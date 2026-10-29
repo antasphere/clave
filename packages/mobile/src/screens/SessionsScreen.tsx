@@ -2,6 +2,7 @@ import { useFocusEffect } from '@react-navigation/native'
 import type { NativeStackScreenProps } from '@react-navigation/native-stack'
 import { useCallback, type ReactNode } from 'react'
 import { FlatList, RefreshControl, View } from 'react-native'
+import type { WorkspaceView } from '../contract/types'
 import type { RootStackParamList } from '../navigation/RootNavigator'
 import { conversationKey } from '../state/store'
 import { useSel, useStoreApi } from '../state/context'
@@ -25,15 +26,20 @@ const tone: Record<PhoneSessionState, Tone> = {
   error: 'danger'
 }
 
+// Selectors answer stable references: a default made inside one would be a
+// new object every render, which React's store subscription refuses.
+const NO_WORKSPACES: readonly WorkspaceView[] = []
+const NO_STAMPS: Readonly<Record<string, string | undefined>> = {}
+
 const basename = (path: string): string => path.split('/').filter(Boolean).pop() ?? path
 
 export function SessionsScreen({ navigation, route }: Props): ReactNode {
   const { machineId, workspaceId } = route.params
   const store = useStoreApi()
-  const workspaces = useSel((s) => s.workspaces[machineId] ?? [])
+  const workspaces = useSel((s) => s.workspaces[machineId]) ?? NO_WORKSPACES
   const workspace = workspaces.find((w) => w.id === workspaceId)
   const sessions = useSel((s) => s.sessions[machineId])
-  const stamps = useSel((s) => s.stamps[machineId] ?? {})
+  const stamps = useSel((s) => s.stamps[machineId]) ?? NO_STAMPS
   const fatal = useSel((s) => s.fatal)
   const error = useSel((s) => s.sessionsError[machineId] ?? null)
   const reach = useSel((s) => s.reachability[machineId] ?? 'connecting')

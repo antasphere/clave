@@ -1,67 +1,77 @@
 /**
- * Where the app opens. A fresh launch opens Machines then Workspaces of the
- * machine last used; coming back to the foreground restores the screen the
- * person was on. The platform keeps the screen tree while the app is merely
- * in the background; this file covers the case where it was evicted there:
- * the navigation state is saved when the app leaves the foreground and
- * restored on the next launch when that save is recent (RESTORE_WINDOW_MS),
- * which is the one signal that tells a return from a fresh start.
+ * Where the app opens (the interview's rule, as the wave restated it on 29
+ * October 2026). A warm resume from the background keeps the navigator the
+ * process already holds: there is nothing to restore. A cold launch, a new
+ * process, opens the Workspaces of the current machine, with no machine
+ * picker when a machine is already paired or selected, and Machines alone
+ * when none is. A notification tap is a deep link to its conversation on
+ * either path (`clave://chat/<machineId>/<sessionId>`, the route this file
+ * builds; lane D wires the notifications). Elapsed time is never the signal
+ * of how the app was closed: iOS gives no way to tell a person's force-close
+ * from an eviction, so every new process is a cold launch there; Android
+ * may hand back saved instance state after a process death, which this app
+ * does not read yet, so a new process is a cold launch there too.
  */
-export interface SavedNavigation {
-  readonly state: unknown
-  readonly savedAt: number
-  readonly machineId: string | null
+export const LAST_MACHINE_KEY = 'clave.last-machine'
+
+export interface RouteState {
+  readonly index: number
+  readonly routes: readonly { readonly name: string; readonly params?: Record<string, string> }[]
 }
 
-export const NAVIGATION_KEY = 'clave.navigation'
-export const LAST_MACHINE_KEY = 'clave.last-machine'
-export const RESTORE_WINDOW_MS = 30 * 60_000
-
-export type InitialNavigation =
-  | { readonly kind: 'restore'; readonly state: unknown }
-  | { readonly kind: 'fresh'; readonly state: unknown }
-
-export const freshState = (machineId: string | null): unknown =>
+/** A cold launch: Machines, then the Workspaces of the current machine. */
+export const coldLaunchState = (machineId: string | null): RouteState =>
   machineId
     ? { index: 1, routes: [{ name: 'Machines' }, { name: 'Workspaces', params: { machineId } }] }
     : { index: 0, routes: [{ name: 'Machines' }] }
 
-export function decideInitialNavigation(
-  saved: SavedNavigation | null,
-  now: number,
-  lastMachineId: string | null,
-  windowMs = RESTORE_WINDOW_MS
-): InitialNavigation {
-  if (saved && saved.state && now - saved.savedAt >= 0 && now - saved.savedAt < windowMs)
-    return { kind: 'restore', state: saved.state }
-  return { kind: 'fresh', state: freshState(lastMachineId) }
-}
+/** The conversation a deep link names, over its machine's Workspaces and
+ *  Sessions-less stack: back from the chat goes to the machine's workspaces. */
+export const deepLinkState = (machineId: string, sessionId: string): RouteState => ({
+  index: 2,
+  routes: [
+    { name: 'Machines' },
+    { name: 'Workspaces', params: { machineId } },
+    { name: 'Chat', params: { machineId, sessionId } }
+  ]
+})
 
-export function parseSaved(raw: string | null): SavedNavigation | null {
-  if (!raw) return null
-  try {
-    const parsed: unknown = JSON.parse(raw)
-    if (
-      typeof parsed === 'object' &&
-      parsed !== null &&
-      typeof (parsed as SavedNavigation).savedAt === 'number' &&
-      'state' in parsed
-    )
-      return {
-        state: (parsed as SavedNavigation).state,
-        savedAt: (parsed as SavedNavigation).savedAt,
-        machineId:
-          typeof (parsed as SavedNavigation).machineId === 'string'
-            ? (parsed as SavedNavigation).machineId
-            : null
-      }
-  } catch {
-    /* an unreadable save is no save */
+/** The path of a deep link to a conversation: `chat/<machineId>/<sessionId>`. */
+export const chatPath = (machineId: string, sessionId: string): string =>
+  `chat/${encodeURIComponent(machineId)}/${encodeURIComponent(sessionId)}`
+
+/**
+ * The state a URL opens, for the navigation container's linking config:
+ * `clave://chat/<machineId>/<sessionId>` (or the same path without the
+ * scheme) opens that conversation on a cold start and on a warm one alike;
+ * anything else is not a link this app knows, and the container keeps its
+ * own state.
+ */
+export function stateForPath(path: string): RouteState | undefined {
+  const clean =
+    path
+      .replace(/^[a-z]+:\/\//i, '')
+      .replace(/^\/+/, '')
+      .split(/[?#]/)[0] ?? ''
+  const parts = clean.split('/').filter(Boolean)
+  if (parts.length === 3 && parts[0] === 'chat') {
+    const machineId = decode(parts[1])
+    const sessionId = decode(parts[2])
+    if (machineId && sessionId) return deepLinkState(machineId, sessionId)
   }
-  return null
+  return undefined
 }
 
-/** The machine the saved screen tree is on, read off the deepest route that names one. */
+const decode = (part: string | undefined): string | null => {
+  if (!part) return null
+  try {
+    return decodeURIComponent(part)
+  } catch {
+    return null
+  }
+}
+
+/** The machine of a screen tree, read off the deepest route that names one. */
 export function machineIdOf(state: unknown): string | null {
   const routes = (state as { routes?: { params?: { machineId?: unknown } }[] } | null)?.routes
   if (!Array.isArray(routes)) return null

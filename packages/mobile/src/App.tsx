@@ -1,22 +1,26 @@
 /**
- * Clave on the phone. The store and the services are built once; the
- * navigation state is saved when the app leaves the foreground and
- * restored on the next launch when that save is recent, so coming back
- * finds the screen the person was on and a fresh launch opens Machines
- * then the Workspaces of the machine last used.
+ * Clave on the phone. The store and the services are built once per process.
+ * A warm resume from the background keeps the navigator in memory; a cold
+ * launch (this component mounting in a new process) opens Machines then the
+ * Workspaces of the current machine; a deep link `clave://chat/<machine>/
+ * <session>` opens that conversation on either path. No screen is saved and
+ * restored by elapsed time (`navigation/persistence.ts` says why).
  */
-import { DarkTheme, NavigationContainer, type NavigationState } from '@react-navigation/native'
+import {
+  DarkTheme,
+  NavigationContainer,
+  type LinkingOptions,
+  type NavigationState
+} from '@react-navigation/native'
 import { StatusBar } from 'expo-status-bar'
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { AppState } from 'react-native'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { SafeAreaProvider } from 'react-native-safe-area-context'
-import { RootNavigator } from './navigation/RootNavigator'
+import { RootNavigator, type RootStackParamList } from './navigation/RootNavigator'
 import {
   LAST_MACHINE_KEY,
-  NAVIGATION_KEY,
-  decideInitialNavigation,
+  coldLaunchState,
   machineIdOf,
-  parseSaved
+  stateForPath
 } from './navigation/persistence'
 import { createServices } from './services'
 import { StoreProvider } from './state/StoreProvider'
@@ -36,40 +40,30 @@ const theme = {
   }
 }
 
+type LinkState = ReturnType<NonNullable<LinkingOptions<RootStackParamList>['getStateFromPath']>>
+
+/** The one deep link the app answers: a conversation, for a notification tap. */
+const linking: LinkingOptions<RootStackParamList> = {
+  prefixes: ['clave://'],
+  getStateFromPath: (path) => stateForPath(path) as LinkState,
+  config: { screens: { Chat: 'chat/:machineId/:sessionId' } }
+}
+
 export function App(): ReactNode {
   const services = useMemo(() => createServices(), [])
   const store = useMemo(() => createStore(services), [services])
-  const [initial, setInitial] = useState<{ state: unknown } | null>(null)
-  const current = useRef<NavigationState | undefined>(undefined)
+  const [initial, setInitial] = useState<{ state: NavigationState } | null>(null)
 
+  // A cold launch: the current machine, read once, decides the first screen.
   useEffect(() => {
     let cancelled = false
-    void (async () => {
-      const [saved, lastMachine] = await Promise.all([
-        services.kv.getItem(NAVIGATION_KEY),
-        services.kv.getItem(LAST_MACHINE_KEY)
-      ])
-      const decision = decideInitialNavigation(parseSaved(saved), Date.now(), lastMachine)
-      if (!cancelled) setInitial({ state: decision.state })
-    })()
+    void services.kv.getItem(LAST_MACHINE_KEY).then((lastMachine) => {
+      if (!cancelled)
+        setInitial({ state: coldLaunchState(lastMachine) as unknown as NavigationState })
+    })
     return () => {
       cancelled = true
     }
-  }, [services])
-
-  useEffect(() => {
-    const save = (): void => {
-      const state = current.current
-      if (!state) return
-      void services.kv.setItem(
-        NAVIGATION_KEY,
-        JSON.stringify({ state, savedAt: Date.now(), machineId: machineIdOf(state) })
-      )
-    }
-    const subscription = AppState.addEventListener('change', (next) => {
-      if (next === 'background' || next === 'inactive') save()
-    })
-    return () => subscription.remove()
   }, [services])
 
   useEffect(() => () => store.getState().disconnectAll(), [store])
@@ -80,9 +74,9 @@ export function App(): ReactNode {
         {initial ? (
           <NavigationContainer
             theme={theme}
-            initialState={initial.state as NavigationState}
+            linking={linking}
+            initialState={initial.state}
             onStateChange={(state) => {
-              current.current = state
               const machineId = machineIdOf(state)
               if (machineId) void services.kv.setItem(LAST_MACHINE_KEY, machineId)
             }}

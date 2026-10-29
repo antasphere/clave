@@ -19,7 +19,7 @@ type Props = NativeStackScreenProps<RootStackParamList, 'Developer'>
 
 export function DeveloperScreen({ navigation }: Props): ReactNode {
   const store = useStoreApi()
-  const [url, setUrl] = useState('http://127.0.0.1:43201')
+  const [url, setUrl] = useState('')
   const [token, setToken] = useState('')
   const [name, setName] = useState('Developer machine')
   const [error, setError] = useState<string | null>(null)
@@ -55,14 +55,20 @@ export function DeveloperScreen({ navigation }: Props): ReactNode {
           label="Server address"
           value={url}
           onChangeText={setUrl}
+          placeholder="http://127.0.0.1:43201"
           keyboardType="url"
           testID="developer-url"
         />
+        {/* A plain field, not a secure one: the token is the developer's own
+            local server's, and a secure field on iOS 26 drops the focus the
+            automated check types into. This screen exists in development
+            builds only. */}
         <Field
           label="Server token"
           value={token}
           onChangeText={setToken}
-          secureTextEntry
+          spellCheck={false}
+          textContentType="none"
           testID="developer-token"
         />
         <Field label="Name" value={name} onChangeText={setName} testID="developer-name" />
@@ -71,7 +77,7 @@ export function DeveloperScreen({ navigation }: Props): ReactNode {
           <Button
             title={busy ? 'Connecting…' : 'Connect'}
             onPress={() => void connect()}
-            disabled={busy || !token.trim()}
+            disabled={busy || !token.trim() || !url.trim()}
             testID="developer-connect"
           />
         </View>

@@ -5,11 +5,9 @@
 # Driven by scripts/simulator-check.mjs, which passes the four variables.
 # The Echo adapter is a fixture (a deterministic chat that repeats what it
 # is told), not a real provider.
+# The four variables come from the command line only (scripts/simulator-check.mjs):
+# a default here would win over them.
 appId: com.clave.app.mobile
-env:
-  SERVER_URL: http://127.0.0.1:43201
-  HISTORY_TEXT: seeded
-  REPLY_TEXT: reply
 ---
 - launchApp:
     clearState: true
@@ -21,12 +19,10 @@ env:
     id: 'developer-connection'
 - tapOn:
     id: 'developer-url'
-- eraseText: 60
 - inputText: ${SERVER_URL}
 - tapOn:
     id: 'developer-token'
 - inputText: ${SERVER_TOKEN}
-- hideKeyboard
 - tapOn:
     id: 'developer-connect'
 # Back on Machines: the developer machine is listed; open it.

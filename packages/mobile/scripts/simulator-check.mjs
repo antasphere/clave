@@ -17,7 +17,8 @@
 // /opt/homebrew/bin/maestro) with JAVA_HOME set to a JDK, and the app built
 // once with `npx expo run:ios --device "iPhone 17 Pro"`.
 import { execFileSync, spawn } from 'node:child_process'
-import { existsSync, mkdirSync, readdirSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, rmSync, statSync } from 'node:fs'
+import os from 'node:os'
 import { randomBytes } from 'node:crypto'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -56,18 +57,39 @@ function bootSimulator(name) {
   return device.udid
 }
 
-/** Where `expo run:ios` left the development build. */
+/** Where `expo run:ios` left the development build: Xcode's DerivedData
+ *  (`Clave-<hash>/Build/Products/Debug-iphonesimulator/Clave.app`, the newest
+ *  when several), or `ios/build` for a build made with `-derivedDataPath`;
+ *  null when neither holds one. */
 function findApp() {
   const given = arg('app', null)
   if (given) return given
-  const products = path.join(PKG, 'ios', 'build', 'Build', 'Products')
-  if (!existsSync(products)) return null
-  for (const dir of readdirSync(products))
-    if (dir.endsWith('-iphonesimulator')) {
-      const app = path.join(products, dir, 'Clave.app')
-      if (existsSync(app)) return app
-    }
-  return null
+  const candidates = []
+  const derived = path.join(os.homedir(), 'Library', 'Developer', 'Xcode', 'DerivedData')
+  const roots = []
+  if (existsSync(derived))
+    for (const project of readdirSync(derived))
+      if (project.startsWith('Clave-')) roots.push(path.join(derived, project, 'Build', 'Products'))
+  roots.push(path.join(PKG, 'ios', 'build', 'Build', 'Products'))
+  for (const products of roots) {
+    if (!existsSync(products)) continue
+    for (const dir of readdirSync(products))
+      if (dir.endsWith('-iphonesimulator')) {
+        const app = path.join(products, dir, 'Clave.app')
+        if (existsSync(app)) candidates.push({ app, at: statSync(app).mtimeMs })
+      }
+  }
+  candidates.sort((a, b) => b.at - a.at)
+  return candidates[0]?.app ?? null
+}
+
+/** The copy already installed on the simulator, when no build is on disk. */
+function installedApp(udid) {
+  try {
+    return sh('xcrun', ['simctl', 'get_app_container', udid, 'com.clave.app.mobile'])
+  } catch {
+    return null
+  }
 }
 
 function findMaestro() {
@@ -105,13 +127,6 @@ async function main() {
   const device = arg('device', 'iPhone 17 Pro')
   const metroPort = Number(arg('metro-port', '8081'))
   const serverPort = Number(arg('server-port', '0'))
-  const app = findApp()
-  if (!app) {
-    log(
-      'no development build found: run `npx expo run:ios --device "iPhone 17 Pro"` first (docs/mobile.md)'
-    )
-    process.exit(2)
-  }
   const maestro = findMaestro()
   rmSync(ROOT, { recursive: true, force: true })
   mkdirSync(ROOT, { recursive: true })
@@ -141,9 +156,17 @@ async function main() {
     })
     log(`server ${server.url}, Echo chat ${session.id} seeded with "${historyText}"`)
 
-    // 2. The simulator and the app.
+    // 2. The simulator and the app: the build on disk, else the copy installed.
     const udid = bootSimulator(device)
-    sh('xcrun', ['simctl', 'install', udid, app])
+    const app = findApp()
+    if (app) {
+      log(`installing ${app}`)
+      sh('xcrun', ['simctl', 'install', udid, app])
+    } else if (installedApp(udid)) log('no build on disk; using the copy installed on the simulator')
+    else {
+      log('no development build: run `npx expo run:ios --device "iPhone 17 Pro"` first (docs/mobile.md)')
+      process.exit(2)
+    }
     try {
       sh('xcrun', ['simctl', 'terminate', udid, 'com.clave.app.mobile'])
     } catch {

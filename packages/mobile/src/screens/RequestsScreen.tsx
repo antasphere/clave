@@ -9,7 +9,7 @@
 import type { NativeStackScreenProps } from '@react-navigation/native-stack'
 import { useEffect, useState, type ReactNode } from 'react'
 import { FlatList, RefreshControl, StyleSheet, Text, View } from 'react-native'
-import type { PendingRequest, RequestResponse } from '../contract/types'
+import type { PendingRequest, RequestResponse, Session } from '../contract/types'
 import type { RootStackParamList } from '../navigation/RootNavigator'
 import {
   answersAsPermission,
@@ -26,11 +26,14 @@ import { QuestionForm } from './QuestionForm'
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Requests'>
 
+// A stable default: a selector must not answer a new array every render.
+const NO_SESSIONS: readonly Session[] = []
+
 export function RequestsScreen({ route }: Props): ReactNode {
   const { machineId } = route.params
   const store = useStoreApi()
   const requests = useSel((s) => s.requests[machineId])
-  const sessions = useSel((s) => s.sessions[machineId] ?? [])
+  const sessions = useSel((s) => s.sessions[machineId]) ?? NO_SESSIONS
   const [notices, setNotices] = useState<Record<string, string>>({})
 
   useEffect(() => {
