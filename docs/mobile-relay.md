@@ -55,7 +55,12 @@ A Clave server reaches the relay when it has an address and a login:
   standalone server, `--relay <url>` on its command line. It is read again at every
   attempt, so an address saved in Settings takes effect without a restart; the separate
   server the packaged app starts follows the preference the app writes into the server's
-  own copy of `preferences.json`.
+  own copy of `preferences.json`. The address is `https` (the relay behind its TLS proxy)
+  or plain `http` to a literal loopback address (`127.0.0.1`, `[::1]`, `localhost`: the
+  development relay on this machine); any other plain-http address is refused where a
+  claim or a hello would leave, whatever wrote it, with one log line naming its scheme
+  and host, since the claim carries the owner's access token and the hello the machine
+  secret.
 - the login is the server's Antasphere account (`docs/antasphere-account.md`): the
   machine credential is bound to its subject, and the claim presents its access token
   (`currentAccessToken()` on the account manager, which renews through the manager's

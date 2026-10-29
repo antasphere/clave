@@ -131,6 +131,32 @@ const HOP_BY_HOP = new Set([
   'origin'
 ])
 
+/** The literal loopback hosts a plain-http relay address may name: the
+ *  development relay on this machine, and the test provider's. */
+const LOOPBACK_HOSTS = new Set(['127.0.0.1', '[::1]', 'localhost'])
+
+/**
+ * Why a relay address must not be used, or null when it may: the claim
+ * carries the owner's access token and the hello the machine secret, so
+ * both leave only over https (wss) or to a literal loopback address. The
+ * rule holds here, where the request and the frame would be sent, so a
+ * saved preference or a flag from before the rule cannot bypass it; the
+ * answer names the address's scheme and host and never a token.
+ */
+export function insecureRelayAddress(address: string): string | null {
+  let url: URL
+  try {
+    url = new URL(address)
+  } catch {
+    return `the relay address is not a URL`
+  }
+  if (url.protocol === 'https:') return null
+  if (url.protocol === 'http:' && LOOPBACK_HOSTS.has(url.hostname)) return null
+  if (url.protocol === 'http:')
+    return `the relay address is plain http to ${url.hostname}: https is required off this machine`
+  return `the relay address has the scheme ${url.protocol} and not https`
+}
+
 const wsUrlOf = (base: string, path: string): string => {
   const url = new URL(base)
   url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
@@ -385,6 +411,14 @@ class Client implements RelayClient {
         continue
       }
       this.relay = address
+      // Nothing of the owner's leaves for an address that would carry it in
+      // clear: no claim, no hello, until the address changes.
+      const insecure = insecureRelayAddress(address)
+      if (insecure) {
+        this.set('unconfigured', insecure)
+        await this.sleep(this.idleRetryMs)
+        continue
+      }
       const owner = this.ask('the owner', () => this.options.owner(), null)
       if (!owner) {
         this.set('signed-out', this.lastFailure)
