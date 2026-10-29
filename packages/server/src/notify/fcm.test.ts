@@ -236,7 +236,8 @@ describe('the FCM message', () => {
           workspaceName: 'clave',
           requestId: 'request-1',
           text: 'Which branch should I use?',
-          actions: 'reply,open'
+          actions: 'reply,open',
+          categoryId: 'clave.question'
         }
       }
     })
@@ -255,7 +256,8 @@ describe('the FCM message', () => {
           sessionId: '',
           sessionTitle: '',
           text: 'Work: 5-hour window has 4% left',
-          actions: 'open'
+          actions: 'open',
+          categoryId: 'clave.account_limit'
         }
       }
     })
