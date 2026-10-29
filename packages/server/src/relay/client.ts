@@ -259,7 +259,25 @@ class Client implements RelayClient {
     this.maxMs = options.backoff?.maxMs ?? 60_000
     this.idleRetryMs = options.idleRetryMs ?? 15_000
     this.silenceMs = options.silenceMs ?? RELAY_OFFLINE_MS + 5_000
-    this.done = this.run()
+    // The loop never rejects: whatever a provider throws is a state of the
+    // client and a line in the log, not an unhandled rejection in the server.
+    this.done = this.run().catch((error: unknown) => {
+      this.options.log(`relay: the client stopped on an error: ${(error as Error).message}`)
+      this.set('stopped', (error as Error).message)
+    })
+  }
+
+  /** A provider's answer, or `fallback` when it throws: a preferences file
+   *  that cannot be read, a login manager that is not ready. Said once. */
+  private ask<T>(what: string, read: () => T, fallback: T): T {
+    try {
+      return read()
+    } catch (error) {
+      const message = `${what} could not be read: ${(error as Error).message}`
+      if (this.lastFailure !== message) this.options.log(`relay: ${message}`)
+      this.lastFailure = message
+      return fallback
+    }
   }
 
   status(): RelayClientStatus {
@@ -348,28 +366,35 @@ class Client implements RelayClient {
 
   private async run(): Promise<void> {
     while (!this.stopped) {
-      const address = this.options.address()
+      const address = this.ask('the relay address', () => this.options.address(), null)
       if (!address) {
         this.relay = null
-        this.set('unconfigured', null)
+        this.set('unconfigured', this.lastFailure)
         await this.sleep(this.idleRetryMs)
         continue
       }
       this.relay = address
-      const owner = this.options.owner()
+      const owner = this.ask('the owner', () => this.options.owner(), null)
       if (!owner) {
-        this.set('signed-out', null)
+        this.set('signed-out', this.lastFailure)
         await this.sleep(this.idleRetryMs)
         continue
       }
-      let credential = this.options.credentials.load()
+      let credential = this.ask(
+        'the machine credential',
+        () => this.options.credentials.load(),
+        null
+      )
       if (credential && (credential.relay !== address || credential.owner !== owner)) {
         this.options.credentials.clear()
         credential = null
       }
       if (!credential) {
         this.set('claiming', null)
-        const token = await this.options.accessToken()
+        const token = await this.options.accessToken().catch((error: unknown) => {
+          this.options.log(`relay: the access token could not be read: ${(error as Error).message}`)
+          return null
+        })
         if (this.stopped) break
         if (!token) {
           this.set('signed-out', 'the login has no usable token')

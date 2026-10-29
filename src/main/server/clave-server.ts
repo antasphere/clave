@@ -89,7 +89,10 @@ async function start(options: StartOptions): Promise<ClaveServerEndpoint> {
   // ── Lane E (mobile wave, 2026-10-29): the relay client, reaching the relay Settings names ──
   // Loaded on first use (`relay-wiring.ts`), so the boot reaches no Effect
   // module through this file; the client waits on its own for an address
-  // and a login, and a failure here never stops the server.
+  // and a login, and a failure here never stops the server. Inside Electron
+  // only: the shell's preferences and secrets come from the app's own ports,
+  // and the unit test of this seam runs it under plain Node with none.
+  if (!process.versions.electron) return endpoint
   mobileRelayStarted = true
   void Promise.all([import('./relay-wiring'), import('../settings/shell-source')])
     .then(([wiring, shell]) =>
