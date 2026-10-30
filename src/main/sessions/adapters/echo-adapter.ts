@@ -86,7 +86,25 @@ export class EchoAdapter implements SessionAdapter {
    *  it is on). For the end-to-end suite, which used to send the frame to
    *  the window over IPC and now injects it where the session lives. */
   inject(sessionId: string, stream: SessionAdapterEvents['stream']): void {
-    this.emitter({ id: sessionId }).emit('stream', stream)
+    const emitter = this.emitter({ id: sessionId })
+    if (
+      stream.kind !== 'event' ||
+      ['provider_event', 'state_change', 'background_tasks'].includes(stream.event.type)
+    ) {
+      emitter.emit('stream', stream)
+      return
+    }
+    const history = this.past.get(sessionId)
+    const offset = history?.length ?? 0
+    const item = { event: stream.event, at: Date.now() }
+    try {
+      // A first stream consumer may seed from history before capturing this
+      // frame. Keep this frame out of that prefix until fan-out completes.
+      emitter.emit('stream', stream)
+    } finally {
+      // Reserve its place ahead of any writes/injections made by listeners.
+      history?.splice(offset, 0, item)
+    }
   }
 
   async commands(): Promise<CommandOption[]> {
