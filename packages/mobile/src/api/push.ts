@@ -347,6 +347,9 @@ export class ClavePushClient {
         this.attempts = 0
         this.serverId = frame.serverId
         this.serverVersion = frame.version ?? null
+        // Invalidate the previous socket's acknowledgements before welcome listeners
+        // request a snapshot. They must await this socket's subscription barrier.
+        for (const subscription of this.subscriptions.values()) subscription.acked = null
         this.setStatus('open', {})
         this.armPing()
         for (const [sessionId, subscription] of this.subscriptions)

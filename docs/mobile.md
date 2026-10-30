@@ -226,3 +226,17 @@ chat through the Mac's own login, on the scratch folder, on this band's server d
 as such where it is reported. The integration proof of the beta on a real provider (a launch
 from the phone, the agent's reply, a reply back, the same session on an attached desktop)
 belongs to the beta's delivery lane, not to this package's checks.
+
+### Ordered history and native source proof
+
+The phone uses `GET /sessions/timeline` from the ordered-history server. It subscribes and waits for the server's acknowledgement before taking a snapshot. Only a generation and sequence pair establishes event identity. Repeated identical text stays in the conversation. Reopening reads a fresh snapshot; `refreshOpenHistory(machineId)` refreshes subscribed conversations without dispatching any draft. A changed generation or a missed sequence triggers a new snapshot, with at most three attempts. The server retains up to 2000 events and 1 MiB, so this endpoint is recent history, not a complete provider transcript. An older server without the route reports a history error rather than guessing an overlap by text.
+
+A native check must prove which source it ran. With the candidate committed, sources frozen and a fresh Metro started with `--clear`, run:
+
+```sh
+node packages/mobile/scripts/native-provenance.mjs \
+  --port 8081 --device-name 'iPhone 17 Pro' \
+  --output /tmp/clave-mobile-c/native-source.json
+```
+
+The check rejects tracked changes. It reads the actual bundle loaded by Hermes through the Metro inspector, asserts the port and worktree, compares its SHA-256 with the bundle served by that Metro, then compares the original mobile source-map contents with disk, including App.tsx. It exits nonzero for a mismatch. It sends no credential and adds no app instrumentation. Run it again after a cold-link launch. `check:simulator` now requires this proof after its successful Maestro flow, uses a private temporary flow instead of a token in the command line, removes its private flow/debug captures, and can keep a final sanitized chat screenshot through `--shot <path>`.
