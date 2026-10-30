@@ -76,7 +76,11 @@ async function setup(): Promise<{
   }
 }
 
-const item = (delta: string, sequence: number, generation = 'g'): import('../contract/types').TimelineItem => ({
+const item = (
+  delta: string,
+  sequence: number,
+  generation = 'g'
+): import('../contract/types').TimelineItem => ({
   event: { type: 'assistant_text' as const, delta, final: false },
   position: { generation, sequence }
 })

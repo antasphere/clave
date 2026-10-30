@@ -17,6 +17,8 @@ export interface HistoryCursor {
   readonly loaded: boolean
   /** A page is on its way. */
   readonly loading: boolean
+  /** Server retention removed earlier events. */
+  readonly truncated?: boolean
 }
 
 export const freshCursor: HistoryCursor = { before: null, loaded: false, loading: false }
@@ -26,24 +28,34 @@ export const hasMore = (cursor: HistoryCursor): boolean => cursor.loaded && curs
 /** The first page: the conversation rebuilt from it, the cursor set. */
 export function applyFirstPage(
   conversation: Conversation,
-  page: HistoryPage
+  page: HistoryPage & { readonly truncated?: boolean }
 ): { conversation: Conversation; cursor: HistoryCursor } {
   const action: Action = { sync: page.items }
   return {
     conversation: page.items.length ? reduceConversation(conversation, action) : conversation,
-    cursor: { before: page.before, loaded: true, loading: false }
+    cursor: {
+      before: page.before,
+      loaded: true,
+      loading: false,
+      ...(page.truncated ? { truncated: true } : {})
+    }
   }
 }
 
 /** A further page, in front of what is here; the cursor moves back. */
 export function applyOlderPage(
   conversation: Conversation,
-  page: HistoryPage
+  page: HistoryPage & { readonly truncated?: boolean }
 ): { conversation: Conversation; cursor: HistoryCursor } {
   const action: Action = { prepend: page.items }
   return {
     conversation: page.items.length ? reduceConversation(conversation, action) : conversation,
-    cursor: { before: page.before, loaded: true, loading: false }
+    cursor: {
+      before: page.before,
+      loaded: true,
+      loading: false,
+      ...(page.truncated ? { truncated: true } : {})
+    }
   }
 }
 
@@ -64,7 +76,7 @@ export class TimelineChanged extends Error {
 export function mergeBufferedHistory(
   page: TimelinePage,
   buffered: readonly BufferedItem[]
-): HistoryPage {
+): HistoryPage & { readonly truncated: boolean } {
   const seen = new Set<number>()
   const newer = buffered.filter((item) => {
     if (!item.position) return true // Synthetic prompt replay has no ordered identity.
@@ -83,6 +95,7 @@ export function mergeBufferedHistory(
   }
   return {
     items: [...page.items, ...ordered, ...newer.filter((item) => !item.position)],
-    before: page.before
+    before: page.before,
+    truncated: page.truncated
   }
 }

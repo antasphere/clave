@@ -176,6 +176,27 @@ describe('ClavePushClient', () => {
     expect(c.status).toBe('open')
     c.close()
   })
+  it('a welcome refresh awaits this socket acknowledgement rather than its previous one', async () => {
+    const c = client().connect()
+    c.subscribe('s1', () => {})
+    await c.subscribed('s1')
+    let refreshed = false
+    let ackCleared = false
+    c.onStatus((status) => {
+      if (status !== 'open') return
+      // Read the observable barrier synchronously in the welcome callback.
+      void c.subscribed('s1').then(() => {
+        refreshed = true
+      })
+      queueMicrotask(() => {
+        ackCleared = !refreshed
+      })
+    })
+    for (const socket of wss.clients) socket.close(1001, 'test drop')
+    await until(() => ackCleared)
+    await until(() => refreshed)
+    c.close()
+  })
   it('reconnects after a drop and subscribes every session again', async () => {
     const c = client().connect()
     c.subscribe('s1', () => {})
