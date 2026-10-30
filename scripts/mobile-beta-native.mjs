@@ -17,8 +17,105 @@ import {
 } from 'node:fs'
 import { createServer } from 'node:net'
 import path from 'node:path'
+import { constants as osConstants } from 'node:os'
 import { pathToFileURL } from 'node:url'
 import { installedCodex, proveCodexProcess, proveSavedProfile } from './mobile-provider-proof.mjs'
+
+/** Build the exact private Maestro file; control fields are serialized separately. */
+export function renderNativeFlow(template, values) {
+  assert.equal(typeof values.CLEAR_STATE, 'boolean', 'Maestro clearState must be Boolean')
+  assert.ok([0, 1].includes(values.REPLY_INDEX), 'Maestro reply index must be zero or one')
+  const typed = template
+    .replaceAll('${CLEAR_STATE}', String(values.CLEAR_STATE))
+    .replaceAll('${REPLY_INDEX}', String(values.REPLY_INDEX))
+  return typed.replace(
+    'appId: com.clave.app.mobile',
+    'appId: com.clave.app.mobile\nenv:\n' +
+      Object.entries(values)
+        .map(([key, value]) => `  ${key}: ${JSON.stringify(String(value))}`)
+        .join('\n')
+  )
+}
+
+const NATIVE_GUARDS = [
+  ['profile.record-count', 'Exactly one server launch record is required'],
+  ['profile.session', 'Launch record must name the phone session'],
+  ['profile.cwd', 'Launch record must name the selected scratch directory'],
+  ['profile.workspace', 'Launch record must name the selected workspace'],
+  ['profile.selected-id', 'Server must launch the selected saved profile'],
+  ['profile.definition', 'Server must retain the selected profile definition'],
+  ['provider.kind', 'Phone session must use Codex'],
+  ['provider.adapter', 'Phone session must use the Codex chat adapter'],
+  ['provider.transport', 'Phone session must use the events transport'],
+  ['provider.cwd', 'Phone session must remain in the selected scratch directory'],
+  ['provider.model', 'Provider metadata must match the requested Codex model'],
+  ['provider.thread-count', 'All turns must retain one provider thread'],
+  ['provider.thread-present', 'A real provider thread is required'],
+  [
+    'process.installed-executable',
+    'Exactly one matching Codex executable must belong to this server'
+  ],
+  ['process.desktop-pid', 'Desktop must retain the same Codex process'],
+  ['provider.desktop-thread', 'Desktop must retain the provider thread']
+]
+
+/** Copy only controlled labels and bounded exit metadata, never error/output values. */
+export function nativeFailureDiagnostic(error) {
+  const status = error?.status
+  const signal = error?.signal
+  const result = {
+    kind: 'runtime',
+    guardId: null,
+    reason: 'Native verification failed.',
+    exit: Number.isInteger(status) && status >= 0 && status <= 255 ? status : null,
+    signal: typeof signal === 'string' && Object.hasOwn(osConstants.signals, signal) ? signal : null
+  }
+  if (error instanceof assert.AssertionError) {
+    const guard = NATIVE_GUARDS.find(([, label]) => error.message.startsWith(label))
+    return guard
+      ? { ...result, kind: 'guard', guardId: guard[0], reason: guard[1] }
+      : { ...result, kind: 'assertion', reason: 'Verification assertion failed.' }
+  }
+  const text = [error?.stdout, error?.stderr, error?.message, error?.code]
+    .filter((value) => typeof value === 'string' || Buffer.isBuffer(value))
+    .map((value) => String(value))
+    .join('\n')
+    .slice(-65536)
+  const classes = [
+    [
+      'flow-format',
+      /Incorrect Format:|Invalid.*[Ff]low|Unrecognized.*field/,
+      'Maestro rejected the generated flow format.'
+    ],
+    [
+      'java',
+      /Unable to locate a Java|UnsupportedClassVersion|JAVA_HOME.*invalid/,
+      'Maestro Java runtime is unavailable.'
+    ],
+    [
+      'boot',
+      /Data Migration Failed|MigrationFailed|Unable to boot|Failed to boot/,
+      'Simulator boot or migration failed.'
+    ],
+    [
+      'connect',
+      /Connection refused|Failed to connect|Unable to connect|No.*[Dd]evices? found|[Dd]evice.*not.*found/,
+      'Native driver could not connect.'
+    ],
+    ['timeout', /[Tt]imed? ?out|[Tt]imeout|ETIMEDOUT/, 'Native command timed out.'],
+    ['ui-assertion', /Assertion is false|[Aa]ssertion.*fail/, 'Native UI assertion failed.'],
+    ['http', /answered [45][0-9]{2}/, 'Server HTTP request failed.']
+  ]
+  const classification = classes.find(([, expression]) => expression.test(text))
+  if (classification) return { ...result, kind: classification[0], reason: classification[2] }
+  if (
+    result.exit !== null ||
+    result.signal !== null ||
+    ['ENOENT', 'EACCES', 'ENOBUFS'].includes(error?.code)
+  )
+    return { ...result, kind: 'command', reason: 'Native command failed.' }
+  return result
+}
 
 export function parseArgs(argv) {
   const required = [
@@ -309,16 +406,10 @@ async function main(o) {
       REPLY_ONE: replies[0],
       REPLY_TWO: replies[1],
       REPLY_INDEX: o.provider === 'echo' ? 1 : 0,
-      CLEAR_STATE: o['ios-udid'] ? 'true' : 'false'
+      CLEAR_STATE: Boolean(o['ios-udid'])
     }
     let flow = readFileSync(path.join(o.worktree, 'packages/mobile/e2e/beta-provider.yaml'), 'utf8')
-    flow = flow.replace(
-      'appId: com.clave.app.mobile',
-      'appId: com.clave.app.mobile\nenv:\n' +
-        Object.entries(values)
-          .map(([key, value]) => `  ${key}: ${JSON.stringify(String(value))}`)
-          .join('\n')
-    )
+    flow = renderNativeFlow(flow, values)
     const flowFile = path.join(privateDir, 'flow.yaml')
     writeFileSync(flowFile, flow, { mode: 0o600 })
     // Suppress all Maestro output and remove its artifacts, including credential screenshots.
@@ -422,8 +513,9 @@ async function main(o) {
       )
     receipt.screenshot = screenshot
     receipt.status = 'PASS'
-  } catch {
-    receipt.status = `FAIL at ${phase}: acceptance incomplete; private runtime output suppressed`
+  } catch (error) {
+    receipt.failure = { phase, ...nativeFailureDiagnostic(error) }
+    receipt.status = `FAIL at ${phase}: ${receipt.failure.reason}`
     throw new Error(receipt.status)
   } finally {
     save()
