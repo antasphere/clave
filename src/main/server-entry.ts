@@ -72,12 +72,19 @@ import {
   FileTreeWatcher,
   createServerFiles,
   PendingRequests,
-  ServerInfoPort
+  ServerInfoPort,
+  // ── The mobile wave, lane B: the push credentials and the fake, the write ledger ──
+  loadPushPorts,
+  fileWriteLedgerStorage
 } from '@clave/server'
 import { standaloneSettingsSource } from './settings/standalone-source'
 import { standaloneSessionHost } from './sessions/standalone-host'
 import { installE2eHooks } from './sessions/e2e-hooks'
-import { publishSessionStates, setServerEventPublisher } from './server/session-events'
+import {
+  observeSessionsForNotify,
+  publishSessionStates,
+  setServerEventPublisher
+} from './server/session-events'
 import { sessionManager } from './sessions/session-manager'
 import { eventsProfile, launchProfileManager } from './launch-profile-manager'
 import { ptyManager, loginShellEnvAsync, getUserShell, getLoginShellEnv } from './pty-manager'
@@ -305,6 +312,10 @@ async function main(): Promise<void> {
       idleMs: upgradeIdleMs(process.argv.slice(2), TEST_NO_ACTIVATE)
     })
   }
+  // ── The mobile wave, lane B: the push credentials under --data-dir/push,
+  // the recording fake under --push-fake (the suite's), on the test hooks ──
+  const push = loadPushPorts({ dataDir, fake: process.argv.includes('--push-fake'), log })
+  if (push.hooks) installE2eHooks({ notify: push.hooks })
   const server = await startEmbedded({
     ports: {
       sessions,
@@ -333,7 +344,16 @@ async function main(): Promise<void> {
       // progress published to every attached client (server/git-port.ts).
       git: serverGitPort(),
       // ── Issue #266: the server domain ──
-      serverInfo: selfUpgrade ?? ServerInfoPort.appRun(version)
+      serverInfo: selfUpgrade ?? ServerInfoPort.appRun(version),
+      // ── The mobile wave, lane B: the notify domain, and the write ledger per session ──
+      ...push.ports,
+      writeLedger: fileWriteLedgerStorage(path.join(dataDir, 'write-ledger'), {
+        activationFile: path.join(dataDir, 'write-ledger-activation.json'),
+        sessionIds: [
+          ...sessionManager.list().map((session) => session.id),
+          ...sessions.listAdoptableRecords().map((record) => record.id)
+        ]
+      })
     },
     port,
     host: config.host,
@@ -374,6 +394,13 @@ async function main(): Promise<void> {
   // entry publishes them.
   setServerEventPublisher((event) => server.publish(event))
   const stopStates = publishSessionStates(sessionManager, (event) => server.publish(event))
+  // ── The mobile wave, lane B: the sessions' frames and exits reach the notifier ──
+  const stopNotify = observeSessionsForNotify(
+    sessionManager,
+    server.notify,
+    server.writes.evidence,
+    server.writes.initialize
+  )
 
   fs.mkdirSync(dataDir, { recursive: true })
   const file = path.join(dataDir, 'clave-server.json')
@@ -449,6 +476,9 @@ async function main(): Promise<void> {
     owned?.close()
     selfUpgrade?.close()
     stopStates()
+    // ── The mobile wave, lane B: nothing is pushed for what this stop ends ──
+    stopNotify()
+    push.close()
     setServerEventPublisher(null)
     // ── Wave 5, lane C: the plugin processes go with the server ──
     plugins.close()

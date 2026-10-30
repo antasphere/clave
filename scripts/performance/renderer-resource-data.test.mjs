@@ -22,6 +22,8 @@ import {
 async function liveSeedFixture() {
   const manager = new SessionManager(),
     adapter = new EchoAdapter()
+  // Qualify live seeding without replay, independently of Echo's retained history.
+  vi.spyOn(adapter, 'history').mockReturnValue([])
   manager.registerAdapter(adapter)
   const sessions = [],
     listeners = new Map(),

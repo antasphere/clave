@@ -35,5 +35,7 @@ export * as Plugins from './plugins'
 export * as Git from './git'
 // ── Issue #266: the server's version and its self-upgrade ──
 export * as ServerInfo from './server-info'
+// ── The mobile wave, lane B: the push notifications ──
+export * as Notify from './notify'
 
 // ── Lane B: terminals · Lane D: settings served ──
