@@ -84,7 +84,14 @@ async function setup(platform) {
   await credentials.set('machine', { serverUrl: server.url, bearer: paired.token })
   const drafts = new Drafts(kv)
   await drafts.set('machine', 'session', 'returning owner draft')
-  const beta = new BetaServices(auth, kv, credentials, drafts, 'development')
+  const beta = new BetaServices(
+    auth,
+    kv,
+    credentials,
+    drafts,
+    'development',
+    new SecureCredentialStore(new MemorySecureStore())
+  )
   await beta.records.set({
     machineId: 'machine',
     serverId: 'server',
@@ -178,7 +185,9 @@ it('retains A cleanup for same-owner retry when offline, without letting B retry
   )
   expect(await beta.signOut()).toEqual({ pending: 1, retryRecorded: true })
   expect(new DeviceStore(storage).pushTargets().length).toBe(1)
-  expect(await beta.kv.getItem(PUSH_CLEANUP_KEY)).toBe(JSON.stringify(['machine']))
+  expect(JSON.parse(await beta.kv.getItem(PUSH_CLEANUP_KEY)).refs).toEqual([
+    expect.stringMatching(/^push-cleanup-/)
+  ])
   await signInAs(auth, provider, 'B')
   const bkv = ownerKeyValueStore(raw, 'owner-B')
   const other = new BetaServices(
@@ -186,13 +195,21 @@ it('retains A cleanup for same-owner retry when offline, without letting B retry
     bkv,
     new SecureCredentialStore(new MemorySecureStore()),
     new Drafts(bkv),
-    'development'
+    'development',
+    new SecureCredentialStore(new MemorySecureStore())
   )
   expect(await other.syncPushTokens()).toEqual([])
   expect(new DeviceStore(storage).pushTargets().length).toBe(1)
   vi.stubGlobal('fetch', nativeFetch)
   await signInAs(auth, provider, 'A')
-  const returning = new BetaServices(auth, beta.kv, beta.credentials, beta.drafts, 'development')
+  const returning = new BetaServices(
+    auth,
+    beta.kv,
+    beta.credentials,
+    beta.drafts,
+    'development',
+    beta.cleanupCredentials
+  )
   expect((await returning.syncPushTokens()).map((result) => result.kind)).toEqual(['registered'])
   expect(await beta.kv.getItem(PUSH_CLEANUP_KEY)).toBeNull()
   expect(await beta.drafts.get('machine', 'session')).toBe('returning owner draft')
@@ -269,4 +286,287 @@ it('finishes captured A cleanup without reading B credentials or signing B out d
   expect(access).not.toHaveBeenCalled()
   expect(id).not.toHaveBeenCalled()
   expect(globalSignOut).not.toHaveBeenCalled()
+})
+
+for (const platform of ['ios', 'android'])
+  it(`retains old-road ${platform} cleanup across a relay change before sign-out`, async () => {
+    const { beta, auth, provider, storage, requests, push, paired, other, server } =
+      await setup(platform)
+    await new EnrollmentClient(server.url, { build: 'development' }).setPushToken(
+      other.token,
+      'other-phone-native-token',
+      platform
+    )
+    const nativeFetch = globalThis.fetch
+    let newRoadRequests = 0
+    vi.stubGlobal('fetch', async (url, init) => {
+      if (url.startsWith('http://127.0.0.1:8789/')) {
+        newRoadRequests++
+        throw new Error('Old cleanup must never use the new road')
+      }
+      return nativeFetch(url, init)
+    })
+    await beta.setRelayUrl('http://127.0.0.1:8789')
+    expect(await beta.credentials.get('machine')).toBeNull()
+    expect(await beta.records.list()).toEqual([])
+    expect(await beta.signOut()).toEqual({ pending: 0, retryRecorded: true })
+    await signInAs(auth, provider, 'B')
+    requests.create({
+      sessionId: 'session',
+      kind: 'clarification',
+      description: 'A fixture question',
+      options: [],
+      questions: [{ question: 'A fixture preview', options: [] }]
+    })
+    await vi.waitFor(() =>
+      expect(push.hooks.sent().some((send) => send.deviceId === other.device.id)).toBe(true)
+    )
+    expect(newRoadRequests).toBe(0)
+    expect(
+      new DeviceStore(storage).pushTargets().some((target) => target.deviceId === paired.device.id)
+    ).toBe(false)
+    expect(push.hooks.sent().some((send) => send.deviceId === paired.device.id)).toBe(false)
+    expect(await beta.drafts.get('machine', 'session')).toBe('returning owner draft')
+  })
+
+it('keeps an encrypted old-road cleanup context after an offline relay change and retries only for A', async () => {
+  const { beta, auth, provider, storage, paired, server, raw } = await setup('ios')
+  const nativeFetch = globalThis.fetch
+  let clearAttempts = 0
+  vi.stubGlobal('fetch', async (url, init) => {
+    if (url === server.url + '/devices/me/push-token/clear') {
+      clearAttempts++
+      throw new Error('old machine offline')
+    }
+    return nativeFetch(url, init)
+  })
+  expect(await beta.setRelayUrl('http://127.0.0.1:8789')).toEqual({
+    pending: 1,
+    retryRecorded: true
+  })
+  expect(await beta.credentials.get('machine')).toBeNull()
+  expect(await beta.records.list()).toEqual([])
+  const encoded = await beta.kv.getItem(PUSH_CLEANUP_KEY)
+  expect(encoded.includes(paired.token) || encoded.includes(server.url)).toBe(false)
+  expect(
+    [...raw.map.values()].some(
+      (value) => value.includes(paired.token) || value.includes(server.url)
+    )
+  ).toBe(false)
+  const {
+    v,
+    refs: [pending]
+  } = JSON.parse(encoded)
+  expect(v).toBe(2)
+  expect(Object.keys(JSON.parse(encoded)).sort()).toEqual(['refs', 'v'])
+  const stored = await beta.cleanupCredentials.get(pending)
+  expect(stored.bearer === paired.token && stored.serverUrl === server.url).toBe(true)
+  expect(await beta.signOut()).toEqual({ pending: 1, retryRecorded: true })
+  await signInAs(auth, provider, 'B')
+  const attemptsBeforeB = clearAttempts
+  const bkv = ownerKeyValueStore(raw, 'owner-B')
+  const b = new BetaServices(
+    auth,
+    bkv,
+    new SecureCredentialStore(new MemorySecureStore()),
+    new Drafts(bkv),
+    'development',
+    new SecureCredentialStore(new MemorySecureStore())
+  )
+  expect(await b.syncPushTokens()).toEqual([])
+  expect(clearAttempts).toBe(attemptsBeforeB)
+  vi.stubGlobal('fetch', nativeFetch)
+  await signInAs(auth, provider, 'A')
+  const returning = new BetaServices(
+    auth,
+    beta.kv,
+    beta.credentials,
+    beta.drafts,
+    'development',
+    beta.cleanupCredentials
+  )
+  expect(await returning.syncPushTokens()).toEqual([])
+  expect(new DeviceStore(storage).pushTargets()).toEqual([])
+  expect(await beta.kv.getItem(PUSH_CLEANUP_KEY)).toBeNull()
+  expect(await beta.cleanupCredentials.get(pending)).toBeNull()
+  expect(await beta.drafts.get('machine', 'session')).toBe('returning owner draft')
+})
+
+it('does not forget an active pairing when encrypted cleanup context cannot be saved', async () => {
+  const { beta, storage } = await setup('ios')
+  vi.spyOn(beta.cleanupCredentials, 'set').mockRejectedValueOnce(new Error('secure storage failed'))
+  await expect(beta.setRelayUrl('http://127.0.0.1:8789')).rejects.toThrow('secure storage failed')
+  expect((await beta.credentials.get('machine')) !== null).toBe(true)
+  expect((await beta.records.list()).length).toBe(1)
+  expect(new DeviceStore(storage).pushTargets().length).toBe(1)
+  expect(await beta.kv.getItem('relay-url')).toBeNull()
+})
+
+it('does not replace an old-road cleanup credential when a new pairing reuses its machine ID', async () => {
+  const { beta, auth, provider, storage, server, push } = await setup('ios')
+  const nativeFetch = globalThis.fetch
+  vi.stubGlobal('fetch', async (url, init) => {
+    if (url === server.url + '/devices/me/push-token/clear') throw new Error('old machine offline')
+    return nativeFetch(url, init)
+  })
+  await beta.setRelayUrl('http://127.0.0.1:8789')
+  const {
+    refs: [old]
+  } = JSON.parse(await beta.kv.getItem(PUSH_CLEANUP_KEY))
+  const secondStorage = memoryDeviceStorage()
+  const secondPair = new DeviceStore(secondStorage).create({
+    name: 'Replacement phone pairing',
+    platform: 'ios',
+    appVersion: 'fixture'
+  })
+  const second = await startEmbedded({
+    ports: {
+      sessions: new FakeSource(aSession('new-session')),
+      ...push.ports,
+      devices: {
+        storage: secondStorage,
+        owner: () => 'A',
+        issuer: provider.issuer,
+        serverName: () => 'New Mac'
+      }
+    }
+  })
+  cleanups.push(() => second.stop())
+  await beta.credentials.set('machine', { serverUrl: second.url, bearer: secondPair.token })
+  await beta.records.set({
+    machineId: 'machine',
+    serverId: 'new-server',
+    deviceId: secondPair.device.id,
+    serverName: 'New Mac',
+    pairedAt: 2
+  })
+  await beta.registerPush('machine')
+  expect(await beta.signOut()).toEqual({ pending: 1, retryRecorded: true })
+  expect(new DeviceStore(secondStorage).pushTargets()).toEqual([])
+  expect(new DeviceStore(storage).pushTargets().length).toBe(1)
+  const retained = await beta.cleanupCredentials.get(old)
+  expect(retained.serverUrl === server.url).toBe(true)
+  vi.stubGlobal('fetch', nativeFetch)
+  await signInAs(auth, provider, 'A')
+  const returning = new BetaServices(
+    auth,
+    beta.kv,
+    beta.credentials,
+    beta.drafts,
+    'development',
+    beta.cleanupCredentials
+  )
+  expect((await returning.syncPushTokens()).map((result) => result.kind)).toEqual(['registered'])
+  expect(new DeviceStore(storage).pushTargets()).toEqual([])
+  expect(new DeviceStore(secondStorage).pushTargets().length).toBe(1)
+  expect(await beta.kv.getItem(PUSH_CLEANUP_KEY)).toBeNull()
+})
+
+it('orders a returning A service behind the prior A sign-out so cleanup cannot erase its new registration', async () => {
+  const { beta, auth, provider, storage, server } = await setup('ios')
+  const nativeFetch = globalThis.fetch
+  let release
+  let waiting = false
+  let newRegistrations = 0
+  let clearCalls = 0
+  vi.stubGlobal('fetch', async (url, init) => {
+    if (url === server.url + '/devices/me/push-token/clear' && ++clearCalls === 1) {
+      waiting = true
+      await new Promise((resolve) => {
+        release = resolve
+      })
+    }
+    if (url === server.url + '/devices/me/push-token') newRegistrations++
+    return nativeFetch(url, init)
+  })
+  const logout = beta.signOut()
+  await vi.waitFor(() => expect(waiting).toBe(true))
+  await signInAs(auth, provider, 'B')
+  await signInAs(auth, provider, 'A')
+  const returning = new BetaServices(
+    auth,
+    beta.kv,
+    beta.credentials,
+    beta.drafts,
+    'development',
+    beta.cleanupCredentials,
+    undefined,
+    beta.pushWork
+  )
+  const registration = returning.syncPushTokens({ type: 'ios', data: 'returning-A-token' })
+  await new Promise((resolve) => setImmediate(resolve))
+  const dispatchedBeforeClear = newRegistrations
+  const overlappingClears = clearCalls
+  release()
+  await Promise.all([logout, registration])
+  expect(overlappingClears).toBe(1)
+  expect(dispatchedBeforeClear).toBe(0)
+  expect(
+    new DeviceStore(storage).pushTargets().some((target) => target.token === 'returning-A-token')
+  ).toBe(true)
+  expect(auth.status().account?.subject).toBe('A')
+})
+
+it('finishes an in-flight rotation before a relay change clears and forgets the old target', async () => {
+  const { beta, storage, server } = await setup('ios')
+  const nativeFetch = globalThis.fetch
+  let release
+  let waiting = false
+  let clears = 0
+  vi.stubGlobal('fetch', async (url, init) => {
+    if (url === server.url + '/devices/me/push-token') {
+      waiting = true
+      await new Promise((resolve) => {
+        release = resolve
+      })
+    }
+    if (url === server.url + '/devices/me/push-token/clear') clears++
+    return nativeFetch(url, init)
+  })
+  const rotation = beta.syncPushTokens({ type: 'ios', data: 'late-old-road-token' })
+  await vi.waitFor(() => expect(waiting).toBe(true))
+  const relay = beta.setRelayUrl('http://127.0.0.1:8789')
+  await new Promise((resolve) => setImmediate(resolve))
+  const earlyClears = clears
+  const retainedWhileWaiting = (await beta.credentials.get('machine')) !== null
+  release()
+  await Promise.all([rotation, relay])
+  expect(earlyClears).toBe(0)
+  expect(retainedWhileWaiting).toBe(true)
+  expect(clears).toBe(1)
+  expect(new DeviceStore(storage).pushTargets()).toEqual([])
+  expect(await beta.credentials.get('machine')).toBeNull()
+})
+
+it('registers again after a pending retry clears a token registered during an earlier failed clear', async () => {
+  const { beta, auth, provider, storage, server } = await setup('ios')
+  const nativeFetch = globalThis.fetch
+  vi.stubGlobal('fetch', async (url, init) => {
+    if (url === server.url + '/devices/me/push-token/clear') throw new Error('clear unreachable')
+    return nativeFetch(url, init)
+  })
+  expect((await beta.signOut()).pending).toBe(1)
+  await signInAs(auth, provider, 'A')
+  const returning = new BetaServices(
+    auth,
+    beta.kv,
+    beta.credentials,
+    beta.drafts,
+    'development',
+    beta.cleanupCredentials,
+    undefined,
+    beta.pushWork
+  )
+  const token = { type: 'ios', data: 'current-owner-token' }
+  expect((await returning.syncPushTokens(token)).map((result) => result.kind)).toEqual([
+    'failed',
+    'registered'
+  ])
+  vi.stubGlobal('fetch', nativeFetch)
+  expect((await returning.syncPushTokens(token)).map((result) => result.kind)).toEqual([
+    'registered'
+  ])
+  expect(new DeviceStore(storage).pushTargets().some((target) => target.token === token.data)).toBe(
+    true
+  )
 })

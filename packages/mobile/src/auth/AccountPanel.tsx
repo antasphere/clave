@@ -22,7 +22,12 @@ export function AccountPanel(): ReactNode {
     try {
       setError(null)
       store.getState().disconnectAll()
-      await beta.setRelayUrl(relay)
+      const cleanup = await beta.setRelayUrl(relay)
+      if (cleanup.pending !== 0)
+        Alert.alert(
+          'Relay changed',
+          'Some previous machines have not confirmed notification removal and may still send updates. Removal will retry when you reopen this account. You can revoke this phone in Settings → Mobile on those machines.'
+        )
       await store.getState().loadMachines()
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'The relay address could not be saved.')
@@ -84,6 +89,7 @@ export function AccountPanel(): ReactNode {
           <Button
             title="Connect to team relay"
             kind="secondary"
+            disabled={signingOut}
             onPress={() => void refresh()}
             testID="relay-connect"
           />

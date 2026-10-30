@@ -31,11 +31,20 @@ import type { DevicePushToken } from '../notifications/port'
 import {
   clearPushRegistrations,
   pendingPushCleanup,
+  type OwnerPushWork,
   type PushCleanupResult
 } from '../notifications/cleanup'
 
 export class BetaServices {
-  private tokenSync: Promise<TokenRegistration[]> = Promise.resolve([])
+  private get tokenSync(): Promise<void> {
+    return this.pushWork.tail
+  }
+  private set tokenSync(work: Promise<unknown>) {
+    this.pushWork.tail = work.then(
+      () => undefined,
+      () => undefined
+    )
+  }
   private closing = false
   private signingOut: Promise<PushCleanupResult> | null = null
   readonly records: EnrollmentRecords
@@ -47,7 +56,9 @@ export class BetaServices {
     readonly credentials: CredentialStore,
     readonly drafts: Drafts,
     readonly build: BuildKind,
-    private readonly assertOwner: () => void = auth.guardAccount()
+    readonly cleanupCredentials: CredentialStore,
+    private readonly assertOwner: () => void = auth.guardAccount(),
+    readonly pushWork: OwnerPushWork = { tail: Promise.resolve() }
   ) {
     this.records = new EnrollmentRecords(kv)
     this.delivery = new DeliveryController(new UnknownSends(kv), new DeliveryMarks(kv), drafts, kv)
@@ -61,20 +72,43 @@ export class BetaServices {
     )
   }
 
-  async setRelayUrl(value: string): Promise<void> {
+  async setRelayUrl(value: string): Promise<PushCleanupResult> {
     const url = value.trim().replace(/\/+$/, '')
     const parsed = new URL(url)
     assertCredentialMayTravelTo(url, this.build)
     if (parsed.pathname !== '/' || parsed.search || parsed.hash)
       throw new Error('Enter the team relay origin without a path or query.')
-    if (url !== (await this.relayUrl())) {
-      for (const record of await this.records.list()) {
-        await this.credentials.remove(record.machineId)
-        await this.records.remove(record.machineId)
+    const run = this.tokenSync.then(async () => {
+      if (this.closing) throw new AuthError('cancelled', 'The account is signing out.')
+      this.assertOwner()
+      const old = await this.relayUrl()
+      this.assertOwner()
+      let cleanup: PushCleanupResult = {
+        pending: (await pendingPushCleanup(this.kv)).length,
+        retryRecorded: true
       }
-      await this.kv.removeItem('machines-cache')
-    }
-    await this.kv.setItem('relay-url', url)
+      if (url !== old) {
+        const records = await this.records.list()
+        cleanup = await clearPushRegistrations(
+          records.map((record) => record.machineId),
+          this
+        )
+        this.assertOwner()
+        for (const record of records) {
+          await this.credentials.remove(record.machineId)
+          await this.records.remove(record.machineId)
+        }
+        await this.kv.removeItem('machines-cache')
+      }
+      this.assertOwner()
+      await this.kv.setItem('relay-url', url)
+      return cleanup
+    })
+    this.tokenSync = run.then(
+      () => [],
+      () => []
+    )
+    return run
   }
 
   private async machines(): Promise<Machine[]> {
@@ -211,19 +245,20 @@ export class BetaServices {
       if (this.closing) return []
       this.assertOwner()
       const pending = await pendingPushCleanup(this.kv)
-      if (pending.length) {
-        const cleaned = await clearPushRegistrations(pending, this)
-        this.assertOwner()
-        if (cleaned.pending !== 0)
-          return [
-            {
-              kind: 'failed',
-              reason: 'Some machines have not confirmed notification removal.'
-            } as const
-          ]
-      }
+      const records = await this.records.list()
       const outcomes: TokenRegistration[] = []
-      for (const record of await this.records.list())
+      if (pending.length) {
+        const cleaned = await clearPushRegistrations([], this)
+        this.assertOwner()
+        // A successful retry may have removed this owner's current token too.
+        for (const record of records) await this.kv.removeItem(pushTokenKey(record.machineId))
+        if (cleaned.pending !== 0)
+          outcomes.push({
+            kind: 'failed',
+            reason: 'Some machines have not confirmed notification removal.'
+          })
+      }
+      for (const record of records)
         outcomes.push(await this.registerPushNow(record.machineId, token, false))
       return outcomes
     })
@@ -241,9 +276,8 @@ export class BetaServices {
       let result: PushCleanupResult
       try {
         const records = await this.records.list()
-        const pending = await pendingPushCleanup(this.kv)
         result = await clearPushRegistrations(
-          [...records.map((record) => record.machineId), ...pending],
+          records.map((record) => record.machineId),
           this
         )
       } catch {
@@ -258,6 +292,7 @@ export class BetaServices {
       if (current) await this.auth.signOut()
       return result
     })
+    this.tokenSync = this.signingOut
     return this.signingOut
   }
 
