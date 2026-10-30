@@ -11,7 +11,7 @@ appId: com.clave.app.mobile
 ---
 - launchApp:
     clearState: true
-    launchArguments:
+    arguments:
       RCT_jsLocation: "127.0.0.1:${METRO_PORT}"
 - extendedWaitUntil:
     visible:
