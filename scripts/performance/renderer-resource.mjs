@@ -210,7 +210,7 @@ export const OWNERSHIP_FIXTURE_SOURCES = Object.freeze({
   'tests/e2e/renderer-resource-fixture.mjs':
     '7afa9ed987c9fbae0e4dca5083ddfa24d33893bf804c83cf7ccf7fcf2d908614',
   'src/main/sessions/adapters/echo-adapter.ts':
-    'a7305b7f465776bbc75c67892e53fc52aa9ede71506eb8dd840cc1ccfb3bf0b9',
+    '98f5fde28f2169de6e51b35a17849f24930be150a27629ba0f75853313d231df',
   'src/main/sessions/session-manager.ts':
     'a4089628f642b3ec06efa771260513721d3cd0558640592147b9ac241f6d3a14',
   'src/main/server-child.ts': 'a52bcbe2fbac42a3a145b6eb7481eade568346dd71b8bbf3f4628f7de1f5a246',
