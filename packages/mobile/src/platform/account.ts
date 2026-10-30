@@ -31,7 +31,8 @@ export function nativeAccount(): HubSignIn {
   if (!account)
     account = new HubSignIn({
       issuer: __DEV__
-        ? (Constants.expoConfig?.extra?.antasphereIssuer as string | undefined)
+        ? (process.env.EXPO_PUBLIC_CLAVE_ANTASPHERE_ISSUER ??
+          (Constants.expoConfig?.extra?.antasphereIssuer as string | undefined))
         : undefined,
       secureStore: rawSecureStore,
       crypto: nativeCrypto,
@@ -59,7 +60,7 @@ export async function nativeOwnerStores(auth: HubSignIn): Promise<{
   )
   let pushWork = ownerPushWork.get(namespace)
   if (!pushWork) {
-    pushWork = { tail: Promise.resolve() }
+    pushWork = { tail: Promise.resolve(), roadGeneration: 0 }
     ownerPushWork.set(namespace, pushWork)
   }
   return {

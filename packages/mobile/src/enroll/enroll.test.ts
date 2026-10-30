@@ -341,6 +341,28 @@ describe('pair', () => {
     expect(await records.get('m-1')).toBeNull()
   })
 
+  it('discards an approved response cancelled while the polling request was awaited', async () => {
+    let cancelled = false
+    const delayed = new EnrollmentClient(url, {
+      build: 'development',
+      fetch: async (input, init) => {
+        const response = await fetch(input, init)
+        if (String(input).includes('/devices/pair?id=')) {
+          const read = await response.clone().json()
+          if (read.status === 'approved') cancelled = true
+        }
+        return response
+      }
+    })
+    const end = await pair(
+      { machine, idToken: 'id-1', clientId: 'c-1', device },
+      ports({ client: delayed, cancelled: () => cancelled })
+    )
+    expect(end.kind).toBe('cancelled')
+    expect(await credentials.get(machine.id)).toBeNull()
+    expect(await records.get(machine.id)).toBeNull()
+  })
+
   it('a pairing the server let lapse is expired', async () => {
     const end = await pair(
       { machine, idToken: 'id-1', clientId: 'c-1', device: { ...device, name: 'expire-me' } },

@@ -20,9 +20,9 @@ import {
 import type { Attachment } from '../contract/types'
 import { EnrollmentClient } from '../enroll/client'
 import { pair, type PairingState } from '../enroll/pairing'
-import { EnrollmentRecords } from '../enroll/records'
+import { EnrollmentRecords, type EnrollmentRecord } from '../enroll/records'
 import { RelayMachineSource } from '../machines/relay'
-import type { CredentialStore, Machine, MachineSource } from '../machines/types'
+import type { Credential, CredentialStore, Machine, MachineSource } from '../machines/types'
 import { assertCredentialMayTravelTo, type BuildKind } from '../machines/transport-policy'
 import { DeliveryController } from '../reconnect/controller'
 import { DeliveryMarks, UnknownSends } from '../reconnect/ledger'
@@ -58,7 +58,7 @@ export class BetaServices {
     readonly build: BuildKind,
     readonly cleanupCredentials: CredentialStore,
     private readonly assertOwner: () => void = auth.guardAccount(),
-    readonly pushWork: OwnerPushWork = { tail: Promise.resolve() }
+    readonly pushWork: OwnerPushWork = { tail: Promise.resolve(), roadGeneration: 0 }
   ) {
     this.records = new EnrollmentRecords(kv)
     this.delivery = new DeliveryController(new UnknownSends(kv), new DeliveryMarks(kv), drafts, kv)
@@ -88,6 +88,7 @@ export class BetaServices {
         retryRecorded: true
       }
       if (url !== old) {
+        this.pushWork.roadGeneration++
         const records = await this.records.list()
         cleanup = await clearPushRegistrations(
           records.map((record) => record.machineId),
@@ -152,6 +153,16 @@ export class BetaServices {
     cancelled: () => boolean
   ): Promise<PairingState> {
     this.assertOwner()
+    const generation = this.pushWork.roadGeneration
+    const isCancelled = (): boolean => {
+      if (this.closing || generation !== this.pushWork.roadGeneration) return true
+      try {
+        this.assertOwner()
+      } catch {
+        return true
+      }
+      return cancelled()
+    }
     const idToken = await this.auth.idToken()
     this.assertOwner()
     const clientId = await this.auth.ensureClient()
@@ -170,22 +181,53 @@ export class BetaServices {
       {
         client: new EnrollmentClient(machine.baseUrl, { build: this.build }),
         credentials: this.credentials,
+        persist: (record, credential) => this.persistPairing(record, credential, isCancelled),
         records: this.records,
         onState,
-        cancelled: () => {
-          try {
-            this.assertOwner()
-          } catch {
-            return true
-          }
-          return cancelled()
-        },
+        cancelled: isCancelled,
         now: Date.now,
         sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms))
       }
     )
-    if (result.kind === 'approved') await this.kv.removeItem(pushTokenKey(machine.id))
     return result
+  }
+
+  private persistPairing(
+    record: EnrollmentRecord,
+    credential: Credential,
+    cancelled: () => boolean
+  ): Promise<boolean> {
+    const run = this.tokenSync.then(async () => {
+      if (cancelled()) return false
+      const previousCredential = await this.credentials.get(record.machineId)
+      const previousRecord = await this.records.get(record.machineId)
+      if (cancelled()) return false
+      const restore = async (): Promise<void> => {
+        if (previousCredential) await this.credentials.set(record.machineId, previousCredential)
+        else await this.credentials.remove(record.machineId)
+        if (previousRecord) await this.records.set(previousRecord)
+        else await this.records.remove(record.machineId)
+      }
+      try {
+        await this.credentials.set(record.machineId, credential)
+        if (cancelled()) {
+          await restore()
+          return false
+        }
+        await this.records.set(record)
+        await this.kv.removeItem(pushTokenKey(record.machineId))
+        if (cancelled()) {
+          await restore()
+          return false
+        }
+        return true
+      } catch (error) {
+        await restore()
+        throw error
+      }
+    })
+    this.tokenSync = run
+    return run
   }
 
   registerPush(

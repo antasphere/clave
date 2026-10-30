@@ -3,6 +3,8 @@ import type { HubSignIn } from '../auth/sign-in'
 import { PUSH_CLEANUP_KEY } from '../notifications/cleanup'
 
 const storage = vi.hoisted(() => ({
+  bakedIssuer: undefined as string | undefined,
+  constantsBlocked: false,
   plain: new Map<string, string>(),
   secure: new Map<string, string>()
 }))
@@ -26,7 +28,14 @@ vi.mock('expo-secure-store', () => ({
     storage.secure.delete(key)
   }
 }))
-vi.mock('expo-constants', () => ({ default: { expoConfig: {} } }))
+vi.mock('expo-constants', () => ({
+  default: {
+    get expoConfig() {
+      if (storage.constantsBlocked) throw new Error('Release must not read development Constants')
+      return { extra: { antasphereIssuer: storage.bakedIssuer } }
+    }
+  }
+}))
 vi.mock('expo-web-browser', () => ({}))
 vi.mock('expo-crypto', () => ({
   CryptoDigestAlgorithm: { SHA256: 'sha256' },
@@ -38,6 +47,10 @@ import { nativeOwnerStores } from './account'
 afterEach(() => {
   storage.plain.clear()
   storage.secure.clear()
+  storage.bakedIssuer = undefined
+  storage.constantsBlocked = false
+  vi.unstubAllGlobals()
+  vi.unstubAllEnvs()
 })
 const account = (subject: string, issuer = 'https://issuer.example.test'): HubSignIn =>
   ({
@@ -81,4 +94,42 @@ it('serializes captured cleanup credentials only through the separate native sec
         key.startsWith(a.namespace + '.push-cleanup.') && value === JSON.stringify(credential)
     )
   ).toBe(true)
+})
+
+async function configuredAccount(dev: boolean, issuer: string | undefined): Promise<HubSignIn> {
+  vi.stubGlobal('__DEV__', dev)
+  vi.stubEnv('EXPO_PUBLIC_CLAVE_ANTASPHERE_ISSUER', issuer)
+  vi.resetModules()
+  return (await import('./account')).nativeAccount()
+}
+
+it('selects the public Metro issuer before a baked development issuer', async () => {
+  storage.bakedIssuer = 'http://127.0.0.1:43445'
+  expect((await configuredAccount(true, 'http://127.0.0.1:43444')).status().issuer).toBe(
+    'http://127.0.0.1:43444'
+  )
+})
+
+it('keeps the baked development issuer when no public Metro override is supplied', async () => {
+  storage.bakedIssuer = 'http://127.0.0.1:43445'
+  expect((await configuredAccount(true, undefined)).status().issuer).toBe(storage.bakedIssuer)
+})
+
+it('ignores hostile public and baked issuer configuration in release', async () => {
+  storage.constantsBlocked = true
+  expect((await configuredAccount(false, 'https://hostile.example.test')).status().issuer).toBe(
+    'https://account.antasphere.com'
+  )
+})
+
+it('refuses an invalid public override without falling back to baked or production sign-in', async () => {
+  storage.bakedIssuer = 'http://127.0.0.1:43445'
+  const fetch = vi.fn(async () => {
+    throw new Error('No network is allowed')
+  })
+  vi.stubGlobal('fetch', fetch)
+  const auth = await configuredAccount(true, 'http://192.168.1.10:43444')
+  const result = await auth.signIn()
+  expect(result.lastFailure).toBe('configuration')
+  expect(fetch).not.toHaveBeenCalled()
 })
