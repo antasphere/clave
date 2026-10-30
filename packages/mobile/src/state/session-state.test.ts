@@ -45,27 +45,26 @@ describe('which workspace a session shows under', () => {
     { id: 'project', rootDir: '/home/v/project' },
     { id: 'other', rootDir: '/srv/other' }
   ]
-  it('the stamp first', () => {
+  it('uses an explicit stamp even when its workspace is missing or deleted', () => {
     expect(workspaceOfSession(base, 'other', workspaces)).toBe('other')
+    expect(workspaceOfSession(base, 'gone-workspace', [])).toBe('gone-workspace')
   })
-  it('then the deepest root holding the folder', () => {
-    expect(workspaceOfSession(base, undefined, workspaces)).toBe('project')
-    expect(workspaceOfSession({ cwd: '/home/v/notes' }, undefined, workspaces)).toBe('home')
-    expect(workspaceOfSession({ cwd: '/home/v/projectile' }, undefined, workspaces)).toBe('home')
+  it('keeps an absent stamp unknown for compatibility with older servers', () => {
+    expect(workspaceOfSession(base, undefined, workspaces)).toBeNull()
   })
-  it('else every workspace', () => {
-    expect(workspaceOfSession({ cwd: '/tmp/elsewhere' }, undefined, workspaces)).toBeNull()
-    expect(workspaceOfSession(base, 'gone-workspace', [{ id: 'x', rootDir: '/x' }])).toBeNull()
-  })
-  it("filters a workspace's sessions by that rule", () => {
+  it('filters only by the stamp, never by a contradictory or nested cwd', () => {
     const sessions: Session[] = [
       { ...base, id: 'a', cwd: '/home/v/project' },
-      { ...base, id: 'b', cwd: '/tmp/elsewhere' },
-      { ...base, id: 'c', cwd: '/srv/other/x' }
+      { ...base, id: 'b', cwd: '/home/v/project/nested' },
+      { ...base, id: 'c', cwd: '/srv/other/x' },
+      { ...base, id: 'deleted', cwd: '/home/v/project' }
     ]
-    const stamps = new Map<string, string | undefined>([['c', 'home']])
+    const stamps = new Map<string, string | undefined>([
+      ['a', 'other'],
+      ['c', 'home'],
+      ['deleted', 'gone-workspace']
+    ])
     expect(sessionsOfWorkspace(sessions, stamps, workspaces, 'project').map((s) => s.id)).toEqual([
-      'a',
       'b'
     ])
     expect(sessionsOfWorkspace(sessions, stamps, workspaces, 'home').map((s) => s.id)).toEqual([
@@ -73,7 +72,11 @@ describe('which workspace a session shows under', () => {
       'c'
     ])
     expect(sessionsOfWorkspace(sessions, stamps, workspaces, 'other').map((s) => s.id)).toEqual([
+      'a',
       'b'
     ])
+    expect(
+      sessionsOfWorkspace(sessions, stamps, workspaces, 'gone-workspace').map((s) => s.id)
+    ).toEqual(['b', 'deleted'])
   })
 })

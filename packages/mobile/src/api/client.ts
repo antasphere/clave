@@ -21,7 +21,6 @@ import {
   decodeSession,
   decodeSessionCapabilities,
   decodeSessionInfo,
-  decodeSessionRecords,
   decodeSessions,
   decodeWorkspaceState,
   decodeWriteStatus,
@@ -38,7 +37,6 @@ import type {
   Session,
   SessionCapabilities,
   SessionInfo,
-  SessionRecord,
   SessionWriteInput,
   StartSessionInput,
   WorkspaceStateView,
@@ -151,12 +149,7 @@ export class ClaveServerClient {
      *  B's route). A server without the route answers 404, which the caller
      *  reads as `unknown`. */
     writeStatus: (id: string, clientMessageId: string): Promise<WriteStatus> =>
-      this.query('/sessions/writes', { id, clientMessageId }, decodeWriteStatus),
-    /** The records of these sessions, with the workspace each is stamped with. */
-    records: (ids: readonly string[]): Promise<SessionRecord[]> =>
-      ids.length === 0
-        ? Promise.resolve([])
-        : this.query('/sessions/records', { ids: ids.join(',') }, decodeSessionRecords)
+      this.query('/sessions/writes', { id, clientMessageId }, decodeWriteStatus)
   }
 
   // ── settings ──
