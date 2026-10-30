@@ -370,3 +370,42 @@ it('parallel machine reads share one socket and disconnect closes it', async () 
   store.getState().disconnectAll()
   expect(close).toHaveBeenCalledTimes(1)
 })
+
+it('queries authoritative status after gateway and malformed 2xx responses without another send', async () => {
+  for (const response of [
+    { status: 504, body: { error: 'gateway timeout' } },
+    { status: 502, body: '' },
+    { status: 500, body: {} },
+    { status: 200, body: {} }
+  ]) {
+    for (const status of ['accepted', 'unknown'] as const) {
+      let writes = 0
+      let asks = 0
+      const server = stubServer()
+      server.fetch = async (url) => {
+        if (new URL(url).pathname === '/sessions/write') {
+          writes++
+          return {
+            status: response.status,
+            ok: response.status < 300,
+            text: async () => JSON.stringify(response.body)
+          }
+        }
+        asks++
+        return { status: 200, ok: true, text: async () => JSON.stringify({ status }) }
+      }
+      const drafts = new Drafts(new MemoryKeyValueStore())
+      await drafts.set(machine.id, 's1', 'possibly delivered')
+      const store = await storeWith(server, drafts)
+      expect(
+        (await store.getState().send(machine.id, 's1', 'possibly delivered', 'message-gateway'))
+          .kind
+      ).toBe(status === 'accepted' ? 'sent' : 'unknown')
+      expect(writes).toBe(1)
+      expect(asks).toBe(1)
+      expect(await drafts.get(machine.id, 's1')).toBe(
+        status === 'accepted' ? '' : 'possibly delivered'
+      )
+    }
+  }
+})

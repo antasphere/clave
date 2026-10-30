@@ -168,3 +168,17 @@ describe('a send and its reconciliation', () => {
     expect(again.kind).toBe('unknown')
   })
 })
+
+it('an unrecognized typed HTTP refusal does not prove the message was rejected', async () => {
+  const p = ports({ writes: [], statuses: [] })
+  const outcome = await sendMessage('message-123', {
+    ...p,
+    write: async (): Promise<WriteAnswer> => {
+      throw new ServerError('refused', 'Gateway failed.', {
+        status: 422,
+        failure: { _tag: 'GatewayFailed', message: 'Gateway failed.' }
+      })
+    }
+  })
+  expect(outcome.kind).toBe('unknown')
+})

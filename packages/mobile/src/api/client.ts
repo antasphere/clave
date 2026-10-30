@@ -13,6 +13,7 @@
 import {
   decodeFileText,
   decodeHistoryPage,
+  decodeTimelinePage,
   decodeLaunchProfiles,
   decodeRequestSnapshot,
   decodeResolveOutcome,
@@ -29,6 +30,7 @@ import {
 import type {
   FileText,
   HistoryPage,
+  TimelinePage,
   LaunchProfilePreferencesView,
   RequestResponse,
   RequestSnapshot,
@@ -136,6 +138,13 @@ export class ClaveServerClient {
         '/sessions/history',
         { id, before, limit },
         decodeHistoryPage,
+        this.historyTimeoutMs
+      ),
+    timeline: (id: string, before?: number, limit?: number): Promise<TimelinePage> =>
+      this.query(
+        '/sessions/timeline',
+        { id, before, limit },
+        decodeTimelinePage,
         this.historyTimeoutMs
       ),
     /** What the server knows of a write by the id the phone minted (lane

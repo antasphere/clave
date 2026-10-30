@@ -202,6 +202,9 @@ export function ChatScreen({ navigation, route }: Props): ReactNode {
           ) : null}
         </View>
         {state?.error ? <ErrorText testID="chat-error">{state.error}</ErrorText> : null}
+        {state?.cursor.truncated ? (
+          <Muted testID="history-retention">Only recent history is retained on this server.</Muted>
+        ) : null}
         <FlatList
           inverted
           data={entries}

@@ -10,6 +10,7 @@
 import { describe, expect, it } from 'vitest'
 import { Schema } from 'effect'
 import * as Sessions from '@clave/contract/sessions'
+import * as Timeline from '@clave/contract/timeline'
 import * as Requests from '@clave/contract/requests'
 import * as Settings from '@clave/contract/settings'
 import * as Files from '@clave/contract/files'
@@ -19,6 +20,9 @@ import { CapabilityUnavailable } from '@clave/contract/errors'
 import {
   decodeFileText,
   decodeHistoryPage,
+  decodeTimelinePage,
+  decodeSessionPosition,
+  decodeSessionStream,
   decodeLaunchProfiles,
   decodePendingRequest,
   decodeRequestSnapshot,
@@ -330,14 +334,14 @@ describe('what the phone sends decodes through the contract', () => {
     }
     expect(Schema.decodeUnknownSync(Sessions.StartSession.payload)(payload)).toEqual(payload)
   })
-  it('a message with the id the phone minted, which the server before lane B drops', () => {
+  it('a message keeps the id the phone minted through the server write contract', () => {
     const input: M.SessionWriteInput = {
       type: 'user_message',
       text: 'hi',
       clientMessageId: 'm-0123456789abcdef'
     }
     const decoded = Schema.decodeUnknownSync(Sessions.WriteSession.payload)({ id: 's1', input })
-    expect(decoded).toEqual({ id: 's1', input: { type: 'user_message', text: 'hi' } })
+    expect(decoded).toEqual({ id: 's1', input })
   })
   it('a permission response through the write route', () => {
     const input: M.SessionWriteInput = {
@@ -438,3 +442,53 @@ const pins: {
   clientFrame: true
 }
 void pins
+
+describe('ordered timeline mirror', () => {
+  const cursor = { generation: 'adoption', sequence: 4 }
+  it('pins positions, pages and push positions to the same contract samples', () => {
+    const event = { type: 'user_message', text: 'a', clientMessageId: 'message-123' }
+    const page = { items: [{ event, position: cursor, at: 1 }], before: 4, cursor, truncated: true }
+    expect(decodeTimelinePage(page)).toEqual(Schema.decodeUnknownSync(Timeline.TimelinePage)(page))
+    expect(decodeSessionPosition(cursor)).toEqual(
+      Schema.decodeUnknownSync(Timeline.SessionPosition)(cursor)
+    )
+    for (const stream of [
+      { kind: 'event', event, position: cursor },
+      { kind: 'event', event }
+    ])
+      expect(decodeSessionStream(stream)).toEqual(
+        Schema.decodeUnknownSync(Sessions.SessionStream)(stream)
+      )
+  })
+  it('rejects empty generation, unsafe/negative/fractional sequence and missing page fields on both sides', () => {
+    for (const position of [
+      { generation: '', sequence: 1 },
+      { generation: 'g', sequence: -1 },
+      { generation: 'g', sequence: 0.5 },
+      { generation: 'g', sequence: Number.MAX_SAFE_INTEGER + 1 }
+    ]) {
+      expect(() => decodeSessionPosition(position)).toThrow()
+      expect(() => Schema.decodeUnknownSync(Timeline.SessionPosition)(position)).toThrow()
+    }
+    expect(() => decodeTimelinePage({ items: [], before: null, cursor })).toThrow()
+  })
+  it('rejects a page that mixes generations or reverses positions', () => {
+    const event = { type: 'user_message', text: 'a' }
+    for (const positions of [
+      [{ ...cursor, generation: 'old' }],
+      [cursor, { ...cursor, sequence: 3 }],
+      [{ ...cursor, sequence: 5 }]
+    ])
+      expect(() =>
+        decodeTimelinePage({
+          items: positions.map((position) => ({ event, position })),
+          before: null,
+          cursor,
+          truncated: false
+        })
+      ).toThrow()
+  })
+})
+
+const timelinePin: Both<M.TimelinePage, Timeline.TimelinePage> = true
+void timelinePin

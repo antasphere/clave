@@ -47,6 +47,15 @@ function handle(req: IncomingMessage, res: ServerResponse, body: string): void {
       return u.searchParams.get('id') === 's1'
         ? json(res, 200, session)
         : json(res, 422, { _tag: 'SessionNotFound', id: u.searchParams.get('id') })
+    case 'GET /sessions/timeline':
+      return json(res, 200, {
+        items: [
+          { event: { type: 'user_message', text: 'a' }, position: { generation: 'g', sequence: 8 } }
+        ],
+        before: 8,
+        cursor: { generation: 'g', sequence: 12 },
+        truncated: true
+      })
     case 'GET /sessions/history':
       return json(res, 200, {
         items: [
@@ -283,4 +292,11 @@ describe('ClaveServerClient', () => {
     await expect(quick.sessions.history('s1')).resolves.toBeTruthy()
     await expect(quick.sessions.list()).rejects.toMatchObject({ kind: 'timeout' })
   })
+})
+
+it('requests timeline paging by exclusive sequence under the long history deadline', async () => {
+  const client = new ClaveServerClient({ serverUrl: url, bearer: TOKEN }, { build: 'development' })
+  const page = await client.sessions.timeline('s1', 9, 10)
+  expect(page.cursor).toEqual({ generation: 'g', sequence: 12 })
+  expect(seen.at(-1)?.url).toBe('/sessions/timeline?id=s1&before=9&limit=10')
 })
