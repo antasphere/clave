@@ -32,7 +32,6 @@ import {
   decodeSession,
   decodeSessionEvent,
   decodeSessionInfo,
-  decodeSessionRecord,
   decodeWorkspaceState
 } from './decode'
 import type * as M from './types'
@@ -172,23 +171,6 @@ const info = {
   model: 'm'
 }
 
-const record = {
-  id: 's1',
-  cwd: '/tmp/scratch',
-  folderName: 'scratch',
-  claudeMode: true,
-  antigravityMode: false,
-  codexMode: false,
-  piMode: false,
-  claudeAgentsMode: false,
-  dangerousMode: false,
-  workspaceId: 'ws1',
-  displayName: 'A chat',
-  launchProfileId: 'claude-chat',
-  live: true,
-  running: true
-}
-
 const envelope = {
   id: 'e1',
   seq: 4,
@@ -199,6 +181,17 @@ const envelope = {
 describe('the mirror decodes what the contract decodes', () => {
   it('Session', () => {
     expect(decodeSession(session)).toEqual(Schema.decodeUnknownSync(Sessions.Session)(session))
+  })
+  it.each([
+    { label: 'absent', sample: session },
+    { label: 'stamped', sample: { ...session, workspaceId: 'ws1' } }
+  ])('keeps the $label authoritative Session workspace stamp', ({ sample }) => {
+    // Comparing both sides to the input catches a shared omission of the field.
+    expect(decodeSession(sample)).toEqual(sample)
+    expect(Schema.decodeUnknownSync(Sessions.Session)(sample)).toEqual(sample)
+    const frame = { _tag: 'subscribed', sessionId: sample.id, session: sample }
+    expect(decodeServerFrame(frame)).toEqual(frame)
+    expect(Schema.decodeUnknownSync(Push.ServerFrame)(frame)).toEqual(frame)
   })
   it('every SessionEvent member', () => {
     for (const event of events)
@@ -214,12 +207,6 @@ describe('the mirror decodes what the contract decodes', () => {
   })
   it('SessionInfo', () => {
     expect(decodeSessionInfo(info)).toEqual(Schema.decodeUnknownSync(Sessions.SessionInfo)(info))
-  })
-  it('SessionRecord, the fields the phone reads', () => {
-    const full = Schema.decodeUnknownSync(Sessions.SessionRecord)(record)
-    const mirrored = decodeSessionRecord(record)
-    for (const key of Object.keys(mirrored) as (keyof typeof mirrored)[])
-      expect(mirrored[key]).toEqual(full[key])
   })
   it('PendingRequest and RequestSnapshot', () => {
     expect(decodePendingRequest(request)).toEqual(
@@ -397,7 +384,9 @@ describe('the mirror refuses what the contract refuses', () => {
     const bad: unknown[] = [
       { ...session, state: 'waiting' },
       { ...session, id: undefined },
-      { ...session, createdAt: 'yesterday' }
+      { ...session, createdAt: 'yesterday' },
+      { ...session, workspaceId: 7 },
+      { ...session, workspaceId: null }
     ]
     for (const sample of bad) {
       expect(() => Schema.decodeUnknownSync(Sessions.Session)(sample)).toThrow()

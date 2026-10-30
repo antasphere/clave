@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { FetchLike } from '../api/client'
 import type { PushSocketConstructor } from '../api/push'
+import type { Session } from '../contract/types'
 import { Drafts, MemoryKeyValueStore } from '../chat/drafts'
 import { MemorySecureStore, SecureCredentialStore } from '../machines/credentials'
 import type { Machine, MachineSource } from '../machines/types'
@@ -73,7 +74,7 @@ const machine: Machine = {
 }
 
 async function storeWith(
-  server: ReturnType<typeof stubServer>,
+  server: { fetch: FetchLike },
   drafts = new Drafts(new MemoryKeyValueStore())
 ): Promise<ReturnType<typeof createStore>> {
   const credentials = new SecureCredentialStore(new MemorySecureStore())
@@ -93,6 +94,126 @@ async function storeWith(
   await store.getState().loadMachines()
   return store
 }
+
+describe('session workspace stamps from the allowed session list', () => {
+  const session: Session = {
+    id: 's1',
+    provider: 'echo',
+    transport: 'events',
+    cwd: '/other-workspace/folder',
+    windowKey: 'server',
+    state: 'idle',
+    createdAt: 1,
+    adapterId: 'echo',
+    title: 'Stamped session'
+  }
+
+  function sessionServer(sessions: Session[]): {
+    sessions: Session[]
+    status: number
+    calls: string[]
+    fetch: FetchLike
+  } {
+    const server = {
+      sessions,
+      status: 200,
+      calls: [] as string[]
+    }
+    const fetch: FetchLike = async (url, init) => {
+      const path = new URL(url).pathname
+      server.calls.push(`${init.method} ${path}`)
+      const allowed = init.method === 'GET' && path === '/sessions'
+      const status = allowed ? server.status : 403
+      return {
+        status,
+        ok: status === 200,
+        text: async () => JSON.stringify(status === 200 ? server.sessions : { error: 'refused' })
+      }
+    }
+    return Object.assign(server, { fetch })
+  }
+
+  it('loads a nonempty stamped list without calling the denied records route', async () => {
+    const server = sessionServer([{ ...session, workspaceId: 'authoritative-workspace' }])
+    const store = await storeWith(server)
+    try {
+      await store.getState().loadSessions(machine.id)
+      expect(server.calls).toEqual(['GET /sessions'])
+      expect(store.getState().sessions[machine.id]).toEqual(server.sessions)
+      expect(store.getState().stamps[machine.id]).toEqual({ s1: 'authoritative-workspace' })
+      expect(store.getState().sessionsError[machine.id]).toBeNull()
+    } finally {
+      store.getState().disconnectAll()
+    }
+  })
+
+  it('replaces moved, removed and cleared stamps with the list in one publication', async () => {
+    const server = sessionServer([
+      { ...session, workspaceId: 'before' },
+      { ...session, id: 'removed', workspaceId: 'old' },
+      { ...session, id: 'cleared', workspaceId: 'old' }
+    ])
+    const store = await storeWith(server)
+    try {
+      await store.getState().loadSessions(machine.id)
+      expect(store.getState().stamps[machine.id]).toEqual({
+        s1: 'before',
+        removed: 'old',
+        cleared: 'old'
+      })
+      server.status = 503
+      await store.getState().loadSessions(machine.id)
+      expect(store.getState().sessionsError[machine.id]).toContain('503')
+      // A failed refresh retains the last complete list and its stamps.
+      expect(store.getState().sessions[machine.id]).toEqual(server.sessions)
+      expect(store.getState().stamps[machine.id]?.s1).toBe('before')
+
+      store.setState((state) => ({
+        sessions: { ...state.sessions, sibling: [session] },
+        stamps: { ...state.stamps, sibling: { s1: 'sibling-workspace' } },
+        sessionsError: { ...state.sessionsError, sibling: 'sibling-error' }
+      }))
+      const publications: unknown[] = []
+      const off = store.subscribe((state, previous) => {
+        if (
+          state.sessions[machine.id] !== previous.sessions[machine.id] ||
+          state.stamps[machine.id] !== previous.stamps[machine.id] ||
+          state.sessionsError[machine.id] !== previous.sessionsError[machine.id]
+        )
+          publications.push({
+            sessions: state.sessions[machine.id],
+            stamps: state.stamps[machine.id],
+            error: state.sessionsError[machine.id]
+          })
+      })
+      try {
+        server.status = 200
+        server.sessions = [
+          { ...session, workspaceId: 'after' },
+          { ...session, id: 'cleared' }
+        ]
+        await store.getState().loadSessions(machine.id)
+        expect(publications).toEqual([
+          { sessions: server.sessions, stamps: { s1: 'after', cleared: undefined }, error: null }
+        ])
+        expect(store.getState().stamps[machine.id]).not.toHaveProperty('removed')
+        expect(store.getState().sessions.sibling).toEqual([session])
+        expect(store.getState().stamps.sibling).toEqual({ s1: 'sibling-workspace' })
+        expect(store.getState().sessionsError.sibling).toBe('sibling-error')
+
+        publications.length = 0
+        server.sessions = []
+        await store.getState().loadSessions(machine.id)
+        expect(publications).toEqual([{ sessions: [], stamps: {}, error: null }])
+        expect(server.calls).toEqual(Array(4).fill('GET /sessions'))
+      } finally {
+        off()
+      }
+    } finally {
+      store.getState().disconnectAll()
+    }
+  })
+})
 
 describe('the store and the requests', () => {
   it('a resolution the server refuses is answered accepted: false and the request is gone on reload', async () => {

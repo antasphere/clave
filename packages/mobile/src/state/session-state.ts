@@ -54,26 +54,17 @@ export function orderSessions(sessions: readonly Session[]): Session[] {
 }
 
 /**
- * Which workspace a session shows under: the one its record is stamped
- * with, else the one whose root holds its working folder, else every
- * workspace of the machine (the desktop's rule for an unstamped remote tab,
- * `inActiveWorkspace`). `null` means every workspace.
+ * Only the host's explicit stamp identifies a workspace. An unstamped
+ * session, including one from an older server, remains visible in every
+ * workspace. A working folder is never workspace identity.
  */
 export function workspaceOfSession(
-  session: Pick<Session, 'cwd'>,
+  _session: Pick<Session, 'cwd'>,
   stampedWorkspaceId: string | undefined,
-  workspaces: readonly { id: string; rootDir: string }[]
+  _workspaces: readonly { id: string; rootDir: string }[]
 ): string | null {
-  if (stampedWorkspaceId && workspaces.some((w) => w.id === stampedWorkspaceId))
-    return stampedWorkspaceId
-  const cwd = session.cwd.replace(/\/+$/, '')
-  const holder = workspaces
-    .filter((w) => {
-      const root = w.rootDir.replace(/\/+$/, '')
-      return cwd === root || cwd.startsWith(`${root}/`)
-    })
-    .sort((a, b) => b.rootDir.length - a.rootDir.length)[0]
-  return holder ? holder.id : null
+  void _workspaces
+  return stampedWorkspaceId ?? null
 }
 
 export function sessionsOfWorkspace(

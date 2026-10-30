@@ -31,6 +31,8 @@ export interface Session {
   readonly transport: Transport
   readonly cwd: string
   readonly windowKey: string
+  /** The host record's workspace stamp, absent on an unstamped or older session. */
+  readonly workspaceId?: string
   readonly groupId?: string
   readonly state: AgentState
   readonly createdAt: number
@@ -259,18 +261,6 @@ export interface SessionInfo {
 }
 export interface SessionCapabilities {
   readonly images: boolean
-}
-/** The part of a session's record the phone reads: which workspace it is
- *  stamped with (a live Session carries none). */
-export interface SessionRecord {
-  readonly id: string
-  readonly cwd: string
-  readonly folderName: string
-  readonly workspaceId?: string
-  readonly displayName?: string
-  readonly launchProfileId?: string
-  readonly live?: boolean
-  readonly running?: boolean
 }
 
 // ── settings/workspaces.ts ──
