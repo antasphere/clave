@@ -74,7 +74,14 @@ function refusal(clientMessageId: string, error: unknown): SendOutcome {
   if (error instanceof ServerError && error.failure?._tag === 'SessionWriteUnknown')
     return { kind: 'unknown', clientMessageId, reason: error.message }
   if (error instanceof ServerError && error.kind === 'refused')
-    return { kind: 'rejected', clientMessageId, reason: error.message }
+    return {
+      kind:
+        error.failure?._tag === 'SessionWriteRefused' || error.failure?._tag === 'SessionNotFound'
+          ? 'rejected'
+          : 'unknown',
+      clientMessageId,
+      reason: error.message
+    }
   return { kind: 'failed', clientMessageId, reason: reasonOf(error) }
 }
 
