@@ -14,8 +14,7 @@
  * not empty: `oauth`), registered by lane C's app.json (`scheme: clave`).
  */
 export const DEFAULT_ISSUER = 'https://account.antasphere.com'
-/** The variable a development build reads the override from (`EXPO_PUBLIC_`
- *  prefixed in the bundle, the wiring says how). */
+/** Legacy build-time app.config override. Metro uses EXPO_PUBLIC_CLAVE_ANTASPHERE_ISSUER. */
 export const ISSUER_ENV = 'CLAVE_ANTASPHERE_ISSUER'
 export const SCOPE = 'openid profile email offline_access'
 export const REDIRECT_URI = 'clave://oauth/callback'

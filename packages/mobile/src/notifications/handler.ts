@@ -3,6 +3,7 @@ import type { MachineResolver, DeepLink } from './deeplink'
 import { deepLinkOf } from './deeplink'
 import type { IncomingResponse } from './port'
 import { interpretResponse, settleFromNotification, type SettleClient } from './respond'
+import { ACTION_IDS } from './categories'
 
 export async function handleResponse(
   response: IncomingResponse,
@@ -24,5 +25,15 @@ export async function handleResponse(
     if (outcome.kind === 'settled' || outcome.kind === 'already-settled') return { kind: 'settled' }
     return { kind: 'open', link: await deepLinkOf(intent.payload, ports.machines, 'request') }
   }
-  return { kind: 'open', link: await deepLinkOf(intent.payload, ports.machines) }
+  const actionNeedsForm = (Object.values(ACTION_IDS) as readonly string[]).includes(
+    response.actionIdentifier
+  )
+  return {
+    kind: 'open',
+    link: await deepLinkOf(
+      intent.payload,
+      ports.machines,
+      actionNeedsForm ? 'request' : 'conversation'
+    )
+  }
 }

@@ -19,6 +19,8 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const PKG = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+const ISSUER_PROBE = 'https://clave-dev-issuer.invalid'
+const ISSUER_PROBE_ENV = { EXPO_PUBLIC_CLAVE_ANTASPHERE_ISSUER: ISSUER_PROBE }
 const MARKERS = ['clave-mobile:developer-connection', 'DeveloperScreen', 'DeveloperMachineSource']
 
 function arg(name, fallback) {
@@ -27,7 +29,7 @@ function arg(name, fallback) {
 }
 
 /** Runs `expo export` into a fresh folder and answers the bundle text. */
-export function exportBundle({ platform, dev, keep = false, log = console.error }) {
+export function exportBundle({ platform, dev, keep = false, log = console.error, env = {} }) {
   const out = mkdtempSync(path.join(os.tmpdir(), `clave-mobile-export-${dev ? 'dev' : 'release'}-`))
   const args = ['expo', 'export', '--platform', platform, '--output-dir', out, '--no-bytecode']
   if (dev) args.push('--dev')
@@ -36,7 +38,7 @@ export function exportBundle({ platform, dev, keep = false, log = console.error 
   const result = spawnSync('npx', args, {
     cwd: PKG,
     encoding: 'utf8',
-    env: { ...process.env, CI: '1' }
+    env: { ...process.env, ...env, CI: '1' }
   })
   if (result.status !== 0) {
     throw new Error(`expo export failed (${result.status}):\n${result.stdout}\n${result.stderr}`)
@@ -63,7 +65,11 @@ if (isMain) {
   const platform = arg('platform', 'ios')
   const keep = process.argv.includes('--keep')
   let failed = false
-  const dev = exportBundle({ platform, dev: true, keep })
+  const dev = exportBundle({ platform, dev: true, keep, env: ISSUER_PROBE_ENV })
+  if (!dev.text.includes(ISSUER_PROBE)) {
+    console.error('FAIL: development export did not inline the public fixture issuer')
+    failed = true
+  }
   const devMarkers = markersIn(dev.text)
   if (devMarkers.length !== MARKERS.length) {
     console.error(
@@ -74,7 +80,11 @@ if (isMain) {
     console.error(
       `ok: the development bundle carries the developer screen (${devMarkers.join(', ')})`
     )
-  const release = exportBundle({ platform, dev: false, keep })
+  const release = exportBundle({ platform, dev: false, keep, env: ISSUER_PROBE_ENV })
+  if (release.text.includes(ISSUER_PROBE)) {
+    console.error('FAIL: release export retained the development issuer override')
+    failed = true
+  }
   const releaseMarkers = markersIn(release.text)
   if (releaseMarkers.length > 0) {
     console.error(

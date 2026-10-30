@@ -12,7 +12,7 @@
  * Pure over its ports: the client, the two stores, the clock and the sleep,
  * so every branch runs under Node against a stub of the routes.
  */
-import type { CredentialStore, Machine } from '../machines/types'
+import type { Credential, CredentialStore, Machine } from '../machines/types'
 import {
   EnrollmentClient,
   EnrollmentError,
@@ -52,6 +52,8 @@ export interface PairingPorts {
   readonly client: EnrollmentClient
   readonly credentials: CredentialStore
   readonly records: EnrollmentRecords
+  /** Commit approval within the owner's current lifecycle boundary. False means cancelled. */
+  readonly persist?: (record: EnrollmentRecord, credential: Credential) => Promise<boolean>
   readonly sleep: (ms: number) => Promise<void>
   readonly now: () => number
   /** Every state as it happens, for the screen. */
@@ -97,6 +99,7 @@ export async function pair(
   const cancelled = (): boolean => ports.cancelled?.() === true
 
   emit({ kind: 'requesting' })
+  if (cancelled()) return emit({ kind: 'cancelled' })
   let ticket
   try {
     ticket = await ports.client.requestPairing({
@@ -107,6 +110,7 @@ export async function pair(
   } catch (error) {
     return emit(failed(error))
   }
+  if (cancelled()) return emit({ kind: 'cancelled' })
   let polls = 0
   emit({ kind: 'waiting', pairingId: ticket.pairingId, expiresAt: ticket.expiresAt, polls })
   for (;;) {
@@ -126,6 +130,7 @@ export async function pair(
       }
       return emit(failed(error))
     }
+    if (cancelled()) return emit({ kind: 'cancelled' })
     switch (read.status) {
       case 'pending':
         if (ports.now() > ticket.expiresAt + graceMs) return emit({ kind: 'expired' })
@@ -143,10 +148,6 @@ export async function pair(
             failure: 'consumed',
             message: 'The approval was already handed out and cannot be read again. Pair again.'
           })
-        await ports.credentials.set(input.machine.id, {
-          serverUrl: input.machine.baseUrl,
-          bearer: session.token
-        })
         const record: EnrollmentRecord = {
           machineId: input.machine.id,
           deviceId: session.deviceId,
@@ -154,7 +155,15 @@ export async function pair(
           serverName: session.serverName,
           pairedAt: ports.now()
         }
-        await ports.records.set(record)
+        const credential = { serverUrl: input.machine.baseUrl, bearer: session.token }
+        if (cancelled()) return emit({ kind: 'cancelled' })
+        if (ports.persist) {
+          if (!(await ports.persist(record, credential)) || cancelled())
+            return emit({ kind: 'cancelled' })
+        } else {
+          await ports.credentials.set(input.machine.id, credential)
+          await ports.records.set(record)
+        }
         return emit({ kind: 'approved', record })
       }
     }
