@@ -220,6 +220,11 @@ Run `CLAVE_E2E_NS=mobile-b npx vitest run packages/server/src/sessions/writes.fi
 It retains a receipt under `/tmp/mobile-b/write-fixture-*/receipt.json`; this isolated fixture
 uses a recording session port, no real provider. Remove only that run directory to clean up.
 
+The status query and repeated-write admission share one acceptance rule. A recorded first
+accepted result keeps its original timestamp. Otherwise durable acknowledged history settles
+received, rejected or unknown records as accepted, including a crash after the history write
+but before the primary ledger update. Replayed evidence never replaces the first result.
+
 A message with no id is written every time, as before, and answers `accepted`.
 
 ## Verification
