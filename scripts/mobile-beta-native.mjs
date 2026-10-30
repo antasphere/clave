@@ -18,6 +18,7 @@ import {
 import { createServer } from 'node:net'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
+import { installedCodex, proveCodexProcess } from './mobile-provider-proof.mjs'
 
 export function parseArgs(argv) {
   const required = [
@@ -163,7 +164,7 @@ async function main(o) {
     provider:
       o.provider === 'echo'
         ? 'echo fixture'
-        : 'codex Mac login, default account; model verified from history',
+        : 'codex Mac login, default account; adapter, live executable and provider thread required',
     ports: {
       metro: Number(o['metro-port']),
       server: Number(o['server-port']),
@@ -175,6 +176,7 @@ async function main(o) {
     serverHistory: 'NOT RUN',
     desktop: 'NOT RUN',
     source: 'NOT RUN',
+    providerProcess: 'NOT RUN',
     screenshot: 'NOT RUN',
     lockfileSha256: sha(readFileSync(path.join(o.worktree, 'package-lock.json'))),
     artifactSha256: artifactHash(o.app)
@@ -210,6 +212,7 @@ async function main(o) {
       log: () => {}
     })
     const workspace = await ensureWorkspace(server.url, server.token, o.scratch, o.marker)
+    const codex = o.provider === 'codex' ? installedCodex() : null
     const profile = o.provider === 'echo' ? 'dev-echo-adapter' : 'chat:codex:mobile-beta-codex'
     // Upsert the editable source. The host derives its reserved chat variant.
     if (o.provider === 'codex')
@@ -218,7 +221,7 @@ async function main(o) {
           id: 'mobile-beta-codex',
           name: 'Mobile beta Codex',
           family: 'codex',
-          command: ['codex'],
+          command: [codex.executable],
           additionalArgs: ['-c', 'model="gpt-6.1-sol"']
         }
       })
@@ -347,13 +350,16 @@ async function main(o) {
       `/sessions/history?id=${encodeURIComponent(session.id)}&limit=2000`
     )
     checkHistory(history, prompts, replies)
-    if (o.provider === 'codex')
-      assert.ok(
-        history.items.some(
-          ({ event }) => event.type === 'session_meta' && event.model === 'gpt-6.1-sol'
-        ),
-        'Codex must report required gpt-6.1-sol model'
-      )
+    if (o.provider === 'codex') {
+      phase = 'provider-process'
+      receipt.providerProcess = proveCodexProcess({
+        serverPid: server.pid,
+        scratch: o.scratch,
+        expected: codex,
+        session,
+        history
+      })
+    }
     receipt.serverHistory = 'PASS'
     phase = 'desktop-history'
     const { launchApp } = await load('tests/e2e/harness.mjs')
@@ -366,6 +372,25 @@ async function main(o) {
       return window.electronAPI.sessionsHistory(id, undefined, 2000)
     }, session.id)
     checkHistory(visibleHistory, prompts, replies)
+    if (o.provider === 'codex') {
+      const after = proveCodexProcess({
+        serverPid: server.pid,
+        scratch: o.scratch,
+        expected: codex,
+        session,
+        history: visibleHistory
+      })
+      assert.equal(
+        after.pid,
+        receipt.providerProcess.pid,
+        'Desktop must retain the same Codex process'
+      )
+      assert.equal(
+        after.threadId,
+        receipt.providerProcess.threadId,
+        'Desktop must retain the provider thread'
+      )
+    }
     receipt.desktop = 'PASS: hidden attached Electron sees same session and history'
     phase = 'native-source'
     receipt.source = await proveNativeSource({ port: Number(o['metro-port']), deviceName })

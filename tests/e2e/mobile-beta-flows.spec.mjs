@@ -253,13 +253,22 @@ export async function run(t) {
       push?.deviceId === session.deviceId && push?.payload?.sessionId === record.id
     )
     const response = { type: 'permission', optionId: 'answer', answers: { 'Ship beta?': 'yes' } }
+    const participants = [owner, device]
+    t.check(
+      'desktop owner and paired phone answer through different clients',
+      participants[0] !== participants[1]
+    )
     const answers = await Promise.all(
-      [1, 2].map(() =>
-        device('POST', '/requests/resolve', { requestId: push?.payload?.requestId, response })
+      participants.map((send) =>
+        send('POST', '/requests/resolve', { requestId: push?.payload?.requestId, response })
       )
     )
+    t.check(
+      'both owner and phone receive valid resolution results',
+      answers.every((answer) => answer.status === 200)
+    )
     t.equal(
-      'two valid answers have exactly one winner',
+      'desktop owner and phone have exactly one answer winner',
       answers.filter((a) => a.body?.accepted === true).length,
       1
     )
