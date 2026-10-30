@@ -19,6 +19,10 @@ import {
   type PushStatusDetail
 } from '../api/push'
 import type { Drafts, KeyValueStore } from '../chat/drafts'
+import type { BetaServices } from '../platform/beta'
+import type { DeliveryController } from '../reconnect/controller'
+import type { UnknownSend } from '../reconnect/ledger'
+import { buildUserMessage } from '../attachments/compose'
 import {
   applyFirstPage,
   mergeBufferedHistory,
@@ -31,6 +35,7 @@ import {
 } from '../chat/history'
 import { type Conversation, emptyConversation, reduceConversation } from '../chat/reducer'
 import type {
+  Attachment,
   FileText,
   LaunchProfilePreferencesView,
   LaunchProfileView,
@@ -51,6 +56,8 @@ import { sendMessage, type SendOutcome as DeliveryOutcome } from '../chat/send'
 import type { Reachability } from './session-state'
 
 export interface Services {
+  readonly beta?: BetaServices
+  readonly delivery?: DeliveryController
   /** Which build this is: decides the addresses a credential may go to. */
   readonly build: BuildKind
   readonly credentials: CredentialStore
@@ -140,7 +147,8 @@ export interface StoreState {
     machineId: string,
     sessionId: string,
     text: string,
-    clientMessageId?: string
+    clientMessageId?: string,
+    attachments?: readonly Attachment[]
   ): Promise<DeliveryOutcome>
   answerInChat(
     machineId: string,
@@ -392,9 +400,21 @@ export function createStore(services: Services): UseBoundStore<StoreApi<StoreSta
           token: credential.bearer,
           client: services.clientName
         })
-        const offStatus = push.onStatus((status, detail) =>
+        const offStatus = push.onStatus((status, detail) => {
           patch('reachability', machineId, reachabilityOf(status, detail))
-        )
+          if (status === 'open') {
+            void get().loadRequests(machineId)
+            void services.delivery
+              ?.reconnect({
+                machineId,
+                client,
+                openConversations: [],
+                refreshRequests: (id) => get().loadRequests(id),
+                refreshHistory: async () => {}
+              })
+              .catch((error) => patch('sessionsError', machineId, fail(error)))
+          }
+        })
         const offEvents = push.onEvent((envelope) => applySessionEvent(machineId, envelope))
         const connection: Connection = {
           machine,
@@ -605,9 +625,9 @@ export function createStore(services: Services): UseBoundStore<StoreApi<StoreSta
         }
       },
 
-      async send(machineId, sessionId, text, clientMessageId = mint()) {
+      async send(machineId, sessionId, text, clientMessageId = mint(), attachments = []) {
         const trimmed = text.trim()
-        if (!trimmed)
+        if (!trimmed && !attachments.length)
           return { kind: 'failed', clientMessageId, reason: 'Nothing to send.' } as DeliveryOutcome
         let client
         try {
@@ -615,17 +635,32 @@ export function createStore(services: Services): UseBoundStore<StoreApi<StoreSta
         } catch (error) {
           return { kind: 'failed', clientMessageId, reason: fail(error) } as DeliveryOutcome
         }
+        const message = buildUserMessage(trimmed, attachments, clientMessageId)
+        const send: UnknownSend = {
+          machineId,
+          sessionId,
+          clientMessageId,
+          text: message.text,
+          draftText: text,
+          at: now(),
+          ...(attachments.length ? { attachments } : {})
+        }
+        try {
+          await services.delivery?.begin(send)
+        } catch {
+          return {
+            kind: 'failed',
+            clientMessageId,
+            reason: 'The send could not be saved safely. Nothing was sent.'
+          }
+        }
         const outcome = await sendMessage(clientMessageId, {
-          write: (id) =>
-            client.sessions.write(sessionId, {
-              type: 'user_message',
-              text: trimmed,
-              clientMessageId: id
-            }),
+          write: () => client.sessions.write(sessionId, message),
           status: (id) => client.sessions.writeStatus(sessionId, id),
           sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
           now
         })
+        await services.delivery?.finish(send, outcome)
         if (outcome.kind === 'sent' && (await services.drafts.get(machineId, sessionId)) === text)
           await services.drafts.clear(machineId, sessionId)
         return outcome

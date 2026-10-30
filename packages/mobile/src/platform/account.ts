@@ -1,0 +1,58 @@
+import AsyncStorage from '@react-native-async-storage/async-storage'
+import Constants from 'expo-constants'
+import * as Crypto from 'expo-crypto'
+import * as SecureStore from 'expo-secure-store'
+import * as WebBrowser from 'expo-web-browser'
+import { HubSignIn } from '../auth/sign-in'
+import { ownerKeyValueStore, ownerSecureStore, ownerNamespace } from '../auth/owner-storage'
+import type { CryptoPort } from '../auth/pkce'
+import { SecureCredentialStore } from '../machines/credentials'
+
+export const rawKeyValueStore = {
+  getItem: (key: string) => AsyncStorage.getItem(key),
+  setItem: (key: string, value: string) => AsyncStorage.setItem(key, value),
+  removeItem: (key: string) => AsyncStorage.removeItem(key)
+}
+export const rawSecureStore = {
+  getItemAsync: (key: string) => SecureStore.getItemAsync(key),
+  setItemAsync: (key: string, value: string) => SecureStore.setItemAsync(key, value),
+  deleteItemAsync: (key: string) => SecureStore.deleteItemAsync(key)
+}
+export const nativeCrypto: CryptoPort = {
+  randomBytes: (n) => Crypto.getRandomBytes(n),
+  sha256: async (data) =>
+    new Uint8Array(await Crypto.digest(Crypto.CryptoDigestAlgorithm.SHA256, new Uint8Array(data)))
+}
+let account: HubSignIn | null = null
+export function nativeAccount(): HubSignIn {
+  if (!account)
+    account = new HubSignIn({
+      issuer: __DEV__
+        ? (Constants.expoConfig?.extra?.antasphereIssuer as string | undefined)
+        : undefined,
+      secureStore: rawSecureStore,
+      crypto: nativeCrypto,
+      openAuthSession: async (url, redirectUri) => {
+        const result = await WebBrowser.openAuthSessionAsync(url, redirectUri)
+        return result.type === 'success' ? result.url : null
+      }
+    })
+  return account
+}
+
+export async function nativeOwnerStores(auth: HubSignIn): Promise<{
+  namespace: string
+  kv: ReturnType<typeof ownerKeyValueStore>
+  credentials: SecureCredentialStore
+}> {
+  const status = auth.status()
+  const subject = status.account?.subject
+  const namespace = await ownerNamespace(status.issuer, subject ?? null, (value) =>
+    Crypto.digestStringAsync(Crypto.CryptoDigestAlgorithm.SHA256, value)
+  )
+  return {
+    namespace,
+    kv: ownerKeyValueStore(rawKeyValueStore, namespace),
+    credentials: new SecureCredentialStore(ownerSecureStore(rawSecureStore, namespace))
+  }
+}

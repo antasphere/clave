@@ -3,7 +3,8 @@ import { useEffect, type ReactNode } from 'react'
 import { Alert, FlatList, RefreshControl, View } from 'react-native'
 import type { RootStackParamList } from '../navigation/RootNavigator'
 import type { Machine } from '../machines/types'
-import { useSel, useStoreApi } from '../state/context'
+import { AccountPanel } from '../auth/AccountPanel'
+import { useServices, useSel, useStoreApi } from '../state/context'
 import { REACHABILITY_LABEL } from '../state/session-state'
 import { Button, ErrorText, Muted, Pill, Row, Screen, Spinner } from '../ui/components'
 import { colors, space } from '../ui/theme'
@@ -30,6 +31,7 @@ const describe = (m: Machine): string => {
 
 export function MachinesScreen({ navigation }: Props): ReactNode {
   const store = useStoreApi()
+  const services = useServices()
   const machines = useSel((s) => s.machines)
   const loading = useSel((s) => s.machinesLoading)
   const error = useSel((s) => s.machinesError)
@@ -40,8 +42,15 @@ export function MachinesScreen({ navigation }: Props): ReactNode {
     void store.getState().loadMachines()
   }, [store])
 
-  const open = (machine: Machine): void =>
-    navigation.navigate('Workspaces', { machineId: machine.id })
+  const open = (machine: Machine): void => {
+    void services.credentials
+      .get(machine.id)
+      .then((credential) =>
+        credential
+          ? navigation.navigate('Workspaces', { machineId: machine.id })
+          : navigation.navigate('Pairing', { machineId: machine.id })
+      )
+  }
   const actions = (machine: Machine): void => {
     Alert.alert(machine.name, machine.baseUrl, [
       {
@@ -123,7 +132,12 @@ export function MachinesScreen({ navigation }: Props): ReactNode {
             </Muted>
           )
         }
-        ListHeaderComponent={error ? <ErrorText>{error}</ErrorText> : undefined}
+        ListHeaderComponent={
+          <>
+            <AccountPanel />
+            {error ? <ErrorText>{error}</ErrorText> : null}
+          </>
+        }
         ListFooterComponent={
           __DEV__ ? (
             <View style={{ padding: space.lg }}>

@@ -11,6 +11,7 @@
  * reason.
  */
 import type { KeyValueStore } from '../chat/drafts'
+import type { Attachment } from '../contract/types'
 
 export interface UnknownSend {
   readonly machineId: string
@@ -19,6 +20,8 @@ export interface UnknownSend {
   /** The text as sent, so a resend the server asks for is the same bytes. */
   readonly text: string
   readonly at: number
+  readonly draftText?: string
+  readonly attachments?: readonly Attachment[]
 }
 
 export const UNKNOWN_SENDS_KEY = 'clave.unknown-sends'
@@ -93,6 +96,16 @@ export const deliveryMarkKey = (machineId: string, sessionId: string): string =>
   `clave.delivery:${machineId}:${sessionId}`
 
 export class DeliveryMarks {
+  private readonly listeners = new Set<() => void>()
+  subscribe(listener: () => void): () => void {
+    this.listeners.add(listener)
+    return () => {
+      this.listeners.delete(listener)
+    }
+  }
+  private changed(): void {
+    for (const listener of this.listeners) listener()
+  }
   constructor(private readonly store: KeyValueStore) {}
 
   async get(machineId: string, sessionId: string): Promise<DeliveryMark | null> {
@@ -116,11 +129,13 @@ export class DeliveryMarks {
     return null
   }
 
-  set(machineId: string, sessionId: string, mark: DeliveryMark): Promise<void> {
-    return this.store.setItem(deliveryMarkKey(machineId, sessionId), JSON.stringify(mark))
+  async set(machineId: string, sessionId: string, mark: DeliveryMark): Promise<void> {
+    await this.store.setItem(deliveryMarkKey(machineId, sessionId), JSON.stringify(mark))
+    this.changed()
   }
 
-  clear(machineId: string, sessionId: string): Promise<void> {
-    return this.store.removeItem(deliveryMarkKey(machineId, sessionId))
+  async clear(machineId: string, sessionId: string): Promise<void> {
+    await this.store.removeItem(deliveryMarkKey(machineId, sessionId))
+    this.changed()
   }
 }

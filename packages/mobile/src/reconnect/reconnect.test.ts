@@ -33,6 +33,7 @@ beforeEach(async () => {
     status: async () => (statuses.length > 1 ? statuses.shift()! : statuses[0]!),
     write: async (s) => {
       writes.push(s)
+      return { status: 'accepted' }
     },
     now: () => time,
     sleep: async (ms) => {

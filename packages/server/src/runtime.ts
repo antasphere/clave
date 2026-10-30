@@ -158,7 +158,16 @@ export const ServicesLive = (options: ServerOptions): Layer.Layer<ServerServices
   // ── Mobile wave, lane A: every change of the devices told to the clients ──
   const devicesEvents = DevicesEventsLive.pipe(Layer.provide(services))
   // ── The mobile wave, lane B: the notifier over the events, the requests and the ports ──
-  const notify = NotifyLive({ serverId: options.serverId }).pipe(Layer.provide(services))
+  // Mobile wave, lane D: use the same paired-device store as authentication.
+  // An explicit target port remains available to recording fixtures.
+  const notificationTargets = Layer.effect(
+    PushTargetsPort,
+    Effect.map(DeviceSessions, (devices) => options.ports.pushTargets ?? devices.pushTargets)
+  ).pipe(Layer.provide(services))
+  const notify = NotifyLive({ serverId: options.serverId }).pipe(
+    Layer.provide(notificationTargets),
+    Layer.provide(services)
+  )
   return Layer.mergeAll(
     services,
     requestEvents,

@@ -1,12 +1,12 @@
 # Clave mobile beta
 
-This lane is in phase one. The pure clients run under Node; they are not yet connected to the native screens. This document records prerequisites, not a claim that a teammate can install the beta yet.
+The beta wiring is in progress on the provisional integration base. Sign-in, relay discovery, pairing, attachments and durable sends have native adapters and screens. Cold notification navigation, native acceptance, build artifacts and independent verification are still pending. This document does not claim an installable beta candidate.
 
 The phone uses the system keyboard's dictation. It needs no separate transcription service.
 
 ## Native modules needed for phase two
 
-The Expo SDK 58.0.21 bundled-module table names these versions. Keep the root lockfile with lane C until the coordinator transfers ownership.
+The Expo SDK 58.0.21 bundled-module table names these versions. Lane D owns the mobile dependency changes and root lockfile under the coordinator handoff. The install added these exact pins without changing any previously locked package version.
 
 | Module | SDK 58 baseline | Purpose |
 | --- | --- | --- |
@@ -17,6 +17,7 @@ The Expo SDK 58.0.21 bundled-module table names these versions. Keep the root lo
 | expo-image-picker | 58.0.10 | Photos, screenshots and camera |
 | expo-document-picker | 58.0.4 | Files |
 | expo-file-system | 58.0.13 | Read picked files for upload |
+| expo-task-manager | 58.0.12 | Android background notification actions |
 
 `expo-secure-store` 58.0.2 is already present. Hub tokens and machine credentials use it. The app registers as a public native client with redirect `clave://oauth/callback`. Automated sign-in uses `tests/e2e/fixtures/oidc-provider.mjs`, never the production hub.
 
@@ -38,3 +39,17 @@ No credentials are requested or changed by the pure module tests. No store publi
 ## Current verification
 
 The pure sign-in tests use the local signed OIDC fixture. Enrollment and upload tests use local HTTP stubs. Notification tests inject the platform interface. Reconnect tests exercise every write status and assert that an unknown outcome sends nothing. These are fixture results, not a real-provider smoke or native-device acceptance.
+
+## Account separation
+
+A secure-store and key-value namespace hashes the issuer and subject together. A subject change reconstructs the store and navigator and disconnects the previous subscriptions. Old asynchronous writes retain their old immutable namespace. A returning owner retains offline drafts, paired credentials and their main machine. Another account cannot read those records.
+
+## Development configuration
+
+`CLAVE_ANTASPHERE_ISSUER` configures the local OIDC fixture for development only. Release sign-in uses the production issuer. `CLAVE_MOBILE_RELAY` supplies the team relay origin; it can also be entered on Machines after sign-in. A release client requires HTTPS. A relay change clears existing pairings before new credentials can travel there.
+
+For native source verification, set `CLAVE_MOBILE_PROOF_URL` to an isolated loopback receipt listener and `CLAVE_MOBILE_CANDIDATE` to a unique run marker when starting this worktree's Metro. The development-only module reports the actual React Native SourceCode script URL, the worktree and marker. A native driver must assert all three against its expected values and use an explicit device ID. Merely starting Metro on a requested port proves nothing. This mechanism has not yet been exercised on a native device.
+
+## Notification platform limit
+
+Expo Notifications 58.1.7 documents background or terminated notification-action tasks only on Android. A killed iOS app cannot receive a response through that task, and a non-foreground action does not invoke its JavaScript listener. The native adapter therefore foregrounds iOS actions and resolves them in the app; Android actions use the registered headless task. These paths still need native verification. Real APNs/FCM delivery remains NOT RUN.

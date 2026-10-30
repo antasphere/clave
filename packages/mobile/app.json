@@ -21,6 +21,23 @@
       "package": "com.clave.app.mobile",
       "usesCleartextTraffic": true
     },
-    "plugins": ["expo-secure-store", "./plugins/with-jsi-xcode26"]
+    "plugins": [
+      "expo-secure-store",
+      "./plugins/with-jsi-xcode26",
+      [
+        "expo-notifications",
+        {
+          "enableBackgroundRemoteNotifications": true
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Allow Clave to attach a photo or screenshot to your agent conversation.",
+          "cameraPermission": "Allow Clave to take a photo for your agent conversation."
+        }
+      ],
+      "expo-document-picker"
+    ]
   }
 }

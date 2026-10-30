@@ -20,6 +20,9 @@ import {
 } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import type { Entry } from '../chat/reducer'
+import type { Attachment } from '../contract/types'
+import { attachmentDraftKey } from '../attachments/drafts'
+import { discardUnknownSend } from '../reconnect/pass'
 import { hasMore } from '../chat/history'
 import type { RootStackParamList } from '../navigation/RootNavigator'
 import { shapeAnswers, type QuestionReply } from '../requests/answers'
@@ -54,6 +57,8 @@ export function ChatScreen({ navigation, route }: Props): ReactNode {
   const fatal = useSel((s) => s.fatal[key])
   const [draft, setDraft] = useState('')
   const [draftLoaded, setDraftLoaded] = useState(false)
+  const [attachments, setAttachments] = useState<Attachment[]>([])
+  const [attaching, setAttaching] = useState(false)
   const [sendError, setSendError] = useState<string | null>(null)
   /** A send whose outcome nobody can tell: kept until the person decides. */
   const [delivery, setDelivery] = useState<{ clientMessageId: string; reason: string } | null>(null)
@@ -78,11 +83,40 @@ export function ChatScreen({ navigation, route }: Props): ReactNode {
   }, [store, machineId, sessionId])
 
   useEffect(() => {
-    void services.drafts.get(machineId, sessionId).then((text) => {
-      latestDraft.current = text
-      setDraft(text)
+    let cancelled = false
+    const load = async (): Promise<void> => {
+      const before = latestDraft.current
+      const [text, mark, files] = await Promise.all([
+        services.drafts.get(machineId, sessionId),
+        services.delivery?.marks.get(machineId, sessionId),
+        services.kv.getItem(attachmentDraftKey(machineId, sessionId))
+      ])
+      if (cancelled) return
+      if (latestDraft.current === before) {
+        latestDraft.current = text
+        setDraft(text)
+      }
       setDraftLoaded(true)
+      setDelivery(
+        mark?.kind === 'unknown'
+          ? { clientMessageId: mark.clientMessageId, reason: mark.reason }
+          : null
+      )
+      if (mark?.kind === 'rejected') setSendError(mark.reason)
+      try {
+        if (files) setAttachments(JSON.parse(files) as Attachment[])
+      } catch {
+        setAttachments([])
+      }
+    }
+    void load()
+    const off = services.delivery?.marks.subscribe(() => {
+      void load()
     })
+    return () => {
+      cancelled = true
+      off?.()
+    }
   }, [services, machineId, sessionId])
 
   const changeDraft = (text: string): void => {
@@ -112,13 +146,20 @@ export function ChatScreen({ navigation, route }: Props): ReactNode {
   }, [conversation])
 
   const send = async (): Promise<void> => {
-    if (!draft.trim() || sending) return
+    if ((!draft.trim() && !attachments.length) || sending || attaching) return
     setSending(true)
     setSendError(null)
-    const outcome = await store.getState().send(machineId, sessionId, draft)
+    if (delivery && services.delivery)
+      await discardUnknownSend(
+        { machineId, sessionId, clientMessageId: delivery.clientMessageId },
+        services.delivery
+      )
+    const outcome = await store.getState().send(machineId, sessionId, draft, undefined, attachments)
     setSending(false)
     switch (outcome.kind) {
       case 'sent':
+        setAttachments([])
+        await services.kv.removeItem(attachmentDraftKey(machineId, sessionId))
         if (latestDraft.current === draft) {
           latestDraft.current = ''
           setDraft('')
@@ -139,11 +180,47 @@ export function ChatScreen({ navigation, route }: Props): ReactNode {
   }
 
   const discard = async (): Promise<void> => {
+    if (delivery && services.delivery)
+      await discardUnknownSend(
+        { machineId, sessionId, clientMessageId: delivery.clientMessageId },
+        services.delivery
+      )
+    setAttachments([])
+    await services.kv.removeItem(attachmentDraftKey(machineId, sessionId))
     latestDraft.current = ''
     await services.drafts.clear(machineId, sessionId)
     setDraft('')
     setDelivery(null)
     setSendError(null)
+  }
+
+  const attach = async (kind: 'photos' | 'camera' | 'files'): Promise<void> => {
+    if (!services.beta || attaching || sending) return
+    setAttaching(true)
+    setSendError(null)
+    try {
+      const { client } = await store.getState().connect(machineId)
+      const capabilities = await client.sessions.capabilities(sessionId)
+      const results = await services.beta.attach(
+        kind,
+        machineId,
+        sessionId,
+        attachments,
+        capabilities.images
+      )
+      const added = results.flatMap((result) => (result.ok ? [result.record] : []))
+      const notes = results.flatMap((result) =>
+        result.ok ? (result.note ? [result.note] : []) : [result.reason]
+      )
+      const next = [...attachments, ...added]
+      await services.kv.setItem(attachmentDraftKey(machineId, sessionId), JSON.stringify(next))
+      setAttachments(next)
+      if (notes.length) setSendError(notes.join(' '))
+    } catch {
+      setSendError('The file could not be attached. Try again.')
+    } finally {
+      setAttaching(false)
+    }
   }
 
   const answer = useCallback(
@@ -229,7 +306,7 @@ export function ChatScreen({ navigation, route }: Props): ReactNode {
           testID="chat-transcript"
         />
         {sendError ? <ErrorText testID="send-error">{sendError}</ErrorText> : undefined}
-        {delivery ? (
+        {delivery && !sending ? (
           <View style={styles.delivery} testID="delivery-unknown">
             <Text style={styles.deliveryText}>Delivery unknown. {delivery.reason}</Text>
             <View style={styles.options}>
@@ -249,6 +326,50 @@ export function ChatScreen({ navigation, route }: Props): ReactNode {
           </View>
         ) : undefined}
         {sending ? <Muted testID="sending">Sending…</Muted> : undefined}
+        {attachments.length ? (
+          <View style={styles.options}>
+            {attachments.map((file) => (
+              <Button
+                key={file.id}
+                title={`${file.label ?? file.name} ×`}
+                kind="secondary"
+                disabled={sending || attaching}
+                onPress={() => {
+                  const next = attachments.filter((item) => item.id !== file.id)
+                  setAttachments(next)
+                  void services.kv.setItem(
+                    attachmentDraftKey(machineId, sessionId),
+                    JSON.stringify(next)
+                  )
+                }}
+              />
+            ))}
+          </View>
+        ) : null}
+        {services.beta ? (
+          <View style={styles.options}>
+            <Button
+              title="Photos"
+              kind="secondary"
+              disabled={sending || attaching || attachments.length >= 10}
+              onPress={() => void attach('photos')}
+              testID="attach-photos"
+            />
+            <Button
+              title="Camera"
+              kind="secondary"
+              disabled={sending || attaching || attachments.length >= 10}
+              onPress={() => void attach('camera')}
+            />
+            <Button
+              title="File"
+              kind="secondary"
+              disabled={sending || attaching || attachments.length >= 10}
+              onPress={() => void attach('files')}
+              testID="attach-file"
+            />
+          </View>
+        ) : null}
         <View style={[styles.composer, { paddingBottom: Math.max(insets.bottom, space.sm) }]}>
           <TextInput
             style={styles.input}
@@ -264,7 +385,7 @@ export function ChatScreen({ navigation, route }: Props): ReactNode {
           <Button
             title="Send"
             onPress={() => void send()}
-            disabled={!draft.trim() || sending}
+            disabled={(!draft.trim() && !attachments.length) || sending || attaching || !!delivery}
             testID="composer-send"
           />
         </View>

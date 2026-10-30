@@ -63,7 +63,7 @@ export function interpretResponse(response: IncomingResponse): NotificationInten
 /** Lane B's rule for which option ids are an allow and a deny
  *  (`packages/server/src/notify/payload.ts`), the same words here so the
  *  phone answers what the server offered. */
-const ALLOW_OPTION = /^(allow|allow-once|allow-always|approve|accept|yes|ok)$/i
+const ALLOW_OPTION = /^(allow|allow-once|approve|accept|yes|ok)$/i
 const DENY_OPTION = /^(deny|decline|reject|cancel|no)$/i
 
 /** The option id to answer with: the request's own when it is known, else
@@ -74,7 +74,9 @@ export function permissionOptionId(
   choice: 'allow' | 'deny'
 ): string {
   const pattern = choice === 'allow' ? ALLOW_OPTION : DENY_OPTION
-  const own = request?.options?.find((o) => pattern.test(o.id))?.id
+  const own =
+    (choice === 'allow' ? request?.options?.find((o) => o.id === 'allow-once') : undefined)?.id ??
+    request?.options?.find((o) => pattern.test(o.id))?.id
   return own ?? (choice === 'allow' ? 'allow-once' : 'deny')
 }
 
@@ -112,7 +114,7 @@ export interface SettleClient {
     resolve(requestId: string, response: RequestResponse): Promise<ResolveOutcome>
   }
   readonly sessions: {
-    write(id: string, input: SessionWriteInput): Promise<void>
+    write(id: string, input: SessionWriteInput): Promise<unknown>
   }
 }
 
@@ -134,12 +136,23 @@ export async function settleFromNotification(
   }
   const request = snapshot.pending.find((r) => r.id === payload.requestId)
   if (!request) return { kind: 'already-settled' }
+  if (request.sessionId !== payload.sessionId)
+    return { kind: 'open-app', reason: 'The notification no longer matches this conversation.' }
   let response: RequestResponse | null
   if (intent.kind === 'reply') {
     response = replyResponse(request, intent.text)
     if (!response)
       return { kind: 'open-app', reason: 'This question needs the app to be answered.' }
-  } else response = permissionResponse(request, intent.kind)
+  } else {
+    if (request.kind !== 'permission')
+      return { kind: 'open-app', reason: 'This request needs the app.' }
+    response = permissionResponse(request, intent.kind)
+    if (
+      request.options?.length &&
+      !request.options.some((option) => option.id === (response as { optionId: string }).optionId)
+    )
+      return { kind: 'open-app', reason: 'Choose the permission in the app.' }
+  }
   try {
     const outcome = await client.requests.resolve(request.id, response)
     return outcome.accepted ? { kind: 'settled' } : { kind: 'already-settled' }
@@ -160,11 +173,17 @@ async function settleInChat(
   if (!payload.sessionId || !payload.requestId)
     return { kind: 'open-app', reason: 'The notification names no conversation to answer in.' }
   try {
-    await client.sessions.write(payload.sessionId, {
+    const answer = await client.sessions.write(payload.sessionId, {
       type: 'permission_response',
       id: payload.requestId,
       optionId: permissionOptionId(null, intent.kind)
     })
+    if (
+      typeof answer === 'object' &&
+      answer !== null &&
+      (answer as { status?: unknown }).status === 'pending'
+    )
+      return { kind: 'open-app', reason: 'The answer is still pending. Check it in the app.' }
     return { kind: 'settled' }
   } catch (error) {
     if (error instanceof ServerError && error.kind === 'refused') return { kind: 'already-settled' }

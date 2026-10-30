@@ -14,9 +14,11 @@ import { RequestsScreen } from '../screens/RequestsScreen'
 import { SessionsScreen } from '../screens/SessionsScreen'
 import { WorkspacesScreen } from '../screens/WorkspacesScreen'
 import { colors } from '../ui/theme'
+import { PairingScreen } from '../enroll/PairingScreen'
 
 export type RootStackParamList = {
   Machines: undefined
+  Pairing: { machineId: string }
   Workspaces: { machineId: string }
   Sessions: { machineId: string; workspaceId: string }
   Chat: { machineId: string; sessionId: string; title?: string }
@@ -43,6 +45,11 @@ export function RootNavigator(): ReactNode {
         contentStyle: { backgroundColor: colors.surface0 }
       }}
     >
+      <Stack.Screen
+        name="Pairing"
+        component={PairingScreen}
+        options={{ title: 'Pair this phone' }}
+      />
       <Stack.Screen name="Machines" component={MachinesScreen} options={{ title: 'Machines' }} />
       <Stack.Screen
         name="Workspaces"

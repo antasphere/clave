@@ -6,26 +6,20 @@
  * `__DEV__`, so a release bundle carries neither it nor the screen
  * (`scripts/check-release-bundle.mjs` proves that on the exported bundle).
  */
-import AsyncStorage from '@react-native-async-storage/async-storage'
-import * as SecureStore from 'expo-secure-store'
 import { Platform } from 'react-native'
-import { Drafts, type KeyValueStore } from './chat/drafts'
-import { SecureCredentialStore } from './machines/credentials'
+import { Drafts } from './chat/drafts'
+import type { HubSignIn } from './auth/sign-in'
+import { nativeOwnerStores } from './platform/account'
+import { BetaServices } from './platform/beta'
 import type { DeveloperMachineSource } from './machines/developer'
 import type { Services } from './state/store'
 import type { BuildKind } from './machines/transport-policy'
 
-export function createServices(): Services {
-  const kv: KeyValueStore = {
-    getItem: (key) => AsyncStorage.getItem(key),
-    setItem: (key, value) => AsyncStorage.setItem(key, value),
-    removeItem: (key) => AsyncStorage.removeItem(key)
-  }
-  const credentials = new SecureCredentialStore({
-    getItemAsync: (key) => SecureStore.getItemAsync(key),
-    setItemAsync: (key, value) => SecureStore.setItemAsync(key, value),
-    deleteItemAsync: (key) => SecureStore.deleteItemAsync(key)
-  })
+export function createServices(
+  auth: HubSignIn,
+  owner: Awaited<ReturnType<typeof nativeOwnerStores>>
+): Services {
+  const { kv, credentials } = owner
   /* eslint-disable @typescript-eslint/no-require-imports -- a static import would put the module in every build */
   const developer: DeveloperMachineSource | null = __DEV__
     ? new (
@@ -34,12 +28,16 @@ export function createServices(): Services {
     : null
   /* eslint-enable @typescript-eslint/no-require-imports */
   const build: BuildKind = __DEV__ ? 'development' : 'release'
+  const drafts = new Drafts(kv)
+  const beta = new BetaServices(auth, kv, credentials, drafts, build)
   return {
+    beta,
+    delivery: beta.delivery,
     build,
     credentials,
-    sources: { relay: null, developer },
+    sources: { relay: beta.source, developer },
     kv,
-    drafts: new Drafts(kv),
+    drafts,
     clientOptions: { build },
     pushOptions: { build },
     clientName: `clave-mobile/${Platform.OS}`

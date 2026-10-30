@@ -9,6 +9,7 @@
 import {
   DarkTheme,
   NavigationContainer,
+  useNavigationContainerRef,
   type LinkingOptions,
   type NavigationState
 } from '@react-navigation/native'
@@ -25,8 +26,17 @@ import {
 } from './navigation/persistence'
 import { createServices } from './services'
 import { StoreProvider } from './state/StoreProvider'
-import { createStore } from './state/store'
-import { Screen } from './ui/components'
+import { createStore, type Services } from './state/store'
+import { nativeAccount, nativeOwnerStores } from './platform/account'
+import type { AuthStatus } from './auth/sign-in'
+import * as Notifications from 'expo-notifications'
+import {
+  configureNativeNotifications,
+  nativeNotificationResponse,
+  PENDING_NOTIFICATION_KEY
+} from './platform/notifications'
+import { navigationStateOf } from './notifications/deeplink'
+import { ErrorText, Screen } from './ui/components'
 import { colors } from './ui/theme'
 
 const theme = {
@@ -51,7 +61,35 @@ const linking: LinkingOptions<RootStackParamList> = {
 }
 
 export function App(): ReactNode {
-  const services = useMemo(() => createServices(), [])
+  const auth = useMemo(() => nativeAccount(), [])
+  const [status, setStatus] = useState<AuthStatus | null>(null)
+  const [owner, setOwner] = useState<{ key: string; services: Services } | null>(null)
+  const key = status ? JSON.stringify([status.issuer, status.account?.subject ?? null]) : null
+  useEffect(() => {
+    const off = auth.onChange(setStatus)
+    void auth.restore().then(setStatus)
+    return off
+  }, [auth])
+  useEffect(() => {
+    let cancelled = false
+    if (key)
+      void nativeOwnerStores(auth).then((stores) => {
+        if (!cancelled) setOwner({ key, services: createServices(auth, stores) })
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [auth, key])
+  return owner && owner.key === key ? (
+    <OwnerApp key={key!} services={owner.services} />
+  ) : (
+    <Screen>{null}</Screen>
+  )
+}
+
+function OwnerApp({ services }: { services: Services }): ReactNode {
+  const navigation = useNavigationContainerRef<RootStackParamList>()
+  const [notificationError, setNotificationError] = useState(false)
   const store = useMemo(() => createStore(services), [services])
   const [initial, setInitial] = useState<{ state: NavigationState } | null>(null)
 
@@ -74,12 +112,37 @@ export function App(): ReactNode {
   }, [services, store])
 
   useEffect(() => () => store.getState().disconnectAll(), [store])
+  useEffect(() => {
+    if (__DEV__) {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports -- test receipt excluded from release bundles
+      void (require('./platform/provenance-dev') as typeof import('./platform/provenance-dev'))
+        .reportBundleProvenance()
+        .catch(() => {})
+    }
+    void configureNativeNotifications().catch(() => {
+      setNotificationError(true)
+    })
+    const subscription = Notifications.addNotificationResponseReceivedListener((response) => {
+      void nativeNotificationResponse(response).then(async (link) => {
+        if (link && navigation.isReady()) {
+          navigation.resetRoot(navigationStateOf(link) as unknown as NavigationState)
+          await services.kv.removeItem(PENDING_NOTIFICATION_KEY)
+        }
+        await Notifications.clearLastNotificationResponseAsync()
+      })
+    })
+    return () => subscription.remove()
+  }, [navigation, services])
 
   return (
     <SafeAreaProvider>
       <StoreProvider store={store} services={services}>
+        {notificationError ? (
+          <ErrorText>Notifications could not be enabled on this build.</ErrorText>
+        ) : null}
         {initial ? (
           <NavigationContainer
+            ref={navigation}
             theme={theme}
             linking={linking}
             initialState={initial.state}

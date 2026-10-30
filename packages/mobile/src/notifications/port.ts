@@ -14,7 +14,7 @@ export const DEFAULT_ACTION_IDENTIFIER = 'expo.modules.notifications.actions.DEF
 /** `getDevicePushTokenAsync`: the raw APNs or FCM token, `type` the platform. */
 export interface DevicePushToken {
   readonly type: string
-  readonly data: unknown
+  readonly data?: unknown
 }
 
 export interface NotificationActionSpec {
@@ -39,7 +39,7 @@ export interface NotificationCategorySpec {
 export interface IncomingContent {
   readonly title: string | null
   readonly body: string | null
-  readonly data: unknown
+  readonly data?: unknown
   readonly categoryIdentifier?: string | null
 }
 

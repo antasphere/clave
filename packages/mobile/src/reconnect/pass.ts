@@ -22,17 +22,19 @@
  */
 import type { Drafts } from '../chat/drafts'
 import { reconcile, type SendOptions, type SendOutcome } from '../chat/send'
-import type { WriteStatus } from '../contract/types'
+import type { WriteStatus, WriteAnswer } from '../contract/types'
 import type { DeliveryMarks, UnknownSend, UnknownSends } from './ledger'
 
 export interface ReconnectPorts {
+  readonly clearAttachments?: (send: UnknownSend) => Promise<void>
+  readonly isActive?: (send: UnknownSend) => boolean
   readonly sends: UnknownSends
   readonly marks: DeliveryMarks
   readonly drafts: Pick<Drafts, 'get' | 'clear'>
   /** `GET /sessions/writes` for this send; throws on failure. */
   readonly status: (send: UnknownSend) => Promise<WriteStatus>
   /** The same message under the same id; throws a `ServerError` on failure. */
-  readonly write: (send: UnknownSend) => Promise<void>
+  readonly write: (send: UnknownSend) => Promise<WriteAnswer>
   readonly sleep: (ms: number) => Promise<void>
   readonly now: () => number
   readonly refreshRequests: (machineId: string) => Promise<void>
@@ -59,6 +61,7 @@ export async function reconnectPass(
 ): Promise<ReconnectReport> {
   const outcomes: { send: UnknownSend; outcome: SendOutcome }[] = []
   for (const send of await ports.sends.forMachine(input.machineId)) {
+    if (ports.isActive?.(send)) continue
     const outcome = await reconcile(
       send.clientMessageId,
       {
@@ -71,7 +74,7 @@ export async function reconnectPass(
       true
     )
     outcomes.push({ send, outcome })
-    await settle(send, outcome, ports)
+    await settleSend(send, outcome, ports)
   }
   const refreshFailures: string[] = []
   let requestsRefreshed = false
@@ -96,16 +99,19 @@ export async function reconnectPass(
 }
 
 /** The ledger, the draft and the mark after one send's outcome. */
-async function settle(
+export async function settleSend(
   send: UnknownSend,
   outcome: SendOutcome,
-  ports: ReconnectPorts
+  ports: Pick<ReconnectPorts, 'sends' | 'marks' | 'drafts' | 'now' | 'clearAttachments'>
 ): Promise<void> {
   switch (outcome.kind) {
     case 'sent': {
       await ports.sends.remove(send.clientMessageId)
-      if ((await ports.drafts.get(send.machineId, send.sessionId)) === send.text)
+      if (
+        (await ports.drafts.get(send.machineId, send.sessionId)) === (send.draftText ?? send.text)
+      )
         await ports.drafts.clear(send.machineId, send.sessionId)
+      await ports.clearAttachments?.(send)
       await ports.marks.clear(send.machineId, send.sessionId)
       return
     }
