@@ -395,10 +395,13 @@ export class HubSignIn {
 
   /** A valid access token for the relay, renewed when within a minute of its end. */
   async accessToken(): Promise<string> {
+    const epoch = this.epoch
     await this.restore()
+    this.assertEpoch(epoch)
     const session = this.requireSession()
     if (session.access && !this.lapsing(session.access)) return session.access.token
     await this.refresh()
+    this.assertEpoch(epoch)
     const renewed = this.requireSession()
     if (!renewed.access) throw new AuthError('expired', 'Sign in again.')
     return renewed.access.token
@@ -407,14 +410,33 @@ export class HubSignIn {
   /** A valid ID token for the enrollment, renewed when within a minute of
    *  its end; a refresh that brings no ID token means a new sign-in. */
   async idToken(): Promise<string> {
+    const epoch = this.epoch
     await this.restore()
+    this.assertEpoch(epoch)
     const session = this.requireSession()
     if (session.id && !this.lapsing(session.id)) return session.id.token
     await this.refresh()
+    this.assertEpoch(epoch)
     const renewed = this.requireSession()
     if (!renewed.id || this.lapsing(renewed.id))
       throw new AuthError('expired', 'Sign in again to pair a machine.')
     return renewed.id.token
+  }
+
+  /** Captured with an owner's stores. Old work cannot start a credential read
+   * after another account signs in, even when it awaited unrelated storage first. */
+  guardAccount(): () => void {
+    const epoch = this.epoch
+    const subject = this.session?.account.subject ?? null
+    return () => {
+      this.assertEpoch(epoch)
+      if ((this.session?.account.subject ?? null) !== subject)
+        throw new AuthError('cancelled', 'The account changed.')
+    }
+  }
+
+  private assertEpoch(epoch: number): void {
+    if (epoch !== this.epoch) throw new AuthError('cancelled', 'The account changed.')
   }
 
   private requireSession(): Session {

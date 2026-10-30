@@ -39,7 +39,8 @@ export class BetaServices {
     readonly kv: KeyValueStore,
     readonly credentials: CredentialStore,
     readonly drafts: Drafts,
-    readonly build: BuildKind
+    readonly build: BuildKind,
+    private readonly assertOwner: () => void = auth.guardAccount()
   ) {
     this.records = new EnrollmentRecords(kv)
     this.delivery = new DeliveryController(new UnknownSends(kv), new DeliveryMarks(kv), drafts, kv)
@@ -71,15 +72,26 @@ export class BetaServices {
 
   private async machines(): Promise<Machine[]> {
     if (!this.auth.status().account) return []
+    this.assertOwner()
     const relayUrl = await this.relayUrl()
+    this.assertOwner()
     if (!relayUrl) throw new Error('Enter the team relay address to see your machines.')
     try {
-      const machines = await new RelayMachineSource(relayUrl, () => this.auth.accessToken(), {
-        build: this.build
-      }).list()
+      const machines = await new RelayMachineSource(
+        relayUrl,
+        () => {
+          this.assertOwner()
+          return this.auth.accessToken()
+        },
+        {
+          build: this.build
+        }
+      ).list()
+      this.assertOwner()
       await this.kv.setItem('machines-cache', JSON.stringify(machines))
       return machines
     } catch (error) {
+      this.assertOwner()
       const transient =
         error instanceof ServerError
           ? ['network', 'timeout'].includes(error.kind) || (error.status ?? 0) >= 500
@@ -98,8 +110,11 @@ export class BetaServices {
     onState: (state: PairingState) => void,
     cancelled: () => boolean
   ): Promise<PairingState> {
+    this.assertOwner()
     const idToken = await this.auth.idToken()
+    this.assertOwner()
     const clientId = await this.auth.ensureClient()
+    this.assertOwner()
     const result = await pair(
       {
         machine,
@@ -116,7 +131,14 @@ export class BetaServices {
         credentials: this.credentials,
         records: this.records,
         onState,
-        cancelled,
+        cancelled: () => {
+          try {
+            this.assertOwner()
+          } catch {
+            return true
+          }
+          return cancelled()
+        },
         now: Date.now,
         sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms))
       }

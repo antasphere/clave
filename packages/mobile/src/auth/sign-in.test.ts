@@ -228,6 +228,47 @@ describe('the code flow', () => {
 })
 
 describe('the refresh', () => {
+  for (const method of ['accessToken', 'idToken'] as const)
+    it(`does not return a replacement owner's ${method} to a caller waiting on refresh`, async () => {
+      provider.state.idTokenTtlSec = 10
+      let release!: () => void
+      let waiting = false
+      const signIn = make({
+        fetch: async (url, init) => {
+          const response = await fetch(url, init)
+          if (String(init?.body).includes('grant_type=refresh_token')) {
+            waiting = true
+            await new Promise<void>((resolve) => {
+              release = resolve
+            })
+          }
+          return response
+        }
+      })
+      await signIn.signIn()
+      advance(11_000)
+      const oldCaller = signIn[method]().then(
+        () => ({ kind: 'resolved' }),
+        (error: unknown) => ({ kind: 'rejected', failure: (error as { failure: string }).failure })
+      )
+      try {
+        await vi.waitFor(() => expect(waiting).toBe(true))
+        await signIn.signOut()
+        provider.state.user = {
+          sub: 'owner-B',
+          name: 'B',
+          email: 'b@example.test',
+          email_verified: true
+        }
+        await signIn.signIn()
+        expect(signIn.status().account?.subject).toBe('owner-B')
+      } finally {
+        release?.()
+      }
+      expect(await oldCaller).toEqual({ kind: 'rejected', failure: 'cancelled' })
+      expect(await signIn[method]()).toBeTypeOf('string')
+    })
+
   it('renews a lapsed access token once for two asks, the rotated token kept first', async () => {
     const signIn = make()
     await signIn.signIn()
