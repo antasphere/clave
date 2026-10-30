@@ -44,6 +44,10 @@ The pure sign-in tests use the local signed OIDC fixture. Enrollment and upload 
 
 A secure-store and key-value namespace hashes the issuer and subject together. A subject change reconstructs the store and navigator and disconnects the previous subscriptions. Old asynchronous writes retain their old immutable namespace. A returning owner retains offline drafts, paired credentials and their main machine. Another account cannot read those records.
 
+Sign out waits for earlier native-token registrations, blocks new registrations on that account's services, and asks every paired machine to remove this phone's push target before ending the local login. Each clear uses the device credential captured from the previous owner's store. It does not read the next account's credentials or remove another phone, and returning-owner drafts remain stored.
+
+An unreachable machine cannot confirm removal. Each clear has a three-second request timeout. Sign-out completes with a warning; that machine may still send previews, and already dispatched notifications cannot be recalled. Failed machine IDs stay in that owner's storage. When that owner signs back in, token startup retries removal before registering a current token. Another account does not run this cleanup. If local storage could not record a retry, the warning asks the person to try signing in and out again or revoke the phone in Settings → Mobile on the Mac. These registry and recording-transport checks do not establish physical APNs/FCM delivery or native UI acceptance.
+
 ## Development configuration
 
 `CLAVE_ANTASPHERE_ISSUER` configures the local OIDC fixture for development only. Release sign-in uses the production issuer. `CLAVE_MOBILE_RELAY` supplies the team relay origin; it can also be entered on Machines after sign-in. A release client requires HTTPS. A relay change clears existing pairings before new credentials can travel there.

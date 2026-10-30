@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react'
-import { View } from 'react-native'
+import { Alert, View } from 'react-native'
 import { useServices, useStoreApi } from '../state/context'
 import { Button, ErrorText, Field, Muted } from '../ui/components'
 import { space } from '../ui/theme'
@@ -11,6 +11,7 @@ export function AccountPanel(): ReactNode {
   const [status, setStatus] = useState<AuthStatus | null>(beta?.auth.status() ?? null)
   const [relay, setRelay] = useState('')
   const [error, setError] = useState<string | null>(null)
+  const [signingOut, setSigningOut] = useState(false)
   useEffect(() => {
     if (!beta) return
     void beta.relayUrl().then(setRelay)
@@ -47,11 +48,28 @@ export function AccountPanel(): ReactNode {
               ? 'Signing in…'
               : 'Sign in with Antasphere'
         }
-        disabled={status.phase === 'signing-in'}
+        disabled={status.phase === 'signing-in' || signingOut}
         testID="account-sign-in"
         onPress={() => {
           store.getState().disconnectAll()
-          void (status.account ? beta.auth.signOut() : beta.auth.signIn())
+          if (!status.account) {
+            void beta.auth.signIn()
+            return
+          }
+          setSigningOut(true)
+          void beta
+            .signOut()
+            .then((result) => {
+              if (result.pending !== 0)
+                Alert.alert(
+                  'Signed out',
+                  result.retryRecorded
+                    ? 'Some machines could not confirm notification removal and may still send updates. Removal will retry when you sign back in to this account. You can also revoke this phone in Settings → Mobile on the Mac.'
+                    : 'Some machines could not confirm notification removal and may still send updates. Try signing in and signing out again, or revoke this phone in Settings → Mobile on the Mac.'
+                )
+            })
+            .catch(() => setError('Sign-out could not complete. Try again.'))
+            .finally(() => setSigningOut(false))
         }}
       />
       {status.account ? (
