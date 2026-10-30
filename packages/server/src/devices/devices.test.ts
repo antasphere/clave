@@ -7,6 +7,9 @@
  * token on lane B's seam, the relay address, the record on disk.
  */
 import { createHash, randomBytes } from 'node:crypto'
+import { mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 import { CLOSE_DEVICE_REVOKED, DEVICE_PAIR_PATH } from '@clave/contract/devices'
 import { startOidcProvider } from '../../../../tests/e2e/fixtures/oidc-provider.mjs'
@@ -16,6 +19,15 @@ import { memoryDeviceStorage, type DevicesPortService } from './port'
 import { DEVICE_FORBIDDEN_MESSAGE, deviceHearsEvent, deviceMayCall } from './scope'
 import { FIXTURE_PATH } from '../fixtures/route'
 import { makeDeviceSessions } from './service'
+import type { ServerPorts } from '../ports'
+import { memoryWriteLedgerStorage, STOPPED_AFTER_DISPATCH } from '../sessions/writes'
+import { FakeSettingsSource } from '../settings/test-support'
+import { PendingRequests } from '../requests/service'
+import { createServerFiles } from '../files/service'
+import { ensureFileHelper } from '../files/test-support'
+import { ClaveServerClient } from '../../../mobile/src/api/client'
+import { AttachmentClient } from '../../../mobile/src/attachments/client'
+import type { TimelinePage } from '@clave/contract/timeline'
 
 type Provider = Awaited<ReturnType<typeof startOidcProvider>>
 const OWNER = 'user-7f3a'
@@ -72,7 +84,7 @@ interface World {
   relay: { url: string }
   asked: Array<{ name: string; platform: string }>
   json: (
-    method: 'GET' | 'POST',
+    method: 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH' | 'HEAD' | 'OPTIONS',
     path: string,
     options?: { token?: string | null; body?: unknown; headers?: Record<string, string> }
   ) => Promise<{ status: number; body: unknown; headers: Headers }>
@@ -96,8 +108,15 @@ afterEach(async () => {
   world = null
 })
 
-async function start(options: { owner?: string | null; issuer?: string } = {}): Promise<World> {
-  const source = new FakeSource(aSession('s1'))
+async function start(
+  options: {
+    owner?: string | null
+    issuer?: string
+    source?: FakeSource
+    ports?: Omit<ServerPorts, 'sessions' | 'devices'>
+  } = {}
+): Promise<World> {
+  const source = options.source ?? new FakeSource(aSession('s1'))
   const storage = memoryDeviceStorage()
   const owner = { subject: options.owner === undefined ? OWNER : options.owner }
   const clock = { now: Date.now() }
@@ -113,7 +132,7 @@ async function start(options: { owner?: string | null; issuer?: string } = {}): 
     now: () => clock.now
   }
   const server = await startEmbedded({
-    ports: { sessions: source, devices: port },
+    ports: { ...options.ports, sessions: source, devices: port },
     testFixtures: true
   })
   const json: World['json'] = async (method, path, o = {}) => {
@@ -661,5 +680,372 @@ describe('the scope, as a table', () => {
     expect(deviceHearsEvent('requests.changed')).toBe(true)
     expect(deviceHearsEvent('accounts.claude_changed')).toBe(false)
     expect(deviceHearsEvent('sidebar.layout_changed')).toBe(false)
+  })
+})
+
+describe('the paired phone mobile boundary', () => {
+  const knownId = 'phone-known-001'
+  const uncertainId = 'phone-uncertain-001'
+  const newId = 'phone-new-001'
+  const seededLedger = (): ReturnType<typeof memoryWriteLedgerStorage> => {
+    const storage = memoryWriteLedgerStorage()
+    // Recovery input from a previous process, not a live provider acknowledgement.
+    storage.documents.set(
+      's1.ledger.json',
+      JSON.stringify({
+        v: 1,
+        complete: true,
+        entries: {
+          [knownId]: { status: 'accepted', at: 42 },
+          [uncertainId]: { status: 'dispatched', at: 41 }
+        }
+      })
+    )
+    return storage
+  }
+  const phoneClient = (w: World, token: string): ClaveServerClient =>
+    new ClaveServerClient({ serverUrl: w.server.url, bearer: token }, { build: 'development' })
+
+  it.each([
+    [knownId, { status: 'accepted', at: 42 }],
+    [uncertainId, { status: 'unknown', reason: STOPPED_AFTER_DISPATCH }],
+    [newId, { status: 'absent' }]
+  ] as const)(
+    'reads canonical write status for %s with a real paired credential',
+    async (id, expected) => {
+      const w = await start({ ports: { writeLedger: seededLedger() } })
+      const { token } = await w.device()
+      expect(token).not.toBe(w.server.token)
+      const path = `/sessions/writes?id=s1&clientMessageId=${id}`
+      const owner = await w.json('GET', path)
+      expect(owner.status).toBe(200)
+      expect(owner.body).toMatchObject(expected)
+      const phone = await w.json('GET', path, { token })
+      expect(phone.status, JSON.stringify(phone.body)).toBe(200)
+      expect(phone.body).toEqual(owner.body)
+      expect(await phoneClient(w, token).sessions.writeStatus('s1', id)).toEqual(owner.body)
+      expect((await w.json('GET', path, { token })).body).toEqual(owner.body)
+      expect(w.source.writes).toEqual([])
+    }
+  )
+
+  it('reads seeded sessions, timeline, history, profiles, workspaces and requests through the mobile client', async () => {
+    const source = new FakeSource(aSession('s1'))
+    source.historyOf = {
+      items: [{ event: { type: 'user_message', text: 'Earlier phone message' }, at: 17 }],
+      before: 10
+    }
+    const timeline: TimelinePage = {
+      items: [
+        {
+          ...source.historyOf.items[0],
+          position: { generation: 'phone-fixture', sequence: 6 }
+        }
+      ],
+      before: 6,
+      cursor: { generation: 'phone-fixture', sequence: 9 },
+      truncated: true
+    }
+    const timelineAsked: unknown[] = []
+    Object.assign(source, {
+      timeline: (id: string, before?: number, limit?: number) => {
+        timelineAsked.push({ id, before, limit })
+        return timeline
+      }
+    })
+    const settings = new FakeSettingsSource()
+    settings.profiles = {
+      ...settings.profiles,
+      customProfiles: [
+        {
+          id: 'phone-profile',
+          name: 'Fixture Codex',
+          family: 'codex',
+          command: ['fixture-codex'],
+          additionalArgs: ['--fixture']
+        }
+      ]
+    }
+    settings.state = {
+      ...settings.state,
+      workspaces: [
+        {
+          id: 'workspace-phone',
+          name: 'Phone work',
+          rootDir: '/work',
+          profileFile: null,
+          createdAt: 3
+        }
+      ]
+    }
+    const requests = new PendingRequests()
+    const pending = requests.create({
+      sessionId: 's1',
+      kind: 'permission',
+      description: 'Read the fixture document?',
+      options: [{ id: 'allow', label: 'Allow' }]
+    })
+    const w = await start({ source, ports: { settings, requests } })
+    try {
+      const { token, deviceId } = await w.device()
+      const client = phoneClient(w, token)
+      expect(await client.sessions.list()).toEqual([aSession('s1')])
+      expect(await client.sessions.get('s1')).toEqual(aSession('s1'))
+      expect(await client.sessions.capabilities('s1')).toEqual({ images: true })
+      expect(await client.sessions.history('s1', 20, 5)).toEqual(source.historyOf)
+      expect(source.historyAsked).toEqual([{ id: 's1', before: 20, limit: 5 }])
+      expect(await client.sessions.timeline('s1', 8, 5)).toEqual(timeline)
+      expect(timelineAsked).toEqual([{ id: 's1', before: 8, limit: 5 }])
+      expect(await client.launchProfiles.list()).toEqual(settings.profiles)
+      expect(await client.workspaces.load()).toEqual(settings.state)
+      expect(await client.requests.list()).toEqual({ revision: 1, pending: [pending] })
+      expect((await w.json('GET', '/devices/me', { token })).body).toMatchObject({
+        id: deviceId,
+        ...PHONE
+      })
+      for (const [path, expected] of [
+        ['/sessions/models?id=s1', source.modelsOf],
+        ['/sessions/commands?id=s1', source.commandsOf]
+      ] as const) {
+        const answer = await w.json('GET', path, { token })
+        expect(answer.status, path).toBe(200)
+        expect(answer.body).toEqual(expected)
+      }
+      expect(source.writes).toEqual([])
+      expect(source.starts).toEqual([])
+    } finally {
+      await w.server.stop()
+      requests.close()
+    }
+  })
+
+  it('applies intended session, request and own-device writes once under the paired credential', async () => {
+    const requests = new PendingRequests()
+    const answers: unknown[] = []
+    const pending = requests.create(
+      {
+        sessionId: 's1',
+        kind: 'permission',
+        description: 'Allow the fixture?',
+        options: [{ id: 'allow', label: 'Allow' }]
+      },
+      async (response) => void answers.push(response)
+    )
+    const w = await start({ ports: { requests, writeLedger: seededLedger() } })
+    try {
+      const { token, deviceId } = await w.device()
+      const client = phoneClient(w, token)
+      const startInput = {
+        cwd: '/work/phone-start',
+        options: {
+          codexMode: true,
+          workspaceId: 'workspace-phone',
+          launchProfileId: 'phone-profile',
+          launchProfile: {
+            id: 'phone-profile',
+            name: 'Fixture Codex',
+            family: 'codex' as const,
+            command: ['fixture-codex'],
+            additionalArgs: ['--fixture']
+          }
+        }
+      }
+      const started = await client.sessions.start(startInput)
+      expect(started).toEqual({
+        id: 'started-1',
+        cwd: '/work/phone-start',
+        folderName: 'phone-start',
+        alive: true,
+        claudeSessionId: null,
+        piSessionId: null
+      })
+      expect(w.source.starts).toEqual([startInput])
+      expect(w.source.sessions.has(started.id)).toBe(true)
+      const input = {
+        type: 'user_message' as const,
+        text: 'One fixture reply',
+        clientMessageId: 'phone-send-001'
+      }
+      const written = await client.sessions.write('s1', input)
+      expect(written).toMatchObject({ status: 'accepted', at: expect.any(Number) })
+      expect(await client.sessions.write('s1', input)).toEqual(written)
+      expect(await client.sessions.writeStatus('s1', input.clientMessageId)).toEqual(written)
+      expect(w.source.writes).toEqual([{ id: 's1', input }])
+      expect(
+        (
+          await w.json('POST', '/sessions/resize', {
+            token,
+            body: { id: 's1', cols: 90, rows: 30 }
+          })
+        ).status
+      ).toBe(204)
+      expect(w.source.resizes).toEqual([{ id: 's1', cols: 90, rows: 30 }])
+      const viewed = await w.json('POST', '/sessions/view', {
+        token,
+        body: { id: 's1', viewId: 'fixture/chat' }
+      })
+      expect(viewed.status).toBe(200)
+      expect(viewed.body).toMatchObject({ id: 's1', viewId: 'fixture/chat' })
+      expect(w.source.views).toEqual([{ id: 's1', viewId: 'fixture/chat' }])
+      expect(
+        (await w.json('POST', '/sessions/view', { token, body: { id: 's1', viewId: null } })).body
+      ).not.toHaveProperty('viewId')
+      expect(w.source.views.at(-1)).toEqual({ id: 's1', viewId: null })
+      expect(await client.sessions.restart('s1')).toMatchObject({ id: 's1', alive: true })
+      expect(w.source.restarts).toEqual([{ id: 's1', account: {}, resendRejected: false }])
+      const response = { type: 'permission' as const, optionId: 'allow' }
+      expect(await client.requests.resolve(pending.id, response)).toEqual({ accepted: true })
+      expect(await client.requests.resolve(pending.id, response)).toEqual({ accepted: false })
+      expect(answers).toEqual([response])
+      expect((await client.requests.list()).pending).toEqual([])
+      expect(requests.result(pending.id, 's1').status).toBe('completed')
+      const other = await w.device()
+      expect(
+        (
+          await w.json('POST', '/devices/me/push-token', {
+            token: other.token,
+            body: { token: 'other-fixture-apns', platform: 'ios' }
+          })
+        ).status
+      ).toBe(204)
+      expect(
+        (
+          await w.json('POST', '/devices/me/push-token', {
+            token,
+            body: { token: 'fixture-apns', platform: 'ios' }
+          })
+        ).status
+      ).toBe(204)
+      expect(await runList(freshService(w))).toEqual(
+        expect.arrayContaining([
+          { deviceId, platform: 'ios', token: 'fixture-apns' },
+          { deviceId: other.deviceId, platform: 'ios', token: 'other-fixture-apns' }
+        ])
+      )
+      expect(
+        (await w.json('POST', '/devices/me/push-token/clear', { token, body: {} })).status
+      ).toBe(204)
+      expect(await runList(freshService(w))).toEqual([
+        { deviceId: other.deviceId, platform: 'ios', token: 'other-fixture-apns' }
+      ])
+      await client.sessions.stop(started.id)
+      expect(w.source.stops).toEqual(['started-1'])
+      expect(w.source.sessions.has(started.id)).toBe(false)
+    } finally {
+      await w.server.stop()
+      requests.close()
+    }
+  })
+
+  it('reads a document and prepares bounded attachment bytes while generic file writes stay forbidden', async () => {
+    ensureFileHelper()
+    const root = await realpath(await mkdtemp(join(tmpdir(), 'clave-phone-scope-')))
+    const content = 'Only the seeded document.\n'
+    await writeFile(join(root, 'document.md'), content)
+    const files = createServerFiles({ attachmentsRoot: join(root, 'attachments'), roots: [root] })
+    let w: World | undefined
+    try {
+      w = await start({ ports: { files, writeLedger: seededLedger() } })
+      const { token } = await w.device()
+      expect(await phoneClient(w, token).files.read(root, 'document.md')).toEqual({
+        content,
+        size: Buffer.byteLength(content),
+        binary: false,
+        truncated: false
+      })
+      const bytes = Buffer.from('A bounded fixture attachment.\n')
+      const attachment = await new AttachmentClient(
+        { serverUrl: w.server.url, bearer: token },
+        { build: 'development' }
+      ).prepareUpload('s1', { name: 'Fixture.txt', image: false, base64: bytes.toString('base64') })
+      expect(attachment).toMatchObject({
+        name: 'Fixture.txt',
+        mimeType: 'text/plain',
+        size: bytes.length,
+        delivery: 'reference'
+      })
+      expect(attachment.path.startsWith(join(root, 'attachments', 's1') + '/')).toBe(true)
+      expect(await readFile(attachment.path)).toEqual(bytes)
+      const attachedInput = {
+        type: 'user_message' as const,
+        text: 'Read the fixture attachment',
+        clientMessageId: 'phone-attached-001',
+        attachments: [attachment]
+      }
+      expect(await phoneClient(w, token).sessions.write('s1', attachedInput)).toMatchObject({
+        status: 'accepted'
+      })
+      expect(w.source.writes).toEqual([{ id: 's1', input: attachedInput }])
+      for (const path of [
+        '/files/write',
+        '/files/upload',
+        '/files/create',
+        '/files/mkdir',
+        '/files/attachments/prepare/extra'
+      ]) {
+        const denied = await w.json('POST', path, {
+          token,
+          body: { root, path: 'document.md', content: 'Changed' }
+        })
+        expect(denied.status, path).toBe(403)
+      }
+      expect(await readFile(join(root, 'document.md'), 'utf8')).toBe(content)
+    } finally {
+      await w?.server.stop()
+      files.dispose()
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('keeps near paths, other methods, desktop metadata and administration forbidden, and rejects invalid or revoked credentials', async () => {
+    const settings = new FakeSettingsSource()
+    const w = await start({ ports: { settings, writeLedger: seededLedger() } })
+    const { token, deviceId } = await w.device()
+    for (const path of [
+      '/sessions/writes/',
+      '/sessions/writes/extra',
+      '/sessions/writes-extra',
+      '/sessions/write-status',
+      '/sessions/records?ids=s1',
+      '/sessions/records',
+      '/devices',
+      '/accounts/claude',
+      '/server/info',
+      '/plugins'
+    ]) {
+      const answer = await w.json('GET', path, { token })
+      expect(answer.status, path).toBe(403)
+      expect(answer.body).toEqual({ error: 'Forbidden', message: DEVICE_FORBIDDEN_MESSAGE })
+    }
+    for (const method of ['POST', 'PUT', 'DELETE', 'PATCH', 'HEAD', 'OPTIONS'] as const) {
+      expect(
+        (
+          await w.json(method, '/sessions/writes', {
+            token,
+            ...(method === 'HEAD' ? {} : { body: {} })
+          })
+        ).status,
+        method
+      ).toBe(403)
+    }
+    for (const path of [
+      '/workspaces/registry',
+      '/launch-profiles',
+      '/accounts/claude',
+      '/preferences/app-icon',
+      '/devices/revoke'
+    ]) {
+      expect((await w.json('POST', path, { token, body: {} })).status, path).toBe(403)
+    }
+    expect(settings.calls).toEqual([])
+    expect(w.source.writes).toEqual([])
+    expect(w.source.starts).toEqual([])
+    const path = `/sessions/writes?id=s1&clientMessageId=${knownId}`
+    for (const bad of [null, '', 'a'.repeat(64)]) {
+      expect((await w.json('GET', path, { token: bad })).status).toBe(401)
+    }
+    expect((await w.json('POST', '/devices/revoke', { body: { deviceId } })).status).toBe(204)
+    expect((await w.json('GET', path, { token })).status).toBe(401)
+    expect((await w.json('GET', '/sessions', { token })).status).toBe(401)
   })
 })
