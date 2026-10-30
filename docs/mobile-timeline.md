@@ -46,8 +46,11 @@ not persisted, and there is no cross-generation exactly-once or recovery claim.
 After explicit Resume, the provider's available launch transcript is the source
 of the new generation. Missing provider history cannot be reconstructed by
 matching a previous checkpoint's text. A legacy host that provides no timeline
-returns `CapabilityUnavailable`; a seed failure returns `TimelineReadFailed`
-without transcript content in the error.
+returns `CapabilityUnavailable`. An exception from the timeline's seed reader
+returns `TimelineReadFailed` without transcript content in the error. Existing
+Claude and Codex adapters can instead catch a replay failure and emit a visible
+error event, which remains a timeline item. `truncated` reports retention or
+checkpoint limits; it does not establish that an adapter read succeeded.
 
 Run the reproducible `@structure-ai/fixtures` scenario and HTTP/push checks with:
 
