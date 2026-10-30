@@ -386,9 +386,12 @@ const messageOf = (error: unknown): string =>
   error instanceof Error ? error.message : String(error)
 
 /** The documents as files under `dir` (owner-only, written then renamed). */
-export function fileWriteLedgerStorage(dir: string): WriteLedgerStorage {
+export function fileWriteLedgerStorage(
+  dir: string,
+  legacy?: { readonly activationFile: string; readonly sessionIds: ReadonlyArray<string> }
+): WriteLedgerStorage {
   const target = (name: string): string => path.join(dir, name)
-  return {
+  const storage: WriteLedgerStorage = {
     read(name) {
       try {
         return fs.readFileSync(target(name), 'utf8')
@@ -406,6 +409,23 @@ export function fileWriteLedgerStorage(dir: string): WriteLedgerStorage {
       fs.renameSync(tmp, file)
     }
   }
+  if (legacy && !fs.existsSync(legacy.activationFile)) {
+    // This runs before the API listener. Only a genuinely new ledger directory
+    // proves these saved sessions predate identified writes. Existing storage,
+    // even empty/corrupt, must never be relabelled as a legacy installation.
+    const firstActivation = !fs.existsSync(dir)
+    fs.mkdirSync(path.dirname(legacy.activationFile), { recursive: true, mode: 0o700 })
+    // Record activation outside the ledger directory BEFORE initializing ids.
+    // A crash part-way through, or loss of the entire ledger directory later,
+    // cannot cause another migration to claim missing entries are absent.
+    fs.writeFileSync(legacy.activationFile, JSON.stringify({ v: 1 }), { mode: 0o600, flag: 'wx' })
+    if (firstActivation) {
+      const ledger = new WriteLedger(storage)
+      for (const id of new Set(legacy.sessionIds)) ledger.initialize(id)
+      fs.mkdirSync(dir, { recursive: true, mode: 0o700 })
+    }
+  }
+  return storage
 }
 
 /** The documents in memory, for the tests and for a server with no data directory. */

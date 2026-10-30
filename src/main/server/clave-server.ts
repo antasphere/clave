@@ -105,7 +105,13 @@ async function start(options: StartOptions): Promise<ClaveServerEndpoint> {
       ...push?.ports,
       // ── The mobile wave, lane B: the write ledger, per session, under the user data ──
       ...(options.dataDir !== undefined && {
-        writeLedger: fileWriteLedgerStorage(`${options.dataDir}/write-ledger`)
+        writeLedger: fileWriteLedgerStorage(`${options.dataDir}/write-ledger`, {
+          activationFile: `${options.dataDir}/write-ledger-activation.json`,
+          sessionIds: [
+            ...manager.list().map((session) => session.id),
+            ...(ports.sessions?.listAdoptableRecords().map((record) => record.id) ?? [])
+          ]
+        })
       }),
       ...ports
     },

@@ -529,3 +529,62 @@ it('an identified Codex write with a lost acknowledgement remains unknown', asyn
   expect(s.events.filter((e) => e.type === 'user_message')).toEqual([])
   await s.adapter.kill(s.handle)
 })
+it('known provider refusal stays refused without evidence', async () => {
+  const s = await setup()
+  const original = s.request.getMockImplementation()!
+  s.request.mockImplementation((method, params) =>
+    method === 'turn/start'
+      ? Promise.reject(new CodexRpcError(-32600, 'not allowed'))
+      : original(method, params)
+  )
+  try {
+    await expect(
+      s.adapter.write(s.handle, {
+        type: 'user_message',
+        text: 'hello',
+        clientMessageId: 'phone-00000009'
+      })
+    ).rejects.toBeInstanceOf(CodexRpcError)
+    expect(s.events.filter((e) => e.type === 'user_message')).toHaveLength(0)
+  } finally {
+    await s.adapter.kill(s.handle)
+  }
+})
+it('close before dispatch never accepts', async () => {
+  const s = await setup()
+  const result = s.adapter.write(s.handle, {
+    type: 'user_message',
+    text: 'hello',
+    clientMessageId: 'phone-00000010'
+  })
+  const assertion = expect(result).rejects.toBeInstanceOf(CodexRpcError)
+  await s.adapter.kill(s.handle)
+  await assertion
+  expect(s.request.mock.calls.filter(([m]) => m === 'turn/start')).toHaveLength(0)
+  expect(s.events.filter((e) => e.type === 'user_message')).toHaveLength(0)
+})
+it('provider response before RPC acknowledgement must retain conversation order', async () => {
+  const s = await setup()
+  const gate = deferred()
+  const original = s.request.getMockImplementation()!
+  s.request.mockImplementation((method, params) =>
+    method === 'turn/start' ? gate.promise : original(method, params)
+  )
+  const result = s.adapter.write(s.handle, {
+    type: 'user_message',
+    text: 'hello',
+    clientMessageId: 'phone-00000011'
+  })
+  await tick()
+  s.notify({
+    method: 'item/agentMessage/delta',
+    params: { threadId: 'thread', turnId: 'turn', itemId: 'a', delta: 'answer' }
+  })
+  gate.resolve({ turn: { id: 'turn', status: 'inProgress' } })
+  await result
+  const order = s.events
+    .filter((e) => e.type === 'user_message' || e.type === 'assistant_text')
+    .map((e) => e.type)
+  await s.adapter.kill(s.handle)
+  expect(order[0]).toBe('user_message')
+})

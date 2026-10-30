@@ -195,7 +195,15 @@ provider's acknowledgement is therefore an `unknown`, by design. A ledger file t
 be read is put aside and started again marked incomplete: an id it does not hold then reads
 `unknown`, never `absent`.
 
-Only a lifecycle creating a new session identity initializes an empty complete ledger.
+The first upgrade initializes the host's existing saved and live session identities before
+opening the API, only when neither the ledger directory nor `write-ledger-activation.json`
+exists. The activation record lives outside the ledger directory and is written first.
+A later missing or corrupt ledger, a missing whole directory, or a partially completed
+activation stays unknown and is never migrated again. An unknown arbitrary session is not
+initialized by this migration. This keeps an existing desktop conversation usable on its
+first phone connection without treating lost delivery records as a fresh conversation.
+
+After activation, only a lifecycle creating a new session identity initializes an empty complete ledger.
 Restoring an identity never does. A missing ledger is unknown even if a surviving history
 contains other ids. If the whole ledger is incomplete, unknown ids are refused, including
 new ids: restore the ledger or start a new session before sending more identified messages.

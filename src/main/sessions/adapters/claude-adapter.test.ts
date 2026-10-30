@@ -2126,3 +2126,53 @@ it('an identified Claude message is evidence only after stdin acknowledges it', 
   ])
   child.emit('exit', 0)
 })
+it('Claude negative stdin callback emits no evidence', async () => {
+  const child = Object.assign(new EventEmitter(), {
+    stdin: new PassThrough(),
+    stdout: new PassThrough(),
+    stderr: new PassThrough(),
+    kill: vi.fn()
+  })
+  let acknowledge!: (error?: Error | null) => void
+  vi.spyOn(child.stdin, 'write').mockImplementation(((_chunk: unknown, callback?: unknown) => {
+    if (typeof callback === 'function') acknowledge = callback as typeof acknowledge
+    return true
+  }) as typeof child.stdin.write)
+  mock.spawn.mockReturnValue(child)
+  const adapter = new ClaudeAdapter()
+  const handle = await adapter.spawn(spec)
+  adapter.on(handle, 'stream', (s) => {
+    if (s.kind === 'event') events.push(s.event)
+  })
+  const result = adapter.write(handle, {
+    type: 'user_message',
+    text: 'hello',
+    clientMessageId: 'phone-00000012'
+  })
+  const assertion = expect(result).rejects.toMatchObject({ _tag: 'SessionWriteUnknown' })
+  acknowledge(new Error('EPIPE'))
+  await assertion
+  expect(events.filter((e) => e.type === 'user_message')).toHaveLength(0)
+  child.emit('exit', 0)
+})
+it('Claude ready handles rejection of identified initialInput', async () => {
+  const child = Object.assign(new EventEmitter(), {
+    stdin: new PassThrough(),
+    stdout: new PassThrough(),
+    stderr: new PassThrough(),
+    kill: vi.fn()
+  })
+  vi.spyOn(child.stdin, 'write').mockImplementation(((_chunk: unknown, callback?: unknown) => {
+    if (typeof callback === 'function') queueMicrotask(() => callback(new Error('EPIPE')))
+    return true
+  }) as typeof child.stdin.write)
+  mock.spawn.mockReturnValue(child)
+  const adapter = new ClaudeAdapter()
+  adapter.configure(spec.id, {
+    initialInput: { type: 'user_message', text: 'retry', clientMessageId: 'phone-00000013' }
+  })
+  const handle = await adapter.spawn(spec)
+  adapter.ready(handle)
+  await new Promise((r) => setTimeout(r, 20))
+  child.emit('exit', 0)
+})

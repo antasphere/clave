@@ -589,6 +589,8 @@ interface HandleState {
   /** Serializes delivery requests, not whole turns: a follow-up waits for a
    *  pending start/steer reply, then targets whichever turn is still active. */
   turnRequest?: Promise<void>
+  /** Provider frames held until an identified input is acknowledged. */
+  pendingInputEvents?: SessionEvent[]
   ended: boolean
   closing: boolean
 }
@@ -645,7 +647,8 @@ export class CodexAdapter implements SessionAdapter {
       emitter,
       translator: new CodexTranslator((event) => {
         if (event.type === 'effort') state.announced = event.effort
-        emitter.emit('stream', { kind: 'event', event })
+        if (state.pendingInputEvents) state.pendingInputEvents.push(event)
+        else emitter.emit('stream', { kind: 'event', event })
       }),
       ended: false,
       closing: false
@@ -745,12 +748,21 @@ export class CodexAdapter implements SessionAdapter {
     const identified = value.clientMessageId !== undefined
     if (!identified) state.emitter.emit('stream', { kind: 'event', event: userMessageEvent(value) })
     const accepted = (state.turnRequest ?? Promise.resolve())
-      .then(() => this.sendTurn(state, prompt))
+      .then(() => {
+        if (identified) state.pendingInputEvents = []
+        return this.sendTurn(state, prompt)
+      })
       .then((delivered) => {
         if (identified) {
           if (!delivered) throw new CodexRpcError(-32600, 'session stopped before dispatch')
           state.emitter.emit('stream', { kind: 'event', event: userMessageEvent(value) })
         }
+      })
+      .finally(() => {
+        if (!identified) return
+        const pending = state.pendingInputEvents ?? []
+        state.pendingInputEvents = undefined
+        for (const event of pending) state.emitter.emit('stream', { kind: 'event', event })
       })
     // Legacy callers keep fire-and-forget behavior and the next input is never
     // replayed because its predecessor failed. Identified callers await their

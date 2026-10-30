@@ -347,7 +347,13 @@ async function main(): Promise<void> {
       serverInfo: selfUpgrade ?? ServerInfoPort.appRun(version),
       // ── The mobile wave, lane B: the notify domain, and the write ledger per session ──
       ...push.ports,
-      writeLedger: fileWriteLedgerStorage(path.join(dataDir, 'write-ledger'))
+      writeLedger: fileWriteLedgerStorage(path.join(dataDir, 'write-ledger'), {
+        activationFile: path.join(dataDir, 'write-ledger-activation.json'),
+        sessionIds: [
+          ...sessionManager.list().map((session) => session.id),
+          ...sessions.listAdoptableRecords().map((record) => record.id)
+        ]
+      })
     },
     port,
     host: config.host,
