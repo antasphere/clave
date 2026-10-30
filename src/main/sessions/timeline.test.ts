@@ -74,6 +74,34 @@ describe('server-authoritative conversation positions', () => {
     expect(history).toHaveBeenCalledTimes(1)
   })
 
+  it('captures a prompt sent by ready once in both the timeline and the live stream', async () => {
+    const { manager, adapter } = await fixture()
+    vi.spyOn(adapter, 'ready').mockImplementation((handle) =>
+      adapter.write(handle, { type: 'user_message', text: 'Initial prompt' })
+    )
+    const streams: SessionStream[] = []
+    manager.subscribe(session.id, (stream) => streams.push(stream))
+    manager.ready(session.id)
+    const items = timeline(manager).items.filter(({ event }) => event.type === 'user_message')
+    const live = streams.filter(
+      (stream) => stream.kind === 'event' && stream.event.type === 'user_message'
+    )
+    expect(items).toHaveLength(1)
+    expect(live).toHaveLength(1)
+    expect(items[0].position).toEqual(position(live[0]))
+  })
+
+  it('keeps a failed launch history read failed instead of returning an empty snapshot', async () => {
+    const { manager, adapter } = await fixture()
+    const error = new Error('Launch history could not be read')
+    const history = vi.spyOn(adapter, 'history').mockImplementation(() => {
+      throw error
+    })
+    expect(() => timeline(manager)).toThrow(error)
+    expect(() => timeline(manager)).toThrow(error)
+    expect(history).toHaveBeenCalledTimes(1)
+  })
+
   it('gives a snapshot watermark that separates buffered events arriving while HTTP is in flight', async () => {
     const { manager } = await fixture()
     await manager.write(session.id, { type: 'user_message', text: 'old' })
@@ -120,6 +148,27 @@ describe('server-authoritative conversation positions', () => {
 })
 
 describe('bounded timeline paging', () => {
+  it('keeps a tool call and its result together when the requested page starts inside the pair', async () => {
+    const { manager, adapter } = await fixture()
+    const events = [
+      { type: 'user_message', text: 'Read the file' },
+      { type: 'tool_call', id: 'read-file', name: 'Read', input: {} },
+      { type: 'tool_result', id: 'read-file', output: 'File contents' },
+      { type: 'assistant_text', delta: 'Done', final: true }
+    ] as const
+    for (const event of events) adapter.inject(session.id, { kind: 'event', event })
+    const page = timeline(manager, undefined, 2)
+    expect(page.items.map(({ event }) => event.type)).toEqual([
+      'tool_call',
+      'tool_result',
+      'assistant_text'
+    ])
+    expect(page.before).toBe(2)
+    expect(timeline(manager, page.before!).items.map(({ event }) => event.type)).toEqual([
+      'user_message'
+    ])
+  })
+
   it('keeps older page cursors absolute while new events arrive and eviction is visible', async () => {
     const { manager, adapter } = await fixture()
     for (let i = 0; i < 2005; i++)
