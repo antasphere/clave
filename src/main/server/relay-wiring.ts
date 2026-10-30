@@ -172,12 +172,14 @@ export function machineRecord(input: {
   version: string
   direct?: ReadonlyArray<string>
   hostname?: string
+  accountName?: string
   platform?: NodeJS.Platform
 }): MachineRecord {
   const platform = input.platform ?? process.platform
   const host = (input.hostname ?? os.hostname()).replace(/\.local$/i, '').trim()
+  const account = input.accountName?.trim()
   return {
-    name: host || 'Clave',
+    name: account ? `${host || 'Clave'} · ${account}` : host || 'Clave',
     platform: platform === 'darwin' ? 'macos' : 'linux',
     version: input.version,
     direct: (input.direct ?? []).map((url) => ({ url }))
@@ -217,7 +219,12 @@ export function startMobileRelay(wiring: MobileRelayWiring): RelayClient | null 
     address: () => flag ?? readMobileRelayPreference(),
     owner: () => manager?.status().account?.subject ?? null,
     accessToken: () => (manager ? manager.currentAccessToken() : Promise.resolve(null)),
-    record: () => machineRecord({ version: wiring.version, direct: wiring.direct ?? [] }),
+    record: () =>
+      machineRecord({
+        version: wiring.version,
+        direct: wiring.direct ?? [],
+        accountName: manager?.status().account?.name ?? undefined
+      }),
     credentials: relayCredentialStore(wiring.ports, log),
     local: { url: wiring.local.url },
     log

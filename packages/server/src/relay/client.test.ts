@@ -10,6 +10,7 @@ import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
 import { randomBytes } from 'node:crypto'
+import { EventEmitter } from 'node:events'
 import { createServer, type IncomingHttpHeaders, type ServerResponse } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { WebSocket, WebSocketServer, type ClientOptions, type RawData } from 'ws'
@@ -338,6 +339,98 @@ const pushUrlOf = (relay: Relay, machineId: string): string =>
   `${relay.url.replace(/^http/, 'ws')}/m/${machineId}/push`
 
 describe('the claim', () => {
+  it.each(['sign-out', 'stop', 'address change'] as const)(
+    'discards a token arriving after %s',
+    async (change) => {
+      let owner: string | null = OWNER
+      let address: string | null = 'https://relay.example'
+      let release!: (token: string) => void
+      const token = new Promise<string>((resolve) => {
+        release = resolve
+      })
+      let entered = false
+      const fetchClaim = vi.fn(async () => {
+        throw new Error('stale claim escaped')
+      })
+      const harness = startClient({
+        address: () => address,
+        owner: () => owner,
+        local: { url: 'http://127.0.0.1:43203' },
+        accessToken: () => {
+          entered = true
+          return token
+        },
+        fetch: fetchClaim
+      })
+      try {
+        await until(() => entered, 3000, 'token request')
+        if (change === 'sign-out') owner = null
+        if (change === 'address change') address = null
+        const stopped = change === 'stop' ? harness.client.stop() : null
+        harness.client.kick()
+        release('old-token')
+        if (stopped) await stopped
+        else
+          await until(() => harness.client.status().state !== 'claiming', 3000, 'token discarded')
+        expect(fetchClaim).not.toHaveBeenCalled()
+        expect(harness.store.saved).toHaveLength(0)
+      } finally {
+        release('old-token')
+      }
+    }
+  )
+
+  it('sends no hello when the owner changes while the socket is connecting', async () => {
+    let owner: string | null = OWNER
+    const sent: string[] = []
+    class ConnectingSocket extends EventEmitter {
+      static current: ConnectingSocket | undefined
+      readyState = 0
+      bufferedAmount = 0
+      constructor() {
+        super()
+        ConnectingSocket.current = this
+      }
+      send(frame: string): void {
+        sent.push(frame)
+      }
+      close(): void {
+        this.readyState = 3
+        queueMicrotask(() => this.emit('close', 1000))
+      }
+      terminate(): void {
+        this.close()
+      }
+    }
+    const address = 'https://relay.example'
+    const harness = startClient({
+      address: () => address,
+      owner: () => owner,
+      local: { url: 'http://127.0.0.1:43203' },
+      credentials: {
+        load: () => ({
+          relay: address,
+          owner: OWNER,
+          machineId: 'm_old',
+          machineSecret: 'test-secret'
+        }),
+        save: () => {},
+        clear: () => {}
+      },
+      WebSocket: ConnectingSocket as unknown as typeof WebSocket
+    })
+    await until(() => ConnectingSocket.current !== undefined, 3000, 'socket connecting')
+    owner = null
+    ConnectingSocket.current!.readyState = 1
+    ConnectingSocket.current!.emit('open')
+    await until(
+      () => harness.client.status().state === 'signed-out',
+      3000,
+      'signed out before hello'
+    )
+    expect(sent).toEqual([])
+  })
+
   it.each(['sign-out', 'stop', 'owner change', 'address change'] as const)(
     'discards a delayed claim after %s',
     async (change) => {
@@ -573,6 +666,22 @@ describe('the requests it performs', () => {
 })
 
 describe('the tunnel', () => {
+  it('isolates an oversized local push and keeps another tunnel usable', async () => {
+    const { relay, local, harness, machineId } = await connectedClient()
+    const phone = openPhone(pushUrlOf(relay, machineId))
+    await phone.opened
+    await until(() => local.pushes.length === 1, 3000, 'local push opened')
+    local.pushes[0].socket.send(Buffer.alloc(13 * 1024 * 1024), { binary: true })
+    // ws reports an exceeded local maxPayload as 1006, carried as going-away.
+    expect([1001, 1009]).toContain((await phone.closed()).code)
+    expect(harness.client.status().state).toBe('connected')
+    expect(relay.online()).toEqual([machineId])
+    const sibling = openPhone(pushUrlOf(relay, machineId))
+    await sibling.opened
+    sibling.socket.send('still alive')
+    expect(await sibling.nextText()).toBe('echo:still alive')
+  })
+
   it('pipes a phone’s push socket to a socket of its own on the local listener', async () => {
     const { relay, local, machineId } = await connectedClient()
     const phone = openPhone(pushUrlOf(relay, machineId))
