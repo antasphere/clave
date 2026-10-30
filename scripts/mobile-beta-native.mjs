@@ -20,6 +20,22 @@ import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { installedCodex, proveCodexProcess, proveSavedProfile } from './mobile-provider-proof.mjs'
 
+/** Build the exact private Maestro file; control fields are serialized separately. */
+export function renderNativeFlow(template, values) {
+  assert.equal(typeof values.CLEAR_STATE, 'boolean', 'Maestro clearState must be Boolean')
+  assert.ok([0, 1].includes(values.REPLY_INDEX), 'Maestro reply index must be zero or one')
+  const typed = template
+    .replaceAll('${CLEAR_STATE}', String(values.CLEAR_STATE))
+    .replaceAll('${REPLY_INDEX}', String(values.REPLY_INDEX))
+  return typed.replace(
+    'appId: com.clave.app.mobile',
+    'appId: com.clave.app.mobile\nenv:\n' +
+      Object.entries(values)
+        .map(([key, value]) => `  ${key}: ${JSON.stringify(String(value))}`)
+        .join('\n')
+  )
+}
+
 export function parseArgs(argv) {
   const required = [
     'worktree',
@@ -309,16 +325,10 @@ async function main(o) {
       REPLY_ONE: replies[0],
       REPLY_TWO: replies[1],
       REPLY_INDEX: o.provider === 'echo' ? 1 : 0,
-      CLEAR_STATE: o['ios-udid'] ? 'true' : 'false'
+      CLEAR_STATE: Boolean(o['ios-udid'])
     }
     let flow = readFileSync(path.join(o.worktree, 'packages/mobile/e2e/beta-provider.yaml'), 'utf8')
-    flow = flow.replace(
-      'appId: com.clave.app.mobile',
-      'appId: com.clave.app.mobile\nenv:\n' +
-        Object.entries(values)
-          .map(([key, value]) => `  ${key}: ${JSON.stringify(String(value))}`)
-          .join('\n')
-    )
+    flow = renderNativeFlow(flow, values)
     const flowFile = path.join(privateDir, 'flow.yaml')
     writeFileSync(flowFile, flow, { mode: 0o600 })
     // Suppress all Maestro output and remove its artifacts, including credential screenshots.
