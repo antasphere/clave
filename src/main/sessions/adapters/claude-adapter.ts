@@ -1,5 +1,5 @@
 import { EventEmitter } from 'node:events'
-import { SessionWriteUnknown } from '@clave/contract/sessions'
+import { UnconfirmedSessionWrite } from '@clave/contract/session-write-error'
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
@@ -1305,13 +1305,7 @@ export class ClaudeAdapter implements SessionAdapter {
         return new Promise<void>((resolve, reject) => {
           live.process!.stdin.write(`${JSON.stringify(payload)}\n`, (error) => {
             if (error) {
-              reject(
-                new SessionWriteUnknown({
-                  id: handle.id,
-                  clientMessageId: input.clientMessageId!,
-                  message: 'the provider did not confirm whether the message arrived'
-                })
-              )
+              reject(new UnconfirmedSessionWrite(handle.id, input.clientMessageId!))
               return
             }
             live.emit(userMessageEvent(input))

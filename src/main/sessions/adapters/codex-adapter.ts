@@ -1,5 +1,5 @@
 import { EventEmitter } from 'node:events'
-import { SessionWriteUnknown } from '@clave/contract/sessions'
+import { UnconfirmedSessionWrite } from '@clave/contract/session-write-error'
 import { readFileSync } from 'node:fs'
 import { randomBytes } from 'node:crypto'
 import { z } from 'zod'
@@ -574,8 +574,8 @@ interface HandleState {
   turnRequest?: Promise<void>
   /** Provider frames held until an identified input is acknowledged. */
   pendingInputEvents?: SessionEvent[]
-  /** Includes queued identified inputs, before their Promise continuation runs. */
-  identifiedInputs: number
+  /** Counts every input whose user event awaits ordered emission, including queued legacy inputs. */
+  orderedInputs: number
   ended: boolean
   closing: boolean
 }
@@ -630,7 +630,7 @@ export class CodexAdapter implements SessionAdapter {
       env: context?.env,
       initialPrompt: context?.initialPrompt,
       emitter,
-      identifiedInputs: 0,
+      orderedInputs: 0,
       translator: new CodexTranslator((event) => {
         if (event.type === 'effort') state.announced = event.effort
         if (state.pendingInputEvents) state.pendingInputEvents.push(event)
@@ -732,8 +732,9 @@ export class CodexAdapter implements SessionAdapter {
     if (value.type === 'stop_task') throw new Error('Codex chat cannot stop one background task')
     const prompt = providerPrompt(value)
     const identified = value.clientMessageId !== undefined
-    const deferLegacy = !identified && state.identifiedInputs > 0
-    if (identified) state.identifiedInputs++
+    const deferLegacy = !identified && state.orderedInputs > 0
+    const ordered = identified || deferLegacy
+    if (ordered) state.orderedInputs++
     if (!identified && !deferLegacy)
       state.emitter.emit('stream', { kind: 'event', event: userMessageEvent(value) })
     const accepted = (state.turnRequest ?? Promise.resolve())
@@ -750,8 +751,8 @@ export class CodexAdapter implements SessionAdapter {
         }
       })
       .finally(() => {
+        if (ordered) state.orderedInputs--
         if (!identified) return
-        state.identifiedInputs--
         const pending = state.pendingInputEvents ?? []
         state.pendingInputEvents = undefined
         for (const event of pending) state.emitter.emit('stream', { kind: 'event', event })
@@ -765,11 +766,7 @@ export class CodexAdapter implements SessionAdapter {
     if (identified)
       return accepted.catch((error) => {
         if (error instanceof CodexRpcError) throw error
-        throw new SessionWriteUnknown({
-          id: handle.id,
-          clientMessageId: value.clientMessageId!,
-          message: 'the provider did not confirm whether the message arrived'
-        })
+        throw new UnconfirmedSessionWrite(handle.id, value.clientMessageId!)
       })
   }
   /** Bring the thread up as soon as the view is looking, so thread/start's

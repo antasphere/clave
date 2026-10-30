@@ -4,6 +4,7 @@ import { FakeSource, aSession } from '../test-support'
 import { PendingRequests } from '../requests/service'
 import { memoryWriteLedgerStorage, type WriteLedgerStorage } from '../sessions/writes'
 import { SessionWriteUnknown } from '@clave/contract/sessions'
+import { UnconfirmedSessionWrite } from '@clave/contract/session-write-error'
 import { fakePush, type FakePush } from './fake'
 
 /**
@@ -333,6 +334,19 @@ describe('a message written once (the seam of 29 October)', () => {
       expect(source.writes).toEqual([])
     }
   )
+  it.each([{ entries: [] }, { entries: [{ status: 'accepted', at: 1 }] }])(
+    'refuses structurally corrupt array entries $entries',
+    async ({ entries }) => {
+      const storage = memoryWriteLedgerStorage()
+      storage.documents.set('s1.ledger.json', JSON.stringify({ v: 1, complete: true, entries }))
+      const { source } = await world({ storage })
+      expect(await status('s1', 'phone-shape-0001')).toMatchObject({ status: 'unknown' })
+      const response = await call('/sessions/write', message('phone-shape-0001'))
+      expect(response.status).toBe(422)
+      expect(await response.json()).toMatchObject({ _tag: 'SessionWriteUnknown' })
+      expect(source.writes).toEqual([])
+    }
+  )
   it('repeats a history-only acceptance without dispatch and keeps other ids unknown', async () => {
     const storage = memoryWriteLedgerStorage()
     storage.documents.set(
@@ -359,6 +373,20 @@ describe('a message written once (the seam of 29 October)', () => {
     source.refuse = null
     const retry = await call('/sessions/write', message('phone-00000011'))
     expect(await retry.json()).toMatchObject({ _tag: 'SessionWriteUnknown' })
+    expect(source.writes).toEqual([])
+  })
+  it('translates the effect-free adapter uncertainty into the existing unknown wire error', async () => {
+    const { source } = await world()
+    source.refuse = new UnconfirmedSessionWrite('s1', 'phone-plain-0001')
+    const response = await call('/sessions/write', message('phone-plain-0001'))
+    expect(response.status).toBe(422)
+    expect(await response.json()).toMatchObject({
+      _tag: 'SessionWriteUnknown',
+      clientMessageId: 'phone-plain-0001'
+    })
+    expect(await status('s1', 'phone-plain-0001')).toMatchObject({ status: 'unknown' })
+    source.refuse = null
+    expect((await call('/sessions/write', message('phone-plain-0001'))).status).toBe(422)
     expect(source.writes).toEqual([])
   })
   it('writes a message with no id every time, as before, answering accepted', async () => {

@@ -34,7 +34,8 @@
     "./devices": "./src/devices.ts",
     "./notify": "./src/notify.ts",
     "./timeline": "./src/timeline.ts",
-    "./relay": "./src/relay.ts"
+    "./relay": "./src/relay.ts",
+    "./session-write-error": "./src/session-write-error.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"

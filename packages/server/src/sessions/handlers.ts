@@ -45,6 +45,7 @@ import {
 import { SessionHost, type SessionHostService } from './port'
 import { ServerEvents } from '../events'
 import { SessionWrites, sanitizeReason } from './writes'
+import { UnconfirmedSessionWrite } from '@clave/contract/session-write-error'
 
 const messageOf = (error: unknown): string =>
   error instanceof Error ? error.message : String(error)
@@ -150,9 +151,10 @@ export const sessionHandlers = [
       const accepted = yield* Effect.tryPromise({
         try: () => host.write(id, input).then(() => ledger.accept(id, clientMessageId)),
         catch: (error) => {
-          if (error instanceof SessionWriteUnknown) {
-            ledger.unknown(id, clientMessageId, error.message)
-            return error
+          if (error instanceof SessionWriteUnknown || error instanceof UnconfirmedSessionWrite) {
+            const reason = sanitizeReason(error, input.text)
+            ledger.unknown(id, clientMessageId, reason)
+            return new SessionWriteUnknown({ id, clientMessageId, message: reason })
           }
           const reason = sanitizeReason(error, input.text)
           ledger.reject(id, clientMessageId, reason)
