@@ -525,7 +525,7 @@ it('an identified Codex write with a lost acknowledgement remains unknown', asyn
       text: 'hello',
       clientMessageId: 'phone-00000003'
     })
-  ).rejects.toMatchObject({ _tag: 'SessionWriteUnknown', clientMessageId: 'phone-00000003' })
+  ).rejects.toMatchObject({ _tag: 'UnconfirmedSessionWrite', clientMessageId: 'phone-00000003' })
   expect(s.events.filter((e) => e.type === 'user_message')).toEqual([])
   await s.adapter.kill(s.handle)
 })
@@ -601,7 +601,7 @@ it('failed ACK flushes provider frames without identified acceptance', async () 
     text: 'hello',
     clientMessageId: 'phone-00000021'
   })
-  const failure = expect(accepted).rejects.toMatchObject({ _tag: 'SessionWriteUnknown' })
+  const failure = expect(accepted).rejects.toMatchObject({ _tag: 'UnconfirmedSessionWrite' })
   await tick()
   s.notify({
     method: 'item/agentMessage/delta',
@@ -747,4 +747,34 @@ it('coalesced response and notification preserve order through real JSON-RPC rea
     .map((e) => e.type)
   await adapter.kill(handle)
   expect(order).toEqual(['user_message', 'assistant_text'])
+})
+
+it('reentrant desktop input does not overtake an already deferred desktop input', async () => {
+  const s = await setup()
+  const gate = deferred()
+  const original = s.request.getMockImplementation()!
+  s.request.mockImplementation((method, params) =>
+    method === 'turn/start' ? gate.promise : original(method, params)
+  )
+  const first = s.adapter.write(s.handle, {
+    type: 'user_message',
+    text: 'phone first',
+    clientMessageId: 'phone-00000026'
+  })
+  await tick()
+  s.adapter.write(s.handle, { type: 'user_message', text: 'desktop second' })
+  s.adapter.on(s.handle, 'stream', (stream) => {
+    if (stream.kind === 'event' && stream.event.type === 'assistant_text')
+      s.adapter.write(s.handle, { type: 'user_message', text: 'desktop third' })
+  })
+  s.notify({
+    method: 'item/agentMessage/delta',
+    params: { threadId: 'thread', turnId: 'turn', itemId: 'a', delta: 'answer' }
+  })
+  gate.resolve({ turn: { id: 'turn', status: 'inProgress' } })
+  await first
+  await tick()
+  const order = s.events.filter((e) => e.type === 'user_message').map((e) => e.text)
+  await s.adapter.kill(s.handle)
+  expect(order).toEqual(['phone first', 'desktop second', 'desktop third'])
 })

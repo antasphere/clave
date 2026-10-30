@@ -358,7 +358,8 @@ function parseLedger(text: string): LedgerDocument | null {
   if (typeof parsed !== 'object' || parsed === null) return null
   const doc = parsed as Partial<LedgerDocument>
   if (doc.v !== 1 || typeof doc.complete !== 'boolean') return null
-  if (typeof doc.entries !== 'object' || doc.entries === null) return null
+  if (typeof doc.entries !== 'object' || doc.entries === null || Array.isArray(doc.entries))
+    return null
   for (const entry of Object.values(doc.entries)) {
     const e = entry as Partial<LedgerEntry> | null
     if (!e || !STATUSES.has(e.status as string) || typeof e.at !== 'number') return null

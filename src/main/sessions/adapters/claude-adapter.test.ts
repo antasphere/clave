@@ -2149,7 +2149,7 @@ it('Claude negative stdin callback emits no evidence', async () => {
     text: 'hello',
     clientMessageId: 'phone-00000012'
   })
-  const assertion = expect(result).rejects.toMatchObject({ _tag: 'SessionWriteUnknown' })
+  const assertion = expect(result).rejects.toMatchObject({ _tag: 'UnconfirmedSessionWrite' })
   acknowledge(new Error('EPIPE'))
   await assertion
   expect(events.filter((e) => e.type === 'user_message')).toHaveLength(0)
