@@ -17,12 +17,21 @@
 // /opt/homebrew/bin/maestro) with JAVA_HOME set to a JDK, and the app built
 // once with `npx expo run:ios --device "iPhone 17 Pro"`.
 import { execFileSync, spawn } from 'node:child_process'
-import { existsSync, mkdirSync, readdirSync, rmSync, statSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  readFileSync,
+  writeFileSync
+} from 'node:fs'
 import os from 'node:os'
 import { randomBytes } from 'node:crypto'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { call, ensureWorkspace, startDevServer } from './dev-server.mjs'
+import { proveNativeSource } from './native-provenance.mjs'
 
 const PKG = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const NS = process.env.CLAVE_E2E_NS ?? 'clave-mobile-c'
@@ -177,11 +186,21 @@ async function main() {
     }
 
     // 3. Metro, for the development build.
-    metro = spawn('npx', ['expo', 'start', '--port', String(metroPort)], {
-      cwd: PKG,
-      env: metroEnv(),
-      stdio: ['ignore', 'pipe', 'pipe']
-    })
+    metro = spawn(
+      process.execPath,
+      [
+        path.resolve(PKG, '../../node_modules/.bin/expo'),
+        'start',
+        '--clear',
+        '--port',
+        String(metroPort)
+      ],
+      {
+        cwd: PKG,
+        env: metroEnv(),
+        stdio: ['ignore', 'pipe', 'pipe']
+      }
+    )
     metro.stdout.on('data', (d) => log(`metro: ${String(d).trim().split('\n')[0]}`))
     metro.stderr.on('data', (d) => log(`metro: ${String(d).trim().split('\n')[0]}`))
     await waitFor(
@@ -194,6 +213,15 @@ async function main() {
     log(`Metro on ${metroPort}`)
 
     // 4. The flow. Maestro's exit code is the verdict.
+    const privateFlow = path.join(ROOT, 'flow.yaml')
+    writeFileSync(
+      privateFlow,
+      readFileSync(path.join(PKG, 'e2e', 'chat.yaml'), 'utf8').replace(
+        '${SERVER_TOKEN}',
+        JSON.stringify(server.token)
+      ),
+      { mode: 0o600 }
+    )
     const started = Date.now()
     const result = spawn(
       maestro,
@@ -201,11 +229,9 @@ async function main() {
         '--udid',
         udid,
         'test',
-        path.join(PKG, 'e2e', 'chat.yaml'),
+        privateFlow,
         '--env',
         `SERVER_URL=${server.url}`,
-        '--env',
-        `SERVER_TOKEN=${server.token}`,
         '--env',
         `HISTORY_TEXT=${historyText}`,
         '--env',
@@ -213,14 +239,34 @@ async function main() {
         '--env',
         `METRO_PORT=${metroPort}`,
         '--debug-output',
-        path.join(PKG, 'e2e', '.output')
+        path.join(ROOT, 'maestro-private')
       ],
-      { cwd: PKG, env: metroEnv(), stdio: ['ignore', 'inherit', 'inherit'] }
+      { cwd: PKG, env: metroEnv(), stdio: ['ignore', 'pipe', 'pipe'] }
     )
+    for (const output of [result.stdout, result.stderr]) {
+      let pending = ''
+      output.on('data', (data) => {
+        pending += String(data)
+        const lines = pending.split('\n')
+        pending = lines.pop() ?? ''
+        for (const line of lines)
+          process.stderr.write(`${line.replaceAll(server.token, '[redacted]')}\n`)
+      })
+      output.on('end', () => process.stderr.write(pending.replaceAll(server.token, '[redacted]')))
+    }
+    const deadline = setTimeout(() => result.kill('SIGTERM'), 360000)
     const code = await new Promise((resolve) => result.once('exit', (c) => resolve(c ?? 1)))
+    clearTimeout(deadline)
     log(`maestro exited ${code} after ${((Date.now() - started) / 1000).toFixed(0)} s`)
     process.exitCode = code
+    if (code === 0) {
+      await proveNativeSource({ port: metroPort, output: path.join(ROOT, 'source-proof.json') })
+      const shot = arg('shot', null)
+      if (shot) sh('xcrun', ['simctl', 'io', udid, 'screenshot', shot])
+    }
   } finally {
+    rmSync(path.join(ROOT, 'flow.yaml'), { force: true })
+    rmSync(path.join(ROOT, 'maestro-private'), { recursive: true, force: true })
     if (metro) metro.kill('SIGTERM')
     for (const stop of stops) await stop()
   }

@@ -24,6 +24,8 @@ import {
   mergeBufferedHistory,
   applyOlderPage,
   freshCursor,
+  TimelineChanged,
+  type BufferedItem,
   shouldLoadOlder,
   type HistoryCursor
 } from '../chat/history'
@@ -37,7 +39,7 @@ import type {
   ResolveOutcome,
   ServerEventEnvelope,
   Session,
-  HistoryItem,
+  SessionPosition,
   SessionInfo,
   SpawnOptions,
   WorkspaceView
@@ -130,6 +132,8 @@ export interface StoreState {
   loadSessions(machineId: string): Promise<void>
   openChat(machineId: string, sessionId: string): Promise<() => void>
   loadOlder(machineId: string, sessionId: string): Promise<void>
+  /** Refresh only currently subscribed conversations. Never dispatch a draft. */
+  refreshOpenHistory(machineId: string): Promise<void>
   /** One send under an id the phone minted (or the one given); the outcome
    *  follows the table of `chat/send.ts`. The draft is cleared on `sent` only. */
   send(
@@ -235,6 +239,15 @@ export function orderProfiles(profiles: readonly LaunchProfileView[]): LaunchPro
 
 export function createStore(services: Services): UseBoundStore<StoreApi<StoreState>> {
   const connections = new Map<string, Connection>()
+  const openHistory = new Map<
+    string,
+    {
+      machineId: string
+      refresh: () => Promise<void>
+      close: () => void
+      position: () => SessionPosition | undefined
+    }
+  >()
   const requestLoads = new Map<string, number>()
   const now = services.now ?? (() => Date.now())
   const mint = services.mintMessageId ?? (() => mintMessageId())
@@ -400,6 +413,7 @@ export function createStore(services: Services): UseBoundStore<StoreApi<StoreSta
       },
 
       disconnect(machineId) {
+        for (const open of [...openHistory.values()]) if (open.machineId === machineId) open.close()
         const connection = connections.get(machineId)
         if (!connection) return
         connections.delete(machineId)
@@ -445,73 +459,149 @@ export function createStore(services: Services): UseBoundStore<StoreApi<StoreSta
 
       async openChat(machineId, sessionId) {
         const key = conversationKey(machineId, sessionId)
+        // A second mount adopts a fresh subscription; an old async page cannot overwrite it.
+        openHistory.get(key)?.close()
         const { client, push } = await get().connect(machineId)
+        openHistory.get(key)?.close()
+        let active = true
         let buffering = true
-        const buffered: HistoryItem[] = []
+        let buffered: BufferedItem[] = []
+        let overflow = false
+        let watermark: SessionPosition | undefined
         let exitCode: number | undefined
+        let inFlight: Promise<void> | undefined
+        const publish = (conversation: Conversation): void => {
+          if (!active) return
+          setConversation(key, { conversation })
+          if (conversation.fatal && !get().fatal[key])
+            set((state) => ({ fatal: { ...state.fatal, [key]: conversation.fatal! } }))
+        }
+        const refresh = (): Promise<void> => {
+          if (!active) return Promise.resolve()
+          if (inFlight) return inFlight
+          buffering = true
+          buffered = []
+          const run = async (): Promise<void> => {
+            try {
+              // The ack means the server has bound its listeners, before taking the snapshot.
+              await push.subscribed(sessionId)
+              for (let attempt = 0; attempt < 3 && active; attempt++) {
+                const page = await client.sessions.timeline(sessionId)
+                if (!active) return
+                try {
+                  if (overflow) throw new TimelineChanged()
+                  const joined = mergeBufferedHistory(page, buffered)
+                  const applied = applyFirstPage(emptyConversation, joined)
+                  watermark = buffered.reduce(
+                    (position, item) =>
+                      item.position && item.position.sequence > position.sequence
+                        ? item.position
+                        : position,
+                    page.cursor
+                  )
+                  setConversation(key, { cursor: applied.cursor, error: null })
+                  publish(
+                    exitCode === undefined
+                      ? applied.conversation
+                      : reduceConversation(applied.conversation, { exit: exitCode })
+                  )
+                  return
+                } catch (error) {
+                  if (!(error instanceof TimelineChanged) || attempt === 2) throw error
+                  // The next snapshot starts after all frames buffered so far.
+                  buffered = []
+                  overflow = false
+                }
+              }
+            } catch (error) {
+              if (active) setConversation(key, { error: fail(error) })
+            } finally {
+              buffering = false
+              buffered = []
+            }
+          }
+          inFlight = run().finally(() => {
+            inFlight = undefined
+          })
+          return inFlight
+        }
         const off = push.subscribe(
           sessionId,
           (stream) => {
-            if (stream.kind !== 'event') return
-            if (buffering) buffered.push({ event: stream.event, at: now() })
-            const current = conversationOf(key)
-            const conversation = reduceConversation(current.conversation, {
-              event: stream.event,
-              at: now()
-            })
-            setConversation(key, { conversation })
-            if (conversation.fatal && !get().fatal[key])
-              set((state) => ({ fatal: { ...state.fatal, [key]: conversation.fatal! } }))
+            if (!active || stream.kind !== 'event') return
+            const item: BufferedItem = { event: stream.event, at: now(), position: stream.position }
+            if (buffering) {
+              const latest = [...buffered].reverse().find((entry) => entry.position)?.position
+              if (latest && item.position && latest.generation !== item.position.generation)
+                buffered = []
+              buffered.push(item)
+              return
+            }
+            if (item.position) {
+              if (
+                !watermark ||
+                item.position.generation !== watermark.generation ||
+                item.position.sequence > watermark.sequence + 1
+              ) {
+                void refresh()
+                buffered.push(item)
+                return
+              }
+              if (item.position.sequence <= watermark.sequence) return
+              watermark = item.position
+            }
+            publish(reduceConversation(conversationOf(key).conversation, item))
           },
           (code) => {
+            if (!active) return
             exitCode = code
-            const current = conversationOf(key)
-            setConversation(key, {
-              conversation: reduceConversation(current.conversation, { exit: code })
-            })
+            publish(reduceConversation(conversationOf(key).conversation, { exit: code }))
           }
         )
-        setConversation(key, { subscribed: true, error: null })
-        try {
-          const page = await client.sessions.history(sessionId)
-          const applied = applyFirstPage(emptyConversation, mergeBufferedHistory(page, buffered))
-          buffering = false
-          setConversation(key, {
-            conversation:
-              exitCode === undefined
-                ? applied.conversation
-                : reduceConversation(applied.conversation, { exit: exitCode }),
-            cursor: applied.cursor
-          })
-          if (applied.conversation.fatal && !get().fatal[key])
-            set((state) => ({ fatal: { ...state.fatal, [key]: applied.conversation.fatal! } }))
-        } catch (error) {
-          buffering = false
-          setConversation(key, { error: fail(error) })
-        }
-        return () => {
+        const close = (): void => {
+          if (!active) return
+          active = false
           off()
+          openHistory.delete(key)
           setConversation(key, { subscribed: false })
         }
+        openHistory.set(key, { machineId, refresh, close, position: () => watermark })
+        setConversation(key, { subscribed: true, error: null })
+        await refresh()
+        return close
+      },
+
+      async refreshOpenHistory(machineId) {
+        await Promise.all(
+          [...openHistory.values()]
+            .filter((open) => open.machineId === machineId)
+            .map((open) => open.refresh())
+        )
       },
 
       async loadOlder(machineId, sessionId) {
         const key = conversationKey(machineId, sessionId)
         const current = conversationOf(key)
-        if (!shouldLoadOlder(current.cursor) || current.cursor.before === null) return
+        const open = openHistory.get(key)
+        if (!open || !shouldLoadOlder(current.cursor) || current.cursor.before === null) return
+        const position = open.position()
         setConversation(key, { cursor: { ...current.cursor, loading: true } })
         try {
           const { client } = await get().connect(machineId)
-          const page = await client.sessions.history(sessionId, current.cursor.before)
+          const page = await client.sessions.timeline(sessionId, current.cursor.before)
+          if (openHistory.get(key) !== open) return
+          if (page.cursor.generation !== position?.generation) {
+            await open.refresh()
+            return
+          }
           const latest = conversationOf(key)
-          const applied = applyOlderPage(latest.conversation, page)
-          setConversation(key, applied)
+          // A concurrent refresh has already replaced the page and its cursor.
+          if (latest.cursor.before !== current.cursor.before) return
+          setConversation(key, applyOlderPage(latest.conversation, page))
         } catch (error) {
+          if (openHistory.get(key) !== open) return
           const latest = conversationOf(key)
-          setConversation(key, {
-            cursor: { ...latest.cursor, loading: false },
-            error: fail(error)
-          })
+          setConversation(key, { cursor: { ...latest.cursor, loading: false }, error: fail(error) })
         }
       },
 

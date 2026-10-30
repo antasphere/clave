@@ -213,12 +213,33 @@ export class ClavePushClient {
 
   /** The server's record for a subscribed session, once the `subscribed`
    *  frame has arrived; rejected with the server's refusal. */
-  subscribed(sessionId: string): Promise<Session> {
+  subscribed(sessionId: string, timeoutMs = 10_000): Promise<Session> {
     const subscription = this.subscriptions.get(sessionId)
     if (!subscription) return Promise.reject(new Error(`Not subscribed to ${sessionId}`))
     if (subscription.acked) return Promise.resolve(subscription.acked)
     if (this.stopped) return Promise.reject(new Error('This push client was closed'))
-    return new Promise((resolve, reject) => subscription.waiters.push({ resolve, reject }))
+    return new Promise((resolve, reject) => {
+      const settle = (): void => {
+        this.timers.clearTimeout(timer)
+        subscription.waiters = subscription.waiters.filter((entry) => entry !== waiter)
+      }
+      const waiter = {
+        resolve: (session: Session): void => {
+          settle()
+          resolve(session)
+        },
+        reject: (error: Error): void => {
+          settle()
+          reject(error)
+        }
+      }
+      const timer = this.timers.setTimeout(
+        () =>
+          waiter.reject(new Error('The server did not acknowledge the conversation subscription.')),
+        timeoutMs
+      )
+      subscription.waiters.push(waiter)
+    })
   }
 
   onEvent(listener: (envelope: ServerEventEnvelope) => void): Unsubscribe {
@@ -281,6 +302,7 @@ export class ClavePushClient {
   }
 
   private scheduleReconnect(code: number, reason: string): void {
+    for (const subscription of this.subscriptions.values()) subscription.acked = null
     const attempt = ++this.attempts
     const base = this.options.backoff?.baseMs ?? 250
     const max = this.options.backoff?.maxMs ?? 10_000
@@ -347,13 +369,16 @@ export class ClavePushClient {
         this.attempts = 0
         this.serverId = frame.serverId
         this.serverVersion = frame.version ?? null
+        // Invalidate the previous socket's acknowledgements before welcome listeners
+        // request a snapshot. They must await this socket's subscription barrier.
+        for (const subscription of this.subscriptions.values()) subscription.acked = null
         this.setStatus('open', {})
         this.armPing()
-        for (const [sessionId, subscription] of this.subscriptions)
-          if (!subscription.ended) {
-            subscription.acked = null
-            this.send({ _tag: 'subscribe', sessionId })
-          }
+        for (const [sessionId, subscription] of this.subscriptions) {
+          // An open finished chat still needs a barrier and must follow a later Resume.
+          subscription.ended = false
+          this.send({ _tag: 'subscribe', sessionId })
+        }
         const waiters = this.openWaiters
         this.openWaiters = []
         for (const waiter of waiters) waiter.resolve()
