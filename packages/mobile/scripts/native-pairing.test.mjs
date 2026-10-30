@@ -292,3 +292,71 @@ it('rolls back a protected pairing write when its screen is cancelled during per
   expect(await w.beta.drafts.get('late-machine', 'fixture-session')).toBe('returning A draft')
   expect(await w.bNamespace.kv.getItem('fixture-other-owner')).toBe('untouched')
 }, 15000)
+
+it('waits for earlier native-owner token work before committing another approved pairing', async () => {
+  const w = await setup()
+  const prior = new DeviceStore(w.storage).create({
+    name: 'Earlier own phone',
+    platform: 'ios',
+    appVersion: 'fixture'
+  })
+  await w.owner.credentials.set('prior-machine', { serverUrl: w.server.url, bearer: prior.token })
+  await w.beta.records.set({
+    machineId: 'prior-machine',
+    deviceId: prior.device.id,
+    serverId: w.server.serverId,
+    serverName: 'Earlier machine',
+    pairedAt: 1
+  })
+  let release,
+    held = false,
+    approvedPoll = false,
+    lateWrites = 0
+  vi.stubGlobal('fetch', async (url, init) => {
+    if (
+      String(url) === w.server.url + '/devices/me/push-token' &&
+      init.headers.Authorization === 'Bearer ' + prior.token
+    ) {
+      held = true
+      await new Promise((resolve) => {
+        release = resolve
+      })
+    }
+    const response = await w.realFetch(url, init)
+    if (String(url).startsWith(w.server.url + '/devices/pair?id=')) {
+      const read = await response.clone().json()
+      if (read.status === 'approved') approvedPoll = true
+    }
+    return response
+  })
+  const rotation = w.beta.registerPush('prior-machine')
+  await wait(() => held)
+  const returningOwner = await nativeOwnerStores(w.auth)
+  const returning = service(w.auth, returningOwner)
+  const original = returningOwner.credentials.set.bind(returningOwner.credentials)
+  vi.spyOn(returningOwner.credentials, 'set').mockImplementation(async (id, credential) => {
+    if (id === w.oldMachine.id) lateWrites++
+    return original(id, credential)
+  })
+  const { pending } = await askAndApprove({ ...w, beta: returning })
+  await wait(() => approvedPoll)
+  await new Promise((resolve) => setImmediate(resolve))
+  const prematureWrites = lateWrites
+  const prematureRecord = (await returning.records.list()).some(
+    (record) => record.machineId === w.oldMachine.id
+  )
+  release()
+  await rotation
+  expect((await pending).kind).toBe('approved')
+  expect(prematureWrites).toBe(0)
+  expect(prematureRecord).toBe(false)
+  expect(lateWrites).toBe(1)
+  expect(
+    (await returning.records.list()).some((record) => record.machineId === w.oldMachine.id)
+  ).toBe(true)
+  expect(await w.beta.drafts.get('late-machine', 'fixture-session')).toBe('returning A draft')
+  expect(await w.bNamespace.kv.getItem('fixture-other-owner')).toBe('untouched')
+  expect(new DeviceStore(w.storage).list().some((device) => device.id === w.other.device.id)).toBe(
+    true
+  )
+}, 15000)
