@@ -37,7 +37,8 @@ async function setup(): Promise<{ beta: BetaServices; kv: MemoryKeyValueStore }>
     kv,
     credentials,
     new Drafts(kv),
-    'development'
+    'development',
+    new SecureCredentialStore(new MemorySecureStore())
   )
   for (const id of ['first', 'second']) {
     await credentials.set(id, {
@@ -137,7 +138,8 @@ it('does not use a later owner token when relay configuration was read by the ol
     kv,
     new SecureCredentialStore(new MemorySecureStore()),
     new Drafts(kv),
-    'development'
+    'development',
+    new SecureCredentialStore(new MemorySecureStore())
   )
   const request = vi.fn(async () =>
     Response.json({ machines: [{ id: 'B-machine', online: true }] })
@@ -179,7 +181,8 @@ it('refuses captured A relay and pairing transports after a real local-OIDC swit
       kv,
       new SecureCredentialStore(new MemorySecureStore()),
       new Drafts(kv),
-      'development'
+      'development',
+      new SecureCredentialStore(new MemorySecureStore())
     )
     await auth.signOut()
     provider.state.user = {

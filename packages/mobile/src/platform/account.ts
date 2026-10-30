@@ -7,6 +7,9 @@ import { HubSignIn } from '../auth/sign-in'
 import { ownerKeyValueStore, ownerSecureStore, ownerNamespace } from '../auth/owner-storage'
 import type { CryptoPort } from '../auth/pkce'
 import { SecureCredentialStore } from '../machines/credentials'
+import type { OwnerPushWork } from '../notifications/cleanup'
+
+const ownerPushWork = new Map<string, OwnerPushWork>()
 
 export const rawKeyValueStore = {
   getItem: (key: string) => AsyncStorage.getItem(key),
@@ -45,6 +48,8 @@ export async function nativeOwnerStores(auth: HubSignIn): Promise<{
   assertCurrentAccount: () => void
   kv: ReturnType<typeof ownerKeyValueStore>
   credentials: SecureCredentialStore
+  cleanupCredentials: SecureCredentialStore
+  pushWork: OwnerPushWork
 }> {
   const status = auth.status()
   const assertCurrentAccount = auth.guardAccount()
@@ -52,10 +57,19 @@ export async function nativeOwnerStores(auth: HubSignIn): Promise<{
   const namespace = await ownerNamespace(status.issuer, subject ?? null, (value) =>
     Crypto.digestStringAsync(Crypto.CryptoDigestAlgorithm.SHA256, value)
   )
+  let pushWork = ownerPushWork.get(namespace)
+  if (!pushWork) {
+    pushWork = { tail: Promise.resolve() }
+    ownerPushWork.set(namespace, pushWork)
+  }
   return {
     namespace,
     assertCurrentAccount,
+    pushWork,
     kv: ownerKeyValueStore(rawKeyValueStore, namespace),
-    credentials: new SecureCredentialStore(ownerSecureStore(rawSecureStore, namespace))
+    credentials: new SecureCredentialStore(ownerSecureStore(rawSecureStore, namespace)),
+    cleanupCredentials: new SecureCredentialStore(
+      ownerSecureStore(rawSecureStore, namespace + '.push-cleanup')
+    )
   }
 }
