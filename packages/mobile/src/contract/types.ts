@@ -165,7 +165,7 @@ export type SessionEvent =
  *  stay base64 on the phone, which shows no terminal. */
 export type SessionStream =
   | { readonly kind: 'pty'; readonly data: string }
-  | { readonly kind: 'event'; readonly event: SessionEvent }
+  | { readonly kind: 'event'; readonly event: SessionEvent; readonly position?: SessionPosition }
 
 export interface HistoryItem {
   readonly event: SessionEvent
@@ -174,6 +174,21 @@ export interface HistoryItem {
 export interface HistoryPage {
   readonly items: readonly HistoryItem[]
   readonly before: number | null
+}
+
+/** Ordered session history, mirrored from @clave/contract/timeline. */
+export interface SessionPosition {
+  readonly generation: string
+  readonly sequence: number
+}
+export interface TimelineItem extends HistoryItem {
+  readonly position: SessionPosition
+}
+export interface TimelinePage {
+  readonly items: readonly TimelineItem[]
+  readonly before: number | null
+  readonly cursor: SessionPosition
+  readonly truncated: boolean
 }
 
 export type LauncherFamily = 'claude' | 'antigravity' | 'codex' | 'pi'

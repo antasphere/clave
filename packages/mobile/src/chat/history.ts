@@ -7,7 +7,7 @@
  * The desktop's `earlier.ts` drives this from the scroll position; the
  * phone's list asks when the reader reaches the top.
  */
-import type { HistoryPage, HistoryItem } from '../contract/types'
+import type { HistoryPage, HistoryItem, SessionPosition, TimelinePage } from '../contract/types'
 import { type Action, type Conversation, reduceConversation } from './reducer'
 
 export interface HistoryCursor {
@@ -52,25 +52,37 @@ export function applyOlderPage(
 export const shouldLoadOlder = (cursor: HistoryCursor): boolean =>
   hasMore(cursor) && !cursor.loading
 
-/** Join the snapshot to events buffered during its request. The wire has no
- * event sequence, so only an exact ordered suffix/prefix overlap is removed.
- * Do not deduplicate arbitrary matching messages elsewhere in the history. */
-export function mergeBufferedHistory(
-  page: HistoryPage,
-  buffered: readonly HistoryItem[]
-): HistoryPage {
-  let overlap = Math.min(page.items.length, buffered.length)
-  for (; overlap > 0; overlap--) {
-    if (
-      buffered
-        .slice(0, overlap)
-        .every(
-          (item, i) =>
-            JSON.stringify(item.event) ===
-            JSON.stringify(page.items[page.items.length - overlap + i]?.event)
-        )
-    )
-      break
+export type BufferedItem = HistoryItem & { readonly position?: SessionPosition }
+
+export class TimelineChanged extends Error {
+  constructor() {
+    super('The conversation changed while history was loading. Refresh it again.')
   }
-  return { ...page, items: [...page.items, ...buffered.slice(overlap)] }
+}
+
+/** Only the server's positions establish identity. Identical text can be new. */
+export function mergeBufferedHistory(
+  page: TimelinePage,
+  buffered: readonly BufferedItem[]
+): HistoryPage {
+  const seen = new Set<number>()
+  const newer = buffered.filter((item) => {
+    if (!item.position) return true // Synthetic prompt replay has no ordered identity.
+    if (item.position.generation !== page.cursor.generation) throw new TimelineChanged()
+    if (item.position.sequence <= page.cursor.sequence || seen.has(item.position.sequence))
+      return false
+    seen.add(item.position.sequence)
+    return true
+  })
+  const ordered = newer
+    .filter((item) => item.position)
+    .sort((a, b) => a.position!.sequence - b.position!.sequence)
+  let next = page.cursor.sequence + 1
+  for (const item of ordered) {
+    if (item.position!.sequence !== next++) throw new TimelineChanged()
+  }
+  return {
+    items: [...page.items, ...ordered, ...newer.filter((item) => !item.position)],
+    before: page.before
+  }
 }
