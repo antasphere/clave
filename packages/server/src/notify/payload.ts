@@ -28,17 +28,30 @@ export interface NotificationSubject {
   readonly workspaceName?: string
 }
 
-/** A text longer than this is cut, with an ellipsis: a platform's payload
- *  limit is 4 KiB, and a notification is read on a lock screen. */
+/** Display budgets count UTF-8 bytes after JSON escaping, excluding quotes.
+ *  Both transports repeat display fields, so character counts are unsafe. */
 export const TEXT_MAX = 500
 export const TITLE_MAX = 120
+export const PUSH_PAYLOAD_MAX_BYTES = 4096
 
 const ALLOW_OPTION = /^(allow|allow-once|allow-always|approve|accept|yes|ok)$/i
 const DENY_OPTION = /^(deny|decline|reject|cancel|no)$/i
 
 export const bounded = (text: string, max = TEXT_MAX): string => {
   const one = text.replace(/\s+/g, ' ').trim()
-  return one.length > max ? `${one.slice(0, max - 1)}…` : one
+  const bytes = (value: string): number => Buffer.byteLength(JSON.stringify(value)) - 2
+  if (bytes(one) <= max) return one
+  const suffix = max >= 3 ? '…' : '.'.repeat(Math.max(0, max))
+  const budget = max - bytes(suffix)
+  let prefix = ''
+  let used = 0
+  for (const point of one) {
+    const size = bytes(point)
+    if (used + size > budget) break
+    prefix += point
+    used += size
+  }
+  return prefix + suffix
 }
 
 /** Allow and deny when the options carry one of each; open always. */

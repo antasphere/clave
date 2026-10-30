@@ -78,6 +78,16 @@ every payload field as a string in `data` (the actions joined by a comma) plus `
 the same `clave.<category>` as the iOS category, which the Android client
 (expo-notifications) reads its action buttons from.
 
+Display text is limited to 500 JSON-escaped UTF-8 bytes, and display titles to 120,
+including any ellipsis. Truncation preserves Unicode code points. Both transport bodies
+repeat display fields. APNs checks its complete serialized JSON against 4096 bytes;
+FCM conservatively checks the notification/data JSON, including keys and values but
+excluding the routing-token envelope. If identity data alone exceeds that budget, the
+send fails before connecting or exchanging OAuth credentials; routing IDs are never
+truncated. These are local checks against the [APNs payload limit](https://developer.apple.com/library/archive/documentation/NetworkingInternet/Conceptual/RemoteNotificationsPG/CreatingtheNotificationPayload.html)
+and [FCM payload limit](https://firebase.google.com/docs/cloud-messaging/error-codes), not
+proof of delivery by either provider.
+
 ## The credentials and the configuration
 
 Read once at boot from `push/` under the server's data directory: the app's user data for

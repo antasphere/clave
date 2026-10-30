@@ -7,6 +7,8 @@ import {
 } from '@clave/contract/notify'
 import {
   TEXT_MAX,
+  TITLE_MAX,
+  bounded,
   accountLimitPayload,
   closedPayload,
   failedPayload,
@@ -21,6 +23,9 @@ import {
   secretPayload,
   testPayload
 } from './payload'
+import { apnsBody } from './apns'
+import { fcmMessage } from './fcm'
+import { unicodePayloads } from './test-support'
 
 /**
  * What a notification says, per category, and what it never says (the mobile
@@ -158,10 +163,46 @@ describe('the text of each category', () => {
   it('bounds a long text and collapses its whitespace', () => {
     const long = 'word '.repeat(400)
     const payload = secretPayload(subject, 'r', long)
-    expect(payload.text.length).toBe(TEXT_MAX)
+    expect(Buffer.byteLength(JSON.stringify(payload.text)) - 2).toBe(TEXT_MAX)
     expect(payload.text.endsWith('…')).toBe(true)
     expect(payload.text.includes('  ')).toBe(false)
   })
+})
+
+describe('serialized notification budgets', () => {
+  const characters = ['界', '😀', '"', '\\', '\u0000']
+  it.each(characters)('bounds JSON-escaped UTF-8 without splitting %s', (character) => {
+    for (const budget of [TEXT_MAX, TITLE_MAX]) {
+      const text = bounded(character.repeat(1000), budget)
+      expect(Buffer.byteLength(JSON.stringify(text)) - 2).toBeLessThanOrEqual(budget)
+      expect(text.endsWith('…')).toBe(true)
+      expect(
+        [...text].every((point) => point.codePointAt(0)! < 0xd800 || point.codePointAt(0)! > 0xdfff)
+      ).toBe(true)
+    }
+  })
+  it.each(characters)(
+    'keeps every category below a conservative 4 KiB wire budget for %s',
+    (character) => {
+      const requestId = '33333333-4444-4555-8666-777777777777'
+      for (const payload of unicodePayloads(character)) {
+        expect(Buffer.byteLength(JSON.stringify(apnsBody(payload)))).toBeLessThanOrEqual(4096)
+        expect(
+          Buffer.byteLength(
+            JSON.stringify(
+              fcmMessage(
+                { deviceId: 'phone-1', platform: 'android', token: 't'.repeat(200) },
+                payload
+              )
+            )
+          )
+        ).toBeLessThanOrEqual(4096)
+        expect(payload.serverId).toBe('11111111-2222-4333-8444-555555555555')
+        if (payload.requestId !== undefined) expect(payload.requestId).toBe(requestId)
+        expect(payloadAsStrings(payload).categoryId).toBe(`clave.${payload.category}`)
+      }
+    }
+  )
 })
 
 describe('the actions', () => {
