@@ -14,6 +14,8 @@ export const SessionSchema = z.object({
   cwd: z.string(),
   windowKey: z.string(),
   groupId: z.string().optional(),
+  /** The current persisted workspace stamp, when the session's record has one. */
+  workspaceId: z.string().optional(),
   state: AgentStateSchema,
   createdAt: z.number(),
   adapterId: z.string().min(1),
