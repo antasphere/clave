@@ -7,6 +7,7 @@ import type { NotificationPayload } from '@clave/contract/notify'
 import { apnsBody } from './apns'
 import { FCM_SCOPE, fcmMessage, fcmTransport, type FcmOptions, type FcmTransport } from './fcm'
 import { verifyJwt } from './jwt'
+import { unicodePayloads } from './test-support'
 import type { PushTarget, SendResult } from './port'
 
 /**
@@ -265,6 +266,37 @@ describe('the FCM message', () => {
 })
 
 describe('the FCM transport', () => {
+  it.each(['界', '😀', '"', '\\', '\u0000'])(
+    'sends every category within the actual notification/data budget for %s',
+    async (character) => {
+      const fake = await started()
+      const transport = open(fake)
+      for (const payload of unicodePayloads(character)) {
+        expect(await send(transport, payload)).toEqual({ outcome: 'sent' })
+        expect(fake.seen.at(-1)!.body).toEqual(fcmMessage(target, payload))
+        const { notification, data } = (
+          fake.seen.at(-1)!.body as {
+            message: { notification: unknown; data: unknown }
+          }
+        ).message
+        expect(Buffer.byteLength(JSON.stringify({ notification, data }))).toBeLessThanOrEqual(4096)
+      }
+      expect(fake.seen).toHaveLength(7)
+    }
+  )
+  it('refuses oversized routing data before OAuth or provider calls', async () => {
+    const fake = await started()
+    const logs: string[] = []
+    const payload = { ...question, serverId: 'identity'.repeat(1000) }
+    expect(await send(open(fake, { log: (line) => logs.push(line) }), payload)).toEqual({
+      outcome: 'failed',
+      reason: 'payload exceeds 4096 bytes'
+    })
+    expect(fake.exchanges).toHaveLength(0)
+    expect(fake.seen).toHaveLength(0)
+    expect(logs).toEqual([])
+    expect(payload.serverId).toBe('identity'.repeat(1000))
+  })
   it('posts the message to the project with the bearer, collapsing on the request id when there is one', async () => {
     const fake = await started()
     const transport = open(fake)
