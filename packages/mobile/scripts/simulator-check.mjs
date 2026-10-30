@@ -186,11 +186,21 @@ async function main() {
     }
 
     // 3. Metro, for the development build.
-    metro = spawn('npx', ['expo', 'start', '--clear', '--port', String(metroPort)], {
-      cwd: PKG,
-      env: metroEnv(),
-      stdio: ['ignore', 'pipe', 'pipe']
-    })
+    metro = spawn(
+      process.execPath,
+      [
+        path.resolve(PKG, '../../node_modules/.bin/expo'),
+        'start',
+        '--clear',
+        '--port',
+        String(metroPort)
+      ],
+      {
+        cwd: PKG,
+        env: metroEnv(),
+        stdio: ['ignore', 'pipe', 'pipe']
+      }
+    )
     metro.stdout.on('data', (d) => log(`metro: ${String(d).trim().split('\n')[0]}`))
     metro.stderr.on('data', (d) => log(`metro: ${String(d).trim().split('\n')[0]}`))
     await waitFor(
@@ -244,7 +254,9 @@ async function main() {
       })
       output.on('end', () => process.stderr.write(pending.replaceAll(server.token, '[redacted]')))
     }
+    const deadline = setTimeout(() => result.kill('SIGTERM'), 360000)
     const code = await new Promise((resolve) => result.once('exit', (c) => resolve(c ?? 1)))
+    clearTimeout(deadline)
     log(`maestro exited ${code} after ${((Date.now() - started) / 1000).toFixed(0)} s`)
     process.exitCode = code
     if (code === 0) {
