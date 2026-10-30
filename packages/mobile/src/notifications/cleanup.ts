@@ -8,6 +8,8 @@ export const PUSH_CLEANUP_KEY = 'clave.pending-push-cleanup'
 export interface OwnerPushWork {
   /** Shared by services for this owner; never retains credential or token results. */
   tail: Promise<void>
+  /** Invalidates approvals captured before a same-owner road reset. */
+  roadGeneration: number
 }
 interface PendingCleanup {
   readonly refs: string[]
