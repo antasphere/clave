@@ -28,9 +28,16 @@ import { DeliveryController } from '../reconnect/controller'
 import { DeliveryMarks, UnknownSends } from '../reconnect/ledger'
 import { registerDeviceToken, pushTokenKey, type TokenRegistration } from '../notifications/token'
 import type { DevicePushToken } from '../notifications/port'
+import {
+  clearPushRegistrations,
+  pendingPushCleanup,
+  type PushCleanupResult
+} from '../notifications/cleanup'
 
 export class BetaServices {
   private tokenSync: Promise<TokenRegistration[]> = Promise.resolve([])
+  private closing = false
+  private signingOut: Promise<PushCleanupResult> | null = null
   readonly records: EnrollmentRecords
   readonly delivery: DeliveryController
   readonly source: MachineSource
@@ -147,11 +154,26 @@ export class BetaServices {
     return result
   }
 
-  async registerPush(
+  registerPush(
     machineId: string,
     token?: DevicePushToken,
     requestPermission = true
   ): Promise<TokenRegistration> {
+    const run = this.tokenSync.then(() => this.registerPushNow(machineId, token, requestPermission))
+    this.tokenSync = run.then(
+      (result) => [result],
+      () => []
+    )
+    return run
+  }
+
+  private async registerPushNow(
+    machineId: string,
+    token?: DevicePushToken,
+    requestPermission = true
+  ): Promise<TokenRegistration> {
+    if (this.closing) return { kind: 'failed', reason: 'The account is signing out.' }
+    this.assertOwner()
     const credential = await this.credentials.get(machineId)
     if (!credential) return { kind: 'failed', reason: 'Pair this phone first.' }
     const permission = requestPermission
@@ -164,7 +186,21 @@ export class BetaServices {
       {
         notifications: token ? { getDevicePushTokenAsync: async () => token } : Notifications,
         kv: this.kv,
-        client: new EnrollmentClient(credential.serverUrl, { build: this.build })
+        client: {
+          clearPushToken: (bearer) =>
+            new EnrollmentClient(credential.serverUrl, { build: this.build }).clearPushToken(
+              bearer
+            ),
+          setPushToken: (bearer, value, platform) => {
+            if (this.closing) throw new AuthError('cancelled', 'The account is signing out.')
+            this.assertOwner()
+            return new EnrollmentClient(credential.serverUrl, { build: this.build }).setPushToken(
+              bearer,
+              value,
+              platform
+            )
+          }
+        }
       }
     )
   }
@@ -172,13 +208,57 @@ export class BetaServices {
   /** Boot and native token rotation keep every paired server's raw token current. */
   syncPushTokens(token?: DevicePushToken): Promise<TokenRegistration[]> {
     const run = this.tokenSync.then(async () => {
+      if (this.closing) return []
+      this.assertOwner()
+      const pending = await pendingPushCleanup(this.kv)
+      if (pending.length) {
+        const cleaned = await clearPushRegistrations(pending, this)
+        this.assertOwner()
+        if (cleaned.pending !== 0)
+          return [
+            {
+              kind: 'failed',
+              reason: 'Some machines have not confirmed notification removal.'
+            } as const
+          ]
+      }
       const outcomes: TokenRegistration[] = []
       for (const record of await this.records.list())
-        outcomes.push(await this.registerPush(record.machineId, token, false))
+        outcomes.push(await this.registerPushNow(record.machineId, token, false))
       return outcomes
     })
     this.tokenSync = run.catch(() => [])
     return run
+  }
+
+  /** Stop new registrations, drain older writes, then remove this owner's
+   * targets. A replacement login is never signed out or used for cleanup. */
+  signOut(): Promise<PushCleanupResult> {
+    if (this.signingOut) return this.signingOut
+    this.assertOwner()
+    this.closing = true
+    this.signingOut = this.tokenSync.then(async () => {
+      let result: PushCleanupResult
+      try {
+        const records = await this.records.list()
+        const pending = await pendingPushCleanup(this.kv)
+        result = await clearPushRegistrations(
+          [...records.map((record) => record.machineId), ...pending],
+          this
+        )
+      } catch {
+        result = { pending: null, retryRecorded: false }
+      }
+      let current = true
+      try {
+        this.assertOwner()
+      } catch {
+        current = false
+      }
+      if (current) await this.auth.signOut()
+      return result
+    })
+    return this.signingOut
   }
 
   async attach(
