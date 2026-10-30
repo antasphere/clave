@@ -591,6 +591,8 @@ interface HandleState {
   turnRequest?: Promise<void>
   /** Provider frames held until an identified input is acknowledged. */
   pendingInputEvents?: SessionEvent[]
+  /** Includes queued identified inputs, before their Promise continuation runs. */
+  identifiedInputs: number
   ended: boolean
   closing: boolean
 }
@@ -645,6 +647,7 @@ export class CodexAdapter implements SessionAdapter {
       env: context?.env,
       initialPrompt: context?.initialPrompt,
       emitter,
+      identifiedInputs: 0,
       translator: new CodexTranslator((event) => {
         if (event.type === 'effort') state.announced = event.effort
         if (state.pendingInputEvents) state.pendingInputEvents.push(event)
@@ -746,9 +749,14 @@ export class CodexAdapter implements SessionAdapter {
     if (value.type === 'stop_task') throw new Error('Codex chat cannot stop one background task')
     const prompt = providerPrompt(value)
     const identified = value.clientMessageId !== undefined
-    if (!identified) state.emitter.emit('stream', { kind: 'event', event: userMessageEvent(value) })
+    const deferLegacy = !identified && state.identifiedInputs > 0
+    if (identified) state.identifiedInputs++
+    if (!identified && !deferLegacy)
+      state.emitter.emit('stream', { kind: 'event', event: userMessageEvent(value) })
     const accepted = (state.turnRequest ?? Promise.resolve())
       .then(() => {
+        if (deferLegacy)
+          state.emitter.emit('stream', { kind: 'event', event: userMessageEvent(value) })
         if (identified) state.pendingInputEvents = []
         return this.sendTurn(state, prompt)
       })
@@ -760,6 +768,7 @@ export class CodexAdapter implements SessionAdapter {
       })
       .finally(() => {
         if (!identified) return
+        state.identifiedInputs--
         const pending = state.pendingInputEvents ?? []
         state.pendingInputEvents = undefined
         for (const event of pending) state.emitter.emit('stream', { kind: 'event', event })
