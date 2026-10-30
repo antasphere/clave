@@ -90,7 +90,10 @@ A device session is an **allowlist** (`packages/server/src/devices/scope.ts`):
 `/launch-profiles`, `/workspaces`, `/devices/me` and anything under `/files/`;
 `POST` on `/sessions/start`, `/sessions/stop`, `/sessions/write`,
 `/sessions/resize`, `/sessions/view`, `/sessions/restart`, `/requests/resolve`,
-`/devices/me/push-token` and `/devices/me/push-token/clear`. Every other route,
+`/devices/me/push-token`, `/devices/me/push-token/clear` and exactly
+`/files/attachments/prepare`. Attachment preparation uses the existing file
+service, its 7 MiB request bound and 5 MiB transfer schema. It does not grant
+`/files/write`, `/files/upload`, `/files/create` or `/files/mkdir`. Every other route,
 the test fixture route `/e2e/evaluate`, the accounts, the clients (and the
 saved server connections behind them), the plugins, the sidebar, the git
 panel, the server's own routes, the owner-only device routes and every write
@@ -158,6 +161,8 @@ server alone (no IPC arm: the devices are the server's).
   issuer and server, signs the owner in through the account commands, requests
   pairing, checks that it waits, approves it through the devices command, and
   checks the one-time session, its own record and its refusal on accounts.
+  It also prepares real image bytes as the paired phone, rejects an oversized
+  preparation request and keeps generic file writes forbidden.
   Readiness queries the paired device and checks the private hashed document.
   No real provider runs. Each invocation keeps a run-specific directory under
   the system temp directory, `clave-antasphere-fixture-<run-id>`, after stopping

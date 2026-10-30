@@ -17,7 +17,12 @@ import {
   run,
   type RunReport
 } from '@structure-ai/fixtures'
-import { startEmbedded, SettingsSource, type EmbeddedServer } from '@clave/server'
+import {
+  startEmbedded,
+  SettingsSource,
+  createServerFiles,
+  type EmbeddedServer
+} from '@clave/server'
 import { startOidcProvider, type OidcProvider } from '../../tests/e2e/fixtures/oidc-provider.mjs'
 import { AntasphereAccountManager } from './antasphere-account'
 import { electronTestPorts } from './ports/testing'
@@ -199,6 +204,10 @@ export const antasphereFixtureHandlers = [
       const server = yield* Effect.promise(() =>
         startEmbedded({
           ports: {
+            files: createServerFiles({
+              roots: [run.dataDir],
+              attachmentsRoot: path.join(run.dataDir, 'attachments')
+            }),
             devices: {
               storage: {
                 read: () => ports.storage.readChecked!('devices.json'),

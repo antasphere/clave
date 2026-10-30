@@ -19,6 +19,8 @@ import {
   type FixtureError
 } from '@structure-ai/fixtures'
 import type { DevicesView, DeviceSessionView } from '@clave/contract/devices'
+import type { FileAttachment } from '@clave/contract/files'
+import { ensureFileHelper } from '../../packages/server/src/files/test-support'
 import {
   AntasphereFixtureWorld,
   antasphereFixtureHandlers,
@@ -41,6 +43,7 @@ const pairHandler = CommandHandler.make(PairPhone, ({ runId, name }) =>
     if (!install?.server) return yield* Effect.die('The fixture needs its signed-in server.')
     const { server, provider } = install
     return yield* Effect.promise(async () => {
+      ensureFileHelper()
       const json = async (
         route: string,
         body?: unknown,
@@ -116,6 +119,46 @@ const pairHandler = CommandHandler.make(PairPhone, ({ runId, name }) =>
       })
       const me = (await json('/devices/me', undefined, session.token)) as { id: string }
       assert.equal(me.id, session.deviceId)
+      const image =
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII='
+      const attachment = (await json(
+        '/files/attachments/prepare',
+        {
+          sessionId: session.deviceId,
+          source: { kind: 'upload', name: 'Fixture.png', image: true, base64: image }
+        },
+        session.token
+      )) as FileAttachment
+      assert.equal(attachment.delivery, 'image')
+      assert.deepEqual(fs.readFileSync(attachment.path), Buffer.from(image, 'base64'))
+      for (const route of [
+        '/files/write',
+        '/files/upload',
+        '/files/create',
+        '/files/mkdir',
+        '/files/attachments/prepare/extra'
+      ]) {
+        const refused = await fetch(`${server.url}${route}`, {
+          method: 'POST',
+          headers: { authorization: `Bearer ${session.token}`, 'content-type': 'application/json' },
+          body: '{}'
+        })
+        assert.equal(refused.status, 403, route)
+      }
+      const tooLarge = await fetch(`${server.url}/files/attachments/prepare`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${session.token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({
+          sessionId: session.deviceId,
+          source: {
+            kind: 'upload',
+            name: 'TooLarge.png',
+            image: true,
+            base64: 'a'.repeat(8 * 1024 * 1024)
+          }
+        })
+      })
+      assert.equal(tooLarge.status, 413)
       const forbidden = await fetch(`${server.url}/accounts/antasphere`, {
         headers: { authorization: `Bearer ${session.token}` }
       })
