@@ -121,6 +121,33 @@ it('replayed evidence and direct accept keep the first durable accepted result a
   expect(recovered.receive('s1', id)).toEqual({ held: { status: 'accepted', at: 42 } })
 })
 
+it('sparse own history keeps its first accepted result when live evidence is replayed', () => {
+  const storage = memoryWriteLedgerStorage()
+  storage.documents.set('s1.history.json', JSON.stringify({ v: 1, items: [{ id, at: 42 }] }))
+  const ledger = new WriteLedger(
+    storage,
+    () => 1,
+    () => {}
+  )
+  expect(ledger.status('s1', id)).toEqual({ status: 'accepted', at: 42 })
+  ledger.evidence('s1', id, 84)
+  expect(ledger.status('s1', id)).toEqual({ status: 'accepted', at: 42 })
+  expect(ledger.receive('s1', id)).toEqual({ held: { status: 'accepted', at: 42 } })
+  expect(new WriteLedger(storage).status('s1', id)).toEqual({ status: 'accepted', at: 42 })
+})
+
+it('direct accept uses existing authoritative sparse history first', () => {
+  const storage = memoryWriteLedgerStorage()
+  storage.documents.set('s1.history.json', JSON.stringify({ v: 1, items: [{ id, at: 42 }] }))
+  const ledger = new WriteLedger(
+    storage,
+    () => 1,
+    () => {}
+  )
+  expect(ledger.accept('s1', id, 99)).toEqual({ status: 'accepted', at: 42 })
+  expect(new WriteLedger(storage).status('s1', id)).toEqual({ status: 'accepted', at: 42 })
+})
+
 // Expectations are the public seam, independent of ledger implementation.
 const phaseCases = [
   { phase: 'received', withoutHistory: 'rejected', acceptedAt: 42 },
