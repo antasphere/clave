@@ -9,6 +9,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { execFileSync } from 'node:child_process'
 import { WebSocket } from 'ws'
+import { toNormalUrl } from 'jsc-safe-url'
 
 const pkg = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const option = (name) => {
@@ -63,28 +64,30 @@ export async function proveNativeSource({ port, deviceName, output, bundleHost =
       ws.once('error', reject)
     })
     await call('Debugger.enable')
-    const bundle = scripts.find((s) => s.url.includes('/packages/mobile/index.bundle'))
-    assert.ok(bundle, 'Hermes must name the mobile entry bundle')
+    const bundles = scripts.filter((s) => {
+      try {
+        return ['/packages/mobile/index.bundle', '/.expo/.virtual-metro-entry.bundle'].includes(
+          new URL(toNormalUrl(s.url)).pathname
+        )
+      } catch {
+        return false
+      }
+    })
+    assert.equal(bundles.length, 1, 'Hermes must name exactly one mobile entry bundle')
+    const bundle = bundles[0]
+    const loadedUrl = new URL(toNormalUrl(bundle.url))
     assert.ok(
       ['127.0.0.1', '10.0.2.2'].includes(bundleHost),
       'Only loopback or the standard owned Android emulator host is supported'
     )
-    assert.equal(
-      new URL(bundle.url).hostname,
-      bundleHost,
-      'Loaded bundle must use the explicit device host'
-    )
-    assert.equal(
-      new URL(bundle.url).port,
-      String(port),
-      'Loaded bundle must use the owned Metro port'
-    )
+    assert.equal(loadedUrl.hostname, bundleHost, 'Loaded bundle must use the explicit device host')
+    assert.equal(loadedUrl.port, String(port), 'Loaded bundle must use the owned Metro port')
     const { scriptSource } = await call('Debugger.getScriptSource', { scriptId: bundle.scriptId })
     assert.ok(
       scriptSource.includes(JSON.stringify(pkg)),
       'Loaded bundle must name this exact worktree'
     )
-    const servedUrl = new URL(bundle.sourceMapURL)
+    const servedUrl = new URL(toNormalUrl(bundle.sourceMapURL))
     servedUrl.hostname = '127.0.0.1'
     servedUrl.pathname = servedUrl.pathname.replace(/\.map$/, '.bundle')
     servedUrl.searchParams.set('transform.bytecode', '0')
@@ -94,7 +97,7 @@ export async function proveNativeSource({ port, deviceName, output, bundleHost =
       sha(normalize(served)),
       'Loaded Hermes source differs from the current Metro bundle'
     )
-    const mapUrl = new URL(bundle.sourceMapURL)
+    const mapUrl = new URL(toNormalUrl(bundle.sourceMapURL))
     mapUrl.hostname = '127.0.0.1'
     mapUrl.searchParams.set('excludeSource', 'false')
     const map = await (await fetch(mapUrl)).json()
