@@ -69,7 +69,9 @@ async function setup(): Promise<{
   adapter.on(handle, 'stream', (stream) => {
     if (stream.kind === 'event') events.push(stream.event)
   })
-  const send = (text: string): void => adapter.write(handle, { type: 'user_message', text })
+  const send = (text: string): void => {
+    void adapter.write(handle, { type: 'user_message', text })
+  }
   const complete = (): void =>
     callbacks.notification({
       method: 'turn/completed',
@@ -449,3 +451,140 @@ it.each(['failed', 'interrupted'])(
     expect(translator.turnId).toBe('')
   }
 )
+it('an identified write has no durable acceptance before provider dispatch', async () => {
+  const { WriteLedger, memoryWriteLedgerStorage } =
+    await import('../../../../packages/server/src/sessions/writes')
+  const storage = memoryWriteLedgerStorage()
+  const ledger = new WriteLedger(
+    storage,
+    () => 1,
+    () => {}
+  )
+  const s = await setup()
+  const id = 'phone-00000001'
+  ledger.initialize('followup')
+  ledger.receive('followup', id)
+  ledger.dispatch('followup', id)
+  s.adapter.on(s.handle, 'stream', (stream) => {
+    if (
+      stream.kind === 'event' &&
+      stream.event.type === 'user_message' &&
+      stream.event.clientMessageId
+    )
+      ledger.evidence('followup', id, 2)
+  })
+  s.adapter.write(s.handle, { type: 'user_message', text: 'NEVER SENT YET', clientMessageId: id })
+  expect(s.request.mock.calls.filter(([m]) => m === 'turn/start')).toHaveLength(0)
+  const reboot = new WriteLedger(
+    storage,
+    () => 3,
+    () => {}
+  )
+  const actual = reboot.status('followup', id)
+  await tick()
+  await s.adapter.kill(s.handle)
+  expect(actual.status).toBe('unknown')
+})
+
+it('an identified Codex write waits for provider acknowledgement and then emits its history', async () => {
+  const s = await setup()
+  const gate = deferred()
+  const original = s.request.getMockImplementation()!
+  s.request.mockImplementation((method, params) =>
+    method === 'turn/start' ? gate.promise : original(method, params)
+  )
+  const accepted = s.adapter.write(s.handle, {
+    type: 'user_message',
+    text: 'hello',
+    clientMessageId: 'phone-00000002'
+  })
+  expect(accepted).toBeInstanceOf(Promise)
+  await tick()
+  expect(s.request.mock.calls.filter(([m]) => m === 'turn/start')).toHaveLength(1)
+  expect(s.events.filter((e) => e.type === 'user_message')).toEqual([])
+  let settled = false
+  void Promise.resolve(accepted).then(() => {
+    settled = true
+  })
+  await tick()
+  expect(settled).toBe(false)
+  gate.resolve({ turn: { id: 'turn', status: 'inProgress' } })
+  await accepted
+  expect(s.events.filter((e) => e.type === 'user_message')).toEqual([
+    { type: 'user_message', text: 'hello', clientMessageId: 'phone-00000002' }
+  ])
+  await s.adapter.kill(s.handle)
+})
+
+it('an identified Codex write with a lost acknowledgement remains unknown', async () => {
+  const s = await setup()
+  s.request.mockRejectedValue(new Error('transport timed out'))
+  await expect(
+    s.adapter.write(s.handle, {
+      type: 'user_message',
+      text: 'hello',
+      clientMessageId: 'phone-00000003'
+    })
+  ).rejects.toMatchObject({ _tag: 'SessionWriteUnknown', clientMessageId: 'phone-00000003' })
+  expect(s.events.filter((e) => e.type === 'user_message')).toEqual([])
+  await s.adapter.kill(s.handle)
+})
+it('known provider refusal stays refused without evidence', async () => {
+  const s = await setup()
+  const original = s.request.getMockImplementation()!
+  s.request.mockImplementation((method, params) =>
+    method === 'turn/start'
+      ? Promise.reject(new CodexRpcError(-32600, 'not allowed'))
+      : original(method, params)
+  )
+  try {
+    await expect(
+      s.adapter.write(s.handle, {
+        type: 'user_message',
+        text: 'hello',
+        clientMessageId: 'phone-00000009'
+      })
+    ).rejects.toBeInstanceOf(CodexRpcError)
+    expect(s.events.filter((e) => e.type === 'user_message')).toHaveLength(0)
+  } finally {
+    await s.adapter.kill(s.handle)
+  }
+})
+it('close before dispatch never accepts', async () => {
+  const s = await setup()
+  const result = s.adapter.write(s.handle, {
+    type: 'user_message',
+    text: 'hello',
+    clientMessageId: 'phone-00000010'
+  })
+  const assertion = expect(result).rejects.toBeInstanceOf(CodexRpcError)
+  await s.adapter.kill(s.handle)
+  await assertion
+  expect(s.request.mock.calls.filter(([m]) => m === 'turn/start')).toHaveLength(0)
+  expect(s.events.filter((e) => e.type === 'user_message')).toHaveLength(0)
+})
+it('provider response before RPC acknowledgement must retain conversation order', async () => {
+  const s = await setup()
+  const gate = deferred()
+  const original = s.request.getMockImplementation()!
+  s.request.mockImplementation((method, params) =>
+    method === 'turn/start' ? gate.promise : original(method, params)
+  )
+  const result = s.adapter.write(s.handle, {
+    type: 'user_message',
+    text: 'hello',
+    clientMessageId: 'phone-00000011'
+  })
+  await tick()
+  s.notify({
+    method: 'item/agentMessage/delta',
+    params: { threadId: 'thread', turnId: 'turn', itemId: 'a', delta: 'answer' }
+  })
+  gate.resolve({ turn: { id: 'turn', status: 'inProgress' } })
+  await result
+  const order = s.events
+    .filter((e) => e.type === 'user_message' || e.type === 'assistant_text')
+    .map((e) => e.type)
+  await s.adapter.kill(s.handle)
+  expect(order[0]).toBe('user_message')
+})

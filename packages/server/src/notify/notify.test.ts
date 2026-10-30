@@ -3,6 +3,7 @@ import { startEmbedded, type EmbeddedServer } from '../embedded'
 import { FakeSource, aSession } from '../test-support'
 import { PendingRequests } from '../requests/service'
 import { memoryWriteLedgerStorage, type WriteLedgerStorage } from '../sessions/writes'
+import { SessionWriteUnknown } from '@clave/contract/sessions'
 import { fakePush, type FakePush } from './fake'
 
 /**
@@ -44,6 +45,7 @@ async function world(
       ...(input.storage && { writeLedger: input.storage })
     }
   })
+  if (!input.storage) server.writes.initialize('s1')
   return { fake, source }
 }
 
@@ -192,7 +194,7 @@ describe('a message written once (the seam of 29 October)', () => {
     expect(await status('s1', 'phone-00000001')).toEqual(answer)
     expect(await status('s1', 'phone-00000009')).toEqual({ status: 'absent' })
     // The status is the ledger's, whether or not the session exists.
-    expect(await status('ghost', 'phone-00000001')).toEqual({ status: 'absent' })
+    expect(await status('ghost', 'phone-00000001')).toMatchObject({ status: 'unknown' })
     const bad = await call('/sessions/writes?id=s1&clientMessageId=short')
     expect(bad.status).toBe(400)
   })
@@ -241,6 +243,7 @@ describe('a message written once (the seam of 29 October)', () => {
   })
   it('records a write to a session it does not know as rejected, and answers SessionNotFound', async () => {
     await world()
+    server!.writes.initialize('ghost')
     const answer = await call('/sessions/write', {
       ...(message('phone-00000004') as object),
       id: 'ghost'
@@ -301,6 +304,62 @@ describe('a message written once (the seam of 29 October)', () => {
       v: 1,
       items: [{ id: 'phone-00000007', at: 77 }]
     })
+  })
+  it.each(['corrupt', 'unreadable', 'incomplete', 'missing'])(
+    'refuses dispatch when the ledger is %s, including an id queried as unknown',
+    async (failure) => {
+      const storage = memoryWriteLedgerStorage()
+      if (failure === 'corrupt') storage.documents.set('s1.ledger.json', '{broken')
+      if (failure === 'incomplete')
+        storage.documents.set(
+          's1.ledger.json',
+          JSON.stringify({ v: 1, complete: false, entries: {} })
+        )
+      const backing =
+        failure === 'unreadable'
+          ? {
+              ...storage,
+              read: (name: string) => {
+                if (name.endsWith('.ledger.json')) throw new Error('EACCES')
+                return storage.read(name)
+              }
+            }
+          : storage
+      const { source } = await world({ storage: backing })
+      expect(await status('s1', 'phone-00000008')).toMatchObject({ status: 'unknown' })
+      const response = await call('/sessions/write', message('phone-00000008'))
+      expect(response.status).toBe(422)
+      expect(await response.json()).toMatchObject({ _tag: 'SessionWriteUnknown' })
+      expect(source.writes).toEqual([])
+    }
+  )
+  it('repeats a history-only acceptance without dispatch and keeps other ids unknown', async () => {
+    const storage = memoryWriteLedgerStorage()
+    storage.documents.set(
+      's1.history.json',
+      JSON.stringify({ v: 1, items: [{ id: 'phone-00000009', at: 19 }] })
+    )
+    const { source } = await world({ storage })
+    expect(await status('s1', 'phone-00000009')).toEqual({ status: 'accepted', at: 19 })
+    const response = await call('/sessions/write', message('phone-00000009'))
+    expect(await response.json()).toEqual({ status: 'accepted', at: 19 })
+    expect(source.writes).toEqual([])
+    expect(await status('s1', 'phone-00000010')).toMatchObject({ status: 'unknown' })
+  })
+  it('keeps a lost provider acknowledgement unknown on both query and repeated POST', async () => {
+    const { source } = await world()
+    source.refuse = new SessionWriteUnknown({
+      id: 's1',
+      clientMessageId: 'phone-00000011',
+      message: 'the provider did not confirm delivery'
+    })
+    const first = await call('/sessions/write', message('phone-00000011'))
+    expect(await first.json()).toMatchObject({ _tag: 'SessionWriteUnknown' })
+    expect(await status('s1', 'phone-00000011')).toMatchObject({ status: 'unknown' })
+    source.refuse = null
+    const retry = await call('/sessions/write', message('phone-00000011'))
+    expect(await retry.json()).toMatchObject({ _tag: 'SessionWriteUnknown' })
+    expect(source.writes).toEqual([])
   })
   it('writes a message with no id every time, as before, answering accepted', async () => {
     const { source } = await world()

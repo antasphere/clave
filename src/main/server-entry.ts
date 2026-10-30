@@ -359,7 +359,13 @@ async function main(): Promise<void> {
       }),
       // ── The mobile wave, lane B: the notify domain, and the write ledger per session ──
       ...push.ports,
-      writeLedger: fileWriteLedgerStorage(path.join(dataDir, 'write-ledger'))
+      writeLedger: fileWriteLedgerStorage(path.join(dataDir, 'write-ledger'), {
+        activationFile: path.join(dataDir, 'write-ledger-activation.json'),
+        sessionIds: [
+          ...sessionManager.list().map((session) => session.id),
+          ...sessions.listAdoptableRecords().map((record) => record.id)
+        ]
+      })
     },
     port,
     host: config.host,
@@ -401,7 +407,12 @@ async function main(): Promise<void> {
   setServerEventPublisher((event) => server.publish(event))
   const stopStates = publishSessionStates(sessionManager, (event) => server.publish(event))
   // ── The mobile wave, lane B: the sessions' frames and exits reach the notifier ──
-  const stopNotify = observeSessionsForNotify(sessionManager, server.notify, server.writes.evidence)
+  const stopNotify = observeSessionsForNotify(
+    sessionManager,
+    server.notify,
+    server.writes.evidence,
+    server.writes.initialize
+  )
 
   fs.mkdirSync(dataDir, { recursive: true })
   const file = path.join(dataDir, 'clave-server.json')

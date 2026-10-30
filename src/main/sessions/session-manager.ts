@@ -179,9 +179,9 @@ export class SessionManager {
     return entry !== undefined && entry.ready && !entry.exited
   }
 
-  write(id: string, input: Uint8Array | SessionInput): void {
+  write(id: string, input: Uint8Array | SessionInput): void | Promise<void> {
     const entry = this.require(id)
-    entry.adapter.write(entry.handle, input)
+    return entry.adapter.write(entry.handle, input)
   }
   async models(id: string): Promise<ModelOption[]> {
     const entry = this.require(id)

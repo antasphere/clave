@@ -170,7 +170,7 @@ accepted id answers the first result and writes nothing; with a pending id (rece
 dispatched) it answers `{ "status": "pending" }` and writes nothing; with a rejected id it
 is refused (`SessionWriteRefused`) with the recorded reason, so a resend takes a new id;
 with an unknown id it is refused as `SessionWriteUnknown` and writes nothing, so a resend
-is always a new id and always the person's. An id the ledger does not hold is a first write.
+is always a new id and always the person's. An id the ledger does not hold is a first write only when the ledger is complete and the acknowledged write history does not contain it. Otherwise it is refused as unknown.
 
 `GET /sessions/writes?id=<session>&clientMessageId=<id>` answers `{ status, at?, reason? }`,
 from the ledger alone, whether or not the session still runs:
@@ -183,7 +183,7 @@ from the ledger alone, whether or not the session still runs:
 | `absent`   | the ledger is intact and complete and never saw the id: the write never arrived. Never decided from a history page, a retention limit or a partial read | completes the same send with the same id, once             |
 | `unknown`  | the ledger is missing, unreadable or incomplete, or the server stopped between the dispatch and the provider's answer                                   | sends nothing by itself; the person decides, with a new id |
 
-**The server's own history of writes** is the second file (`write-history/`, beside the
+**The server's own history of writes** is the second file (`<session>.history.json`, beside the
 ledger): every `user_message` carrying an id is recorded as it passes on the session's
 stream, from where the sessions live and independently of the write's handler, on the
 in-process server and the standalone server alike. It is the durable evidence that
@@ -194,6 +194,31 @@ the id; an entry left at `received` was provably never handed to the provider an
 provider's acknowledgement is therefore an `unknown`, by design. A ledger file that cannot
 be read is put aside and started again marked incomplete: an id it does not hold then reads
 `unknown`, never `absent`.
+
+The first upgrade initializes the host's existing saved and live session identities before
+opening the API, only when neither the ledger directory nor `write-ledger-activation.json`
+exists. The activation record lives outside the ledger directory and is written first.
+A later missing or corrupt ledger, a missing whole directory, or a partially completed
+activation stays unknown and is never migrated again. An unknown arbitrary session is not
+initialized by this migration. This keeps an existing desktop conversation usable on its
+first phone connection without treating lost delivery records as a fresh conversation.
+
+After activation, only a lifecycle creating a new session identity initializes an empty complete ledger.
+Restoring an identity never does. A missing ledger is unknown even if a surviving history
+contains other ids. If the whole ledger is incomplete, unknown ids are refused, including
+new ids: restore the ledger or start a new session before sending more identified messages.
+A history-proven accepted id still returns its original result without dispatch.
+
+Identified Codex writes wait for the turn/start or turn/steer acknowledgement before emitting
+the user-message evidence. Identified Claude writes wait for the stdin write callback.
+A lost transport acknowledgement stays unknown and never authorizes a retry of that id.
+Messages without a client id retain their existing behavior.
+
+The reproducible `mobile-notify/write-once` fixture dispatches the same identified message
+twice through `WriteSession`, then checks one provider-port write and persisted status over HTTP.
+Run `CLAVE_E2E_NS=mobile-b npx vitest run packages/server/src/sessions/writes.fixtures.test.ts`.
+It retains a receipt under `/tmp/mobile-b/write-fixture-*/receipt.json`; this isolated fixture
+uses a recording session port, no real provider. Remove only that run directory to clean up.
 
 A message with no id is written every time, as before, and answers `accepted`.
 

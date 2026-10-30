@@ -114,7 +114,13 @@ async function start(options: StartOptions): Promise<ClaveServerEndpoint> {
       ...push?.ports,
       // ── The mobile wave, lane B: the write ledger, per session, under the user data ──
       ...(options.dataDir !== undefined && {
-        writeLedger: fileWriteLedgerStorage(`${options.dataDir}/write-ledger`)
+        writeLedger: fileWriteLedgerStorage(`${options.dataDir}/write-ledger`, {
+          activationFile: `${options.dataDir}/write-ledger-activation.json`,
+          sessionIds: [
+            ...manager.list().map((session) => session.id),
+            ...(ports.sessions?.listAdoptableRecords().map((record) => record.id) ?? [])
+          ]
+        })
       }),
       ...ports
     },
@@ -128,7 +134,12 @@ async function start(options: StartOptions): Promise<ClaveServerEndpoint> {
   setServerEventPublisher((event) => server.publish(event))
   stopStates = publishSessionStates(manager, (event) => server.publish(event))
   // ── The mobile wave, lane B: the sessions' frames and exits reach the notifier ──
-  stopNotify = observeSessionsForNotify(manager, server.notify, server.writes.evidence)
+  stopNotify = observeSessionsForNotify(
+    manager,
+    server.notify,
+    server.writes.evidence,
+    server.writes.initialize
+  )
   // ── Lane E (mobile wave, 2026-10-29): the relay client, reaching the relay Settings names ──
   // Loaded on first use (`relay-wiring.ts`), so the boot reaches no Effect
   // module through this file; the client waits on its own for an address

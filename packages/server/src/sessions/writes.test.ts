@@ -26,12 +26,17 @@ afterEach(() => {
 })
 const quiet = (): void => {}
 const ID = 'phone-00000001'
+const freshLedger = (storage = memoryWriteLedgerStorage(), now = () => 1): WriteLedger => {
+  const ledger = new WriteLedger(storage, now, quiet)
+  for (const id of ['s', 't', 'fresh']) ledger.initialize(id)
+  return ledger
+}
 
 describe('the phases of a write', () => {
   it('persists received before anything else, then dispatched, then accepted with when', () => {
     const storage = memoryWriteLedgerStorage()
     let clock = 100
-    const ledger = new WriteLedger(storage, () => clock, quiet)
+    const ledger = freshLedger(storage, () => clock)
     expect(ledger.receive('s', ID)).toEqual({ first: true })
     const onDisk = (): unknown => JSON.parse(storage.documents.get('s.ledger.json')!)
     expect(onDisk()).toEqual({
@@ -50,7 +55,7 @@ describe('the phases of a write', () => {
     expect(ledger.status('s', ID)).toEqual({ status: 'accepted', at: 102 })
   })
   it('records a rejection with its reason, and answers it', () => {
-    const ledger = new WriteLedger(memoryWriteLedgerStorage(), () => 5, quiet)
+    const ledger = freshLedger(undefined, () => 5)
     ledger.receive('s', ID)
     ledger.dispatch('s', ID)
     ledger.reject('s', ID, 'the provider refused it')
@@ -61,7 +66,7 @@ describe('the phases of a write', () => {
     })
   })
   it('answers the held entry to a second arrival, in every state', () => {
-    const ledger = new WriteLedger(memoryWriteLedgerStorage(), () => 1, quiet)
+    const ledger = freshLedger()
     ledger.receive('s', 'a-00000001')
     expect(ledger.receive('s', 'a-00000001')).toEqual({ held: { status: 'received', at: 1 } })
     ledger.dispatch('s', 'a-00000001')
@@ -78,7 +83,7 @@ describe('the phases of a write', () => {
   })
   it('refuses a write whose received phase cannot be persisted, holding nothing', () => {
     const storage = memoryWriteLedgerStorage()
-    const ledger = new WriteLedger(storage, () => 1, quiet)
+    const ledger = freshLedger(storage)
     const write = storage.write
     storage.write = () => {
       throw new Error('disk full')
@@ -91,7 +96,7 @@ describe('the phases of a write', () => {
     expect(ledger.receive('s', ID)).toEqual({ first: true })
   })
   it('keeps every id: nothing is evicted', () => {
-    const ledger = new WriteLedger(memoryWriteLedgerStorage(), () => 1, quiet)
+    const ledger = freshLedger()
     for (let i = 0; i < 1000; i++) {
       const id = `id-${String(i).padStart(8, '0')}`
       ledger.receive('s', id)
@@ -105,10 +110,21 @@ describe('the phases of a write', () => {
 
 describe('the route’s five statuses', () => {
   it('absent from an intact complete ledger, never from anything else', () => {
-    const ledger = new WriteLedger(memoryWriteLedgerStorage(), () => 1, quiet)
+    const ledger = freshLedger()
     expect(ledger.status('fresh', ID)).toEqual({ status: 'absent' })
     ledger.receive('fresh', 'other-00000001')
     expect(ledger.status('fresh', ID)).toEqual({ status: 'absent' })
+  })
+  it('a missing ledger is unknown until a new session identity explicitly initializes it', () => {
+    const storage = memoryWriteLedgerStorage()
+    const ledger = new WriteLedger(storage, () => 1, quiet)
+    expect(ledger.status('old', ID)).toMatchObject({ status: 'unknown' })
+    expect(ledger.receive('old', ID)).toMatchObject({ held: { status: 'unknown' } })
+    ledger.initialize('old')
+    expect(ledger.status('old', ID)).toMatchObject({ status: 'unknown' })
+    ledger.initialize('new')
+    expect(ledger.status('new', ID)).toEqual({ status: 'absent' })
+    expect(new WriteLedger(storage).status('new', ID)).toEqual({ status: 'absent' })
   })
   it('unknown from an unreadable ledger, and from one started again after an invalid file', () => {
     const storage = memoryWriteLedgerStorage()
@@ -129,8 +145,8 @@ describe('the route’s five statuses', () => {
       [...storage.documents.keys()].some((k) => k.startsWith('t.ledger.json.unreadable-'))
     ).toBe(true)
     expect(JSON.parse(storage.documents.get('t.ledger.json')!)).toMatchObject({ complete: false })
-    // A new write on it is a first write, recorded; an id it never saw stays unknown.
-    expect(invalid.receive('t', ID)).toEqual({ first: true })
+    // An incomplete ledger cannot prove an unseen id is new.
+    expect(invalid.receive('t', ID)).toMatchObject({ held: { status: 'unknown' } })
     expect(invalid.status('t', 'never-00000001')).toEqual({
       status: 'unknown',
       reason: LEDGER_INCOMPLETE
@@ -138,7 +154,7 @@ describe('the route’s five statuses', () => {
   })
   it('unknown while a load throws, said as such', () => {
     const storage = memoryWriteLedgerStorage()
-    const ledger = new WriteLedger(storage, () => 1, quiet)
+    const ledger = freshLedger(storage)
     // The history file is read first; a throwing ledger read is caught by load,
     // so only a thrown put reaches status: proven through the unreadable path above.
     expect(ledger.status('s', ID)).toEqual({ status: 'absent' })
@@ -155,7 +171,7 @@ describe('the route’s five statuses', () => {
 describe('the server’s own history of writes', () => {
   it('records an id as it passes, settles a dispatched entry as accepted, and persists both', () => {
     const storage = memoryWriteLedgerStorage()
-    const ledger = new WriteLedger(storage, () => 1, quiet)
+    const ledger = freshLedger(storage)
     ledger.receive('s', ID)
     ledger.dispatch('s', ID)
     ledger.evidence('s', ID, 9)
@@ -235,6 +251,7 @@ describe('recovery at boot, on what a previous process left', () => {
     const dir = mkdtempSync(path.join(tmpdir(), 'clave-ledger-'))
     dirs.push(dir)
     const first = new WriteLedger(fileWriteLedgerStorage(dir), () => 1, quiet)
+    first.initialize('s')
     first.receive('s', 'a-00000001')
     first.dispatch('s', 'a-00000001')
     first.accept('s', 'a-00000001')

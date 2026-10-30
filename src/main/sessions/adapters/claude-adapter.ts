@@ -1,4 +1,5 @@
 import { EventEmitter } from 'node:events'
+import { SessionWriteUnknown } from '@clave/contract/sessions'
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
@@ -1219,8 +1220,17 @@ export class ClaudeAdapter implements SessionAdapter {
     live.translator.requestSettings()
     const initialInput = live.initialInput
     const initialPrompt = live.initialPrompt
-    if (initialInput !== undefined) this.write(handle, initialInput)
-    else if (initialPrompt !== undefined)
+    if (initialInput !== undefined) {
+      const acceptance = this.write(handle, initialInput)
+      if (acceptance)
+        void acceptance.catch(() =>
+          live.emit({
+            type: 'error',
+            message: 'The initial message delivery could not be confirmed.',
+            fatal: false
+          })
+        )
+    } else if (initialPrompt !== undefined)
       this.write(handle, { type: 'user_message', text: initialPrompt })
     live.initialInput = undefined
     live.initialPrompt = undefined
@@ -1247,7 +1257,7 @@ export class ClaudeAdapter implements SessionAdapter {
     }
     return resume.history
   }
-  write(handle: SessionHandle, raw: Uint8Array | SessionInput): void {
+  write(handle: SessionHandle, raw: Uint8Array | SessionInput): void | Promise<void> {
     if (raw instanceof Uint8Array)
       throw new Error('Claude events adapter accepts SessionInput, not raw bytes')
     const input = SessionInputSchema.parse(raw)
@@ -1267,7 +1277,7 @@ export class ClaudeAdapter implements SessionAdapter {
       live.process ??= live.start()
       live.translator.interrupted = false
       live.lastUserMessage = input
-      live.emit(userMessageEvent(input))
+      if (input.clientMessageId === undefined) live.emit(userMessageEvent(input))
       // The pane works from the moment a message is sent, the first one
       // included: before this the CLI's init frame, seconds after the first
       // Enter, was the first word that anything was happening. A queued
@@ -1290,7 +1300,25 @@ export class ClaudeAdapter implements SessionAdapter {
             }))
           ]
         : prompt.text
-      send({ type: 'user', message: { role: 'user', content } })
+      const payload = { type: 'user', message: { role: 'user', content } }
+      if (input.clientMessageId !== undefined)
+        return new Promise<void>((resolve, reject) => {
+          live.process!.stdin.write(`${JSON.stringify(payload)}\n`, (error) => {
+            if (error) {
+              reject(
+                new SessionWriteUnknown({
+                  id: handle.id,
+                  clientMessageId: input.clientMessageId!,
+                  message: 'the provider did not confirm whether the message arrived'
+                })
+              )
+              return
+            }
+            live.emit(userMessageEvent(input))
+            resolve()
+          })
+        })
+      send(payload)
     } else if (input.type === 'permission_response') {
       send(live.translator.response(input.id, input.optionId, input.answers))
       if (!live.translator.permissions.size)

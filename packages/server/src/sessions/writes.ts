@@ -101,6 +101,23 @@ export class WriteLedger {
     private readonly log: (line: string) => void = (line) => console.error(`[clave-server] ${line}`)
   ) {}
 
+  /** Only the lifecycle creating a new identity may establish completeness.
+   * Restoring an existing identity must never call this. Existing or unreadable
+   * documents are always recovered, never replaced with an empty complete ledger. */
+  initialize(sessionId: string): void {
+    if (this.sessions.has(sessionId)) return
+    if (
+      this.storage.read(this.ledgerName(sessionId)) !== null ||
+      this.storage.read(this.historyName(sessionId)) !== null
+    ) {
+      this.load(sessionId)
+      return
+    }
+    const ledger: SessionLedger = { complete: true, entries: new Map(), history: new Map() }
+    this.persist(sessionId, ledger)
+    this.sessions.set(sessionId, ledger)
+  }
+
   /**
    * The write arrives: the entry the ledger holds for the id, or `received`
    * written and persisted first. Throws when the phase cannot be persisted,
@@ -108,8 +125,12 @@ export class WriteLedger {
    */
   receive(sessionId: string, id: string): { held: LedgerEntry } | { first: true } {
     const ledger = this.load(sessionId)
+    const evidenced = ledger.history.get(id)
+    if (evidenced !== undefined) return { held: { status: 'accepted', at: evidenced } }
     const held = ledger.entries.get(id)
     if (held) return { held }
+    if (!ledger.complete)
+      return { held: { status: 'unknown', at: this.now(), reason: LEDGER_INCOMPLETE } }
     this.put(sessionId, ledger, id, { status: 'received', at: this.now() })
     return { first: true }
   }
@@ -129,6 +150,18 @@ export class WriteLedger {
     const entry: LedgerEntry = current?.status === 'accepted' ? current : { status: 'accepted', at }
     this.put(sessionId, ledger, id, entry, { tolerate: true })
     return entry
+  }
+
+  /** A dispatch whose acknowledgement was lost must not authorize a retry. */
+  unknown(sessionId: string, id: string, reason: string): void {
+    const ledger = this.load(sessionId)
+    this.put(
+      sessionId,
+      ledger,
+      id,
+      { status: 'unknown', at: this.now(), reason },
+      { tolerate: true }
+    )
   }
 
   /** The provider refused it, or the dispatch failed. */
@@ -197,7 +230,7 @@ export class WriteLedger {
     const loaded = this.sessions.get(sessionId)
     if (loaded) return loaded
     const history = this.readHistory(sessionId)
-    const ledger: SessionLedger = { complete: true, entries: new Map(), history }
+    const ledger: SessionLedger = { complete: false, entries: new Map(), history }
     let recovered = false
     let text: string | null
     try {
@@ -353,9 +386,12 @@ const messageOf = (error: unknown): string =>
   error instanceof Error ? error.message : String(error)
 
 /** The documents as files under `dir` (owner-only, written then renamed). */
-export function fileWriteLedgerStorage(dir: string): WriteLedgerStorage {
+export function fileWriteLedgerStorage(
+  dir: string,
+  legacy?: { readonly activationFile: string; readonly sessionIds: ReadonlyArray<string> }
+): WriteLedgerStorage {
   const target = (name: string): string => path.join(dir, name)
-  return {
+  const storage: WriteLedgerStorage = {
     read(name) {
       try {
         return fs.readFileSync(target(name), 'utf8')
@@ -373,6 +409,23 @@ export function fileWriteLedgerStorage(dir: string): WriteLedgerStorage {
       fs.renameSync(tmp, file)
     }
   }
+  if (legacy && !fs.existsSync(legacy.activationFile)) {
+    // This runs before the API listener. Only a genuinely new ledger directory
+    // proves these saved sessions predate identified writes. Existing storage,
+    // even empty/corrupt, must never be relabelled as a legacy installation.
+    const firstActivation = !fs.existsSync(dir)
+    fs.mkdirSync(path.dirname(legacy.activationFile), { recursive: true, mode: 0o700 })
+    // Record activation outside the ledger directory BEFORE initializing ids.
+    // A crash part-way through, or loss of the entire ledger directory later,
+    // cannot cause another migration to claim missing entries are absent.
+    fs.writeFileSync(legacy.activationFile, JSON.stringify({ v: 1 }), { mode: 0o600, flag: 'wx' })
+    if (firstActivation) {
+      const ledger = new WriteLedger(storage)
+      for (const id of new Set(legacy.sessionIds)) ledger.initialize(id)
+      fs.mkdirSync(dir, { recursive: true, mode: 0o700 })
+    }
+  }
+  return storage
 }
 
 /** The documents in memory, for the tests and for a server with no data directory. */
