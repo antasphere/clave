@@ -75,6 +75,7 @@ import {
   ServerInfoPort,
   // ── The mobile wave, lane B: the push credentials and the fake, the write ledger ──
   loadPushPorts,
+  parsePushFixtureArgs,
   fileWriteLedgerStorage
 } from '@clave/server'
 import { standaloneSettingsSource } from './settings/standalone-source'
@@ -316,7 +317,8 @@ async function main(): Promise<void> {
   }
   // ── The mobile wave, lane B: the push credentials under --data-dir/push,
   // the recording fake under --push-fake (the suite's), on the test hooks ──
-  const push = loadPushPorts({ dataDir, fake: process.argv.includes('--push-fake'), log })
+  const pushFixture = parsePushFixtureArgs(process.argv)
+  const push = loadPushPorts({ dataDir, ...pushFixture, log })
   if (push.hooks) installE2eHooks({ notify: push.hooks })
   const server = await startEmbedded({
     ports: {

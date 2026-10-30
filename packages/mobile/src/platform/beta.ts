@@ -27,8 +27,10 @@ import { assertCredentialMayTravelTo, type BuildKind } from '../machines/transpo
 import { DeliveryController } from '../reconnect/controller'
 import { DeliveryMarks, UnknownSends } from '../reconnect/ledger'
 import { registerDeviceToken, pushTokenKey, type TokenRegistration } from '../notifications/token'
+import type { DevicePushToken } from '../notifications/port'
 
 export class BetaServices {
+  private tokenSync: Promise<TokenRegistration[]> = Promise.resolve([])
   readonly records: EnrollmentRecords
   readonly delivery: DeliveryController
   readonly source: MachineSource
@@ -123,20 +125,38 @@ export class BetaServices {
     return result
   }
 
-  async registerPush(machineId: string): Promise<TokenRegistration> {
+  async registerPush(
+    machineId: string,
+    token?: DevicePushToken,
+    requestPermission = true
+  ): Promise<TokenRegistration> {
     const credential = await this.credentials.get(machineId)
     if (!credential) return { kind: 'failed', reason: 'Pair this phone first.' }
-    const permission = await Notifications.requestPermissionsAsync()
+    const permission = requestPermission
+      ? await Notifications.requestPermissionsAsync()
+      : await Notifications.getPermissionsAsync()
     if (!permission.granted)
       return { kind: 'unsupported', reason: 'Notifications are off for Clave.' }
     return registerDeviceToken(
       { machineId, bearer: credential.bearer, platform: Platform.OS === 'ios' ? 'ios' : 'android' },
       {
-        notifications: Notifications,
+        notifications: token ? { getDevicePushTokenAsync: async () => token } : Notifications,
         kv: this.kv,
         client: new EnrollmentClient(credential.serverUrl, { build: this.build })
       }
     )
+  }
+
+  /** Boot and native token rotation keep every paired server's raw token current. */
+  syncPushTokens(token?: DevicePushToken): Promise<TokenRegistration[]> {
+    const run = this.tokenSync.then(async () => {
+      const outcomes: TokenRegistration[] = []
+      for (const record of await this.records.list())
+        outcomes.push(await this.registerPush(record.machineId, token, false))
+      return outcomes
+    })
+    this.tokenSync = run.catch(() => [])
+    return run
   }
 
   async attach(

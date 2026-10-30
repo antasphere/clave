@@ -27,6 +27,7 @@ export {
 } from './fake'
 export {
   loadPushPorts,
+  parsePushFixtureArgs,
   apnsFileProblem,
   fcmFileProblem,
   APNS_FILE,

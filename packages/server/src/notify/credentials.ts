@@ -58,7 +58,7 @@ export interface LoadedPushPorts {
     readonly notify: NotifyOptions
   }
   readonly report: PushPortsReport
-  /** Under `--push-fake` only. */
+  /** Under either recording fixture mode. */
   readonly hooks?: NotifyE2eHooks
   readonly close: () => void
 }
@@ -66,8 +66,23 @@ export interface LoadedPushPorts {
 export interface LoadPushPortsInput {
   readonly dataDir: string
   readonly fake?: boolean
+  /** Keep recording transports but use the real DeviceSessions registry when false. */
+  readonly fakeTargets?: boolean
   readonly log: (line: string) => void
   readonly serverName?: string
+}
+
+/** Preserve legacy --push-fake behavior; the transport-only seam is test-only. */
+export function parsePushFixtureArgs(argv: readonly string[]): {
+  fake: boolean
+  fakeTargets: boolean
+} {
+  const fake = argv.includes('--push-fake')
+  const transports = argv.includes('--push-fake-transports')
+  if (fake && transports) throw new Error('Choose only one push fake mode.')
+  if (transports && !argv.includes('--test-no-activate'))
+    throw new Error('--push-fake-transports requires --test-no-activate.')
+  return { fake: fake || transports, fakeTargets: !transports }
 }
 
 interface ApnsFile {
@@ -107,10 +122,14 @@ export function loadPushPorts(input: LoadPushPortsInput): LoadedPushPorts {
   const serverName = input.serverName ?? machineName()
   if (input.fake) {
     const fake = fakePush()
-    input.log('push: the recording fake stands in for APNs and FCM (--push-fake)')
+    input.log(
+      input.fakeTargets === false
+        ? 'push: recording APNs and FCM with the real device registry (--push-fake-transports)'
+        : 'push: the recording fake stands in for APNs and FCM (--push-fake)'
+    )
     return {
       ports: {
-        pushTargets: fake.targets,
+        ...(input.fakeTargets !== false && { pushTargets: fake.targets }),
         pushTransports: fake.transports,
         notify: { serverName, fake: true }
       },
