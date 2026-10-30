@@ -43,15 +43,36 @@ describe('the page cursor', () => {
   })
 })
 
-it('merges only ordered overlap between history and buffered stream, keeping distinct live events', () => {
-  const item = (text: string): import('../contract/types').HistoryItem => ({
-    event: { type: 'user_message' as const, text }
+it('keeps a new identical delta beyond the snapshot watermark', () => {
+  const event = { type: 'assistant_text' as const, delta: 'a', final: false }
+  const page = {
+    items: [{ event, position: { generation: 'g', sequence: 1 } }],
+    before: null,
+    cursor: { generation: 'g', sequence: 1 },
+    truncated: false
+  }
+  const joined = mergeBufferedHistory(page, [{ event, position: { generation: 'g', sequence: 2 } }])
+  const applied = applyFirstPage(emptyConversation, joined)
+  expect(applied.conversation.entries[0]).toMatchObject({ text: 'aa' })
+})
+
+it('deduplicates positions only and rejects generation changes or gaps', () => {
+  const event = { type: 'assistant_text' as const, delta: 'a', final: false }
+  const item = (sequence: number, generation = 'g'): import('../contract/types').TimelineItem => ({
+    event,
+    position: { generation, sequence }
   })
-  expect(
-    mergeBufferedHistory({ items: [item('old'), item('a')], before: 2 }, [item('a'), item('b')])
-  ).toEqual({ items: [item('old'), item('a'), item('b')], before: 2 })
-  expect(mergeBufferedHistory({ items: [item('old')], before: null }, [item('a')]).items).toEqual([
-    item('old'),
-    item('a')
+  const page = {
+    items: [item(4)],
+    cursor: { generation: 'g', sequence: 4 },
+    before: null,
+    truncated: true
+  }
+  expect(mergeBufferedHistory(page, [item(4), item(6), item(5), item(5)]).items).toEqual([
+    item(4),
+    item(5),
+    item(6)
   ])
+  expect(() => mergeBufferedHistory(page, [item(5, 'new')])).toThrow()
+  expect(() => mergeBufferedHistory(page, [item(6)])).toThrow()
 })

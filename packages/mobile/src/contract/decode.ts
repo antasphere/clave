@@ -16,6 +16,8 @@ import type {
   Attachment,
   FileText,
   HistoryPage,
+  SessionPosition,
+  TimelinePage,
   LaunchProfilePreferencesView,
   LaunchProfileView,
   PendingRequest,
@@ -264,8 +266,55 @@ export function decodeSessionStream(value: unknown, path = 'stream'): SessionStr
   const o = record(value, path)
   const kind = str(o.kind, `${path}.kind`)
   if (kind === 'pty') return { kind, data: str(o.data, `${path}.data`) }
-  if (kind === 'event') return { kind, event: decodeSessionEvent(o.event, `${path}.event`) }
+  if (kind === 'event')
+    return present({
+      kind,
+      event: decodeSessionEvent(o.event, `${path}.event`),
+      position: opt(decodeSessionPosition)(o.position, `${path}.position`)
+    })
   return fail(`${path}.kind`, 'pty or event')
+}
+
+const sequence = (value: unknown, path: string): number =>
+  typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
+    ? value
+    : fail(path, 'a nonnegative safe integer')
+
+export function decodeSessionPosition(value: unknown, path = 'position'): SessionPosition {
+  const o = record(value, path)
+  return {
+    generation: nonEmpty(o.generation, `${path}.generation`),
+    sequence: sequence(o.sequence, `${path}.sequence`)
+  }
+}
+
+export function decodeTimelinePage(value: unknown, path = 'timeline'): TimelinePage {
+  const o = record(value, path)
+  const cursor = decodeSessionPosition(o.cursor, `${path}.cursor`)
+  const items = arr((item, p) => {
+    const entry = record(item, p)
+    return present({
+      event: decodeSessionEvent(entry.event, `${p}.event`),
+      at: opt(num)(entry.at, `${p}.at`),
+      position: decodeSessionPosition(entry.position, `${p}.position`)
+    })
+  })(o.items, `${path}.items`)
+  let previous = -1
+  for (const item of items) {
+    if (
+      item.position.generation !== cursor.generation ||
+      item.position.sequence <= previous ||
+      item.position.sequence > cursor.sequence
+    )
+      return fail(path, 'ordered items in the cursor generation at or below its watermark')
+    previous = item.position.sequence
+  }
+  return {
+    items,
+    before: nullable(sequence)(o.before, `${path}.before`),
+    cursor,
+    truncated: bool(o.truncated, `${path}.truncated`)
+  }
 }
 
 export function decodeHistoryPage(value: unknown, path = 'history'): HistoryPage {
