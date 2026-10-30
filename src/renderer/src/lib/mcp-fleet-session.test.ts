@@ -101,6 +101,19 @@ describe('MCP fleet session launch', () => {
       ).rejects.toThrow()
     expect(api.fleetStart).not.toHaveBeenCalled()
   })
+  it('carries same-server attachment only when explicitly requested', async () => {
+    const api = setup()
+    for (const attachToParent of [false, true]) {
+      await openFleetSession('server', undefined, undefined, {
+        cwd: '/srv/repo',
+        mode: 'terminal',
+        callerSessionId: 'parent',
+        attachToParent
+      })
+      const options = api.fleetStart.mock.calls.at(-1)![2]
+      expect(options.spawnedBy).toBe(attachToParent ? 'parent' : undefined)
+    }
+  })
   it('propagates an offline server without creating a session anywhere else', async () => {
     const api = setup()
     api.fleetStart.mockRejectedValue(new Error('offline'))

@@ -456,6 +456,7 @@ export async function openSessionProgrammatically(payload: {
     workspace: payload.workspace,
     group: targetGroup,
     defaultWorkspaceId: workspaceForSpawn(undefined, payload.callerSessionId),
+    callerServerId: payload.callerSessionId ? ownerOf(payload.callerSessionId) : undefined,
     workspaces: allWorkspaces(useWorkspaceStore.getState()),
     connections
   })

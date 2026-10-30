@@ -9,6 +9,7 @@ export function resolveSessionTarget(input: {
   workspace?: string
   group?: { id: string; workspaceId?: string | null } | null
   defaultWorkspaceId?: string
+  callerServerId?: string
   workspaces: Workspace[]
   connections: SavedServerConnection[]
 }): { serverId: string; workspaceId?: string } {
@@ -54,7 +55,7 @@ export function resolveSessionTarget(input: {
       ? ownerOf(input.group.id)
       : workspace
         ? ownerOf(workspace.id)
-        : ownerOf(input.defaultWorkspaceId))
+        : (input.callerServerId ?? ownerOf(input.defaultWorkspaceId)))
   if (input.group && ownerOf(input.group.id) !== serverId)
     throw new Error('The target group belongs to another server.')
   if (workspace && ownerOf(workspace.id) !== serverId)

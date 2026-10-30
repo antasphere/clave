@@ -77,6 +77,13 @@ describe('MCP destination ownership', () => {
       })
     ).toThrow('another workspace')
   })
+  it('keeps an unstamped remote caller on its server when the window shows the Mac', () => {
+    expect(resolveSessionTarget({ ...defaults, callerServerId: 'a' })).toEqual({ serverId: 'a' })
+    expect(resolveSessionTarget({ ...defaults, callerServerId: 'a', server: 'local' })).toEqual({
+      serverId: 'local',
+      workspaceId: 'local-ws'
+    })
+  })
   it('explicit local drops a remote caller workspace', () => {
     expect(
       resolveSessionTarget({ ...defaults, server: 'local', defaultWorkspaceId: remote })

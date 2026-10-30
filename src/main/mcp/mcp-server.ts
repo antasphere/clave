@@ -641,6 +641,13 @@ async function runCommand(command: string, payload: unknown, caller?: string): P
         }
       }
       result = await callRenderer<unknown>(command, payload, win)
+      // A window-owned fleet launch keeps a messaging link in the renderer.
+      // Local read/send tools still run on the server, so retain the same
+      // authenticated relationship there independently of sidebar nesting.
+      if (command === 'openSession' && callerSessionId && result && typeof result === 'object') {
+        const childId = (result as { sessionId?: unknown }).sessionId
+        if (typeof childId === 'string') setParent(childId, callerSessionId)
+      }
       // Focusing a tab that lives in another window means the user should
       // SEE it: bring that window forward (inert under --test-no-activate).
       if (command === 'focus' && win) bringForward(win)

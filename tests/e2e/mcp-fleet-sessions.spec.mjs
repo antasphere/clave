@@ -7,9 +7,10 @@ import {
   eventually,
   request,
   owned,
-  showServer
+  showServer,
+  showMac
 } from './fixtures/fleet-world.mjs'
-import { mcpHttpClient, mcpEndpoint, toolPayload, toolErrored } from './harness.mjs'
+import { mcpHttpClient, mcpEndpoint, toolPayload, toolErrored, callMcp } from './harness.mjs'
 
 export async function run(t) {
   const world = await fleetWorld('mcp-session')
@@ -79,6 +80,61 @@ export async function run(t) {
     assert.equal(toolErrored(local), false, JSON.stringify(local))
     assert.ok(!toolPayload(local).sessionId.startsWith('clave-owner:'))
     t.check('explicit local launch stays on the Mac with a connected fleet', true)
+    await showMac(mac)
+    const inherited = await callMcp(mac.app, 'openSession', {
+      callerSessionId: created.sessionId,
+      cwd: world.servers[1].root,
+      mode: 'terminal',
+      name: 'Verifier inherited owner'
+    })
+    assert.ok(
+      inherited.sessionId.startsWith(owned('session', mac.owners[1].id, '')),
+      'unstamped remote caller keeps its server'
+    )
+    t.check('unstamped remote caller stays on its server while the window shows the Mac', true)
+    const parent = toolPayload(
+      await mcp.call('clave_open_session', {
+        server: 'local',
+        cwd: mac.root,
+        mode: 'claude',
+        profile: 'fleet-title-fixture',
+        name: 'Verifier parent'
+      })
+    )
+    let parentToken
+    await eventually(async () => {
+      try {
+        const config = JSON.parse(
+          readFileSync(path.join(mac.dir, 'mcp-configs', parent.sessionId + '.json'), 'utf8')
+        )
+        parentToken = config.mcpServers.clave.headers.Authorization.replace(/^Bearer /, '')
+        return !!parentToken
+      } catch {
+        return false
+      }
+    }, 'local parent has real session MCP token')
+    const caller = mcpHttpClient(mcpEndpoint(mac.dir), parentToken)
+    await caller.init()
+    const childResult = await caller.call('clave_open_session', {
+      server: 'local',
+      cwd: mac.root,
+      mode: 'terminal',
+      name: 'Verifier child'
+    })
+    assert.equal(toolErrored(childResult), false, JSON.stringify(childResult))
+    const child = toolPayload(childResult)
+    const read = await caller.call('clave_read_session', { sessionId: child.sessionId })
+    const remoteChildResult = await caller.call('clave_open_session', {
+      server: mac.owners[0].id,
+      cwd: world.servers[0].root,
+      mode: 'terminal',
+      name: 'Verifier remote child'
+    })
+    assert.equal(toolErrored(remoteChildResult), false, JSON.stringify(remoteChildResult))
+    const remoteChild = toolPayload(remoteChildResult)
+    const remoteRead = await caller.call('clave_read_session', { sessionId: remoteChild.sessionId })
+    assert.equal(toolErrored(read), false, JSON.stringify(read))
+    t.check('local parent reads its separately opened child through authenticated HTTP MCP', true)
   } finally {
     await world.close()
   }
