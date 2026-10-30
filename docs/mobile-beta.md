@@ -1,6 +1,6 @@
 # Clave mobile beta
 
-The beta wiring is in progress on the named integration base `157bea53`. Sign-in, relay discovery, pairing, attachments and durable sends have native adapters and screens. Cold notification navigation and ordered reconnect hooks have focused tests. Native acceptance, build artifacts and independent verification are still pending. This document does not claim an installable beta candidate.
+The beta wiring is in progress on the coordinator's integration branch. Sign-in, relay discovery, pairing, attachments and durable sends have native adapters and screens. Cold notification navigation and ordered reconnect hooks have focused tests. Native acceptance, build artifacts and independent verification are still pending. This document does not claim an installable beta candidate.
 
 The phone uses the system keyboard's dictation. It needs no separate transcription service.
 
@@ -69,6 +69,8 @@ Use a new output directory for each build. The iOS default is an unsigned device
 Android produces `clave-release.apk`, signed with a local beta key under `/tmp/clave-mobile-d/keystore`. `MOBILE_ANDROID_KEY_DIR` selects a different local key directory. Team signing uses `MOBILE_ANDROID_KEYSTORE`, `MOBILE_ANDROID_KEY_ALIAS`, `MOBILE_ANDROID_STORE_PASSWORD_FILE` and `MOBILE_ANDROID_KEY_PASSWORD_FILE`. The signing files must have no group or other permissions. Passwords travel through files rather than command arguments. Store distribution needs the team's keystore.
 
 These scripts have syntax checks only at this checkpoint. No native build artifact is claimed yet.
+
+The native/provider acceptance driver needs a separately built **development** `.app` or debug APK, with the new native modules included. Release artifacts cannot connect to Metro or its source inspector. Start only the assigned simulator or emulator, then run `scripts/mobile-beta-native.mjs` with explicit `--worktree`, full `--candidate` SHA, unique `--marker`, `--metro-port`, `--server-port`, `--relay-port`, `--data`, `--scratch`, `--output`, `--app`, `--provider echo|codex` and either `--ios-udid` or `--android-serial`. The driver starts its own isolated server and Metro, launches from a saved profile on the phone, checks two responses and the same session through an attached hidden Electron app, and verifies the actually loaded source. Its developer connection flow explicitly does not prove relay discovery or native enrollment. Echo is always a fixture; Codex uses the Mac's existing login and verifies the reported model. No such native run has passed yet.
 
 ## Using the beta
 
