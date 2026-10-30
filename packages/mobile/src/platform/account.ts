@@ -42,16 +42,19 @@ export function nativeAccount(): HubSignIn {
 
 export async function nativeOwnerStores(auth: HubSignIn): Promise<{
   namespace: string
+  assertCurrentAccount: () => void
   kv: ReturnType<typeof ownerKeyValueStore>
   credentials: SecureCredentialStore
 }> {
   const status = auth.status()
+  const assertCurrentAccount = auth.guardAccount()
   const subject = status.account?.subject
   const namespace = await ownerNamespace(status.issuer, subject ?? null, (value) =>
     Crypto.digestStringAsync(Crypto.CryptoDigestAlgorithm.SHA256, value)
   )
   return {
     namespace,
+    assertCurrentAccount,
     kv: ownerKeyValueStore(rawKeyValueStore, namespace),
     credentials: new SecureCredentialStore(ownerSecureStore(rawSecureStore, namespace))
   }

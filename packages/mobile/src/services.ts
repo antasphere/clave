@@ -29,7 +29,7 @@ export function createServices(
   /* eslint-enable @typescript-eslint/no-require-imports */
   const build: BuildKind = __DEV__ ? 'development' : 'release'
   const drafts = new Drafts(kv)
-  const beta = new BetaServices(auth, kv, credentials, drafts, build)
+  const beta = new BetaServices(auth, kv, credentials, drafts, build, owner.assertCurrentAccount)
   return {
     beta,
     delivery: beta.delivery,
