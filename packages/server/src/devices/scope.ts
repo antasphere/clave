@@ -2,8 +2,9 @@
  * What a phone may do on this server, as an ALLOWLIST: the sessions routes
  * the spec names (a list, a read, a start, a stop, a write, a resize, a
  * view, the models, the commands, the capabilities, the history, a
- * restart), the pending requests and their answers, the files reads, the
- * launch profiles and workspaces reads, and its own device routes.
+ * restart), the pending requests and their answers, the files reads and
+ * bounded attachment preparation, launch profile and workspace reads,
+ * and its own device routes.
  * Everything else, the test fixture route, the saved accounts and clients,
  * the plugins, the sidebar, the git panel, the server's own routes and
  * every write to the settings included, answers 403 with one sentence.
@@ -28,6 +29,7 @@ const SESSION_WRITES = new Set([
 const READS = new Set(['/requests/pending', '/launch-profiles', '/workspaces', '/devices/me'])
 const WRITES = new Set([
   '/requests/resolve',
+  '/files/attachments/prepare',
   '/devices/me/push-token',
   '/devices/me/push-token/clear'
 ])
