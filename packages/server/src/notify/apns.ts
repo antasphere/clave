@@ -17,7 +17,13 @@ import type { KeyObject } from 'node:crypto'
 import { Effect } from 'effect'
 import type { NotificationPayload } from '@clave/contract/notify'
 import { signJwt } from './jwt'
-import { bounded, categoryIdOf, closedPayload, payloadTitle } from './payload'
+import {
+  PUSH_PAYLOAD_MAX_BYTES,
+  bounded,
+  categoryIdOf,
+  closedPayload,
+  payloadTitle
+} from './payload'
 import type { PushTarget, PushTransport, SendResult } from './port'
 
 export const APNS_HOST = 'api.push.apple.com'
@@ -134,7 +140,8 @@ export function apnsTransport(options: ApnsOptions): ApnsTransport {
   const request = (
     target: PushTarget,
     payload: NotificationPayload,
-    jwt: string
+    jwt: string,
+    serializedBody: string
   ): Promise<Exchange> =>
     new Promise<Exchange>((resolve) => {
       let current: http2.ClientHttp2Session
@@ -190,7 +197,7 @@ export function apnsTransport(options: ApnsOptions): ApnsTransport {
           reason: closed ? 'transport closed' : `stream closed (code ${stream.rstCode})`
         })
       )
-      stream.end(JSON.stringify(apnsBody(payload)))
+      stream.end(serializedBody)
     })
 
   const attempt = async (
@@ -198,7 +205,10 @@ export function apnsTransport(options: ApnsOptions): ApnsTransport {
     payload: NotificationPayload,
     fresh: boolean
   ): Promise<SendResult> => {
-    const exchange = await request(target, payload, providerToken(fresh))
+    const body = JSON.stringify(apnsBody(payload))
+    if (Buffer.byteLength(body) > PUSH_PAYLOAD_MAX_BYTES)
+      return { outcome: 'failed', reason: 'payload exceeds 4096 bytes' }
+    const exchange = await request(target, payload, providerToken(fresh), body)
     if (!exchange.answered) return { outcome: 'failed', reason: exchange.reason }
     const { status, reason } = exchange
     if (status === 200) return { outcome: 'sent' }
