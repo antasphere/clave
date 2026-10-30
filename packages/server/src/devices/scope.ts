@@ -17,7 +17,8 @@ const SESSION_READS = new Set([
   '/sessions/commands',
   '/sessions/capabilities',
   '/sessions/history',
-  '/sessions/timeline'
+  '/sessions/timeline',
+  '/sessions/writes'
 ])
 const SESSION_WRITES = new Set([
   '/sessions/start',
