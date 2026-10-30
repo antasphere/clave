@@ -9,6 +9,7 @@
  * here holds this one, and a change to one event is a change to both files.
  */
 import { Schema } from 'effect'
+import { SessionPosition } from './session-position'
 import { Command, Query } from '@structure-ai/cqrs'
 import { CapabilityUnavailable } from './errors'
 import { LaunchProfileView } from './settings/launch-profiles'
@@ -316,7 +317,11 @@ export type SessionEvent = typeof SessionEvent.Type
  *  `Uint8Array` in memory) or one typed event. */
 export const SessionStream = Schema.Union(
   Schema.Struct({ kind: Schema.Literal('pty'), data: Schema.Uint8ArrayFromBase64 }),
-  Schema.Struct({ kind: Schema.Literal('event'), event: SessionEvent })
+  Schema.Struct({
+    kind: Schema.Literal('event'),
+    event: SessionEvent,
+    position: Schema.optional(SessionPosition)
+  })
 )
 export type SessionStream = typeof SessionStream.Type
 export type SessionStreamEncoded = typeof SessionStream.Encoded

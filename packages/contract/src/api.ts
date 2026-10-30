@@ -10,6 +10,7 @@
  * module and nothing else, added to `ClaveApi` as one line. A lane adds its
  * group and its line; nobody edits another lane's group.
  */
+import { GetSessionTimeline } from './timeline'
 import { Api, ApiGroup, Health, HttpCqrs, annotate } from '@structure-ai/http'
 import { Schema } from 'effect'
 import {
@@ -99,6 +100,8 @@ export const sessionsGroup = ApiGroup.make('sessions')
   .add(HttpCqrs.commandEndpoint('restart', '/sessions/restart', RestartSession))
   // ── The mobile wave, lane B: whether a message a client minted an id for landed ──
   .add(HttpCqrs.queryEndpoint('writeStatus', '/sessions/writes', GetSessionWriteStatus))
+  // Mobile history ordering: the legacy history route keeps its semantics.
+  .add(HttpCqrs.queryEndpoint('timeline', '/sessions/timeline', GetSessionTimeline))
 
 // ── Clients (lane A, for the shell) ──
 export const clientsGroup = ApiGroup.make('clients')

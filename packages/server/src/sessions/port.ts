@@ -10,6 +10,7 @@
  * port is implemented by the shell in plain TypeScript, and the handlers
  * (`handlers.ts`) are where a thrown error becomes a declared failure.
  */
+import type { TimelinePage } from '@clave/contract/timeline'
 import { Context, Layer } from 'effect'
 import { CapabilityUnavailable } from '@clave/contract/errors'
 import type {
@@ -76,6 +77,8 @@ export interface SessionHostService extends SessionStreamSource {
   readonly control: (id: string, request: SessionControl) => Promise<Record<string, unknown>>
   readonly capabilities: (id: string) => SessionCapabilities
   readonly history: (id: string, before?: number, limit?: number) => HistoryPage
+  /** Additive capability; legacy hosts must refuse, never invent positions. */
+  readonly timeline?: (id: string, before?: number, limit?: number) => TimelinePage
   // ── Wave 4, lane C: the session records, and a session's release (PRDCT-3376) ──
   /** The records a window may bring back (`ListAdoptableRecords`): every
    *  adoptable one, or those of `ids` plus the records of the sessions this

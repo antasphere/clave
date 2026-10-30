@@ -5,6 +5,7 @@
  * never over a request. What the host throws becomes a declared failure
  * here, so a client reads a 422 it knows and never a 500.
  */
+import { GetSessionTimeline, TimelineReadFailed } from '@clave/contract/timeline'
 import { Effect } from 'effect'
 import { CommandHandler, QueryHandler } from '@structure-ai/cqrs'
 import { CapabilityUnavailable } from '@clave/contract/errors'
@@ -363,5 +364,30 @@ export const sessionHandlers = [
         ...(payload.requestId !== undefined && { requestId: payload.requestId })
       }
     })
+  ),
+  QueryHandler.make(GetSessionTimeline, (payload) =>
+    Effect.flatMap(SessionHost, (host) =>
+      known(host, payload.id).pipe(
+        Effect.flatMap(() =>
+          Effect.try({
+            try: () => {
+              if (!host.timeline)
+                throw new CapabilityUnavailable({
+                  capability: 'session timeline',
+                  message: 'This host does not provide ordered conversation history.'
+                })
+              return host.timeline(payload.id, payload.before, payload.limit)
+            },
+            catch: (error) =>
+              error instanceof CapabilityUnavailable
+                ? error
+                : new TimelineReadFailed({
+                    id: payload.id,
+                    message: 'Conversation history could not be read.'
+                  })
+          })
+        )
+      )
+    )
   )
 ] as const

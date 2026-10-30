@@ -4,6 +4,7 @@
  * traces a call the same way whatever transport brought it. One `<Domain>Live`
  * group per domain, one line each in `ApiLive`; a lane adds its own.
  */
+import { GetSessionTimeline } from '@clave/contract/timeline'
 import { Layer } from 'effect'
 import * as HttpApiBuilder from '@effect/platform/HttpApiBuilder'
 import { Health, HttpCqrs } from '@structure-ai/http'
@@ -129,6 +130,7 @@ export const SessionsLive = HttpApiBuilder.group(ClaveApi, 'sessions', (handlers
     .handle('restart', HttpCqrs.command(RestartSession))
     // ── The mobile wave, lane B: whether a message a client minted an id for landed ──
     .handle('writeStatus', HttpCqrs.query(GetSessionWriteStatus))
+    .handle('timeline', HttpCqrs.query(GetSessionTimeline))
 )
 
 // ── Lane A: the clients the shell registers as ──

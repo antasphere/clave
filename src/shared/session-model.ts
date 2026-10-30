@@ -292,8 +292,17 @@ export interface HistoryPage {
   items: HistoryItem[]
   before: number | null
 }
+export const SessionPositionSchema = z.object({
+  generation: z.string().min(1),
+  sequence: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER)
+})
+export type SessionPosition = z.infer<typeof SessionPositionSchema>
 export const SessionStreamSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('pty'), data: z.instanceof(Uint8Array) }),
-  z.object({ kind: z.literal('event'), event: SessionEventSchema })
+  z.object({
+    kind: z.literal('event'),
+    event: SessionEventSchema,
+    position: SessionPositionSchema.optional()
+  })
 ])
 export type SessionStream = z.infer<typeof SessionStreamSchema>

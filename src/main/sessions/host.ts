@@ -192,6 +192,7 @@ export function createSessionHost(deps: SessionHostDeps): SessionHostService {
     control: (id, request) => manager.control(id, request),
     capabilities: (id): SessionCapabilities => manager.capabilities(id),
     history: (id, before, limit): HistoryPage => manager.history(id, before, limit),
+    timeline: (id, before, limit) => manager.timeline(id, before, limit),
     // ── Wave 4, lane C: the session records (PRDCT-3376) ──
     listAdoptableRecords: (ids) => records.listAdoptableRecords(ids),
     discardRecord: (key) => records.discardRecord(key),

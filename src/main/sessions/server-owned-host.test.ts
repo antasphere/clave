@@ -494,3 +494,50 @@ describe('live server-retained history', () => {
     }
   })
 })
+
+describe('stopped conversation timeline', () => {
+  it('reads bounded checkpoints without starting a provider and resets generation across server restart', () => {
+    const f = fixture()
+    f.emit(record.id, { kind: 'event', event: { type: 'user_message', text: 'kept' } })
+    const first = f.host.timeline!(record.id)
+    expect(first.items.map(({ event }) => event.type)).toEqual(['user_message'])
+    expect(first.truncated).toBe(true)
+    expect(f.host.timeline!(record.id)).toEqual(first)
+    expect(f.start).not.toHaveBeenCalled()
+    expect(f.ready).not.toHaveBeenCalled()
+    f.close()
+    const restarted = fixture(f.dataDir)
+    expect(restarted.host.timeline!(record.id).cursor.generation).not.toBe(first.cursor.generation)
+    expect(restarted.host.timeline!(record.id).items[0].event).toEqual(first.items[0].event)
+    expect(() => restarted.host.timeline!('unknown')).toThrow('Unknown session')
+    restarted.close()
+  })
+  it('delegates live timeline reads and rebinds subscriptions after a live restart', async () => {
+    const f = fixture()
+    f.live.set(record.id, session)
+    const page = {
+      items: [],
+      before: null,
+      cursor: { generation: 'live', sequence: 0 },
+      truncated: false
+    } as const
+    Object.assign(f.base, { timeline: vi.fn(() => page) })
+    Object.assign(f.base, {
+      restart: vi.fn(async () => ({
+        id: record.id,
+        cwd: '/repo',
+        folderName: 'repo',
+        alive: true,
+        claudeSessionId: null,
+        piSessionId: null,
+        resumed: true
+      }))
+    })
+    const off = f.host.subscribe(record.id, () => {})
+    expect(f.host.timeline!(record.id)).toBe(page)
+    await f.host.restart(record.id, {}, false)
+    expect(f.base.subscribe).toHaveBeenCalledTimes(2)
+    off()
+    f.close()
+  })
+})
