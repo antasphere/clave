@@ -32,7 +32,6 @@ import type {
   SessionCapabilities,
   SessionEvent,
   SessionInfo,
-  SessionRecord,
   SessionStream,
   WorkspaceStateView,
   WorkspaceView,
@@ -109,6 +108,7 @@ export function decodeSession(value: unknown, path = 'session'): Session {
     transport: lit('pty', 'events')(o.transport, `${path}.transport`),
     cwd: str(o.cwd, `${path}.cwd`),
     windowKey: str(o.windowKey, `${path}.windowKey`),
+    workspaceId: opt(str)(o.workspaceId, `${path}.workspaceId`),
     groupId: opt(str)(o.groupId, `${path}.groupId`),
     state: agentState(o.state, `${path}.state`),
     createdAt: num(o.createdAt, `${path}.createdAt`),
@@ -354,22 +354,6 @@ export function decodeSessionCapabilities(
   const o = record(value, path)
   return { images: bool(o.images, `${path}.images`) }
 }
-
-export function decodeSessionRecord(value: unknown, path = 'record'): SessionRecord {
-  const o = record(value, path)
-  return present({
-    id: nonEmpty(o.id, `${path}.id`),
-    cwd: str(o.cwd, `${path}.cwd`),
-    folderName: str(o.folderName, `${path}.folderName`),
-    workspaceId: opt(str)(o.workspaceId, `${path}.workspaceId`),
-    displayName: opt(str)(o.displayName, `${path}.displayName`),
-    launchProfileId: opt(str)(o.launchProfileId, `${path}.launchProfileId`),
-    live: opt(bool)(o.live, `${path}.live`),
-    running: opt(bool)(o.running, `${path}.running`)
-  })
-}
-export const decodeSessionRecords = (value: unknown, path = 'records'): SessionRecord[] =>
-  arr(decodeSessionRecord)(value, path)
 
 export function decodeWriteAnswer(value: unknown, path = 'writeAnswer'): WriteAnswer {
   const o = record(value, path)
