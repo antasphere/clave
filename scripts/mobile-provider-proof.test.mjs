@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { parseOpenFiles, proveCodexProcess } from './mobile-provider-proof.mjs'
+import { parseOpenFiles, proveCodexProcess, proveSavedProfile } from './mobile-provider-proof.mjs'
 
 const input = {
   serverPid: 100,
@@ -33,6 +33,62 @@ const deps = {
   digest: () => 'installed-bytes',
   canonical: (value) => value
 }
+
+describe('native saved-profile acceptance uses the server launch record', () => {
+  const selected = {
+    id: 'chat:codex:mobile-beta-codex',
+    name: 'Mobile beta Codex',
+    family: 'codex',
+    command: ['/installed/codex'],
+    additionalArgs: ['-c', 'model="gpt-6.1-sol"']
+  }
+  const record = {
+    id: 'phone-session',
+    cwd: '/scratch',
+    workspaceId: 'chosen-workspace',
+    launchProfileId: selected.id,
+    launchProfile: selected
+  }
+  const expected = {
+    sessionId: record.id,
+    scratch: record.cwd,
+    workspaceId: record.workspaceId,
+    selected
+  }
+  it('binds the exact session, folder, workspace and full saved definition', () => {
+    expect(proveSavedProfile({ ...expected, records: [record] })).toMatchObject({
+      selectedProfileId: selected.id,
+      recordedProfileId: selected.id,
+      workspaceId: 'chosen-workspace'
+    })
+  })
+  it('rejects a silently substituted default with the same executable and model', () => {
+    expect(() =>
+      proveSavedProfile({ ...expected, records: [{ ...record, launchProfileId: 'codex-chat' }] })
+    ).toThrow('selected saved profile')
+  })
+  it('rejects missing or altered persisted profile definitions', () => {
+    expect(() =>
+      proveSavedProfile({ ...expected, records: [{ ...record, launchProfile: undefined }] })
+    ).toThrow('selected profile definition')
+    expect(() =>
+      proveSavedProfile({
+        ...expected,
+        records: [{ ...record, launchProfile: { ...selected, additionalArgs: [] } }]
+      })
+    ).toThrow('selected profile definition')
+  })
+  it('rejects a different session, workspace or launch folder', () => {
+    for (const change of [
+      { id: 'other-session' },
+      { workspaceId: 'other-workspace' },
+      { cwd: '/live-user-folder' }
+    ])
+      expect(() =>
+        proveSavedProfile({ ...expected, records: [{ ...record, ...change }] })
+      ).toThrow()
+  })
+})
 
 describe('native acceptance requires a real isolated Codex process', () => {
   it('binds the adapter and provider thread to the isolated server descendant and executable bytes', () => {
