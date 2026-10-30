@@ -93,3 +93,15 @@ export { PendingRequests, type RequestInput, type RequestResult } from './reques
 export { RequestsPort, type RequestsService } from './requests/port'
 
 export { FileTreeWatcher } from './files/watch'
+// ── Lane E (mobile wave, 2026-10-29): the relay, and its client in the server ──
+export { startRelay, type Relay, type RelayOptions } from './relay/relay'
+export {
+  insecureRelayAddress,
+  startRelayClient,
+  type RelayClient,
+  type RelayClientOptions,
+  type RelayClientState,
+  type RelayClientStatus,
+  type RelayCredential,
+  type RelayCredentialStore
+} from './relay/client'

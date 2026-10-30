@@ -86,6 +86,25 @@ async function start(options: StartOptions): Promise<ClaveServerEndpoint> {
   setClaveServerEndpoint(endpoint)
   setServerEventPublisher((event) => server.publish(event))
   stopStates = publishSessionStates(manager, (event) => server.publish(event))
+  // ── Lane E (mobile wave, 2026-10-29): the relay client, reaching the relay Settings names ──
+  // Loaded on first use (`relay-wiring.ts`), so the boot reaches no Effect
+  // module through this file; the client waits on its own for an address
+  // and a login, and a failure here never stops the server. Inside Electron
+  // only: the shell's preferences and secrets come from the app's own ports,
+  // and the unit test of this seam runs it under plain Node with none.
+  if (!process.versions.electron) return endpoint
+  mobileRelayStarted = true
+  void Promise.all([import('./relay-wiring'), import('../settings/shell-source')])
+    .then(([wiring, shell]) =>
+      wiring.startMobileRelay({
+        local: { url: server.url },
+        version: options.appVersion ?? '0.0.0',
+        antasphere: shell.shellAntasphereAccount
+      })
+    )
+    .catch((error: unknown) => {
+      console.error('[mobile-relay] the relay client did not start', error)
+    })
   return endpoint
 }
 
@@ -107,4 +126,12 @@ export async function stopClaveServer(): Promise<void> {
       `${report.drained ? '' : ', NOT all answered'}, ${report.peers} push peer(s) closed, ` +
       `${report.destroyed} connection(s) destroyed`
   )
+  // ── Lane E (mobile wave, 2026-10-29): the relay client goes with the server ──
+  if (mobileRelayStarted) {
+    mobileRelayStarted = false
+    await import('./relay-wiring').then((wiring) => wiring.stopMobileRelay())
+  }
 }
+
+// ── Lane E (mobile wave, 2026-10-29): whether this process started a relay client ──
+let mobileRelayStarted = false
