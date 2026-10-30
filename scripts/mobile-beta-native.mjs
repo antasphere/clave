@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /* eslint-disable @typescript-eslint/explicit-function-return-type -- Node verification driver */
-// Native acceptance only. Requires a committed candidate, prebuilt app and running explicit device.
+// Native acceptance only. Requires a committed candidate, development app and explicit device.
 import assert from 'node:assert/strict'
 import { execFileSync, spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
@@ -156,6 +156,7 @@ async function main(o) {
   )
   const receipt = {
     candidate: o.candidate,
+    tree: sh('git', ['rev-parse', 'HEAD^{tree}'], { cwd: o.worktree }),
     worktree: o.worktree,
     marker: o.marker,
     device: o['ios-udid'] ?? o['android-serial'],
