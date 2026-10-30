@@ -230,3 +230,34 @@ describe('ClavePushClient', () => {
     expect(() => c.connect()).toThrow(/closed/)
   })
 })
+
+it('finished subscriptions still allow a reconnect snapshot barrier', async () => {
+  const c = client().connect()
+  try {
+    c.subscribe('s1', () => {})
+    await c.subscribed('s1')
+    broadcast({ _tag: 'exit', sessionId: 's1', code: 0 })
+    await new Promise((r) => setTimeout(r, 20))
+    for (const peer of peers) peer.close(1001, 'test reconnect')
+    await until(() => c.connections >= 2 && c.status === 'open')
+    const state = await Promise.race([
+      c.subscribed('s1').then(() => 'snapshot-ready'),
+      new Promise((resolve) => setTimeout(() => resolve('hung'), 150))
+    ])
+    expect(state).toBe('snapshot-ready')
+  } finally {
+    c.close()
+  }
+})
+
+it('bounds a missing subscription acknowledgement and removes the timed-out waiter', async () => {
+  const c = client().connect()
+  try {
+    c.subscribe('s1', () => {})
+    // The current socket has not welcomed or subscribed yet.
+    await expect(c.subscribed('s1', 0)).rejects.toThrow(/acknowledge/)
+    await expect(c.subscribed('s1')).resolves.toMatchObject({ id: 's1' })
+  } finally {
+    c.close()
+  }
+})
