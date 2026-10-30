@@ -97,7 +97,7 @@ export class NotificationInbox {
   }
 }
 
-function pendingLink(raw: string | null): DeepLink | null {
+export function pendingLink(raw: string | null): DeepLink | null {
   if (!raw) return null
   try {
     const value: unknown = JSON.parse(raw)

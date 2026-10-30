@@ -123,3 +123,43 @@ it('a permanent-only permission opens the app instead of granting it from a noti
   expect(resolved).toBe(false)
   expect(result).toMatchObject({ kind: 'open', link: { kind: 'requests', requestId: 'request' } })
 })
+
+it('an offered button that cannot settle a complex question opens its specific request', async () => {
+  const credentials = new SecureCredentialStore(new MemorySecureStore())
+  await credentials.set('machine', {
+    serverUrl: 'https://relay.example/m/machine',
+    bearer: 'fixture'
+  })
+  const original = response('clave.reply')
+  const data = {
+    category: 'question',
+    serverId: 'server',
+    serverName: 'Fixture',
+    sessionId: 'session',
+    sessionTitle: 'Chat',
+    requestId: 'request',
+    text: 'Choose two options',
+    actions: ['open']
+  }
+  const incoming = {
+    ...original,
+    notification: {
+      ...original.notification,
+      request: {
+        ...original.notification.request,
+        content: { ...original.notification.request.content, data }
+      }
+    }
+  }
+  const result = await handleResponse(incoming, {
+    machines: { byServerId: async () => ({ machineId: 'machine' }) },
+    credentials,
+    client: () => {
+      throw new Error('An unsupported action must not dispatch')
+    }
+  })
+  expect(result).toEqual({
+    kind: 'open',
+    link: { kind: 'requests', machineId: 'machine', requestId: 'request' }
+  })
+})
