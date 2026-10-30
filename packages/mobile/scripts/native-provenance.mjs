@@ -129,6 +129,7 @@ export async function proveNativeSource({ port, deviceName, output, bundleHost =
       worktree: pkg,
       deviceName: own[0].deviceName,
       port,
+      bundleHost,
       bundleSha256: sha(normalize(scriptSource)),
       checked
     }
@@ -142,7 +143,12 @@ export async function proveNativeSource({ port, deviceName, output, bundleHost =
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const port = Number(option('port') || '8081')
-  proveNativeSource({ port, deviceName: option('device-name'), output: option('output') })
+  proveNativeSource({
+    port,
+    deviceName: option('device-name'),
+    output: option('output'),
+    bundleHost: option('bundle-host') ?? '127.0.0.1'
+  })
     .then((proof) =>
       console.log(
         `Native source verified: ${proof.candidate}, Metro ${proof.port}, ${proof.checked.length} source files`

@@ -216,7 +216,7 @@ describe('ClavePushClient', () => {
     expect(c.status).toBe('open')
     answerPings = false
     const connections = c.connections
-    await until(() => c.connections > connections, 5_000)
+    await until(() => c.connections > connections && c.status === 'open', 5_000)
     expect(c.status).toBe('open')
     c.close()
   })
