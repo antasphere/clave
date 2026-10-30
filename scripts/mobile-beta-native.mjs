@@ -13,7 +13,13 @@ import {
   readlinkSync,
   rmSync,
   realpathSync,
-  existsSync
+  existsSync,
+  opendirSync,
+  openSync,
+  closeSync,
+  readSync,
+  fstatSync,
+  constants as fsConstants
 } from 'node:fs'
 import { createServer } from 'node:net'
 import path from 'node:path'
@@ -115,6 +121,112 @@ export function nativeFailureDiagnostic(error) {
   )
     return { ...result, kind: 'command', reason: 'Native command failed.' }
   return result
+}
+
+const NATIVE_COMMANDS = new Set([
+  'launchAppCommand',
+  'tapOnElement',
+  'assertConditionCommand',
+  'inputTextCommand',
+  'hideKeyboardCommand'
+])
+const NATIVE_SELECTOR_IDS = new Set([
+  'developer-connection',
+  'developer-url',
+  'developer-token',
+  'developer-connect',
+  'machine-row-dev:.*',
+  'new-session',
+  'composer-input',
+  'composer-send'
+])
+
+/** Project only fixed command/selector names from bounded private status files. */
+export function nativeFailedStep(directory) {
+  const failures = []
+  let visited = 0
+  let bytes = 0
+  let files = 0
+  const visit = (dir, depth) => {
+    const inventory = opendirSync(dir)
+    try {
+      for (let entry; (entry = inventory.readSync()) !== null; ) {
+        if (++visited > 64) throw new Error('Status inventory exceeds bound')
+        if (entry.isSymbolicLink()) continue
+        const file = path.join(dir, entry.name)
+        if (entry.isDirectory() && depth < 3) visit(file, depth + 1)
+        if (!entry.isFile() || !/^commands(?:-[^/\\]{1,120})?\.json$/.test(entry.name)) continue
+        if (++files > 8) throw new Error('Status file count exceeds bound')
+        const fd = openSync(
+          file,
+          fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW | fsConstants.O_NONBLOCK
+        )
+        let body
+        try {
+          const stat = fstatSync(fd)
+          if (!stat.isFile() || stat.size > 1024 * 1024 || (bytes += stat.size) > 2 * 1024 * 1024)
+            throw new Error('Status data exceeds bound')
+          const buffer = Buffer.alloc(stat.size + 1)
+          let offset = 0
+          while (offset < buffer.length) {
+            const count = readSync(fd, buffer, offset, buffer.length - offset, null)
+            if (count === 0) break
+            offset += count
+          }
+          if (offset > stat.size) throw new Error('Status file grew during read')
+          body = buffer.toString('utf8', 0, offset)
+        } finally {
+          closeSync(fd)
+        }
+        let entries
+        try {
+          entries = JSON.parse(body)
+        } catch {
+          continue
+        }
+        if (!Array.isArray(entries) || entries.length > 512) continue
+        for (const entry of entries) {
+          const sequence = entry?.metadata?.sequenceNumber
+          if (
+            entry?.metadata?.status !== 'FAILED' ||
+            !Number.isInteger(sequence) ||
+            sequence < 0 ||
+            sequence >= 512
+          )
+            continue
+          const command = entry.command
+          if (!command || typeof command !== 'object' || Array.isArray(command)) continue
+          const kinds = Object.keys(command).filter(
+            (kind) =>
+              NATIVE_COMMANDS.has(kind) &&
+              command[kind] !== null &&
+              typeof command[kind] === 'object' &&
+              !Array.isArray(command[kind])
+          )
+          if (kinds.length !== 1) continue
+          const kind = kinds[0]
+          const id =
+            command[kind]?.selector?.idRegex ??
+            command[kind]?.condition?.visible?.idRegex ??
+            command[kind]?.condition?.notVisible?.idRegex
+          failures.push({
+            ordinal: sequence + 1,
+            kind,
+            selectorId: NATIVE_SELECTOR_IDS.has(id) ? id : null
+          })
+        }
+      }
+    } finally {
+      inventory.closeSync()
+    }
+  }
+  try {
+    if (lstatSync(directory).isSymbolicLink()) return null
+    visit(directory, 0)
+    return failures.sort((a, b) => a.ordinal - b.ordinal)[0] ?? null
+  } catch {
+    return null
+  }
 }
 
 export function parseArgs(argv) {
@@ -515,6 +627,7 @@ async function main(o) {
     receipt.status = 'PASS'
   } catch (error) {
     receipt.failure = { phase, ...nativeFailureDiagnostic(error) }
+    if (phase === 'phone-maestro') receipt.failure.step = nativeFailedStep(privateDir)
     receipt.status = `FAIL at ${phase}: ${receipt.failure.reason}`
     throw new Error(receipt.status)
   } finally {
