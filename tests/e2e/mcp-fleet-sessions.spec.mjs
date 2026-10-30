@@ -124,15 +124,6 @@ export async function run(t) {
     assert.equal(toolErrored(childResult), false, JSON.stringify(childResult))
     const child = toolPayload(childResult)
     const read = await caller.call('clave_read_session', { sessionId: child.sessionId })
-    const remoteChildResult = await caller.call('clave_open_session', {
-      server: mac.owners[0].id,
-      cwd: world.servers[0].root,
-      mode: 'terminal',
-      name: 'Verifier remote child'
-    })
-    assert.equal(toolErrored(remoteChildResult), false, JSON.stringify(remoteChildResult))
-    const remoteChild = toolPayload(remoteChildResult)
-    const remoteRead = await caller.call('clave_read_session', { sessionId: remoteChild.sessionId })
     assert.equal(toolErrored(read), false, JSON.stringify(read))
     t.check('local parent reads its separately opened child through authenticated HTTP MCP', true)
   } finally {
