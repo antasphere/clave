@@ -8,6 +8,39 @@ const hash = (file) => createHash('sha256').update(readFileSync(file)).digest('h
 const command = (file, args) =>
   execFileSync(file, args, { encoding: 'utf8', timeout: 10000, maxBuffer: 1024 * 1024 })
 
+export function proveSavedProfile({
+  records,
+  sessionId,
+  selected,
+  workspaceId,
+  scratch,
+  requireDefinition = true
+}) {
+  assert.equal(records.length, 1, 'Exactly one server launch record is required')
+  const record = records[0]
+  assert.equal(record.id, sessionId, 'Launch record must name the phone session')
+  assert.equal(record.cwd, scratch, 'Launch record must name the selected scratch directory')
+  assert.equal(record.workspaceId, workspaceId, 'Launch record must name the selected workspace')
+  assert.equal(record.launchProfileId, selected.id, 'Server must launch the selected saved profile')
+  if (requireDefinition || record.launchProfile !== undefined)
+    assert.deepEqual(
+      record.launchProfile,
+      selected,
+      'Server must retain the selected profile definition'
+    )
+  return {
+    sessionId: record.id,
+    cwd: record.cwd,
+    workspaceId: record.workspaceId,
+    selectedProfileId: selected.id,
+    recordedProfileId: record.launchProfileId,
+    definitionSha256:
+      record.launchProfile === undefined
+        ? null
+        : createHash('sha256').update(JSON.stringify(selected)).digest('hex')
+  }
+}
+
 export function installedCodex() {
   const found = command('/bin/zsh', ['-lic', 'command -v codex']).trim().split('\n').at(-1)
   assert.ok(found.startsWith('/'), 'Codex must resolve to an installed executable')

@@ -18,7 +18,7 @@ import {
 import { createServer } from 'node:net'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { installedCodex, proveCodexProcess } from './mobile-provider-proof.mjs'
+import { installedCodex, proveCodexProcess, proveSavedProfile } from './mobile-provider-proof.mjs'
 
 export function parseArgs(argv) {
   const required = [
@@ -177,6 +177,7 @@ async function main(o) {
     desktop: 'NOT RUN',
     source: 'NOT RUN',
     providerProcess: 'NOT RUN',
+    launchRecord: 'NOT RUN',
     screenshot: 'NOT RUN',
     lockfileSha256: sha(readFileSync(path.join(o.worktree, 'package-lock.json'))),
     artifactSha256: artifactHash(o.app)
@@ -343,6 +344,20 @@ async function main(o) {
     const session = sessions[0]
     assert.equal(session.cwd, o.scratch)
     receipt.sessionId = session.id
+    phase = 'server-launch-record'
+    receipt.launchRecord = proveSavedProfile({
+      records: await call(
+        server.url,
+        server.token,
+        'GET',
+        `/sessions/records?ids=${encodeURIComponent(session.id)}`
+      ),
+      sessionId: session.id,
+      selected: prefs.customProfiles.find((p) => p.id === profile),
+      workspaceId: workspace.id,
+      scratch: o.scratch,
+      requireDefinition: o.provider === 'codex'
+    })
     const history = await call(
       server.url,
       server.token,
