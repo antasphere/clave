@@ -30,7 +30,7 @@ type Props = NativeStackScreenProps<RootStackParamList, 'Requests'>
 const NO_SESSIONS: readonly Session[] = []
 
 export function RequestsScreen({ route }: Props): ReactNode {
-  const { machineId } = route.params
+  const { machineId, requestId } = route.params
   const store = useStoreApi()
   const requests = useSel((s) => s.requests[machineId])
   const sessions = useSel((s) => s.sessions[machineId]) ?? NO_SESSIONS
@@ -57,7 +57,9 @@ export function RequestsScreen({ route }: Props): ReactNode {
     }
   }
 
-  const pending = [...(requests?.snapshot?.pending ?? [])].sort((a, b) => a.createdAt - b.createdAt)
+  const pending = [...(requests?.snapshot?.pending ?? [])]
+    .filter((request) => !requestId || request.id === requestId)
+    .sort((a, b) => a.createdAt - b.createdAt)
 
   return (
     <Screen>
@@ -100,7 +102,11 @@ export function RequestsScreen({ route }: Props): ReactNode {
           !requests || (requests.loading && !requests.snapshot) ? (
             <Spinner />
           ) : requests.unavailable ? undefined : (
-            <Muted testID="requests-empty">Nothing is waiting for you.</Muted>
+            <Muted testID="requests-empty">
+              {requestId
+                ? 'This request is already settled or no longer available.'
+                : 'Nothing is waiting for you.'}
+            </Muted>
           )
         }
       />

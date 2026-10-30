@@ -8,9 +8,30 @@ import { handleResponse } from '../notifications/handler'
 import type { IncomingResponse } from '../notifications/port'
 import type { DeepLink } from '../notifications/deeplink'
 import { nativeAccount, nativeOwnerStores } from './account'
+import { PENDING_NOTIFICATION_KEY } from '../notifications/inbox'
+import type { KeyValueStore } from '../chat/drafts'
+import type { CredentialStore } from '../machines/types'
+import type { MachineResolver } from '../notifications/deeplink'
+import type { BuildKind } from '../machines/transport-policy'
 
 const TASK = 'clave.notification-response'
-export const PENDING_NOTIFICATION_KEY = 'clave.pending-notification'
+
+export async function ownerNotificationResponse(
+  response: IncomingResponse,
+  owner: {
+    kv: KeyValueStore
+    credentials: CredentialStore
+    machines: MachineResolver
+    build: BuildKind
+  }
+): Promise<DeepLink | null> {
+  const result = await handleResponse(response, {
+    machines: owner.machines,
+    credentials: owner.credentials,
+    client: (credential) => new ClaveServerClient(credential, { build: owner.build })
+  })
+  return result.link ?? null
+}
 
 export async function nativeNotificationResponse(
   response: IncomingResponse
@@ -19,17 +40,14 @@ export async function nativeNotificationResponse(
   await auth.restore()
   if (!auth.status().account) return null
   const owner = await nativeOwnerStores(auth)
-  const result = await handleResponse(response, {
+  const link = await ownerNotificationResponse(response, {
+    kv: owner.kv,
     machines: new EnrollmentRecords(owner.kv),
     credentials: owner.credentials,
-    client: (credential) =>
-      new ClaveServerClient(credential, { build: __DEV__ ? 'development' : 'release' })
+    build: __DEV__ ? 'development' : 'release'
   })
-  if (result.link) {
-    await owner.kv.setItem(PENDING_NOTIFICATION_KEY, JSON.stringify(result.link))
-    return result.link
-  }
-  return null
+  if (link) await owner.kv.setItem(PENDING_NOTIFICATION_KEY, JSON.stringify(link))
+  return link
 }
 
 // Android can run action responses in a headless task. The SDK cannot deliver

@@ -71,7 +71,13 @@ export function routesOf(link: DeepLink): Route[] {
       return [
         { name: 'Machines' },
         { name: 'Workspaces', params: { machineId: link.machineId } },
-        { name: 'Requests', params: { machineId: link.machineId } }
+        {
+          name: 'Requests',
+          params: {
+            machineId: link.machineId,
+            ...(link.requestId ? { requestId: link.requestId } : {})
+          }
+        }
       ]
     case 'chat':
       return [

@@ -484,7 +484,10 @@ describe('the deep link', () => {
   it('a request the notification could not settle opens the app on the requests', async () => {
     const link = await deepLinkOf(question, machines, 'request')
     expect(link).toEqual({ kind: 'requests', machineId: 'm-1', requestId: 'r-2' })
-    expect(routeOf(link)).toEqual({ name: 'Requests', params: { machineId: 'm-1' } })
+    expect(routeOf(link)).toEqual({
+      name: 'Requests',
+      params: { machineId: 'm-1', requestId: 'r-2' }
+    })
   })
 
   it('a notification about an account opens the machine’s workspaces', async () => {

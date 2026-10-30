@@ -23,7 +23,7 @@ export type RootStackParamList = {
   Sessions: { machineId: string; workspaceId: string }
   Chat: { machineId: string; sessionId: string; title?: string }
   Launch: { machineId: string; workspaceId: string }
-  Requests: { machineId: string }
+  Requests: { machineId: string; requestId?: string }
   Developer: undefined
 }
 

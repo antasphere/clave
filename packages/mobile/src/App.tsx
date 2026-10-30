@@ -14,28 +14,21 @@ import {
   type NavigationState
 } from '@react-navigation/native'
 import { StatusBar } from 'expo-status-bar'
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { Linking } from 'react-native'
 import { SafeAreaProvider } from 'react-native-safe-area-context'
 import { RootNavigator, type RootStackParamList } from './navigation/RootNavigator'
-import {
-  LAST_MACHINE_KEY,
-  initialLaunchState,
-  machineIdOf,
-  stateForPath
-} from './navigation/persistence'
+import { LAST_MACHINE_KEY, machineIdOf, stateForPath } from './navigation/persistence'
 import { createServices } from './services'
 import { StoreProvider } from './state/StoreProvider'
 import { createStore, type Services } from './state/store'
 import { nativeAccount, nativeOwnerStores } from './platform/account'
 import type { AuthStatus } from './auth/sign-in'
 import * as Notifications from 'expo-notifications'
-import {
-  configureNativeNotifications,
-  nativeNotificationResponse,
-  PENDING_NOTIFICATION_KEY
-} from './platform/notifications'
-import { navigationStateOf } from './notifications/deeplink'
+import { configureNativeNotifications, ownerNotificationResponse } from './platform/notifications'
+import { navigationStateOf, type DeepLink } from './notifications/deeplink'
+import { NotificationInbox } from './notifications/inbox'
+import { EnrollmentRecords } from './enroll/records'
 import { ErrorText, Screen } from './ui/components'
 import { colors } from './ui/theme'
 
@@ -91,6 +84,28 @@ function OwnerApp({ services }: { services: Services }): ReactNode {
   const navigation = useNavigationContainerRef<RootStackParamList>()
   const [notificationError, setNotificationError] = useState(false)
   const store = useMemo(() => createStore(services), [services])
+  const navigateNotification = useCallback(
+    (link: DeepLink) => {
+      navigation.resetRoot(navigationStateOf(link) as unknown as NavigationState)
+    },
+    [navigation]
+  )
+  const inbox = useMemo(
+    () =>
+      new NotificationInbox({
+        kv: services.kv,
+        lastResponse: Notifications.getLastNotificationResponseAsync,
+        clearLastResponse: Notifications.clearLastNotificationResponseAsync,
+        respond: (response) =>
+          ownerNotificationResponse(response, {
+            kv: services.kv,
+            credentials: services.credentials,
+            machines: new EnrollmentRecords(services.kv),
+            build: services.build ?? 'release'
+          })
+      }),
+    [services]
+  )
   const [initial, setInitial] = useState<{ state: NavigationState } | null>(null)
 
   // A cold launch: the current machine, read once, decides the first screen.
@@ -100,16 +115,25 @@ function OwnerApp({ services }: { services: Services }): ReactNode {
       services.kv.getItem(LAST_MACHINE_KEY),
       Linking.getInitialURL(),
       store.getState().loadMachines()
-    ]).then(([lastMachine, url]) => {
-      if (!cancelled)
-        setInitial({
-          state: initialLaunchState(lastMachine, url ?? null) as unknown as NavigationState
-        })
-    })
+    ])
+      .then(async ([lastMachine, url]) => {
+        const state = await inbox.initialState(lastMachine, url ?? null)
+        if (!cancelled)
+          setInitial({
+            state: state as unknown as NavigationState
+          })
+      })
+      .catch(() => {
+        setNotificationError(true)
+        if (!cancelled)
+          setInitial({
+            state: { index: 0, routes: [{ name: 'Machines' }] } as unknown as NavigationState
+          })
+      })
     return () => {
       cancelled = true
     }
-  }, [services, store])
+  }, [inbox, services, store])
 
   useEffect(() => () => store.getState().disconnectAll(), [store])
   useEffect(() => {
@@ -123,16 +147,13 @@ function OwnerApp({ services }: { services: Services }): ReactNode {
       setNotificationError(true)
     })
     const subscription = Notifications.addNotificationResponseReceivedListener((response) => {
-      void nativeNotificationResponse(response).then(async (link) => {
-        if (link && navigation.isReady()) {
-          navigation.resetRoot(navigationStateOf(link) as unknown as NavigationState)
-          await services.kv.removeItem(PENDING_NOTIFICATION_KEY)
-        }
-        await Notifications.clearLastNotificationResponseAsync()
-      })
+      void inbox.receive(response).catch(() => setNotificationError(true))
     })
-    return () => subscription.remove()
-  }, [navigation, services])
+    return () => {
+      inbox.close()
+      subscription.remove()
+    }
+  }, [inbox])
 
   return (
     <SafeAreaProvider>
@@ -146,6 +167,9 @@ function OwnerApp({ services }: { services: Services }): ReactNode {
             theme={theme}
             linking={linking}
             initialState={initial.state}
+            onReady={() => {
+              void inbox.ready(navigateNotification).catch(() => setNotificationError(true))
+            }}
             onStateChange={(state) => {
               const machineId = machineIdOf(state)
               if (machineId) void services.kv.setItem(LAST_MACHINE_KEY, machineId)
