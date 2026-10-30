@@ -185,17 +185,14 @@ describe('the mirror decodes what the contract decodes', () => {
   it.each([
     { label: 'absent', sample: session },
     { label: 'stamped', sample: { ...session, workspaceId: 'ws1' } }
-  ])(
-    'keeps the $label authoritative Session workspace stamp',
-    ({ sample }) => {
-      // Comparing both sides to the input catches a shared omission of the field.
-      expect(decodeSession(sample)).toEqual(sample)
-      expect(Schema.decodeUnknownSync(Sessions.Session)(sample)).toEqual(sample)
-      const frame = { _tag: 'subscribed', sessionId: sample.id, session: sample }
-      expect(decodeServerFrame(frame)).toEqual(frame)
-      expect(Schema.decodeUnknownSync(Push.ServerFrame)(frame)).toEqual(frame)
-    }
-  )
+  ])('keeps the $label authoritative Session workspace stamp', ({ sample }) => {
+    // Comparing both sides to the input catches a shared omission of the field.
+    expect(decodeSession(sample)).toEqual(sample)
+    expect(Schema.decodeUnknownSync(Sessions.Session)(sample)).toEqual(sample)
+    const frame = { _tag: 'subscribed', sessionId: sample.id, session: sample }
+    expect(decodeServerFrame(frame)).toEqual(frame)
+    expect(Schema.decodeUnknownSync(Push.ServerFrame)(frame)).toEqual(frame)
+  })
   it('every SessionEvent member', () => {
     for (const event of events)
       expect(decodeSessionEvent(event)).toEqual(
