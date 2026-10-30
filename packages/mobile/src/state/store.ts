@@ -404,13 +404,18 @@ export function createStore(services: Services): UseBoundStore<StoreApi<StoreSta
           patch('reachability', machineId, reachabilityOf(status, detail))
           if (status === 'open') {
             void get().loadRequests(machineId)
+            // C owns the ordered snapshot join and waits for this socket's new ack.
+            const historyRefresh = get().refreshOpenHistory(machineId)
+            void historyRefresh.catch((error) => patch('sessionsError', machineId, fail(error)))
             void services.delivery
               ?.reconnect({
                 machineId,
                 client,
-                openConversations: [],
+                openConversations: [...openHistory.entries()]
+                  .filter(([, open]) => open.machineId === machineId)
+                  .map(([key]) => ({ sessionId: key.slice(machineId.length + 1) })),
                 refreshRequests: (id) => get().loadRequests(id),
-                refreshHistory: async () => {}
+                refreshHistory: () => historyRefresh
               })
               .catch((error) => patch('sessionsError', machineId, fail(error)))
           }

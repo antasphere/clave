@@ -1,0 +1,66 @@
+# Developer connection only. Echo is a fixture. Driver writes private variables to a 0600 copy.
+appId: com.clave.app.mobile
+---
+- launchApp:
+    clearState: ${CLEAR_STATE}
+    arguments:
+      RCT_jsLocation: '127.0.0.1:${METRO_PORT}'
+- extendedWaitUntil:
+    visible:
+      id: developer-connection
+    timeout: 60000
+- tapOn:
+    id: developer-connection
+- tapOn:
+    id: developer-url
+- inputText: ${SERVER_URL}
+- tapOn:
+    id: developer-token
+- inputText: ${SERVER_TOKEN}
+- tapOn:
+    id: developer-connect
+- extendedWaitUntil:
+    visible:
+      id: 'machine-row-dev:.*'
+    timeout: 20000
+- tapOn:
+    id: 'machine-row-dev:.*'
+- extendedWaitUntil:
+    visible:
+      id: workspace-row-${WORKSPACE_ID}
+    timeout: 20000
+- tapOn:
+    id: workspace-row-${WORKSPACE_ID}
+- tapOn:
+    id: new-session
+- extendedWaitUntil:
+    visible:
+      id: profile-row-${PROFILE_ID}
+    timeout: 20000
+- tapOn:
+    id: profile-row-${PROFILE_ID}
+- extendedWaitUntil:
+    visible:
+      id: composer-input
+    timeout: 60000
+- tapOn:
+    id: composer-input
+- inputText: ${PROMPT_ONE}
+- tapOn:
+    id: composer-send
+- extendedWaitUntil:
+    visible:
+      text: ${REPLY_ONE}
+      index: ${REPLY_INDEX}
+    timeout: 120000
+- tapOn:
+    id: composer-input
+- inputText: ${PROMPT_TWO}
+- tapOn:
+    id: composer-send
+- extendedWaitUntil:
+    visible:
+      text: ${REPLY_TWO}
+      index: ${REPLY_INDEX}
+    timeout: 120000
+- hideKeyboard

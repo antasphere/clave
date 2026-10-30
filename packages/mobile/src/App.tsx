@@ -31,6 +31,7 @@ import { NotificationInbox } from './notifications/inbox'
 import { EnrollmentRecords } from './enroll/records'
 import { ErrorText, Screen } from './ui/components'
 import { colors } from './ui/theme'
+import type { DevicePushToken } from './notifications/port'
 
 const theme = {
   ...DarkTheme,
@@ -137,23 +138,32 @@ function OwnerApp({ services }: { services: Services }): ReactNode {
 
   useEffect(() => () => store.getState().disconnectAll(), [store])
   useEffect(() => {
-    if (__DEV__) {
-      // eslint-disable-next-line @typescript-eslint/no-require-imports -- test receipt excluded from release bundles
-      void (require('./platform/provenance-dev') as typeof import('./platform/provenance-dev'))
-        .reportBundleProvenance()
-        .catch(() => {})
+    let cancelled = false
+    const syncPush = async (token?: DevicePushToken): Promise<void> => {
+      const results = await services.beta?.syncPushTokens(token)
+      if (!cancelled && results?.some((result) => result.kind === 'failed'))
+        setNotificationError(true)
     }
-    void configureNativeNotifications().catch(() => {
-      setNotificationError(true)
+    void configureNativeNotifications()
+      .then(() => syncPush())
+      .catch(() => {
+        setNotificationError(true)
+      })
+    const tokenSubscription = Notifications.addPushTokenListener((token) => {
+      void syncPush(token).catch(() => {
+        if (!cancelled) setNotificationError(true)
+      })
     })
     const subscription = Notifications.addNotificationResponseReceivedListener((response) => {
       void inbox.receive(response).catch(() => setNotificationError(true))
     })
     return () => {
+      cancelled = true
       inbox.close()
       subscription.remove()
+      tokenSubscription.remove()
     }
-  }, [inbox])
+  }, [inbox, services])
 
   return (
     <SafeAreaProvider>

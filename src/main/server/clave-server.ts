@@ -83,15 +83,20 @@ export function startClaveServer(options: StartOptions): Promise<ClaveServerEndp
 async function start(options: StartOptions): Promise<ClaveServerEndpoint> {
   const manager = options.manager ?? sessionManager
   const { ports } = options
-  const { startEmbedded, ServerInfoPort, loadPushPorts, fileWriteLedgerStorage } =
-    await import('@clave/server')
+  const {
+    startEmbedded,
+    ServerInfoPort,
+    loadPushPorts,
+    parsePushFixtureArgs,
+    fileWriteLedgerStorage
+  } = await import('@clave/server')
   // ── The mobile wave, lane B: the push credentials under the user data, the fake under --push-fake ──
-  const pushFake = process.argv.includes('--push-fake')
+  const pushFixture = parsePushFixtureArgs(process.argv)
   const push =
-    options.dataDir !== undefined || pushFake
+    options.dataDir !== undefined || pushFixture.fake
       ? loadPushPorts({
           dataDir: options.dataDir ?? '',
-          fake: pushFake,
+          ...pushFixture,
           log: (line) => console.log(`[server] ${line}`)
         })
       : null

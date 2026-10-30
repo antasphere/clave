@@ -128,6 +128,7 @@ export {
   FakePushTargets,
   FakePushTransport,
   loadPushPorts,
+  parsePushFixtureArgs,
   apnsTransport,
   fcmTransport,
   signJwt,

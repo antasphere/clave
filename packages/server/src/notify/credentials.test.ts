@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { generateKeyPairSync } from 'node:crypto'
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -165,5 +165,97 @@ describe('what a credentials file must carry', () => {
     expect(
       fcmFileProblem({ project_id: 'p', client_email: 'e', private_key: 'k', token_uri: 'u' })
     ).toBeNull()
+  })
+})
+
+import { parsePushFixtureArgs } from './credentials'
+import { startEmbedded } from '../embedded'
+import { FakeSource } from '../test-support'
+import { memoryDeviceStorage } from '../devices/port'
+import { DeviceStore } from '../devices/store'
+
+describe('push fixture flags', () => {
+  it('preserves normal and legacy full fake boot', () => {
+    expect(parsePushFixtureArgs([])).toEqual({ fake: false, fakeTargets: true })
+    expect(parsePushFixtureArgs(['--push-fake'])).toEqual({ fake: true, fakeTargets: true })
+  })
+  it('gates transport-only recording and refuses ambiguous modes', () => {
+    expect(() => parsePushFixtureArgs(['--push-fake-transports'])).toThrow('--test-no-activate')
+    expect(parsePushFixtureArgs(['--push-fake-transports', '--test-no-activate'])).toEqual({
+      fake: true,
+      fakeTargets: false
+    })
+    for (const flags of [[], ['--test-no-activate']])
+      expect(() =>
+        parsePushFixtureArgs(['--push-fake', '--push-fake-transports', ...flags])
+      ).toThrow('only one')
+  })
+})
+
+describe('recording transports with the real device registry', () => {
+  it('records a real phone send, follows token rotation and forgets gone tokens in DeviceSessions', async () => {
+    const push = loadPushPorts({
+      dataDir: dataDir(),
+      fake: true,
+      fakeTargets: false,
+      log: () => {}
+    })
+    loaded.push(push)
+    expect(push.ports.pushTargets).toBeUndefined()
+    expect(push.report).toEqual({ ios: true, android: true, fake: true })
+    const sends = vi.spyOn(push.ports.pushTransports.ios!, 'send')
+    const storage = memoryDeviceStorage()
+    // Create the credential through the real device store, not a fabricated document.
+    const paired = new DeviceStore(storage).create({
+      name: 'Phone',
+      platform: 'ios',
+      appVersion: '0.1.0'
+    })
+    const server = await startEmbedded({
+      ports: {
+        sessions: new FakeSource(),
+        ...push.ports,
+        devices: {
+          storage,
+          owner: () => 'owner',
+          issuer: 'https://hub.example',
+          serverName: () => 'Mac'
+        }
+      }
+    })
+    const call = (route: string, body: unknown, token = server.token): Promise<Response> =>
+      fetch(`${server.url}${route}`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify(body)
+      })
+    try {
+      for (const token of ['apns-first', 'apns-rotated']) {
+        expect(
+          (await call('/devices/me/push-token', { token, platform: 'ios' }, paired.token)).status
+        ).toBe(204)
+        expect((await call('/notify/test', { deviceId: paired.device.id })).status).toBe(200)
+        expect(new DeviceStore(storage).pushTargets()).toEqual([
+          { deviceId: paired.device.id, platform: 'ios', token }
+        ])
+      }
+      expect(sends.mock.calls.map(([target]) => target.token)).toEqual([
+        'apns-first',
+        'apns-rotated'
+      ])
+      expect(push.hooks!.sent()).toHaveLength(2)
+      expect(push.hooks!.sent().map((send) => send.deviceId)).toEqual([
+        paired.device.id,
+        paired.device.id
+      ])
+      push.hooks!.answer('gone')
+      expect((await call('/notify/test', { deviceId: paired.device.id })).status).toBe(200)
+      expect(new DeviceStore(storage).pushTargets()).toEqual([])
+      expect(push.hooks!.sent().map((send) => send.outcome)).toEqual(['sent', 'sent', 'gone'])
+      expect(push.hooks!.targets.list()).toEqual([])
+      expect(push.hooks!.targets.forgotten()).toEqual([])
+    } finally {
+      await server.stop()
+    }
   })
 })
