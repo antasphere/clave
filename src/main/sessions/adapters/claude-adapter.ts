@@ -1220,8 +1220,17 @@ export class ClaudeAdapter implements SessionAdapter {
     live.translator.requestSettings()
     const initialInput = live.initialInput
     const initialPrompt = live.initialPrompt
-    if (initialInput !== undefined) this.write(handle, initialInput)
-    else if (initialPrompt !== undefined)
+    if (initialInput !== undefined) {
+      const acceptance = this.write(handle, initialInput)
+      if (acceptance)
+        void acceptance.catch(() =>
+          live.emit({
+            type: 'error',
+            message: 'The initial message delivery could not be confirmed.',
+            fatal: false
+          })
+        )
+    } else if (initialPrompt !== undefined)
       this.write(handle, { type: 'user_message', text: initialPrompt })
     live.initialInput = undefined
     live.initialPrompt = undefined
