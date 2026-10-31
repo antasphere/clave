@@ -223,6 +223,15 @@ stopped.
 
 ## Verification
 
+`.github/workflows/relay-image.yml` builds one native `linux/amd64` image on an
+ephemeral hosted runner for relevant pull requests. It records the actual checkout
+merge SHA/tree and ordered PR base/head parents, builds that source archive, and
+retains the immutable image/config/manifest identities, platform, embedded dependency
+provenance, bounded health/unauthenticated smoke results and owned-container cleanup.
+The seven-day artifact includes a Docker image archive. It publishes no registry image
+and uses no deployment credentials. This job does not validate Linux/arm64, native
+phone behavior, a deployment host or the off-network path.
+
 - `npx vitest run packages/server/src/relay`: the relay against the local OIDC provider
   (`tests/e2e/fixtures/oidc-provider.mjs`, its userinfo answering the subject of a bearer
   it issued and refusing every other): two subjects and two machines, each listing their
