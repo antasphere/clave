@@ -175,7 +175,11 @@ export async function run(t) {
         byKey.tag,
         'WEBVIEW'
       )
-      await win.click('.segmented-item:has-text("Terminal")')
+      // Back to the terminal when the view did open; when it did not, the
+      // Terminal segment is in the DOM but hidden, so the next key still gets
+      // its own check instead of a 30 s timeout on a click nobody can make.
+      const toggle = win.locator('.segmented-item:has-text("Terminal")')
+      if (await toggle.isVisible().catch(() => false)) await toggle.click()
       await sleep(1200)
     }
   } finally {
