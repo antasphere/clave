@@ -95,7 +95,7 @@ export async function run(t) {
     await callMcp(app, 'setSessionView', { sessionId, url: PAGE, title: 'Dash' })
     await sleep(1500)
 
-    // Attach must not steal the pane — the view arrives on the row's icon.
+    // Attach must not steal the pane — the view arrives on the row's view glyph.
     const afterAttach = await paneCentre(win)
     t.check(
       'attaching alone does not take over the pane',
@@ -105,14 +105,20 @@ export async function run(t) {
     const icon = await win.evaluate(
       () =>
         [
-          ...document.querySelectorAll('[data-sidebar-item-type="session"] .tab-status[data-view]')
+          ...document.querySelectorAll(
+            '[data-sidebar-item-type="session"] .sidebar-tab-view[data-view]'
+          )
         ].filter((s) => s.getAttribute('title') === 'Dash').length
     )
-    t.equal("and makes the row's logo open it", icon, 1)
+    t.equal("and makes the row's view glyph open it", icon, 1)
 
     // Open it.
     await win.evaluate(() =>
-      [...document.querySelectorAll('[data-sidebar-item-type="session"] .tab-status[data-view]')]
+      [
+        ...document.querySelectorAll(
+          '[data-sidebar-item-type="session"] .sidebar-tab-view[data-view]'
+        )
+      ]
         .find((s) => s.getAttribute('title') === 'Dash')
         ?.click()
     )

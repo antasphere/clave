@@ -232,7 +232,7 @@ exec /bin/sh "$@"
     )
     t.equal(
       'aggregate alert preserves the parent actual state',
-      await row(parent).locator('.sidebar-tab-icon').getAttribute('data-status'),
+      await row(parent).locator('.sidebar-tab-status').getAttribute('data-status'),
       'idle'
     )
     await checkSignal('needs-you', '--color-status-waiting')
