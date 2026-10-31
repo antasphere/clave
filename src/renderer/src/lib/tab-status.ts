@@ -3,16 +3,17 @@ import type { Session } from '../store/session-types'
 /**
  * What a sidebar tab says about its session, and the one place that decides it.
  *
- * The provider logo carries a single signal at a time — motion means working,
- * colour means "go look" — and background work never touches the logo: it is a
- * counter on the row's right side. Everything the row paints comes from here.
+ * The row carries a single signal at a time, in the status slot on its right
+ * (`tabStatusPresentation` below says what the slot draws): motion means
+ * working, colour means "go look". Background work never touches the slot: it
+ * is a counter beside it. Everything the row paints comes from here.
  *
- *   needs-you → amber logo (a permission or a question waits on the reader)
- *   working   → grey logo inside a spinning ring
- *   unread    → blue logo (a turn finished while the tab was not in view, or
- *               another tab wrote to it); back to idle once the tab is opened
- *   idle      → grey logo
- *   ended     → dimmed logo
+ *   needs-you → a permission or a question waits on the reader
+ *   working   → the agent is on a turn
+ *   unread    → a turn finished while the tab was not in view, or another tab
+ *               wrote to it; back to idle once the tab is opened
+ *   idle      → at rest
+ *   ended     → the process has exited
  *
  * Priority when several apply: needs-you > working > unread > idle; ended
  * overrides them all. Providers without a deterministic state signal

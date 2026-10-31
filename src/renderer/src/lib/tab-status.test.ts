@@ -105,7 +105,7 @@ describe('tabStatusPresentation', () => {
     ['a Pi tab done and read', { ...pi, agentState: 'done' }, 'check', 'grey', 'Finished'],
     ['a terminal with a stray done state', { ...terminal, agentState: 'done' }, null, 'grey', null],
     ['an Antigravity tab stays neutral', { ...antigravity, agentState: 'done' }, null, 'grey', null]
-  ] as const)('%s → %s', (_label, session, glyph, tone, label) => {
+  ] as const)('%s', (_label, session, glyph, tone, label) => {
     expect(tabStatusPresentation(session as Fields)).toMatchObject({ glyph, tone, label })
   })
 

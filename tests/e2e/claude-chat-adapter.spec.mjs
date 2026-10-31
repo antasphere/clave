@@ -249,7 +249,7 @@ setInterval(()=>{},1000);
     assert.equal(
       await win.locator('.sidebar-tab-status[data-status="needs-you"]').count(),
       0,
-      'the amber logo clears when the kernel finishes the external answer'
+      'the amber question mark clears when the kernel finishes the external answer'
     )
     const inputs = readFileSync(`${ROOT}/input.ndjson`, 'utf8').trim().split('\n').map(JSON.parse)
     assert.equal(inputs[1].response.request_id, request.id)

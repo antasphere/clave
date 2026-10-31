@@ -389,7 +389,6 @@ body,
    here. Its own motion says working. Rest and work swap with a short fade;
    the rest mark keeps its full ink — stillness is the signal, and a dimmed
    15px globe was too faint to read (2026-10-15). */
-.sidebar-tab-icon > canvas,
 .sidebar-tab-status > canvas {
   width: var(--sidebar-tab-icon-size) !important;
   height: var(--sidebar-tab-icon-size) !important;

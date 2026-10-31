@@ -175,7 +175,12 @@ function SessionViewButton({ session }: { session: Session }): React.JSX.Element
       onClick={openView}
       onPointerDown={(e: React.PointerEvent) => e.stopPropagation()}
       onKeyDown={(e: React.KeyboardEvent) => {
-        if (e.key === 'Enter' || e.key === ' ') openView(e)
+        if (e.key !== 'Enter' && e.key !== ' ') return
+        // The glyph sits inside the row's button: without this, the browser
+        // turns the same Enter or Space into a click on the row, which shows
+        // the terminal again right after the view opened (verifier, round 1).
+        e.preventDefault()
+        openView(e)
       }}
     >
       <WindowIcon />

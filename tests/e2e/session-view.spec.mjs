@@ -159,6 +159,25 @@ export async function run(t) {
       'and the session is still alive after being hidden behind the view',
       (await callMcp(app, 'list', {})).sessions.find((s) => s.id === sessionId)?.alive === true
     )
+
+    // The keyboard road (verifier round 1 of PRDCT-3933): the glyph is a
+    // span inside the row's button, and a real Enter or Space on it used to
+    // open the view and then click the row, which showed the terminal again.
+    // A real key press, never a synthetic keydown, is what proves it.
+    const glyph = win.locator(`[data-sidebar-item-id="${sessionId}"] .sidebar-tab-view[data-view]`)
+    for (const key of ['Enter', ' ']) {
+      await glyph.focus()
+      await win.keyboard.press(key)
+      await sleep(2000)
+      const byKey = await paneCentre(win)
+      t.equal(
+        `${key === ' ' ? 'Space' : key} on the focused view glyph opens the view and keeps it open`,
+        byKey.tag,
+        'WEBVIEW'
+      )
+      await win.click('.segmented-item:has-text("Terminal")')
+      await sleep(1200)
+    }
   } finally {
     await app.close()
   }
