@@ -22,9 +22,11 @@ import type {
   RestartedSession,
   Session,
   SessionCapabilities,
+  SessionControl,
   SessionInfo,
   SessionRecord,
   SessionPage,
+  SessionRecordFields,
   SessionScreen,
   SessionStream,
   SessionWrite,
@@ -69,6 +71,9 @@ export interface SessionHostService extends SessionStreamSource {
   readonly setView: (id: string, viewId: string | null) => Session
   readonly models: (id: string) => Promise<ReadonlyArray<ModelOption>>
   readonly commands: (id: string) => Promise<ReadonlyArray<CommandOption>>
+  /** One control request to the session's provider, answered as the provider
+   *  answered it; rejects when the session takes none or the provider refused. */
+  readonly control: (id: string, request: SessionControl) => Promise<Record<string, unknown>>
   readonly capabilities: (id: string) => SessionCapabilities
   readonly history: (id: string, before?: number, limit?: number) => HistoryPage
   // ── Wave 4, lane C: the session records, and a session's release (PRDCT-3376) ──
@@ -91,6 +96,10 @@ export interface SessionHostService extends SessionStreamSource {
   /** The page on the tab's row, on the record; null takes it off. Throws
    *  when the session is unknown. */
   readonly setPage: (id: string, page: SessionPage | null) => void
+  /** Wave 6, lane A: what the window keeps on the tab's record, written
+   *  when it has one; a field left out is left as it is. Nothing is
+   *  published. */
+  readonly keepOnRecord: (id: string, fields: SessionRecordFields) => void
   /** The last `lines` rendered lines of a terminal session. Throws when the
    *  session is unknown; rejects with `SessionScreenUnavailable` when it has
    *  no screen this host kept (a chat tab). */
@@ -152,6 +161,7 @@ export class SessionHost extends Context.Tag('@clave/server/SessionHost')<
     },
     models: (id) => Promise.reject(new Error(`Unknown session: ${id}`)),
     commands: (id) => Promise.reject(new Error(`Unknown session: ${id}`)),
+    control: (id) => Promise.reject(new Error(`Unknown session: ${id}`)),
     capabilities: (id) => {
       throw new Error(`Unknown session: ${id}`)
     },
@@ -174,6 +184,9 @@ export class SessionHost extends Context.Tag('@clave/server/SessionHost')<
     },
     setPage: (id) => {
       throw new Error(`Unknown session: ${id}`)
+    },
+    keepOnRecord: () => {
+      throw NO_SESSIONS
     },
     screen: (id) => Promise.reject(new Error(`Unknown session: ${id}`)),
     type: (id) => Promise.reject(new Error(`Unknown session: ${id}`)),

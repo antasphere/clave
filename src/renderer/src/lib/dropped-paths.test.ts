@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { pathForMessage, pathsFromDataTransfer } from './dropped-paths'
+import { failureText, pathForMessage, pathsFromDataTransfer } from './dropped-paths'
 
 // The three ways a drop carries paths, in the order the reader prefers them.
 const transfer = (data: Record<string, string>, files: File[] = []): DataTransfer =>
@@ -23,6 +23,22 @@ describe('pathsFromDataTransfer', () => {
   })
   it('yields nothing for a drop without paths', () => {
     expect(pathsFromDataTransfer(transfer({ 'text/plain': 'hello' }))).toEqual([])
+  })
+})
+
+describe('failureText', () => {
+  it("drops an IPC error's routing prefix and keeps the sentence", () => {
+    expect(
+      failureText(
+        new Error(
+          "Error invoking remote method 'sessions:files': Error: Folders and special files cannot be attached."
+        )
+      )
+    ).toBe('Folders and special files cannot be attached.')
+    expect(failureText(new Error('Pasted images must be 5 MiB or smaller.'))).toBe(
+      'Pasted images must be 5 MiB or smaller.'
+    )
+    expect(failureText('refused')).toBe('refused')
   })
 })
 

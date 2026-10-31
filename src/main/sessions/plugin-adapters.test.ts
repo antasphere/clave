@@ -92,6 +92,7 @@ function plugin(options: PluginOptions = {}): PluginRecord {
         toolbar: [],
         sidebarSections: [],
         views: [],
+        marks: [],
         adapters: [
           {
             id: adapterId,

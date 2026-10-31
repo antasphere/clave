@@ -26,3 +26,25 @@ export function useViewPaneIds(): ReadonlySet<string> {
   )
   return useMemo(() => new Set(key ? key.split('\n') : []), [key])
 }
+
+/** Whether a session's pane is one of the bundled native views, the ones that
+ *  dock what its agent waits on (a tool to allow, questions to answer). A
+ *  surface view or the terminal fallback has no such dock. */
+export function paneHasDock(registry: RegistryState, sessionId: string): boolean {
+  const session = registry.sessions.find((s) => s.id === sessionId)
+  if (!session || session.transport === 'pty') return false
+  const view = resolveView(session, registry.plugins, implemented)
+  return view !== undefined && implemented.has(view)
+}
+
+/** The sessions whose pane docks their agent's requests, selected as one
+ *  string like `useViewPaneIds`. */
+export function useDockPaneIds(): ReadonlySet<string> {
+  const key = useRegistry((r) =>
+    r.sessions
+      .filter((s) => paneHasDock(r, s.id))
+      .map((s) => s.id)
+      .join('\n')
+  )
+  return useMemo(() => new Set(key ? key.split('\n') : []), [key])
+}

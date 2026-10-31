@@ -1,7 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import fs from 'fs'
 import path from 'path'
+import { Effect } from 'effect'
+import { loadUsageClockScenario } from './usage-clock.fixtures'
 import type { SettingsEvent } from '@clave/contract/settings'
+import type { Workspace } from '../../shared/workspace-types'
 import { ClaudeAccountsManager } from '../claude-accounts'
 import { CodexAccountsManager } from '../codex-accounts'
 import { AccountUsageManager } from '../usage-manager'
@@ -189,13 +192,26 @@ describe('the settings source over the real managers', () => {
     source.subscribe((event) => events.push(event))
     const ws1 = { id: 'ws1', name: 'One', rootDir: '/tmp/x', profileFile: null, createdAt: 1 }
 
-    expect(await source.workspaces.updateRegistry([ws1], 'w1')).toEqual({ ok: true })
+    // Every write that lands answers the state's stamp, and the change event
+    // carries the same one (PRDCT-3405): a window compares a fold with it.
+    const first = await source.workspaces.updateRegistry([ws1], 'w1')
+    expect(first).toEqual({
+      ok: true,
+      workspaces: [ws1],
+      pins: [],
+      revision: 1,
+      instance: expect.any(String)
+    })
+    const instance = (first as { instance: string }).instance
     expect(events).toHaveLength(1)
     expect(events[0]).toMatchObject({
       _tag: 'workspaces.state_changed',
       origin: 'w1',
-      workspaces: [ws1]
+      workspaces: [ws1],
+      revision: 1,
+      instance
     })
+    expect(await source.workspaces.load()).toMatchObject({ revision: 1, instance })
 
     const error = vi.spyOn(console, 'error').mockImplementation(() => {})
     const bad = { id: 'bad key', name: 'x', rootDir: '', profileFile: null, createdAt: 1 }
@@ -210,18 +226,65 @@ describe('the settings source over the real managers', () => {
     expect(events).toHaveLength(1)
     error.mockRestore()
 
-    expect(await source.workspaces.updatePins(null, [{ p: 1 }], undefined)).toEqual({ ok: true })
+    // A refused write bumps nothing: the next landed one is revision 2.
+    expect(await source.workspaces.updatePins(null, [{ p: 1 }], undefined)).toEqual({
+      ok: true,
+      workspaces: [ws1],
+      pins: [{ p: 1 }],
+      revision: 2,
+      instance
+    })
     expect(events).toHaveLength(2)
     expect(events[1]).toMatchObject({
       _tag: 'workspaces.state_changed',
       origin: null,
-      pins: expect.arrayContaining([{ p: 1 }])
+      pins: expect.arrayContaining([{ p: 1 }]),
+      revision: 2,
+      instance
     })
 
     await source.workspaces.setLastActive('ws1')
     expect((await source.workspaces.load()).lastActiveWorkspaceId).toBe('ws1')
+    // The last-active workspace is not part of what the change event carries,
+    // so setting it moves no revision.
+    expect((await source.workspaces.load()).revision).toBe(2)
     await source.workspaces.setLastActive('bad key')
     expect((await source.workspaces.load()).lastActiveWorkspaceId).toBeNull()
+  })
+
+  it('refuses a registry write made against a stamp that has moved on (#241)', async () => {
+    const source = settingsSourceFromManagers(managers)
+    const ws = (id: string): Workspace => ({
+      id,
+      name: id,
+      rootDir: `/srv/${id}`,
+      profileFile: null,
+      createdAt: 1
+    })
+    const read = await source.workspaces.load()
+    const base = { revision: read.revision, instance: read.instance }
+    // Another writer lands first.
+    expect(await source.workspaces.updateRegistry([ws('other')], undefined)).toMatchObject({
+      ok: true
+    })
+    expect(await source.workspaces.updateRegistry([ws('mine')], undefined, base)).toEqual({
+      ok: false,
+      reason: 'stale'
+    })
+    expect((await source.workspaces.load()).workspaces.map((w) => w.id)).toEqual(['other'])
+    const now = await source.workspaces.load()
+    expect(
+      await source.workspaces.updateRegistry([ws('other'), ws('mine')], undefined, {
+        revision: now.revision,
+        instance: now.instance
+      })
+    ).toMatchObject({ ok: true, revision: now.revision + 1 })
+    expect(
+      await source.workspaces.updateRegistry([], undefined, {
+        revision: now.revision + 1,
+        instance: 'gone'
+      })
+    ).toEqual({ ok: false, reason: 'stale' })
   })
 
   it('reads the machine login when the usage read names no account', async () => {
@@ -359,5 +422,53 @@ describe('the Antasphere account through the source (PRDCT-3259)', () => {
     expect(change).not.toBeNull()
     change!(status('signed-in'))
     expect(events).toEqual([{ _tag: 'accounts.antasphere_changed', status: status('signed-in') }])
+  })
+})
+
+describe('usage-clock/accounts recording scenario', () => {
+  it('polls both live account lists and publishes every read, including accounts added later', async () => {
+    const source = settingsSourceFromManagers(managers)
+    const events: SettingsEvent[] = []
+    source.subscribe((event) => events.push(event))
+    const initial = await Effect.runPromise(loadUsageClockScenario(source))
+    console.log(
+      JSON.stringify({
+        scenario: 'usage-clock/accounts',
+        runId: initial.runId,
+        accounts: initial.values.accounts
+      })
+    )
+    vi.useFakeTimers()
+    try {
+      managers.claudeUsage.startPolling()
+      managers.codexUsage.startPolling()
+      await vi.advanceTimersByTimeAsync(5_000)
+      const before = reads.length
+      const lateClaude = await source.claudeAccounts.add('Late Claude')
+      const lateCodex = await source.codexAccounts.add('Late Codex', 'chatgpt')
+      await vi.advanceTimersByTimeAsync(295_000)
+      expect(reads.length).toBeGreaterThan(before)
+      expect(reads).toContain(lateClaude.id)
+      expect(reads).toContain(lateCodex.id)
+      expect(events).toContainEqual({
+        _tag: 'usage.claude_read',
+        accountId: lateClaude.id,
+        result: READ
+      })
+      expect(events).toContainEqual({
+        _tag: 'usage.codex_read',
+        accountId: lateCodex.id,
+        result: READ
+      })
+      managers.claudeUsage.stopPolling()
+      managers.codexUsage.stopPolling()
+      const stopped = reads.length
+      await vi.advanceTimersByTimeAsync(600_000)
+      expect(reads).toHaveLength(stopped)
+    } finally {
+      managers.claudeUsage.stopPolling()
+      managers.codexUsage.stopPolling()
+      vi.useRealTimers()
+    }
   })
 })

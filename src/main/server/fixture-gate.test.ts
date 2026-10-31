@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
@@ -34,14 +34,31 @@ describe('the fixture route is turned on by the test flag and nothing else', () 
     )
     expect(testMode).not.toMatch(/process\.env/)
   })
-  it('in the built main bundle, when there is one', () => {
-    const bundle = join(root, 'out', 'main', 'index.js')
-    if (!existsSync(bundle)) return
-    const text = readFileSync(bundle, 'utf8')
-    // The server package passes the option through (`options.testFixtures`);
-    // the app's own assignment is the flag, and only it.
-    const own = assignments(text).filter((value) => !value.startsWith('options.'))
-    expect(own).toEqual(['TEST_NO_ACTIVATE'])
-    expect(text).toMatch(/const TEST_NO_ACTIVATE = process\.argv\.includes\("--test-no-activate"\)/)
+  it('in the built bundles of the app and of the standalone entry, when there are any', () => {
+    const main = join(root, 'out', 'main')
+    if (!existsSync(join(main, 'index.js'))) return
+    // Since wave 5 the standalone entry is built beside the app's main
+    // bundle and shares its modules with it, so `test-mode.ts` lands in a
+    // chunk both import under a namespace (`announcing.TEST_NO_ACTIVATE`):
+    // the assignment is read in each entry, the constant in the chunks too.
+    const chunksDir = join(main, 'chunks')
+    const chunks = existsSync(chunksDir)
+      ? readdirSync(chunksDir).map((f) => readFileSync(join(chunksDir, f), 'utf8'))
+      : []
+    for (const entry of ['index.js', 'server-entry.js']) {
+      const file = join(main, entry)
+      if (!existsSync(file)) continue
+      const text = readFileSync(file, 'utf8')
+      // The server package passes the option through (`options.testFixtures`);
+      // the entry's own assignment is the flag, and only it.
+      const own = assignments(text)
+        .filter((value) => !value.startsWith('options.'))
+        .map((value) => value.replace(/^\w+\./, ''))
+      expect(own, entry).toEqual(['TEST_NO_ACTIVATE'])
+    }
+    const everywhere = [readFileSync(join(main, 'index.js'), 'utf8'), ...chunks].join('\n')
+    expect(everywhere).toMatch(
+      /const TEST_NO_ACTIVATE = process\.argv\.includes\("--test-no-activate"\)/
+    )
   })
 })

@@ -33,7 +33,7 @@ test('copies a pasted image durably and encodes the actual bytes for the provide
   await expect(preparePrompt('', [file], false)).rejects.toThrow('Send as file reference')
   const reference = await preparePrompt('look', [{ ...file, delivery: 'reference' }], false)
   expect(reference.images).toEqual([])
-  expect(reference.text).toContain('look\n\nAttached local files')
+  expect(reference.text).toContain('look\n\nAttachments, by the marker')
   expect(reference.text).toContain(JSON.stringify({ name: file.name, path: file.path }))
 })
 test('names a pasted image by its bytes, not by what the clipboard called it', async () => {
@@ -42,9 +42,27 @@ test('names a pasted image by its bytes, not by what the clipboard called it', a
   expect(file.name).toBe('photo.png')
   expect(file.mimeType).toBe('image/png')
 })
-test('rejects missing files, directories and image bytes disguised by their name', async () => {
+test('a folder is a record of its own, special files are refused, and image bytes disguised by their name', async () => {
   const directory = await setup()
-  await expect(prepareAttachment(directory, { path: directory })).rejects.toThrow('Folders')
+  await writeFile(join(directory, 'one.txt'), '1')
+  await mkdir(join(directory, 'two'))
+  const folder = await prepareAttachment(join(directory, 'saved'), { path: directory })
+  expect(folder).toMatchObject({
+    path: directory,
+    mimeType: 'inode/directory',
+    size: 0,
+    entries: 2,
+    delivery: 'folder'
+  })
+  const listed = await preparePrompt('list [Folder #1]', [{ ...folder, label: 'Folder #1' }], true)
+  expect(listed.images).toEqual([])
+  expect(listed.text.split('\n')).toContain(
+    '[Folder #1] ' + JSON.stringify({ folder: folder.name, path: directory })
+  )
+  expect(listed.text).toContain('- a local folder: list and read its contents at its path.')
+  await rm(join(directory, 'two'), { recursive: true })
+  await rm(join(directory, 'one.txt'))
+  await expect(prepareAttachment(directory, { path: '/dev/null' })).rejects.toThrow('Special files')
   await expect(
     prepareAttachment(directory, { name: 'bad.png', bytes: Buffer.from('not an image') })
   ).rejects.toThrow('Only PNG')
@@ -82,11 +100,102 @@ test('ordinary references keep the original path and never embed contents', asyn
   await writeFile(path, 'original')
   await mkdir(join(directory, 'saved'))
   const file = await prepareAttachment(join(directory, 'saved'), { path })
-  expect(file).toMatchObject({ path, mimeType: 'application/octet-stream', delivery: 'reference' })
+  expect(file).toMatchObject({ path, mimeType: 'text/typescript', delivery: 'reference' })
   await writeFile(path, 'updated')
   const prompt = await preparePrompt('read this', [file], false)
   expect(prompt.text).toContain(JSON.stringify(path))
   expect(prompt.text).not.toContain('original')
   expect(prompt.text).not.toContain('updated')
   expect(prompt.images).toEqual([])
+})
+
+test('accepts exactly 20 MiB and rejects 20 MiB plus one byte and five valid 5 MiB images', async () => {
+  const directory = await setup()
+  const large = Buffer.alloc(5 * 1024 * 1024)
+  png.copy(large)
+  const path = join(directory, 'large.png')
+  await writeFile(path, large)
+  const file = await prepareAttachment(join(directory, 'saved'), { path })
+  const nearlyFullPath = join(directory, 'nearly-full.png')
+  await writeFile(nearlyFullPath, large.subarray(0, large.length - 7))
+  const nearlyFull = await prepareAttachment(join(directory, 'saved'), { path: nearlyFullPath })
+  const tinyPath = join(directory, 'tiny.png')
+  await writeFile(tinyPath, png.subarray(0, 8))
+  const tiny = await prepareAttachment(join(directory, 'saved'), { path: tinyPath })
+  expect((await preparePrompt('', Array(4).fill(file), true)).images).toHaveLength(4)
+  const refuses = async (input: unknown): Promise<void> => {
+    const accepted = await preparePrompt('', input, true).then(
+      () => true,
+      (error: unknown) => {
+        expect(String(error)).toContain('20 MiB')
+        return false
+      }
+    )
+    expect(accepted).toBe(false)
+  }
+  await refuses([file, file, file, nearlyFull, tiny])
+  await refuses(Array(5).fill(file))
+})
+
+test('an image no provider takes as content is a file from the start: the agent gets its path', async () => {
+  const directory = await setup()
+  const heic = join(directory, 'photo.heic')
+  await writeFile(heic, Buffer.from('not really a heic'))
+  const file = await prepareAttachment(directory, { path: heic })
+  expect(file).toMatchObject({ mimeType: 'image/heic', delivery: 'reference' })
+  const prompt = await preparePrompt('see', [{ ...file, label: 'File #1' }], true)
+  expect(prompt.images).toEqual([])
+  expect(prompt.text).toContain(
+    '[File #1] ' + JSON.stringify({ name: 'photo.heic', path: file.path })
+  )
+  // The SVG and AVIF cases follow the same rule.
+  const svg = join(directory, 'mark.svg')
+  await writeFile(svg, '<svg/>')
+  expect((await prepareAttachment(directory, { path: svg })).delivery).toBe('reference')
+})
+test('markers key every line the provider reads, sessions included', async () => {
+  const directory = await setup()
+  const shot = await prepareAttachment(directory, { name: 'shot.png', bytes: png })
+  const notes = join(directory, 'notes.txt')
+  await writeFile(notes, 'n')
+  const file = await prepareAttachment(directory, { path: notes })
+  const prompt = await preparePrompt(
+    'finish when [Session #1] is done, see [Image #1] and [File #1]',
+    [
+      { ...shot, label: 'Image #1' },
+      { ...file, label: 'File #1' },
+      {
+        id: 's',
+        label: 'Session #1',
+        delivery: 'session',
+        sessionId: 'lane-a',
+        name: 'Lane A',
+        agent: 'Claude Code',
+        cwd: '/work/a'
+      }
+    ],
+    true
+  )
+  expect(prompt.images).toHaveLength(1)
+  const lines = prompt.text.split('\n')
+  expect(lines[0]).toBe('finish when [Session #1] is done, see [Image #1] and [File #1]')
+  expect(lines).toContain('- an image: sent with this message as image content.')
+  expect(lines).toContain('- a local file: read the current contents at its path.')
+  expect(
+    lines.some((l) => l.startsWith('- a Clave session') && l.includes('clave_read_session'))
+  ).toBe(true)
+  expect(lines).toContain('[Image #1] ' + JSON.stringify({ image: 'shot.png' }))
+  expect(lines).toContain('[File #1] ' + JSON.stringify({ name: 'notes.txt', path: file.path }))
+  expect(lines).toContain(
+    '[Session #1] ' +
+      JSON.stringify({ session: 'lane-a', name: 'Lane A', agent: 'Claude Code', cwd: '/work/a' })
+  )
+  // A session needs no file on disk; a session id that is not one is refused.
+  await expect(
+    preparePrompt(
+      'x',
+      [{ id: 's', delivery: 'session', sessionId: '../x', name: 'n', agent: 'a', cwd: '' }],
+      true
+    )
+  ).rejects.toThrow()
 })

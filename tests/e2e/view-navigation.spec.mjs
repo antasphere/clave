@@ -227,7 +227,11 @@ export async function run(t) {
   const { server, port } = await serve()
   const HOME = `http://127.0.0.1:${port}`
 
-  const { app, win } = await launchApp(DIR, { server: 'in-process' })
+  const { app, win } = await launchApp(DIR, {
+    server: 'in-process',
+    // Synthetic devices avoid hardware/TCC without bypassing permission handlers.
+    args: ['--use-fake-device-for-media-stream']
+  })
   try {
     // Count what leaves for the system browser instead of letting it open.
     await app.evaluate(({ shell }) => {
@@ -338,20 +342,51 @@ export async function run(t) {
       powers
     )
 
-    // And no more of the machine than a browser tab would give it — less, in
-    // fact: every permission is refused, not asked. Delete the two permission
-    // handlers on the view session and this reads "granted" on every row.
+    // A loopback main frame may use audio alone. Other permissions remain
+    // denied. Ask for streams too, so the request and check handlers must
+    // agree, and stop every synthetic track even if a refusal regresses.
     const perms = await runInGuest(
       win,
-      `(async () => { const q = {}; for (const n of ['microphone', 'camera', 'geolocation', 'notifications']) { try { q[n] = (await navigator.permissions.query({ name: n })).state } catch (e) { q[n] = 'ERR ' + e.name } } try { await navigator.mediaDevices.getUserMedia({ audio: true }); q.mic = 'GRANTED' } catch (e) { q.mic = e.name } return q })()`
+      `(async () => {
+        const q = {}
+        for (const name of ['microphone', 'camera', 'geolocation', 'notifications']) {
+          try { q[name] = (await navigator.permissions.query({ name })).state }
+          catch (e) { q[name] = 'ERR ' + e.name }
+        }
+        const attempt = async (constraints) => {
+          try {
+            const stream = await navigator.mediaDevices.getUserMedia(constraints)
+            const tracks = stream.getTracks()
+            const kinds = tracks.map((track) => track.kind)
+            tracks.forEach((track) => track.stop())
+            return { kinds, stopped: tracks.every((track) => track.readyState === 'ended') }
+          } catch (e) { return { error: e.name } }
+        }
+        q.audio = await attempt({ audio: true })
+        q.video = await attempt({ video: true })
+        q.mixed = await attempt({ audio: true, video: true })
+        return q
+      })()`
     )
     t.check(
-      'the guest is refused every permission',
-      ['microphone', 'camera', 'geolocation', 'notifications'].every(
-        (n) => perms[n] === 'denied'
-      ) && perms.mic === 'NotAllowedError',
+      'the local guest is granted microphone permission',
+      perms.microphone === 'granted',
       perms
     )
+    t.check(
+      'the local guest receives audio alone and releases its tracks',
+      perms.audio.kinds?.length === 1 &&
+        perms.audio.kinds[0] === 'audio' &&
+        perms.audio.stopped === true,
+      perms.audio
+    )
+    t.check(
+      'the local guest is denied camera, geolocation and notifications',
+      ['camera', 'geolocation', 'notifications'].every((name) => perms[name] === 'denied'),
+      perms
+    )
+    t.equal('the local guest cannot open a camera stream', perms.video.error, 'NotAllowedError')
+    t.equal('the local guest cannot open mixed audio/video', perms.mixed.error, 'NotAllowedError')
 
     // A file: src never attaches: the tag is created, the guest is not.
     const fileAttach = await win.evaluate(async () => {

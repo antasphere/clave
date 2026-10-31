@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url'
 import { execFile, execFileSync, spawn } from 'node:child_process'
 import {
   bunBinary,
+  readServerDiscovery,
   serverCommand,
   startServerProcess,
   startTerminalProcess,
@@ -97,6 +98,47 @@ describe('the server as its own process', () => {
         await testing.stop()
       }
     } finally {
+      rmSync(dataDir, { recursive: true, force: true })
+    }
+  }, 30_000)
+
+  it('takes ELECTRON_RUN_AS_NODE out of its own environment at boot, so nothing it spawns inherits it', async () => {
+    // The packaged app starts the entry under its own binary with the
+    // variable set (server-child.ts); the entry deletes it before anything
+    // spawns, or a login shell, a chat's CLI and a Clave started from a tab
+    // would carry it. Under Bun the variable is harmless, so the deletion is
+    // read back through the test-only evaluate route rather than inferred.
+    const dataDir = mkdtempSync(path.join(tmpdir(), 'clave-server-process-asnode-'))
+    const server = await startServerProcess({
+      repo: REPO,
+      dataDir,
+      terminals: 'none',
+      args: ['--test-no-activate'],
+      env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', CLAVE_E2E_CONTROL: 'kept' }
+    })
+    try {
+      const evaluate = async (source) =>
+        (
+          await fetch(`${server.url}/e2e/evaluate`, {
+            method: 'POST',
+            headers: {
+              authorization: `Bearer ${server.token}`,
+              'content-type': 'application/json'
+            },
+            body: JSON.stringify({ source })
+          })
+        ).json()
+      expect(await evaluate('() => process.env.ELECTRON_RUN_AS_NODE ?? null')).toEqual({
+        ok: true,
+        value: null
+      })
+      // The rest of the environment is kept: the deletion is one name, not a wipe.
+      expect(await evaluate('() => process.env.CLAVE_E2E_CONTROL ?? null')).toEqual({
+        ok: true,
+        value: 'kept'
+      })
+    } finally {
+      await server.stop()
       rmSync(dataDir, { recursive: true, force: true })
     }
   }, 30_000)
@@ -299,48 +341,232 @@ describe('the commands the starter names', () => {
       }).args
     ).not.toContain('--terminals')
   })
+
+  it.skipIf(!built)(
+    'the server is told the terminal process bundle to start, the Node to run it under, and its parent',
+    () => {
+      const { args } = serverCommand({
+        repo: REPO,
+        dataDir: '/tmp/x',
+        terminalProcess: BUNDLE,
+        parent: 4242,
+        env: { PATH: '', CLAVE_BUN: '/usr/bin/true' }
+      })
+      expect(args).toContain('--terminal-process')
+      expect(args[args.indexOf('--terminal-process') + 1]).toBe(BUNDLE)
+      // Bun cannot run node-pty: the server is told this process's Node.
+      expect(args[args.indexOf('--node') + 1]).toBe(process.execPath)
+      expect(args[args.indexOf('--parent') + 1]).toBe('4242')
+      expect(args.join(' ')).not.toMatch(/token/i)
+    }
+  )
+
+  it('a terminal process bundle that is not there is refused before anything starts, naming the build', () => {
+    expect(() =>
+      serverCommand({
+        repo: REPO,
+        dataDir: '/tmp/x',
+        terminalProcess: '/nowhere/terminal-process.js',
+        env: { PATH: '', CLAVE_BUN: '/usr/bin/true' }
+      })
+    ).toThrow(/electron-vite build/)
+  })
 })
 
-// Each start is two processes (Node, then Bun) announcing themselves: under
-// a loaded suite that is seconds, so every case here gets twenty.
+/** Wait until `fn` answers something truthy, at most `ms`; the last answer otherwise. */
+const untilTruthy = async (fn, ms = 10_000) => {
+  const end = Date.now() + ms
+  let last
+  while (Date.now() < end) {
+    last = await fn()
+    if (last) return last
+    await new Promise((r) => setTimeout(r, 100))
+  }
+  return last
+}
+
+// Each start is two processes (Bun, which starts the Node terminal process)
+// announcing themselves: under a loaded suite that is seconds, so every case
+// here gets twenty.
 describe.skipIf(!built)('the terminal process beside the server (from the built bundle)', () => {
-  it('the server starts after its terminal process, reports it ready, and stops both', async () => {
+  it('the server starts its terminal process, reports it ready, and stops both', async () => {
     const dataDir = mkdtempSync(path.join(tmpdir(), 'clave-server-terminals-'))
     let server
+    let tpPid
     try {
       server = await startServerProcess({ repo: REPO, dataDir })
-      expect(server.terminalProcess.address).toMatch(/^127\.0\.0\.1:\d+$/)
-      expect(alive(server.terminalProcess.pid)).toBe(true)
+      expect(server.terminalProcess.address()).toMatch(/^127\.0\.0\.1:\d+$/)
+      tpPid = server.terminalProcess.pid()
+      expect(tpPid).toBeGreaterThan(0)
+      expect(alive(tpPid)).toBe(true)
       expect(await ready(server.url)).toEqual({
         ready: true,
         checks: [{ name: 'terminals', ok: true }]
       })
+      // The process was started by the server, with the server as its parent.
+      const ppid = Number(
+        execFileSync('ps', ['-o', 'ppid=', '-p', String(tpPid)], { encoding: 'utf8' }).trim()
+      )
+      expect(ppid).toBe(server.pid)
     } finally {
       // Stopped whatever the assertions said: a failing test must leave no
-      // Bun server behind (the server has no parent watch of its own).
+      // Bun server behind.
       await server?.stop()
       rmSync(dataDir, { recursive: true, force: true })
     }
     expect(await untilDead(server.pid)).toBe(true)
-    expect(await untilDead(server.terminalProcess.pid)).toBe(true)
+    expect(await untilDead(tpPid)).toBe(true)
   }, 20_000)
 
-  it('a terminal process killed under the server is reported by the server as not ready', async () => {
-    const dataDir = mkdtempSync(path.join(tmpdir(), 'clave-server-terminals-killed-'))
+  // Wave 5, lane C (PRDCT-3433): the plugins are the server's. The entry
+  // builds its service over the checkout's plugins/ and forks each plugin's
+  // main under Node IPC; this is the one unit check of that wiring (the
+  // port handed to the server, the runner path, the runner's first message),
+  // which the suite otherwise only reached through the app.
+  it('answers its bundled plugins, the chat view, GitHub panel and orbs active in forked runners', async () => {
+    const dataDir = mkdtempSync(path.join(tmpdir(), 'clave-server-plugins-'))
     let server
     try {
+      // Test mode keeps the plugins under the data dir, never in ~/.clave.
+      server = await startServerProcess({ repo: REPO, dataDir, args: ['--test-no-activate'] })
+      const headers = { authorization: `Bearer ${server.token}` }
+      const required = ['clave.chat-view', 'clave.github', 'clave.orbs']
+      let records = []
+      const end = Date.now() + 15_000
+      while (Date.now() < end) {
+        const response = await fetch(`${server.url}/plugins`, { headers })
+        expect(response.status).toBe(200)
+        records = await response.json()
+        if (required.every((id) => records.some((r) => r.id === id && r.status === 'active'))) break
+        await new Promise((r) => setTimeout(r, 250))
+      }
+      const byId = Object.fromEntries(records.map((r) => [r.id, r]))
+      expect(Object.keys(byId).sort()).toEqual([
+        'clave.chat-view',
+        'clave.echo-provider',
+        'clave.github',
+        'clave.hello',
+        'clave.orbs'
+      ])
+      for (const id of required) {
+        expect(byId[id], id).toMatchObject({ enabled: true, status: 'active', source: 'bundled' })
+        expect(byId[id].error, id).toBeUndefined()
+      }
+      for (const id of ['clave.echo-provider', 'clave.hello']) {
+        expect(byId[id], id).toMatchObject({
+          enabled: false,
+          status: 'disabled',
+          source: 'bundled'
+        })
+        expect(byId[id].error, id).toBeUndefined()
+      }
+    } finally {
+      await server?.stop()
+      rmSync(dataDir, { recursive: true, force: true })
+    }
+    expect(await untilDead(server.pid)).toBe(true)
+  }, 30_000)
+
+  it('a terminal process killed under the server is started again: not ready in between, ready after, a new pid', async () => {
+    const dataDir = mkdtempSync(path.join(tmpdir(), 'clave-server-terminals-killed-'))
+    let server
+    let second
+    try {
       server = await startServerProcess({ repo: REPO, dataDir })
-      process.kill(server.terminalProcess.pid, 'SIGKILL')
-      await server.terminalProcess.exited
-      expect(await ready(server.url)).toEqual({
-        ready: false,
-        checks: [{ name: 'terminals', ok: false }]
+      const first = server.terminalProcess.pid()
+      const firstAddress = server.terminalProcess.address()
+      process.kill(first, 'SIGKILL')
+      expect(await untilDead(first)).toBe(true)
+      // The new process: a new pid in the discovery file, generation 2.
+      second = await untilTruthy(() => {
+        const pid = server.terminalProcess.pid()
+        return pid && pid !== first ? pid : null
       })
-      expect(server.stderr()).toMatch(/the terminal process at 127\.0\.0\.1:\d+ is gone/)
-      // The server itself is still answering.
+      expect(second, `a new terminal process after the kill\n${server.stderr()}`).toBeTruthy()
+      expect(alive(second)).toBe(true)
+      expect(readServerDiscovery(dataDir).terminalProcessGeneration).toBe(2)
+      expect(server.terminalProcess.address()).not.toBe(firstAddress)
+      // Readiness answers ready again on the new process.
+      const readyAgain = await untilTruthy(async () => {
+        const answer = await ready(server.url)
+        return answer.ready ? answer : null
+      })
+      expect(readyAgain).toEqual({ ready: true, checks: [{ name: 'terminals', ok: true }] })
+      expect(server.stderr()).toMatch(/terminal process \d+ lost: it exited/)
+      expect(server.stderr()).toMatch(/starting a new terminal process/)
+      // The server itself kept answering throughout.
       expect((await fetch(`${server.url}/health/live`)).status).toBe(200)
     } finally {
       await server?.stop()
+      rmSync(dataDir, { recursive: true, force: true })
+    }
+    expect(await untilDead(server.pid)).toBe(true)
+    if (second) expect(await untilDead(second)).toBe(true)
+  }, 20_000)
+
+  it('a terminal process bundle that cannot start makes the server exit 2 before announcing, not come up on no terminals', async () => {
+    const dataDir = mkdtempSync(path.join(tmpdir(), 'clave-server-tp-broken-'))
+    // A bundle that is there and exits at once: the entry's first start
+    // fails, and the server must not announce itself.
+    const broken = path.join(dataDir, 'terminal-process.js')
+    writeFileSync(
+      broken,
+      "process.stderr.write('clave-terminals: broken on purpose\\n'); process.exit(3)\n"
+    )
+    const { cmd, args } = serverCommand({ repo: REPO, dataDir, terminalProcess: broken })
+    const child = spawn(cmd, args, { cwd: REPO, stdio: ['ignore', 'pipe', 'pipe'] })
+    let stdout = ''
+    let stderr = ''
+    child.stdout.on('data', (d) => {
+      stdout += d
+    })
+    child.stderr.on('data', (d) => {
+      stderr += d
+    })
+    try {
+      const code = await new Promise((resolve) => child.once('exit', (c) => resolve(c)))
+      expect(code).toBe(2)
+      expect(stdout).toBe('')
+      expect(stderr).toMatch(
+        /the terminal process did not start: the terminal process exited \(3\)/
+      )
+    } finally {
+      if (alive(child.pid)) child.kill('SIGKILL')
+      rmSync(dataDir, { recursive: true, force: true })
+    }
+  }, 20_000)
+
+  it('the server ends on its own when the parent it was given is gone, and its terminal process with it', async () => {
+    const dataDir = mkdtempSync(path.join(tmpdir(), 'clave-server-parent-gone-'))
+    // A parent that lives 500 ms: the server, told its pid, must stop once
+    // it is gone (polled every two seconds), and the terminal process must
+    // follow (it polls the server).
+    const parent = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 500)'])
+    const parentGone = new Promise((resolve) => parent.once('exit', resolve))
+    const { cmd, args } = serverCommand({
+      repo: REPO,
+      dataDir,
+      terminalProcess: BUNDLE,
+      parent: parent.pid
+    })
+    const child = spawn(cmd, args, { cwd: REPO, stdio: ['ignore', 'pipe', 'pipe'] })
+    let stderr = ''
+    child.stderr.on('data', (d) => {
+      stderr += d
+    })
+    try {
+      const announced = await new Promise((resolve) =>
+        child.stdout.once('data', (d) => resolve(JSON.parse(String(d).split('\n')[0])))
+      )
+      expect(announced.url).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/)
+      const tpPid = readServerDiscovery(dataDir)?.terminalProcessPid
+      expect(tpPid).toBeGreaterThan(0)
+      await parentGone
+      expect(await untilDead(child.pid, 8_000)).toBe(true)
+      expect(stderr).toMatch(new RegExp(`parent ${parent.pid} is gone, stopping`))
+      expect(await untilDead(tpPid, 8_000)).toBe(true)
+    } finally {
+      if (alive(child.pid)) child.kill('SIGKILL')
       rmSync(dataDir, { recursive: true, force: true })
     }
   }, 20_000)

@@ -21,6 +21,14 @@ import { type WorkspaceFilesClient, workspaceFilesClient } from './workspace-fil
 import { type ViewsClient, viewsClient } from './views'
 // ── Wave 4, lane C: the agent tools' address and tokens ──
 import { type AgentToolsClient, agentToolsClient } from './agent-tools'
+// ── Wave 5, lane C: the plugins ──
+import { type PluginsClient, pluginsClient } from './plugins'
+import { filesClient, type FilesClient } from './files'
+import { requestsClient, type RequestsClient } from './requests'
+// ── Wave wcs1023, lane C: the git domain ──
+import { gitClient, type GitClient } from './git'
+// ── Issue #266: the server's version and its self-upgrade ──
+import { serverInfoClient, type ServerInfoClient } from './server-info'
 
 export interface ApiClientOptions {
   readonly url: string
@@ -33,6 +41,11 @@ export interface ApiClientOptions {
    *  stay above that timeout or a late answer trusts content for a read that
    *  is gone (round 1 of wave 3 lane A's verifier). */
   readonly patientTimeoutMs?: number
+  /** The deadline of a conversation's past (`sessions.history`): a read the
+   *  server answers behind everything else it does at a restore, replaying
+   *  transcripts of several megabytes for every tab at once. A minute by
+   *  default; the chat pane asks again after a lost one (PRDCT-3526). */
+  readonly historyTimeoutMs?: number
   /**
    * The HTTP client the requests go out through. The browser's `fetch` by
    * default (a page served from a loopback origin, with the server's CORS
@@ -46,6 +59,8 @@ export interface ApiClientOptions {
 }
 
 export interface ClaveApiClient {
+  readonly requests: RequestsClient
+  readonly files: FilesClient
   readonly url: string
   // ── Lane A ──
   readonly sessions: SessionsClient
@@ -60,6 +75,12 @@ export interface ClaveApiClient {
   readonly views: ViewsClient
   // ── Wave 4, lane C: the agent tools (`./agent-tools.ts`) ──
   readonly agentTools: AgentToolsClient
+  // ── Wave 5, lane C: the plugins (`./plugins.ts`) ──
+  readonly plugins: PluginsClient
+  // ── Wave wcs1023, lane C: the git domain (`./git.ts`) ──
+  readonly git: GitClient
+  // ── Issue #266: the server domain (`./server-info.ts`) ──
+  readonly server: ServerInfoClient
   // ── Lane B: terminals ──
   readonly health: {
     readonly live: () => Promise<boolean>
@@ -78,11 +99,15 @@ const translate = (url: string, error: unknown): Error => {
   if (Schema.is(UnauthorizedProblem)(error)) return new ServerRefused(url, 401)
   if (Schema.is(ForbiddenProblem)(error)) return new ServerRefused(url, 403)
   if (error instanceof Error) return error
-  return new Error(String(error))
+  // The problem itself stays reachable: a route an older server lacks is its
+  // router's NotFound (`server-info.ts`, issue #266).
+  return new Error(String(error), { cause: error })
 }
 
 /** Five minutes of review plus half a minute for the answer to travel. */
 export const PATIENT_TIMEOUT_MS = 5 * 60 * 1000 + 30_000
+/** A minute for a page of a conversation's past. */
+export const HISTORY_TIMEOUT_MS = 60_000
 
 export function createApiClient(options: ApiClientOptions): ClaveApiClient {
   const runtime = ManagedRuntime.make(options.httpClient ?? FetchHttpClient.layer)
@@ -113,9 +138,15 @@ export function createApiClient(options: ApiClientOptions): ClaveApiClient {
   const patientCall = callOn(
     () => (patientClient ??= derived(options.patientTimeoutMs ?? PATIENT_TIMEOUT_MS))
   )
+  let historyClient: Promise<DerivedClient> | null = null
+  const historyCall = callOn(
+    () => (historyClient ??= derived(options.historyTimeoutMs ?? HISTORY_TIMEOUT_MS))
+  )
   return {
     url: options.url,
-    sessions: sessionsClient(call),
+    files: filesClient(call),
+    requests: requestsClient(call, patientCall),
+    sessions: sessionsClient(call, historyCall),
     clients: clientsClient(call),
     settings: settingsClient(call),
     sidebar: sidebarClient(call),
@@ -124,6 +155,12 @@ export function createApiClient(options: ApiClientOptions): ClaveApiClient {
     views: viewsClient(call),
     // ── Wave 4, lane C: the agent tools ──
     agentTools: agentToolsClient(call),
+    // ── Wave 5, lane C: the plugins ──
+    plugins: pluginsClient(call),
+    // ── Wave wcs1023, lane C: the git domain ──
+    git: gitClient(call, patientCall),
+    // ── Issue #266: the server domain ──
+    server: serverInfoClient(call, options.url),
     health: {
       live: () => call((c) => c.health.live()).then((answer) => answer.status === 'live')
     },

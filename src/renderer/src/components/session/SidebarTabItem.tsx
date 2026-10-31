@@ -23,6 +23,8 @@ export interface SidebarTabItemProps {
   icon: ReactNode
   /** Extra content rendered between the name and the close button (e.g. LocationBadge) */
   extraContent?: ReactNode
+  /** A sibling control, so focusable menus are never nested in the row button. */
+  rowControl?: ReactNode
 
   // Group styling
   grouped?: boolean
@@ -52,6 +54,7 @@ export function SidebarTabItem({
   onDelete,
   icon,
   extraContent,
+  rowControl,
   grouped,
   groupSelected,
   groupColorHex,
@@ -91,7 +94,7 @@ export function SidebarTabItem({
 
   return (
     <div
-      className="relative"
+      className={cn('relative', rowControl && 'subagent-session-row')}
       data-sidebar-item-id={id}
       data-sidebar-item-type="session"
       onPointerDown={!editing ? onPointerDown : undefined}
@@ -101,7 +104,9 @@ export function SidebarTabItem({
         onContextMenu={onContextMenu}
         onKeyDown={handleButtonKeyDown}
         title={title}
-        data-selected={isSelected && !grouped ? 'true' : undefined}
+        data-selected={
+          isSelected && (!grouped || (!!rowControl && !groupSelected)) ? 'true' : undefined
+        }
         className={cn(
           'sidebar-item group',
           groupSelected
@@ -172,6 +177,7 @@ export function SidebarTabItem({
           </span>
         )}
       </button>
+      {rowControl}
     </div>
   )
 }

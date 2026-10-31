@@ -29,7 +29,6 @@ handlers and the server's `StartSession`. The IPC channels stay for a window the
 server has not reached (the first moments of a boot, an app whose server did not
 start):
 
-
 - `sessions:list` returns the asking window's records.
 - `sessions:subscribe(id)` refuses sessions outside the caller’s window, returns the record and starts notifications on
   `sessions:stream:<id>` and `sessions:exit:<id>` for that WebContents.
@@ -82,8 +81,12 @@ scrolling up keeps the reader's place, and every turn arrives once, in order.
 
 ## Attachments
 
-A `user_message` may carry `attachments`: records (id, path, name, MIME type,
-size, delivery) of files the reader attached, never their bytes. The composer
+A `user_message` may carry `attachments`: records (id, label, path, name, MIME
+type, size, delivery, and a folder's `entries` count) of files and folders the
+reader attached, never their bytes (a folder is `delivery: folder`, a path the
+agent lists; the media types come from `@clave/contract/attachments`), or
+session records (delivery `session`: the Clave session id, the tab's name,
+agent and cwd) for sidebar tabs dropped on the composer. The composer
 obtains a record through `sessions:files` (`prepare`), which validates the
 file, copies it out of an OS temp folder into
 `<userData>/session-attachments/<sessionId>/` (a macOS screenshot preview is
@@ -95,8 +98,11 @@ Sending is the ordinary `sessions:write`. For a message with attachments the
 handler builds the prepared prompt in main — every file is stat'ed and read
 again at send time, against the adapter's `images` capability
 (`sessions:capabilities`) — and hands the adapter the message with a `prepared`
-field: the text with one JSON line per reference appended under "Attached local
-files", and the images as base64. Whatever a renderer put in `prepared` is
+field: the text with a legend appended — one JSON line per file reference,
+image and session, each keyed by the marker the text refers to it by
+(`[File #1] {"name":…,"path":…}`, `[Folder #1] {"folder":…,"path":…}`,
+`[Session #1] {"session":…}`), under a line per kind saying what to do with it — and the images as base64. Whatever a
+renderer put in `prepared` is
 discarded. Adapters call `providerPrompt(input)` for what to send (Claude:
 image content blocks in stream-json; Codex: `image` input items as data URLs;
 echo: appends "(N images received)"; PTY and plugin providers: the text) and
@@ -104,8 +110,11 @@ echo: appends "(N images received)"; PTY and plugin providers: the text) and
 attachments included and `prepared` dropped, so no image payload reaches a
 renderer's log. An image for an adapter without the capability is refused at
 the write with the reader's remedy in the message; the fallback to a reference
-is the reader's explicit choice in the composer, never automatic. Limits:
-10 files, 5 MiB per image, 20 MiB of images per message
+is the reader's explicit choice in the composer, never automatic — except for
+an image in a format no provider takes as content (HEIC, SVG, AVIF), which
+`prepareAttachment` types as a reference from the start so the agent at least
+gets its path. Limits: 10 attachments (files and sessions together), 5 MiB per
+image, 20 MiB of images per message
 (`src/shared/attachments.ts`). A resumed Claude transcript replays the text of
 a past message; its image content has no path and is not replayed as chips.
 
@@ -181,6 +190,23 @@ itself or the CLI wrote its own `[Request interrupted by user]` acknowledgement
 later failure still reads as one. A replayed transcript maps that
 acknowledgement the same way instead of showing it as something the reader
 typed. Codex reports a `turn/completed` whose status is `interrupted` alike.
+A main-thread command call (Claude's `Bash`, Codex's `commandExecution`)
+opens a terminal card in the Terminal view from its `tool_call`, as running
+work, and its result closes it; the background list naming the call
+(`toolUseId`) promotes the same card, in place, to background work, which
+then outlives the turn until the list drops it. A Claude call asking for
+`run_in_background` keeps its card past its "running in background" result
+until the list names it or the turn ends. A subagent's own calls stay its
+activity (`claude-stream/background-bash.ndjson`).
+Codex's running work reaches `background_tasks` from the app-server's own
+lifecycle: a `subAgentActivity` (or v1 `collabAgentToolCall`) lists a subagent
+by its thread and its end drops it; a command still in progress when the turn
+completes is listed until its own `item/completed`. A known subagent whose
+thread starts another turn (work sent to it after it finished) is listed
+again, under the name and model it was first listed with. A listed subagent's thread
+contributes only its context usage, under its row; every other frame of it,
+and every frame of a thread no row names, stays a `provider_event`
+(`fixtures/codex-app-server/README.md`).
 Unknown frames and complete message metadata remain `provider_event`; malformed
 frames produce nonfatal errors. Text snapshots do not duplicate partial text.
 A final empty text event closes each assistant message. Result usage/cost remains

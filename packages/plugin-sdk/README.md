@@ -58,6 +58,15 @@ refused, because at click time the host would simply refuse the command and the 
 would look fine. Registration goes through `ui.registerToolbar(id)`, guarded by the same
 exact-id check as panels and commands.
 
+A `marks` entry is a mark pack: what stands for an agent (its sidebar tab, the chat
+pane's status, the mark at the end of a transcript while it works) and, with the `tool`
+slot, for a tool call in flight, drawn by the pack instead of the provider's logo and the
+kind's glyph. The user picks one pack in Appearance → Agent mark; a pack may carry its own
+settings block there. Packs are native: the components are compiled into the renderer and
+mapped by `<pluginId>/<markId>` (`components/plugins/native-marks.tsx`), so only a bundled
+plugin can draw one — a linked plugin declaring `marks` is valid and listed, and never
+drawn. `plugins/orbs` is the first.
+
 The host checks both requested and granted permissions for every API request.
 Session reads and subscriptions require `sessions.read`; sending text requires
 `sessions.write`; secret prompts require `secrets`. Registering UI requires an

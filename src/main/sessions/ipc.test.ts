@@ -337,7 +337,7 @@ it('prepares attachments at the write: the provider gets references and images, 
     attachments: [reference, shot]
   })
   const reply = events.find((e) => e.type === 'assistant_text') as { delta: string }
-  expect(reply.delta).toContain('read\n\nAttached local files')
+  expect(reply.delta).toContain('read\n\nAttachments, by the marker')
   expect(reply.delta).toContain(JSON.stringify({ name: 'notes.txt', path: notes }))
   expect(reply.delta).toContain('(1 image received)')
   expect(reply.delta).not.toContain('forged')
@@ -478,6 +478,36 @@ it("pages a session's past to the window that owns it, newest first, and to no o
   mocks.keyForWindow.mockReturnValue('other-window')
   expect(() => history(event, id)).toThrow('another window')
   mocks.keyForWindow.mockReturnValue('window')
+})
+
+it('passes a control request the schema names and refuses any other at the boundary', async () => {
+  const id = `ipc-control-${++sequence}`
+  const adapter = new EchoAdapter()
+  const session = {
+    id,
+    provider: 'echo',
+    transport: 'events' as const,
+    cwd: '/project',
+    windowKey: 'window',
+    state: 'idle' as const,
+    createdAt: 1,
+    adapterId: 'echo',
+    title: 'Echo'
+  }
+  const control = vi.fn(async () => ({ mcpServers: [] }))
+  sessionManager.adopt(session, adapter.prepare(session), Object.assign(adapter, { control }))
+  const event = { sender: { id: 103 } }
+  const handler = mocks.handlers.get('sessions:control')
+  await expect(handler(event, id, { type: 'mcp_status' })).resolves.toEqual({ mcpServers: [] })
+  expect(control).toHaveBeenCalledExactlyOnceWith(expect.anything(), { type: 'mcp_status' })
+  // The permission mode travels on the same CLI channel; it must not pass here.
+  expect(() =>
+    handler(event, id, { type: 'set_permission_mode', mode: 'bypassPermissions' })
+  ).toThrow()
+  expect(() => handler(event, id, { type: 'mcp_reconnect', server: '' })).toThrow()
+  expect(control).toHaveBeenCalledTimes(1)
+  sessionManager.kill(id)
+  sessionManager.forget(id)
 })
 
 it('remembers a composer model pick for the next chat, only once the session took it', async () => {

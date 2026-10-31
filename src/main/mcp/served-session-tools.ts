@@ -19,9 +19,11 @@ import type { AccountOverride, Session } from '@clave/contract/sessions'
 import { sanitizeForPaste } from '../../shared/paste-sanitize'
 import { buildCheckpointProvenance, buildProvenanceHeader } from '../../shared/exchange-provenance'
 import { pickAccount, type PoolAccount } from '../../shared/account-pool'
+import { usageSummaryForModel } from '../../shared/usage-summary'
 import { resolveProfileRef, resolveSpawnModes } from '../../shared/open-session-modes'
 import { substituteTokens } from '../../shared/prompt-tokens'
 import { resolveDeclaredGroupView } from '../../shared/group-view'
+import { shareAGroup } from '../../shared/group-reach'
 import type { PinnedBlueprint, PinnedBlueprintSession } from '../../shared/pinned-blueprint'
 import {
   type AccountProvider,
@@ -61,6 +63,12 @@ const modeOfSession = (ctx: Ctx, session: Session): string =>
 
 // ── Who may reach whom ──
 
+/** The tab that opened this one: main's own memory of the open, else the
+ *  session's record, which is what still says it after a restart (#259). */
+function parentOfSession(ctx: Ctx, sessionId: string): string | null {
+  return ctx.shell.parentOf(sessionId) ?? ctx.shell.record(sessionId)?.spawnedBy ?? null
+}
+
 /** The renderer's `resolveTargetSession`: "parent", an id, then an exact
  *  name, the routed window's tabs first. */
 async function resolveTarget(ctx: Ctx, key: string, ref: string): Promise<Session> {
@@ -68,11 +76,11 @@ async function resolveTarget(ctx: Ctx, key: string, ref: string): Promise<Sessio
     if (!ctx.callerSessionId) {
       throw new Error('Target "parent" requires the call to come from inside a Clave session')
     }
-    const parentId = ctx.shell.parentOf(ctx.callerSessionId)
+    const parentId = parentOfSession(ctx, ctx.callerSessionId)
     const parent = parentId ? await ctx.api.sessions.get(parentId).catch(() => null) : null
     if (!parent) {
       throw new Error(
-        'This session has no live parent — only tabs opened via clave_open_session know their opener, and the link does not survive an app restart. Use clave_list and target a session id or name instead.'
+        'This session has no live parent — only tabs opened via clave_open_session know their opener, and that tab is no longer open. Use clave_list and target a session id or name instead.'
       )
     }
     return parent
@@ -90,7 +98,8 @@ async function resolveTarget(ctx: Ctx, key: string, ref: string): Promise<Sessio
 }
 
 /** The renderer's reach rule, over the server's facts: a tab reaches itself,
- *  the tab that opened it, a tab it opened, or a tab in the same group. */
+ *  the tab that opened it, a tab it opened, or a tab or terminal in the same
+ *  group. */
 function assertCanReach(
   ctx: Ctx,
   layouts: readonly LayoutSnapshot[],
@@ -105,11 +114,13 @@ function assertCanReach(
   }
   if (caller === target.id) return
   const related =
-    ctx.shell.parentOf(target.id) === caller ||
-    ctx.shell.parentOf(caller) === target.id ||
-    layouts
-      .flatMap((l) => l.groups)
-      .some((g) => g.sessionIds.includes(caller) && g.sessionIds.includes(target.id))
+    parentOfSession(ctx, target.id) === caller ||
+    parentOfSession(ctx, caller) === target.id ||
+    shareAGroup(
+      layouts.flatMap((l) => l.groups),
+      caller,
+      target.id
+    )
   if (!related) {
     throw new Error(
       `Refusing to ${verb} tab "${nameOf(ctx, target)}": it is not related to yours. You can only reach the tab that opened yours ("parent"), tabs you opened, or tabs in the same group. Put both tabs in one group to allow this.`
@@ -334,8 +345,13 @@ async function sendToSession(ctx: Ctx, key: string, p: Payload): Promise<unknown
 
 const poolOf = (accounts: ServedPoolAccount[]): PoolAccount[] =>
   accounts.map((a) => ({ id: a.id, usable: a.usable, ...(a.fallback ? { fallback: true } : {}) }))
-const usageOf = (accounts: ServedPoolAccount[]): Record<string, ServedPoolAccount['usage']> =>
-  Object.fromEntries(accounts.map((a) => [a.id, a.usage]))
+const usageOf = (
+  accounts: ServedPoolAccount[],
+  context?: { model?: string }
+): Record<string, ServedPoolAccount['usage']> =>
+  Object.fromEntries(
+    accounts.map((a) => [a.id, context ? usageSummaryForModel(a.usage, context.model) : a.usage])
+  )
 
 /** The renderer's `accountForLaunch`: a named account is honoured; with none
  *  named, the selected one while it has headroom, else the next along. */
@@ -402,7 +418,7 @@ async function switchAccount(ctx: Ctx, _key: string, p: Payload): Promise<unknow
     const accounts = ctx.shell.accounts(provider)
     const next = pickAccount({
       accounts: poolOf(accounts),
-      usage: usageOf(accounts),
+      usage: usageOf(accounts, provider === 'claude' ? { model: record?.model } : undefined),
       preferredId: current,
       leavingId: current,
       preferSessionHeadroom: true
@@ -536,7 +552,12 @@ async function openSession(ctx: Ctx, key: string, p: Payload): Promise<unknown> 
         ...(mode === 'terminal' && command ? { initialCommand: command } : {}),
         autoExecute: mode === 'terminal' && !!command && p.autoRun !== false,
         ...(mode !== 'terminal' && prompt ? { initialPrompt: prompt } : {}),
-        ...(workspaceId !== undefined ? { workspaceId } : {})
+        ...(workspaceId !== undefined ? { workspaceId } : {}),
+        // Persisted lineage folds the tab under its caller. Separate tabs
+        // keep the in-memory messaging link below without sidebar nesting.
+        ...(p.attachToParent === true && ctx.callerSessionId
+          ? { spawnedBy: ctx.callerSessionId }
+          : {})
       }
     })
   } catch (err) {

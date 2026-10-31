@@ -297,6 +297,40 @@ html[data-ui-font='synonym'] {
   top: auto;
   bottom: calc(var(--drop-seam, 2px) / -2 - 1.5px);
 }
+/* A row of a list that drags to reorder (use-list-reorder, #257: the workspace
+   switcher and Settings → Workspaces). The drop line is the sidebar's, drawn
+   just inside the edge of the row it lands beside, so a scrolling list never
+   clips it; the dragged row fades in place. */
+.reorder-row {
+  position: relative;
+}
+.reorder-row[data-dragging] {
+  opacity: 0.45;
+}
+.reorder-row[data-drop]::after {
+  content: '';
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  height: 3px;
+  border-radius: 9999px;
+  background-color: var(--color-accent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--color-accent) 25%, transparent);
+  pointer-events: none;
+  z-index: 5;
+  animation: overlay-in 100ms var(--ease-out-expo);
+}
+.reorder-row[data-drop='before']::after {
+  top: 0;
+}
+.reorder-row[data-drop='after']::after {
+  bottom: 0;
+}
+body.reorder-dragging,
+body.reorder-dragging * {
+  cursor: grabbing !important;
+  user-select: none;
+}
 /* The group header's two controls (PRDCT-1670). The terminals button carries
    the whole terminal story in one glyph: its colour is the first RUNNING
    terminal's (set inline) and the count beside it is how many are attached;
@@ -3182,6 +3216,23 @@ html[data-ui-font='synonym'] {
   gap: var(--control-gap);
 }
 
+/* Audio settings: the default input's segmented level meter. */
+.mic-level-meter {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--control-h) / 14);
+}
+.mic-level-segment {
+  width: calc(var(--control-h) / 7);
+  height: calc(var(--control-h) / 2);
+  border-radius: var(--radius-sm);
+  background: var(--surface-300);
+}
+.mic-level-segment[data-state='lit'] { background: var(--color-accent); }
+.mic-level-segment[data-state='peak'] {
+  background: color-mix(in srgb, var(--color-accent) 40%, transparent);
+}
+
 /* ── Background work (BackgroundTasksChip) ──
    A chat's turn can end while shells and subagents it started keep running.
    The chip names how many, in the pane header; its popover lists them. */
@@ -3213,4 +3264,33 @@ html[data-ui-font='synonym'] {
   .background-tasks-pulse,
   .pane-status-dot[data-status='background'],
   .sidebar-tab-icon[data-background] { animation: none !important; }
+}
+
+/* A live subagent selector shares the model picker's chip and menu material.
+   Its button is a sibling of the parent row's button for keyboard access. */
+.subagent-session-row {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing);
+}
+.subagent-session-row > .sidebar-item {
+  flex: 1;
+  min-width: 0;
+}
+.subagent-trigger {
+  --chat-glyph: var(--framed-control-icon);
+  flex-shrink: 0;
+  max-width: 45%;
+  cursor: pointer;
+}
+.subagent-trigger .tab-status {
+  flex-shrink: 0;
+}
+.subagent-trigger[data-active='true'] {
+  color: var(--text-primary);
+  background-color: var(--surface-200);
+}
+.subagent-menu {
+  max-height: var(--radix-dropdown-menu-content-available-height);
+  overflow-y: auto;
 }

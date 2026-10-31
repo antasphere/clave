@@ -3,38 +3,49 @@ import { EventEmitter } from 'node:events'
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { PluginHost, type PluginServices } from './plugin-host'
+import { PluginHost, type PluginServices, type RunnerSpawner } from './plugin-host'
 import { PluginStore } from './plugin-store'
 
-const electron = vi.hoisted(() => ({ fork: vi.fn(), channels: [] as unknown[] }))
-vi.mock('electron', async () => {
-  const { EventEmitter } = await import('node:events')
-  class Port extends EventEmitter {
-    postMessage = vi.fn()
-    start = vi.fn()
-    close = vi.fn()
-  }
-  return {
-    utilityProcess: { fork: electron.fork },
-    MessageChannelMain: class {
-      port1 = new Port()
-      port2 = new Port()
-      constructor() {
-        electron.channels.push(this)
-      }
-    }
-  }
-})
+// The host speaks to a plugin's process through `RunnerProcess` (PRDCT-3433);
+// this fake stands in for both spawners, Electron's utility process and the
+// forked runner: a child that exits on kill and a port the test drives, one
+// pair per spawn, kept in the order they were spawned.
+class Port extends EventEmitter {
+  postMessage = vi.fn()
+}
 interface MockPort extends EventEmitter {
   postMessage: ReturnType<typeof vi.fn>
-  close: ReturnType<typeof vi.fn>
 }
 class Child extends EventEmitter {
-  postMessage = vi.fn()
   kill = vi.fn(() => {
     this.emit('exit', 1)
     return true
   })
+}
+const electron = { channels: [] as { port1: MockPort }[], failNext: null as Error | null }
+const spawner: RunnerSpawner = () => {
+  if (electron.failNext) {
+    const error = electron.failNext
+    electron.failNext = null
+    throw error
+  }
+  const child = new Child()
+  const port = new Port()
+  children.push(child)
+  electron.channels.push({ port1: port })
+  return {
+    postMessage: (message) => port.postMessage(message),
+    onMessage: (listener) => {
+      port.on('message', (event: { data: unknown }) => listener(event.data))
+    },
+    onExit: (listener) => {
+      child.on('exit', listener)
+    },
+    onOutput: () => {},
+    kill: () => {
+      child.kill()
+    }
+  }
 }
 let temporary: string
 let store: PluginStore
@@ -56,12 +67,8 @@ beforeEach(() => {
   vi.useFakeTimers()
   vi.spyOn(console, 'error').mockImplementation(() => {})
   electron.channels.length = 0
+  electron.failNext = null
   children = []
-  electron.fork.mockReset().mockImplementation(() => {
-    const child = new Child()
-    children.push(child)
-    return child
-  })
   temporary = mkdtempSync(join(tmpdir(), 'clave-plugin-host-'))
   const bundled = join(temporary, 'bundled')
   const directory = join(bundled, 'example')
@@ -95,7 +102,7 @@ beforeEach(() => {
     changed: vi.fn(),
     stopped: vi.fn()
   }
-  host = new PluginHost(store, services, 'runner.cjs')
+  host = new PluginHost(store, services, spawner)
 })
 afterEach(() => {
   host.close()
@@ -346,21 +353,16 @@ describe('plugin utility-process host', () => {
     await Promise.resolve()
     expect(oldPort.postMessage).not.toHaveBeenCalled()
   })
-  it('kills a failed startup transport and permits a later clean activation', () => {
-    electron.fork.mockImplementationOnce(() => {
-      const child = new Child()
-      child.postMessage.mockImplementation(() => {
-        throw new Error('Closed startup port')
-      })
-      children.push(child)
-      return child
-    })
+  it('records a spawn that failed and permits a later clean activation', () => {
+    electron.failNext = new Error('Closed startup port')
     host.startAll()
-    expect(children[0].kill).toHaveBeenCalledOnce()
+    expect(children).toHaveLength(0)
     expect(store.get('example.host').status).toBe('error')
+    expect(store.get('example.host').error).toContain('Closed startup port')
     host.stop('example.host')
     host.start('example.host')
-    expect(children).toHaveLength(2)
+    expect(children).toHaveLength(1)
+    expect(store.get('example.host').status).toBe('starting')
   })
   it('terminates a process that reports activation failure', () => {
     host.startAll()

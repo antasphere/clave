@@ -49,6 +49,11 @@ export interface GrpcTerminalsOptions {
   /** The deadline of an attach stream, after which the handle re-attaches. */
   readonly attachTimeoutMs?: number
   readonly log?: (line: string) => void
+  /** Called once, when the process is found gone (the first UNAVAILABLE, or
+   *  a refused token): the cue for whoever owns the process to start another
+   *  (`src/main/terminal-process/supervisor.ts`, wave 5). This port itself
+   *  stays down for good; the supervisor swaps it for a new one. */
+  readonly onDown?: (why: string) => void
 }
 
 export interface GrpcTerminals extends TerminalsService {
@@ -121,6 +126,7 @@ export function grpcTerminals(options: GrpcTerminalsOptions): GrpcTerminals {
     down = why
     log(`the terminal process at ${options.address} is gone: ${why}`)
     for (const remote of [...live]) remote.lost(why)
+    options.onDown?.(why)
   }
 
   const call = <A, E>(effect: Effect.Effect<A, E>): Promise<Exit.Exit<A, E>> =>

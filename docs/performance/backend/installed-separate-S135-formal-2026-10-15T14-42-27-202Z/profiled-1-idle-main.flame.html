@@ -1,0 +1,28 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>installed-separate S135 · main · idle 15s</title>
+<style>
+body{font:12px -apple-system,Helvetica,sans-serif;margin:16px;color:#222}
+table{border-collapse:collapse;margin-bottom:10px}th{text-align:left;padding-right:12px;color:#666;font-weight:500}
+svg{font:11px Menlo,monospace}g{cursor:pointer}rect{stroke:#fff;stroke-width:.5}text{pointer-events:none;fill:#111}
+#hint{color:#666;margin:6px 0}
+</style></head><body>
+<h2>installed-separate S135 · main · idle 15s</h2><table><tr><th>variant</th><td>installed-separate</td></tr><tr><th>scale</th><td>S135</td></tr><tr><th>process</th><td>main</td></tr><tr><th>window</th><td>idle 15 s</td></tr><tr><th>sampled time</th><td>15183.8 ms</td></tr></table>
+<div id="hint">Width is sampled time. Hover a frame for its time; click to zoom into it, click the bottom frame to reset.</div>
+<svg id="fg" width="1600" height="34" viewBox="0 0 1600 34">
+<g data-p="0" data-x="0.000" data-w="1600.000"><title>all — 15183.8 ms, 100.00%</title><rect x="0.00" y="17" width="1600.00" height="16" fill="hsl(23,85%,57%)"/><text x="3.00" y="29">all</text></g>
+<g data-p="0.1" data-x="0.155" data-w="2.807"><title>(garbage collector) — 26.6 ms, 0.18%</title><rect x="0.15" y="0" width="2.81" height="16" fill="#b8b8b8"/></g>
+<g data-p="0.2" data-x="2.961" data-w="1594.230"><title>(idle) — 15129.0 ms, 99.64%</title><rect x="2.96" y="0" width="1594.23" height="16" fill="#b8b8b8"/><text x="5.96" y="12">(idle)</text></g>
+<g data-p="0.3" data-x="1597.192" data-w="2.665"><title>(program) — 25.3 ms, 0.17%</title><rect x="1597.19" y="0" width="2.67" height="16" fill="#b8b8b8"/></g>
+</svg>
+<script>
+(function(){var W=1600;var gs=[].slice.call(document.querySelectorAll('#fg g'));
+function zoom(p,x,w){gs.forEach(function(g){var gp=g.getAttribute('data-p');var r=g.querySelector('rect');var t=g.querySelector('text');
+var inside=gp===p||gp.indexOf(p+'.')===0;var below=p.indexOf(gp+'.')===0;
+if(!inside&&!below){g.style.display='none';return}g.style.display='';
+var gx=parseFloat(g.getAttribute('data-x')),gw=parseFloat(g.getAttribute('data-w'));
+var nx=below?0:(gx-x)*W/w,nw=below?W:gw*W/w;r.setAttribute('x',nx);r.setAttribute('width',Math.max(.1,nw));
+if(t){t.setAttribute('x',nx+3);var full=g.querySelector('title').textContent.split(' — ')[0];var c=Math.floor((nw-6)/6.5);
+t.textContent=c<3?'':(full.length>c?full.slice(0,c-1)+'…':full)}})}
+gs.forEach(function(g){g.addEventListener('click',function(){zoom(g.getAttribute('data-p'),parseFloat(g.getAttribute('data-x')),parseFloat(g.getAttribute('data-w')))})})})();
+</script>
+</body></html>

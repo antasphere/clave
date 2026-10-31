@@ -15,12 +15,13 @@ import { readJson } from '../../ports/storage'
 import type { TerminalProcess } from '../../ports/terminal'
 import { workspaceManager } from '../../workspace-manager'
 import { launchProfileManager } from '../../launch-profile-manager'
-import { claudeAccountsManager } from '../../claude-accounts'
-import { codexAccountsManager } from '../../codex-accounts'
+import { claudeAccountsManager, DEFAULT_CLAUDE_ACCOUNT_ID } from '../../claude-accounts'
+import { codexAccountsManager, DEFAULT_CODEX_ACCOUNT_ID } from '../../codex-accounts'
 import { resolvePosixShellLaunch, shellSingleQuote } from '../../shell-launch'
 import { CODEX_TITLE_CONFIG } from '../../../shared/codex-state'
 import { isValidModelName } from '../../../shared/model-name'
 import { tmuxKillSessionArgs } from '../../tmux-args'
+import { lineageOf } from '../lineage'
 import {
   buildAgentArgv,
   type AgentKind,
@@ -224,6 +225,15 @@ function detectTmux(): string | null {
     tmuxPathCache = null
     return null
   }
+  // Before the login shell has answered, the tmux the last launch found, so
+  // a launch's records listing (which asks tmux which sessions still run)
+  // does not wait two seconds on the person's profile or freeze on its
+  // synchronous read (PRDCT-3527). Not cached: the login PATH decides as soon
+  // as it is read.
+  if (loginShellEnv === null) {
+    const remembered = rememberedTmux()
+    if (remembered) return remembered
+  }
   const env = getLoginShellEnv()
   const pathDirs = (env.PATH || process.env.PATH || '').split(':')
   for (const dir of pathDirs) {
@@ -232,6 +242,7 @@ function detectTmux(): string | null {
     try {
       fs.accessSync(candidate, fs.constants.X_OK)
       tmuxPathCache = candidate
+      rememberTmux(candidate)
       return candidate
     } catch {
       // not here, keep looking
@@ -239,6 +250,41 @@ function detectTmux(): string | null {
   }
   tmuxPathCache = null
   return null
+}
+
+/** Where the last tmux found is remembered, as the storage port names it. */
+export const TMUX_PATH_DOCUMENT = 'tmux-path.json'
+
+function rememberedTmux(): string | null {
+  try {
+    const raw = lazyTerminalPorts.storage.read(TMUX_PATH_DOCUMENT)
+    const found = raw ? (JSON.parse(raw) as { path?: unknown }).path : null
+    if (typeof found !== 'string' || !path.isAbsolute(found)) return null
+    fs.accessSync(found, fs.constants.X_OK)
+    return found
+  } catch {
+    return null
+  }
+}
+
+function rememberTmux(found: string): void {
+  try {
+    const raw = lazyTerminalPorts.storage.read(TMUX_PATH_DOCUMENT)
+    if (raw && (JSON.parse(raw) as { path?: unknown }).path === found) return
+    lazyTerminalPorts.storage.write(TMUX_PATH_DOCUMENT, JSON.stringify({ path: found }))
+  } catch {
+    // Remembering is a shortcut for the next launch, never a failure of this one.
+  }
+}
+
+/** Resolves once `detectTmux` can answer without the synchronous login-shell
+ *  read: at once when tmux is already found, the login shell has answered, or
+ *  the last launch's tmux is remembered; else when the login shell answers
+ *  (PRDCT-3527). Main's handlers wait on this, never on the read itself. */
+export async function whenTmuxResolvable(): Promise<void> {
+  if (tmuxPathCache !== undefined || loginShellEnv !== null || isWindows) return
+  if (rememberedTmux()) return
+  await loginShellEnvAsync()
 }
 
 export function isTmuxAvailable(): boolean {
@@ -455,6 +501,8 @@ export interface SessionRecord {
    *  re-spawn after a reboot relaunches the CLI on the same model. */
   model?: string
   launchProfileId?: string
+  /** Keeps Resume on the carried command; absent when this server resolved its own list. */
+  launchProfile?: LaunchProfile
   piProvider?: string
   piThinking?: PiThinkingLevel
   /** Claude account/profile this session runs under, so the badge + config dir
@@ -504,6 +552,12 @@ export interface SessionRecord {
    *  session view's is deliberately not persisted, and the group's lives in
    *  the sidebar layout, which drops it with the group. */
   link?: SessionLink
+  /** The tab whose agent opened this one (#259): what folds the tab under
+   *  its parent in the sidebar and what `"parent"` resolves to in the agent
+   *  tools. The renderer's `spawnedBy` and main's lineage map are both
+   *  memory, gone at a quit; this is what brings the link back. Absent for a
+   *  tab the user opened. Carried forward across adoption like the name. */
+  spawnedBy?: string
   /** Populated only on the listAdoptableSessions() path (not persisted in
    *  the record). True when the backing tmux session is still running (app
    *  quit/reopen, no reboot) → reattach to the live process. False when the
@@ -707,6 +761,9 @@ export interface PtySpawnOptions {
   claudeSessionId?: string
   piSessionId?: string
   launchProfileId?: string
+  /** The Mac's definition, sanitized by the manager, wins over this server's
+   * resolution. Server-resolved profiles are never put here. */
+  launchProfile?: LaunchProfile
   piProvider?: string
   piThinking?: PiThinkingLevel
   initialCommand?: string
@@ -748,6 +805,9 @@ export interface PtySpawnOptions {
    *  the record so the next launch can put it back there. Omitted = a tab.
    *  Carried forward across adoption like the display name. */
   link?: SessionLink
+  /** The session id of the tab whose agent opened this one — persisted on
+   *  the record (SessionRecord.spawnedBy). Omitted = opened by the user. */
+  spawnedBy?: string
 }
 
 /** Validate a link crossing the IPC boundary. It is only ever compared to
@@ -804,7 +864,10 @@ export function accountTokenForSpawn(
     claudeAccountsManager.getToken(id)
 ): string | undefined {
   if (kind !== 'claude' && kind !== 'claude-agents') return undefined
-  return getToken(accountId)
+  const token = getToken(accountId)
+  if (accountId && accountId !== DEFAULT_CLAUDE_ACCOUNT_ID && !token)
+    throw new Error('The selected Claude account is no longer available.')
+  return token
 }
 
 /**
@@ -812,7 +875,8 @@ export function accountTokenForSpawn(
  * session. The same boundary as the token above: a Claude tab handed a Codex
  * account id must not have its environment pointed at another home. The sync
  * runs here, at spawn, so the home carries every entry the default one has
- * today (ADR 0002).
+ * today (ADR 0002). An explicitly selected non-default account must still
+ * have a home: a removal racing renderer preflight must never use Default.
  */
 export function codexHomeForSpawn(
   kind: AgentKind | null,
@@ -821,7 +885,10 @@ export function codexHomeForSpawn(
     codexAccountsManager.syncHome(id, getLoginShellEnv())
 ): string | undefined {
   if (kind !== 'codex') return undefined
-  return syncHome(accountId)
+  const home = syncHome(accountId)
+  if (accountId && accountId !== DEFAULT_CODEX_ACCOUNT_ID && !home)
+    throw new Error('The selected Codex account is no longer available.')
+  return home
 }
 
 /**
@@ -917,15 +984,19 @@ export class PtyBackend {
               ? 'claude'
               : null
     const launchProfile: LaunchProfile | undefined = kind
-      ? launchProfileManager.resolve(
+      ? (options?.launchProfile ??
+        launchProfileManager.resolve(
           kind === 'claude-agents' ? 'claude' : kind,
           options?.workspaceId,
           options?.launchProfileId
-        )
+        ))
       : undefined
     // The Codex account's home, synced now so the process starts on a home
     // that carries every entry of the machine's own (ADR 0002).
     const codexHome = codexHomeForSpawn(kind, options?.codexAccountId)
+    // Refuse a missing explicit token before writing any restore metadata.
+    // The renderer never receives the token; only a Claude process uses it.
+    const oauthToken = accountTokenForSpawn(kind, options?.claudeProfileId)
     const model = options?.model ?? (usePiMode ? launchProfile?.pi?.model : undefined)
     const piProvider = usePiMode ? (options?.piProvider ?? launchProfile?.pi?.provider) : undefined
     const piThinking = usePiMode ? (options?.piThinking ?? launchProfile?.pi?.thinking) : undefined
@@ -1102,6 +1173,7 @@ export class PtyBackend {
       dangerousMode: options?.dangerousMode === true,
       model,
       launchProfileId: launchProfile?.id,
+      launchProfile: options?.launchProfile,
       piProvider,
       piThinking,
       configDir: options?.configDir,
@@ -1123,7 +1195,10 @@ export class PtyBackend {
       // may hang the same terminal off a different group), else what the
       // record already said, so an adoption never erases the ownership that
       // keeps the session out of the sidebar.
-      link: sanitizeSessionLink(options?.link) ?? previous?.link
+      link: sanitizeSessionLink(options?.link) ?? previous?.link,
+      // Who opened it: the opening agent's tab, else what the record already
+      // said, so a reattach, a respawn or an account switch keeps the child.
+      spawnedBy: lineageOf(id, options?.spawnedBy, previous?.spawnedBy)
     }
     let recordKey: string | null = null
 
@@ -1194,10 +1269,7 @@ export class PtyBackend {
         initialCommand: options?.initialCommand,
         autoExecute: options?.autoExecute,
         configDir: options?.configDir,
-        // The token is looked up here, by account id, and only for a Claude
-        // session: the renderer never holds it, and a terminal or another
-        // agent never inherits it.
-        oauthToken: accountTokenForSpawn(kind, options?.claudeProfileId),
+        oauthToken,
         codexHome
       }
     }
@@ -1524,6 +1596,19 @@ export class PtyBackend {
         // `antigravityMode`'s predecessor key. Map it forward so a survivor of the
         // retired Gemini CLI re-spawns as Antigravity (`agy`) on adoption.
         meta.antigravityMode = (meta as { geminiMode?: boolean }).geminiMode ?? false
+      }
+      if (meta) {
+        // A record older than one of the modes says nothing of it, which
+        // means off. Spelled out here, where every listing passes, because a
+        // listing that crosses the wire (the server's, attached or separate)
+        // is refused whole by the contract for one record missing a mode:
+        // the restore then brought back nothing at all (PRDCT-3527, a
+        // pre-Pi record carried over by the migration).
+        meta.claudeMode ??= true // absent always meant Claude (`claudeMode !== false`)
+        meta.codexMode ??= false
+        meta.piMode ??= false
+        meta.claudeAgentsMode ??= false
+        meta.dangerousMode ??= false
       }
       // Malformed record → prune the file. Valid shapes: tmux-backed (valid
       // tmux name) or plain (no tmuxName, uuid session id).

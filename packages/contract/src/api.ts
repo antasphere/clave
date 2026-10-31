@@ -11,11 +11,20 @@
  * group and its line; nobody edits another lane's group.
  */
 import { Api, ApiGroup, Health, HttpCqrs, annotate } from '@structure-ai/http'
-import { ListClients, RegisterClient, UnregisterClient } from './clients'
+import { Schema } from 'effect'
+import {
+  ListClients,
+  RegisterClient,
+  UnregisterClient,
+  ReserveClientRegistration,
+  ConfirmClientRegistration,
+  ReleaseClientRegistration
+} from './clients'
 import {
   GetSession,
   GetSessionCapabilities,
   GetSessionCommands,
+  ControlSession,
   GetSessionHistory,
   GetSessionModels,
   ListSessions,
@@ -31,6 +40,7 @@ import {
   // ── Wave 4, lane D: the last agent tools ──
   ReadSessionScreen,
   RenameSession,
+  KeepOnSessionRecord,
   RestartSession,
   SetSessionPage,
   TypeIntoSession
@@ -40,6 +50,13 @@ import { settingsGroup } from './settings/api'
 import { sidebarGroup } from './sidebar/api'
 import { workspaceFilesGroup } from './workspace-files/api'
 import { viewsGroup } from './views'
+import { pluginsGroup } from './plugins'
+import { filesGroup } from './files'
+import { requestsGroup } from './requests'
+// ── Wave wcs1023, lane C: the git panel on a server's checkout (`git.ts`) ──
+import { gitGroup } from './git'
+// ── Issue #266: the server's version and its self-upgrade (`server-info.ts`) ──
+import { serverInfoGroup } from './server-info'
 
 // ── Sessions (lane A) ──
 export const sessionsGroup = ApiGroup.make('sessions')
@@ -47,11 +64,20 @@ export const sessionsGroup = ApiGroup.make('sessions')
   .add(HttpCqrs.queryEndpoint('get', '/sessions/by-id', GetSession))
   .add(HttpCqrs.commandEndpoint('start', '/sessions/start', StartSession))
   .add(HttpCqrs.commandEndpoint('stop', '/sessions/stop', StopSession))
-  .add(HttpCqrs.commandEndpoint('write', '/sessions/write', WriteSession))
+  .add(
+    HttpCqrs.commandEndpoint('write', '/sessions/write', WriteSession).setPayload(
+      // encodedSchema drops annotations while rebuilding nested transforms.
+      // Apply privacy at the final HTTP boundary, before any host is invoked.
+      Schema.encodedSchema(WriteSession.payload).annotations({
+        message: () => ({ message: 'Invalid session input.', override: true })
+      })
+    )
+  )
   .add(HttpCqrs.commandEndpoint('resize', '/sessions/resize', ResizeSession))
   .add(HttpCqrs.commandEndpoint('setView', '/sessions/view', SetSessionView))
   .add(HttpCqrs.queryEndpoint('models', '/sessions/models', GetSessionModels))
   .add(HttpCqrs.queryEndpoint('commands', '/sessions/commands', GetSessionCommands))
+  .add(HttpCqrs.commandEndpoint('control', '/sessions/control', ControlSession))
   .add(HttpCqrs.queryEndpoint('capabilities', '/sessions/capabilities', GetSessionCapabilities))
   .add(HttpCqrs.queryEndpoint('history', '/sessions/history', GetSessionHistory))
   // ── Wave 4, lane C: the records a window brings back, their discard, a release for a move ──
@@ -60,6 +86,7 @@ export const sessionsGroup = ApiGroup.make('sessions')
   .add(HttpCqrs.commandEndpoint('release', '/sessions/release', ReleaseSessions))
   // ── Wave 4, lane D: the last agent tools ──
   .add(HttpCqrs.commandEndpoint('rename', '/sessions/rename', RenameSession))
+  .add(HttpCqrs.commandEndpoint('keepOnRecord', '/sessions/keep-on-record', KeepOnSessionRecord))
   .add(HttpCqrs.commandEndpoint('setPage', '/sessions/page', SetSessionPage))
   .add(HttpCqrs.queryEndpoint('screen', '/sessions/screen', ReadSessionScreen))
   .add(HttpCqrs.commandEndpoint('type', '/sessions/type', TypeIntoSession))
@@ -70,6 +97,27 @@ export const clientsGroup = ApiGroup.make('clients')
   .add(HttpCqrs.commandEndpoint('register', '/clients', RegisterClient))
   .add(HttpCqrs.queryEndpoint('list', '/clients', ListClients))
   .add(HttpCqrs.commandEndpoint('unregister', '/clients/unregister', UnregisterClient))
+  .add(
+    HttpCqrs.commandEndpoint(
+      'reserveRegistration',
+      '/clients/registrations/v1/reserve',
+      ReserveClientRegistration
+    )
+  )
+  .add(
+    HttpCqrs.commandEndpoint(
+      'confirmRegistration',
+      '/clients/registrations/v1/confirm',
+      ConfirmClientRegistration
+    )
+  )
+  .add(
+    HttpCqrs.commandEndpoint(
+      'releaseRegistration',
+      '/clients/registrations/v1/release',
+      ReleaseClientRegistration
+    )
+  )
 
 // ── Lane D: settings (`settings/api.ts`, built from the settings modules) ──
 export { settingsGroup }
@@ -83,6 +131,14 @@ export { workspaceFilesGroup }
 export { viewsGroup }
 // ── Wave 4, lane C: the agent tools' address and tokens (`agent-tools.ts`) ──
 export { agentToolsGroup }
+// ── Wave 5, lane C: the plugins (`plugins.ts`) ──
+export { pluginsGroup }
+
+// ── Wave wcs1023, lane C: the git domain (`git.ts`) ──
+export { gitGroup }
+
+// ── Issue #266: the server domain (`server-info.ts`) ──
+export { serverInfoGroup }
 
 // ── Lane B: terminals ──
 
@@ -96,6 +152,14 @@ export const ClaveApi = Api.make('clave')
   .add(viewsGroup)
   // ── Wave 4, lane C: the agent tools ──
   .add(agentToolsGroup)
+  // ── Wave 5, lane C: the plugins (`plugins.ts`) ──
+  .add(pluginsGroup)
+  .add(filesGroup)
+  .add(requestsGroup)
+  // ── Wave wcs1023, lane C: the git domain ──
+  .add(gitGroup)
+  // ── Issue #266: the server domain ──
+  .add(serverInfoGroup)
   .add(Health.group)
   .pipe(annotate({ title: 'Clave', version: '1', description: "Clave's server API" }))
 export type ClaveApi = typeof ClaveApi

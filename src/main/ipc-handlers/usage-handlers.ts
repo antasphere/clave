@@ -3,6 +3,7 @@ import { usageManager } from '../usage-manager'
 import { codexUsageManager } from '../codex-usage'
 import { shellSettingsSource as settings } from '../settings/shell-source'
 import { TEST_NO_ACTIVATE } from '../test-mode'
+import { getClaveServerEndpoint } from '../server/endpoint'
 
 function broadcast(channel: string, payload: unknown): void {
   for (const win of BrowserWindow.getAllWindows()) {
@@ -49,10 +50,30 @@ export function registerUsageHandlers(): void {
 
   // The five-minute clock, for every account of both providers. Not under
   // the E2E flag: a test instance stubs the reads and must never reach the
-  // keychain, the network or a codex binary on its own.
+  // keychain, the network or a codex binary on its own. And only while the
+  // server runs in this process (wave 5): with the server in another
+  // process the windows read the usage through it on their own clock
+  // (`usage-store.ts`) and hear nothing of this one, so a read here would
+  // spend each account's quota a second time for nobody.
   if (!TEST_NO_ACTIVATE) {
     const anyWindow = (): boolean => BrowserWindow.getAllWindows().some((win) => !win.isDestroyed())
-    usageManager.startPolling(undefined, anyWindow)
-    codexUsageManager.startPolling(undefined, anyWindow)
+    const shouldRun = (): boolean =>
+      shouldPollUsage(getClaveServerEndpoint()?.mode ?? null, anyWindow())
+    usageManager.startPolling(undefined, shouldRun)
+    codexUsageManager.startPolling(undefined, shouldRun)
   }
+}
+
+/**
+ * Whether main's five-minute usage poll reads now: a window is open, and the
+ * server runs in this process or none is named yet (a boot that has not
+ * decided, or that failed, keeps the poll it always had). With the server in
+ * another process the windows read the usage through it and hear nothing of
+ * main's reads, which would spend each account's quota a second time. Pure.
+ */
+export function shouldPollUsage(
+  mode: 'in-process' | 'attached' | null,
+  anyWindow: boolean
+): boolean {
+  return anyWindow && mode !== 'attached'
 }

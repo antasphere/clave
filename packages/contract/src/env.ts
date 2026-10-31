@@ -14,5 +14,15 @@
 export const CONTRACT_VERSION = 1
 /** The IPC channel the preload asks main for the endpoint on. */
 export const IPC_SERVER_ENDPOINT = 'server:endpoint'
+/** Sent by main to every window the moment it names a server, so a window
+ *  that asked before (and was answered `null`) asks again at once instead of
+ *  at its next poll (PRDCT-3527: the poll cost up to two seconds of the
+ *  launch's restore). No payload: the window asks `IPC_SERVER_ENDPOINT`. */
+export const IPC_SERVER_ENDPOINT_NAMED = 'server:endpoint-named'
+/** Whether the launch put the sessions on a server process of their own
+ *  (attached, or the app's separate child): answered at once, before that
+ *  server is up, so a window can load the client it will need while it
+ *  waits (PRDCT-3527). `true` or `false`. */
+export const IPC_SERVER_EXTERNAL = 'server:external'
 export const ENV_SERVER_URL = 'CLAVE_SERVER_URL'
 export const ENV_SERVER_TOKEN = 'CLAVE_SERVER_TOKEN'
