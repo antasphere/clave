@@ -1,0 +1,76 @@
+name: Relay image
+
+# One native Linux validation target, not a hosting or release destination.
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/relay-image.yml'
+      - '.dockerignore'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'packages/contract/**'
+      - 'packages/server/relay*'
+      - 'packages/server/src/relay/**'
+      - 'scripts/relay-image-ci*'
+
+permissions:
+  contents: read
+
+jobs:
+  relay-image:
+    name: Build and smoke relay (linux/amd64)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      RELAY_PLATFORM: linux/amd64
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      # Official actions refs/tags/v4, resolved through api.github.com on 2026-10-31.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+
+      - name: Set private job evidence directory
+        shell: bash
+        run: echo "RELAY_EVIDENCE=$RUNNER_TEMP/relay-image-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" >> "$GITHUB_ENV"
+
+      - name: Check image gate predicates
+        timeout-minutes: 1
+        run: python3 scripts/relay-image-ci.test.py
+
+      - name: Bind actual checkout and source archive
+        timeout-minutes: 1
+        run: python3 scripts/relay-image-ci.py source
+
+      - name: Build locked image from the tested tree
+        timeout-minutes: 8
+        run: python3 scripts/relay-image-ci.py build
+
+      - name: Check health, unauthenticated refusal and embedded provenance
+        timeout-minutes: 2
+        run: python3 scripts/relay-image-ci.py smoke
+
+      - name: Retain immutable image archive
+        timeout-minutes: 2
+        run: python3 scripts/relay-image-ci.py archive
+
+      - name: Clean up only this job's container
+        if: always()
+        timeout-minutes: 1
+        run: python3 scripts/relay-image-ci.py cleanup
+
+      - name: Finalize source and evidence hashes
+        if: always()
+        timeout-minutes: 1
+        run: python3 scripts/relay-image-ci.py manifest
+
+      - name: Upload image and evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: relay-image-linux-amd64-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ env.RELAY_EVIDENCE }}
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
