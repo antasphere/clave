@@ -1,3 +1,9 @@
+import { LOCAL_SERVER_ID } from '@clave/contract/fleet'
+import { useFleetStore } from '../store/fleet-store'
+import { allWorkspaces } from '../store/workspace-store'
+import { resolveSessionTarget } from './mcp-session-target'
+import { openFleetSession } from './mcp-fleet-session'
+import { ownerOf } from './fleet-identity'
 import { flushLinkedDocument } from '../store/linked-document-store'
 import type { LinkedOpen } from '../../../shared/linked-documents'
 import {
@@ -64,7 +70,7 @@ interface McpCommandMessage {
 
 /** Resolve a workspace reference: id, exact name, or case-insensitive name. */
 function resolveWorkspace(ref: string): Workspace {
-  const { workspaces } = useWorkspaceStore.getState()
+  const workspaces = allWorkspaces(useWorkspaceStore.getState())
   if (workspaces.length === 0) {
     throw new Error('No workspaces configured — the workspace parameter cannot be used')
   }
@@ -241,10 +247,18 @@ function handleList(payload: { callerSessionId?: string; workspace?: string }): 
   const pinnedGroups = pinnedGroupsInScope(inScope)
   const callerSessionId = payload.callerSessionId ?? null
   return {
-    workspaces: wsState.workspaces.map((w) => ({
+    servers: [
+      { id: LOCAL_SERVER_ID, name: 'This Mac', enabled: true, state: 'connected' },
+      ...useFleetStore.getState().connections.map((c) => ({
+        ...c,
+        state: useFleetStore.getState().statuses[c.id]?.state ?? 'disconnected'
+      }))
+    ],
+    workspaces: allWorkspaces(wsState).map((w) => ({
       id: w.id,
       name: w.name,
       rootDir: w.rootDir,
+      serverId: ownerOf(w.id),
       active: w.id === wsState.activeWorkspaceId
     })),
     activeWorkspaceId: wsState.activeWorkspaceId,
@@ -394,6 +408,7 @@ const messagingParentOf = (session: Session): string | undefined =>
 
 export async function openSessionProgrammatically(payload: {
   cwd: string
+  server?: string
   mode?: 'claude' | 'antigravity' | 'gemini' | 'codex' | 'pi' | 'terminal'
   groupId?: string
   name?: string
@@ -415,16 +430,41 @@ export async function openSessionProgrammatically(payload: {
 }): Promise<unknown> {
   const state = useSessionStore.getState()
   const spawnedBy = payload.attachToParent === true ? payload.callerSessionId : undefined
-  // Resolve the target group before spawning so a bad reference fails cleanly.
+  const connections = useFleetStore.getState().connections
+  const explicitOwner =
+    payload.server === undefined
+      ? undefined
+      : resolveSessionTarget({
+          server: payload.server,
+          connections,
+          workspaces: []
+        }).serverId
+  // A server selector also scopes a group's name. An explicit ID and "mine"
+  // retain their identity and are checked for conflicting ownership below.
+  const candidateGroups =
+    explicitOwner !== undefined &&
+    payload.groupId !== 'mine' &&
+    !state.groups.some((g) => g.id === payload.groupId)
+      ? state.groups.filter((g) => ownerOf(g.id) === explicitOwner)
+      : state.groups
   const targetGroup = payload.groupId
-    ? resolveGroup(state.groups, payload.groupId, payload.callerSessionId)
+    ? resolveGroup(candidateGroups, payload.groupId, payload.callerSessionId)
     : null
 
-  // Workspace: explicit param > target group's > caller's > active. A session
-  // placed into a group must land in that group's workspace either way.
-  const workspaceId = payload.workspace
-    ? resolveWorkspace(payload.workspace).id
-    : (targetGroup?.workspaceId ?? workspaceForSpawn(undefined, payload.callerSessionId))
+  const { serverId, workspaceId } = resolveSessionTarget({
+    server: payload.server,
+    workspace: payload.workspace,
+    group: targetGroup,
+    defaultWorkspaceId: workspaceForSpawn(undefined, payload.callerSessionId),
+    callerServerId: payload.callerSessionId ? ownerOf(payload.callerSessionId) : undefined,
+    workspaces: allWorkspaces(useWorkspaceStore.getState()),
+    connections
+  })
+  if (serverId !== LOCAL_SERVER_ID) {
+    const result = await openFleetSession(serverId, workspaceId, targetGroup?.id, payload)
+    if (payload.callerSessionId) messagingParents.set(result.sessionId, payload.callerSessionId)
+    return result
+  }
 
   const mode = payload.mode ?? 'claude'
   // Which CLI starts and which flags it takes, decided in `open-session-modes`

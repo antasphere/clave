@@ -165,6 +165,10 @@ jobs:
       - name: Gate, full Markdown client, native lifecycle and responsiveness
         run: node tests/e2e/run.mjs markdown-parser-deep-client markdown-full-native renderer-responsiveness
 
+      - name: Gate, MCP sessions on connected servers
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: node tests/e2e/run.mjs mcp-fleet-sessions
+
       - name: Report, the whole suite with the server in-process
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         continue-on-error: true
