@@ -79,6 +79,17 @@ def validate_owned_container(value, expected_owner, expected_id=None):
     return cid
 
 
+def validate_absence(probe, cid):
+    assert re.fullmatch(r'[0-9a-f]{64}', cid)
+    supported = {
+        f'{prefix} No such {kind}: {cid}'
+        for prefix in ['Error:', 'Error response from daemon:']
+        for kind in ['container', 'object']
+    }
+    assert probe.returncode != 0 and probe.stdout.strip() == '[]' and \
+        probe.stderr.strip() in supported, 'Exact owned container removal unconfirmed'
+
+
 def source():
     out = evidence()
     out.mkdir(mode=0o700)
@@ -218,12 +229,13 @@ def cleanup():
                 logs = subprocess.run(['docker', 'logs', '--tail', '100', cid], stdout=log,
                                       stderr=subprocess.STDOUT, timeout=5, check=False)
                 result['logsExit'] = logs.returncode
-        except subprocess.TimeoutExpired:
-            result['logsTimedOut'] = True
+        except Exception as error:
+            # Diagnostic I/O must not prevent removal of an already validated own CID.
+            result['logsError'] = f'{type(error).__name__}: {str(error)[:400]}'
         run(['docker', 'container', 'rm', '--force', '--volumes', cid], 15)
         probe = subprocess.run(['docker', 'container', 'inspect', cid],
                                capture_output=True, text=True, timeout=5)
-        assert probe.returncode != 0 and 'No such' in probe.stderr, 'Removal unconfirmed'
+        validate_absence(probe, cid)
         result.update(status='OWNED CONTAINER REMOVED', removed=True, containerId=cid)
     except Exception as error:
         result.update(status='UNKNOWN; NO FOREIGN CLEANUP', error=type(error).__name__)
