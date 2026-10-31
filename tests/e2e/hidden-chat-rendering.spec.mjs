@@ -289,7 +289,7 @@ export async function run(t) {
       await until(
         async () =>
           (await win
-            .locator(`[data-sidebar-item-id="${record.id}"] .tab-status`)
+            .locator(`[data-sidebar-item-id="${record.id}"] .sidebar-tab-status`)
             .getAttribute('data-status')) === 'needs-you'
       ),
       'the hidden session still notifies the sidebar that it needs the reader'

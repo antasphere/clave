@@ -40,12 +40,12 @@ const WS = {
   createdAt: 1
 }
 
-/** The row's one signal, as `lib/tab-status.ts` paints it (`data-status`). */
+/** The row's one signal, as `lib/tab-status.ts` paints it, in the row's trailing status slot (`data-status`). */
 const rowStatus = (win, id) =>
   win.evaluate(
     (sid) =>
       document
-        .querySelector(`[data-sidebar-item-id="${sid}"] .tab-status`)
+        .querySelector(`[data-sidebar-item-id="${sid}"] .sidebar-tab-status`)
         ?.getAttribute('data-status') ?? null,
     id
   )
