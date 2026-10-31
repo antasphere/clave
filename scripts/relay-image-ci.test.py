@@ -1,4 +1,5 @@
 import copy
+from contextlib import ExitStack
 import importlib.util
 import json
 import os
@@ -10,11 +11,21 @@ from unittest.mock import patch
 
 spec = importlib.util.spec_from_file_location('relay_image_ci', Path(__file__).with_name('relay-image-ci.py'))
 ci = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(ci)
+with patch.object(subprocess, 'check_output', side_effect=AssertionError('No engine calls on import')), \
+     patch.object(subprocess, 'run', side_effect=AssertionError('No engine calls on import')):
+    spec.loader.exec_module(ci)
 
 
 class ImagePredicates(unittest.TestCase):
     def setUp(self):
+        output_guard = patch.object(ci.subprocess, 'check_output',
+                                    side_effect=AssertionError('No engine calls in unit tests'))
+        process_guard = patch.object(ci.subprocess, 'run',
+                                     side_effect=AssertionError('No engine calls in unit tests'))
+        output_guard.start()
+        self.direct_process = process_guard.start()
+        self.addCleanup(output_guard.stop)
+        self.addCleanup(process_guard.stop)
         self.iid = 'sha256:' + 'a' * 64
         self.sha = 'b' * 40
         self.image = {'Id': self.iid, 'Os': 'linux', 'Architecture': 'amd64',
@@ -99,6 +110,7 @@ class ImagePredicates(unittest.TestCase):
                     ci.cleanup()
                 self.assertEqual(commands.call_count, 1)
                 self.assertNotIn('rm', commands.call_args.args[0])
+                self.direct_process.assert_not_called()
             self.assertFalse(json.loads((out / 'cleanup.json').read_text())['removed'])
 
     def test_cleanup_removes_only_validated_id_and_records_absence(self):
@@ -114,7 +126,7 @@ class ImagePredicates(unittest.TestCase):
             def response(argv, **kwargs):
                 if 'logs' in argv:
                     return subprocess.CompletedProcess(argv, 0)
-                return subprocess.CompletedProcess(argv, 1, '', 'Error: No such container: ' + cid)
+                return subprocess.CompletedProcess(argv, 1, '[]', 'Error: No such container: ' + cid)
             with patch.object(ci, 'evidence', return_value=out), patch.object(
                 ci, 'run', side_effect=[json.dumps([owned]), cid]
             ) as commands, patch.object(ci.subprocess, 'run', side_effect=response):
@@ -122,6 +134,55 @@ class ImagePredicates(unittest.TestCase):
                 self.assertEqual(commands.call_args_list[-1].args[0],
                                  ['docker', 'container', 'rm', '--force', '--volumes', cid])
             self.assertEqual(json.loads((out / 'cleanup.json').read_text())['containerId'], cid)
+
+    def cleanup_case(self, log_failure=None, absence=None):
+        with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {
+            'GITHUB_RUN_ID': '1', 'GITHUB_RUN_ATTEMPT': '1'
+        }), ExitStack() as stack:
+            out = Path(directory)
+            cid = 'a' * 64
+            (out / 'create-attempted').write_text('attempted')
+            (out / 'container-id').write_text(cid)
+            owned = {'Id': cid, 'Name': '/' + ci.owner(),
+                     'Config': {'Labels': {ci.OWNER_LABEL: ci.owner()}}}
+            original_open = Path.open
+            def open_file(path, *args, **kwargs):
+                if log_failure == 'file' and path.name == 'container.log':
+                    raise OSError('Diagnostic file unavailable')
+                return original_open(path, *args, **kwargs)
+            def response(argv, **kwargs):
+                if 'logs' in argv:
+                    if log_failure == 'spawn':
+                        raise OSError('Diagnostic subprocess unavailable')
+                    return subprocess.CompletedProcess(argv, 0)
+                return subprocess.CompletedProcess(argv, 1, '[]',
+                    absence or 'Error: No such container: ' + cid)
+            stack.enter_context(patch.object(Path, 'open', new=open_file))
+            stack.enter_context(patch.object(ci, 'evidence', return_value=out))
+            commands = stack.enter_context(patch.object(ci, 'run', side_effect=[json.dumps([owned]), cid]))
+            stack.enter_context(patch.object(ci.subprocess, 'run', side_effect=response))
+            try:
+                ci.cleanup()
+            except (OSError, AssertionError):
+                pass
+            return json.loads((out / 'cleanup.json').read_text()), [c.args[0] for c in commands.call_args_list]
+
+    def test_diagnostic_errors_do_not_skip_validated_owned_removal(self):
+        for failure in ['file', 'spawn']:
+            with self.subTest(failure=failure):
+                result, commands = self.cleanup_case(log_failure=failure)
+                self.assertIn(['docker', 'container', 'rm', '--force', '--volumes', 'a' * 64], commands)
+                self.assertTrue(result['removed'])
+                self.assertIn('logsError', result)
+
+    def test_unrelated_or_unavailable_daemon_is_not_positive_absence(self):
+        for message in ['Error response from daemon: No such volume: unrelated-volume',
+                        'Error: No such container: ' + 'b' * 64,
+                        'Cannot connect to daemon: No such file or directory']:
+            with self.subTest(message=message):
+                result, _ = self.cleanup_case(absence=message)
+                self.assertFalse(result['removed'])
+                self.assertEqual(result['status'], 'UNKNOWN; NO FOREIGN CLEANUP')
 
 
 if __name__ == '__main__':
