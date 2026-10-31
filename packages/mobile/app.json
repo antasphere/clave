@@ -25,6 +25,7 @@
       "expo-secure-store",
       "./plugins/with-jsi-xcode26",
       "./plugins/with-jsi-scheduler",
+      "./plugins/with-rn-eager-metadata",
       [
         "expo-notifications",
         {
