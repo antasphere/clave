@@ -11,10 +11,13 @@
 # package is copied in as a module and only what the relay imports is
 # installed (`relay.package.json`), so the image carries neither Electron
 # nor the server's other dependencies.
-FROM oven/bun:1.4.1-slim
+FROM oven/bun:1.4.1-slim@sha256:887d0f37f674c69984be4e397fef29ca0d74df1e75155431abbe857258bffde5
 WORKDIR /app
-COPY packages/server/relay.package.json ./package.json
-RUN bun install --production
+COPY package-lock.json /inputs/package-lock.json
+COPY packages/server/relay.package.json packages/server/relay-dependencies.mjs /inputs/
+RUN bun /inputs/relay-dependencies.mjs /inputs/package-lock.json /inputs/relay.package.json /app \
+  && bun install --production --frozen-lockfile --ignore-scripts \
+  && bun /inputs/relay-dependencies.mjs --verify /app
 COPY packages/contract ./node_modules/@clave/contract
 COPY packages/server/src/relay ./packages/server/src/relay
 ENV RELAY_PORT=8787 RELAY_HOST=0.0.0.0 RELAY_DATA_DIR=/data
