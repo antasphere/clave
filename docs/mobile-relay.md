@@ -139,15 +139,65 @@ entry; a test provider stands in for the hub with `--issuer http://127.0.0.1:<po
 ## Deploying it
 
 The image is `packages/server/relay.Dockerfile`, built from the repository root on
-`oven/bun:1.4.1-slim` (the Bun the repository pins) with the contract package copied in
-as a module and only `effect` and `ws` installed:
+the digest-pinned `oven/bun:1.4.1-slim` (the Bun the repository pins). The contract is
+copied in as a module. `relay-dependencies.mjs` projects the relay's `effect` and `ws`
+runtime closure from the committed root `package-lock.json`, preserving every selected
+version, tarball URL and SHA-512 integrity. It refuses missing entries, an unpinned or
+disagreeing relay manifest, and unsupported dependency kinds rather than resolving them.
+The generated install lock exists only inside the image; there is no second committed
+workspace lock and neither root manifest nor root lock is rewritten.
+
+The pinned Bun consumes that projection with
+`bun install --production --frozen-lockfile --ignore-scripts`. A check after the install
+requires unchanged manifest/lock bytes and the installed versions recorded by the
+projection. `/app/relay-dependencies.json` retains the original workspace-lock hash,
+relay-manifest hash, projected-lock hash and selected versions/URLs/integrities. Bun 1.4.1
+also writes its migrated `bun.lock` in this isolated install; that derived file is not a
+new repository lock. A missing lock is not safely frozen by the flag alone, which is why
+the projection and its input checks are part of the recipe.
+
+The primary Docker registry returned the following index on 31 October 2026 at
+00:11:50 UTC. Its response `Docker-Content-Digest` matched the SHA-256 of the received
+index bytes. Both platform-manifest digests were checked against their response bytes:
+
+| Image metadata                  | Digest                                                                    |
+| ------------------------------- | ------------------------------------------------------------------------- |
+| `oven/bun:1.4.1-slim` OCI index | `sha256:887d0f37f674c69984be4e397fef29ca0d74df1e75155431abbe857258bffde5` |
+| `linux/amd64` manifest          | `sha256:0ef5026ed08a73e76ad7a6e2e814d4f352a66037a7aee194b69008d1429a6ae4` |
+| `linux/arm64` manifest          | `sha256:13322d1181c5956d733e50e8250fd9343b7f9c422b6057e4c7aeaac98b9c746e` |
+
+Primary source: [Docker registry image index](https://registry-1.docker.io/v2/oven/bun/manifests/1.4.1-slim),
+retrieved with anonymous pull authorization from `auth.docker.io`. The Dockerfile pins
+the index digest, so a later tag move does not change the base. This pins base and
+dependency inputs, not timestamps or the byte identity of independently rebuilt images.
+No host or target platform is selected by this record.
+
+After the build is authorized and scheduled, use a clean committed checkout and the
+owner-confirmed platform (`linux/amd64` or `linux/arm64`). These command shapes do not
+authorize a build, container start, volume creation or deployment:
 
 ```sh
-docker build -f packages/server/relay.Dockerfile -t clave-relay .
+: "${RELAY_PLATFORM:?Set the owner-confirmed target platform}"
+RELAY_SOURCE_SHA=$(git rev-parse HEAD)
+docker build --platform "$RELAY_PLATFORM" -f packages/server/relay.Dockerfile \
+  --label org.opencontainers.image.revision="$RELAY_SOURCE_SHA" \
+  --iidfile /tmp/clave-relay-image-id -t "clave-relay:$RELAY_SOURCE_SHA" .
+# Retain image ID/RepoDigests, platform, source revision and /app/relay-dependencies.json
+# with the build logs before proposing the immutable image for deployment.
+docker image inspect "clave-relay:$RELAY_SOURCE_SHA"
+# On an explicitly approved target, use that inspected immutable image ID/digest:
 docker run -d --name clave-relay --restart unless-stopped \
   -p 127.0.0.1:8787:8787 -v clave-relay-data:/data \
-  -e RELAY_ISSUER=https://account.antasphere.com clave-relay
+  -e RELAY_ISSUER=https://account.antasphere.com <approved-image-id-or-digest>
 ```
+
+The example's loopback port is for a proxy running on the host. A proxy in another
+container needs an approved shared-network upstream or host mapping; its own
+`127.0.0.1` is not the host listener. An existing deployment pipeline must explicitly
+support this service and its `/health` endpoint; a tool pipeline requiring `/healthz`
+and `/api/v1/instance` cannot deploy it unchanged. The hostname, host administration,
+proxy/DNS changes, durable volume/backup and rollback image remain the human deploy
+gate. A local image build does not prove a phone on another network can reach it.
 
 | Variable         | Default   | Meaning                                                               |
 | ---------------- | --------- | --------------------------------------------------------------------- |
