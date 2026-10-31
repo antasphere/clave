@@ -42,11 +42,17 @@ describe('nodePtyTerminals', () => {
       CLAVE_PORT_TEST: 'through-the-port'
     })
     let output = ''
+    let resolveOutput!: () => void
+    const outputObserved = new Promise<void>((resolve) => {
+      resolveOutput = resolve
+    })
     process.onData((data) => {
       output += data
+      if (output.includes('got:typed-in:through-the-port')) resolveOutput()
     })
     process.write('typed-in\r')
     expect(await exitOf(process)).toBe(0)
+    await outputObserved
     expect(output).toContain('got:typed-in:through-the-port')
   })
 
