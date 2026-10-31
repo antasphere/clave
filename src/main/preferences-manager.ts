@@ -40,6 +40,13 @@ export interface Preferences {
    * A fresh chat opens in it (`sessions/chat-view-default.ts`).
    */
   chatView: string | null
+  /**
+   * The relay a phone reaches this machine through from outside the home
+   * network (Settings → Mobile, mobile wave): an http(s) origin, or empty
+   * for none. Stored by the devices domain (`server/devices-port.ts`,
+   * validated by the server), read by the relay client.
+   */
+  mobileRelayUrl: string
 }
 
 const PREFERENCES_FILE = 'preferences.json'
@@ -57,7 +64,8 @@ const DEFAULTS: Preferences = {
   agentAutoUpdate: true,
   chatModels: {},
   chatEfforts: {},
-  chatView: null
+  chatView: null,
+  mobileRelayUrl: ''
 }
 
 export class PreferencesManager {

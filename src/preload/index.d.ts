@@ -11,6 +11,8 @@ import type {
 import type { DayActivity } from '../shared/activity-fold'
 import type { AttachmentPreview, AttachmentSource, FileAttachment } from '../shared/attachments'
 import type { AntasphereAccountStatus } from '../shared/antasphere-account-types'
+// ── Mobile wave, lane A: the phones paired with this server (the window's read models) ──
+import type { DeviceView, DevicesView } from '../shared/mobile-types'
 import type {
   GithubResult,
   MergeMethod,
@@ -1053,6 +1055,16 @@ export interface ElectronAPI extends FleetDesktopAPI {
   antasphereAccountSignOut: () => Promise<AntasphereAccountStatus>
   antasphereAccountDismiss: () => Promise<AntasphereAccountStatus>
   onAntasphereAccountChanged: (callback: (status: AntasphereAccountStatus) => void) => () => void
+  /** The phones paired with this server (mobile wave, lane A, Settings → Mobile):
+   *  the owner's list and its three actions, the relay address, the change
+   *  signal. Never a session token: the server shows one to the phone alone. */
+  devicesList: () => Promise<DevicesView>
+  devicesApprove: (pairingId: string) => Promise<DeviceView>
+  devicesRefuse: (pairingId: string) => Promise<void>
+  devicesRevoke: (deviceId: string) => Promise<void>
+  mobileRelayGet: () => Promise<string>
+  mobileRelaySet: (url: string) => Promise<string>
+  onDevicesChanged: (callback: (revision: number) => void) => () => void
   getCodexUsageLimits: (
     accountId?: string,
     options?: { force?: boolean }

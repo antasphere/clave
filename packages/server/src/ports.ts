@@ -45,6 +45,10 @@ export { GitPort, type GitService } from './git/port'
 import { ServerInfoPort, type ServerInfoService } from './server-info/port'
 
 export { ServerInfoPort, type ServerInfoService } from './server-info/port'
+// ── Mobile wave, lane A: the devices ──
+import { DevicesPort, type DevicesPortService } from './devices/port'
+
+export { DevicesPort, type DevicesPortService } from './devices/port'
 
 export interface ServerPorts {
   readonly requests?: RequestsService
@@ -75,6 +79,11 @@ export interface ServerPorts {
   // ── Issue #266: the server domain ──
   /** The version this server runs and its self-upgrade. `ServerInfoPort.none` when absent: no version reported, no upgrade. */
   readonly serverInfo?: ServerInfoService
+  // ── Mobile wave, lane A: the devices ──
+  /** A phone paired with this server as its owner's: the device records'
+   *  document, the owner's identity, the issuer, the relay preference.
+   *  `DevicesPort.none` when absent: no owner, so no phone is ever admitted. */
+  readonly devices?: DevicesPortService
 }
 
 /** Every port as a layer, the domain's `none` where the entry gave nothing. */
@@ -95,6 +104,8 @@ export const PortsLive = (
   | GitPort
   // ── Issue #266: the server domain ──
   | ServerInfoPort
+  // ── Mobile wave, lane A: the devices ──
+  | DevicesPort
 > =>
   Layer.mergeAll(
     RequestsPort.layer(ports.requests ?? RequestsPort.none),
@@ -111,5 +122,7 @@ export const PortsLive = (
     // ── Wave wcs1023, lane C: the git domain ──
     GitPort.layer(ports.git ?? GitPort.none),
     // ── Issue #266: the server domain ──
-    ServerInfoPort.layer(ports.serverInfo ?? ServerInfoPort.none)
+    ServerInfoPort.layer(ports.serverInfo ?? ServerInfoPort.none),
+    // ── Mobile wave, lane A: the devices ──
+    DevicesPort.layer(ports.devices ?? DevicesPort.none)
   )

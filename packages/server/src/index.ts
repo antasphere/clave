@@ -12,7 +12,7 @@ export { ServerEvents, type ServerEventsService } from './events'
 export { PushHub, type PushSocket, type PushPeer } from './push/hub'
 export { PushHubService, pushRoute } from './push/route'
 export { bearerAuth, safeEqual, tokenMatches } from './auth'
-export { corsForLoopback, isLoopbackOrigin, isOwnPageOrigin } from './cors'
+export { corsForLoopback, isListenerOrigin, isLoopbackOrigin, isOwnPageOrigin } from './cors'
 export { ServerLive, ServicesLive, BusesLive, type ServerOptions } from './runtime'
 
 // ── Lane A: sessions, and the clients the shell registers as ──
@@ -93,3 +93,23 @@ export { PendingRequests, type RequestInput, type RequestResult } from './reques
 export { RequestsPort, type RequestsService } from './requests/port'
 
 export { FileTreeWatcher } from './files/watch'
+
+// ── Mobile wave, lane A: the devices, a phone paired with this server ──
+export {
+  DevicesPort,
+  memoryDeviceStorage,
+  type DevicesPortService,
+  type DeviceDocumentStorage,
+  type RelayAddressPreference,
+  DeviceSessions,
+  type DeviceSessionsService,
+  deviceHandlers,
+  DevicesEventsLive,
+  deviceMayCall,
+  deviceHearsEvent,
+  resolveAntasphereIssuer,
+  ANTASPHERE_ISSUER_ENV,
+  devicesPushTargets,
+  type PushTarget,
+  type PushTargets
+} from './devices'

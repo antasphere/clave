@@ -57,6 +57,8 @@ import { requestsGroup } from './requests'
 import { gitGroup } from './git'
 // ── Issue #266: the server's version and its self-upgrade (`server-info.ts`) ──
 import { serverInfoGroup } from './server-info'
+// ── Mobile wave, lane A: the devices, a phone paired with this server (`devices.ts`) ──
+import { devicesGroup } from './devices'
 
 // ── Sessions (lane A) ──
 export const sessionsGroup = ApiGroup.make('sessions')
@@ -140,6 +142,9 @@ export { gitGroup }
 // ── Issue #266: the server domain (`server-info.ts`) ──
 export { serverInfoGroup }
 
+// ── Mobile wave, lane A: the devices (`devices.ts`) ──
+export { devicesGroup }
+
 // ── Lane B: terminals ──
 
 export const ClaveApi = Api.make('clave')
@@ -160,6 +165,8 @@ export const ClaveApi = Api.make('clave')
   .add(gitGroup)
   // ── Issue #266: the server domain ──
   .add(serverInfoGroup)
+  // ── Mobile wave, lane A: the devices ──
+  .add(devicesGroup)
   .add(Health.group)
   .pipe(annotate({ title: 'Clave', version: '1', description: "Clave's server API" }))
 export type ClaveApi = typeof ClaveApi

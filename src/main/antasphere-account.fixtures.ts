@@ -17,7 +17,12 @@ import {
   run,
   type RunReport
 } from '@structure-ai/fixtures'
-import { startEmbedded, SettingsSource, type EmbeddedServer } from '@clave/server'
+import {
+  startEmbedded,
+  SettingsSource,
+  createServerFiles,
+  type EmbeddedServer
+} from '@clave/server'
 import { startOidcProvider, type OidcProvider } from '../../tests/e2e/fixtures/oidc-provider.mjs'
 import { AntasphereAccountManager } from './antasphere-account'
 import { electronTestPorts } from './ports/testing'
@@ -187,8 +192,9 @@ export const antasphereFixtureHandlers = [
         )
       }
       const provider = run.provider
+      const ports = electronTestPorts(run.dataDir)
       const manager = new AntasphereAccountManager({
-        ports: electronTestPorts(run.dataDir),
+        ports,
         env: { CLAVE_ANTASPHERE_ISSUER: provider.issuer },
         log: () => {}
       })
@@ -198,6 +204,19 @@ export const antasphereFixtureHandlers = [
       const server = yield* Effect.promise(() =>
         startEmbedded({
           ports: {
+            files: createServerFiles({
+              roots: [run.dataDir],
+              attachmentsRoot: path.join(run.dataDir, 'attachments')
+            }),
+            devices: {
+              storage: {
+                read: () => ports.storage.readChecked!('devices.json'),
+                write: (text) => ports.storage.write('devices.json', text, { mode: 0o600 })
+              },
+              owner: () => manager.status().account?.subject ?? null,
+              issuer: provider.issuer,
+              serverName: () => 'Fixture Mac'
+            },
             settings: {
               ...SettingsSource.none,
               antasphere: {

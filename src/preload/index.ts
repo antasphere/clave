@@ -663,6 +663,17 @@ const relayPluginEvents = (push: import('@clave/client').PushClient): (() => voi
         .catch(() => undefined)
     else if (event._tag === 'plugins.changed')
       void ipcRenderer.invoke('plugins:changed-heard', envelope.id).catch(() => undefined)
+    // ── Mobile wave, lane A: a phone asked to pair; the shell shows the notice ──
+    else if (event._tag === 'devices.pairing_requested')
+      void ipcRenderer
+        .invoke(
+          'devices:pairing-requested',
+          envelope.id,
+          event.pairingId,
+          event.name,
+          event.platform
+        )
+        .catch(() => undefined)
   })
 }
 
@@ -793,6 +804,9 @@ const antasphereChanged = viaServerEvent(
   // A server that holds no Antasphere account refuses the read; nothing is delivered.
   async (api) => [await api.settings.antasphere.status()]
 )
+/** The devices have no road but the server (mobile wave, lane A). */
+const noDevicesYet = (): Promise<never> =>
+  Promise.reject(new Error("Clave's server is not up yet; try again in a moment."))
 let accountOp = 0
 const nextAccountOp = (): number => ++accountOp
 const onAccountStatus = (status: unknown): void => {
@@ -2101,6 +2115,40 @@ const electronAPI = {
       onAccountStatus(status)
       callback(status)
     }),
+  // ── Mobile wave, lane A: the phones paired with this server (Settings → Mobile) ──
+  // The devices live on the server and nowhere else: there is no IPC arm. A
+  // window that asks before the server is named hears one sentence and the
+  // page offers a retry; the change signal reads the list at the welcome.
+  devicesList: viaServer<[], unknown>({
+    ipc: () => noDevicesYet(),
+    server: ({ api }) => api.devices.list()
+  }),
+  devicesApprove: viaServer<[string], unknown>({
+    ipc: () => noDevicesYet(),
+    server: ({ api }, pairingId) => api.devices.approve(pairingId)
+  }),
+  devicesRefuse: viaServer<[string], void>({
+    ipc: () => noDevicesYet(),
+    server: ({ api }, pairingId) => api.devices.refuse(pairingId)
+  }),
+  devicesRevoke: viaServer<[string], void>({
+    ipc: () => noDevicesYet(),
+    server: ({ api }, deviceId) => api.devices.revoke(deviceId)
+  }),
+  mobileRelayGet: viaServer<[], string>({
+    ipc: () => noDevicesYet(),
+    server: ({ api }) => api.devices.relay.get()
+  }),
+  mobileRelaySet: viaServer<[string], string>({
+    ipc: () => noDevicesYet(),
+    server: ({ api }, url) => api.devices.relay.set(url)
+  }),
+  onDevicesChanged: viaServerEvent(
+    'devices:changed',
+    'devices.changed',
+    (event) => event.revision,
+    async (api) => [(await api.devices.list()).revision]
+  ),
   // Codex usage is per account like Claude's (the machine's home when omitted).
   getCodexUsageLimits: viaServer<[string?, { force?: boolean }?], UsageRead>({
     ipc: (accountId, options) => ipcRenderer.invoke('usage:get-codex-limits', accountId, options),

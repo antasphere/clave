@@ -41,6 +41,30 @@ export const isLoopbackOrigin = (origin: string | undefined): boolean => {
  *  still proves itself with the hello token, as every peer does. */
 export const isOwnPageOrigin = (origin: string | undefined): boolean => isLoopbackOrigin(origin)
 
+// ── Mobile wave, lane A: a phone's socket ──
+/** A socket whose Origin is the server's own address, as the handshake's
+ *  Host header names it (`http://<host>:<port>` of the listener the client
+ *  reached): what a phone's WebSocket sends, derived from the URL it opened.
+ *  No page can be served from that origin, since this server serves none,
+ *  so a browser page off this machine never has it; a loopback page keeps
+ *  its own rule above, and any other Origin keeps its 403. */
+export const isListenerOrigin = (origin: string | undefined, host: string | undefined): boolean => {
+  if (!origin || !host) return false
+  let url: URL
+  try {
+    url = new URL(origin)
+  } catch {
+    return false
+  }
+  return (
+    (url.protocol === 'http:' || url.protocol === 'https:') &&
+    url.pathname === '/' &&
+    !url.search &&
+    !url.hash &&
+    url.host.toLowerCase() === host.trim().toLowerCase()
+  )
+}
+
 const ALLOW_METHODS = 'GET, POST, OPTIONS'
 /** What the typed client sends with every request, besides what a browser
  *  adds on its own: the token, the JSON body, the framework's idempotency and
