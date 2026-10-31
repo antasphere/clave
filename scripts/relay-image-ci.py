@@ -52,13 +52,23 @@ def validate_image(iid, inspected, metadata, source_sha):
     assert inspected['Id'] == iid == metadata['containerimage.config.digest'], 'Image identity differs'
     assert inspected['Os'] == 'linux' and inspected['Architecture'] == 'amd64', 'Wrong platform'
     assert inspected['Config']['Labels']['org.opencontainers.image.revision'] == source_sha
+    exported = metadata['containerimage.digest']
+    assert SHA256.fullmatch(exported), 'Invalid exporter digest'
+    identity = {'imageId': iid, 'configDigest': iid, 'exporterDigest': exported,
+                'platform': 'linux/amd64'}
+    if 'containerimage.descriptor' not in metadata:
+        assert exported == iid, 'Descriptor missing for a non-config exporter digest'
+        return {**identity, 'kind': 'image-config',
+                'manifestDigest': None, 'manifestMediaType': None}
     descriptor = metadata['containerimage.descriptor']
-    assert SHA256.fullmatch(metadata['containerimage.digest']), 'Missing immutable manifest digest'
-    assert descriptor['digest'] == metadata['containerimage.digest'], 'Manifest descriptor differs'
-    assert descriptor['mediaType'] in (
+    assert isinstance(descriptor, dict), 'Malformed supplied manifest descriptor'
+    assert descriptor.get('digest') == exported != iid, 'Manifest descriptor differs from its identity'
+    assert descriptor.get('mediaType') in (
         'application/vnd.oci.image.manifest.v1+json',
         'application/vnd.docker.distribution.manifest.v2+json'
     ), 'Expected one platform manifest'
+    return {**identity, 'kind': 'manifest', 'manifestDigest': exported,
+            'manifestMediaType': descriptor['mediaType']}
 
 
 def validate_smoke(health, unauthorized_status):
@@ -139,12 +149,16 @@ def build():
         subprocess.run(argv, stdin=archive, stdout=log, stderr=subprocess.STDOUT,
                        timeout=420, check=True)
     iid = (out / 'image-id').read_text().strip()
-    inspected = json.loads(run(['docker', 'image', 'inspect', iid], 15))[0]
+    assert SHA256.fullmatch(iid), 'Invalid built image ID'
+    raw_inspection = run(['docker', 'image', 'inspect', iid], 15)
+    (out / 'image-inspect.json').write_text(raw_inspection + '\n')
+    inspections = json.loads(raw_inspection)
+    assert isinstance(inspections, list) and len(inspections) == 1, 'Ambiguous image inspection'
+    inspected = inspections[0]
     metadata = json.loads((out / 'build-metadata.json').read_text())
-    validate_image(iid, inspected, metadata, src['checkoutSha'])
-    write(out / 'image-inspect.json', inspected)
-    print(json.dumps({'imageId': iid, 'manifestDigest': metadata['containerimage.digest'],
-                      'platform': 'linux/amd64'}), flush=True)
+    identity = validate_image(iid, inspected, metadata, src['checkoutSha'])
+    write(out / 'image-identity.json', identity)
+    print(json.dumps(identity), flush=True)
 
 
 def request(url):
