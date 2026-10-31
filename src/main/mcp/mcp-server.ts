@@ -7,6 +7,7 @@ import { createHash, timingSafeEqual } from 'crypto'
 import { app, Notification } from 'electron'
 import { TEST_NO_ACTIVATE } from '../test-mode'
 import { z } from 'zod'
+import { serverConnectionRegistry } from '../ipc-handlers/server-handlers'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import { callRenderer, callRendererAll, requestView } from './mcp-bridge'
@@ -592,7 +593,11 @@ async function runCommand(command: string, payload: unknown, caller?: string): P
       // (`shell-sidebar.ts`); `serveCommand` keeps the wave 3 tools on the
       // window there.
       const attached = getClaveServerEndpoint()?.mode === 'attached'
-      if (sidebarTransport() === 'server' || attached) {
+      // Fleet launches and listings need the window's merged owner inventory.
+      const fleetTool =
+        (command === 'openSession' || command === 'list') &&
+        (p.server !== undefined || serverConnectionRegistry().list().length > 0)
+      if (!fleetTool && (sidebarTransport() === 'server' || attached)) {
         const api = await serverClient.api()
         const served = await serveCommand(command, p, {
           api: attached ? { ...api, sidebar: shellSidebarClient(sidebarLayouts()) } : api,
@@ -636,6 +641,13 @@ async function runCommand(command: string, payload: unknown, caller?: string): P
         }
       }
       result = await callRenderer<unknown>(command, payload, win)
+      // A window-owned fleet launch keeps a messaging link in the renderer.
+      // Local read/send tools still run on the server, so retain the same
+      // authenticated relationship there independently of sidebar nesting.
+      if (command === 'openSession' && callerSessionId && result && typeof result === 'object') {
+        const childId = (result as { sessionId?: unknown }).sessionId
+        if (typeof childId === 'string') setParent(childId, callerSessionId)
+      }
       // Focusing a tab that lives in another window means the user should
       // SEE it: bring that window forward (inert under --test-no-activate).
       if (command === 'focus' && win) bringForward(win)
@@ -674,7 +686,7 @@ function buildServer(callerSessionId: string | undefined): McpServer {
     'clave_list',
     {
       description:
-        'List the open Clave windows (id, workspace, which is yours), the registered workspaces (root folders; each window shows one and scopes what the user sees in it), all groups and sessions (tabs) currently open across every window, plus the pinned workspace groups (launchable templates from .clave files, with their state: idle / active-visible / active-hidden), the focused session, and — when called from inside a Clave tab — which session/group/window is yours. Sessions and groups are annotated with their workspaceId/workspaceName and the windowId they live in; a Claude or Codex session also carries its account ({ id, label, exhausted }, the subscription it runs on and whether it is about to hit its limit).',
+        'List the saved servers (id, name, connection state), their workspaces, the open Clave windows (id, workspace, which is yours), the registered workspaces (root folders; each window shows one and scopes what the user sees in it), all groups and sessions (tabs) currently open across every window, plus the pinned workspace groups (launchable templates from .clave files, with their state: idle / active-visible / active-hidden), the focused session, and — when called from inside a Clave tab — which session/group/window is yours. Sessions and groups are annotated with their workspaceId/workspaceName and the windowId they live in; a Claude or Codex session also carries its account ({ id, label, exhausted }, the subscription it runs on and whether it is about to hit its limit).',
       inputSchema: {
         workspace: z
           .string()
@@ -716,13 +728,21 @@ function buildServer(callerSessionId: string | undefined): McpServer {
     'clave_open_session',
     {
       description:
-        'Open a new tab in Clave: a Claude Code, Antigravity, Codex, or Pi session, or a plain terminal, in the given directory. Claude and Codex can open in the terminal (default) or in Clave\'s CHAT VIEW — the conversation interface with message bubbles and a composer — with chat: true ("open a chat", "in chat mode", "chat session"). Optionally place it in a group — pass a groupId, an exact group name, or "mine" for the calling tab\'s own group. Returns { sessionId, groupId }.',
+        'Open a new tab in Clave: a Claude Code, Antigravity, Codex, or Pi session, or a plain terminal, in the given directory. Claude and Codex can open in the terminal (default) or in Clave\'s CHAT VIEW — the conversation interface with message bubbles and a composer — with chat: true ("open a chat", "in chat mode", "chat session"). Optionally place it in a group — pass a groupId, an exact group name, or "mine" for the calling tab\'s own group. Pass server to run on a connected server, using its own directory, profiles and accounts. clave_list shows server IDs and names. Returns { sessionId, groupId } plus serverId for a remote launch.',
       inputSchema: {
         attachToParent: z
           .boolean()
           .default(false)
           .describe(
             'Nest the new tab under the calling session in the sidebar (default false). Use true for execution helpers and verifiers; false for lane leads and successors. The caller remains the messaging parent either way while the server is running. Without a caller, the tab stays separate.'
+          ),
+        server: z
+          .string()
+          .min(1)
+          .max(200)
+          .optional()
+          .describe(
+            'Destination server id or name from clave_list, or local for this Mac. Omit to follow the target group or workspace, then the calling tab. cwd is a path on the destination server. Conflicting group/workspace owners are refused.'
           ),
         cwd: z.string().describe('Absolute path of the working directory for the new session'),
         mode: z
