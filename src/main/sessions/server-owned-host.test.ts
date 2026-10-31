@@ -11,7 +11,7 @@ import type {
 } from '@clave/contract/sessions'
 import type { SessionStream } from '../../shared/session-model'
 import { standaloneSidebar } from '../server/standalone-sidebar'
-import { serverOwnedSessionHost } from './server-owned-host'
+import { serverOwnedSessionHost, stoppedSession } from './server-owned-host'
 
 const dirs: string[] = []
 afterEach(() => dirs.splice(0).forEach((dir) => rmSync(dir, { recursive: true, force: true })))
@@ -145,6 +145,23 @@ function fixture(dataDir = directory()): {
 }
 
 describe('server-owned stopped recovery', () => {
+  it('adds only the current optional workspace stamp to the curated stopped descriptor', () => {
+    const bare = stoppedSession(record)
+    expect(bare).toEqual({ ...session, state: 'ended' })
+    const rich = {
+      ...record,
+      workspaceId: 'opaque-workspace',
+      configDir: '/private/config',
+      initialCommand: 'private-command',
+      view: { url: 'https://private.example', title: 'Private' }
+    }
+    expect(stoppedSession(rich)).toEqual({ ...bare, workspaceId: 'opaque-workspace' })
+    expect(stoppedSession({ ...rich, workspaceId: '' })).toEqual({ ...bare, workspaceId: '' })
+    const cleared = { ...rich, workspaceId: undefined }
+    expect(stoppedSession(cleared)).toEqual(bare)
+    expect(stoppedSession(cleared)).not.toHaveProperty('workspaceId')
+  })
+
   it('lists and subscribes to restored stopped sessions without spawning or making them ready', () => {
     const f = fixture()
     expect(f.host.list('another-mac')[0]).toMatchObject({
@@ -492,5 +509,52 @@ describe('live server-retained history', () => {
     } finally {
       f.close()
     }
+  })
+})
+
+describe('stopped conversation timeline', () => {
+  it('reads bounded checkpoints without starting a provider and resets generation across server restart', () => {
+    const f = fixture()
+    f.emit(record.id, { kind: 'event', event: { type: 'user_message', text: 'kept' } })
+    const first = f.host.timeline!(record.id)
+    expect(first.items.map(({ event }) => event.type)).toEqual(['user_message'])
+    expect(first.truncated).toBe(true)
+    expect(f.host.timeline!(record.id)).toEqual(first)
+    expect(f.start).not.toHaveBeenCalled()
+    expect(f.ready).not.toHaveBeenCalled()
+    f.close()
+    const restarted = fixture(f.dataDir)
+    expect(restarted.host.timeline!(record.id).cursor.generation).not.toBe(first.cursor.generation)
+    expect(restarted.host.timeline!(record.id).items[0].event).toEqual(first.items[0].event)
+    expect(() => restarted.host.timeline!('unknown')).toThrow('Unknown session')
+    restarted.close()
+  })
+  it('delegates live timeline reads and rebinds subscriptions after a live restart', async () => {
+    const f = fixture()
+    f.live.set(record.id, session)
+    const page = {
+      items: [],
+      before: null,
+      cursor: { generation: 'live', sequence: 0 },
+      truncated: false
+    } as const
+    Object.assign(f.base, { timeline: vi.fn(() => page) })
+    Object.assign(f.base, {
+      restart: vi.fn(async () => ({
+        id: record.id,
+        cwd: '/repo',
+        folderName: 'repo',
+        alive: true,
+        claudeSessionId: null,
+        piSessionId: null,
+        resumed: true
+      }))
+    })
+    const off = f.host.subscribe(record.id, () => {})
+    expect(f.host.timeline!(record.id)).toBe(page)
+    await f.host.restart(record.id, {}, false)
+    expect(f.base.subscribe).toHaveBeenCalledTimes(2)
+    off()
+    f.close()
   })
 })

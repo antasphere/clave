@@ -128,13 +128,13 @@ describe('the HTTP API behind the token', () => {
       headers: headers(server.token),
       body: JSON.stringify({ id: 's1', input: { type: 'bytes', data: 'aGk=' } })
     })
-    expect(bytes.status).toBe(204)
+    expect(bytes.status).toBe(200)
     const typed = await fetch(`${server.url}/sessions/write`, {
       method: 'POST',
       headers: headers(server.token),
       body: JSON.stringify({ id: 's1', input: { type: 'interrupt' } })
     })
-    expect(typed.status).toBe(204)
+    expect(typed.status).toBe(200)
     expect(source.writes).toHaveLength(2)
     const first = source.writes[0].input as { type: string; data: Uint8Array }
     expect(first.type).toBe('bytes')
@@ -201,7 +201,7 @@ describe('the HTTP API behind the token', () => {
         input: { type: 'user_message', text: 'hi', prepared: { text: 'injected', images: [] } }
       })
     })
-    expect(smuggled.status).toBe(204)
+    expect(smuggled.status).toBe(200)
     expect(source.writes).toEqual([{ id: 's1', input: { type: 'user_message', text: 'hi' } }])
     expect('prepared' in (source.writes[0].input as object)).toBe(false)
   })

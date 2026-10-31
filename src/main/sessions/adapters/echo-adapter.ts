@@ -4,6 +4,7 @@ import {
   userMessageEvent,
   providerPrompt,
   type CommandOption,
+  type HistoryItem,
   type ModelOption,
   type SessionInput
 } from '../../../shared/session-model'
@@ -44,11 +45,19 @@ export class EchoAdapter implements SessionAdapter {
   readonly images = true
   private handles = new Map<string, EventEmitter>()
   private sequence = 0
+  /** What each session said so far, answered as its history: the mobile
+   *  wave's suite reads a message landing once off it (lane B). */
+  private readonly past = new Map<string, HistoryItem[]>()
 
   prepare(spec: SpawnSpec): SessionHandle {
     if (this.handles.has(spec.id)) throw new Error(`Echo session already exists: ${spec.id}`)
     this.handles.set(spec.id, new EventEmitter())
+    this.past.set(spec.id, [])
     return { id: spec.id }
+  }
+
+  history(handle: SessionHandle): HistoryItem[] {
+    return [...(this.past.get(handle.id) ?? [])]
   }
 
   async spawn(spec: SpawnSpec): Promise<SessionHandle> {
@@ -77,7 +86,25 @@ export class EchoAdapter implements SessionAdapter {
    *  it is on). For the end-to-end suite, which used to send the frame to
    *  the window over IPC and now injects it where the session lives. */
   inject(sessionId: string, stream: SessionAdapterEvents['stream']): void {
-    this.emitter({ id: sessionId }).emit('stream', stream)
+    const emitter = this.emitter({ id: sessionId })
+    if (
+      stream.kind !== 'event' ||
+      ['provider_event', 'state_change', 'background_tasks'].includes(stream.event.type)
+    ) {
+      emitter.emit('stream', stream)
+      return
+    }
+    const history = this.past.get(sessionId)
+    const offset = history?.length ?? 0
+    const item = { event: stream.event, at: Date.now() }
+    try {
+      // A first stream consumer may seed from history before capturing this
+      // frame. Keep this frame out of that prefix until fan-out completes.
+      emitter.emit('stream', stream)
+    } finally {
+      // Reserve its place ahead of any writes/injections made by listeners.
+      history?.splice(offset, 0, item)
+    }
   }
 
   async commands(): Promise<CommandOption[]> {
@@ -99,6 +126,7 @@ export class EchoAdapter implements SessionAdapter {
     const emit = (
       event: Extract<SessionAdapterEvents['stream'], { kind: 'event' }>['event']
     ): void => {
+      this.past.get(handle.id)?.push({ event, at: Date.now() })
       emitter.emit('stream', { kind: 'event', event })
     }
     if (value.type === 'set_model') {
@@ -130,6 +158,7 @@ export class EchoAdapter implements SessionAdapter {
     const emitter = this.handles.get(handle.id)
     if (!emitter) return
     this.handles.delete(handle.id)
+    this.past.delete(handle.id)
     emitter.emit('exit', 0)
     emitter.removeAllListeners()
   }

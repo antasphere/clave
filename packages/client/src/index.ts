@@ -89,3 +89,5 @@ export { requestsClient, type RequestsClient } from './requests'
 export { gitClient, type GitClient } from './git'
 // ── Issue #266: the server's version and its self-upgrade ──
 export { serverInfoClient, type ServerInfoClient, ServerInfoMissing } from './server-info'
+// ── Mobile wave, lane A: the devices, a phone paired with a server ──
+export { devicesClient, type DevicesClient, type PairingRequestInput } from './devices'

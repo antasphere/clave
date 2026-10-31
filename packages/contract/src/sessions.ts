@@ -9,6 +9,7 @@
  * here holds this one, and a change to one event is a change to both files.
  */
 import { Schema } from 'effect'
+import { SessionPosition } from './session-position'
 import { Command, Query } from '@structure-ai/cqrs'
 import { CapabilityUnavailable } from './errors'
 import { LaunchProfileView } from './settings/launch-profiles'
@@ -25,6 +26,8 @@ export const Session = Schema.Struct({
   cwd: Schema.String,
   windowKey: Schema.String,
   groupId: Schema.optional(Schema.String),
+  /** The current persisted workspace stamp, when the session's record has one. */
+  workspaceId: Schema.optional(Schema.String),
   state: AgentState,
   createdAt: Schema.Number,
   adapterId: Schema.NonEmptyString,
@@ -85,11 +88,28 @@ export type ProviderImage = typeof ProviderImage.Type
 
 // ── What a view writes ──
 
+/**
+ * The id a client mints for a message it sends (the mobile wave, lane B;
+ * decision 10 of the spec): 8 to 64 characters of letters, digits, dot,
+ * underscore, colon and dash. A second write with the same id on the same
+ * session answers the first write's outcome and writes nothing
+ * (`packages/server/src/sessions/writes.ts`), and the event the message
+ * becomes carries the id into the history, which is what rebuilds the
+ * server's ledger after a restart and what `GetSessionWriteStatus` reads.
+ */
+export const ClientMessageId = Schema.String.pipe(
+  Schema.minLength(8),
+  Schema.maxLength(64),
+  Schema.pattern(/^[A-Za-z0-9._:-]+$/, { message: () => 'Invalid client message id' })
+)
+export type ClientMessageId = typeof ClientMessageId.Type
 export const UserMessage = Schema.Struct({
   type: Schema.Literal('user_message'),
   text: Schema.String,
   /** The files the reader attached, as the transcript shows them: never bytes. */
-  attachments: Schema.optional(Attachments)
+  attachments: Schema.optional(Attachments),
+  /** The id the sending client minted, when it minted one. */
+  clientMessageId: Schema.optional(ClientMessageId)
 })
 export type UserMessage = typeof UserMessage.Type
 export const PreparedPrompt = Schema.Struct({
@@ -299,7 +319,11 @@ export type SessionEvent = typeof SessionEvent.Type
  *  `Uint8Array` in memory) or one typed event. */
 export const SessionStream = Schema.Union(
   Schema.Struct({ kind: Schema.Literal('pty'), data: Schema.Uint8ArrayFromBase64 }),
-  Schema.Struct({ kind: Schema.Literal('event'), event: SessionEvent })
+  Schema.Struct({
+    kind: Schema.Literal('event'),
+    event: SessionEvent,
+    position: Schema.optional(SessionPosition)
+  })
 )
 export type SessionStream = typeof SessionStream.Type
 export type SessionStreamEncoded = typeof SessionStream.Encoded
@@ -457,13 +481,33 @@ export const StopSession = Command.define('StopSession', {
   success: Schema.Void,
   failure: Schema.Union(CapabilityUnavailable, SessionStopFailed)
 })
+/** What a write answers (the mobile wave, lane B): `accepted` with when the
+ *  provider took it; `pending` for a second write of a client message id
+ *  whose first write has not settled yet, which writes nothing. */
+export const WriteAnswer = Schema.Struct({
+  status: Schema.Literal('accepted', 'pending'),
+  at: Schema.optional(Schema.Number)
+})
+export type WriteAnswer = typeof WriteAnswer.Type
+/** A second write of a client message id whose outcome the server cannot
+ *  tell (it stopped between the dispatch and the provider's answer): refused
+ *  and written nowhere, so a resend is always a new id and always the
+ *  person's. */
+export class SessionWriteUnknown extends Schema.TaggedError<SessionWriteUnknown>()(
+  'SessionWriteUnknown',
+  { id: Schema.String, clientMessageId: Schema.String, message: Schema.String }
+) {}
 /** Hand a session what a view wrote: a typed input or terminal bytes. A
  *  user message's attachments are prepared by the shell at the write, from
- *  the files they name. */
+ *  the files they name. A user message carrying a `clientMessageId` is
+ *  written once: a second write with an accepted id answers the first
+ *  write's result, with a pending one answers pending, with a rejected one
+ *  is refused with the recorded reason, with an unknown one is refused as
+ *  unknown; none of them writes anything. */
 export const WriteSession = Command.define('WriteSession', {
   payload: Schema.Struct({ id: Schema.String, input: SessionWrite }),
-  success: Schema.Void,
-  failure: Schema.Union(SessionNotFound, SessionWriteRefused)
+  success: WriteAnswer,
+  failure: Schema.Union(SessionNotFound, SessionWriteRefused, SessionWriteUnknown)
 })
 /**
  * A terminal's size, from the pane that shows it. The first call starts the
@@ -808,4 +852,38 @@ export const KeepOnSessionRecord = Command.define('KeepOnSessionRecord', {
   payload: Schema.Struct({ id: Schema.String, ...SessionRecordFields.fields }),
   success: Schema.Void,
   failure: CapabilityUnavailable
+})
+
+// ── The mobile wave, lane B: nothing is sent twice (decision 10 of the spec,
+// the seam `seam-write-status.md` of 29 October 2026 shared with lanes C and D) ──
+
+/**
+ * What became of a message a client minted an id for, as the server's
+ * complete per-session ledger and its own history of writes say it:
+ * `accepted` (the provider took it; `at` is when), `pending` (received, not
+ * settled yet), `rejected` (the provider refused it, or the server restarted
+ * before the dispatch; `reason` is one short sentence, never the message's
+ * text), `absent` (the ledger is intact and complete and never saw the id:
+ * the write never arrived, and the client may complete the same send with
+ * the same id), `unknown` (the ledger is missing, unreadable or incomplete,
+ * or the server stopped between the dispatch and the provider's answer: the
+ * client sends nothing by itself, the person decides with a new id).
+ */
+export const WriteStatus = Schema.Literal('accepted', 'pending', 'rejected', 'absent', 'unknown')
+export type WriteStatus = typeof WriteStatus.Type
+export const WriteStatusView = Schema.Struct({
+  status: WriteStatus,
+  at: Schema.optional(Schema.Number),
+  reason: Schema.optional(Schema.String)
+})
+export type WriteStatusView = typeof WriteStatusView.Type
+/**
+ * `GET /sessions/writes?id=<session>&clientMessageId=<id>`: what a client
+ * asks before it retries a write whose outcome it never heard, so a message
+ * sent over a flaky connection lands once. Answered from the ledger alone,
+ * whether or not the session still runs.
+ */
+export const GetSessionWriteStatus = Query.define('GetSessionWriteStatus', {
+  payload: Schema.Struct({ id: Schema.String, clientMessageId: ClientMessageId }),
+  success: WriteStatusView
 })

@@ -13,7 +13,13 @@
 // spec (tests/e2e/antasphere-account.spec.mjs) start one of these on
 // 127.0.0.1 and nothing else: no test ever reaches account.antasphere.com.
 import { createServer } from 'node:http'
-import { createHash, generateKeyPairSync, randomBytes, sign as signBytes } from 'node:crypto'
+import {
+  createHash,
+  generateKeyPairSync,
+  randomBytes,
+  sign as signBytes,
+  verify as verifyBytes
+} from 'node:crypto'
 
 const b64url = (input) => Buffer.from(input).toString('base64url')
 
@@ -84,6 +90,11 @@ export async function startOidcProvider({
     codes: new Map(),
     /** The refresh tokens issued, by token: { sub, client_id, scope }. */
     refreshTokens: new Map(),
+    /** The opaque access tokens issued, by token: { sub, exp } (epoch seconds).
+     *  Userinfo answers for a token it issued and refuses every other
+     *  bearer, as the hub does; `mintAccessToken` adds one for a test that
+     *  presents a bearer without a code flow (the relay's tests). */
+    accessTokens: new Map(),
     /** Set to turn the NEXT token response into a wrong one; cleared after. */
     tamper: null,
     /** The next authorization answers `error=access_denied`. */
@@ -113,6 +124,46 @@ export async function startOidcProvider({
     counts: { discovery: 0, register: 0, authorize: 0, token: 0, refresh: 0, jwks: 0, userinfo: 0 }
   }
   let issuer = ''
+
+  /** The person a subject names: the configured user, or a stand-in for
+   *  any other subject a test minted a token for. */
+  const userFor = (sub) =>
+    sub === state.user.sub
+      ? {
+          sub: state.user.sub,
+          name: state.user.name,
+          email: state.user.email,
+          email_verified: state.user.email_verified
+        }
+      : { sub, name: `Person ${sub}`, email: `${sub}@example.test`, email_verified: true }
+
+  /** The subject an `Authorization: Bearer` header names, or null. */
+  const subjectOfBearer = (header) => {
+    if (typeof header !== 'string' || !header.startsWith('Bearer ')) return null
+    const token = header.slice(7).trim()
+    const nowSec = Math.floor(Date.now() / 1000)
+    const opaque = state.accessTokens.get(token)
+    if (opaque) return opaque.exp > nowSec ? opaque.sub : null
+    const parts = token.split('.')
+    if (parts.length !== 3) return null
+    try {
+      const header64 = JSON.parse(Buffer.from(parts[0], 'base64url').toString('utf8'))
+      if (header64.alg !== 'RS256' || header64.kid !== keys.signing.kid) return null
+      const ok = verifyBytes(
+        'sha256',
+        Buffer.from(`${parts[0]}.${parts[1]}`),
+        keys.signing.privateKey,
+        Buffer.from(parts[2], 'base64url')
+      )
+      if (!ok) return null
+      const claims = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8'))
+      if (claims.iss !== issuer || typeof claims.sub !== 'string') return null
+      if (typeof claims.exp === 'number' && claims.exp <= nowSec) return null
+      return claims.sub
+    } catch {
+      return null
+    }
+  }
 
   const server = createServer(async (req, res) => {
     const url = new URL(req.url, issuer)
@@ -306,6 +357,7 @@ export async function startOidcProvider({
         tamper?.key === 'other' ? { kid: keys.signing.kid } : {}
       )
       const access_token = `at-${randomBytes(12).toString('hex')}`
+      state.accessTokens.set(access_token, { sub: claims.sub, exp: now + state.accessTokenTtlSec })
       const bare = grant === 'refresh_token' && state.bareRefresh
       const response = {
         access_token,
@@ -328,12 +380,12 @@ export async function startOidcProvider({
     if (url.pathname === '/userinfo') {
       state.counts.userinfo++
       if (state.userinfoFail) return json(res, 500, { error: 'server_error' })
-      return json(res, 200, {
-        sub: state.user.sub,
-        name: state.user.name,
-        email: state.user.email,
-        email_verified: state.user.email_verified
-      })
+      // The bearer decides, as at the hub: an access token this provider
+      // issued (opaque, or a JWT it signed), unexpired, names its subject;
+      // anything else is refused.
+      const sub = subjectOfBearer(req.headers.authorization)
+      if (!sub) return json(res, 401, { error: 'invalid_token' })
+      return json(res, 200, userFor(sub))
     }
 
     json(res, 404, { error: 'not_found' })
@@ -361,6 +413,25 @@ export async function startOidcProvider({
       }
       const location = first.headers.get('location')
       return { location, response: await fetch(location, { redirect: 'manual' }) }
+    },
+    /** An access token for `sub` without a code flow: opaque by default
+     *  (registered, so userinfo answers it), or a JWT signed with the
+     *  provider's key when `jwt` is set (`iss` overridable for a token of
+     *  another issuer, `expiresInSec` negative for one already expired). */
+    mintAccessToken({ sub = state.user.sub, jwt = false, expiresInSec = 3600, iss = null } = {}) {
+      const nowSec = Math.floor(Date.now() / 1000)
+      if (!jwt) {
+        const token = `at-${randomBytes(12).toString('hex')}`
+        state.accessTokens.set(token, { sub, exp: nowSec + expiresInSec })
+        return token
+      }
+      return signJwt(keys.signing, {
+        iss: iss ?? issuer,
+        sub,
+        aud: `${issuer}/mcp`,
+        iat: nowSec,
+        exp: nowSec + expiresInSec
+      })
     },
     close: () =>
       new Promise((resolve) => {

@@ -14,6 +14,8 @@ export const SessionSchema = z.object({
   cwd: z.string(),
   windowKey: z.string(),
   groupId: z.string().optional(),
+  /** The current persisted workspace stamp, when the session's record has one. */
+  workspaceId: z.string().optional(),
   state: AgentStateSchema,
   createdAt: z.number(),
   adapterId: z.string().min(1),
@@ -25,12 +27,23 @@ export const SessionSchema = z.object({
 })
 export type Session = z.infer<typeof SessionSchema>
 
+/** The id a client mints for a message it sends (the mobile wave, lane B):
+ *  8 to 64 characters of letters, digits, dot, underscore, colon and dash.
+ *  The contract's `ClientMessageId` is the original; this copy follows. */
+export const ClientMessageIdSchema = z
+  .string()
+  .min(8)
+  .max(64)
+  .regex(/^[A-Za-z0-9._:-]+$/, 'Invalid client message id')
 export const UserMessageSchema = z.object({
   type: z.literal('user_message'),
   text: z.string(),
   /** The files the reader attached, as the transcript shows them: names,
    *  paths and how each was delivered — never their bytes. */
-  attachments: AttachmentsSchema.optional()
+  attachments: AttachmentsSchema.optional(),
+  /** The id the sending client minted, when it minted one: carried into the
+   *  history, where the server's write ledger reads it back after a restart. */
+  clientMessageId: ClientMessageIdSchema.optional()
 })
 export type UserMessage = z.infer<typeof UserMessageSchema>
 /** What the provider is handed once main has prepared the attachments: the
@@ -54,7 +67,8 @@ export function userMessageEvent(input: UserMessageInput): UserMessage {
   return {
     type: 'user_message',
     text: input.text,
-    ...(input.attachments?.length ? { attachments: input.attachments } : {})
+    ...(input.attachments?.length ? { attachments: input.attachments } : {}),
+    ...(input.clientMessageId !== undefined ? { clientMessageId: input.clientMessageId } : {})
   }
 }
 /** What the provider receives for a user message: the prepared prompt when
@@ -280,8 +294,17 @@ export interface HistoryPage {
   items: HistoryItem[]
   before: number | null
 }
+export const SessionPositionSchema = z.object({
+  generation: z.string().min(1),
+  sequence: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER)
+})
+export type SessionPosition = z.infer<typeof SessionPositionSchema>
 export const SessionStreamSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('pty'), data: z.instanceof(Uint8Array) }),
-  z.object({ kind: z.literal('event'), event: SessionEventSchema })
+  z.object({
+    kind: z.literal('event'),
+    event: SessionEventSchema,
+    position: SessionPositionSchema.optional()
+  })
 ])
 export type SessionStream = z.infer<typeof SessionStreamSchema>

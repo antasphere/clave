@@ -9,6 +9,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import { SessionHost } from '@clave/server'
+import { SessionWrites } from '../../../packages/server/src/sessions/writes'
 import type { Session } from '@clave/contract/sessions'
 import { SERVER_LAYOUT_KEY } from '@clave/contract/sidebar'
 import { SidebarLayouts, memorySidebarStorage, noWindowsHost } from '@clave/server/sidebar-layouts'
@@ -690,6 +691,8 @@ describe('agent-sessions/delegation-group fixture', () => {
       Layer.provide(HandlerRegistry.layer(...sidebarHandlers, ...sessionHandlers)),
       Layer.provide(SidebarLayoutsPort.layer(sidebar)),
       Layer.provide(SessionHost.layer(host)),
+      // ── The mobile wave, lane B: the write command reads the ledger ──
+      Layer.provide(SessionWrites.memory),
       Layer.provide(ServerEvents.layer('fixture-server').pipe(Layer.provide(InMemoryAll)))
     )
     const report = await Effect.runPromise(
