@@ -23,6 +23,10 @@ jobs:
     timeout-minutes: 15
     env:
       RELAY_PLATFORM: linux/amd64
+      # Target source is independent of the PR merge running this trusted controller.
+      # Changing the target requires a reviewed workflow change, never a branch fallback.
+      RELAY_TARGET_SHA: 531bc17740af3004c6708fe94bca6b26f00ec753
+      RELAY_TARGET_TREE: 72833cc0011bf96e6e7c250f1b67fa346f15f0da
       PYTHONDONTWRITEBYTECODE: '1'
     steps:
       # Official actions refs/tags/v4, resolved through api.github.com on 2026-10-31.
@@ -39,11 +43,15 @@ jobs:
         timeout-minutes: 1
         run: python3 scripts/relay-image-ci.test.py
 
-      - name: Bind actual checkout and source archive
+      - name: Fetch only the immutable target object
+        timeout-minutes: 1
+        run: git fetch --no-tags --depth=1 origin "$RELAY_TARGET_SHA"
+
+      - name: Bind PR controller and immutable target archive independently
         timeout-minutes: 1
         run: python3 scripts/relay-image-ci.py source
 
-      - name: Build locked image from the tested tree
+      - name: Build locked image from the bound target tree
         timeout-minutes: 8
         run: python3 scripts/relay-image-ci.py build
 

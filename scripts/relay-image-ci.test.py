@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import subprocess
 import tempfile
+import tarfile
 import unittest
 from unittest.mock import patch
 
@@ -77,15 +78,17 @@ class ImagePredicates(unittest.TestCase):
         self.addCleanup(process_guard.stop)
         self.iid = 'sha256:' + 'a' * 64
         self.sha = 'b' * 40
+        self.source = {'targetSha': self.sha, 'targetTree': 'c' * 40,
+                       'contextSha256': 'd' * 64, 'checkoutSha': 'e' * 40}
         self.image = {'Id': self.iid, 'Os': 'linux', 'Architecture': 'amd64',
-                      'Config': {'Labels': {'org.opencontainers.image.revision': self.sha}}}
+                      'Config': {'Labels': ci.image_labels(self.source)}}
         self.metadata = {'containerimage.config.digest': self.iid,
                          'containerimage.digest': 'sha256:' + 'c' * 64,
                          'containerimage.descriptor': {'digest': 'sha256:' + 'c' * 64,
                           'mediaType': 'application/vnd.oci.image.manifest.v1+json'}}
 
     def test_exact_identity_and_platform(self):
-        result = ci.validate_image(self.iid, self.image, self.metadata, self.sha)
+        result = ci.validate_image(self.iid, self.image, self.metadata, self.source)
         self.assertEqual(result['kind'], 'manifest')
         self.assertEqual(result['manifestDigest'], self.metadata['containerimage.digest'])
 
@@ -97,7 +100,7 @@ class ImagePredicates(unittest.TestCase):
         # Explicitly synthetic inspection; the first failed run did not retain its real one.
         image = copy.deepcopy(self.image)
         image['Id'] = iid
-        result = ci.validate_image(iid, image, metadata, self.sha)
+        result = ci.validate_image(iid, image, metadata, self.source)
         self.assertEqual(result['kind'], 'image-config')
         self.assertEqual(result['imageId'], iid)
         self.assertIsNone(result['manifestDigest'])
@@ -110,7 +113,7 @@ class ImagePredicates(unittest.TestCase):
         image['Id'] = iid
         metadata['containerimage.digest'] = 'sha256:' + 'd' * 64
         with self.assertRaises(AssertionError):
-            ci.validate_image(iid, image, metadata, self.sha)
+            ci.validate_image(iid, image, metadata, self.source)
 
     def test_present_descriptor_never_falls_back_to_config_only(self):
         iid = ACTUAL_CLASSIC_METADATA['containerimage.config.digest']
@@ -124,7 +127,7 @@ class ImagePredicates(unittest.TestCase):
                 metadata = copy.deepcopy(ACTUAL_CLASSIC_METADATA)
                 metadata['containerimage.descriptor'] = descriptor
                 with self.assertRaises(AssertionError):
-                    ci.validate_image(iid, image, metadata, self.sha)
+                    ci.validate_image(iid, image, metadata, self.source)
 
     def test_failed_validator_retains_raw_inspection(self):
         with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {
@@ -143,11 +146,65 @@ class ImagePredicates(unittest.TestCase):
                 ci, 'run', side_effect=['mock docker', 'mock buildx', json.dumps([self.image])]
             ), patch.object(ci.subprocess, 'run', side_effect=fake_build), patch.object(
                 ci, 'validate_image', side_effect=AssertionError('Deliberate validation rejection')
-            ):
+            ), patch.object(ci, 'bound_source', return_value=self.source):
                 with self.assertRaises(AssertionError):
                     ci.build()
             self.assertTrue((out / 'image-inspect.json').exists())
             self.assertEqual(json.loads((out / 'image-inspect.json').read_text()), [self.image])
+
+    def test_each_image_binding_is_required(self):
+        for label in ['org.opencontainers.image.revision', 'com.clave.target.tree',
+                      'com.clave.target.context-sha256', 'com.clave.controller.revision']:
+            for replacement in [None, 'f' * 40]:
+                with self.subTest(label=label, replacement=replacement):
+                    image = copy.deepcopy(self.image)
+                    if replacement is None:
+                        del image['Config']['Labels'][label]
+                    else:
+                        image['Config']['Labels'][label] = replacement
+                    with self.assertRaises(AssertionError):
+                        ci.validate_image(self.iid, image, self.metadata, self.source)
+
+    def test_build_uses_bound_tar_and_both_identities(self):
+        with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {
+            'GITHUB_RUN_ID': '1', 'GITHUB_RUN_ATTEMPT': '1'
+        }):
+            out = Path(directory)
+            (out / 'context.tar').write_bytes(b'own synthetic target tar')
+            def fake_build(argv, **kwargs):
+                self.assertEqual(argv[:3], ['docker', 'buildx', 'build'])
+                self.assertEqual(argv[-1], '-')
+                self.assertEqual(kwargs['stdin'].read(), b'own synthetic target tar')
+                for label, value in ci.image_labels(self.source).items():
+                    self.assertIn(label + '=' + value, argv)
+                self.assertIn('org.opencontainers.image.revision=' + self.sha, argv)
+                self.assertNotIn('org.opencontainers.image.revision=' + self.source['checkoutSha'], argv)
+                (out / 'image-id').write_text(self.iid)
+                (out / 'build-metadata.json').write_text(json.dumps(self.metadata))
+                return subprocess.CompletedProcess(argv, 0)
+            with patch.object(ci, 'evidence', return_value=out), patch.object(
+                ci, 'bound_source', return_value=self.source
+            ), patch.object(ci, 'run', side_effect=['mock docker', 'mock buildx', json.dumps([self.image])]), \
+                 patch.object(ci.subprocess, 'run', side_effect=fake_build):
+                ci.build()
+            identity = json.loads((out / 'image-identity.json').read_text())
+            self.assertEqual(identity['sourceBindings'], ci.image_labels(self.source))
+            ci.validate_stored_image(out, self.source, self.iid)
+            changed = copy.deepcopy(self.source)
+            changed['targetTree'] = 'f' * 40
+            with self.assertRaises(AssertionError):
+                ci.validate_stored_image(out, changed, self.iid)
+
+    def test_unbound_receipt_stops_all_engine_entrypoints(self):
+        for operation in [ci.build, ci.smoke, ci.archive]:
+            with self.subTest(operation=operation.__name__), patch.object(
+                ci, 'bound_source', side_effect=AssertionError('Deliberate unbound source')
+            ), patch.object(ci, 'evidence', return_value=Path('/unused-synthetic')), \
+                 patch.object(ci, 'run') as commands:
+                with self.assertRaises(AssertionError):
+                    operation()
+                commands.assert_not_called()
+                self.direct_process.assert_not_called()
 
     def test_actual_checkout_and_ordered_parents_are_required(self):
         merge, tree, head, base = (x * 40 for x in ['a', 'b', 'c', 'd'])
@@ -159,19 +216,19 @@ class ImagePredicates(unittest.TestCase):
     def test_wrong_platform_cannot_pass(self):
         self.image['Architecture'] = 'arm64'
         with self.assertRaises(AssertionError):
-            ci.validate_image(self.iid, self.image, self.metadata, self.sha)
+            ci.validate_image(self.iid, self.image, self.metadata, self.source)
 
     def test_head_label_is_not_a_substitute_for_actual_tested_merge(self):
         self.image['Config']['Labels']['org.opencontainers.image.revision'] = 'd' * 40
         with self.assertRaises(AssertionError):
-            ci.validate_image(self.iid, self.image, self.metadata, self.sha)
+            ci.validate_image(self.iid, self.image, self.metadata, self.source)
 
     def test_digest_mismatch_cannot_pass(self):
         for key in ['containerimage.config.digest', 'containerimage.digest']:
             changed = copy.deepcopy(self.metadata)
             changed[key] = 'sha256:' + 'd' * 64
             with self.assertRaises(AssertionError):
-                ci.validate_image(self.iid, self.image, changed, self.sha)
+                ci.validate_image(self.iid, self.image, changed, self.source)
 
     def test_healthy_and_unauthorized(self):
         ci.validate_smoke({'status': 'live', 'machines': 0, 'online': 0}, 401)
@@ -294,6 +351,182 @@ class ImagePredicates(unittest.TestCase):
                 result, _ = self.cleanup_case(absence=message)
                 self.assertFalse(result['removed'])
                 self.assertEqual(result['status'], 'UNKNOWN; NO FOREIGN CLEANUP')
+
+
+class TargetBindings(unittest.TestCase):
+    """Own synthetic local Git fixtures. No hosted evidence or Docker execution."""
+
+    def test_target_requires_both_exact_commit_and_tree(self):
+        sha, tree = 'a' * 40, 'b' * 40
+        ci.validate_target(sha, tree, sha, tree)
+        for actual_sha, actual_tree, expected_sha, expected_tree in [
+            ('c' * 40, tree, sha, tree), (sha, 'c' * 40, sha, tree),
+            (sha, tree, '', tree), (sha, tree, sha, ''),
+            (sha, tree, 'main', tree), (sha, tree, sha, 'b' * 39)
+        ]:
+            with self.subTest(binding=(actual_sha, actual_tree, expected_sha, expected_tree)):
+                with self.assertRaises(AssertionError):
+                    ci.validate_target(actual_sha, actual_tree, expected_sha, expected_tree)
+
+    def test_missing_or_symbolic_pins_fail_before_git(self):
+        for env in [{}, {'RELAY_TARGET_SHA': 'main', 'RELAY_TARGET_TREE': 'b' * 40},
+                    {'RELAY_TARGET_SHA': 'a' * 40}]:
+            with self.subTest(env=env), patch.dict(os.environ, env, clear=True), \
+                 patch.object(ci, 'run') as commands:
+                with self.assertRaises(AssertionError):
+                    ci.target()
+                commands.assert_not_called()
+
+    def test_committed_workflow_pins_exact_allocated_target(self):
+        workflow = Path(__file__).resolve().parents[1] / '.github/workflows/relay-image.yml'
+        text = workflow.read_text()
+        self.assertIn('RELAY_TARGET_SHA: 531bc17740af3004c6708fe94bca6b26f00ec753', text)
+        self.assertIn('RELAY_TARGET_TREE: 72833cc0011bf96e6e7c250f1b67fa346f15f0da', text)
+        self.assertIn('git fetch --no-tags --depth=1 origin "$RELAY_TARGET_SHA"', text)
+
+    def test_source_archives_target_not_controller_and_rejects_tampering(self):
+        self.source_fixture()
+
+    def test_reviewer_rebased_controller_receipt_must_reject(self):
+        def check(git, out, src):
+            for key, value in [('eventSha', 'f' * 40), ('prHead', 'f' * 40),
+                               ('prBase', 'f' * 40), ('parents', []), ('prNumber', 999)]:
+                forged = copy.deepcopy(src)
+                forged[key] = value
+                ci.write(out / 'source.json', forged)
+                with self.subTest(field=key), self.assertRaises(AssertionError):
+                    ci.bound_source()
+            ci.write(out / 'source.json', src)
+            replacement = git('commit-tree', 'HEAD^{tree}', '-m', 'unrelated non-event controller')
+            git('checkout', '--quiet', '--detach', replacement)
+            forged = copy.deepcopy(src)
+            forged.update(checkoutSha=replacement, testedTree=git('rev-parse', 'HEAD^{tree}'),
+                          parents=[], eventSha=replacement, prHead=replacement, prBase=replacement)
+            ci.write(out / 'source.json', forged)
+            with self.assertRaises(AssertionError, msg='must independently recheck event and ordered parents'):
+                ci.bound_source()
+            # Even a receipt retaining the real event fields cannot bless this new HEAD.
+            forged = copy.deepcopy(src)
+            forged.update(checkoutSha=replacement, testedTree=git('rev-parse', 'HEAD^{tree}'), parents=[])
+            ci.write(out / 'source.json', forged)
+            with self.assertRaises(AssertionError):
+                ci.bound_source()
+        self.source_fixture(check)
+
+    def test_reviewer_rebased_projection_receipt_must_reject(self):
+        def check(git, out, src):
+            # Mutable staging is not an authority. Fresh canonical inputs must still pass.
+            for path in (out / 'target-inputs').iterdir():
+                path.write_bytes(b'invalid mutable staging')
+            ci.bound_source()
+            projection = out / 'expected-dependencies/relay-dependencies.json'
+            projection.write_text('{}')
+            forged = copy.deepcopy(src)
+            forged['expectedDependenciesSha256'] = ci.digest(projection)
+            ci.write(out / 'source.json', forged)
+            with self.assertRaises(AssertionError, msg='must independently rederive target projection'):
+                ci.bound_source()
+        self.source_fixture(check)
+
+    def source_fixture(self, check=None):
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory() as directory:
+            repo, out = Path(directory) / 'repo', Path(directory) / 'evidence'
+            repo.mkdir()
+            def git(*args):
+                return subprocess.check_output(['git', '-C', str(repo),
+                    '-c', 'user.name=Synthetic', '-c', 'user.email=synthetic@example.invalid',
+                    *args], text=True, timeout=20).strip()
+            git('init', '--quiet')
+            for name in ['package-lock.json', 'packages/server/relay.package.json',
+                         'packages/server/relay-dependencies.mjs',
+                         'packages/server/relay.Dockerfile', '.dockerignore']:
+                dest = repo / name
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                dest.write_bytes((root / name).read_bytes())
+            git('add', '.')
+            git('commit', '--quiet', '-m', 'synthetic target')
+            target, tree = git('rev-parse', 'HEAD'), git('rev-parse', 'HEAD^{tree}')
+            # Distinct valid controller inputs expose a silent wrong-target archive.
+            (repo / 'package-lock.json').write_bytes(b'\n' + (root / 'package-lock.json').read_bytes())
+            (repo / 'packages/server/relay.Dockerfile').write_text('controller recipe, not target')
+            git('add', '.')
+            git('commit', '--quiet', '-m', 'synthetic controller inputs')
+            head = git('rev-parse', 'HEAD')
+            controller = git('commit-tree', 'HEAD^{tree}', '-p', target, '-p', head,
+                             '-m', 'synthetic PR merge controller')
+            git('checkout', '--quiet', '--detach', controller)
+            event = Path(directory) / 'event.json'
+            event.write_text(json.dumps({'pull_request': {
+                'head': {'sha': head}, 'base': {'sha': target}, 'number': 1}}))
+            env = {'RELAY_EVIDENCE': str(out), 'RELAY_PLATFORM': 'linux/amd64',
+                   'RELAY_TARGET_SHA': target, 'RELAY_TARGET_TREE': tree,
+                   'GITHUB_EVENT_PATH': str(event), 'GITHUB_SHA': controller,
+                   'GITHUB_RUN_ID': '1', 'GITHUB_RUN_ATTEMPT': '1'}
+            previous = Path.cwd()
+            real_run = ci.run
+            def local_only(argv, timeout=20):
+                self.assertIn(argv[0], ['git', 'node'], 'No engines/network in source fixture')
+                return real_run(argv, timeout)
+            try:
+                os.chdir(repo)
+                with patch.dict(os.environ, env), patch.object(ci, 'run', side_effect=local_only):
+                    ci.source()
+                    with tarfile.open(out / 'context.tar') as archive:
+                        self.assertEqual(archive.extractfile('package-lock.json').read(),
+                                         (root / 'package-lock.json').read_bytes(),
+                                         'Build archive must use target lock, not controller lock')
+                    src = ci.bound_source()
+                    self.assertEqual(src['checkoutSha'], controller)
+                    self.assertEqual(src['targetSha'], target)
+                    self.assertEqual(src['targetTree'], tree)
+                    with tarfile.open(out / 'context.tar') as archive:
+                        self.assertEqual(archive.extractfile('package-lock.json').read(),
+                                         (root / 'package-lock.json').read_bytes())
+                    expected = json.loads((out / 'expected-dependencies/relay-dependencies.json').read_text())
+                    self.assertEqual(expected['workspaceLockSha256'], src['rootLockSha256'])
+                    self.assertEqual(expected['manifestSha256'],
+                                     src['targetInputs']['packages/server/relay.package.json']['sha256'])
+                    if check:
+                        check(git, out, src)
+                        return
+                    # Wrong target tree must fail even with an otherwise valid controller.
+                    with patch.dict(os.environ, {'RELAY_TARGET_TREE': 'f' * 40}):
+                        with self.assertRaises(AssertionError):
+                            ci.bound_source()
+                    # Replacing the archive AND its recorded hash must still fail closed.
+                    original = (out / 'context.tar').read_bytes()
+                    git('archive', '--format=tar', '--output=' + str(out / 'context.tar'), controller)
+                    forged = copy.deepcopy(src)
+                    forged['contextSha256'] = ci.digest(out / 'context.tar')
+                    ci.write(out / 'source.json', forged)
+                    with self.assertRaises(AssertionError):
+                        ci.bound_source()
+                    (out / 'context.tar').write_bytes(original)
+                    ci.write(out / 'source.json', src)
+                    # Equal input blobs/tree are insufficient: the archive must bind the commit too.
+                    equal_tree_commit = git('commit-tree', tree, '-m', 'synthetic equal-tree forgery')
+                    git('archive', '--format=tar', '--output=' + str(out / 'context.tar'), equal_tree_commit)
+                    forged = copy.deepcopy(src)
+                    forged['contextSha256'] = ci.digest(out / 'context.tar')
+                    ci.write(out / 'source.json', forged)
+                    with self.assertRaises(AssertionError):
+                        ci.bound_source()
+                    (out / 'context.tar').write_bytes(original)
+                    ci.write(out / 'source.json', src)
+                    # A source receipt cannot rebind target to controller, even with its tree.
+                    forged = copy.deepcopy(src)
+                    forged.update(targetSha=controller, targetTree=git('rev-parse', 'HEAD^{tree}'))
+                    ci.write(out / 'source.json', forged)
+                    with self.assertRaises(AssertionError):
+                        ci.bound_source()
+                    ci.write(out / 'source.json', src)
+                    projection = out / 'expected-dependencies/relay-dependencies.json'
+                    projection.write_text('{}')
+                    with self.assertRaises(AssertionError):
+                        ci.bound_source()
+            finally:
+                os.chdir(previous)
 
 
 if __name__ == '__main__':

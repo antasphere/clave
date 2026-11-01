@@ -223,9 +223,43 @@ stopped.
 
 ## Verification
 
-`.github/workflows/relay-image.yml` builds one native `linux/amd64` image on an
-ephemeral hosted runner for relevant pull requests. It records the actual checkout
-merge SHA/tree and ordered PR base/head parents, builds that source archive, and
+`.github/workflows/relay-image.yml` defines one native `linux/amd64` validation job
+for relevant pull requests. Its PR merge is the **controller**, not the image's source.
+The workflow pins the target independently to commit
+`531bc17740af3004c6708fe94bca6b26f00ec753` and tree
+`72833cc0011bf96e6e7c250f1b67fa346f15f0da`. It fetches only that immutable target object;
+a missing object or a mismatched tree fails without selecting another branch.
+`RELAY_TARGET_SHA` and `RELAY_TARGET_TREE` must both be full pins. Changing them requires
+a reviewed controller workflow change. No manual dispatch or alternate executor is added.
+
+`source.json` schema 2 records the actual controller checkout as `checkoutSha` and
+`testedTree`, with its event SHA and ordered PR base/head parents checked as before.
+The image source is recorded separately as `targetSha` and `targetTree`. The context
+is a Git archive of that target commit. Its lock, Dockerfile, relay manifest, dependency
+projector and Docker ignore rules are checked against target Git blobs and recorded
+with SHA-256 and byte counts. Expected dependency provenance is generated from the
+archived target lock and manifest using the archived projector, never those of the
+controller checkout. No target file is overlaid with a controller version.
+
+Before build, smoke and image export, the controller rechecks both source bindings,
+the clean controller checkout, the context against a fresh archive of the pinned commit,
+the input hashes and the expected dependency receipt. An altered archive with a rewritten
+receipt hash still fails. Image inspection must match labels for the target commit,
+target tree, context SHA-256 and controller commit. Smoke and export also revalidate the
+stored inspection and identity receipt before using the immutable image ID. Cleanup
+keeps its existing exact owned-container checks so an earlier binding failure cannot
+authorize foreign cleanup.
+
+Every resumed entrypoint rederives the controller commit, tree and ordered parents from
+Git and validates them against the current event SHA and PR base/head. All stored
+controller/event/PR fields must match that independently derived binding. A coordinated
+clean-HEAD and source-receipt rewrite cannot replace the event authority. Expected
+dependency provenance is also regenerated in fresh temporary storage from the newly
+verified canonical archive inputs and projector. Its exact bytes and digest must match
+the existing projection and receipt. Mutable staged inputs or a rewritten projection
+plus its self-declared receipt hash cannot replace that independent derivation.
+
+When run under a separately authorized CI allocation, the job
 retains the immutable image/config identity and typed exporter digest, platform, embedded dependency
 provenance, bounded health/unauthenticated smoke results and owned-container cleanup.
 The seven-day artifact includes a Docker image archive. It publishes no registry image
@@ -234,6 +268,20 @@ phone behavior, a deployment host or the off-network path.
 Classic Docker metadata can identify only the image config; this is recorded as
 `kind=image-config` with no manifest digest. A supplied descriptor is validated as a
 distinct manifest identity. Raw inspection is retained before validation, including failures.
+
+The local controller tests use synthetic Git repositories and mocked engine output.
+They establish rejection behavior, not a successful exact-target image build. Controller
+event binding also does not establish operator authorization. The actual caller and
+execution venue, an exact-target remote CI result and the image result remain unbound or
+unknown until separately allocated and observed. Publishing these workflow changes can
+trigger CI and requires that allocation. A passing local test is not merge or deployment
+approval.
+
+- `python3 -B scripts/relay-image-ci.test.py`: controller/target binding, target archive
+  and dependency projection, missing or symbolic pins, wrong trees, forged context and
+  source receipts, image bindings, config-only versus manifest identities, smoke
+  predicates and owned cleanup. Engine calls are mocked; the source fixture uses only
+  local Git and Node.
 
 - `npx vitest run packages/server/src/relay`: the relay against the local OIDC provider
   (`tests/e2e/fixtures/oidc-provider.mjs`, its userinfo answering the subject of a bearer
