@@ -385,6 +385,50 @@ class TargetBindings(unittest.TestCase):
         self.assertIn('git fetch --no-tags --depth=1 origin "$RELAY_TARGET_SHA"', text)
 
     def test_source_archives_target_not_controller_and_rejects_tampering(self):
+        self.source_fixture()
+
+    def test_reviewer_rebased_controller_receipt_must_reject(self):
+        def check(git, out, src):
+            for key, value in [('eventSha', 'f' * 40), ('prHead', 'f' * 40),
+                               ('prBase', 'f' * 40), ('parents', []), ('prNumber', 999)]:
+                forged = copy.deepcopy(src)
+                forged[key] = value
+                ci.write(out / 'source.json', forged)
+                with self.subTest(field=key), self.assertRaises(AssertionError):
+                    ci.bound_source()
+            ci.write(out / 'source.json', src)
+            replacement = git('commit-tree', 'HEAD^{tree}', '-m', 'unrelated non-event controller')
+            git('checkout', '--quiet', '--detach', replacement)
+            forged = copy.deepcopy(src)
+            forged.update(checkoutSha=replacement, testedTree=git('rev-parse', 'HEAD^{tree}'),
+                          parents=[], eventSha=replacement, prHead=replacement, prBase=replacement)
+            ci.write(out / 'source.json', forged)
+            with self.assertRaises(AssertionError, msg='must independently recheck event and ordered parents'):
+                ci.bound_source()
+            # Even a receipt retaining the real event fields cannot bless this new HEAD.
+            forged = copy.deepcopy(src)
+            forged.update(checkoutSha=replacement, testedTree=git('rev-parse', 'HEAD^{tree}'), parents=[])
+            ci.write(out / 'source.json', forged)
+            with self.assertRaises(AssertionError):
+                ci.bound_source()
+        self.source_fixture(check)
+
+    def test_reviewer_rebased_projection_receipt_must_reject(self):
+        def check(git, out, src):
+            # Mutable staging is not an authority. Fresh canonical inputs must still pass.
+            for path in (out / 'target-inputs').iterdir():
+                path.write_bytes(b'invalid mutable staging')
+            ci.bound_source()
+            projection = out / 'expected-dependencies/relay-dependencies.json'
+            projection.write_text('{}')
+            forged = copy.deepcopy(src)
+            forged['expectedDependenciesSha256'] = ci.digest(projection)
+            ci.write(out / 'source.json', forged)
+            with self.assertRaises(AssertionError, msg='must independently rederive target projection'):
+                ci.bound_source()
+        self.source_fixture(check)
+
+    def source_fixture(self, check=None):
         root = Path(__file__).resolve().parents[1]
         with tempfile.TemporaryDirectory() as directory:
             repo, out = Path(directory) / 'repo', Path(directory) / 'evidence'
@@ -443,6 +487,9 @@ class TargetBindings(unittest.TestCase):
                     self.assertEqual(expected['workspaceLockSha256'], src['rootLockSha256'])
                     self.assertEqual(expected['manifestSha256'],
                                      src['targetInputs']['packages/server/relay.package.json']['sha256'])
+                    if check:
+                        check(git, out, src)
+                        return
                     # Wrong target tree must fail even with an otherwise valid controller.
                     with patch.dict(os.environ, {'RELAY_TARGET_TREE': 'f' * 40}):
                         with self.assertRaises(AssertionError):

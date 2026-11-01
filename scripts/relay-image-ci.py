@@ -85,6 +85,34 @@ def target_inputs(archive_path, sha):
     return inputs, contents
 
 
+def controller_binding():
+    assert os.environ['RELAY_PLATFORM'] == 'linux/amd64'
+    assert run(['git', 'status', '--porcelain', '--untracked-files=all']) == '', 'Controller is dirty'
+    checked_out = run(['git', 'rev-parse', 'HEAD'])
+    tree = run(['git', 'rev-parse', 'HEAD^{tree}'])
+    parents = run(['git', 'show', '-s', '--format=%P', 'HEAD']).split()
+    event = json.loads(Path(os.environ['GITHUB_EVENT_PATH']).read_text())
+    pr = event['pull_request']
+    head, base = pr['head']['sha'], pr['base']['sha']
+    validate_source(checked_out, tree, parents, os.environ['GITHUB_SHA'], head, base)
+    return {'checkoutSha': checked_out, 'testedTree': tree, 'parents': parents,
+            'prHead': head, 'prBase': base, 'prNumber': pr['number'],
+            'eventSha': os.environ['GITHUB_SHA'], 'runId': os.environ['GITHUB_RUN_ID'],
+            'attempt': os.environ['GITHUB_RUN_ATTEMPT'], 'platform': 'linux/amd64'}
+
+
+def project_dependencies(contents, directory):
+    """Use only verified archive bytes, never previously staged mutable files."""
+    staged = directory / 'target-inputs'
+    staged.mkdir()
+    for name, data in contents.items():
+        (staged / Path(name).name).write_bytes(data)
+    expected = directory / 'expected-dependencies'
+    run(['node', str(staged / 'relay-dependencies.mjs'), str(staged / 'package-lock.json'),
+         str(staged / 'relay.package.json'), str(expected)], 15)
+    return (expected / 'relay-dependencies.json').read_bytes()
+
+
 def bound_source():
     """Recheck both bindings before any engine command, including on resumed steps."""
     out = evidence()
@@ -92,9 +120,8 @@ def bound_source():
     assert src['schemaVersion'] == 2, 'Unbound legacy source receipt'
     sha, tree = target()
     validate_target(src['targetSha'], src['targetTree'], sha, tree)
-    assert run(['git', 'rev-parse', 'HEAD']) == src['checkoutSha'], 'Controller commit changed'
-    assert run(['git', 'rev-parse', 'HEAD^{tree}']) == src['testedTree'], 'Controller tree changed'
-    assert run(['git', 'status', '--porcelain', '--untracked-files=all']) == '', 'Controller is dirty'
+    controller = controller_binding()
+    assert {key: src[key] for key in controller} == controller, 'Controller event binding changed'
     context = out / 'context.tar'
     assert digest(context) == src['contextSha256'], 'Target context changed'
     # A forged receipt/hash for a controller archive must not rebind the target.
@@ -102,14 +129,17 @@ def bound_source():
         canonical = Path(directory) / 'context.tar'
         run(['git', 'archive', '--format=tar', '--output=' + str(canonical), sha], 30)
         assert digest(context) == digest(canonical), 'Archive is not the immutable target'
-    inputs, _ = target_inputs(context, sha)
+        inputs, contents = target_inputs(canonical, sha)
+        projection = project_dependencies(contents, Path(directory))
     assert inputs == src['targetInputs'], 'Target input receipt differs'
     assert src['rootLockBlob'] == inputs['package-lock.json']['blob']
     assert src['rootLockSha256'] == inputs['package-lock.json']['sha256']
     assert src['dockerfileBlob'] == inputs['packages/server/relay.Dockerfile']['blob']
     assert src['dockerfileSha256'] == inputs['packages/server/relay.Dockerfile']['sha256']
-    assert digest(out / 'expected-dependencies/relay-dependencies.json') == \
-        src['expectedDependenciesSha256'], 'Expected dependency projection changed'
+    assert (out / 'expected-dependencies/relay-dependencies.json').read_bytes() == projection, \
+        'Expected dependencies differ from canonical target projection'
+    assert src['expectedDependenciesSha256'] == hashlib.sha256(projection).hexdigest(), \
+        'Expected dependency receipt differs from canonical target projection'
     return src
 
 
@@ -177,33 +207,17 @@ def validate_absence(probe, cid):
 def source():
     out = evidence()
     out.mkdir(mode=0o700)
-    assert os.environ['RELAY_PLATFORM'] == 'linux/amd64'
-    assert run(['git', 'status', '--porcelain', '--untracked-files=all']) == ''
-    checked_out = run(['git', 'rev-parse', 'HEAD'])
-    tree = run(['git', 'rev-parse', 'HEAD^{tree}'])
-    parents = run(['git', 'show', '-s', '--format=%P', 'HEAD']).split()
-    event = json.loads(Path(os.environ['GITHUB_EVENT_PATH']).read_text())
-    pr = event['pull_request']
-    head, base = pr['head']['sha'], pr['base']['sha']
-    validate_source(checked_out, tree, parents, os.environ['GITHUB_SHA'], head, base)
+    controller = controller_binding()
     target_sha, target_tree = target()
     run(['git', 'archive', '--format=tar', '--output=' + str(out / 'context.tar'), target_sha], 30)
     inputs, contents = target_inputs(out / 'context.tar', target_sha)
-    staged = out / 'target-inputs'
-    staged.mkdir()
-    for name, data in contents.items():
-        (staged / Path(name).name).write_bytes(data)
     # These inputs come from the exact archived target, never the controller checkout.
-    run(['node', str(staged / 'relay-dependencies.mjs'), str(staged / 'package-lock.json'),
-         str(staged / 'relay.package.json'), str(out / 'expected-dependencies')], 15)
+    project_dependencies(contents, out)
     value = {
         'schemaVersion': 2, 'targetSha': target_sha, 'targetTree': target_tree,
         'targetInputs': inputs, 'contextSha256': digest(out / 'context.tar'),
         'expectedDependenciesSha256': digest(out / 'expected-dependencies/relay-dependencies.json'),
-        'checkoutSha': checked_out, 'testedTree': tree, 'parents': parents,
-        'prHead': head, 'prBase': base, 'prNumber': pr['number'],
-        'eventSha': os.environ['GITHUB_SHA'], 'runId': os.environ['GITHUB_RUN_ID'],
-        'attempt': os.environ['GITHUB_RUN_ATTEMPT'], 'platform': 'linux/amd64',
+        **controller,
         'rootLockBlob': inputs['package-lock.json']['blob'],
         'rootLockSha256': inputs['package-lock.json']['sha256'],
         'dockerfileBlob': inputs['packages/server/relay.Dockerfile']['blob'],

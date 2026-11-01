@@ -250,6 +250,15 @@ stored inspection and identity receipt before using the immutable image ID. Clea
 keeps its existing exact owned-container checks so an earlier binding failure cannot
 authorize foreign cleanup.
 
+Every resumed entrypoint rederives the controller commit, tree and ordered parents from
+Git and validates them against the current event SHA and PR base/head. All stored
+controller/event/PR fields must match that independently derived binding. A coordinated
+clean-HEAD and source-receipt rewrite cannot replace the event authority. Expected
+dependency provenance is also regenerated in fresh temporary storage from the newly
+verified canonical archive inputs and projector. Its exact bytes and digest must match
+the existing projection and receipt. Mutable staged inputs or a rewritten projection
+plus its self-declared receipt hash cannot replace that independent derivation.
+
 When run under a separately authorized CI allocation, the job
 retains the immutable image/config identity and typed exporter digest, platform, embedded dependency
 provenance, bounded health/unauthenticated smoke results and owned-container cleanup.
