@@ -45,6 +45,31 @@ export { GitPort, type GitService } from './git/port'
 import { ServerInfoPort, type ServerInfoService } from './server-info/port'
 
 export { ServerInfoPort, type ServerInfoService } from './server-info/port'
+// ── Mobile wave, lane A: the devices ──
+import { DevicesPort, type DevicesPortService } from './devices/port'
+
+export { DevicesPort, type DevicesPortService } from './devices/port'
+// ── The mobile wave, lane B: the push targets and transports (`notify/port.ts`) ──
+import {
+  NotifyOptionsPort,
+  PushTargetsPort,
+  PushTransportsPort,
+  type NotifyOptions,
+  type PushTargets,
+  type PushTransports
+} from './notify/port'
+
+export {
+  NotifyOptionsPort,
+  PushTargetsPort,
+  PushTransportsPort,
+  type NotifyOptions,
+  type PushTargets,
+  type PushTransports
+} from './notify/port'
+import type { WriteLedgerStorage } from './sessions/writes'
+
+export { type WriteLedgerStorage } from './sessions/writes'
 
 export interface ServerPorts {
   readonly requests?: RequestsService
@@ -75,6 +100,23 @@ export interface ServerPorts {
   // ── Issue #266: the server domain ──
   /** The version this server runs and its self-upgrade. `ServerInfoPort.none` when absent: no version reported, no upgrade. */
   readonly serverInfo?: ServerInfoService
+  // ── Mobile wave, lane A: the devices ──
+  /** A phone paired with this server as its owner's: the device records'
+   *  document, the owner's identity, the issuer, the relay preference.
+   *  `DevicesPort.none` when absent: no owner, so no phone is ever admitted. */
+  readonly devices?: DevicesPortService
+  // ── The mobile wave, lane B: the notify domain ──
+  /** The paired phones' push targets (lane A's devices on the integration
+   *  branch, the fake in the tests). `PushTargetsPort.none` when absent: no phone. */
+  readonly pushTargets?: PushTargets
+  /** One transport per platform (APNs, FCM, or the fake). `PushTransportsPort.none`
+   *  when absent: nothing is sent. */
+  readonly pushTransports?: PushTransports
+  /** The name the notifier signs with and the grace a request waits. */
+  readonly notify?: NotifyOptions
+  /** Where the write ledger and the server's own history of writes are
+   *  kept, per session (`sessions/writes.ts`); in memory when absent. */
+  readonly writeLedger?: WriteLedgerStorage
 }
 
 /** Every port as a layer, the domain's `none` where the entry gave nothing. */
@@ -95,6 +137,12 @@ export const PortsLive = (
   | GitPort
   // ── Issue #266: the server domain ──
   | ServerInfoPort
+  // ── Mobile wave, lane A: the devices ──
+  | DevicesPort
+  // ── The mobile wave, lane B: the notify domain ──
+  | PushTargetsPort
+  | PushTransportsPort
+  | NotifyOptionsPort
 > =>
   Layer.mergeAll(
     RequestsPort.layer(ports.requests ?? RequestsPort.none),
@@ -111,5 +159,11 @@ export const PortsLive = (
     // ── Wave wcs1023, lane C: the git domain ──
     GitPort.layer(ports.git ?? GitPort.none),
     // ── Issue #266: the server domain ──
-    ServerInfoPort.layer(ports.serverInfo ?? ServerInfoPort.none)
+    ServerInfoPort.layer(ports.serverInfo ?? ServerInfoPort.none),
+    // ── Mobile wave, lane A: the devices ──
+    DevicesPort.layer(ports.devices ?? DevicesPort.none),
+    // ── The mobile wave, lane B: the notify domain ──
+    PushTargetsPort.layer(ports.pushTargets ?? PushTargetsPort.none),
+    PushTransportsPort.layer(ports.pushTransports ?? PushTransportsPort.none),
+    NotifyOptionsPort.layer(ports.notify ?? NotifyOptionsPort.none)
   )

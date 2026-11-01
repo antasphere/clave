@@ -29,13 +29,22 @@ import {
   getClaveServerEndpoint,
   setClaveServerEndpoint
 } from './endpoint'
-import { publishSessionStates, setServerEventPublisher } from './session-events'
+import {
+  observeSessionsForNotify,
+  publishSessionStates,
+  setServerEventPublisher
+} from './session-events'
+// ── The mobile wave, lane B: the fake push's hooks for the suite ──
+import { installE2eHooks } from '../sessions/e2e-hooks'
 
 export { type ClaveServerEndpoint, getClaveServerEndpoint } from './endpoint'
 
 let running: EmbeddedServer | null = null
 let starting: Promise<ClaveServerEndpoint> | null = null
 let stopStates: (() => void) | null = null
+// ── The mobile wave, lane B ──
+let stopNotify: (() => void) | null = null
+let closePush: (() => void) | null = null
 
 export interface StartOptions {
   port?: number
@@ -51,6 +60,11 @@ export interface StartOptions {
    *  updates with the app (`ServerInfoPort.appRun`), built here, after the
    *  server package has loaded. */
   appVersion?: string
+  /** The mobile wave, lane B: the directory the push credentials are read
+   *  under (`push/apns.json`, `push/fcm-service-account.json`), the app's
+   *  user data. Absent, no credential is read; `--push-fake` still puts the
+   *  recording fake in place. */
+  dataDir?: string
 }
 
 /** Start the server once; a second call, concurrent or later, answers the
@@ -69,11 +83,49 @@ export function startClaveServer(options: StartOptions): Promise<ClaveServerEndp
 async function start(options: StartOptions): Promise<ClaveServerEndpoint> {
   const manager = options.manager ?? sessionManager
   const { ports } = options
-  const { startEmbedded, ServerInfoPort } = await import('@clave/server')
+  const {
+    startEmbedded,
+    ServerInfoPort,
+    loadPushPorts,
+    parsePushFixtureArgs,
+    fileWriteLedgerStorage
+  } = await import('@clave/server')
+  // ── The mobile wave, lane B: the push credentials under the user data, the fake under --push-fake ──
+  const pushFixture = parsePushFixtureArgs(process.argv)
+  const push =
+    options.dataDir !== undefined || pushFixture.fake
+      ? loadPushPorts({
+          dataDir: options.dataDir ?? '',
+          ...pushFixture,
+          log: (line) => console.log(`[server] ${line}`)
+        })
+      : null
+  if (push?.hooks) installE2eHooks({ notify: push.hooks })
+  closePush = push?.close ?? null
+  // ── Mobile wave, lane A: the devices port, the shell's own Antasphere login as the owner ──
+  // Loaded beside the server package (a dynamic import, so this seam stays as
+  // light as it was at main's boot) and under Electron alone (the unit tests
+  // of this file run without it); a boot that named its own port keeps it.
+  const devices =
+    ports.devices ??
+    (process.versions.electron ? (await import('./devices-shell')).shellDevicesPort() : undefined)
   const server = await startEmbedded({
     ports: {
       ...(options.appVersion !== undefined && {
         serverInfo: ServerInfoPort.appRun(options.appVersion)
+      }),
+      // ── Mobile wave, lane A: the devices ──
+      ...(devices && { devices }),
+      ...push?.ports,
+      // ── The mobile wave, lane B: the write ledger, per session, under the user data ──
+      ...(options.dataDir !== undefined && {
+        writeLedger: fileWriteLedgerStorage(`${options.dataDir}/write-ledger`, {
+          activationFile: `${options.dataDir}/write-ledger-activation.json`,
+          sessionIds: [
+            ...manager.list().map((session) => session.id),
+            ...(ports.sessions?.listAdoptableRecords().map((record) => record.id) ?? [])
+          ]
+        })
       }),
       ...ports
     },
@@ -86,6 +138,32 @@ async function start(options: StartOptions): Promise<ClaveServerEndpoint> {
   setClaveServerEndpoint(endpoint)
   setServerEventPublisher((event) => server.publish(event))
   stopStates = publishSessionStates(manager, (event) => server.publish(event))
+  // ── The mobile wave, lane B: the sessions' frames and exits reach the notifier ──
+  stopNotify = observeSessionsForNotify(
+    manager,
+    server.notify,
+    server.writes.evidence,
+    server.writes.initialize
+  )
+  // ── Lane E (mobile wave, 2026-10-29): the relay client, reaching the relay Settings names ──
+  // Loaded on first use (`relay-wiring.ts`), so the boot reaches no Effect
+  // module through this file; the client waits on its own for an address
+  // and a login, and a failure here never stops the server. Inside Electron
+  // only: the shell's preferences and secrets come from the app's own ports,
+  // and the unit test of this seam runs it under plain Node with none.
+  if (!process.versions.electron) return endpoint
+  mobileRelayStarted = true
+  void Promise.all([import('./relay-wiring'), import('../settings/shell-source')])
+    .then(([wiring, shell]) =>
+      wiring.startMobileRelay({
+        local: { url: server.url },
+        version: options.appVersion ?? '0.0.0',
+        antasphere: shell.shellAntasphereAccount
+      })
+    )
+    .catch((error: unknown) => {
+      console.error('[mobile-relay] the relay client did not start', error)
+    })
   return endpoint
 }
 
@@ -97,6 +175,11 @@ export async function stopClaveServer(): Promise<void> {
   setServerEventPublisher(null)
   stopStates?.()
   stopStates = null
+  // ── The mobile wave, lane B: nothing is pushed for what a quit ends ──
+  stopNotify?.()
+  stopNotify = null
+  closePush?.()
+  closePush = null
   if (!server) return
   // The stop's own figures, in the log (PRDCT-3375): what it answered, who it
   // told, what it had to destroy. A quit measured at ten seconds in wave 3
@@ -107,4 +190,12 @@ export async function stopClaveServer(): Promise<void> {
       `${report.drained ? '' : ', NOT all answered'}, ${report.peers} push peer(s) closed, ` +
       `${report.destroyed} connection(s) destroyed`
   )
+  // ── Lane E (mobile wave, 2026-10-29): the relay client goes with the server ──
+  if (mobileRelayStarted) {
+    mobileRelayStarted = false
+    await import('./relay-wiring').then((wiring) => wiring.stopMobileRelay())
+  }
 }
+
+// ── Lane E (mobile wave, 2026-10-29): whether this process started a relay client ──
+let mobileRelayStarted = false

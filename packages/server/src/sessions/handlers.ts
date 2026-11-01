@@ -5,6 +5,7 @@
  * never over a request. What the host throws becomes a declared failure
  * here, so a client reads a 422 it knows and never a 500.
  */
+import { GetSessionTimeline, TimelineReadFailed } from '@clave/contract/timeline'
 import { Effect } from 'effect'
 import { CommandHandler, QueryHandler } from '@structure-ai/cqrs'
 import { CapabilityUnavailable } from '@clave/contract/errors'
@@ -28,6 +29,7 @@ import {
   SessionStartFailed,
   SessionStopFailed,
   SessionWriteRefused,
+  SessionWriteUnknown,
   SetSessionView,
   StartSession,
   StopSession,
@@ -36,10 +38,14 @@ import {
   // ── Wave 4, lane C: the session records and a session's release ──
   DiscardSessionRecord,
   ListAdoptableRecords,
-  ReleaseSessions
+  ReleaseSessions,
+  // ── The mobile wave, lane B: whether a client's message landed ──
+  GetSessionWriteStatus
 } from '@clave/contract/sessions'
 import { SessionHost, type SessionHostService } from './port'
 import { ServerEvents } from '../events'
+import { SessionWrites, sanitizeReason } from './writes'
+import { UnconfirmedSessionWrite } from '@clave/contract/session-write-error'
 
 const messageOf = (error: unknown): string =>
   error instanceof Error ? error.message : String(error)
@@ -90,17 +96,76 @@ export const sessionHandlers = [
       })
     )
   ),
+  // ── The mobile wave, lane B: a user message carrying a client message id is
+  // written once (`writes.ts`, the seam of 29 October): `received` is
+  // persisted before the session is even checked, `dispatched` right before
+  // the hand-off, then `accepted` or `rejected`; a second write of a held id
+  // answers by its state and writes nothing. ──
   CommandHandler.make(WriteSession, (payload) =>
-    Effect.flatMap(SessionHost, (host) =>
-      known(host, payload.id).pipe(
-        Effect.flatMap(() =>
-          Effect.tryPromise({
-            try: () => host.write(payload.id, payload.input),
-            catch: (error) => new SessionWriteRefused({ id: payload.id, message: messageOf(error) })
-          })
+    Effect.gen(function* () {
+      const host = yield* SessionHost
+      const input = payload.input
+      const id = payload.id
+      const refused = (error: unknown, text?: string): SessionWriteRefused =>
+        new SessionWriteRefused({ id, message: sanitizeReason(error, text) })
+      if (input.type !== 'user_message' || input.clientMessageId === undefined) {
+        yield* known(host, id)
+        yield* Effect.tryPromise({ try: () => host.write(id, input), catch: refused })
+        return { status: 'accepted', at: Date.now() } as const
+      }
+      const ledger = yield* SessionWrites
+      const clientMessageId = input.clientMessageId
+      const arrival = yield* Effect.try({
+        try: () => ledger.receive(id, clientMessageId),
+        catch: refused
+      })
+      if ('held' in arrival) {
+        const held = arrival.held
+        switch (held.status) {
+          case 'accepted':
+            return { status: 'accepted', at: held.at } as const
+          case 'received':
+          case 'dispatched':
+            return { status: 'pending' } as const
+          case 'rejected':
+            return yield* Effect.fail(new SessionWriteRefused({ id, message: held.reason }))
+          case 'unknown':
+            return yield* Effect.fail(
+              new SessionWriteUnknown({ id, clientMessageId, message: held.reason })
+            )
+        }
+      }
+      const session = host.get(id)
+      if (!session) {
+        ledger.reject(id, clientMessageId, 'no session with that id')
+        return yield* Effect.fail(new SessionNotFound({ id }))
+      }
+      try {
+        ledger.dispatch(id, clientMessageId)
+      } catch (error) {
+        const entry = ledger.reject(id, clientMessageId, sanitizeReason(error))
+        return yield* Effect.fail(
+          new SessionWriteRefused({ id, message: entry.status === 'rejected' ? entry.reason : '' })
         )
-      )
-    )
+      }
+      const accepted = yield* Effect.tryPromise({
+        try: () => host.write(id, input).then(() => ledger.accept(id, clientMessageId)),
+        catch: (error) => {
+          if (error instanceof SessionWriteUnknown || error instanceof UnconfirmedSessionWrite) {
+            const reason = sanitizeReason(error, input.text)
+            ledger.unknown(id, clientMessageId, reason)
+            return new SessionWriteUnknown({ id, clientMessageId, message: reason })
+          }
+          const reason = sanitizeReason(error, input.text)
+          ledger.reject(id, clientMessageId, reason)
+          return new SessionWriteRefused({ id, message: reason })
+        }
+      })
+      return { status: 'accepted', at: accepted.at } as const
+    })
+  ),
+  QueryHandler.make(GetSessionWriteStatus, (payload) =>
+    Effect.map(SessionWrites, (ledger) => ledger.status(payload.id, payload.clientMessageId))
   ),
   CommandHandler.make(ResizeSession, (payload) =>
     Effect.flatMap(SessionHost, (host) =>
@@ -301,5 +366,30 @@ export const sessionHandlers = [
         ...(payload.requestId !== undefined && { requestId: payload.requestId })
       }
     })
+  ),
+  QueryHandler.make(GetSessionTimeline, (payload) =>
+    Effect.flatMap(SessionHost, (host) =>
+      known(host, payload.id).pipe(
+        Effect.flatMap(() =>
+          Effect.try({
+            try: () => {
+              if (!host.timeline)
+                throw new CapabilityUnavailable({
+                  capability: 'session timeline',
+                  message: 'This host does not provide ordered conversation history.'
+                })
+              return host.timeline(payload.id, payload.before, payload.limit)
+            },
+            catch: (error) =>
+              error instanceof CapabilityUnavailable
+                ? error
+                : new TimelineReadFailed({
+                    id: payload.id,
+                    message: 'Conversation history could not be read.'
+                  })
+          })
+        )
+      )
+    )
   )
 ] as const

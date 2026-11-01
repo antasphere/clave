@@ -41,6 +41,8 @@ import {
   writeTerminal
 } from './lifecycle'
 import { type SessionRecordsSource, sessionRecords } from './records'
+// ── The mobile wave, lane B: a permission answered settles its push ──
+import { notifyRequestAnswered } from '../server/session-events'
 
 /** Built-in adapters whose `provider_event` is the CLI's own frame, verbatim. */
 const RAW_WIRE_PROVIDERS: ReadonlySet<string> = new Set(['claude', 'codex'])
@@ -75,6 +77,8 @@ export interface SessionHostDeps {
    *  session's release (`records.ts`). A host built without one, the tests',
    *  keeps no records and says so. */
   readonly records?: SessionRecordsSource
+  /** Exact current record metadata, independent of the adoptable-record listing. */
+  readonly workspaceIdOf?: (id: string) => string | undefined
 }
 
 const NO_RECORDS = (): never => {
@@ -104,12 +108,23 @@ const bytesDecoder = new TextDecoder()
 export function createSessionHost(deps: SessionHostDeps): SessionHostService {
   const { manager } = deps
   const records = deps.records ?? noRecords
+  const project = (session: Session): Session => {
+    const current = { ...session }
+    // The manager's launch snapshot may predate a workspace move or clear.
+    delete current.workspaceId
+    const workspaceId = deps.workspaceIdOf?.(session.id)
+    if (workspaceId !== undefined) current.workspaceId = workspaceId
+    return current
+  }
   /** The key of the window the session's record names, for the per-window
    *  arm of its news when no server publishes them. */
   const windowOf = (id: string): string | null => manager.get(id)?.windowKey ?? null
   const host: SessionHostService = {
-    list: (windowKey) => manager.list(windowKey),
-    get: (id) => manager.get(id),
+    list: (windowKey) => manager.list(windowKey).map(project),
+    get: (id) => {
+      const session = manager.get(id)
+      return session && project(session)
+    },
     subscribe: (id, listener) => {
       const off = manager.subscribe(id, (value) => {
         if (!isRawWireFrame(value)) listener(value)
@@ -150,19 +165,31 @@ export function createSessionHost(deps: SessionHostDeps): SessionHostService {
         if (adapterId) rememberChatEffort(adapterId, value.effort)
         return
       }
+      if (value.type === 'permission_response') notifyRequestAnswered(id, value.id)
       if (value.type !== 'user_message') return manager.write(id, value)
       // A chat tab is named by its first message, and this is where that
       // message is first seen in main; the title comes back as a server event
       // (or on `session:auto-title:<id>` to the tab's window without a server).
       titleGenerator.notifyChatMessage(id, value.text, windowOf(id))
+      // The id the sending client minted rides with the message into the
+      // event it becomes (the mobile wave, lane B): the history carries it.
+      const minted =
+        value.clientMessageId !== undefined ? { clientMessageId: value.clientMessageId } : {}
       // A user message's prepared prompt is main's to build, from the attachment
       // records and the files they name, never the caller's to supply: the
       // files are read here, at send time, against the adapter's capabilities,
       // and a failure rejects the write so the composer keeps its draft.
       const attachments = value.attachments?.length ? value.attachments : undefined
-      if (!attachments) return manager.write(id, { type: 'user_message', text: value.text })
+      if (!attachments)
+        return manager.write(id, { type: 'user_message', text: value.text, ...minted })
       const prepared = await preparePrompt(value.text, attachments, manager.capabilities(id).images)
-      manager.write(id, { type: 'user_message', text: value.text, attachments, prepared })
+      return manager.write(id, {
+        type: 'user_message',
+        text: value.text,
+        attachments,
+        prepared,
+        ...minted
+      })
     },
     resize: (id, cols, rows) => {
       if (!manager.get(id)) throw new Error(`Unknown session: ${id}`)
@@ -171,13 +198,14 @@ export function createSessionHost(deps: SessionHostDeps): SessionHostService {
     setView: (id, viewId) => {
       const updated = manager.setView(id, viewId)
       rememberChatView(viewId)
-      return updated
+      return project(updated)
     },
     models: (id) => manager.models(id),
     commands: (id) => manager.commands(id),
     control: (id, request) => manager.control(id, request),
     capabilities: (id): SessionCapabilities => manager.capabilities(id),
     history: (id, before, limit): HistoryPage => manager.history(id, before, limit),
+    timeline: (id, before, limit) => manager.timeline(id, before, limit),
     // ── Wave 4, lane C: the session records (PRDCT-3376) ──
     listAdoptableRecords: (ids) => records.listAdoptableRecords(ids),
     discardRecord: (key) => records.discardRecord(key),
@@ -192,7 +220,7 @@ export function createSessionHost(deps: SessionHostDeps): SessionHostService {
       // the folder name means "no name", and a rename protects it from the
       // auto-title (`userRenamed`).
       ptyManager.setSessionDisplayName(id, next === folderName ? null : next, true)
-      return manager.get(id) ?? session
+      return project(manager.get(id) ?? session)
     },
     // ── Wave 6, lane A: the window's name and page, on the record only ──
     keepOnRecord: (id, { name, page, claudeSessionId, workspaceId }) => {
@@ -236,7 +264,8 @@ export function getSessionHost(): SessionHostService {
         resize: resizeSession,
         writeTerminal
       },
-      records: sessionRecords
+      records: sessionRecords,
+      workspaceIdOf: (id) => ptyManager.getSessionRecord(id)?.workspaceId
     })
   }
   return host

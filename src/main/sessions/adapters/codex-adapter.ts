@@ -1,4 +1,5 @@
 import { EventEmitter } from 'node:events'
+import { UnconfirmedSessionWrite } from '@clave/contract/session-write-error'
 import { readFileSync } from 'node:fs'
 import { randomBytes } from 'node:crypto'
 import { z } from 'zod'
@@ -588,6 +589,10 @@ interface HandleState {
   /** Serializes delivery requests, not whole turns: a follow-up waits for a
    *  pending start/steer reply, then targets whichever turn is still active. */
   turnRequest?: Promise<void>
+  /** Provider frames held until an identified input is acknowledged. */
+  pendingInputEvents?: SessionEvent[]
+  /** Counts every input whose user event awaits ordered emission, including queued legacy inputs. */
+  orderedInputs: number
   ended: boolean
   closing: boolean
 }
@@ -642,9 +647,11 @@ export class CodexAdapter implements SessionAdapter {
       env: context?.env,
       initialPrompt: context?.initialPrompt,
       emitter,
+      orderedInputs: 0,
       translator: new CodexTranslator((event) => {
         if (event.type === 'effort') state.announced = event.effort
-        emitter.emit('stream', { kind: 'event', event })
+        if (state.pendingInputEvents) state.pendingInputEvents.push(event)
+        else emitter.emit('stream', { kind: 'event', event })
       }),
       ended: false,
       closing: false
@@ -696,7 +703,7 @@ export class CodexAdapter implements SessionAdapter {
     return state.history
   }
 
-  write(handle: SessionHandle, input: Uint8Array | SessionInput): void {
+  write(handle: SessionHandle, input: Uint8Array | SessionInput): void | Promise<void> {
     if (input instanceof Uint8Array)
       throw new Error('Codex chat accepts structured SessionInput, not raw terminal bytes')
     const value = SessionInputSchema.parse(input)
@@ -741,10 +748,43 @@ export class CodexAdapter implements SessionAdapter {
       throw new Error('Codex chat does not offer permission modes')
     if (value.type === 'stop_task') throw new Error('Codex chat cannot stop one background task')
     const prompt = providerPrompt(value)
-    state.emitter.emit('stream', { kind: 'event', event: userMessageEvent(value) })
-    state.turnRequest = (state.turnRequest ?? Promise.resolve())
-      .then(() => this.sendTurn(state, prompt))
-      .catch((error) => this.error(state, error, !state.translator.threadId))
+    const identified = value.clientMessageId !== undefined
+    const deferLegacy = !identified && state.orderedInputs > 0
+    const ordered = identified || deferLegacy
+    if (ordered) state.orderedInputs++
+    if (!identified && !deferLegacy)
+      state.emitter.emit('stream', { kind: 'event', event: userMessageEvent(value) })
+    const accepted = (state.turnRequest ?? Promise.resolve())
+      .then(() => {
+        if (deferLegacy)
+          state.emitter.emit('stream', { kind: 'event', event: userMessageEvent(value) })
+        if (identified) state.pendingInputEvents = []
+        return this.sendTurn(state, prompt)
+      })
+      .then((delivered) => {
+        if (identified) {
+          if (!delivered) throw new CodexRpcError(-32600, 'session stopped before dispatch')
+          state.emitter.emit('stream', { kind: 'event', event: userMessageEvent(value) })
+        }
+      })
+      .finally(() => {
+        if (ordered) state.orderedInputs--
+        if (!identified) return
+        const pending = state.pendingInputEvents ?? []
+        state.pendingInputEvents = undefined
+        for (const event of pending) state.emitter.emit('stream', { kind: 'event', event })
+      })
+    // Legacy callers keep fire-and-forget behavior and the next input is never
+    // replayed because its predecessor failed. Identified callers await their
+    // own acknowledgement, with uncertain transport failures kept uncertain.
+    state.turnRequest = accepted.catch((error) =>
+      this.error(state, error, !state.translator.threadId)
+    )
+    if (identified)
+      return accepted.catch((error) => {
+        if (error instanceof CodexRpcError) throw error
+        throw new UnconfirmedSessionWrite(handle.id, value.clientMessageId!)
+      })
   }
   /** Bring the thread up as soon as the view is looking, so thread/start's
    *  reply names the model before the first message rather than after it,
@@ -875,11 +915,11 @@ export class CodexAdapter implements SessionAdapter {
     state: HandleState,
     prompt: PreparedPrompt,
     recoverCompleted = true
-  ): Promise<void> {
+  ): Promise<boolean> {
     await this.start(state)
-    if (state.ended || state.closing) return
+    if (state.ended || state.closing) return false
     const effort = state.translator.turnId ? undefined : await this.turnEffort(state)
-    if (state.ended || state.closing) return
+    if (state.ended || state.closing) return false
     // Images are input items of their own, as a data URL, the way the
     // app-server's turn/start and turn/steer take them.
     const input = [
@@ -910,9 +950,9 @@ export class CodexAdapter implements SessionAdapter {
         )
           throw error
         state.translator.turnId = ''
-        await this.sendTurn(state, prompt, false)
+        return this.sendTurn(state, prompt, false)
       }
-      return
+      return true
     }
     const result = await state.connection!.request('turn/start', {
       threadId: state.translator.threadId,
@@ -927,6 +967,7 @@ export class CodexAdapter implements SessionAdapter {
       text(turn.id) !== state.translator.completedTurnId
     )
       state.translator.turnId = text(turn.id)
+    return true
   }
   private start(state: HandleState): Promise<void> {
     if (state.ready) return state.ready

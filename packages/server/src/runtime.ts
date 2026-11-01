@@ -53,6 +53,12 @@ import { Plugins, PluginsEventsLive, pluginHandlers } from './plugins'
 import { GitEventsLive, GitPort, gitHandlers } from './git'
 // ── Issue #266: the server's version and its self-upgrade ──
 import { ServerInfoEventsLive, ServerInfoPort, serverInfoHandlers } from './server-info'
+// ── Mobile wave, lane A: the devices, a phone paired with this server ──
+import { DeviceSessions, DevicesEventsLive, deviceHandlers } from './devices'
+// ── The mobile wave, lane B: the notify domain, and the write ledger ──
+import { Notify, NotifyLive, notifyHandlers } from './notify'
+import { NotifyOptionsPort, PushTargetsPort, PushTransportsPort } from './notify/port'
+import { SessionWrites, memoryWriteLedgerStorage } from './sessions/writes'
 
 export interface ServerOptions {
   /** The bearer token every request and every push hello must present. */
@@ -96,6 +102,14 @@ export type ServerServices =
   | GitPort
   // ── Issue #266: the server domain ──
   | ServerInfoPort
+  // ── Mobile wave, lane A: the devices ──
+  | DeviceSessions
+  // ── The mobile wave, lane B: the notify domain, and the write ledger ──
+  | Notify
+  | SessionWrites
+  | PushTargetsPort
+  | PushTransportsPort
+  | NotifyOptionsPort
 
 /** Everything but the listener. */
 export const ServicesLive = (options: ServerOptions): Layer.Layer<ServerServices> => {
@@ -109,10 +123,16 @@ export const ServicesLive = (options: ServerOptions): Layer.Layer<ServerServices
     // ── Wave 3, lane A: the reviews a `.clave` read waits on ──
     ReviewDesk.layer({
       ...(options.reviewTimeoutMs !== undefined && { timeoutMs: options.reviewTimeoutMs })
-    })
+    }),
+    // ── The mobile wave, lane B: the ids of the messages written once ──
+    SessionWrites.layer(options.ports.writeLedger ?? memoryWriteLedgerStorage())
   )
   const events = ServerEvents.layer(options.serverId).pipe(Layer.provide(foundations))
-  const services = Layer.mergeAll(foundations, events)
+  // ── Mobile wave, lane A: the devices domain over its port, beside the events ──
+  const devices = DeviceSessions.layer({ serverId: options.serverId }).pipe(
+    Layer.provide(foundations)
+  )
+  const services = Layer.mergeAll(foundations, events, devices)
   const hub = PushHubService.layer(options).pipe(Layer.provide(services))
   // ── Lane D: the settings source's changes go out as server events ──
   const settingsEvents = SettingsEventsLive.pipe(Layer.provide(services))
@@ -135,6 +155,19 @@ export const ServicesLive = (options: ServerOptions): Layer.Layer<ServerServices
   const requestEvents = RequestEventsLive.pipe(Layer.provide(services))
   // ── Issue #266: the self-upgrade's state told to the clients ──
   const serverInfoEvents = ServerInfoEventsLive.pipe(Layer.provide(services))
+  // ── Mobile wave, lane A: every change of the devices told to the clients ──
+  const devicesEvents = DevicesEventsLive.pipe(Layer.provide(services))
+  // ── The mobile wave, lane B: the notifier over the events, the requests and the ports ──
+  // Mobile wave, lane D: use the same paired-device store as authentication.
+  // An explicit target port remains available to recording fixtures.
+  const notificationTargets = Layer.effect(
+    PushTargetsPort,
+    Effect.map(DeviceSessions, (devices) => options.ports.pushTargets ?? devices.pushTargets)
+  ).pipe(Layer.provide(services))
+  const notify = NotifyLive({ serverId: options.serverId }).pipe(
+    Layer.provide(notificationTargets),
+    Layer.provide(services)
+  )
   return Layer.mergeAll(
     services,
     requestEvents,
@@ -152,7 +185,11 @@ export const ServicesLive = (options: ServerOptions): Layer.Layer<ServerServices
     // ── Wave wcs1023, lane C: the git domain ──
     gitEvents,
     // ── Issue #266: the server domain ──
-    serverInfoEvents
+    serverInfoEvents,
+    // ── Mobile wave, lane A: the devices ──
+    devicesEvents,
+    // ── The mobile wave, lane B: the notify domain ──
+    notify
   )
 }
 
@@ -192,7 +229,11 @@ export const BusesLive = busesLayer.pipe(
       // ── Wave wcs1023, lane C: the git domain ──
       ...gitHandlers,
       // ── Issue #266: the server domain ──
-      ...serverInfoHandlers
+      ...serverInfoHandlers,
+      // ── Mobile wave, lane A: the devices ──
+      ...deviceHandlers,
+      // ── The mobile wave, lane B: the notify domain ──
+      ...notifyHandlers
       // ── Lane B: ...terminalHandlers ──
     )
   )
@@ -200,15 +241,23 @@ export const BusesLive = busesLayer.pipe(
 
 /** The middleware outside the router, outermost first: the loopback CORS
  *  answer, the push upgrade, then the token check, then (test mode only)
- *  the fixture route, inside the token check so it is never open. */
+ *  the fixture route, inside the token check so it is never open. The token
+ *  check also knows the phones' device sessions (mobile wave, lane A). */
 const outer =
   (options: ServerOptions) =>
-  (app: HttpApp.Default): HttpApp.Default<never, PushHubService> =>
+  (app: HttpApp.Default): HttpApp.Default<never, PushHubService | DeviceSessions> =>
     Effect.flatMap(PushHubService, (hub) =>
-      corsForLoopback(
-        pushRoute(hub)(
-          bearerAuth(options.token)(
-            fixtureRoute(options.testFixtures === true)(boundedFileRequest(privateAnswerJson(app)))
+      Effect.flatMap(DeviceSessions, (devices) =>
+        corsForLoopback(
+          pushRoute(hub)(
+            bearerAuth(
+              options.token,
+              devices
+            )(
+              fixtureRoute(options.testFixtures === true)(
+                boundedFileRequest(privateAnswerJson(app))
+              )
+            )
           )
         )
       )
