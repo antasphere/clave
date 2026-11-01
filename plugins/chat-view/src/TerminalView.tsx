@@ -33,6 +33,7 @@ import { PermissionModeMenu } from './PermissionModeMenu'
 import { ModelMenu } from './ModelMenu'
 import { EffortMenu } from './EffortMenu'
 import { SenderChip } from './Delivery'
+import { DeliveryStack } from './DeliveryStack'
 import { parseDelivery } from '../../../src/shared/exchange-provenance'
 import { claudeContextWindow } from '../../../src/shared/claude-models'
 import { nextPermissionMode } from './permission-mode'
@@ -47,7 +48,7 @@ import {
 import { ContextMeter, SubAgentStack } from './TerminalStatus'
 import { AccountChip } from './AccountChip'
 import { useQuestionHeight } from './question-height'
-import { groupEntries, visibleEntries, type ToolGroup as ToolRun } from './tools'
+import { groupEntries, visibleEntries, type Block, type ToolGroup as ToolRun } from './tools'
 import { TerminalTools } from './TerminalTools'
 import { ToolDisclosure } from './disclosure'
 import { PermissionRow, PromptDock } from './PromptDock'
@@ -383,7 +384,7 @@ const PIN_KEY = 'clave-terminal-pin-questions'
 /** What a click lands on when it means something other than "type here". */
 const INTERACTIVE =
   'a, button, input, textarea, select, summary, label, [role="button"], [role="menuitem"], [role="menu"], [role="dialog"], [role="separator"], [contenteditable="true"]'
-type TurnRows = { key: string; block: Entry | ToolRun }[]
+type TurnRows = { key: string; block: Block }[]
 /** One exchange as the virtualiser mounts it: the section stays whole inside
  *  its row, so the pinned question stays sticky within its own exchange. An
  *  exchange the column gained at its end arrives (`TranscriptRows`), and so
@@ -411,7 +412,29 @@ function TerminalTurn({
     >
       <section className="term-turn">
         {rows.map(({ block, key }) =>
-          block.kind === 'tool-group' ? (
+          block.kind === 'delivery-group' ? (
+            <DeliveryStack
+              key={key}
+              group={block}
+              id={key}
+              renderEntry={(entry) =>
+                entry.kind === 'tool-group' ? (
+                  <ToolRow
+                    group={entry}
+                    live={
+                      key === liveRun &&
+                      entry ===
+                        block.exchanges
+                          .at(-1)
+                          ?.responses.findLast((response) => response.kind === 'tool-group')
+                    }
+                  />
+                ) : (
+                  <EntryRow entry={entry} onError={onError} />
+                )
+              }
+            />
+          ) : block.kind === 'tool-group' ? (
             <ToolRow key={key} group={block} live={key === liveRun} />
           ) : (
             <EntryRow key={key} entry={block} onError={onError} />
@@ -801,7 +824,12 @@ export function TerminalView({
     entries.forEach((entry, i) => ordinal.set(entry, presentation.first + i))
     return groupEntries(visibleEntries(entries)).map((block) => ({
       block,
-      key: block.kind === 'tool-group' ? `tools-${block.id}` : `entry-${ordinal.get(block)}`
+      key:
+        block.kind === 'tool-group'
+          ? `tools-${block.id}`
+          : block.kind === 'delivery-group'
+            ? `deliveries-${ordinal.get(block.exchanges[0].message)}`
+            : `entry-${ordinal.get(block)}`
     }))
   }, [presentation.entries, presentation.first, remotePending, session.id])
   // One section per exchange: the reader's message and everything answering
@@ -809,7 +837,8 @@ export function TerminalView({
   const turns = useMemo(() => {
     const out: { key: string; rows: typeof blocks }[] = []
     for (const row of blocks) {
-      if (row.block.kind === 'user' || !out.length) out.push({ key: row.key, rows: [] })
+      if (row.block.kind === 'user' || row.block.kind === 'delivery-group' || !out.length)
+        out.push({ key: row.key, rows: [] })
       out[out.length - 1].rows.push(row)
     }
     return out
@@ -830,7 +859,10 @@ export function TerminalView({
   // or not.
   const liveRun =
     state === 'working' || state === 'blocked'
-      ? blocks.findLast(({ block }) => block.kind === 'tool-group' || block.kind === 'user')?.key
+      ? blocks.findLast(
+          ({ block }) =>
+            block.kind === 'tool-group' || block.kind === 'user' || block.kind === 'delivery-group'
+        )?.key
       : undefined
   return (
     <div
