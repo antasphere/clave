@@ -252,10 +252,11 @@ body,
   height: var(--sidebar-tab-icon-size);
 }
 
-/* The tab's status, carried by its logo one signal at a time
-   (`lib/tab-status.ts`): motion means working, colour means "go look". No
-   dots, no pulses. The ring sits just outside the logo so the mark keeps its
-   size in every state. */
+/* A status carried by a glyph, one signal at a time (`lib/tab-status.ts`):
+   motion means working, colour means "go look". No dots, no pulses. Worn by
+   the subagent selector's attention glyph and the Appearance sample; a
+   session row's own status is `.sidebar-tab-status` below. The ring sits
+   just outside the glyph so the mark keeps its size in every state. */
 .tab-status {
   display: inline-flex;
   align-items: center;
@@ -282,44 +283,125 @@ body,
   border-top-color: currentColor;
   animation: tab-status-spin 0.9s linear infinite;
 }
-/* A logo that opens the row's attached view (SessionItem's SessionIcon): it
-   grows with a small overshoot on hover, so it reads as its own target. */
-.tab-status[data-view] {
-  cursor: pointer;
-  transition:
-    color 300ms,
-    opacity 300ms,
-    transform 420ms cubic-bezier(0.34, 1.9, 0.5, 1);
-}
-/* An invisible hit area the size the logo grows to, so the hover starts where
-   the grown logo WILL be rather than only on the resting mark. (::before is
-   the working ring.) */
-.tab-status[data-view]::after {
-  content: '';
-  position: absolute;
-  inset: -5px;
-  border-radius: 9999px;
-}
-.tab-status[data-view]:hover,
-.tab-status[data-view]:focus-visible {
-  transform: scale(1.3);
-  color: var(--text-primary);
-  outline: none;
-}
-.tab-status[data-view]:active {
-  transform: scale(1.15);
-  transition-duration: 120ms;
-}
 @keyframes tab-status-spin {
   to {
     transform: rotate(360deg);
   }
 }
+
+/* The session row's status, in a trailing column of its own
+   (`tabStatusPresentation` in `lib/tab-status.ts`, PRDCT-3933): one glyph in
+   a slot the size of a tab icon, last before the close button, so every
+   title starts at the row's gutter and the state reads on the right. The
+   slot is kept when there is nothing to say, so the badges before it keep
+   their column from row to row. Colour means "go look": amber for a question
+   waiting on the reader, blue for something new to read; grey otherwise,
+   dimmed once the process has ended. */
+.sidebar-tab-status {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: var(--sidebar-tab-icon-size);
+  height: var(--sidebar-tab-icon-size);
+  color: var(--sidebar-icon-color);
+  transition:
+    color 300ms,
+    opacity 300ms;
+}
+.sidebar-tab-status > svg {
+  width: 100%;
+  height: 100%;
+}
+.sidebar-tab-status[data-tone='amber'] {
+  color: var(--color-status-waiting);
+}
+.sidebar-tab-status[data-tone='blue'] {
+  color: var(--color-status-working);
+}
+.sidebar-tab-status[data-tone='dim'] {
+  opacity: 0.45;
+}
+/* Working: eight fixed segments under an ink that fades around the ring,
+   turned one segment at a time, the way an activity indicator ticks. The
+   element turns in eighths, which leaves the segments where they are and
+   moves the fade alone. */
+.sidebar-tab-spinner {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: 9999px;
+  background: conic-gradient(
+    from 0deg,
+    color-mix(in srgb, currentColor 12%, transparent),
+    currentColor
+  );
+  mask:
+    radial-gradient(farthest-side, transparent calc(100% - 2.5px), #000 calc(100% - 2px)),
+    repeating-conic-gradient(from -11deg, #000 0 22deg, transparent 22deg 45deg);
+  mask-composite: intersect;
+  animation: sidebar-tab-spin 0.8s steps(8, end) infinite;
+}
+@keyframes sidebar-tab-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+/* The way to a page attached to the row (SessionItem's SessionViewButton),
+   beside the status: it grows with a small overshoot on hover, so it reads
+   as its own target, over an invisible hit area the size it grows to. */
+.sidebar-tab-view {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: var(--sidebar-tab-icon-size);
+  height: var(--sidebar-tab-icon-size);
+  color: var(--sidebar-icon-color);
+  cursor: pointer;
+  transition:
+    color 300ms,
+    transform 420ms cubic-bezier(0.34, 1.9, 0.5, 1);
+}
+.sidebar-tab-view > svg {
+  width: 100%;
+  height: 100%;
+}
+.sidebar-tab-view::after {
+  content: '';
+  position: absolute;
+  inset: -5px;
+  border-radius: 9999px;
+}
+.sidebar-tab-view:hover,
+.sidebar-tab-view:focus-visible {
+  transform: scale(1.3);
+  color: var(--text-primary);
+  outline: none;
+}
+.sidebar-tab-view:active {
+  transform: scale(1.15);
+  transition-duration: 120ms;
+}
+/* Appearance → Agent mark: the row's status slot is a mark pack's canvas
+   (the orbs pack draws `thinking-orbs`' 20px preset), fitted to the slot
+   here. Its own motion says working. Rest and work swap with a short fade;
+   the rest mark keeps its full ink — stillness is the signal, and a dimmed
+   15px globe was too faint to read (2026-10-15). */
+.sidebar-tab-status > canvas {
+  width: var(--sidebar-tab-icon-size) !important;
+  height: var(--sidebar-tab-icon-size) !important;
+}
+canvas[data-orb-state] {
+  transition: opacity 300ms;
+}
 @media (prefers-reduced-motion: reduce) {
-  .tab-status[data-status='working']::before {
+  .tab-status[data-status='working']::before,
+  .sidebar-tab-spinner {
     animation-duration: 2.4s;
   }
-  .tab-status[data-view] {
+  .sidebar-tab-view {
     transition-timing-function: ease-out;
   }
 }
@@ -1697,6 +1779,48 @@ body,
   scale: 0.97;
 }
 
+/* Appearance → Agent mark: the nine orbs to pick from, each drawn live at the
+   avatar preset so the choice is made on the animation itself, not a still. */
+.orb-picker {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+  gap: calc(var(--spacing) * 2);
+  width: 100%;
+}
+.orb-swatch {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: calc(var(--spacing) * 1.5);
+  padding: calc(var(--spacing) * 3) calc(var(--spacing) * 2);
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border-color);
+  background-color: var(--surface-50);
+  color: var(--text-tertiary);
+  cursor: pointer;
+  transition:
+    border-color 150ms,
+    background-color 150ms,
+    color 150ms;
+}
+.orb-swatch:hover {
+  background-color: var(--surface-100);
+  color: var(--text-secondary);
+}
+.orb-swatch[data-selected='true'] {
+  border-color: var(--accent);
+  color: var(--text-primary);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+.orb-swatch-label {
+  font-size: 11px;
+  font-weight: var(--font-weight-medium);
+}
+.orb-swatch canvas {
+  width: 48px !important;
+  height: 48px !important;
+}
+
 /* Segmented control: compact inline mode switcher (e.g. Page/Preview/Source
    in file headers). Items mark their active state via data-active="true". */
 .segmented {
@@ -2640,6 +2764,22 @@ button.extension-card:hover {
   background-color: var(--color-status-working);
   animation: pulse-dot 5s cubic-bezier(0.4, 0, 0.6, 1) infinite;
 }
+/* The same slot with a mark pack's mark in it (Appearance → Agent mark). */
+.pane-status-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: calc(var(--spacing) * 4);
+  height: calc(var(--spacing) * 4);
+  flex-shrink: 0;
+}
+.pane-status-mark > canvas {
+  width: 100% !important;
+  height: 100% !important;
+}
+.pane-status-mark[data-status='inactive'] {
+  opacity: 0.45;
+}
 
 /* ── Conversation views ──────────────────────────────────────────────────
    The chat view: the host frames it (.chat-host, the pane header above), the
@@ -2786,6 +2926,23 @@ button.extension-card:hover {
     opacity: 0;
     translate: 0 calc(var(--spacing) * -2);
   }
+}
+/* The past of a resumed chat that a round of asking could not read
+   (PRDCT-3526): in the flow at the transcript's head, where the past would
+   be, quiet, with the one action that asks again. */
+.chat-past-failed {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: calc(var(--spacing) * 2);
+  padding: calc(var(--spacing) * 2) 0;
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
+.chat-past-failed > svg {
+  width: var(--chat-glyph);
+  height: var(--chat-glyph);
+  flex: none;
 }
 .chat-earlier svg {
   width: var(--chat-glyph);
@@ -3021,6 +3178,16 @@ button.chat-turn-from:focus-visible {
 .chat-provider-mark[data-state='working'] {
   animation: chat-breathe 1.4s ease-in-out infinite;
 }
+/* A pack's mark moves on its own; breathing it too would double the signal.
+   The canvas is the library's 20px preset, shown as drawn. */
+.chat-provider-mark[data-mark='pack'] {
+  animation: none;
+  color: var(--text-primary);
+}
+.chat-provider-mark canvas {
+  width: calc(var(--spacing) * 5) !important;
+  height: calc(var(--spacing) * 5) !important;
+}
 @keyframes chat-breathe {
   0%,
   100% {
@@ -3247,6 +3414,24 @@ details[open] > .chat-tool-row .chat-tool-chevron,
 }
 .chat-tool-status[data-running='true'] {
   animation: chat-spin 1s linear infinite;
+}
+/* A mark pack's running call (Appearance → Agent mark): the pack's own motion,
+   not the spinner's, in the glyph's box. */
+.chat-tool-status[data-mark='pack'] {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  animation: none;
+}
+.chat-tool-status[data-mark='pack'] > canvas,
+.term-call-icon[data-mark='pack'] > canvas {
+  width: 100% !important;
+  height: 100% !important;
+}
+.term-call-icon[data-mark='pack'] {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 @keyframes chat-spin {
   to {
@@ -3830,6 +4015,73 @@ details[open] > .chat-tool-row .chat-tool-chevron,
   margin-left: auto;
 }
 
+/* The /mcp and /plugin panels wear the same dock: one row per server or
+   plugin, its name over its state, the actions on the right ending in the
+   switch. A row being worked on dims until the CLI has answered. */
+.chat-control-row {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--spacing) * 3);
+  padding: calc(var(--spacing) * 1.5) calc(var(--spacing) * 2.5);
+  border-radius: var(--radius-lg);
+  transition: opacity var(--default-transition-duration);
+}
+.chat-control-row + .chat-control-row {
+  margin-top: var(--row-gap);
+}
+.chat-control-row:hover {
+  background-color: var(--surface-100);
+}
+.chat-control-row[data-busy='true'] {
+  opacity: 0.55;
+}
+.chat-control-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: calc(var(--spacing) * 0.5);
+  min-width: 0;
+}
+.chat-control-actions {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: calc(var(--spacing) * 2);
+}
+.chat-control-status {
+  color: var(--text-secondary);
+}
+.chat-control-status[data-status='connected'] {
+  color: var(--color-success);
+}
+.chat-control-status[data-status='needs-auth'],
+.chat-control-status[data-status='pending'] {
+  color: var(--color-warning);
+}
+.chat-control-status[data-status='failed'] {
+  color: var(--color-destructive);
+}
+.chat-control-error {
+  font-size: var(--text-xs);
+  color: var(--color-destructive);
+  overflow-wrap: anywhere;
+}
+.chat-control-foot {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: calc(var(--spacing) * 3);
+}
+.chat-control-note {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+}
+.chat-control-note[data-failed='true'] {
+  color: var(--color-destructive);
+}
+
 /* The transcript's record of a request: one muted row, like a tool call. */
 .chat-permission-row {
   display: flex;
@@ -4042,38 +4294,186 @@ details[open] > .chat-tool-row .chat-tool-chevron,
 .chat-view {
   position: relative;
 }
+/* The drop: a veil over the pane and one paper card on it, with a drawing in
+   the hand of the products' figures (DropDrawing.tsx) and the words under
+   it. It comes up as the drag comes in; it goes as the drag goes, at once. */
 .chat-drop-overlay {
   position: absolute;
-  inset: calc(var(--spacing) * 3);
+  inset: 0;
   z-index: 30;
   pointer-events: none;
   display: flex;
-  flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: calc(var(--spacing) * 2);
-  border: calc(var(--spacing) / 2) dashed var(--color-accent);
-  border-radius: var(--radius-2xl);
-  background-color: color-mix(in oklch, var(--surface-raised) 92%, var(--color-accent));
-  color: var(--text-primary);
-  font-size: var(--text-sm);
-  /* It comes up as the drag comes in; it goes as the drag goes, at once. */
-  transition:
-    opacity var(--default-transition-duration) var(--ease-out-expo),
-    scale var(--default-transition-duration) var(--ease-out-expo);
+  padding: calc(var(--spacing) * 6);
+  background-color: color-mix(in oklab, var(--surface-0) 72%, transparent);
+  backdrop-filter: blur(6px);
+  transition: opacity var(--default-transition-duration) var(--ease-out-expo);
   @starting-style {
     opacity: 0;
-    scale: 0.98;
   }
 }
-.chat-drop-overlay svg {
-  width: calc(var(--spacing) * 6);
-  height: calc(var(--spacing) * 6);
-  color: var(--color-accent);
+.chat-drop-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: calc(var(--spacing) * 1.5);
+  width: min(100%, calc(var(--spacing) * 96));
+  padding: calc(var(--spacing) * 6) calc(var(--spacing) * 7) calc(var(--spacing) * 6);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-2xl);
+  background-color: var(--surface-raised);
+  box-shadow: var(--overlay-shadow-lg);
+  text-align: center;
+  transition:
+    translate calc(var(--default-transition-duration) * 1.6) var(--ease-out-expo),
+    scale calc(var(--default-transition-duration) * 1.6) var(--ease-out-expo);
+  @starting-style {
+    translate: 0 calc(var(--spacing) * 2);
+    scale: 0.97;
+  }
 }
-.chat-drop-overlay span {
+.chat-drop-card .chat-drawing {
+  width: calc(var(--spacing) * 60);
+  max-width: 100%;
+  height: auto;
+  margin-bottom: calc(var(--spacing) * 2);
+}
+.chat-drop-eyebrow {
+  margin: 0;
+  color: var(--text-tertiary);
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+.chat-drop-card strong {
+  color: var(--text-primary);
+  font-size: var(--text-base);
+  font-weight: var(--font-weight-medium);
+}
+.chat-drop-card span {
+  max-width: 36ch;
   color: var(--text-secondary);
-  font-size: var(--text-xs);
+  font-size: var(--text-sm);
+  line-height: 1.45;
+}
+
+/* The drawing's hand: ink lines at 30–45%, boxes filled with a breath of the
+   ground, the box in front filled with paper so it hides what is behind it,
+   the ringed dot as the focal marker, and the accent on ONE path. The ink
+   is the app's text colour, so the dark set just works. */
+.chat-drawing {
+  --ink: var(--text-primary);
+  --paper: var(--surface-raised);
+  --ground: var(--surface-100);
+  display: block;
+  overflow: visible;
+}
+.chat-drawing :is(.ln, .bx, .ring, .head) {
+  vector-effect: non-scaling-stroke;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.chat-drawing .ln {
+  fill: none;
+  stroke: color-mix(in oklab, var(--ink) 45%, transparent);
+  stroke-width: 1.2;
+}
+.chat-drawing .ln--soft {
+  stroke: color-mix(in oklab, var(--ink) 34%, transparent);
+  stroke-dasharray: 4 5;
+}
+.chat-drawing .ln--thin {
+  stroke: color-mix(in oklab, var(--ink) 30%, transparent);
+  stroke-width: 1;
+}
+.chat-drawing .bx {
+  fill: color-mix(in oklab, var(--ground) 40%, transparent);
+  stroke: color-mix(in oklab, var(--ink) 40%, transparent);
+  stroke-width: 1;
+}
+.chat-drawing .bx--front {
+  fill: var(--paper);
+}
+.chat-drawing .dot {
+  fill: color-mix(in oklab, var(--ink) 78%, transparent);
+}
+.chat-drawing .dot--seat {
+  fill: color-mix(in oklab, var(--ink) 40%, transparent);
+}
+.chat-drawing .ring {
+  fill: none;
+  stroke: color-mix(in oklab, var(--ink) 42%, transparent);
+  stroke-width: 1;
+}
+.chat-drawing .head {
+  fill: none;
+  stroke: color-mix(in oklab, var(--ink) 55%, transparent);
+  stroke-width: 1.1;
+}
+/* the one place the accent goes */
+.chat-drawing .ln--c {
+  stroke: var(--color-accent);
+  stroke-width: 1.7;
+}
+.chat-drawing .head--c {
+  stroke: var(--color-accent);
+  stroke-width: 1.5;
+}
+.chat-drawing .dot--c {
+  fill: var(--color-accent);
+}
+.chat-drawing .fan {
+  transform-box: fill-box;
+  transform-origin: bottom center;
+}
+.chat-drawing .fan--back {
+  transform: rotate(7deg);
+}
+.chat-drawing .fan--front {
+  transform: rotate(-5deg);
+}
+.chat-drawing .ring--pulse {
+  opacity: 0;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+/* the accent line draws itself once as the card comes up, measured in its
+   own length (pathLength 1), and the landing pulses once when it arrives */
+.chat-drawing .travel {
+  stroke-dasharray: 1;
+  stroke-dashoffset: 0;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .chat-drawing .travel {
+    animation: chat-drawing-draw 900ms var(--ease-out-expo) 180ms 1 backwards;
+  }
+  .chat-drawing .ring--pulse {
+    animation: chat-drawing-pulse 1400ms var(--ease-out-expo) 900ms 1;
+  }
+  .chat-drawing .lift {
+    animation: chat-drawing-lift 700ms var(--ease-out-expo) 1 backwards;
+  }
+}
+@keyframes chat-drawing-draw {
+  from {
+    stroke-dashoffset: 1;
+  }
+}
+@keyframes chat-drawing-pulse {
+  from {
+    opacity: 0.7;
+    transform: scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: scale(1.7);
+  }
+}
+@keyframes chat-drawing-lift {
+  from {
+    transform: translate(-36px, 8px);
+  }
 }
 .chat-composer {
   flex-wrap: wrap;
@@ -4110,6 +4510,7 @@ details[open] > .chat-tool-row .chat-tool-chevron,
   margin-bottom: calc(var(--spacing) * 1.5);
 }
 .chat-attachment {
+  position: relative;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -4126,40 +4527,73 @@ details[open] > .chat-tool-row .chat-tool-chevron,
 .chat-attachment[data-issue='true'] {
   border-color: var(--color-accent);
 }
+/* The card is the thing to click: the preview button inside it paints
+   nothing of its own, the card takes the hover, and the remove button sits
+   in the card's top-right corner, the card keeping room for it. */
 .chat-attachment-open {
   display: flex;
   align-items: center;
-  gap: calc(var(--spacing) * 2);
+  gap: calc(var(--spacing) * 1.5);
   min-width: 0;
   text-align: left;
-  padding: var(--spacing);
-  border-radius: var(--radius-control);
-  transition: background-color var(--default-transition-duration);
+  padding: 0;
 }
-.chat-attachment-open:hover {
+.chat-attachment:has(> button.chat-attachment-open:hover) {
   background-color: var(--surface-200);
+}
+.chat-attachment:has(> .chat-attachment-remove) {
+  padding-right: calc(var(--spacing) * 6);
+}
+.chat-attachment-remove {
+  position: absolute;
+  top: calc(var(--spacing) * 0.75);
+  right: calc(var(--spacing) * 0.75);
 }
 .chat-attachment-thumb {
   flex-shrink: 0;
-  width: var(--control-h-lg);
-  height: var(--control-h-lg);
+  width: var(--control-h);
+  height: var(--control-h);
   object-fit: cover;
   border-radius: var(--radius-control);
 }
+/* A chip's glyph: a small drawing in the same hand as the drop card, one
+   per family (a page, a frame, a few bars of sound, a folder, a row out of
+   its column), on a tile the size of a thumbnail. */
 .chat-attachment-glyph {
   flex-shrink: 0;
-  width: var(--control-icon);
-  height: var(--control-icon);
+  width: var(--control-h);
+  height: var(--control-h);
+  padding: calc(var(--spacing) * 1.25);
+  border-radius: var(--radius-control);
+  background-color: color-mix(in oklab, var(--surface-200) 70%, transparent);
   color: var(--text-tertiary);
+}
+.chat-attachment-thumb {
+  border: 1px solid var(--border-subtle-color);
+}
+/* The label, as the text refers to the record: [Image #1] there, the tag here. */
+.chat-attachment-tag {
+  display: inline-block;
+  margin-right: calc(var(--spacing) * 1.5);
+  padding: 0 calc(var(--spacing) * 1.25);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  line-height: 1.6;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+  background-color: var(--surface-raised);
 }
 .chat-attachment-text {
   display: flex;
   flex-direction: column;
   min-width: 0;
-  padding: var(--spacing);
+  padding: calc(var(--spacing) * 0.5) var(--spacing);
 }
 .chat-attachment-name {
-  max-width: 28ch;
+  max-width: 20ch;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -4177,36 +4611,105 @@ details[open] > .chat-tool-row .chat-tool-chevron,
   padding: var(--spacing);
   color: var(--text-secondary);
 }
+/* The preview dialog: the modal card (its corner is the panels'), a head
+   with the record's tile and words, the path under it in a path's hand, the
+   preview in a framed inset on the inner corner, the actions at the foot. */
 .chat-attachment-dialog {
-  width: min(85vw, calc(var(--spacing) * 240));
-  padding: calc(var(--spacing) * 4);
+  width: min(85vw, calc(var(--spacing) * 180));
+  padding: 0;
 }
 .chat-attachment-dialog-head {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: var(--spacing);
+  gap: calc(var(--spacing) * 3);
+  padding: calc(var(--spacing) * 4) calc(var(--spacing) * 4) calc(var(--spacing) * 2);
+}
+.chat-attachment-dialog-tile {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: calc(var(--spacing) * 11);
+  height: calc(var(--spacing) * 11);
+  overflow: hidden;
+  border: 1px solid var(--border-subtle-color);
+  border-radius: var(--radius-lg);
+  background-color: color-mix(in oklab, var(--surface-200) 70%, transparent);
+}
+.chat-attachment-dialog-tile img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.chat-attachment-dialog-tile .chat-attachment-glyph {
+  width: 100%;
+  height: 100%;
+  padding: calc(var(--spacing) * 2.5);
+  border-radius: 0;
+  background: none;
+}
+.chat-attachment-dialog-titles {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--spacing) * 0.75);
+  min-width: 0;
+}
+.chat-attachment-dialog-titles > * {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chat-attachment-dialog-meta {
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
 }
 .chat-attachment-dialog-path {
+  margin: 0;
+  padding: 0 calc(var(--spacing) * 4) calc(var(--spacing) * 3);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-tertiary);
   overflow-wrap: anywhere;
 }
 .chat-attachment-dialog-body {
-  max-height: 65vh;
+  max-height: 60vh;
   overflow: auto;
-  margin: calc(var(--spacing) * 3) 0;
+  margin: 0 calc(var(--spacing) * 4);
+  padding: calc(var(--spacing) * 3);
+  border: 1px solid var(--border-subtle-color);
+  border-radius: var(--radius-lg);
+  background-color: var(--surface-100);
   font-size: var(--text-xs);
+  color: var(--text-primary);
+}
+.chat-attachment-dialog-body[data-kind='image'] {
+  padding: calc(var(--spacing) * 2);
 }
 .chat-attachment-dialog-body img {
   display: block;
   max-width: 100%;
-  max-height: 60vh;
+  max-height: 56vh;
   margin: auto;
+  border-radius: var(--radius-md);
   object-fit: contain;
 }
 .chat-attachment-dialog-body pre {
+  margin: 0;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   font-family: var(--font-mono);
+  line-height: 1.5;
+}
+.chat-attachment-dialog-body p {
+  margin: 0;
+  color: var(--text-secondary);
+}
+.chat-attachment-dialog-body pre + p {
+  margin-top: calc(var(--spacing) * 2);
+}
+.chat-attachment-dialog-foot {
+  padding: calc(var(--spacing) * 3) calc(var(--spacing) * 4) calc(var(--spacing) * 4);
 }
 .chat-composer-hint {
   display: inline-flex;
@@ -5099,6 +5602,18 @@ details[open] > .chat-tool-row .chat-tool-chevron,
 .term-agent[data-background] .term-agent-dot {
   background-color: var(--color-term-mode);
 }
+/* A background command's row: the terminal glyph where an agent's dot is,
+   breathing the same way. Twice the dot's size, so it gives back the
+   difference at each side and the text column stays where the dot puts it. */
+.term-agent-icon {
+  flex-shrink: 0;
+  align-self: center;
+  inline-size: calc(var(--spacing) * 3);
+  block-size: calc(var(--spacing) * 3);
+  margin-inline: calc(var(--spacing) * -0.75);
+  color: var(--color-term-mode);
+  animation: pulse-dot calc(var(--default-transition-duration) * 10) ease-in-out infinite;
+}
 /* Each new step: a ring leaves the dot once. The element is remounted per
    step, so the one-shot animation is the tick. */
 .term-agent-tick {
@@ -5204,7 +5719,8 @@ button.term-agent-model:focus-visible {
   }
   .chat-turn-copy[data-copied='true'] svg,
   .chat-send svg,
-  .term-agent-dot {
+  .term-agent-dot,
+  .term-agent-icon {
     animation: none;
     transition-property: opacity;
   }

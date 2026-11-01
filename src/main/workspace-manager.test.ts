@@ -67,9 +67,32 @@ describe.each(eachTestPorts())('WorkspaceManager on %s', (_name, makePorts) => {
       pins: [],
       pinsMigrated: true,
       lastActiveWorkspaceId: null,
-      activeWorkspaceId: null
+      activeWorkspaceId: null,
+      revision: 0,
+      instance: expect.any(String)
     })
     expect(fs.existsSync(path.join(ports.dir, 'workspace-state.json'))).toBe(true)
+  })
+
+  // The stamp (PRDCT-3405): what a window compares a fold against.
+  it('stamps the state per process: the revision moves at every registry or pins write, never on disk', () => {
+    const ports = makePorts()
+    const manager = new WorkspaceManager(ports)
+    const { instance } = manager.load()
+    expect(manager.updateRegistry([])).toEqual({ revision: 1, instance })
+    expect(manager.updatePins('ws-1', [pin('p', 'ws-1')])).toEqual({ revision: 2, instance })
+    expect(manager.updatePins(null, [])).toEqual({ revision: 3, instance })
+    // The last-active workspace is not in the change event: no revision for it.
+    manager.setLastActive('ws-1')
+    expect(manager.load()).toMatchObject({ revision: 3, instance })
+    // Nothing of the stamp reaches the file: a fresh process starts over.
+    expect(readFile(ports.dir, 'workspace-state.json')).not.toHaveProperty('revision')
+    expect(readFile(ports.dir, 'workspace-state.json')).not.toHaveProperty('instance')
+    const fresh = new WorkspaceManager(ports)
+    expect(fresh.load().revision).toBe(0)
+    expect(fresh.load().instance).not.toBe(instance)
+    // Two managers are two instances, even on the same folder.
+    expect(new WorkspaceManager(ports).load().instance).not.toBe(fresh.load().instance)
   })
 
   it('persists the registry, the pins and the last-active, and a fresh manager reads them back', () => {

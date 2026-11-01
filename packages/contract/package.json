@@ -8,6 +8,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./api": "./src/api.ts",
+    "./attachments": "./src/attachments.ts",
     "./clients": "./src/clients.ts",
     "./env": "./src/env.ts",
     "./errors": "./src/errors.ts",
@@ -20,7 +21,16 @@
     "./workspace-files": "./src/workspace-files/index.ts",
     "./views": "./src/views.ts",
     "./view-deadlines": "./src/view-deadlines.ts",
-    "./agent-tools": "./src/agent-tools.ts"
+    "./agent-tools": "./src/agent-tools.ts",
+    "./plugins": "./src/plugins.ts",
+    "./files": "./src/files.ts",
+    "./fleet": "./src/fleet.ts",
+    "./requests": "./src/requests.ts",
+    "./sidebar/layout": "./src/sidebar/layout.ts",
+    "./git": "./src/git.ts",
+    "./server-info": "./src/server-info.ts",
+    "./release-version": "./src/release-version.ts",
+    "./upgrade-failure": "./src/upgrade-failure.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"

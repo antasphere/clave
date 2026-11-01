@@ -1,3 +1,5 @@
+import { parseResourceKey, LOCAL_SERVER_ID } from '@clave/contract/fleet'
+import { useFleetStore } from '../../store/fleet-store'
 import { PluginsTab } from './PluginsTab'
 import { useSkinStore, skinAction } from '../../lib/skin'
 import { useState, useEffect, type ReactNode } from 'react'
@@ -11,6 +13,10 @@ import {
 } from '../../store/session-store'
 import { useWorkTrackerStore } from '../../store/work-tracker-store'
 import { UI_FONTS } from '../../lib/ui-font'
+import { availableMarks, resolveMark, LOGO_MARK } from '../../lib/marks'
+import { implementedMarks, nativeMarks } from '../plugins/native-marks'
+import { useRegistry } from '../../views/store'
+import { ClaudeLogo } from '../icons/cli-logos'
 import { useUserStore, USER_ICONS } from '../../store/user-store'
 import { PALETTE_KEYS, PALETTE_LABELS, fieldInk } from '../../lib/brand-field'
 import { BrandField } from '../ui/BrandField'
@@ -21,13 +27,14 @@ import {
   setActiveWorkspace,
   renameWorkspace,
   setWorkspaceProfile,
-  describeWorkspaceRemoval
+  describeWorkspaceRemoval,
+  moveWorkspace
 } from '../../lib/workspace-actions'
+import { useListReorder } from '../../hooks/use-list-reorder'
 import { UserIconDisplay, ICON_MAP } from '../ui/UserIconDisplay'
 import { CheckIcon } from '@heroicons/react/24/solid'
 import {
   TrashIcon,
-  PlusIcon,
   PencilIcon,
   FolderIcon,
   ShieldCheckIcon,
@@ -52,6 +59,9 @@ import {
 } from './primitives'
 import { KeymapSettings } from './KeymapSettings'
 import { AgentsSettings } from './AgentsSettings'
+import { AudioSettings } from './AudioSettings'
+import { ServersSettings } from './ServersSettings'
+import { AddWorkspaceAction, ServerWorkspaceRows } from './ServerWorkspaces'
 
 /** One seed for every swatch in the field picker: the row is a comparison of
  *  palettes, and twelve different draws would compare the draws instead. */
@@ -199,12 +209,14 @@ export function SettingsPanel(): React.JSX.Element {
         {settingsSection === 'general' && <GeneralSettings />}
         {settingsSection === 'agents' && <AgentsSettings />}
         {settingsSection === 'appearance' && <AppearanceSettings />}
+        {settingsSection === 'audio' && <AudioSettings />}
         {settingsSection === 'keymaps' && <KeymapSettings />}
         {settingsSection === 'updates' && <UpdatesTab />}
         {settingsSection === 'plugins' && <PluginsTab />}
         {settingsSection === 'usage' && <UsageSettings />}
         {settingsSection === 'activity' && <ActivitySettings />}
         {settingsSection === 'accounts' && <AccountsSettings />}
+        {settingsSection === 'servers' && <ServersSettings />}
       </div>
     </div>
   )
@@ -297,6 +309,7 @@ function AppearanceSettings(): React.JSX.Element {
       </SettingsSection>
 
       <DensitySection />
+      <AgentMarkSection />
       <TreeSeparatorsSection />
       <SidebarWidgetsSection />
       <MissionControlSection />
@@ -430,6 +443,93 @@ function FontRow(): React.JSX.Element {
         ))}
       </div>
     </SettingsRow>
+  )
+}
+
+/**
+ * What stands for an agent in the chrome, and for a tool call in flight
+ * (`lib/marks.ts`): the provider's logo, or a mark pack a bundled plugin
+ * contributes (`contributes.marks[]`). The row lists the logo and every pack
+ * this build can draw; the sample beside the switch shows the chosen mark at
+ * rest and at work, the two states every slot draws it in; a pack's own
+ * settings block, when it has one, follows the row while the pack is chosen.
+ * Hidden entirely when no pack is available: a choice of one is no choice.
+ */
+function AgentMarkSection(): React.JSX.Element | null {
+  const saved = useSessionStore((s) => s.agentMark)
+  const setAgentMark = useSessionStore((s) => s.setAgentMark)
+  const plugins = useRegistry((s) => s.plugins)
+  const marks = availableMarks(plugins, implementedMarks)
+  if (marks.length === 0) return null
+  const agentMark = resolveMark(saved, marks)
+  const pack = agentMark === LOGO_MARK ? null : nativeMarks[agentMark]
+  const options = [{ id: LOGO_MARK, title: 'Logo' }, ...marks]
+
+  return (
+    <SettingsSection
+      title="Agent mark"
+      description="What stands for an agent in the chat header, at the end of a transcript, and for a tool call while it runs; on its tab, a pack also takes the status slot on the right."
+    >
+      <SettingsCard>
+        <SettingsRow
+          label="Mark"
+          description="The logo keeps each provider's brand mark in the chat, and a tab says its state with a glyph on its right. A pack is one mark for every agent, moving while it works, on the tab too; plugins contribute them."
+        >
+          <div className="flex items-center gap-3">
+            <span
+              className="flex items-center gap-2 text-text-tertiary"
+              aria-hidden
+              data-testid="agent-mark-sample"
+            >
+              {pack ? (
+                <>
+                  <span className="pane-status-mark" title="At rest">
+                    <pack.Agent working={false} status="idle" slot="sample" />
+                  </span>
+                  <span className="pane-status-mark" title="Working">
+                    <pack.Agent working status="working" slot="sample" />
+                  </span>
+                </>
+              ) : (
+                <>
+                  <span className="sidebar-tab-icon" title="In the chat">
+                    <ClaudeLogo />
+                  </span>
+                  <span
+                    className="sidebar-tab-status"
+                    data-status="working"
+                    data-tone="grey"
+                    title="Working, on the tab"
+                  >
+                    <span className="sidebar-tab-spinner" />
+                  </span>
+                </>
+              )}
+            </span>
+            <div className="segmented" role="radiogroup" aria-label="Agent mark">
+              {options.map((mark) => (
+                <button
+                  key={mark.id}
+                  role="radio"
+                  aria-checked={agentMark === mark.id}
+                  onClick={() => setAgentMark(mark.id)}
+                  data-active={agentMark === mark.id}
+                  data-agent-mark-option={mark.id}
+                  className="segmented-item"
+                >
+                  {mark.title}
+                </button>
+              ))}
+            </div>
+          </div>
+        </SettingsRow>
+        {pack?.Settings && (
+          <div className="settings-row" data-testid="agent-mark-pack-settings">
+            <pack.Settings />
+          </div>
+        )}
+      </SettingsCard>
+    </SettingsSection>
   )
 }
 
@@ -770,6 +870,14 @@ function WorkspacesSection(): React.JSX.Element {
     setTimeout(() => setError(null), 4000)
   }
 
+  // This Mac's rows drag to reorder among themselves (#257); the server rows
+  // below carry their own, per server.
+  const { rowProps } = useListReorder((id, targetId, position) => {
+    moveWorkspace(id, targetId, position).catch(() => {
+      flashError('The new order could not be saved.')
+    })
+  })
+
   const handleAddWorkspace = async (): Promise<void> => {
     setError(null)
     setPendingAdd(null)
@@ -844,7 +952,12 @@ function WorkspacesSection(): React.JSX.Element {
               { value: NO_PROFILE, label: 'No profile' }
             ]
             return (
-              <div key={ws.id} className="settings-row" data-workspace-row={ws.id}>
+              <div
+                key={ws.id}
+                {...rowProps(ws.id, 'local')}
+                className="settings-row reorder-row"
+                data-workspace-row={ws.id}
+              >
                 <div
                   className="flex items-center gap-3 flex-1 min-w-0 cursor-pointer"
                   onClick={() => {
@@ -921,11 +1034,9 @@ function WorkspacesSection(): React.JSX.Element {
               </div>
             )
           })}
+          <ServerWorkspaceRows />
 
-          <button onClick={handleAddWorkspace} className="settings-row-action">
-            <PlusIcon className="w-4 h-4" />
-            Add workspace
-          </button>
+          <AddWorkspaceAction onThisMac={handleAddWorkspace} />
         </SettingsCard>
 
         {/* Removal confirmation — spells out the cascade before anything happens */}
@@ -1026,6 +1137,13 @@ function TrustedFoldersSection({
   roots: string[]
   onRevoke: (root: string) => void
 }): React.JSX.Element | null {
+  const connections = useFleetStore((s) => s.connections)
+  const label = (root: string): string => {
+    const ref = parseResourceKey('file', root)
+    return ref.serverId === LOCAL_SERVER_ID
+      ? root
+      : `${ref.id} on ${connections.find((c) => c.id === ref.serverId)?.name ?? ref.serverId}`
+  }
   if (roots.length === 0) return null
   return (
     <SettingsSection
@@ -1042,8 +1160,8 @@ function TrustedFoldersSection({
           <div key={root} className="settings-row">
             <div className="flex items-center gap-3 flex-1 min-w-0">
               <FolderIcon className="w-4 h-4 flex-shrink-0 text-text-tertiary" />
-              <p className="settings-row-title truncate" title={root}>
-                {root}
+              <p className="settings-row-title truncate" title={label(root)}>
+                {label(root)}
               </p>
             </div>
             <div className="settings-row-controls">

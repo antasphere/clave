@@ -23,6 +23,15 @@ export interface Workspace {
   createdAt: number
 }
 
+/** A workspace that lives on a connected Clave server (#241): its id is the
+ *  server's own id wrapped as a remote key, `resourceKey('workspace',
+ *  serverId, id)` in `@clave/contract/fleet`. This Mac's registry never holds
+ *  one, so main takes it on trust for a window to show and persists it on
+ *  the window; the renderer reads the server's registry for everything else. */
+export function isServerWorkspaceId(id: unknown): id is string {
+  return typeof id === 'string' && id.startsWith('clave-owner:workspace:')
+}
+
 /** Everything persisted in <userData>/workspace-state.json. The main process
  *  stores `pins` opaquely (the renderer's pinned-store owns their shape), the
  *  same way the sidebar layouts store groups — main is dumb, crash-safe
@@ -66,3 +75,20 @@ export interface WorkspaceStateFile {
    *  renderer imports localStorage pins (Phase B) and flips it true. */
   pinsMigrated: boolean
 }
+
+/** Where a copy of the registry and the pins stands (PRDCT-3405). `revision`
+ *  is bumped by the process holding the state at every registry or pins
+ *  write; `instance` names that process, minted when it starts and never
+ *  written to disk. Two copies compare by revision only within one
+ *  instance: an attached window that booted on main's copy and reached the
+ *  server later meets a second instance, whose stamp it adopts. The window
+ *  keeps the last stamp it loaded, wrote or took in and drops any fold that
+ *  is not newer, which is what keeps a catch-up read older than the
+ *  window's own write from resetting the pins that write just loaded. */
+export interface WorkspaceStamp {
+  revision: number
+  instance: string
+}
+
+/** The state as `workspace:load` answers it: the file, stamped. */
+export interface WorkspaceState extends WorkspaceStateFile, WorkspaceStamp {}

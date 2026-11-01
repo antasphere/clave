@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
-import { CheckIcon, ChevronDownIcon } from '@heroicons/react/24/outline'
+import { CheckIcon, ChevronDownIcon, CommandLineIcon } from '@heroicons/react/24/outline'
 import { ConfirmDialog } from '@clave/ui/components'
 import { claudeModelName, findClaudeModel } from '../../../src/shared/claude-models'
 import { compactTokens, type SubAgent } from './terminal-status'
@@ -82,19 +82,21 @@ const AGENT_MODELS = (['opus', 'fable', 'sonnet', 'haiku'] as const).map((alias)
 }))
 
 /** The model chip on a subagent's row and the menu that relaunches the agent
- *  on another. Only a background agent can be stopped on its own; one the
- *  turn waits on shows its model and offers no menu. */
+ *  on another. Only a background agent can be stopped on its own, and only
+ *  where the conversation can relaunch it (`onPick`); any other shows its
+ *  model, by the provider's own name when it is not a Claude one, and offers
+ *  no menu. */
 function AgentModel({
   agent,
   onPick
 }: {
   agent: SubAgent
-  onPick: (alias: string) => void
+  onPick?: (alias: string) => void
 }): React.JSX.Element {
-  const name = claudeModelName(agent.model)
+  const name = claudeModelName(agent.model) ?? agent.model
   const label = name ?? '…'
   const title = name ? `Runs on ${name}` : 'Its model is named at its first answer'
-  if (!agent.taskId)
+  if (!agent.taskId || !onPick)
     return (
       <span className="term-agent-model" title={title}>
         {label}
@@ -143,20 +145,28 @@ function AgentModel({
   )
 }
 
-/** The subagents running now, stacked under the status line: what each is,
- *  what it was asked, the model it runs on, how many steps it has taken, how
- *  full its own context is and how long it has run. The dot is the loader:
- *  it breathes while the agent works, rings once at each new step, and goes
- *  still once the agent has been quiet a minute, which the row then says;
- *  its last step is in the row's tooltip, not on the line. A row folds open
- *  as its agent starts and folds shut as it ends, so the stack is held for the
- *  length of the fold after an agent has gone; the stack itself folds away
- *  with its last row. */
+/** The work running now, stacked under the status line. A subagent's row
+ *  says what it is, what it was asked, the model it runs on, how many steps it
+ *  has taken, how full its own context is and how long it has run; a
+ *  command's row (background work only, `shownWork`) says the command and how
+ *  long it has run, behind a terminal glyph, from its call's start. The dot (the glyph,
+ *  for a command) is the loader: it breathes while the work runs; an agent's
+ *  rings once at each new step and
+ *  goes still once the agent has been quiet a minute, which the row then
+ *  says; its last step is in the row's tooltip, not on the line. A command
+ *  takes no steps, so it is never called quiet. A row folds open as its work
+ *  starts and folds shut as it ends, so the stack is held for the length of
+ *  the fold after a row has gone; the stack itself folds away with its last
+ *  row. */
 export function SubAgentStack({
   agents,
+  canRelaunch,
   onRelaunch
 }: {
   agents: SubAgent[]
+  /** Whether the conversation can launch this agent again; a row it says no
+   *  to, and every command's row, offers no relaunch. */
+  canRelaunch: (agent: SubAgent) => boolean
   /** Stop the agent and have the conversation launch it again on `alias`. */
   onRelaunch: (agent: SubAgent, alias: string) => void
 }): React.JSX.Element | null {
@@ -209,32 +219,51 @@ export function SubAgentStack({
   ]
   return (
     <div className="term-agents" data-empty={running ? undefined : 'true'}>
-      <ul className="term-agents-list" aria-label="Subagents">
+      <ul className="term-agents-list" aria-label="Running tasks">
         {rows.map(({ agent, gone }) => {
-          const quiet = !gone && now - agent.lastActiveAt >= QUIET_MS
+          const shell = agent.kind === 'shell'
+          const quiet = !gone && !shell && now - agent.lastActiveAt >= QUIET_MS
           return (
             <li
               key={agent.id}
               className="term-agent"
+              data-kind={agent.kind}
               data-background={agent.background || undefined}
               data-quiet={quiet || undefined}
               data-leaving={gone || undefined}
             >
               <div
                 className="term-agent-row"
-                title={agent.lastAction ? `Last step: ${agent.lastAction}` : 'No step yet'}
+                title={
+                  shell
+                    ? `${agent.background ? 'Running in the background' : 'Running'}: ${agent.description}`
+                    : agent.lastAction
+                      ? `Last step: ${agent.lastAction}`
+                      : 'No step yet'
+                }
               >
-                {/* Keyed on the step count: each new step mounts a fresh
-                    ring, whose one-shot animation is the tick. */}
-                <span className="term-agent-dot" aria-hidden="true">
-                  {agent.toolCount > 0 && (
-                    <span key={agent.toolCount} className="term-agent-tick" />
-                  )}
-                </span>
-                <span className="term-agent-type">{agent.type}</span>
+                {shell ? (
+                  <CommandLineIcon className="term-agent-icon" aria-hidden="true" />
+                ) : (
+                  /* Keyed on the step count: each new step mounts a fresh
+                     ring, whose one-shot animation is the tick. */
+                  <span className="term-agent-dot" aria-hidden="true">
+                    {agent.toolCount > 0 && (
+                      <span key={agent.toolCount} className="term-agent-tick" />
+                    )}
+                  </span>
+                )}
+                {!shell && <span className="term-agent-type">{agent.type}</span>}
                 <span className="term-agent-description">{agent.description}</span>
                 <span className="term-agent-meta">
-                  <AgentModel agent={agent} onPick={(alias) => setAsked({ agent, alias })} />
+                  {!shell && (
+                    <AgentModel
+                      agent={agent}
+                      onPick={
+                        canRelaunch(agent) ? (alias) => setAsked({ agent, alias }) : undefined
+                      }
+                    />
+                  )}
                   {agent.toolCount > 0 && (
                     <span className="term-agent-steps">
                       {`${agent.toolCount} step${agent.toolCount === 1 ? '' : 's'}`}

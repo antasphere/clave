@@ -1,0 +1,374 @@
+import assert from 'node:assert/strict'
+import { existsSync, readFileSync, realpathSync } from 'node:fs'
+import path from 'node:path'
+import {
+  fleetWorld,
+  connectMac,
+  eventually,
+  owned,
+  request,
+  ownerReady,
+  clickReady,
+  showMac,
+  showServer,
+  step
+} from './fixtures/fleet-world.mjs'
+
+const row = (win, id) => win.locator(`[data-sidebar-item-id="${id}"]`)
+const chat = (win, id) => win.locator(`[data-session-id="${id}"] [data-testid="chat-view"]`)
+// Close the switcher and wait until its popover is gone, so a shortcut
+// pressed next reaches the window.
+async function closeSwitcher(win) {
+  const add = win.getByRole('button', { name: 'Add workspace…', exact: true })
+  if (await add.isVisible()) await win.keyboard.press('Escape')
+  await add.waitFor({ state: 'hidden' })
+}
+// Put a window on a workspace it already knows by id through the toolbar
+// switcher. showServer needs its server reachable to look the workspace up;
+// this reaches the workspace of a server that is offline now (#241).
+async function switchTo(win, id) {
+  const item = win.locator(`[data-workspace-id="${id}"]`)
+  await eventually(async () => {
+    if (!(await item.count())) {
+      await win.getByLabel('Switch workspace', { exact: true }).click()
+      await item.waitFor({ state: 'visible', timeout: 2_000 }).catch(() => {})
+    }
+    if (!(await item.count())) {
+      await closeSwitcher(win)
+      return false
+    }
+    if (
+      (await item.getAttribute('data-selected', { timeout: 2_000 }).catch(() => null)) === 'true'
+    ) {
+      await closeSwitcher(win)
+      return true
+    }
+    // A pane mounting after a launch can take focus and close the popover
+    // while it animates in: the click is retried from a fresh open.
+    await item.click({ timeout: 3_000 }).catch(() => {})
+    return false
+  }, `the window shows workspace ${id}`)
+}
+async function send(win, id, text, expected = text) {
+  await row(win, id).click()
+  await chat(win, id).locator('textarea:not(:disabled)').fill(text)
+  await chat(win, id).getByRole('button', { name: 'Send message', exact: true }).click()
+  await chat(win, id)
+    .locator('.chat-turn[data-role="assistant"]')
+    .filter({ hasText: expected })
+    .waitFor()
+}
+export async function run(t) {
+  const world = await fleetWorld('personal')
+  try {
+    const [a, b] = world.servers
+    const macA = await world.mac('a')
+    const win = macA.win
+    // Create the normal local terminal before any remote is focused.
+    await win.getByTitle(/^New terminal .*workspace root/).click()
+    const tile = win.locator('[data-terminal-tile]').first()
+    await tile.locator('.xterm').waitFor()
+    const localId = await tile.getAttribute('data-terminal-tile')
+    await win.evaluate(
+      (id) => window.electronAPI.writeSession(id, "printf 'LOCAL_ONLY\\n' > local-effect.txt\r"),
+      localId
+    )
+    await eventually(
+      () => existsSync(path.join(macA.root, 'local-effect.txt')),
+      'local terminal executes'
+    )
+    assert.equal(readFileSync(path.join(macA.root, 'local-effect.txt'), 'utf8'), 'LOCAL_ONLY\n')
+    await connectMac(macA, world.servers)
+    t.check('normal local terminal executes beside two connected personal servers', true)
+
+    const ownerA = macA.owners[0].id
+    const ownerB = macA.owners[1].id
+    // Remote tabs show only in a workspace of their own server (#241): the
+    // normal launch flow starts a session on the server of the workspace.
+    await showServer(macA, 0)
+    const localBefore = await win.evaluate(() => window.electronAPI.listSessions())
+    await win.keyboard.press('Meta+N')
+    let launched
+    await eventually(async () => {
+      launched = (await request(a, '/sessions')).find((s) => s.provider === 'claude')
+      return !!launched
+    }, 'Cmd+N in the server workspace starts the first agent on the empty owner')
+    assert.equal(
+      realpathSync(launched.cwd),
+      realpathSync(a.root),
+      'the launched agent uses the server workspace root'
+    )
+    await row(win, owned('session', ownerA, launched.id)).waitFor()
+    // The launch carries no server profile pick any more; the echo adapter the
+    // chat turn below needs is chosen explicitly on the owner.
+    await win.evaluate(
+      ({ owner, cwd }) =>
+        window.electronAPI.fleetStart(owner, cwd, {
+          claudeMode: true,
+          launchProfileId: 'dev-echo-adapter'
+        }),
+      { owner: ownerA, cwd: a.root }
+    )
+    let created
+    await eventually(async () => {
+      created = (await request(a, '/sessions')).find((s) => s.adapterId === 'echo')
+      return !!created
+    }, 'first remote agent exists on empty owner')
+    assert.equal(
+      realpathSync(created.cwd),
+      realpathSync(a.root),
+      'created agent uses selected server cwd'
+    )
+    assert.notEqual(realpathSync(created.cwd), realpathSync(macA.root))
+    assert.equal(created.adapterId, 'echo')
+    assert.deepEqual(await request(b, '/sessions'), [])
+    assert.deepEqual(
+      await win.evaluate(() => window.electronAPI.listSessions()),
+      localBefore,
+      'remote creation adds no local agent'
+    )
+    const firstAgent = (
+      await win.evaluate((id) => window.electronAPI.fleetSnapshot(id), ownerA)
+    ).sessions.find((s) => s.adapterId === 'echo')
+    assert.equal(firstAgent.id, owned('session', ownerA, created.id))
+    await send(win, firstAgent.id, 'Created on the empty remote through Mac A')
+    await showMac(macA)
+    await row(win, localId).waitFor()
+    await eventually(
+      async () => (await row(win, firstAgent.id).count()) === 0,
+      'the remote agent is hidden in the Mac workspace'
+    )
+    t.check(
+      'Mac UI creates the first remote agent at the server workspace root, only on its owner',
+      true
+    )
+
+    const report = world.load()
+    const id = report.values.first.sessionId
+    const groupId = report.values.first.groupId
+    const ka = owned('session', ownerA, id)
+    const kb = owned('session', ownerB, id)
+    await showServer(macA, 1)
+    await row(win, kb).waitFor()
+    await showServer(macA, 0)
+    await row(win, ka).waitFor()
+    const macB = await world.mac('b')
+    await macB.win.getByTitle(/^New terminal .*workspace root/).click()
+    const localB = macB.win.locator('[data-terminal-tile]').first()
+    await localB.locator('.xterm').waitFor()
+    const localBId = await localB.getAttribute('data-terminal-tile')
+    await connectMac(macB, world.servers)
+    const ba = owned('session', macB.owners[0].id, id)
+    const bb = owned('session', macB.owners[1].id, id)
+    await showServer(macB, 1)
+    await row(macB.win, bb).waitFor()
+    const macBOnA = await showServer(macB, 0)
+    await row(macB.win, ba).waitFor()
+    assert.notEqual(ka, kb)
+    await send(win, ka, 'Mac A writes only to owner one')
+    await row(macB.win, ba).click()
+    await chat(macB.win, ba)
+      .locator('.chat-turn[data-role="assistant"]')
+      .filter({ hasText: 'Mac A writes only to owner one' })
+      .waitFor()
+    assert.equal(
+      JSON.stringify(await request(b, `/sessions/history?id=${id}`)).includes(
+        'Mac A writes only to owner one'
+      ),
+      false
+    )
+    t.check(
+      'two real clients show distinct colliding owner IDs and share live history only within its owner',
+      true
+    )
+
+    // Put the same conversation at different scroll positions on the two
+    // devices, then preserve the second device's panes, draft and focus.
+    const longTurn =
+      '```text\n' +
+      Array.from({ length: 100 }, (_, i) => `Personal fleet history line ${i}`).join('\n') +
+      '\n```'
+    await showServer(macA, 1)
+    await send(win, kb, longTurn, 'Personal fleet history line 99')
+    await showServer(macB, 1)
+    await row(macB.win, bb).click()
+    const scrollB = chat(macB.win, bb).locator('.chat-scroll')
+    await eventually(
+      () => scrollB.evaluate((element) => element.scrollHeight > element.clientHeight + 100),
+      'conversation has a meaningful scroll range'
+    )
+    await scrollB.evaluate((element) => {
+      element.scrollTop = 0
+    })
+    await chat(win, kb)
+      .locator('.chat-scroll')
+      .evaluate((element) => {
+        element.scrollTop = element.scrollHeight
+      })
+    const panesBefore = await macB.win
+      .locator('[data-terminal-tile]:not([aria-hidden="true"])')
+      .evaluateAll((elements) =>
+        elements.map((element) => element.getAttribute('data-terminal-tile'))
+      )
+    const draft = chat(macB.win, bb).locator('textarea:not(:disabled)')
+    await draft.fill('Mac B local draft')
+    await draft.focus()
+    await win.evaluate(
+      async ({ owner, group }) => {
+        const snapshot = await window.electronAPI.fleetSnapshot(owner)
+        await window.electronAPI.fleetSaveLayout(
+          owner,
+          {
+            groups: snapshot.layout.groups.map((g) =>
+              g.id === group ? { ...g, name: 'Shared owner two name' } : g
+            ),
+            displayOrder: [...snapshot.layout.displayOrder].reverse()
+          },
+          snapshot.layout.revision
+        )
+      },
+      { owner: ownerB, group: owned('group', ownerB, groupId) }
+    )
+    await macB.win.getByRole('button', { name: 'Shared owner two name', exact: true }).waitFor()
+    assert.equal(await draft.inputValue(), 'Mac B local draft')
+    assert.equal(await draft.evaluate((element) => element === document.activeElement), true)
+    assert.equal(
+      await scrollB.evaluate((element) => element.scrollTop),
+      0,
+      'the other Mac scroll does not move this reader'
+    )
+    assert.deepEqual(
+      await macB.win
+        .locator('[data-terminal-tile]:not([aria-hidden="true"])')
+        .evaluateAll((elements) =>
+          elements.map((element) => element.getAttribute('data-terminal-tile'))
+        ),
+      panesBefore,
+      'shared sidebar changes preserve device-local panes'
+    )
+    const layouts = await Promise.all(
+      [win, macB.win].map((page, i) =>
+        page.evaluate(
+          (owner) => window.electronAPI.fleetSnapshot(owner),
+          i ? macB.owners[1].id : ownerB
+        )
+      )
+    )
+    assert.deepEqual(
+      layouts[0].layout.displayOrder.map((key) => decodeURIComponent(key.split(':').at(-1))),
+      layouts[1].layout.displayOrder.map((key) => decodeURIComponent(key.split(':').at(-1)))
+    )
+    t.check(
+      'shared group name and order propagate while the other Mac retains its panes, scroll, draft and focus',
+      true
+    )
+
+    // Both desktops stop consuming A. The process and history belong to A.
+    await step('personal detach Mac B from owner one', async () => {
+      await showServer(macB, 0)
+      await macB.win.evaluate(
+        (owner) => window.electronAPI.fleetDisconnect(owner),
+        macB.owners[0].id
+      )
+      await eventually(
+        async () =>
+          (await row(macB.win, ba)
+            .locator('[data-fleet-owner]')
+            .getAttribute('data-fleet-state')) === 'disconnected',
+        'Mac B observed intentional disconnect'
+      )
+    })
+    await step('personal quit original Mac A', () => macA.close())
+    assert.ok((await request(a, '/sessions')).some((s) => s.id === id))
+    await request(a, '/sessions/write', {
+      id,
+      input: { type: 'user_message', text: 'Produced with both Macs detached' }
+    })
+    assert.ok(
+      JSON.stringify(await request(a, `/sessions/history?id=${id}`)).includes(
+        'Produced with both Macs detached'
+      )
+    )
+    await step('personal reconnect Mac B and catch up', async () => {
+      await macB.win.evaluate((owner) => window.electronAPI.fleetConnect(owner), macB.owners[0].id)
+      await ownerReady(macB, macB.owners[0].id, ba)
+      await clickReady(row(macB.win, ba))
+      await chat(macB.win, ba)
+        .locator('.chat-turn[data-role="assistant"]')
+        .filter({ hasText: 'Produced with both Macs detached' })
+        .waitFor()
+    })
+    const returned = await step('personal reopen Mac A on saved data', () =>
+      world.mac('a', { reuse: macA.dir })
+    )
+    returned.owners = await returned.win.evaluate(() => window.electronAPI.fleetList())
+    await step('personal startup reconnect Mac A and catch up', async () => {
+      await eventually(async () => {
+        try {
+          return !!(await returned.win.evaluate(
+            (id) => window.electronAPI.fleetSnapshot(id),
+            ownerA
+          ))
+        } catch {
+          return false
+        }
+      }, 'returned Mac A reaches owner one')
+      await showServer(returned, 0)
+      await ownerReady(returned, ownerA, ka)
+      await clickReady(row(returned.win, ka))
+      await chat(returned.win, ka)
+        .locator('.chat-turn[data-role="assistant"]')
+        .filter({ hasText: 'Produced with both Macs detached' })
+        .waitFor()
+    })
+    t.check(
+      'quit, detached-client interval, reconnect and startup restore preserve running sessions and catch-up history',
+      true
+    )
+
+    // One live owner and the local shell stay usable while A is unavailable.
+    await switchTo(macB.win, macBOnA)
+    await row(macB.win, ba).waitFor()
+    await a.stop()
+    await eventually(
+      async () =>
+        (await row(macB.win, ba).locator('[data-fleet-owner]').getAttribute('data-fleet-state')) !==
+        'connected',
+      'Mac B sees owner one go offline'
+    )
+    assert.equal(await row(macB.win, ba).count(), 1)
+    await showServer(macB, 1)
+    await send(macB.win, bb, 'Owner two remains usable while owner one is offline')
+    await macB.win.evaluate(
+      (id) => window.electronAPI.writeSession(id, "printf 'STILL_LOCAL\\n' > offline-local.txt\r"),
+      localBId
+    )
+    await eventually(
+      () => existsSync(path.join(macB.root, 'offline-local.txt')),
+      'local terminal survives a remote outage'
+    )
+    assert.equal(readFileSync(path.join(macB.root, 'offline-local.txt'), 'utf8'), 'STILL_LOCAL\n')
+    await assert.rejects(macB.win.evaluate((key) => window.electronAPI.sessionsHistory(key), ba))
+    t.check('one offline owner retains its rows while another owner remains usable', true)
+
+    await showServer(returned, 1)
+    await row(returned.win, kb).waitFor()
+    await row(macB.win, bb).waitFor()
+    await macB.win.evaluate((key) => window.electronAPI.killSession(key), bb)
+    await eventually(
+      async () => (await row(macB.win, bb).count()) === 0,
+      'close propagates on Mac B'
+    )
+    await eventually(
+      async () => (await row(returned.win, kb).count()) === 0,
+      'close propagates on returned Mac A'
+    )
+    await switchTo(macB.win, macBOnA)
+    assert.equal(await row(macB.win, ba).count(), 1)
+    assert.deepEqual(macB.errors, [])
+    assert.deepEqual(returned.errors, [])
+    t.check('closing one colliding tab propagates to both Macs and preserves the other owner', true)
+  } finally {
+    await world.close()
+  }
+}

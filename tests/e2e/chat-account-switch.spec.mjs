@@ -1,8 +1,9 @@
-// Pinned to the in-process server (wave 3 of the server/client split,
-// PRDCT-3293): this spec opens a session through the agent tools, which main
-// still answers from its own session host; attached, that host is not the
-// server's, so the pin goes when the tools answer from the server (lane D,
-// PRDCT-3294). Not a known failure.
+// Pinned to the in-process server (re-examined by wave 5, lane C,
+// PRDCT-3433): the spec wraps main's session host and the shell's quota
+// reads directly, which only the in-process server consults. The restart
+// itself takes the server road in every mode since the fix of the
+// separate-server switch (account-switch-served.spec.mjs proves it there);
+// the hold below wraps that road and the IPC one. Not a known failure.
 // A live chat tab moved to another account by hand stays a live chat tab
 // (ADR 0002). On 2026-09-28 a Claude chat tab moved while idle came back as
 // "Session ended (exit 1)" with a disabled composer: the old process's exit —
@@ -35,6 +36,11 @@ import {
 
 const DIR = userDataDir('chat-account-switch')
 const ROOT = fixturePath('chat-switch-root')
+const PROVIDER_HOMES = {
+  CLAUDE_CONFIG_DIR: path.join(ROOT, 'provider-homes/claude'),
+  CODEX_HOME: path.join(ROOT, 'provider-homes/codex'),
+  PI_CODING_AGENT_DIR: path.join(ROOT, 'provider-homes/pi')
+}
 const TRANSCRIPTS = fixturePath('chat-switch-transcripts')
 const PROCESSES = path.join(ROOT, 'processes.jsonl')
 const INPUTS = path.join(ROOT, 'inputs.jsonl')
@@ -48,6 +54,7 @@ function writeFixtures() {
   rmSync(TRANSCRIPTS, { recursive: true, force: true })
   mkdirSync(`${ROOT}/bin`, { recursive: true })
   mkdirSync(TRANSCRIPTS, { recursive: true })
+  for (const home of Object.values(PROVIDER_HOMES)) mkdirSync(home, { recursive: true })
   seedWorkspaces(DIR, { workspaces: [WS], activeWorkspaceId: WS.id, fresh: true })
   seedTrustedRoots(DIR, [ROOT])
   writeFileSync(
@@ -101,11 +108,24 @@ const lines = (file) =>
 export async function run(t) {
   writeFixtures()
   const env = {
+    ...PROVIDER_HOMES,
     SHELL: `${ROOT}/bin/bash`,
     PATH: `${ROOT}/bin:${process.env.PATH}`,
     CLAVE_TRANSCRIPTS_ROOT: TRANSCRIPTS
   }
-  const { app, win } = await launchApp(DIR, { server: 'in-process', env })
+  const { app, win, fixture } = await launchApp(DIR, {
+    server: 'in-process',
+    args: ['--test-no-machine-usage'],
+    env
+  })
+  t.check(
+    'the actual shell disables machine-login usage',
+    await app.evaluate(() => process.argv.includes('--test-no-machine-usage'))
+  )
+  t.check(
+    'the actual sessions host disables machine-login usage',
+    await fixture.evaluate(() => process.argv.includes('--test-no-machine-usage'))
+  )
   // The old process's end (below) travels through the session host, and a
   // wrap only reaches the subscriptions made after it: so the host's stream is
   // wrapped here, before the tab exists, and asks a hold the move installs
@@ -227,17 +247,23 @@ export async function run(t) {
           held.push(flush)
           return true
         }
-        const handlers = ipcMain._invokeHandlers
-        const restart = handlers.get('pty:restart')
-        handlers.set('pty:restart', async (...a) => {
-          restarting = true
-          try {
-            return await restart(...a)
-          } finally {
-            restarting = false
-            setTimeout(() => held.splice(0).forEach((flush) => flush()), 50)
+        const around = (fn) =>
+          async function (...a) {
+            restarting = true
+            try {
+              return await fn.apply(this, a)
+            } finally {
+              restarting = false
+              setTimeout(() => held.splice(0).forEach((flush) => flush()), 50)
+            }
           }
-        })
+        // The window's restart reaches the server's `RestartSession`, which
+        // restarts through the host; `pty:restart` is the IPC road a window
+        // without a server still takes. Both are held the same way.
+        const host = globalThis.__claveE2E.sessionHost
+        host.restart = around(host.restart)
+        const handlers = ipcMain._invokeHandlers
+        handlers.set('pty:restart', around(handlers.get('pty:restart')))
       },
       { id }
     )

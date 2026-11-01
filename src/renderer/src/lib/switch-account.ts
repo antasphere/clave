@@ -1,3 +1,4 @@
+import { isRemoteKey } from './fleet-identity'
 import { useSessionStore, type Session } from '../store/session-store'
 import {
   useClaudeProfileStore,
@@ -14,7 +15,11 @@ import {
   resolveCodexAccount,
   describeCodexAccountAuth
 } from '../store/codex-account-store'
-import { accountsUsageFor, type AccountUsageSummary } from '../store/usage-store'
+import {
+  accountsUsageFor,
+  claudeUsageForModel,
+  type AccountUsageSummary
+} from '../store/usage-store'
 import {
   explicitAccountId,
   isExhausted,
@@ -23,6 +28,7 @@ import {
   type PoolAccount
 } from './account-pool'
 import type { CodexAccount } from '../../../preload/index.d'
+import { abandonOwnRestart, beginOwnRestart, ownAnswerApplies } from './restart-ownership'
 
 /**
  * The pool at work (ADR 0002): which account a launch lands on, which one a
@@ -118,20 +124,33 @@ export function resolveAccountRef(
 export function sessionAccountExhausted(session: Session): boolean {
   const provider = accountProviderOf(session)
   if (!provider) return false
-  return isExhausted(accountsUsageFor(provider)[sessionAccountId(session, provider)])
+  return isExhausted(sessionAccountUsage(session))
 }
 
 /** The summary of the account a session runs on, for a badge. */
 export function sessionAccountUsage(session: Session): AccountUsageSummary | undefined {
   const provider = accountProviderOf(session)
   if (!provider) return undefined
-  return accountsUsageFor(provider)[sessionAccountId(session, provider)]
+  const summary = accountsUsageFor(provider)[sessionAccountId(session, provider)]
+  return provider === 'claude' ? claudeUsageForModel(summary, session.model) : summary
+}
+
+function sessionPoolUsage(
+  session: Session,
+  provider: AccountProvider
+): Record<string, AccountUsageSummary | undefined> {
+  const usage = accountsUsageFor(provider)
+  if (provider !== 'claude') return usage
+  return Object.fromEntries(
+    Object.entries(usage).map(([id, summary]) => [id, claudeUsageForModel(summary, session.model)])
+  )
 }
 
 /** One account a session could move to, as the Switch account menu draws it. */
 export interface SwitchTarget {
   id: string
   provider: AccountProvider
+  model?: string
   label: string
   /** How the account signs in ("Max 20x", "API key"), for the preview. */
   auth: string
@@ -146,15 +165,17 @@ export interface SwitchTarget {
 /** The accounts a session could move to, in the menu's order: those with
  *  headroom first, each side by its soonest weekly reset. */
 export function sessionSwitchTargets(session: Session): SwitchTarget[] {
+  if (isRemoteKey(session.id)) return []
   const provider = accountProviderOf(session)
   if (!provider) return []
   const current = sessionAccountId(session, provider)
-  const usage = accountsUsageFor(provider)
+  const usage = sessionPoolUsage(session, provider)
   return switchTargets(poolAccounts(provider), usage, current).map((t) => {
     const account = provider === 'codex' ? getCodexAccount(t.id) : getClaudeProfile(t.id)
     return {
       ...t,
       provider,
+      model: session.model,
       label: account.label,
       auth:
         provider === 'codex'
@@ -173,7 +194,7 @@ export function nextAccountFor(session: Session): string | null {
   const current = sessionAccountId(session, provider)
   const next = pickAccount({
     accounts: poolAccounts(provider),
-    usage: accountsUsageFor(provider),
+    usage: sessionPoolUsage(session, provider),
     preferredId: current,
     leavingId: current,
     preferSessionHeadroom: true
@@ -250,18 +271,31 @@ export async function restartSessionProcess(
   const session = store.sessions.find((s) => s.id === sessionId)
   if (!session) return { ok: false, resumed: false, error: 'No such session' }
   store.setSessionRestarting(sessionId, true)
+  // Marked before the call: the server's `session.restarted` push for this
+  // very move can reach the window before the answer does, and only one of
+  // the two may remount the pane (`restart-ownership.ts`).
+  const requestId = crypto.randomUUID()
+  beginOwnRestart(sessionId, requestId)
   const result = await window.electronAPI
-    .restartSession(sessionId, {
-      ...options.overrides,
-      resendRejected: options.resendRejected === true
-    })
+    .restartSession(
+      sessionId,
+      {
+        ...options.overrides,
+        resendRejected: options.resendRejected === true
+      },
+      requestId
+    )
     .catch((err) => ({
       error: err instanceof Error ? err.message : String(err)
     }))
   if ('error' in result) {
+    abandonOwnRestart(requestId)
     useSessionStore.getState().setSessionRestarting(sessionId, false)
     return { ok: false, resumed: false, error: result.error }
   }
+  // The push applied it already: the answer only reports.
+  if (!ownAnswerApplies(sessionId, requestId, result.requestId))
+    return { ok: true, resumed: result.resumed }
   const current = useSessionStore.getState()
   current.applySessionRestart(sessionId, {
     claudeSessionId: result.claudeSessionId,

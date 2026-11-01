@@ -29,5 +29,11 @@ export * as WorkspaceFiles from './workspace-files'
 export * as Views from './views'
 // ── Wave 4, lane C: the agent tools' address and tokens ──
 export * as AgentTools from './agent-tools'
+// ── Wave 5, lane C: the plugins ──
+export * as Plugins from './plugins'
+// ── Wave wcs1023, lane C: the git panel on a server's checkout ──
+export * as Git from './git'
+// ── Issue #266: the server's version and its self-upgrade ──
+export * as ServerInfo from './server-info'
 
 // ── Lane B: terminals · Lane D: settings served ──

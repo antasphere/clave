@@ -8,7 +8,8 @@
  */
 import type { ReleaseOutcome, SessionRecord } from '@clave/contract/sessions'
 import { ptyManager } from '../pty-manager'
-import { recordsForIds } from './records-by-id'
+import { hostedListing, recordsForIds } from './records-by-id'
+import { sessionManager } from './session-manager'
 import { sessionWindows } from './windows'
 
 export interface SessionRecordsSource {
@@ -17,17 +18,28 @@ export interface SessionRecordsSource {
   readonly release: (ids: ReadonlyArray<string>, fallbackWindowKey?: string) => ReleaseOutcome
 }
 
+/** What this process holds. A chat is alive once its provider was started,
+ *  not merely registered: the restore keeps an unstarted one dormant, so
+ *  opening it is still what starts its agent (issue #183). */
+const hosted: Parameters<typeof hostedListing>[1] = {
+  hosts: (id) => ptyManager.getSession(id) !== undefined,
+  isAlive: (id) =>
+    sessionManager.get(id)?.transport === 'events'
+      ? sessionManager.started(id)
+      : ptyManager.getSession(id)?.alive === true,
+  ids: () => ptyManager.getAllSessions().map((s) => s.id),
+  recordOf: (id) => ptyManager.getSessionRecord(id) ?? undefined
+}
+
 /** The records over the app's own terminal manager. */
 export const sessionRecords: SessionRecordsSource = {
   listAdoptableRecords: (ids) => {
     const all = ptyManager.listAdoptableSessions()
-    if (ids === undefined) return all as SessionRecord[]
-    // By id, the records of the sessions this process already runs come back
-    // too, marked `running` (records-by-id.ts, the rule's own test).
-    return recordsForIds(all, ids, {
-      recordOf: (id) => ptyManager.getSessionRecord(id) ?? undefined,
-      isAlive: (id) => ptyManager.getSession(id)?.alive === true
-    }) as SessionRecord[]
+    // A session this process hosts is marked `running` wherever it is
+    // answered, and its record comes back even where the backend's listing
+    // left it out (records-by-id.ts, the rule's own test).
+    if (ids === undefined) return hostedListing(all, hosted) as SessionRecord[]
+    return recordsForIds(all, ids, hosted) as SessionRecord[]
   },
   discardRecord: (key) => ptyManager.discardSessionRecord(key),
   release: (ids, fallbackWindowKey) => {

@@ -1,0 +1,13 @@
+{
+  "id": "clave.orbs",
+  "name": "Thinking orbs",
+  "version": "1.0.0",
+  "kind": "plugin",
+  "engines": { "clave": ">=2.2.0 <3.0.0" },
+  "ui": "native",
+  "main": "main.mjs",
+  "contributes": {
+    "marks": [{ "id": "orbs", "title": "Orb", "slots": ["agent", "tool"] }]
+  },
+  "permissions": []
+}

@@ -42,7 +42,7 @@ export function workspaceFiles(): WorkspaceFiles {
 /** What the dialog shows for a review: the shape the harness's
  *  `stubReviewDialog` records (`message`, `detail`) and asserts on; the text
  *  itself is `workspace-files-dialog.ts`, tested without Electron. */
-export function reviewDialog(review: ReviewRequest): MessageBoxOptions {
+export function reviewDialog(review: ReviewRequest & { server?: string }): MessageBoxOptions {
   const text = reviewDialogText(review)
   return {
     type: 'warning',
@@ -61,7 +61,7 @@ export function reviewDialog(review: ReviewRequest): MessageBoxOptions {
 /** Show the review on a window and answer the person's word. */
 export async function showReview(
   win: BrowserWindow | null,
-  review: ReviewRequest
+  review: ReviewRequest & { server?: string }
 ): Promise<ReviewAnswer> {
   const options = reviewDialog(review)
   const { response, checkboxChecked } = win

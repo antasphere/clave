@@ -96,7 +96,8 @@ export interface SettingsClient {
     readonly load: () => Promise<WorkspaceState>
     readonly updateRegistry: (
       workspaces: ReadonlyArray<Workspace>,
-      origin?: string
+      origin?: string,
+      base?: { revision: number; instance: string }
     ) => Promise<RegistryWriteResult>
     readonly updatePins: (
       scope: string | null,
@@ -193,8 +194,12 @@ export function settingsClient(callApi: Call): SettingsClient {
     },
     workspaces: {
       load: () => call((g) => g.loadWorkspaceState({ payload: {} })),
-      updateRegistry: (workspaces, from) =>
-        call((g) => g.updateWorkspaceRegistry({ payload: { workspaces, ...origin(from) } })),
+      updateRegistry: (workspaces, from, base) =>
+        call((g) =>
+          g.updateWorkspaceRegistry({
+            payload: { workspaces, ...origin(from), ...(base ? { base } : {}) }
+          })
+        ),
       updatePins: (scope, pins, from) =>
         call((g) => g.updateWorkspacePins({ payload: { scope, pins, ...origin(from) } })),
       setLastActive: (workspaceId) =>

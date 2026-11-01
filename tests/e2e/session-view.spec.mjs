@@ -95,7 +95,7 @@ export async function run(t) {
     await callMcp(app, 'setSessionView', { sessionId, url: PAGE, title: 'Dash' })
     await sleep(1500)
 
-    // Attach must not steal the pane — the view arrives on the row's icon.
+    // Attach must not steal the pane — the view arrives on the row's view glyph.
     const afterAttach = await paneCentre(win)
     t.check(
       'attaching alone does not take over the pane',
@@ -105,14 +105,20 @@ export async function run(t) {
     const icon = await win.evaluate(
       () =>
         [
-          ...document.querySelectorAll('[data-sidebar-item-type="session"] .tab-status[data-view]')
+          ...document.querySelectorAll(
+            '[data-sidebar-item-type="session"] .sidebar-tab-view[data-view]'
+          )
         ].filter((s) => s.getAttribute('title') === 'Dash').length
     )
-    t.equal("and makes the row's logo open it", icon, 1)
+    t.equal("and makes the row's view glyph open it", icon, 1)
 
     // Open it.
     await win.evaluate(() =>
-      [...document.querySelectorAll('[data-sidebar-item-type="session"] .tab-status[data-view]')]
+      [
+        ...document.querySelectorAll(
+          '[data-sidebar-item-type="session"] .sidebar-tab-view[data-view]'
+        )
+      ]
         .find((s) => s.getAttribute('title') === 'Dash')
         ?.click()
     )
@@ -153,6 +159,29 @@ export async function run(t) {
       'and the session is still alive after being hidden behind the view',
       (await callMcp(app, 'list', {})).sessions.find((s) => s.id === sessionId)?.alive === true
     )
+
+    // The keyboard road (verifier round 1 of PRDCT-3933): the glyph is a
+    // span inside the row's button, and a real Enter or Space on it used to
+    // open the view and then click the row, which showed the terminal again.
+    // A real key press, never a synthetic keydown, is what proves it.
+    const glyph = win.locator(`[data-sidebar-item-id="${sessionId}"] .sidebar-tab-view[data-view]`)
+    for (const key of ['Enter', ' ']) {
+      await glyph.focus()
+      await win.keyboard.press(key)
+      await sleep(2000)
+      const byKey = await paneCentre(win)
+      t.equal(
+        `${key === ' ' ? 'Space' : key} on the focused view glyph opens the view and keeps it open`,
+        byKey.tag,
+        'WEBVIEW'
+      )
+      // Back to the terminal when the view did open; when it did not, the
+      // Terminal segment is in the DOM but hidden, so the next key still gets
+      // its own check instead of a 30 s timeout on a click nobody can make.
+      const toggle = win.locator('.segmented-item:has-text("Terminal")')
+      if (await toggle.isVisible().catch(() => false)) await toggle.click()
+      await sleep(1200)
+    }
   } finally {
     await app.close()
   }

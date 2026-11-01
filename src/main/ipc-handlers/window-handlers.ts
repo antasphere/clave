@@ -1,8 +1,9 @@
 import { ipcMain, BrowserWindow } from 'electron'
 import type { MoveResult } from '@clave/contract/sidebar'
 import { windowRegistry, type WindowIdentity } from '../window-registry'
-import { workspaceManager } from '../workspace-manager'
+import { windowWorkspaces, initialWindowWorkspace } from '../window-workspaces'
 import { windowState } from '../window-state'
+import { isServerWorkspaceId } from '../../shared/workspace-types'
 import { rehomeAck } from '../rehome-ack'
 import {
   rehomeSessions,
@@ -14,6 +15,7 @@ import {
   type RehomePayload
 } from '../sidebar-layouts'
 import { serverClient } from '../mcp/server-client'
+import { getClaveServerEndpoint, isServerExternal } from '../server/endpoint'
 
 export type { MoveResult, RehomePayload }
 export { rehomeSessions }
@@ -38,7 +40,7 @@ export function broadcastIdentities(): void {
 export interface WindowHandlerDeps {
   /** Open a new window on a workspace — lives in main/index.ts next to
    *  createWindow; injected so this module never imports the entry. */
-  openWindow: (workspaceId: string | null) => { windowId: number }
+  openWindow: (workspaceId: string | null) => Promise<{ windowId: number }>
 }
 
 // ── Re-homing ────────────────────────────────────────────────────────────────
@@ -92,9 +94,31 @@ export async function moveSessionsToWindow(
 }
 
 export function registerWindowHandlers(deps: WindowHandlerDeps): void {
-  ipcMain.handle('window:identity', (event) => {
+  const initialized = new WeakSet<BrowserWindow>()
+  ipcMain.handle('window:identity', async (event) => {
     const win = BrowserWindow.fromWebContents(event.sender)
-    return win ? identityFor(win.id) : null
+    if (!win) return null
+    if (isServerExternal() && getClaveServerEndpoint() && !initialized.has(win)) {
+      // Windows still appear before the server boots. Resolve their saved
+      // workspace against that server before the renderer adopts sessions;
+      // a shell-local registry must not erase a valid saved choice.
+      const before = windowRegistry.getWorkspaceForWindow(win.id)
+      const state = await windowWorkspaces.load()
+      if (win.isDestroyed()) return null
+      if (windowRegistry.getWorkspaceForWindow(win.id) === before) {
+        const target =
+          isServerWorkspaceId(before) || state.workspaces.some((w) => w.id === before)
+            ? before
+            : initialWindowWorkspace(state)
+        if (target !== before) {
+          windowRegistry.setWindowWorkspace(win.id, target)
+          const key = windowRegistry.getKeyForWindow(win.id)
+          if (key) windowState.upsert(key, { workspaceId: target })
+        }
+      }
+      initialized.add(win)
+    }
+    return identityFor(win.id)
   })
 
   // macOS hides the traffic lights in fullscreen, so the chrome that was
@@ -115,28 +139,38 @@ export function registerWindowHandlers(deps: WindowHandlerDeps): void {
   // A window switching its workspace tells main FIRST, so the registry is
   // current when the next pty:spawn stamps its record (IPC is FIFO). Any
   // window may show any workspace; the switch is persisted so the window
-  // comes back on it, and becomes the last-active default.
-  ipcMain.handle('window:set-workspace', (event, workspaceId: unknown) => {
+  // comes back on it, and becomes the last-active default. A server
+  // workspace (#241) is in that server's registry, not this one: it is taken
+  // as given and persisted on the window, but never made the last-active
+  // default, which a windowless spawn here would be stamped with.
+  ipcMain.handle('window:set-workspace', async (event, workspaceId: unknown) => {
     const win = BrowserWindow.fromWebContents(event.sender)
     if (!win) return { ok: false as const, reason: 'no-window' as const }
     const target = typeof workspaceId === 'string' ? workspaceId : null
-    if (target !== null && !workspaceManager.isRegistered(target)) {
-      return { ok: false as const, reason: 'unknown-workspace' as const }
+    if (!isServerWorkspaceId(target)) {
+      const state = await windowWorkspaces.load()
+      if (target !== null && !state.workspaces.some((w) => w.id === target)) {
+        return { ok: false as const, reason: 'unknown-workspace' as const }
+      }
+      await windowWorkspaces.setLastActive(target)
     }
+    if (win.isDestroyed()) return { ok: false as const, reason: 'no-window' as const }
     windowRegistry.setWindowWorkspace(win.id, target)
     const key = windowRegistry.getKeyForWindow(win.id)
     if (key) windowState.upsert(key, { workspaceId: target })
-    workspaceManager.setLastActive(target)
     return { ok: true as const }
   })
 
   // The single reach for "a new window": the File menu, the popover, the
   // clave_open_window tool and the end-to-end harness all come through here.
   // No workspace → the asking window's own (the app once more, where you are).
-  ipcMain.handle('window:open', (event, workspaceId?: unknown) => {
+  ipcMain.handle('window:open', async (event, workspaceId?: unknown) => {
     let target: string | null
-    if (typeof workspaceId === 'string') {
-      if (!workspaceManager.isRegistered(workspaceId)) {
+    if (isServerWorkspaceId(workspaceId)) {
+      target = workspaceId
+    } else if (typeof workspaceId === 'string') {
+      const state = await windowWorkspaces.load()
+      if (!state.workspaces.some((w) => w.id === workspaceId)) {
         throw new Error(`No registered workspace with id "${workspaceId}"`)
       }
       target = workspaceId
@@ -144,7 +178,7 @@ export function registerWindowHandlers(deps: WindowHandlerDeps): void {
       const win = BrowserWindow.fromWebContents(event.sender)
       target =
         (win ? windowRegistry.getWorkspaceForWindow(win.id) : null) ??
-        workspaceManager.resolveInitialWorkspaceId()
+        initialWindowWorkspace(await windowWorkspaces.load())
     }
     return deps.openWindow(target)
   })

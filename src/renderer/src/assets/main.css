@@ -3,6 +3,141 @@
 @import "@clave/ui/styles.css";
 @source "../../../../packages/ui/src";
 
+/* A peer conversation is a deck: inset faces remain visible beneath its
+   cover, then unfold into complete message-and-answer cards. */
+.chat-delivery-stack {
+  --delivery-step: calc(var(--spacing) * 5);
+  position: relative;
+  align-self: stretch;
+  min-width: 0;
+  margin-bottom: calc(var(--delivery-layers) * var(--delivery-step));
+  interpolate-size: allow-keywords;
+  transition: margin-bottom var(--default-transition-duration) var(--ease-out-expo);
+}
+.chat-delivery-summary {
+  position: relative;
+  display: block;
+  list-style: none;
+  cursor: pointer;
+  outline: none;
+  -webkit-tap-highlight-color: transparent;
+}
+/* Keep the deck's spacing transition beside the transcript's arrival fade. */
+.chat-view .chat-row .chat-delivery-stack {
+  transition: margin-bottom var(--default-transition-duration) var(--ease-out-expo),
+    opacity var(--default-transition-duration) var(--ease-out-expo),
+    translate var(--default-transition-duration) var(--ease-out-expo);
+}
+.chat-delivery-summary::-webkit-details-marker { display: none; }
+.chat-delivery-summary:focus-visible .chat-delivery-cover {
+  outline: thin solid var(--color-accent);
+  outline-offset: var(--spacing);
+}
+.chat-delivery-cover, .chat-delivery-peek, .chat-exchange-card {
+  border: thin solid var(--border-subtle-color);
+  border-radius: var(--radius-2xl);
+}
+.chat-delivery-cover {
+  position: relative;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--spacing) * 2);
+  padding: calc(var(--spacing) * 4) calc(var(--spacing) * 5);
+  background: var(--surface-100);
+  box-shadow: var(--raised-shadow);
+  transition: background var(--default-transition-duration), box-shadow var(--default-transition-duration);
+}
+.chat-delivery-summary:hover .chat-delivery-cover {
+  background: color-mix(in oklch, var(--surface-100) 75%, var(--surface-0));
+}
+.chat-delivery-heading {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--spacing) * 3);
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+}
+.chat-delivery-eyebrow { display: inline-flex; align-items: center; gap: var(--spacing); min-width: 0; }
+.chat-delivery-eyebrow svg { width: var(--chat-glyph); height: var(--chat-glyph); flex-shrink: 0; }
+.chat-delivery-count { margin-left: auto; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.chat-delivery-chevron {
+  width: var(--chat-glyph);
+  height: var(--chat-glyph);
+  flex-shrink: 0;
+  transition: rotate var(--default-transition-duration) var(--ease-out-expo);
+}
+.chat-delivery-senders {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-primary);
+  font-size: var(--text-base);
+  font-weight: 500;
+}
+.chat-delivery-preview {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+}
+.chat-delivery-peek {
+  position: absolute;
+  z-index: calc(3 - var(--delivery-layer));
+  inset: 0 calc(var(--delivery-layer) * var(--spacing) * 3);
+  display: flex;
+  align-items: flex-end;
+  padding: 0 calc(var(--spacing) * 5) calc(var(--spacing) * 0.5);
+  background: color-mix(in oklch, var(--surface-200) calc(40% + var(--delivery-layer) * 20%), var(--surface-100));
+  transform: translateY(calc(var(--delivery-layer) * var(--delivery-step)));
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+  transition: transform var(--default-transition-duration) var(--ease-out-expo), opacity var(--default-transition-duration);
+}
+.chat-delivery-peek > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-delivery-stack[open] { margin-bottom: 0; }
+.chat-delivery-stack[open] .chat-delivery-peek { transform: translateY(0); opacity: 0; }
+.chat-delivery-stack[open] .chat-delivery-chevron { rotate: 180deg; }
+.chat-delivery-stack[open] .chat-delivery-preview { display: none; }
+.chat-delivery-stack::details-content {
+  block-size: 0;
+  overflow: clip;
+  opacity: 0;
+  transition: block-size var(--default-transition-duration) var(--ease-out-expo),
+    opacity var(--default-transition-duration),
+    content-visibility var(--default-transition-duration) allow-discrete;
+}
+.chat-delivery-stack[open]::details-content { block-size: auto; opacity: 1; }
+.chat-delivery-items { display: flex; flex-direction: column; gap: calc(var(--spacing) * 3); padding-top: calc(var(--spacing) * 3); }
+.chat-exchange-card { min-width: 0; background: var(--surface-0); overflow: hidden; }
+.chat-exchange-message { padding: calc(var(--spacing) * 4) calc(var(--spacing) * 5); background: color-mix(in oklch, var(--color-term-model) 5%, var(--surface-0)); }
+.chat-exchange-card .chat-turn-wrap[data-side='end'] { align-items: stretch; }
+.chat-exchange-card .chat-turn[data-role='user'][data-from='tab'] {
+  padding: 0;
+  max-width: none;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  font-size: var(--text-sm);
+  font-weight: 400;
+}
+.chat-exchange-card .chat-turn[data-role='user']::before { display: none; }
+.terminal-view .chat-exchange-card .chat-turn-wrap[data-side='end'] .chat-turn[data-role='user'][data-from='tab'] { background: transparent; }
+.chat-exchange-card .term-question { position: static; }
+.chat-exchange-card .chat-turn-meta { position: static; height: auto; justify-content: flex-end; padding-top: var(--spacing); }
+.chat-exchange-responses { display: flex; flex-direction: column; gap: calc(var(--spacing) * 4); padding: calc(var(--spacing) * 4) calc(var(--spacing) * 5); border-top: thin solid var(--border-subtle-color); }
+.chat-exchange-response-label { font-size: var(--text-xs); color: var(--text-tertiary); }
+.chat-exchange-responses .chat-turn[data-role='assistant'] { padding: 0; }
+@media (prefers-reduced-motion: reduce) {
+  .chat-view .chat-row .chat-delivery-stack,
+  .chat-delivery-stack, .chat-delivery-stack::details-content,
+  .chat-delivery-chevron, .chat-delivery-peek, .chat-delivery-cover { transition: none; }
+}
+
 /* Appearance → Font: Synonym, with the website's corrections (size-adjust is on
    the face, see lib/ui-font.ts). Only the sans stack changes; monospace text
    and the terminal keep their own face. */
@@ -296,6 +431,40 @@ html[data-ui-font='synonym'] {
 .sidebar-drop-gap--after .sidebar-drop-line {
   top: auto;
   bottom: calc(var(--drop-seam, 2px) / -2 - 1.5px);
+}
+/* A row of a list that drags to reorder (use-list-reorder, #257: the workspace
+   switcher and Settings → Workspaces). The drop line is the sidebar's, drawn
+   just inside the edge of the row it lands beside, so a scrolling list never
+   clips it; the dragged row fades in place. */
+.reorder-row {
+  position: relative;
+}
+.reorder-row[data-dragging] {
+  opacity: 0.45;
+}
+.reorder-row[data-drop]::after {
+  content: '';
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  height: 3px;
+  border-radius: 9999px;
+  background-color: var(--color-accent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--color-accent) 25%, transparent);
+  pointer-events: none;
+  z-index: 5;
+  animation: overlay-in 100ms var(--ease-out-expo);
+}
+.reorder-row[data-drop='before']::after {
+  top: 0;
+}
+.reorder-row[data-drop='after']::after {
+  bottom: 0;
+}
+body.reorder-dragging,
+body.reorder-dragging * {
+  cursor: grabbing !important;
+  user-select: none;
 }
 /* The group header's two controls (PRDCT-1670). The terminals button carries
    the whole terminal story in one glyph: its colour is the first RUNNING
@@ -3182,6 +3351,23 @@ html[data-ui-font='synonym'] {
   gap: var(--control-gap);
 }
 
+/* Audio settings: the default input's segmented level meter. */
+.mic-level-meter {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--control-h) / 14);
+}
+.mic-level-segment {
+  width: calc(var(--control-h) / 7);
+  height: calc(var(--control-h) / 2);
+  border-radius: var(--radius-sm);
+  background: var(--surface-300);
+}
+.mic-level-segment[data-state='lit'] { background: var(--color-accent); }
+.mic-level-segment[data-state='peak'] {
+  background: color-mix(in srgb, var(--color-accent) 40%, transparent);
+}
+
 /* ── Background work (BackgroundTasksChip) ──
    A chat's turn can end while shells and subagents it started keep running.
    The chip names how many, in the pane header; its popover lists them. */
@@ -3213,4 +3399,33 @@ html[data-ui-font='synonym'] {
   .background-tasks-pulse,
   .pane-status-dot[data-status='background'],
   .sidebar-tab-icon[data-background] { animation: none !important; }
+}
+
+/* A live subagent selector shares the model picker's chip and menu material.
+   Its button is a sibling of the parent row's button for keyboard access. */
+.subagent-session-row {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing);
+}
+.subagent-session-row > .sidebar-item {
+  flex: 1;
+  min-width: 0;
+}
+.subagent-trigger {
+  --chat-glyph: var(--framed-control-icon);
+  flex-shrink: 0;
+  max-width: 45%;
+  cursor: pointer;
+}
+.subagent-trigger .tab-status {
+  flex-shrink: 0;
+}
+.subagent-trigger[data-active='true'] {
+  color: var(--text-primary);
+  background-color: var(--surface-200);
+}
+.subagent-menu {
+  max-height: var(--radix-dropdown-menu-content-available-height);
+  overflow-y: auto;
 }

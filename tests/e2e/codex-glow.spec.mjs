@@ -1,8 +1,7 @@
-// Pinned to the in-process server (wave 3 of the server/client split,
-// PRDCT-3293): this spec opens a session through the agent tools, which main
-// still answers from its own session host; attached, that host is not the
-// server's, so the pin goes when the tools answer from the server (lane D,
-// PRDCT-3294). Not a known failure.
+// Pinned to the in-process server (re-examined by wave 5, lane C,
+// PRDCT-3433): its plain-PTY leg turns tmux off through the shell's own
+// preferences file, which the standalone server never reads, so attached
+// that leg would quietly run under tmux and prove nothing. Not a known failure.
 import { mkdirSync, writeFileSync, readFileSync } from 'node:fs'
 import {
   launchApp,
@@ -66,8 +65,15 @@ for line in sys.stdin:
       })
       const id = session.sessionId
       const row = win.locator('.sidebar-item').filter({ hasText: `Codex ${label}` })
-      const icon = row.locator('.sidebar-tab-icon')
+      // The row's status lives in its trailing slot (PRDCT-3933); no logo
+      // leads the title any more.
+      const icon = row.locator('.sidebar-tab-status')
       await icon.waitFor()
+      t.equal(
+        `${label}: no logo before the title`,
+        await row.locator('.sidebar-tab-icon').count(),
+        0
+      )
       await until(async () => {
         const state = await callMcp(app, 'list', {})
         return state.sessions.find((s) => s.id === id)?.agentState === 'idle'
@@ -84,6 +90,7 @@ for line in sys.stdin:
         if (!matched) throw new Error(`${label}: ${name}`)
       }
       t.equal(`${label}: idle icon is neutral`, await blue(), 0)
+      t.equal(`${label}: an idle row draws no glyph`, await icon.getAttribute('data-glyph'), null)
       await send('body')
       await win.waitForTimeout(250)
       t.equal(`${label}: body text does not pretend to be lifecycle state`, await blue(), 0)
@@ -92,9 +99,15 @@ for line in sys.stdin:
         await expectBlue(`${status} lights the icon`, 1)
       }
       t.check(
-        `${label}: a working logo spins its ring`,
-        (await icon.evaluate((el) => getComputedStyle(el, '::before').animationName)) ===
-          'tab-status-spin'
+        `${label}: a working row ticks its spinner`,
+        (await icon.evaluate(
+          (el) => getComputedStyle(el.querySelector('.sidebar-tab-spinner')).animationName
+        )) === 'sidebar-tab-spin'
+      )
+      t.equal(
+        `${label}: the working glyph is the spinner`,
+        await icon.getAttribute('data-glyph'),
+        'spinner'
       )
       await send('[ ! ] Action Required | codex')
       await expectBlue('waiting for the user clears the glow', 0)
@@ -102,6 +115,16 @@ for line in sys.stdin:
         `${label}: action required turns the logo amber`,
         await icon.getAttribute('data-status'),
         'needs-you'
+      )
+      t.equal(
+        `${label}: action required draws the question mark`,
+        await icon.getAttribute('data-glyph'),
+        'question'
+      )
+      t.equal(
+        `${label}: the question mark names itself`,
+        await icon.getAttribute('aria-label'),
+        'Waiting on you'
       )
       await send('codex | Working')
       await expectBlue('work resumes after a question', 1)
@@ -127,11 +150,13 @@ for line in sys.stdin:
         await until(async () => (await icon.getAttribute('data-status')) === 'unread'),
         await icon.getAttribute('data-status')
       )
+      t.equal(`${label}: unread draws the check`, await icon.getAttribute('data-glyph'), 'check')
       await send('codex | Working')
       await expectBlue('working before exit', 1)
       await send('exit')
       await expectBlue('process exit clears the glow', 0)
       t.equal(`${label}: ended Codex icon dims`, await icon.getAttribute('data-status'), 'ended')
+      t.equal(`${label}: ended draws the minus`, await icon.getAttribute('data-glyph'), 'minus')
       await callMcp(app, 'closeSession', { sessionId: other.sessionId })
       await callMcp(app, 'closeSession', { sessionId: id })
     }

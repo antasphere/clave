@@ -30,11 +30,12 @@ async function open(dir) {
     fresh: true
   })
   seedTrustedRoots(dir, [root])
-  // In-process (PRDCT-3293): the plugin's adapter and its launch profile
-  // register with the shell's plugin host and main's managers; attached, the
-  // window reads its profiles from the standalone server, which never hears
-  // of them. The session host is reached through the fixture either way.
-  const { app, win, fixture } = await launchApp(dir, { server: 'in-process' })
+  // Runs in both modes (wave 5, lane C, PRDCT-3433): the plugin store and
+  // host are the server's, so an adapter plugin enabled from the window
+  // registers with the server's session manager and its launch profile is
+  // offered among the server's own. The session host is reached through the
+  // fixture either way.
+  const { app, win, fixture } = await launchApp(dir)
   // Record the raw stream before any session exists: what the plugin emits is
   // only assertable here, ahead of whatever the view chooses to render. The
   // stream reaches the window over the server's push channel, so the record
@@ -228,7 +229,24 @@ export async function run(t) {
           ?.commands.includes('read')
       )
     )
-    await win.evaluate(() => window.electronAPI.pluginsCommand('test.session-reader', 'read'))
+    // The link starts a watcher on the plugin's folder, and the files written
+    // just before the link reach it a moment later: the host reloads the
+    // linked plugin once, and its command is refused while it restarts
+    // (measured 14 October 2026: the wait above saw `read` on the first start
+    // and the call landed on the restart, one run in three). Call it until the
+    // restart has settled.
+    assert.ok(
+      await until(() =>
+        win
+          .evaluate(() => window.electronAPI.pluginsCommand('test.session-reader', 'read'))
+          .then(() => true)
+          .catch((error) => {
+            if (!String(error).includes('Command is not active')) throw error
+            return null
+          })
+      ),
+      'the reader plugin runs its command once its restart has settled'
+    )
     const seen = await until(async () => {
       const reader = (await win.evaluate(() => window.electronAPI.pluginsList())).find(
         (p) => p.id === 'test.session-reader'

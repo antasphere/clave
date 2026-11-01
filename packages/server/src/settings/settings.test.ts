@@ -182,8 +182,36 @@ describe('the settings events on the push channel', () => {
     await peer.opened
     peer.send({ _tag: 'hello', token: server.token, client: 'test' })
     expect(await peer.next()).toMatchObject({ _tag: 'welcome', serverId: server.serverId })
+    expect(await peer.next()).toMatchObject({
+      _tag: 'event',
+      event: { _tag: 'workspaces.state_changed', origin: null }
+    })
     return peer
   }
+
+  it('tells each socket the workspace list at its welcome, that socket alone', async () => {
+    await post('/workspaces/registry', {
+      workspaces: [{ id: 'w', name: 'W', rootDir: '/w', profileFile: null, createdAt: 1 }]
+    })
+    const first = await welcomed()
+    const second = new Peer(server.url.replace('http', 'ws') + '/push')
+    await second.opened
+    second.send({ _tag: 'hello', token: server.token, client: 'test' })
+    expect(await second.next()).toMatchObject({ _tag: 'welcome' })
+    expect(await second.next()).toMatchObject({
+      _tag: 'event',
+      seq: 0,
+      event: {
+        _tag: 'workspaces.state_changed',
+        workspaces: [{ id: 'w', rootDir: '/w' }],
+        origin: null,
+        revision: 1,
+        instance: 'fake-settings'
+      }
+    })
+    // The first socket hears nothing of the second one's welcome.
+    expect(await first.silence()).toBe(true)
+  })
 
   it('republishes every source event, and nothing for a write that changed nothing', async () => {
     const peer = await welcomed()
@@ -195,10 +223,24 @@ describe('the settings events on the push channel', () => {
 
     const pins = await post('/workspaces/pins', { scope: null, pins: [{ a: 1 }], origin: 'w1' })
     expect(pins.status).toBe(200)
-    expect(await pins.json()).toEqual({ ok: true })
+    // The write answers the state's stamp, and the event carries the same
+    // (PRDCT-3405): what a window compares a fold against.
+    expect(await pins.json()).toEqual({
+      ok: true,
+      workspaces: [],
+      pins: [{ a: 1 }],
+      revision: 1,
+      instance: 'fake-settings'
+    })
     expect(await peer.next()).toMatchObject({
       _tag: 'event',
-      event: { _tag: 'workspaces.state_changed', origin: 'w1', pins: [{ a: 1 }] }
+      event: {
+        _tag: 'workspaces.state_changed',
+        origin: 'w1',
+        pins: [{ a: 1 }],
+        revision: 1,
+        instance: 'fake-settings'
+      }
     })
 
     const refused = await post('/workspaces/pins', { scope: 'bad', pins: [] })
@@ -265,6 +307,10 @@ describe('the Antasphere account on the server (PRDCT-3259)', () => {
     await peer.opened
     peer.send({ _tag: 'hello', token: server.token, client: 'test' })
     expect(await peer.next()).toMatchObject({ _tag: 'welcome' })
+    expect(await peer.next()).toMatchObject({
+      _tag: 'event',
+      event: { _tag: 'workspaces.state_changed' }
+    })
     const res = await post('/accounts/antasphere/sign-in', {})
     expect([200, 201]).toContain(res.status)
     const body = (await res.json()) as {

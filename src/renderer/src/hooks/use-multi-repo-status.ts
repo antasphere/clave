@@ -2,9 +2,18 @@ import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import type { GitStatusResult } from '../../../preload/index.d'
 import { useSessionStore } from '../store/session-store'
 import { useGitBatch } from '../components/git/git-batch-context'
-
-const POLL_INTERVAL = 5000
-const FETCH_INTERVAL = 30000
+import { startPollLoop } from '../lib/poll-loop'
+import { repoDisplayName } from '../lib/git-paths'
+import {
+  GIT_FETCH_JITTER_MS,
+  GIT_FETCH_POLL_MS,
+  GIT_STATUS_BACKSTOP_MS,
+  GIT_STATUS_MAX_POLL_MS,
+  GIT_STATUS_POLL_MS,
+  isDocumentHidden,
+  mergeStatuses,
+  newWatchSubscriberId
+} from '../lib/git-poll'
 
 type RepoEntry = { name: string; path: string; status: GitStatusResult }
 
@@ -13,6 +22,19 @@ export type MultiRepoMode =
   | { mode: 'multi'; repos: RepoEntry[]; truncated: boolean; live: boolean }
   | { mode: 'none' }
   | { mode: 'loading' }
+
+/**
+ * The last reading of each folder, kept outside the component (PRDCT-3776).
+ * Switching from the git tab to the files tab and back used to reset the
+ * panel to its loading state and wait for the whole tree to be read again;
+ * now the panel opens on what it last showed and the read refreshes it.
+ */
+interface CachedReading {
+  result: MultiRepoMode
+  lastUpdated: number | null
+  hasNestedRepos: boolean
+}
+const readingCache = new Map<string, CachedReading>()
 
 export function useMultiRepoStatus(
   cwd: string | null,
@@ -25,11 +47,49 @@ export function useMultiRepoStatus(
   hasNestedRepos: boolean
 } {
   const { run } = useGitBatch()
-  const [result, setResult] = useState<MultiRepoMode>({ mode: 'loading' })
-  const [hasNestedRepos, setHasNestedRepos] = useState(false)
+  const [result, setResultState] = useState<MultiRepoMode>(
+    () => (cwd ? readingCache.get(cwd)?.result : undefined) ?? { mode: 'loading' }
+  )
+  const [hasNestedRepos, setHasNestedReposState] = useState(
+    () => (cwd ? readingCache.get(cwd)?.hasNestedRepos : undefined) ?? false
+  )
   const [refreshing, setRefreshing] = useState(false)
-  const [lastUpdated, setLastUpdated] = useState<number | null>(null)
+  const [lastUpdated, setLastUpdatedState] = useState<number | null>(
+    () => (cwd ? readingCache.get(cwd)?.lastUpdated : undefined) ?? null
+  )
   const cwdRef = useRef(cwd)
+
+  // Every write of the reading also lands in the cache, under the folder it
+  // was read for — never under a folder the panel moved to since.
+  const remember = useCallback((forCwd: string, patch: Partial<CachedReading>): void => {
+    const prev = readingCache.get(forCwd) ?? {
+      result: { mode: 'loading' } as MultiRepoMode,
+      lastUpdated: null,
+      hasNestedRepos: false
+    }
+    readingCache.set(forCwd, { ...prev, ...patch })
+  }, [])
+  const setResult = useCallback(
+    (next: MultiRepoMode): void => {
+      setResultState(next)
+      if (cwd && next.mode !== 'loading') remember(cwd, { result: next })
+    },
+    [cwd, remember]
+  )
+  const setHasNestedRepos = useCallback(
+    (next: boolean): void => {
+      setHasNestedReposState(next)
+      if (cwd) remember(cwd, { hasNestedRepos: next })
+    },
+    [cwd, remember]
+  )
+  const setLastUpdated = useCallback(
+    (next: number): void => {
+      setLastUpdatedState(next)
+      if (cwd) remember(cwd, { lastUpdated: next })
+    },
+    [cwd, remember]
+  )
 
   // Live-update settings. Above `pollLimit` repos the panel stops auto-polling
   // (manual + event-driven refresh only) to keep huge trees (e.g. "/") from
@@ -46,89 +106,107 @@ export function useMultiRepoStatus(
     async (force = false) => {
       if (!cwd || !window.electronAPI) return
 
-      const status = await window.electronAPI.getGitStatus(cwd)
-      if (cwdRef.current !== cwd) return
-
-      if (status.isRepo) {
-        const { repos: nested } = await window.electronAPI.discoverGitRepos(cwd, force)
+      try {
+        const status = await window.electronAPI.getGitStatus(cwd)
         if (cwdRef.current !== cwd) return
 
-        setHasNestedRepos(nested.length > 0)
+        if (status.isRepo) {
+          const { repos: nested } = await window.electronAPI.discoverGitRepos(cwd, force)
+          if (cwdRef.current !== cwd) return
 
-        if (nested.length === 0) {
-          setResult({ mode: 'single' })
+          setHasNestedRepos(nested.length > 0)
+
+          if (nested.length === 0) {
+            setResult({ mode: 'single' })
+            return
+          }
+
+          // Root + nested repos. Reuse the status we already have for the root.
+          const rootName = repoDisplayName(cwd)
+          const nameByPath = new Map<string, string>([[cwd, rootName]])
+          for (const r of nested) nameByPath.set(r.path, r.name)
+
+          const allPaths = [cwd, ...nested.map((r) => r.path)]
+          const live = isLive(allPaths.length)
+          const statuses = await window.electronAPI.getGitStatusBatch(nested.map((r) => r.path))
+          if (cwdRef.current !== cwd) return
+
+          const repos: RepoEntry[] = [
+            { name: rootName, path: cwd, status },
+            ...statuses.map((s) => ({
+              name: nameByPath.get(s.path) ?? s.path,
+              path: s.path,
+              status: s.status
+            }))
+          ]
+          setResult({ mode: 'multi', repos, truncated: false, live })
+          setLastUpdated(Date.now())
           return
         }
 
-        // Root + nested repos. Reuse the status we already have for the root.
-        const rootName = cwd.split(/[\\/]/).pop() ?? cwd
-        const nameByPath = new Map<string, string>([[cwd, rootName]])
-        for (const r of nested) nameByPath.set(r.path, r.name)
+        // CWD is not a repo — discover repos in children
+        setHasNestedRepos(false)
 
-        const allPaths = [cwd, ...nested.map((r) => r.path)]
-        const live = isLive(allPaths.length)
-        const statuses = await window.electronAPI.getGitStatusBatch(nested.map((r) => r.path))
+        const { repos: discovered, truncated } = await window.electronAPI.discoverGitRepos(
+          cwd,
+          force
+        )
         if (cwdRef.current !== cwd) return
 
-        const repos: RepoEntry[] = [
-          { name: rootName, path: cwd, status },
-          ...statuses.map((s) => ({
-            name: nameByPath.get(s.path) ?? s.path,
-            path: s.path,
-            status: s.status
-          }))
-        ]
-        setResult({ mode: 'multi', repos, truncated: false, live })
+        if (discovered.length === 0) {
+          setResult({ mode: 'none' })
+          return
+        }
+
+        const live = isLive(discovered.length)
+        const nameByPath = new Map(discovered.map((r) => [r.path, r.name]))
+        const statuses = await window.electronAPI.getGitStatusBatch(discovered.map((r) => r.path))
+        if (cwdRef.current !== cwd) return
+
+        const repos: RepoEntry[] = statuses.map((s) => ({
+          name: nameByPath.get(s.path) ?? s.path,
+          path: s.path,
+          status: s.status
+        }))
+        setResult({ mode: 'multi', repos, truncated, live })
         setLastUpdated(Date.now())
-        return
+      } catch (error) {
+        if (cwdRef.current !== cwd) return
+        console.warn(
+          '[clave] git panel read failed',
+          error instanceof Error ? error.message : 'Failed to get git status'
+        )
+        setResultState((prev) => {
+          if (prev.mode !== 'loading') return prev
+          const next: MultiRepoMode = { mode: 'single' }
+          remember(cwd, { result: next })
+          return next
+        })
       }
-
-      // CWD is not a repo — discover repos in children
-      setHasNestedRepos(false)
-
-      const { repos: discovered, truncated } = await window.electronAPI.discoverGitRepos(cwd, force)
-      if (cwdRef.current !== cwd) return
-
-      if (discovered.length === 0) {
-        setResult({ mode: 'none' })
-        return
-      }
-
-      const live = isLive(discovered.length)
-      const nameByPath = new Map(discovered.map((r) => [r.path, r.name]))
-      const statuses = await window.electronAPI.getGitStatusBatch(discovered.map((r) => r.path))
-      if (cwdRef.current !== cwd) return
-
-      const repos: RepoEntry[] = statuses.map((s) => ({
-        name: nameByPath.get(s.path) ?? s.path,
-        path: s.path,
-        status: s.status
-      }))
-      setResult({ mode: 'multi', repos, truncated, live })
-      setLastUpdated(Date.now())
     },
-    [cwd, isLive]
+    [cwd, isLive, setResult, setHasNestedRepos, setLastUpdated, remember]
   )
 
-  // Reset + initial fetch when cwd or active changes
+  // On a folder change or a return to the git tab: show the folder's last
+  // reading at once (the loading state only for a folder never read), then
+  // read it again.
   useEffect(() => {
     cwdRef.current = cwd
-    if (!cwd || !active) {
-      setResult({ mode: 'loading' })
+    if (!cwd) {
+      setResultState({ mode: 'loading' })
       return
     }
-    setResult({ mode: 'loading' })
+    const cached = readingCache.get(cwd)
+    setResultState(cached?.result ?? { mode: 'loading' })
+    setHasNestedReposState(cached?.hasNestedRepos ?? false)
+    setLastUpdatedState(cached?.lastUpdated ?? null)
+    if (!active) return
     fetchAll()
   }, [cwd, active, fetchAll])
 
   // Only poll in multi mode that is "live" (small enough). Single mode uses
   // useGitStatus for its own polling.
   const isLiveMulti = result.mode === 'multi' && result.live
-  useEffect(() => {
-    if (!cwd || !active || !isLiveMulti) return
-    const interval = setInterval(fetchAll, POLL_INTERVAL)
-    return () => clearInterval(interval)
-  }, [cwd, active, fetchAll, isLiveMulti])
 
   // Stable key for repo paths — only changes when repos are added/removed, not on status polls
   const repoPaths = useMemo(() => {
@@ -139,16 +217,93 @@ export function useMultiRepoStatus(
       .join('\n')
   }, [result])
 
-  // Periodic git fetch for all repos in live multi mode (bounded concurrency)
+  // Live multi mode: the listed repos are watched, and a repo the watcher
+  // reports is read again on its own. A full re-read runs behind it on a
+  // timer — every five seconds while the watch is not up, every thirty once
+  // every repo is watched — and never starts before the last one ended.
   useEffect(() => {
     if (!cwd || !active || !isLiveMulti || !repoPaths) return
     const paths = repoPaths.split('\n').filter(Boolean)
     if (paths.length === 0) return
-    window.electronAPI.gitFetchBatch(paths)
-    const interval = setInterval(() => {
-      window.electronAPI.gitFetchBatch(paths)
-    }, FETCH_INTERVAL)
-    return () => clearInterval(interval)
+    const listed = new Set(paths)
+    let allWatched = false
+    const subscriberId = newWatchSubscriberId('git-multi')
+    const loop = startPollLoop({
+      run: () => fetchAll(),
+      intervalMs: () => (allWatched ? GIT_STATUS_BACKSTOP_MS : GIT_STATUS_POLL_MS),
+      maxIntervalMs: GIT_STATUS_MAX_POLL_MS,
+      isHidden: isDocumentHidden
+    })
+
+    // The repos reported while a partial read runs wait for the next one, so
+    // a burst of changes never puts two reads of the same repos side by side.
+    let changed = new Set<string>()
+    let reading = false
+    const readChanged = async (): Promise<void> => {
+      // Hidden: the reported repos wait, and are read when the window is shown.
+      if (reading || changed.size === 0 || isDocumentHidden()) return
+      reading = true
+      const batch = [...changed]
+      changed = new Set()
+      try {
+        const statuses = await window.electronAPI.getGitStatusBatch(batch)
+        if (cwdRef.current === cwd) {
+          setResultState((prev) => {
+            const next = mergeStatuses(prev, statuses)
+            if (next !== prev) remember(cwd, { result: next })
+            return next
+          })
+          setLastUpdated(Date.now())
+        }
+      } catch {
+        // The timer's full read covers a failed partial one.
+      } finally {
+        reading = false
+      }
+      if (changed.size > 0) void readChanged()
+    }
+    const offChanged = window.electronAPI.onGitReposChanged?.((repos) => {
+      for (const repo of repos) if (listed.has(repo)) changed.add(repo)
+      void readChanged()
+    })
+    window.electronAPI
+      .gitWatchRepos?.(subscriberId, paths)
+      .then((ok) => {
+        allWatched = ok.length === paths.length
+      })
+      .catch(() => {
+        allWatched = false
+      })
+    const onVisible = (): void => {
+      if (isDocumentHidden()) return
+      loop.trigger()
+      void readChanged()
+    }
+    document.addEventListener('visibilitychange', onVisible)
+    return () => {
+      loop.stop()
+      offChanged?.()
+      document.removeEventListener('visibilitychange', onVisible)
+      void window.electronAPI.gitUnwatchRepos?.(subscriberId)
+    }
+  }, [cwd, active, isLiveMulti, repoPaths, fetchAll, remember, setLastUpdated])
+
+  // Background git fetch for the listed repos in live multi mode: every three
+  // minutes, staggered. Main skips a repo fetched a moment ago by anyone, and
+  // its queue bounds how many fetch at once across the app.
+  useEffect(() => {
+    if (!cwd || !active || !isLiveMulti || !repoPaths) return
+    const paths = repoPaths.split('\n').filter(Boolean)
+    if (paths.length === 0) return
+    const loop = startPollLoop({
+      run: () => window.electronAPI.gitFetchBatch(paths),
+      intervalMs: () => GIT_FETCH_POLL_MS,
+      maxIntervalMs: GIT_FETCH_POLL_MS * 2,
+      jitterMs: GIT_FETCH_JITTER_MS,
+      isHidden: isDocumentHidden,
+      immediate: true
+    })
+    return () => loop.stop()
   }, [cwd, active, isLiveMulti, repoPaths])
 
   // Event-driven refresh — keeps the panel fresh even when live polling is

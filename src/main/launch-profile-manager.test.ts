@@ -158,9 +158,27 @@ describe.each(eachTestPorts())('LaunchProfileManager on %s', (_name, makePorts) 
 
   it('rejects malformed workspace override keys', () => {
     withManager(makePorts, (manager) => {
-      expect(() => manager.setWorkspaceDefault('../other', 'pi', 'builtin-pi')).toThrow(
-        'Invalid workspace id'
-      )
+      for (const key of [
+        '../other',
+        'clave-owner:workspace:server-1',
+        'clave-owner:workspace:server-1:ws:extra',
+        'clave-owner:session:server-1:ws',
+        'clave-owner:workspace:server%2D1:ws',
+        `clave-owner:workspace:server-1:${'w'.repeat(200)}`
+      ])
+        expect(() => manager.setWorkspaceDefault(key, 'pi', 'builtin-pi'), key).toThrow(
+          'Invalid workspace id'
+        )
+    })
+  })
+
+  it('keeps a default for a workspace that lives on a Clave server (#241)', () => {
+    withManager(makePorts, (manager) => {
+      const key = 'clave-owner:workspace:server-1:ws-on-server'
+      manager.setWorkspaceDefault(key, 'pi', 'builtin-pi')
+      expect(manager.getPreferences().workspaceOverrides[key]).toEqual({ pi: 'builtin-pi' })
+      manager.setWorkspaceDefault(key, 'pi', null)
+      expect(manager.getPreferences().workspaceOverrides[key]).toEqual({})
     })
   })
 })
@@ -256,6 +274,7 @@ function adapterPlugin(enabled: boolean): PluginRecord {
         toolbar: [],
         sidebarSections: [],
         views: [],
+        marks: [],
         adapters: [
           {
             id: 'acme-agent',

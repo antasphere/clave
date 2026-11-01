@@ -47,6 +47,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Build secure filesystem helper
+        run: npm run native:build
+
       - name: Lint
         run: npm run lint
 
@@ -68,8 +71,9 @@ jobs:
   # the specs spawn tmux sessions and the login shell. Bun runs the server's
   # own process for the attached mode (ADR 0003).
   #
-  # Two kinds of step. The GATE: the server spec, in-process and attached,
-  # fails the job (it is deterministic, and proven to go red under mutation).
+  # Two kinds of step. The GATE: the server spec, in-process, attached and
+  # separate, fails the job (it is deterministic, and proven to go red under
+  # mutation).
   # The REPORT: the whole suite in-process, with continue-on-error, its
   # result line in the job summary. On 2 October 2026 the suite on dev fails
   # 25 checks on a laptop and 28 on this runner with 15 in common, and the
@@ -100,9 +104,15 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Build native helpers
+        run: npm run native:build
+
       - name: Build the app
         id: build
         run: npx electron-vite build
+
+      - name: Gate, actual renderer and native view module audit
+        run: node scripts/renderer-module-audit.mjs
 
       # The packaged app, not the checkout: electron-builder leaves out the
       # peers npm installs on its own, so a module the bundles require can
@@ -132,6 +142,32 @@ jobs:
         run: node tests/e2e/run.mjs server-boot
         env:
           CLAVE_E2E_SERVER: attached
+
+      # The app starting its own server as a child, from the bundles it
+      # carries, under its own binary as Node (wave 5, PRDCT-3434): the pair
+      # starts, a killed terminal process is started again, the quit stops
+      # both.
+      - name: Gate, the server spec with the server separate
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: node tests/e2e/run.mjs server-boot
+        env:
+          CLAVE_E2E_SERVER: separate
+
+      # A daemon on an older version, with a stand-in install script, and an
+      # app on a newer test version (issue #266): the server upgrades to the
+      # app's version only once no agent works, and Upgrade now runs it at once.
+      - name: Gate, connected servers follow the app's version
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: node tests/e2e/run.mjs fleet-server-upgrade
+
+      # Current full-renderer completeness, lifecycle and responsiveness gates.
+      # Retired prefix-cache integration remains explicitly named legacy diagnostics.
+      - name: Gate, full Markdown client, native lifecycle and responsiveness
+        run: node tests/e2e/run.mjs markdown-parser-deep-client markdown-full-native renderer-responsiveness
+
+      - name: Gate, MCP sessions on connected servers
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: node tests/e2e/run.mjs mcp-fleet-sessions
 
       - name: Report, the whole suite with the server in-process
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}

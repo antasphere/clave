@@ -5,13 +5,24 @@ import {
   CheckIcon,
   Cog6ToothIcon,
   FolderOpenIcon,
-  ArrowTopRightOnSquareIcon
+  ArrowTopRightOnSquareIcon,
+  ComputerDesktopIcon,
+  ServerIcon
 } from '@heroicons/react/24/outline'
 import { Popover, PopoverTrigger, PopoverContent } from '@clave/ui/components'
-import { useWorkspaceStore } from '../../store/workspace-store'
+import { allWorkspaces, useWorkspaceStore, workspaceServer } from '../../store/workspace-store'
 import { useSessionStore } from '../../store/session-store'
-import { setActiveWorkspace, addWorkspace } from '../../lib/workspace-actions'
+import { useFleetStore } from '../../store/fleet-store'
+import { pickServerFolder } from '../../store/server-folder-store'
+import {
+  setActiveWorkspace,
+  addWorkspace,
+  addServerWorkspace,
+  moveWorkspace,
+  serverWorkspaceError
+} from '../../lib/workspace-actions'
 import { shortenPath } from '../../lib/utils'
+import { useListReorder } from '../../hooks/use-list-reorder'
 
 /** A folder picked for registration that holds several `.clave` profiles — one
  *  has to be chosen before the workspace exists. */
@@ -25,7 +36,7 @@ interface PendingAdd {
  * The toolbar's workspace control: the active workspace's name, and — when
  * there is a registry to speak of — a popover listing every workspace on this
  * machine with the switch one click away, plus an Add that goes straight to
- * the folder picker.
+ * the folder picker. Rows drag to reorder within their machine's list (#257).
  *
  * This is the workspace switcher; the sidebar no longer carries one. In
  * no-workspace mode it stays a plain label: with zero workspaces the app runs
@@ -33,15 +44,37 @@ interface PendingAdd {
  * pill row followed).
  */
 export function ToolbarWorkspacePopover(): React.JSX.Element {
-  const workspaces = useWorkspaceStore((s) => s.workspaces)
+  const localWorkspaces = useWorkspaceStore((s) => s.workspaces)
+  const serverWorkspaces = useWorkspaceStore((s) => s.serverWorkspaces)
+  const workspaces = useMemo(
+    () => allWorkspaces({ workspaces: localWorkspaces, serverWorkspaces }),
+    [localWorkspaces, serverWorkspaces]
+  )
   const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId)
   const sessions = useSessionStore((s) => s.sessions)
   const openSettings = useSessionStore((s) => s.openSettings)
+  const connections = useFleetStore((s) => s.connections)
+  const statuses = useFleetStore((s) => s.statuses)
+  const connectedServers = connections.filter((c) => statuses[c.id]?.state === 'connected')
+  const serverName = (id: string): string =>
+    connections.find((c) => c.id === id)?.name ?? 'Clave server'
 
   const [open, setOpen] = useState(false)
   const [pendingAdd, setPendingAdd] = useState<PendingAdd | null>(null)
+  const [choosingMachine, setChoosingMachine] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+
+  const { rowProps } = useListReorder((id, targetId, position) => {
+    const server = workspaceServer(id)
+    moveWorkspace(id, targetId, position).catch((err: unknown) => {
+      setError(
+        server
+          ? serverWorkspaceError(err, serverName(server), 'reorder')
+          : 'The new order could not be saved.'
+      )
+    })
+  })
 
   const active = workspaces.find((w) => w.id === activeWorkspaceId)
   const name = active?.name ?? 'Clave'
@@ -67,6 +100,7 @@ export function ToolbarWorkspacePopover(): React.JSX.Element {
 
   const reset = (): void => {
     setPendingAdd(null)
+    setChoosingMachine(false)
     setError(null)
     setBusy(false)
   }
@@ -86,11 +120,34 @@ export function ToolbarWorkspacePopover(): React.JSX.Element {
     handleOpenChange(false)
   }
 
+  /** Add asks for the machine first when a Clave server is connected (#241):
+   *  this Mac, or the server, whose own registry then holds the workspace. */
+  const handleAddClick = (): void => {
+    setError(null)
+    if (connectedServers.length === 0) void handleAdd()
+    else setChoosingMachine(true)
+  }
+
+  /** A folder on the server's disk, picked in the server folder picker. */
+  const handleAddOnServer = async (serverId: string): Promise<void> => {
+    handleOpenChange(false)
+    const folder = await pickServerFolder({ serverId, serverName: serverName(serverId) })
+    if (!folder) return
+    try {
+      const added = await addServerWorkspace(serverId, folder)
+      await setActiveWorkspace(added.id)
+    } catch (err) {
+      setOpen(true)
+      setError(serverWorkspaceError(err, serverName(serverId), 'add'))
+    }
+  }
+
   /** Straight to the folder picker — no detour through Settings. A folder with
    *  several `.clave` profiles comes back here for the one pick it needs. */
   const handleAdd = async (): Promise<void> => {
     setError(null)
     setPendingAdd(null)
+    setChoosingMachine(false)
     setBusy(true)
     try {
       const folder = await window.electronAPI?.openFolderDialog()
@@ -155,7 +212,32 @@ export function ToolbarWorkspacePopover(): React.JSX.Element {
           className="w-[300px] p-1"
           onOpenAutoFocus={(e) => e.preventDefault()}
         >
-          {pendingAdd ? (
+          {choosingMachine ? (
+            <>
+              <div className="menu-label">Add a workspace on</div>
+              <button className="menu-item" onClick={() => void handleAdd()} disabled={busy}>
+                <ComputerDesktopIcon className="w-3.5 h-3.5 flex-shrink-0" />
+                <span className="flex-1 min-w-0 truncate">This Mac</span>
+              </button>
+              {connectedServers.map((c) => (
+                <button
+                  key={c.id}
+                  className="menu-item"
+                  onClick={() => void handleAddOnServer(c.id)}
+                >
+                  <ServerIcon className="w-3.5 h-3.5 flex-shrink-0" />
+                  <span className="flex-1 min-w-0 truncate">{c.name}</span>
+                </button>
+              ))}
+              <div className="menu-sep" />
+              <button
+                className="menu-item menu-item--muted"
+                onClick={() => setChoosingMachine(false)}
+              >
+                Cancel
+              </button>
+            </>
+          ) : pendingAdd ? (
             <ProfilePicker
               pending={pendingAdd}
               onSelect={(path) => setPendingAdd({ ...pendingAdd, selected: path })}
@@ -168,23 +250,33 @@ export function ToolbarWorkspacePopover(): React.JSX.Element {
               <div className="max-h-[320px] overflow-y-auto">
                 {workspaces.map((ws) => {
                   const isActive = ws.id === activeWorkspaceId
+                  const server = workspaceServer(ws.id)
+                  const offline = server !== null && statuses[server]?.state !== 'connected'
                   return (
                     <button
                       key={ws.id}
-                      className="menu-item group"
+                      {...rowProps(ws.id, server ?? 'local')}
+                      className="menu-item reorder-row group"
                       data-selected={isActive}
+                      data-workspace-id={ws.id}
+                      data-server={server ?? undefined}
+                      data-offline={offline || undefined}
                       onClick={() => {
                         if (!isActive) void setActiveWorkspace(ws.id)
                         handleOpenChange(false)
                       }}
-                      title={shortenPath(ws.rootDir)}
+                      title={
+                        server ? `${serverName(server)}: ${ws.rootDir}` : shortenPath(ws.rootDir)
+                      }
                     >
                       <span className="flex-1 min-w-0 py-0.5">
                         <span className="block text-control leading-tight text-text-primary truncate">
                           {ws.name}
                         </span>
                         <span className="block text-[11px] leading-tight text-text-tertiary truncate mt-0.5">
-                          {shortenPath(ws.rootDir)}
+                          {server
+                            ? `${serverName(server)}${offline ? ' · offline' : ''} · ${ws.rootDir}`
+                            : shortenPath(ws.rootDir)}
                         </span>
                       </span>
                       {attention.has(ws.id) && (
@@ -211,7 +303,7 @@ export function ToolbarWorkspacePopover(): React.JSX.Element {
               <div className="menu-sep" />
               <button
                 className="menu-item menu-item--muted"
-                onClick={() => void handleAdd()}
+                onClick={handleAddClick}
                 disabled={busy}
               >
                 <PlusIcon className="w-3.5 h-3.5 flex-shrink-0" />

@@ -27,6 +27,8 @@ import {
   type RepoTreeDir
 } from '../../lib/git-repo-tree'
 import { collapsedFromExpanded, toRelative } from '../../lib/panel-expansion'
+import { ownedFilePath } from '../../lib/fleet-identity'
+import { relativeFolderPrefix, repoDisplayName, repoDisplayPath } from '../../lib/git-paths'
 import { GitLogView } from './GitLogView'
 import { FileRow, GitTreeSection } from './GitFileRows'
 import {
@@ -502,12 +504,11 @@ function RepoSection({
   )
 
   // Compute relative filter prefix from the repo root
-  const relativeFilterPrefix = useMemo(() => {
-    if (!filterPrefix || !status?.repoRoot) return null
-    const repoRoot = status.repoRoot
-    if (!filterPrefix.startsWith(repoRoot + '/')) return null
-    return filterPrefix.slice(repoRoot.length + 1) + '/'
-  }, [filterPrefix, status?.repoRoot])
+  const relativeFilterPrefix = useMemo(
+    () =>
+      filterPrefix && status?.repoRoot ? relativeFolderPrefix(filterPrefix, status.repoRoot) : null,
+    [filterPrefix, status?.repoRoot]
+  )
 
   const { staged, unstaged, untracked } = useMemo(() => {
     if (!status?.files) return { staged: [], unstaged: [], untracked: [] }
@@ -656,7 +657,7 @@ function RepoSection({
       const filename = file.path.includes('/') ? file.path.split('/').pop()! : file.path
       addFileTab({
         id: `file-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-        filePath: `${repoRoot}/${file.path}`,
+        filePath: ownedFilePath(repoRoot, file.path),
         name: filename,
         kind: 'diff',
         diff: {
@@ -1296,7 +1297,7 @@ function MultiRepoSection({
   // The opened folder isn't itself a repo root — git resolved it to a parent
   // repository, so the changes shown actually belong to that parent.
   const isParentRepo = !!status.repoRoot && status.repoRoot !== repoPath
-  const parentRepoName = isParentRepo ? status.repoRoot.split(/[\\/]/).pop() || status.repoRoot : ''
+  const parentRepoName = isParentRepo ? repoDisplayName(status.repoRoot) : ''
 
   // A repo row starts CLOSED, whatever it is carrying.
   //
@@ -1586,7 +1587,7 @@ function MultiRepoSection({
             </TooltipTrigger>
             <TooltipContent side="bottom" className="font-mono max-w-[300px]">
               This folder isn’t a git repository. The changes shown belong to the parent repository{' '}
-              {shortenPath(status.repoRoot)}, which contains it.
+              {shortenPath(repoDisplayPath(status.repoRoot))}, which contains it.
             </TooltipContent>
           </Tooltip>
         </div>
@@ -1871,6 +1872,14 @@ export function MultiRepoGitPanel({
   )
 
   const statusByPath = useMemo(() => new Map(repos.map((r) => [r.path, r.status])), [repos])
+  // The tree below is built over the repos' READABLE paths: a Clave server's
+  // repository is keyed by its owner (`lib/git-paths.ts`), and a key is no
+  // path to split on '/'. Each row maps back to the key its status and its
+  // actions are filed under; on the Mac the two are the same string.
+  const statusByDisplay = useMemo(
+    () => new Map(repos.map((r) => [repoDisplayPath(r.path), r.status])),
+    [repos]
+  )
 
   // Each worktree's source, as discovery spells the source's path (PRDCT-2356):
   // git names it resolved, the list may hold it through a symlink.
@@ -1889,20 +1898,25 @@ export function MultiRepoGitPanel({
   )
 
   // The spatial tree of the (nested) repos, rooted at the panel's folder.
+  const displayBase = basePath ? repoDisplayPath(basePath) : null
+  const keyByDisplay = useMemo(
+    () => new Map(withSources.map((r) => [repoDisplayPath(r.path), r.path])),
+    [withSources]
+  )
   const repoTree = useMemo(
     () =>
-      basePath
+      displayBase
         ? buildRepoTree(
-            basePath,
+            displayBase,
             withSources.map((r) => ({
               name: r.name,
-              path: r.path,
-              worktreeOf: r.worktreeOf,
+              path: repoDisplayPath(r.path),
+              worktreeOf: r.worktreeOf ? repoDisplayPath(r.worktreeOf) : r.worktreeOf,
               createdAt: r.createdAt
             }))
           )
         : null,
-    [basePath, withSources]
+    [displayBase, withSources]
   )
 
   // The flat fallback's order, with each repo's worktrees under it (PRDCT-2356).
@@ -1926,8 +1940,7 @@ export function MultiRepoGitPanel({
   // state for a stale press to clobber.
   // `basePath` is optional AND nullable at the prop boundary; the mapping
   // helpers take one absent form, not two.
-  const base = basePath ?? null
-  const cacheKey = base ?? ''
+  const cacheKey = basePath ?? ''
   const expandedDirs = useSessionStore((s) => s.panelExpandedDirs[cacheKey])
   const setPanelDirExpanded = useSessionStore((s) => s.setPanelDirExpanded)
 
@@ -1935,12 +1948,12 @@ export function MultiRepoGitPanel({
     () =>
       repoTree
         ? collapsedFromExpanded(
-            base,
+            displayBase,
             collectRepoTreeDirPaths(repoTree),
             expandedDirs ?? EMPTY_PATH_SET
           )
         : EMPTY_PATH_SET,
-    [repoTree, base, expandedDirs]
+    [repoTree, displayBase, expandedDirs]
   )
 
   // `segments` is what the row stands for. This tree compacts single-child
@@ -1951,12 +1964,12 @@ export function MultiRepoGitPanel({
   // only itself, which is also what the Files tab does with its own rows.
   const toggleDir = useCallback(
     (dirPath: string, label: string) => {
-      const rel = toRelative(base, dirPath)
+      const rel = toRelative(displayBase, dirPath)
       if (rel === null || rel === '') return
       const segments = label.split('/').filter(Boolean).length || 1
       setPanelDirExpanded(cacheKey, rel, collapsedDirs.has(dirPath), segments)
     },
-    [base, cacheKey, collapsedDirs, setPanelDirExpanded]
+    [displayBase, cacheKey, collapsedDirs, setPanelDirExpanded]
   )
 
   const treeRows = useMemo(
@@ -1979,22 +1992,23 @@ export function MultiRepoGitPanel({
           depth={row.depth}
           collapsed={row.collapsed}
           onToggle={() => toggleDir(row.node.path, row.node.name)}
-          statusByPath={statusByPath}
+          statusByPath={statusByDisplay}
           rule={rule}
         />
       )
     }
-    const status = statusByPath.get(row.node.path)
+    const repoKey = keyByDisplay.get(row.node.path) ?? row.node.path
+    const status = statusByPath.get(repoKey)
     if (!status) return null
     const isWorktree = row.node.type === 'worktree'
     return (
       <MultiRepoSection
-        key={row.node.path}
+        key={repoKey}
         name={row.node.name}
-        repoPath={row.node.path}
+        repoPath={repoKey}
         status={status}
         refresh={refresh}
-        isSelected={selectedRepoPaths.has(row.node.path)}
+        isSelected={selectedRepoPaths.has(repoKey)}
         onSelect={handleRepoSelect}
         selectedRepoPaths={selectedRepoPaths}
         depth={row.depth}

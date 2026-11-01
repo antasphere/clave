@@ -11,6 +11,7 @@
 import { Schema } from 'effect'
 import { Command, Query } from '@structure-ai/cqrs'
 import { CapabilityUnavailable } from './errors'
+import { LaunchProfileView } from './settings/launch-profiles'
 
 export const AgentState = Schema.Literal('idle', 'working', 'blocked', 'done', 'ended')
 export type AgentState = typeof AgentState.Type
@@ -38,8 +39,13 @@ export type Session = typeof Session.Type
 
 export const MAX_ATTACHMENTS = 10
 
-export const Attachment = Schema.Struct({
+const AttachmentLabel = Schema.optional(
+  Schema.String.pipe(Schema.minLength(1), Schema.maxLength(32))
+)
+export const FileAttachment = Schema.Struct({
   id: Schema.String.pipe(Schema.minLength(1), Schema.maxLength(128)),
+  /** `Image #1`, `File #2`: the record's name in the message text, `[Image #1]`. */
+  label: AttachmentLabel,
   path: Schema.String.pipe(
     Schema.minLength(1),
     Schema.maxLength(4096),
@@ -48,8 +54,24 @@ export const Attachment = Schema.Struct({
   name: Schema.String.pipe(Schema.minLength(1), Schema.maxLength(255)),
   mimeType: Schema.String.pipe(Schema.minLength(1), Schema.maxLength(128)),
   size: Schema.NonNegativeInt,
-  delivery: Schema.Literal('reference', 'image')
+  delivery: Schema.Literal('reference', 'image', 'folder'),
+  /** A folder's top-level item count; folders only. */
+  entries: Schema.optional(Schema.NonNegativeInt)
 })
+export type FileAttachment = typeof FileAttachment.Type
+/** Another Clave tab dragged onto the composer: delivered to the agent as a
+ *  line it can act on with the Clave tools, never as a file. */
+export const SessionAttachment = Schema.Struct({
+  id: Schema.String.pipe(Schema.minLength(1), Schema.maxLength(128)),
+  label: AttachmentLabel,
+  delivery: Schema.Literal('session'),
+  sessionId: Schema.String.pipe(Schema.pattern(/^[a-zA-Z0-9_-]{1,128}$/)),
+  name: Schema.String.pipe(Schema.minLength(1), Schema.maxLength(255)),
+  agent: Schema.String.pipe(Schema.minLength(1), Schema.maxLength(64)),
+  cwd: Schema.String.pipe(Schema.maxLength(4096))
+})
+export type SessionAttachment = typeof SessionAttachment.Type
+export const Attachment = Schema.Union(FileAttachment, SessionAttachment)
 export type Attachment = typeof Attachment.Type
 export const Attachments = Schema.Array(Attachment).pipe(Schema.maxItems(MAX_ATTACHMENTS))
 
@@ -145,6 +167,8 @@ export type SessionWrite = typeof SessionWrite.Type
 export const PermissionModeOption = Schema.Struct({ id: Schema.String, label: Schema.String })
 export type PermissionModeOption = typeof PermissionModeOption.Type
 export const AgentQuestion = Schema.Struct({
+  /** Stable answer key; older providers without IDs use the question text. */
+  id: Schema.optional(Schema.NonEmptyString),
   question: Schema.String,
   header: Schema.optional(Schema.String),
   options: Schema.Array(
@@ -174,13 +198,34 @@ export const CommandOption = Schema.Struct({
   insert: Schema.String
 })
 export type CommandOption = typeof CommandOption.Type
+/** One control request a view may send a live session's provider, the zod
+ *  `SessionControlSchema` on the wire. The set is closed on purpose: the
+ *  provider's control channel also changes the permission mode and the like,
+ *  and none of that may pass here. */
+export const SessionControl = Schema.Union(
+  Schema.Struct({ type: Schema.Literal('mcp_status') }),
+  Schema.Struct({
+    type: Schema.Literal('mcp_toggle'),
+    server: Schema.NonEmptyString,
+    enabled: Schema.Boolean
+  }),
+  Schema.Struct({ type: Schema.Literal('mcp_reconnect'), server: Schema.NonEmptyString }),
+  Schema.Struct({ type: Schema.Literal('mcp_authenticate'), server: Schema.NonEmptyString }),
+  Schema.Struct({ type: Schema.Literal('mcp_clear_auth'), server: Schema.NonEmptyString }),
+  Schema.Struct({ type: Schema.Literal('reload_plugins') })
+)
+export type SessionControl = typeof SessionControl.Type
+/** The provider's answer to a control request, as it gave it. */
+export const SessionControlResult = Schema.Record({ key: Schema.String, value: Schema.Unknown })
+export type SessionControlResult = typeof SessionControlResult.Type
 export const BackgroundTask = Schema.Struct({
   id: Schema.String,
   kind: Schema.Literal('shell', 'agent', 'other'),
   description: Schema.String,
   toolUseId: Schema.optional(Schema.String),
   startedAt: Schema.Number,
-  outputFile: Schema.optional(Schema.String)
+  outputFile: Schema.optional(Schema.String),
+  model: Schema.optional(Schema.String)
 })
 export type BackgroundTask = typeof BackgroundTask.Type
 
@@ -303,6 +348,10 @@ export const SpawnOptions = Schema.Struct({
   claudeSessionId: Schema.optional(Schema.String),
   piSessionId: Schema.optional(Schema.String),
   launchProfileId: Schema.optional(Schema.String),
+  /** The definition named by launchProfileId in the asking Mac's list. The
+   * server runs it as given and stores none. Absent, the server resolves the
+   * id against its own built-ins and list as before. */
+  launchProfile: Schema.optional(LaunchProfileView),
   piProvider: Schema.optional(Schema.String),
   /** A level as Pi spells it (`off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`). */
   piThinking: Schema.optional(Schema.String),
@@ -318,7 +367,11 @@ export const SpawnOptions = Schema.Struct({
   codexAccountId: Schema.optional(Schema.String),
   codexAccountLabel: Schema.optional(Schema.String),
   workspaceId: Schema.optional(Schema.String),
-  link: Schema.optional(SessionLink)
+  link: Schema.optional(SessionLink),
+  /** The caller when `clave_open_session` uses `attachToParent: true`:
+   *  folds the tab under its parent and restores the messaging link at boot.
+   *  Absent for separate tabs, including agent opens without attachment. */
+  spawnedBy: Schema.optional(Schema.String)
 })
 export type SpawnOptions = typeof SpawnOptions.Type
 
@@ -448,6 +501,14 @@ export const GetSessionCommands = Query.define('GetSessionCommands', {
   success: Schema.Array(CommandOption),
   failure: SessionNotFound
 })
+/** Send the session's provider one control request and answer what it
+ *  answered. A command, not a query: most of them change state (a server
+ *  turned off, a sign-in started, the plugins reloaded). */
+export const ControlSession = Command.define('ControlSession', {
+  payload: Schema.Struct({ id: Schema.String, request: SessionControl }),
+  success: SessionControlResult,
+  failure: Schema.Union(SessionNotFound, SessionWriteRefused)
+})
 /** What the session's adapter takes beyond text. */
 export const SessionCapabilities = Schema.Struct({ images: Schema.Boolean })
 export type SessionCapabilities = typeof SessionCapabilities.Type
@@ -509,6 +570,8 @@ export const SessionRecord = Schema.Struct({
   dangerousMode: Schema.Boolean,
   model: Schema.optional(Schema.String),
   launchProfileId: Schema.optional(Schema.String),
+  /** What a stopped session's Resume relaunches with. */
+  launchProfile: Schema.optional(LaunchProfileView),
   piProvider: Schema.optional(Schema.String),
   piThinking: Schema.optional(Schema.String),
   configDir: Schema.optional(Schema.String),
@@ -522,6 +585,7 @@ export const SessionRecord = Schema.Struct({
   windowKey: Schema.optional(Schema.String),
   view: Schema.optional(SessionRecordView),
   link: Schema.optional(SessionLink),
+  spawnedBy: Schema.optional(Schema.String),
   live: Schema.optional(Schema.Boolean),
   running: Schema.optional(Schema.Boolean)
 })
@@ -681,7 +745,14 @@ export const AccountOverride = Schema.Struct({
   codexAccountLabel: Schema.optional(Schema.String)
 })
 export type AccountOverride = typeof AccountOverride.Type
+/** Correlates one caller's answer and event; never a spawn override. */
+export const RestartRequestId = Schema.String.pipe(
+  Schema.minLength(1),
+  Schema.maxLength(128),
+  Schema.pattern(/^[A-Za-z0-9._:-]+$/)
+)
 export const RestartedSession = Schema.Struct({
+  requestId: Schema.optional(RestartRequestId),
   ...SessionInfo.fields,
   /** The conversation came along; false means the tab started fresh. */
   resumed: Schema.Boolean
@@ -696,8 +767,45 @@ export const RestartSession = Command.define('RestartSession', {
   payload: Schema.Struct({
     id: Schema.String,
     account: AccountOverride,
+    requestId: Schema.optional(RestartRequestId),
     resendRejected: Schema.optional(Schema.Boolean)
   }),
   success: RestartedSession,
   failure: Schema.Union(SessionNotFound, CapabilityUnavailable, SessionStartFailed)
+})
+
+// ── Wave 6, lane A: what the window keeps on a tab's record (PRDCT-3526) ──
+
+/** A tab's name as the record keeps it: null is "no name" (the folder's),
+ *  `userRenamed` protects it from the auto-title. */
+export const SessionRecordName = Schema.Struct({
+  displayName: Schema.NullOr(Schema.String),
+  userRenamed: Schema.Boolean
+})
+export type SessionRecordName = typeof SessionRecordName.Type
+/** What the window keeps on a tab's record, each field only when sent: its
+ *  name, the page on its row (null takes it off), the conversation a
+ *  `/clear` rotated it to, and the workspace it was moved to (null for
+ *  none). */
+export const SessionRecordFields = Schema.Struct({
+  name: Schema.optional(SessionRecordName),
+  page: Schema.optional(Schema.NullOr(SessionRecordView)),
+  claudeSessionId: Schema.optional(Schema.NonEmptyString),
+  workspaceId: Schema.optional(Schema.NullOr(Schema.String))
+})
+export type SessionRecordFields = typeof SessionRecordFields.Type
+/**
+ * Keep what the window decided about a tab on the record the next launch
+ * restores it from (`SessionRecordFields`). Quiet on purpose: the window that sends it
+ * already shows it, so nothing is published, unlike `RenameSession` and
+ * `SetSessionPage`, which an agent sends for the windows to follow. A tab
+ * with no record keeps nothing, as before. Under the separate server the
+ * window's rename reached main's copy of the records only, and the name was
+ * gone at the next launch; a `/clear` and a workspace move the same way
+ * (round 1 of the lane's verifier).
+ */
+export const KeepOnSessionRecord = Command.define('KeepOnSessionRecord', {
+  payload: Schema.Struct({ id: Schema.String, ...SessionRecordFields.fields }),
+  success: Schema.Void,
+  failure: CapabilityUnavailable
 })

@@ -170,3 +170,36 @@ describe('the server started by the shell', () => {
     manager.kill('t1')
   })
 })
+
+describe('the version the in-process server reports (issue #266, V1-F6)', () => {
+  it("answers the app's version and that it updates with the app, and names it in the welcome", async () => {
+    const manager = new SessionManager()
+    const endpoint = await startClaveServer({
+      manager,
+      ports: { sessions: hostOver(manager) },
+      appVersion: '3.0.0-beta.9'
+    })
+    const api = createApiClient({ url: endpoint.url, token: endpoint.token })
+    try {
+      expect(await api.server.info()).toEqual({
+        version: '3.0.0-beta.9',
+        installRef: null,
+        upgrade: {
+          supported: false,
+          reason: 'This server is run by the app; it updates with it',
+          state: 'idle'
+        }
+      })
+    } finally {
+      await api.dispose()
+    }
+    const ws = new WebSocket(endpoint.url.replace('http', 'ws') + '/push')
+    const welcome = await new Promise<unknown>((resolve, reject) => {
+      ws.once('open', () => ws.send(JSON.stringify({ _tag: 'hello', token: endpoint.token })))
+      ws.once('message', (data) => resolve(JSON.parse(data.toString())))
+      ws.once('error', reject)
+    })
+    ws.close()
+    expect(welcome).toMatchObject({ _tag: 'welcome', version: '3.0.0-beta.9' })
+  })
+})

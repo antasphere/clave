@@ -7,7 +7,8 @@ import {
   seedWorkspaces,
   seedTrustedRoots,
   until,
-  fixturePath
+  fixturePath,
+  serverDataDirOf
 } from './harness.mjs'
 
 export async function run(t) {
@@ -143,9 +144,10 @@ require('node:readline').createInterface({input:process.stdin}).on('line', line 
     }
     await app.close()
     app = undefined
-    // Attached, the profiles are the standalone server's, in its own folder.
+    // The profiles are the server's, in its own folder: the standalone's
+    // attached, the app's `server/` folder when the app started its own.
     const persisted = JSON.parse(
-      readFileSync(`${launched.server?.dataDir ?? data}/agent-launch-profiles.json`, 'utf8')
+      readFileSync(`${serverDataDirOf(data)}/agent-launch-profiles.json`, 'utf8')
     )
     assert.equal(persisted.workspaceOverrides.profiles.claude, 'chat:claude:claude-work')
     assert.ok(

@@ -34,6 +34,108 @@ export async function adoptRecord(
   return spawned.session.id
 }
 
+/** How many records a restore reattaches at once (PRDCT-3527). One at a time,
+ *  a launch bringing back 118 chats took 20 s on the separate server, each
+ *  spawn a round trip; a handful at once keeps the server's queue short
+ *  without asking it for a hundred spawns in the same instant. */
+export const RESTORE_CONCURRENCY = 6
+
+/**
+ * Bring back many records at once, in two beats (PRDCT-3527). First every
+ * record is placed in the store as it is written, marked `restoring`: the
+ * sidebar shows the person's tabs in their groups at once, before any process
+ * is reattached. Then the records are spawned a few at a time, and each tab
+ * takes what its spawn answers (alive, the model, the conversation) and loses
+ * the mark, so its pane mounts; a record whose spawn fails leaves the store
+ * again, as an adoption that fails always did. Where a tab lands is the
+ * layout's business (`adoptSessionInPlace`), so the order the spawns answer
+ * in moves nothing, and a spawn that hangs holds back only itself. The first
+ * tab placed takes focus when `focusFirst` says so (the restore's rule: only
+ * when nothing is selected yet). One kernel read seeds the agent states once
+ * every spawn has answered. Resolves with the ids placed, at once; `attached`
+ * resolves with the ids whose spawn succeeded, when all have answered.
+ */
+export function placeRecords(
+  records: SessionRecord[],
+  activeWorkspaceId: string | null,
+  options: { focusFirst?: boolean; concurrency?: number } = {}
+): { placed: string[]; attached: Promise<string[]> } {
+  const placed: string[] = []
+  // A session the host already runs is placed as it is, settled: there is
+  // nothing to spawn, and asking for it again under its id fails as a
+  // duplicate, which took the tab out of its group (issue #183).
+  const attachedIds: string[] = []
+  let focus = options.focusFirst === true
+  for (const s of records) {
+    if (useSessionStore.getState().sessions.some((existing) => existing.id === s.id)) continue
+    const tab =
+      s.running === true
+        ? sessionOfRecord(s, s.workspaceId ?? activeWorkspaceId ?? undefined)
+        : { ...sessionFromRecord(s, activeWorkspaceId, null), restoring: true }
+    useSessionStore.getState().adoptSessionInPlace(tab, { focus })
+    focus = false
+    placed.push(tab.id)
+    if (s.running === true) attachedIds.push(s.id)
+  }
+  const pending = records.filter((s) => s.running !== true && placed.includes(s.id))
+  let next = 0
+  const worker = async (): Promise<void> => {
+    while (next < pending.length) {
+      const s = pending[next++]
+      const spawned = await spawnFromRecord(s, activeWorkspaceId)
+      // Closed while it was restoring: the close's kill found no session yet,
+      // so the one that just landed is ended here, the way the close would
+      // have ended it, record and all (round 1 of the verifier, F2).
+      if (spawned && !useSessionStore.getState().sessions.some((t) => t.id === s.id)) {
+        void window.electronAPI.killSession(spawned.session.id).catch(() => {})
+        continue
+      }
+      if (spawned && spawned.session.id === s.id) {
+        settleRestored(spawned.session)
+        attachedIds.push(s.id)
+      } else {
+        // Failed (logged by the spawn), or answered under another id: the
+        // placeholder goes; a session under another id is a tab of its own.
+        useSessionStore.getState().removeSessionForRehome(s.id)
+        if (spawned) {
+          useSessionStore.getState().adoptSessionInPlace(spawned.session)
+          attachedIds.push(spawned.session.id)
+        }
+      }
+    }
+  }
+  const lanes = Math.max(1, Math.min(options.concurrency ?? RESTORE_CONCURRENCY, pending.length))
+  const attached = Promise.all(Array.from({ length: lanes }, worker)).then(() => {
+    void seedAgentStatesFromKernel(attachedIds)
+    return attachedIds
+  })
+  return { placed, attached }
+}
+
+/** A restored tab takes what its spawn answered, keeping what the person did
+ *  to it meanwhile (a rename, a selection). */
+function settleRestored(spawned: Session): void {
+  useSessionStore.setState((state) => ({
+    sessions: state.sessions.map((s) =>
+      s.id === spawned.id && s.restoring
+        ? {
+            ...s,
+            cwd: spawned.cwd,
+            folderName: spawned.folderName,
+            alive: spawned.alive,
+            model: spawned.model,
+            claudeSessionId: spawned.claudeSessionId,
+            piSessionId: spawned.piSessionId,
+            launchProfileId: spawned.launchProfileId,
+            piProvider: spawned.piProvider,
+            piThinking: spawned.piThinking,
+            restoring: false
+          }
+        : s
+    )
+  }))
+}
+
 /**
  * Paint the state the kernel already holds for sessions this window just took
  * in (PRDCT-3289). A tab built from a record carries no `agentState`, and the
@@ -42,18 +144,90 @@ export async function adoptRecord(
  * the agent's next transition. One read of the listed sessions for the ids,
  * and `agentState` seeded on each that still has no word; a word that reached
  * the store live meanwhile is never written over. The chat view does the same
- * for an events session (`views/kernel-state.ts`).
+ * for an events session (`views/kernel-state.ts`). A session the kernel holds
+ * as `ended` (a chat whose provider exited, still held by the host) comes in
+ * ended, the record being the arbiter as in `views/session-end.ts`: taken in
+ * from its record it would otherwise read as a usable tab until opened. The
+ * answer is a snapshot taken when asked, so the end is applied only to a tab
+ * nothing has touched since (the same object): a word or a restart that
+ * reached it while the read was on its way is newer, and stands (V1-F3).
  */
 export async function seedAgentStatesFromKernel(ids: string[]): Promise<void> {
   if (ids.length === 0) return
+  const asked = new Map(
+    useSessionStore
+      .getState()
+      .sessions.filter((s) => ids.includes(s.id))
+      .map((s) => [s.id, s])
+  )
   const listed = (await window.electronAPI?.sessionsList?.().catch(() => [])) ?? []
   const store = useSessionStore.getState()
   for (const id of ids) {
     const state = listed.find((k) => k.id === id)?.state
-    if (state !== 'idle' && state !== 'working' && state !== 'blocked' && state !== 'done') continue
     const session = store.sessions.find((s) => s.id === id)
+    if (state === 'ended') {
+      if (session?.alive && session === asked.get(id)) store.updateSessionAlive(id, false)
+      continue
+    }
+    if (state !== 'idle' && state !== 'working' && state !== 'blocked' && state !== 'done') continue
     if (!session || session.agentState !== undefined) continue
     store.setAgentState(id, state)
+  }
+}
+
+/**
+ * The tab a record stands for: what the spawn answered when there is an
+ * answer, else the record as it is written (the placeholder a restore shows
+ * while the spawn runs, PRDCT-3527).
+ */
+function sessionFromRecord(
+  s: SessionRecord,
+  activeWorkspaceId: string | null,
+  info: Awaited<ReturnType<typeof window.electronAPI.spawnSession>> | null
+): Session {
+  const workspaceId = s.workspaceId ?? activeWorkspaceId ?? undefined
+  return {
+    id: info?.id ?? s.id,
+    cwd: info?.cwd ?? s.cwd,
+    folderName: info?.folderName ?? s.folderName,
+    name: s.displayName || s.folderName,
+    userRenamed: s.userRenamed === true,
+    alive: info?.alive ?? false,
+    activityStatus: 'idle',
+    promptWaiting: null,
+    claudeMode: s.claudeMode,
+    antigravityMode: s.antigravityMode,
+    codexMode: s.codexMode,
+    piMode: s.piMode,
+    claudeAgentsMode: s.claudeAgentsMode,
+    dangerousMode: s.dangerousMode,
+    model: info ? info.model : s.model,
+    claudeSessionId: info ? info.claudeSessionId : (s.claudeSessionId ?? null),
+    piSessionId: info ? info.piSessionId : (s.piSessionId ?? null),
+    launchProfileId: info ? info.launchProfileId : s.launchProfileId,
+    piProvider: info ? info.piProvider : s.piProvider,
+    piThinking: info ? info.piThinking : s.piThinking,
+    claudeProfileId: s.claudeProfileId,
+    claudeProfileLabel: s.claudeProfileLabel,
+    claudeConfigDir: s.configDir,
+    codexAccountId: s.codexAccountId,
+    codexAccountLabel: s.codexAccountLabel,
+    sessionType: 'local',
+    workspaceId,
+    view: s.view ? { ...s.view } : undefined,
+    // The tab whose agent opened this one: folded under it again, and its
+    // "parent" still answers (#259).
+    spawnedBy: s.spawnedBy,
+    // A chat that is not running comes back without starting its agent:
+    // its pane mounts, and the agent starts, when the tab is first shown.
+    ...(s.transport === 'events' && !s.live ? { dormant: true } : {}),
+    // The defaults normalizeSession would fill in anyway, spelled out so
+    // this is a whole Session both adoption paths can hand around.
+    detectedUrl: null,
+    serverStatus: null,
+    serverCommand: null,
+    hasUnseenActivity: false,
+    planFilePath: null
   }
 }
 
@@ -66,8 +240,10 @@ async function spawnFromRecord(
   s: SessionRecord,
   activeWorkspaceId: string | null
 ): Promise<{ session: Session } | null> {
+  const workspaceId = s.workspaceId ?? activeWorkspaceId ?? undefined
+  // The host already runs it: there is nothing to reattach (issue #183).
+  if (s.running === true) return { session: sessionOfRecord(s, workspaceId) }
   try {
-    const workspaceId = s.workspaceId ?? activeWorkspaceId ?? undefined
     const info = await window.electronAPI.spawnSession(s.cwd, {
       claudeMode: s.claudeMode,
       antigravityMode: s.antigravityMode,
@@ -108,46 +284,12 @@ async function spawnFromRecord(
       workspaceId,
       // Carry the ownership forward: an adoption rewrites the record, and a
       // hidden half that came back unstamped would be a tab at the NEXT boot.
-      link: s.link
+      link: s.link,
+      // The parent too, so the restored spawn itself carries it: a later
+      // account switch respawns from these options (#259, V1-F1).
+      spawnedBy: s.spawnedBy
     })
-    const session: Session = {
-      id: info.id,
-      cwd: info.cwd,
-      folderName: info.folderName,
-      name: s.displayName || s.folderName,
-      userRenamed: s.userRenamed === true,
-      alive: info.alive,
-      activityStatus: 'idle',
-      promptWaiting: null,
-      claudeMode: s.claudeMode,
-      antigravityMode: s.antigravityMode,
-      codexMode: s.codexMode,
-      piMode: s.piMode,
-      claudeAgentsMode: s.claudeAgentsMode,
-      dangerousMode: s.dangerousMode,
-      model: info.model,
-      claudeSessionId: info.claudeSessionId,
-      piSessionId: info.piSessionId,
-      launchProfileId: info.launchProfileId,
-      piProvider: info.piProvider,
-      piThinking: info.piThinking,
-      claudeProfileId: s.claudeProfileId,
-      claudeProfileLabel: s.claudeProfileLabel,
-      claudeConfigDir: s.configDir,
-      codexAccountId: s.codexAccountId,
-      codexAccountLabel: s.codexAccountLabel,
-      sessionType: 'local',
-      workspaceId,
-      view: s.view ? { ...s.view } : undefined,
-      // The defaults normalizeSession would fill in anyway, spelled out so
-      // this is a whole Session both adoption paths can hand around.
-      detectedUrl: null,
-      serverStatus: null,
-      serverCommand: null,
-      hasUnseenActivity: false,
-      planFilePath: null
-    }
-    return { session }
+    return { session: sessionFromRecord(s, activeWorkspaceId, info) }
   } catch (err) {
     console.error('Failed to adopt session record:', s.tmuxName ?? s.id, err)
     return null
@@ -284,15 +426,20 @@ export async function adoptServerStartedTerminals(
 }
 
 /** The tab a record describes, as `spawnFromRecord` builds it after its
- *  spawn, from the record alone: for a process main already runs. */
+ *  spawn, from the record alone: for a process main already runs. A chat the
+ *  host holds is alive (registered) whether or not its provider was started;
+ *  one whose provider was not started (`live` false) stays dormant, so opening
+ *  it is still what starts its agent. */
 function sessionOfRecord(s: SessionRecord, workspaceId: string | undefined): Session {
+  const chat = s.transport === 'events'
   return {
     id: s.id,
     cwd: s.cwd,
     folderName: s.folderName,
     name: s.displayName || s.folderName,
     userRenamed: s.userRenamed === true,
-    alive: s.live !== false,
+    alive: chat || s.live !== false,
+    ...(chat && !s.live ? { dormant: true } : {}),
     activityStatus: 'idle',
     promptWaiting: null,
     claudeMode: s.claudeMode,
@@ -315,6 +462,7 @@ function sessionOfRecord(s: SessionRecord, workspaceId: string | undefined): Ses
     sessionType: 'local',
     workspaceId,
     view: s.view ? { ...s.view } : undefined,
+    spawnedBy: s.spawnedBy,
     detectedUrl: null,
     serverStatus: null,
     serverCommand: null,

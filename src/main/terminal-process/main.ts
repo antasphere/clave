@@ -18,11 +18,17 @@
  * stdout, ever. SIGTERM or SIGINT stops it; so does the end of the parent
  * named by `--parent`, polled, so a server that died without a word leaves
  * no terminal process behind.
+ *
+ * Since wave 5 the server entry starts it itself and starts it again when
+ * it dies (`supervisor.ts`); inside the packaged app the executable is the
+ * app's own binary run as Node (`ELECTRON_RUN_AS_NODE`, taken out of this
+ * environment at boot like the token).
  */
 import { randomBytes } from 'node:crypto'
 import { startTerminalProcess } from './server'
+import { RUN_AS_NODE_ENV, TOKEN_ENV } from './token-env'
 
-export const TOKEN_ENV = 'CLAVE_TERMINALS_TOKEN'
+export { TOKEN_ENV }
 
 function arg(name: string): string | undefined {
   const i = process.argv.indexOf(`--${name}`)
@@ -47,6 +53,11 @@ async function main(): Promise<void> {
 
   const token = process.env[TOKEN_ENV] || randomBytes(32).toString('hex')
   delete process.env[TOKEN_ENV]
+  // Started as Node by the app's own binary (wave 5): the variable that
+  // made it so is nobody else's (`token-env.ts`). A terminal gets the
+  // environment of its spawn request, never this process's, so this is
+  // the rule kept rather than a leak closed.
+  delete process.env[RUN_AS_NODE_ENV]
 
   const log = (line: string): void => {
     process.stderr.write(`clave-terminals: ${line}\n`)

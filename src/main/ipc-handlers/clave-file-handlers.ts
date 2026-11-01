@@ -44,6 +44,7 @@ export function registerClaveFileHandlers(): void {
         autoCommands: string[]
         prompts: string[]
         dangerous: boolean
+        server?: string
       }
     ): Promise<ReviewAnswer> => showReview(BrowserWindow.fromWebContents(event.sender), review)
   )

@@ -1,6 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { resolvePosixShellLaunch } from '../../shell-launch'
 import type { LaunchProfile } from '../../../shared/agent-launch'
+import { retainedCodexLaunch } from './codex-runtime'
 
 export type RpcId = number | string
 export interface RpcNotification {
@@ -22,6 +23,16 @@ export interface CodexCallbacks {
   request(frame: RpcRequest): void
   error(error: Error): void
   exit(code: number, stderr?: string): void
+}
+/** A provider refusal, distinct from a timeout or a lost connection. */
+export class CodexRpcError extends Error {
+  constructor(
+    readonly code: number,
+    message: string
+  ) {
+    super(message)
+    this.name = 'CodexRpcError'
+  }
 }
 export function object(value: unknown): Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -181,9 +192,15 @@ export class CodexAppServer implements CodexConnection {
         if (!pending) continue // A late response to a timed-out request.
         this.pending.delete(id)
         clearTimeout(pending.timer)
-        if ('error' in frame)
-          pending.reject(new Error(String(object(frame.error).message ?? 'Codex protocol error')))
-        else pending.resolve(frame.result)
+        if ('error' in frame) {
+          const error = object(frame.error)
+          const message = String(error.message ?? 'Codex protocol error')
+          pending.reject(
+            typeof error.code === 'number'
+              ? new CodexRpcError(error.code, message)
+              : new Error(message)
+          )
+        } else pending.resolve(frame.result)
       } else {
         this.fail(new Error('Invalid Codex JSON-RPC frame'))
         return
@@ -224,23 +241,39 @@ export function spawnCodexAppServer(
   const childEnv = env?.CLAVE_CODEX_MCP_TOKEN
     ? { ...env, _CLAVE_CODEX_MCP_TOKEN_LAUNCH: env.CLAVE_CODEX_MCP_TOKEN }
     : env
+  const runtime = process.platform === 'win32' ? undefined : retainedCodexLaunch(argv, assignment)
   const launch =
     process.platform === 'win32'
       ? { file: windowsDefault ? 'codex.cmd' : argv[0], args: argv.slice(1) }
-      : resolvePosixShellLaunch(
-          process.env.SHELL || '/bin/zsh',
-          `${assignment}exec ${argv.map(quote).join(' ')}`
-        )
-  return new CodexAppServer(
-    spawn(launch.file, launch.args, {
+      : resolvePosixShellLaunch(process.env.SHELL || '/bin/zsh', runtime!.command)
+  let child: ChildProcessWithoutNullStreams
+  try {
+    child = spawn(launch.file, launch.args, {
       cwd,
       ...(childEnv ? { env: childEnv } : {}),
       stdio: ['pipe', 'pipe', 'pipe'],
       windowsHide: true,
       shell: windowsDefault
-    }),
+    })
+  } catch (error) {
+    void runtime?.release()
+    throw error
+  }
+  child.once('close', () => void runtime?.release())
+  const connection = new CodexAppServer(
+    child,
     callbacks,
     30_000,
     env?.CLAVE_CODEX_MCP_TOKEN ? [env.CLAVE_CODEX_MCP_TOKEN] : []
   )
+  return {
+    request: (method, params) => connection.request(method, params),
+    notify: (method, params) => connection.notify(method, params),
+    respond: (id, result) => connection.respond(id, result),
+    reject: (id, message) => connection.reject(id, message),
+    close: async () => {
+      await connection.close()
+      await runtime?.release()
+    }
+  }
 }

@@ -89,6 +89,7 @@ export type Action =
    *  Main only cuts a page where nothing pairs across the cut (a tool call and
    *  its result, an interrupt and its message), so it reduces on its own. */
   | { prepend: HistoryItem[] }
+  | { sync: HistoryItem[] }
   /** The reader took their last message back before any answer to it. */
   | { withdraw: true }
 
@@ -111,6 +112,10 @@ export function reduceConversation(state: Conversation, action: Action): Convers
     const entries = [...state.entries]
     entries[last] = { ...message, withdrawn: true }
     return { ...state, entries }
+  }
+  if ('sync' in action) {
+    if (!action.sync.length) return state
+    return action.sync.reduce(reduceConversation, { ...state, entries: [], first: 0 })
   }
   if ('prepend' in action) {
     if (!action.prepend.length) return state
