@@ -47,7 +47,13 @@ const DIR = userDataDir('restore-timing')
 const ROOT = fixturePath('restore-timing-root')
 const BIN = `${ROOT}/bin`
 const STARTS = `${ROOT}/agent-starts.jsonl`
-const WS = { id: 'restore-timing-ws', name: 'Timing', rootDir: ROOT }
+const WS = {
+  id: 'restore-timing-ws',
+  name: 'Timing',
+  rootDir: ROOT,
+  profileFile: null,
+  createdAt: 1
+}
 const KEY = 'restore-timing-window'
 const GROUPS = 5
 const PER_GROUP = 20
