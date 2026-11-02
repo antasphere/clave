@@ -444,7 +444,11 @@ export async function run(t) {
     const remoteRow = win.locator(`[data-sidebar-item-id="${quotaKey}"]`)
     await remoteRow.waitFor()
     assert.equal(await remoteRow.locator('[data-account-limit]').count(), 0)
-    assert.equal(await remoteRow.locator('.sidebar-tab-icon svg').count(), 1)
+    // No logo leads a title any more (PRDCT-3933); the row's status slot is on
+    // its right, and a remote row has no lifecycle to draw there.
+    assert.equal(await remoteRow.locator('.sidebar-tab-icon').count(), 0)
+    assert.equal(await remoteRow.locator('.sidebar-tab-status').count(), 1)
+    assert.equal(await remoteRow.locator('.sidebar-tab-status svg').count(), 0)
     const ownerBadge = remoteRow.locator(`[data-fleet-owner="${savedA.id}"]`)
     const assertOwnerBadge = async () => {
       assert.equal(await ownerBadge.getAttribute('title'), 'VPS A')
@@ -458,7 +462,7 @@ export async function run(t) {
     }
     await assertOwnerBadge()
     t.check(
-      'remote default-account row retains its provider and owner marks without exhausted Mac quota',
+      'remote default-account row keeps its owner mark, no logo and no exhausted Mac quota',
       true
     )
 
@@ -468,14 +472,19 @@ export async function run(t) {
     await win.click('[data-orb-option="weaving"]')
     await win.getByRole('button', { name: 'Back to sessions', exact: true }).click()
     const remoteOrb = remoteRow.locator(
-      '.sidebar-tab-icon[data-mark="pack"] canvas[data-orb-state="weaving"]'
+      '.sidebar-tab-status[data-mark="pack"] canvas[data-orb-state="weaving"]'
     )
     await remoteOrb.waitFor()
-    assert.equal(await remoteRow.locator('.sidebar-tab-icon svg').count(), 0)
+    assert.equal(await remoteRow.locator('.sidebar-tab-status svg').count(), 0)
     await assertOwnerBadge()
     await win.evaluate(() => window.electronAPI.pluginsDisable('clave.orbs'))
-    await remoteRow.locator('.sidebar-tab-icon svg').waitFor()
-    assert.equal(await remoteRow.locator('.sidebar-tab-icon canvas').count(), 0)
+    assert.ok(
+      await until(
+        async () => (await remoteRow.locator('.sidebar-tab-status canvas').count()) === 0
+      ),
+      'the orb leaves the remote row when its plugin is disabled'
+    )
+    assert.equal(await remoteRow.locator('.sidebar-tab-status[data-mark]').count(), 0)
     await assertOwnerBadge()
     await win.evaluate(() => window.electronAPI.pluginsEnable('clave.orbs', []))
     await remoteOrb.waitFor()
@@ -488,7 +497,12 @@ export async function run(t) {
     await win.click('[data-settings-nav-row="appearance"]')
     await win.click('[data-agent-mark-option="logo"]')
     await win.getByRole('button', { name: 'Back to sessions', exact: true }).click()
-    await remoteRow.locator('.sidebar-tab-icon svg').waitFor()
+    assert.ok(
+      await until(
+        async () => (await remoteRow.locator('.sidebar-tab-status canvas').count()) === 0
+      ),
+      'the orb leaves the remote row when the logo is the mark again'
+    )
     await win.evaluate((id) => window.electronAPI.killSession(id), quotaKey)
     await win.evaluate((id) => window.electronAPI.killSession(id), localQuota.sessionId)
     await win.locator(`[data-sidebar-item-id="${ka}"]`).click()

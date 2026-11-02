@@ -41,6 +41,84 @@ const spec: SpawnSpec = {
 const tick = (): Promise<void> => new Promise((resolve) => setImmediate(resolve))
 
 describe('Codex translation', () => {
+  it.each(['form', 'openai/form', 'openaiForm'])(
+    'offers an accept-once response for a %s empty MCP approval',
+    (mode) => {
+      const events: SessionEvent[] = []
+      const translator = new CodexTranslator((e) => events.push(e))
+      translator.turnId = 'turn-mcp'
+      translator.request({
+        id: 73,
+        method: 'mcpServer/elicitation/request',
+        params: {
+          mode,
+          threadId: 'thread',
+          turnId: 'turn-mcp',
+          serverName: 'clave_test',
+          message: 'Allow the clave_test MCP server to run tool "clave_list"?',
+          _meta: { tool_name: 'clave_list', tool_params: { workspace: 'all' } },
+          requestedSchema: { type: 'object', properties: {} }
+        }
+      })
+      const prompt = events.find((e) => e.type === 'permission_request')
+      expect(prompt?.options).toEqual([
+        { id: 'accept', label: 'accept' },
+        { id: 'decline', label: 'decline' },
+        { id: 'cancel', label: 'cancel' }
+      ])
+      expect(events.at(-1)).toEqual({ type: 'state_change', state: 'blocked' })
+      const connection = { respond: vi.fn() } as unknown as CodexConnection
+      translator.answer('73', 'accept', connection)
+      // Codex's message-only ApprovalAction sends no form content or persistence metadata.
+      expect(connection.respond).toHaveBeenCalledWith(73, {
+        action: 'accept',
+        content: null,
+        _meta: null
+      })
+      expect(events.at(-1)).toEqual({ type: 'state_change', state: 'working' })
+      expect(() => translator.answer('73', 'accept', connection)).toThrow(/expired/)
+      expect(connection.respond).toHaveBeenCalledTimes(1)
+    }
+  )
+  it.each([
+    { mode: 'form', requestedSchema: { type: 'object', properties: { name: { type: 'string' } } } },
+    { mode: 'form', requestedSchema: { type: 'object', properties: {}, required: ['name'] } },
+    { mode: 'form', requestedSchema: { type: 'object', properties: {}, minProperties: 1 } },
+    { mode: 'openai/form', requestedSchema: { type: 'object', properties: {}, not: {} } },
+    {
+      mode: 'openaiForm',
+      requestedSchema: { type: 'object', properties: {}, const: { name: 'x' } }
+    },
+    {
+      mode: 'url',
+      requestedSchema: { type: 'object', properties: {} },
+      url: 'https://example.test'
+    },
+    { mode: 'future', requestedSchema: { type: 'object', properties: {} } },
+    { mode: 'form', requestedSchema: null },
+    { mode: 'form', requestedSchema: { type: 'object', properties: [] } },
+    { mode: 'form', requestedSchema: { type: 'object' } }
+  ])('does not offer acceptance for an unfillable or unsupported elicitation: %j', (params) => {
+    const events: SessionEvent[] = []
+    const translator = new CodexTranslator((e) => events.push(e))
+    translator.request({ id: 'mcp', method: 'mcpServer/elicitation/request', params })
+    const prompt = events.find((e) => e.type === 'permission_request')
+    expect(prompt?.options.map((o) => o.id)).toEqual(['decline', 'cancel'])
+    const connection = { respond: vi.fn() } as unknown as CodexConnection
+    expect(() => translator.answer('"mcp"', 'accept', connection)).toThrow(/approval option/)
+    expect(connection.respond).not.toHaveBeenCalled()
+  })
+  it.each(['decline', 'cancel'])('preserves the %s reply to an MCP elicitation', (action) => {
+    const translator = new CodexTranslator(() => {})
+    translator.request({
+      id: 'mcp',
+      method: 'mcpServer/elicitation/request',
+      params: { mode: 'form', requestedSchema: { type: 'object', properties: {}, required: [] } }
+    })
+    const connection = { respond: vi.fn() } as unknown as CodexConnection
+    translator.answer('"mcp"', action, connection)
+    expect(connection.respond).toHaveBeenCalledWith('mcp', { action, content: null, _meta: null })
+  })
   it('translates every recorded notification in order without silently dropping any', () => {
     const events: SessionEvent[] = []
     const translator = new CodexTranslator((e) => events.push(SessionEventSchema.parse(e)))

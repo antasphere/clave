@@ -1,4 +1,5 @@
 import type { Entry } from './reducer'
+import { parseDelivery } from '../../../src/shared/exchange-provenance'
 
 /* What a run of tool calls says between two messages, decided without a DOM so
    both views of this plugin read it the same way and a test can pin it.
@@ -15,7 +16,16 @@ export interface ToolGroup {
   id: string
   tools: ToolEntry[]
 }
-export type Block = Exclude<Entry, { kind: 'tool' }> | ToolGroup
+export type ExchangeResponse = Extract<Entry, { kind: 'assistant' }> | ToolGroup
+export interface DeliveryExchange {
+  message: Extract<Entry, { kind: 'user' }>
+  responses: ExchangeResponse[]
+}
+export interface DeliveryGroup {
+  kind: 'delivery-group'
+  exchanges: DeliveryExchange[]
+}
+export type Block = Exclude<Entry, { kind: 'tool' }> | ToolGroup | DeliveryGroup
 
 /** A MESSAGE ends a run of tools; a permission card does not. The reader asked
  *  a question, the agent worked, the agent answered: the work between those two
@@ -33,19 +43,41 @@ export function visibleEntries(entries: Entry[]): Entry[] {
   )
 }
 
+/** A peer's delivery owns the replies and tools that follow it. A human
+ *  message ends that context; permissions and errors stay outside the deck so
+ *  actionable notices can never be concealed. */
 export function groupEntries(entries: Entry[]): Block[] {
   const blocks: Block[] = []
   let open: ToolGroup | undefined
+  let deliveries: DeliveryGroup | undefined
+  let exchange: DeliveryExchange | undefined
   for (const entry of entries) {
+    if (entry.kind === 'user' && parseDelivery(entry.text)) {
+      if (!deliveries) {
+        deliveries = { kind: 'delivery-group', exchanges: [] }
+        blocks.push(deliveries)
+      }
+      exchange = { message: entry, responses: [] }
+      deliveries.exchanges.push(exchange)
+      open = undefined
+      continue
+    }
+    if (entry.kind === 'user' || entry.kind === 'permission' || entry.kind === 'error') {
+      if (exchange) open = undefined
+      deliveries = undefined
+      exchange = undefined
+    }
     if (entry.kind === 'tool') {
       if (!open) {
         open = { kind: 'tool-group', id: entry.id, tools: [] }
-        blocks.push(open)
+        if (exchange) exchange.responses.push(open)
+        else blocks.push(open)
       }
       open.tools.push(entry)
       continue
     }
-    blocks.push(entry)
+    if (exchange && entry.kind === 'assistant') exchange.responses.push(entry)
+    else blocks.push(entry)
     if (entry.kind === 'user' || entry.kind === 'assistant') open = undefined
   }
   return blocks

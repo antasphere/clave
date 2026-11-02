@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { finishesTurn, tabIndicators } from './tab-status'
+import { finishesTurn, tabIndicators, tabStatusPresentation } from './tab-status'
 
 type Fields = Parameters<typeof tabIndicators>[0]
 
@@ -64,6 +64,54 @@ describe('tabIndicators', () => {
   it('counts nothing in the background of a dead or neutral tab', () => {
     expect(tabIndicators({ ...claude, alive: false, backgroundTasks: 2 }).background).toBe(0)
     expect(tabIndicators({ ...terminal, backgroundTasks: 2 }).background).toBe(0)
+  })
+})
+
+describe('tabStatusPresentation', () => {
+  it.each([
+    ['a fresh Claude tab', claude, null, 'grey', null],
+    ['a working Claude tab', { ...claude, agentState: 'working' }, 'spinner', 'grey', 'Working'],
+    [
+      'a Claude tab waiting on a permission',
+      { ...claude, agentState: 'blocked' },
+      'question',
+      'amber',
+      'Waiting on you'
+    ],
+    [
+      'a Claude tab done while away',
+      { ...claude, agentState: 'done', hasUnseenActivity: true },
+      'check',
+      'blue',
+      'Finished while you were away'
+    ],
+    [
+      'a Claude tab written to while away',
+      { ...claude, agentState: 'done', hasUnseenActivity: true, injectedFrom: 'Wave' },
+      'envelope',
+      'blue',
+      'Message from Wave'
+    ],
+    ['a Claude tab done and read', { ...claude, agentState: 'done' }, 'check', 'grey', 'Finished'],
+    [
+      'a terminal written to by another tab',
+      { ...terminal, injectedFrom: 'Wave' },
+      'envelope',
+      'blue',
+      'Message from Wave'
+    ],
+    ['a dead Claude tab', { ...claude, alive: false, agentState: 'done' }, 'minus', 'dim', 'Ended'],
+    ['a Codex tab at rest', { ...codex, agentState: 'idle' }, null, 'grey', null],
+    ['a Pi tab done and read', { ...pi, agentState: 'done' }, 'check', 'grey', 'Finished'],
+    ['a terminal with a stray done state', { ...terminal, agentState: 'done' }, null, 'grey', null],
+    ['an Antigravity tab stays neutral', { ...antigravity, agentState: 'done' }, null, 'grey', null]
+  ] as const)('%s', (_label, session, glyph, tone, label) => {
+    expect(tabStatusPresentation(session as Fields)).toMatchObject({ glyph, tone, label })
+  })
+
+  it('carries the status the row paints', () => {
+    expect(tabStatusPresentation({ ...claude, agentState: 'blocked' }).status).toBe('needs-you')
+    expect(tabStatusPresentation({ ...claude, alive: false }).status).toBe('ended')
   })
 })
 

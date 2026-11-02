@@ -91,15 +91,16 @@ writeFileSync(
   `${ROOT}/legend.txt`,
   `Tab status demo (PRDCT-2940). Each tab on the left shows one behaviour:
 
-  Working ............... grey logo inside a spinning ring
-  Needs you ............. amber logo (a permission or a question waits)
-  New to read ........... blue logo: a turn ended while you were here;
-                          click it and it goes back to grey
-  Idle .................. grey logo
+  Working ............... a grey segmented spinner on the right of the row
+  Needs you ............. an amber question mark in a circle (a permission or a question waits)
+  New to read ........... a blue check in a circle: a turn ended while you were away;
+                          click the row and it goes grey (a Codex row goes empty)
+  Idle .................. nothing on the right
   Cycles ................ goes working -> needs you -> working -> done, every ~16s
                           (it lands blue each time because you are not on it)
-  Message from a tab .... blue logo: another tab wrote to it; click to clear
-  Ended ................. dimmed logo (its process exited)
+  Message from a tab .... a blue envelope: another tab wrote to it; click to clear
+  Ended ................. a dimmed minus in a circle (its process exited)
+  No logo leads a title any more: every title starts at the row's left edge.
   Chat · background ..... finished chat turn with 2 tasks still running:
                           the counter on the right, then gone after ~60s;
                           its account is at its limit: the warning icon,
@@ -206,7 +207,8 @@ await sleep(1500)
 const rows = await win.evaluate(() =>
   [...document.querySelectorAll('.sidebar-item')].map((row) => ({
     name: row.querySelector('[data-testid="session-tab-name"]')?.textContent,
-    status: row.querySelector('.tab-status')?.getAttribute('data-status'),
+    status: row.querySelector('.sidebar-tab-status')?.getAttribute('data-status'),
+    glyph: row.querySelector('.sidebar-tab-status')?.getAttribute('data-glyph') ?? null,
     background: row.querySelector('[data-background]')?.getAttribute('data-background') ?? null,
     limit: !!row.querySelector('[data-account-limit]')
   }))

@@ -3,16 +3,17 @@ import type { Session } from '../store/session-types'
 /**
  * What a sidebar tab says about its session, and the one place that decides it.
  *
- * The provider logo carries a single signal at a time — motion means working,
- * colour means "go look" — and background work never touches the logo: it is a
- * counter on the row's right side. Everything the row paints comes from here.
+ * The row carries a single signal at a time, in the status slot on its right
+ * (`tabStatusPresentation` below says what the slot draws): motion means
+ * working, colour means "go look". Background work never touches the slot: it
+ * is a counter beside it. Everything the row paints comes from here.
  *
- *   needs-you → amber logo (a permission or a question waits on the reader)
- *   working   → grey logo inside a spinning ring
- *   unread    → blue logo (a turn finished while the tab was not in view, or
- *               another tab wrote to it); back to idle once the tab is opened
- *   idle      → grey logo
- *   ended     → dimmed logo
+ *   needs-you → a permission or a question waits on the reader
+ *   working   → the agent is on a turn
+ *   unread    → a turn finished while the tab was not in view, or another tab
+ *               wrote to it; back to idle once the tab is opened
+ *   idle      → at rest
+ *   ended     → the process has exited
  *
  * Priority when several apply: needs-you > working > unread > idle; ended
  * overrides them all. Providers without a deterministic state signal
@@ -72,6 +73,51 @@ export function tabIndicators(session: StatusFields): TabIndicators {
           ? 'unread'
           : 'idle'
   return { status, background }
+}
+
+/**
+ * What the row's trailing status slot draws (PRDCT-3933): the glyph, its ink
+ * and the words its tooltip and a screen reader get, from the one status
+ * above. One place, so the row, its tests and the specs agree.
+ *
+ *   working   → a segmented spinner, grey
+ *   needs-you → a question mark in a circle, amber
+ *   unread    → a check in a circle, blue; an envelope when another tab wrote
+ *   idle      → a check in a circle, grey, once a turn has finished and been
+ *               read (Claude and Pi rest on `done`; Codex rests on `idle` and
+ *               reads as fresh again); nothing on a fresh tab
+ *   ended     → a minus in a circle, dimmed
+ */
+export type TabGlyph = 'spinner' | 'question' | 'check' | 'envelope' | 'minus'
+export type TabTone = 'grey' | 'amber' | 'blue' | 'dim'
+
+export interface TabStatusPresentation {
+  status: TabStatus
+  /** Null draws nothing: the slot stays, empty. */
+  glyph: TabGlyph | null
+  tone: TabTone
+  /** The tooltip and the accessible name; null when there is nothing to say. */
+  label: string | null
+}
+
+export function tabStatusPresentation(session: StatusFields): TabStatusPresentation {
+  const { status } = tabIndicators(session)
+  switch (status) {
+    case 'needs-you':
+      return { status, glyph: 'question', tone: 'amber', label: 'Waiting on you' }
+    case 'working':
+      return { status, glyph: 'spinner', tone: 'grey', label: 'Working' }
+    case 'unread':
+      return session.injectedFrom
+        ? { status, glyph: 'envelope', tone: 'blue', label: `Message from ${session.injectedFrom}` }
+        : { status, glyph: 'check', tone: 'blue', label: 'Finished while you were away' }
+    case 'ended':
+      return { status, glyph: 'minus', tone: 'dim', label: 'Ended' }
+    case 'idle':
+      return hasLifecycleState(session) && session.agentState === 'done'
+        ? { status, glyph: 'check', tone: 'grey', label: 'Finished' }
+        : { status, glyph: null, tone: 'grey', label: null }
+  }
 }
 
 /**

@@ -39,8 +39,13 @@ export type Session = typeof Session.Type
 
 export const MAX_ATTACHMENTS = 10
 
-export const Attachment = Schema.Struct({
+const AttachmentLabel = Schema.optional(
+  Schema.String.pipe(Schema.minLength(1), Schema.maxLength(32))
+)
+export const FileAttachment = Schema.Struct({
   id: Schema.String.pipe(Schema.minLength(1), Schema.maxLength(128)),
+  /** `Image #1`, `File #2`: the record's name in the message text, `[Image #1]`. */
+  label: AttachmentLabel,
   path: Schema.String.pipe(
     Schema.minLength(1),
     Schema.maxLength(4096),
@@ -49,8 +54,24 @@ export const Attachment = Schema.Struct({
   name: Schema.String.pipe(Schema.minLength(1), Schema.maxLength(255)),
   mimeType: Schema.String.pipe(Schema.minLength(1), Schema.maxLength(128)),
   size: Schema.NonNegativeInt,
-  delivery: Schema.Literal('reference', 'image')
+  delivery: Schema.Literal('reference', 'image', 'folder'),
+  /** A folder's top-level item count; folders only. */
+  entries: Schema.optional(Schema.NonNegativeInt)
 })
+export type FileAttachment = typeof FileAttachment.Type
+/** Another Clave tab dragged onto the composer: delivered to the agent as a
+ *  line it can act on with the Clave tools, never as a file. */
+export const SessionAttachment = Schema.Struct({
+  id: Schema.String.pipe(Schema.minLength(1), Schema.maxLength(128)),
+  label: AttachmentLabel,
+  delivery: Schema.Literal('session'),
+  sessionId: Schema.String.pipe(Schema.pattern(/^[a-zA-Z0-9_-]{1,128}$/)),
+  name: Schema.String.pipe(Schema.minLength(1), Schema.maxLength(255)),
+  agent: Schema.String.pipe(Schema.minLength(1), Schema.maxLength(64)),
+  cwd: Schema.String.pipe(Schema.maxLength(4096))
+})
+export type SessionAttachment = typeof SessionAttachment.Type
+export const Attachment = Schema.Union(FileAttachment, SessionAttachment)
 export type Attachment = typeof Attachment.Type
 export const Attachments = Schema.Array(Attachment).pipe(Schema.maxItems(MAX_ATTACHMENTS))
 
@@ -347,9 +368,9 @@ export const SpawnOptions = Schema.Struct({
   codexAccountLabel: Schema.optional(Schema.String),
   workspaceId: Schema.optional(Schema.String),
   link: Schema.optional(SessionLink),
-  /** The tab whose agent opened this one (`clave_open_session` from inside a
-   *  tab): what folds it under its parent and what `"parent"` resolves to.
-   *  Absent for a tab the user opened. */
+  /** The caller when `clave_open_session` uses `attachToParent: true`:
+   *  folds the tab under its parent and restores the messaging link at boot.
+   *  Absent for separate tabs, including agent opens without attachment. */
   spawnedBy: Schema.optional(Schema.String)
 })
 export type SpawnOptions = typeof SpawnOptions.Type

@@ -67,6 +67,18 @@ interface Approval {
   responses: Map<string, unknown>
   questions?: Array<{ id: string; question: string }>
 }
+// An empty form is Codex's message-only approval, not a form to fill in.
+// Keep unknown schema constraints closed until Clave can handle them.
+const emptyElicitationForm = z
+  .object({
+    type: z.literal('object'),
+    properties: z.object({}).strict(),
+    required: z.tuple([]).optional(),
+    $schema: z.string().optional(),
+    title: z.string().optional(),
+    description: z.string().optional()
+  })
+  .strict()
 // Installed Codex 0.163.0 ToolRequestUserInputParams. The provider's question
 // IDs identify answers across the connection, shared form and replay boundary.
 const nativeQuestions = z.object({
@@ -450,7 +462,12 @@ export class CodexTranslator {
       responses.set('answer', undefined)
       responses.set('deny', { answers: {} })
     } else if (frame.method === 'mcpServer/elicitation/request') {
-      // v1 has choices, not a form editor: decline/cancel are always valid.
+      if (
+        ['form', 'openai/form', 'openaiForm'].includes(text(p.mode)) &&
+        emptyElicitationForm.safeParse(p.requestedSchema).success
+      )
+        responses.set('accept', { action: 'accept', content: null, _meta: null })
+      // Forms that need input and URL requests still need an editor/URL flow.
       for (const action of ['decline', 'cancel'])
         responses.set(action, { action, content: null, _meta: null })
     } else {

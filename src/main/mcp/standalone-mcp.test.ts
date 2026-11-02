@@ -361,6 +361,36 @@ describe('standalone MCP session tools', () => {
     expect(self?.parentId).toBeUndefined()
   }, 15_000)
 
+  it.each([undefined, false, true])(
+    'accepts attachToParent %s and keeps the messaging parent independently',
+    async (attachToParent) => {
+      const { client, started, directory } = await sessionFixture()
+      const opened = payload(
+        await client.callTool({
+          name: 'clave_open_session',
+          arguments: { cwd: directory, mode: 'codex', attachToParent }
+        })
+      )
+      if (attachToParent === true) expect(started[0].options?.spawnedBy).toBe('caller')
+      else expect(started[0].options).not.toHaveProperty('spawnedBy')
+      const listed = payload(await client.callTool({ name: 'clave_list', arguments: {} }))
+        .sessions as Array<Record<string, unknown>>
+      expect(listed.find((s) => s.id === opened.sessionId)?.parentId).toBe('caller')
+    },
+    15_000
+  )
+
+  it('rejects a non-boolean attachment before starting a session', async () => {
+    const { client, started, directory } = await sessionFixture()
+    errorText(
+      await client.callTool({
+        name: 'clave_open_session',
+        arguments: { cwd: directory, attachToParent: 'true' }
+      })
+    )
+    expect(started).toHaveLength(0)
+  }, 15_000)
+
   it('opens a terminal tab with its command and gives it a first size so the process starts', async () => {
     const { client, started, resized, directory } = await sessionFixture()
     payload(
@@ -648,7 +678,7 @@ describe('standalone MCP session tools: boundaries', () => {
 
 describe('agent-sessions/delegation-group fixture', () => {
   it('loads the scenario through the commands, then an agent organises and delegates into it', async () => {
-    const { client, sidebar, host, sessions, stopped, directory } = await sessionFixture()
+    const { client, sidebar, host, sessions, started, stopped, directory } = await sessionFixture()
     const groupName = `Delegation ${randomUUID().slice(0, 8)}`
     const fixtures = await Effect.runPromise(
       agentSessionFixtureCatalog.prepare('agent-sessions/delegation-group', {
@@ -691,9 +721,29 @@ describe('agent-sessions/delegation-group fixture', () => {
     const delegated = payload(
       await client.callTool({
         name: 'clave_open_session',
-        arguments: { cwd: directory, mode: 'codex', name: 'Verifier', groupId }
+        arguments: {
+          cwd: directory,
+          mode: 'codex',
+          name: 'Verifier',
+          groupId,
+          attachToParent: true
+        }
       })
     )
+    const lane = payload(
+      await client.callTool({
+        name: 'clave_open_session',
+        arguments: {
+          cwd: directory,
+          mode: 'codex',
+          name: 'Lane lead',
+          groupId,
+          attachToParent: false
+        }
+      })
+    )
+    expect(started.find((s) => s.options?.spawnedBy === 'caller')).toBeDefined()
+    expect(started.at(-1)?.options).not.toHaveProperty('spawnedBy')
     expect(delegated.groupId).toBe(groupId)
     const listed = payload(await client.callTool({ name: 'clave_list', arguments: {} }))
       .sessions as Array<Record<string, unknown>>
@@ -701,13 +751,17 @@ describe('agent-sessions/delegation-group fixture', () => {
       parentId: 'caller',
       title: 'Verifier'
     })
+    expect(listed.find((s) => s.id === lane.sessionId)).toMatchObject({
+      parentId: 'caller',
+      title: 'Lane lead'
+    })
     expect(listed.find((s) => s.id === tabId)).toMatchObject({ title: 'Dev server' })
     expect(listed.find((s) => s.id === tabId)?.parentId).toBeUndefined()
     expect(
       [
         ...(sidebar.get(SERVER_LAYOUT_KEY).groups.find((g) => g.id === groupId)?.sessionIds ?? [])
       ].sort()
-    ).toEqual([tabId, delegated.sessionId].sort())
+    ).toEqual([tabId, delegated.sessionId, lane.sessionId].sort())
 
     // The receipt outlives the test's scratch data, as the other fixtures' do.
     const scratch = join('/tmp', process.env.CLAVE_E2E_NS ?? 'clave-vps-d-impl')
@@ -719,14 +773,15 @@ describe('agent-sessions/delegation-group fixture', () => {
       groupId,
       tabId,
       delegatedId: delegated.sessionId,
+      separateLaneId: lane.sessionId,
       target: 'isolated standalone MCP over the server commands',
       data
     }
     await writeFile(join(data, 'receipt.json'), JSON.stringify(receipt, null, 2), { mode: 0o600 })
     // Cleanup is explicit and scoped to this run's tabs.
-    for (const id of [delegated.sessionId, tabId])
+    for (const id of [delegated.sessionId, lane.sessionId, tabId])
       payload(await client.callTool({ name: 'clave_close_session', arguments: { sessionId: id } }))
-    expect(stopped).toEqual([delegated.sessionId, tabId])
+    expect(stopped).toEqual([delegated.sessionId, lane.sessionId, tabId])
     expect(sessions.has(tabId)).toBe(false)
   }, 15_000)
 })

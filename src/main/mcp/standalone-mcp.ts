@@ -207,6 +207,12 @@ function buildServer(
       description:
         'Open a new tab on this server: a Claude or Codex agent (in the chat view unless chat is false), an Antigravity or Pi agent, or a plain terminal, in an absolute directory, with an optional model, name, first prompt and group. Returns the new sessionId; the tab is linked to its caller, so clave_list reports its parentId and clave_send_to_session and clave_read_session reach it.',
       inputSchema: {
+        attachToParent: z
+          .boolean()
+          .default(false)
+          .describe(
+            'Nest the new tab under the calling session in the sidebar (default false). Use true for execution helpers and verifiers; false for lane leads and successors. The caller remains the messaging parent either way while the server is running. Without a caller, the tab stays separate.'
+          ),
         cwd: z.string().min(1).describe('Absolute path of the working directory'),
         mode: z.enum(['claude', 'codex', 'antigravity', 'gemini', 'pi', 'terminal']).optional(),
         model: z.string().min(1).max(256).optional(),
@@ -275,7 +281,8 @@ function buildServer(
           ...(launchProfileId !== undefined ? { launchProfileId } : {}),
           ...(terminal && args.command ? { initialCommand: args.command } : {}),
           autoExecute: terminal && !!args.command,
-          ...(!terminal && args.prompt ? { initialPrompt: args.prompt } : {})
+          ...(!terminal && args.prompt ? { initialPrompt: args.prompt } : {}),
+          ...(args.attachToParent ? { spawnedBy: sessionId } : {})
         }
       })
       parents.set(info.id, sessionId)

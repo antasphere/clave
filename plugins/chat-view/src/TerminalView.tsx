@@ -33,6 +33,7 @@ import { PermissionModeMenu } from './PermissionModeMenu'
 import { ModelMenu } from './ModelMenu'
 import { EffortMenu } from './EffortMenu'
 import { SenderChip } from './Delivery'
+import { DeliveryStack } from './DeliveryStack'
 import { parseDelivery } from '../../../src/shared/exchange-provenance'
 import { claudeContextWindow } from '../../../src/shared/claude-models'
 import { nextPermissionMode } from './permission-mode'
@@ -40,13 +41,14 @@ import {
   emptyStatus,
   reduceStatus,
   relaunchRequest,
+  runningLabel,
   shownWork,
   type TerminalStatus
 } from './terminal-status'
 import { ContextMeter, SubAgentStack } from './TerminalStatus'
 import { AccountChip } from './AccountChip'
 import { useQuestionHeight } from './question-height'
-import { groupEntries, visibleEntries, type ToolGroup as ToolRun } from './tools'
+import { groupEntries, visibleEntries, type Block, type ToolGroup as ToolRun } from './tools'
 import { TerminalTools } from './TerminalTools'
 import { ToolDisclosure } from './disclosure'
 import { PermissionRow, PromptDock } from './PromptDock'
@@ -74,25 +76,21 @@ import { useEarlier, type EarlierPage } from './earlier'
 import { EarlierLoading } from './EarlierLoading'
 import {
   attachmentIssue,
-  MAX_ATTACHMENTS,
-  MAX_IMAGE_BYTES,
   MAX_TOTAL_IMAGE_BYTES,
-  type Attachment,
-  type AttachmentSource
+  type Attachment
 } from '../../../src/shared/attachments'
-import { pathsFromDataTransfer, pathForMessage } from '../../../src/renderer/src/lib/dropped-paths'
+import { useComposerAttachments } from './composer-attachments'
+import { DropDrawing } from './DropDrawing'
+import {
+  failureText,
+  pathForMessage,
+  pathsFromDataTransfer
+} from '../../../src/renderer/src/lib/dropped-paths'
 import { openLink, wantsExternal } from '../../../src/renderer/src/lib/open-link'
 import { ClaudeLogo, CodexLogo, PiLogo } from '../../../src/renderer/src/components/icons/cli-logos'
 import { useMarkPack } from '../../../src/renderer/src/components/plugins/native-marks'
 import type { ChatViewProps } from './ChatView'
 
-/** A file on its way into the composer: named at once, a chip once main has
- *  prepared it, an error in its place when main refused it. */
-interface Preparation {
-  id: string
-  name: string
-  error?: string
-}
 /** What a drag carries: files from a file manager or another app, or the
  *  paths Clave's own file and git panels write as text. */
 const filesDrag = (dt: DataTransfer): boolean =>
@@ -386,7 +384,7 @@ const PIN_KEY = 'clave-terminal-pin-questions'
 /** What a click lands on when it means something other than "type here". */
 const INTERACTIVE =
   'a, button, input, textarea, select, summary, label, [role="button"], [role="menuitem"], [role="menu"], [role="dialog"], [role="separator"], [contenteditable="true"]'
-type TurnRows = { key: string; block: Entry | ToolRun }[]
+type TurnRows = { key: string; block: Block }[]
 /** One exchange as the virtualiser mounts it: the section stays whole inside
  *  its row, so the pinned question stays sticky within its own exchange. An
  *  exchange the column gained at its end arrives (`TranscriptRows`), and so
@@ -414,7 +412,29 @@ function TerminalTurn({
     >
       <section className="term-turn">
         {rows.map(({ block, key }) =>
-          block.kind === 'tool-group' ? (
+          block.kind === 'delivery-group' ? (
+            <DeliveryStack
+              key={key}
+              group={block}
+              id={key}
+              renderEntry={(entry) =>
+                entry.kind === 'tool-group' ? (
+                  <ToolRow
+                    group={entry}
+                    live={
+                      key === liveRun &&
+                      entry ===
+                        block.exchanges
+                          .at(-1)
+                          ?.responses.findLast((response) => response.kind === 'tool-group')
+                    }
+                  />
+                ) : (
+                  <EntryRow entry={entry} onError={onError} />
+                )
+              }
+            />
+          ) : block.kind === 'tool-group' ? (
             <ToolRow key={key} group={block} live={key === liveRun} />
           ) : (
             <EntryRow key={key} entry={block} onError={onError} />
@@ -441,6 +461,9 @@ export function TerminalView({
   )
   // Held by identity: the stack folds a row away when its list changes.
   const work = useMemo(() => shownWork(status.agents), [status.agents])
+  // The count under the composer: the subagents and the commands apart, so
+  // four background commands beside three agents never read as seven agents.
+  const running = runningLabel(work)
   const [ready, setReady] = useState(false)
   // A resumed conversation's past lives in main and arrives a page at a time,
   // the newest first: `before` is what to ask for next, null once nothing is
@@ -451,15 +474,11 @@ export function TerminalView({
   // The draft is the host's, per session, so it survives this view being
   // unmounted and mounted again (PRDCT-2620); the attachments stay here.
   const { draft, setDraft, recall } = useMessageHistory(session.id, conversation.entries)
-  const [attachments, setAttachments] = useState<Attachment[]>([])
-  const [preparations, setPreparations] = useState<Preparation[]>([])
   const [imagesSupported, setImagesSupported] = useState(false)
   const [sending, setSending] = useState(false)
   // A files drag over the pane, for the overlay; a paths drag over the composer.
   const [dragging, setDragging] = useState<'files' | 'paths' | null>(null)
   const dragDepth = useRef(0)
-  // Preparations the reader removed before main answered; their file is dropped on arrival.
-  const withdrawn = useRef(new Set<string>())
   const [pending, setPending] = useState<string[]>([])
   // The host's own panel, open in the dock above the composer: the /resume
   // picker, or the /mcp and /plugin panels headless Claude has no menu for.
@@ -587,6 +606,20 @@ export function TerminalView({
     setDraft('')
     setPanel(which)
   }
+  // The pane's root, where a sidebar tab is dropped (`lib/session-drag.ts`).
+  const pane = useRef<HTMLDivElement>(null)
+  const {
+    attachments,
+    preparations,
+    sessionsOver,
+    addFiles,
+    insertAtCaret,
+    withdraw,
+    changeAttachments,
+    onDraftChange,
+    clearSent,
+    restore
+  } = useComposerAttachments({ sessionId: session.id, closed, setDraft, textarea, pane, report })
   // A message can go while files are still being prepared or one still
   // needs the reader's call on how to send it: neither, until they are settled.
   const filesBlocked =
@@ -597,9 +630,10 @@ export function TerminalView({
     if (!ready || sending || state === 'ended' || !hasDraft || filesBlocked) return
     const typedPanel = hostPanels ? hostPanelFor(draft) : null
     if (typedPanel) return openPanel(typedPanel)
-    const imageBytes = attachments
-      .filter((file) => file.delivery === 'image')
-      .reduce((sum, file) => sum + file.size, 0)
+    const imageBytes = attachments.reduce(
+      (sum, file) => sum + (file.delivery === 'image' ? file.size : 0),
+      0
+    )
     if (imageBytes > MAX_TOTAL_IMAGE_BYTES)
       return report('Images in one message must total 20 MiB or less.')
     const text = draft
@@ -614,7 +648,7 @@ export function TerminalView({
       })
       lastSent.current = { text, attachments: files }
       setDraft((current) => (current === text ? '' : current))
-      setAttachments((current) => (current === files ? [] : current))
+      clearSent(files)
     } catch (error) {
       report(error)
     } finally {
@@ -682,107 +716,53 @@ export function TerminalView({
       dispatch({ withdraw: true })
       if (last && !draft.trim() && !attachments.length) {
         setDraft(last.text)
-        setAttachments(last.attachments)
+        restore(last.attachments)
       }
     }
     textarea.current?.focus()
   }
-  /* Files into the composer, from a drop, a paste or the picker. Each is
-     named at once as a chip in preparation, then handed to main to validate,
-     copy out of a temp folder if it lives in one, and type; the record main
-     returns becomes the attachment. A file the renderer holds only as bytes
-     (a pasted screenshot has no path) is sent as bytes and written by main. */
-  const addFiles = async (sources: (File | string)[]): Promise<void> => {
-    if (closed) return
-    const queued: { source: File | string; key: string }[] = []
-    let room = MAX_ATTACHMENTS - attachments.length - preparations.length
-    for (const source of sources) {
-      if (room-- <= 0) {
-        report(`Attach up to ${MAX_ATTACHMENTS} files per message.`)
-        break
-      }
-      const name =
-        (typeof source === 'string' ? source.split(/[\\/]/).pop() : source.name) || 'Pasted image'
-      queued.push({ source, key: crypto.randomUUID() })
-      setPreparations((current) => [...current, { id: queued.at(-1)!.key, name }])
-    }
-    for (const { source, key } of queued) {
-      if (withdrawn.current.has(key)) continue
-      try {
-        let value: AttachmentSource
-        if (typeof source === 'string') value = { path: source }
-        else {
-          const path = window.electronAPI.getPathForFile(source)
-          if (path) value = { path }
-          else {
-            if (source.size > MAX_IMAGE_BYTES)
-              throw new Error('Pasted images must be 5 MiB or smaller.')
-            value = {
-              name: source.name || 'Pasted image.png',
-              bytes: new Uint8Array(await source.arrayBuffer())
-            }
-          }
-        }
-        const file = await window.electronAPI.sessionsFiles.prepare(session.id, value)
-        if (withdrawn.current.has(key)) continue
-        setAttachments((current) =>
-          current.some((f) => f.path === file.path) ? current : [...current, file]
-        )
-        setPreparations((current) => current.filter((p) => p.id !== key))
-      } catch (failure) {
-        if (withdrawn.current.has(key)) continue
-        setPreparations((current) =>
-          current.map((p) => (p.id === key ? { ...p, error: String(failure) } : p))
-        )
-      }
-    }
-    for (const { key } of queued) withdrawn.current.delete(key)
-    textarea.current?.focus({ preventScroll: true })
-  }
-  const withdraw = (key: string): void => {
-    withdrawn.current.add(key)
-    setPreparations((current) => current.filter((p) => p.id !== key))
-  }
-  /* A drop on the pane. Files and file URLs become attachments; the paths
-     Clave's own file and git panels drag as text land at the caret, the way
-     the TUI pastes them (quoted only when needed, a space after), because a
-     dragged folder is a path to talk about, not a file to attach. */
+  /* A drop on the pane. Files and folders become attachments (main tells
+     them apart, and what is neither lands as its path, the reason beside
+     it); the paths Clave's own file and git panels drag as text land at the
+     caret, the way the TUI pastes them (quoted only when needed, a space
+     after). */
   const drop = (dt: DataTransfer): void => {
     if (filesDrag(dt)) {
       const files = Array.from(dt.files)
       void addFiles(files.length ? files : pathsFromDataTransfer(dt))
     } else if (pathsDrag(dt)) void dropPaths(pathsFromDataTransfer(dt))
   }
+  /* Paths dragged as text. Each is made stable first — a transient source
+     copied, a local file carried to a server's session — and one that cannot
+     be (a folder under a temp root, a file the server refuses) lands as the
+     path it was dropped with, the reason reported beside it. */
   const dropPaths = async (paths: string[]): Promise<void> => {
     if (!paths.length) return
-    const stable = (
-      await Promise.all(
-        paths.map(async (p) => {
-          if (!isRemoteKey(session.id)) {
-            if (isRemoteKey(p)) throw new Error('This file belongs to another server.')
-            return window.electronAPI.persistDroppedFile(p)
-          }
-          if (isRemoteKey(p)) {
-            const file = parseResourceKey('file', p)
-            if (file.serverId !== ownerOf(session.id))
-              throw new Error('This file belongs to another server.')
-            return file.id
-          }
-          const file = await window.electronAPI.sessionsFiles.prepare(session.id, { path: p })
-          return parseResourceKey('file', file.path).id
+    const stable = await Promise.all(
+      paths.map((p) =>
+        stablePath(p).catch((failure: unknown) => {
+          const path = isRemoteKey(p) ? parseResourceKey('file', p).id : p
+          const name = path.split(/[\\/]/).pop() || path
+          report(`${failureText(failure)} ${name} is in the message as a path.`)
+          return path
         })
       )
-    ).filter((p): p is string => Boolean(p))
-    if (!stable.length) return
-    const insert = stable.map(pathForMessage).join(' ') + ' '
-    const el = textarea.current
-    const start = el?.selectionStart ?? draft.length
-    const end = el?.selectionEnd ?? draft.length
-    setDraft((current) => current.slice(0, start) + insert + current.slice(end))
-    requestAnimationFrame(() => {
-      el?.focus()
-      el?.setSelectionRange(start + insert.length, start + insert.length)
-    })
+    )
+    insertAtCaret(stable.map(pathForMessage).join(' ') + ' ')
+  }
+  const stablePath = async (p: string): Promise<string> => {
+    if (!isRemoteKey(session.id)) {
+      if (isRemoteKey(p)) throw new Error('This file belongs to another server.')
+      return (await window.electronAPI.persistDroppedFile(p)) ?? p
+    }
+    if (isRemoteKey(p)) {
+      const file = parseResourceKey('file', p)
+      if (file.serverId !== ownerOf(session.id))
+        throw new Error('This file belongs to another server.')
+      return file.id
+    }
+    const file = await window.electronAPI.sessionsFiles.prepare(session.id, { path: p })
+    return parseResourceKey('file', file.path).id
   }
   // What the agent waits on, oldest first: the dock shows the head of it. A
   // server's session reads it off the server's own records (server-requests.ts).
@@ -844,7 +824,12 @@ export function TerminalView({
     entries.forEach((entry, i) => ordinal.set(entry, presentation.first + i))
     return groupEntries(visibleEntries(entries)).map((block) => ({
       block,
-      key: block.kind === 'tool-group' ? `tools-${block.id}` : `entry-${ordinal.get(block)}`
+      key:
+        block.kind === 'tool-group'
+          ? `tools-${block.id}`
+          : block.kind === 'delivery-group'
+            ? `deliveries-${ordinal.get(block.exchanges[0].message)}`
+            : `entry-${ordinal.get(block)}`
     }))
   }, [presentation.entries, presentation.first, remotePending, session.id])
   // One section per exchange: the reader's message and everything answering
@@ -852,7 +837,8 @@ export function TerminalView({
   const turns = useMemo(() => {
     const out: { key: string; rows: typeof blocks }[] = []
     for (const row of blocks) {
-      if (row.block.kind === 'user' || !out.length) out.push({ key: row.key, rows: [] })
+      if (row.block.kind === 'user' || row.block.kind === 'delivery-group' || !out.length)
+        out.push({ key: row.key, rows: [] })
       out[out.length - 1].rows.push(row)
     }
     return out
@@ -873,10 +859,14 @@ export function TerminalView({
   // or not.
   const liveRun =
     state === 'working' || state === 'blocked'
-      ? blocks.findLast(({ block }) => block.kind === 'tool-group' || block.kind === 'user')?.key
+      ? blocks.findLast(
+          ({ block }) =>
+            block.kind === 'tool-group' || block.kind === 'user' || block.kind === 'delivery-group'
+        )?.key
       : undefined
   return (
     <div
+      ref={pane}
       className="chat-view terminal-view"
       data-testid="terminal-view"
       onClickCapture={(event) => {
@@ -925,11 +915,20 @@ export function TerminalView({
         if (!closed) drop(event.dataTransfer)
       }}
     >
-      {dragging === 'files' && (
+      {(dragging === 'files' || sessionsOver) && (
         <div className="chat-drop-overlay" role="status">
-          <PaperClipIcon />
-          <strong>Add files to the message</strong>
-          <span>They stay in the composer to review before you send.</span>
+          <div className="chat-drop-card">
+            <DropDrawing kind={sessionsOver ? 'sessions' : 'files'} />
+            <p className="chat-drop-eyebrow">{sessionsOver ? 'Session' : 'Files'}</p>
+            <strong>
+              {sessionsOver ? 'Add the session to the message' : 'Add files to the message'}
+            </strong>
+            <span>
+              {sessionsOver
+                ? 'The agent gets its id, to read it or message it.'
+                : 'Files and folders, reviewed in the composer before they go.'}
+            </span>
+          </div>
         </div>
       )}
       <div className="chat-transcript">
@@ -1034,7 +1033,7 @@ export function TerminalView({
             <Attachments
               files={attachments}
               imagesSupported={imagesSupported}
-              onChange={setAttachments}
+              onChange={changeAttachments}
             />
             {preparations.length > 0 && (
               <ul className="chat-attachments" aria-label="Preparing files">
@@ -1050,7 +1049,7 @@ export function TerminalView({
                     </span>
                     <button
                       type="button"
-                      className="chat-turn-copy"
+                      className="chat-turn-copy chat-attachment-remove"
                       aria-label={`Remove ${item.name}`}
                       title="Remove"
                       onClick={() => withdraw(item.id)}
@@ -1083,7 +1082,7 @@ export function TerminalView({
             }
             value={draft}
             disabled={closed}
-            onChange={(event) => setDraft(event.target.value)}
+            onChange={(event) => onDraftChange(event.target.value)}
             onPaste={(event) => {
               // A pasted screenshot is a file on the clipboard; text pastes as text.
               const files = Array.from(event.clipboardData.files)
@@ -1195,9 +1194,12 @@ export function TerminalView({
             }
           />
           <AccountChip sessionId={session.id} />
-          {work.length > 0 && (
-            <span className="term-dim">
-              · {work.length} agent{work.length === 1 ? '' : 's'}
+          {running && (
+            <span
+              className="term-dim term-running"
+              title="Running now: the subagents, and the commands sent to the background"
+            >
+              · {running}
             </span>
           )}
           <span className="term-status-end">

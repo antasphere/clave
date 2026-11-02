@@ -343,12 +343,15 @@ it('does not add a deep phrasing inspection/clone failure to accepted full-pipel
   }
 })
 
+// This is 120 complete render/AST parity checks, not a latency assertion.
+// CI completed every assertion in 31.4 s; shared runners need more than the
+// old 30 s deadline. Keep the full sequence and a bounded completion budget.
 it('actually reuses the workload prefix through a substantial sequence with one bounded current state', () => {
   // legacy-counter:add-begin
   const diagnostic = new MarkdownCaseCounters()
   diagnostic.run(() => {
-  // legacy-counter:add-end
-  // legacy-counter:body-begin
+    // legacy-counter:add-end
+    // legacy-counter:body-begin
     const slot = makeSlot()
     let input = LONG_RESPONSE
     compare(input, slot, undefined, diagnostic)
@@ -384,11 +387,11 @@ it('actually reuses the workload prefix through a substantial sequence with one 
         accounting: slot.current?.kind === 'prefix' ? slot.current.snapshot.accounting : null
       })
     )
-  // legacy-counter:body-end
-  // legacy-counter:add-begin
+    // legacy-counter:body-end
+    // legacy-counter:add-begin
   })
   // legacy-counter:add-end
-}, 30_000)
+}, 120_000)
 
 it('accepts original-renderer wide phrasing before bounded full fallback without spread inspection', () => {
   const input = '**x** '.repeat(6000) + '\n\nMutable'

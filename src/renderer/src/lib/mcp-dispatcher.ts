@@ -1,3 +1,9 @@
+import { LOCAL_SERVER_ID } from '@clave/contract/fleet'
+import { useFleetStore } from '../store/fleet-store'
+import { allWorkspaces } from '../store/workspace-store'
+import { resolveSessionTarget } from './mcp-session-target'
+import { openFleetSession } from './mcp-fleet-session'
+import { ownerOf } from './fleet-identity'
 import { flushLinkedDocument } from '../store/linked-document-store'
 import type { LinkedOpen } from '../../../shared/linked-documents'
 import {
@@ -64,7 +70,7 @@ interface McpCommandMessage {
 
 /** Resolve a workspace reference: id, exact name, or case-insensitive name. */
 function resolveWorkspace(ref: string): Workspace {
-  const { workspaces } = useWorkspaceStore.getState()
+  const workspaces = allWorkspaces(useWorkspaceStore.getState())
   if (workspaces.length === 0) {
     throw new Error('No workspaces configured — the workspace parameter cannot be used')
   }
@@ -241,10 +247,18 @@ function handleList(payload: { callerSessionId?: string; workspace?: string }): 
   const pinnedGroups = pinnedGroupsInScope(inScope)
   const callerSessionId = payload.callerSessionId ?? null
   return {
-    workspaces: wsState.workspaces.map((w) => ({
+    servers: [
+      { id: LOCAL_SERVER_ID, name: 'This Mac', enabled: true, state: 'connected' },
+      ...useFleetStore.getState().connections.map((c) => ({
+        ...c,
+        state: useFleetStore.getState().statuses[c.id]?.state ?? 'disconnected'
+      }))
+    ],
+    workspaces: allWorkspaces(wsState).map((w) => ({
       id: w.id,
       name: w.name,
       rootDir: w.rootDir,
+      serverId: ownerOf(w.id),
       active: w.id === wsState.activeWorkspaceId
     })),
     activeWorkspaceId: wsState.activeWorkspaceId,
@@ -386,8 +400,15 @@ export function resolveAccountForSpawn(ref: string | undefined): ClaudeProfile {
   return resolveAccountRef('claude', ref) as ClaudeProfile
 }
 
+// Legacy window-owned opens keep the live messaging link independently of
+// persisted sidebar attachment. Served opens keep their link in main.
+const messagingParents = new Map<string, string>()
+const messagingParentOf = (session: Session): string | undefined =>
+  messagingParents.get(session.id) ?? session.spawnedBy
+
 export async function openSessionProgrammatically(payload: {
   cwd: string
+  server?: string
   mode?: 'claude' | 'antigravity' | 'gemini' | 'codex' | 'pi' | 'terminal'
   groupId?: string
   name?: string
@@ -405,18 +426,45 @@ export async function openSessionProgrammatically(payload: {
   prompt?: string
   workspace?: string
   callerSessionId?: string
+  attachToParent?: boolean
 }): Promise<unknown> {
   const state = useSessionStore.getState()
-  // Resolve the target group before spawning so a bad reference fails cleanly.
+  const spawnedBy = payload.attachToParent === true ? payload.callerSessionId : undefined
+  const connections = useFleetStore.getState().connections
+  const explicitOwner =
+    payload.server === undefined
+      ? undefined
+      : resolveSessionTarget({
+          server: payload.server,
+          connections,
+          workspaces: []
+        }).serverId
+  // A server selector also scopes a group's name. An explicit ID and "mine"
+  // retain their identity and are checked for conflicting ownership below.
+  const candidateGroups =
+    explicitOwner !== undefined &&
+    payload.groupId !== 'mine' &&
+    !state.groups.some((g) => g.id === payload.groupId)
+      ? state.groups.filter((g) => ownerOf(g.id) === explicitOwner)
+      : state.groups
   const targetGroup = payload.groupId
-    ? resolveGroup(state.groups, payload.groupId, payload.callerSessionId)
+    ? resolveGroup(candidateGroups, payload.groupId, payload.callerSessionId)
     : null
 
-  // Workspace: explicit param > target group's > caller's > active. A session
-  // placed into a group must land in that group's workspace either way.
-  const workspaceId = payload.workspace
-    ? resolveWorkspace(payload.workspace).id
-    : (targetGroup?.workspaceId ?? workspaceForSpawn(undefined, payload.callerSessionId))
+  const { serverId, workspaceId } = resolveSessionTarget({
+    server: payload.server,
+    workspace: payload.workspace,
+    group: targetGroup,
+    defaultWorkspaceId: workspaceForSpawn(undefined, payload.callerSessionId),
+    callerServerId: payload.callerSessionId ? ownerOf(payload.callerSessionId) : undefined,
+    workspaces: allWorkspaces(useWorkspaceStore.getState()),
+    connections
+  })
+  if (serverId !== LOCAL_SERVER_ID) {
+    const result = await openFleetSession(serverId, workspaceId, targetGroup?.id, payload)
+    if (payload.callerSessionId) messagingParents.set(result.sessionId, payload.callerSessionId)
+    return result
+  }
 
   const mode = payload.mode ?? 'claude'
   // Which CLI starts and which flags it takes, decided in `open-session-modes`
@@ -467,11 +515,11 @@ export async function openSessionProgrammatically(payload: {
     autoExecute: mode === 'terminal' && !!payload.command && payload.autoRun !== false,
     initialPrompt: mode !== 'terminal' ? payload.prompt || undefined : undefined,
     workspaceId,
-    // The parent on the record as well as in the store below, so the link
-    // outlives this window (#259).
-    spawnedBy: payload.callerSessionId || undefined
+    // Only attached tabs persist the parent for sidebar nesting and restart.
+    spawnedBy
   })
 
+  if (payload.callerSessionId) messagingParents.set(info.id, payload.callerSessionId)
   state.addSession({
     id: info.id,
     cwd: info.cwd,
@@ -487,9 +535,7 @@ export async function openSessionProgrammatically(payload: {
     claudeAgentsMode: false,
     dangerousMode,
     model: info.model,
-    // Parent link for clave_send_to_session/"parent" — only set when the open
-    // came from inside another tab (agent delegation), not from the app UI.
-    spawnedBy: payload.callerSessionId || undefined,
+    spawnedBy,
     claudeSessionId: info.claudeSessionId ?? null,
     piSessionId: info.piSessionId ?? null,
     launchProfileId: info.launchProfileId,
@@ -876,6 +922,7 @@ async function handleCloseSession(payload: {
     : null
   emitTabClosed(session, state.groups, 'agent', closer)
   await window.electronAPI.killSession(id)
+  messagingParents.delete(id)
   useSessionStore.getState().removeSession(id)
   return { closed: id }
 }
@@ -1005,7 +1052,8 @@ function resolveTargetSession(ref: string, callerSessionId: string | undefined):
       throw new Error('Target "parent" requires the call to come from inside a Clave session')
     }
     const caller = sessions.find((s) => s.id === callerSessionId)
-    const parent = caller?.spawnedBy ? sessions.find((s) => s.id === caller.spawnedBy) : undefined
+    const parentId = caller ? messagingParentOf(caller) : undefined
+    const parent = parentId ? sessions.find((s) => s.id === parentId) : undefined
     if (!parent) {
       throw new Error(
         'This session has no live parent — only tabs opened via clave_open_session know their opener, and that tab is no longer open. Use clave_list and target a session id or name instead.'
@@ -1054,9 +1102,9 @@ function assertCanReach(
   // only within one window (parent stays caller-window by design, §3.8).
   const caller = state.sessions.find((s) => s.id === callerSessionId)
   const related =
-    target.spawnedBy === callerSessionId || // I opened target (my child) — cross-window
+    messagingParentOf(target) === callerSessionId || // I opened target (my child) — cross-window
     (!!caller &&
-      (target.id === caller.spawnedBy || // target opened me (my parent) — same window
+      (target.id === messagingParentOf(caller) || // target opened me (my parent) — same window
         shareAGroup(state.groups, caller.id, target.id))) // same group, terminals included
   if (!related) {
     throw new Error(

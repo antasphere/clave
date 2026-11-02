@@ -337,7 +337,7 @@ it('prepares attachments at the write: the provider gets references and images, 
     attachments: [reference, shot]
   })
   const reply = events.find((e) => e.type === 'assistant_text') as { delta: string }
-  expect(reply.delta).toContain('read\n\nAttached local files')
+  expect(reply.delta).toContain('read\n\nAttachments, by the marker')
   expect(reply.delta).toContain(JSON.stringify({ name: 'notes.txt', path: notes }))
   expect(reply.delta).toContain('(1 image received)')
   expect(reply.delta).not.toContain('forged')

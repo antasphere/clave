@@ -8,6 +8,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./api": "./src/api.ts",
+    "./attachments": "./src/attachments.ts",
     "./clients": "./src/clients.ts",
     "./env": "./src/env.ts",
     "./errors": "./src/errors.ts",

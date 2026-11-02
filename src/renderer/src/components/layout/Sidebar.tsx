@@ -106,6 +106,8 @@ interface ContextMenuState {
   items: ContextMenuItem[]
   header?: React.ReactNode
   headerLift?: number
+  /** Surface classes: a menu opened from a dialog above z-50 must clear it. */
+  className?: string
 }
 
 function GroupColorPickerHeader({
@@ -2133,6 +2135,7 @@ export function Sidebar(): React.JSX.Element {
           onClose={() => setContextMenu(null)}
           header={contextMenu.header}
           headerLift={contextMenu.headerLift}
+          className={contextMenu.className}
         />
       )}
 
@@ -2301,6 +2304,8 @@ function PinnedSection({
       setContextMenu({
         x: e.clientX,
         y: e.clientY,
+        // Opened from the group picker (z-60): sit above it, or the menu is hidden.
+        className: 'z-[70]',
         items: [
           {
             label: 'Rename',

@@ -5,6 +5,7 @@ import path from 'path'
 import { startEmbedded, SessionHost, type EmbeddedServer } from '@clave/server'
 import {
   resolveServerLaunch,
+  shellOwnsAntasphereAccount,
   takeServerLaunch,
   startServer,
   readDiscovery,
@@ -51,6 +52,28 @@ describe('resolveServerLaunch', () => {
       url: 'http://127.0.0.1:4790',
       token: null
     })
+  })
+})
+
+describe('the shell owns the Antasphere account manager only when it is the server (PRDCT-3259)', () => {
+  it('in-process: yes; attached or separate: the login is the other process’s', () => {
+    expect(shellOwnsAntasphereAccount({ mode: 'in-process' })).toBe(true)
+    expect(shellOwnsAntasphereAccount({ mode: 'separate' })).toBe(false)
+    expect(
+      shellOwnsAntasphereAccount({ mode: 'attached', url: 'http://127.0.0.1:4790', token: 'abc' })
+    ).toBe(false)
+  })
+
+  it('so a packaged app on macOS, with no flag, owns none: the decision main takes is the one that counts', () => {
+    expect(
+      shellOwnsAntasphereAccount(resolveServerLaunch({}, { packaged: true, platform: 'darwin' }))
+    ).toBe(false)
+    // The environment alone says in-process, which is what the shell used to
+    // read; the full input is what the installed app runs with.
+    expect(shellOwnsAntasphereAccount(resolveServerLaunch({}))).toBe(true)
+    expect(
+      shellOwnsAntasphereAccount(resolveServerLaunch({}, { argv: ['--server=separate'] }))
+    ).toBe(false)
   })
 })
 

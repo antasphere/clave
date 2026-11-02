@@ -220,7 +220,7 @@ export async function run(t) {
     await win.getByRole('button', { name: 'Allow once', exact: true }).waitFor()
     await win.locator('.chat-state[data-state="blocked"]').waitFor()
     const waitingDot = win.locator(
-      `[data-sidebar-item-id="${record.id}"] .sidebar-tab-icon[data-status="needs-you"]`
+      `[data-sidebar-item-id="${record.id}"] .sidebar-tab-status[data-status="needs-you"]`
     )
     assert.equal(
       (await win.evaluate(() => window.electronAPI.sessionsList())).find((s) => s.id === record.id)
@@ -352,7 +352,7 @@ export async function run(t) {
     await win.getByRole('button', { name: 'Interrupt', exact: true }).click()
     assert.match(
       await win
-        .locator(`[data-sidebar-item-id="${record.id}"] .sidebar-tab-icon`)
+        .locator(`[data-sidebar-item-id="${record.id}"] .sidebar-tab-status`)
         .getAttribute('data-status'),
       'working'
     )

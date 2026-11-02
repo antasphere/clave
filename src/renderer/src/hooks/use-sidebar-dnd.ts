@@ -1,5 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useSessionStore, type SessionGroup } from '../store/session-store'
+import {
+  dropSessionsOn,
+  enterSessionDropTarget,
+  leaveSessionDropTarget,
+  sessionDropTargetAt
+} from '../lib/session-drag'
 
 export interface DropIndicatorState {
   targetId: string
@@ -24,6 +30,8 @@ interface DragRef {
   scrollAnimFrame: number | null
   overlayWidth: number
   overPinnedZone: boolean
+  /** A pane taking sessions (`lib/session-drag.ts`) the cursor is over, if any. */
+  dropTarget: HTMLElement | null
 }
 
 const DRAG_THRESHOLD = 5
@@ -502,7 +510,8 @@ export function useSidebarDnd(opts: {
         currentIndicator: null,
         scrollAnimFrame: null,
         overlayWidth: 0,
-        overPinnedZone: false
+        overPinnedZone: false,
+        dropTarget: null
       }
     },
     []
@@ -548,6 +557,28 @@ export function useSidebarDnd(opts: {
       if (overlayRef.current) {
         overlayRef.current.style.left = `${e.clientX - drag.overlayWidth / 2}px`
         overlayRef.current.style.top = `${e.clientY - 20}px`
+      }
+
+      // A pane that takes sessions (the chat composer) under the cursor: the
+      // row or group is offered to it, and the sidebar's own targets stand
+      // down while it is — the hit-test's fallbacks would otherwise still
+      // find "after the last row" from a cursor far outside the sidebar.
+      const target = sessionDropTargetAt(e.clientX, e.clientY)
+      if (target !== drag.dropTarget) {
+        if (drag.dropTarget) leaveSessionDropTarget(drag.dropTarget)
+        if (target) enterSessionDropTarget(target)
+        drag.dropTarget = target
+      }
+      if (target) {
+        if (drag.currentIndicator) {
+          drag.currentIndicator = null
+          if (indicatorTimerRef.current) {
+            clearTimeout(indicatorTimerRef.current)
+            indicatorTimerRef.current = null
+          }
+          setDndState((prev) => ({ ...prev, dropIndicator: null }))
+        }
+        return
       }
 
       // Check if hovering over pinned zone (only for group drags)
@@ -598,6 +629,25 @@ export function useSidebarDnd(opts: {
         if (drag.currentIndicator) {
           setDndState((prev) => ({ ...prev, dropIndicator: drag.currentIndicator }))
         }
+      }
+
+      // Dropped on a pane that takes sessions: it gets the ids, the sidebar
+      // keeps its order. A group hands over every session it holds.
+      if (drag.started && drag.dropTarget) {
+        const target = drag.dropTarget
+        const ids = drag.isGroup
+          ? (useSessionStore.getState().groups.find((g) => g.id === drag.ids[0])?.sessionIds ?? [])
+          : drag.ids
+        dragRef.current = null
+        destroyOverlay()
+        setDndState({
+          isDragging: false,
+          draggedIds: [],
+          dropIndicator: null,
+          isOverPinnedZone: false
+        })
+        dropSessionsOn(target, [...ids])
+        return
       }
 
       // Handle drop on pinned zone
@@ -674,6 +724,7 @@ export function useSidebarDnd(opts: {
     const handleKeyDown = (e: KeyboardEvent): void => {
       if (e.key === 'Escape' && dragRef.current?.started) {
         e.preventDefault()
+        if (dragRef.current.dropTarget) leaveSessionDropTarget(dragRef.current.dropTarget)
         if (dragRef.current.scrollAnimFrame) {
           cancelAnimationFrame(dragRef.current.scrollAnimFrame)
         }

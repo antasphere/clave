@@ -19,8 +19,9 @@ export interface SidebarTabItemProps {
   /** Called when the close button is clicked. If omitted, no close button is shown. */
   onDelete?: () => void
 
-  // Icon slot
-  icon: ReactNode
+  /** Leading icon slot (file tabs). A session row has none: its title starts
+   *  at the row's gutter and its status sits on the right, in `extraContent`. */
+  icon?: ReactNode
   /** Extra content rendered between the name and the close button (e.g. LocationBadge) */
   extraContent?: ReactNode
   /** A sibling control, so focusable menus are never nested in the row button. */

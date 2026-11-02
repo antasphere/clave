@@ -1,9 +1,13 @@
 import { constants } from 'node:fs'
 import { app, BrowserWindow, dialog, ipcMain, nativeImage, shell } from 'electron'
-import { open } from 'node:fs/promises'
+import { open, readdir } from 'node:fs/promises'
 import { isAbsolute, join } from 'node:path'
 import { z } from 'zod'
-import { AttachmentSchema, MAX_IMAGE_BYTES, type AttachmentPreview } from '../../shared/attachments'
+import {
+  FileAttachmentSchema,
+  MAX_IMAGE_BYTES,
+  type AttachmentPreview
+} from '../../shared/attachments'
 import { prepareAttachment, readBounded } from '../sessions/attachments'
 
 /* The composer's file operations, one channel: prepare a file for a session's
@@ -28,7 +32,7 @@ const requestSchema = z
       .regex(/^[a-zA-Z0-9_-]{1,128}$/)
       .optional(),
     source: sourceSchema.optional(),
-    file: AttachmentSchema.optional()
+    file: FileAttachmentSchema.optional()
   })
   .strict()
 
@@ -68,6 +72,20 @@ export function registerAttachmentHandlers(): void {
       return
     }
     const result: AttachmentPreview = {}
+    // A folder previews as its listing: the first items, folders marked.
+    if (file.delivery === 'folder') {
+      const items = (await readdir(file.path, { withFileTypes: true })).sort((a, b) =>
+        a.name.localeCompare(b.name)
+      )
+      const shown = items.slice(0, 80)
+      result.text = shown
+        .map((item) => (item.isDirectory() ? `${item.name}/` : item.name))
+        .join('\n')
+      if (!items.length) result.notice = 'An empty folder.'
+      else if (items.length > shown.length)
+        result.notice = `Showing the first ${shown.length} of ${items.length} items.`
+      return result
+    }
     if (file.mimeType.startsWith('image/') && file.mimeType !== 'image/svg+xml') {
       const bytes = await readBounded(file.path, MAX_IMAGE_BYTES)
       const image = nativeImage.createFromBuffer(bytes)

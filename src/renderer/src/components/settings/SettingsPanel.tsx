@@ -468,12 +468,12 @@ function AgentMarkSection(): React.JSX.Element | null {
   return (
     <SettingsSection
       title="Agent mark"
-      description="What stands for an agent on its tab, in the chat header, at the end of a transcript, and for a tool call while it runs."
+      description="What stands for an agent in the chat header, at the end of a transcript, and for a tool call while it runs; on its tab, a pack also takes the status slot on the right."
     >
       <SettingsCard>
         <SettingsRow
           label="Mark"
-          description="The logo keeps each provider's brand mark. A pack is one mark for every agent, moving while it works; plugins contribute them."
+          description="The logo keeps each provider's brand mark in the chat, and a tab says its state with a glyph on its right. A pack is one mark for every agent, moving while it works, on the tab too; plugins contribute them."
         >
           <div className="flex items-center gap-3">
             <span
@@ -491,9 +491,19 @@ function AgentMarkSection(): React.JSX.Element | null {
                   </span>
                 </>
               ) : (
-                <span className="sidebar-tab-icon tab-status relative" data-status="working">
-                  <ClaudeLogo />
-                </span>
+                <>
+                  <span className="sidebar-tab-icon" title="In the chat">
+                    <ClaudeLogo />
+                  </span>
+                  <span
+                    className="sidebar-tab-status"
+                    data-status="working"
+                    data-tone="grey"
+                    title="Working, on the tab"
+                  >
+                    <span className="sidebar-tab-spinner" />
+                  </span>
+                </>
               )}
             </span>
             <div className="segmented" role="radiogroup" aria-label="Agent mark">

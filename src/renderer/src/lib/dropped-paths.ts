@@ -60,3 +60,10 @@ export function pathsFromDataTransfer(dt: DataTransfer): string[] {
 export function pathForMessage(p: string): string {
   return /^[\w@%+=:,./~-]+$/.test(p) ? p : `'${p.replace(/'/g, "'\\''")}'`
 }
+
+/** What a failure says, in the words of whoever refused: an IPC error's
+ *  routing prefix is not part of the sentence. */
+export function failureText(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error)
+  return message.replace(/^Error invoking remote method '[^']+': (?:Error: )?/, '').trim()
+}

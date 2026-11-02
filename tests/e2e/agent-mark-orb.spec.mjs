@@ -27,7 +27,9 @@ const PACK = 'clave.orbs/orbs'
 export async function run(t) {
   const chat = await openChat('agent-mark-orb')
   const { app, win, record } = chat
-  const tab = `[data-sidebar-item-id="${record.id}"] .sidebar-tab-icon`
+  // The tab's slot for a mark is its trailing status slot (PRDCT-3933): the
+  // provider's logo no longer leads the title.
+  const tab = `[data-sidebar-item-id="${record.id}"] .sidebar-tab-status`
   const shot = async (name) => {
     if (SHOTS) await win.screenshot({ path: `${SHOTS}/${name}.png` })
   }
@@ -38,10 +40,14 @@ export async function run(t) {
       { id: record.id, state }
     )
   try {
-    // The default: the provider's logo, an SVG, no canvas anywhere.
-    assert.equal(await win.locator(`${tab} svg`).count(), 1)
+    // The default: no logo before the title, the status slot there, no canvas anywhere.
+    assert.equal(
+      await win.locator(`[data-sidebar-item-id="${record.id}"] .sidebar-tab-icon`).count(),
+      0
+    )
+    assert.equal(await win.locator(tab).count(), 1)
     assert.equal(await win.locator('canvas[data-orb-state]').count(), 0)
-    t.check('a fresh app draws the logo on the tab and no orb', true)
+    t.check('a fresh app draws no logo on the tab and no orb', true)
 
     await win.click('.sidebar-footer-btn[aria-label="Settings"]')
     await win.click('[data-settings-nav-row="appearance"]')
@@ -164,10 +170,10 @@ export async function run(t) {
     t.equal('the mark is saved as the pack’s id', saved.mark, PACK)
     t.equal('the orb is saved by the pack', saved.orb, 'weaving')
 
-    // The pack belongs to its plugin: disabled, the logo is back and the
-    // choice is kept for when it returns.
+    // The pack belongs to its plugin: disabled, the tab's own glyph is back
+    // (the agent is done, so the check) and the choice is kept for when it returns.
     await win.evaluate(() => window.electronAPI.pluginsDisable('clave.orbs'))
-    await win.locator(`${tab} svg`).waitFor()
+    await win.locator(`${tab}[data-glyph="check"] svg`).waitFor()
     assert.ok(
       await until(async () => (await win.locator('canvas[data-orb-state]').count()) === 0),
       'no orb may stay while the plugin is disabled'
@@ -179,17 +185,23 @@ export async function run(t) {
       PACK,
       'the choice survives the plugin being off'
     )
-    t.check('disabling the plugin falls back to the logo; enabling it brings the orb back', true)
+    t.check(
+      'disabling the plugin falls back to the tab’s glyph; enabling it brings the orb back',
+      true
+    )
 
-    // Back to the logo: the SVG returns, the canvases go.
+    // Back to the logo: the tab's glyph returns, the canvases go.
     await win.click('.sidebar-footer-btn[aria-label="Settings"]')
     await win.click('[data-settings-nav-row="appearance"]')
     await win.click('[data-agent-mark-option="logo"]')
     await win.getByRole('button', { name: 'Back to sessions', exact: true }).click()
     await win.locator(`[data-sidebar-item-id="${record.id}"] button`).first().click()
-    await win.locator(`${tab} svg`).waitFor()
+    await win.locator(`${tab}[data-glyph="check"] svg`).waitFor()
     assert.equal(await win.locator('canvas[data-orb-state]').count(), 0)
-    t.check('switching back to the logo restores the brand marks everywhere', true)
+    t.check(
+      'switching back to the logo restores the glyph on the tab and the brand marks in the chat',
+      true
+    )
   } finally {
     await chat.close()
   }

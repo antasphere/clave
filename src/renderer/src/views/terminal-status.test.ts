@@ -5,6 +5,7 @@ import {
   emptyStatus,
   reduceStatus,
   relaunchRequest,
+  runningLabel,
   shownWork,
   type TerminalStatus
 } from '../../../../plugins/chat-view/src/terminal-status'
@@ -692,4 +693,36 @@ it('shows a command only as background work, never while the turn waits on it', 
     ['b2', 'npm run dev', 1000],
     ['c1', 'echo fg', 1000]
   ])
+})
+
+it('counts the subagents and the commands apart under the composer, each by its own word', () => {
+  // Valentin's screen of 28 October 2026: three subagents and four background
+  // commands read "7 agents".
+  const status = at(
+    [
+      call('a1', 'Agent', { subagent_type: 'general-purpose', description: 'Implement issue 67' }),
+      call('a2', 'Agent', {
+        subagent_type: 'general-purpose',
+        description: 'Implement slice SC-S3'
+      }),
+      call('a3', 'Task', { description: 'Security review PR 84' }),
+      bash('b1', 'Run all mutations and PoCs sequentially', true),
+      bash('b2', 'Wait for mutation batch to finish', true),
+      bash('b3', 'Run workspace tests with PostgreSQL', true),
+      bash('b4', 'Run the doc tests', true)
+    ],
+    1000
+  )
+  const work = shownWork(status.agents)
+  expect(work).toHaveLength(7)
+  expect(runningLabel(work)).toBe('3 agents · 4 commands')
+  expect(runningLabel(work.filter((item) => item.kind === 'agent'))).toBe('3 agents')
+  expect(runningLabel(work.filter((item) => item.kind === 'shell'))).toBe('4 commands')
+  expect(runningLabel(work.slice(0, 1))).toBe('1 agent')
+  expect(runningLabel(work.slice(3, 4))).toBe('1 command')
+  expect(runningLabel([work[0], work[3]])).toBe('1 agent · 1 command')
+  // A command the turn waits on is off the stack, so it is off the count too.
+  const waited = at([bash('b5', 'git status -sb')], 2000, status)
+  expect(runningLabel(shownWork(waited.agents))).toBe('3 agents · 4 commands')
+  expect(runningLabel([])).toBe('')
 })
