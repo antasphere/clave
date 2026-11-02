@@ -310,7 +310,13 @@ export async function run(t) {
     // window, and only then is the held answer released: it is no, and no
     // page opens. No step assumes a timing. A preload that opens without
     // asking never enters the wrapper, the ask is never seen, and the page
-    // opens before the cancel: two lines below go red.
+    // opens before the cancel: two lines below go red. What this part pins
+    // is the ask and its order; that the preload HONOURS a no is pinned by
+    // its unit test (`src/preload/antasphere-bridge.test.ts`), because the
+    // cancel's status, heard before the release, already bumps the
+    // preload's own order guard (round 2 of the verifier, mutation M11).
+    // The wrapper is undone in a finally, so a failed step leaves the child
+    // server answering its confirmations again.
     await childFixture().evaluate(() => {
       const hooks = globalThis.__claveE2E
       const source = hooks?.settings
@@ -329,45 +335,48 @@ export async function run(t) {
         return hold.answered
       }
     })
-    const holdState = () =>
-      childFixture().evaluate(() => {
-        const h = globalThis.__claveE2E.antasphereHold
-        return { entered: h.entered, answered: h.answered ?? null }
+    try {
+      const holdState = () =>
+        childFixture().evaluate(() => {
+          const h = globalThis.__claveE2E.antasphereHold
+          return { entered: h.entered, answered: h.answered ?? null }
+        })
+      const before3 = (await opened()).length
+      await signInButton.click()
+      await waitPhase(section, 'signing-in')
+      const asked = await until(async () => ((await holdState()).entered > 0 ? true : null))
+      t.check(
+        'the preload asked the child server to confirm the handoff, and the answer is held',
+        asked === true,
+        await holdState()
+      )
+      t.equal(
+        'the login is cancelled on the server meanwhile',
+        (await api('/accounts/antasphere/cancel', { method: 'POST', body: '{}' })).status,
+        200
+      )
+      t.equal('the window hears it', await waitPhase(section, 'signed-out'), 'signed-out')
+      await childFixture().evaluate(() => {
+        globalThis.__claveE2E.antasphereHold.release()
       })
-    const before3 = (await opened()).length
-    await signInButton.click()
-    await waitPhase(section, 'signing-in')
-    const asked = await until(async () => ((await holdState()).entered > 0 ? true : null))
-    t.check(
-      'the preload asked the child server to confirm the handoff, and the answer is held',
-      asked === true,
-      await holdState()
-    )
-    t.equal(
-      'the login is cancelled on the server meanwhile',
-      (await api('/accounts/antasphere/cancel', { method: 'POST', body: '{}' })).status,
-      200
-    )
-    t.equal('the window hears it', await waitPhase(section, 'signed-out'), 'signed-out')
-    await childFixture().evaluate(() => {
-      globalThis.__claveE2E.antasphereHold.release()
-    })
-    const answered = await until(async () => {
-      const h = await holdState()
-      return h.entered > 0 && h.answered !== null ? h : null
-    })
-    t.check(
-      'the held answer, released after the cancel, is no',
-      answered?.answered === false,
-      answered
-    )
-    t.equal('and the preload opened no page on it', (await opened()).length, before3)
-    t.equal('the server says cancelled', (await serverStatus()).lastFailure, 'cancelled')
-    await childFixture().evaluate(() => {
-      const hooks = globalThis.__claveE2E
-      hooks.settings.antasphere.confirmHandoff = hooks.antasphereConfirmHandoff
-      delete hooks.antasphereHold
-    })
+      const answered = await until(async () => {
+        const h = await holdState()
+        return h.entered > 0 && h.answered !== null ? h : null
+      })
+      t.check(
+        'the held answer, released after the cancel, is no',
+        answered?.answered === false,
+        answered
+      )
+      t.equal('and the preload opened no page on it', (await opened()).length, before3)
+      t.equal('the server says cancelled', (await serverStatus()).lastFailure, 'cancelled')
+    } finally {
+      await childFixture().evaluate(() => {
+        const hooks = globalThis.__claveE2E
+        hooks.settings.antasphere.confirmHandoff = hooks.antasphereConfirmHandoff
+        delete hooks.antasphereHold
+      })
+    }
     await section.locator('[data-antasphere-dismiss]').click()
     await until(async () => (await section.locator('[data-antasphere-failure]').count()) === 0)
 
