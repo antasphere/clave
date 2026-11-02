@@ -30,6 +30,7 @@ export function stoppedSession(record: SessionRecord): Session {
     state: 'ended',
     createdAt: record.startedAt ?? 0,
     title: record.displayName ?? record.folderName,
+    ...(record.workspaceId !== undefined && { workspaceId: record.workspaceId }),
     transport: record.transport ?? 'pty',
     adapterId: record.adapterId ?? 'pty',
     provider: record.codexMode

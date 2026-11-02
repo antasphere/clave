@@ -125,9 +125,7 @@ export class WriteLedger {
    */
   receive(sessionId: string, id: string): { held: LedgerEntry } | { first: true } {
     const ledger = this.load(sessionId)
-    const evidenced = ledger.history.get(id)
-    if (evidenced !== undefined) return { held: { status: 'accepted', at: evidenced } }
-    const held = ledger.entries.get(id)
+    const held = this.knownEntry(ledger, id)
     if (held) return { held }
     if (!ledger.complete)
       return { held: { status: 'unknown', at: this.now(), reason: LEDGER_INCOMPLETE } }
@@ -146,7 +144,7 @@ export class WriteLedger {
    *  thrown: the message landed, and the history carries the id. */
   accept(sessionId: string, id: string, at = this.now()): LedgerEntry {
     const ledger = this.load(sessionId)
-    const current = ledger.entries.get(id)
+    const current = this.knownEntry(ledger, id)
     const entry: LedgerEntry = current?.status === 'accepted' ? current : { status: 'accepted', at }
     this.put(sessionId, ledger, id, entry, { tolerate: true })
     return entry
@@ -174,8 +172,8 @@ export class WriteLedger {
 
   /**
    * A `user_message` carrying the id passed on the session's stream: the
-   * server's own history records it, and an entry at `dispatched` or
-   * `unknown` is settled as `accepted` by that evidence.
+   * server's own history records it. Any phase not already accepted is
+   * settled by that evidence; the first accepted result is never replaced.
    */
   evidence(sessionId: string, id: string, at = this.now()): void {
     const ledger = this.load(sessionId)
@@ -191,8 +189,14 @@ export class WriteLedger {
       }
     }
     const entry = ledger.entries.get(id)
-    if (entry && (entry.status === 'dispatched' || entry.status === 'unknown'))
-      this.put(sessionId, ledger, id, { status: 'accepted', at }, { tolerate: true })
+    if (entry?.status !== 'accepted')
+      this.put(
+        sessionId,
+        ledger,
+        id,
+        { status: 'accepted', at: ledger.history.get(id)! },
+        { tolerate: true }
+      )
   }
 
   /** What became of the id, for `GET /sessions/writes`. */
@@ -203,16 +207,25 @@ export class WriteLedger {
     } catch {
       return { status: 'unknown', reason: LEDGER_UNREADABLE }
     }
-    const entry = ledger.entries.get(id)
+    const entry = this.knownEntry(ledger, id)
     if (entry) return statusOf(entry)
-    const evidenced = ledger.history.get(id)
-    if (evidenced !== undefined) return { status: 'accepted', at: evidenced }
     return ledger.complete ? { status: 'absent' } : { status: 'unknown', reason: LEDGER_INCOMPLETE }
   }
 
   /** The entries of a session, for the tests. */
   entries(sessionId: string): ReadonlyMap<string, LedgerEntry> {
     return this.load(sessionId).entries
+  }
+
+  /** Preserve the first accepted result. Otherwise acknowledged own history
+   * settles every uncertain/rejected phase, including a crash between the
+   * history write and the primary accepted write. Query and admission use
+   * the same rule so reconciliation cannot authorize an already delivered input. */
+  private knownEntry(ledger: SessionLedger, id: string): LedgerEntry | undefined {
+    const entry = ledger.entries.get(id)
+    if (entry?.status === 'accepted') return entry
+    const at = ledger.history.get(id)
+    return at === undefined ? entry : { status: 'accepted', at }
   }
 
   // ── The documents ──
@@ -259,7 +272,11 @@ export class WriteLedger {
         ledger.complete = parsed.complete
         for (const [id, entry] of Object.entries(parsed.entries)) {
           // What a previous process left: the recovery rules.
-          if (entry.status === 'received') {
+          const evidenced = history.get(id)
+          if (entry.status !== 'accepted' && evidenced !== undefined) {
+            ledger.entries.set(id, { status: 'accepted', at: evidenced })
+            recovered = true
+          } else if (entry.status === 'received') {
             ledger.entries.set(id, {
               status: 'rejected',
               at: this.now(),

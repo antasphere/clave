@@ -21,6 +21,7 @@ let url = ''
 const received: unknown[] = []
 const peers = new Set<WebSocket>()
 let answerPings = true
+let answerSubscriptions = true
 
 const start = async (): Promise<void> => {
   wss = new WebSocketServer({ host: '127.0.0.1', port: 0 })
@@ -52,7 +53,8 @@ const start = async (): Promise<void> => {
               message: 'Unknown session'
             })
           )
-        return socket.send(JSON.stringify({ _tag: 'subscribed', sessionId: 's1', session }))
+        if (answerSubscriptions)
+          return socket.send(JSON.stringify({ _tag: 'subscribed', sessionId: 's1', session }))
       }
     })
     socket.on('close', () => peers.delete(socket))
@@ -91,6 +93,7 @@ const client = (
 beforeEach(async () => {
   received.length = 0
   answerPings = true
+  answerSubscriptions = true
   await start()
 })
 afterEach(stop)
@@ -251,12 +254,27 @@ it('finished subscriptions still allow a reconnect snapshot barrier', async () =
 })
 
 it('bounds a missing subscription acknowledgement and removes the timed-out waiter', async () => {
+  answerSubscriptions = false
   const c = client().connect()
   try {
     c.subscribe('s1', () => {})
-    // The current socket has not welcomed or subscribed yet.
+    // Withhold the acknowledgement: network delivery can beat a zero-ms timer.
     await expect(c.subscribed('s1', 0)).rejects.toThrow(/acknowledge/)
-    await expect(c.subscribed('s1')).resolves.toMatchObject({ id: 's1' })
+    const subscription = (
+      c as unknown as { subscriptions: Map<string, { waiters: unknown[] }> }
+    ).subscriptions.get('s1')
+    expect(subscription?.waiters).toHaveLength(0)
+
+    await until(() =>
+      received.some((frame) => {
+        const request = frame as { _tag: string; sessionId?: string }
+        return request._tag === 'subscribe' && request.sessionId === 's1'
+      })
+    )
+    const acknowledged = c.subscribed('s1')
+    broadcast({ _tag: 'subscribed', sessionId: 's1', session })
+    await expect(acknowledged).resolves.toMatchObject({ id: 's1' })
+    expect(subscription?.waiters).toHaveLength(0)
   } finally {
     c.close()
   }

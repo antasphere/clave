@@ -11,7 +11,7 @@ import type {
 } from '@clave/contract/sessions'
 import type { SessionStream } from '../../shared/session-model'
 import { standaloneSidebar } from '../server/standalone-sidebar'
-import { serverOwnedSessionHost } from './server-owned-host'
+import { serverOwnedSessionHost, stoppedSession } from './server-owned-host'
 
 const dirs: string[] = []
 afterEach(() => dirs.splice(0).forEach((dir) => rmSync(dir, { recursive: true, force: true })))
@@ -145,6 +145,23 @@ function fixture(dataDir = directory()): {
 }
 
 describe('server-owned stopped recovery', () => {
+  it('adds only the current optional workspace stamp to the curated stopped descriptor', () => {
+    const bare = stoppedSession(record)
+    expect(bare).toEqual({ ...session, state: 'ended' })
+    const rich = {
+      ...record,
+      workspaceId: 'opaque-workspace',
+      configDir: '/private/config',
+      initialCommand: 'private-command',
+      view: { url: 'https://private.example', title: 'Private' }
+    }
+    expect(stoppedSession(rich)).toEqual({ ...bare, workspaceId: 'opaque-workspace' })
+    expect(stoppedSession({ ...rich, workspaceId: '' })).toEqual({ ...bare, workspaceId: '' })
+    const cleared = { ...rich, workspaceId: undefined }
+    expect(stoppedSession(cleared)).toEqual(bare)
+    expect(stoppedSession(cleared)).not.toHaveProperty('workspaceId')
+  })
+
   it('lists and subscribes to restored stopped sessions without spawning or making them ready', () => {
     const f = fixture()
     expect(f.host.list('another-mac')[0]).toMatchObject({

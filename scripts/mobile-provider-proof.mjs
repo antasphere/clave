@@ -85,10 +85,17 @@ export function proveCodexProcess(
 ) {
   assert.equal(session.provider, 'codex', 'Phone session must use Codex')
   assert.equal(session.adapterId, 'codex-chat', 'Phone session must use the Codex chat adapter')
-  assert.equal(session.transport, 'events')
-  assert.equal(canonical(session.cwd), canonical(scratch))
+  assert.equal(session.transport, 'events', 'Phone session must use the events transport')
+  assert.equal(
+    canonical(session.cwd),
+    canonical(scratch),
+    'Phone session must remain in the selected scratch directory'
+  )
   const metadata = history.items.map(({ event }) => event).filter((e) => e.type === 'session_meta')
-  assert.ok(metadata.length > 0 && metadata.every((e) => e.model === 'gpt-6.1-sol'))
+  assert.ok(
+    metadata.length > 0 && metadata.every((e) => e.model === 'gpt-6.1-sol'),
+    'Provider metadata must match the requested Codex model'
+  )
   const threads = new Set(metadata.map((e) => e.providerSessionId))
   assert.equal(threads.size, 1, 'All turns must retain one provider thread')
   const [threadId] = threads

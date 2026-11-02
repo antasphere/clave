@@ -160,6 +160,15 @@ it('loads sessions/timeline-repeated-messages and verifies HTTP/push snapshot or
     } finally {
       reconnected.close()
     }
+    const pagedResponse = await fetch(
+      `${server.url}/sessions/timeline?id=${sessionId}&before=7&limit=2`,
+      { headers }
+    )
+    expect(pagedResponse.status).toBe(200)
+    const paged = Schema.decodeUnknownSync(TimelinePage)(await pagedResponse.json())
+    expect(paged.items.map(({ position }) => position.sequence)).toEqual([4, 5, 6])
+    expect(paged.before).toBe(4)
+    expect(paged.cursor).toEqual((await get()).cursor)
     const legacy = await fetch(`${server.url}/sessions/history?id=${sessionId}`, { headers })
     expect(legacy.status).toBe(200)
     expect(await legacy.json()).not.toHaveProperty('cursor')

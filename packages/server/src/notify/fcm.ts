@@ -15,7 +15,7 @@
 import { Effect } from 'effect'
 import type { NotificationPayload } from '@clave/contract/notify'
 import { signJwt } from './jwt'
-import { bounded, payloadAsStrings, payloadTitle } from './payload'
+import { PUSH_PAYLOAD_MAX_BYTES, bounded, payloadAsStrings, payloadTitle } from './payload'
 import type { PushTarget, PushTransport, SendResult } from './port'
 
 export const FCM_ENDPOINT = 'https://fcm.googleapis.com'
@@ -46,22 +46,30 @@ export interface FcmTransport extends PushTransport {
   close(): void
 }
 
+const notificationData = (
+  payload: NotificationPayload
+): { notification: { title: string; body: string }; data: Record<string, string> } => ({
+  notification: { title: payloadTitle(payload), body: payload.text },
+  data: payloadAsStrings(payload)
+})
+
 /** The HTTP v1 message of one push, pure (the tests assert it). */
 export function fcmMessage(
   target: PushTarget,
   payload: NotificationPayload
 ): Record<string, unknown> {
   const collapse = payload.requestId
+  const fields = notificationData(payload)
   return {
     message: {
       token: target.token,
-      notification: { title: payloadTitle(payload), body: payload.text },
+      notification: fields.notification,
       android: {
         priority: 'high',
         ...(collapse ? { collapse_key: collapse } : {}),
         notification: { channel_id: 'clave', ...(collapse ? { tag: collapse } : {}) }
       },
-      data: payloadAsStrings(payload)
+      data: fields.data
     }
   }
 }
@@ -162,6 +170,10 @@ export function fcmTransport(options: FcmOptions): FcmTransport {
     secrets: string[],
     retried: boolean
   ): Promise<SendResult> => {
+    // JSON punctuation makes this a conservative upper bound on the
+    // notification/data keys and values. Routing tokens are not payload.
+    if (Buffer.byteLength(JSON.stringify(notificationData(payload))) > PUSH_PAYLOAD_MAX_BYTES)
+      return { outcome: 'failed', reason: 'payload exceeds 4096 bytes' }
     const access = await accessToken()
     if (!access.ok) return { outcome: 'failed', reason: access.reason }
     secrets.push(access.token)

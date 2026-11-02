@@ -145,6 +145,22 @@ describe('the ported session model agrees with the zod one', () => {
     expect(Either.isRight(decode(Session, { ...session, id: '' }))).toBe(false)
     expect(ZodSession.safeParse({ ...session, id: '' }).success).toBe(false)
   })
+  it('preserves an optional workspace stamp through both session models and the wire', () => {
+    for (const value of [
+      session,
+      { ...session, workspaceId: 'workspace-opaque' },
+      { ...session, workspaceId: '' }
+    ]) {
+      expect(ZodSession.parse(value)).toEqual(value)
+      const decoded = Schema.decodeUnknownSync(Session)(value)
+      expect(decoded).toEqual(value)
+      expect(Schema.encodeSync(Session)(decoded)).toEqual(value)
+    }
+    for (const workspaceId of [null, 42]) {
+      expect(ZodSession.safeParse({ ...session, workspaceId }).success).toBe(false)
+      expect(Either.isLeft(decode(Session, { ...session, workspaceId }))).toBe(true)
+    }
+  })
   it.each(inputs.map((input) => [JSON.stringify(input), input]))('accepts input %s', (_, input) => {
     expect(ZodSessionInput.safeParse(input).success).toBe(true)
     expect(decode(SessionInput, input)).toEqual(Either.right(input))

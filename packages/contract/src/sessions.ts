@@ -26,6 +26,8 @@ export const Session = Schema.Struct({
   cwd: Schema.String,
   windowKey: Schema.String,
   groupId: Schema.optional(Schema.String),
+  /** The current persisted workspace stamp, when the session's record has one. */
+  workspaceId: Schema.optional(Schema.String),
   state: AgentState,
   createdAt: Schema.Number,
   adapterId: Schema.NonEmptyString,

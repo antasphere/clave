@@ -31,7 +31,8 @@ const session = {
   state: 'idle',
   createdAt: 1,
   adapterId: 'echo',
-  title: 'Echo'
+  title: 'Echo',
+  workspaceId: 'ws1'
 }
 
 function handle(req: IncomingMessage, res: ServerResponse, body: string): void {
@@ -63,10 +64,6 @@ function handle(req: IncomingMessage, res: ServerResponse, body: string): void {
         ],
         before: u.searchParams.get('before') === null ? 200 : null
       })
-    case 'GET /sessions/records':
-      return json(res, 200, [
-        { id: 's1', cwd: '/tmp/scratch', folderName: 'scratch', workspaceId: 'ws1', running: true }
-      ])
     case 'POST /sessions/start': {
       const input = JSON.parse(body) as {
         options?: { launchProfile?: { name: string; command: string[] } }
@@ -172,13 +169,11 @@ describe('ClaveServerClient', () => {
     expect(older.before).toBeNull()
     expect(seen[1]?.url).toBe('/sessions/history?id=s1&before=200&limit=50')
   })
-  it('joins record ids with a comma, and asks nothing for no ids', async () => {
+  it('reads the workspace stamp from the existing list and by-id responses', async () => {
     seen.length = 0
-    expect(await client().sessions.records([])).toEqual([])
-    expect(seen).toHaveLength(0)
-    const records = await client().sessions.records(['s1', 's2'])
-    expect(records[0]?.workspaceId).toBe('ws1')
-    expect(decodeURIComponent(seen[0]?.url ?? '')).toBe('/sessions/records?ids=s1,s2')
+    expect((await client().sessions.list())[0]?.workspaceId).toBe('ws1')
+    expect((await client().sessions.get('s1')).workspaceId).toBe('ws1')
+    expect(seen.map((request) => request.url)).toEqual(['/sessions', '/sessions/by-id?id=s1'])
   })
   it('posts a command as JSON', async () => {
     seen.length = 0

@@ -14,6 +14,7 @@ import {
   type ApnsTransport
 } from './apns'
 import { verifyJwt } from './jwt'
+import { unicodePayloads } from './test-support'
 import type { PushTarget, SendResult } from './port'
 
 /**
@@ -227,6 +228,34 @@ describe('the APNs body', () => {
 })
 
 describe('the APNs transport', () => {
+  it.each(['界', '😀', '"', '\\', '\u0000'])(
+    'sends every category within the actual APNs body budget for %s',
+    async (character) => {
+      const fake = await started()
+      const transport = open(optionsFor(fake))
+      for (const payload of unicodePayloads(character)) {
+        expect(await send(transport, payload)).toEqual({ outcome: 'sent' })
+        expect(fake.seen.at(-1)!.body).toEqual(apnsBody(payload))
+        expect(Buffer.byteLength(JSON.stringify(fake.seen.at(-1)!.body))).toBeLessThanOrEqual(4096)
+      }
+      expect(fake.seen).toHaveLength(7)
+    }
+  )
+  it('refuses oversized routing data without connecting or truncating identity', async () => {
+    const fake = await started()
+    const logs: string[] = []
+    const payload = { ...question, serverId: 'identity'.repeat(1000) }
+    expect(await send(open(optionsFor(fake, { log: (line) => logs.push(line) })), payload)).toEqual(
+      {
+        outcome: 'failed',
+        reason: 'payload exceeds 4096 bytes'
+      }
+    )
+    expect(fake.sessions).toHaveLength(0)
+    expect(fake.seen).toHaveLength(0)
+    expect(logs).toEqual([])
+    expect(payload.serverId).toBe('identity'.repeat(1000))
+  })
   it('sends the topic, the push type, the priority and the collapse id, to the token, with the body', async () => {
     const fake = await started()
     const pem = privateKey.export({ format: 'pem', type: 'pkcs8' }) as string

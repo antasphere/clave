@@ -119,7 +119,7 @@ export interface StoreState {
   readonly workspacesError: Readonly<Record<string, string | null>>
   readonly sessions: Readonly<Record<string, Session[]>>
   readonly sessionsError: Readonly<Record<string, string | null>>
-  /** machine id → session id → the workspace the record is stamped with. */
+  /** machine id → session id → the authoritative stamp from the latest session list. */
   readonly stamps: Readonly<Record<string, Readonly<Record<string, string | undefined>>>>
   /** Conversation key → the last fatal error its stream carried. */
   readonly fatal: Readonly<Record<string, string>>
@@ -471,12 +471,13 @@ export function createStore(services: Services): UseBoundStore<StoreApi<StoreSta
         try {
           const { client } = await get().connect(machineId)
           const sessions = await client.sessions.list()
-          patch('sessions', machineId, sessions)
-          patch('sessionsError', machineId, null)
-          const records = await client.sessions.records(sessions.map((s) => s.id))
           const stamps: Record<string, string | undefined> = {}
-          for (const record of records) stamps[record.id] = record.workspaceId
-          patch('stamps', machineId, stamps)
+          for (const session of sessions) stamps[session.id] = session.workspaceId
+          set((state) => ({
+            sessions: { ...state.sessions, [machineId]: sessions },
+            stamps: { ...state.stamps, [machineId]: stamps },
+            sessionsError: { ...state.sessionsError, [machineId]: null }
+          }))
         } catch (error) {
           patch('sessionsError', machineId, fail(error))
         }
