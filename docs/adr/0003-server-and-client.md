@@ -290,6 +290,8 @@ The Settings page starts no sessions. Lane B moves server launches into the norm
 
 **The panel.** `SidePanel.tsx` keeps the files-only treatment for the legacy remote kinds (an SSH location, an OpenClaw agent) and gives a Clave-server session the Git tab, driven with the owner's key; the two local roots and the plugin tabs stay off for it. Batch progress is published to every attached client; each batch carries an id its Mac minted (`batchId` on the three batch commands, echoed on every `git.batch_progress` of that batch), and the preload forwards only the events of a batch it has in flight, so two Macs on one daemon each draw their own batch even on the same repositories (neither the op nor the paths could tell them apart, as the verifier's two-Mac runs showed). Long git calls (fetch, pull, push, a commit and its hooks, the sweep, the batches, the model's commit message and push summary) travel under the client's patient deadline rather than the ordinary ten seconds. The commit message of a server checkout is written by the server's `claude` on the server's login-shell environment; a missing binary or a sign-in refusal is one sentence naming the server's missing Claude login, carried in the repo's result the way the bar names any failed repo.
 
+
+
 ## Files and `.clave` on a server (wave wcs1023, lane D)
 
 The side panel uses the focused tab's owner or the active workspace's owner when no tab is focused, chooses only roots of that owner, and passes the same folder key to FileTree and the git panel while displaying plain paths.
