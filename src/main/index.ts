@@ -67,14 +67,8 @@ import { accountLoginManager } from './account-login'
 import { sweepSessionMcpConfigs } from './mcp/mcp-runtime'
 import { registerPreviewScheme, installPreviewProtocol } from './preview-protocol'
 import { hardenViewHost, installViewGuestPolicy } from './view-guests'
-import {
-  startServer,
-  takeServerLaunch,
-  markServerGone,
-  ServerBootError,
-  type ServerHandle,
-  type ServerLaunch
-} from './server-boot'
+import { startServer, markServerGone, ServerBootError, type ServerHandle } from './server-boot'
+import { serverLaunch } from './server-launch'
 import { flagsForServerChild, startSeparateServer } from './server-child'
 import { migrateAppDataToServer } from './server-migration'
 import { safeStorageSecrets } from './ports/electron'
@@ -93,29 +87,12 @@ import { workspaceFiles } from './workspace-files'
 // ── Wave 5, lane C: the plugins, the shell's own service (plugins/shell-plugins.ts) ──
 import { shellPlugins } from './plugins/shell-plugins'
 
-// The server to attach to, if any, read ONCE off the environment and taken
-// out of it here, before anything in this process spawns: the token belongs
-// to what is meant to call the server, and no session, helper or nested Clave
-// may inherit it (ADR 0003). The command line's `--server` flag picks the
-// shell's own server otherwise (in-process, or a separate child of the
-// app, wave 5), and a packaged app has its own default (server-boot.ts).
-// A `--server` value that is not a mode ends the launch here, with the
-// sentence on stderr and exit code 2: a typo must not pick a mode, and an
-// error box the person cannot read past is no answer either (the round-1
-// verifier watched the throw land in Electron's dialog, the process alive
-// until dismissed).
-const serverLaunch: ServerLaunch = (() => {
-  try {
-    return takeServerLaunch(process.env, {
-      argv: process.argv,
-      packaged: app.isPackaged,
-      platform: process.platform
-    })
-  } catch (err) {
-    process.stderr.write(`[server] ${(err as Error).message}\n`)
-    return process.exit(2)
-  }
-})()
+// The server to attach to, if any: ONE decision for the whole shell, taken
+// off the environment and the command line in `server-launch.ts` (the
+// variables taken out of the environment there, before anything in this
+// process spawns, ADR 0003), and read by the settings source too, so the
+// shell's Antasphere account manager exists exactly when this process is
+// the server (the packaged default is the separate server, server-boot.ts).
 // ── Wave 6, lane B: a launch's restore waits on nothing it can start sooner (PRDCT-3527) ──
 // Where this shell's sessions live, for the boot's records listing, and the
 // login shell's environment read from here rather than from app ready: tmux
