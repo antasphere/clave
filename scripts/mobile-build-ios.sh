@@ -74,13 +74,18 @@ node - "$OUT" "$ROOT" "$SOURCE_HEAD" "$SOURCE_TREE" "$SOURCE_LOCK_SHA256" "$SIGN
 const fs = require('node:fs')
 const path = require('node:path')
 const crypto = require('node:crypto')
+const assert = require('node:assert/strict')
 const [out, repository, head, tree, packageLockSha256, signingMode, archive, executable] = process.argv.slice(2)
-const hashFile = file => ({ path: file, sha256: crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex') })
+const hashFile = file => {
+  const stat = fs.lstatSync(file)
+  assert.ok(stat.isFile() && stat.size > 0, `Expected nonempty regular archive file: ${file}`)
+  return { path: file, sha256: crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex') }
+}
 const bundle = path.join(path.dirname(executable), 'main.jsbundle')
 fs.writeFileSync(path.join(out, 'provenance.json'), JSON.stringify({
   platform: 'ios', repository, head, tree, packageLockSha256, signingMode,
   createdAt: new Date().toISOString(), archive, executable: hashFile(executable),
-  javascriptBundle: fs.existsSync(bundle) ? hashFile(bundle) : null
+  javascriptBundle: hashFile(bundle)
 }, null, 2) + '\n', { mode: 0o600 })
 NODE
 assert_source
