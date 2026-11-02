@@ -29,13 +29,14 @@
 import { app } from 'electron'
 import { takeServerLaunch, type ServerLaunch } from './server-boot'
 
+// The inputs are read before the try: the only thing the catch is for is a
+// flag that is not a mode, and a read that throws (a test's Electron stand-in
+// with no `app`) must fail as itself, never as a flag error with exit 2.
+const input = { argv: process.argv, packaged: app.isPackaged, platform: process.platform }
+
 export const serverLaunch: ServerLaunch = (() => {
   try {
-    return takeServerLaunch(process.env, {
-      argv: process.argv,
-      packaged: app.isPackaged,
-      platform: process.platform
-    })
+    return takeServerLaunch(process.env, input)
   } catch (err) {
     process.stderr.write(`[server] ${(err as Error).message}\n`)
     return process.exit(2)

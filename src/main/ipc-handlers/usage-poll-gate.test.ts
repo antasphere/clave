@@ -2,7 +2,10 @@ import { describe, expect, it, vi } from 'vitest'
 
 vi.mock('electron', () => ({
   ipcMain: { handle: vi.fn() },
-  BrowserWindow: { getAllWindows: () => [] }
+  BrowserWindow: { getAllWindows: () => [] },
+  // The handlers import the shell's settings source, which reads the launch
+  // decision (`server-launch.ts`), which reads whether the app is packaged.
+  app: { isPackaged: false }
 }))
 
 describe('main’s usage poll', () => {
