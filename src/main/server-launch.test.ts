@@ -71,6 +71,24 @@ describe('the launch decision the whole shell reads', () => {
     expect(process.env.CLAVE_SERVER_TOKEN).toBeUndefined()
   })
 
+  it('a read that throws fails as itself, never as a flag error with exit 2 (an Electron with no app)', async () => {
+    const exit = vi.spyOn(process, 'exit').mockImplementation((() => {
+      throw new Error('exited')
+    }) as never)
+    const stderr = vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
+    const stand = electron as { app?: { isPackaged: boolean } }
+    stand.app = undefined
+    try {
+      vi.resetModules()
+      process.argv = ['electron', '.']
+      await expect(import('./server-launch')).rejects.toThrow(/isPackaged/)
+      expect(exit).not.toHaveBeenCalled()
+      expect(stderr).not.toHaveBeenCalled()
+    } finally {
+      stand.app = { isPackaged: false }
+    }
+  })
+
   it('a flag that is not a mode ends the launch with the sentence on stderr and exit code 2', async () => {
     const exit = vi.spyOn(process, 'exit').mockImplementation((() => {
       throw new Error('exited')

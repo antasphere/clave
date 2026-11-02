@@ -21,8 +21,13 @@
 //     directory (`<user data>/server`) and its keychain file, nothing under
 //     the app's own user data.
 //  3. The protections hold with no shell manager: a cancelled login's link
-//     lands on nothing, a cancel while the issuer is slow settles and opens
-//     nothing, and the server says cancelled both times.
+//     is still answered by the issuer but refused at the child's closed
+//     callback, a cancel while the issuer is slow settles and opens nothing,
+//     and a cancel ON THE SERVER while its confirmation of the handoff is
+//     held opens no page either: the ask is observed inside the server, the
+//     held answer is released only after the cancel, and it is no (the
+//     preload's ask removed, the ask is never seen and the page opens before
+//     the cancel: red).
 //  4. Restored at the next launch of the app, whose child starts again on the
 //     same folder, without the browser; signed out, the file and the keychain
 //     item are gone.
@@ -33,6 +38,7 @@ import {
   seedWorkspaces,
   separateServerDataDir,
   serverEndpoint,
+  serverFixture,
   userDataDir,
   fixturePath,
   until
@@ -78,6 +84,20 @@ const waitPhase = (section, phase) =>
 const rendererStatus = (win) => win.evaluate(() => window.electronAPI.antasphereAccountGet())
 const filesNamed = (dir, name) =>
   existsSync(dir) ? readdirSync(dir).filter((f) => f === name).length : 0
+/** A cancelled login's link, played as the browser would: the issuer's
+ *  answer to the authorization URL, and what the loopback callback it
+ *  redirects to does with the connection (a closed listener refuses it). */
+async function staleLink(authorizationUrl) {
+  const first = await fetch(authorizationUrl, { redirect: 'manual' })
+  const location = first.headers.get('location')
+  const callback = location
+    ? await fetch(location, { redirect: 'manual' }).then(
+        (r) => ({ answered: r.status }),
+        (e) => ({ refused: e?.cause?.code ?? e?.code ?? String(e) })
+      )
+    : { answered: null }
+  return { authorize: first.status, callback }
+}
 /** What main's own settings source says of the account: the status, or the
  *  refusal's tag and capability. */
 const mainsOwn = (app) =>
@@ -112,11 +132,24 @@ export async function run(t) {
   const env = { CLAVE_ANTASPHERE_ISSUER: provider.issuer, CLAVE_KEYCHAIN_FILE: keychain.file }
   // The child server's HTTP API, read off the app's discovery file at each
   // call: a relaunch starts a new child on a new port.
-  const api = async (p) => {
+  const api = async (p, init = {}) => {
     const disc = serverEndpoint(DIR)
-    const res = await fetch(disc.url + p, { headers: { authorization: `Bearer ${disc.token}` } })
+    const res = await fetch(disc.url + p, {
+      ...init,
+      headers: {
+        authorization: `Bearer ${disc.token}`,
+        ...(init.body ? { 'content-type': 'application/json' } : {})
+      }
+    })
     const text = await res.text()
     return { status: res.status, body: text ? JSON.parse(text) : null }
+  }
+  // The fixture route of the child server (`--test-no-activate` reaches it
+  // through the shell's flags): a function run in the SERVER's process, the
+  // one place its settings source can be wrapped.
+  const childFixture = () => {
+    const disc = serverEndpoint(DIR)
+    return serverFixture(disc.url, disc.token)
   }
   const serverStatus = async () => (await api('/accounts/antasphere')).body
   const serverDir = separateServerDataDir(DIR)
@@ -231,11 +264,12 @@ export async function run(t) {
       await section.locator('[data-antasphere-failure="cancelled"]').count(),
       1
     )
-    const stale = await provider.browse(urls2.at(-1)).then(
-      (r) => `callback answered ${r.response.status}`,
-      (e) => e
+    const stale = await staleLink(urls2.at(-1))
+    t.check(
+      'the cancelled login’s link: the issuer still answers it, and the child’s callback listener is closed',
+      stale.authorize === 302 && stale.callback.refused === 'ECONNREFUSED',
+      stale
     )
-    t.check('the cancelled login’s link lands on nothing', stale instanceof Error, String(stale))
     t.equal('and the app stays signed out', await phaseOf(section), 'signed-out')
     t.equal('the server says cancelled too', (await serverStatus()).lastFailure, 'cancelled')
     await section.locator('[data-antasphere-dismiss]').click()
@@ -244,7 +278,9 @@ export async function run(t) {
     // ── A cancel while the issuer is slow ────────────────────────────────
     // The sign-in's answer waits on discovery (2.5 s here): Cancel must stay
     // usable, the cancel must settle, no page may open, and the late answer
-    // must change nothing, with the server's confirmation as the last word.
+    // must change nothing. What drops that late answer is the preload's own
+    // order of the account's operations; the server's confirmation is proven
+    // in the part after this one.
     provider.state.discoveryDelayMs = 2500
     const before2 = (await opened()).length
     await signInButton.click()
@@ -265,11 +301,82 @@ export async function run(t) {
     await section.locator('[data-antasphere-dismiss]').click()
     await until(async () => (await section.locator('[data-antasphere-failure]').count()) === 0)
 
+    // ── A cancel on the server while its confirmation is pending ─────────
+    // Right before the open, the preload asks the child server whether the
+    // handoff is still the login in flight. Here the server's answer is HELD
+    // inside the server (its settings source wrapped through the fixture
+    // route, which counts the asks), the ask is waited for and asserted, the
+    // login is cancelled through the server's own API, never from the
+    // window, and only then is the held answer released: it is no, and no
+    // page opens. No step assumes a timing. A preload that opens without
+    // asking never enters the wrapper, the ask is never seen, and the page
+    // opens before the cancel: two lines below go red.
+    await childFixture().evaluate(() => {
+      const hooks = globalThis.__claveE2E
+      const source = hooks?.settings
+      if (!source) throw new Error('no settings source on the server: is --test-no-activate on?')
+      hooks.antasphereConfirmHandoff ??= source.antasphere.confirmHandoff
+      const real = hooks.antasphereConfirmHandoff
+      const hold = { entered: 0, answered: undefined, release: null }
+      hold.gate = new Promise((resolve) => {
+        hold.release = resolve
+      })
+      hooks.antasphereHold = hold
+      source.antasphere.confirmHandoff = async (handoff) => {
+        hold.entered += 1
+        await hold.gate
+        hold.answered = await real(handoff)
+        return hold.answered
+      }
+    })
+    const holdState = () =>
+      childFixture().evaluate(() => {
+        const h = globalThis.__claveE2E.antasphereHold
+        return { entered: h.entered, answered: h.answered ?? null }
+      })
+    const before3 = (await opened()).length
+    await signInButton.click()
+    await waitPhase(section, 'signing-in')
+    const asked = await until(async () => ((await holdState()).entered > 0 ? true : null))
+    t.check(
+      'the preload asked the child server to confirm the handoff, and the answer is held',
+      asked === true,
+      await holdState()
+    )
+    t.equal(
+      'the login is cancelled on the server meanwhile',
+      (await api('/accounts/antasphere/cancel', { method: 'POST', body: '{}' })).status,
+      200
+    )
+    t.equal('the window hears it', await waitPhase(section, 'signed-out'), 'signed-out')
+    await childFixture().evaluate(() => {
+      globalThis.__claveE2E.antasphereHold.release()
+    })
+    const answered = await until(async () => {
+      const h = await holdState()
+      return h.entered > 0 && h.answered !== null ? h : null
+    })
+    t.check(
+      'the held answer, released after the cancel, is no',
+      answered?.answered === false,
+      answered
+    )
+    t.equal('and the preload opened no page on it', (await opened()).length, before3)
+    t.equal('the server says cancelled', (await serverStatus()).lastFailure, 'cancelled')
+    await childFixture().evaluate(() => {
+      const hooks = globalThis.__claveE2E
+      hooks.settings.antasphere.confirmHandoff = hooks.antasphereConfirmHandoff
+      delete hooks.antasphereHold
+    })
+    await section.locator('[data-antasphere-dismiss]').click()
+    await until(async () => (await section.locator('[data-antasphere-failure]').count()) === 0)
+
     // ── Restored at the next launch, the child started again on its folder ─
+    const before4 = (await opened()).length
     await signInButton.click()
     const urls3 = await until(async () => {
       const u = await opened()
-      return u.length > before2 ? u : null
+      return u.length > before4 ? u : null
     })
     await provider.browse(urls3.at(-1))
     t.equal('signed in again', await waitPhase(section, 'signed-in'), 'signed-in')
