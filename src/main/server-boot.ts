@@ -171,6 +171,20 @@ export function takeServerLaunch(env: NodeJS.ProcessEnv, input: LaunchInput = {}
   return launch
 }
 
+/**
+ * Whether the shell owns the Antasphere account manager for this launch
+ * (PRDCT-3259): only while the server runs in this process. With the server
+ * elsewhere, attached or the shell's own separate child, the login is that
+ * process's: the shell builds no manager, restores no stored session of its
+ * own, and asks nothing but the server's confirmation before it opens the
+ * browser. A manager built here on a separate server never saw the login
+ * the server held and refused the handoff the server had issued at the open
+ * (the installed 3.0.0-beta.8, 2 November 2026).
+ */
+export function shellOwnsAntasphereAccount(launch: ServerLaunch): boolean {
+  return launch.mode === 'in-process'
+}
+
 /** A server the shell started itself: inside its process, or as a child. */
 export interface OwnServer {
   url: string
