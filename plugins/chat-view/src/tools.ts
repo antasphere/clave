@@ -1,5 +1,6 @@
 import type { Entry } from './reducer'
 import { parseDelivery } from '../../../src/shared/exchange-provenance'
+import { settledApproval, type PermissionEntry } from './approvals'
 
 /* What a run of tool calls says between two messages, decided without a DOM so
    both views of this plugin read it the same way and a test can pin it.
@@ -25,7 +26,16 @@ export interface DeliveryGroup {
   kind: 'delivery-group'
   exchanges: DeliveryExchange[]
 }
-export type Block = Exclude<Entry, { kind: 'tool' }> | ToolGroup | DeliveryGroup
+/** A run of approvals the reader allowed, one row that opens to its receipts
+ *  (`approvals.ts` says which rows fold). Two or more: a lone one stays the
+ *  row it always was. */
+export interface ApprovalGroup {
+  kind: 'approval-group'
+  /** The first request's id: stable as the run grows. */
+  id: string
+  approvals: PermissionEntry[]
+}
+export type Block = Exclude<Entry, { kind: 'tool' }> | ToolGroup | ApprovalGroup | DeliveryGroup
 
 /** A MESSAGE ends a run of tools; a permission card does not. The reader asked
  *  a question, the agent worked, the agent answered: the work between those two
@@ -45,10 +55,16 @@ export function visibleEntries(entries: Entry[]): Entry[] {
 
 /** A peer's delivery owns the replies and tools that follow it. A human
  *  message ends that context; permissions and errors stay outside the deck so
- *  actionable notices can never be concealed. */
+ *  actionable notices can never be concealed. Approvals the reader allowed
+ *  fold into one run (the wall of identical grey rows of 3 November 2026);
+ *  what the reader must still see on its own (a request waiting, a refusal,
+ *  one settled from another client, a question) keeps its row and ends the
+ *  run, and so do a message and an error; the tool an approval was for does
+ *  not, since it joined the open run of tools before the row. */
 export function groupEntries(entries: Entry[]): Block[] {
   const blocks: Block[] = []
   let open: ToolGroup | undefined
+  let allowed: ApprovalGroup | undefined
   let deliveries: DeliveryGroup | undefined
   let exchange: DeliveryExchange | undefined
   for (const entry of entries) {
@@ -60,6 +76,7 @@ export function groupEntries(entries: Entry[]): Block[] {
       exchange = { message: entry, responses: [] }
       deliveries.exchanges.push(exchange)
       open = undefined
+      allowed = undefined
       continue
     }
     if (entry.kind === 'user' || entry.kind === 'permission' || entry.kind === 'error') {
@@ -67,6 +84,15 @@ export function groupEntries(entries: Entry[]): Block[] {
       deliveries = undefined
       exchange = undefined
     }
+    if (entry.kind === 'permission' && settledApproval(entry)) {
+      if (!allowed) {
+        allowed = { kind: 'approval-group', id: entry.request.id, approvals: [] }
+        blocks.push(allowed)
+      }
+      allowed.approvals.push(entry)
+      continue
+    }
+    if (entry.kind !== 'tool') allowed = undefined
     if (entry.kind === 'tool') {
       if (!open) {
         open = { kind: 'tool-group', id: entry.id, tools: [] }
@@ -80,7 +106,10 @@ export function groupEntries(entries: Entry[]): Block[] {
     else blocks.push(entry)
     if (entry.kind === 'user' || entry.kind === 'assistant') open = undefined
   }
-  return blocks
+  // A run of one is the row it always was.
+  return blocks.map((block) =>
+    block.kind === 'approval-group' && block.approvals.length === 1 ? block.approvals[0] : block
+  )
 }
 
 export type ToolKind = 'read' | 'search' | 'edit' | 'command' | 'skill' | 'web' | 'agent' | 'other'

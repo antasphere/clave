@@ -37,7 +37,7 @@ import { nextPermissionMode } from './permission-mode'
 import { groupEntries, visibleEntries, type Block, type ToolGroup as ToolRun } from './tools'
 import { ToolGroup } from './ToolGroup'
 import { ToolDisclosure } from './disclosure'
-import { PermissionRow, PromptDock } from './PromptDock'
+import { ApprovalRun, PermissionRow, PromptDock } from './PromptDock'
 import { serverDock, withServerPending } from './server-requests'
 import { continueList } from './lists'
 import { ResumePicker } from './ResumePicker'
@@ -401,6 +401,8 @@ function TranscriptRow({
         />
       ) : block.kind === 'tool-group' ? (
         <ToolRow group={block} />
+      ) : block.kind === 'approval-group' ? (
+        <ApprovalRun group={block} />
       ) : (
         <EntryRow entry={block} onError={onError} />
       )}
@@ -804,9 +806,11 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
       key:
         block.kind === 'tool-group'
           ? `tools-${block.id}`
-          : block.kind === 'delivery-group'
-            ? `deliveries-${ordinal.get(block.exchanges[0].message)}`
-            : `entry-${ordinal.get(block)}`
+          : block.kind === 'approval-group'
+            ? `approvals-${block.id}`
+            : block.kind === 'delivery-group'
+              ? `deliveries-${ordinal.get(block.exchanges[0].message)}`
+              : `entry-${ordinal.get(block)}`
     }))
   }, [presentation.entries, presentation.first, remotePending, session.id])
   // The reader's open tool rows, kept across the rows' unmounts (`ToolDisclosure`).
