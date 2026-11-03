@@ -1,0 +1,7 @@
+{
+  "agentType": "Explore",
+  "description": "Find the theme colour reads",
+  "model": "opus",
+  "toolUseId": "toolu_fixture",
+  "finished": true
+}

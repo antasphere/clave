@@ -3,12 +3,16 @@ import type { WebviewTag } from 'electron'
 import { SettingsCallout } from '../settings/primitives'
 
 /** Enumerate the computed custom properties, including tokens introduced by a skin.
- * No mirrored token inventory: the live app stylesheet is the authority. */
+ * No mirrored token inventory: the live app stylesheet is the authority. Each value is
+ * `!important`: a sheet inserted into a guest sits BEFORE the page's own in the cascade,
+ * so a page that declares the same tokens itself (the analytics pages carry the app's
+ * tokens so they also stand alone in a browser) would otherwise win on equal specificity
+ * and never follow the app's theme. */
 function themeCSS(): string {
   const style = getComputedStyle(document.documentElement)
   return `:root {${Array.from(style)
     .filter((name) => name.startsWith('--'))
-    .map((name) => `${name}: ${style.getPropertyValue(name)};`)
+    .map((name) => `${name}: ${style.getPropertyValue(name)} !important;`)
     .join('\n')}}`
 }
 

@@ -20,7 +20,8 @@ export default defineConfig({
       'src/**/*.test.{ts,tsx}',
       'scripts/**/*.test.mjs',
       'tests/e2e/**/*.test.mjs',
-      'packages/{contract,server,client}/src/**/*.test.ts'
+      'packages/{contract,server,client}/src/**/*.test.ts',
+      'plugins/*/src/**/*.test.ts'
     ],
     environment: 'node',
     // The framework ships TypeScript source, not compiled output, so Node

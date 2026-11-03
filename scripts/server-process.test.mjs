@@ -430,7 +430,7 @@ describe.skipIf(!built)('the terminal process beside the server (from the built 
       // Test mode keeps the plugins under the data dir, never in ~/.clave.
       server = await startServerProcess({ repo: REPO, dataDir, args: ['--test-no-activate'] })
       const headers = { authorization: `Bearer ${server.token}` }
-      const required = ['clave.chat-view', 'clave.github', 'clave.orbs']
+      const required = ['clave.chat-view', 'clave.github', 'clave.orbs', 'clave.analytics']
       let records = []
       const end = Date.now() + 15_000
       while (Date.now() < end) {
@@ -442,6 +442,7 @@ describe.skipIf(!built)('the terminal process beside the server (from the built 
       }
       const byId = Object.fromEntries(records.map((r) => [r.id, r]))
       expect(Object.keys(byId).sort()).toEqual([
+        'clave.analytics',
         'clave.chat-view',
         'clave.echo-provider',
         'clave.github',

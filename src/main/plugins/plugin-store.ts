@@ -77,7 +77,9 @@ export function pluginFile(root: string, entry: string): string {
 export const BUNDLED_ON_FIRST_INSTALL: readonly string[] = [
   'clave.chat-view',
   'clave.github',
-  'clave.orbs'
+  'clave.orbs',
+  // Analytics: without it the app says nothing about what its sessions cost.
+  'clave.analytics'
 ]
 
 export class PluginStore {
