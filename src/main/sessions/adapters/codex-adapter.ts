@@ -146,11 +146,13 @@ const commandOf = (item: Record<string, unknown>): string => {
  *  the Mac outside this chat's own sandbox and approval policy keep their
  *  prompt: a new tab (a terminal with a command, an agent without approvals),
  *  a group terminal that launches at once, a pinned group, a view's serving
- *  command, the end of another tab's process. Under an explicit read-only
- *  sandbox the side panel keeps its prompt too: its update writes one
- *  existing file on disk, which that sandbox exists to prevent (a sandbox left
- *  to Codex's own config is not seen here). Under a policy that skips every
- *  approval (`never`, the yolo profile) everything is approved: the person
+ *  command, the end of another tab's process. The side panel keeps its
+ *  prompt with them: its update writes one existing file on disk wherever the
+ *  agent nominated it, outside the thread's sandbox and its writable roots,
+ *  and the sandbox Codex's own config applies to the thread is not seen here,
+ *  so no policy that asks lets it through unasked (the root tab's case of 3
+ *  November 2026). Under a policy that skips every approval (`never`, the
+ *  yolo profile) everything is approved: the person
  *  chose no prompts, Codex 0.166.0 auto-approves a prompted tool under it
  *  anyway (verified live, 3 November 2026), and a terminal started then runs
  *  where the chat's own commands already run unasked. Only this binding is
@@ -162,22 +164,17 @@ export const CLAVE_TOOLS_APPROVAL = {
     'clave_add_group_terminal',
     'clave_launch_group',
     'clave_set_session_view',
-    'clave_close_session'
-  ],
-  promptedReadOnly: ['clave_side_panel']
-} as const
-const claveToolsApproval = (
-  approvalPolicy: string,
-  sandbox: string | undefined
-): Record<string, unknown> => {
-  if (approvalPolicy === 'never') return { default_tools_approval_mode: CLAVE_TOOLS_APPROVAL.mode }
-  const prompted = [
-    ...CLAVE_TOOLS_APPROVAL.prompted,
-    ...(sandbox === 'read-only' ? CLAVE_TOOLS_APPROVAL.promptedReadOnly : [])
+    'clave_close_session',
+    'clave_side_panel'
   ]
+} as const
+const claveToolsApproval = (approvalPolicy: string): Record<string, unknown> => {
+  if (approvalPolicy === 'never') return { default_tools_approval_mode: CLAVE_TOOLS_APPROVAL.mode }
   return {
     default_tools_approval_mode: CLAVE_TOOLS_APPROVAL.mode,
-    tools: Object.fromEntries(prompted.map((tool) => [tool, { approval_mode: 'prompt' }]))
+    tools: Object.fromEntries(
+      CLAVE_TOOLS_APPROVAL.prompted.map((tool) => [tool, { approval_mode: 'prompt' }])
+    )
   }
 }
 
@@ -1080,7 +1077,7 @@ export class CodexAdapter implements SessionAdapter {
             bearer_token_env_var: 'CLAVE_CODEX_MCP_TOKEN',
             enabled: true,
             required: true,
-            ...claveToolsApproval(permissionMode, sandbox)
+            ...claveToolsApproval(permissionMode)
           }
         }
       })

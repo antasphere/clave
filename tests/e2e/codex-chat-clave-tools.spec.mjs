@@ -174,7 +174,8 @@ export async function run(t) {
             'clave_add_group_terminal',
             'clave_launch_group',
             'clave_set_session_view',
-            'clave_close_session'
+            'clave_close_session',
+            'clave_side_panel'
           ].map((tool) => [tool, { approval_mode: 'prompt' }])
         ),
         otherServers: 0

@@ -908,7 +908,8 @@ describe('Codex chat permissions', () => {
     clave_add_group_terminal: { approval_mode: 'prompt' },
     clave_launch_group: { approval_mode: 'prompt' },
     clave_set_session_view: { approval_mode: 'prompt' },
-    clave_close_session: { approval_mode: 'prompt' }
+    clave_close_session: { approval_mode: 'prompt' },
+    clave_side_panel: { approval_mode: 'prompt' }
   }
   it("tells Codex this tab's Clave tools need no approval, the process-starting ones excepted", async () => {
     const binding = claveBinding(await threadParams({}, profile()))
@@ -929,15 +930,21 @@ describe('Codex chat permissions', () => {
       claveBinding(await threadParams({ resume: 'saved' }, profile('-s', 'workspace-write')))
     ).toMatchObject({ default_tools_approval_mode: 'approve', tools: prompted })
   })
-  it('prompts the side panel too under an explicit read-only sandbox, where its update writes a file', async () => {
-    const readOnly = claveBinding(await threadParams({}, profile('-s', 'read-only')))
-    expect(readOnly).toMatchObject({
-      tools: { ...prompted, clave_side_panel: { approval_mode: 'prompt' } }
-    })
-    const launch = claveBinding(await threadParams({ sandbox: 'read-only' }, profile()))
+  it('prompts the side panel under every policy that asks, whatever the sandbox says', async () => {
+    // Its update writes an existing file wherever the agent nominated it,
+    // outside the thread's sandbox and its writable roots; the sandbox Codex's
+    // own config applies is not seen here, so no asking policy approves it.
+    for (const flags of [
+      [],
+      ['-s', 'read-only'],
+      ['-s', 'workspace-write'],
+      ['-s', 'danger-full-access']
+    ]) {
+      const binding = claveBinding(await threadParams({}, profile(...flags)))
+      expect(binding).toMatchObject({ tools: { clave_side_panel: { approval_mode: 'prompt' } } })
+    }
+    const launch = claveBinding(await threadParams({ sandbox: 'workspace-write' }, profile()))
     expect(launch).toMatchObject({ tools: { clave_side_panel: { approval_mode: 'prompt' } } })
-    const writable = claveBinding(await threadParams({}, profile('-s', 'workspace-write')))
-    expect(writable!.tools).not.toHaveProperty('clave_side_panel')
   })
   it('keeps no prompt under a policy that skips every approval: the person chose none', async () => {
     const binding = claveBinding(await threadParams({}, profile('--yolo')))

@@ -90,7 +90,8 @@ it('binds fresh and resumed tabs to distinct authenticated callers and revokes o
         clave_add_group_terminal: { approval_mode: 'prompt' },
         clave_launch_group: { approval_mode: 'prompt' },
         clave_set_session_view: { approval_mode: 'prompt' },
-        clave_close_session: { approval_mode: 'prompt' }
+        clave_close_session: { approval_mode: 'prompt' },
+        clave_side_panel: { approval_mode: 'prompt' }
       }
     })
     const token = env?.CLAVE_CODEX_MCP_TOKEN
