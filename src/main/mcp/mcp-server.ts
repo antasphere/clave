@@ -763,7 +763,7 @@ function buildServer(callerSessionId: string | undefined): McpServer {
           .boolean()
           .optional()
           .describe(
-            'Open the agent in Clave\'s chat view instead of the terminal: "chat", "chat mode", "chat session", "the chat UI". claude and codex modes only (Claude chat is macOS/Linux only); errors for any other mode. Opens the chat the launcher would in that workspace: the chat form of its default profile for the family (the person\'s own flags included), the built-in "claude-chat" / "codex-chat" otherwise; profile may name another chat profile instead.'
+            'Open the agent in Clave\'s chat view instead of the terminal: "chat", "chat mode", "chat session", "the chat UI". claude and codex modes only (Claude chat is macOS/Linux only); errors for any other mode. Opens the chat the launcher would in that workspace: the chat form of its default profile for the family (the person\'s own flags included), the built-in "claude-chat" / "codex-chat" otherwise; profile may name another chat profile by its id instead.'
           ),
         dangerous: z
           .boolean()

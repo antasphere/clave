@@ -63,7 +63,19 @@ function fakes(): {
       launchProfiles: {
         list: async () => {
           calls.push('profiles')
-          return { customProfiles: [{ id: 'c1', name: 'Custom', family: 'claude' }] }
+          return {
+            customProfiles: [
+              { id: 'c1', name: 'Custom', family: 'claude' },
+              {
+                id: 'chat:claude:c1',
+                name: 'Custom (chat)',
+                family: 'claude',
+                sourceProfileId: 'c1'
+              }
+            ],
+            globalDefaults: { claude: 'c1' },
+            workspaceOverrides: {}
+          }
         }
       },
       workspaces: {
@@ -79,6 +91,7 @@ function fakes(): {
     servingSessionsOf: () => ['mine'],
     accounts: () => [{ id: 'base', label: 'Base', usable: true }],
     launchProfiles: () => [{ id: 'base-p', name: 'Base profile' }],
+    chatDefault: () => 'base-chat',
     pins: () => [{ id: 'base-pin', name: 'Base pin', cwd: null, sessions: [], terminals: [] }]
   } as unknown as ServedShell
   return { api, calls, base, records }
@@ -103,7 +116,18 @@ describe('the attached shell', () => {
     expect(shell.record('tab')).toBeUndefined()
     expect(shell.accounts('claude')).toEqual([{ id: 'base', label: 'Base', usable: true }])
     expect(shell.launchProfiles('claude')).toEqual([{ id: 'base-p', name: 'Base profile' }])
+    expect(shell.chatDefault('claude', 'ws')).toBe('base-chat')
     expect(shell.pins().map((p) => p.id)).toEqual(['base-pin'])
+  })
+  it("answers the chat default from the server's own preferences once a command loaded them", async () => {
+    const f = fakes()
+    const shell = await attachedShell(f.base, f.api, 'openSession')
+    expect(f.calls).toContain('profiles')
+    // The server's default is the saved terminal profile; its chat form is
+    // the chat an agent's open lands on. The Mac's base shell is not asked.
+    expect(shell.chatDefault('claude', 'ws')).toBe('chat:claude:c1')
+    expect(shell.chatDefault('codex', 'ws')).toBe('codex-chat')
+    expect(shell.launchProfiles('claude').map((p) => p.id)).toContain('chat:claude:c1')
   })
   it('reads the records for every command that names, reads or types into a tab', async () => {
     for (const command of ['setSessionView', 'readSession', 'sendToSession']) {
@@ -149,8 +173,12 @@ describe('the attached shell', () => {
     const f = fakes()
     const open = await attachedShell(f.base, f.api, 'openSession')
     const claude = open.launchProfiles('claude')
-    expect(claude.at(-1)).toEqual({ id: 'c1', name: 'Custom' })
-    expect(claude.length).toBeGreaterThan(1)
+    // The server's list as it offers it: the saved profile and its chat form.
+    expect(claude.slice(-2)).toEqual([
+      { id: 'c1', name: 'Custom' },
+      { id: 'chat:claude:c1', name: 'Custom (chat)' }
+    ])
+    expect(claude.length).toBeGreaterThan(2)
     expect(open.launchProfiles('pi').some((p) => p.id === 'c1')).toBe(false)
     const launch = await attachedShell(f.base, f.api, 'launchGroup')
     expect(launch.pins().map((p) => p.id)).toEqual(['p1'])

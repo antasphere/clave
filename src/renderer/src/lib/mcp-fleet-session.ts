@@ -39,10 +39,14 @@ export async function openFleetSession(
       `The account argument applies to claude and codex modes only (got mode "${mode}")`
     )
   const settings = family ? await window.electronAPI.fleetLaunchSettings(serverId) : null
-  // The chat the server's own launcher would open in that workspace.
+  // The chat the server itself would open: its own global default's chat
+  // form. A fleet server holds no per-workspace default the Mac could name
+  // (the Mac's launcher keeps its server-workspace overrides in the Mac's own
+  // file), so the workspace is not consulted here; an explicit profile still
+  // names one of the server's by id.
   const profileRef = resolveProfileRef(
     payload,
-    family && settings ? chatDefaultFor(settings.profiles, family, workspaceId) : undefined
+    family && settings ? chatDefaultFor(settings.profiles, family, null) : undefined
   )
   const profile =
     profileRef && settings

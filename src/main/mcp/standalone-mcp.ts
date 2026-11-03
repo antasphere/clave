@@ -231,7 +231,7 @@ function buildServer(
           .boolean()
           .optional()
           .describe(
-            "Claude and Codex open in the chat view unless this is false, on the chat form of this server's default profile for the family (profile names another)"
+            "Claude and Codex open in the chat view unless this is false, on the chat form of this server's default profile for the family (profile names another chat profile by its id)"
           ),
         profile: z.string().min(1).max(256).optional().describe('A launch profile id'),
         groupId: z.string().min(1).max(256).optional().describe('Group id from clave_create_group'),
