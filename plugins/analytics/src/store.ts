@@ -1,6 +1,6 @@
 import * as nodeFs from 'node:fs'
 import { join } from 'node:path'
-import { emptyLedger, type Ledger, type SessionRow } from './ledger'
+import { LEDGER_VERSION, emptyLedger, type Ledger, type SessionRow } from './ledger'
 
 /**
  * The plugin's own files in its data folder, each written atomically (`<file>.tmp`, then
@@ -19,21 +19,57 @@ export type StoreFs = Pick<
   'mkdirSync' | 'readFileSync' | 'writeFileSync' | 'renameSync'
 >
 
-/** A ledger row the views can draw: anything else is dropped at load, never served. */
+const isObj = (v: unknown): v is Record<string, unknown> =>
+  typeof v === 'object' && v !== null && !Array.isArray(v)
+const isNum = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v)
+const isStrOrNull = (v: unknown): boolean => v === null || typeof v === 'string'
+const TOKEN_KEYS = [
+  'input',
+  'cacheWrite5m',
+  'cacheWrite1h',
+  'cacheWriteUnsplit',
+  'cacheRead',
+  'output'
+]
+const isTokens = (v: unknown): boolean => isObj(v) && TOKEN_KEYS.every((k) => isNum(v[k]))
+const isTally = (v: unknown): boolean =>
+  isObj(v) &&
+  isTokens(v['tokens']) &&
+  isObj(v['byModel']) &&
+  isObj(v['days']) &&
+  isNum(v['messages']) &&
+  isNum(v['toolCalls']) &&
+  isNum(v['prompts']) &&
+  Array.isArray(v['stamps']) &&
+  isStrOrNull(v['firstAt']) &&
+  isStrOrNull(v['lastAt'])
+const isCursor = (v: unknown): boolean =>
+  isObj(v) &&
+  typeof v['path'] === 'string' &&
+  isNum(v['offset']) &&
+  typeof v['partial'] === 'string' &&
+  Array.isArray(v['seen'])
+const isSubagent = (v: unknown): boolean =>
+  isObj(v) && typeof v['id'] === 'string' && isTally(v['tally']) && isCursor(v['file'])
+
+/** A ledger row the views can draw, checked down to its tallies and cursors: anything else
+ *  is dropped at load, never served, so one row of a hand-edited file cannot blank a page. */
 export function isSessionRow(value: unknown): value is SessionRow {
-  if (!value || typeof value !== 'object') return false
-  const row = value as Record<string, unknown>
-  const root = row['root']
+  if (!isObj(value)) return false
+  const root = value['root']
+  const group = value['group']
   return (
-    typeof row['id'] === 'string' &&
-    typeof row['name'] === 'string' &&
-    Array.isArray(row['subagents']) &&
-    Array.isArray(row['stateSpans']) &&
-    (root === null ||
-      (!!root &&
-        typeof root === 'object' &&
-        !!(root as Record<string, unknown>)['tally'] &&
-        !!(root as Record<string, unknown>)['file']))
+    typeof value['id'] === 'string' &&
+    typeof value['name'] === 'string' &&
+    typeof value['provider'] === 'string' &&
+    typeof value['cwd'] === 'string' &&
+    typeof value['state'] === 'string' &&
+    (group === null ||
+      (isObj(group) && typeof group['id'] === 'string' && typeof group['name'] === 'string')) &&
+    Array.isArray(value['subagents']) &&
+    value['subagents'].every(isSubagent) &&
+    Array.isArray(value['stateSpans']) &&
+    (root === null || (isObj(root) && isTally(root['tally']) && isCursor(root['file'])))
   )
 }
 
@@ -94,8 +130,14 @@ export class Store {
       return emptyLedger(gapMinutes)
     }
     const ledger = raw as Partial<Ledger> | null
-    if (!ledger || ledger.v !== 1 || typeof ledger.sessions !== 'object' || !ledger.sessions) {
+    if (!ledger || typeof ledger.sessions !== 'object' || !ledger.sessions) {
       this.warnOnce('ledger.json has an unknown shape; starting from an empty ledger')
+      return emptyLedger(gapMinutes)
+    }
+    if (ledger.v !== LEDGER_VERSION) {
+      this.warnOnce(
+        `ledger.json is version ${String(ledger.v)}, this build writes ${LEDGER_VERSION}; the transcripts are counted again`
+      )
       return emptyLedger(gapMinutes)
     }
     const sessions: Record<string, SessionRow> = {}
@@ -107,7 +149,7 @@ export class Store {
     if (dropped > 0)
       this.warnOnce(`ledger.json holds ${dropped} row(s) of an unknown shape; they are left out`)
     return {
-      v: 1,
+      v: LEDGER_VERSION,
       gapMinutes: typeof ledger.gapMinutes === 'number' ? ledger.gapMinutes : gapMinutes,
       sessions,
       updatedAt: typeof ledger.updatedAt === 'string' ? ledger.updatedAt : new Date().toISOString()

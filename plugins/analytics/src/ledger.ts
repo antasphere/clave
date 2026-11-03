@@ -78,8 +78,12 @@ export interface SessionRow {
   stateSpans: StateSpan[]
 }
 
+/** The ledger file's version: 2 since stamps count messages, not streamed rows; a file of
+ *  an earlier version is recounted from the transcripts rather than read. */
+export const LEDGER_VERSION = 2 as const
+
 export interface Ledger {
-  v: 1
+  v: typeof LEDGER_VERSION
   gapMinutes: number
   sessions: Record<string, SessionRow>
   updatedAt: string
@@ -134,7 +138,7 @@ export function emptyTally(): Tally {
 }
 
 export function emptyLedger(gapMinutes = 15, now: Date = new Date()): Ledger {
-  return { v: 1, gapMinutes, sessions: {}, updatedAt: now.toISOString() }
+  return { v: LEDGER_VERSION, gapMinutes, sessions: {}, updatedAt: now.toISOString() }
 }
 
 /** Everything the model was given: fresh input, both cache writes and the cache reads. */

@@ -1,5 +1,6 @@
 import type { Figures, GroupCard, Range, ScopeView, ViewRow } from '../src/ledger'
 import {
+  activeNote,
   formatCount,
   formatMillions,
   formatMinutes,
@@ -190,15 +191,7 @@ function drawTiles(p: Parts, f: Figures, kind: ScopeView['kind']): void {
       ? `+ ${formatTokens(unpriced)} tokens unpriced`
       : `${formatCount(f.messages)} messages`
   )
-  // One session's active time sits inside its wall clock; a group's or a workspace's is a
-  // sum over sessions that ran side by side, so its wall clock is the span they cover.
-  set(
-    'active',
-    formatMinutes(f.activeMinutes),
-    kind === 'session'
-      ? `over ${formatMinutes(f.wallMinutes)} wall`
-      : `summed, across ${formatMinutes(f.wallMinutes)} of wall clock`
-  )
+  set('active', formatMinutes(f.activeMinutes), activeNote(kind, f.wallMinutes))
   set('read', formatTokens(f.tokensRead), 'input and cache')
   set('written', formatTokens(f.tokensWritten), 'output')
   set(

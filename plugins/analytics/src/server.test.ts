@@ -67,6 +67,7 @@ let dir: string
 let server: AnalyticsServer
 let collector: FakeCollector
 let base: string
+const logged: string[] = []
 
 beforeAll(async () => {
   dir = mkdtempSync(join(tmpdir(), 'analytics-server-'))
@@ -81,7 +82,8 @@ beforeAll(async () => {
     collector,
     prices: loadPrices(join(__dirname, '..', 'prices.json'), null),
     pageDir,
-    host: '127.0.0.1'
+    host: '127.0.0.1',
+    log: (level, message) => logged.push(`${level}: ${message}`)
   })
   const page = new URL(server.url('session', 'tab 1', 'ws-1'))
   base = `${page.origin}/${page.pathname.split('/')[1]}`
@@ -225,5 +227,51 @@ describe('the server', () => {
     expect(String(page['content-security-policy'])).toContain("script-src 'self'")
     const data = await headers(`${base}/data/session/tab%201.json`)
     expect(data['content-security-policy']).toBeUndefined()
+  })
+  it('answers nothing for a page it cannot draw, says why once, and keeps serving', async () => {
+    // A row the views choke on, reached only by the pages that walk every row.
+    Object.defineProperty(collector.ledger.sessions, 'broken', {
+      configurable: true,
+      enumerable: true,
+      get() {
+        throw new Error('a row the views cannot read')
+      }
+    })
+    try {
+      const first = await get(server.url('workspace', 'ws-1', 'ws-1'))
+      expect(first.status).toBe(404)
+      expect(first.body).toBe('')
+      const again = await get(server.url('workspace', 'ws-1', 'ws-1'))
+      expect(again.status).toBe(404)
+      expect(logged.filter((l) => l.includes('workspace page workspace:ws-1'))).toHaveLength(1)
+      // A page that does not walk the broken row still answers.
+      expect((await get(server.url('session', 'tab 1', 'ws-1'))).status).toBe(200)
+      // The live stream of the broken page sends no frame and stays open; once the row is
+      // gone, a change brings the frame.
+      const frames: string[] = []
+      const url = new URL(`${base}/events?scope=workspace:ws-1&range=all`)
+      await new Promise<void>((resolve, reject) => {
+        const req = request(url, (res) => {
+          res.setEncoding('utf8')
+          res.on('data', (chunk: string) => {
+            frames.push(chunk)
+            if (chunk.includes('event: data')) {
+              req.destroy()
+              resolve()
+            }
+          })
+        })
+        req.on('error', (e) => (frames.length ? resolve() : reject(e)))
+        req.end()
+        setTimeout(() => {
+          expect(frames.join('')).not.toContain('event: data')
+          delete (collector.ledger.sessions as Record<string, unknown>)['broken']
+          collector.emit('changed', new Set(['tab 1']))
+        }, 150)
+      })
+      expect(frames.join('')).toContain('"kind":"workspace"')
+    } finally {
+      delete (collector.ledger.sessions as Record<string, unknown>)['broken']
+    }
   })
 })

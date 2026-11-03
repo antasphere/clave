@@ -160,9 +160,8 @@ body {
 .tile-note {
   color: var(--text-tertiary);
   font-size: 11px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  /* A note wraps rather than being cut: the tile's width is a fifth of the pane's. */
+  overflow-wrap: anywhere;
 }
 
 /* ── Table ──────────────────────────────────────────────────────────────── */

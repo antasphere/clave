@@ -75,6 +75,26 @@ export async function run(t) {
     await menuItems(win).first().waitFor()
     const entry = menuItem(win, 'Analytics')
     t.equal('the tab menu holds one Analytics entry', await entry.count(), 1)
+    // The plugin's entry is the menu's last section: a hairline right above it, Delete right
+    // below, and the app's own window entries (which arrive a beat later) before the hairline.
+    const windowEntry = await until(async () =>
+      (await menuItem(win, 'Move to new window').count()) === 1 ? true : null
+    )
+    t.check('the window entries arrived in the tab menu', !!windowEntry)
+    const rows = await win
+      .locator('[role="menu"] > *')
+      .evaluateAll((nodes) =>
+        nodes.map((n) => (n.getAttribute('role') === 'separator' ? 'sep' : n.textContent.trim()))
+      )
+    const at = rows.findIndex((r) => r === 'Analytics')
+    t.check(
+      'a hairline sits right above the plugin entry, Delete right below, the window entries before',
+      at > 0 &&
+        rows[at - 1] === 'sep' &&
+        rows[at + 1] === 'Delete' &&
+        rows.indexOf('Move to new window') < at,
+      JSON.stringify(rows)
+    )
     await entry.hover()
     const preview = win.locator('[data-plugin-action-preview="deck"]')
     await preview.waitFor({ timeout: 5_000 })
@@ -121,6 +141,13 @@ export async function run(t) {
     )
     if (previousSkin) await win.evaluate((id) => window.electronAPI.skinsActivate(id), previousSkin)
 
+    // The toolbar's home button lights for its own page only, not for a tab's page.
+    const homeLit = () =>
+      win
+        .locator('[data-plugin-action="home"]')
+        .evaluate((el) => el.className.includes('text-accent'))
+    t.check('the home button is unlit while a tab page shows', !(await homeLit()))
+
     // The way back.
     await win.locator(`${PAGE} [aria-label="Back to sessions"]`).click()
     await win.locator(PAGE).waitFor({ state: 'detached', timeout: 5_000 })
@@ -160,6 +187,7 @@ export async function run(t) {
       return s && s.includes('/workspace') ? s : null
     })
     t.check('the workspace page is served', !!(await deckTitle(win, 'Workspace')))
+    t.check('the home button is lit while its own page shows', await homeLit())
     t.check(
       'the workspace page has a card for the group',
       !!(await guestList(win, '.card-name', 'Analytics group'))

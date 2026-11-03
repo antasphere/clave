@@ -46,6 +46,8 @@ export interface ServerOptions {
   pageDir: string
   host?: '127.0.0.1'
   now?: () => Date
+  /** Where a page that could not be drawn is said, once per page. */
+  log?: (level: 'warn' | 'error', message: string) => void
 }
 
 export interface AnalyticsServer {
@@ -147,12 +149,23 @@ export async function startServer(options: ServerOptions): Promise<AnalyticsServ
   const now = options.now ?? ((): Date => new Date())
   const streams = new Set<{ res: ServerResponse; stop: () => void }>()
 
-  // A row the views cannot draw (a hand-edited ledger) answers nothing, never a crash: the
-  // live push runs on a timer where a throw would end the plugin's process.
+  // A row the views cannot draw answers nothing, never a crash: the live push runs on a
+  // timer where a throw would end the plugin's process. The cause is said once per page.
+  const undrawn = new Set<string>()
   const view = (scope: Scope, range: Range): ScopeView | null => {
     try {
       return scopeView(options.collector.ledger, prices(), scope, range, now())
-    } catch {
+    } catch (error) {
+      const key = scopeParam(scope)
+      if (!undrawn.has(key)) {
+        undrawn.add(key)
+        options.log?.(
+          'warn',
+          `The ${scope.kind} page ${key} could not be drawn from the ledger: ${
+            error instanceof Error ? error.message : String(error)
+          }`
+        )
+      }
       return null
     }
   }

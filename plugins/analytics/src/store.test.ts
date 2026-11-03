@@ -48,7 +48,7 @@ describe('Store', () => {
     store.writeLedger(emptyLedger(15, new Date('2026-10-02T10:00:00.000Z')))
     const file = join(dir, 'ledger.json')
     expect(calls).toEqual([`write ${file}.tmp`, `rename ${file}.tmp -> ${file}`])
-    expect(JSON.parse(readFileSync(file, 'utf8'))).toMatchObject({ v: 1, gapMinutes: 15 })
+    expect(JSON.parse(readFileSync(file, 'utf8'))).toMatchObject({ v: 2, gapMinutes: 15 })
   })
 
   it('reloads the rows it can draw and leaves a malformed one out, with one warning', () => {
@@ -72,5 +72,34 @@ describe('Store', () => {
     expect(new Store(dir).readLedger(15).sessions).toEqual({})
     writeFileSync(join(dir, 'ledger.json'), '{not json')
     expect(new Store(dir).readLedger(15).sessions).toEqual({})
+  })
+  it('leaves out a row whose tally or cursor is not whole, so no page is blanked by it', () => {
+    const warnings: string[] = []
+    const ledger = emptyLedger(15, new Date('2026-10-02T10:00:00.000Z'))
+    const hollow = { ...row('h'), root: { tally: {}, file: {} } }
+    const halfSub = { ...row('s'), subagents: [{ id: 'x', tally: emptyTally(), file: {} }] }
+    writeFileSync(
+      join(dir, 'ledger.json'),
+      JSON.stringify({ ...ledger, sessions: { a: row('a'), h: hollow, s: halfSub } })
+    )
+    const store = new Store(dir, (level, message) => {
+      if (level === 'warn') warnings.push(message)
+    })
+    expect(Object.keys(store.readLedger(15).sessions)).toEqual(['a'])
+    expect(warnings).toEqual([expect.stringContaining('2 row(s)')])
+  })
+
+  it('counts the transcripts again rather than read a ledger of an earlier version', () => {
+    const warnings: string[] = []
+    const ledger = { ...emptyLedger(15, new Date('2026-10-02T10:00:00.000Z')), v: 1 }
+    writeFileSync(
+      join(dir, 'ledger.json'),
+      JSON.stringify({ ...ledger, sessions: { a: row('a') } })
+    )
+    const store = new Store(dir, (level, message) => {
+      if (level === 'warn') warnings.push(message)
+    })
+    expect(store.readLedger(15).sessions).toEqual({})
+    expect(warnings).toEqual([expect.stringContaining('version 1')])
   })
 })

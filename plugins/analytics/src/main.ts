@@ -88,7 +88,8 @@ export default {
       // The override is re-read on each ledger change, so a price edit shows without a restart.
       prices: () => table,
       pageDir: fileURLToPath(new URL('dist/', here)),
-      host: '127.0.0.1'
+      host: '127.0.0.1',
+      log
     })
     collector.on('changed', () => {
       table = prices()
