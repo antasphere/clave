@@ -102,4 +102,57 @@ describe('Store', () => {
     expect(store.readLedger(15).sessions).toEqual({})
     expect(warnings).toEqual([expect.stringContaining('version 1')])
   })
+  it('refuses a row for each field the check names, one at a time', () => {
+    const whole = row('w')
+    const tally = (): Record<string, unknown> => ({ ...emptyTally() })
+    const cursor = (): Record<string, unknown> => ({ ...newCursor('/x/w.jsonl') })
+    const without = (base: Record<string, unknown>, key: string): Record<string, unknown> => {
+      const copy = { ...base }
+      delete copy[key]
+      return copy
+    }
+    const broken: [string, Record<string, unknown>][] = [
+      ['no seenAt', without(whole, 'seenAt')],
+      ['no createdAt', without(whole, 'createdAt')],
+      ['a group without a name', { ...whole, group: { id: 'g' } }],
+      [
+        'a tally without stamps',
+        { ...whole, root: { tally: without(tally(), 'stamps'), file: cursor() } }
+      ],
+      [
+        'a tally without tokens',
+        { ...whole, root: { tally: without(tally(), 'tokens'), file: cursor() } }
+      ],
+      [
+        'a tally with a half token set',
+        { ...whole, root: { tally: { ...tally(), tokens: { input: 1 } }, file: cursor() } }
+      ],
+      [
+        'a model entry that is not a token set',
+        { ...whole, root: { tally: { ...tally(), byModel: { m: { input: 1 } } }, file: cursor() } }
+      ],
+      [
+        'a day bucket without counts',
+        {
+          ...whole,
+          root: { tally: { ...tally(), days: { '2026-10-02': { input: 1 } } }, file: cursor() }
+        }
+      ],
+      [
+        'a cursor without seen',
+        { ...whole, root: { tally: tally(), file: without(cursor(), 'seen') } }
+      ],
+      [
+        'a cursor without an offset',
+        { ...whole, root: { tally: tally(), file: without(cursor(), 'offset') } }
+      ],
+      [
+        'a subagent without a cursor',
+        { ...whole, subagents: [{ id: 'x', tally: tally(), file: {} }] }
+      ],
+      ['state spans that are not a list', { ...whole, stateSpans: {} }]
+    ]
+    expect(isSessionRow(whole)).toBe(true)
+    for (const [why, candidate] of broken) expect(isSessionRow(candidate), why).toBe(false)
+  })
 })

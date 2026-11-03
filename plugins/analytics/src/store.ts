@@ -32,11 +32,15 @@ const TOKEN_KEYS = [
   'output'
 ]
 const isTokens = (v: unknown): boolean => isObj(v) && TOKEN_KEYS.every((k) => isNum(v[k]))
+const isDay = (v: unknown): boolean =>
+  isObj(v) && isTokens(v) && isNum(v['messages']) && isNum(v['toolCalls'])
 const isTally = (v: unknown): boolean =>
   isObj(v) &&
   isTokens(v['tokens']) &&
   isObj(v['byModel']) &&
+  Object.values(v['byModel']).every(isTokens) &&
   isObj(v['days']) &&
+  Object.values(v['days']).every(isDay) &&
   isNum(v['messages']) &&
   isNum(v['toolCalls']) &&
   isNum(v['prompts']) &&
@@ -64,6 +68,8 @@ export function isSessionRow(value: unknown): value is SessionRow {
     typeof value['provider'] === 'string' &&
     typeof value['cwd'] === 'string' &&
     typeof value['state'] === 'string' &&
+    typeof value['seenAt'] === 'string' &&
+    isNum(value['createdAt']) &&
     (group === null ||
       (isObj(group) && typeof group['id'] === 'string' && typeof group['name'] === 'string')) &&
     Array.isArray(value['subagents']) &&
