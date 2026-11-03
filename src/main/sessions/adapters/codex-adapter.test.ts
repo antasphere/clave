@@ -891,6 +891,40 @@ describe('Codex chat permissions', () => {
       )
     ).toMatchObject({ sandbox: 'danger-full-access', approvalPolicy: 'never' })
   })
+  /* The thread's binding to this tab's own Clave tool server, by its fresh
+     name. Codex asks before every tool of a server left on its default mode
+     (auto: any tool not annotated read-only, and Clave's carry no
+     annotations), and the fresh name let no answer be remembered: on 3
+     November 2026 every message a lane sent to another tab asked first. */
+  const claveBinding = (params: unknown): Record<string, unknown> | undefined => {
+    const config = (params as { config?: Record<string, unknown> })?.config ?? {}
+    const key = Object.keys(config).find((k) => /^mcp_servers\.clave_[a-f0-9]{12}$/.test(k))
+    return key ? (config[key] as Record<string, unknown>) : undefined
+  }
+  it("tells Codex this tab's Clave tools need no approval, closing a tab excepted", async () => {
+    const binding = claveBinding(await threadParams({}, profile()))
+    expect(binding).toMatchObject({
+      url: 'http://127.0.0.1:12345/mcp',
+      bearer_token_env_var: 'CLAVE_CODEX_MCP_TOKEN',
+      enabled: true,
+      required: true,
+      default_tools_approval_mode: 'approve',
+      tools: { clave_close_session: { approval_mode: 'prompt' } }
+    })
+    expect(Object.keys(binding!.tools as Record<string, unknown>)).toEqual(['clave_close_session'])
+  })
+  it('says the same on a resumed thread, so a restart keeps it', async () => {
+    expect(
+      claveBinding(await threadParams({ resume: 'saved' }, profile('-s', 'workspace-write')))
+    ).toMatchObject({
+      default_tools_approval_mode: 'approve',
+      tools: { clave_close_session: { approval_mode: 'prompt' } }
+    })
+  })
+  it('names its own server only: no other server table is written', async () => {
+    const params = (await threadParams({}, profile())) as { config: Record<string, unknown> }
+    expect(Object.keys(params.config).filter((k) => k.startsWith('mcp_servers.'))).toHaveLength(1)
+  })
   it('refuses a sandbox Codex does not know', async () => {
     const { adapter } = fake()
     const handle = await adapter.spawn({ ...spec, options: { sandbox: 'everything' } })
