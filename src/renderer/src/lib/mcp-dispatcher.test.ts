@@ -19,7 +19,7 @@ const globals = vi.hoisted(() => {
   return { window }
 })
 import { useLaunchProfileStore } from '../store/launch-profile-store'
-import type { LaunchProfilePreferences } from '../../../shared/agent-launch'
+import type { LaunchProfile, LaunchProfilePreferences } from '../../../shared/agent-launch'
 
 /* The window road of clave_open_session: the renderer's own executor, the one
    a Mac with a saved server connection runs every open through (and the only
@@ -38,7 +38,7 @@ vi.mock('./switch-account', () => ({
 }))
 import { openSessionProgrammatically } from './mcp-dispatcher'
 
-const codex = (id: string, name: string, flags: string[] = []) => ({
+const codex = (id: string, name: string, flags: string[] = []): LaunchProfile => ({
   id,
   name,
   family: 'codex' as const,
