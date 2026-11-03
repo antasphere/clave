@@ -929,6 +929,16 @@ describe('Codex chat permissions', () => {
       claveBinding(await threadParams({ resume: 'saved' }, profile('-s', 'workspace-write')))
     ).toMatchObject({ default_tools_approval_mode: 'approve', tools: prompted })
   })
+  it('prompts the side panel too under an explicit read-only sandbox, where its update writes a file', async () => {
+    const readOnly = claveBinding(await threadParams({}, profile('-s', 'read-only')))
+    expect(readOnly).toMatchObject({
+      tools: { ...prompted, clave_side_panel: { approval_mode: 'prompt' } }
+    })
+    const launch = claveBinding(await threadParams({ sandbox: 'read-only' }, profile()))
+    expect(launch).toMatchObject({ tools: { clave_side_panel: { approval_mode: 'prompt' } } })
+    const writable = claveBinding(await threadParams({}, profile('-s', 'workspace-write')))
+    expect(writable!.tools).not.toHaveProperty('clave_side_panel')
+  })
   it('keeps no prompt under a policy that skips every approval: the person chose none', async () => {
     const binding = claveBinding(await threadParams({}, profile('--yolo')))
     expect(binding).toMatchObject({ default_tools_approval_mode: 'approve' })
