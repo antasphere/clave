@@ -901,7 +901,16 @@ describe('Codex chat permissions', () => {
     const key = Object.keys(config).find((k) => /^mcp_servers\.clave_[a-f0-9]{12}$/.test(k))
     return key ? (config[key] as Record<string, unknown>) : undefined
   }
-  it("tells Codex this tab's Clave tools need no approval, closing a tab excepted", async () => {
+  /* The tools kept on prompt: the ones that start or end a process on the
+     Mac outside the chat's own sandbox and approval policy. */
+  const prompted = {
+    clave_open_session: { approval_mode: 'prompt' },
+    clave_add_group_terminal: { approval_mode: 'prompt' },
+    clave_launch_group: { approval_mode: 'prompt' },
+    clave_set_session_view: { approval_mode: 'prompt' },
+    clave_close_session: { approval_mode: 'prompt' }
+  }
+  it("tells Codex this tab's Clave tools need no approval, the process-starting ones excepted", async () => {
     const binding = claveBinding(await threadParams({}, profile()))
     expect(binding).toMatchObject({
       url: 'http://127.0.0.1:12345/mcp',
@@ -909,17 +918,24 @@ describe('Codex chat permissions', () => {
       enabled: true,
       required: true,
       default_tools_approval_mode: 'approve',
-      tools: { clave_close_session: { approval_mode: 'prompt' } }
+      tools: prompted
     })
-    expect(Object.keys(binding!.tools as Record<string, unknown>)).toEqual(['clave_close_session'])
+    expect(Object.keys(binding!.tools as Record<string, unknown>).sort()).toEqual(
+      Object.keys(prompted).sort()
+    )
   })
   it('says the same on a resumed thread, so a restart keeps it', async () => {
     expect(
       claveBinding(await threadParams({ resume: 'saved' }, profile('-s', 'workspace-write')))
-    ).toMatchObject({
-      default_tools_approval_mode: 'approve',
-      tools: { clave_close_session: { approval_mode: 'prompt' } }
-    })
+    ).toMatchObject({ default_tools_approval_mode: 'approve', tools: prompted })
+  })
+  it('keeps no prompt under a policy that skips every approval: the person chose none', async () => {
+    const binding = claveBinding(await threadParams({}, profile('--yolo')))
+    expect(binding).toMatchObject({ default_tools_approval_mode: 'approve' })
+    expect(binding).not.toHaveProperty('tools')
+    // The launch's own choice says the same.
+    const launch = claveBinding(await threadParams({ permissionMode: 'never' }, profile()))
+    expect(launch).not.toHaveProperty('tools')
   })
   it('names its own server only: no other server table is written', async () => {
     const params = (await threadParams({}, profile())) as { config: Record<string, unknown> }

@@ -140,18 +140,36 @@ const commandOf = (item: Record<string, unknown>): string => {
  *  another tab asked first, and, the server bound under a fresh name per
  *  connection, no answer could be remembered. Clave is the app the chat runs
  *  in and the server is this tab's own, reached with the tab's own token: its
- *  coordination tools need no second word from the person, and the one tool
- *  that ends another tab's session keeps its prompt. Only this binding is
- *  named; every other server keeps Codex's own rule. */
+ *  coordination tools (messages between tabs, reads, names, groups, views,
+ *  notices, the dialogs that put the person in the loop by construction) need
+ *  no second word from the person. The tools that start or end a process on
+ *  the Mac outside this chat's own sandbox and approval policy keep their
+ *  prompt: a new tab (a terminal with a command, an agent without approvals),
+ *  a group terminal that launches at once, a pinned group, a view's serving
+ *  command, the end of another tab's process. Under a policy that skips every
+ *  approval (`never`, the yolo profile) they are approved too: the person
+ *  chose no prompts, and a terminal started then runs where the chat's own
+ *  commands already run unasked. Only this binding is named; every other
+ *  server keeps Codex's own rule. */
 export const CLAVE_TOOLS_APPROVAL = {
   mode: 'approve',
-  prompted: ['clave_close_session']
+  prompted: [
+    'clave_open_session',
+    'clave_add_group_terminal',
+    'clave_launch_group',
+    'clave_set_session_view',
+    'clave_close_session'
+  ]
 } as const
-const claveToolsApproval = (): Record<string, unknown> => ({
+const claveToolsApproval = (approvalPolicy: string): Record<string, unknown> => ({
   default_tools_approval_mode: CLAVE_TOOLS_APPROVAL.mode,
-  tools: Object.fromEntries(
-    CLAVE_TOOLS_APPROVAL.prompted.map((tool) => [tool, { approval_mode: 'prompt' }])
-  )
+  ...(approvalPolicy === 'never'
+    ? {}
+    : {
+        tools: Object.fromEntries(
+          CLAVE_TOOLS_APPROVAL.prompted.map((tool) => [tool, { approval_mode: 'prompt' }])
+        )
+      })
 })
 
 /** State belongs to this connection, never to terminal titles or body heuristics. */
@@ -1053,7 +1071,7 @@ export class CodexAdapter implements SessionAdapter {
             bearer_token_env_var: 'CLAVE_CODEX_MCP_TOKEN',
             enabled: true,
             required: true,
-            ...claveToolsApproval()
+            ...claveToolsApproval(permissionMode)
           }
         }
       })

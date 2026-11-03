@@ -168,7 +168,15 @@ export async function run(t) {
       // asks, and no other server's table is touched.
       assert.deepEqual(record?.approval, {
         mode: 'approve',
-        tools: { clave_close_session: { approval_mode: 'prompt' } },
+        tools: Object.fromEntries(
+          [
+            'clave_open_session',
+            'clave_add_group_terminal',
+            'clave_launch_group',
+            'clave_set_session_view',
+            'clave_close_session'
+          ].map((tool) => [tool, { approval_mode: 'prompt' }])
+        ),
         otherServers: 0
       })
     }
@@ -181,7 +189,7 @@ export async function run(t) {
     t.check('each authenticated caller creates and joins its own real sidebar group', true)
     t.check('login profiles cannot overwrite tab identity or place the token on argv', true)
     t.check(
-      "fresh and resumed threads tell Codex this tab's Clave tools need no approval, closing a tab excepted",
+      "fresh and resumed threads tell Codex this tab's Clave tools need no approval, the process-starting ones excepted",
       true
     )
 
