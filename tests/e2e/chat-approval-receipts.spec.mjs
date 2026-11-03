@@ -172,6 +172,12 @@ export async function run(t) {
       'the approvals after the question started a new run'
     )
     assert.equal(await runs.nth(1).getAttribute('data-count'), '2')
+    // The second run has its own key and its own disclosure: it renders
+    // closed although the first run was opened above (a run keyed by a
+    // request id Codex restarts at zero would have inherited that state).
+    assert.equal(await runs.nth(1).evaluate((el) => el.open), false)
+    assert.equal(await runs.nth(1).locator('.chat-permission-row').count(), 0)
+    assert.equal(await runs.nth(0).evaluate((el) => el.open), true)
     assert.equal(
       await view.locator('.chat-approval-run .chat-permission-row[data-kind="question"]').count(),
       0
