@@ -15,7 +15,7 @@ import { SidebarLayouts, memorySidebarStorage, noWindowsHost } from '@clave/serv
 import { PendingRequests } from '../../../packages/server/src/requests/service'
 import { createAgentTokenStore } from '../sessions/agent-tokens'
 import { executeSecretAction } from '../secret-actions'
-import { startStandaloneMcp } from './standalone-mcp'
+import { builtInProfileFamily, startStandaloneMcp } from './standalone-mcp'
 import { agentSessionFixtureCatalog } from './standalone-mcp.fixtures'
 import { sessionHandlers } from '../../../packages/server/src/sessions/handlers'
 import { sidebarHandlers } from '../../../packages/server/src/sidebar/handlers'
@@ -217,6 +217,8 @@ async function sessionFixture(
   hooks: {
     duringStart?: (sidebar: SidebarLayouts) => void
     renameFails?: (id: string) => boolean
+    /** Options laid over the fixture's own `startStandaloneMcp` call. */
+    options?: Partial<Parameters<typeof startStandaloneMcp>[0]>
   } = {}
 ): Promise<{
   client: Client
@@ -305,7 +307,13 @@ async function sessionFixture(
     sidebar,
     requests: new PendingRequests(),
     agentTools: tokens,
-    executeSecret: async () => {}
+    executeSecret: async () => {},
+    // This server's Codex chats run on the person's own profile; the chat
+    // form of a custom profile is a profile of this server too.
+    profileFamily: (id) =>
+      builtInProfileFamily(id) ?? (id === 'chat:codex:yolo' || id === 'yolo' ? 'codex' : undefined),
+    chatDefault: (family) => (family === 'codex' ? 'chat:codex:yolo' : undefined),
+    ...hooks.options
   })
   closes.push(() => mcp.close())
   tokens.announce(mcp.url)
@@ -348,7 +356,10 @@ describe('standalone MCP session tools', () => {
       claudeMode: false,
       dangerousMode: false,
       model: 'gpt-6.1-sol',
-      launchProfileId: 'codex-chat',
+      // The chat the launcher would open on this server: its Codex default's
+      // chat form, not the built-in one (the wave of 3 November 2026 got the
+      // built-in and asked before every command).
+      launchProfileId: 'chat:codex:yolo',
       initialPrompt: 'Read the brief and reply READY.'
     })
     expect(sessions.get('started-1')?.title).toBe('Lane A verify | Codex')
@@ -409,6 +420,21 @@ describe('standalone MCP session tools', () => {
     expect(resized).toEqual([['started-1', 120, 30]])
   }, 15_000)
 
+  it('opens the built-in chat when the server names no chat default for the family', async () => {
+    const { client, started, directory } = await sessionFixture({
+      options: { chatDefault: () => undefined }
+    })
+    await client.callTool({
+      name: 'clave_open_session',
+      arguments: { cwd: directory, mode: 'codex', name: 'Plain chat' }
+    })
+    expect(started[0].options).toMatchObject({ codexMode: true, launchProfileId: 'codex-chat' })
+    await client.callTool({
+      name: 'clave_open_session',
+      arguments: { cwd: directory, mode: 'codex', chat: true, profile: 'codex-chat' }
+    })
+    expect(started[1].options).toMatchObject({ launchProfileId: 'codex-chat' })
+  })
   it('opens a Claude terminal instead of the chat view with chat: false', async () => {
     const { client, started, resized, directory } = await sessionFixture()
     payload(

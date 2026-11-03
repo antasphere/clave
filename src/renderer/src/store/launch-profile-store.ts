@@ -7,6 +7,7 @@ import {
   type LaunchProfilePreferences,
   type LauncherFamily
 } from '../../../shared/agent-launch'
+import { chatDefaultFor } from '../../../shared/open-session-modes'
 
 interface LaunchProfileState {
   preferences: LaunchProfilePreferences
@@ -48,6 +49,15 @@ export function selectedLaunchProfile(
     workspaceId,
     requestedId
   )
+}
+
+/** The chat profile the launcher would open a family's chat on in a
+ *  workspace, as `chatDefaultFor` reads the loaded preferences. */
+export function selectedChatProfile(
+  family: LauncherFamily,
+  workspaceId: string | null | undefined
+): string | undefined {
+  return chatDefaultFor(useLaunchProfileStore.getState().preferences, family, workspaceId)
 }
 
 export async function saveLaunchProfile(profile: LaunchProfile): Promise<void> {
