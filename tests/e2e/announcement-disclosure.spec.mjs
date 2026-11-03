@@ -147,7 +147,7 @@ const FIXTURE_ENTRY_HASH = 'ee357e9d7476606e7fb15ef327ed391e4b018d10cda2ab8c7e8a
 
 function checkReleaseFixture() {
   const data = readFileSync(new URL('../../src/renderer/src/help/whats-new.json', import.meta.url), 'utf8')
-  const raw = data.match(/\{\s*"version": "2\.0\.0",[\s\S]*?\n  \}/)?.[0]
+  const raw = data.match(/\{\s*"version": "2\.0\.0",[\s\S]*?\n {2}\}/)?.[0]
   if (
     !raw ||
     Buffer.byteLength(raw) !== 1014 ||
