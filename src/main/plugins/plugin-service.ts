@@ -19,13 +19,15 @@
 import { randomUUID } from 'node:crypto'
 import type { PluginsEvent, PluginsService } from '@clave/server'
 import type {
+  PluginGroup,
   PluginPage,
   PluginRecord as WirePluginRecord,
   PluginSecretRequest,
   PluginViewLease
 } from '@clave/contract/plugins'
-import type { PluginPermission, PluginSession } from '@clave/plugin-sdk'
-import { SessionInputSchema } from '../../shared/session-model'
+import type { SessionRecord } from '@clave/contract/sessions'
+import type { PluginPermission, PluginSession, PluginSessionGroup } from '@clave/plugin-sdk'
+import { type Session, SessionInputSchema } from '../../shared/session-model'
 import { syncPluginAdapters } from '../sessions/plugin-adapters'
 import { pluginSessionOf } from '../sessions/plugin-sessions'
 import { type SessionManager, sessionManager } from '../sessions/session-manager'
@@ -54,6 +56,10 @@ export interface PluginServiceOptions {
   readonly manager?: SessionManager
   /** How long a secret request waits for an answer; two minutes by default. */
   readonly secretTimeoutMs?: number
+  /** The session records, read for what a plugin learns of a session beyond the
+   *  registry (its provider session id, model, workspace). A host with no records
+   *  throws (`CapabilityUnavailable`), read as none. */
+  readonly records?: () => ReadonlyArray<SessionRecord>
 }
 
 export interface PluginService extends PluginsService {
@@ -125,6 +131,26 @@ export function createPluginService(options: PluginServiceOptions): PluginServic
       }
   }
 
+  /** Each window's sidebar groups, as the shell last reported them. */
+  const groupsByWindow = new Map<string, PluginGroup[]>()
+  const readRecords = (): Map<string, SessionRecord> => {
+    let records: ReadonlyArray<SessionRecord> = []
+    try {
+      records = options.records?.() ?? []
+    } catch {
+      records = []
+    }
+    return new Map(records.map((record) => [record.id, record]))
+  }
+  const groupOf = (sessionId: string): PluginSessionGroup | null => {
+    for (const groups of groupsByWindow.values())
+      for (const group of groups)
+        if (group.sessionIds.includes(sessionId)) return { id: group.id, name: group.name }
+    return null
+  }
+  const describe = (session: Session, records: Map<string, SessionRecord>): PluginSession =>
+    pluginSessionOf(session, { record: records.get(session.id), group: groupOf(session.id) })
+
   const host = new PluginHost(
     store,
     {
@@ -133,11 +159,14 @@ export function createPluginService(options: PluginServiceOptions): PluginServic
         // one row per live session whatever its transport, `alive` from the
         // record's own state, and focus resolved the same way, so `list` and
         // `focused` can never disagree about a chat session.
-        list: () => manager.list().map(pluginSessionOf),
+        list: () => {
+          const records = readRecords()
+          return manager.list().map((session) => describe(session, records))
+        },
         focused: () => {
           if (!focused) return null
           const session = manager.get(focused.sessionId)
-          return session ? pluginSessionOf(session) : null
+          return session ? describe(session, readRecords()) : null
         },
         send: (id, text) => {
           const session = manager.get(id)
@@ -313,6 +342,13 @@ export function createPluginService(options: PluginServiceOptions): PluginServic
     revokeView: (leaseId) => {
       viewLeases.delete(leaseId)
     },
+    invokeAction: (pluginId, actionId, target) => host.invokeAction(pluginId, actionId, target),
+    previewAction: (pluginId, actionId, target) => host.previewAction(pluginId, actionId, target),
+    groups: (windowKey, groups) => {
+      if (groups.length) groupsByWindow.set(windowKey, [...groups])
+      else groupsByWindow.delete(windowKey)
+      host.sessionsChanged()
+    },
     secrets: (): ReadonlyArray<PluginSecretRequest> =>
       [...secretRequests].map(([id, { pluginId, title, description }]) => ({
         id,
@@ -367,6 +403,9 @@ export function refusingPluginService(message: string): PluginService {
     revokeView: refuse,
     secrets: refuse,
     replySecret: refuse,
+    invokeAction: () => Promise.reject(new Error(message)),
+    previewAction: () => Promise.reject(new Error(message)),
+    groups: refuse,
     subscribe: () => () => {},
     close: () => {}
   }

@@ -19,6 +19,23 @@ Crashes clear contributions and retry at 1/2/4/8/16 seconds, then stop until the
 user disables/enables the plugin. Pending commands reject on shutdown. Deactivation
 gets a one-second grace period before the owned child is terminated.
 
+## Actions, and the fuller account of a session
+
+A plugin's `contributes.actions[]` are the verbs it offers on a tab, a group or the workspace
+(`packages/plugin-sdk/README.md`). The host keeps the registered ids on the record (`actions`,
+runtime state like `panels`), asks the plugin over the same JSON-RPC channel (`actions.invoke`,
+`actions.preview`, with the timeouts and the answer limits `plugin-host.ts` enforces and never
+trusts from the plugin), and the renderer draws the entries and the page pane
+(`src/renderer/src/components/plugins/plugin-actions.tsx`, `PluginMainPanel.tsx`). The session
+payload a plugin reads (`plugin-sessions.ts`) joins the registry's session with its record (the
+provider's own session id, the model, the workspace) and with the sidebar group holding it: the
+shell reports every window's groups to the service (`plugin-groups.ts`, from the shell's
+`SidebarLayouts` instance, in-process and attached alike), since the groups are the windows' and
+the service may run in the server's process. Each plugin process gets `CLAVE_PLUGIN_DATA_DIR`, a
+folder under the plugin root created at spawn. `plugins/analytics` (on by default) is the first
+plugin on this contract: it reads the transcripts of the sessions it is told about and serves its
+pages on loopback; its README says what it keeps and where.
+
 ## Two execution models, and they are not equally contained
 
 A plugin's code can run in two places, and what it can reach differs completely.

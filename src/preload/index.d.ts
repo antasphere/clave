@@ -682,6 +682,18 @@ export interface ElectronAPI extends FleetDesktopAPI {
   pluginsLink: (folder?: string) => Promise<string | null>
   pluginsRemove: (id: string) => Promise<void>
   pluginsCommand: (id: string, command: string) => Promise<void>
+  /** Run a plugin's action on a target; answers the page it opens, if any. */
+  pluginsInvokeAction: (
+    pluginId: string,
+    actionId: string,
+    target: import('@clave/plugin-sdk').PluginActionTarget
+  ) => Promise<import('@clave/plugin-sdk').PluginActionResult>
+  /** The rows a plugin's action shows for a target before it runs. */
+  pluginsPreviewAction: (
+    pluginId: string,
+    actionId: string,
+    target: import('@clave/plugin-sdk').PluginActionTarget
+  ) => Promise<import('@clave/plugin-sdk').PluginActionPreviewRow[]>
   pluginsPanel: (id: string, panel: string) => Promise<{ url: string }>
   /** Report the focused session to the plugin host, which pushes it to plugins as
    *  `context.changed`. Null clears this window's report. */

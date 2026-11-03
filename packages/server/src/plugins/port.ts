@@ -21,6 +21,10 @@ export type PluginPermission = typeof Contract.PluginPermission.Type
 export type PluginPage = typeof Contract.PluginPage.Type
 export type PluginViewLease = typeof Contract.PluginViewLease.Type
 export type PluginSecretRequest = typeof Contract.PluginSecretRequest.Type
+export type PluginActionTarget = typeof Contract.PluginActionTarget.Type
+export type PluginActionResult = typeof Contract.PluginActionResult.Type
+export type PluginActionPreviewRow = typeof Contract.PluginActionPreviewRow.Type
+export type PluginGroup = typeof Contract.PluginGroup.Type
 
 /** The service's news, exactly the two `ServerEvent` members of the domain,
  *  so the events layer publishes them as they are. */
@@ -61,6 +65,20 @@ export interface PluginsService {
   secrets(): ReadonlyArray<PluginSecretRequest>
   /** The person's answer to a secret request; null declines it. */
   replySecret(id: string, value: string | null): void
+  /** Run a running plugin's action on a target; answers the page it opens, if any. */
+  invokeAction(
+    pluginId: string,
+    actionId: string,
+    target: PluginActionTarget
+  ): Promise<PluginActionResult>
+  /** The rows a running plugin's action shows for a target before it runs. */
+  previewAction(
+    pluginId: string,
+    actionId: string,
+    target: PluginActionTarget
+  ): Promise<ReadonlyArray<PluginActionPreviewRow>>
+  /** A window's sidebar groups, replacing what it reported before; empty clears them. */
+  groups(windowKey: string, groups: ReadonlyArray<PluginGroup>): void
   /** The service's news: `plugins.changed` after any change of the records or
    *  their running state, `plugins.notified` when a plugin notifies and this
    *  entry shows no notification itself. The server publishes each one. */
@@ -96,6 +114,9 @@ export class Plugins extends Context.Tag('@clave/server/Plugins')<Plugins, Plugi
     revokeView: refuse,
     secrets: refuse,
     replySecret: refuse,
+    invokeAction: () => Promise.reject(NO_PLUGINS),
+    previewAction: () => Promise.reject(NO_PLUGINS),
+    groups: refuse,
     subscribe: () => () => {}
   }
 }

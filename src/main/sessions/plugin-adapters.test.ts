@@ -74,6 +74,7 @@ function plugin(options: PluginOptions = {}): PluginRecord {
     contentDigest: options.digest ?? 'digest-1',
     status: 'active',
     panels: [],
+    actions: [],
     commands: [],
     toolbar: [],
     generation: 0,
@@ -93,6 +94,7 @@ function plugin(options: PluginOptions = {}): PluginRecord {
         sidebarSections: [],
         views: [],
         marks: [],
+        actions: [],
         adapters: [
           {
             id: adapterId,

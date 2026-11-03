@@ -8,6 +8,10 @@
  * as `CapabilityUnavailable`, like every declared failure.
  */
 import type {
+  PluginActionPreviewRow,
+  PluginActionResult,
+  PluginActionTarget,
+  PluginGroup,
   PluginPage,
   PluginPermission,
   PluginRecord,
@@ -41,6 +45,20 @@ export interface PluginsClient {
   readonly revokeView: (leaseId: string) => Promise<void>
   /** The person's answer to a secret request; null when they declined. */
   readonly replySecret: (id: string, value: string | null) => Promise<void>
+  /** Run a plugin's action on a target; answers the page it opens, if any. */
+  readonly invokeAction: (
+    pluginId: string,
+    actionId: string,
+    target: PluginActionTarget
+  ) => Promise<PluginActionResult>
+  /** The rows a plugin's action shows for a target before it runs. */
+  readonly previewAction: (
+    pluginId: string,
+    actionId: string,
+    target: PluginActionTarget
+  ) => Promise<ReadonlyArray<PluginActionPreviewRow>>
+  /** A window's sidebar groups; an empty list clears them. */
+  readonly groups: (windowKey: string, groups: ReadonlyArray<PluginGroup>) => Promise<void>
 }
 
 export const pluginsClient = (call: Call): PluginsClient => ({
@@ -67,5 +85,11 @@ export const pluginsClient = (call: Call): PluginsClient => ({
   revokeView: (leaseId) =>
     call((c) => c.plugins.revokeView({ payload: { leaseId } })).then(() => undefined),
   replySecret: (id, value) =>
-    call((c) => c.plugins.replySecret({ payload: { id, value } })).then(() => undefined)
+    call((c) => c.plugins.replySecret({ payload: { id, value } })).then(() => undefined),
+  invokeAction: (pluginId, actionId, target) =>
+    call((c) => c.plugins.invokeAction({ payload: { pluginId, actionId, target } })),
+  previewAction: (pluginId, actionId, target) =>
+    call((c) => c.plugins.previewAction({ payload: { pluginId, actionId, target } })),
+  groups: (windowKey, groups) =>
+    call((c) => c.plugins.groups({ payload: { windowKey, groups } })).then(() => undefined)
 })

@@ -3,6 +3,7 @@ import { defineConfig, externalizeDepsPlugin } from 'electron-vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import { rendererModuleMetadata } from './scripts/renderer-module-audit.mjs'
+import { buildPlugins } from './scripts/build-plugins.mjs'
 
 /**
  * What the bundles carry rather than require at runtime. The workspace
@@ -37,7 +38,17 @@ const BUNDLED_ESM = ['openid-client', 'oauth4webapi', 'jose']
 
 export default defineConfig({
   main: {
-    plugins: [externalizeDepsPlugin({ exclude: [...BUNDLED_SOURCE, ...BUNDLED_ESM] })],
+    plugins: [
+      externalizeDepsPlugin({ exclude: [...BUNDLED_SOURCE, ...BUNDLED_ESM] }),
+      // The bundled plugins written in TypeScript (plugins/analytics) are built where the
+      // plugin store reads bundled plugins from, by dev and build alike.
+      {
+        name: 'clave-bundled-plugins',
+        async buildStart() {
+          await buildPlugins()
+        }
+      }
+    ],
     build: {
       rollupOptions: {
         input: {

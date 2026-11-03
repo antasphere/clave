@@ -3,12 +3,14 @@ import { Either, Schema } from 'effect'
 import { ClaveApi } from './api'
 import { CapabilityUnavailable } from './errors'
 import {
+  InvokePluginAction,
   PluginRecord,
   PluginRefused,
   PluginSecretRequest,
   PluginViewLease,
   RefusedOrUnavailable,
-  ReportPluginContext
+  ReportPluginContext,
+  ReportPluginGroups
 } from './plugins'
 
 const decodeRecord = Schema.decodeUnknownSync(PluginRecord)
@@ -24,6 +26,7 @@ const bare = {
   directory: '/plugins/clave.hello',
   status: 'disabled',
   panels: [],
+  actions: [],
   commands: [],
   toolbar: [],
   generation: 0
@@ -43,6 +46,7 @@ const full = {
   error: 'main threw at activation',
   status: 'error',
   panels: ['main'],
+  actions: ['deck'],
   commands: ['hello.say'],
   toolbar: ['hello.say'],
   generation: 3,
@@ -124,8 +128,37 @@ describe('ReportPluginContext', () => {
   })
 })
 
+describe('the action and group payloads', () => {
+  it('round-trip an action invocation and a groups report', () => {
+    const invoke = {
+      pluginId: 'clave.analytics',
+      actionId: 'deck',
+      target: { kind: 'group', id: 'g1', workspaceId: null }
+    }
+    const decodeInvoke = Schema.decodeUnknownSync(InvokePluginAction.payload)
+    expect(Schema.encodeSync(InvokePluginAction.payload)(decodeInvoke(invoke))).toEqual(invoke)
+    expect(
+      Either.isLeft(
+        Schema.decodeUnknownEither(InvokePluginAction.payload)({
+          ...invoke,
+          target: { ...invoke.target, kind: 'window' }
+        })
+      )
+    ).toBe(true)
+    const report = {
+      windowKey: 'w1',
+      groups: [
+        { id: 'g1', name: 'Launch', sessionIds: ['s1', 's2'], workspaceId: 'ws1' },
+        { id: 'g2', name: 'Empty', sessionIds: [], workspaceId: null }
+      ]
+    }
+    const decodeReport = Schema.decodeUnknownSync(ReportPluginGroups.payload)
+    expect(Schema.encodeSync(ReportPluginGroups.payload)(decodeReport(report))).toEqual(report)
+  })
+})
+
 describe('the plugins group', () => {
-  it('carries its thirteen endpoints on ClaveApi', () => {
+  it('carries its sixteen endpoints on ClaveApi', () => {
     const group = ClaveApi.groups.plugins
     expect(group).toBeDefined()
     const routes = Object.values(group.endpoints).map((e) => [e.name, e.method, e.path])
@@ -143,7 +176,10 @@ describe('the plugins group', () => {
         ['leaseView', 'POST', '/plugins/views/lease'],
         ['requestView', 'POST', '/plugins/views/request'],
         ['revokeView', 'POST', '/plugins/views/revoke'],
-        ['replySecret', 'POST', '/plugins/secrets/reply']
+        ['replySecret', 'POST', '/plugins/secrets/reply'],
+        ['invokeAction', 'POST', '/plugins/actions/invoke'],
+        ['previewAction', 'POST', '/plugins/actions/preview'],
+        ['groups', 'POST', '/plugins/groups']
       ].sort()
     )
   })

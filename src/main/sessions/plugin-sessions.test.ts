@@ -69,7 +69,15 @@ describe('the plugin host view of a session', () => {
       id: session.id,
       cwd: '/Users/someone/work/my-project',
       folderName: 'my-project',
-      alive: true
+      alive: true,
+      provider: 'stub',
+      providerSessionId: null,
+      name: 'work',
+      model: null,
+      state: 'idle',
+      group: null,
+      workspaceId: null,
+      createdAt: 1
     })
     // The same session is in the listing, so `focused` and `list` agree about it.
     expect(listPluginSessions()).toContainEqual(reported)
@@ -83,6 +91,37 @@ describe('the plugin host view of a session', () => {
     expect(pluginSessionById(session.id)?.alive).toBe(false)
     sessionManager.forget(session.id)
     expect(pluginSessionById(session.id)).toBeNull()
+  })
+
+  it('takes the provider session id, model and workspace from the record, the group as given', () => {
+    const session = registrySession()
+    const base = {
+      id: session.id,
+      cwd: session.cwd,
+      folderName: 'x',
+      claudeMode: false,
+      antigravityMode: false,
+      codexMode: true,
+      piMode: false,
+      claudeAgentsMode: false,
+      dangerousMode: false
+    }
+    expect(
+      pluginSessionOf(session, {
+        record: { ...base, codexThreadId: 'thread-1', model: 'gpt', workspaceId: 'ws1' },
+        group: { id: 'g1', name: 'Launch' }
+      })
+    ).toMatchObject({
+      providerSessionId: 'thread-1',
+      model: 'gpt',
+      workspaceId: 'ws1',
+      group: { id: 'g1', name: 'Launch' }
+    })
+    expect(
+      pluginSessionOf(session, { record: { ...base, claudeSessionId: 'c1', piSessionId: 'p1' } })
+        .providerSessionId
+    ).toBe('c1')
+    sessionManager.forget(session.id)
   })
 
   it.each([

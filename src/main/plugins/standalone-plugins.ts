@@ -10,6 +10,7 @@
 import { existsSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
+import type { SessionRecord } from '@clave/contract/sessions'
 import { TEST_NO_ACTIVATE } from '../test-mode'
 import { forkRunner } from './fork-runner'
 import { createPluginService, refusingPluginService, type PluginService } from './plugin-service'
@@ -22,6 +23,8 @@ export interface StandalonePluginsOptions {
   readonly bundled: string
   /** The host's version, the one a manifest's `engines.clave` is judged against. */
   readonly version: string
+  /** The session records, for what a plugin learns of a session. */
+  readonly records?: () => ReadonlyArray<SessionRecord>
 }
 
 /** The runner beside this module: the built bundle when the server runs
@@ -38,7 +41,8 @@ export function standalonePlugins(options: StandalonePluginsOptions): PluginServ
       root,
       bundled: options.bundled,
       version: options.version,
-      spawner: forkRunner({ runner: standaloneRunnerPath() })
+      spawner: forkRunner({ runner: standaloneRunnerPath() }),
+      ...(options.records && { records: options.records })
     })
   } catch (error) {
     // The shell's own degradation (`shell-plugins.ts`): a registry that cannot

@@ -48,6 +48,8 @@ export interface PluginRecord extends InstalledPlugin {
   error?: string
   status: 'disabled' | 'starting' | 'active' | 'error'
   panels: string[]
+  /** Action ids the running plugin registered; runtime state, never saved. */
+  actions: string[]
   commands: string[]
   toolbar: string[]
   generation: number
@@ -75,7 +77,9 @@ export function pluginFile(root: string, entry: string): string {
 export const BUNDLED_ON_FIRST_INSTALL: readonly string[] = [
   'clave.chat-view',
   'clave.github',
-  'clave.orbs'
+  'clave.orbs',
+  // Analytics: without it the app says nothing about what its sessions cost.
+  'clave.analytics'
 ]
 
 export class PluginStore {
@@ -187,6 +191,7 @@ export class PluginStore {
             directory,
             status: 'disabled',
             panels: [],
+            actions: [],
             commands: [],
             toolbar: [],
             generation: 0
@@ -235,6 +240,7 @@ export class PluginStore {
             error: String(error),
             status: 'error',
             panels: [],
+            actions: [],
             commands: [],
             toolbar: [],
             generation: 0
