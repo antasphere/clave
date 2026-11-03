@@ -1,6 +1,6 @@
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
+import * as nodeFs from 'node:fs'
 import { join } from 'node:path'
-import { emptyLedger, type Ledger } from './ledger'
+import { emptyLedger, type Ledger, type SessionRow } from './ledger'
 
 /**
  * The plugin's own files in its data folder, each written atomically (`<file>.tmp`, then
@@ -14,15 +14,38 @@ export interface ServerInfo {
 }
 
 export type Logger = (level: 'debug' | 'info' | 'warn' | 'error', message: string) => void
+export type StoreFs = Pick<
+  typeof nodeFs,
+  'mkdirSync' | 'readFileSync' | 'writeFileSync' | 'renameSync'
+>
+
+/** A ledger row the views can draw: anything else is dropped at load, never served. */
+export function isSessionRow(value: unknown): value is SessionRow {
+  if (!value || typeof value !== 'object') return false
+  const row = value as Record<string, unknown>
+  const root = row['root']
+  return (
+    typeof row['id'] === 'string' &&
+    typeof row['name'] === 'string' &&
+    Array.isArray(row['subagents']) &&
+    Array.isArray(row['stateSpans']) &&
+    (root === null ||
+      (!!root &&
+        typeof root === 'object' &&
+        !!(root as Record<string, unknown>)['tally'] &&
+        !!(root as Record<string, unknown>)['file']))
+  )
+}
 
 export class Store {
   private warned = false
 
   constructor(
     readonly dir: string,
-    private readonly log: Logger = () => {}
+    private readonly log: Logger = () => {},
+    private readonly fs: StoreFs = nodeFs
   ) {
-    mkdirSync(dir, { recursive: true })
+    this.fs.mkdirSync(dir, { recursive: true })
   }
 
   get pricesPath(): string {
@@ -30,14 +53,14 @@ export class Store {
   }
 
   private readJson(name: string): unknown {
-    return JSON.parse(readFileSync(join(this.dir, name), 'utf8'))
+    return JSON.parse(this.fs.readFileSync(join(this.dir, name), 'utf8'))
   }
 
   private writeJson(name: string, value: unknown): void {
     const file = join(this.dir, name)
     const tmp = `${file}.tmp`
-    writeFileSync(tmp, JSON.stringify(value))
-    renameSync(tmp, file)
+    this.fs.writeFileSync(tmp, JSON.stringify(value))
+    this.fs.renameSync(tmp, file)
   }
 
   readServer(): ServerInfo | null {
@@ -75,10 +98,18 @@ export class Store {
       this.warnOnce('ledger.json has an unknown shape; starting from an empty ledger')
       return emptyLedger(gapMinutes)
     }
+    const sessions: Record<string, SessionRow> = {}
+    let dropped = 0
+    for (const [id, row] of Object.entries(ledger.sessions as Record<string, unknown>)) {
+      if (isSessionRow(row)) sessions[id] = row
+      else dropped++
+    }
+    if (dropped > 0)
+      this.warnOnce(`ledger.json holds ${dropped} row(s) of an unknown shape; they are left out`)
     return {
       v: 1,
       gapMinutes: typeof ledger.gapMinutes === 'number' ? ledger.gapMinutes : gapMinutes,
-      sessions: ledger.sessions,
+      sessions,
       updatedAt: typeof ledger.updatedAt === 'string' ? ledger.updatedAt : new Date().toISOString()
     }
   }

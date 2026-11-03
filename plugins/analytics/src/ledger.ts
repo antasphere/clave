@@ -183,8 +183,8 @@ export interface Block {
 
 /**
  * Activity blocks: consecutive timestamps less than `gapMinutes` apart belong to one block
- * of work; a longer silence is the agent waiting. `messages` counts the timestamps a block
- * holds.
+ * of work; a longer silence is the agent waiting. `messages` counts the messages a block
+ * holds (one timestamp per counted message).
  */
 export function blocks(stamps: readonly string[], gapMinutes: number): Block[] {
   const times = [...new Set(stamps)]

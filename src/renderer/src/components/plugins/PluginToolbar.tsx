@@ -56,7 +56,7 @@ export function PluginToolbar(): React.JSX.Element | null {
           key={`${entry.pluginId}:${entry.id}`}
           className={cn(
             'btn-icon btn-icon-md flex-shrink-0',
-            page?.pluginId === entry.pluginId && '!text-accent'
+            page?.pluginId === entry.pluginId && page.actionId === entry.id && '!text-accent'
           )}
           title={`${entry.title} (${entry.pluginName})`}
           data-plugin-action={entry.id}

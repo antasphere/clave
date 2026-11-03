@@ -177,7 +177,7 @@ function drawHeader(p: Parts, v: ScopeView): void {
   )
 }
 
-function drawTiles(p: Parts, f: Figures): void {
+function drawTiles(p: Parts, f: Figures, kind: ScopeView['kind']): void {
   const set = (key: string, value: string, note: string): void => {
     p.tiles[key]!.value.textContent = value
     p.tiles[key]!.note.textContent = note
@@ -190,7 +190,15 @@ function drawTiles(p: Parts, f: Figures): void {
       ? `+ ${formatTokens(unpriced)} tokens unpriced`
       : `${formatCount(f.messages)} messages`
   )
-  set('active', formatMinutes(f.activeMinutes), `over ${formatMinutes(f.wallMinutes)} wall`)
+  // One session's active time sits inside its wall clock; a group's or a workspace's is a
+  // sum over sessions that ran side by side, so its wall clock is the span they cover.
+  set(
+    'active',
+    formatMinutes(f.activeMinutes),
+    kind === 'session'
+      ? `over ${formatMinutes(f.wallMinutes)} wall`
+      : `summed, across ${formatMinutes(f.wallMinutes)} of wall clock`
+  )
   set('read', formatTokens(f.tokensRead), 'input and cache')
   set('written', formatTokens(f.tokensWritten), 'output')
   set(
@@ -407,7 +415,7 @@ function draw(): void {
   }
   if (!parts || !root.contains(parts.title)) parts = skeleton(root)
   drawHeader(parts, view)
-  drawTiles(parts, view.figures)
+  drawTiles(parts, view.figures, view.kind)
   if (view.kind === 'workspace') drawCards(parts.body, view)
   else drawTable(parts.body, view)
   drawFooter(parts, view)

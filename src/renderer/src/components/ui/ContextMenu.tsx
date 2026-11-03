@@ -21,6 +21,9 @@ export interface ContextMenuItem {
   /** A card shown beside the menu while this entry is highlighted (hover or
    *  arrow keys): a look at what the entry leads to, never clickable. */
   preview?: React.ReactNode
+  /** A hairline above this entry: it opens a section of its own (the entries
+   *  a plugin contributes, below the app's). */
+  separatorBefore?: boolean
 }
 
 interface ContextMenuProps {
@@ -141,37 +144,46 @@ function ContextMenuEntry({
       {item.label}
     </span>
   )
+  const separator = item.separatorBefore ? (
+    <DropdownMenuPrimitive.Separator className="menu-sep" />
+  ) : null
   if (item.submenu) {
     return (
-      <DropdownMenuPrimitive.Sub>
-        <DropdownMenuPrimitive.SubTrigger
-          disabled={item.disabled}
-          className="menu-item justify-between"
-        >
-          {body}
-          <ChevronRightIcon className="w-3 h-3 ml-4 flex-shrink-0 text-text-tertiary" />
-        </DropdownMenuPrimitive.SubTrigger>
-        <DropdownMenuPrimitive.Portal>
-          <SubmenuContent item={item} onClose={onClose} className={className} />
-        </DropdownMenuPrimitive.Portal>
-      </DropdownMenuPrimitive.Sub>
+      <>
+        {separator}
+        <DropdownMenuPrimitive.Sub>
+          <DropdownMenuPrimitive.SubTrigger
+            disabled={item.disabled}
+            className="menu-item justify-between"
+          >
+            {body}
+            <ChevronRightIcon className="w-3 h-3 ml-4 flex-shrink-0 text-text-tertiary" />
+          </DropdownMenuPrimitive.SubTrigger>
+          <DropdownMenuPrimitive.Portal>
+            <SubmenuContent item={item} onClose={onClose} className={className} />
+          </DropdownMenuPrimitive.Portal>
+        </DropdownMenuPrimitive.Sub>
+      </>
     )
   }
   return (
-    <DropdownMenuPrimitive.Item
-      disabled={item.disabled}
-      onSelect={() => {
-        item.onClick()
-        onClose()
-      }}
-      onFocus={onHighlight ? (e) => onHighlight(e.currentTarget) : undefined}
-      onBlur={onHighlight ? () => onHighlight(null) : undefined}
-      aria-label={item.content ? item.label : undefined}
-      className={cn('menu-item justify-between', item.danger && 'menu-item--danger')}
-    >
-      {body}
-      {item.shortcut && <span className="ml-4 text-text-tertiary">{item.shortcut}</span>}
-    </DropdownMenuPrimitive.Item>
+    <>
+      {separator}
+      <DropdownMenuPrimitive.Item
+        disabled={item.disabled}
+        onSelect={() => {
+          item.onClick()
+          onClose()
+        }}
+        onFocus={onHighlight ? (e) => onHighlight(e.currentTarget) : undefined}
+        onBlur={onHighlight ? () => onHighlight(null) : undefined}
+        aria-label={item.content ? item.label : undefined}
+        className={cn('menu-item justify-between', item.danger && 'menu-item--danger')}
+      >
+        {body}
+        {item.shortcut && <span className="ml-4 text-text-tertiary">{item.shortcut}</span>}
+      </DropdownMenuPrimitive.Item>
+    </>
   )
 }
 

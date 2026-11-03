@@ -69,7 +69,8 @@ describe('the whole fixture', () => {
   it('keeps the first and last assistant times, and every distinct stamp', () => {
     expect(t.firstAt).toBe('2026-10-01T09:00:05.000Z')
     expect(t.lastAt).toBe('2026-10-02T09:31:00.000Z')
-    expect(t.stamps).toHaveLength(8)
+    // One stamp per counted message, never per streamed row.
+    expect(t.stamps).toHaveLength(t.messages)
     expect(t.stamps).not.toContain('2026-10-01T09:11:00.000Z')
   })
 

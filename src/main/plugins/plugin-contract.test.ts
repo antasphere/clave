@@ -183,6 +183,7 @@ describe('plugin manifest v1', () => {
     const paths = (actions: unknown[]): string[] =>
       (withActions(actions).error?.issues ?? []).map((issue) => issue.path.join('.'))
     expect(paths([{ ...action, targets: ['window'] }])).toContain('contributes.actions.0.targets.0')
+    expect(paths([{ ...action, icon: 'chart-bar' }])).toContain('contributes.actions.0.icon')
     expect(paths([{ ...action, targets: [] }])).toContain('contributes.actions.0.targets')
     const duplicate = withActions([{ ...action, targets: ['group', 'group'] }])
     expect(duplicate.error?.issues).toEqual([

@@ -27,6 +27,8 @@ export interface PluginToolbarEntry {
 /** The page an action answered, shown in the content column in place of the mosaic. */
 export interface PluginPage {
   pluginId: string
+  /** The action that opened it, so its toolbar button alone lights up. */
+  actionId: string
   pluginName: string
   icon: string
   title: string
@@ -147,7 +149,7 @@ export function pluginPanels(
   )
 }
 
-/** Whether a plugin holds the content column — a main-placement panel or an action's page —
+/** Whether a plugin holds the content column (a main-placement panel or an action's page),
  *  for the hosts that have to step aside for it. */
 export function usePluginMainPanelOpen(): boolean {
   const selection = usePluginUIStore((s) => s.mainPanel)

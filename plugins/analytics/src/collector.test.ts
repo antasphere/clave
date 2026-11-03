@@ -9,7 +9,8 @@ import {
 } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import * as nodeFs from 'node:fs'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Collector, projectSlug } from './collector'
 import type { PluginSession } from './host'
 import { emptyLedger } from './ledger'
@@ -157,5 +158,95 @@ describe('Collector', () => {
     c.start()
     c.stop()
     expect(c.listenerCount('changed')).toBe(0)
+  })
+  it('reads nothing again after a restart from the written ledger, and keeps counting once', () => {
+    writeFileSync(join(projectDir(), 'conv-1.jsonl'), fixture)
+    const first = collector()
+    first.setSessions([claudeSession()])
+    const before = first.ledger.sessions['tab-1']!.root!.tally
+    // The ledger as the store writes and reads it: a JSON round trip.
+    const persisted = JSON.parse(JSON.stringify(first.ledger))
+    let bytes = 0
+    const fs = {
+      ...nodeFs,
+      readSync: ((...args: Parameters<typeof nodeFs.readSync>) => {
+        const n = nodeFs.readSync(...args)
+        bytes += n
+        return n
+      }) as typeof nodeFs.readSync
+    }
+    const second = new Collector({
+      transcriptRoot: root,
+      ledger: persisted,
+      gapMinutes: 15,
+      now,
+      fs
+    })
+    second.setSessions([claudeSession()])
+    expect(bytes).toBe(0)
+    expect(second.ledger.sessions['tab-1']!.root!.tally).toEqual(before)
+    // A late row of a message already counted adds nothing; a new message adds once.
+    const lines = fixture.trim().split('\n')
+    const counted = lines.find((l) => l.includes('"type":"assistant"') && l.includes('msg_'))!
+    appendFileSync(join(projectDir(), 'conv-1.jsonl'), `${counted}\n`)
+    second.tick()
+    expect(second.ledger.sessions['tab-1']!.root!.tally.messages).toBe(before.messages)
+  })
+
+  it('wakes on the project folder watcher, before its timer', () => {
+    vi.useFakeTimers()
+    try {
+      writeFileSync(join(projectDir(), 'conv-1.jsonl'), fixture)
+      const listeners: { dir: string; listener: (event: string, name: string) => void }[] = []
+      const fs = {
+        ...nodeFs,
+        watch: ((
+          dir: string,
+          _options: unknown,
+          listener: (event: string, name: string) => void
+        ) => {
+          listeners.push({ dir, listener })
+          return {
+            close() {
+              /* a fake watcher has nothing to close */
+            },
+            on() {
+              return this
+            }
+          }
+        }) as unknown as typeof nodeFs.watch
+      }
+      const c = new Collector({
+        transcriptRoot: root,
+        ledger: emptyLedger(15),
+        gapMinutes: 15,
+        now,
+        fs
+      })
+      c.setSessions([claudeSession({ state: 'idle' })])
+      c.start()
+      expect(listeners.map((l) => l.dir)).toEqual([projectDir()])
+      const before = c.ledger.sessions['tab-1']!.root!.tally.messages
+      appendFileSync(
+        join(projectDir(), 'conv-1.jsonl'),
+        `${JSON.stringify({
+          type: 'assistant',
+          timestamp: '2026-10-03T09:00:00.000Z',
+          message: {
+            id: 'msg_watch',
+            model: 'claude-opus-5-5',
+            content: [],
+            usage: { input_tokens: 1, output_tokens: 1 }
+          }
+        })}\n`
+      )
+      listeners[0]!.listener('change', 'conv-1.jsonl')
+      // The watcher's debounce is 300 ms; the idle timer would only fire at 30 s.
+      vi.advanceTimersByTime(400)
+      expect(c.ledger.sessions['tab-1']!.root!.tally.messages).toBe(before + 1)
+      c.stop()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

@@ -147,8 +147,15 @@ export async function startServer(options: ServerOptions): Promise<AnalyticsServ
   const now = options.now ?? ((): Date => new Date())
   const streams = new Set<{ res: ServerResponse; stop: () => void }>()
 
-  const view = (scope: Scope, range: Range): ScopeView | null =>
-    scopeView(options.collector.ledger, prices(), scope, range, now())
+  // A row the views cannot draw (a hand-edited ledger) answers nothing, never a crash: the
+  // live push runs on a timer where a throw would end the plugin's process.
+  const view = (scope: Scope, range: Range): ScopeView | null => {
+    try {
+      return scopeView(options.collector.ledger, prices(), scope, range, now())
+    } catch {
+      return null
+    }
+  }
 
   const pagePath = (scope: Scope, range: Range | null, theme: string | null): string => {
     const query = new URLSearchParams()
@@ -203,7 +210,8 @@ export async function startServer(options: ServerOptions): Promise<AnalyticsServ
       'x-accel-buffering': 'no'
     })
     const push = (): void => {
-      res.write(`event: data\ndata: ${JSON.stringify(view(scope, range))}\n\n`)
+      const data = view(scope, range)
+      if (data) res.write(`event: data\ndata: ${JSON.stringify(data)}\n\n`)
     }
     let pending: ReturnType<typeof setTimeout> | null = null
     const onChanged = (): void => {

@@ -26,6 +26,7 @@ export async function runPluginAction(
     if (!page) return
     usePluginUIStore.getState().openPage({
       pluginId: entry.pluginId,
+      actionId: entry.id,
       pluginName: entry.pluginName,
       icon: entry.icon,
       title: page.title,
@@ -43,11 +44,13 @@ export function pluginActionMenuItems(kind: 'session' | 'group', id: string): Co
   const activeWorkspaceId = useWorkspaceStore.getState().activeWorkspaceId
   const entries = pluginActions(records, kind)
   const labels = actionLabels(entries)
-  return entries.map((entry) => {
+  return entries.map((entry, index) => {
     const target =
       kind === 'session' ? sessionTarget(id, activeWorkspaceId) : groupTarget(id, activeWorkspaceId)
     return {
       label: labels.get(actionKey(entry)) ?? entry.title,
+      // The plugins' entries are a section of their own, below the app's.
+      separatorBefore: index === 0,
       icon: <PluginIcon name={entry.icon} className="w-3.5 h-3.5" />,
       onClick: () => void runPluginAction(entry, target),
       preview: entry.preview ? <PluginActionPreview entry={entry} target={target} /> : undefined

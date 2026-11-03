@@ -12,6 +12,7 @@ import {
   tokensRead,
   wallMinutes,
   workspaceView,
+  rangeDays,
   type Ledger,
   type SessionRow,
   type Tally
@@ -256,5 +257,31 @@ describe('views', () => {
     const v = sessionView(ledger, 'a', prices)!
     expect(v.figures.usd).toBe(0)
     expect(v.figures.unpriced).toEqual([{ model: 'claude-unknown-9', tokens: 10 }])
+  })
+  it('covers exactly today, and exactly the last seven local days', () => {
+    const today = rangeDays('today', NOW)!
+    expect([...today]).toEqual([dayKey(NOW)])
+    const week = rangeDays('7d', NOW)!
+    expect(week.size).toBe(7)
+    expect(week.has(dayKey(new Date(NOW.getFullYear(), NOW.getMonth(), NOW.getDate() - 6)))).toBe(
+      true
+    )
+    expect(week.has(dayKey(new Date(NOW.getFullYear(), NOW.getMonth(), NOW.getDate() - 7)))).toBe(
+      false
+    )
+    expect(rangeDays('all', NOW)).toBeNull()
+  })
+
+  it('counts a session with no workspace stamp in every workspace, as the sidebar shows it', () => {
+    const ledger = threeSessions()
+    ledger.sessions['d'] = session('d', null, tally([message('d1', local(0, 11), 10_000)]), {
+      workspaceId: null
+    })
+    const one = workspaceView(ledger, 'ws-1', prices, 'all', NOW)
+    const names = one.cards.flatMap((card) => card.name)
+    expect(one.header.sessions).toBe(3)
+    expect(names).toContain('Ungrouped')
+    const other = workspaceView(ledger, 'ws-2', prices, 'all', NOW)
+    expect(other.header.sessions).toBe(2)
   })
 })

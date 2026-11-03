@@ -196,4 +196,34 @@ describe('the server', () => {
     expect(first.name).toBe('Dark </script> mode')
     expect(second.name).toBe('Renamed')
   })
+  it('answers nothing but GET, and sends the page policy on pages only', async () => {
+    const post = await new Promise<Reply>((resolve, reject) => {
+      request(server.url('session', 'tab 1', 'ws-1'), { method: 'POST' }, (res) => {
+        let body = ''
+        res.setEncoding('utf8')
+        res.on('data', (chunk: string) => (body += chunk))
+        res.on('end', () =>
+          resolve({ status: res.statusCode ?? 0, type: res.headers['content-type'], body })
+        )
+      })
+        .on('error', reject)
+        .end()
+    })
+    expect(post.status).toBe(404)
+    expect(post.body).toBe('')
+    const headers = (url: string): Promise<Record<string, string | string[] | undefined>> =>
+      new Promise((resolve, reject) => {
+        request(url, (res) => {
+          res.resume()
+          res.on('end', () => resolve(res.headers))
+        })
+          .on('error', reject)
+          .end()
+      })
+    const page = await headers(server.url('session', 'tab 1', 'ws-1'))
+    expect(String(page['content-security-policy'])).toContain("default-src 'none'")
+    expect(String(page['content-security-policy'])).toContain("script-src 'self'")
+    const data = await headers(`${base}/data/session/tab%201.json`)
+    expect(data['content-security-policy']).toBeUndefined()
+  })
 })

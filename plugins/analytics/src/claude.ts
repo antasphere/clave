@@ -212,10 +212,6 @@ export function foldEvents(
     if (event.timestamp) {
       tally.firstAt = earlier(tally.firstAt, event.timestamp)
       tally.lastAt = later(tally.lastAt, event.timestamp)
-      if (!w.stamps.has(event.timestamp)) {
-        w.stamps.add(event.timestamp)
-        tally.stamps.push(event.timestamp)
-      }
     }
     for (const id of event.toolUseIds) {
       if (w.toolCallIds.has(id)) continue
@@ -226,6 +222,12 @@ export function foldEvents(
     if (event.messageId !== null) {
       if (seen.includes(event.messageId)) continue
       rememberSeen(seen, event.messageId)
+    }
+    // One stamp per counted message, the unit the activity blocks count: a streamed
+    // message's later rows add none.
+    if (event.timestamp && !w.stamps.has(event.timestamp)) {
+      w.stamps.add(event.timestamp)
+      tally.stamps.push(event.timestamp)
     }
     tally.messages++
     addTokens(tally.tokens, event.tokens)

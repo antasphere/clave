@@ -10,4 +10,6 @@ The server listens on 127.0.0.1 only. Every route sits under `/<token>/`: `sessi
 
 The pages are built by `scripts/build-plugins.mjs`: `src/main.ts` → `main.mjs`, `page/deck.ts` → `dist/deck.js`, and `dist/deck.css` = embedded Geist Sans + `packages/ui/src/tokens.css` + `page/deck.css`. `electron-vite dev` and `build` run it, and so does `npm run plugins:build`. The outputs are git-ignored.
 
+What this first slice draws, and what the next ones bring. The pages show the figures, the session's and the group's table and the workspace's cards, live. Not yet drawn, though the data for them is in every view (`blocks`): the session's timeline of activity blocks, the group's swimlane and the workspace's animation of the sessions moving between states, with the brand field as the home's ground; nor the settings page (the price table and the activity gap editable in the app; today a `prices.json` in the data folder overrides the shipped table and the gap is fixed at 15 minutes); nor the publish to Slideless, nor Codex and Pi. The spec's delivery section names the slice each comes in.
+
 Tests: `npx vitest run plugins/analytics`; types: `npm run typecheck:plugins`.
