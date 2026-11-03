@@ -31,8 +31,6 @@ export interface DeliveryGroup {
  *  row it always was. */
 export interface ApprovalGroup {
   kind: 'approval-group'
-  /** The first request's id: stable as the run grows. */
-  id: string
   approvals: PermissionEntry[]
 }
 export type Block = Exclude<Entry, { kind: 'tool' }> | ToolGroup | ApprovalGroup | DeliveryGroup
@@ -86,7 +84,7 @@ export function groupEntries(entries: Entry[]): Block[] {
     }
     if (entry.kind === 'permission' && settledApproval(entry)) {
       if (!allowed) {
-        allowed = { kind: 'approval-group', id: entry.request.id, approvals: [] }
+        allowed = { kind: 'approval-group', approvals: [] }
         blocks.push(allowed)
       }
       allowed.approvals.push(entry)
@@ -110,6 +108,24 @@ export function groupEntries(entries: Entry[]): Block[] {
   return blocks.map((block) =>
     block.kind === 'approval-group' && block.approvals.length === 1 ? block.approvals[0] : block
   )
+}
+
+/** The key a view renders a block under, stable for the block's life: a run
+ *  of tools by its first call's id (the provider mints those unique), every
+ *  other block by its first entry's ordinal. A request's id is not a key: it
+ *  is Codex's RPC counter, which restarts at zero in every process, so two
+ *  approval runs of one conversation can share it after a restart. */
+export function blockKey(block: Block, ordinal: (entry: Entry) => number | undefined): string {
+  switch (block.kind) {
+    case 'tool-group':
+      return `tools-${block.id}`
+    case 'approval-group':
+      return `approvals-${ordinal(block.approvals[0])}`
+    case 'delivery-group':
+      return `deliveries-${ordinal(block.exchanges[0].message)}`
+    default:
+      return `entry-${ordinal(block)}`
+  }
 }
 
 export type ToolKind = 'read' | 'search' | 'edit' | 'command' | 'skill' | 'web' | 'agent' | 'other'

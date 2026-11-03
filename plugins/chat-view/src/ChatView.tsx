@@ -34,7 +34,13 @@ import { SenderChip } from './Delivery'
 import { DeliveryStack } from './DeliveryStack'
 import { parseDelivery } from '../../../src/shared/exchange-provenance'
 import { nextPermissionMode } from './permission-mode'
-import { groupEntries, visibleEntries, type Block, type ToolGroup as ToolRun } from './tools'
+import {
+  blockKey,
+  groupEntries,
+  visibleEntries,
+  type Block,
+  type ToolGroup as ToolRun
+} from './tools'
 import { ToolGroup } from './ToolGroup'
 import { ToolDisclosure } from './disclosure'
 import { ApprovalRun, PermissionRow, PromptDock } from './PromptDock'
@@ -402,7 +408,7 @@ function TranscriptRow({
       ) : block.kind === 'tool-group' ? (
         <ToolRow group={block} />
       ) : block.kind === 'approval-group' ? (
-        <ApprovalRun group={block} />
+        <ApprovalRun group={block} id={rowKey} />
       ) : (
         <EntryRow entry={block} onError={onError} />
       )}
@@ -803,14 +809,7 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
     entries.forEach((entry, i) => ordinal.set(entry, presentation.first + i))
     return groupEntries(visibleEntries(entries)).map((block) => ({
       block,
-      key:
-        block.kind === 'tool-group'
-          ? `tools-${block.id}`
-          : block.kind === 'approval-group'
-            ? `approvals-${block.id}`
-            : block.kind === 'delivery-group'
-              ? `deliveries-${ordinal.get(block.exchanges[0].message)}`
-              : `entry-${ordinal.get(block)}`
+      key: blockKey(block, (entry) => ordinal.get(entry))
     }))
   }, [presentation.entries, presentation.first, remotePending, session.id])
   // The reader's open tool rows, kept across the rows' unmounts (`ToolDisclosure`).

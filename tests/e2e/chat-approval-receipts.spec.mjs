@@ -21,19 +21,27 @@ const command = (id, cmd) => ({
   input: { threadId: 't', turnId: 'u', itemId: `item-${id}`, command: cmd, cwd: '/work' },
   options: ['accept', 'acceptForSession', 'decline', 'cancel'].map((o) => ({ id: o, label: o }))
 })
+// The approval frame as codex 0.166.0 sends it, captured by the lane's
+// verifier on 3 November 2026: the tool named in the message alone, _meta
+// carrying the kind, the description and the params, no tool_name key.
 const claveTool = (id, tool) => ({
   type: 'permission_request',
   id,
-  description: `Allow the ${SERVER} MCP server to run tool ${tool}?`,
+  description: `Allow the ${SERVER} MCP server to run tool "${tool}"?`,
   toolName: 'mcpServer/elicitation/request',
   input: {
     threadId: 't',
     turnId: 'u',
     serverName: SERVER,
     mode: 'form',
-    message: `Allow the ${SERVER} MCP server to run tool ${tool}?`,
+    message: `Allow the ${SERVER} MCP server to run tool "${tool}"?`,
     requestedSchema: { type: 'object', properties: {} },
-    _meta: { tool_name: tool, tool_params: { sessionId: 'parent', message: 'STATUS' } }
+    _meta: {
+      codex_approval_kind: 'mcp_tool_call',
+      tool_description: 'Send a message to another agent tab',
+      tool_params: { sessionId: 'parent', message: 'STATUS' },
+      tool_params_display: [{ name: 'sessionId', value: 'parent', display_name: 'sessionId' }]
+    }
   },
   options: ['accept', 'decline', 'cancel'].map((o) => ({ id: o, label: o }))
 })
@@ -58,7 +66,10 @@ export async function run(t) {
       await inject(fixture, record.id, [request])
       await dock.waitFor()
       await dock.getByRole('button', { name, exact: true }).click()
-      await until(async () => (await dock.count()) === 0)
+      assert.ok(
+        await until(async () => (await dock.count()) === 0),
+        'the answered request left the dock'
+      )
     }
     await inject(fixture, record.id, [{ type: 'user_message', text: 'coordinate the lanes' }])
     await ask(command('c1', 'npm test'), 'accept')
@@ -83,7 +94,10 @@ export async function run(t) {
     t.check('three allowed approvals fold into one closed row that says what was allowed', true)
 
     await run1.locator('> summary').click()
-    await until(async () => (await folded.count()) === 3)
+    assert.ok(
+      await until(async () => (await folded.count()) === 3),
+      'the run opened to its three receipts'
+    )
     const texts = await folded.allInnerTexts()
     assert.match(texts[0], /Allowed/)
     assert.match(texts[0], /Run a command/)
@@ -99,7 +113,10 @@ export async function run(t) {
 
     // A refusal is its own row, outside the run, and the run stays as it was.
     await ask(command('c2', 'rm -rf dist'), 'decline')
-    await until(async () => (await rows.count()) === 4)
+    assert.ok(
+      await until(async () => (await rows.count()) === 4),
+      'the refusal got a row of its own'
+    )
     assert.equal(await runs.count(), 1)
     assert.equal(await run1.getAttribute('data-count'), '3')
     const refused = view.locator('.chat-permission-row[data-state="answered"]').nth(3)
@@ -141,13 +158,19 @@ export async function run(t) {
     const question = view.locator('.chat-prompt[data-kind="question"]')
     await question.waitFor()
     await question.getByRole('radio', { name: /Lane B/ }).click()
-    await until(async () => (await question.count()) === 0)
+    assert.ok(
+      await until(async () => (await question.count()) === 0),
+      'the answered question left the dock'
+    )
     const answered = view.locator('.chat-permission-row[data-kind="question"]')
     await answered.waitFor()
     assert.match(await answered.innerText(), /Answered/)
     await ask(command('c4', 'git status'), 'accept')
     await ask(command('c5', 'git diff'), 'accept')
-    await until(async () => (await runs.count()) === 2)
+    assert.ok(
+      await until(async () => (await runs.count()) === 2),
+      'the approvals after the question started a new run'
+    )
     assert.equal(await runs.nth(1).getAttribute('data-count'), '2')
     assert.equal(
       await view.locator('.chat-approval-run .chat-permission-row[data-kind="question"]').count(),

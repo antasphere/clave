@@ -81,7 +81,12 @@ export function describeApproval(
       target: text(p.reason) || Object.keys(record(p.permissions)).join(', ')
     }
   if (method === 'mcpServer/elicitation/request') {
-    const tool = text(record(p._meta).tool_name)
+    // Codex 0.166.0 names the tool in the message alone ("Allow the probe MCP
+    // server to run tool \"ending_tool\"?"), its _meta carrying the kind, the
+    // description and the params; a frame that names the tool under its own
+    // key is read first. Verified live by the lane's verifier on 3 November 2026.
+    const tool =
+      text(record(p._meta).tool_name) || /run tool "([^"]+)"/.exec(text(p.message))?.[1] || ''
     const server = text(p.serverName)
     return {
       label: tool ? `Use ${tool}` : 'Use a tool',

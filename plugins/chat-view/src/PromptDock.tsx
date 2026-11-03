@@ -673,11 +673,18 @@ export function PermissionRow({ entry }: { entry: PermissionEntry }): React.JSX.
 
 /** A run of approvals the reader allowed: one row, led by the shield, that
  *  opens to one receipt per request. An uncontrolled `<details>` keyed by the
- *  run's first request, as a run of tools is: the reader's choice is DOM state
+ *  row's key, as a run of tools is: the reader's choice is DOM state
  *  a re-render cannot touch, and a receipt arriving mid-run neither closes an
  *  opened row nor opens a closed one. */
-export function ApprovalRun({ group }: { group: ApprovalGroup }): React.JSX.Element {
-  const disclosure = useDisclosure(`approvals-${group.id}`)
+export function ApprovalRun({
+  group,
+  id
+}: {
+  group: ApprovalGroup
+  /** The row's key (`blockKey`): what the reader's disclosure is remembered under. */
+  id: string
+}): React.JSX.Element {
+  const disclosure = useDisclosure(id)
   const [opened, setOpened] = useState(disclosure.initial)
   const { head, detail } = approvalRunSummary(group.approvals)
   return (

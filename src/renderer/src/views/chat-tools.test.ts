@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { Entry } from '../../../../plugins/chat-view/src/reducer'
 import {
+  blockKey,
   describeTool,
   describeToolHead,
   failureCount,
@@ -143,9 +144,22 @@ describe('groupEntries, the approvals', () => {
       assistant('done')
     ]
     expect(kinds(entries)).toEqual(['user', 'approval-group', 'assistant'])
-    const run = groupEntries(entries)[1]
-    expect(run.kind === 'approval-group' && run.id).toBe('a')
     expect(runOf(entries, 1)).toEqual(['a', 'b', 'c'])
+  })
+  it("keys a run by its first entry's ordinal, never by a request id Codex restarts at zero", () => {
+    // Two runs of one conversation, the second after a restart that counted
+    // its requests from zero again: the same request ids, two different rows.
+    const entries = [
+      approval('0'),
+      approval('1'),
+      user('and again, after the restart'),
+      approval('0'),
+      approval('1')
+    ]
+    const ordinal = new Map(entries.map((entry, i) => [entry, 10 + i]))
+    const keys = groupEntries(entries).map((block) => blockKey(block, (e) => ordinal.get(e)))
+    expect(keys).toEqual(['approvals-10', 'entry-12', 'approvals-13'])
+    expect(new Set(keys).size).toBe(keys.length)
   })
   it('leaves one allowed approval as its own row', () => {
     expect(kinds([user('go'), approval('a')])).toEqual(['user', 'permission'])
@@ -157,7 +171,7 @@ describe('groupEntries, the approvals', () => {
     expect(kinds(entries)).toEqual(['user', 'approval-group', 'tool-group'])
     expect(runOf(entries, 1)).toEqual(['a', 'b'])
   })
-  it('keeps a refusal, a request still waiting and one settled elsewhere on their own rows', () => {
+  it('keeps a refusal, a request still waiting and one closed from another client on their own rows', () => {
     const entries = [
       approval('a'),
       approval('b', { answer: 'decline' }),
