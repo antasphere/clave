@@ -81,7 +81,11 @@ it('binds fresh and resumed tabs to distinct authenticated callers and revokes o
       url: 'http://127.0.0.1:12345/mcp',
       bearer_token_env_var: 'CLAVE_CODEX_MCP_TOKEN',
       enabled: true,
-      required: true
+      required: true,
+      // The binding's word on approvals (codex-adapter.test.ts pins it): the
+      // tab's own tools approved, closing a tab still prompted.
+      default_tools_approval_mode: 'approve',
+      tools: { clave_close_session: { approval_mode: 'prompt' } }
     })
     const token = env?.CLAVE_CODEX_MCP_TOKEN
     expect(typeof token).toBe('string')
