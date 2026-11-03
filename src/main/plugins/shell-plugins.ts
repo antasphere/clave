@@ -15,6 +15,7 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { OWN_PROFILE, TEST_NO_ACTIVATE } from '../test-mode'
 import { installE2eHooks } from '../sessions/e2e-hooks'
+import { getSessionHost } from '../sessions/host'
 import { electronRunner } from './electron-runner'
 import { createPluginService, refusingPluginService, type PluginService } from './plugin-service'
 
@@ -33,6 +34,7 @@ export function shellPlugins(): PluginService {
       bundled,
       version: app.getVersion(),
       spawner: electronRunner(),
+      records: () => getSessionHost().listAdoptableRecords(),
       notify: ({ name, title, body }) => {
         if (!TEST_NO_ACTIVATE && Notification.isSupported())
           new Notification({ title: `${name}: ${title}`, body: body ?? '' }).show()

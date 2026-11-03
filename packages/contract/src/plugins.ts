@@ -71,6 +71,7 @@ export const PluginRecord = Schema.Struct({
   error: Schema.optional(Schema.String),
   status: PluginStatus,
   panels: Schema.Array(Schema.String),
+  actions: Schema.Array(Schema.String),
   commands: Schema.Array(Schema.String),
   toolbar: Schema.Array(Schema.String),
   generation: Schema.Number,
@@ -101,6 +102,35 @@ export const PluginViewLease = Schema.Struct({
   csp: Schema.String
 })
 export type PluginViewLease = typeof PluginViewLease.Type
+
+/** What a plugin action runs on: a session, a sidebar group or a workspace. */
+export const PluginActionTarget = Schema.Struct({
+  kind: Schema.Literal('session', 'group', 'workspace'),
+  id: Schema.String,
+  workspaceId: Schema.NullOr(Schema.String)
+})
+export type PluginActionTarget = typeof PluginActionTarget.Type
+
+/** A web page an action answers, for the shell to open. */
+export const PluginActionPage = Schema.Struct({ url: Schema.String, title: Schema.String })
+export type PluginActionPage = typeof PluginActionPage.Type
+
+/** What an invoked action answered: a page to open, or nothing. */
+export const PluginActionResult = Schema.Struct({ page: Schema.NullOr(PluginActionPage) })
+export type PluginActionResult = typeof PluginActionResult.Type
+
+/** One row of an action's preview, shown before it runs. */
+export const PluginActionPreviewRow = Schema.Struct({ label: Schema.String, value: Schema.String })
+export type PluginActionPreviewRow = typeof PluginActionPreviewRow.Type
+
+/** One sidebar group of a window, as the shell reports it to the plugins. */
+export const PluginGroup = Schema.Struct({
+  id: Schema.String,
+  name: Schema.String,
+  sessionIds: Schema.Array(Schema.String),
+  workspaceId: Schema.NullOr(Schema.String)
+})
+export type PluginGroup = typeof PluginGroup.Type
 
 /** The store or the host said no; `message` is the sentence shown to the user. */
 export class PluginRefused extends Schema.TaggedError<PluginRefused>()('PluginRefused', {
@@ -215,6 +245,35 @@ export const ReplyPluginSecret = Command.define('ReplyPluginSecret', {
   failure: RefusedOrUnavailable
 })
 
+/** Run a plugin's action on a target; answers the page it opens, if any. */
+export const InvokePluginAction = Command.define('InvokePluginAction', {
+  payload: Schema.Struct({
+    pluginId: Schema.String,
+    actionId: Schema.String,
+    target: PluginActionTarget
+  }),
+  success: PluginActionResult,
+  failure: RefusedOrUnavailable
+})
+
+/** Ask a plugin's action what it would show for a target, before it runs. */
+export const PreviewPluginAction = Command.define('PreviewPluginAction', {
+  payload: Schema.Struct({
+    pluginId: Schema.String,
+    actionId: Schema.String,
+    target: PluginActionTarget
+  }),
+  success: Schema.Array(PluginActionPreviewRow),
+  failure: RefusedOrUnavailable
+})
+
+/** A window's sidebar groups, as the shell reports them; an empty list clears them. */
+export const ReportPluginGroups = Command.define('ReportPluginGroups', {
+  payload: Schema.Struct({ windowKey: Schema.String, groups: Schema.Array(PluginGroup) }),
+  success: Schema.Void,
+  failure: RefusedOrUnavailable
+})
+
 export const pluginsGroup = ApiGroup.make('plugins')
   .add(HttpCqrs.queryEndpoint('list', '/plugins', ListPlugins))
   .add(HttpCqrs.queryEndpoint('panel', '/plugins/panel', GetPluginPanel))
@@ -229,3 +288,6 @@ export const pluginsGroup = ApiGroup.make('plugins')
   .add(HttpCqrs.commandEndpoint('requestView', '/plugins/views/request', RequestPluginView))
   .add(HttpCqrs.commandEndpoint('revokeView', '/plugins/views/revoke', RevokePluginView))
   .add(HttpCqrs.commandEndpoint('replySecret', '/plugins/secrets/reply', ReplyPluginSecret))
+  .add(HttpCqrs.commandEndpoint('invokeAction', '/plugins/actions/invoke', InvokePluginAction))
+  .add(HttpCqrs.commandEndpoint('previewAction', '/plugins/actions/preview', PreviewPluginAction))
+  .add(HttpCqrs.commandEndpoint('groups', '/plugins/groups', ReportPluginGroups))

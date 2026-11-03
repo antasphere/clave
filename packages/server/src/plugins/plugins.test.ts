@@ -8,6 +8,10 @@ import { FakeSource, Peer } from '../test-support'
 import { pluginHandlers } from './handlers'
 import {
   Plugins,
+  type PluginActionPreviewRow,
+  type PluginActionResult,
+  type PluginActionTarget,
+  type PluginGroup,
   type PluginPage,
   type PluginPermission,
   type PluginRecord,
@@ -35,6 +39,7 @@ const aPlugin = (id: string): PluginRecord => ({
   directory: `/plugins/${id}`,
   status: 'disabled',
   panels: ['main'],
+  actions: [],
   commands: ['hello'],
   toolbar: [],
   generation: 0
@@ -97,6 +102,24 @@ class FakePlugins implements PluginsService {
     return [{ id: 'sec-1', pluginId: 'clave.demo', title: 'API key' }]
   }
   replySecret = (id: string, value: string | null): void => this.record('replySecret', id, value)
+  invokeAction = async (
+    pluginId: string,
+    actionId: string,
+    target: PluginActionTarget
+  ): Promise<PluginActionResult> => {
+    this.record('invokeAction', pluginId, actionId, target)
+    return { page: { url: 'https://example.com/deck', title: 'Deck' } }
+  }
+  previewAction = async (
+    pluginId: string,
+    actionId: string,
+    target: PluginActionTarget
+  ): Promise<ReadonlyArray<PluginActionPreviewRow>> => {
+    this.record('previewAction', pluginId, actionId, target)
+    return [{ label: 'Sessions', value: '3' }]
+  }
+  groups = (windowKey: string, groups: ReadonlyArray<PluginGroup>): void =>
+    this.record('groups', windowKey, groups)
   subscribe = (listener: (event: PluginsEvent) => void): Unsubscribe => {
     this.listeners.add(listener)
     return () => {
@@ -143,6 +166,32 @@ afterEach(async () => {
 })
 
 describe('the plugins group of the HTTP API', () => {
+  it('hands an action its target and answers the page, the preview its rows', async () => {
+    const target = { kind: 'group', id: 'g1', workspaceId: null }
+    const invoked = await post('/plugins/actions/invoke', {
+      pluginId: 'clave.demo',
+      actionId: 'deck',
+      target
+    })
+    expect(invoked.status).toBe(200)
+    expect(await invoked.json()).toEqual({
+      page: { url: 'https://example.com/deck', title: 'Deck' }
+    })
+    const previewed = await post('/plugins/actions/preview', {
+      pluginId: 'clave.demo',
+      actionId: 'deck',
+      target
+    })
+    expect(await previewed.json()).toEqual([{ label: 'Sessions', value: '3' }])
+    const groups = [{ id: 'g1', name: 'Work', sessionIds: ['s1'], workspaceId: null }]
+    expect((await post('/plugins/groups', { windowKey: 'w1', groups })).status).toBe(204)
+    expect(fake.calls).toEqual([
+      { method: 'invokeAction', args: ['clave.demo', 'deck', target] },
+      { method: 'previewAction', args: ['clave.demo', 'deck', target] },
+      { method: 'groups', args: ['w1', groups] }
+    ])
+  })
+
   it('lists the records the port holds', async () => {
     const response = await get('/plugins')
     expect(response.status).toBe(200)

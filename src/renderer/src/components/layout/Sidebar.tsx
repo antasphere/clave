@@ -20,6 +20,7 @@ import { SessionItem as BaseSessionItem } from '../session/SessionItem'
 import { FileTabItem } from '../session/FileTabItem'
 import { SessionGroupItem } from '../session/SessionGroupItem'
 import { ContextMenu, type ContextMenuItem } from '../ui/ContextMenu'
+import { pluginActionMenuItems } from '../plugins/plugin-actions'
 import { ConfirmDialog } from '@clave/ui/components'
 import { GroupCommandDialog } from '../ui/GroupCommandDialog'
 import { ExportClaveDialog } from '../ui/ExportClaveDialog'
@@ -1188,7 +1189,8 @@ export function Sidebar(): React.JSX.Element {
             onClick: () => {
               if (session.agentId) useAgentStore.getState().clearMessages(session.agentId)
             }
-          }
+          },
+          ...pluginActionMenuItems('session', sessionId)
         ]
         setContextMenu({ x: e.clientX, y: e.clientY, items })
         return
@@ -1310,6 +1312,7 @@ export function Sidebar(): React.JSX.Element {
           onClick: () => createGroup(state.selectedSessionIds)
         })
       }
+      items.push(...pluginActionMenuItems('session', sessionId))
       items.push({
         label: 'Delete',
         icon: <TrashIcon className="w-3.5 h-3.5" />,
@@ -1405,6 +1408,7 @@ export function Sidebar(): React.JSX.Element {
             icon: <FolderMinusIcon className="w-3.5 h-3.5" />,
             onClick: () => handleUngroup(groupId)
           },
+          ...pluginActionMenuItems('group', groupId),
           {
             label: 'Delete',
             icon: <TrashIcon className="w-3.5 h-3.5" />,

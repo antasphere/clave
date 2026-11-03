@@ -16,14 +16,17 @@ import {
   DisablePlugin,
   EnablePlugin,
   GetPluginPanel,
+  InvokePluginAction,
   LeasePluginView,
   LinkPlugin,
   ListPluginSecretRequests,
   ListPlugins,
   PluginRefused,
+  PreviewPluginAction,
   RemovePlugin,
   ReplyPluginSecret,
   ReportPluginContext,
+  ReportPluginGroups,
   RequestPluginView,
   RevokePluginView,
   RunPluginCommand
@@ -105,5 +108,15 @@ export const pluginHandlers = [
   // The secrets plugins asked for
   CommandHandler.make(ReplyPluginSecret, (payload) =>
     call((p) => p.replySecret(payload.id, payload.value))
+  ),
+  // The actions plugins contribute, and the groups they read
+  CommandHandler.make(InvokePluginAction, (payload) =>
+    call((p) => p.invokeAction(payload.pluginId, payload.actionId, payload.target))
+  ),
+  CommandHandler.make(PreviewPluginAction, (payload) =>
+    call((p) => p.previewAction(payload.pluginId, payload.actionId, payload.target))
+  ),
+  CommandHandler.make(ReportPluginGroups, (payload) =>
+    call((p) => p.groups(payload.windowKey, payload.groups))
   )
 ] as const

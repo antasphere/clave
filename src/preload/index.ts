@@ -1103,6 +1103,24 @@ const electronAPI = {
     ipc: (id, command) => ipcRenderer.invoke('plugins:command', id, command),
     server: ({ api }, id, command) => api.plugins.command(id, command)
   }),
+  pluginsInvokeAction: viaServer<
+    [string, string, import('@clave/plugin-sdk').PluginActionTarget],
+    import('@clave/plugin-sdk').PluginActionResult
+  >({
+    ipc: (pluginId, actionId, target) =>
+      ipcRenderer.invoke('plugins:action-invoke', pluginId, actionId, target),
+    server: ({ api }, pluginId, actionId, target) =>
+      api.plugins.invokeAction(pluginId, actionId, target)
+  }),
+  pluginsPreviewAction: viaServer<
+    [string, string, import('@clave/plugin-sdk').PluginActionTarget],
+    import('@clave/plugin-sdk').PluginActionPreviewRow[]
+  >({
+    ipc: (pluginId, actionId, target) =>
+      ipcRenderer.invoke('plugins:action-preview', pluginId, actionId, target),
+    server: ({ api }, pluginId, actionId, target) =>
+      api.plugins.previewAction(pluginId, actionId, target).then((rows) => [...rows])
+  }),
   pluginsPanel: (id: string, panel: string) =>
     ipcRenderer.invoke('plugins:panel', id, panel) as Promise<{ url: string }>,
   // The focus report goes through the arm in both modes too: the shell keys

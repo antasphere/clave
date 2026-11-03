@@ -60,6 +60,7 @@ export function ContextMenu({
     return () => observer.disconnect()
   }, [contentEl])
   const at = size ? placeMenu(x, y, size.w, size.h, headerLift) : { left: x, top: y }
+  const { active, highlight, preview, hasPreviews } = useMenuHighlight(items)
 
   return (
     <DropdownMenuPrimitive.Root
@@ -111,10 +112,12 @@ export function ContextMenu({
               item={item}
               onClose={onClose}
               className={className}
+              onHighlight={hasPreviews ? (row) => highlight(item.label, row) : undefined}
             />
           ))}
         </DropdownMenuPrimitive.Content>
       </DropdownMenuPrimitive.Portal>
+      {preview && active && <MenuPreview row={active.row}>{preview}</MenuPreview>}
     </DropdownMenuPrimitive.Root>
   )
 }
@@ -172,18 +175,15 @@ function ContextMenuEntry({
   )
 }
 
-/** A submenu's surface, and the preview card of whichever of its entries is
- *  highlighted. Radix moves focus to the highlighted entry on hover and on
- *  the arrow keys alike, so focus is the one signal both follow. */
-function SubmenuContent({
-  item,
-  onClose,
-  className
-}: {
-  item: ContextMenuItem
-  onClose: () => void
-  className?: string
-}): React.JSX.Element {
+/** Which entry of one menu surface is highlighted, and the preview card it
+ *  carries. Radix moves focus to the highlighted entry on hover and on the
+ *  arrow keys alike, so focus is the one signal both follow. */
+function useMenuHighlight(items: ContextMenuItem[]): {
+  active: { label: string; row: HTMLElement } | null
+  highlight: (label: string, row: HTMLElement | null) => void
+  preview: React.ReactNode
+  hasPreviews: boolean
+} {
   const [active, setActive] = useState<{ label: string; row: HTMLElement } | null>(null)
   // A blur is followed at once by the next row's focus when the highlight
   // moves down the list: clear on the next frame so the card does not blink.
@@ -200,9 +200,24 @@ function SubmenuContent({
       setActive(null)
     })
   }
+  const hasPreviews = items.some((item) => item.preview)
+  const preview = active ? items.find((item) => item.label === active.label)?.preview : null
+  return { active, highlight, preview, hasPreviews }
+}
+
+/** A submenu's surface, and the preview card of whichever of its entries is
+ *  highlighted. */
+function SubmenuContent({
+  item,
+  onClose,
+  className
+}: {
+  item: ContextMenuItem
+  onClose: () => void
+  className?: string
+}): React.JSX.Element {
   const children = item.submenu ?? []
-  const hasPreviews = children.some((child) => child.preview)
-  const preview = active ? children.find((child) => child.label === active.label)?.preview : null
+  const { active, highlight, preview, hasPreviews } = useMenuHighlight(children)
   return (
     <>
       <DropdownMenuPrimitive.SubContent
@@ -230,7 +245,7 @@ function SubmenuContent({
 const PREVIEW_GAP = 6
 const VIEWPORT_PAD = 8
 
-/** The preview card: beside the submenu on whichever side has room, level
+/** The preview card: beside the menu or submenu on whichever side has room, level
  *  with the highlighted row, kept inside the window. It takes no pointer
  *  events, so the menu under the cursor stays the menu. */
 export function MenuPreview({

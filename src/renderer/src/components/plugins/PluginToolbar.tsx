@@ -6,10 +6,14 @@ import {
   pluginPanels,
   pluginToolbarEntries,
   usePluginUIStore,
+  usePluginPage,
   type PluginToolbarEntry,
   type PluginPanelEntry
 } from './plugin-ui-store'
 import { cn } from '@clave/ui/components'
+import { useWorkspaceStore } from '../../store/workspace-store'
+import { pluginActions, workspaceTarget } from './plugin-actions-model'
+import { runPluginAction } from './plugin-actions'
 
 /** Toolbar contributions, in the right-hand cluster beside the side-panel toggle. An action
  *  is one button running the plugin's command of the same id; a popover is a button opening
@@ -22,7 +26,11 @@ export function PluginToolbar(): React.JSX.Element | null {
   // file tree beside it works the same way. The toolbar is its opener until the pane kernel
   // can carry a plugin as a tile of the mosaic.
   const mainPanels = pluginPanels(records, 'main')
-  if (entries.length === 0 && mainPanels.length === 0) return null
+  // A workspace action runs on the workspace in view and opens the page it answers.
+  const actions = pluginActions(records, 'workspace')
+  const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId)
+  const page = usePluginPage()
+  if (entries.length === 0 && mainPanels.length === 0 && actions.length === 0) return null
   return (
     <>
       {entries.map((entry) =>
@@ -42,6 +50,20 @@ export function PluginToolbar(): React.JSX.Element | null {
       )}
       {mainPanels.map((panel) => (
         <PluginMainPanelButton key={`${panel.pluginId}:${panel.panelId}`} panel={panel} />
+      ))}
+      {actions.map((entry) => (
+        <button
+          key={`${entry.pluginId}:${entry.id}`}
+          className={cn(
+            'btn-icon btn-icon-md flex-shrink-0',
+            page?.pluginId === entry.pluginId && '!text-accent'
+          )}
+          title={`${entry.title} (${entry.pluginName})`}
+          data-plugin-action={entry.id}
+          onClick={() => void runPluginAction(entry, workspaceTarget(activeWorkspaceId))}
+        >
+          <PluginIcon name={entry.icon} />
+        </button>
       ))}
     </>
   )

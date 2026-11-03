@@ -24,6 +24,10 @@
 import { app, BrowserWindow, dialog, ipcMain, Notification } from 'electron'
 import type { ClaveApiClient } from '@clave/client'
 import type {
+  PluginActionPreviewRow,
+  PluginActionResult,
+  PluginActionTarget,
+  PluginGroup,
   PluginPage,
   PluginPermission,
   PluginRecord,
@@ -36,6 +40,7 @@ import { TEST_NO_ACTIVATE } from '../test-mode'
 import { getClaveServerEndpoint, whenClaveServerBootSettled } from '../server/endpoint'
 import { serverClient } from '../mcp/server-client'
 import { shellPlugins } from '../plugins/shell-plugins'
+import { reportPluginGroups } from '../plugins/plugin-groups'
 
 /** The plugins as the arms call them: every method a promise, whether the
  *  service is in this process or across the loopback. */
@@ -53,6 +58,17 @@ export interface PluginsFacade {
   revokeView(leaseId: string): Promise<void>
   secrets(): Promise<ReadonlyArray<PluginSecretRequest>>
   replySecret(id: string, value: string | null): Promise<void>
+  invokeAction(
+    pluginId: string,
+    actionId: string,
+    target: PluginActionTarget
+  ): Promise<PluginActionResult>
+  previewAction(
+    pluginId: string,
+    actionId: string,
+    target: PluginActionTarget
+  ): Promise<ReadonlyArray<PluginActionPreviewRow>>
+  groups(windowKey: string, groups: ReadonlyArray<PluginGroup>): Promise<void>
 }
 
 const inProcessFacade = (): PluginsFacade => {
@@ -71,7 +87,11 @@ const inProcessFacade = (): PluginsFacade => {
     requestView: async (leaseId, method, params) => service.requestView(leaseId, method, params),
     revokeView: async (leaseId) => service.revokeView(leaseId),
     secrets: async () => service.secrets(),
-    replySecret: async (id, value) => service.replySecret(id, value)
+    replySecret: async (id, value) => service.replySecret(id, value),
+    invokeAction: (pluginId, actionId, target) => service.invokeAction(pluginId, actionId, target),
+    previewAction: (pluginId, actionId, target) =>
+      service.previewAction(pluginId, actionId, target),
+    groups: async (windowKey, groups) => service.groups(windowKey, groups)
   }
 }
 
@@ -88,7 +108,12 @@ const attachedFacade = (api: ClaveApiClient): PluginsFacade => ({
   requestView: (leaseId, method, params) => api.plugins.requestView(leaseId, method, params),
   revokeView: (leaseId) => api.plugins.revokeView(leaseId),
   secrets: () => api.plugins.secrets(),
-  replySecret: (id, value) => api.plugins.replySecret(id, value)
+  replySecret: (id, value) => api.plugins.replySecret(id, value),
+  invokeAction: (pluginId, actionId, target) =>
+    api.plugins.invokeAction(pluginId, actionId, target),
+  previewAction: (pluginId, actionId, target) =>
+    api.plugins.previewAction(pluginId, actionId, target),
+  groups: (windowKey, groups) => api.plugins.groups(windowKey, groups)
 })
 
 /** The plugins the boot named: the shell's own service while the server runs
@@ -167,6 +192,8 @@ export function registerPluginHandlers(): void {
   // In this process the shell's own service says when the plugins changed;
   // attached, the windows relay the server's event (`plugins:changed-heard`).
   void whenClaveServerBootSettled().then(() => {
+    // The shell's layouts hold the windows' groups in both modes.
+    reportPluginGroups()
     if (getClaveServerEndpoint()?.mode === 'attached') return
     shellPlugins().subscribe((event) => {
       if (event._tag === 'plugins.changed') void refreshPages()
@@ -231,6 +258,21 @@ export function registerPluginHandlers(): void {
     guard(event)
     await (await pluginsFacade()).command(id, command)
   })
+  // The target is validated by the service (the host's `validateActionTarget`).
+  ipcMain.handle(
+    'plugins:action-invoke',
+    async (event, pluginId: string, actionId: string, target: PluginActionTarget) => {
+      guard(event)
+      return (await pluginsFacade()).invokeAction(pluginId, actionId, target)
+    }
+  )
+  ipcMain.handle(
+    'plugins:action-preview',
+    async (event, pluginId: string, actionId: string, target: PluginActionTarget) => {
+      guard(event)
+      return (await pluginsFacade()).previewAction(pluginId, actionId, target)
+    }
+  )
   ipcMain.handle('plugins:panel', async (event, id: string, panel: string) => {
     guard(event)
     const page = await (await pluginsFacade()).panel(id, panel)

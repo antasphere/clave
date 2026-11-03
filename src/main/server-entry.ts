@@ -288,7 +288,8 @@ async function main(): Promise<void> {
   const plugins = standalonePlugins({
     dataDir,
     bundled: arg('plugins-bundled') ?? path.resolve(__dirname, '..', '..', 'plugins'),
-    version
+    version,
+    records: () => sessions.listAdoptableRecords()
   })
   installE2eHooks({ plugins })
   // ── Issue #266: the version, and for a daemon the install script's upgrade ──

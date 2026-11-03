@@ -48,6 +48,8 @@ export interface PluginRecord extends InstalledPlugin {
   error?: string
   status: 'disabled' | 'starting' | 'active' | 'error'
   panels: string[]
+  /** Action ids the running plugin registered; runtime state, never saved. */
+  actions: string[]
   commands: string[]
   toolbar: string[]
   generation: number
@@ -187,6 +189,7 @@ export class PluginStore {
             directory,
             status: 'disabled',
             panels: [],
+            actions: [],
             commands: [],
             toolbar: [],
             generation: 0
@@ -235,6 +238,7 @@ export class PluginStore {
             error: String(error),
             status: 'error',
             panels: [],
+            actions: [],
             commands: [],
             toolbar: [],
             generation: 0

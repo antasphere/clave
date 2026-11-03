@@ -6,6 +6,8 @@ import { join } from 'node:path'
 import { Schema } from 'effect'
 import type { PluginsEvent } from '@clave/server'
 import { PluginRecord as WirePluginRecord } from '@clave/contract/plugins'
+import type { SessionRecord } from '@clave/contract/sessions'
+import type { LayoutSnapshot } from '@clave/contract/sidebar/layout'
 import { SessionManager } from '../sessions/session-manager'
 import type {
   SessionAdapter,
@@ -14,6 +16,7 @@ import type {
   SpawnSpec
 } from '../sessions/adapter'
 import { createPluginService, type PluginService } from './plugin-service'
+import { pluginGroupsOf } from './plugin-groups-map'
 import type { RunnerProcess, RunnerSpawner } from './plugin-host'
 
 // The service as the server's port, over a real store on disk, a fake runner
@@ -92,6 +95,20 @@ let manager: SessionManager
 let adapter: RecordingAdapter
 let events: PluginsEvent[]
 let notified: unknown[]
+/** What the service's `records` option answers; a function so a test can make it throw. */
+let records: () => ReadonlyArray<SessionRecord>
+const aRecord = (patch: Partial<SessionRecord>): SessionRecord => ({
+  id: 'session-1',
+  cwd: '/repo',
+  folderName: 'repo',
+  claudeMode: true,
+  antigravityMode: false,
+  codexMode: false,
+  piMode: false,
+  claudeAgentsMode: false,
+  dangerousMode: false,
+  ...patch
+})
 
 const manifest = (id: string, extra: Record<string, unknown>): string =>
   JSON.stringify({
@@ -142,13 +159,15 @@ beforeEach(async () => {
   })
   events = []
   notified = []
+  records = () => []
   service = createPluginService({
     root: join(temporary, 'user'),
     bundled,
     version: '1.90.2',
     spawner,
     manager,
-    secretTimeoutMs: 1_000
+    secretTimeoutMs: 1_000,
+    records: () => records()
   })
   service.subscribe((event) => events.push(event))
   // The fixture stands in for a bundled plugin enabled on first install.
@@ -365,5 +384,70 @@ describe('the plugin service as the server port', () => {
     expect(sessions.list()).toMatchObject([{ id: 'session-1', alive: true }])
     sessions.send('session-1', 'from a plugin')
     expect(adapter.written.at(-1)).toEqual({ type: 'user_message', text: 'from a plugin' })
+  })
+  it('tells a plugin a session’s group, record facts, name and state', () => {
+    records = () => [
+      aRecord({
+        claudeSessionId: 'claude-abc',
+        model: 'opus',
+        workspaceId: 'ws1'
+      })
+    ]
+    const sessions = service.host['services'].sessions
+    expect(sessions.list()[0]).toMatchObject({ group: null, providerSessionId: 'claude-abc' })
+    service.groups('w1', [
+      { id: 'g1', name: 'Launch', sessionIds: ['session-1'], workspaceId: 'ws1' }
+    ])
+    expect(sessions.list()).toEqual([
+      {
+        id: 'session-1',
+        cwd: temporary,
+        folderName: temporary.split('/').pop(),
+        alive: true,
+        provider: 'echo',
+        providerSessionId: 'claude-abc',
+        name: 'work',
+        model: 'opus',
+        state: 'idle',
+        group: { id: 'g1', name: 'Launch' },
+        workspaceId: 'ws1',
+        createdAt: 1
+      }
+    ])
+    service.context('w1', 'session-1')
+    expect(sessions.focused()).toMatchObject({ group: { id: 'g1', name: 'Launch' } })
+    // An empty report clears the window's groups.
+    service.groups('w1', [])
+    expect(sessions.list()[0]!.group).toBeNull()
+  })
+  it('reads a host without records as none', () => {
+    records = () => {
+      throw new Error('CapabilityUnavailable')
+    }
+    expect(service.host['services'].sessions.list()[0]).toMatchObject({
+      providerSessionId: null,
+      model: null,
+      workspaceId: null
+    })
+  })
+  it('refuses an action the plugin never registered', async () => {
+    await expect(
+      service.invokeAction('test.surface', 'deck', { kind: 'session', id: 's1', workspaceId: null })
+    ).rejects.toThrow('Action is not active')
+  })
+  it('maps a layout snapshot to the groups the plugins read', () => {
+    const snapshot = {
+      windowKey: 'w1',
+      revision: 3,
+      groups: [
+        { id: 'g1', name: 'A', sessionIds: ['s1', 's2'], workspaceId: 'ws1' },
+        { id: 'g2', name: 'B', sessionIds: [] }
+      ],
+      displayOrder: []
+    } as unknown as LayoutSnapshot
+    expect(pluginGroupsOf(snapshot)).toEqual([
+      { id: 'g1', name: 'A', sessionIds: ['s1', 's2'], workspaceId: 'ws1' },
+      { id: 'g2', name: 'B', sessionIds: [], workspaceId: null }
+    ])
   })
 })
