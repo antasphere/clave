@@ -1,6 +1,7 @@
 import type { PluginSessionState } from './host'
 import type { FileCursor } from './reader'
 import { cost, type PriceTable } from './prices'
+import { scopeKey } from './scope'
 
 /**
  * The ledger: one row per session Clave has shown the plugin, each with the tally of its
@@ -109,10 +110,7 @@ export interface Ledger {
   updatedAt: string
 }
 
-/** The key a scope is kept under: the published decks, the live stream's parameter. */
-export function scopeKey(kind: 'session' | 'group' | 'workspace', id: string | null): string {
-  return kind === 'workspace' ? `workspace:${id ?? '-'}` : `${kind}:${id ?? ''}`
-}
+export { scopeKey } from './scope'
 
 export type Range = 'all' | 'today' | '7d' | '30d'
 export const RANGES: readonly Range[] = ['today', '7d', '30d', 'all']

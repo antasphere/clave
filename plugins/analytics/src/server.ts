@@ -92,6 +92,8 @@ export interface AnalyticsServer {
 const PING_MS = 25_000
 const EVENT_DEBOUNCE_MS = 500
 const BODY_LIMIT = 256 * 1024
+/** Past this, the request is cut rather than drained: nothing honest is that large. */
+const BODY_CUT = 4 * 1024 * 1024
 
 export function defaultRange(scope: Scope): Range {
   return scope.kind === 'workspace' ? 'today' : 'all'
@@ -162,13 +164,15 @@ function sameToken(given: string, token: string): boolean {
   return a.length === b.length && timingSafeEqual(a, b)
 }
 
-/** The request's body as text, or null when it is over the limit or broke off. */
-function readBody(req: IncomingMessage): Promise<string | null> {
+/** The request's body as text; `tooLarge` when it went over the limit (the rest of the body
+ *  is read and dropped so the 413 can be answered on an open socket), null when it broke off. */
+function readBody(req: IncomingMessage): Promise<string | null | 'tooLarge'> {
   return new Promise((resolve) => {
     const chunks: Buffer[] = []
     let size = 0
     let done = false
-    const finish = (value: string | null): void => {
+    let over = false
+    const finish = (value: string | null | 'tooLarge'): void => {
       if (done) return
       done = true
       resolve(value)
@@ -176,14 +180,19 @@ function readBody(req: IncomingMessage): Promise<string | null> {
     req.on('data', (chunk: Buffer) => {
       if (done) return
       size += chunk.length
-      if (size > BODY_LIMIT) {
+      if (size > BODY_CUT) {
         finish(null)
         req.destroy()
         return
       }
+      if (size > BODY_LIMIT) {
+        over = true
+        chunks.length = 0
+        return
+      }
       chunks.push(chunk)
     })
-    req.on('end', () => finish(Buffer.concat(chunks).toString('utf8')))
+    req.on('end', () => finish(over ? 'tooLarge' : Buffer.concat(chunks).toString('utf8')))
     req.on('error', () => finish(null))
   })
 }
@@ -404,8 +413,12 @@ export async function startServer(options: ServerOptions): Promise<AnalyticsServ
 
   const readJsonBody = async (req: IncomingMessage, res: ServerResponse): Promise<unknown> => {
     const text = await readBody(req)
-    if (text === null) {
+    if (text === 'tooLarge') {
       sendJson(res, 413, { error: 'The body is too large.' })
+      return undefined
+    }
+    if (text === null) {
+      sendJson(res, 400, { error: 'The body broke off.' })
       return undefined
     }
     try {

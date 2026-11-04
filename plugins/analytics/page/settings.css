@@ -1,1 +1,196 @@
-/* The settings page: filled by the settings page lane. */
+/* The settings page, drawn on the deck's ground (page/deck.css). Every colour, radius and size
+   is a token of packages/ui/src/tokens.css; the 12 and 11 px type sizes and the 1.5 px focus
+   ring are the exceptions the app's field guide itself makes. */
+
+/* ── Header ─────────────────────────────────────────────────────────────── */
+
+.settings .settings-head {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: calc(var(--control-px) * 1.5);
+}
+
+/* ── Sections ───────────────────────────────────────────────────────────── */
+
+.settings .settings-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--control-px);
+}
+
+.settings .settings-section-title {
+  margin: 0;
+  color: var(--text-tertiary);
+  font-size: 11px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.settings .settings-section .deck-meta {
+  margin-top: 0;
+}
+
+.settings .settings-line {
+  display: flex;
+  align-items: center;
+  gap: var(--control-px);
+  flex-wrap: wrap;
+}
+
+.settings .settings-label {
+  color: var(--text-primary);
+}
+
+.settings .settings-note {
+  margin: 0;
+  color: var(--text-tertiary);
+  font-size: 12px;
+}
+
+.settings .settings-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--control-px);
+  flex-wrap: wrap;
+}
+
+/* ── Controls ───────────────────────────────────────────────────────────── */
+
+.settings .btn,
+.settings .settings-input {
+  box-sizing: border-box;
+  height: var(--control-h);
+  margin: 0;
+  border: var(--frame-border) solid var(--color-border);
+  border-radius: var(--control-radius);
+  font: inherit;
+  font-size: var(--control-text);
+  color: var(--text-primary);
+}
+
+.settings .btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--control-gap);
+  padding: 0 calc(var(--control-px) * 1.5);
+  background: var(--surface-50);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.settings .btn:hover:not(:disabled) {
+  background: var(--surface-100);
+}
+
+.settings .btn-primary {
+  padding: 0 calc(var(--control-px) * 2);
+  border-color: var(--color-action);
+  background: var(--color-action);
+  color: var(--color-action-foreground);
+}
+.settings .btn-primary:hover:not(:disabled) {
+  border-color: var(--color-action-hover);
+  background: var(--color-action-hover);
+}
+
+.settings .btn:disabled,
+.settings .settings-input:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.settings .btn svg {
+  flex: none;
+  width: var(--control-icon);
+  height: var(--control-icon);
+}
+
+.settings .settings-back {
+  padding: 0 calc(var(--control-px) * 1.5) 0 var(--control-px);
+}
+
+.settings .settings-icon-btn {
+  width: var(--control-h);
+  padding: 0;
+  border-color: transparent;
+  background: transparent;
+  color: var(--text-tertiary);
+}
+.settings .settings-icon-btn:hover:not(:disabled) {
+  color: var(--text-primary);
+}
+
+.settings .settings-input {
+  width: 100%;
+  min-width: calc(var(--control-h) * 2.5);
+  padding: 0 var(--control-px);
+  background: var(--surface-0);
+}
+
+.settings .settings-number {
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.settings .settings-gap {
+  width: calc(var(--control-h) * 2.5);
+}
+
+.settings .settings-input[aria-invalid='true'] {
+  border-color: var(--color-destructive);
+}
+
+.settings .btn:focus-visible,
+.settings .settings-input:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 1.5px var(--color-accent);
+}
+
+/* ── The price table ────────────────────────────────────────────────────── */
+
+.settings .settings-table {
+  overflow-x: auto;
+}
+
+.settings .settings-table th {
+  padding: 0 var(--control-px);
+}
+
+.settings .settings-table tbody tr:hover {
+  background: transparent;
+}
+
+.settings .settings-cell {
+  padding: var(--surface-inset);
+  text-align: left;
+}
+
+.settings .settings-cell:first-child .settings-input {
+  min-width: calc(var(--control-h) * 6);
+}
+
+.settings .settings-cell:nth-child(2) .settings-input {
+  min-width: calc(var(--control-h) * 5);
+}
+
+.settings .settings-remove-col {
+  width: var(--control-h);
+  text-align: center;
+}
+
+.settings .settings-empty {
+  color: var(--text-tertiary);
+  text-align: center;
+}
+
+/* ── Status ─────────────────────────────────────────────────────────────── */
+
+.settings .settings-status {
+  min-height: 1.5em;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+.settings .settings-status[data-status='error'] {
+  color: var(--color-destructive);
+}

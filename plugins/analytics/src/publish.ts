@@ -233,15 +233,23 @@ export function assembleDeck(input: DeckInput): string {
   const js = input.js.replace(/<\/script/gi, '<\\/script')
   const style = `<style>\n${css}\n${tokens ? `:root {\n${tokens}\n}\n` : ''}</style>`
   const script = `<script>\n${js}\n</script>`
-  const template = input.template.replace(STYLE_LINK, style).replace(SCRIPT_TAG, script)
-  return renderPage(template, {
-    title: input.title,
-    data: input.data,
-    events: null,
-    theme: input.theme,
-    base: '/',
-    mode: 'deck'
-  })
+  // The placeholders are filled on the template alone, before the stylesheet and the script
+  // go in: a `{{data}}` inside the built code is code, not a placeholder. The replacements
+  // are functions, so a `$&` or a `$'` in the built code is text, not a pattern.
+  const STYLE_AT = '\u0000analytics-style\u0000'
+  const SCRIPT_AT = '\u0000analytics-script\u0000'
+  const page = renderPage(
+    input.template.replace(STYLE_LINK, () => STYLE_AT).replace(SCRIPT_TAG, () => SCRIPT_AT),
+    {
+      title: input.title,
+      data: input.data,
+      events: null,
+      theme: input.theme,
+      base: '/',
+      mode: 'deck'
+    }
+  )
+  return page.replace(STYLE_AT, () => style).replace(SCRIPT_AT, () => script)
 }
 
 /**
