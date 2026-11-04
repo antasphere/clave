@@ -2,6 +2,7 @@ import type { SessionHostService } from '@clave/server'
 import type { SessionEvent, SessionStream } from '@clave/contract/sessions'
 import { RequestRejected, type PendingRequest } from '../../../packages/contract/src/requests'
 import type { PendingRequests } from '../../../packages/server/src/requests/service'
+import { REQUEST_GONE } from '../../shared/request-refusals'
 
 const eventOf = (r: PendingRequest): Extract<SessionEvent, { type: 'permission_request' }> => ({
   type: 'permission_request',
@@ -32,6 +33,9 @@ export function requestAwareSessionHost(options: {
       event.type === 'turn_interrupted'
     )
       requests.cancelNative(id)
+    // The adapter's own word that a request is gone, the one the views settle
+    // their card on; the raw frames below say the same for the built-in CLIs.
+    if (event.type === 'permission_withdrawn') requests.cancelNative(id, event.id)
     if (event.type === 'provider_event' && event.provider === 'claude') {
       const raw = event.payload as { type?: unknown; request_id?: unknown } | null
       if (raw?.type === 'control_cancel_request' && typeof raw.request_id === 'string')
@@ -122,7 +126,7 @@ export function requestAwareSessionHost(options: {
         if (input.type !== 'permission_response') return base.write(id, input)
         const request = requests.native(id, input.id)
         if (!request)
-          throw new RequestRejected({ code: 'not_found', message: 'No such provider request.' })
+          throw new RequestRejected({ code: 'not_found', message: REQUEST_GONE.notFound })
         const { accepted } = await requests.resolve({
           requestId: request.id,
           response: {
@@ -134,8 +138,7 @@ export function requestAwareSessionHost(options: {
         // Another client answered first, or the provider dropped the request.
         // Refused, as a local adapter refuses a stale answer: the view that
         // sent it must not record an answer the agent never received.
-        if (!accepted)
-          throw new RequestRejected({ code: 'closed', message: 'The request was already settled.' })
+        if (!accepted) throw new RequestRejected({ code: 'closed', message: REQUEST_GONE.settled })
       },
       stop: async (id) => {
         await base.stop(id)

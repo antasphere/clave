@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto'
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
+import { REQUEST_GONE } from '../../../shared/request-refusals'
 import { z } from 'zod'
 import {
   SessionInputSchema,
@@ -783,12 +784,20 @@ export class ClaudeStreamTranslator {
       })
       this.emit({ type: 'state_change', state: 'blocked' })
     } else if (p.type === 'control_cancel_request') {
-      this.permissions.delete(z.string().parse(p.request_id))
-      this.questionRequests.delete(z.string().parse(p.request_id))
+      const id = z.string().parse(p.request_id)
+      const held = this.permissions.delete(id)
+      this.questionRequests.delete(id)
       fallback()
+      // The views settle the card on this word: the raw frame never reaches
+      // a window (`host.ts`, isRawWireFrame), and the card it left behind came
+      // back ahead of the next request (PRDCT-4032).
+      if (held) this.emit({ type: 'permission_withdrawn', id })
       if (!this.permissions.size) this.emit({ type: 'state_change', state: 'working' })
     } else if (p.type === 'result') {
       this.finish()
+      // Nothing the turn waited on outlives it: a request still open is
+      // withdrawn before the turn is said to be done.
+      for (const id of this.permissions.keys()) this.emit({ type: 'permission_withdrawn', id })
       this.permissions.clear()
       this.questionRequests.clear()
       this.tools.clear()
@@ -844,7 +853,7 @@ export class ClaudeStreamTranslator {
   }
   response(id: string, optionId: string, answers?: Record<string, string>): unknown {
     const pending = this.permissions.get(id)
-    if (!pending) throw new Error(`Unknown Claude permission request: ${id}`)
+    if (!pending) throw new Error(`${REQUEST_GONE.claude}: ${id}`)
     const question = this.questionRequests.has(id)
     if (
       question

@@ -585,6 +585,14 @@ describe('Codex races and failure boundaries', () => {
     translator.notification({ method: 'serverRequest/resolved', params: { requestId: '1' } })
     expect(() => translator.answer('"1"', 'accept', connection)).toThrow()
     expect(events.at(-1)).toEqual({ type: 'state_change', state: 'working' })
+    // The views settle the card on the adapter's own word, never on the raw
+    // frame, and the word comes before the state word that follows it.
+    const withdrawn = events.findIndex((e) => e.type === 'permission_withdrawn' && e.id === '"1"')
+    expect(withdrawn).toBeGreaterThan(-1)
+    expect(withdrawn).toBeLessThan(events.length - 1)
+    // A resolution naming no held request says nothing.
+    translator.notification({ method: 'serverRequest/resolved', params: { requestId: 'never' } })
+    expect(events.filter((e) => e.type === 'permission_withdrawn')).toHaveLength(1)
   })
   it('offers schema-valid scoped permission grants without granting null fields', () => {
     const events: SessionEvent[] = []
@@ -647,13 +655,19 @@ it('reports an interrupted turn as interrupted even when Codex attaches an error
   expect(events).toEqual([{ type: 'turn_interrupted' }, { type: 'state_change', state: 'done' }])
 })
 it('expires legacy approvals with the active turn even without a turnId field', () => {
-  const translator = new CodexTranslator(() => {})
+  const events: SessionEvent[] = []
+  const translator = new CodexTranslator((e) => events.push(e))
   translator.turnId = 'active'
   translator.request({ id: 1, method: 'execCommandApproval', params: {} })
   translator.notification({ method: 'turn/completed', params: { turn: { id: 'active' } } })
   const connection = { respond: vi.fn() } as unknown as CodexConnection
   expect(() => translator.answer('1', 'approved', connection)).toThrow('expired')
   expect(connection.respond).not.toHaveBeenCalled()
+  // The turn's end says which approval it withdrew, before it says done.
+  const withdrawn = events.findIndex((e) => e.type === 'permission_withdrawn' && e.id === '1')
+  const done = events.findIndex((e) => e.type === 'state_change' && e.state === 'done')
+  expect(withdrawn).toBeGreaterThan(-1)
+  expect(withdrawn).toBeLessThan(done)
 })
 
 it('intentional close during initialization does not publish a fatal error or accept new input', async () => {

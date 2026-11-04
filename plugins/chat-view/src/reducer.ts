@@ -53,6 +53,13 @@ export type Entry =
          session's (sessions/ipc.ts:34, :79-93). Either way the card offers no
          click the adapter would refuse. */
       answeredElsewhere?: boolean
+      /* The adapter no longer holds the request, for good: it said so
+         (`permission_withdrawn`: the provider withdrew the request, or the
+         turn ended with it open), or the host refused this view's answer as
+         naming a request it does not hold. Set beside `answeredElsewhere`,
+         which a later `blocked` restores; this one it never restores, since
+         an answer would only be refused (PRDCT-4032). */
+      abandoned?: boolean
       at: number
     }
   | { kind: 'error'; message: string; at: number }
@@ -92,6 +99,9 @@ export type Action =
   | { sync: HistoryItem[] }
   /** The reader took their last message back before any answer to it. */
   | { withdraw: true }
+  /** The host refused this view's answer because it no longer holds the
+   *  request: the card is retired without an answer. */
+  | { retire: string }
 
 /** Whether anything answers the reader's last message yet: text, a tool call,
  *  a question, an error. What decides, on Escape, between taking the message
@@ -102,8 +112,34 @@ export function answeredSince(entries: Entry[]): boolean {
     .slice(last + 1)
     .some((e) => e.kind !== 'user' && (e.kind !== 'assistant' || e.text.trim() !== ''))
 }
+/** What the reader can still answer, in the order asked: the dock shows the
+ *  head of it and the rest queue behind. A card answered here, settled
+ *  elsewhere or abandoned by the adapter is not in it. */
+export function openRequests(entries: Entry[]): Permission[] {
+  return entries.flatMap((e) =>
+    e.kind === 'permission' && !e.answer && !e.answeredElsewhere && !e.abandoned ? [e.request] : []
+  )
+}
+/** The entries with every unanswered request `matches` settled for good: the
+ *  adapter no longer holds it, so no later blocked reopens it. The same array
+ *  when nothing matches, so a view memoised on it does not rebuild. */
+function settle(entries: Entry[], matches: (request: Permission) => boolean): Entry[] {
+  const touches = (e: Entry): boolean =>
+    e.kind === 'permission' && !e.answer && e.abandoned !== true && matches(e.request)
+  return entries.some(touches)
+    ? entries.map((e) => (touches(e) ? { ...e, answeredElsewhere: true, abandoned: true } : e))
+    : entries
+}
 export function reduceConversation(state: Conversation, action: Action): Conversation {
   if ('exit' in action) return { ...state, state: 'ended', exitCode: action.exit }
+  if ('retire' in action) {
+    // The host no longer holds the request this view's answer named: the
+    // card leaves the dock with no answer recorded, since nothing ran. The
+    // kernel's word stays the state; its next state_change says what is
+    // awaited.
+    const entries = settle(state.entries, (request) => request.id === action.retire)
+    return entries === state.entries ? state : { ...state, entries }
+  }
   if ('withdraw' in action) {
     if (answeredSince(state.entries)) return state
     const last = state.entries.findLastIndex((e) => e.kind === 'user')
@@ -133,13 +169,12 @@ export function reduceConversation(state: Conversation, action: Action): Convers
             ...e,
             answer: action.optionId,
             answeredElsewhere: undefined,
+            abandoned: undefined,
             ...(action.answers ? { answers: action.answers } : {})
           }
         : e
     )
-    const waiting = entries.some(
-      (e) => e.kind === 'permission' && !e.answer && !e.answeredElsewhere
-    )
+    const waiting = openRequests(entries).length > 0
     return {
       ...state,
       entries,
@@ -159,11 +194,16 @@ export function reduceConversation(state: Conversation, action: Action): Convers
     // working on every turn/started, approvals pending or not, and leaves an
     // approval whose turn id is empty in its set), while a card wrongly
     // reopened costs at worst one refused answer, which shows as an error card.
+    // A card the adapter withdrew for good (`permission_withdrawn`), or whose
+    // answer the host refused as naming no request, is never restored: back at
+    // the head of the queue it hid the live request and took every click
+    // (PRDCT-4032).
     const marks = event.state === 'working' || event.state === 'done' || event.state === 'idle'
     const clears = event.state === 'blocked'
     const touches = (e: Entry): boolean =>
       e.kind === 'permission' &&
       !e.answer &&
+      !e.abandoned &&
       (marks ? e.answeredElsewhere !== true : clears && e.answeredElsewhere === true)
     if (!state.entries.some(touches)) return { ...state, state: event.state }
     return {
@@ -173,6 +213,13 @@ export function reduceConversation(state: Conversation, action: Action): Convers
       ),
       state: event.state
     }
+  }
+  if (event.type === 'permission_withdrawn') {
+    // The adapter no longer waits on it: the card is settled for good, as the
+    // server's request store settles its record on the same word, and no
+    // later blocked reopens it. The kernel's own state_change follows.
+    const entries = settle(state.entries, (request) => request.id === event.id)
+    return entries === state.entries ? state : { ...state, entries }
   }
   const entries = [...state.entries]
   switch (event.type) {

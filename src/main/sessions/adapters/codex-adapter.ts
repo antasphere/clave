@@ -1,6 +1,7 @@
 import { EventEmitter } from 'node:events'
 import { readFileSync } from 'node:fs'
 import { randomBytes } from 'node:crypto'
+import { REQUEST_GONE } from '../../../shared/request-refusals'
 import { z } from 'zod'
 import { isQuestionAnswerKey } from '../../../../packages/server/src/requests/question-key'
 import { codexRoot, findCodexRollout } from '../../session-history/codex'
@@ -432,7 +433,12 @@ export class CodexTranslator {
             fatal: false
           })
         for (const [id, approval] of this.approvals)
-          if (approval.turnId === text(turn.id)) this.approvals.delete(id)
+          if (approval.turnId === text(turn.id)) {
+            this.approvals.delete(id)
+            // The views settle the card on this word: the provider's own
+            // frames never reach a window (PRDCT-4032).
+            this.emit({ type: 'permission_withdrawn', id })
+          }
         this.completedTurnId = text(turn.id)
         // Keep the old turn's outcome and cleanup without resetting the new
         // active turn or clearing its streamed text.
@@ -453,7 +459,8 @@ export class CodexTranslator {
         return
       }
       case 'serverRequest/resolved': {
-        this.approvals.delete(JSON.stringify(p.requestId))
+        const id = JSON.stringify(p.requestId)
+        if (this.approvals.delete(id)) this.emit({ type: 'permission_withdrawn', id })
         fallback()
         if (!this.approvals.size && this.turnId)
           this.emit({ type: 'state_change', state: 'working' })
@@ -576,8 +583,10 @@ export class CodexTranslator {
     answers?: Record<string, string>
   ): void {
     const approval = this.approvals.get(id)
-    if (!approval || !approval.responses.has(optionId))
-      throw new Error('Unknown or expired Codex approval option')
+    // Two refusals, kept apart: the view retires a card on the first, never
+    // on the second (`request-refusals.ts`).
+    if (!approval) throw new Error(REQUEST_GONE.codex)
+    if (!approval.responses.has(optionId)) throw new Error('Unknown Codex approval option')
     let response = approval.responses.get(optionId)
     if (approval.questions && optionId === 'answer') {
       if (

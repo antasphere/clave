@@ -236,6 +236,11 @@ export const SessionEventSchema = z.discriminatedUnion('type', [
      that it was cut short, never a failure. A view mutes the message that
      started it rather than raising an error card over it. */
   z.object({ type: z.literal('turn_interrupted') }),
+  /** The agent no longer waits on this request: the provider withdrew it
+   *  (Claude cancels a control request, Codex resolves a server request on
+   *  its own), or the turn it belonged to ended with it unanswered. A view
+   *  settles its card for good; an answer to it would only be refused. */
+  z.object({ type: z.literal('permission_withdrawn'), id: z.string() }),
   /** How full the conversation's context is (or, with `parent`, a subagent's):
    *  the tokens its last call read and wrote, and the model's window once the
    *  provider has named it. The
