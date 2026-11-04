@@ -154,6 +154,17 @@ describe('Viewer', () => {
     expect(viewer.note()).toBe(NOTES.stopped)
   })
 
+  it("says on the plugin's own page that the viewer is up, when it is", async () => {
+    const h = harness()
+    const viewer = h.make(null)
+    const started = viewer.start()
+    await tick()
+    h.children[0]!.up(5006)
+    await started
+    expect(viewer.note()).toBe(NOTES.up)
+    await viewer.stop()
+  })
+
   it('asks for any port when none was saved, and keeps the one the CLI took', async () => {
     const h = harness()
     const viewer = h.make(null)
@@ -258,6 +269,62 @@ describe('Viewer', () => {
     await tick(20)
     expect(h.children).toHaveLength(2)
     expect(viewer.state).toEqual({ kind: 'stopped' })
+  })
+
+  it('never answers a dead viewer as up: ready() during the backoff waits for the restart', async () => {
+    const h = harness()
+    const viewer = h.make(null)
+    const started = viewer.start()
+    await tick()
+    h.children[0]!.up(5004)
+    await started
+    h.children[0]!.emit('exit', 1, null)
+    expect(viewer.state).toEqual({ kind: 'starting' })
+    // Within the backoff: the state so far after a short wait, never the old `up`.
+    expect(await viewer.ready(2)).toEqual({ kind: 'starting' })
+    // A longer wait reaches the restart's outcome.
+    const waited = viewer.ready(200)
+    await tick(15)
+    expect(h.children).toHaveLength(2)
+    h.children[1]!.up(5004)
+    expect(await waited).toMatchObject({ kind: 'up', port: 5004 })
+    await viewer.stop()
+  })
+
+  it('starts the backoff over after a run that stayed up for a minute', async () => {
+    const h = harness()
+    let clock = 0
+    const viewer = new Viewer({
+      root: '/data/decks',
+      proc: h.proc,
+      savedPort: null,
+      env: async () => ({}),
+      spawn: h.spawn,
+      log: (level, message) => h.logs.push(`${level}: ${message}`),
+      backoffMs: [5, 10, 20],
+      startTimeoutMs: 200,
+      now: () => clock
+    })
+    const started = viewer.start()
+    await tick()
+    h.children[0]!.up(5005)
+    await started
+    // Two quick crashes: the wait grows.
+    h.children[0]!.emit('exit', 1, null)
+    expect(h.logs.at(-1)).toContain('in 10 ms')
+    await tick(20)
+    h.children[1]!.up(5005)
+    await viewer.ready(50)
+    h.children[1]!.emit('exit', 1, null)
+    expect(h.logs.at(-1)).toContain('in 20 ms')
+    await tick(30)
+    h.children[2]!.up(5005)
+    await viewer.ready(50)
+    // A minute up: the next crash waits the shortest time again.
+    clock += 60_000
+    h.children[2]!.emit('exit', 1, null)
+    expect(h.logs.at(-1)).toContain('in 5 ms')
+    await viewer.stop()
   })
 
   it('answers ready() with the state so far when the start takes longer than the wait', async () => {

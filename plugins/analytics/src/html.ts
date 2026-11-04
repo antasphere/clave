@@ -17,8 +17,8 @@ export interface PageOptions {
   /** The plugin server's token root: where the assets, the open route and the settings live.
    *  A path on the served page, an absolute URL on a deck. */
   base?: string
-  /** `live` on the page the plugin serves (the stream on); `deck` on a deck the viewer
-   *  serves (the stream off, every link through the open route). */
+  /** `live` on the page the plugin serves; `deck` on a deck the viewer serves (the stream
+   *  named absolute, every link through the open route). */
   mode?: PageMode
   /** The footer's last line: what serves the page, or why the viewer does not. */
   note?: string

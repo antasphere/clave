@@ -24,7 +24,8 @@ export const NOTES = {
   starting: 'The Slideless viewer is starting; the next open shows this page through it',
   failed: (reason: string): string =>
     `The Slideless viewer could not start (${reason}); this page is served by Clave itself`,
-  stopped: 'The Slideless viewer is off; this page is served by Clave itself'
+  stopped: 'The Slideless viewer is off; this page is served by Clave itself',
+  up: 'The Slideless viewer is up: open this page from Clave again to see it through the viewer'
 } as const
 
 const BACKOFF_MS = [1_000, 2_000, 4_000, 8_000, 16_000, 30_000]
@@ -186,6 +187,7 @@ export class Viewer {
     if (s.kind === 'missing') return NOTES.missing
     if (s.kind === 'failed') return NOTES.failed(s.reason)
     if (s.kind === 'starting') return NOTES.starting
+    if (s.kind === 'up') return NOTES.up
     return NOTES.stopped
   }
 
@@ -196,15 +198,18 @@ export class Viewer {
     return this.attempt
   }
 
-  /** The state once the attempt in flight has settled, or the state now after `timeoutMs`. */
+  /** The state once the attempt in flight has settled (a start, or the restart after an
+   *  exit), or the state now after `timeoutMs`; always the state as it stands, so a viewer
+   *  that went down since its start is never answered as up. */
   async ready(timeoutMs: number): Promise<ViewerState> {
     if (!this.attempt) return this.current
     let timer: ReturnType<typeof setTimeout> | null = null
-    const late = new Promise<ViewerState>((resolve) => {
-      timer = setTimeout(() => resolve(this.current), timeoutMs)
+    const late = new Promise<void>((resolve) => {
+      timer = setTimeout(resolve, timeoutMs)
     })
     try {
-      return await Promise.race([this.attempt, late])
+      await Promise.race([this.attempt, late])
+      return this.current
     } finally {
       if (timer) clearTimeout(timer)
     }
@@ -311,10 +316,17 @@ export class Viewer {
           `The Slideless viewer exited (${code === null ? (signal ?? '?') : `code ${code}`}); starting it again in ${wait} ms`
         )
         this.current = { kind: 'starting' }
+        // The attempt in flight is the restart, from now: whoever waits on `ready()` during
+        // the backoff gets the restart's outcome, never the dead viewer's `up`.
+        let settle: (state: ViewerState) => void = () => {}
+        this.attempt = new Promise<ViewerState>((resolve) => {
+          settle = resolve
+        })
         this.restartTimer = setTimeout(() => {
           this.restartTimer = null
-          this.attempt = this.run(this.savedOrAny())
-          void this.attempt
+          const run = this.run(this.savedOrAny())
+          this.attempt = run
+          void run.then(settle)
         }, wait)
       })
     })
