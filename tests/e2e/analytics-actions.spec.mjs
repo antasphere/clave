@@ -227,7 +227,8 @@ export async function run(t) {
             state: d.dataset.state,
             column: d.dataset.column,
             lane: label ? label.textContent : null,
-            canvas: !!canvas && canvas.width > 0 && canvas.height > 0
+            canvas: !!canvas && canvas.width > 0 && canvas.height > 0,
+            hollow: d.classList.contains('kind-terminal')
           }
         })()`
       )
@@ -237,7 +238,8 @@ export async function run(t) {
       !!dot &&
         dot.lane === 'Analytics group' &&
         dot.canvas &&
-        ['working', 'idle', 'blocked'].includes(dot.column),
+        ['working', 'idle', 'blocked'].includes(dot.column) &&
+        dot.hollow === false,
       JSON.stringify(dot)
     )
 
