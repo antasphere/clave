@@ -1,4 +1,9 @@
-import type { LauncherFamily } from './agent-launch'
+import {
+  chatProfileSource,
+  resolveLaunchProfile,
+  type LaunchProfilePreferences,
+  type LauncherFamily
+} from './agent-launch'
 
 /** The modes `clave_open_session` takes; 'gemini' is the retired CLI's name,
  *  kept as an alias for antigravity. */
@@ -55,30 +60,90 @@ export const CHAT_PROFILE_IDS: Partial<Record<OpenSessionMode, string>> = {
   codex: 'codex-chat'
 }
 
+/** The families with a chat view, the ones `CHAT_PROFILE_IDS` names. */
+type ChatFamily = 'claude' | 'codex'
+const chatFamilyOf = (family: LauncherFamily): ChatFamily | undefined =>
+  family === 'claude' || family === 'codex' ? family : undefined
+
+/** Is this id a chat profile of the family: its built-in chat profile, or the
+ *  chat form of one of its saved profiles (`chat:<family>:<id>`, the id the
+ *  launcher's "(chat)" entries and the settings' chat defaults carry)? Ids
+ *  only: the chat rule never reads a name. */
+export function isChatProfileRef(family: LauncherFamily, id: string): boolean {
+  return id === CHAT_PROFILE_IDS[family] || chatProfileSource(id)?.family === family
+}
+
+/**
+ * The chat profile the launcher would open a family's chat on in a workspace,
+ * from the preferences as the host lists them (`launchProfilesList`, the chat
+ * forms of the saved profiles included): the family's default for the
+ * workspace, else the global one, else the built-in. Itself when it is a chat
+ * profile; its chat form when it is a saved terminal profile, the "(chat)"
+ * entry the launcher offers beside it (one saved definition, two forms, so a
+ * profile that skips approvals in a terminal skips them in a chat); the
+ * built-in chat when it is the built-in terminal. Undefined for a default with
+ * no chat form (a plugin's agent) and for a family with no chat view, and
+ * `resolveProfileRef` then answers the built-in chat.
+ */
+export function chatDefaultFor(
+  preferences: LaunchProfilePreferences,
+  family: LauncherFamily,
+  workspaceId: string | null | undefined
+): string | undefined {
+  const chatFamily = chatFamilyOf(family)
+  if (!chatFamily) return undefined
+  // A preferences object off the wire may lack a table; the resolver indexes them.
+  const prefs: LaunchProfilePreferences = {
+    version: 1,
+    customProfiles: preferences.customProfiles ?? [],
+    globalDefaults: preferences.globalDefaults ?? {},
+    workspaceOverrides: preferences.workspaceOverrides ?? {}
+  }
+  const selected = resolveLaunchProfile(prefs, chatFamily, workspaceId)
+  if (isChatProfileRef(chatFamily, selected.id)) return selected.id
+  if (selected.builtIn) return CHAT_PROFILE_IDS[chatFamily]
+  return prefs.customProfiles.find(
+    (profile) =>
+      profile.family === chatFamily &&
+      profile.sourceProfileId === selected.id &&
+      chatProfileSource(profile.id)?.family === chatFamily
+  )?.id
+}
+
 /**
  * The launch profile a `clave_open_session` call names, with `chat: true`
- * turned into the family's chat profile. The chat view IS a launch profile,
+ * turned into a chat profile of the family. The chat view IS a launch profile,
  * so before `chat` existed an agent could only reach it by knowing the
  * profile's id — the tool never said so, and agents told the user it could
- * not be done. Refuses what cannot be honoured rather than quietly opening a
- * terminal: chat on a mode that has no chat view, or chat beside a profile
- * that is not that chat profile.
+ * not be done. `chatDefault` is the chat the launcher would open for the
+ * family in the target workspace (`chatDefaultFor`): an agent's chat lands on
+ * the same tab the person gets from the launcher. Until 3 November 2026 the
+ * flag always answered the built-in chat profile, so a workspace whose Codex
+ * chats ran on a profile of the person's own got, from an agent, a tab on the
+ * built-in command and its default approval policy, and asked before every
+ * command. An explicit chat profile still wins. Refuses what cannot be
+ * honoured rather than quietly opening a terminal: chat on a mode that has no
+ * chat view, or chat beside a profile that is not a chat profile.
  */
-export function resolveProfileRef(payload: {
-  mode?: OpenSessionMode
-  chat?: boolean
-  profile?: string
-}): string | undefined {
+export function resolveProfileRef(
+  payload: { mode?: OpenSessionMode; chat?: boolean; profile?: string },
+  chatDefault?: string
+): string | undefined {
   if (!payload.chat) return payload.profile
   const mode = payload.mode ?? 'claude'
   const chatProfile = CHAT_PROFILE_IDS[mode]
   if (!chatProfile) {
     throw new Error(`chat: true needs mode "claude" or "codex"; "${mode}" has no chat view`)
   }
-  if (payload.profile && payload.profile !== chatProfile) {
-    throw new Error(
-      `chat: true opens the "${chatProfile}" profile; drop profile "${payload.profile}" or chat`
-    )
+  const family = mode as ChatFamily
+  if (payload.profile) {
+    if (!isChatProfileRef(family, payload.profile))
+      throw new Error(
+        `chat: true opens a chat profile ("${chatProfile}", or a "chat:${family}:…" one); drop profile "${payload.profile}" or chat`
+      )
+    return payload.profile
   }
-  return chatProfile
+  return chatDefault !== undefined && isChatProfileRef(family, chatDefault)
+    ? chatDefault
+    : chatProfile
 }

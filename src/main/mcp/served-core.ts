@@ -100,6 +100,9 @@ export interface ServedShell<W extends ToolWindow = ToolWindow> {
   switchMode(workspaceId: string | null | undefined): AccountSwitchMode
   /** The launch profiles of a family, built-ins first. */
   launchProfiles(family: LauncherFamily): { id: string; name: string }[]
+  /** The chat profile the launcher would open that family's chat on in that
+   *  workspace (`chatDefaultFor`); undefined when its default has no chat form. */
+  chatDefault(family: LauncherFamily, workspaceId: string | undefined): string | undefined
   /** The pinned groups the workspace state persists, every workspace's. */
   pins(): PinnedBlueprint[]
   /** The tab that opened a tab, null when none did (`sessions/lineage.ts`). */

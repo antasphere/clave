@@ -26,9 +26,11 @@ import {
   until,
   userDataDir,
   fixturePath,
-  serverDataDirOf
+  serverDataDirOf,
+  recordsRootOf
 } from './harness.mjs'
-import { mkdirSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync } from 'node:fs'
+import path from 'node:path'
 
 const DIR = userDataDir('mcp-open-chat')
 const ROOT = fixturePath('mcp-open-chat-root')
@@ -87,6 +89,52 @@ export async function run(t) {
         record
       )
     }
+
+    // The chat an agent opens is the chat the launcher would open: the
+    // workspace's (here the global) default's chat form, not the built-in
+    // chat whatever the person set. On 3 November 2026 a wave's Codex chats
+    // ran on the built-in and asked before every command. Read off the
+    // session record the server writes, the one a restart restores from.
+    await win.evaluate(() =>
+      window.electronAPI.launchProfileUpsert({
+        id: 'yolo-e2e',
+        name: 'yolo codex e2e',
+        family: 'codex',
+        command: ['codex', '--yolo'],
+        additionalArgs: []
+      })
+    )
+    await win.evaluate(() => window.electronAPI.launchProfileSetGlobal('codex', 'yolo-e2e'))
+    const storedProfile = async (id) =>
+      until(async () => {
+        const file = path.join(recordsRootOf(DIR), 'session-records', `${id}.json`)
+        if (!existsSync(file)) return null
+        return JSON.parse(readFileSync(file, 'utf8')).launchProfileId ?? null
+      })
+    const onDefault = toolPayload(
+      await client.call('clave_open_session', { cwd: ROOT, mode: 'codex', chat: true })
+    )
+    t.check(
+      "codex chat with a saved profile as the default: the tab runs on that profile's chat form",
+      onDefault?.sessionId
+        ? (await storedProfile(onDefault.sessionId)) === 'chat:codex:yolo-e2e'
+        : false,
+      onDefault
+    )
+    const explicit = toolPayload(
+      await client.call('clave_open_session', {
+        cwd: ROOT,
+        mode: 'codex',
+        chat: true,
+        profile: 'codex-chat'
+      })
+    )
+    t.check(
+      'an explicit chat profile still wins over the default',
+      explicit?.sessionId ? (await storedProfile(explicit.sessionId)) === 'codex-chat' : false,
+      explicit
+    )
+    await win.evaluate(() => window.electronAPI.launchProfileSetGlobal('codex', null))
 
     const plain = toolPayload(
       await client.call('clave_open_session', { cwd: ROOT, mode: 'claude' })

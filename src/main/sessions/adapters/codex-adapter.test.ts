@@ -891,6 +891,73 @@ describe('Codex chat permissions', () => {
       )
     ).toMatchObject({ sandbox: 'danger-full-access', approvalPolicy: 'never' })
   })
+  /* The thread's binding to this tab's own Clave tool server, by its fresh
+     name. Codex asks before every tool of a server left on its default mode
+     (auto: any tool not annotated read-only, and Clave's carry no
+     annotations), and the fresh name let no answer be remembered: on 3
+     November 2026 every message a lane sent to another tab asked first. */
+  const claveBinding = (params: unknown): Record<string, unknown> | undefined => {
+    const config = (params as { config?: Record<string, unknown> })?.config ?? {}
+    const key = Object.keys(config).find((k) => /^mcp_servers\.clave_[a-f0-9]{12}$/.test(k))
+    return key ? (config[key] as Record<string, unknown>) : undefined
+  }
+  /* The tools kept on prompt: the ones that start or end a process on the
+     Mac outside the chat's own sandbox and approval policy. */
+  const prompted = {
+    clave_open_session: { approval_mode: 'prompt' },
+    clave_add_group_terminal: { approval_mode: 'prompt' },
+    clave_launch_group: { approval_mode: 'prompt' },
+    clave_set_session_view: { approval_mode: 'prompt' },
+    clave_close_session: { approval_mode: 'prompt' },
+    clave_side_panel: { approval_mode: 'prompt' }
+  }
+  it("tells Codex this tab's Clave tools need no approval, the process-starting ones excepted", async () => {
+    const binding = claveBinding(await threadParams({}, profile()))
+    expect(binding).toMatchObject({
+      url: 'http://127.0.0.1:12345/mcp',
+      bearer_token_env_var: 'CLAVE_CODEX_MCP_TOKEN',
+      enabled: true,
+      required: true,
+      default_tools_approval_mode: 'approve',
+      tools: prompted
+    })
+    expect(Object.keys(binding!.tools as Record<string, unknown>).sort()).toEqual(
+      Object.keys(prompted).sort()
+    )
+  })
+  it('says the same on a resumed thread, so a restart keeps it', async () => {
+    expect(
+      claveBinding(await threadParams({ resume: 'saved' }, profile('-s', 'workspace-write')))
+    ).toMatchObject({ default_tools_approval_mode: 'approve', tools: prompted })
+  })
+  it('prompts the side panel under every policy that asks, whatever the sandbox says', async () => {
+    // Its update writes an existing file wherever the agent nominated it,
+    // outside the thread's sandbox and its writable roots; the sandbox Codex's
+    // own config applies is not seen here, so no asking policy approves it.
+    for (const flags of [
+      [],
+      ['-s', 'read-only'],
+      ['-s', 'workspace-write'],
+      ['-s', 'danger-full-access']
+    ]) {
+      const binding = claveBinding(await threadParams({}, profile(...flags)))
+      expect(binding).toMatchObject({ tools: { clave_side_panel: { approval_mode: 'prompt' } } })
+    }
+    const launch = claveBinding(await threadParams({ sandbox: 'workspace-write' }, profile()))
+    expect(launch).toMatchObject({ tools: { clave_side_panel: { approval_mode: 'prompt' } } })
+  })
+  it('keeps no prompt under a policy that skips every approval: the person chose none', async () => {
+    const binding = claveBinding(await threadParams({}, profile('--yolo')))
+    expect(binding).toMatchObject({ default_tools_approval_mode: 'approve' })
+    expect(binding).not.toHaveProperty('tools')
+    // The launch's own choice says the same.
+    const launch = claveBinding(await threadParams({ permissionMode: 'never' }, profile()))
+    expect(launch).not.toHaveProperty('tools')
+  })
+  it('names its own server only: no other server table is written', async () => {
+    const params = (await threadParams({}, profile())) as { config: Record<string, unknown> }
+    expect(Object.keys(params.config).filter((k) => k.startsWith('mcp_servers.'))).toHaveLength(1)
+  })
   it('refuses a sandbox Codex does not know', async () => {
     const { adapter } = fake()
     const handle = await adapter.spawn({ ...spec, options: { sandbox: 'everything' } })

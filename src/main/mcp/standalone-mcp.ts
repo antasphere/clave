@@ -31,6 +31,9 @@ export interface StandaloneMcpOptions {
    *  server offers no such profile. Absent, only the built-in terminal and
    *  chat profiles are known. */
   readonly profileFamily?: ((id: string) => LauncherFamily | undefined) | undefined
+  /** The chat profile this server's launcher would open a family's chat on
+   *  (its default's chat form, `chatDefaultFor`); absent, the built-in chat. */
+  readonly chatDefault?: ((family: LauncherFamily) => string | undefined) | undefined
 }
 /** The profiles every server offers: the terminal built-ins and the chat views. */
 export const builtInProfileFamily = (id: string): LauncherFamily | undefined =>
@@ -80,6 +83,7 @@ function buildServer(
 ): McpServer {
   const { sessions, requests, sidebar } = options
   const profileFamily = options.profileFamily ?? builtInProfileFamily
+  const chatDefault = options.chatDefault ?? ((): undefined => undefined)
   const own = (id: string): string => (id === 'mine' ? sessionId : id)
   const known = (id: string): string => {
     const resolved = own(id)
@@ -226,7 +230,9 @@ function buildServer(
         chat: z
           .boolean()
           .optional()
-          .describe('Claude and Codex open in the chat view unless this is false'),
+          .describe(
+            "Claude and Codex open in the chat view unless this is false, on the chat form of this server's default profile for the family (profile names another chat profile by its id)"
+          ),
         profile: z.string().min(1).max(256).optional().describe('A launch profile id'),
         groupId: z.string().min(1).max(256).optional().describe('Group id from clave_create_group'),
         // Named so a desktop-shaped call fails clearly instead of being stripped.
@@ -252,12 +258,18 @@ function buildServer(
           ...(args.dangerous !== undefined ? { dangerous: args.dangerous } : {}),
           ...(args.model !== undefined ? { model: args.model } : {})
         })
-      const launchProfileId = resolveProfileRef({
-        mode,
-        // The chat view is the standalone default; a named profile decides for itself.
-        chat: args.chat ?? (args.profile === undefined && (mode === 'claude' || mode === 'codex')),
-        ...(args.profile !== undefined ? { profile: args.profile } : {})
-      })
+      const launchProfileId = resolveProfileRef(
+        {
+          mode,
+          // The chat view is the standalone default; a named profile decides for itself.
+          chat:
+            args.chat ?? (args.profile === undefined && (mode === 'claude' || mode === 'codex')),
+          ...(args.profile !== undefined ? { profile: args.profile } : {})
+        },
+        // The chat this server's launcher would open: the person's own chat
+        // profile when they set one on this server.
+        family ? chatDefault(family) : undefined
+      )
       // A profile picks the adapter, so one from another family would start
       // another agent than the mode names: refuse it before anything starts.
       if (launchProfileId !== undefined) {

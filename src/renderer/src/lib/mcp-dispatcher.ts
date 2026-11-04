@@ -23,7 +23,7 @@ import type {
 import { usePinnedStore, getPinnedState, togglePinnedGroup } from '../store/pinned-store'
 import type { PinnedGroupSession } from '../store/session-types'
 import { useWorkspaceStore, type Workspace } from '../store/workspace-store'
-import { profilesFor } from '../store/launch-profile-store'
+import { profilesFor, selectedChatProfile } from '../store/launch-profile-store'
 import {
   getClaudeProfile,
   claudeProfileSpawnFields,
@@ -473,7 +473,12 @@ export async function openSessionProgrammatically(payload: {
   // --yolo for the launcher's own Cmd+Y (PRDCT-2528).
   const { claudeMode, antigravityMode, codexMode, piMode, dangerousMode, model, family } =
     resolveSpawnModes(payload)
-  const profileRef = resolveProfileRef(payload)
+  // The chat the launcher would open in that workspace: the person's own
+  // chat profile when they set one, as the account below is the pool's pick.
+  const profileRef = resolveProfileRef(
+    payload,
+    family ? selectedChatProfile(family, workspaceId) : undefined
+  )
   const launchProfileId =
     family && profileRef
       ? profilesFor(family).find(

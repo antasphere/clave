@@ -1,5 +1,6 @@
 import { BUILT_IN_LAUNCH_PROFILES } from '../../../shared/agent-launch'
 import {
+  chatDefaultFor,
   resolveProfileRef,
   resolveSpawnModes,
   type OpenSessionMode
@@ -33,12 +34,20 @@ export async function openFleetSession(
 ): Promise<{ sessionId: string; groupId: string | null; serverId: string }> {
   const mode = payload.mode ?? 'claude'
   const { family, ...modes } = resolveSpawnModes(payload)
-  const profileRef = resolveProfileRef(payload)
   if (payload.account && !modes.claudeMode && !modes.codexMode)
     throw new Error(
       `The account argument applies to claude and codex modes only (got mode "${mode}")`
     )
   const settings = family ? await window.electronAPI.fleetLaunchSettings(serverId) : null
+  // The chat the server itself would open: its own global default's chat
+  // form. A fleet server holds no per-workspace default the Mac could name
+  // (the Mac's launcher keeps its server-workspace overrides in the Mac's own
+  // file), so the workspace is not consulted here; an explicit profile still
+  // names one of the server's by id.
+  const profileRef = resolveProfileRef(
+    payload,
+    family && settings ? chatDefaultFor(settings.profiles, family, null) : undefined
+  )
   const profile =
     profileRef && settings
       ? [...BUILT_IN_LAUNCH_PROFILES, ...settings.profiles.customProfiles].find(

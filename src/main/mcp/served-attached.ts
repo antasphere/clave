@@ -15,7 +15,8 @@
 import type { ClaveApiClient } from '@clave/client'
 import type { SessionRecord as WireRecord } from '@clave/contract/sessions'
 import type { SessionRecord } from '../sessions/adapters/pty-backend'
-import { BUILT_IN_LAUNCH_PROFILES } from '../../shared/agent-launch'
+import { BUILT_IN_LAUNCH_PROFILES, type LaunchProfilePreferences } from '../../shared/agent-launch'
+import { chatDefaultFor } from '../../shared/open-session-modes'
 import type { PinnedBlueprint } from '../../shared/pinned-blueprint'
 import { usageSummaryOf } from '../../shared/usage-summary'
 import type { AccountProvider, ServedPoolAccount, ServedShell, ToolWindow } from './served-core'
@@ -88,7 +89,7 @@ export async function attachedShell<W extends ToolWindow>(
     needs.includes('records') ? loadRecords() : Promise.resolve(),
     needs.includes('accounts') ? fetchAccounts(api) : Promise.resolve(null),
     needs.includes('profiles')
-      ? api.settings.launchProfiles.list().then((p) => p.customProfiles)
+      ? api.settings.launchProfiles.list().then((p) => p as unknown as LaunchProfilePreferences)
       : Promise.resolve(null),
     needs.includes('pins')
       ? api.settings.workspaces.load().then((s) => s.pins as unknown as PinnedBlueprint[])
@@ -107,10 +108,16 @@ export async function attachedShell<W extends ToolWindow>(
     accounts: (provider) => accounts?.[provider] ?? base.accounts(provider),
     launchProfiles: (family) =>
       profiles
-        ? [...BUILT_IN_LAUNCH_PROFILES, ...profiles]
+        ? [...BUILT_IN_LAUNCH_PROFILES, ...profiles.customProfiles]
             .filter((p) => p.family === family)
             .map(({ id, name }) => ({ id, name }))
         : base.launchProfiles(family),
+    // The server's own defaults: a chat opened on a server lands on the chat
+    // that server's launcher would open, never on the Mac's.
+    chatDefault: (family, workspaceId) =>
+      profiles
+        ? chatDefaultFor(profiles, family, workspaceId)
+        : base.chatDefault(family, workspaceId),
     pins: () => pins ?? base.pins()
   }
 }

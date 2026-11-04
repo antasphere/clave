@@ -47,6 +47,8 @@ interface World {
   accounts: Record<'claude' | 'codex', ServedPoolAccount[]>
   selected: Record<'claude' | 'codex', string | undefined>
   switchMode: 'propose' | 'automatic'
+  /** The chat profile the launcher would open, by `<family>@<workspace>`. */
+  chatDefaults: Record<string, string | undefined>
   pins: PinnedBlueprint[]
   /** The windows that are live, by key. */
   windows: string[]
@@ -78,6 +80,7 @@ function setup(partial: Partial<World> = {}): Harness {
     },
     selected: { claude: undefined, codex: undefined },
     switchMode: 'propose',
+    chatDefaults: {},
     pins: [],
     windows: ['wA', 'wB'],
     parents: {},
@@ -170,7 +173,16 @@ function setup(partial: Partial<World> = {}): Harness {
     selectedAccountId: (provider) => w.selected[provider],
     switchMode: () => w.switchMode,
     launchProfiles: (family) =>
-      family === 'claude' ? [{ id: 'claude-chat', name: 'Claude chat' }] : [],
+      family === 'claude'
+        ? [{ id: 'claude-chat', name: 'Claude chat' }]
+        : family === 'codex'
+          ? [
+              { id: 'codex-chat', name: 'Codex chat' },
+              { id: 'chat:codex:yolo', name: 'yolo codex (chat)' },
+              { id: 'strict', name: 'strict codex' }
+            ]
+          : [],
+    chatDefault: (family, workspaceId) => w.chatDefaults[`${family}@${workspaceId ?? ''}`],
     pins: () => w.pins,
     parentOf: (id) => w.parents[id] ?? null,
     setParent: (child, parent) => {
@@ -740,6 +752,42 @@ describe('opening a session', () => {
     ])
     // A window is live: the pane starts the process at its real size.
     expect(h.argsOf('sessions.resize')).toEqual([])
+  })
+  it("opens a chat on the workspace's own chat profile, the one the launcher would", async () => {
+    // The caller sits in ws1, whose Codex chats run on the person's yolo
+    // profile; ws2 has no default of its own. An explicit profile still wins.
+    const h = setup({
+      ...world(),
+      chatDefaults: { 'codex@ws1': 'chat:codex:yolo', 'codex@ws2': 'codex-chat' }
+    })
+    const started = (): Record<string, unknown>[] =>
+      (h.argsOf('sessions.start') as { options: Record<string, unknown> }[]).map(
+        (call) => call.options
+      )
+    await run(h, 'openSession', { cwd: '/proj', mode: 'codex', chat: true })
+    expect(started()[0]).toMatchObject({
+      codexMode: true,
+      dangerousMode: false,
+      launchProfileId: 'chat:codex:yolo',
+      workspaceId: 'ws1'
+    })
+    await run(h, 'openSession', { cwd: '/proj', mode: 'codex', chat: true, workspace: 'ws2' })
+    expect(started()[1]).toMatchObject({ launchProfileId: 'codex-chat', workspaceId: 'ws2' })
+    await run(h, 'openSession', {
+      cwd: '/proj',
+      mode: 'codex',
+      chat: true,
+      profile: 'codex-chat',
+      dangerous: true
+    })
+    expect(started()[2]).toMatchObject({ launchProfileId: 'codex-chat', dangerousMode: true })
+    // A terminal profile beside chat is refused, as before.
+    await expect(
+      run(h, 'openSession', { cwd: '/proj', mode: 'codex', chat: true, profile: 'strict' })
+    ).rejects.toThrow(/drop profile/)
+    // Without chat, the named terminal profile is the one that starts.
+    await run(h, 'openSession', { cwd: '/proj', mode: 'codex', profile: 'strict' })
+    expect(started()[3]).toMatchObject({ launchProfileId: 'strict' })
   })
   it.each([undefined, false, true])(
     'persists sidebar attachment only when attachToParent is true: %s',
