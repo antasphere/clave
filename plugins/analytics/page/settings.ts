@@ -77,8 +77,11 @@ function button(className: string, text: string, action?: string): HTMLButtonEle
   return node
 }
 
-/** The token root of the page's own URL: `/<token>/`. */
+/** The plugin server's token root: the `analytics-base` meta, else the first segment of the
+ *  page's own URL, `/<token>/`. */
 function base(): string {
+  const named = document.querySelector<HTMLMetaElement>('meta[name="analytics-base"]')?.content
+  if (named) return named
   const first = location.pathname.split('/')[1] ?? ''
   return `/${first}/`
 }
@@ -165,7 +168,7 @@ function drawHeader(): HTMLElement {
   back.append(icon(ARROW_LEFT_D), el('span', undefined, 'Back'))
   back.addEventListener('click', () => {
     if (history.length > 1) history.back()
-    else location.assign(base() + 'workspace')
+    else location.assign(base() + 'open/workspace')
   })
   back.disabled = false
   const titles = el('div')

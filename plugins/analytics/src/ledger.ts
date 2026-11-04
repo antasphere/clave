@@ -1,7 +1,7 @@
 import type { PluginSessionState } from './host'
 import type { FileCursor } from './reader'
 import { cost, type PriceTable } from './prices'
-import { scopeKey } from './scope'
+import type { Range } from './scope'
 
 /**
  * The ledger: one row per session Clave has shown the plugin, each with the tally of its
@@ -81,45 +81,20 @@ export interface SessionRow {
   stateSpans: StateSpan[]
 }
 
-/** The ledger file's version: 3 since a tally keeps the stamps of its tool calls and the
- *  ledger the deck each scope was published as (2 since stamps count messages, not streamed
- *  rows); a file of an earlier version is recounted from the transcripts rather than read. */
+/** The ledger file's version: 3 since a tally keeps the stamps of its tool calls (2 since
+ *  stamps count messages, not streamed rows); a file of an earlier version is recounted from
+ *  the transcripts rather than read. A file carrying fields this build does not know (a
+ *  `published` map, for one) is read for what it knows. */
 export const LEDGER_VERSION = 3 as const
-
-/** The deck a scope was last published as on Slideless, kept so the next publish is a new
- *  version of the same deck and its share links stay. */
-export interface PublishedDeck {
-  deckId: string
-  baseUrl: string
-  url: string
-  version: number
-  /** The publish's ordinal for this scope: the `n` of `published/<scope>-<n>.json`. */
-  n: number
-  at: string
-  title: string
-  /** Whether the session names and folders went with it. */
-  names: boolean
-  /** The login the CLI published under, as `whoami` named it; absent when it said no email. */
-  by?: string
-}
 
 export interface Ledger {
   v: typeof LEDGER_VERSION
   gapMinutes: number
   sessions: Record<string, SessionRow>
-  /** By scope key (`scopeKey`), the deck each scope was last published as. */
-  published: Record<string, PublishedDeck>
   updatedAt: string
 }
 
-export { scopeKey } from './scope'
-
-export type Range = 'all' | 'today' | '7d' | '30d'
-export const RANGES: readonly Range[] = ['today', '7d', '30d', 'all']
-
-export function isRange(value: unknown): value is Range {
-  return typeof value === 'string' && (RANGES as readonly string[]).includes(value)
-}
+export { isRange, RANGES, scopeKey, type Range } from './scope'
 
 // ─── Tokens and tallies ──────────────────────────────────────────────────────
 
@@ -168,7 +143,6 @@ export function emptyLedger(gapMinutes = 15, now: Date = new Date()): Ledger {
     v: LEDGER_VERSION,
     gapMinutes,
     sessions: {},
-    published: {},
     updatedAt: now.toISOString()
   }
 }
@@ -363,8 +337,6 @@ export interface ScopeView {
   blocks: Block[]
   /** The sessions the workspace's animation draws, every state included; empty elsewhere. */
   live: LiveSession[]
-  /** The deck this scope was last published as, or null. */
-  published: PublishedDeck | null
   footer: ViewFooter
 }
 
@@ -606,7 +578,6 @@ export function sessionView(ledger: Ledger, id: string, prices: PriceTable): Sco
     cards: [],
     blocks: total.blocks,
     live: [],
-    published: ledger.published[scopeKey('session', row.id)] ?? null,
     footer: footer(ledger, prices, filesOf(row))
   }
 }
@@ -666,7 +637,6 @@ export function groupView(
     cards: [],
     blocks: all.blocks,
     live: [],
-    published: ledger.published[scopeKey('group', groupId)] ?? null,
     footer: footer(ledger, prices, all.files)
   }
 }
@@ -745,7 +715,6 @@ export function workspaceView(
     cards,
     blocks: all.blocks,
     live,
-    published: ledger.published[scopeKey('workspace', workspaceId)] ?? null,
     footer: footer(ledger, prices, all.files)
   }
 }

@@ -7,19 +7,20 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { foldEvents, parseLine } from './claude'
 import { emptyLedger, emptyTally, type Ledger, type ScopeView } from './ledger'
 import { loadPrices } from './prices'
-import type { PublishOutcome, PublishRequest } from './publish'
 import { newCursor } from './reader'
 import {
-  parsePublishBody,
   parseScopeParam,
   parseSettingsPatch,
+  scopeOfPath,
   scopeParam,
   startServer,
   type AnalyticsServer,
+  type Scope,
   type SettingsData,
   type SettingsPatch,
   type SettingsPort
 } from './server'
+import type { Range } from './scope'
 import { Store } from './store'
 
 const fixture = readFileSync(join(__dirname, 'fixtures', 'session.jsonl'), 'utf8')
@@ -58,6 +59,8 @@ function ledger(): Ledger {
 interface Reply {
   status: number
   type: string | undefined
+  /** The `access-control-allow-origin` answered, if any. */
+  origin: string | undefined
   body: string
 }
 
@@ -68,7 +71,12 @@ function get(url: string): Promise<Reply> {
       res.setEncoding('utf8')
       res.on('data', (chunk: string) => (body += chunk))
       res.on('end', () =>
-        resolve({ status: res.statusCode ?? 0, type: res.headers['content-type'], body })
+        resolve({
+          status: res.statusCode ?? 0,
+          type: res.headers['content-type'],
+          origin: res.headers['access-control-allow-origin'],
+          body
+        })
       )
     })
       .on('error', reject)
@@ -76,10 +84,12 @@ function get(url: string): Promise<Reply> {
   })
 }
 
-// The settings port and the publish the server is handed, recording what reaches them.
+// The settings port and the open port the server is handed, recording what reaches them.
 let patches: SettingsPatch[] = []
-let publishes: PublishRequest[] = []
-let publishThrows = false
+let opens: { scope: Scope; range: Range }[] = []
+/** What the open port answers: a viewer URL, null for the plugin's own page, or a throw. */
+let openAnswer: string | null | 'throw' = null
+let note = ''
 
 const settingsData = (): SettingsData => ({
   gapMinutes: 15,
@@ -102,24 +112,10 @@ const settingsPort: SettingsPort = {
   }
 }
 
-const cannedOutcome: PublishOutcome = {
-  ok: true,
-  deck: {
-    deckId: 'deck-7',
-    baseUrl: 'https://share.antasphere.com',
-    url: 'https://share.antasphere.com/p/deck-7',
-    version: 1,
-    n: 1,
-    at: '2026-11-04T15:00:00.000Z',
-    title: 'Theme · Analytics',
-    names: true
-  }
-}
-
-async function fakePublish(request: PublishRequest): Promise<PublishOutcome> {
-  publishes.push(request)
-  if (publishThrows) throw new Error('boom')
-  return cannedOutcome
+async function fakeOpen(scope: Scope, range: Range): Promise<string | null> {
+  opens.push({ scope, range })
+  if (openAnswer === 'throw') throw new Error('boom')
+  return openAnswer
 }
 
 let dir: string
@@ -146,10 +142,10 @@ beforeAll(async () => {
     host: '127.0.0.1',
     log: (level, message) => logged.push(`${level}: ${message}`),
     settings: settingsPort,
-    publish: fakePublish
+    open: fakeOpen,
+    note: () => note
   })
-  const page = new URL(server.url('session', 'tab 1', 'ws-1'))
-  base = `${page.origin}/${page.pathname.split('/')[1]}`
+  base = server.base.replace(/\/$/, '')
 })
 
 afterAll(async () => {
@@ -168,16 +164,19 @@ describe('the server', () => {
     const saved = JSON.parse(readFileSync(join(dir, 'data', 'server.json'), 'utf8'))
     expect(saved.port).toBe(server.port)
     expect(saved.token).toMatch(/^[0-9a-f]{32}$/)
-    expect(server.url('group', 'g1', null)).toBe(
-      `http://127.0.0.1:${server.port}/${saved.token}/group/g1`
-    )
-    expect(server.url('workspace', 'ws-1', 'ws-1')).toBe(
-      `http://127.0.0.1:${server.port}/${saved.token}/workspace?ws=ws-1`
+    expect(server.base).toBe(`http://127.0.0.1:${server.port}/${saved.token}/`)
+    // The actions lead through the open route; the pages themselves sit beside it.
+    expect(server.url('group', 'g1', null)).toBe(`${base}/open/group/g1`)
+    expect(server.url('workspace', 'ws-1', 'ws-1')).toBe(`${base}/open/workspace?ws=ws-1`)
+    expect(server.url('workspace', 'none', null)).toBe(`${base}/open/workspace`)
+    expect(server.pageUrl({ kind: 'group', id: 'g 1' }, '7d')).toBe(`${base}/group/g%201?range=7d`)
+    expect(server.pageUrl({ kind: 'workspace', ws: 'ws-1' }, null)).toBe(
+      `${base}/workspace?ws=ws-1`
     )
   })
 
   it('answers the three pages with their data and theme', async () => {
-    const session = await get(server.url('session', 'tab 1', 'ws-1'))
+    const session = await get(server.pageUrl({ kind: 'session', id: 'tab 1' }, null))
     expect(session.status).toBe(200)
     expect(session.type).toContain('text/html')
     expect(session.body).toContain('<html lang="en" data-theme="dark">')
@@ -185,12 +184,14 @@ describe('the server', () => {
     expect(session.body).not.toContain('Dark </script> mode')
     expect(dataBlock(session.body)).toMatchObject({ kind: 'session', name: 'Dark </script> mode' })
 
-    const group = await get(`${server.url('group', 'g1', null)}?theme=coffee&range=7d`)
+    const group = await get(`${server.pageUrl({ kind: 'group', id: 'g1' }, '7d')}&theme=coffee`)
     expect(group.status).toBe(200)
     expect(group.body).toContain('data-theme="coffee"')
     expect(dataBlock(group.body)).toMatchObject({ kind: 'group', name: 'Theme', range: '7d' })
 
-    const workspace = await get(`${server.url('workspace', 'ws-1', 'ws-1')}&theme=nonsense`)
+    const workspace = await get(
+      `${server.pageUrl({ kind: 'workspace', ws: 'ws-1' }, null)}&theme=nonsense`
+    )
     expect(workspace.status).toBe(200)
     expect(workspace.body).toContain('data-theme="dark"')
     const ws = dataBlock(workspace.body)
@@ -198,10 +199,15 @@ describe('the server', () => {
     expect(ws.cards.map((c) => c.name)).toEqual(['Theme'])
   })
 
-  it('answers the data of a scope as JSON', async () => {
+  it('answers the data of a scope as JSON, to any origin, and the pages to none', async () => {
     const r = await get(`${base}/data/session/tab%201.json`)
     expect(r.status).toBe(200)
     expect(r.type).toContain('application/json')
+    expect(r.origin).toBe('*')
+    expect(
+      (await get(server.pageUrl({ kind: 'session', id: 'tab 1' }, null))).origin
+    ).toBeUndefined()
+    expect((await get(`${base}/data/settings.json`)).origin).toBeUndefined()
     const v = JSON.parse(r.body) as ScopeView
     expect(v.figures.messages).toBe(3)
     expect(v.figures.toolCalls).toBe(5)
@@ -233,6 +239,7 @@ describe('the server', () => {
     await new Promise<void>((resolve, reject) => {
       const req = request(url, (res) => {
         expect(res.headers['content-type']).toContain('text/event-stream')
+        expect(res.headers['access-control-allow-origin']).toBe('*')
         res.setEncoding('utf8')
         let buffer = ''
         res.on('data', (chunk: string) => {
@@ -263,12 +270,17 @@ describe('the server', () => {
   })
   it('answers nothing but GET, and sends the page policy on pages only', async () => {
     const post = await new Promise<Reply>((resolve, reject) => {
-      request(server.url('session', 'tab 1', 'ws-1'), { method: 'POST' }, (res) => {
+      request(server.pageUrl({ kind: 'session', id: 'tab 1' }, null), { method: 'POST' }, (res) => {
         let body = ''
         res.setEncoding('utf8')
         res.on('data', (chunk: string) => (body += chunk))
         res.on('end', () =>
-          resolve({ status: res.statusCode ?? 0, type: res.headers['content-type'], body })
+          resolve({
+            status: res.statusCode ?? 0,
+            type: res.headers['content-type'],
+            origin: res.headers['access-control-allow-origin'],
+            body
+          })
         )
       })
         .on('error', reject)
@@ -285,7 +297,7 @@ describe('the server', () => {
           .on('error', reject)
           .end()
       })
-    const page = await headers(server.url('session', 'tab 1', 'ws-1'))
+    const page = await headers(server.pageUrl({ kind: 'session', id: 'tab 1' }, null))
     expect(String(page['content-security-policy'])).toContain("default-src 'none'")
     expect(String(page['content-security-policy'])).toContain("script-src 'self'")
     const data = await headers(`${base}/data/session/tab%201.json`)
@@ -301,14 +313,14 @@ describe('the server', () => {
       }
     })
     try {
-      const first = await get(server.url('workspace', 'ws-1', 'ws-1'))
+      const first = await get(server.pageUrl({ kind: 'workspace', ws: 'ws-1' }, null))
       expect(first.status).toBe(404)
       expect(first.body).toBe('')
-      const again = await get(server.url('workspace', 'ws-1', 'ws-1'))
+      const again = await get(server.pageUrl({ kind: 'workspace', ws: 'ws-1' }, null))
       expect(again.status).toBe(404)
       expect(logged.filter((l) => l.includes('workspace page workspace:ws-1'))).toHaveLength(1)
       // A page that does not walk the broken row still answers.
-      expect((await get(server.url('session', 'tab 1', 'ws-1'))).status).toBe(200)
+      expect((await get(server.pageUrl({ kind: 'session', id: 'tab 1' }, null))).status).toBe(200)
       // The live stream of the broken page sends no frame and stays open; once the row is
       // gone, a change brings the frame.
       const frames: string[] = []
@@ -352,7 +364,12 @@ function post(url: string, body: string, type = 'application/json'): Promise<Rep
         res.setEncoding('utf8')
         res.on('data', (chunk: string) => (text += chunk))
         res.on('end', () =>
-          resolve({ status: res.statusCode ?? 0, type: res.headers['content-type'], body: text })
+          resolve({
+            status: res.statusCode ?? 0,
+            type: res.headers['content-type'],
+            origin: res.headers['access-control-allow-origin'],
+            body: text
+          })
         )
       }
     )
@@ -464,75 +481,88 @@ describe('the settings routes', () => {
   })
 })
 
-describe('the publish route', () => {
-  it('hands the publish the scope view and the cleaned request', async () => {
-    publishes = []
-    const r = await post(
-      `${base}/publish`,
-      json({
-        scope: 'group:g1',
-        names: true,
-        theme: 'coffee',
-        tokens: { '--surface-0': '#fff', bad: 'x', '--y': 'a}b' }
+describe('the open route', () => {
+  /** A GET whose redirect is read, never followed. */
+  const head = (
+    url: string
+  ): Promise<{ status: number; location: string | undefined; length: string | undefined }> =>
+    new Promise((resolve, reject) => {
+      request(url, (res) => {
+        res.resume()
+        res.on('end', () =>
+          resolve({
+            status: res.statusCode ?? 0,
+            location: res.headers['location'],
+            length: res.headers['content-length']
+          })
+        )
       })
-    )
-    expect(r.status).toBe(200)
-    expect(JSON.parse(r.body)).toEqual(cannedOutcome)
-    expect(publishes).toHaveLength(1)
-    const sent = publishes[0]!
-    expect(sent.key).toBe('group:g1')
-    expect(sent.range).toBe('all')
-    expect(sent.names).toBe(true)
-    expect(sent.theme).toBe('coffee')
-    expect(sent.tokens).toEqual({ '--surface-0': '#fff' })
-    expect(sent.data.kind).toBe('group')
-    expect(sent.data.name).toBe('Theme')
-  })
-
-  it('takes the range given and the defaults for the rest', async () => {
-    publishes = []
-    const r = await post(`${base}/publish`, json({ scope: 'workspace:ws-1', range: '7d' }))
-    expect(r.status).toBe(200)
-    expect(publishes).toHaveLength(1)
-    const sent = publishes[0]!
-    expect(sent.key).toBe('workspace:ws-1')
-    expect(sent.range).toBe('7d')
-    expect(sent.names).toBe(false)
-    expect(sent.theme).toBe('dark')
-    expect(sent.tokens).toEqual({})
-    expect(sent.data.kind).toBe('workspace')
-  })
-
-  it('says why it cannot publish, in a sentence', async () => {
-    publishes = []
-    const absent = await post(`${base}/publish`, json({ scope: 'session:absent' }))
-    expect(absent.status).toBe(404)
-    expect(absent.type).toContain('application/json')
-    expect(JSON.parse(absent.body)).toEqual({
-      ok: false,
-      kind: 'failed',
-      message: 'Nothing is measured for this page yet.'
+        .on('error', reject)
+        .end()
     })
-    const nope = await post(`${base}/publish`, json({ scope: 'nope' }))
-    expect(nope.status).toBe(400)
-    expect(JSON.parse(nope.body).error).toBe('The body names no page to publish.')
-    expect(publishes).toEqual([])
 
-    publishThrows = true
-    try {
-      const thrown = await post(`${base}/publish`, json({ scope: 'group:g1' }))
-      expect(thrown.status).toBe(200)
-      expect(JSON.parse(thrown.body)).toEqual({
-        ok: false,
-        kind: 'failed',
-        message: 'The publish failed: boom'
-      })
-    } finally {
-      publishThrows = false
-    }
+  it('hands the open port the scope and the range, and redirects to the viewer URL it answers', async () => {
+    opens = []
+    openAnswer = 'http://127.0.0.1:4173/group-g1-7d/index.html'
+    const r = await head(`${base}/open/group/g1?range=7d`)
+    expect(r.status).toBe(302)
+    expect(r.location).toBe(openAnswer)
+    expect(r.length).toBe('0')
+    expect(opens).toEqual([{ scope: { kind: 'group', id: 'g1' }, range: '7d' }])
+    opens = []
+    await head(`${base}/open/workspace?ws=ws-1`)
+    await head(`${base}/open/session/tab%201?range=nonsense`)
+    expect(opens).toEqual([
+      { scope: { kind: 'workspace', ws: 'ws-1' }, range: 'today' },
+      { scope: { kind: 'session', id: 'tab 1' }, range: 'all' }
+    ])
   })
 
-  it('answers 404 on both routes when the server has no settings and no publish', async () => {
+  it("redirects to the plugin's own page, the range and the theme kept, when there is no viewer", async () => {
+    openAnswer = null
+    const r = await head(`${base}/open/group/g1?range=7d&theme=coffee`)
+    expect(r.status).toBe(302)
+    expect(r.location).toBe(`/${base.split('/').pop()}/group/g1?range=7d&theme=coffee`)
+    const ws = await head(`${base}/open/workspace?ws=ws-1`)
+    expect(ws.location).toBe(`/${base.split('/').pop()}/workspace?ws=ws-1&range=today`)
+  })
+
+  it('falls back to the plugin page when the open port throws, and says why once', async () => {
+    openAnswer = 'throw'
+    const before = logged.length
+    const r = await head(`${base}/open/session/tab%201`)
+    expect(r.status).toBe(302)
+    expect(r.location).toBe(`/${base.split('/').pop()}/session/tab%201?range=all`)
+    expect(logged.slice(before)).toEqual([
+      'warn: The deck of session:tab 1 could not be written: boom'
+    ])
+    openAnswer = null
+  })
+
+  it('answers 404 for a scope nothing is measured for, and for a path that names none', async () => {
+    opens = []
+    expect((await head(`${base}/open/session/absent`)).status).toBe(404)
+    expect((await head(`${base}/open/nope`)).status).toBe(404)
+    expect((await head(`${base}/open`)).status).toBe(404)
+    expect((await head(`${base}/open/group/`)).status).toBe(404)
+    expect(opens).toEqual([])
+  })
+
+  it("writes the note it is given on the plugin's own page, and nothing on the settings page", async () => {
+    note = 'The Slideless viewer is starting; the next open shows this page through it'
+    const page = await get(server.pageUrl({ kind: 'session', id: 'tab 1' }, null))
+    expect(page.body).toContain(`<meta name="analytics-note" content="${note}" />`)
+    expect(page.body).toContain(
+      `<meta name="analytics-base" content="/${base.split('/').pop()}/" />`
+    )
+    const settings = await get(`${base}/settings`)
+    expect(settings.body).toContain('<meta name="analytics-base" content="/')
+    note = ''
+    const bare = await get(server.pageUrl({ kind: 'session', id: 'tab 1' }, null))
+    expect(bare.body).toContain('<meta name="analytics-note" content="" />')
+  })
+
+  it('redirects to the plugin page and writes no note when the server has no open port', async () => {
     const own = mkdtempSync(join(tmpdir(), 'analytics-server-bare-'))
     const bare = await startServer({
       store: new Store(join(own, 'data')),
@@ -542,13 +572,17 @@ describe('the publish route', () => {
       host: '127.0.0.1'
     })
     try {
-      const page = new URL(bare.url('group', 'g1', null))
-      const root = `${page.origin}/${page.pathname.split('/')[1]}`
+      const root = bare.base.replace(/\/$/, '')
+      const r = await head(`${root}/open/group/g1`)
+      expect(r.status).toBe(302)
+      expect(r.location).toBe(`/${root.split('/').pop()}/group/g1?range=all`)
       expect((await get(`${root}/group/g1`)).status).toBe(200)
+      expect((await get(`${root}/group/g1`)).body).toContain(
+        '<meta name="analytics-note" content="" />'
+      )
       expect((await get(`${root}/settings`)).status).toBe(404)
       expect((await get(`${root}/data/settings.json`)).status).toBe(404)
       expect((await post(`${root}/settings`, json({ gapMinutes: 20 }))).status).toBe(404)
-      expect((await post(`${root}/publish`, json({ scope: 'group:g1' }))).status).toBe(404)
     } finally {
       await bare.close()
       rmSync(own, { recursive: true, force: true })
@@ -566,7 +600,22 @@ describe('the request parsers', () => {
     expect(parseScopeParam('nope')).toBeNull()
   })
 
-  it('reads a settings patch and a publish body', () => {
+  it('reads the scope a path names', () => {
+    const q = new URLSearchParams('ws=ws-1')
+    expect(scopeOfPath(['session', 'tab 1'], q)).toEqual({ kind: 'session', id: 'tab 1' })
+    expect(scopeOfPath(['group', 'g1'], q)).toEqual({ kind: 'group', id: 'g1' })
+    expect(scopeOfPath(['workspace'], q)).toEqual({ kind: 'workspace', ws: 'ws-1' })
+    expect(scopeOfPath(['workspace'], new URLSearchParams())).toEqual({
+      kind: 'workspace',
+      ws: null
+    })
+    expect(scopeOfPath(['session'], q)).toBeNull()
+    expect(scopeOfPath(['session', ''], q)).toBeNull()
+    expect(scopeOfPath(['workspace', 'x'], q)).toBeNull()
+    expect(scopeOfPath([], q)).toBeNull()
+  })
+
+  it('reads a settings patch', () => {
     expect(parseSettingsPatch({ gapMinutes: '20' })).toEqual({ patch: { gapMinutes: 20 } })
     expect(parseSettingsPatch([])).toHaveProperty('error')
     expect(parseSettingsPatch([])).not.toHaveProperty('patch')
@@ -589,9 +638,5 @@ describe('the request parsers', () => {
       }
     })
     expect('error' in negative && negative.error).toContain('zero or more')
-    const theme = parsePublishBody({ scope: 'group:g1', theme: 'nonsense' })
-    expect('body' in theme && theme.body.theme).toBe('dark')
-    const range = parsePublishBody({ scope: 'group:g1', range: 'yesterday' })
-    expect('body' in range && range.body.range).toBe('all')
   })
 })

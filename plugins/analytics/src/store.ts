@@ -1,26 +1,22 @@
 import * as nodeFs from 'node:fs'
 import { join } from 'node:path'
-import {
-  LEDGER_VERSION,
-  emptyLedger,
-  type Ledger,
-  type PublishedDeck,
-  type SessionRow
-} from './ledger'
+import { LEDGER_VERSION, emptyLedger, type Ledger, type SessionRow } from './ledger'
 import type { PriceTable } from './prices'
 import { DEFAULT_SETTINGS, parseSettings, type Settings } from './settings'
 
 /**
  * The plugin's own files in its data folder, each written atomically (`<file>.tmp`, then
- * `rename`): `server.json` (the port and the URL token), `ledger.json`, `settings.json` (the
- * activity gap) and `prices.json`, the price override the settings page writes (absent by
- * default; a copy a person drops there by hand reads the same). The deck folders and the
- * published snapshots beside them are the publish module's.
+ * `rename`): `server.json` (the port, the URL token and the viewer's port), `ledger.json`,
+ * `settings.json` (the activity gap) and `prices.json`, the price override the settings page
+ * writes (absent by default; a copy a person drops there by hand reads the same). The deck
+ * folders under `decks/` are the deck writer's.
  */
 
 export interface ServerInfo {
   port: number
   token: string
+  /** The port the Slideless viewer listened on last, asked for again at the next start. */
+  viewerPort?: number
 }
 
 export type Logger = (level: 'debug' | 'info' | 'warn' | 'error', message: string) => void
@@ -32,7 +28,6 @@ export type StoreFs = Pick<
 const isObj = (v: unknown): v is Record<string, unknown> =>
   typeof v === 'object' && v !== null && !Array.isArray(v)
 const isNum = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v)
-const isStr = (v: unknown): v is string => typeof v === 'string'
 const isStrOrNull = (v: unknown): boolean => v === null || typeof v === 'string'
 const TOKEN_KEYS = [
   'input',
@@ -91,23 +86,6 @@ export function isSessionRow(value: unknown): value is SessionRow {
   )
 }
 
-/** A published deck as the ledger keeps it; anything else is dropped at load. */
-export function isPublishedDeck(value: unknown): value is PublishedDeck {
-  return (
-    isObj(value) &&
-    isStr(value['deckId']) &&
-    value['deckId'] !== '' &&
-    isStr(value['baseUrl']) &&
-    isStr(value['url']) &&
-    isNum(value['version']) &&
-    isNum(value['n']) &&
-    isStr(value['at']) &&
-    isStr(value['title']) &&
-    typeof value['names'] === 'boolean' &&
-    (value['by'] === undefined || isStr(value['by']))
-  )
-}
-
 export class Store {
   private warned = false
 
@@ -142,8 +120,12 @@ export class Store {
         Number.isInteger(raw.port) &&
         typeof raw.token === 'string' &&
         /^[0-9a-f]{32}$/.test(raw.token)
-      )
-        return { port: raw.port, token: raw.token }
+      ) {
+        const viewerPort = raw.viewerPort
+        return typeof viewerPort === 'number' && Number.isInteger(viewerPort) && viewerPort > 0
+          ? { port: raw.port, token: raw.token, viewerPort }
+          : { port: raw.port, token: raw.token }
+      }
     } catch {
       /* missing or unreadable: a new one is minted */
     }
@@ -201,11 +183,7 @@ export class Store {
       this.warnOnce(
         `ledger.json is version ${String(ledger.v)}, this build writes ${LEDGER_VERSION}; the transcripts are counted again`
       )
-      // The decks a scope was published as survive the recount: a share link must keep
-      // pointing at the same deck once the figures are counted again.
-      const kept = emptyLedger(gapMinutes)
-      kept.published = this.readPublished(ledger.published)
-      return kept
+      return emptyLedger(gapMinutes)
     }
     const sessions: Record<string, SessionRow> = {}
     let dropped = 0
@@ -219,18 +197,8 @@ export class Store {
       v: LEDGER_VERSION,
       gapMinutes: typeof ledger.gapMinutes === 'number' ? ledger.gapMinutes : gapMinutes,
       sessions,
-      published: this.readPublished(ledger.published),
       updatedAt: typeof ledger.updatedAt === 'string' ? ledger.updatedAt : new Date().toISOString()
     }
-  }
-
-  private readPublished(raw: unknown): Record<string, PublishedDeck> {
-    const out: Record<string, PublishedDeck> = {}
-    if (!isObj(raw)) return out
-    for (const [key, deck] of Object.entries(raw)) {
-      if (isPublishedDeck(deck)) out[key] = deck
-    }
-    return out
   }
 
   writeLedger(ledger: Ledger): void {

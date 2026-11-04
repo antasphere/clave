@@ -188,7 +188,6 @@ describe('views', () => {
     expect(v.rows[0]!.blocks.map((b) => b.toolCalls)).toEqual([1])
     expect(v.rows[1]!.blocks.map((b) => b.toolCalls)).toEqual([2])
     expect(v.live).toEqual([])
-    expect(v.published).toBeNull()
     expect(v.rows.map((r) => [r.kind, r.name])).toEqual([
       ['session', 'Session a'],
       ['subagent', 'Explore']
@@ -311,29 +310,11 @@ describe('views', () => {
     expect(rangeDays('all', NOW)).toBeNull()
   })
 
-  it('keys a scope and reads the deck it was published as', () => {
+  it('keys a scope', () => {
     expect(scopeKey('session', 'tab 1')).toBe('session:tab 1')
     expect(scopeKey('group', 'g1')).toBe('group:g1')
     expect(scopeKey('workspace', null)).toBe('workspace:-')
     expect(scopeKey('workspace', 'ws-1')).toBe('workspace:ws-1')
-    const ledger = threeSessions()
-    const deck = {
-      deckId: 'deck-1',
-      baseUrl: 'https://share.example',
-      url: 'https://share.example/p/deck-1',
-      version: 2,
-      n: 2,
-      at: '2026-11-04T10:00:00.000Z',
-      title: 'Theme work · Analytics',
-      names: false
-    }
-    ledger.published[scopeKey('group', 'g1')] = deck
-    ledger.published[scopeKey('workspace', 'ws-1')] = { ...deck, deckId: 'deck-2' }
-    expect(groupView(ledger, 'g1', prices, 'all', NOW).published).toEqual(deck)
-    expect(groupView(ledger, 'nope', prices, 'all', NOW).published).toBeNull()
-    expect(workspaceView(ledger, 'ws-1', prices, 'all', NOW).published?.deckId).toBe('deck-2')
-    expect(workspaceView(ledger, null, prices, 'all', NOW).published).toBeNull()
-    expect(sessionView(ledger, 'a', prices)!.published).toBeNull()
   })
 
   it('counts a session with no workspace stamp in every workspace, as the sidebar shows it', () => {

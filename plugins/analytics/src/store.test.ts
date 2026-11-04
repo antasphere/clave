@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { emptyLedger, emptyTally } from './ledger'
 import { newCursor } from './reader'
-import { Store, isPublishedDeck, isSessionRow } from './store'
+import { Store, isSessionRow } from './store'
 
 let dir: string
 beforeEach(() => {
@@ -51,46 +51,36 @@ describe('Store', () => {
     expect(JSON.parse(readFileSync(file, 'utf8'))).toMatchObject({ v: 3, gapMinutes: 15 })
   })
 
-  it('reloads the published decks it can read, drops the rest, and keeps them across a recount', () => {
+  it('reads a ledger carrying fields it does not know for what it knows, and recounts an earlier version', () => {
     const ledger = emptyLedger(15, new Date('2026-10-02T10:00:00.000Z'))
-    const deck = {
-      deckId: 'deck-1',
-      baseUrl: 'https://share.example',
-      url: 'https://share.example/p/deck-1',
-      version: 3,
-      n: 1,
-      at: '2026-11-04T10:00:00.000Z',
-      title: 'Theme · Analytics',
-      names: false
-    }
     writeFileSync(
       join(dir, 'ledger.json'),
-      JSON.stringify({
-        ...ledger,
-        sessions: { a: row('a') },
-        published: { 'group:g1': deck, 'group:g2': { deckId: 'x' }, 'group:g3': 'nope' }
-      })
+      JSON.stringify({ ...ledger, sessions: { a: row('a') }, published: { 'group:g1': {} } })
     )
-    expect(new Store(dir).readLedger(15).published).toEqual({ 'group:g1': deck })
-    expect(isPublishedDeck(deck)).toBe(true)
-    expect(isPublishedDeck({ ...deck, by: 'romain@example.test' })).toBe(true)
-    expect(isPublishedDeck({ ...deck, by: 7 })).toBe(false)
-    expect(isPublishedDeck({ ...deck, version: '3' })).toBe(false)
-    expect(isPublishedDeck({ ...deck, deckId: '' })).toBe(false)
-    // A ledger of an earlier version is recounted, but the decks it was published as stay:
-    // a share link keeps pointing at the same deck.
+    const read = new Store(dir).readLedger(15)
+    expect(Object.keys(read.sessions)).toEqual(['a'])
+    expect('published' in read).toBe(false)
     writeFileSync(
       join(dir, 'ledger.json'),
-      JSON.stringify({
-        ...ledger,
-        v: 2,
-        sessions: { a: row('a') },
-        published: { 'group:g1': deck }
-      })
+      JSON.stringify({ ...ledger, v: 2, sessions: { a: row('a') } })
     )
     const recounted = new Store(dir).readLedger(15)
     expect(recounted.sessions).toEqual({})
-    expect(recounted.published).toEqual({ 'group:g1': deck })
+    expect(recounted.v).toBe(3)
+  })
+
+  it('keeps the viewer port in server.json beside the port and the token, when it is one', () => {
+    const store = new Store(dir)
+    expect(store.readServer()).toBeNull()
+    store.writeServer({ port: 4000, token: 'a'.repeat(32) })
+    expect(store.readServer()).toEqual({ port: 4000, token: 'a'.repeat(32) })
+    store.writeServer({ port: 4000, token: 'a'.repeat(32), viewerPort: 4173 })
+    expect(store.readServer()).toEqual({ port: 4000, token: 'a'.repeat(32), viewerPort: 4173 })
+    writeFileSync(
+      join(dir, 'server.json'),
+      JSON.stringify({ port: 4000, token: 'a'.repeat(32), viewerPort: 'x' })
+    )
+    expect(store.readServer()).toEqual({ port: 4000, token: 'a'.repeat(32) })
   })
 
   it('reads the settings with their defaults and writes them back, and keeps the price override', () => {

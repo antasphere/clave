@@ -4,34 +4,34 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import type { AddressInfo } from 'node:net'
 import { join } from 'node:path'
 import type { PluginActionTargetKind } from './host'
-import { pickTheme, renderPage, type Theme } from './html'
-import {
-  groupView,
-  isRange,
-  scopeKey,
-  sessionView,
-  workspaceView,
-  type Ledger,
-  type Range,
-  type ScopeView
-} from './ledger'
+import { pickTheme, renderPage } from './html'
+import { groupView, sessionView, workspaceView, type Ledger, type ScopeView } from './ledger'
 import { tableFromJson, type PriceTable } from './prices'
-import { cleanTokens, type PublishOutcome, type PublishRequest } from './publish'
+import {
+  defaultRange,
+  isRange,
+  parseScopeParam,
+  scopeParam,
+  scopePath,
+  type Range,
+  type Scope
+} from './scope'
 import { GAP_MAX, GAP_MIN, parseGap } from './settings'
 import type { ServerInfo } from './store'
 
 /**
  * The pages, on loopback only. Every route lives under `/<token>/`, a random token minted
  * once and kept in `server.json` with the port, so a page URL survives a restart and no
- * other local page can guess one. Anything else answers 404 with an empty body. Two routes
- * take a POST, both under the token and both JSON: `settings` (the gap and the price table)
- * and `publish` (a page pushed to Slideless); every other method answers 404.
+ * other local page can guess one. Anything else answers 404 with an empty body. One route
+ * takes a POST, under the token and JSON: `settings` (the gap and the price table); every
+ * other method answers 404. The `open` routes are where the host's actions and the pages'
+ * own links lead: each writes the scope's deck and answers a redirect to the Slideless
+ * viewer's copy of it, or to the plugin's own page when there is no viewer. The stream and
+ * the data routes answer any origin, so the viewer's copy follows the ledger live too.
  */
 
-export type Scope =
-  | { kind: 'session'; id: string }
-  | { kind: 'group'; id: string }
-  | { kind: 'workspace'; ws: string | null }
+export type { Scope } from './scope'
+export { defaultRange, parseScopeParam, scopeParam } from './scope'
 
 export interface CollectorLike {
   readonly ledger: Ledger
@@ -67,6 +67,10 @@ export interface SettingsPort {
   apply(patch: SettingsPatch): SettingsData
 }
 
+/** Where an open leads: the deck written and the viewer's URL for it, or null for the
+ *  plugin's own page. The server hands it the scope and the range the route named. */
+export type OpenPort = (scope: Scope, range: Range) => Promise<string | null> | string | null
+
 export interface ServerOptions {
   store: StoreLike
   collector: CollectorLike
@@ -78,14 +82,20 @@ export interface ServerOptions {
   log?: (level: 'warn' | 'error', message: string) => void
   /** The settings page and its data; without it the route answers 404. */
   settings?: SettingsPort
-  /** One publish of a page; without it the route answers 404. */
-  publish?: (request: PublishRequest) => Promise<PublishOutcome>
+  /** The decks and the viewer; without it an open leads to the plugin's own page. */
+  open?: OpenPort
+  /** The footer's last line on the plugin's own page: what the viewer is doing. */
+  note?: () => string
 }
 
 export interface AnalyticsServer {
   readonly port: number
-  /** The page URL for an action target. */
+  /** The token root, absolute: `http://127.0.0.1:<port>/<token>/`. */
+  readonly base: string
+  /** The page URL for an action target, through the open route. */
   url(kind: PluginActionTargetKind, id: string, workspaceId: string | null): string
+  /** The plugin's own page URL for a scope, where an open without a viewer leads. */
+  pageUrl(scope: Scope, range: Range | null): string
   close(): Promise<void>
 }
 
@@ -94,10 +104,6 @@ const EVENT_DEBOUNCE_MS = 500
 const BODY_LIMIT = 256 * 1024
 /** Past this, the request is cut rather than drained: nothing honest is that large. */
 const BODY_CUT = 4 * 1024 * 1024
-
-export function defaultRange(scope: Scope): Range {
-  return scope.kind === 'workspace' ? 'today' : 'all'
-}
 
 export function scopeView(
   ledger: Ledger,
@@ -111,24 +117,13 @@ export function scopeView(
   return workspaceView(ledger, scope.ws, prices, range, now)
 }
 
-/** The scope's key: `session:<id>`, `group:<id>`, `workspace:<ws|->`. */
-export function scopeParam(scope: Scope): string {
-  return scopeKey(scope.kind, scope.kind === 'workspace' ? scope.ws : scope.id)
-}
-
-export function parseScopeParam(value: string | null): Scope | null {
-  if (!value) return null
-  const at = value.indexOf(':')
-  if (at < 0) return null
-  const kind = value.slice(0, at)
-  const id = value.slice(at + 1)
-  if (kind === 'workspace') return { kind, ws: id === '-' || id === '' ? null : id }
-  if ((kind === 'session' || kind === 'group') && id) return { kind, id }
-  return null
-}
-
 function notFound(res: ServerResponse): void {
   res.writeHead(404, { 'content-length': '0', 'cache-control': 'no-store' })
+  res.end()
+}
+
+function redirect(res: ServerResponse, location: string): void {
+  res.writeHead(302, { location, 'content-length': '0', 'cache-control': 'no-store' })
   res.end()
 }
 
@@ -156,6 +151,23 @@ function send(res: ServerResponse, status: number, type: string, body: string): 
 
 function sendJson(res: ServerResponse, status: number, value: unknown): void {
   send(res, status, 'application/json; charset=utf-8', JSON.stringify(value))
+}
+
+/** The read-only routes a deck follows from the viewer: the viewer's sandbox gives its pages
+ *  an opaque origin, so the stream and the data answer any origin; the token in the path
+ *  stays the guard, and nothing under it writes on a GET. */
+const ANY_ORIGIN = { 'access-control-allow-origin': '*' }
+
+function sendData(res: ServerResponse, status: number, value: unknown): void {
+  const body = JSON.stringify(value)
+  res.writeHead(status, {
+    'content-type': 'application/json; charset=utf-8',
+    'content-length': Buffer.byteLength(body),
+    'cache-control': 'no-store',
+    'x-content-type-options': 'nosniff',
+    ...ANY_ORIGIN
+  })
+  res.end(body)
 }
 
 function sameToken(given: string, token: string): boolean {
@@ -223,29 +235,15 @@ export function parseSettingsPatch(raw: unknown): { patch: SettingsPatch } | { e
   return { patch }
 }
 
-interface PublishBody {
-  scope: Scope
-  range: Range
-  names: boolean
-  theme: Theme
-  tokens: Record<string, string>
-}
-
-/** A publish request's body, or the sentence that refuses it. */
-export function parsePublishBody(raw: unknown): { body: PublishBody } | { error: string } {
-  if (!isObj(raw)) return { error: 'The body is not an object.' }
-  const scope = parseScopeParam(typeof raw['scope'] === 'string' ? raw['scope'] : null)
-  if (!scope) return { error: 'The body names no page to publish.' }
-  const range = isRange(raw['range']) ? raw['range'] : defaultRange(scope)
-  return {
-    body: {
-      scope,
-      range,
-      names: raw['names'] === true,
-      theme: pickTheme(typeof raw['theme'] === 'string' ? raw['theme'] : null),
-      tokens: cleanTokens(raw['tokens'])
-    }
-  }
+/** The scope a route's path names, `session/<id>`, `group/<id>` or `workspace` with its
+ *  `ws` query, or null for any other path. */
+export function scopeOfPath(parts: string[], query: URLSearchParams): Scope | null {
+  const [head, a] = parts
+  if (parts.length === 2 && (head === 'session' || head === 'group') && a)
+    return { kind: head, id: a }
+  if (parts.length === 1 && head === 'workspace')
+    return { kind: 'workspace', ws: query.get('ws') || null }
+  return null
 }
 
 function listen(server: Server, port: number, host: string): Promise<number> {
@@ -295,14 +293,9 @@ export async function startServer(options: ServerOptions): Promise<AnalyticsServ
   }
 
   const pagePath = (scope: Scope, range: Range | null, theme: string | null): string => {
-    const query = new URLSearchParams()
-    if (scope.kind === 'workspace' && scope.ws) query.set('ws', scope.ws)
-    if (range) query.set('range', range)
-    if (theme) query.set('theme', theme)
-    const path =
-      scope.kind === 'workspace' ? 'workspace' : `${scope.kind}/${encodeURIComponent(scope.id)}`
-    const q = query.toString()
-    return `/${token}/${path}${q ? `?${q}` : ''}`
+    const path = scopePath(scope, range)
+    if (!theme) return `/${token}/${path}`
+    return `/${token}/${path}${path.includes('?') ? '&' : '?'}theme=${encodeURIComponent(theme)}`
   }
 
   const template = (name: string): string | null => {
@@ -334,7 +327,8 @@ export async function startServer(options: ServerOptions): Promise<AnalyticsServ
         events,
         theme: pickTheme(theme),
         base: `/${token}/`,
-        mode: 'live'
+        mode: 'live',
+        note: options.note?.() ?? ''
       })
     )
   }
@@ -368,7 +362,8 @@ export async function startServer(options: ServerOptions): Promise<AnalyticsServ
       'content-type': 'text/event-stream; charset=utf-8',
       'cache-control': 'no-store',
       connection: 'keep-alive',
-      'x-accel-buffering': 'no'
+      'x-accel-buffering': 'no',
+      ...ANY_ORIGIN
     })
     const push = (): void => {
       const data = view(scope, range)
@@ -445,32 +440,27 @@ export async function startServer(options: ServerOptions): Promise<AnalyticsServ
     }
   }
 
-  const handlePublish = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
-    const publish = options.publish
-    if (!publish) return notFound(res)
-    const raw = await readJsonBody(req, res)
-    if (raw === undefined) return
-    const parsed = parsePublishBody(raw)
-    if ('error' in parsed) return sendJson(res, 400, { error: parsed.error })
-    const { scope, range, names, theme, tokens } = parsed.body
-    const data = view(scope, range)
-    if (!data)
-      return sendJson(res, 404, {
-        ok: false,
-        kind: 'failed',
-        message: 'Nothing is measured for this page yet.'
-      })
-    let outcome: PublishOutcome
-    try {
-      outcome = await publish({ key: scopeParam(scope), range, names, theme, tokens, data })
-    } catch (error) {
-      outcome = {
-        ok: false,
-        kind: 'failed',
-        message: `The publish failed: ${error instanceof Error ? error.message : String(error)}`
+  /** An open: the deck written and the viewer's URL answered, else the plugin's own page.
+   *  A scope nothing is measured for answers 404, as its page would. */
+  const handleOpen = async (
+    res: ServerResponse,
+    scope: Scope,
+    range: Range,
+    theme: string | null
+  ): Promise<void> => {
+    if (!view(scope, range)) return notFound(res)
+    let target: string | null = null
+    if (options.open) {
+      try {
+        target = await options.open(scope, range)
+      } catch (error) {
+        options.log?.(
+          'warn',
+          `The deck of ${scopeParam(scope)} could not be written: ${error instanceof Error ? error.message : String(error)}`
+        )
       }
     }
-    sendJson(res, 200, outcome)
+    redirect(res, target ?? pagePath(scope, range, theme))
   }
 
   const handle = (req: IncomingMessage, res: ServerResponse): void => {
@@ -487,7 +477,6 @@ export async function startServer(options: ServerOptions): Promise<AnalyticsServ
     const [head, a, b] = rest
     if (req.method === 'POST') {
       if (rest.length === 1 && head === 'settings') return void handleSettings(req, res)
-      if (rest.length === 1 && head === 'publish') return void handlePublish(req, res)
       return notFound(res)
     }
     if (req.method !== 'GET') return notFound(res)
@@ -497,13 +486,12 @@ export async function startServer(options: ServerOptions): Promise<AnalyticsServ
       isRange(rangeParam) ? rangeParam : defaultRange(scope)
     const theme = q.get('theme')
 
-    if (rest.length === 2 && (head === 'session' || head === 'group') && a) {
-      const scope: Scope = { kind: head, id: a }
-      return servePage(res, scope, rangeFor(scope), theme)
-    }
-    if (rest.length === 1 && head === 'workspace') {
-      const scope: Scope = { kind: 'workspace', ws: q.get('ws') || null }
-      return servePage(res, scope, rangeFor(scope), theme)
+    const page = scopeOfPath(rest, q)
+    if (page) return servePage(res, page, rangeFor(page), theme)
+    if (head === 'open') {
+      const scope = scopeOfPath(rest.slice(1), q)
+      if (!scope) return notFound(res)
+      return void handleOpen(res, scope, rangeFor(scope), theme)
     }
     if (rest.length === 1 && head === 'settings') return serveSettingsPage(res, theme)
     if (head === 'data') {
@@ -520,7 +508,7 @@ export async function startServer(options: ServerOptions): Promise<AnalyticsServ
       if (!scope || (scope.kind !== 'workspace' && !scope.id)) return notFound(res)
       const data = view(scope, rangeFor(scope))
       if (!data) return notFound(res)
-      return sendJson(res, 200, data)
+      return sendData(res, 200, data)
     }
     if (rest.length === 1 && head === 'events') {
       const scope = parseScopeParam(q.get('scope'))
@@ -540,18 +528,23 @@ export async function startServer(options: ServerOptions): Promise<AnalyticsServ
     port = await listen(server, 0, host)
   }
   if (!saved || saved.port !== port || saved.token !== token) {
-    options.store.writeServer({ port, token })
+    options.store.writeServer({ ...(saved ?? {}), port, token })
   }
+  const base = `http://${host}:${port}/${token}/`
 
   return {
     port,
+    base,
     url(kind, id, workspaceId): string {
       // `none` is what the renderer names the workspace when no workspace is open.
       const scope: Scope =
         kind === 'workspace'
           ? { kind, ws: workspaceId ?? (id && id !== 'none' ? id : null) }
           : { kind, id }
-      return `http://${host}:${port}${pagePath(scope, null, null)}`
+      return `${base}open/${scopePath(scope, null)}`
+    },
+    pageUrl(scope, range): string {
+      return `http://${host}:${port}${pagePath(scope, range, null)}`
     },
     close(): Promise<void> {
       for (const s of [...streams]) {

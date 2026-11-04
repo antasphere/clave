@@ -1,13 +1,5 @@
-import type {
-  Block,
-  Figures,
-  GroupCard,
-  PublishedDeck,
-  Range,
-  ScopeView,
-  ViewRow
-} from '../src/ledger'
-import { scopeKey } from '../src/scope'
+import type { Block, Figures, GroupCard, ScopeView, ViewRow } from '../src/ledger'
+import { scopePath, type Range, type Scope } from '../src/scope'
 import {
   activeNote,
   formatCount,
@@ -20,7 +12,6 @@ import {
 import {
   blockRect,
   blockWords,
-  formatClock,
   formatDay,
   laneRows,
   spanOf,
@@ -40,18 +31,19 @@ import { mountLive, type Live } from './live'
  * table rows and cards are keyed by id, so an open fold and the row under the pointer
  * survive a redraw. Between the figures and the table sits the drawing of the page: the
  * session's timeline, the group's swimlane, the workspace's animation on the brand field.
- * In `deck` mode (a copy published to Slideless) the page is a still: the hover stays,
- * the chips, the links, the stream and the footer's actions are gone.
+ * In `deck` mode (the deck folder the Slideless viewer serves) the stream is the plugin
+ * server's, named absolute in the `analytics-events` meta, and every link, the range chips,
+ * the cards and the footer's gear, leads through the plugin server's root named in the
+ * `analytics-base` meta, so a page served by the viewer opens the next one the same way. A
+ * page with no stream at all (the meta empty) is a still: nothing eases in.
  */
 
-/** Heroicons 24/outline: ChevronRightIcon, Cog6ToothIcon, ArrowUpTrayIcon. */
+/** Heroicons 24/outline: ChevronRightIcon, Cog6ToothIcon. */
 const CHEVRON_D = 'm8.25 4.5 7.5 7.5-7.5 7.5'
 const COG_D = [
   'M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.325.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 0 1 1.37.49l1.296 2.247a1.125 1.125 0 0 1-.26 1.431l-1.003.827c-.293.241-.438.613-.43.992a7.723 7.723 0 0 1 0 .255c-.008.378.137.75.43.991l1.004.827c.424.35.534.955.26 1.43l-1.298 2.247a1.125 1.125 0 0 1-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.47 6.47 0 0 1-.22.128c-.331.183-.581.495-.644.869l-.213 1.281c-.09.543-.56.94-1.11.94h-2.594c-.55 0-1.019-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 0 1-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 0 1-1.369-.49l-1.297-2.247a1.125 1.125 0 0 1 .26-1.431l1.004-.827c.292-.24.437-.613.43-.991a6.932 6.932 0 0 1 0-.255c.007-.38-.138-.751-.43-.992l-1.004-.827a1.125 1.125 0 0 1-.26-1.43l1.297-2.247a1.125 1.125 0 0 1 1.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.086.22-.128.332-.183.582-.495.644-.869l.214-1.28Z',
   'M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z'
 ]
-const UPLOAD_D =
-  'M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5m-13.5-9L12 3m0 0 4.5 4.5M12 3v13.5'
 const SVG_NS = 'http://www.w3.org/2000/svg'
 const RANGE_LABELS: [Range, string][] = [
   ['today', 'Today'],
@@ -75,20 +67,20 @@ const TIMELINE = {
 const SWIMLANE = { rowH: 28, barH: 10, axisPad: 24 }
 
 const params = new URLSearchParams(location.search)
-const mode: 'live' | 'deck' =
-  document.querySelector<HTMLMetaElement>('meta[name="analytics-mode"]')?.content === 'deck'
-    ? 'deck'
-    : 'live'
-const still = mode === 'deck'
+
+function meta(name: string): string {
+  return document.querySelector<HTMLMetaElement>(`meta[name="${name}"]`)?.content ?? ''
+}
+
+/** A page with no stream is a still: what it shows is what it was given, so nothing eases in. */
+const still = meta('analytics-events') === ''
 const openFolds = new Set<string>()
 let view: ScopeView | null = null
 let live: Live | null = null
-let publishing = false
-let publishWord: { text: string; error: boolean; url?: string } | null = null
 
 function applyTheme(): void {
-  // A deck wears the theme it was published with; a served page takes the URL's, else the system's.
-  if (still || params.has('theme')) return
+  // The URL's theme when given, else the system's; inside Clave the pane's tokens win anyway.
+  if (params.has('theme')) return
   if (window.matchMedia?.('(prefers-color-scheme: light)').matches) {
     document.documentElement.dataset['theme'] = 'light'
   }
@@ -139,20 +131,27 @@ function dot(state: string | null): HTMLSpanElement {
   return node
 }
 
-/** The token root of the page's own URL: `/<token>/`. */
+/** The plugin server's token root: the `analytics-base` meta (absolute on a deck), else the
+ *  first segment of the page's own URL, `/<token>/`. */
 function base(): string {
+  const named = meta('analytics-base')
+  if (named) return named
   const first = location.pathname.split('/')[1] ?? ''
   return `/${first}/`
 }
 
-function linkWith(path: string, changes: Record<string, string | null>): string {
-  const query = new URLSearchParams(params)
-  for (const [key, value] of Object.entries(changes)) {
-    if (value === null) query.delete(key)
-    else query.set(key, value)
-  }
-  const q = query.toString()
-  return `${path}${q ? `?${q}` : ''}`
+/** Where a page opens from here: the plugin's open route for the scope and the range, the
+ *  URL's theme carried along, so the viewer's copy is shown when there is a viewer. */
+function openUrl(scope: Scope, range: Range | null): string {
+  const path = scopePath(scope, range)
+  const theme = params.get('theme')
+  if (!theme) return `${base()}open/${path}`
+  return `${base()}open/${path}${path.includes('?') ? '&' : '?'}theme=${encodeURIComponent(theme)}`
+}
+
+function scopeOf(v: ScopeView): Scope {
+  if (v.kind === 'workspace') return { kind: 'workspace', ws: v.id }
+  return { kind: v.kind, id: v.id ?? '' }
 }
 
 function readData(): ScopeView | null {
@@ -246,18 +245,10 @@ function drawHeader(p: Parts, v: ScopeView): void {
     p.ranges.replaceChildren()
     return
   }
-  if (still) {
-    // A deck is a still of one range: the chip names it and leads nowhere.
-    const label = RANGE_LABELS.find(([range]) => range === v.range)?.[1] ?? v.range
-    const chip = el('span', 'chip selected', label)
-    chip.setAttribute('aria-current', 'true')
-    p.ranges.replaceChildren(chip)
-    return
-  }
   p.ranges.replaceChildren(
     ...RANGE_LABELS.map(([range, label]) => {
       const a = el('a', range === v.range ? 'chip selected' : 'chip', label)
-      a.href = linkWith(location.pathname, { range })
+      a.href = openUrl(scopeOf(v), range)
       if (range === v.range) a.setAttribute('aria-current', 'true')
       return a
     })
@@ -296,128 +287,17 @@ function footerText(v: ScopeView): string {
   )
 }
 
-function publishedWords(deck: PublishedDeck): string {
-  const when = `on ${formatDay(deck.at)} at ${formatClock(deck.at)}`
-  return `Published as version ${deck.version} ${when}${deck.by ? ` by ${deck.by}` : ''}`
-}
-
 function drawFooter(p: Parts, v: ScopeView): void {
-  p.footText.textContent = footerText(v)
-  if (still) {
-    p.footActions.replaceChildren()
-    return
-  }
-  let bar = p.footActions.querySelector<HTMLDivElement>(':scope > .publish')
-  if (!bar) {
-    bar = el('div', 'publish')
-    const names = el('label', 'publish-names')
-    const box = el('input')
-    box.type = 'checkbox'
-    box.className = 'publish-names-box'
-    names.append(box, document.createTextNode('Include session names and folders'))
-    const button = el('button', 'foot-btn publish-button')
-    button.type = 'button'
-    button.append(icon([UPLOAD_D]), el('span', 'publish-label', 'Publish'))
-    button.addEventListener('click', () => void publish(box.checked))
-    const status = el('span', 'publish-status')
-    bar.append(names, button, status)
+  p.footText.replaceChildren(document.createTextNode(footerText(v)))
+  const note = meta('analytics-note')
+  if (note) p.footText.append(el('span', 'foot-note', note))
+  if (p.footActions.childElementCount === 0) {
     const gear = el('a', 'gear')
     gear.href = `${base()}settings`
     gear.setAttribute('aria-label', 'Analytics settings')
     gear.title = 'Analytics settings'
     gear.append(icon(COG_D))
-    p.footActions.replaceChildren(bar, gear)
-  }
-  const button = bar.querySelector<HTMLButtonElement>('.publish-button')!
-  const label = bar.querySelector<HTMLSpanElement>('.publish-label')!
-  const status = bar.querySelector<HTMLSpanElement>('.publish-status')!
-  const deck = v.published
-  button.disabled = publishing
-  label.textContent = deck ? 'Update' : 'Publish'
-  status.classList.toggle('error', !!publishWord?.error)
-  if (publishing) {
-    status.replaceChildren(document.createTextNode('Publishing…'))
-  } else if (publishWord) {
-    status.replaceChildren(document.createTextNode(publishWord.text))
-    if (publishWord.url) status.append(document.createTextNode(' · '), openLink(publishWord.url))
-  } else if (deck) {
-    status.replaceChildren(
-      document.createTextNode(publishedWords(deck)),
-      document.createTextNode(' · '),
-      openLink(deck.url)
-    )
-  } else {
-    status.replaceChildren(document.createTextNode('Not published yet'))
-  }
-}
-
-function openLink(url: string): HTMLAnchorElement {
-  const a = el('a', 'publish-link', 'Open on Slideless')
-  a.href = url
-  a.rel = 'noreferrer'
-  return a
-}
-
-/** Every token the page's own stylesheets name, with the value painted now: inside Clave
- *  the app's inserted theme wins the cascade, so these are the app's live colours. */
-function liveTokens(): Record<string, string> {
-  const names = new Set<string>()
-  for (const sheet of Array.from(document.styleSheets)) {
-    let rules: CSSRuleList
-    try {
-      rules = sheet.cssRules
-    } catch {
-      continue
-    }
-    for (const rule of Array.from(rules)) {
-      if (!(rule instanceof CSSStyleRule)) continue
-      for (const name of Array.from(rule.style)) if (name.startsWith('--')) names.add(name)
-    }
-  }
-  const computed = getComputedStyle(document.documentElement)
-  const out: Record<string, string> = {}
-  for (const name of names) {
-    const value = computed.getPropertyValue(name).trim()
-    if (value) out[name] = value
-  }
-  return out
-}
-
-async function publish(names: boolean): Promise<void> {
-  if (!view || publishing) return
-  publishing = true
-  publishWord = null
-  draw()
-  try {
-    const response = await fetch(`${base()}publish`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        scope: scopeKey(view.kind, view.id),
-        range: view.range,
-        names,
-        theme: document.documentElement.dataset['theme'] ?? 'dark',
-        tokens: liveTokens()
-      })
-    })
-    const outcome = (await response.json()) as
-      | { ok: true; deck: PublishedDeck }
-      | { ok: false; message?: string; error?: string }
-    if (outcome.ok) {
-      publishWord = { text: publishedWords(outcome.deck), error: false, url: outcome.deck.url }
-      // The page knows its deck now; the next frame of the stream says the same.
-      if (view) view.published = outcome.deck
-    } else {
-      publishWord = { text: outcome.message ?? outcome.error ?? 'The publish failed.', error: true }
-    }
-  } catch (error) {
-    publishWord = {
-      text: `The publish could not reach the plugin: ${error instanceof Error ? error.message : String(error)}.`,
-      error: true
-    }
-  } finally {
-    publishing = false
-    draw()
+    p.footActions.replaceChildren(gear)
   }
 }
 
@@ -603,10 +483,10 @@ function drawCards(body: HTMLElement, v: ScopeView): void {
     grid,
     v.cards.map((card) => ({
       key: `${card.id === null ? 'ungrouped' : `group:${card.id}`}`,
-      create: () => (card.id === null || still ? el('div', 'card') : el('a', 'card')),
+      create: () => (card.id === null ? el('div', 'card') : el('a', 'card')),
       fill: (node) => {
         if (node instanceof HTMLAnchorElement && card.id !== null) {
-          node.href = linkWith(`${base()}group/${encodeURIComponent(card.id)}`, { ws: null })
+          node.href = openUrl({ kind: 'group', id: card.id }, null)
         }
         node.title = cardWords(card)
         const states = el('div', 'card-states')
@@ -899,8 +779,7 @@ function draw(): void {
 
 function follow(): void {
   if (still) return
-  const meta = document.querySelector<HTMLMetaElement>('meta[name="analytics-events"]')
-  const url = meta?.content
+  const url = meta('analytics-events')
   if (!url || typeof EventSource === 'undefined') return
   const source = new EventSource(url)
   source.addEventListener('data', (event) => {

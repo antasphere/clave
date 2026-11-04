@@ -3,26 +3,34 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { Collector } from './collector'
+import { DeckWriter } from './decks'
 import { formatCount, formatMinutes, formatTokens, formatUsd } from './format'
 import type { HostApi, PluginActionPreviewRow, PluginActionTarget } from './host'
-import { publisher, settingsPort } from './ports'
+import { settingsPort } from './ports'
 import { loadPrices, type PriceTable } from './prices'
 import { scopeView, startServer, type AnalyticsServer, type Scope } from './server'
 import { Store } from './store'
+import { VIEWER_NOTE, Viewer } from './viewer'
 
 /**
  * Analytics: reads the transcripts of the Claude Code sessions Clave knows, keeps one
  * ledger row per session, serves its pages on loopback for the host's actions, keeps the
- * settings a person edits on its settings page, and publishes a page to Slideless on ask.
+ * settings a person edits on its settings page, writes each opened page as a Slideless deck
+ * folder on disk and runs the Slideless CLI's own viewer over those folders, so the page
+ * Clave shows is the viewer's copy, reloaded as the data is rewritten; nothing leaves the Mac.
  */
 
 const LEDGER_WRITE_MS = 2_000
+/** How long an open waits for a viewer still starting before it falls back to the plugin's page. */
+const OPEN_WAIT_MS = 5_000
 
 let collector: Collector | null = null
 let server: AnalyticsServer | null = null
 let store: Store | null = null
+let viewer: Viewer | null = null
 let unsubscribe: (() => void) | null = null
 let writeTimer: ReturnType<typeof setTimeout> | null = null
+let deckTimer: ReturnType<typeof setTimeout> | null = null
 
 function dataDir(api: HostApi): string {
   const fromHost = process.env['CLAVE_PLUGIN_DATA_DIR']
@@ -87,6 +95,10 @@ export default {
     })
 
     const pageDir = fileURLToPath(new URL('dist/', here))
+    const c = collector
+    const s = store
+    let writer: DeckWriter | null = null
+    let v: Viewer | null = null
     server = await startServer({
       store,
       collector,
@@ -104,26 +116,70 @@ export default {
           table = next
         }
       }),
-      publish: publisher({ dir, pageDir, collector, flush: flushLedger, log })
+      // An open writes the scope's deck and leads to the viewer's copy when the viewer is up
+      // (waited for a few seconds while it starts), else to the plugin's own page.
+      open: async (scope, range) => {
+        const deck = writer?.write(scope, range) ?? null
+        const state = v ? await v.ready(OPEN_WAIT_MS) : null
+        if (!deck || !state || state.kind !== 'up') return null
+        return `${state.url}/${encodeURIComponent(deck.name)}/index.html`
+      },
+      note: () => v?.note() ?? ''
     })
+    const srv = server
+
+    writer = new DeckWriter({
+      dir,
+      pageDir,
+      agentFile: fileURLToPath(new URL('deck/AGENT.md', here)),
+      view: (scope, range) => scopeView(c.ledger, table, scope, range),
+      base: srv.base,
+      note: VIEWER_NOTE,
+      log
+    })
+    writer.ensureRoot()
+    const w = writer
+    // Every opened deck follows the ledger, debounced like the ledger's own write; the viewer
+    // reloads the pages whose folders changed.
     collector.on('changed', () => {
       table = prices()
+      if (deckTimer) return
+      deckTimer = setTimeout(() => {
+        deckTimer = null
+        try {
+          w.rewrite()
+        } catch (error) {
+          log('warn', `Could not rewrite the decks: ${(error as Error).message}`)
+        }
+      }, LEDGER_WRITE_MS)
     })
 
+    v = new Viewer({
+      root: w.root,
+      savedPort: s.readServer()?.viewerPort ?? null,
+      onPort: (port) => {
+        const info = s.readServer()
+        if (info) s.writeServer({ ...info, viewerPort: port })
+      },
+      log
+    })
+    viewer = v
+    void v.start()
+
     const view = (target: PluginActionTarget): ReturnType<typeof scopeView> =>
-      scopeView(collector!.ledger, table, scopeOf(target))
+      scopeView(c.ledger, table, scopeOf(target))
 
     await api.ui.registerAction('deck', {
       invoke: (t) => ({
         page: {
-          url: server!.url(t.kind, t.id, t.workspaceId),
+          url: srv.url(t.kind, t.id, t.workspaceId),
           title: clip(view(t)?.name || 'Analytics', 200) || 'Analytics'
         }
       }),
       preview: (t): PluginActionPreviewRow[] => {
-        const v = view(t)
-        if (!v) return []
-        const f = v.figures
+        const data = view(t)
+        if (!data) return []
+        const f = data.figures
         return [
           { label: 'Cost', value: formatUsd(f.usd) },
           { label: 'Active', value: formatMinutes(f.activeMinutes) },
@@ -136,25 +192,28 @@ export default {
     })
     await api.ui.registerAction('home', {
       invoke: (t) => ({
-        page: { url: server!.url('workspace', t.id, t.workspaceId), title: 'Analytics home' }
+        page: { url: srv.url('workspace', t.id, t.workspaceId), title: 'Analytics home' }
       })
     })
 
-    const c = collector
     unsubscribe = await api.sessions.subscribe((sessions) => c.setSessions(sessions))
     c.start()
-    await api.log('info', `Analytics serving on 127.0.0.1:${server.port}`)
+    await api.log('info', `Analytics serving on 127.0.0.1:${srv.port}`)
   },
 
   async deactivate(): Promise<void> {
     unsubscribe?.()
     unsubscribe = null
     collector?.stop()
+    if (deckTimer) clearTimeout(deckTimer)
+    deckTimer = null
     try {
       flushLedger()
     } catch {
       /* the next activation starts from the last good write */
     }
+    await viewer?.stop()
+    viewer = null
     await server?.close()
     server = null
     collector = null
