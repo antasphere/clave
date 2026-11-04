@@ -1,11 +1,21 @@
 import * as nodeFs from 'node:fs'
 import { join } from 'node:path'
-import { LEDGER_VERSION, emptyLedger, type Ledger, type SessionRow } from './ledger'
+import {
+  LEDGER_VERSION,
+  emptyLedger,
+  type Ledger,
+  type PublishedDeck,
+  type SessionRow
+} from './ledger'
+import type { PriceTable } from './prices'
+import { DEFAULT_SETTINGS, parseSettings, type Settings } from './settings'
 
 /**
  * The plugin's own files in its data folder, each written atomically (`<file>.tmp`, then
- * `rename`): `server.json` (the port and the URL token), `ledger.json`, and `prices.json`,
- * the price override a person may drop there (absent by default, never written here).
+ * `rename`): `server.json` (the port and the URL token), `ledger.json`, `settings.json` (the
+ * activity gap) and `prices.json`, the price override the settings page writes (absent by
+ * default; a copy a person drops there by hand reads the same). The deck folders and the
+ * published snapshots beside them are the publish module's.
  */
 
 export interface ServerInfo {
@@ -16,12 +26,13 @@ export interface ServerInfo {
 export type Logger = (level: 'debug' | 'info' | 'warn' | 'error', message: string) => void
 export type StoreFs = Pick<
   typeof nodeFs,
-  'mkdirSync' | 'readFileSync' | 'writeFileSync' | 'renameSync'
+  'mkdirSync' | 'readFileSync' | 'writeFileSync' | 'renameSync' | 'existsSync' | 'rmSync'
 >
 
 const isObj = (v: unknown): v is Record<string, unknown> =>
   typeof v === 'object' && v !== null && !Array.isArray(v)
 const isNum = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v)
+const isStr = (v: unknown): v is string => typeof v === 'string'
 const isStrOrNull = (v: unknown): boolean => v === null || typeof v === 'string'
 const TOKEN_KEYS = [
   'input',
@@ -45,6 +56,7 @@ const isTally = (v: unknown): boolean =>
   isNum(v['toolCalls']) &&
   isNum(v['prompts']) &&
   Array.isArray(v['stamps']) &&
+  Array.isArray(v['toolStamps']) &&
   isStrOrNull(v['firstAt']) &&
   isStrOrNull(v['lastAt'])
 const isCursor = (v: unknown): boolean =>
@@ -76,6 +88,22 @@ export function isSessionRow(value: unknown): value is SessionRow {
     value['subagents'].every(isSubagent) &&
     Array.isArray(value['stateSpans']) &&
     (root === null || (isObj(root) && isTally(root['tally']) && isCursor(root['file'])))
+  )
+}
+
+/** A published deck as the ledger keeps it; anything else is dropped at load. */
+export function isPublishedDeck(value: unknown): value is PublishedDeck {
+  return (
+    isObj(value) &&
+    isStr(value['deckId']) &&
+    value['deckId'] !== '' &&
+    isStr(value['baseUrl']) &&
+    isStr(value['url']) &&
+    isNum(value['version']) &&
+    isNum(value['n']) &&
+    isStr(value['at']) &&
+    isStr(value['title']) &&
+    typeof value['names'] === 'boolean'
   )
 }
 
@@ -125,6 +153,34 @@ export class Store {
     this.writeJson('server.json', info)
   }
 
+  /** The settings in the data folder; the defaults when the file is missing or off. */
+  readSettings(): Settings {
+    try {
+      return parseSettings(this.readJson('settings.json'))
+    } catch {
+      return { ...DEFAULT_SETTINGS }
+    }
+  }
+
+  writeSettings(settings: Settings): void {
+    this.writeJson('settings.json', settings)
+  }
+
+  /** Whether a price override sits in the data folder. */
+  hasPrices(): boolean {
+    return this.fs.existsSync(this.pricesPath)
+  }
+
+  /** Writes the person's own price table over the shipped one. */
+  writePrices(table: PriceTable): void {
+    this.writeJson('prices.json', table)
+  }
+
+  /** Removes the override: the shipped table is in force again. */
+  removePrices(): void {
+    this.fs.rmSync(this.pricesPath, { force: true })
+  }
+
   /** The stored ledger, or an empty one when the file is missing or does not parse. */
   readLedger(gapMinutes = 15): Ledger {
     let raw: unknown
@@ -144,7 +200,11 @@ export class Store {
       this.warnOnce(
         `ledger.json is version ${String(ledger.v)}, this build writes ${LEDGER_VERSION}; the transcripts are counted again`
       )
-      return emptyLedger(gapMinutes)
+      // The decks a scope was published as survive the recount: a share link must keep
+      // pointing at the same deck once the figures are counted again.
+      const kept = emptyLedger(gapMinutes)
+      kept.published = this.readPublished(ledger.published)
+      return kept
     }
     const sessions: Record<string, SessionRow> = {}
     let dropped = 0
@@ -158,8 +218,18 @@ export class Store {
       v: LEDGER_VERSION,
       gapMinutes: typeof ledger.gapMinutes === 'number' ? ledger.gapMinutes : gapMinutes,
       sessions,
+      published: this.readPublished(ledger.published),
       updatedAt: typeof ledger.updatedAt === 'string' ? ledger.updatedAt : new Date().toISOString()
     }
+  }
+
+  private readPublished(raw: unknown): Record<string, PublishedDeck> {
+    const out: Record<string, PublishedDeck> = {}
+    if (!isObj(raw)) return out
+    for (const [key, deck] of Object.entries(raw)) {
+      if (isPublishedDeck(deck)) out[key] = deck
+    }
+    return out
   }
 
   writeLedger(ledger: Ledger): void {

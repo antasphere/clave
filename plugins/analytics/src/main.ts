@@ -6,15 +6,24 @@ import { Collector } from './collector'
 import { formatCount, formatMinutes, formatTokens, formatUsd } from './format'
 import type { HostApi, PluginActionPreviewRow, PluginActionTarget } from './host'
 import { loadPrices, type PriceTable } from './prices'
-import { scopeView, startServer, type AnalyticsServer, type Scope } from './server'
+import { publishDeck, type PublishOutcome, type PublishRequest } from './publish'
+import {
+  scopeView,
+  startServer,
+  type AnalyticsServer,
+  type Scope,
+  type SettingsData,
+  type SettingsPatch
+} from './server'
+import { GAP_MAX, GAP_MIN } from './settings'
 import { Store } from './store'
 
 /**
  * Analytics: reads the transcripts of the Claude Code sessions Clave knows, keeps one
- * ledger row per session, and serves its pages on loopback for the host's actions.
+ * ledger row per session, serves its pages on loopback for the host's actions, keeps the
+ * settings a person edits on its settings page, and publishes a page to Slideless on ask.
  */
 
-const GAP_MINUTES = 15
 const LEDGER_WRITE_MS = 2_000
 
 let collector: Collector | null = null
@@ -65,11 +74,14 @@ export default {
     store = new Store(dir, log)
     const here = new URL('.', import.meta.url)
     const shipped = fileURLToPath(new URL('prices.json', here))
+    const shippedTable = loadPrices(shipped, null)
     const prices = (): PriceTable => loadPrices(shipped, store!.pricesPath)
     let table = prices()
 
-    const ledger = store.readLedger(GAP_MINUTES)
-    collector = new Collector({ ledger, gapMinutes: GAP_MINUTES, log })
+    // The settings file is the gap's one truth; the ledger keeps a copy for its views.
+    const settings = store.readSettings()
+    const ledger = store.readLedger(settings.gapMinutes)
+    collector = new Collector({ ledger, gapMinutes: settings.gapMinutes, log })
     collector.on('changed', () => {
       if (writeTimer) return
       writeTimer = setTimeout(() => {
@@ -82,14 +94,69 @@ export default {
       }, LEDGER_WRITE_MS)
     })
 
+    const pageDir = fileURLToPath(new URL('dist/', here))
+    const settingsData = (): SettingsData => ({
+      gapMinutes: collector!.ledger.gapMinutes,
+      gapBounds: { min: GAP_MIN, max: GAP_MAX },
+      prices: table,
+      override: store!.hasPrices(),
+      shipped: { date: shippedTable.date, source: shippedTable.source }
+    })
+    const applySettings = (patch: SettingsPatch): SettingsData => {
+      if (patch.resetPrices) store!.removePrices()
+      else if (patch.prices) store!.writePrices(patch.prices)
+      table = prices()
+      if (patch.gapMinutes !== undefined) {
+        store!.writeSettings({ gapMinutes: patch.gapMinutes })
+        collector!.setGap(patch.gapMinutes)
+      }
+      // A new table re-prices every open page.
+      if (patch.resetPrices || patch.prices) collector!.touch()
+      return settingsData()
+    }
+
+    // One publish at a time per page: a second click while one runs is told so.
+    const inFlight = new Set<string>()
+    const publish = async (request: PublishRequest): Promise<PublishOutcome> => {
+      if (inFlight.has(request.key))
+        return { ok: false, kind: 'busy', message: 'This page is being published already.' }
+      inFlight.add(request.key)
+      try {
+        const outcome = await publishDeck({
+          dir,
+          pageDir,
+          request,
+          existing: collector!.ledger.published[request.key] ?? null
+        })
+        if (outcome.ok) {
+          collector!.ledger.published[request.key] = outcome.deck
+          collector!.touch()
+          flushLedger()
+          log(
+            'info',
+            `Published ${request.key} as deck ${outcome.deck.deckId} version ${outcome.deck.version}`
+          )
+        } else if (outcome.gone) {
+          delete collector!.ledger.published[request.key]
+          collector!.touch()
+          flushLedger()
+        }
+        return outcome
+      } finally {
+        inFlight.delete(request.key)
+      }
+    }
+
     server = await startServer({
       store,
       collector,
       // The override is re-read on each ledger change, so a price edit shows without a restart.
       prices: () => table,
-      pageDir: fileURLToPath(new URL('dist/', here)),
+      pageDir,
       host: '127.0.0.1',
-      log
+      log,
+      settings: { get: settingsData, apply: applySettings },
+      publish
     })
     collector.on('changed', () => {
       table = prices()

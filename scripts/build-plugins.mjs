@@ -1,10 +1,11 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type -- plain JavaScript build tooling */
 /**
  * Builds the bundled plugins whose sources are TypeScript: today `plugins/analytics`.
- * Its runnable `main.mjs` and its page assets under `dist/` are build outputs (git-ignored),
- * produced here for `electron-vite dev` / `build` (through the inline vite plugin in
- * electron.vite.config.ts) and by `npm run plugins:build`. A file whose content did not
- * change is not rewritten, so a rebuild touches nothing it does not have to.
+ * Its runnable `main.mjs` and its page assets under `dist/` (the deck page and the settings
+ * page, their scripts, one stylesheet) are build outputs (git-ignored), produced here for
+ * `electron-vite dev` / `build` (through the inline vite plugin in electron.vite.config.ts)
+ * and by `npm run plugins:build`. A file whose content did not change is not rewritten, so
+ * a rebuild touches nothing it does not have to.
  */
 import { build } from 'esbuild'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
@@ -79,22 +80,27 @@ export async function buildPlugins() {
     platform: 'node',
     target: 'node22'
   })
-  await bundle(path.join(plugin, 'page', 'deck.ts'), path.join(dist, 'deck.js'), {
-    format: 'iife',
-    platform: 'browser',
-    target: 'es2022'
-  })
+  for (const page of ['deck', 'settings']) {
+    await bundle(path.join(plugin, 'page', `${page}.ts`), path.join(dist, `${page}.js`), {
+      format: 'iife',
+      platform: 'browser',
+      target: 'es2022'
+    })
+  }
   const css = [
-    `/* Built by scripts/build-plugins.mjs: Geist Sans, packages/ui/src/tokens.css, page/deck.css. */`,
+    `/* Built by scripts/build-plugins.mjs: Geist Sans, packages/ui/src/tokens.css, page/deck.css, page/settings.css. */`,
     ...[400, 500, 600].map(fontFace),
     tokensForBrowser(),
-    readFileSync(path.join(plugin, 'page', 'deck.css'), 'utf8')
+    readFileSync(path.join(plugin, 'page', 'deck.css'), 'utf8'),
+    readFileSync(path.join(plugin, 'page', 'settings.css'), 'utf8')
   ].join('\n')
   writeIfChanged(path.join(dist, 'deck.css'), css)
-  writeIfChanged(
-    path.join(dist, 'index.html'),
-    readFileSync(path.join(plugin, 'page', 'index.html'), 'utf8')
-  )
+  for (const page of ['index', 'settings']) {
+    writeIfChanged(
+      path.join(dist, `${page}.html`),
+      readFileSync(path.join(plugin, 'page', `${page}.html`), 'utf8')
+    )
+  }
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

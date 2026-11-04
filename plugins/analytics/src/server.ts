@@ -4,23 +4,28 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import type { AddressInfo } from 'node:net'
 import { join } from 'node:path'
 import type { PluginActionTargetKind } from './host'
-import { pickTheme, renderPage } from './html'
+import { pickTheme, renderPage, type Theme } from './html'
 import {
   groupView,
   isRange,
+  scopeKey,
   sessionView,
   workspaceView,
   type Ledger,
   type Range,
   type ScopeView
 } from './ledger'
-import type { PriceTable } from './prices'
+import { tableFromJson, type PriceTable } from './prices'
+import { cleanTokens, type PublishOutcome, type PublishRequest } from './publish'
+import { GAP_MAX, GAP_MIN, parseGap } from './settings'
 import type { ServerInfo } from './store'
 
 /**
  * The pages, on loopback only. Every route lives under `/<token>/`, a random token minted
  * once and kept in `server.json` with the port, so a page URL survives a restart and no
- * other local page can guess one. Anything else answers 404 with an empty body.
+ * other local page can guess one. Anything else answers 404 with an empty body. Two routes
+ * take a POST, both under the token and both JSON: `settings` (the gap and the price table)
+ * and `publish` (a page pushed to Slideless); every other method answers 404.
  */
 
 export type Scope =
@@ -39,6 +44,29 @@ export interface StoreLike {
   writeServer(info: ServerInfo): void
 }
 
+/** What the settings page shows and edits. */
+export interface SettingsData {
+  gapMinutes: number
+  gapBounds: { min: number; max: number }
+  /** The table in force: the person's own copy when there is one, else the shipped one. */
+  prices: PriceTable
+  override: boolean
+  shipped: { date: string; source: string }
+}
+
+export interface SettingsPatch {
+  gapMinutes?: number
+  prices?: PriceTable
+  /** Drop the person's copy: the shipped table is in force again. */
+  resetPrices?: boolean
+}
+
+export interface SettingsPort {
+  get(): SettingsData
+  /** Applies a validated patch and answers the state in force after it. */
+  apply(patch: SettingsPatch): SettingsData
+}
+
 export interface ServerOptions {
   store: StoreLike
   collector: CollectorLike
@@ -48,6 +76,10 @@ export interface ServerOptions {
   now?: () => Date
   /** Where a page that could not be drawn is said, once per page. */
   log?: (level: 'warn' | 'error', message: string) => void
+  /** The settings page and its data; without it the route answers 404. */
+  settings?: SettingsPort
+  /** One publish of a page; without it the route answers 404. */
+  publish?: (request: PublishRequest) => Promise<PublishOutcome>
 }
 
 export interface AnalyticsServer {
@@ -59,6 +91,7 @@ export interface AnalyticsServer {
 
 const PING_MS = 25_000
 const EVENT_DEBOUNCE_MS = 500
+const BODY_LIMIT = 256 * 1024
 
 export function defaultRange(scope: Scope): Range {
   return scope.kind === 'workspace' ? 'today' : 'all'
@@ -76,11 +109,12 @@ export function scopeView(
   return workspaceView(ledger, scope.ws, prices, range, now)
 }
 
-function scopeParam(scope: Scope): string {
-  return scope.kind === 'workspace' ? `workspace:${scope.ws ?? '-'}` : `${scope.kind}:${scope.id}`
+/** The scope's key: `session:<id>`, `group:<id>`, `workspace:<ws|->`. */
+export function scopeParam(scope: Scope): string {
+  return scopeKey(scope.kind, scope.kind === 'workspace' ? scope.ws : scope.id)
 }
 
-function parseScopeParam(value: string | null): Scope | null {
+export function parseScopeParam(value: string | null): Scope | null {
   if (!value) return null
   const at = value.indexOf(':')
   if (at < 0) return null
@@ -118,10 +152,91 @@ function send(res: ServerResponse, status: number, type: string, body: string): 
   res.end(body)
 }
 
+function sendJson(res: ServerResponse, status: number, value: unknown): void {
+  send(res, status, 'application/json; charset=utf-8', JSON.stringify(value))
+}
+
 function sameToken(given: string, token: string): boolean {
   const a = Buffer.from(given)
   const b = Buffer.from(token)
   return a.length === b.length && timingSafeEqual(a, b)
+}
+
+/** The request's body as text, or null when it is over the limit or broke off. */
+function readBody(req: IncomingMessage): Promise<string | null> {
+  return new Promise((resolve) => {
+    const chunks: Buffer[] = []
+    let size = 0
+    let done = false
+    const finish = (value: string | null): void => {
+      if (done) return
+      done = true
+      resolve(value)
+    }
+    req.on('data', (chunk: Buffer) => {
+      if (done) return
+      size += chunk.length
+      if (size > BODY_LIMIT) {
+        finish(null)
+        req.destroy()
+        return
+      }
+      chunks.push(chunk)
+    })
+    req.on('end', () => finish(Buffer.concat(chunks).toString('utf8')))
+    req.on('error', () => finish(null))
+  })
+}
+
+const isObj = (v: unknown): v is Record<string, unknown> =>
+  typeof v === 'object' && v !== null && !Array.isArray(v)
+
+/** A settings patch out of a request body, or the sentence that refuses it. */
+export function parseSettingsPatch(raw: unknown): { patch: SettingsPatch } | { error: string } {
+  if (!isObj(raw)) return { error: 'The body is not an object.' }
+  const patch: SettingsPatch = {}
+  if ('gapMinutes' in raw) {
+    const gap = parseGap(raw['gapMinutes'])
+    if (gap === null)
+      return { error: `The gap is a whole number of minutes from ${GAP_MIN} to ${GAP_MAX}.` }
+    patch.gapMinutes = gap
+  }
+  if (raw['resetPrices'] === true) {
+    patch.resetPrices = true
+  } else if ('prices' in raw) {
+    const given = raw['prices']
+    const table = tableFromJson(given)
+    const wanted = isObj(given) && isObj(given['models']) ? Object.keys(given['models']).length : -1
+    if (!table || Object.keys(table.models).length !== wanted)
+      return { error: 'Every model needs a non-empty id and five prices, numbers of zero or more.' }
+    patch.prices = table
+  }
+  return { patch }
+}
+
+interface PublishBody {
+  scope: Scope
+  range: Range
+  names: boolean
+  theme: Theme
+  tokens: Record<string, string>
+}
+
+/** A publish request's body, or the sentence that refuses it. */
+export function parsePublishBody(raw: unknown): { body: PublishBody } | { error: string } {
+  if (!isObj(raw)) return { error: 'The body is not an object.' }
+  const scope = parseScopeParam(typeof raw['scope'] === 'string' ? raw['scope'] : null)
+  if (!scope) return { error: 'The body names no page to publish.' }
+  const range = isRange(raw['range']) ? raw['range'] : defaultRange(scope)
+  return {
+    body: {
+      scope,
+      range,
+      names: raw['names'] === true,
+      theme: pickTheme(typeof raw['theme'] === 'string' ? raw['theme'] : null),
+      tokens: cleanTokens(raw['tokens'])
+    }
+  }
 }
 
 function listen(server: Server, port: number, host: string): Promise<number> {
@@ -181,6 +296,14 @@ export async function startServer(options: ServerOptions): Promise<AnalyticsServ
     return `/${token}/${path}${q ? `?${q}` : ''}`
   }
 
+  const template = (name: string): string | null => {
+    try {
+      return readFileSync(join(options.pageDir, name), 'utf8')
+    } catch {
+      return null
+    }
+  }
+
   const servePage = (
     res: ServerResponse,
     scope: Scope,
@@ -189,23 +312,39 @@ export async function startServer(options: ServerOptions): Promise<AnalyticsServ
   ): void => {
     const data = view(scope, range)
     if (!data) return notFound(res)
-    let template: string
-    try {
-      template = readFileSync(join(options.pageDir, 'index.html'), 'utf8')
-    } catch {
-      return notFound(res)
-    }
+    const page = template('index.html')
+    if (page === null) return notFound(res)
     const events = `/${token}/events?${new URLSearchParams({ scope: scopeParam(scope), range })}`
     send(
       res,
       200,
       'text/html; charset=utf-8',
-      renderPage(template, {
+      renderPage(page, {
         title: data.name,
         data,
         events,
         theme: pickTheme(theme),
-        base: `/${token}/`
+        base: `/${token}/`,
+        mode: 'live'
+      })
+    )
+  }
+
+  const serveSettingsPage = (res: ServerResponse, theme: string | null): void => {
+    if (!options.settings) return notFound(res)
+    const page = template('settings.html')
+    if (page === null) return notFound(res)
+    send(
+      res,
+      200,
+      'text/html; charset=utf-8',
+      renderPage(page, {
+        title: 'Analytics settings',
+        data: options.settings.get(),
+        events: null,
+        theme: pickTheme(theme),
+        base: `/${token}/`,
+        mode: 'live'
       })
     )
   }
@@ -253,21 +392,75 @@ export async function startServer(options: ServerOptions): Promise<AnalyticsServ
   const serveAsset = (res: ServerResponse, name: string): void => {
     const types: Record<string, string> = {
       'deck.css': 'text/css; charset=utf-8',
-      'deck.js': 'text/javascript; charset=utf-8'
+      'deck.js': 'text/javascript; charset=utf-8',
+      'settings.js': 'text/javascript; charset=utf-8'
     }
     const type = types[name]
     if (!type) return notFound(res)
-    let body: string
-    try {
-      body = readFileSync(join(options.pageDir, name), 'utf8')
-    } catch {
-      return notFound(res)
-    }
+    const body = template(name)
+    if (body === null) return notFound(res)
     send(res, 200, type, body)
   }
 
+  const readJsonBody = async (req: IncomingMessage, res: ServerResponse): Promise<unknown> => {
+    const text = await readBody(req)
+    if (text === null) {
+      sendJson(res, 413, { error: 'The body is too large.' })
+      return undefined
+    }
+    try {
+      return JSON.parse(text) as unknown
+    } catch {
+      sendJson(res, 400, { error: 'The body is not JSON.' })
+      return undefined
+    }
+  }
+
+  const handleSettings = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
+    const settings = options.settings
+    if (!settings) return notFound(res)
+    const raw = await readJsonBody(req, res)
+    if (raw === undefined) return
+    const parsed = parseSettingsPatch(raw)
+    if ('error' in parsed) return sendJson(res, 400, { error: parsed.error })
+    try {
+      sendJson(res, 200, settings.apply(parsed.patch))
+    } catch (error) {
+      sendJson(res, 500, {
+        error: `The settings could not be saved: ${error instanceof Error ? error.message : String(error)}`
+      })
+    }
+  }
+
+  const handlePublish = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
+    const publish = options.publish
+    if (!publish) return notFound(res)
+    const raw = await readJsonBody(req, res)
+    if (raw === undefined) return
+    const parsed = parsePublishBody(raw)
+    if ('error' in parsed) return sendJson(res, 400, { error: parsed.error })
+    const { scope, range, names, theme, tokens } = parsed.body
+    const data = view(scope, range)
+    if (!data)
+      return sendJson(res, 404, {
+        ok: false,
+        kind: 'failed',
+        message: 'Nothing is measured for this page yet.'
+      })
+    let outcome: PublishOutcome
+    try {
+      outcome = await publish({ key: scopeParam(scope), range, names, theme, tokens, data })
+    } catch (error) {
+      outcome = {
+        ok: false,
+        kind: 'failed',
+        message: `The publish failed: ${error instanceof Error ? error.message : String(error)}`
+      }
+    }
+    sendJson(res, 200, outcome)
+  }
+
   const handle = (req: IncomingMessage, res: ServerResponse): void => {
-    if (req.method !== 'GET') return notFound(res)
     let url: URL
     let parts: string[]
     try {
@@ -278,12 +471,18 @@ export async function startServer(options: ServerOptions): Promise<AnalyticsServ
     }
     if (parts.length < 2 || !sameToken(parts[0]!, token)) return notFound(res)
     const rest = parts.slice(1)
+    const [head, a, b] = rest
+    if (req.method === 'POST') {
+      if (rest.length === 1 && head === 'settings') return void handleSettings(req, res)
+      if (rest.length === 1 && head === 'publish') return void handlePublish(req, res)
+      return notFound(res)
+    }
+    if (req.method !== 'GET') return notFound(res)
     const q = url.searchParams
     const rangeParam = q.get('range')
     const rangeFor = (scope: Scope): Range =>
       isRange(rangeParam) ? rangeParam : defaultRange(scope)
     const theme = q.get('theme')
-    const [head, a, b] = rest
 
     if (rest.length === 2 && (head === 'session' || head === 'group') && a) {
       const scope: Scope = { kind: head, id: a }
@@ -293,7 +492,12 @@ export async function startServer(options: ServerOptions): Promise<AnalyticsServ
       const scope: Scope = { kind: 'workspace', ws: q.get('ws') || null }
       return servePage(res, scope, rangeFor(scope), theme)
     }
+    if (rest.length === 1 && head === 'settings') return serveSettingsPage(res, theme)
     if (head === 'data') {
+      if (rest.length === 2 && a === 'settings.json') {
+        if (!options.settings) return notFound(res)
+        return sendJson(res, 200, options.settings.get())
+      }
       let scope: Scope | null = null
       if (rest.length === 3 && (a === 'session' || a === 'group') && b?.endsWith('.json')) {
         scope = { kind: a, id: b.slice(0, -'.json'.length) }
@@ -303,7 +507,7 @@ export async function startServer(options: ServerOptions): Promise<AnalyticsServ
       if (!scope || (scope.kind !== 'workspace' && !scope.id)) return notFound(res)
       const data = view(scope, rangeFor(scope))
       if (!data) return notFound(res)
-      return send(res, 200, 'application/json; charset=utf-8', JSON.stringify(data))
+      return sendJson(res, 200, data)
     }
     if (rest.length === 1 && head === 'events') {
       const scope = parseScopeParam(q.get('scope'))

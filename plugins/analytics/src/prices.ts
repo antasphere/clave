@@ -28,6 +28,15 @@ function isNum(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value)
 }
 
+/** The fields a model's price carries, USD per million tokens, in the settings page's order. */
+export const PRICE_FIELDS = [
+  'input',
+  'output',
+  'cacheRead',
+  'cacheWrite5m',
+  'cacheWrite1h'
+] as const
+
 function parseTable(text: string): PriceTable | null {
   let raw: unknown
   try {
@@ -35,7 +44,13 @@ function parseTable(text: string): PriceTable | null {
   } catch {
     return null
   }
-  if (!raw || typeof raw !== 'object') return null
+  return tableFromJson(raw)
+}
+
+/** A price table from a parsed JSON value; null when the shape is not a table. A model
+ *  whose prices are not all finite numbers is left out, never guessed. */
+export function tableFromJson(raw: unknown): PriceTable | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
   const obj = raw as Record<string, unknown>
   const models = obj['models']
   if (!models || typeof models !== 'object' || Array.isArray(models)) return null
@@ -45,10 +60,9 @@ function parseTable(text: string): PriceTable | null {
     models: {}
   }
   for (const [id, value] of Object.entries(models as Record<string, unknown>)) {
-    if (!value || typeof value !== 'object') continue
+    if (!id.trim() || !value || typeof value !== 'object') continue
     const p = value as Record<string, unknown>
-    const fields = ['input', 'output', 'cacheRead', 'cacheWrite5m', 'cacheWrite1h'] as const
-    if (!fields.every((f) => isNum(p[f]))) continue
+    if (!PRICE_FIELDS.every((f) => isNum(p[f]) && (p[f] as number) >= 0)) continue
     table.models[id] = {
       name: typeof p['name'] === 'string' ? p['name'] : id,
       input: p['input'] as number,

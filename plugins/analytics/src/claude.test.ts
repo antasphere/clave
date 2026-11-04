@@ -39,6 +39,16 @@ describe('a streamed message', () => {
     })
     expect(t.byModel['claude-opus-5-5']?.messages).toBe(1)
   })
+
+  it('stamps each of its tool calls with the row that carried it', () => {
+    const t = fold(streamed)
+    expect(t.toolStamps).toEqual([
+      '2026-10-01T09:00:07.000Z',
+      '2026-10-01T09:00:08.000Z',
+      '2026-10-01T09:00:09.000Z',
+      '2026-10-01T09:00:10.000Z'
+    ])
+  })
 })
 
 describe('the whole fixture', () => {
@@ -108,6 +118,7 @@ describe('a synthetic row', () => {
     expect(t.tokens.input).toBe(0)
     expect(t.firstAt).toBeNull()
     expect(t.stamps).toEqual([])
+    expect(t.toolStamps).toEqual([])
   })
 })
 

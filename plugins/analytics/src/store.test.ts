@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { emptyLedger, emptyTally } from './ledger'
 import { newCursor } from './reader'
-import { Store, isSessionRow } from './store'
+import { Store, isPublishedDeck, isSessionRow } from './store'
 
 let dir: string
 beforeEach(() => {
@@ -48,7 +48,82 @@ describe('Store', () => {
     store.writeLedger(emptyLedger(15, new Date('2026-10-02T10:00:00.000Z')))
     const file = join(dir, 'ledger.json')
     expect(calls).toEqual([`write ${file}.tmp`, `rename ${file}.tmp -> ${file}`])
-    expect(JSON.parse(readFileSync(file, 'utf8'))).toMatchObject({ v: 2, gapMinutes: 15 })
+    expect(JSON.parse(readFileSync(file, 'utf8'))).toMatchObject({ v: 3, gapMinutes: 15 })
+  })
+
+  it('reloads the published decks it can read, drops the rest, and keeps them across a recount', () => {
+    const ledger = emptyLedger(15, new Date('2026-10-02T10:00:00.000Z'))
+    const deck = {
+      deckId: 'deck-1',
+      baseUrl: 'https://share.example',
+      url: 'https://share.example/p/deck-1',
+      version: 3,
+      n: 1,
+      at: '2026-11-04T10:00:00.000Z',
+      title: 'Theme · Analytics',
+      names: false
+    }
+    writeFileSync(
+      join(dir, 'ledger.json'),
+      JSON.stringify({
+        ...ledger,
+        sessions: { a: row('a') },
+        published: { 'group:g1': deck, 'group:g2': { deckId: 'x' }, 'group:g3': 'nope' }
+      })
+    )
+    expect(new Store(dir).readLedger(15).published).toEqual({ 'group:g1': deck })
+    expect(isPublishedDeck(deck)).toBe(true)
+    expect(isPublishedDeck({ ...deck, version: '3' })).toBe(false)
+    expect(isPublishedDeck({ ...deck, deckId: '' })).toBe(false)
+    // A ledger of an earlier version is recounted, but the decks it was published as stay:
+    // a share link keeps pointing at the same deck.
+    writeFileSync(
+      join(dir, 'ledger.json'),
+      JSON.stringify({
+        ...ledger,
+        v: 2,
+        sessions: { a: row('a') },
+        published: { 'group:g1': deck }
+      })
+    )
+    const recounted = new Store(dir).readLedger(15)
+    expect(recounted.sessions).toEqual({})
+    expect(recounted.published).toEqual({ 'group:g1': deck })
+  })
+
+  it('reads the settings with their defaults and writes them back, and keeps the price override', () => {
+    const store = new Store(dir)
+    expect(store.readSettings()).toEqual({ gapMinutes: 15 })
+    writeFileSync(join(dir, 'settings.json'), JSON.stringify({ gapMinutes: 90 }))
+    expect(store.readSettings()).toEqual({ gapMinutes: 90 })
+    writeFileSync(join(dir, 'settings.json'), JSON.stringify({ gapMinutes: 0 }))
+    expect(store.readSettings()).toEqual({ gapMinutes: 15 })
+    writeFileSync(join(dir, 'settings.json'), '{oops')
+    expect(store.readSettings()).toEqual({ gapMinutes: 15 })
+    store.writeSettings({ gapMinutes: 45 })
+    expect(JSON.parse(readFileSync(join(dir, 'settings.json'), 'utf8'))).toEqual({ gapMinutes: 45 })
+
+    expect(store.hasPrices()).toBe(false)
+    const table = {
+      source: 'edited',
+      date: '2026-11-04',
+      models: {
+        'claude-x': {
+          name: 'X',
+          input: 1,
+          output: 2,
+          cacheRead: 0.1,
+          cacheWrite5m: 1.25,
+          cacheWrite1h: 2
+        }
+      }
+    }
+    store.writePrices(table)
+    expect(store.hasPrices()).toBe(true)
+    expect(JSON.parse(readFileSync(store.pricesPath, 'utf8'))).toEqual(table)
+    store.removePrices()
+    expect(store.hasPrices()).toBe(false)
+    store.removePrices()
   })
 
   it('reloads the rows it can draw and leaves a malformed one out, with one warning', () => {

@@ -217,6 +217,7 @@ export function foldEvents(
       if (w.toolCallIds.has(id)) continue
       w.toolCallIds.add(id)
       tally.toolCalls++
+      if (event.timestamp) tally.toolStamps.push(event.timestamp)
       if (day) day.toolCalls++
     }
     if (event.messageId !== null) {
