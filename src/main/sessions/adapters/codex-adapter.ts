@@ -129,6 +129,54 @@ const commandOf = (item: Record<string, unknown>): string => {
   const actions = Array.isArray(item.commandActions) ? item.commandActions.map(object) : []
   return (actions.length === 1 && text(actions[0].command)) || text(item.command)
 }
+/** What the thread is told about this tab's own Clave tool server. Codex asks
+ *  before an MCP tool call by the server's `default_tools_approval_mode` and
+ *  the tool's `approval_mode`: `auto`, its default, asks for every tool not
+ *  annotated read-only, and Clave's tools carry no annotations; `approve`
+ *  never asks, `prompt` always does, and the tool's mode wins over the
+ *  server's (codex-rs/core/src/mcp_tool_call.rs, 0.166.0; the keys refused
+ *  under `--strict-config` on any other spelling or value). Until 3 November
+ *  2026 the binding said nothing of this, so every message a lane sent to
+ *  another tab asked first, and, the server bound under a fresh name per
+ *  connection, no answer could be remembered. Clave is the app the chat runs
+ *  in and the server is this tab's own, reached with the tab's own token: its
+ *  coordination tools (messages between tabs, reads, names, groups, views,
+ *  notices, the dialogs that put the person in the loop by construction) need
+ *  no second word from the person. The tools that start or end a process on
+ *  the Mac outside this chat's own sandbox and approval policy keep their
+ *  prompt: a new tab (a terminal with a command, an agent without approvals),
+ *  a group terminal that launches at once, a pinned group, a view's serving
+ *  command, the end of another tab's process. The side panel keeps its
+ *  prompt with them: its update writes one existing file on disk wherever the
+ *  agent nominated it, outside the thread's sandbox and its writable roots,
+ *  and the sandbox Codex's own config applies to the thread is not seen here,
+ *  so no policy that asks lets it through unasked (the root tab's case of 3
+ *  November 2026). Under a policy that skips every approval (`never`, the
+ *  yolo profile) everything is approved: the person
+ *  chose no prompts, Codex 0.166.0 auto-approves a prompted tool under it
+ *  anyway (verified live, 3 November 2026), and a terminal started then runs
+ *  where the chat's own commands already run unasked. Only this binding is
+ *  named; every other server keeps Codex's own rule. */
+export const CLAVE_TOOLS_APPROVAL = {
+  mode: 'approve',
+  prompted: [
+    'clave_open_session',
+    'clave_add_group_terminal',
+    'clave_launch_group',
+    'clave_set_session_view',
+    'clave_close_session',
+    'clave_side_panel'
+  ]
+} as const
+const claveToolsApproval = (approvalPolicy: string): Record<string, unknown> => {
+  if (approvalPolicy === 'never') return { default_tools_approval_mode: CLAVE_TOOLS_APPROVAL.mode }
+  return {
+    default_tools_approval_mode: CLAVE_TOOLS_APPROVAL.mode,
+    tools: Object.fromEntries(
+      CLAVE_TOOLS_APPROVAL.prompted.map((tool) => [tool, { approval_mode: 'prompt' }])
+    )
+  }
+}
 
 /** State belongs to this connection, never to terminal titles or body heuristics. */
 export class CodexTranslator {
@@ -1028,7 +1076,8 @@ export class CodexAdapter implements SessionAdapter {
             url,
             bearer_token_env_var: 'CLAVE_CODEX_MCP_TOKEN',
             enabled: true,
-            required: true
+            required: true,
+            ...claveToolsApproval(permissionMode)
           }
         }
       })

@@ -37,6 +37,9 @@ const snapshots = () =>
 function seedStub() {
   mkdirSync(BIN, { recursive: true })
   mkdirSync(ROLLOUTS, { recursive: true })
+  // A run reads exactly two records of its own: the log starts empty, or a
+  // second run in the same namespace reads the first run's records too.
+  writeFileSync(LOG, '')
   writeFileSync(path.join(ROLLOUTS, 'rollout-2026-10-13T10-00-00-fixture-saved-thread.jsonl'), '')
   writeFileSync(
     path.join(BIN, 'sh'),
@@ -89,7 +92,8 @@ require('node:readline').createInterface({input:process.stdin}).on('line', async
         callerSessionId:after.callerSessionId,callerGroupId:after.callerGroupId,
         groupId:group.groupId,tools:tools.tools.map(tool=>tool.name),
         members:after.groups.find(g=>g.id===group.groupId)?.sessionIds,
-        tokenOnArgv:process.argv.some(arg=>arg.includes(token))
+        tokenOnArgv:process.argv.some(arg=>arg.includes(token)),
+        approval:{mode:cfg.default_tools_approval_mode,tools:cfg.tools,otherServers:Object.keys(frame.params.config||{}).filter(key=>key.startsWith('mcp_servers.')).length-1}
       })+'\\n');
       return send({id:frame.id,result:{thread:{id:thread},model:'fixture-model'}});
     }
@@ -159,6 +163,23 @@ export async function run(t) {
       assert.ok(record?.tools.includes('clave_open_session'))
       assert.ok(record?.tools.includes('clave_create_group'))
       assert.equal(record?.tokenOnArgv, false)
+      // What the thread start said about this binding's approvals (fresh and
+      // resumed alike): Clave's own tools are approved, closing a tab still
+      // asks, and no other server's table is touched.
+      assert.deepEqual(record?.approval, {
+        mode: 'approve',
+        tools: Object.fromEntries(
+          [
+            'clave_open_session',
+            'clave_add_group_terminal',
+            'clave_launch_group',
+            'clave_set_session_view',
+            'clave_close_session',
+            'clave_side_panel'
+          ].map((tool) => [tool, { approval_mode: 'prompt' }])
+        ),
+        otherServers: 0
+      })
     }
     assert.equal(new Set(records.map((record) => record.groupId)).size, 2)
     assert.equal(records.find((record) => record.sessionId === resumed.id)?.method, 'thread/resume')
@@ -168,6 +189,10 @@ export async function run(t) {
     )
     t.check('each authenticated caller creates and joins its own real sidebar group', true)
     t.check('login profiles cannot overwrite tab identity or place the token on argv', true)
+    t.check(
+      "fresh and resumed threads tell Codex this tab's Clave tools need no approval, the process-starting ones excepted",
+      true
+    )
 
     // Read credentials privately to verify teardown on the real HTTP boundary.
     // They never enter assertion details, provider logs or the fixture receipt.

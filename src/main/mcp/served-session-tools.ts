@@ -504,11 +504,17 @@ async function openSession(ctx: Ctx, key: string, p: Payload): Promise<unknown> 
       ...(p.dangerous !== undefined ? { dangerous: p.dangerous === true } : {}),
       ...(str(p.model) !== undefined ? { model: str(p.model) } : {})
     })
-  const profileRef = resolveProfileRef({
-    mode,
-    ...(p.chat !== undefined ? { chat: p.chat === true } : {}),
-    ...(str(p.profile) !== undefined ? { profile: str(p.profile) } : {})
-  })
+  const profileRef = resolveProfileRef(
+    {
+      mode,
+      ...(p.chat !== undefined ? { chat: p.chat === true } : {}),
+      ...(str(p.profile) !== undefined ? { profile: str(p.profile) } : {})
+    },
+    // The chat the launcher would open in that workspace: the person's own
+    // chat profile when they set one. Until 3 November 2026 the built-in
+    // replaced it, and a wave's Codex chats asked before every command.
+    family ? ctx.shell.chatDefault(family, workspaceId) : undefined
+  )
   const launchProfileId =
     family && profileRef
       ? ctx.shell

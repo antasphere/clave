@@ -10,7 +10,9 @@ import {
 } from '@heroicons/react/24/outline'
 import type { AgentQuestion } from '../../../src/shared/session-model'
 import type { Entry, Permission } from './reducer'
-import { describeTool, safeJson, type ToolKind } from './tools'
+import { describeTool, safeJson, type ApprovalGroup, type ToolKind } from './tools'
+import { approvalRunSummary, decisionWord, describeApproval, isQuestion } from './approvals'
+import { useDisclosure } from './disclosure'
 import { ChatCode } from './code'
 
 /* What the agent is waiting on, docked above the composer so it is always in
@@ -574,8 +576,6 @@ function QuestionPrompt({
   )
 }
 
-const isQuestion = (request: Permission): boolean => !!request.questions || !request.toolName
-
 /** The first request the agent still waits on, docked above the composer; the
  *  rest queue behind it. */
 export function PromptDock({
@@ -621,20 +621,25 @@ export function PromptDock({
   )
 }
 
-/** The transcript's record of a request: one muted row, like a tool call. */
+/** The transcript's record of a request: one muted row, like a tool call.
+ *  It reads what was asked in the reader's words (`describeApproval`: "Run a
+ *  command", "Use clave_send_to_session · Clave") and what the reader said
+ *  ("Allowed", "Declined"), never the protocol's method name and raw
+ *  decision id the Codex adapter carries. */
 export function PermissionRow({ entry }: { entry: PermissionEntry }): React.JSX.Element {
   const { request } = entry
   const question = isQuestion(request)
   const Icon = question ? QuestionMarkCircleIcon : ShieldCheckIcon
-  const chosen = entry.answer
-    ? (request.options.find((o) => o.id === entry.answer)?.label ?? entry.answer)
-    : null
-  const target = question ? '' : describeRequest(request, '').target
-  const subject = question
-    ? request.description
-    : request.toolName
-      ? [request.toolName, target].filter(Boolean).join(' ')
-      : request.description
+  const chosen = entry.answer ? decisionWord(request, entry.answer) : null
+  const approval = question
+    ? undefined
+    : (describeApproval(request) ?? {
+        label: request.toolName ?? request.description,
+        target: describeRequest(request, '').target
+      })
+  const subject = approval
+    ? [approval.label, approval.target].filter(Boolean).join(' ')
+    : request.description
   const answers = entry.answers ? Object.values(entry.answers).join('; ') : null
   // An answer on the entry is the truth, whatever the kernel said meanwhile.
   const status =
@@ -663,5 +668,49 @@ export function PermissionRow({ entry }: { entry: PermissionEntry }): React.JSX.
         {answers && question && <span className="chat-permission-row-answer">→ {answers}</span>}
       </span>
     </div>
+  )
+}
+
+/** A run of approvals the reader allowed: one row, led by the shield, that
+ *  opens to one receipt per request. An uncontrolled `<details>` keyed by the
+ *  row's key, as a run of tools is: the reader's choice is DOM state
+ *  a re-render cannot touch, and a receipt arriving mid-run neither closes an
+ *  opened row nor opens a closed one. */
+export function ApprovalRun({
+  group,
+  id
+}: {
+  group: ApprovalGroup
+  /** The row's key (`blockKey`): what the reader's disclosure is remembered under. */
+  id: string
+}): React.JSX.Element {
+  const disclosure = useDisclosure(id)
+  const [opened, setOpened] = useState(disclosure.initial)
+  const { head, detail } = approvalRunSummary(group.approvals)
+  return (
+    <details
+      className="chat-approval-run"
+      data-count={group.approvals.length}
+      open={disclosure.initial}
+      onToggle={(event) => {
+        if (disclosure.toggle(event)) setOpened(true)
+      }}
+    >
+      <summary className="chat-tool-row">
+        <ShieldCheckIcon className="chat-tool-status" aria-label="Allowed" />
+        <span className="chat-tool-run-summary">
+          <span className="chat-tool-name">{head}</span>
+          {detail && <span className="chat-tool-summary">{detail}</span>}
+        </span>
+        <ChevronRightIcon className="chat-tool-chevron" />
+      </summary>
+      {opened && (
+        <div className="chat-approval-items">
+          {group.approvals.map((entry) => (
+            <PermissionRow key={entry.request.id} entry={entry} />
+          ))}
+        </div>
+      )}
+    </details>
   )
 }

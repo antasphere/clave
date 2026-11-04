@@ -1,10 +1,46 @@
 export const API_VERSION = '1.0.0' as const
 
+export type PluginSessionState = 'idle' | 'working' | 'blocked' | 'done' | 'ended'
+export interface PluginSessionGroup {
+  id: string
+  name: string
+}
+
 export interface PluginSession {
   id: string
   cwd: string
   folderName: string
   alive: boolean
+  provider: string
+  providerSessionId: string | null
+  name: string
+  model: string | null
+  state: PluginSessionState
+  group: PluginSessionGroup | null
+  workspaceId: string | null
+  createdAt: number
+}
+
+export type PluginActionTargetKind = 'session' | 'group' | 'workspace'
+export interface PluginActionTarget {
+  kind: PluginActionTargetKind
+  id: string
+  workspaceId: string | null
+}
+export interface PluginActionPage {
+  url: string
+  title: string
+}
+export interface PluginActionResult {
+  page: PluginActionPage | null
+}
+export interface PluginActionPreviewRow {
+  label: string
+  value: string
+}
+export interface PluginActionHandlers {
+  invoke(target: PluginActionTarget): PluginActionResult | null | Promise<PluginActionResult | null>
+  preview?(target: PluginActionTarget): PluginActionPreviewRow[] | Promise<PluginActionPreviewRow[]>
 }
 export type PluginLogLevel = 'debug' | 'info' | 'warn' | 'error'
 export type PluginCommandHandler = (args?: unknown) => unknown | Promise<unknown>
@@ -26,6 +62,7 @@ export interface PluginAPI {
     registerPanel(id: string): Promise<void>
     registerToolbar(id: string): Promise<void>
     registerCommand(id: string, handler: PluginCommandHandler): Promise<void>
+    registerAction(id: string, handlers: PluginActionHandlers): Promise<void>
   }
   notify(options: { title: string; body?: string }): Promise<void>
   secrets: {

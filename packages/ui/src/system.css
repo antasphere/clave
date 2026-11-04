@@ -4114,6 +4114,22 @@ details[open] > .chat-tool-row .chat-tool-chevron,
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+/* A run of approvals the reader allowed: one row, led by the shield and read
+   like a run of tools, that opens to one receipt per request, indented under
+   the glyph. */
+.chat-approval-run {
+  align-self: stretch;
+  min-width: 0;
+  font-size: var(--chat-code-size);
+}
+.chat-approval-items {
+  display: flex;
+  flex-direction: column;
+  padding-left: calc(var(--chat-glyph) + var(--spacing) * 2);
+}
+details[open] > .chat-approval-items {
+  animation: chat-reveal var(--default-transition-duration) var(--ease-out-expo);
+}
 
 /* Notices sit in the column's centre, small and grey; an error carries the
    destructive ink and a hairline so it cannot be mistaken for a status. */

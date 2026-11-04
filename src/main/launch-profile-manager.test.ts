@@ -256,6 +256,7 @@ function adapterPlugin(enabled: boolean): PluginRecord {
     contentDigest: 'digest',
     status: 'active',
     panels: [],
+    actions: [],
     commands: [],
     toolbar: [],
     generation: 0,
@@ -275,6 +276,7 @@ function adapterPlugin(enabled: boolean): PluginRecord {
         sidebarSections: [],
         views: [],
         marks: [],
+        actions: [],
         adapters: [
           {
             id: 'acme-agent',

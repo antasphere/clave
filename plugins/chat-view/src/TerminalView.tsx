@@ -48,10 +48,16 @@ import {
 import { ContextMeter, SubAgentStack } from './TerminalStatus'
 import { AccountChip } from './AccountChip'
 import { useQuestionHeight } from './question-height'
-import { groupEntries, visibleEntries, type Block, type ToolGroup as ToolRun } from './tools'
+import {
+  blockKey,
+  groupEntries,
+  visibleEntries,
+  type Block,
+  type ToolGroup as ToolRun
+} from './tools'
 import { TerminalTools } from './TerminalTools'
 import { ToolDisclosure } from './disclosure'
-import { PermissionRow, PromptDock } from './PromptDock'
+import { ApprovalRun, PermissionRow, PromptDock } from './PromptDock'
 import { serverDock, withServerPending } from './server-requests'
 import { continueList } from './lists'
 import { ResumePicker } from './ResumePicker'
@@ -436,6 +442,8 @@ function TerminalTurn({
             />
           ) : block.kind === 'tool-group' ? (
             <ToolRow key={key} group={block} live={key === liveRun} />
+          ) : block.kind === 'approval-group' ? (
+            <ApprovalRun key={key} id={key} group={block} />
           ) : (
             <EntryRow key={key} entry={block} onError={onError} />
           )
@@ -824,12 +832,7 @@ export function TerminalView({
     entries.forEach((entry, i) => ordinal.set(entry, presentation.first + i))
     return groupEntries(visibleEntries(entries)).map((block) => ({
       block,
-      key:
-        block.kind === 'tool-group'
-          ? `tools-${block.id}`
-          : block.kind === 'delivery-group'
-            ? `deliveries-${ordinal.get(block.exchanges[0].message)}`
-            : `entry-${ordinal.get(block)}`
+      key: blockKey(block, (entry) => ordinal.get(entry))
     }))
   }, [presentation.entries, presentation.first, remotePending, session.id])
   // One section per exchange: the reader's message and everything answering

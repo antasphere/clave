@@ -80,6 +80,7 @@ import { installE2eHooks } from './sessions/e2e-hooks'
 import { publishSessionStates, setServerEventPublisher } from './server/session-events'
 import { sessionManager } from './sessions/session-manager'
 import { eventsProfile, launchProfileManager } from './launch-profile-manager'
+import { chatDefaultFor } from '../shared/open-session-modes'
 import { ptyManager, loginShellEnvAsync, getUserShell, getLoginShellEnv } from './pty-manager'
 import { TEST_NO_ACTIVATE } from './test-mode'
 // ── Wave 5, lane C: the plugins, this server's own service (plugins/standalone-plugins.ts) ──
@@ -288,7 +289,8 @@ async function main(): Promise<void> {
   const plugins = standalonePlugins({
     dataDir,
     bundled: arg('plugins-bundled') ?? path.resolve(__dirname, '..', '..', 'plugins'),
-    version
+    version,
+    records: () => sessions.listAdoptableRecords()
   })
   installE2eHooks({ plugins })
   // ── Issue #266: the version, and for a daemon the install script's upgrade ──
@@ -357,6 +359,11 @@ async function main(): Promise<void> {
           builtInProfileFamily(id) ??
           eventsProfile(id)?.family ??
           launchProfileManager.getPreferences().customProfiles.find((p) => p.id === id)?.family,
+        // The chat this server's launcher would open for a family: its own
+        // default's chat form, the server having one sidebar and no workspace
+        // defaults of its own.
+        chatDefault: (family) =>
+          chatDefaultFor(launchProfileManager.getPreferences(), family, null),
         executeSecret: async (action, value) => {
           const outcome = await executeSecretAction(
             action,

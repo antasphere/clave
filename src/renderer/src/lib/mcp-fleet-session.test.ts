@@ -73,6 +73,69 @@ describe('MCP fleet session launch', () => {
     expect(f.move).toHaveBeenCalledWith(['remote-session'], 'group', 'inside')
     expect(api.resizeSession).toHaveBeenCalledWith('remote-session', 120, 30)
   })
+  it("opens a chat on the server's own global default's chat form, the built-in otherwise", async () => {
+    const api = setup()
+    const yolo = {
+      id: 'yolo',
+      name: 'yolo codex',
+      family: 'codex',
+      command: ['codex', '--yolo'],
+      additionalArgs: []
+    }
+    const yoloChat = {
+      ...yolo,
+      id: 'chat:codex:yolo',
+      name: 'yolo codex (chat)',
+      sourceProfileId: 'yolo'
+    }
+    const codexChat = {
+      id: 'codex-chat',
+      name: 'Codex (chat)',
+      family: 'codex',
+      command: ['codex'],
+      additionalArgs: [],
+      builtIn: true
+    }
+    api.fleetLaunchSettings.mockResolvedValue({
+      profiles: {
+        customProfiles: [profile, yolo, yoloChat, codexChat],
+        globalDefaults: { codex: 'yolo' },
+        // A Mac-side workspace key the server never holds: not consulted.
+        workspaceOverrides: { ws: { codex: 'codex-chat' } }
+      },
+      claudeAccounts: [],
+      codexAccounts: [{ id: 'x', label: 'Remote Codex' }]
+    })
+    await openFleetSession('server', 'ws', undefined, {
+      cwd: '/srv/repo',
+      mode: 'codex',
+      chat: true
+    })
+    expect(api.fleetStart.mock.calls.at(-1)![2]).toMatchObject({
+      launchProfileId: 'chat:codex:yolo',
+      launchProfile: yoloChat
+    })
+    // An explicit chat profile still wins, by id.
+    await openFleetSession('server', 'ws', undefined, {
+      cwd: '/srv/repo',
+      mode: 'codex',
+      chat: true,
+      profile: 'codex-chat'
+    })
+    expect(api.fleetStart.mock.calls.at(-1)![2]).toMatchObject({ launchProfileId: 'codex-chat' })
+    // No default on the server: the built-in chat.
+    api.fleetLaunchSettings.mockResolvedValue({
+      profiles: { customProfiles: [codexChat], globalDefaults: {}, workspaceOverrides: {} },
+      claudeAccounts: [],
+      codexAccounts: []
+    })
+    await openFleetSession('server', undefined, undefined, {
+      cwd: '/srv/repo',
+      mode: 'codex',
+      chat: true
+    })
+    expect(api.fleetStart.mock.calls.at(-1)![2]).toMatchObject({ launchProfileId: 'codex-chat' })
+  })
   it('runs terminals without account/profile lookups and preserves prefill', async () => {
     const api = setup()
     await openFleetSession('server', undefined, undefined, {

@@ -1,0 +1,38 @@
+{
+  "source": "Anthropic list prices as the claude-api skill's model table gives them, read on 2026-11-03; cache write multipliers from the same skill: 1.25x the input price for a 5-minute entry, 2x for a 1-hour entry; cache reads 0.025x on Fable 5.1, 0.05x on Opus 5.5, 0.1x elsewhere. Haiku 5.5 is priced at its rate for prompts of 100K tokens or fewer; its higher rate above that is not applied.",
+  "date": "2026-11-03",
+  "models": {
+    "claude-fable-5-1": {
+      "name": "Claude Fable 5.1",
+      "input": 10.0,
+      "output": 50.0,
+      "cacheRead": 0.25,
+      "cacheWrite5m": 12.5,
+      "cacheWrite1h": 20.0
+    },
+    "claude-opus-5-5": {
+      "name": "Claude Opus 5.5",
+      "input": 4.0,
+      "output": 20.0,
+      "cacheRead": 0.2,
+      "cacheWrite5m": 5.0,
+      "cacheWrite1h": 8.0
+    },
+    "claude-sonnet-5-5": {
+      "name": "Claude Sonnet 5.5",
+      "input": 2.0,
+      "output": 10.0,
+      "cacheRead": 0.2,
+      "cacheWrite5m": 2.5,
+      "cacheWrite1h": 4.0
+    },
+    "claude-haiku-5-5": {
+      "name": "Claude Haiku 5.5",
+      "input": 0.1,
+      "output": 0.5,
+      "cacheRead": 0.01,
+      "cacheWrite5m": 0.125,
+      "cacheWrite1h": 0.2
+    }
+  }
+}

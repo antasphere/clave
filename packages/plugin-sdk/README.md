@@ -58,6 +58,22 @@ refused, because at click time the host would simply refuse the command and the 
 would look fine. Registration goes through `ui.registerToolbar(id)`, guarded by the same
 exact-id check as panels and commands.
 
+An `actions` entry is a verb a plugin offers on something the person right-clicks: `{ "id",
+"title", "icon", "targets", "preview" }`, `targets` a non-empty subset of `session`, `group` and
+`workspace`. The host puts a `session` action in a tab's right-click menu and a `group` action in
+a group's, below the app's own entries, with the plugin's icon; a `workspace` action is one button
+in the toolbar's plugin cluster. The plugin claims an action with `ui.registerAction(id, { invoke,
+preview? })`, guarded by the same exact-id check as the other contributions. `invoke` receives the
+target, `{ kind, id, workspaceId }`, and answers `{ page: { url, title } }` or `null`: a page is
+shown in the content column, in the themed web view every plugin surface renders in (an `http:` or
+`https:` URL of at most 2048 characters, a title of 1 to 200 characters; anything else is refused
+and nothing opens). With `preview: true` the host also asks `preview(target)` while the entry is
+highlighted and draws the rows it answers, at most six `{ label, value }` pairs of at most 80
+characters each, in the menu's preview card: the live figures of what the pointer is on, without
+opening anything. An invoke that takes more than 15 seconds, or a preview more than 3, is dropped.
+The target is an id and nothing more: what the plugin may read of that session is what its grants
+allow, as for every other call. `plugins/analytics` is the first plugin to contribute actions.
+
 A `marks` entry is a mark pack: what stands for an agent (its sidebar tab, the chat
 pane's status, the mark at the end of a transcript while it works) and, with the `tool`
 slot, for a tool call in flight, drawn by the pack instead of the provider's logo and the
@@ -76,6 +92,17 @@ The other declared permissions reserve future host APIs; they do not expose
 filesystem, network, or shell methods in v1. Utility processes provide crash
 isolation, not an OS security sandbox for arbitrary Node.js plugin code. Only
 install host-side code you trust.
+
+A session, as every `sessions.*` call and the `sessions.changed` push describe it, carries
+`id`, `cwd`, `folderName`, `alive`, and since the actions contribution also `provider` (`claude`,
+`codex`, `pi`, `antigravity`, `terminal`, or an adapter's own), `providerSessionId` (the id the
+provider resumes the conversation by, `null` for a plain terminal), `name` (the tab's name),
+`model` (the model the tab was launched with, `null` when the provider has none), `state` (`idle`,
+`working`, `blocked`, `done`, `ended`), `group` (`{ id, name }` of the sidebar group holding the
+tab, `null` when it is ungrouped), `workspaceId` and `createdAt`. All of it under `sessions.read`.
+A plugin's process also receives `CLAVE_PLUGIN_DATA_DIR`, a folder of its own under the plugin
+root, created by the host, for whatever must survive a restart (a ledger, a saved port); nothing
+else of the host's environment reaches it.
 
 `sessions.focused()` resolves to the session the user is looking at, or `null`; the host
 also pushes it unasked as a `context.changed` notification whenever it changes, delivered

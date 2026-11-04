@@ -1,5 +1,13 @@
-import { watch, type FSWatcher } from 'node:fs'
-import { assertMethodPermission, type RPCMessage, type PluginSession } from '@clave/plugin-sdk'
+import { mkdirSync, watch, type FSWatcher } from 'node:fs'
+import { join } from 'node:path'
+import {
+  assertMethodPermission,
+  type PluginActionPreviewRow,
+  type PluginActionResult,
+  type PluginActionTarget,
+  type RPCMessage,
+  type PluginSession
+} from '@clave/plugin-sdk'
 import { pluginFile, PluginStore, type PluginRecord } from './plugin-store'
 
 /** The process a plugin's `main` runs in, as the host sees it: one per start,
@@ -37,7 +45,7 @@ interface RunningPlugin {
   context?: string
   pending: Map<
     number,
-    { resolve: () => void; reject: (error: Error) => void; timer: NodeJS.Timeout }
+    { resolve: (value: unknown) => void; reject: (error: Error) => void; timer: NodeJS.Timeout }
   >
 }
 export interface PluginServices {
@@ -84,6 +92,7 @@ export class PluginHost {
     if (record.manifest.kind === 'skin') return // The skin lane owns token activation.
     record.generation = ++this.generation
     record.panels = []
+    record.actions = []
     record.commands = []
     record.toolbar = []
     if (!record.manifest.main) {
@@ -106,6 +115,10 @@ export class PluginHost {
           process.env[key] ? [[key, process.env[key]!]] : []
         )
       )
+      // The plugin's own folder for what it keeps between runs, outside its package.
+      const dataDir = join(this.store.root, 'data', id)
+      mkdirSync(dataDir, { recursive: true })
+      env.CLAVE_PLUGIN_DATA_DIR = dataDir
       const child = this.spawner({ id, main, cwd: record.directory, env })
       const running: RunningPlugin = {
         process: child,
@@ -138,6 +151,7 @@ export class PluginHost {
         if (this.running.get(id) !== running) return
         this.running.delete(id)
         record.panels = []
+        record.actions = []
         record.commands = []
         record.toolbar = []
         this.services.stopped(id)
@@ -197,7 +211,7 @@ export class PluginHost {
       clearTimeout(pending.timer)
       if ('error' in message)
         pending.reject(new Error(message.error?.message ?? 'Malformed plugin error'))
-      else pending.resolve()
+      else pending.resolve(message.result)
       return
     }
     if (!('id' in message)) {
@@ -258,6 +272,10 @@ export class PluginHost {
           break
         case 'ui.registerCommand':
           if (!record.commands.includes(string('id'))) record.commands.push(string('id'))
+          this.services.changed()
+          break
+        case 'ui.registerAction':
+          if (!record.actions.includes(string('id'))) record.actions.push(string('id'))
           this.services.changed()
           break
         case 'ui.registerToolbar':
@@ -357,30 +375,88 @@ export class PluginHost {
   contextChanged(): void {
     this.publishContext()
   }
+  /** The session list changed in a way the poll would only see late (a group report):
+   *  publish it now. */
+  sessionsChanged(): void {
+    this.publishSessions()
+  }
   execute(id: string, command: string): Promise<void> {
     const record = this.store.get(id)
-    const running = this.running.get(id)
     if (
       !record.enabled ||
       record.status !== 'active' ||
       !record.commands.includes(command) ||
-      !running
+      !this.running.has(id)
     )
       return Promise.reject(new Error('Command is not active'))
+    return this.request(id, 'commands.execute', { id: command }, 125_000, 'Command timed out').then(
+      () => undefined
+    )
+  }
+  /** Run a declared, registered action on a target and check the page it answers. */
+  async invokeAction(
+    pluginId: string,
+    actionId: string,
+    target: unknown
+  ): Promise<PluginActionResult> {
+    const checked = this.activeAction(pluginId, actionId, target)
+    const answer = await this.request(
+      pluginId,
+      'actions.invoke',
+      { id: actionId, target: checked },
+      15_000
+    )
+    return validateActionResult(answer)
+  }
+  /** Ask a declared, registered action for its preview rows on a target. */
+  async previewAction(
+    pluginId: string,
+    actionId: string,
+    target: unknown
+  ): Promise<PluginActionPreviewRow[]> {
+    const checked = this.activeAction(pluginId, actionId, target)
+    const answer = await this.request(
+      pluginId,
+      'actions.preview',
+      { id: actionId, target: checked },
+      3_000
+    )
+    return validateActionPreview(answer)
+  }
+  private activeAction(pluginId: string, actionId: string, target: unknown): PluginActionTarget {
+    const checked = validateActionTarget(target)
+    const record = this.store.get(pluginId)
+    const declared = record.manifest?.contributes.actions.find((action) => action.id === actionId)
+    if (
+      !record.enabled ||
+      record.status !== 'active' ||
+      !record.actions.includes(actionId) ||
+      !declared ||
+      !declared.targets.includes(checked.kind) ||
+      !this.running.has(pluginId)
+    )
+      throw new Error('Action is not active')
+    return checked
+  }
+  /** A host → plugin request, resolved with the plugin's result. */
+  private request(
+    id: string,
+    method: string,
+    params: unknown,
+    timeoutMs: number,
+    timeoutMessage = `Plugin request timed out: ${method}`
+  ): Promise<unknown> {
+    const running = this.running.get(id)
+    if (!running) return Promise.reject(new Error('Plugin is not running'))
     const requestId = this.nextId++
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         running.pending.delete(requestId)
-        reject(new Error('Command timed out'))
-      }, 125_000)
+        reject(new Error(timeoutMessage))
+      }, timeoutMs)
       running.pending.set(requestId, { resolve, reject, timer })
       try {
-        running.process.postMessage({
-          jsonrpc: '2.0',
-          id: requestId,
-          method: 'commands.execute',
-          params: { id: command }
-        })
+        running.process.postMessage({ jsonrpc: '2.0', id: requestId, method, params })
       } catch (error) {
         clearTimeout(timer)
         running.pending.delete(requestId)
@@ -402,6 +478,7 @@ export class PluginHost {
     this.retries.delete(id)
     const record = this.store.get(id)
     record.panels = []
+    record.actions = []
     record.commands = []
     record.toolbar = []
     record.status = 'disabled'
@@ -472,4 +549,57 @@ export class PluginHost {
     for (const timer of this.timers.values()) clearTimeout(timer)
     for (const id of this.running.keys()) this.stop(id)
   }
+}
+
+const TARGET_KINDS = ['session', 'group', 'workspace'] as const
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value)
+const boundedString = (value: unknown, max: number): value is string =>
+  typeof value === 'string' && value.length >= 1 && value.length <= max
+
+/** What the renderer names an action's target; checked before anything reaches a plugin. */
+export function validateActionTarget(value: unknown): PluginActionTarget {
+  if (
+    !isRecord(value) ||
+    !(TARGET_KINDS as readonly unknown[]).includes(value.kind) ||
+    !boundedString(value.id, 256) ||
+    !(value.workspaceId === null || boundedString(value.workspaceId, 256))
+  )
+    throw new Error('Invalid action target')
+  return {
+    kind: value.kind as PluginActionTarget['kind'],
+    id: value.id,
+    workspaceId: value.workspaceId as string | null
+  }
+}
+
+/** A plugin's invoke answer: nothing, or a web page to open. Never trusted as sent. */
+export function validateActionResult(value: unknown): PluginActionResult {
+  if (value === null || value === undefined) return { page: null }
+  if (!isRecord(value)) throw new Error('Plugin answered an invalid page')
+  const page = value.page
+  if (page === null) return { page: null }
+  if (!isRecord(page) || !boundedString(page.url, 2048) || !boundedString(page.title, 200))
+    throw new Error('Plugin answered an invalid page')
+  let protocol: string
+  try {
+    protocol = new URL(page.url).protocol
+  } catch {
+    throw new Error('Plugin answered an invalid page')
+  }
+  if (protocol !== 'http:' && protocol !== 'https:')
+    throw new Error('Plugin answered an invalid page')
+  return { page: { url: page.url, title: page.title } }
+}
+
+/** A plugin's preview answer: at most six short label/value rows. */
+export function validateActionPreview(value: unknown): PluginActionPreviewRow[] {
+  if (!Array.isArray(value) || value.length > 6)
+    throw new Error('Plugin answered an invalid preview')
+  return value.map((row) => {
+    if (!isRecord(row) || !boundedString(row.label, 80) || !boundedString(row.value, 80))
+      throw new Error('Plugin answered an invalid preview')
+    return { label: row.label, value: row.value }
+  })
 }

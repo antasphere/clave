@@ -20,6 +20,7 @@ import { SessionItem as BaseSessionItem } from '../session/SessionItem'
 import { FileTabItem } from '../session/FileTabItem'
 import { SessionGroupItem } from '../session/SessionGroupItem'
 import { ContextMenu, type ContextMenuItem } from '../ui/ContextMenu'
+import { pluginActionMenuItems } from '../plugins/plugin-actions'
 import { ConfirmDialog } from '@clave/ui/components'
 import { GroupCommandDialog } from '../ui/GroupCommandDialog'
 import { ExportClaveDialog } from '../ui/ExportClaveDialog'
@@ -1188,7 +1189,8 @@ export function Sidebar(): React.JSX.Element {
             onClick: () => {
               if (session.agentId) useAgentStore.getState().clearMessages(session.agentId)
             }
-          }
+          },
+          ...pluginActionMenuItems('session', sessionId)
         ]
         setContextMenu({ x: e.clientX, y: e.clientY, items })
         return
@@ -1310,6 +1312,10 @@ export function Sidebar(): React.JSX.Element {
           onClick: () => createGroup(state.selectedSessionIds)
         })
       }
+      // The plugins' entries are the menu's last section, above Delete; the window entries
+      // that arrive a beat later go before them, with the app's own.
+      const pluginItems = pluginActionMenuItems('session', sessionId)
+      items.push(...pluginItems)
       items.push({
         label: 'Delete',
         icon: <TrashIcon className="w-3.5 h-3.5" />,
@@ -1327,7 +1333,14 @@ export function Sidebar(): React.JSX.Element {
           if (extra.length === 0) return
           setContextMenu((current) =>
             current && current.x === x && current.y === y
-              ? { ...current, items: [...items.slice(0, -1), ...extra, items[items.length - 1]] }
+              ? {
+                  ...current,
+                  items: [
+                    ...items.slice(0, -1 - pluginItems.length),
+                    ...extra,
+                    ...items.slice(-1 - pluginItems.length)
+                  ]
+                }
               : current
           )
         })
@@ -1350,6 +1363,7 @@ export function Sidebar(): React.JSX.Element {
       const group = useSessionStore.getState().groups.find((g) => g.id === groupId)
       const currentColor = group?.color ?? null
       const existingPin = findPinnedByGroupId(groupId)
+      const pluginItems = pluginActionMenuItems('group', groupId)
       setContextMenu({
         x: e.clientX,
         y: e.clientY,
@@ -1405,6 +1419,7 @@ export function Sidebar(): React.JSX.Element {
             icon: <FolderMinusIcon className="w-3.5 h-3.5" />,
             onClick: () => handleUngroup(groupId)
           },
+          ...pluginItems,
           {
             label: 'Delete',
             icon: <TrashIcon className="w-3.5 h-3.5" />,
@@ -1421,9 +1436,9 @@ export function Sidebar(): React.JSX.Element {
             ? {
                 ...current,
                 items: [
-                  ...current.items.slice(0, -1),
+                  ...current.items.slice(0, -1 - pluginItems.length),
                   ...extra,
-                  current.items[current.items.length - 1]
+                  ...current.items.slice(-1 - pluginItems.length)
                 ]
               }
             : current

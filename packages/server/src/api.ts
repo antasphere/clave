@@ -48,13 +48,16 @@ import {
   DisablePlugin,
   EnablePlugin,
   GetPluginPanel,
+  InvokePluginAction,
   LeasePluginView,
   LinkPlugin,
   ListPluginSecretRequests,
   ListPlugins,
+  PreviewPluginAction,
   RemovePlugin,
   ReplyPluginSecret,
   ReportPluginContext,
+  ReportPluginGroups,
   RequestPluginView,
   RevokePluginView,
   RunPluginCommand
@@ -193,6 +196,9 @@ export const PluginsLive = HttpApiBuilder.group(ClaveApi, 'plugins', (handlers) 
     .handle('requestView', HttpCqrs.command(RequestPluginView))
     .handle('revokeView', HttpCqrs.command(RevokePluginView))
     .handle('replySecret', HttpCqrs.command(ReplyPluginSecret))
+    .handle('invokeAction', HttpCqrs.command(InvokePluginAction))
+    .handle('previewAction', HttpCqrs.command(PreviewPluginAction))
+    .handle('groups', HttpCqrs.command(ReportPluginGroups))
 )
 
 // ── Wave wcs1023, lane C: the git domain ──

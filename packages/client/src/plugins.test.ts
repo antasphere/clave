@@ -46,6 +46,23 @@ describe('the plugins client', () => {
     expect(empty.calls[0]).toEqual(['requestView', { payload: { leaseId: 'l1', method: 'ping' } }])
   })
 
+  it('sends an action its target and answers the page or the rows, a groups report as undefined', async () => {
+    const page = { page: { url: 'https://decks.example/1', title: 'Deck' } }
+    const rows = [{ label: 'Sessions', value: '3' }]
+    const { calls, call } = fake({ invokeAction: page, previewAction: rows })
+    const plugins = pluginsClient(call)
+    const target = { kind: 'session', id: 's1', workspaceId: 'ws1' } as const
+    expect(await plugins.invokeAction('clave.analytics', 'deck', target)).toEqual(page)
+    expect(await plugins.previewAction('clave.analytics', 'deck', target)).toEqual(rows)
+    const groups = [{ id: 'g1', name: 'Launch', sessionIds: ['s1'], workspaceId: null }]
+    expect(await plugins.groups('w1', groups)).toBeUndefined()
+    expect(calls).toEqual([
+      ['invokeAction', { payload: { pluginId: 'clave.analytics', actionId: 'deck', target } }],
+      ['previewAction', { payload: { pluginId: 'clave.analytics', actionId: 'deck', target } }],
+      ['groups', { payload: { windowKey: 'w1', groups } }]
+    ])
+  })
+
   it('passes a null session through to the context report', async () => {
     const { calls, call } = fake()
     expect(await pluginsClient(call).context('w1', null)).toBeUndefined()
