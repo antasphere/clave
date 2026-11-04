@@ -126,6 +126,8 @@ export class Viewer {
   private child: ChildLike | null = null
   private attempt: Promise<ViewerState> | null = null
   private restartTimer: ReturnType<typeof setTimeout> | null = null
+  /** Settles the restart promise a backoff is waiting on, when `stop()` cuts the backoff short. */
+  private settleRestart: ((state: ViewerState) => void) | null = null
   private failures = 0
   private stopped = false
   private readonly spawn: SpawnLike
@@ -224,6 +226,11 @@ export class Viewer {
     this.child = null
     this.unguard()
     this.current = { kind: 'stopped' }
+    // A backoff cut short: whoever waits on the restart is answered, and a later `start()`
+    // is a fresh attempt rather than the promise of a restart that never comes.
+    this.settleRestart?.(this.current)
+    this.settleRestart = null
+    this.attempt = null
     if (child) {
       await new Promise<void>((resolve) => {
         const done = (): void => resolve()
@@ -322,8 +329,10 @@ export class Viewer {
         this.attempt = new Promise<ViewerState>((resolve) => {
           settle = resolve
         })
+        this.settleRestart = settle
         this.restartTimer = setTimeout(() => {
           this.restartTimer = null
+          this.settleRestart = null
           const run = this.run(this.savedOrAny())
           this.attempt = run
           void run.then(settle)

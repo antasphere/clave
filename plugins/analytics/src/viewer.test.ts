@@ -291,6 +291,36 @@ describe('Viewer', () => {
     await viewer.stop()
   })
 
+  it('answers a wait as soon as the restart is up, and settles it on stop', async () => {
+    const h = harness()
+    const viewer = h.make(null)
+    const started = viewer.start()
+    await tick()
+    h.children[0]!.up(5007)
+    await started
+    h.children[0]!.emit('exit', 1, null)
+    // A long wait begun during the backoff resolves when the restart is up, not at its end.
+    const began = Date.now()
+    const waited = viewer.ready(2_000)
+    await tick(15)
+    h.children[1]!.up(5007)
+    expect(await waited).toMatchObject({ kind: 'up', port: 5007 })
+    expect(Date.now() - began).toBeLessThan(500)
+    // A stop during a backoff settles the wait and makes the next start a fresh attempt.
+    h.children[1]!.emit('exit', 1, null)
+    const pending = viewer.ready(2_000)
+    const stopped = viewer.stop()
+    expect(await pending).toEqual({ kind: 'stopped' })
+    await stopped
+    expect(h.children).toHaveLength(2)
+    const again = viewer.start()
+    await tick()
+    expect(h.children).toHaveLength(3)
+    h.children[2]!.up(5008)
+    expect(await again).toMatchObject({ kind: 'up', port: 5008 })
+    await viewer.stop()
+  })
+
   it('starts the backoff over after a run that stayed up for a minute', async () => {
     const h = harness()
     let clock = 0
