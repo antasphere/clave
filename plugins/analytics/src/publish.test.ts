@@ -17,14 +17,20 @@ import {
 } from './ledger'
 import { loadPrices } from './prices'
 import {
+  ENV_COMMAND,
+  ENV_MARK,
   MESSAGES,
+  TIMEOUT_TEXT,
   assembleDeck,
   cleanTokens,
   fileKey,
   loginShellEnv,
   mergePaths,
+  nextOrdinal,
   parseEnv0,
+  parseMarkedEnv,
   parsePush,
+  parseWhoami,
   publishDeck,
   pushArgs,
   redactView,
@@ -174,6 +180,7 @@ describe('cleanTokens', () => {
         '--open': 'a{b',
         '--semi': 'red; color: blue',
         '--tag': 'x<y',
+        '--comment': 'a/*b',
         '--number': 12
       })
     ).toEqual({ '--surface-0': '#fff', '--ink': '#000' })
@@ -309,10 +316,14 @@ describe('the login shell environment', () => {
   })
 
   it('takes the login shell environment with the plugin path first', async () => {
-    const calls: { file: string; args: string[] }[] = []
-    const exec: ExecLike = (file, args, _options, callback) => {
-      calls.push({ file, args })
-      callback(null, 'PATH=/login/bin:/usr/bin\0HOME=/Users/x\0SLIDELESS_PROFILE=share\0', '')
+    const calls: { file: string; args: string[]; killSignal: string | undefined }[] = []
+    const exec: ExecLike = (file, args, options, callback) => {
+      calls.push({ file, args, killSignal: options.killSignal })
+      callback(
+        null,
+        `${ENV_MARK}PATH=/login/bin:/usr/bin\0HOME=/Users/x\0SLIDELESS_PROFILE=share\0`,
+        ''
+      )
       return undefined
     }
     const env = await loginShellEnv(exec, {
@@ -320,13 +331,33 @@ describe('the login shell environment', () => {
       HOME: '/Users/x',
       TMPDIR: '/tmp/t'
     })
-    expect(calls).toEqual([{ file: '/bin/zsh', args: ['-lic', 'env -0'] }])
+    expect(calls).toEqual([
+      { file: '/bin/zsh', args: ['-lic', ENV_COMMAND], killSignal: 'SIGKILL' }
+    ])
+    expect(ENV_COMMAND).toBe(`printf '%s' '${ENV_MARK}'; env -0`)
     expect(env).toEqual({
       PATH: '/own/bin:/usr/bin:/login/bin',
       HOME: '/Users/x',
       TMPDIR: '/tmp/t',
       SLIDELESS_PROFILE: 'share'
     })
+  })
+
+  it('drops what a chatty profile prints before the mark, and takes nothing without it', async () => {
+    const chatty: ExecLike = (_file, _args, _options, callback) => {
+      callback(null, `Welcome, a line from .zshrc\n${ENV_MARK}PATH=/login/bin\0HOME=/Users/x\0`, '')
+      return undefined
+    }
+    const env = await loginShellEnv(chatty, { PATH: '/own/bin:/usr/bin', HOME: '/Users/x' })
+    expect(env['PATH']).toBe('/own/bin:/usr/bin:/login/bin')
+    expect(Object.keys(env).some((key) => key.includes('\n'))).toBe(false)
+    expect(parseMarkedEnv('no mark at all\nPATH=/x\0')).toEqual({})
+    const unmarked: ExecLike = (_file, _args, _options, callback) => {
+      callback(null, 'PATH=/login/bin\0', '')
+      return undefined
+    }
+    const bare = await loginShellEnv(unmarked, { PATH: '/own/bin', HOME: '/Users/x' })
+    expect(bare['PATH']).toBe('/own/bin')
   })
 
   it('keeps the plugin path when the shell fails', async () => {
@@ -380,6 +411,23 @@ describe('slidelessRunner', () => {
         execAnswering({ error: failed, stdout: '', stderr: '  Error: refused \n' })
       )(args)
     ).toEqual({ ok: false, missing: false, code: 2, stderr: 'Error: refused' })
+    expect(calls[1]!.args).toEqual(args)
+  })
+
+  it('says a CLI stopped at its deadline in words, never its command line', async () => {
+    const killed = Object.assign(new Error('Command failed: slideless push /Users/x/My data'), {
+      code: null as unknown as number,
+      killed: true
+    })
+    const run = slidelessRunner(env, execAnswering({ error: killed, stdout: '', stderr: '' }))
+    const result = await run(args)
+    expect(result).toEqual({ ok: false, missing: false, code: null, stderr: TIMEOUT_TEXT })
+    const silent = Object.assign(new Error('Command failed: slideless push /Users/x/My data'), {
+      code: 3
+    })
+    expect(
+      await slidelessRunner(env, execAnswering({ error: silent, stdout: '', stderr: '' }))(args)
+    ).toEqual({ ok: false, missing: false, code: 3, stderr: 'the CLI exited with code 3' })
   })
 })
 
@@ -444,7 +492,8 @@ describe('publishDeck', () => {
     n: 1,
     at: '2026-11-04T15:00:00.000Z',
     title: 'Theme work · Analytics',
-    names: false
+    names: false,
+    by: 'x'
   }
 
   const publish = (
@@ -508,6 +557,7 @@ describe('publishDeck', () => {
       version: 1,
       url: URL_7,
       at: '2026-11-04T15:00:00.000Z',
+      by: 'x',
       names: false,
       theme: 'coffee',
       range: 'all',
@@ -580,9 +630,80 @@ describe('publishDeck', () => {
     expect(existsSync(join(folder, 'index.html'))).toBe(true)
   })
 
-  it('names the folders and files after the scope key', () => {
+  it('names the folders and files after the scope key, a long one cut and hashed', () => {
     expect(fileKey('workspace:-')).toBe('workspace--')
     expect(fileKey('session:tab 1')).toBe('session-tab-1')
     expect(fileKey('group:g1')).toBe('group-g1')
+    const long = fileKey(`workspace:${'x'.repeat(300)}`)
+    expect(long.length).toBeLessThanOrEqual(96)
+    expect(long.startsWith(`workspace-${'x'.repeat(70)}`)).toBe(true)
+    expect(long).toMatch(/-[0-9a-f]{8}$/)
+    expect(fileKey(`workspace:${'x'.repeat(300)}`)).toBe(long)
+    expect(fileKey(`workspace:${'y'.repeat(300)}`)).not.toBe(long)
+  })
+
+  it('numbers a snapshot past the highest on disk or on record, so none is overwritten', () => {
+    const published = join(dir, 'published')
+    expect(
+      nextOrdinal(
+        {
+          readdirSync: () => {
+            throw new Error('ENOENT')
+          }
+        },
+        published,
+        'group-g1'
+      )
+    ).toBe(1)
+    const names = [
+      'group-g1-1.json',
+      'group-g1-2.json',
+      'group-g2-9.json',
+      'group-g1-x.json',
+      'other'
+    ]
+    expect(nextOrdinal({ readdirSync: () => names as never }, published, 'group-g1')).toBe(3)
+    expect(nextOrdinal({ readdirSync: () => names as never }, published, 'group-g2')).toBe(10)
+    expect(parseWhoami('{"user":{"email":"a@b"}}')).toBe('a@b')
+    expect(parseWhoami('{}')).toBeNull()
+    expect(parseWhoami('not json')).toBeNull()
+  })
+
+  it('makes a new deck after one was reported gone without overwriting the snapshots', async () => {
+    mkdirSync(join(dir, 'published'), { recursive: true })
+    writeFileSync(join(dir, 'published', 'group-g1-1.json'), '{"v":1,"first":true}')
+    writeFileSync(join(dir, 'published', 'group-g1-2.json'), '{"v":1}')
+    const outcome = await publish(runner(signedIn(), pushed(1)))
+    expect(outcome).toEqual({ ok: true, deck: { ...firstDeck, n: 3 } })
+    expect(calls[1]).toContain('--new')
+    expect(readFileSync(join(dir, 'published', 'group-g1-1.json'), 'utf8')).toBe(
+      '{"v":1,"first":true}'
+    )
+    expect(existsSync(join(dir, 'published', 'group-g1-3.json'))).toBe(true)
+  })
+
+  it('titles a session deck after the redaction when the names stay out', async () => {
+    const view = sessionView(ledger(), 'sa', prices)!
+    const names = publishDeck({
+      dir,
+      pageDir,
+      request: { ...request(true), key: 'session:sa', data: view },
+      existing: null,
+      run: runner(signedIn(), pushed(1)),
+      now: () => NOW
+    })
+    expect((await names).ok).toBe(true)
+    expect(calls[1]![5]).toBe('Session a · Analytics')
+    calls = []
+    const redacted = await publishDeck({
+      dir,
+      pageDir,
+      request: { ...request(false), key: 'session:sa', data: view },
+      existing: null,
+      run: runner(signedIn(), pushed(1)),
+      now: () => NOW
+    })
+    expect(redacted.ok).toBe(true)
+    expect(calls[1]![5]).toBe('Session 1 · Analytics')
   })
 })

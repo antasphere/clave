@@ -5,17 +5,9 @@ import { fileURLToPath } from 'node:url'
 import { Collector } from './collector'
 import { formatCount, formatMinutes, formatTokens, formatUsd } from './format'
 import type { HostApi, PluginActionPreviewRow, PluginActionTarget } from './host'
+import { publisher, settingsPort } from './ports'
 import { loadPrices, type PriceTable } from './prices'
-import { publishDeck, type PublishOutcome, type PublishRequest } from './publish'
-import {
-  scopeView,
-  startServer,
-  type AnalyticsServer,
-  type Scope,
-  type SettingsData,
-  type SettingsPatch
-} from './server'
-import { GAP_MAX, GAP_MIN } from './settings'
+import { scopeView, startServer, type AnalyticsServer, type Scope } from './server'
 import { Store } from './store'
 
 /**
@@ -95,58 +87,6 @@ export default {
     })
 
     const pageDir = fileURLToPath(new URL('dist/', here))
-    const settingsData = (): SettingsData => ({
-      gapMinutes: collector!.ledger.gapMinutes,
-      gapBounds: { min: GAP_MIN, max: GAP_MAX },
-      prices: table,
-      override: store!.hasPrices(),
-      shipped: { date: shippedTable.date, source: shippedTable.source }
-    })
-    const applySettings = (patch: SettingsPatch): SettingsData => {
-      if (patch.resetPrices) store!.removePrices()
-      else if (patch.prices) store!.writePrices(patch.prices)
-      table = prices()
-      if (patch.gapMinutes !== undefined) {
-        store!.writeSettings({ gapMinutes: patch.gapMinutes })
-        collector!.setGap(patch.gapMinutes)
-      }
-      // A new table re-prices every open page.
-      if (patch.resetPrices || patch.prices) collector!.touch()
-      return settingsData()
-    }
-
-    // One publish at a time per page: a second click while one runs is told so.
-    const inFlight = new Set<string>()
-    const publish = async (request: PublishRequest): Promise<PublishOutcome> => {
-      if (inFlight.has(request.key))
-        return { ok: false, kind: 'busy', message: 'This page is being published already.' }
-      inFlight.add(request.key)
-      try {
-        const outcome = await publishDeck({
-          dir,
-          pageDir,
-          request,
-          existing: collector!.ledger.published[request.key] ?? null
-        })
-        if (outcome.ok) {
-          collector!.ledger.published[request.key] = outcome.deck
-          collector!.touch()
-          flushLedger()
-          log(
-            'info',
-            `Published ${request.key} as deck ${outcome.deck.deckId} version ${outcome.deck.version}`
-          )
-        } else if (outcome.gone) {
-          delete collector!.ledger.published[request.key]
-          collector!.touch()
-          flushLedger()
-        }
-        return outcome
-      } finally {
-        inFlight.delete(request.key)
-      }
-    }
-
     server = await startServer({
       store,
       collector,
@@ -155,8 +95,16 @@ export default {
       pageDir,
       host: '127.0.0.1',
       log,
-      settings: { get: settingsData, apply: applySettings },
-      publish
+      settings: settingsPort({
+        store,
+        collector,
+        shipped: shippedTable,
+        prices,
+        onTable: (next) => {
+          table = next
+        }
+      }),
+      publish: publisher({ dir, pageDir, collector, flush: flushLedger, log })
     })
     collector.on('changed', () => {
       table = prices()

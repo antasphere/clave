@@ -70,7 +70,8 @@ const TIMELINE = {
   hitTop: 6,
   hitBottom: 44
 }
-/** The swimlane's: one row per lane, the axis under them. */
+/** The swimlane's: one row per lane (its height the lane label's, a token of the sheet,
+ *  measured once the labels are drawn), the axis under them. */
 const SWIMLANE = { rowH: 28, barH: 10, axisPad: 24 }
 
 const params = new URLSearchParams(location.search)
@@ -296,7 +297,8 @@ function footerText(v: ScopeView): string {
 }
 
 function publishedWords(deck: PublishedDeck): string {
-  return `Published as version ${deck.version} on ${formatDay(deck.at)} at ${formatClock(deck.at)}`
+  const when = `on ${formatDay(deck.at)} at ${formatClock(deck.at)}`
+  return `Published as version ${deck.version} ${when}${deck.by ? ` by ${deck.by}` : ''}`
 }
 
 function drawFooter(p: Parts, v: ScopeView): void {
@@ -819,7 +821,8 @@ function drawSwimlane(slot: HTMLElement, lanes: Lane[]): void {
   )
   const width = plotWidth(plot)
   const scale = timeScale(span, width)
-  const height = lanes.length * SWIMLANE.rowH + SWIMLANE.axisPad
+  const rowH = labels.firstElementChild?.getBoundingClientRect().height || SWIMLANE.rowH
+  const height = lanes.length * rowH + SWIMLANE.axisPad
   const svg = svgEl('svg', { viewBox: `0 0 ${width} ${height}`, width, height }, 'chart')
   svg.setAttribute('role', 'img')
   svg.setAttribute(
@@ -827,24 +830,16 @@ function drawSwimlane(slot: HTMLElement, lanes: Lane[]): void {
     `${lanes.length} ${lanes.length === 1 ? 'session' : 'sessions'} on one wall clock`
   )
   lanes.forEach((lane, i) => {
-    const top = i * SWIMLANE.rowH + (SWIMLANE.rowH - SWIMLANE.barH) / 2
+    const top = i * rowH + (rowH - SWIMLANE.barH) / 2
     if (i > 0) {
-      const y = i * SWIMLANE.rowH
+      const y = i * rowH
       svg.append(svgEl('line', { x1: 0, x2: width, y1: y, y2: y }, 'rule'))
     }
-    laneMarks(
-      figure,
-      svg,
-      scale,
-      lane.blocks,
-      top,
-      SWIMLANE.barH,
-      i * SWIMLANE.rowH + 2,
-      SWIMLANE.rowH - 4,
-      [lane.label]
-    )
+    laneMarks(figure, svg, scale, lane.blocks, top, SWIMLANE.barH, i * rowH + 2, rowH - 4, [
+      lane.label
+    ])
   })
-  axis(svg, scale, lanes.length * SWIMLANE.rowH + 2, lanes.length * SWIMLANE.rowH + 18)
+  axis(svg, scale, lanes.length * rowH + 2, lanes.length * rowH + 18)
   plot.replaceChildren(svg)
 }
 

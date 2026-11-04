@@ -17,7 +17,8 @@ const COLUMN_LABELS: Record<Column, string> = {
   idle: 'Idle',
   blocked: 'Needs you'
 }
-const LANE_H = 40
+/** The lane's height is the lane label's, a token of the sheet, measured once drawn. */
+const LANE_FALLBACK_H = 42
 const DOT_R = 5
 const DOT_GAP = 14
 const EASE_MS = 700
@@ -116,9 +117,11 @@ export function mountLive(host: HTMLElement, first: ScopeView, still: boolean): 
   let lanes: Lane[] = []
   let frame: number | null = null
   let width = 0
+  let LANE_H = LANE_FALLBACK_H
 
   const measure = (): void => {
     width = Math.max(120, plot.getBoundingClientRect().width)
+    LANE_H = labels.firstElementChild?.getBoundingClientRect().height || LANE_FALLBACK_H
   }
 
   /** Where each live session's dot belongs: its lane's row, its state's column, spread
@@ -147,7 +150,9 @@ export function mountLive(host: HTMLElement, first: ScopeView, still: boolean): 
         out.set(s.id, {
           x,
           y,
-          title: `${s.name} · ${COLUMN_LABELS[column].toLowerCase()}`
+          title: `${s.name} · ${COLUMN_LABELS[column].toLowerCase()}${
+            s.provider === 'terminal' ? ' · a terminal' : ''
+          }`
         })
       })
     }
@@ -201,7 +206,6 @@ export function mountLive(host: HTMLElement, first: ScopeView, still: boolean): 
 
   const update = (view: ScopeView): void => {
     lanes = lanesOf(view)
-    measure()
     labels.replaceChildren(
       ...lanes.map((lane) => {
         const label = div('live-lane-label', lane.name)
@@ -209,6 +213,7 @@ export function mountLive(host: HTMLElement, first: ScopeView, still: boolean): 
         return label
       })
     )
+    measure()
     const height = Math.max(LANE_H, lanes.length * LANE_H)
     plot.setAttribute('viewBox', `0 0 ${width} ${height}`)
     plot.setAttribute('width', String(width))
@@ -227,6 +232,7 @@ export function mountLive(host: HTMLElement, first: ScopeView, still: boolean): 
     const now = performance.now()
     const wanted = targets(view)
     const states = new Map(view.live.map((s) => [s.id, s.state]))
+    const providers = new Map(view.live.map((s) => [s.id, s.provider]))
     for (const [id, target] of wanted) {
       let dot = dots.get(id)
       if (!dot) {
@@ -270,7 +276,8 @@ export function mountLive(host: HTMLElement, first: ScopeView, still: boolean): 
         }
       }
       const state = states.get(id) ?? 'idle'
-      dot.el.setAttribute('class', `live-dot state-${columnOf(state) ?? 'idle'}`)
+      const terminal = providers.get(id) === 'terminal' ? ' kind-terminal' : ''
+      dot.el.setAttribute('class', `live-dot state-${columnOf(state) ?? 'idle'}${terminal}`)
       dot.el.dataset['state'] = state
       dot.el.dataset['lane'] = String(Math.round((target.y - LANE_H / 2) / LANE_H))
       dot.el.dataset['column'] = columnOf(state) ?? ''

@@ -73,6 +73,8 @@ describe('Store', () => {
     )
     expect(new Store(dir).readLedger(15).published).toEqual({ 'group:g1': deck })
     expect(isPublishedDeck(deck)).toBe(true)
+    expect(isPublishedDeck({ ...deck, by: 'romain@example.test' })).toBe(true)
+    expect(isPublishedDeck({ ...deck, by: 7 })).toBe(false)
     expect(isPublishedDeck({ ...deck, version: '3' })).toBe(false)
     expect(isPublishedDeck({ ...deck, deckId: '' })).toBe(false)
     // A ledger of an earlier version is recounted, but the decks it was published as stay:
@@ -193,6 +195,10 @@ describe('Store', () => {
       [
         'a tally without stamps',
         { ...whole, root: { tally: without(tally(), 'stamps'), file: cursor() } }
+      ],
+      [
+        'a tally without tool stamps',
+        { ...whole, root: { tally: without(tally(), 'toolStamps'), file: cursor() } }
       ],
       [
         'a tally without tokens',

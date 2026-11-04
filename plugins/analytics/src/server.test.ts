@@ -573,6 +573,22 @@ describe('the request parsers', () => {
     expect(parseSettingsPatch({ resetPrices: true, prices: {} })).toEqual({
       patch: { resetPrices: true }
     })
+    // The server refuses a negative price itself, whatever the page's form checked.
+    const negative = parseSettingsPatch({
+      prices: {
+        models: {
+          'claude-x': {
+            name: 'X',
+            input: -5,
+            output: 1,
+            cacheRead: 1,
+            cacheWrite5m: 1,
+            cacheWrite1h: 1
+          }
+        }
+      }
+    })
+    expect('error' in negative && negative.error).toContain('zero or more')
     const theme = parsePublishBody({ scope: 'group:g1', theme: 'nonsense' })
     expect('body' in theme && theme.body.theme).toBe('dark')
     const range = parsePublishBody({ scope: 'group:g1', range: 'yesterday' })

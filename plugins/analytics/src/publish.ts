@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import * as nodeFs from 'node:fs'
 import { delimiter, join } from 'node:path'
 import { renderPage, type Theme } from './html'
@@ -46,7 +47,7 @@ export type PublishOutcome =
 
 export type PublishFs = Pick<
   typeof nodeFs,
-  'readFileSync' | 'writeFileSync' | 'mkdirSync' | 'rmSync' | 'renameSync'
+  'readFileSync' | 'writeFileSync' | 'mkdirSync' | 'rmSync' | 'renameSync' | 'readdirSync'
 >
 
 export interface PublishDeps {
@@ -62,6 +63,10 @@ export interface PublishDeps {
   now?: () => Date
   fs?: PublishFs
 }
+
+/** The sentence the runner gives for a CLI stopped at its deadline. */
+export const TIMEOUT_TEXT =
+  'the CLI did not answer within 120 seconds; the deck may exist on Slideless without being on record'
 
 export const CLI = 'slideless'
 export const INSTALL_HINT = 'team tools install slideless'
@@ -88,11 +93,28 @@ type ExecCallback = (
 export type ExecLike = (
   file: string,
   args: string[],
-  options: { env: Record<string, string>; encoding: 'utf8'; timeout: number; maxBuffer: number },
+  options: {
+    env: Record<string, string>
+    encoding: 'utf8'
+    timeout: number
+    maxBuffer: number
+    killSignal?: 'SIGKILL'
+  },
   callback: ExecCallback
 ) => unknown
 
 const realExec = execFile as unknown as ExecLike
+
+/** Printed by the shell right before `env -0`: whatever a profile prints to stdout comes
+ *  before it and is dropped, so a chatty `.zshrc` cannot glue its line to the first entry. */
+export const ENV_MARK = '__CLAVE_ENV_0__'
+export const ENV_COMMAND = `printf '%s' '${ENV_MARK}'; env -0`
+
+/** The entries after the mark, as `env -0` wrote them; nothing when the mark never came. */
+export function parseMarkedEnv(stdout: string): Record<string, string> {
+  const at = stdout.indexOf(ENV_MARK)
+  return at < 0 ? {} : parseEnv0(stdout.slice(at + ENV_MARK.length))
+}
 
 /** `env -0` output into a map; an entry without `=` is skipped. */
 export function parseEnv0(text: string): Record<string, string> {
@@ -138,11 +160,18 @@ export async function loginShellEnv(
   const own = envOf(base)
   const login = await new Promise<Record<string, string>>((resolve) => {
     try {
+      // SIGKILL at the deadline: an interactive shell ignores the TERM a timeout sends.
       exec(
         '/bin/zsh',
-        ['-lic', 'env -0'],
-        { env: own, encoding: 'utf8', timeout: SHELL_TIMEOUT_MS, maxBuffer: MAX_BUFFER },
-        (error, stdout) => resolve(error ? {} : parseEnv0(stdout))
+        ['-lic', ENV_COMMAND],
+        {
+          env: own,
+          encoding: 'utf8',
+          timeout: SHELL_TIMEOUT_MS,
+          maxBuffer: MAX_BUFFER,
+          killSignal: 'SIGKILL'
+        },
+        (error, stdout) => resolve(error ? {} : parseMarkedEnv(stdout))
       )
     } catch {
       resolve({})
@@ -157,23 +186,47 @@ export async function loginShellEnv(
   return env
 }
 
+/** The login shell's environment, resolved once per process and kept: a shell per publish
+ *  is slow and leaves what the person's own profile leaves (a folder per shell under some
+ *  version managers). Forgotten when the CLI was found missing, so an install is seen. */
+let loginEnvCache: Record<string, string> | null = null
+
+export async function cachedLoginEnv(): Promise<Record<string, string>> {
+  if (!loginEnvCache) loginEnvCache = await loginShellEnv()
+  return loginEnvCache
+}
+
+export function forgetLoginEnv(): void {
+  loginEnvCache = null
+}
+
 /** Runs the CLI with its arguments as an argument list, never a shell string: the folder
- *  and the deck id travel as they are. A binary not found is its own result. */
+ *  and the deck id travel as they are. A binary not found is its own result, and a CLI
+ *  stopped at its deadline says so rather than echoing its command line. */
 export function slidelessRunner(env: Record<string, string>, exec: ExecLike = realExec): CliRunner {
   return (args) =>
     new Promise((resolve) => {
       exec(
         CLI,
         args,
-        { env, encoding: 'utf8', timeout: PUSH_TIMEOUT_MS, maxBuffer: MAX_BUFFER },
+        {
+          env,
+          encoding: 'utf8',
+          timeout: PUSH_TIMEOUT_MS,
+          maxBuffer: MAX_BUFFER,
+          killSignal: 'SIGKILL'
+        },
         (error, stdout, stderr) => {
           if (!error) return resolve({ ok: true, stdout, stderr })
           const code = error.code
+          const said = (stderr || '').trim()
           resolve({
             ok: false,
             missing: code === 'ENOENT',
             code: typeof code === 'number' ? code : null,
-            stderr: (stderr || error.message || '').trim()
+            stderr:
+              said ||
+              (error.killed ? TIMEOUT_TEXT : `the CLI exited with code ${String(code ?? '?')}`)
           })
         }
       )
@@ -183,8 +236,9 @@ export function slidelessRunner(env: Record<string, string>, exec: ExecLike = re
 // ─── The deck ────────────────────────────────────────────────────────────────
 
 const TOKEN_NAME = /^--[A-Za-z0-9_-]{1,64}$/
-/** A token value as a stylesheet may carry it inline: no brace, no semicolon, no tag. */
-const TOKEN_VALUE = /^[^;{}<>]{1,200}$/
+/** A token value as a stylesheet may carry it inline: no brace, no semicolon, no tag, and no
+ *  comment opener, which would swallow every token after it. */
+const TOKEN_VALUE = /^(?!.*\/\*)[^;{}<>]{1,200}$/
 const MAX_TOKENS = 600
 const STYLE_LINK = '<link rel="stylesheet" href="{{base}}assets/deck.css" />'
 const SCRIPT_TAG = '<script src="{{base}}assets/deck.js"></script>'
@@ -295,9 +349,44 @@ export function pushArgs(folder: string, title: string, existing: PublishedDeck 
   return existing ? [...args, '--id', existing.deckId] : [...args, '--title', title, '--new']
 }
 
-/** A scope key as a file or folder name. */
+/** A scope key as a file or folder name; a long one is cut and tailed with its hash. */
 export function fileKey(key: string): string {
-  return key.replace(/[^A-Za-z0-9._-]+/g, '-')
+  const plain = key.replace(/[^A-Za-z0-9._-]+/g, '-')
+  if (plain.length <= 96) return plain
+  return `${plain.slice(0, 80)}-${createHash('sha1').update(key).digest('hex').slice(0, 8)}`
+}
+
+/** The next snapshot ordinal for a scope: one past the highest `published/<key>-<n>.json`
+ *  on disk, so a deck made again after one went away never overwrites what was pushed. */
+export function nextOrdinal(
+  fs: Pick<PublishFs, 'readdirSync'>,
+  published: string,
+  key: string
+): number {
+  let names: string[] = []
+  try {
+    names = fs.readdirSync(published) as string[]
+  } catch {
+    return 1
+  }
+  let highest = 0
+  const prefix = `${key}-`
+  for (const name of names) {
+    if (!name.startsWith(prefix) || !name.endsWith('.json')) continue
+    const n = Number(name.slice(prefix.length, -'.json'.length))
+    if (Number.isInteger(n) && n > highest) highest = n
+  }
+  return highest + 1
+}
+
+/** The email `whoami --json` names, or null. */
+export function parseWhoami(stdout: string): string | null {
+  try {
+    const raw = JSON.parse(stdout) as { user?: { email?: unknown } }
+    return typeof raw.user?.email === 'string' && raw.user.email ? raw.user.email : null
+  } catch {
+    return null
+  }
 }
 
 export interface PushAnswer {
@@ -370,11 +459,14 @@ function writeAtomic(fs: PublishFs, file: string, text: string): void {
 export async function publishDeck(deps: PublishDeps): Promise<PublishOutcome> {
   const fs = deps.fs ?? nodeFs
   const now = deps.now ?? ((): Date => new Date())
-  const run = deps.run ?? slidelessRunner(await loginShellEnv())
+  const run = deps.run ?? slidelessRunner(await cachedLoginEnv())
 
   const who = await run(['whoami', '--json'])
   if (!who.ok) {
-    if (who.missing) return { ok: false, kind: 'missing', message: MESSAGES.missing }
+    if (who.missing) {
+      forgetLoginEnv()
+      return { ok: false, kind: 'missing', message: MESSAGES.missing }
+    }
     if (looksLikeAuth(who.stderr)) return { ok: false, kind: 'auth', message: MESSAGES.auth }
     return {
       ok: false,
@@ -415,8 +507,16 @@ export async function publishDeck(deps: PublishDeps): Promise<PublishOutcome> {
   const answer = parsePush(pushed.stdout)
   if (!answer) return { ok: false, kind: 'failed', message: MESSAGES.unreadable }
 
-  const n = (deps.existing?.n ?? 0) + 1
+  const published = join(deps.dir, 'published')
+  fs.mkdirSync(published, { recursive: true })
+  // One past the highest ordinal on disk or on record: a deck made again after one went
+  // away never overwrites what an earlier publish pushed.
+  const n = Math.max(
+    nextOrdinal(fs, published, fileKey(deps.request.key)),
+    (deps.existing?.n ?? 0) + 1
+  )
   const at = now().toISOString()
+  const by = parseWhoami(who.stdout)
   const deck: PublishedDeck = {
     deckId: answer.deckId,
     baseUrl: answer.baseUrl,
@@ -425,7 +525,8 @@ export async function publishDeck(deps: PublishDeps): Promise<PublishOutcome> {
     n,
     at,
     title: deps.existing?.title ?? title,
-    names: deps.request.names
+    names: deps.request.names,
+    ...(by ? { by } : {})
   }
   const snapshot = {
     v: 1,
@@ -434,13 +535,12 @@ export async function publishDeck(deps: PublishDeps): Promise<PublishOutcome> {
     version: deck.version,
     url: deck.url,
     at,
+    by,
     names: deps.request.names,
     theme: deps.request.theme,
     range: deps.request.range,
     data
   }
-  const published = join(deps.dir, 'published')
-  fs.mkdirSync(published, { recursive: true })
   writeAtomic(
     fs,
     join(published, `${fileKey(deps.request.key)}-${n}.json`),

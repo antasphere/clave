@@ -99,6 +99,8 @@ export interface PublishedDeck {
   title: string
   /** Whether the session names and folders went with it. */
   names: boolean
+  /** The login the CLI published under, as `whoami` named it; absent when it said no email. */
+  by?: string
 }
 
 export interface Ledger {
@@ -249,7 +251,8 @@ export function blocks(
     .sort((a, b) => a - b)
   let at = 0
   return out.map((b) => {
-    // A tool stamp is a message stamp, so it falls inside a block; one before this block's
+    // A tool stamp is its message's stamp (the reader stamps a call with the first row of
+    // the message that carried it), so it falls inside a block; one before this block's
     // start belongs to no block of this list and is skipped.
     while (at < tools.length && tools[at]! < b.start) at++
     let toolCalls = 0
@@ -314,6 +317,8 @@ export interface LiveSession {
   groupName: string
   state: PluginSessionState
   model: string | null
+  /** The tab's provider: a plain terminal is drawn hollow, it is no agent. */
+  provider: string
 }
 
 export interface StateCounts {
@@ -726,7 +731,8 @@ export function workspaceView(
     groupId: s.group?.id ?? null,
     groupName: cardNames.get(s.group?.id ?? null) ?? s.group?.name ?? 'Ungrouped',
     state: s.state,
-    model: sessionModel(s)
+    model: sessionModel(s),
+    provider: s.provider
   }))
   return {
     kind: 'workspace',

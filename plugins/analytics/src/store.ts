@@ -103,7 +103,8 @@ export function isPublishedDeck(value: unknown): value is PublishedDeck {
     isNum(value['n']) &&
     isStr(value['at']) &&
     isStr(value['title']) &&
-    typeof value['names'] === 'boolean'
+    typeof value['names'] === 'boolean' &&
+    (value['by'] === undefined || isStr(value['by']))
   )
 }
 

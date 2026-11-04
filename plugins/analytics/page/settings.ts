@@ -344,7 +344,7 @@ function draw(): void {
   const foot = el(
     'footer',
     'deck-foot',
-    `A cost is the list-price value of the tokens, not an invoice. Source of the table in force: ${data.prices.source}.`
+    `A cost is the list-price value of the tokens, not an invoice. Source of the table in force: ${data.prices.source.trim().replace(/\.$/, '')}.`
   )
   root.replaceChildren(drawHeader(), drawActivity(data), drawPrices(data), drawStatus(), foot)
   if (focusKey) {

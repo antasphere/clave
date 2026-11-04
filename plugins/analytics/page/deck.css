@@ -489,7 +489,7 @@ figure.live-figure {
   display: flex;
   align-items: center;
   gap: var(--control-gap);
-  height: 28px;
+  height: var(--control-h);
   min-width: 0;
   color: var(--text-secondary);
   font-size: 12px;
@@ -547,8 +547,8 @@ figure.live-figure {
 }
 .live-lane-label {
   display: block;
-  height: 40px;
-  line-height: 40px;
+  height: calc(var(--control-h) * 1.5);
+  line-height: calc(var(--control-h) * 1.5);
   color: var(--text-secondary);
   font-size: 12px;
   overflow: hidden;
@@ -569,8 +569,14 @@ figure.live-figure {
 }
 .live-dot {
   stroke: var(--surface-0);
-  stroke-width: 2;
+  stroke-width: calc(var(--frame-border) * 2);
   fill: var(--text-tertiary);
+}
+/* A plain terminal is no agent: hollow, so the lane does not read as idle agents. */
+.live-dot.kind-terminal {
+  fill: var(--surface-0);
+  stroke: var(--text-tertiary);
+  stroke-width: var(--frame-border);
 }
 .live-dot.state-working {
   fill: var(--color-accent);
