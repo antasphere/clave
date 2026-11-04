@@ -86,6 +86,24 @@ describe('a block closed by a streamed message', () => {
     ])
     expect(list.reduce((n, b) => n + b.toolCalls, 0)).toBe(t.toolCalls)
   })
+
+  it('keeps stamping with the message past the bound of the stamps it remembers', () => {
+    // Seventy messages, the last one streamed as a text row then a tool row 20 seconds
+    // later: the map of message stamps is bounded, and it must let the OLDEST go, never
+    // the one it just took, or the calls of every message past the bound fall back on
+    // their rows.
+    const lines: string[] = []
+    for (let i = 0; i < 70; i++) {
+      const ts = new Date(Date.UTC(2026, 9, 1, 9, i)).toISOString()
+      lines.push(assistant(ts, `msg_${i}`, [{ type: 'text', text: `Step ${i}` }]))
+    }
+    const last = new Date(Date.UTC(2026, 9, 1, 9, 69, 20)).toISOString()
+    lines.push(assistant(last, 'msg_69', [{ type: 'tool_use', id: 'toolu_late' }]))
+    const t = fold(lines.join('\n'))
+    expect(t.messages).toBe(70)
+    expect(t.toolCalls).toBe(1)
+    expect(t.toolStamps).toEqual([new Date(Date.UTC(2026, 9, 1, 9, 69)).toISOString()])
+  })
 })
 
 describe('the whole fixture', () => {

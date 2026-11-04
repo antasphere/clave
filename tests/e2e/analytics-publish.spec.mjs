@@ -106,7 +106,11 @@ export async function run(t) {
     // title, the names redacted, the deck file and the snapshot under the data folder.
     await until(() => clickPublish(win))
     const first = await statusWith(win, 'Published as version 1')
-    t.check('the page says it was published as version 1', !!first, String(first))
+    t.check(
+      'the page says it was published as version 1, and by which login',
+      !!first && first.includes('by me@example.test'),
+      String(first)
+    )
     const after1 = calls()
     assert.deepEqual(after1[0], ['whoami', '--json'])
     const push1 = after1[1]

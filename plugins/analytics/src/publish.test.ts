@@ -22,8 +22,10 @@ import {
   MESSAGES,
   TIMEOUT_TEXT,
   assembleDeck,
+  cachedLoginEnv,
   cleanTokens,
   fileKey,
+  forgetLoginEnv,
   loginShellEnv,
   mergePaths,
   nextOrdinal,
@@ -360,6 +362,24 @@ describe('the login shell environment', () => {
     expect(bare['PATH']).toBe('/own/bin')
   })
 
+  it('resolves the shell once per process and again after it was forgotten', async () => {
+    let runs = 0
+    const exec: ExecLike = (_file, _args, _options, callback) => {
+      runs++
+      callback(null, `${ENV_MARK}PATH=/login/bin\0`, '')
+      return undefined
+    }
+    forgetLoginEnv()
+    const first = await cachedLoginEnv(exec, { PATH: '/own/bin' })
+    const second = await cachedLoginEnv(exec, { PATH: '/own/bin' })
+    expect(runs).toBe(1)
+    expect(second).toBe(first)
+    forgetLoginEnv()
+    await cachedLoginEnv(exec, { PATH: '/own/bin' })
+    expect(runs).toBe(2)
+    forgetLoginEnv()
+  })
+
   it('keeps the plugin path when the shell fails', async () => {
     const exec: ExecLike = (_file, _args, _options, callback) => {
       callback(new Error('zsh failed'), '', '')
@@ -377,11 +397,23 @@ describe('slidelessRunner', () => {
     stdout: string
     stderr: string
   }
-  const calls: { file: string; args: string[]; env: Record<string, string> }[] = []
+  const calls: {
+    file: string
+    args: string[]
+    env: Record<string, string>
+    killSignal: string | undefined
+    timeout: number
+  }[] = []
   const execAnswering =
     (answer: Answer): ExecLike =>
     (file, args, options, callback) => {
-      calls.push({ file, args, env: options.env })
+      calls.push({
+        file,
+        args,
+        env: options.env,
+        killSignal: options.killSignal,
+        timeout: options.timeout
+      })
       callback(answer.error, answer.stdout, answer.stderr)
       return undefined
     }
@@ -392,10 +424,12 @@ describe('slidelessRunner', () => {
     calls.length = 0
   })
 
-  it('runs slideless with the arguments as a list and the env given', async () => {
+  it('runs slideless with the arguments as a list and the env given, killed at its deadline', async () => {
     const run = slidelessRunner(env, execAnswering({ error: null, stdout: '{}', stderr: 'w' }))
     expect(await run(args)).toEqual({ ok: true, stdout: '{}', stderr: 'w' })
-    expect(calls).toEqual([{ file: 'slideless', args, env }])
+    expect(calls).toEqual([
+      { file: 'slideless', args, env, killSignal: 'SIGKILL', timeout: 120_000 }
+    ])
     expect(calls[0]!.args[1]).toBe('/Users/x/My data/decks/group-g1')
   })
 
@@ -503,15 +537,40 @@ describe('publishDeck', () => {
   ): ReturnType<typeof publishDeck> =>
     publishDeck({ dir, pageDir, request: request(names), existing, run, now: () => NOW })
 
-  it('stops at a missing CLI before writing anything', async () => {
-    const outcome = await publish(
-      runner({ ok: false, missing: true, code: null, stderr: 'spawn slideless ENOENT' })
-    )
+  it('stops at a missing CLI before writing anything, and forgets the login environment', async () => {
+    let forgotten = 0
+    const outcome = await publishDeck({
+      dir,
+      pageDir,
+      request: request(),
+      existing: null,
+      run: runner({ ok: false, missing: true, code: null, stderr: 'spawn slideless ENOENT' }),
+      now: () => NOW,
+      forget: () => forgotten++
+    })
     expect(outcome).toEqual({ ok: false, kind: 'missing', message: MESSAGES.missing })
     expect(calls).toHaveLength(1)
     expect(calls[0]).toEqual(['whoami', '--json'])
     expect(existsSync(join(dir, 'decks'))).toBe(false)
     expect(existsSync(join(dir, 'published'))).toBe(false)
+    expect(forgotten).toBe(1)
+    // A CLI that answered whoami and went missing at the push forgets it too.
+    let gone = 0
+    const atPush: CliRunner = async (args) =>
+      args[0] === 'whoami'
+        ? signedIn()
+        : { ok: false, missing: true, code: null, stderr: 'spawn slideless ENOENT' }
+    const later = await publishDeck({
+      dir,
+      pageDir,
+      request: request(),
+      existing: null,
+      run: atPush,
+      now: () => NOW,
+      forget: () => gone++
+    })
+    expect(later).toMatchObject({ ok: false, kind: 'missing' })
+    expect(gone).toBe(1)
   })
 
   it('stops at a CLI that is not signed in', async () => {
@@ -565,6 +624,28 @@ describe('publishDeck', () => {
     })
     expect(snapshot.data.rows[0]!.name).toBe('Session 1')
     expect(snapshot.data.name).toBe('Theme work')
+  })
+
+  it('carries nothing of its own publish record into the deck or the snapshot', async () => {
+    const view = { ...theGroup(), published: { ...firstDeck, by: 'romain@example.test' } }
+    const outcome = await publishDeck({
+      dir,
+      pageDir,
+      request: { ...request(), data: view },
+      existing: firstDeck,
+      run: runner(signedIn(), pushed(2)),
+      now: () => NOW
+    })
+    expect(outcome.ok).toBe(true)
+    const html = readFileSync(join(dir, 'decks', 'group-g1', 'index.html'), 'utf8')
+    expect(html).not.toContain('romain@example.test')
+    expect(html).not.toContain('deck-7')
+    expect(dataBlock(html).published).toBeNull()
+    const snapshot = JSON.parse(
+      readFileSync(join(dir, 'published', 'group-g1-2.json'), 'utf8')
+    ) as { by: string | null; data: ScopeView }
+    expect(snapshot.data.published).toBeNull()
+    expect(snapshot.by).toBe('x')
   })
 
   it('publishes a new version of the deck on record and keeps its title', async () => {

@@ -257,6 +257,20 @@ describe('views', () => {
       ['c', null, 'Ungrouped', 'ended']
     ])
     expect(all.live[0]!.model).toBe('claude-opus-5-5')
+    // The provider rides with the dot: a plain terminal is drawn hollow.
+    const withTerminal = threeSessions()
+    withTerminal.sessions['t'] = session('t', null, emptyTally(), {
+      provider: 'terminal',
+      providerSessionId: null,
+      root: null
+    })
+    const live = workspaceView(withTerminal, null, prices, 'all', NOW).live
+    expect(live.map((s) => [s.id, s.provider])).toEqual([
+      ['a', 'claude'],
+      ['b', 'claude'],
+      ['c', 'claude'],
+      ['t', 'terminal']
+    ])
 
     const month = workspaceView(threeSessions(), null, prices, '30d', NOW)
     expect(month.figures.tokensRead).toBe(8_500_000)

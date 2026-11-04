@@ -62,6 +62,8 @@ export interface PublishDeps {
   run?: CliRunner
   now?: () => Date
   fs?: PublishFs
+  /** Called when the CLI came back missing, so the login environment is resolved again next time. */
+  forget?: () => void
 }
 
 /** The sentence the runner gives for a CLI stopped at its deadline. */
@@ -191,8 +193,11 @@ export async function loginShellEnv(
  *  version managers). Forgotten when the CLI was found missing, so an install is seen. */
 let loginEnvCache: Record<string, string> | null = null
 
-export async function cachedLoginEnv(): Promise<Record<string, string>> {
-  if (!loginEnvCache) loginEnvCache = await loginShellEnv()
+export async function cachedLoginEnv(
+  exec: ExecLike = realExec,
+  base: NodeJS.ProcessEnv = process.env
+): Promise<Record<string, string>> {
+  if (!loginEnvCache) loginEnvCache = await loginShellEnv(exec, base)
   return loginEnvCache
 }
 
@@ -464,7 +469,7 @@ export async function publishDeck(deps: PublishDeps): Promise<PublishOutcome> {
   const who = await run(['whoami', '--json'])
   if (!who.ok) {
     if (who.missing) {
-      forgetLoginEnv()
+      ;(deps.forget ?? forgetLoginEnv)()
       return { ok: false, kind: 'missing', message: MESSAGES.missing }
     }
     if (looksLikeAuth(who.stderr)) return { ok: false, kind: 'auth', message: MESSAGES.auth }
@@ -476,6 +481,9 @@ export async function publishDeck(deps: PublishDeps): Promise<PublishOutcome> {
   }
 
   const data = redactView(deps.request.data, deps.request.names)
+  // A deck carries the scope's figures and nothing of its own publish record: the deck it
+  // was published as before, and the login that published it, stay on this Mac.
+  data.published = null
   const title = deckTitle(data)
   const html = assembleDeck({
     template: fs.readFileSync(join(deps.pageDir, 'index.html'), 'utf8'),
@@ -494,7 +502,10 @@ export async function publishDeck(deps: PublishDeps): Promise<PublishOutcome> {
 
   const pushed = await run(pushArgs(folder, title, deps.existing))
   if (!pushed.ok) {
-    if (pushed.missing) return { ok: false, kind: 'missing', message: MESSAGES.missing }
+    if (pushed.missing) {
+      ;(deps.forget ?? forgetLoginEnv)()
+      return { ok: false, kind: 'missing', message: MESSAGES.missing }
+    }
     if (looksLikeAuth(pushed.stderr)) return { ok: false, kind: 'auth', message: MESSAGES.auth }
     if (deps.existing && looksGone(pushed.stderr))
       return { ok: false, kind: 'failed', message: MESSAGES.gone, gone: true }

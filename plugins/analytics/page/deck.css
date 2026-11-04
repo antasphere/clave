@@ -572,17 +572,18 @@ figure.live-figure {
   stroke-width: calc(var(--frame-border) * 2);
   fill: var(--text-tertiary);
 }
-/* A plain terminal is no agent: hollow, so the lane does not read as idle agents. */
-.live-dot.kind-terminal {
-  fill: var(--surface-0);
-  stroke: var(--text-tertiary);
-  stroke-width: var(--frame-border);
-}
 .live-dot.state-working {
   fill: var(--color-accent);
 }
 .live-dot.state-blocked {
   fill: var(--color-warning);
+}
+/* A plain terminal is no agent: hollow whatever its state, so the lane does not read as
+   idle agents; the rule sits after the state rules so it wins at equal specificity. */
+.live-dot.kind-terminal {
+  fill: var(--surface-0);
+  stroke: var(--text-tertiary);
+  stroke-width: var(--frame-border);
 }
 .live-empty {
   grid-column: 1 / -1;
