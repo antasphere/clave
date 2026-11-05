@@ -103,11 +103,14 @@ for line in sys.stdin:
           transitionFull: box ? getComputedStyle(box).transition : null,
           transform: box ? getComputedStyle(box).transform : null,
           // The room the cross takes from the title once shown: its box, the
-          // row's gap before it, and its (negative) pull into the row's padding.
+          // row's gap before it less the margin that cancels it (the box sits
+          // flush against the status slot), and its (negative) pull into the
+          // row's padding.
           room: box
             ? Math.round(
                 (box.getBoundingClientRect().width +
                   parseFloat(getComputedStyle(row).columnGap) +
+                  parseFloat(getComputedStyle(box).marginLeft) +
                   parseFloat(getComputedStyle(box).marginRight)) *
                   10
               ) / 10
@@ -164,7 +167,7 @@ for line in sys.stdin:
       )
       const titleHovered = await width(nameOf(id))
       t.check(
-        `${label}: the title gives the cross exactly its box, the row's gap and its pull into the padding (${hovered.room}px at this density)`,
+        `${label}: the title gives the cross exactly its box, the row's gap less its cancelling margin, and its pull into the padding (${hovered.room}px at this density)`,
         hovered.room !== null && Math.abs(titleAtRest - titleHovered - hovered.room) <= 0.5,
         { titleAtRest, titleHovered, room: hovered.room }
       )

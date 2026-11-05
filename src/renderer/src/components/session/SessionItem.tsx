@@ -20,7 +20,7 @@ import {
 } from '../../store/usage-store'
 import { isExhausted } from '../../lib/account-pool'
 import { accountProviderOf, sessionAccountId } from '../../lib/switch-account'
-import { tabIndicators, tabStatusPresentation, type TabGlyph } from '../../lib/tab-status'
+import { tabStatusPresentation, type TabGlyph } from '../../lib/tab-status'
 import { AccountMenuHeader } from '../layout/AccountMenuHeader'
 import { useMarkPack } from '../plugins/native-marks'
 import { tokenColor } from '../../lib/marks'
@@ -115,9 +115,20 @@ const GLYPHS: Record<Exclude<TabGlyph, 'spinner'>, typeof CheckCircleIcon> = {
  *  Appearance → Agent mark: a plugin's mark pack stands in for the glyph on
  *  an agent row (never on a plain terminal). Its mark moves while the agent
  *  works and takes the status colour as its ink, so the row keeps saying the
- *  same things in a different voice. */
-function SessionStatus({ session }: { session: Session }): React.JSX.Element {
-  const { status, glyph, tone, label } = tabStatusPresentation(session)
+ *  same things in a different voice. Exported: a pane's header draws this
+ *  same component before its title, so the tab and the pane it opens say the
+ *  state with one glyph rather than a glyph in one place and a dot in the
+ *  other. */
+export function SessionStatus({
+  session,
+  placeholder = false
+}: {
+  session: Session
+  /** Draw an empty grey ring when there is nothing to say (a pane header);
+   *  the sidebar leaves the slot empty. */
+  placeholder?: boolean
+}): React.JSX.Element {
+  const { status, glyph, tone, label, agents } = tabStatusPresentation(session)
   const pack = useMarkPack()
   const Mark = pack && isProviderRow(session) ? pack.Agent : null
   const markInk =
@@ -142,9 +153,20 @@ function SessionStatus({ session }: { session: Session }): React.JSX.Element {
       {Mark ? (
         <Mark working={status === 'working'} status={status} color={markInk} slot="tab" />
       ) : glyph === 'spinner' ? (
-        <span className="sidebar-tab-spinner" />
+        <>
+          <span className="sidebar-tab-spinner" />
+          {/* The subagents still at work, inside the ring rather than beside
+              it: one signal, not a spinner and a counter. */}
+          {agents ? (
+            <span className="sidebar-tab-agents" data-agents={agents}>
+              {agents > 9 ? '9+' : agents}
+            </span>
+          ) : null}
+        </>
       ) : Glyph ? (
         <Glyph />
+      ) : placeholder ? (
+        <span className="sidebar-tab-placeholder" />
       ) : null}
     </span>
   )
@@ -182,22 +204,6 @@ function SessionViewButton({ session }: { session: Session }): React.JSX.Element
       }}
     >
       <WindowIcon />
-    </span>
-  )
-}
-
-/** Background shells and subagents a turn left running, in words on the row's
- *  right, so a finished tab with a server up still reads as finished. */
-function BackgroundCounter({ session }: { session: Session }): React.JSX.Element | null {
-  const { background } = tabIndicators(session)
-  if (!background) return null
-  return (
-    <span
-      className="tab-background-count"
-      data-background={background}
-      title={`${background} ${background === 1 ? 'task' : 'tasks'} still running in the background`}
-    >
-      {background} running
     </span>
   )
 }
@@ -269,7 +275,6 @@ function SessionItemImpl({
       }
       extraContent={
         <>
-          <BackgroundCounter session={session} />
           <AccountLimitBadge session={session} />
           {session.locationId && session.sessionType !== 'local' ? (
             <LocationBadge locationId={session.locationId} />

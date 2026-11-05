@@ -212,20 +212,24 @@
   --content-top-offset: calc(0.5rem + var(--toolbar-h) + 0.5rem); /* 44px at Compact, 50px at Comfortable */
 
   /* Height of a row in the git panel's repo tree (a directory or a repo
-     header). Sized to hold the trailing sync badges, which come and go — a
-     folder's roll-up only shows while it is collapsed, and a repo's ↓ clears
-     on pull — so the row is fixed rather than content-sized. */
-  --git-tree-row-h: 1.875rem; /* 30px = 18px badge + 12px of padding */
+     header). Fixed rather than content-sized, since the trailing sync badges
+     come and go (a folder's roll-up only shows while it is collapsed, a repo's
+     ↓ clears on pull). The same height as every other side-panel row: the git
+     tree's folders used to stand a notch taller (30px) than the Files tab's
+     (28px), so the same folders were spaced differently in the two tabs. The
+     18px badges still fit with 5px to spare. */
+  --git-tree-row-h: var(--panel-row-h);
 
   /* Height of a leaf row in either side-panel tree — a file or a folder in the
      Files tab, a file or a folder inside a repo in the Git tab. One token
      because they are one list to the eye: you read the same names, at the same
      indentation, in the same column, and a repo's contents packed tighter than
      the file tree above it read as clutter rather than as density. The repo and
-     directory rows of the git tree stay one notch taller (--git-tree-row-h):
-     they carry the sync badges, and they are the level you scan, not the level
-     you read. */
-  --panel-row-h: 1.75rem; /* 28px */
+     directory rows of the git tree are this height too (--git-tree-row-h). */
+  /* Follows Appearance → Density with the sidebar's rows, a notch tighter: 28px
+     at Comfortable (the default, the height the trees were drawn at), 30px at
+     Spacious, down to 22px at Tight. */
+  --panel-row-h: calc(var(--sidebar-row-h) - 4px);
   --brand-claude: #d97757; /* Claude's mark keeps its colour in every skin */
   /* The air between two filled rows — see "Row rhythm" in system.css. One of
      the few metrics a SKIN may set (deliberately absent from

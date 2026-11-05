@@ -186,6 +186,47 @@ body,
   outline-offset: -1.5px;
 }
 
+/* The side panel (Files and Git tabs) follows Appearance → Text size. Its rows
+   are written with fixed Tailwind sizes (text-xs, text-[11px], ...), which the
+   chrome's --ui-text-offset never reached: every label in the app moved but
+   the trees. Here each size the panel uses takes the offset on top. The row
+   height follows Density through --panel-row-h. */
+.side-panel :is(.text-xs) {
+  font-size: calc(0.75rem + var(--ui-text-offset));
+}
+.side-panel :is(.text-sm) {
+  font-size: calc(0.875rem + var(--ui-text-offset));
+}
+.side-panel .text-\[9px\] {
+  font-size: calc(9px + var(--ui-text-offset));
+}
+.side-panel .text-\[10px\] {
+  font-size: calc(10px + var(--ui-text-offset));
+}
+.side-panel .text-\[11px\] {
+  font-size: calc(11px + var(--ui-text-offset));
+}
+.side-panel .text-\[15px\] {
+  font-size: calc(15px + var(--ui-text-offset));
+}
+
+/* A folder of the Files tab whose contents are slow to arrive: its chevron,
+   already turned, pulses, from 400ms on so a fast read never shows it. */
+.tree-chevron[data-loading] {
+  animation: tree-chevron-wait 900ms ease-in-out 400ms infinite;
+}
+@keyframes tree-chevron-wait {
+  50% {
+    opacity: 0.35;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .tree-chevron[data-loading] {
+    animation: none;
+    opacity: 0.6;
+  }
+}
+
 /* ── Sidebar items ── */
 
 .sidebar-item {
@@ -238,11 +279,16 @@ body,
     background-color 150ms,
     scale 120ms var(--ease-out-expo); /* the icon button's press dip keeps its easing */
 }
+/* Shown, it still cancels the row's gap: the 20px box already carries 3px of
+   air around its 14px glyph, and the status glyph before it its own, so with
+   the 8px gap on top the check and the cross stood ~16px apart, twice the
+   distance between any other two things on the row. Flush boxes put the two
+   glyphs ~8px apart, the row's own rhythm. */
 .sidebar-item:hover .sidebar-item-close,
 .sidebar-item:focus-visible .sidebar-item-close,
 .sidebar-item:has(:focus-visible) .sidebar-item-close {
   width: var(--control-h-xs);
-  margin-left: 0;
+  margin-left: calc(-1 * var(--sidebar-item-gap));
   margin-right: calc((var(--sidebar-row-h) - var(--control-h-xs)) / 2 - var(--sidebar-row-px));
   opacity: 1;
   transform: none;
@@ -340,9 +386,44 @@ body,
     color 300ms,
     opacity 300ms;
 }
+/* Nothing to say yet, in a pane header only: an empty grey ring the size of
+   the glyphs' own circle, so the place before the title is never blank. */
+.sidebar-tab-placeholder {
+  display: block;
+  flex-shrink: 0;
+  width: 87%;
+  height: 87%;
+  border-radius: 9999px;
+  border: 1.5px solid currentColor;
+  opacity: 0.45;
+}
+/* Subagents still at work: their count inside the spinner's ring. */
+.sidebar-tab-status:has(.sidebar-tab-agents) {
+  position: relative;
+}
+.sidebar-tab-agents {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 7px;
+  font-weight: 600;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+  color: var(--text-secondary);
+}
+/* The glyphs and the spinner meet in the middle. An outline check or ? draws
+   its circle on 18 of its 24 units, so at the slot's 15px it read ~11px
+   across while the spinner's ring filled all 15: the working row looked a
+   size bigger than the finished one. The glyph now draws at 115% (its circle
+   ~13px, overflowing the slot evenly, the slot itself unchanged so nothing
+   around it moves) and the spinner at 87% (~13px): one size for every state. */
 .sidebar-tab-status > svg {
-  width: 100%;
-  height: 100%;
+  flex-shrink: 0;
+  width: 115%;
+  height: 115%;
 }
 .sidebar-tab-status[data-tone='amber'] {
   color: var(--color-status-waiting);
@@ -359,8 +440,9 @@ body,
    moves the fade alone. */
 .sidebar-tab-spinner {
   display: block;
-  width: 100%;
-  height: 100%;
+  flex-shrink: 0;
+  width: 87%;
+  height: 87%;
   border-radius: 9999px;
   background: conic-gradient(
     from 0deg,
@@ -446,19 +528,10 @@ canvas[data-orb-state] {
   }
 }
 
-/* The row's right side, before the close button: what still runs in the
-   background, and a warning when the account is at its limit. */
-.tab-background-count {
-  flex-shrink: 0;
-  padding: 0 5px;
-  border-radius: 9999px;
-  background: var(--color-surface-100);
-  font-size: 10.5px;
-  line-height: 16px;
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-  color: var(--color-text-tertiary);
-}
+/* The row's right side, before the close button: a warning when the account
+   is at its limit. (Background work no longer has a counter here: subagents
+   keep the spinner turning with their count inside it, commands left running
+   are named in the status glyph's tooltip; tab-status.ts.) */
 .tab-limit-warning {
   display: inline-flex;
   flex-shrink: 0;
@@ -2751,14 +2824,17 @@ button.extension-card:hover {
    right. The two headers share these classes so they cannot drift apart. The
    row is one control tall plus the 2px inset a box gives its contents. */
 .pane-header {
+  /* The status glyph's centre sits as far from the header's left edge as from
+     its top: half the header's height in from the left, less half the glyph. */
+  --pane-header-h: calc(var(--control-h-md) + var(--spacing));
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: calc(var(--spacing) * 2);
   flex-shrink: 0;
-  min-height: calc(var(--control-h-md) + var(--spacing));
+  min-height: var(--pane-header-h);
   padding: calc(var(--spacing) / 2) calc(var(--spacing) / 2) calc(var(--spacing) / 2)
-    calc(var(--spacing) * 3);
+    calc((var(--pane-header-h) - var(--sidebar-tab-icon-size)) / 2);
   background-color: var(--surface-0);
   border-bottom: thin solid var(--border-subtle-color);
 }
@@ -2879,6 +2955,91 @@ button.extension-card:hover {
 .chat-state[data-state='idle'],
 .chat-state[data-state='done'] {
   display: none;
+}
+
+/* Find in this session (PaneSearch): a compact field in the pane header,
+   right after the title, so it reads as searching this conversation. */
+.pane-search {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: 0 1 18rem;
+  min-width: 9rem;
+  height: var(--control-h-sm);
+  padding: 0 2px 0 var(--control-gap);
+  border-radius: var(--radius-control);
+  color: var(--text-tertiary);
+  background-color: var(--surface-100);
+  box-shadow: inset 0 0 0 1px var(--border-subtle-color);
+}
+.pane-search:focus-within {
+  box-shadow: inset 0 0 0 1px var(--color-accent);
+}
+.pane-search-icon {
+  width: 0.875rem;
+  height: 0.875rem;
+  flex-shrink: 0;
+}
+.pane-search input {
+  flex: 1 1 auto;
+  min-width: 3rem;
+  margin-left: 4px;
+  background: transparent;
+  border: none;
+  outline: none;
+  font-size: var(--text-xs);
+  color: var(--text-primary);
+}
+.pane-search input::placeholder {
+  color: var(--text-tertiary);
+}
+.pane-search-count {
+  flex-shrink: 0;
+  padding: 0 4px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  color: var(--text-tertiary);
+}
+/* While the query settles or older history is read in: a small ring where
+   the count goes, the sidebar's working spinner at the field's scale. */
+.pane-search-spinner {
+  flex-shrink: 0;
+  width: 0.75rem;
+  height: 0.75rem;
+  margin: 0 4px;
+  border-radius: 9999px;
+  border: 1.5px solid color-mix(in srgb, currentColor 20%, transparent);
+  border-top-color: currentColor;
+  animation: sidebar-tab-spin 0.7s linear infinite;
+}
+.pane-search-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 1.25rem;
+  height: 1.25rem;
+  border-radius: var(--radius-control);
+  color: var(--text-tertiary);
+}
+.pane-search-btn > svg {
+  width: 0.875rem;
+  height: 0.875rem;
+}
+.pane-search-btn:hover:not(:disabled) {
+  color: var(--text-primary);
+  background-color: var(--surface-200);
+}
+.pane-search-btn:disabled {
+  opacity: 0.4;
+}
+::highlight(pane-search) {
+  background-color: color-mix(in srgb, var(--color-status-waiting) 30%, transparent);
+}
+::highlight(pane-search-current) {
+  background-color: var(--color-status-waiting);
+  color: var(--surface-0);
 }
 
 /* The transcript */
@@ -3408,10 +3569,37 @@ button.chat-turn-from:focus-visible {
    declared on the open state, so it runs on every opening — a rule that
    stops matching ends it, one that matches again restarts it — and never on
    a row the reader has not touched. */
-details[open] > .chat-tool-items,
 details[open] > .chat-tool-item[data-lone],
 details[open] > .chat-tool-panel {
   animation: chat-reveal var(--default-transition-duration) var(--ease-out-expo);
+}
+/* A run's calls come in one after another rather than as one block: each
+   row fades and settles a beat after the one above it (chat-stagger-in,
+   below), so opening a run of twenty reads as a list arriving, not a slab
+   appearing. */
+details[open] > .chat-tool-items > .chat-tool-item,
+.term-tools[open] > .term-tools-body > .term-call {
+  animation: chat-stagger-in calc(var(--default-transition-duration) * 2) var(--ease-out-expo)
+    backwards;
+  animation-delay: var(--stagger-delay);
+}
+/* The stagger: a row's delay is its place in the list, a fifth of the open
+   transition per row (30ms at the default 150ms), capped at the tenth row so
+   a long run is whole within half a second; the height opens at the default
+   duration, so the first rows land while it is still opening and the rest
+   follow it down. `sibling-index()` reads the place, no markup needed. */
+:root {
+  --stagger-step: calc(var(--default-transition-duration) / 5);
+}
+details[open] > .chat-tool-items > .chat-tool-item,
+.term-tools[open] > .term-tools-body > .term-call {
+  --stagger-delay: calc(min(sibling-index() - 1, 10) * var(--stagger-step));
+}
+@keyframes chat-stagger-in {
+  from {
+    opacity: 0;
+    translate: 0 calc(var(--spacing) * -1);
+  }
 }
 @keyframes chat-reveal {
   from {
@@ -5211,15 +5399,26 @@ details[open] > .chat-approval-items {
   block-size: 0;
   overflow: clip;
   opacity: 0;
+  /* Closing: it swells a touch before it folds (an ease-in-back), the
+     closing's bounce; a height cannot go below zero, so the give is taken at
+     the start rather than the end. */
   transition:
-    block-size var(--default-transition-duration) var(--ease-out-expo),
-    opacity var(--default-transition-duration) var(--ease-out-expo),
-    content-visibility var(--default-transition-duration) allow-discrete;
+    block-size calc(var(--default-transition-duration) * 1.75) cubic-bezier(0.36, 0, 0.66, -0.3),
+    opacity calc(var(--default-transition-duration) * 1.75) var(--ease-out-expo),
+    content-visibility calc(var(--default-transition-duration) * 1.75) allow-discrete;
 }
 .term-tools[open]::details-content,
 .term-call[open]::details-content {
   block-size: auto;
   opacity: 1;
+  /* Opening: a spring that runs a few percent past the height and settles
+     back, the small bounce. Declared on the open state, so it is the opening's
+     curve; the closed state above carries the closing's. */
+  transition:
+    block-size calc(var(--default-transition-duration) * 2.5)
+      linear(0, 0.21 7%, 0.57 16%, 0.86 27%, 1.03 38%, 1.07 46%, 1.05 55%, 1.01 67%, 0.995 80%, 1),
+    opacity var(--default-transition-duration) var(--ease-out-expo),
+    content-visibility calc(var(--default-transition-duration) * 2.5) allow-discrete;
 }
 .term-tools-row,
 .term-call-row {
@@ -5285,6 +5484,16 @@ details[open] > .chat-approval-items {
   margin: calc(var(--spacing) * 0.5) 0 calc(var(--spacing) * 1) calc(var(--chat-glyph) / 2 - 0.5px);
   padding-left: calc(var(--chat-glyph) / 2 + var(--spacing) * 2);
   border-left: thin solid var(--border-subtle-color);
+}
+/* The hairline fades in over the whole stagger rather than being uncovered
+   by the height as it opens, which read as a line drawing itself down. */
+.term-tools[open] > .term-tools-body {
+  animation: term-hairline-in calc(var(--default-transition-duration) * 3) var(--ease-out-expo);
+}
+@keyframes term-hairline-in {
+  from {
+    border-left-color: transparent;
+  }
 }
 .term-call-icon {
   flex-shrink: 0;
@@ -5447,6 +5656,27 @@ details[open] > .chat-approval-items {
   color: var(--text-secondary);
   white-space: nowrap;
 }
+/* Every item keeps its width: one that could shrink let its text spill over
+   its neighbours (the account's "79% left" over the pin and attach buttons)
+   without the row ever counting as too wide, so useFitRow dropped nothing. */
+.term-status > *,
+.term-status > .term-fit > * {
+  flex-shrink: 0;
+}
+/* An item the row dropped for room (useFitRow in fit.ts). */
+.term-status [data-fit-hidden] {
+  display: none;
+}
+/* A wrapper the row can drop, with no box of its own. */
+.term-fit {
+  display: contents;
+}
+/* The effort and the mode follow the model as one run of chips: their own
+   padding already spaces them, so they give back the row's gap. With the gap
+   on top, the space before the mode read twice the space before the effort. */
+.term-status .term-chip-next {
+  margin-left: calc(var(--spacing) * -3);
+}
 .term-status .chat-composer-tool[data-active] {
   color: var(--color-accent);
 }
@@ -5455,6 +5685,9 @@ details[open] > .chat-approval-items {
   align-items: center;
   gap: var(--spacing);
   margin-left: auto;
+  /* Never squeezed: the row drops its other items to keep these two. Its
+     overflow: hidden would otherwise let it shrink to nothing first. */
+  flex-shrink: 0;
   overflow: hidden;
   text-overflow: ellipsis;
 }
@@ -5676,6 +5909,7 @@ details[open] > .chat-approval-items {
   align-self: center;
   inline-size: calc(var(--spacing) * 1.5);
   block-size: calc(var(--spacing) * 1.5);
+  margin-inline: calc(var(--spacing) * 0.75);
   border-radius: var(--radius-full);
   background-color: var(--color-status-working);
   animation: pulse-dot calc(var(--default-transition-duration) * 10) ease-in-out infinite;
@@ -5684,14 +5918,15 @@ details[open] > .chat-approval-items {
   background-color: var(--color-term-mode);
 }
 /* A background command's row: the terminal glyph where an agent's dot is,
-   breathing the same way. Twice the dot's size, so it gives back the
-   difference at each side and the text column stays where the dot puts it. */
+   breathing the same way. Twice the dot's size; the dot takes the same
+   width in margin (below) so the text column lines up. It used to pull
+   itself out with negative margins instead, and the row's overflow: hidden
+   (the fold) cut the glyph's edges off. */
 .term-agent-icon {
   flex-shrink: 0;
   align-self: center;
   inline-size: calc(var(--spacing) * 3);
   block-size: calc(var(--spacing) * 3);
-  margin-inline: calc(var(--spacing) * -0.75);
   color: var(--color-term-mode);
   animation: pulse-dot calc(var(--default-transition-duration) * 10) ease-in-out infinite;
 }
@@ -5793,10 +6028,14 @@ button.term-agent-model:focus-visible {
     }
   }
   .chat-jump-end,
-  details[open] > .chat-tool-items,
   details[open] > .chat-tool-item[data-lone],
   details[open] > .chat-tool-panel {
     animation-name: scrim-in;
+  }
+  details[open] > .chat-tool-items > .chat-tool-item,
+  .term-tools[open] > .term-tools-body > .term-call,
+  .term-tools[open] > .term-tools-body {
+    animation: none;
   }
   .chat-turn-copy[data-copied='true'] svg,
   .chat-send svg,

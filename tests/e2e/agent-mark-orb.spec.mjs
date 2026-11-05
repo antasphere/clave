@@ -96,13 +96,17 @@ export async function run(t) {
     // Scoped to the pane: the Settings page stays mounted with its own two samples.
     const pane = `.chat-host[data-session-id="${record.id}"]`
     assert.equal(
-      await win.locator(`${pane} .pane-status-mark canvas[data-orb-state="weaving"]`).count(),
+      await win
+        .locator(
+          `${pane} .pane-header .sidebar-tab-status[data-mark="pack"] canvas[data-orb-state="weaving"]`
+        )
+        .count(),
       1
     )
     assert.equal(
       await win.locator(`${pane} .pane-status-dot`).count(),
       0,
-      'the pane dot is the orb now'
+      'the pane header draws the tab status, the orb, not a dot'
     )
     t.check('the tab icon and the pane status are the chosen orb, still while idle', true)
 

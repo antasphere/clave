@@ -3,6 +3,7 @@ import { useRemoteFileTree, type FlatRemoteTreeNode } from '../../hooks/use-remo
 import { useSessionStore } from '../../store/session-store'
 import { FileIcon } from './file-icons'
 import { ArrowPathIcon } from '@heroicons/react/24/outline'
+import { useTreeIndentPx } from './tree-metrics'
 
 interface RemoteFileTreeProps {
   locationId: string
@@ -78,11 +79,12 @@ function RemoteFileTreeRow({
   node: FlatRemoteTreeNode
   onClick: (node: FlatRemoteTreeNode) => void
 }): React.JSX.Element {
+  const indentPx = useTreeIndentPx()
   return (
     <button
       onClick={() => onClick(node)}
       className="w-full flex items-center h-control-md px-2 cursor-pointer select-none transition-colors text-sm text-left hover:bg-surface-100"
-      style={{ paddingLeft: `${8 + node.depth * 8}px` }}
+      style={{ paddingLeft: `${8 + node.depth * indentPx}px` }}
       title={node.name}
     >
       {/* Chevron for directories */}

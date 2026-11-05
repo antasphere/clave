@@ -37,6 +37,26 @@ export function treeRuleMultiplier(intensity: TreeRuleIntensity): number {
 }
 
 /**
+ * How far each level of a side-panel tree steps in: the Files tab, the git
+ * panel's repository tree and the files inside a repository, all at once, so
+ * the two panels read as one list. Ids are stored, not numbers, like the rule
+ * weights above. Normal is the 12px the trees were drawn at.
+ */
+export const TREE_INDENTS = [
+  { id: 'tight', label: '8px', px: 8 },
+  { id: 'normal', label: '12px', px: 12 },
+  { id: 'roomy', label: '16px', px: 16 },
+  { id: 'wide', label: '20px', px: 20 }
+] as const
+
+export type TreeIndent = (typeof TREE_INDENTS)[number]['id']
+
+/** The px a level steps in; unknown ids fall back to Normal. */
+export function treeIndentPx(indent: TreeIndent | string | null | undefined): number {
+  return TREE_INDENTS.find((i) => i.id === indent)?.px ?? 12
+}
+
+/**
  * How tight the app's chrome is drawn: one of five presets, written on the
  * root element as `data-density` and resolved in
  * `packages/ui/src/density.css`. Each preset is a table of literal values, not
@@ -304,6 +324,10 @@ export interface Session {
   /** How many background shells/subagents a chat session left running past its
    *  turn, from the provider's own list. Runtime only; absent means none. */
   backgroundTasks?: number
+  /** How many of those are subagents (the rest are shells and other tasks).
+   *  A subagent is the agent still at work, so the tab reads working while
+   *  one runs; a shell is only something left running. Runtime only. */
+  backgroundAgents?: number
   promptWaiting: string | null
   claudeMode: boolean
   antigravityMode: boolean

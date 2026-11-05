@@ -75,6 +75,7 @@ import { usePresentation } from './presentation'
 import { TranscriptRows } from './rows'
 import { JumpToEnd } from './JumpToEnd'
 import { useEarlier, type EarlierPage } from './earlier'
+import { useTranscriptSearch } from './search'
 import { EarlierLoading, PastFailed } from './EarlierLoading'
 import { pastHead, pastStep, readPast, type PastReader, type PastState } from './past'
 import {
@@ -819,6 +820,14 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
   // The mark is the agent at work, nothing else: it leaves with the state.
   const head = pastHead(past, conversation.entries.length, state === 'ended')
   const showMark = state === 'working'
+  // Find in this conversation, for the field in the pane header (search.ts).
+  const searchReveal = useTranscriptSearch({
+    sessionId: session.id,
+    rows: blocks,
+    active: visible,
+    scroll: transcript.scroll,
+    more: before !== null
+  })
   return (
     <div
       ref={pane}
@@ -902,7 +911,12 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
             {/* Mounted from the start, empty or not: what it gains is told apart
                 from what it opened on by the rows it rendered before. */}
             <ToolDisclosure.Provider value={disclosure}>
-              <TranscriptRows rows={blocks} settled={pastRead} scroll={transcript.scroll}>
+              <TranscriptRows
+                rows={blocks}
+                settled={pastRead}
+                scroll={transcript.scroll}
+                reveal={searchReveal}
+              >
                 {({ block, key }, index, arriving) => (
                   <TranscriptRow
                     rowKey={key}

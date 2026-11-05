@@ -58,7 +58,42 @@ describe('tabIndicators', () => {
 
   it('never lets background work colour the logo', () => {
     const done = tabIndicators({ ...claude, agentState: 'done', backgroundTasks: 2 })
-    expect(done).toEqual({ status: 'idle', background: 2 })
+    expect(done).toEqual({ status: 'idle', background: 2, agents: 0 })
+  })
+
+  it('keeps a tab working while its subagents run past the turn', () => {
+    const lane = tabIndicators({
+      ...claude,
+      agentState: 'done',
+      backgroundTasks: 3,
+      backgroundAgents: 2
+    })
+    expect(lane).toEqual({ status: 'working', background: 1, agents: 2 })
+  })
+
+  it('a question still wins over running subagents', () => {
+    const asking = tabIndicators({
+      ...claude,
+      agentState: 'blocked',
+      backgroundTasks: 2,
+      backgroundAgents: 2
+    })
+    expect(asking.status).toBe('needs-you')
+  })
+
+  it('shells alone leave a finished tab finished', () => {
+    const shells = tabIndicators({ ...claude, agentState: 'done', backgroundTasks: 2 })
+    expect(shells).toEqual({ status: 'idle', background: 2, agents: 0 })
+  })
+
+  it('never counts more subagents than tasks', () => {
+    const odd = tabIndicators({
+      ...claude,
+      agentState: 'done',
+      backgroundTasks: 1,
+      backgroundAgents: 4
+    })
+    expect(odd).toEqual({ status: 'working', background: 0, agents: 1 })
   })
 
   it('counts nothing in the background of a dead or neutral tab', () => {
@@ -144,5 +179,34 @@ describe('finishesTurn', () => {
     ['working', 'blocked', false]
   ] as const)('%s → %s: %s', (previous, next, expected) => {
     expect(finishesTurn(previous, next)).toBe(expected)
+  })
+})
+
+describe('tabStatusPresentation with subagents', () => {
+  it('draws the spinner with the subagents counted, and says so', () => {
+    const p = tabStatusPresentation({
+      ...claude,
+      agentState: 'done',
+      backgroundTasks: 2,
+      backgroundAgents: 2
+    })
+    expect(p).toMatchObject({ status: 'working', glyph: 'spinner', agents: 2 })
+    expect(p.label).toBe('Working · 2 subagents running')
+  })
+  it('a plain working turn carries no count', () => {
+    const p = tabStatusPresentation({ ...claude, agentState: 'working' })
+    expect(p.agents ?? 0).toBe(0)
+    expect(p.label).toBe('Working')
+  })
+})
+
+describe('commands left running', () => {
+  it('are named in the tooltip of a finished tab', () => {
+    const p = tabStatusPresentation({ ...claude, agentState: 'done', backgroundTasks: 1 })
+    expect(p).toMatchObject({ glyph: 'check', label: 'Finished · 1 command still running' })
+  })
+  it('in the plural too', () => {
+    const p = tabStatusPresentation({ ...claude, agentState: 'done', backgroundTasks: 3 })
+    expect(p.label).toBe('Finished · 3 commands still running')
   })
 })

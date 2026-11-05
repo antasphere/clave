@@ -161,10 +161,17 @@ export async function run(t) {
         .evaluate((el) => el.className.includes('text-accent'))
     t.check('the home button is unlit while a tab page shows', !(await homeLit()))
 
-    // The way back.
-    await win.locator(`${PAGE} [aria-label="Back to sessions"]`).click()
+    // The page is bare: no bar over it, so no back arrow, no title tab, no close cross.
+    t.equal(
+      'the page carries no bar of controls over it',
+      await win.locator(`${PAGE} button, ${PAGE} .panel-tab`).count(),
+      0
+    )
+    // The way back is the sidebar: picking the tab the page stood in for, even the one
+    // still selected, puts the session back.
+    await rowButton(win, record.id).click()
     await win.locator(PAGE).waitFor({ state: 'detached', timeout: 5_000 })
-    t.check('back closes the page pane', true)
+    t.check('picking a tab in the sidebar closes the page', true)
 
     // A group's menu carries the entry too, and its page lists the group's session.
     const { groupId } = await callMcp(app, 'createGroup', { name: 'Analytics group' })
@@ -279,6 +286,13 @@ export async function run(t) {
       return typeof text === 'string' && text.includes('less than 20 minutes apart') ? text : null
     })
     t.check('back on the page, the footer counts with the new gap', !!footer, String(footer))
+
+    // The home button is a toggle: pressed again on its own page, it puts the sessions back.
+    await win.locator('[data-plugin-action="home"]').click()
+    await win.locator(PAGE).waitFor({ state: 'detached', timeout: 5_000 })
+    t.check('the home button pressed again closes its own page', !(await homeLit()))
+    await win.locator('[data-plugin-action="home"]').click()
+    await win.locator(PAGE).waitFor({ timeout: 10_000 })
 
     // Switched off, the plugin leaves no entry and no page behind.
     await win.evaluate((id) => window.electronAPI.pluginsDisable(id), PLUGIN)

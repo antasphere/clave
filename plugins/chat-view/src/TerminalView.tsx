@@ -86,6 +86,8 @@ import { usePresentation } from './presentation'
 import { TranscriptRows } from './rows'
 import { JumpToEnd } from './JumpToEnd'
 import { useEarlier, type EarlierPage } from './earlier'
+import { useTranscriptSearch } from './search'
+import { useFitRow } from './fit'
 import { EarlierLoading } from './EarlierLoading'
 import {
   attachmentIssue,
@@ -577,6 +579,8 @@ export function TerminalView({
   useComposerFocus(session.id, visible && !closed, textarea)
   useEffect(() => onState(state, conversation.model), [state, conversation.model, onState])
   const transcript = useTranscriptEnd(presentation.entries, stickSlack, visible)
+  const statusRow = useRef<HTMLDivElement>(null)
+  useFitRow(statusRow)
   const fetchEarlier = useCallback<EarlierPage>(async () => {
     if (before === null) return null
     const page = await window.electronAPI.sessionsHistory(session.id, before)
@@ -860,6 +864,14 @@ export function TerminalView({
             block.kind === 'tool-group' || block.kind === 'user' || block.kind === 'delivery-group'
         )?.key
       : undefined
+  // Find in this conversation, for the field in the pane header (search.ts).
+  const searchReveal = useTranscriptSearch({
+    sessionId: session.id,
+    rows: turns,
+    active: visible,
+    scroll: transcript.scroll,
+    more: before !== null
+  })
   return (
     <div
       ref={pane}
@@ -948,6 +960,7 @@ export function TerminalView({
                 rows={turns}
                 settled={pastRead}
                 scroll={transcript.scroll}
+                reveal={searchReveal}
                 holdAbove={pinQuestions}
               >
                 {(turn, index, arriving) => (
@@ -1148,8 +1161,14 @@ export function TerminalView({
             <StopIcon data-glyph="stop" />
           </button>
         </form>
-        <div className="term-status">
-          <span className="term-cwd" title={session.cwd}>
+        {/* One line that never runs past its edge: when it is too narrow the
+            items go in this order (useFitRow, the highest data-fit-drop
+            first): the permission mode and the effort, rarely changed; then
+            the folder (the pane header says it too) and the running count;
+            then the account; then the context. The model stays, and so do the
+            pin and attach buttons at the end. */}
+        <div className="term-status" ref={statusRow}>
+          <span className="term-cwd" title={session.cwd} data-fit-drop="5">
             {session.cwd.split('/').filter(Boolean).pop() ?? session.cwd}
           </span>
           <span className="term-model">
@@ -1159,6 +1178,8 @@ export function TerminalView({
               disabled={closed}
               onSelect={(id) => void write({ type: 'set_model', model: id }).catch(report)}
             />
+          </span>
+          <span className="term-model term-chip-next" data-fit-drop="6">
             <EffortMenu
               sessionId={session.id}
               model={conversation.model}
@@ -1168,7 +1189,11 @@ export function TerminalView({
             />
           </span>
           {conversation.permissionMode && (
-            <span className="term-mode" data-mode={conversation.permissionMode.mode}>
+            <span
+              className="term-mode term-chip-next"
+              data-mode={conversation.permissionMode.mode}
+              data-fit-drop="7"
+            >
               <PermissionModeMenu
                 mode={conversation.permissionMode.mode}
                 modes={conversation.permissionMode.modes}
@@ -1180,20 +1205,25 @@ export function TerminalView({
               />
             </span>
           )}
-          <ContextMeter
-            used={status.contextUsed}
-            window={
-              status.contextWindow ??
-              // The window is named by a turn's result; until one has come,
-              // the model says it (a resumed conversation's replay never does).
-              claudeContextWindow(conversation.model)
-            }
-          />
-          <AccountChip sessionId={session.id} />
+          <span className="term-fit" data-fit-drop="2">
+            <ContextMeter
+              used={status.contextUsed}
+              window={
+                status.contextWindow ??
+                // The window is named by a turn's result; until one has come,
+                // the model says it (a resumed conversation's replay never does).
+                claudeContextWindow(conversation.model)
+              }
+            />
+          </span>
+          <span className="term-fit" data-fit-drop="3">
+            <AccountChip sessionId={session.id} />
+          </span>
           {running && (
             <span
               className="term-dim term-running"
               title="Running now: the subagents, and the commands sent to the background"
+              data-fit-drop="4"
             >
               · {running}
             </span>

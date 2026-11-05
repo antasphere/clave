@@ -7,6 +7,7 @@ import { clearSessionDraft } from '../views/draft-store'
 import { subagentPresentation } from '../lib/subagent-presentation'
 import { finishesTurn } from '../lib/tab-status'
 import { create } from 'zustand'
+import { usePluginUIStore } from '../components/plugins/plugin-ui-store'
 import type { GitRangeDirection } from '../../../shared/git-range'
 import type {
   Theme,
@@ -14,6 +15,7 @@ import type {
   Density,
   TextSize,
   TreeRuleIntensity,
+  TreeIndent,
   PanelScope,
   ActivityStatus,
   GroupTerminalConfig,
@@ -70,6 +72,7 @@ export type {
   ExtensionsSection,
   SessionType,
   TreeRuleIntensity,
+  TreeIndent,
   Density,
   TextSize,
   PanelScope
@@ -79,6 +82,8 @@ export {
   GROUP_TERMINAL_ICONS,
   TERMINAL_COLOR_VALUES,
   TREE_RULE_INTENSITIES,
+  TREE_INDENTS,
+  treeIndentPx,
   PANEL_ROOTS,
   DENSITY_LEVELS,
   DEFAULT_DENSITY,
@@ -143,6 +148,8 @@ interface SessionState {
   appIcon: AppIcon
   /** How heavily every tree draws the hairlines between its rows. */
   treeRuleIntensity: TreeRuleIntensity
+  /** How far each level of a side-panel tree steps in (TREE_INDENTS). */
+  treeIndent: TreeIndent
   /** How tight the chrome is drawn — the preset written as `data-density`. */
   density: Density
   /** Px added to the chrome's labels on top of the preset (`--ui-text-offset`). */
@@ -330,6 +337,7 @@ interface SessionState {
   setTheme: (theme: Theme) => void
   setAppIcon: (icon: AppIcon) => void
   setTreeRuleIntensity: (intensity: TreeRuleIntensity) => void
+  setTreeIndent: (indent: TreeIndent) => void
   setDensity: (density: Density) => void
   setTextSize: (textSize: TextSize) => void
   setUiFont: (uiFont: UiFont) => void
@@ -370,7 +378,7 @@ interface SessionState {
   setLimitReported: (id: string, reported: boolean) => void
   setSessionActivity: (id: string, status: ActivityStatus) => void
   setAgentState: (id: string, state: import('./session-types').AgentRunState) => void
-  setBackgroundTaskCount: (id: string, count: number) => void
+  setBackgroundTaskCount: (id: string, count: number, agents?: number) => void
   setSessionPromptWaiting: (id: string, promptType: string | null) => void
   setSessionDetectedUrl: (id: string, url: string | null) => void
   setSessionServerStatus: (id: string, status: import('./session-types').ServerStatus) => void
@@ -1085,6 +1093,12 @@ export function fileTabDedupKey(tab: FileTab): string {
   return `file:${tab.filePath}`
 }
 
+/** Close a plugin's page in the content column, if one is open (see selectSession). */
+function closePluginPage(): void {
+  const plugins = usePluginUIStore.getState()
+  if (plugins.page) plugins.openPage(null)
+}
+
 export const useSessionStore = create<SessionState>((set) => ({
   sessions: [],
   fileTabs: [],
@@ -1100,6 +1114,7 @@ export const useSessionStore = create<SessionState>((set) => ({
   appIcon: (localStorage.getItem('clave-app-icon') as AppIcon) || 'dark',
   treeRuleIntensity:
     (localStorage.getItem('clave-tree-rule-intensity') as TreeRuleIntensity) || 'normal',
+  treeIndent: (localStorage.getItem('clave-tree-indent') as TreeIndent) || 'normal',
   density: resolveDensity(
     localStorage.getItem(DENSITY_STORAGE_KEY),
     localStorage.getItem(LEGACY_DENSITY_STORAGE_KEY)
@@ -1464,7 +1479,13 @@ export const useSessionStore = create<SessionState>((set) => ({
       return { sessions, selectedSessionIds, focusedSessionId, groups, displayOrder, ...viewPatch }
     }),
 
-  selectSession: (id, addToSelection) =>
+  // Picking a tab or a group is leaving whatever page a plugin opened in the
+  // content column (the Analytics home, a tab's analytics): the page stood in
+  // for the session you were on, and choosing a session, even the same one,
+  // puts that session back. Before, the page stayed over the mosaic and only
+  // its own back or close button removed it.
+  selectSession: (id, addToSelection) => {
+    closePluginPage()
     set((state) => {
       const session = state.sessions.find((s) => s.id === id)
       const targetView: ActiveView = session?.sessionType === 'agent' ? 'agents' : 'terminals'
@@ -1498,16 +1519,19 @@ export const useSessionStore = create<SessionState>((set) => ({
         activeGroupViewId: null,
         activeSessionViewId: null
       }
-    }),
+    })
+  },
 
-  selectSessions: (ids) =>
+  selectSessions: (ids) => {
+    closePluginPage()
     set(() => ({
       selectedSessionIds: ids,
       focusedSessionId: ids[0] ?? null,
       activeView: 'terminals' as ActiveView,
       activeGroupViewId: null,
       activeSessionViewId: null
-    })),
+    }))
+  },
 
   setFocusedSession: (id) => set(() => ({ focusedSessionId: id })),
 
@@ -1838,6 +1862,11 @@ export const useSessionStore = create<SessionState>((set) => ({
     set({ treeRuleIntensity })
   },
 
+  setTreeIndent: (treeIndent) => {
+    localStorage.setItem('clave-tree-indent', treeIndent)
+    set({ treeIndent })
+  },
+
   setDensity: (density) => {
     localStorage.setItem(DENSITY_STORAGE_KEY, density)
     set({ density })
@@ -1989,13 +2018,19 @@ export const useSessionStore = create<SessionState>((set) => ({
       }
     }),
 
-  setBackgroundTaskCount: (id, count) =>
+  setBackgroundTaskCount: (id, count, agents = 0) =>
     set((state) => {
       const session = state.sessions.find((s) => s.id === id)
-      if (!session || (session.backgroundTasks ?? 0) === count) return state
+      if (
+        !session ||
+        ((session.backgroundTasks ?? 0) === count && (session.backgroundAgents ?? 0) === agents)
+      )
+        return state
       return {
         sessions: state.sessions.map((s) =>
-          s.id === id ? { ...s, backgroundTasks: count || undefined } : s
+          s.id === id
+            ? { ...s, backgroundTasks: count || undefined, backgroundAgents: agents || undefined }
+            : s
         )
       }
     }),

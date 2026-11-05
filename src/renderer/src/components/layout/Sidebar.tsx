@@ -1685,7 +1685,11 @@ export function Sidebar(): React.JSX.Element {
               {/* 6px between top-level items: room for the drop line to sit
                   between two cards with air on both sides of it. */}
               <div
-                className="px-2 space-y-1.5"
+                // pt-1.5: the same 6px above the first card as between two
+                // cards. The "Sessions" heading used to hold that room; without
+                // it the first card ran into the seam's hairline. A search
+                // keeps its "Results" heading, which brings its own.
+                className={cn('px-2 space-y-1.5', !isSearchMode && 'pt-1.5')}
                 style={{ '--drop-seam': '6px' } as React.CSSProperties}
               >
                 {filteredSessions ? (

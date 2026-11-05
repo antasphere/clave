@@ -21,6 +21,7 @@ import { SessionCopyOffers } from './SessionCopyOffers'
 import { AccountProposal } from './AccountProposal'
 import { AgentUpdateHint } from './AgentUpdateHint'
 import { LinkedDocumentReopen } from '../files/LinkedDocumentReopen'
+import { SessionStatus } from '../session/SessionItem'
 
 interface TerminalHeaderProps {
   sessionId: string
@@ -81,16 +82,8 @@ export function TerminalHeader({ sessionId }: TerminalHeaderProps): ReactElement
     <>
       <div className="pane-header">
         <div className="pane-header-lead">
-          <span
-            className="pane-status-dot"
-            data-status={
-              session.activityStatus === 'active'
-                ? 'working'
-                : session.activityStatus === 'idle'
-                  ? 'ready'
-                  : 'inactive'
-            }
-          />
+          {/* The sidebar row's own status glyph, as in a chat pane's header. */}
+          <SessionStatus session={session} placeholder />
           <span className="pane-header-title">{session.name}</span>
           {multiProfile &&
             session.claudeProfileLabel &&

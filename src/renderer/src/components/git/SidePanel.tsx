@@ -445,7 +445,9 @@ function SidePanelBody(): React.JSX.Element {
   }, [cwd])
 
   return (
-    <div className="flex flex-col h-full bg-surface-50">
+    // `side-panel`: what the stylesheet scales the panel's text by (Appearance →
+    // Text size), see .side-panel in system.css.
+    <div className="side-panel flex flex-col h-full bg-surface-50">
       {/* Header — the panel's chrome, and the window's drag region; every
           interactive child opts out. No rule under it: the bars ARE the chrome,
           exactly as the sidebar's launcher and switcher panels are, and a line
