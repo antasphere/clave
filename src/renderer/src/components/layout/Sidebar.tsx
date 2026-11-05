@@ -68,11 +68,7 @@ import {
 } from '../../lib/switch-account'
 import { AccountMenuHeader } from './AccountMenuHeader'
 import { AccountSwitchRow, AccountUsagePreview } from './AccountSwitchMenu'
-import {
-  effectiveSwitchMode,
-  loadAccountPolicy,
-  subscribeAccountLaunchPolicy
-} from '../../store/account-policy-store'
+import { effectiveSwitchMode, loadAccountPolicy } from '../../store/account-policy-store'
 import { startAccountPolicy } from '../../lib/account-policy'
 import { WordmarkStrip } from './Wordmark'
 import { ScrollArea } from '@clave/ui/components'
@@ -352,9 +348,7 @@ export function Sidebar(): React.JSX.Element {
       }
     )
     // The switching policy (ADR 0002): its knobs, then its watch on every tab.
-    const unsubscribeLaunchPolicy = subscribeAccountLaunchPolicy()
     void loadAccountPolicy().then(() => startAccountPolicy())
-    return unsubscribeLaunchPolicy
   }, [])
 
   // Detect file drag over window (for showing pinned section as drop target).

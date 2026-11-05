@@ -85,8 +85,8 @@ export interface PickInput {
 }
 
 /**
- * The account to start on. Returns the preferred id when it is usable and
- * has headroom; otherwise walks the ring from the account being left.
+ * The account to start on. An opted-in launch uses the menu recommendation.
+ * Otherwise keeps the preferred id while usable with headroom, then walks the ring.
  */
 export function pickAccount(input: PickInput): string {
   const { accounts, usage, preferredId } = input

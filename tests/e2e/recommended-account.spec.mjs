@@ -203,8 +203,8 @@ export async function run(t) {
     t.equal('disabling restores the selected account', await chosen(disabled.sessionId), 'default')
     t.equal(
       'disabling also reaches the other window',
-      await otherToggle.getAttribute('aria-checked'),
-      'false'
+      await until(async () => (await otherToggle.getAttribute('aria-checked')) === 'false'),
+      true
     )
     t.equal('no renderer exceptions', errors.length, 0)
   } finally {

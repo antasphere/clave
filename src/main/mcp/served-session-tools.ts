@@ -354,7 +354,8 @@ const usageOf = (
   )
 
 /** The renderer's `accountForLaunch`: a named account is honoured; with none
- *  named, the selected one while it has headroom, else the next along. */
+ *  named, follow the launch setting: the recommendation, or the selected
+ *  one while it has headroom, else the next along. */
 function accountForLaunch(ctx: Ctx, provider: AccountProvider): ServedPoolAccount {
   const accounts = ctx.shell.accounts(provider)
   const selected = ctx.shell.selectedAccountId(provider) ?? 'default'
