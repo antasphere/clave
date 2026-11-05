@@ -203,6 +203,10 @@ it('reports malformed lines, unknown events, cancellation, UTF-8 fragmentation a
   // The views settle the card on the adapter's own word, never on the raw frame.
   expect(events).toContainEqual({ type: 'permission_withdrawn', id: 'cancel' })
   expect(events.filter((e) => e.type === 'permission_withdrawn')).toHaveLength(1)
+  // The word comes before the state word the cancel leaves on.
+  expect(events.findIndex((e) => e.type === 'permission_withdrawn')).toBeLessThan(
+    events.findLastIndex((e) => e.type === 'state_change' && e.state === 'working')
+  )
   // A cancel naming no held request says nothing.
   feed({ type: 'control_cancel_request', request_id: 'never-asked' })
   expect(events.filter((e) => e.type === 'permission_withdrawn')).toHaveLength(1)

@@ -6,6 +6,7 @@ import { installTerminalPorts, resetTerminalPorts } from '../../ports/terminals'
 import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest'
 import { CodexAdapter, CodexTranslator } from './codex-adapter'
 import { SessionEventSchema, type SessionEvent } from '../../../shared/session-model'
+import { requestGone } from '../../../shared/request-refusals'
 import type { SpawnSpec } from '../adapter'
 import type { LaunchProfile } from '../../../shared/agent-launch'
 import type { CodexCallbacks, CodexConnection } from './codex-app-server'
@@ -668,6 +669,29 @@ it('expires legacy approvals with the active turn even without a turnId field', 
   const done = events.findIndex((e) => e.type === 'state_change' && e.state === 'done')
   expect(withdrawn).toBeGreaterThan(-1)
   expect(withdrawn).toBeLessThan(done)
+})
+
+it('refuses an unknown option on a held approval in words that keep the card, a missing approval in words that retire it', () => {
+  const translator = new CodexTranslator(() => {})
+  translator.turnId = 'active'
+  translator.request({ id: 1, method: 'execCommandApproval', params: {} })
+  const connection = { respond: vi.fn() } as unknown as CodexConnection
+  const thrown = (answer: () => void): unknown => {
+    try {
+      answer()
+    } catch (error) {
+      return error
+    }
+    return undefined
+  }
+  const option = thrown(() => translator.answer('1', 'bogus-option', connection))
+  expect(option).toBeInstanceOf(Error)
+  expect((option as Error).message).toBe('Unknown Codex approval option')
+  expect(requestGone(option)).toBe(false)
+  const missing = thrown(() => translator.answer('9', 'approved', connection))
+  expect((missing as Error).message).toBe('Unknown or expired Codex approval option')
+  expect(requestGone(missing)).toBe(true)
+  expect(connection.respond).not.toHaveBeenCalled()
 })
 
 it('intentional close during initialization does not publish a fatal error or accept new input', async () => {

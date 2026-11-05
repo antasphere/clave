@@ -56,9 +56,11 @@ export type Entry =
       /* The adapter no longer holds the request, for good: it said so
          (`permission_withdrawn`: the provider withdrew the request, or the
          turn ended with it open), or the host refused this view's answer as
-         naming a request it does not hold. Set beside `answeredElsewhere`,
-         which a later `blocked` restores; this one it never restores, since
-         an answer would only be refused (PRDCT-4032). */
+         naming a request it does not hold. Always set together with
+         `answeredElsewhere: true` (`settle` is the one writer), so the dock's
+         filter reads the latter alone; a later `blocked` restores a card
+         closed on the kernel's word and never this one, since an answer
+         would only be refused (PRDCT-4032). */
       abandoned?: boolean
       at: number
     }
@@ -117,7 +119,7 @@ export function answeredSince(entries: Entry[]): boolean {
  *  elsewhere or abandoned by the adapter is not in it. */
 export function openRequests(entries: Entry[]): Permission[] {
   return entries.flatMap((e) =>
-    e.kind === 'permission' && !e.answer && !e.answeredElsewhere && !e.abandoned ? [e.request] : []
+    e.kind === 'permission' && !e.answer && !e.answeredElsewhere ? [e.request] : []
   )
 }
 /** The entries with every unanswered request `matches` settled for good: the

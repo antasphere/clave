@@ -384,6 +384,7 @@ export function prefixIds(event: SessionEvent, pluginId: string): SessionEvent {
     case 'tool_call':
     case 'tool_result':
     case 'permission_request':
+    case 'permission_withdrawn':
       return { ...event, id: `${pluginId}:${event.id}` }
     default:
       return event
