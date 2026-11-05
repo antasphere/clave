@@ -15,11 +15,14 @@ import { getActiveWorkspaceId } from './workspace-store'
  */
 export type AccountSwitchMode = 'propose' | 'automatic'
 
+const LAUNCH_KEY = 'useRecommendedAccount'
 const GLOBAL_KEY = 'accountSwitchMode'
 const BY_WORKSPACE_KEY = 'accountSwitchModeByWorkspace'
 
 interface AccountPolicyState {
   mode: AccountSwitchMode
+  useRecommendedAccount: boolean
+  setUseRecommendedAccount: (enabled: boolean) => void
   byWorkspace: Record<string, AccountSwitchMode>
   loaded: boolean
   setMode: (mode: AccountSwitchMode) => void
@@ -33,6 +36,11 @@ export function parseSwitchMode(raw: unknown): AccountSwitchMode | null {
 
 export const useAccountPolicyStore = create<AccountPolicyState>((set, get) => ({
   mode: 'propose',
+  useRecommendedAccount: false,
+  setUseRecommendedAccount: (enabled) => {
+    set({ useRecommendedAccount: enabled })
+    window.electronAPI?.preferencesSet(LAUNCH_KEY, enabled).catch(() => {})
+  },
   byWorkspace: {},
   loaded: false,
 
@@ -67,9 +75,10 @@ export function effectiveSwitchMode(
 
 export async function loadAccountPolicy(): Promise<void> {
   try {
-    const [mode, byWorkspace] = await Promise.all([
+    const [mode, byWorkspace, useRecommendedAccount] = await Promise.all([
       window.electronAPI?.preferencesGet(GLOBAL_KEY),
-      window.electronAPI?.preferencesGet(BY_WORKSPACE_KEY)
+      window.electronAPI?.preferencesGet(BY_WORKSPACE_KEY),
+      window.electronAPI?.preferencesGet(LAUNCH_KEY)
     ])
     const parsed: Record<string, AccountSwitchMode> = {}
     if (byWorkspace && typeof byWorkspace === 'object') {
@@ -79,6 +88,7 @@ export async function loadAccountPolicy(): Promise<void> {
       }
     }
     useAccountPolicyStore.setState({
+      useRecommendedAccount: useRecommendedAccount === true,
       mode: parseSwitchMode(mode) ?? 'propose',
       byWorkspace: parsed,
       loaded: true

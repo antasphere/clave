@@ -97,6 +97,8 @@ export interface ServedShell<W extends ToolWindow = ToolWindow> {
   accounts(provider: AccountProvider): ServedPoolAccount[]
   /** The account selected in settings for that provider, undefined when none is. */
   selectedAccountId(provider: AccountProvider): string | undefined
+  /** Opt in to the menu recommendation for implicit new-session accounts. */
+  useRecommendedAccount?(): boolean
   /** The switching mode a workspace runs under: its own, else the global one. */
   switchMode(workspaceId: string | null | undefined): AccountSwitchMode
   /** The launch profiles of a family, built-ins first. */

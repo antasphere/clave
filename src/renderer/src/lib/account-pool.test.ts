@@ -189,3 +189,52 @@ describe('switchTargets', () => {
     expect(targets[0].weeklyResetAt).toBe(5_000)
   })
 })
+
+describe('recommended launch account', () => {
+  const weekly = (percent: number, at: number): AccountUsageSummary => {
+    const summary = used(percent)
+    const window = { ...summary.tightest!, kind: 'weekly_all', resetsAt: at }
+    return { ...summary, tightest: window, windows: [window] }
+  }
+  const input = {
+    accounts,
+    usage: { default: weekly(20, 9000), work: weekly(50, 3000), team: weekly(10, 6000) },
+    preferredId: 'default',
+    preferRecommended: true
+  }
+  it('uses the same weekly ranking as the switch menu when enabled', () => {
+    expect(pickAccount(input)).toBe('work')
+    expect(pickAccount({ ...input, preferRecommended: false })).toBe('default')
+  })
+  it('includes the selected account, and breaks ties in account order', () => {
+    expect(pickAccount({ ...input, preferredId: 'work' })).toBe('work')
+    expect(pickAccount({ ...input, usage: {}, preferredId: 'team' })).toBe('default')
+  })
+  it('skips exhausted, unusable, excluded and API key accounts', () => {
+    expect(pickAccount({ ...input, usage: { ...input.usage, work: weekly(99, 1000) } })).toBe(
+      'team'
+    )
+    expect(pickAccount({ ...input, excludeIds: ['work'] })).toBe('team')
+    expect(
+      pickAccount({
+        ...input,
+        accounts: [{ id: 'key', usable: true, fallback: true }, ...accounts],
+        preferredId: 'key'
+      })
+    ).toBe('work')
+    expect(
+      pickAccount({ ...input, accounts: accounts.map((a) => ({ ...a, usable: a.id !== 'work' })) })
+    ).toBe('team')
+  })
+  it('retains existing fallback when every subscription is exhausted', () => {
+    const exhausted = { default: weekly(99, 3000), work: weekly(99, 1000), team: weekly(99, 2000) }
+    expect(pickAccount({ ...input, usage: exhausted })).toBe('work')
+    expect(
+      pickAccount({
+        ...input,
+        usage: exhausted,
+        accounts: [...accounts, { id: 'key', usable: true, fallback: true }]
+      })
+    ).toBe('key')
+  })
+})

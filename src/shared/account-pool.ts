@@ -80,6 +80,8 @@ export interface PickInput {
   excludeIds?: string[]
   /** Prefer the account with the most 5-hour headroom among open targets. */
   preferSessionHeadroom?: boolean
+  /** Use the menu recommendation for a new session, including the selected account. */
+  preferRecommended?: boolean
 }
 
 /**
@@ -89,6 +91,13 @@ export interface PickInput {
 export function pickAccount(input: PickInput): string {
   const { accounts, usage, preferredId } = input
   const excluded = new Set(input.excludeIds ?? [])
+  if (input.preferRecommended && input.leavingId === undefined) {
+    const recommended = switchTargets(
+      accounts.filter((a) => !excluded.has(a.id)),
+      usage
+    ).find((a) => a.suggested)
+    if (recommended) return recommended.id
+  }
   const byId = new Map(accounts.map((a) => [a.id, a]))
   const preferred = byId.get(preferredId)
   const ok = (a: PoolAccount): boolean => a.usable && !excluded.has(a.id)
@@ -151,7 +160,7 @@ export function soonestWeeklyReset(summary: AccountUsageSummary | undefined): nu
 export function switchTargets(
   accounts: PoolAccount[],
   usage: Record<string, AccountUsageSummary | undefined>,
-  currentId: string
+  currentId?: string
 ): { id: string; exhausted: boolean; suggested: boolean; weeklyResetAt: number | null }[] {
   const ranked = accounts
     .map((a, index) => ({ a, index }))

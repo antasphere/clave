@@ -46,6 +46,7 @@ interface World {
   records: Record<string, SessionRecord>
   accounts: Record<'claude' | 'codex', ServedPoolAccount[]>
   selected: Record<'claude' | 'codex', string | undefined>
+  useRecommendedAccount: boolean
   switchMode: 'propose' | 'automatic'
   /** The chat profile the launcher would open, by `<family>@<workspace>`. */
   chatDefaults: Record<string, string | undefined>
@@ -79,6 +80,7 @@ function setup(partial: Partial<World> = {}): Harness {
       codex: [{ id: 'default', label: 'Default', usable: true }]
     },
     selected: { claude: undefined, codex: undefined },
+    useRecommendedAccount: false,
     switchMode: 'propose',
     chatDefaults: {},
     pins: [],
@@ -171,6 +173,7 @@ function setup(partial: Partial<World> = {}): Harness {
     sleep: async () => undefined,
     accounts: (provider) => w.accounts[provider],
     selectedAccountId: (provider) => w.selected[provider],
+    useRecommendedAccount: () => w.useRecommendedAccount,
     switchMode: () => w.switchMode,
     launchProfiles: (family) =>
       family === 'claude'
@@ -734,6 +737,34 @@ describe('opening a session', () => {
     ).rejects.toThrow('workspace')
     expect(h.argsOf('sessions.start')).toHaveLength(0)
   })
+  it.each(['claude', 'codex'] as const)(
+    'applies the recommended default to implicit %s tool launches only',
+    async (provider) => {
+      const h = setup(world())
+      const summary = (at: number) => ({
+        tightest: { kind: 'weekly_all', usedPercentage: 30 },
+        windows: [{ kind: 'weekly_all', usedPercentage: 30, resetsAt: at }]
+      })
+      h.w.accounts[provider] = [
+        { id: 'default', label: 'Default', usable: true, usage: summary(5000) },
+        { id: 'acc-2', label: 'Second', usable: true, usage: summary(1000) }
+      ]
+      h.w.selected[provider] = 'default'
+      const chosen = () =>
+        (h.argsOf('sessions.start').at(-1) as { options: Record<string, string> }).options[
+          provider === 'claude' ? 'claudeProfileId' : 'codexAccountId'
+        ]
+      await run(h, 'openSession', { cwd: '/proj', mode: provider })
+      expect(chosen()).toBe('default')
+      h.w.useRecommendedAccount = true
+      await run(h, 'openSession', { cwd: '/proj', mode: provider })
+      expect(chosen()).toBe('acc-2')
+      await run(h, 'openSession', { cwd: '/proj', mode: provider, account: 'default' })
+      expect(chosen()).toBe('default')
+      await run(h, 'openSession', { cwd: '/proj', mode: provider, account: 'any' })
+      expect(chosen()).toBe('acc-2')
+    }
+  )
   it('starts on the pool’s account with the caller’s workspace, names it, places it, links it, records it', async () => {
     const h = setup(world())
     const out = await run(h, 'openSession', {

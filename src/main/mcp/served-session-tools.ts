@@ -361,7 +361,8 @@ function accountForLaunch(ctx: Ctx, provider: AccountProvider): ServedPoolAccoun
   const id = pickAccount({
     accounts: poolOf(accounts),
     usage: usageOf(accounts),
-    preferredId: selected
+    preferredId: selected,
+    preferRecommended: ctx.shell.useRecommendedAccount?.() === true
   })
   return accounts.find((a) => a.id === id) ?? accounts[0] ?? { id, label: id, usable: true }
 }

@@ -1,3 +1,4 @@
+import { useAccountPolicyStore } from '../store/account-policy-store'
 import { isRemoteKey } from './fleet-identity'
 import { useSessionStore, type Session } from '../store/session-store'
 import {
@@ -69,7 +70,7 @@ function poolAccounts(provider: AccountProvider): PoolAccount[] {
 
 /** The pool's pick for a new session. A named account is honored; when no
  *  account is named, the selected account is used while it has headroom, else
- *  the next one along. */
+ *  the next one along. The launch setting can opt into the menu recommendation. */
 export function accountForLaunch(provider: 'claude', preferredId?: string): ClaudeProfile
 export function accountForLaunch(provider: 'codex', preferredId?: string): CodexAccount
 export function accountForLaunch(
@@ -92,7 +93,9 @@ export function accountForLaunch(
   const id = pickAccount({
     accounts: poolAccounts(provider),
     usage: accountsUsageFor(provider),
-    preferredId: preferredId ?? selected
+    preferredId: preferredId ?? selected,
+    preferRecommended:
+      preferredId === undefined && useAccountPolicyStore.getState().useRecommendedAccount
   })
   return provider === 'codex' ? getCodexAccount(id) : getClaudeProfile(id)
 }
