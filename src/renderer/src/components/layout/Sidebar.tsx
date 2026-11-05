@@ -97,9 +97,10 @@ import {
   GlobeAltIcon
 } from '@heroicons/react/24/outline'
 
-// The height of a tab menu's account header with its usage chart, its
-// separator and the menu's padding (AccountMenuHeader with `chart`).
-const ACCOUNT_HEADER_LIFT = 200
+// The height of a tab menu's account header with its usage bars, its
+// separator and the menu's padding (AccountMenuHeader with `chart`): the
+// account line (~30px) plus one 16px bar row per cap (typically 3–4).
+const ACCOUNT_HEADER_LIFT = 110
 
 interface ContextMenuState {
   x: number
@@ -1666,7 +1667,9 @@ export function Sidebar(): React.JSX.Element {
                 gate closed, and the results it had already computed went with
                 it. The gate now hides only the pinned drop zone, which is the
                 one part that has nothing to say about a set of results. */}
-            <SectionHeading title={isSearchMode ? 'Results' : 'Sessions'} />
+            {/* No "Sessions" label over the list — the list is the sidebar's
+                body and needs no title; only a search names what it shows. */}
+            {isSearchMode && <SectionHeading title="Results" />}
             {!isSearchMode && (
               <PinnedSection
                 setContextMenu={setContextMenu}

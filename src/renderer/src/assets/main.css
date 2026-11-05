@@ -1664,6 +1664,63 @@ body.reorder-dragging * {
   justify-content: space-evenly;
   gap: 0;
 }
+/* The tab menu header's caps: one line per cap — name, a 4px bar, % used,
+   time to reset. */
+.account-usage-bars {
+  /* One grid for the whole stack (the rows are display: contents), so the
+     name and reset columns size to their longest entry and every bar still
+     starts and ends at the same x. */
+  display: grid;
+  grid-template-columns: max-content minmax(2.5rem, 1fr) max-content max-content;
+  grid-auto-rows: 1rem;
+  align-items: center;
+  column-gap: 0.5rem;
+  min-width: 0;
+  font-size: 0.6875rem;
+  line-height: 1;
+}
+.account-usage-bar {
+  display: contents;
+}
+.account-usage-bar-name {
+  max-width: 5rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: var(--font-weight-medium);
+  color: var(--text-secondary);
+}
+.account-usage-bar-track {
+  display: block;
+  height: 4px;
+  border-radius: 2px;
+  overflow: hidden;
+  background-color: var(--surface-200);
+}
+.account-usage-bar-fill {
+  display: block;
+  height: 100%;
+  border-radius: 2px;
+  transition:
+    width 300ms var(--ease-out-expo),
+    background-color 200ms;
+}
+.account-usage-bar-pct {
+  text-align: right;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+}
+.account-usage-bar-reset {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  color: var(--text-tertiary);
+}
+.account-usage-bars-empty {
+  font-size: 0.6875rem;
+  color: var(--text-tertiary);
+}
 .account-preview-divider {
   align-self: stretch;
   width: 1px;

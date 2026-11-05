@@ -216,7 +216,7 @@ export async function run(t) {
     )
     t.equal(
       'a cap past its limit reads 100% used, not 1%',
-      (await menu.locator('.usage-column-value').first().innerText()).trim(),
+      (await menu.locator('.account-usage-bar-pct').first().innerText()).trim(),
       '100%'
     )
     const playRow = menu.locator(`[data-account-switch-row="${ids.play}"]`)

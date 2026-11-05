@@ -654,13 +654,24 @@ canvas[data-orb-state] {
   grid-template-rows: 0fr;
   opacity: 0;
 }
+/* One row that slides sideways rather than wrapping onto new lines: the panel
+   holds a single chip row however many groups run, so the list below never
+   moves when a group starts or stops. The scrollbar is hidden — a trackpad
+   swipe (or the wheel, mapped in GroupSwitcher.tsx) moves it. overflow-y stays
+   hidden so the grid track above can still clip the row on its way out. */
 .group-switcher-chips {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: center;
   gap: 2px;
   min-height: 0;
-  overflow: hidden;
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
+}
+.group-switcher-chips::-webkit-scrollbar {
+  display: none;
 }
 /* Only when there is a head row above them — the margin would otherwise open a
    gap at the top of the panel — and it goes with the row on the way out, so the
@@ -781,7 +792,7 @@ canvas[data-orb-state] {
   gap: var(--control-gap);
   flex-shrink: 0;
   min-width: 0;
-  max-width: 100%; /* a long group name wraps the row, never the panel */
+  max-width: 100%; /* a long group name truncates, never widens the panel */
   height: var(--control-h-md);
   padding: 0 var(--control-px); /* px-2 — see .launcher-btn */
   border-radius: var(--radius-control);
