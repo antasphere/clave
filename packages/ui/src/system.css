@@ -238,11 +238,16 @@ body,
     background-color 150ms,
     scale 120ms var(--ease-out-expo); /* the icon button's press dip keeps its easing */
 }
+/* Shown, it still cancels the row's gap: the 20px box already carries 3px of
+   air around its 14px glyph, and the status glyph before it its own, so with
+   the 8px gap on top the check and the cross stood ~16px apart, twice the
+   distance between any other two things on the row. Flush boxes put the two
+   glyphs ~8px apart, the row's own rhythm. */
 .sidebar-item:hover .sidebar-item-close,
 .sidebar-item:focus-visible .sidebar-item-close,
 .sidebar-item:has(:focus-visible) .sidebar-item-close {
   width: var(--control-h-xs);
-  margin-left: 0;
+  margin-left: calc(-1 * var(--sidebar-item-gap));
   margin-right: calc((var(--sidebar-row-h) - var(--control-h-xs)) / 2 - var(--sidebar-row-px));
   opacity: 1;
   transform: none;
