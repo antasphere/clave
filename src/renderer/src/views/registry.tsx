@@ -28,43 +28,10 @@ import { LinkedDocumentReopen } from '../components/files/LinkedDocumentReopen'
 import { AccountProposal } from '../components/terminal/AccountProposal'
 import { useBackgroundTasks } from './background-tasks'
 import { BackgroundTasksChip } from './BackgroundTasksChip'
+import { SessionStatus } from '../components/session/SessionItem'
 import { PaneSearch } from './PaneSearch'
 import { usePaneSearchStore } from './pane-search'
-import { useMarkPack } from '../components/plugins/native-marks'
-import { tokenColor } from '../lib/marks'
 
-type DotStatus = 'working' | 'waiting' | 'background' | 'ready' | 'inactive'
-/** `background`: the turn is over but work it started still runs. */
-function dotStatus(state: string, background = 0): DotStatus {
-  if (state === 'working') return 'working'
-  if (state === 'blocked') return 'waiting'
-  if (state === 'ended') return 'inactive'
-  if (background > 0) return 'background'
-  return 'ready'
-}
-/** The pane's status before its title: the dot, or — Appearance → Agent mark —
- *  the chosen pack's mark, moving while the agent works and tinted the dot's
- *  colour when it is waiting on the reader or finished with work still running. */
-function PaneStatus({ status }: { status: DotStatus }): React.JSX.Element {
-  const pack = useMarkPack()
-  if (!pack) return <span className="pane-status-dot" data-status={status} />
-  const ink =
-    status === 'waiting'
-      ? tokenColor('--color-status-waiting')
-      : status === 'background'
-        ? tokenColor('--color-status-working')
-        : undefined
-  return (
-    <span className="pane-status-mark" data-status={status}>
-      <pack.Agent
-        working={status === 'working' || status === 'background'}
-        status={status}
-        color={ink}
-        slot="pane"
-      />
-    </span>
-  )
-}
 /** The pane's view picker: every view that renders this session, the current
  *  one checked. Hidden when a session has only one view to be read in — a menu
  *  with a single item is chrome with nothing to decide. */
@@ -290,7 +257,9 @@ function RegisteredSessionView({
     >
       <header className="pane-header chat-header">
         <div className="pane-header-lead">
-          <PaneStatus status={dotStatus(meta.state, backgroundTasks.length)} />
+          {/* The sidebar row's own status glyph, the same component: spinner
+              while working, check when finished, ? when it waits on you. */}
+          {record && <SessionStatus session={record} placeholder />}
           <span className="pane-header-title" title={session.cwd}>
             {name ?? session.title}
           </span>
@@ -311,8 +280,13 @@ function RegisteredSessionView({
         <div className="pane-header-actions">
           <FleetResume sessionId={sessionId} />
           <LinkedDocumentReopen sessionId={sessionId} />
-          <BackgroundTasksChip tasks={backgroundTasks} />
-          <span className="chat-state" data-state={meta.state}>
+          {/* The terminal view lists the running work under its status line
+              itself; the chip would say it twice. The chat view has no such
+              list, so it keeps the chip. */}
+          {viewId !== 'clave.chat-view/terminal' && <BackgroundTasksChip tasks={backgroundTasks} />}
+          {/* The state in words, for assistive tech and the specs only: the
+              status glyph before the title says it on screen. */}
+          <span className="chat-state sr-only" data-state={meta.state}>
             {meta.state}
           </span>
           {!searching && (

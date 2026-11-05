@@ -115,8 +115,19 @@ const GLYPHS: Record<Exclude<TabGlyph, 'spinner'>, typeof CheckCircleIcon> = {
  *  Appearance → Agent mark: a plugin's mark pack stands in for the glyph on
  *  an agent row (never on a plain terminal). Its mark moves while the agent
  *  works and takes the status colour as its ink, so the row keeps saying the
- *  same things in a different voice. */
-function SessionStatus({ session }: { session: Session }): React.JSX.Element {
+ *  same things in a different voice. Exported: a pane's header draws this
+ *  same component before its title, so the tab and the pane it opens say the
+ *  state with one glyph rather than a glyph in one place and a dot in the
+ *  other. */
+export function SessionStatus({
+  session,
+  placeholder = false
+}: {
+  session: Session
+  /** Draw an empty grey ring when there is nothing to say (a pane header);
+   *  the sidebar leaves the slot empty. */
+  placeholder?: boolean
+}): React.JSX.Element {
   const { status, glyph, tone, label } = tabStatusPresentation(session)
   const pack = useMarkPack()
   const Mark = pack && isProviderRow(session) ? pack.Agent : null
@@ -145,6 +156,8 @@ function SessionStatus({ session }: { session: Session }): React.JSX.Element {
         <span className="sidebar-tab-spinner" />
       ) : Glyph ? (
         <Glyph />
+      ) : placeholder ? (
+        <span className="sidebar-tab-placeholder" />
       ) : null}
     </span>
   )
