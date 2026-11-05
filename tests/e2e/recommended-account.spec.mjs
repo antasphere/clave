@@ -9,7 +9,8 @@ import {
   callMcp,
   until,
   userDataDir,
-  fixturePath
+  fixturePath,
+  openWindow
 } from './harness.mjs'
 
 const DIR = userDataDir('recommended-account')
@@ -125,12 +126,30 @@ export async function run(t) {
       await chosen(initial.sessionId),
       'default'
     )
+    const other = await openWindow(app, win, WS.id)
     await settings()
     await toggle.click()
     t.equal(
       'the setting persists through IPC',
       await win.evaluate(() => window.electronAPI.preferencesGet('useRecommendedAccount')),
       true
+    )
+    t.equal(
+      'the preference is saved on disk',
+      JSON.parse(readFileSync(`${DIR}/preferences.json`, 'utf8')).useRecommendedAccount,
+      true
+    )
+    await app.evaluate(
+      ({ BrowserWindow }, id) =>
+        BrowserWindow.fromId(id).webContents.send('menu:open-settings-section', 'accounts'),
+      other.windowId
+    )
+    const otherToggle = other.page.getByRole('switch', { name: LABEL, exact: true })
+    await otherToggle.waitFor()
+    t.equal(
+      'an already-open window follows the setting',
+      await otherToggle.getAttribute('aria-checked'),
+      'true'
     )
     const implicit = await open('Recommended account')
     t.equal(
@@ -176,10 +195,16 @@ export async function run(t) {
           .some((s) => s.options?.claudeProfileId === accountId)
       ))
     )
+    await win.waitForFunction(() => !document.querySelector('[data-launcher-agent]')?.disabled)
     await settings()
     await toggle.click()
     const disabled = await open('Selected again')
     t.equal('disabling restores the selected account', await chosen(disabled.sessionId), 'default')
+    t.equal(
+      'disabling also reaches the other window',
+      await otherToggle.getAttribute('aria-checked'),
+      'false'
+    )
     t.equal('no renderer exceptions', errors.length, 0)
   } finally {
     await app.close()

@@ -5,7 +5,11 @@ import {
   useCodexAccountsUsage,
   type AccountUsageSummary
 } from '../store/usage-store'
-import { useAccountPolicyStore, loadAccountPolicy } from '../store/account-policy-store'
+import {
+  useAccountPolicyStore,
+  loadAccountPolicy,
+  subscribeAccountLaunchPolicy
+} from '../store/account-policy-store'
 import { useCodexAccountStore } from '../store/codex-account-store'
 import { useClaudeProfileStore } from '../store/claude-profile-store'
 import {
@@ -125,6 +129,25 @@ describe('recommended account setting', () => {
     expect(launch('default').id).toBe('default')
     useAccountPolicyStore.setState({ useRecommendedAccount: false })
     expect(launch().id).toBe('default')
+  })
+  it('updates an already-open window and releases its listener', () => {
+    let notify: (enabled: boolean) => void = () => {}
+    const unsubscribe = vi.fn()
+    vi.stubGlobal('window', {
+      electronAPI: {
+        onRecommendedAccountChanged: (callback: typeof notify) => {
+          notify = callback
+          return unsubscribe
+        }
+      }
+    })
+    const stop = subscribeAccountLaunchPolicy()
+    notify(true)
+    expect(useAccountPolicyStore.getState().useRecommendedAccount).toBe(true)
+    notify(false)
+    expect(useAccountPolicyStore.getState().useRecommendedAccount).toBe(false)
+    stop()
+    expect(unsubscribe).toHaveBeenCalledOnce()
   })
   it('loads the persisted opt-in and rejects non-boolean values', async () => {
     const get = vi.fn(async () => true)

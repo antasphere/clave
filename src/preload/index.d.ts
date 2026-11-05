@@ -1235,6 +1235,7 @@ export interface ElectronAPI extends FleetDesktopAPI {
   onSkinsChanged: (callback: (state: import('@clave/skins/types').SkinState) => void) => () => void
   preferencesGet: (key: string) => Promise<unknown>
   preferencesSet: (key: string, value: unknown) => Promise<void>
+  onRecommendedAccountChanged: (callback: (enabled: boolean) => void) => () => void
   getMicAccess: () => Promise<MicAccessState>
   requestMicAccess: () => Promise<MicAccessState>
   openMicPrivacySettings: () => Promise<void>

@@ -97,3 +97,12 @@ export async function loadAccountPolicy(): Promise<void> {
     useAccountPolicyStore.setState({ loaded: true })
   }
 }
+
+/** Keep already-open windows on the app-wide launch choice. */
+export function subscribeAccountLaunchPolicy(): () => void {
+  return (
+    window.electronAPI?.onRecommendedAccountChanged?.((enabled) => {
+      useAccountPolicyStore.setState({ useRecommendedAccount: enabled === true })
+    }) ?? (() => {})
+  )
+}

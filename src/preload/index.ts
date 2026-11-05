@@ -2386,6 +2386,8 @@ const electronAPI = {
   preferencesGet: (key: string) => ipcRenderer.invoke('preferences:get', key),
   preferencesSet: (key: string, value: unknown) =>
     ipcRenderer.invoke('preferences:set', key, value),
+  onRecommendedAccountChanged: (callback: (enabled: boolean) => void) =>
+    createIpcListener<[boolean]>('accounts:recommended-launch-changed', callback),
   // ── Microphone (the Audio settings page's OS surface) ──
   getMicAccess: () => ipcRenderer.invoke(MIC_GET_ACCESS_CHANNEL) as Promise<MicAccessState>,
   requestMicAccess: () => ipcRenderer.invoke(MIC_REQUEST_ACCESS_CHANNEL) as Promise<MicAccessState>,
