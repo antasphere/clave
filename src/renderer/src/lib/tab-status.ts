@@ -82,13 +82,15 @@ export function tabIndicators(session: StatusFields): TabIndicators {
  *
  *   working   → a segmented spinner, grey
  *   needs-you → a question mark in a circle, amber
- *   unread    → a check in a circle, blue; an envelope when another tab wrote
+ *   unread    → a check in a circle, blue, whatever brought the news: a turn
+ *               finished out of view or another tab's message (the label
+ *               names the tab; the envelope it once drew went with PRDCT-4078)
  *   idle      → a check in a circle, grey, once a turn has finished and been
  *               read (Claude and Pi rest on `done`; Codex rests on `idle` and
  *               reads as fresh again); nothing on a fresh tab
  *   ended     → a minus in a circle, dimmed
  */
-export type TabGlyph = 'spinner' | 'question' | 'check' | 'envelope' | 'minus'
+export type TabGlyph = 'spinner' | 'question' | 'check' | 'minus'
 export type TabTone = 'grey' | 'amber' | 'blue' | 'dim'
 
 export interface TabStatusPresentation {
@@ -108,9 +110,17 @@ export function tabStatusPresentation(session: StatusFields): TabStatusPresentat
     case 'working':
       return { status, glyph: 'spinner', tone: 'grey', label: 'Working' }
     case 'unread':
-      return session.injectedFrom
-        ? { status, glyph: 'envelope', tone: 'blue', label: `Message from ${session.injectedFrom}` }
-        : { status, glyph: 'check', tone: 'blue', label: 'Finished while you were away' }
+      // One glyph for one piece of news, whatever brought it (PRDCT-4078): the
+      // envelope that stood for another tab's message read as a second signal
+      // beside the check. The label still names the tab that wrote.
+      return {
+        status,
+        glyph: 'check',
+        tone: 'blue',
+        label: session.injectedFrom
+          ? `Message from ${session.injectedFrom}`
+          : 'Finished while you were away'
+      }
     case 'ended':
       return { status, glyph: 'minus', tone: 'dim', label: 'Ended' }
     case 'idle':

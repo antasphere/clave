@@ -88,7 +88,7 @@ describe('tabStatusPresentation', () => {
     [
       'a Claude tab written to while away',
       { ...claude, agentState: 'done', hasUnseenActivity: true, injectedFrom: 'Wave' },
-      'envelope',
+      'check',
       'blue',
       'Message from Wave'
     ],
@@ -96,7 +96,7 @@ describe('tabStatusPresentation', () => {
     [
       'a terminal written to by another tab',
       { ...terminal, injectedFrom: 'Wave' },
-      'envelope',
+      'check',
       'blue',
       'Message from Wave'
     ],
@@ -107,6 +107,24 @@ describe('tabStatusPresentation', () => {
     ['an Antigravity tab stays neutral', { ...antigravity, agentState: 'done' }, null, 'grey', null]
   ] as const)('%s', (_label, session, glyph, tone, label) => {
     expect(tabStatusPresentation(session as Fields)).toMatchObject({ glyph, tone, label })
+  })
+
+  it('never draws an envelope: one glyph for one piece of news (PRDCT-4078)', () => {
+    const presentations = [
+      tabStatusPresentation({
+        ...claude,
+        agentState: 'done',
+        hasUnseenActivity: true,
+        injectedFrom: 'Wave'
+      }),
+      tabStatusPresentation({ ...terminal, injectedFrom: 'Wave' }),
+      tabStatusPresentation({ ...codex, agentState: 'idle', injectedFrom: 'Wave' })
+    ]
+    for (const p of presentations) {
+      expect(p.glyph).toBe('check')
+      expect(p.tone).toBe('blue')
+      expect(p.label).toBe('Message from Wave')
+    }
   })
 
   it('carries the status the row paints', () => {

@@ -6,7 +6,6 @@ import { useSessionStore, type Session } from '../../store/session-store'
 import { useLocationStore } from '../../store/location-store'
 import {
   CheckCircleIcon,
-  EnvelopeIcon,
   ExclamationTriangleIcon,
   MinusCircleIcon,
   QuestionMarkCircleIcon,
@@ -104,7 +103,6 @@ function isProviderRow(session: Session): boolean {
 
 const GLYPHS: Record<Exclude<TabGlyph, 'spinner'>, typeof CheckCircleIcon> = {
   check: CheckCircleIcon,
-  envelope: EnvelopeIcon,
   minus: MinusCircleIcon,
   question: QuestionMarkCircleIcon
 }
