@@ -2267,8 +2267,14 @@ export const useSessionStore = create<SessionState>((set) => ({
 
   addFileTab: (tab) =>
     set((state) => {
+      tab = {
+        ...tab,
+        workspaceId: tab.workspaceId ?? useWorkspaceStore.getState().activeWorkspaceId ?? undefined
+      }
       const key = fileTabDedupKey(tab)
-      const existing = state.fileTabs.find((f) => fileTabDedupKey(f) === key)
+      const existing = state.fileTabs.find(
+        (f) => f.workspaceId === tab.workspaceId && fileTabDedupKey(f) === key
+      )
       if (existing) {
         return {
           // A re-open with an explicit view mode retargets the existing tab.

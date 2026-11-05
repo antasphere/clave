@@ -497,6 +497,9 @@ async function openSession(ctx: Ctx, key: string, p: Payload): Promise<unknown> 
     ? resolveWorkspace(ctx, explicitWorkspace)
     : (target?.group.workspaceId ?? workspaceForSpawn(ctx, undefined))
 
+  if (explicitWorkspace && target?.group.workspaceId && workspaceId !== target.group.workspaceId)
+    throw new Error('The group and workspace arguments name different workspaces')
+
   const mode = (str(p.mode) as OpenMode | undefined) ?? 'claude'
   const { claudeMode, antigravityMode, codexMode, piMode, dangerousMode, model, family } =
     resolveSpawnModes({
@@ -646,9 +649,7 @@ function resolvePin(ctx: Ctx, p: Payload): PinnedBlueprint {
       })()
   let pin = named.length === 1 ? named[0] : undefined
   if (!pin && named.length > 1) {
-    const callerWs = ctx.callerSessionId
-      ? ctx.shell.record(ctx.callerSessionId)?.workspaceId
-      : undefined
+    const callerWs = workspaceForSpawn(ctx, undefined)
     const inCallerWs = callerWs ? named.filter((x) => x.workspaceId === callerWs) : []
     if (inCallerWs.length === 1) pin = inCallerWs[0]
     if (!pin) {

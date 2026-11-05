@@ -704,6 +704,36 @@ describe('opening a session', () => {
     records: { caller: record('caller', { workspaceId: 'ws1', displayName: 'Lane D' }) },
     selected: { claude: 'acc-2', codex: undefined }
   })
+  it('resolves a duplicated group name in the legacy caller workspace', async () => {
+    const h = setup({
+      records: { caller: record('caller', { cwd: '/two/project' }) },
+      layouts: [
+        layout('wA', [
+          group('a', { name: 'Build', workspaceId: 'ws1' }),
+          group('b', { name: 'Build', workspaceId: 'ws2' })
+        ])
+      ]
+    })
+    await run(h, 'openSession', { cwd: '/outside', mode: 'terminal', groupId: 'Build' })
+    expect(h.argsOf('sidebar.placeSession')[0]).toMatchObject({ groupId: 'b' })
+  })
+  it('keeps a legacy caller in its cwd workspace after its window switches', async () => {
+    const h = setup({ records: { caller: record('caller', { cwd: '/two/project' }) } })
+    await run(h, 'openSession', { cwd: '/outside', mode: 'terminal' })
+    expect(h.argsOf('sessions.start')[0]).toMatchObject({ options: { workspaceId: 'ws2' } })
+  })
+  it('refuses a group and explicit workspace that disagree before starting', async () => {
+    const h = setup({ layouts: [layout('wA', [group('g1', { workspaceId: 'ws1' })])] })
+    await expect(
+      run(h, 'openSession', {
+        cwd: '/project',
+        mode: 'terminal',
+        groupId: 'g1',
+        workspace: 'Two'
+      })
+    ).rejects.toThrow('workspace')
+    expect(h.argsOf('sessions.start')).toHaveLength(0)
+  })
   it('starts on the pool’s account with the caller’s workspace, names it, places it, links it, records it', async () => {
     const h = setup(world())
     const out = await run(h, 'openSession', {

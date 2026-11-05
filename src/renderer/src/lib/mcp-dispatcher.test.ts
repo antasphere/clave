@@ -38,6 +38,8 @@ vi.mock('./switch-account', () => ({
 }))
 import { openSessionProgrammatically } from './mcp-dispatcher'
 
+import { useWorkspaceStore } from '../store/workspace-store'
+import { useSessionStore } from '../store/session-store'
 const codex = (id: string, name: string, flags: string[] = []): LaunchProfile => ({
   id,
   name,
@@ -68,7 +70,7 @@ beforeEach(() => {
     alive: true,
     launchProfileId: options.launchProfileId
   }))
-  globals.window.electronAPI = { spawnSession }
+  globals.window.electronAPI = { spawnSession, captureTabSpawn: vi.fn() }
 })
 afterEach(() => {
   globals.window.electronAPI = {}
@@ -78,6 +80,28 @@ afterEach(() => {
 const spawned = (): Record<string, unknown> => spawnSession.mock.calls.at(-1)![1]
 
 describe('clave_open_session on the window road', () => {
+  it('uses a legacy background caller workspace on the fleet window road', async () => {
+    useWorkspaceStore.setState({
+      activeWorkspaceId: 'other',
+      workspaces: [
+        { id: 'home', name: 'Home', rootDir: '/home-project', profileFile: null, createdAt: 1 },
+        { id: 'other', name: 'Other', rootDir: '/other', profileFile: null, createdAt: 1 }
+      ]
+    })
+    useSessionStore.setState({ sessions: [{ id: 'caller', cwd: '/home-project/work' } as never] })
+    try {
+      await openSessionProgrammatically({
+        cwd: '/outside',
+        mode: 'codex',
+        callerSessionId: 'caller'
+      })
+      expect(spawned()).toMatchObject({ workspaceId: 'home' })
+    } finally {
+      useWorkspaceStore.setState({ workspaces: [], activeWorkspaceId: null })
+      useSessionStore.setState({ sessions: [] })
+    }
+  })
+
   it("opens a chat on the global default's chat form, the one the launcher would open", async () => {
     useLaunchProfileStore.setState({
       preferences: preferences({ globalDefaults: { codex: 'yolo' } }),

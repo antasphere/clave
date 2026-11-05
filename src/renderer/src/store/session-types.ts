@@ -468,6 +468,8 @@ export interface FileTabDiffInfo {
 }
 
 export interface FileTab {
+  /** The workspace that opened this viewer. */
+  workspaceId?: string
   id: string
   filePath: string
   name: string

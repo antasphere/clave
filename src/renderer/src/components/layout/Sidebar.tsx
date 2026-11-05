@@ -609,8 +609,10 @@ export function Sidebar(): React.JSX.Element {
           const session = sessions.find((s) => s.id === item.sessionId)
           return !!session && inActiveWorkspace(session, activeWorkspaceId)
         }
-        // File tabs are lightweight viewers, deliberately global.
-        if (item.type === 'fileTab') return true
+        if (item.type === 'fileTab') {
+          const file = fileTabs.find((f) => f.id === item.fileTabId)
+          return !!file && inActiveWorkspace(file, activeWorkspaceId)
+        }
         if (item.type === 'group') {
           const group = groups.find((g) => g.id === item.groupId)
           // An empty group stays on screen (it draws a "No sessions" row):
@@ -1957,7 +1959,10 @@ export function Sidebar(): React.JSX.Element {
                                         shouldShowGapBefore(dropIndicator, sid, prevSid)
 
                                       // Check if this is a file tab
-                                      const fileTab = fileTabs.find((f) => f.id === sid)
+                                      const fileTab = fileTabs.find(
+                                        (f) =>
+                                          f.id === sid && inActiveWorkspace(f, activeWorkspaceId)
+                                      )
                                       if (fileTab) {
                                         return (
                                           <div key={fileTab.id}>
