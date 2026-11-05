@@ -137,13 +137,15 @@ export function parseLine(line: string): TranscriptEvent | null {
 interface Working {
   toolCallIds: Set<string>
   stamps: Set<string>
+  /** The stamp of each message seen in this process, its first row's, the last `SEEN_LIMIT`. */
+  messageStamps: Map<string, string>
 }
 const working = new WeakMap<Tally, Working>()
 
 function workingOf(tally: Tally): Working {
   let w = working.get(tally)
   if (!w) {
-    w = { toolCallIds: new Set(), stamps: new Set(tally.stamps) }
+    w = { toolCallIds: new Set(), stamps: new Set(tally.stamps), messageStamps: new Map() }
     working.set(tally, w)
   }
   return w
@@ -213,10 +215,28 @@ export function foldEvents(
       tally.firstAt = earlier(tally.firstAt, event.timestamp)
       tally.lastAt = later(tally.lastAt, event.timestamp)
     }
+    // A tool call is stamped with its MESSAGE's stamp, the first row's: a streamed message
+    // writes its tool calls on later rows, seconds after the row that stamps the message,
+    // and the activity blocks are cut on the messages' stamps, so a call stamped with its
+    // own row could fall after the block its message closes and into no block at all. Across
+    // a restart in the middle of a message the row's own stamp stands in, seconds off.
+    let messageStamp = event.timestamp
+    if (event.messageId !== null && event.timestamp) {
+      const first = w.messageStamps.get(event.messageId)
+      if (first) messageStamp = first
+      else {
+        w.messageStamps.set(event.messageId, event.timestamp)
+        if (w.messageStamps.size > SEEN_LIMIT) {
+          const oldest = w.messageStamps.keys().next().value
+          if (oldest !== undefined) w.messageStamps.delete(oldest)
+        }
+      }
+    }
     for (const id of event.toolUseIds) {
       if (w.toolCallIds.has(id)) continue
       w.toolCallIds.add(id)
       tally.toolCalls++
+      if (messageStamp) tally.toolStamps.push(messageStamp)
       if (day) day.toolCalls++
     }
     if (event.messageId !== null) {

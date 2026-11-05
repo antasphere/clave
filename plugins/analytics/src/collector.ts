@@ -103,6 +103,19 @@ export class Collector extends EventEmitter {
     this.arm()
   }
 
+  /** Changes the gap the activity blocks are cut with; every open page redraws. */
+  setGap(minutes: number): void {
+    if (this.ledger.gapMinutes === minutes) return
+    this.ledger.gapMinutes = minutes
+    this.touch()
+  }
+
+  /** Says every row changed without reading anything: a price edit, a publish, a new gap. */
+  touch(): void {
+    this.ledger.updatedAt = this.now().toISOString()
+    this.emit('changed', new Set(Object.keys(this.ledger.sessions)))
+  }
+
   stop(): void {
     this.started = false
     if (this.timer) clearTimeout(this.timer)

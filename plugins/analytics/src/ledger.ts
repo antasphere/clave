@@ -1,6 +1,7 @@
 import type { PluginSessionState } from './host'
 import type { FileCursor } from './reader'
 import { cost, type PriceTable } from './prices'
+import type { Range } from './scope'
 
 /**
  * The ledger: one row per session Clave has shown the plugin, each with the tally of its
@@ -42,6 +43,8 @@ export interface Tally {
   promptFirstAt: string | null
   promptLastAt: string | null
   stamps: string[]
+  /** One timestamp per counted tool call, the stamp of the message that carried it. */
+  toolStamps: string[]
   skipped: number
 }
 
@@ -78,9 +81,11 @@ export interface SessionRow {
   stateSpans: StateSpan[]
 }
 
-/** The ledger file's version: 2 since stamps count messages, not streamed rows; a file of
- *  an earlier version is recounted from the transcripts rather than read. */
-export const LEDGER_VERSION = 2 as const
+/** The ledger file's version: 3 since a tally keeps the stamps of its tool calls (2 since
+ *  stamps count messages, not streamed rows); a file of an earlier version is recounted from
+ *  the transcripts rather than read. A file carrying fields this build does not know (a
+ *  `published` map, for one) is read for what it knows. */
+export const LEDGER_VERSION = 3 as const
 
 export interface Ledger {
   v: typeof LEDGER_VERSION
@@ -89,12 +94,7 @@ export interface Ledger {
   updatedAt: string
 }
 
-export type Range = 'all' | 'today' | '7d' | '30d'
-export const RANGES: readonly Range[] = ['today', '7d', '30d', 'all']
-
-export function isRange(value: unknown): value is Range {
-  return typeof value === 'string' && (RANGES as readonly string[]).includes(value)
-}
+export { isRange, RANGES, scopeKey, type Range } from './scope'
 
 // ─── Tokens and tallies ──────────────────────────────────────────────────────
 
@@ -133,12 +133,18 @@ export function emptyTally(): Tally {
     promptFirstAt: null,
     promptLastAt: null,
     stamps: [],
+    toolStamps: [],
     skipped: 0
   }
 }
 
 export function emptyLedger(gapMinutes = 15, now: Date = new Date()): Ledger {
-  return { v: LEDGER_VERSION, gapMinutes, sessions: {}, updatedAt: now.toISOString() }
+  return {
+    v: LEDGER_VERSION,
+    gapMinutes,
+    sessions: {},
+    updatedAt: now.toISOString()
+  }
 }
 
 /** Everything the model was given: fresh input, both cache writes and the cache reads. */
@@ -183,14 +189,21 @@ export interface Block {
   end: string
   minutes: number
   messages: number
+  /** The tool calls the block's messages carried. */
+  toolCalls: number
 }
 
 /**
  * Activity blocks: consecutive timestamps less than `gapMinutes` apart belong to one block
  * of work; a longer silence is the agent waiting. `messages` counts the messages a block
- * holds (one timestamp per counted message).
+ * holds (one timestamp per counted message); `toolCalls` the tool stamps that fall inside
+ * it (one per counted tool call, the stamp of the message that carried it).
  */
-export function blocks(stamps: readonly string[], gapMinutes: number): Block[] {
+export function blocks(
+  stamps: readonly string[],
+  gapMinutes: number,
+  toolStamps: readonly string[] = []
+): Block[] {
   const times = [...new Set(stamps)]
     .map((s) => Date.parse(s))
     .filter((ms) => !Number.isNaN(ms))
@@ -206,12 +219,29 @@ export function blocks(stamps: readonly string[], gapMinutes: number): Block[] {
       out.push({ start: t, end: t, messages: 1 })
     }
   }
-  return out.map((b) => ({
-    start: new Date(b.start).toISOString(),
-    end: new Date(b.end).toISOString(),
-    minutes: (b.end - b.start) / 60_000,
-    messages: b.messages
-  }))
+  const tools = toolStamps
+    .map((s) => Date.parse(s))
+    .filter((ms) => !Number.isNaN(ms))
+    .sort((a, b) => a - b)
+  let at = 0
+  return out.map((b) => {
+    // A tool stamp is its message's stamp (the reader stamps a call with the first row of
+    // the message that carried it), so it falls inside a block; one before this block's
+    // start belongs to no block of this list and is skipped.
+    while (at < tools.length && tools[at]! < b.start) at++
+    let toolCalls = 0
+    while (at < tools.length && tools[at]! <= b.end) {
+      toolCalls++
+      at++
+    }
+    return {
+      start: new Date(b.start).toISOString(),
+      end: new Date(b.end).toISOString(),
+      minutes: (b.end - b.start) / 60_000,
+      messages: b.messages,
+      toolCalls
+    }
+  })
 }
 
 export function activeMinutes(list: readonly Block[]): number {
@@ -248,7 +278,21 @@ export interface ViewRow {
   model: string | null
   state: PluginSessionState | null
   figures: Figures
+  /** The row's activity blocks: the swimlane's marks. */
+  blocks: Block[]
   children: ViewRow[]
+}
+
+/** A session as the workspace's animation places it: its group's lane and its state. */
+export interface LiveSession {
+  id: string
+  name: string
+  groupId: string | null
+  groupName: string
+  state: PluginSessionState
+  model: string | null
+  /** The tab's provider: a plain terminal is drawn hollow, it is no agent. */
+  provider: string
 }
 
 export interface StateCounts {
@@ -291,6 +335,8 @@ export interface ScopeView {
   rows: ViewRow[]
   cards: GroupCard[]
   blocks: Block[]
+  /** The sessions the workspace's animation draws, every state included; empty elsewhere. */
+  live: LiveSession[]
   footer: ViewFooter
 }
 
@@ -373,6 +419,7 @@ function figuresOf(
   const tokens = emptyTokens()
   const figures = emptyFigures()
   const stamps: string[] = []
+  const toolStamps: string[] = []
   for (const tally of tallies) {
     const part = clip(tally, days)
     addTokens(tokens, part.tokens)
@@ -383,13 +430,14 @@ function figuresOf(
     figures.toolCalls += part.toolCalls
     figures.prompts += part.prompts
     for (const s of tally.stamps) stamps.push(s)
+    for (const s of tally.toolStamps) toolStamps.push(s)
   }
   const priced = cost(byModel, prices)
   figures.usd = priced.usd
   figures.unpriced = priced.unpriced
   figures.tokensRead = tokensRead(tokens)
   figures.tokensWritten = tokensWritten(tokens)
-  const list = clipBlocks(blocks(stamps, gapMinutes), days)
+  const list = clipBlocks(blocks(stamps, gapMinutes, toolStamps), days)
   figures.activeMinutes = activeMinutes(list)
   figures.wallMinutes = spanOf(list)
   return { figures, blocks: list }
@@ -440,6 +488,7 @@ function subagentRow(
   days: Set<string> | null,
   gap: number
 ): ViewRow {
+  const own = figuresOf([sub.tally], prices, days, gap)
   return {
     id: `${sub.id}`,
     kind: 'subagent',
@@ -448,7 +497,8 @@ function subagentRow(
     description: sub.description,
     model: topModel(sub.tally) ?? sub.model,
     state: null,
-    figures: figuresOf([sub.tally], prices, days, gap).figures,
+    figures: own.figures,
+    blocks: own.blocks,
     children: []
   }
 }
@@ -463,6 +513,7 @@ function sessionViewRow(
   days: Set<string> | null,
   gap: number
 ): ViewRow {
+  const all = figuresOf(sessionTallies(row), prices, days, gap)
   return {
     id: row.id,
     kind: 'session',
@@ -471,7 +522,8 @@ function sessionViewRow(
     description: null,
     model: sessionModel(row),
     state: row.state,
-    figures: figuresOf(sessionTallies(row), prices, days, gap).figures,
+    figures: all.figures,
+    blocks: all.blocks,
     children: row.subagents.map((s) => subagentRow(s, prices, days, gap))
   }
 }
@@ -496,6 +548,7 @@ export function sessionView(ledger: Ledger, id: string, prices: PriceTable): Sco
   if (!row) return null
   const gap = ledger.gapMinutes
   const total = figuresOf(sessionTallies(row), prices, null, gap)
+  const root = figuresOf(row.root ? [row.root.tally] : [], prices, null, gap)
   const own: ViewRow = {
     id: row.id,
     kind: 'session',
@@ -504,7 +557,8 @@ export function sessionView(ledger: Ledger, id: string, prices: PriceTable): Sco
     description: null,
     model: sessionModel(row),
     state: row.state,
-    figures: figuresOf(row.root ? [row.root.tally] : [], prices, null, gap).figures,
+    figures: root.figures,
+    blocks: root.blocks,
     children: []
   }
   return {
@@ -523,6 +577,7 @@ export function sessionView(ledger: Ledger, id: string, prices: PriceTable): Sco
     rows: [own, ...row.subagents.map((s) => subagentRow(s, prices, null, gap))],
     cards: [],
     blocks: total.blocks,
+    live: [],
     footer: footer(ledger, prices, filesOf(row))
   }
 }
@@ -581,6 +636,7 @@ export function groupView(
     rows: all.viewRows,
     cards: [],
     blocks: all.blocks,
+    live: [],
     footer: footer(ledger, prices, all.files)
   }
 }
@@ -637,6 +693,17 @@ export function workspaceView(
         : b.figures.usd - a.figures.usd || a.name.localeCompare(b.name)
   )
   const all = sideBySide(members, prices, days, gap)
+  // The animation's sessions, every state included: the page drops the ended ones itself.
+  const cardNames = new Map(cards.map((c) => [c.id, c.name]))
+  const live: LiveSession[] = members.map((s) => ({
+    id: s.id,
+    name: s.name,
+    groupId: s.group?.id ?? null,
+    groupName: cardNames.get(s.group?.id ?? null) ?? s.group?.name ?? 'Ungrouped',
+    state: s.state,
+    model: sessionModel(s),
+    provider: s.provider
+  }))
   return {
     kind: 'workspace',
     id: workspaceId,
@@ -647,6 +714,7 @@ export function workspaceView(
     rows: [],
     cards,
     blocks: all.blocks,
+    live,
     footer: footer(ledger, prices, all.files)
   }
 }

@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { foldEvents, parseLine } from './claude'
-import { emptyTally, localDay, type Tally } from './ledger'
+import { blocks, emptyTally, localDay, type Tally } from './ledger'
 
 const fixture = readFileSync(join(__dirname, 'fixtures', 'session.jsonl'), 'utf8')
 
@@ -38,6 +38,71 @@ describe('a streamed message', () => {
       output: 50
     })
     expect(t.byModel['claude-opus-5-5']?.messages).toBe(1)
+  })
+
+  it('stamps each of its tool calls with the message, not with the row that carried it', () => {
+    const t = fold(streamed)
+    expect(t.toolStamps).toEqual([
+      '2026-10-01T09:00:05.000Z',
+      '2026-10-01T09:00:05.000Z',
+      '2026-10-01T09:00:05.000Z',
+      '2026-10-01T09:00:05.000Z'
+    ])
+  })
+})
+
+describe('a block closed by a streamed message', () => {
+  const assistant = (ts: string, id: string, content: unknown[]): string =>
+    row({
+      type: 'assistant',
+      timestamp: ts,
+      message: {
+        id,
+        model: 'claude-opus-5-5',
+        content,
+        usage: { input_tokens: 1, output_tokens: 1 }
+      }
+    })
+
+  it('keeps the tool calls its later rows carry, seconds after the message stamp', () => {
+    // The message's first row stamps it at 09:00:00; its tool calls arrive on later rows at
+    // 09:00:25 and 09:00:31; the next message is 20 minutes away, so the block ends at the
+    // message stamp. A call stamped with its own row would fall in no block at all.
+    const t = fold(
+      [
+        assistant('2026-10-01T09:00:00.000Z', 'msg_1', [{ type: 'text', text: 'Reading.' }]),
+        assistant('2026-10-01T09:00:25.000Z', 'msg_1', [{ type: 'tool_use', id: 'toolu_a' }]),
+        assistant('2026-10-01T09:00:31.000Z', 'msg_1', [{ type: 'tool_use', id: 'toolu_b' }]),
+        assistant('2026-10-01T09:20:00.000Z', 'msg_2', [{ type: 'text', text: 'Done.' }])
+      ].join('\n')
+    )
+    expect(t.messages).toBe(2)
+    expect(t.toolCalls).toBe(2)
+    expect(t.toolStamps).toEqual(['2026-10-01T09:00:00.000Z', '2026-10-01T09:00:00.000Z'])
+    const list = blocks(t.stamps, 15, t.toolStamps)
+    expect(list.map((b) => [b.messages, b.toolCalls])).toEqual([
+      [1, 2],
+      [1, 0]
+    ])
+    expect(list.reduce((n, b) => n + b.toolCalls, 0)).toBe(t.toolCalls)
+  })
+
+  it('keeps stamping with the message past the bound of the stamps it remembers', () => {
+    // Seventy messages, the last one streamed as a text row then a tool row 20 seconds
+    // later: the map of message stamps is bounded, and it must let the OLDEST go, never
+    // the one it just took, or the calls of every message past the bound fall back on
+    // their rows.
+    const lines: string[] = []
+    for (let i = 0; i < 70; i++) {
+      const ts = new Date(Date.UTC(2026, 9, 1, 9, i)).toISOString()
+      lines.push(assistant(ts, `msg_${i}`, [{ type: 'text', text: `Step ${i}` }]))
+    }
+    const last = new Date(Date.UTC(2026, 9, 1, 9, 69, 20)).toISOString()
+    lines.push(assistant(last, 'msg_69', [{ type: 'tool_use', id: 'toolu_late' }]))
+    const t = fold(lines.join('\n'))
+    expect(t.messages).toBe(70)
+    expect(t.toolCalls).toBe(1)
+    expect(t.toolStamps).toEqual([new Date(Date.UTC(2026, 9, 1, 9, 69)).toISOString()])
   })
 })
 
@@ -108,6 +173,7 @@ describe('a synthetic row', () => {
     expect(t.tokens.input).toBe(0)
     expect(t.firstAt).toBeNull()
     expect(t.stamps).toEqual([])
+    expect(t.toolStamps).toEqual([])
   })
 })
 

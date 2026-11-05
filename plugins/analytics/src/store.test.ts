@@ -48,7 +48,74 @@ describe('Store', () => {
     store.writeLedger(emptyLedger(15, new Date('2026-10-02T10:00:00.000Z')))
     const file = join(dir, 'ledger.json')
     expect(calls).toEqual([`write ${file}.tmp`, `rename ${file}.tmp -> ${file}`])
-    expect(JSON.parse(readFileSync(file, 'utf8'))).toMatchObject({ v: 2, gapMinutes: 15 })
+    expect(JSON.parse(readFileSync(file, 'utf8'))).toMatchObject({ v: 3, gapMinutes: 15 })
+  })
+
+  it('reads a ledger carrying fields it does not know for what it knows, and recounts an earlier version', () => {
+    const ledger = emptyLedger(15, new Date('2026-10-02T10:00:00.000Z'))
+    writeFileSync(
+      join(dir, 'ledger.json'),
+      JSON.stringify({ ...ledger, sessions: { a: row('a') }, published: { 'group:g1': {} } })
+    )
+    const read = new Store(dir).readLedger(15)
+    expect(Object.keys(read.sessions)).toEqual(['a'])
+    expect('published' in read).toBe(false)
+    writeFileSync(
+      join(dir, 'ledger.json'),
+      JSON.stringify({ ...ledger, v: 2, sessions: { a: row('a') } })
+    )
+    const recounted = new Store(dir).readLedger(15)
+    expect(recounted.sessions).toEqual({})
+    expect(recounted.v).toBe(3)
+  })
+
+  it('keeps the viewer port in server.json beside the port and the token, when it is one', () => {
+    const store = new Store(dir)
+    expect(store.readServer()).toBeNull()
+    store.writeServer({ port: 4000, token: 'a'.repeat(32) })
+    expect(store.readServer()).toEqual({ port: 4000, token: 'a'.repeat(32) })
+    store.writeServer({ port: 4000, token: 'a'.repeat(32), viewerPort: 4173 })
+    expect(store.readServer()).toEqual({ port: 4000, token: 'a'.repeat(32), viewerPort: 4173 })
+    writeFileSync(
+      join(dir, 'server.json'),
+      JSON.stringify({ port: 4000, token: 'a'.repeat(32), viewerPort: 'x' })
+    )
+    expect(store.readServer()).toEqual({ port: 4000, token: 'a'.repeat(32) })
+  })
+
+  it('reads the settings with their defaults and writes them back, and keeps the price override', () => {
+    const store = new Store(dir)
+    expect(store.readSettings()).toEqual({ gapMinutes: 15 })
+    writeFileSync(join(dir, 'settings.json'), JSON.stringify({ gapMinutes: 90 }))
+    expect(store.readSettings()).toEqual({ gapMinutes: 90 })
+    writeFileSync(join(dir, 'settings.json'), JSON.stringify({ gapMinutes: 0 }))
+    expect(store.readSettings()).toEqual({ gapMinutes: 15 })
+    writeFileSync(join(dir, 'settings.json'), '{oops')
+    expect(store.readSettings()).toEqual({ gapMinutes: 15 })
+    store.writeSettings({ gapMinutes: 45 })
+    expect(JSON.parse(readFileSync(join(dir, 'settings.json'), 'utf8'))).toEqual({ gapMinutes: 45 })
+
+    expect(store.hasPrices()).toBe(false)
+    const table = {
+      source: 'edited',
+      date: '2026-11-04',
+      models: {
+        'claude-x': {
+          name: 'X',
+          input: 1,
+          output: 2,
+          cacheRead: 0.1,
+          cacheWrite5m: 1.25,
+          cacheWrite1h: 2
+        }
+      }
+    }
+    store.writePrices(table)
+    expect(store.hasPrices()).toBe(true)
+    expect(JSON.parse(readFileSync(store.pricesPath, 'utf8'))).toEqual(table)
+    store.removePrices()
+    expect(store.hasPrices()).toBe(false)
+    store.removePrices()
   })
 
   it('reloads the rows it can draw and leaves a malformed one out, with one warning', () => {
@@ -118,6 +185,10 @@ describe('Store', () => {
       [
         'a tally without stamps',
         { ...whole, root: { tally: without(tally(), 'stamps'), file: cursor() } }
+      ],
+      [
+        'a tally without tool stamps',
+        { ...whole, root: { tally: without(tally(), 'toolStamps'), file: cursor() } }
       ],
       [
         'a tally without tokens',
