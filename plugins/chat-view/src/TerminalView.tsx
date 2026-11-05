@@ -86,6 +86,7 @@ import { usePresentation } from './presentation'
 import { TranscriptRows } from './rows'
 import { JumpToEnd } from './JumpToEnd'
 import { useEarlier, type EarlierPage } from './earlier'
+import { useTranscriptSearch } from './search'
 import { useFitRow } from './fit'
 import { EarlierLoading } from './EarlierLoading'
 import {
@@ -863,6 +864,14 @@ export function TerminalView({
             block.kind === 'tool-group' || block.kind === 'user' || block.kind === 'delivery-group'
         )?.key
       : undefined
+  // Find in this conversation, for the field in the pane header (search.ts).
+  const searchReveal = useTranscriptSearch({
+    sessionId: session.id,
+    rows: turns,
+    active: visible,
+    scroll: transcript.scroll,
+    more: before !== null
+  })
   return (
     <div
       ref={pane}
@@ -951,6 +960,7 @@ export function TerminalView({
                 rows={turns}
                 settled={pastRead}
                 scroll={transcript.scroll}
+                reveal={searchReveal}
                 holdAbove={pinQuestions}
               >
                 {(turn, index, arriving) => (

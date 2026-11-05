@@ -75,6 +75,7 @@ import { getTerminalIconComponent } from '../ui/terminal-icons'
 import { ToolbarTerminalPopover } from './ToolbarTerminalPopover'
 import { PluginToolbar } from '../plugins/PluginToolbar'
 import { PluginMainPanel } from '../plugins/PluginMainPanel'
+import { searchableScroller, usePaneSearchStore } from '../../views/pane-search'
 import { usePluginMainPanelOpen, initPluginUI } from '../plugins/plugin-ui-store'
 import { ConfirmDialog } from '@clave/ui/components'
 import { requestArchiveAndKill } from '../../lib/archive-session'
@@ -604,6 +605,13 @@ export function AppShell(): React.JSX.Element {
       openSettings: () => useSessionStore.getState().setActiveView('settings'),
       focusSidebarSearch: () => {
         const state = useSessionStore.getState()
+        // A chat pane in view takes Cmd+F as find-in-this-session; the
+        // sidebar's search keeps it everywhere else.
+        const focused = state.focusedSessionId
+        if (state.activeView === 'terminals' && focused && searchableScroller(focused)) {
+          usePaneSearchStore.getState().open(focused)
+          return
+        }
         if (!state.sidebarOpen) state.toggleSidebar()
         setTimeout(
           () => document.querySelector<HTMLInputElement>('[data-sidebar-search]')?.focus(),

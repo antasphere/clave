@@ -1,12 +1,18 @@
 import { isRemoteKey } from '../lib/fleet-identity'
 import { reportFleetError } from '../store/fleet-store'
 import { FleetResume } from '../components/fleet/FleetControls'
-import { memo, useEffect, useMemo, useState } from 'react'
+import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import { useRegistry } from './store'
 import { implemented, nativeViews } from './native-views'
 import { paneIsTerminal } from './pane-kind'
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
-import { CheckIcon, CommandLineIcon, Squares2X2Icon, XMarkIcon } from '@heroicons/react/24/outline'
+import {
+  CheckIcon,
+  CommandLineIcon,
+  MagnifyingGlassIcon,
+  Squares2X2Icon,
+  XMarkIcon
+} from '@heroicons/react/24/outline'
 import type { AgentState } from '../../../shared/session-model'
 import { claudeModelName } from '../../../shared/claude-models'
 import { TerminalPanel } from '../components/terminal/TerminalPanel'
@@ -22,6 +28,8 @@ import { LinkedDocumentReopen } from '../components/files/LinkedDocumentReopen'
 import { AccountProposal } from '../components/terminal/AccountProposal'
 import { useBackgroundTasks } from './background-tasks'
 import { BackgroundTasksChip } from './BackgroundTasksChip'
+import { PaneSearch } from './PaneSearch'
+import { usePaneSearchStore } from './pane-search'
 import { useMarkPack } from '../components/plugins/native-marks'
 import { tokenColor } from '../lib/marks'
 
@@ -237,7 +245,37 @@ function RegisteredSessionView({
   // v1 describes exactly one transport. A future dual-transport record can pass
   // its PTY session id here without changing the view plugin's bridge.
   const terminal = registry.terminal.has(sessionId)
-  const name = useViewSessionStore((s) => s.sessions.find((r) => r.id === sessionId)?.name)
+  const record = useViewSessionStore((s) => s.sessions.find((r) => r.id === sessionId))
+  const name = record?.name
+  // Find in this session: opened by Cmd+F while this pane is focused (the
+  // request comes through usePaneSearchStore) or by the header's magnifier.
+  const [searching, setSearching] = useState(false)
+  const searchInput = useRef<HTMLInputElement | null>(null)
+  const searchAsk = usePaneSearchStore((s) => (s.sessionId === sessionId ? s.nonce : 0))
+  useEffect(() => {
+    if (!searchAsk) return
+    setSearching(true)
+    // The view answers a search only while its entry exists (pane-search.ts).
+    if (!usePaneSearchStore.getState().finds[sessionId])
+      usePaneSearchStore.getState().setQuery(sessionId, '')
+  }, [searchAsk, sessionId])
+  // Focus once the field is in the page: after the render that mounted it,
+  // and again on a repeated Cmd+F while it is open.
+  useEffect(() => {
+    if (!searching) return
+    searchInput.current?.focus()
+    searchInput.current?.select()
+  }, [searching, searchAsk])
+  const closeSearch = (): void => {
+    setSearching(false)
+    usePaneSearchStore.getState().clear(sessionId)
+    // Back to where the reader types, as a browser's find gives the page back:
+    // the visible view's composer (every view of the session stays mounted).
+    const composers = document.querySelectorAll<HTMLTextAreaElement>(
+      `.chat-host[data-session-id="${CSS.escape(sessionId)}"] textarea`
+    )
+    ;[...composers].find((el) => el.offsetParent !== null)?.focus()
+  }
   // The terminal is the fallback when nothing resolves — not when the resolved
   // view happens to be a surface one, which has no entry in the native map.
   if (paneIsTerminal(registry, sessionId) || !session || !viewId)
@@ -262,6 +300,13 @@ function RegisteredSessionView({
             </span>
           )}
           <AccountProposal sessionId={sessionId} />
+          {/* Beside the title on purpose: what it searches is this session. */}
+          <PaneSearch
+            sessionId={sessionId}
+            open={searching}
+            onClose={closeSearch}
+            inputRef={searchInput}
+          />
         </div>
         <div className="pane-header-actions">
           <FleetResume sessionId={sessionId} />
@@ -270,6 +315,16 @@ function RegisteredSessionView({
           <span className="chat-state" data-state={meta.state}>
             {meta.state}
           </span>
+          {!searching && (
+            <button
+              className="panel-icon-btn"
+              aria-label="Search this session"
+              title="Search this session (⌘F)"
+              onClick={() => usePaneSearchStore.getState().open(sessionId)}
+            >
+              <MagnifyingGlassIcon className="w-4 h-4" />
+            </button>
+          )}
           <ViewPicker sessionId={sessionId} views={views} active={viewId} />
           <span
             title={
