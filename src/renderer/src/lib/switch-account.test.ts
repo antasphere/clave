@@ -5,11 +5,18 @@ import {
   useCodexAccountsUsage,
   type AccountUsageSummary
 } from '../store/usage-store'
+import {
+  useAccountPolicyStore,
+  loadAccountPolicy,
+  subscribeAccountLaunchPolicy
+} from '../store/account-policy-store'
+import { useCodexAccountStore } from '../store/codex-account-store'
 import { useClaudeProfileStore } from '../store/claude-profile-store'
 import {
   sessionAccountExhausted,
   sessionAccountUsage,
   sessionSwitchTargets,
+  accountForLaunch,
   nextAccountFor
 } from './switch-account'
 
@@ -81,5 +88,77 @@ describe('session account quota', () => {
     expect(sessionAccountUsage({ ...session('opus'), claudeMode: false, codexMode: true })).toBe(
       summary
     )
+  })
+})
+
+describe('recommended account setting', () => {
+  afterEach(() => {
+    useAccountPolicyStore.setState({ useRecommendedAccount: false })
+    useClaudeProfileStore.setState({ selectedProfileId: 'default' })
+    useCodexAccountStore.setState({
+      accounts: [{ id: 'default', label: 'Default', kind: 'chatgpt', hasCredential: true }],
+      selectedAccountId: 'default'
+    })
+    vi.unstubAllGlobals()
+  })
+  it.each(['claude', 'codex'] as const)('applies only to implicit %s launches', (provider) => {
+    useClaudeProfileStore.setState({
+      profiles: [
+        ...originalProfiles,
+        { ...originalProfiles[0], id: 'spare', label: 'Spare', hasToken: true }
+      ]
+    })
+    useCodexAccountStore.setState({
+      accounts: [
+        { id: 'default', label: 'Default', kind: 'chatgpt', hasCredential: true },
+        { id: 'spare', label: 'Spare', kind: 'chatgpt', hasCredential: true }
+      ]
+    })
+    const window = { ...windows[0], resetsAt: 1000 }
+    const usage = {
+      default: { ...summary, windows: [{ ...window, resetsAt: 5000 }], tightest: window },
+      spare: { ...summary, windows: [window], tightest: window }
+    }
+    useClaudeAccountsUsage.setState({ byAccount: usage })
+    useCodexAccountsUsage.setState({ byAccount: usage })
+    const launch = (id?: string): { id: string } =>
+      provider === 'claude' ? accountForLaunch('claude', id) : accountForLaunch('codex', id)
+    expect(launch().id).toBe('default')
+    useAccountPolicyStore.setState({ useRecommendedAccount: true })
+    expect(launch().id).toBe('spare')
+    expect(launch('default').id).toBe('default')
+    useAccountPolicyStore.setState({ useRecommendedAccount: false })
+    expect(launch().id).toBe('default')
+  })
+  it('updates an already-open window and releases its listener', () => {
+    let notify: (enabled: boolean) => void = () => {}
+    const unsubscribe = vi.fn()
+    vi.stubGlobal('window', {
+      electronAPI: {
+        onRecommendedAccountChanged: (callback: typeof notify) => {
+          notify = callback
+          return unsubscribe
+        }
+      }
+    })
+    const stop = subscribeAccountLaunchPolicy()
+    notify(true)
+    expect(useAccountPolicyStore.getState().useRecommendedAccount).toBe(true)
+    notify(false)
+    expect(useAccountPolicyStore.getState().useRecommendedAccount).toBe(false)
+    stop()
+    expect(unsubscribe).toHaveBeenCalledOnce()
+  })
+  it('loads the persisted opt-in and rejects non-boolean values', async () => {
+    const get = vi.fn(async () => true)
+    const set = vi.fn(async () => {})
+    vi.stubGlobal('window', { electronAPI: { preferencesGet: get, preferencesSet: set } })
+    await loadAccountPolicy()
+    expect(useAccountPolicyStore.getState().useRecommendedAccount).toBe(true)
+    useAccountPolicyStore.getState().setUseRecommendedAccount(false)
+    expect(set).toHaveBeenCalledWith('useRecommendedAccount', false)
+    get.mockResolvedValue('true' as unknown as boolean)
+    await loadAccountPolicy()
+    expect(useAccountPolicyStore.getState().useRecommendedAccount).toBe(false)
   })
 })

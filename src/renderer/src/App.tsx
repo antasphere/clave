@@ -1,8 +1,12 @@
+import { useEffect } from 'react'
+import { subscribeAccountLaunchPolicy } from './store/account-policy-store'
 import { MotionConfig } from 'framer-motion'
 import { AppShell } from './components/layout/AppShell'
 import { TooltipProvider } from '@clave/ui/components'
 
 function App(): React.JSX.Element {
+  useEffect(() => subscribeAccountLaunchPolicy(), [])
+
   return (
     // reducedMotion="user": when the OS asks for reduced motion, framer skips
     // transform animations and keeps opacity — pairs with the CSS media query

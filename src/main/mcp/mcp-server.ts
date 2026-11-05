@@ -491,6 +491,7 @@ const servedShell: ServedShell<NonNullable<BrowserWindowLike>> = {
             ? { usage: summaryOf(usageManager.snapshot()[a.id]) }
             : {})
         })),
+  useRecommendedAccount: () => getPreference('useRecommendedAccount') === true,
   selectedAccountId: (provider) => {
     const raw = getPreference(
       provider === 'codex' ? 'selectedCodexAccountId' : 'selectedClaudeProfileId'
@@ -793,7 +794,7 @@ function buildServer(callerSessionId: string | undefined): McpServer {
           .max(128)
           .optional()
           .describe(
-            'Account (subscription) the new tab runs on: an account id or its exact name as set in Settings → Accounts ("default" is the machine login), or "any" for whichever account of the pool has headroom. claude and codex modes only. Omit to use the account selected in settings, moved along the pool when that one is about to hit its limit. Unknown names error with the list. clave_list reports each session\'s account.'
+            'Account (subscription) the new tab runs on: an account id or its exact name as set in Settings → Accounts ("default" is the machine login), or "any" for whichever account of the pool has headroom. claude and codex modes only. Omit to follow Settings → Accounts: the selected account, or the recommended account when enabled, moved along the pool when exhausted. Unknown names error with the list. clave_list reports each session\'s account.'
           ),
         provider: z.string().min(1).max(200).optional().describe('Pi provider id. Pi mode only.'),
         thinking: z
