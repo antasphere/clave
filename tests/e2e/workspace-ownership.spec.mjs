@@ -151,7 +151,10 @@ export async function run(t) {
       second.fileTabId
     )
     await win.keyboard.press(process.platform === 'darwin' ? 'Meta+w' : 'Control+w')
-    await until(async () => !(await drawn(second.fileTabId)))
+    t.check(
+      'Cmd+W closes the visible B viewer',
+      !!(await until(async () => !(await drawn(second.fileTabId))))
+    )
     await switchTo(a.id)
     t.equal('closing a viewer in B keeps the hidden A viewer', await drawn(first.fileTabId), 1)
     t.equal('A viewer returns in A', await drawn(first.fileTabId), 1)

@@ -507,6 +507,13 @@ export function applyServerWorkspaces(serverId: string, workspaces: Workspace[])
   const owned = workspaces.filter((w) => workspaceServer(w.id) === serverId)
   useWorkspaceStore.setState({ serverWorkspaces: { ...serverWorkspaces, [serverId]: owned } })
   cacheServerWorkspaces()
+  rehomeRemovedWorkspaceViewers(
+    new Set(
+      (serverWorkspaces[serverId] ?? [])
+        .filter((w) => !owned.some((next) => next.id === w.id))
+        .map((w) => w.id)
+    )
+  )
   const shown = owned.find((w) => w.id === activeWorkspaceId)
   const status = useFleetStore.getState().statuses[serverId]
   if (shown) refreshServerPins(shown, status)
@@ -527,8 +534,25 @@ function retainServerWorkspaces(retained: Set<string>): void {
   for (const id of gone) delete next[id]
   useWorkspaceStore.setState({ serverWorkspaces: next })
   cacheServerWorkspaces()
+  rehomeRemovedWorkspaceViewers(
+    new Set(gone.flatMap((id) => serverWorkspaces[id].map((w) => w.id)))
+  )
   const shownOn = workspaceServer(activeWorkspaceId)
   if (shownOn && gone.includes(shownOn)) landElsewhere(activeWorkspaceId!)
+}
+
+/** File viewers live in this window even when their workspace is served
+ * elsewhere. Keep them reachable when a server's registry loses their home. */
+function rehomeRemovedWorkspaceViewers(removed: Set<string>): void {
+  if (removed.size === 0) return
+  const state = useWorkspaceStore.getState()
+  const remaining = allWorkspaces(state)
+  const target = remaining.find((w) => w.id === state.activeWorkspaceId) ?? remaining[0]
+  useSessionStore.setState((s) => ({
+    fileTabs: s.fileTabs.map((f) =>
+      f.workspaceId && removed.has(f.workspaceId) ? { ...f, workspaceId: target?.id } : f
+    )
+  }))
 }
 
 function landElsewhere(from: string): void {
