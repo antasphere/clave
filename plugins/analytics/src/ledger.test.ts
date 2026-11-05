@@ -13,6 +13,7 @@ import {
   wallMinutes,
   workspaceView,
   rangeDays,
+  scopeKey,
   type Ledger,
   type SessionRow,
   type Tally
@@ -45,7 +46,14 @@ describe('blocks', () => {
     expect(two).toHaveLength(2)
     expect(two.map((b) => b.minutes)).toEqual([0, 0])
     const one = blocks([at(28), at(0), at(14), at(14)], 15)
-    expect(one).toEqual([{ start: at(0), end: at(28), minutes: 28, messages: 3 }])
+    expect(one).toEqual([{ start: at(0), end: at(28), minutes: 28, messages: 3, toolCalls: 0 }])
+  })
+
+  it('counts the tool stamps that fall inside each block, one per tool call', () => {
+    const two = blocks([at(0), at(10), at(60), at(65)], 15, [at(0), at(0), at(10), at(65), at(300)])
+    expect(two.map((b) => b.toolCalls)).toEqual([3, 1])
+    // A tool stamp before every block belongs to none of them.
+    expect(blocks([at(10)], 15, [at(0), at(10)]).map((b) => b.toolCalls)).toEqual([1])
   })
 
   it('active minutes sum the blocks; wall minutes span first to last', () => {
@@ -175,6 +183,11 @@ describe('views', () => {
   it('a session view puts its own row above its subagents', () => {
     const v = sessionView(threeSessions(), 'a', prices)!
     expect(v.kind).toBe('session')
+    // The blocks carry their tool calls: a1 made one, the subagent two.
+    expect(v.blocks.map((b) => [b.messages, b.toolCalls])).toEqual([[3, 3]])
+    expect(v.rows[0]!.blocks.map((b) => b.toolCalls)).toEqual([1])
+    expect(v.rows[1]!.blocks.map((b) => b.toolCalls)).toEqual([2])
+    expect(v.live).toEqual([])
     expect(v.rows.map((r) => [r.kind, r.name])).toEqual([
       ['session', 'Session a'],
       ['subagent', 'Explore']
@@ -201,6 +214,10 @@ describe('views', () => {
     expect(v.rows.map((r) => r.id).sort()).toEqual(['a', 'b'])
     const a = v.rows.find((r) => r.id === 'a')!
     expect(a.children.map((c) => c.id)).toEqual(['sub1'])
+    // Each row carries its own blocks for the swimlane: a's union with its subagent, b's own.
+    expect(a.blocks).toHaveLength(1)
+    expect(a.blocks[0]).toMatchObject({ messages: 3, toolCalls: 3 })
+    expect(v.rows.find((r) => r.id === 'b')!.blocks[0]).toMatchObject({ messages: 2, toolCalls: 0 })
     expect(a.figures.tokensRead).toBe(2_500_000)
     expect(v.figures.tokensRead).toBe(4_500_000)
     expect(v.figures.messages).toBe(5)
@@ -232,6 +249,27 @@ describe('views', () => {
 
     const ws1 = workspaceView(threeSessions(), 'ws-1', prices, 'all', NOW)
     expect(ws1.cards.map((c) => c.name)).toEqual(['Theme work'])
+    // The animation's sessions, every state included, each in its group's lane.
+    expect(all.live.map((s) => [s.id, s.groupId, s.groupName, s.state])).toEqual([
+      ['a', 'g1', 'Theme work', 'working'],
+      ['b', 'g1', 'Theme work', 'blocked'],
+      ['c', null, 'Ungrouped', 'ended']
+    ])
+    expect(all.live[0]!.model).toBe('claude-opus-5-5')
+    // The provider rides with the dot: a plain terminal is drawn hollow.
+    const withTerminal = threeSessions()
+    withTerminal.sessions['t'] = session('t', null, emptyTally(), {
+      provider: 'terminal',
+      providerSessionId: null,
+      root: null
+    })
+    const live = workspaceView(withTerminal, null, prices, 'all', NOW).live
+    expect(live.map((s) => [s.id, s.provider])).toEqual([
+      ['a', 'claude'],
+      ['b', 'claude'],
+      ['c', 'claude'],
+      ['t', 'terminal']
+    ])
 
     const month = workspaceView(threeSessions(), null, prices, '30d', NOW)
     expect(month.figures.tokensRead).toBe(8_500_000)
@@ -270,6 +308,13 @@ describe('views', () => {
       false
     )
     expect(rangeDays('all', NOW)).toBeNull()
+  })
+
+  it('keys a scope', () => {
+    expect(scopeKey('session', 'tab 1')).toBe('session:tab 1')
+    expect(scopeKey('group', 'g1')).toBe('group:g1')
+    expect(scopeKey('workspace', null)).toBe('workspace:-')
+    expect(scopeKey('workspace', 'ws-1')).toBe('workspace:ws-1')
   })
 
   it('counts a session with no workspace stamp in every workspace, as the sidebar shows it', () => {

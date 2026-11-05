@@ -5,7 +5,8 @@ import {
   SettingsCard,
   SettingsRow,
   Radio,
-  SettingsSelect
+  SettingsSelect,
+  ToggleRow
 } from './primitives'
 import { AntasphereAccountSection } from './AntasphereAccountSection'
 import { ClaudeAccountsSection } from './ClaudeAccountsSection'
@@ -94,18 +95,30 @@ function SwitchPolicySection(): ReactElement {
  * this page is where an account is added, logged into, ordered and removed.
  */
 export function AccountsSettings(): ReactElement {
+  const useRecommendedAccount = useAccountPolicyStore((s) => s.useRecommendedAccount)
+  const setUseRecommendedAccount = useAccountPolicyStore((s) => s.setUseRecommendedAccount)
   useEffect(() => {
     void loadAccountLogins()
   }, [])
   return (
     <SettingsPage
       title="Accounts"
-      description="Your Antasphere account, which signs you into Clave itself, and the provider subscriptions Clave can run sessions on. New sessions start on the selected account and move along the list when it is about to hit its limit; a running tab is switched from its menu, its conversation resumed on the other account."
+      description="Your Antasphere account, which signs you into Clave itself, and the provider subscriptions Clave can run sessions on. Choose how new sessions pick an account; a running tab is switched from its menu, its conversation resumed on the other account."
       testId="accounts"
     >
       <AntasphereAccountSection />
       <ClaudeAccountsSection />
       <CodexAccountsSection />
+      <SettingsSection title="New sessions">
+        <SettingsCard>
+          <ToggleRow
+            label="Use the recommended account for new sessions"
+            description="For Claude and Codex, use the same recommendation as Switch account: a usable subscription whose weekly allowance resets soonest. An account you choose explicitly takes priority."
+            checked={useRecommendedAccount}
+            onChange={setUseRecommendedAccount}
+          />
+        </SettingsCard>
+      </SettingsSection>
       <SwitchPolicySection />
     </SettingsPage>
   )

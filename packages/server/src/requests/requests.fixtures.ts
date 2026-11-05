@@ -23,6 +23,22 @@ export const requestFixtureCatalog = makeCatalog({
       })
     }),
     defineScenario({
+      name: 'shared-requests/answered-native-approval',
+      description:
+        'Answer a native provider approval through the command, in an option the provider offered; one the agent withdrew is refused by the store, never answered.',
+      input: Schema.Struct({ requestId: Schema.NonEmptyString, optionId: Schema.NonEmptyString }),
+      fixtures: ({ requestId, optionId }) => ({
+        approval: defineFixture({
+          key: 'shared-requests/native-approval',
+          create: ({ dispatch }) =>
+            dispatch(ResolvePendingRequest, {
+              requestId,
+              response: { type: 'permission', optionId }
+            })
+        })
+      })
+    }),
+    defineScenario({
       name: 'shared-requests/answered-native-questions',
       description: 'Resolve distinct native question IDs sharing one displayed prompt.',
       input: Schema.Struct({

@@ -159,6 +159,102 @@ it('loads duplicate-label native questions through the command fixture and verif
   }
 }, 15_000)
 
+it('refuses, through the command fixture, an approval the agent withdrew, and answers the live one behind it', async () => {
+  // Two native Codex approvals on one session; the provider resolves the
+  // first on its own, so the adapter says the request is withdrawn and the
+  // store cancels its record (PRDCT-4032). The scenario answers both in the
+  // option the provider offered: the withdrawn one is refused by the store
+  // and never reaches the provider, the live one is answered once.
+  const scratch = join('/tmp', process.env.CLAVE_E2E_NS ?? 'clave-vps-d-impl')
+  await mkdir(scratch, { recursive: true })
+  const data = await mkdtemp(join(scratch, 'withdrawn-fixture-'))
+  const requests = new PendingRequests()
+  let receive!: (id: string, stream: SessionStream) => void
+  const respond = vi.fn()
+  const translator = new CodexTranslator((event) =>
+    receive('fixture-withdrawn', { kind: 'event', event })
+  )
+  const wrapped = requestAwareSessionHost({
+    host: {
+      ...SessionHost.none,
+      subscribe: () => () => {},
+      write: async (_id, input) => {
+        if (input.type === 'permission_response')
+          translator.answer(input.id, input.optionId, { respond } as unknown as CodexConnection)
+      }
+    },
+    requests,
+    subscribeAll: (listener) => {
+      receive = listener
+      return () => {}
+    }
+  })
+  const server = await startEmbedded({ ports: { requests, sessions: wrapped.host } })
+  const api = createApiClient({ url: server.url, token: server.token })
+  try {
+    translator.turnId = 'fixture-turn'
+    for (const id of [7, 8])
+      expect(
+        translator.request({
+          id,
+          method: 'item/commandExecution/requestApproval',
+          params: { turnId: 'fixture-turn', itemId: `fixture-item-${id}`, command: `echo ${id}` }
+        })
+      ).toBe(true)
+    const [withdrawn, live] = (await api.requests.list()).pending
+    expect([withdrawn.providerRequestId, live.providerRequestId]).toEqual(['7', '8'])
+    translator.notification({ method: 'serverRequest/resolved', params: { requestId: 7 } })
+    expect((await api.requests.list()).pending.map((r) => r.id)).toEqual([live.id])
+    const layer = buses.pipe(
+      Layer.provide(HandlerRegistry.layer(...requestHandlers)),
+      Layer.provide(RequestsPort.layer(requests))
+    )
+    const answer = async (
+      requestId: string
+    ): Promise<RunReport<Readonly<Record<string, unknown>>>> => {
+      const fixtures = await Effect.runPromise(
+        requestFixtureCatalog.prepare('shared-requests/answered-native-approval', {
+          requestId,
+          optionId: 'accept'
+        })
+      )
+      return Effect.runPromise(
+        (
+          run({ fixtures, enabled: true, ready: () => Effect.void }) as Effect.Effect<
+            RunReport<Readonly<Record<string, unknown>>>,
+            FixtureError,
+            CommandBus
+          >
+        ).pipe(Effect.provide(layer))
+      )
+    }
+    const refused = await answer(withdrawn.id)
+    expect(refused.completed).toEqual(['shared-requests/native-approval'])
+    expect(refused.values.approval).toEqual({ accepted: false })
+    expect(respond).not.toHaveBeenCalled()
+    expect((await api.requests.list()).pending.map((r) => r.id)).toEqual([live.id])
+    const answered = await answer(live.id)
+    expect(answered.values.approval).toEqual({ accepted: true })
+    expect(respond).toHaveBeenCalledExactlyOnceWith(8, { decision: 'accept' })
+    expect((await api.requests.list()).pending).toEqual([])
+    const receipt = {
+      scenario: 'shared-requests/answered-native-approval',
+      runIds: [refused.runId, answered.runId],
+      completed: [refused.completed, answered.completed],
+      requestIds: { withdrawn: withdrawn.id, live: live.id },
+      target: 'isolated loopback native protocol fixture',
+      data
+    }
+    await writeFile(join(data, 'receipt.json'), JSON.stringify(receipt, null, 2), { mode: 0o600 })
+    console.log(JSON.stringify(receipt))
+  } finally {
+    await api.dispose()
+    await server.stop()
+    wrapped.close()
+    requests.close()
+  }
+}, 15_000)
+
 it('loads shared-requests/answered-approval from a real MCP request and verifies settlement over HTTP', async () => {
   const scratch = join('/tmp', process.env.CLAVE_E2E_NS ?? 'clave-vps-d-impl')
   await mkdir(scratch, { recursive: true })

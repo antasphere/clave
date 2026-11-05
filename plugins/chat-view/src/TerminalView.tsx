@@ -28,7 +28,13 @@ import type {
   SessionInput,
   CommandOption
 } from '../../../src/shared/session-model'
-import { answeredSince, emptyConversation, reduceConversation, type Entry } from './reducer'
+import {
+  answeredSince,
+  emptyConversation,
+  openRequests,
+  reduceConversation,
+  type Entry
+} from './reducer'
 import { PermissionModeMenu } from './PermissionModeMenu'
 import { ModelMenu } from './ModelMenu'
 import { EffortMenu } from './EffortMenu'
@@ -58,6 +64,7 @@ import {
 import { TerminalTools } from './TerminalTools'
 import { ToolDisclosure } from './disclosure'
 import { ApprovalRun, PermissionRow, PromptDock } from './PromptDock'
+import { refusedAnswer } from './refused-answer'
 import { serverDock, withServerPending } from './server-requests'
 import { continueList } from './lists'
 import { ResumePicker } from './ResumePicker'
@@ -423,22 +430,7 @@ function TerminalTurn({
               key={key}
               group={block}
               id={key}
-              renderEntry={(entry) =>
-                entry.kind === 'tool-group' ? (
-                  <ToolRow
-                    group={entry}
-                    live={
-                      key === liveRun &&
-                      entry ===
-                        block.exchanges
-                          .at(-1)
-                          ?.responses.findLast((response) => response.kind === 'tool-group')
-                    }
-                  />
-                ) : (
-                  <EntryRow entry={entry} onError={onError} />
-                )
-              }
+              renderEntry={(entry) => <EntryRow entry={entry} onError={onError} />}
             />
           ) : block.kind === 'tool-group' ? (
             <ToolRow key={key} group={block} live={key === liveRun} />
@@ -704,7 +696,10 @@ export function TerminalView({
       dispatch({ answer: id, optionId, answers: shown })
       textarea.current?.focus()
     } catch (error) {
-      report(error)
+      // A server session's refusals are its own (above). A local one that says
+      // the request is gone retires the card: nothing ran, and the live
+      // request behind it takes the dock (PRDCT-4032).
+      report(isRemoteKey(session.id) ? error : refusedAnswer(error, id, dispatch))
     } finally {
       setPending((current) => current.filter((value) => value !== id))
     }
@@ -776,9 +771,7 @@ export function TerminalView({
   // server's session reads it off the server's own records (server-requests.ts).
   const waitingOn = isRemoteKey(session.id)
     ? serverDock(remotePending, session.id)
-    : conversation.entries.flatMap((e) =>
-        e.kind === 'permission' && !e.answer && !e.answeredElsewhere ? [e.request] : []
-      )
+    : openRequests(conversation.entries)
   const query = closed ? null : slashQuery(draft)
   const slashOpen = query !== null && slashDismissed !== draft
   const pickCommand = useCallback(

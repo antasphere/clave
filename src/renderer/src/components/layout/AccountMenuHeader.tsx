@@ -21,13 +21,14 @@ import {
 import { isExhausted, soonestWeeklyReset } from '../../lib/account-pool'
 import type { Session } from '../../store/session-types'
 import { useNow } from '../../lib/use-now'
-import { AccountUsagePlot } from './AccountSwitchMenu'
+import { AccountUsageBars } from './AccountSwitchMenu'
 
 /**
  * The header of a Claude or Codex session's context menu: which account the
  * session runs on and that account's headroom. Live while the menu is open:
  * a read that lands meanwhile updates the line. With `chart`, the account's
- * caps follow as columns, the same plot the Switch account card draws.
+ * caps follow as one thin horizontal bar each (AccountUsageBars), compact so
+ * the header never outweighs the menu under it.
  */
 export function AccountMenuHeader({
   session,
@@ -89,9 +90,9 @@ export function AccountMenuHeader({
   )
   if (!chart) return line
   return (
-    <div className="flex flex-col gap-2.5 min-w-0">
+    <div className="flex flex-col gap-1.5 min-w-0">
       {line}
-      <AccountUsagePlot summary={summary} now={now} even />
+      <AccountUsageBars summary={summary} now={now} />
     </div>
   )
 }

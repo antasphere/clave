@@ -545,6 +545,12 @@ describe('plugin adapter registry', () => {
 })
 
 describe('prefixIds', () => {
+  it('prefixes a withdrawn request the way it prefixed the request, so the word names the card', () => {
+    expect(prefixIds({ type: 'permission_withdrawn', id: 'x' }, 'clave.p')).toEqual({
+      type: 'permission_withdrawn',
+      id: 'clave.p:x'
+    })
+  })
   it.each(['tool_call', 'tool_result', 'permission_request'] as const)(
     'prefixes the correlation id of %s',
     (type) => {

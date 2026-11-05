@@ -354,14 +354,16 @@ const usageOf = (
   )
 
 /** The renderer's `accountForLaunch`: a named account is honoured; with none
- *  named, the selected one while it has headroom, else the next along. */
+ *  named, follow the launch setting: the recommendation, or the selected
+ *  one while it has headroom, else the next along. */
 function accountForLaunch(ctx: Ctx, provider: AccountProvider): ServedPoolAccount {
   const accounts = ctx.shell.accounts(provider)
   const selected = ctx.shell.selectedAccountId(provider) ?? 'default'
   const id = pickAccount({
     accounts: poolOf(accounts),
     usage: usageOf(accounts),
-    preferredId: selected
+    preferredId: selected,
+    preferRecommended: ctx.shell.useRecommendedAccount?.() === true
   })
   return accounts.find((a) => a.id === id) ?? accounts[0] ?? { id, label: id, usable: true }
 }
@@ -496,6 +498,9 @@ async function openSession(ctx: Ctx, key: string, p: Payload): Promise<unknown> 
   const workspaceId = explicitWorkspace
     ? resolveWorkspace(ctx, explicitWorkspace)
     : (target?.group.workspaceId ?? workspaceForSpawn(ctx, undefined))
+
+  if (explicitWorkspace && target?.group.workspaceId && workspaceId !== target.group.workspaceId)
+    throw new Error('The group and workspace arguments name different workspaces')
 
   const mode = (str(p.mode) as OpenMode | undefined) ?? 'claude'
   const { claudeMode, antigravityMode, codexMode, piMode, dangerousMode, model, family } =
@@ -646,9 +651,7 @@ function resolvePin(ctx: Ctx, p: Payload): PinnedBlueprint {
       })()
   let pin = named.length === 1 ? named[0] : undefined
   if (!pin && named.length > 1) {
-    const callerWs = ctx.callerSessionId
-      ? ctx.shell.record(ctx.callerSessionId)?.workspaceId
-      : undefined
+    const callerWs = workspaceForSpawn(ctx, undefined)
     const inCallerWs = callerWs ? named.filter((x) => x.workspaceId === callerWs) : []
     if (inCallerWs.length === 1) pin = inCallerWs[0]
     if (!pin) {

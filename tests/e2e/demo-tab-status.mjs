@@ -98,7 +98,8 @@ writeFileSync(
   Idle .................. nothing on the right
   Cycles ................ goes working -> needs you -> working -> done, every ~16s
                           (it lands blue each time because you are not on it)
-  Message from a tab .... a blue envelope: another tab wrote to it; click to clear
+  Message from a tab .... the same blue check as a finished turn; its tooltip
+                          names the tab that wrote; click to clear
   Ended ................. a dimmed minus in a circle (its process exited)
   No logo leads a title any more: every title starts at the row's left edge.
   Chat · background ..... finished chat turn with 2 tasks still running:

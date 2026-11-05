@@ -97,9 +97,10 @@ import {
   GlobeAltIcon
 } from '@heroicons/react/24/outline'
 
-// The height of a tab menu's account header with its usage chart, its
-// separator and the menu's padding (AccountMenuHeader with `chart`).
-const ACCOUNT_HEADER_LIFT = 200
+// The height of a tab menu's account header with its usage bars, its
+// separator and the menu's padding (AccountMenuHeader with `chart`): the
+// account line (~30px) plus one 16px bar row per cap (typically 3–4).
+const ACCOUNT_HEADER_LIFT = 110
 
 interface ContextMenuState {
   x: number
@@ -609,8 +610,10 @@ export function Sidebar(): React.JSX.Element {
           const session = sessions.find((s) => s.id === item.sessionId)
           return !!session && inActiveWorkspace(session, activeWorkspaceId)
         }
-        // File tabs are lightweight viewers, deliberately global.
-        if (item.type === 'fileTab') return true
+        if (item.type === 'fileTab') {
+          const file = fileTabs.find((f) => f.id === item.fileTabId)
+          return !!file && inActiveWorkspace(file, activeWorkspaceId)
+        }
         if (item.type === 'group') {
           const group = groups.find((g) => g.id === item.groupId)
           // An empty group stays on screen (it draws a "No sessions" row):
@@ -1664,7 +1667,9 @@ export function Sidebar(): React.JSX.Element {
                 gate closed, and the results it had already computed went with
                 it. The gate now hides only the pinned drop zone, which is the
                 one part that has nothing to say about a set of results. */}
-            <SectionHeading title={isSearchMode ? 'Results' : 'Sessions'} />
+            {/* No "Sessions" label over the list — the list is the sidebar's
+                body and needs no title; only a search names what it shows. */}
+            {isSearchMode && <SectionHeading title="Results" />}
             {!isSearchMode && (
               <PinnedSection
                 setContextMenu={setContextMenu}
@@ -1957,7 +1962,10 @@ export function Sidebar(): React.JSX.Element {
                                         shouldShowGapBefore(dropIndicator, sid, prevSid)
 
                                       // Check if this is a file tab
-                                      const fileTab = fileTabs.find((f) => f.id === sid)
+                                      const fileTab = fileTabs.find(
+                                        (f) =>
+                                          f.id === sid && inActiveWorkspace(f, activeWorkspaceId)
+                                      )
                                       if (fileTab) {
                                         return (
                                           <div key={fileTab.id}>

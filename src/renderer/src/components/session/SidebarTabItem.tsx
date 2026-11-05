@@ -163,16 +163,27 @@ export function SidebarTabItem({
         {/* Extra content (e.g. location badge) */}
         {extraContent}
 
-        {/* Close button — visible on hover */}
+        {/* Close button. Away it takes no room; the row's hover or keyboard
+            focus slides it in (`.sidebar-item-close`). In the tab order in its
+            own right, so Tab reaches it; Enter and Space close the tab without
+            reaching the row's own handlers (a rename on Enter, a click). */}
         {!editing && onDelete && !isDragging && (
           <span
             role="button"
-            tabIndex={-1}
+            tabIndex={0}
+            aria-label="Close"
+            title="Close"
             onClick={(e) => {
               e.stopPropagation()
               onDelete()
             }}
-            className="btn-icon btn-icon-xs sidebar-item-close opacity-0 group-hover:opacity-100 transition-opacity"
+            onKeyDown={(e) => {
+              if (e.key !== 'Enter' && e.key !== ' ') return
+              e.preventDefault()
+              e.stopPropagation()
+              onDelete()
+            }}
+            className="btn-icon btn-icon-xs sidebar-item-close"
           >
             <XMarkIcon className="w-3.5 h-3.5" />
           </span>

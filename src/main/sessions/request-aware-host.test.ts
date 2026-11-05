@@ -24,7 +24,7 @@ const permission: Extract<SessionEvent, { type: 'permission_request' }> = {
     { id: 'deny', label: 'Deny' }
   ]
 }
-function fixture(): {
+function fixture(options: { now?: () => number } = {}): {
   host: SessionHostService
   emit: (event: SessionEvent) => void
   write: ReturnType<typeof vi.fn>
@@ -45,7 +45,7 @@ function fixture(): {
     },
     write
   }
-  const requests = new PendingRequests()
+  const requests = new PendingRequests(options)
   const wrapped = requestAwareSessionHost({
     host,
     requests,
@@ -225,6 +225,64 @@ describe('server native requests without clients', () => {
     expect(listener).not.toHaveBeenCalled()
     f.emit({ type: 'state_change', state: 'ended' })
     expect(f.requests.snapshot().pending).toEqual([])
+  })
+  it('refuses an answer to a request the provider withdrew, in the words the view retires the card on', async () => {
+    let now = 0
+    const f = fixture({ now: () => now })
+    f.emit(permission)
+    f.emit({
+      type: 'provider_event',
+      provider: 'claude',
+      payload: { type: 'control_cancel_request', request_id: permission.id }
+    })
+    const answer = (): Promise<void> =>
+      f.host.write(session.id, {
+        type: 'permission_response',
+        id: permission.id,
+        optionId: 'allow-once'
+      })
+    // While the cancelled record is kept, the answer meets a settled request.
+    await expect(answer()).rejects.toMatchObject({
+      _tag: 'RequestRejected',
+      code: 'closed',
+      message: 'The request was already settled.'
+    })
+    // Once it is pruned, ten minutes later, there is no such request at all.
+    now = 600_001
+    await expect(answer()).rejects.toMatchObject({
+      _tag: 'RequestRejected',
+      code: 'not_found',
+      message: 'No such provider request.'
+    })
+    expect(f.write).not.toHaveBeenCalled()
+    // The next request the provider raises is answered once, as ever.
+    f.emit({ ...permission, id: 'native-2' })
+    await f.host.write(session.id, {
+      type: 'permission_response',
+      id: 'native-2',
+      optionId: 'allow-once'
+    })
+    expect(f.write).toHaveBeenCalledTimes(1)
+    expect(f.write).toHaveBeenCalledWith(session.id, {
+      type: 'permission_response',
+      id: 'native-2',
+      optionId: 'allow-once'
+    })
+  })
+  it("cancels the record on the adapter's own word that the request is withdrawn", async () => {
+    const f = fixture()
+    f.emit(permission)
+    f.emit({ ...permission, id: 'native-2' })
+    f.emit({ type: 'permission_withdrawn', id: permission.id })
+    expect(f.requests.snapshot().pending.map((r) => r.providerRequestId)).toEqual(['native-2'])
+    await expect(
+      f.host.write(session.id, {
+        type: 'permission_response',
+        id: permission.id,
+        optionId: 'allow-once'
+      })
+    ).rejects.toMatchObject({ _tag: 'RequestRejected', code: 'closed' })
+    expect(f.write).not.toHaveBeenCalled()
   })
   it('removes native Codex requests resolved by the provider itself', () => {
     const f = fixture()

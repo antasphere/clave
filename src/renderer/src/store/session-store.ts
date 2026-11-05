@@ -2267,8 +2267,26 @@ export const useSessionStore = create<SessionState>((set) => ({
 
   addFileTab: (tab) =>
     set((state) => {
+      const activeWorkspaceId = useWorkspaceStore.getState().activeWorkspaceId
+      tab = {
+        ...tab,
+        workspaceId: tab.workspaceId ?? activeWorkspaceId ?? undefined
+      }
       const key = fileTabDedupKey(tab)
-      const existing = state.fileTabs.find((f) => fileTabDedupKey(f) === key)
+      const existing = state.fileTabs.find(
+        (f) => f.workspaceId === tab.workspaceId && fileTabDedupKey(f) === key
+      )
+      // A background caller may create or retarget its own viewer without
+      // taking the selection away from the workspace the person is using.
+      const selection = inActiveWorkspace(tab, activeWorkspaceId)
+        ? {
+            selectedSessionIds: [existing?.id ?? tab.id],
+            focusedSessionId: existing?.id ?? tab.id,
+            activeView: 'terminals' as ActiveView,
+            activeGroupViewId: null,
+            activeSessionViewId: null
+          }
+        : {}
       if (existing) {
         return {
           // A re-open with an explicit view mode retargets the existing tab.
@@ -2279,21 +2297,13 @@ export const useSessionStore = create<SessionState>((set) => ({
                 )
               }
             : {}),
-          selectedSessionIds: [existing.id],
-          focusedSessionId: existing.id,
-          activeView: 'terminals' as ActiveView,
-          activeGroupViewId: null,
-          activeSessionViewId: null
+          ...selection
         }
       }
       return {
         fileTabs: [...state.fileTabs, tab],
         displayOrder: [...getDisplayOrder(state), tab.id],
-        selectedSessionIds: [tab.id],
-        focusedSessionId: tab.id,
-        activeView: 'terminals' as ActiveView,
-        activeGroupViewId: null,
-        activeSessionViewId: null
+        ...selection
       }
     }),
 

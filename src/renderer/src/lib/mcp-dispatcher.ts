@@ -1,3 +1,4 @@
+import { workspaceForPath } from '../../../shared/workspace-types'
 import { LOCAL_SERVER_ID } from '@clave/contract/fleet'
 import { useFleetStore } from '../store/fleet-store'
 import { allWorkspaces } from '../store/workspace-store'
@@ -100,7 +101,17 @@ function workspaceForSpawn(
   const caller = callerSessionId
     ? useSessionStore.getState().sessions.find((s) => s.id === callerSessionId)
     : undefined
-  return caller?.workspaceId ?? useWorkspaceStore.getState().activeWorkspaceId ?? undefined
+  return (
+    caller?.workspaceId ??
+    workspaceForPath(
+      allWorkspaces(useWorkspaceStore.getState()).filter(
+        (w) => ownerOf(w.id) === ownerOf(caller?.id)
+      ),
+      caller?.cwd
+    ) ??
+    useWorkspaceStore.getState().activeWorkspaceId ??
+    undefined
+  )
 }
 
 /** Resolve a tool's group reference: a group id, a group name, or "mine".
@@ -127,9 +138,7 @@ function resolveGroup(
   if (named.length === 0) throw new Error(`No group with id or name "${ref}"`)
   if (named.length === 1) return named[0]
 
-  const callerWs = callerSessionId
-    ? useSessionStore.getState().sessions.find((s) => s.id === callerSessionId)?.workspaceId
-    : undefined
+  const callerWs = workspaceForSpawn(undefined, callerSessionId)
   const inCallerWs = callerWs ? named.filter((g) => g.workspaceId === callerWs) : []
   if (inCallerWs.length === 1) return inCallerWs[0]
   const activeWs = useWorkspaceStore.getState().activeWorkspaceId
@@ -298,10 +307,7 @@ async function handleLaunchGroup(payload: {
       })()
   let pg = named.length === 1 ? named[0] : undefined
   if (!pg && named.length > 1) {
-    const callerWs = payload.callerSessionId
-      ? useSessionStore.getState().sessions.find((s) => s.id === payload.callerSessionId)
-          ?.workspaceId
-      : undefined
+    const callerWs = workspaceForSpawn(undefined, payload.callerSessionId)
     const inCallerWs = callerWs ? named.filter((p) => p.workspaceId === callerWs) : []
     if (inCallerWs.length === 1) pg = inCallerWs[0]
     if (!pg) {
@@ -966,6 +972,7 @@ async function handleOpenFile(payload: {
   callerSessionId?: string
 }): Promise<unknown> {
   const state = useSessionStore.getState()
+  const workspaceId = workspaceForSpawn(undefined, payload.callerSessionId)
   let abs = payload.path
   if (!abs.startsWith('/')) {
     const caller = state.sessions.find((s) => s.id === payload.callerSessionId)
@@ -1000,10 +1007,13 @@ async function handleOpenFile(payload: {
   state.addFileTab({
     id: `file-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
     filePath: abs,
+    workspaceId,
     name: payload.name ?? fileName,
     ...(isHtml && payload.view ? { view: payload.view } : {})
   })
-  const tab = useSessionStore.getState().fileTabs.find((f) => fileTabDedupKey(f) === `file:${abs}`)
+  const tab = useSessionStore
+    .getState()
+    .fileTabs.find((f) => f.workspaceId === workspaceId && fileTabDedupKey(f) === `file:${abs}`)
   return { fileTabId: tab?.id ?? null, filePath: abs }
 }
 

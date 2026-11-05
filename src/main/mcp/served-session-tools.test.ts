@@ -46,6 +46,7 @@ interface World {
   records: Record<string, SessionRecord>
   accounts: Record<'claude' | 'codex', ServedPoolAccount[]>
   selected: Record<'claude' | 'codex', string | undefined>
+  useRecommendedAccount: boolean
   switchMode: 'propose' | 'automatic'
   /** The chat profile the launcher would open, by `<family>@<workspace>`. */
   chatDefaults: Record<string, string | undefined>
@@ -79,6 +80,7 @@ function setup(partial: Partial<World> = {}): Harness {
       codex: [{ id: 'default', label: 'Default', usable: true }]
     },
     selected: { claude: undefined, codex: undefined },
+    useRecommendedAccount: false,
     switchMode: 'propose',
     chatDefaults: {},
     pins: [],
@@ -171,6 +173,7 @@ function setup(partial: Partial<World> = {}): Harness {
     sleep: async () => undefined,
     accounts: (provider) => w.accounts[provider],
     selectedAccountId: (provider) => w.selected[provider],
+    useRecommendedAccount: () => w.useRecommendedAccount,
     switchMode: () => w.switchMode,
     launchProfiles: (family) =>
       family === 'claude'
@@ -704,6 +707,64 @@ describe('opening a session', () => {
     records: { caller: record('caller', { workspaceId: 'ws1', displayName: 'Lane D' }) },
     selected: { claude: 'acc-2', codex: undefined }
   })
+  it('resolves a duplicated group name in the legacy caller workspace', async () => {
+    const h = setup({
+      records: { caller: record('caller', { cwd: '/two/project' }) },
+      layouts: [
+        layout('wA', [
+          group('a', { name: 'Build', workspaceId: 'ws1' }),
+          group('b', { name: 'Build', workspaceId: 'ws2' })
+        ])
+      ]
+    })
+    await run(h, 'openSession', { cwd: '/outside', mode: 'terminal', groupId: 'Build' })
+    expect(h.argsOf('sidebar.placeSession')[0]).toMatchObject({ groupId: 'b' })
+  })
+  it('keeps a legacy caller in its cwd workspace after its window switches', async () => {
+    const h = setup({ records: { caller: record('caller', { cwd: '/two/project' }) } })
+    await run(h, 'openSession', { cwd: '/outside', mode: 'terminal' })
+    expect(h.argsOf('sessions.start')[0]).toMatchObject({ options: { workspaceId: 'ws2' } })
+  })
+  it('refuses a group and explicit workspace that disagree before starting', async () => {
+    const h = setup({ layouts: [layout('wA', [group('g1', { workspaceId: 'ws1' })])] })
+    await expect(
+      run(h, 'openSession', {
+        cwd: '/project',
+        mode: 'terminal',
+        groupId: 'g1',
+        workspace: 'Two'
+      })
+    ).rejects.toThrow('workspace')
+    expect(h.argsOf('sessions.start')).toHaveLength(0)
+  })
+  it.each(['claude', 'codex'] as const)(
+    'applies the recommended default to implicit %s tool launches only',
+    async (provider) => {
+      const h = setup(world())
+      const summary = (at: number): ServedPoolAccount['usage'] => ({
+        tightest: { kind: 'weekly_all', usedPercentage: 30 },
+        windows: [{ kind: 'weekly_all', usedPercentage: 30, resetsAt: at }]
+      })
+      h.w.accounts[provider] = [
+        { id: 'default', label: 'Default', usable: true, usage: summary(5000) },
+        { id: 'acc-2', label: 'Second', usable: true, usage: summary(1000) }
+      ]
+      h.w.selected[provider] = 'default'
+      const chosen = (): string =>
+        (h.argsOf('sessions.start').at(-1) as { options: Record<string, string> }).options[
+          provider === 'claude' ? 'claudeProfileId' : 'codexAccountId'
+        ]
+      await run(h, 'openSession', { cwd: '/proj', mode: provider })
+      expect(chosen()).toBe('default')
+      h.w.useRecommendedAccount = true
+      await run(h, 'openSession', { cwd: '/proj', mode: provider })
+      expect(chosen()).toBe('acc-2')
+      await run(h, 'openSession', { cwd: '/proj', mode: provider, account: 'default' })
+      expect(chosen()).toBe('default')
+      await run(h, 'openSession', { cwd: '/proj', mode: provider, account: 'any' })
+      expect(chosen()).toBe('acc-2')
+    }
+  )
   it('starts on the pool’s account with the caller’s workspace, names it, places it, links it, records it', async () => {
     const h = setup(world())
     const out = await run(h, 'openSession', {
@@ -914,6 +975,14 @@ describe('launching a pinned group', () => {
     ],
     records: { caller: record('caller', { workspaceId: 'ws2' }) },
     sessions: [session('caller')]
+  })
+  it('uses a legacy caller cwd to choose between duplicate pinned names', async () => {
+    const h = setup({
+      ...world(),
+      records: { caller: record('caller', { cwd: '/two/project' }) },
+      windows: []
+    })
+    expect(await run(h, 'launchGroup', { group: 'Same' })).toMatchObject({ pinnedId: 'Twin2' })
   })
   it('resolves by id, by name in the caller’s workspace, and refuses what is unknown or ambiguous', async () => {
     const h = setup({ ...world(), windows: [] })

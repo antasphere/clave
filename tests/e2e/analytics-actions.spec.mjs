@@ -4,16 +4,20 @@
 // group's menu, the workspace button in the toolbar, the page each one opens in the content
 // column, and the way back; then the plugin switched off and every entry gone. The failure
 // mode of all of this is silence (an unread manifest field draws nothing and reports
-// nothing), so the checks are on the DOM and on the page the plugin actually served.
+// nothing), so the checks are on the DOM and on the page the plugin actually served. The
+// second slice's drawings and settings page are checked here too: the session page's
+// timeline, the group page's swimlane, the workspace home's animation with the tab's dot in
+// its group's lane on the brand field, and the settings page reached from the footer's gear,
+// where the activity gap is changed and seen on the page's footer right after.
 import assert from 'node:assert/strict'
 import { callMcp, until } from './harness.mjs'
 import { openChat } from './chat-view.spec.mjs'
 
-const PLUGIN = 'clave.analytics'
-const PAGE = `[data-plugin-page="${PLUGIN}"]`
+export const PLUGIN = 'clave.analytics'
+export const PAGE = `[data-plugin-page="${PLUGIN}"]`
 /** Runs a script inside the page pane's web view guest, from the host (the guest is a
  *  separate web contents, not a frame of the window); null until the guest can answer. */
-const inGuest = (win, script) =>
+export const inGuest = (win, script) =>
   win.evaluate(
     async ([selector, code]) => {
       const wv = document.querySelector(selector)
@@ -40,9 +44,9 @@ const guestList = (win, selector, wanted) =>
     )
     return Array.isArray(names) && names.includes(wanted) ? names : null
   })
-const menuItems = (win) => win.locator('[role="menu"] [role="menuitem"]')
-const menuItem = (win, label) => menuItems(win).filter({ hasText: label })
-const rowButton = (win, id) => win.locator(`[data-sidebar-item-id="${id}"] button`).first()
+export const menuItems = (win) => win.locator('[role="menu"] [role="menuitem"]')
+export const menuItem = (win, label) => menuItems(win).filter({ hasText: label })
+export const rowButton = (win, id) => win.locator(`[data-sidebar-item-id="${id}"] button`).first()
 const closeMenu = async (win) => {
   await win.keyboard.press('Escape')
   await menuItems(win)
@@ -117,6 +121,15 @@ export async function run(t) {
       inGuest(win, `JSON.parse(document.getElementById('slideless-data').textContent).kind`)
     )
     t.equal('the page carries its data block, a session view', dataKind, 'session')
+    // The timeline is there, and says so for a tab that has not worked yet.
+    const timeline = await until(() =>
+      inGuest(win, `document.querySelector('figure.timeline .figure-empty')?.textContent ?? null`)
+    )
+    t.equal(
+      'the session page carries its timeline, empty for a tab that has not worked',
+      timeline,
+      'No activity measured yet.'
+    )
 
     // The page follows the app's theme live: the app applies a theme as inline tokens on its
     // root and the page pane inserts them into the guest, so activating coffee (a theme no
@@ -176,6 +189,14 @@ export async function run(t) {
       'the group table lists the session',
       !!(await guestList(win, 'tbody .name-text', record.title))
     )
+    const swimlane = await until(() =>
+      inGuest(win, `document.querySelector('figure.swimlane .figure-empty')?.textContent ?? null`)
+    )
+    t.equal(
+      'the group page carries its swimlane, empty in this range',
+      swimlane,
+      'No activity measured in this range yet.'
+    )
 
     // The toolbar button opens the workspace page.
     await win.locator('[data-plugin-action="home"]').click()
@@ -192,6 +213,72 @@ export async function run(t) {
       'the workspace page has a card for the group',
       !!(await guestList(win, '.card-name', 'Analytics group'))
     )
+    // The animation: the tab is a dot in its group's lane, at the column of its state, on
+    // the brand field's canvas.
+    const dot = await until(() =>
+      inGuest(
+        win,
+        `(() => {
+          const d = document.querySelector('.live-dot[data-session=${JSON.stringify(record.id)}]')
+          if (!d) return null
+          const label = document.querySelectorAll('.live-lane-label')[Number(d.dataset.lane)]
+          const canvas = document.querySelector('canvas.live-ground')
+          return {
+            state: d.dataset.state,
+            column: d.dataset.column,
+            lane: label ? label.textContent : null,
+            canvas: !!canvas && canvas.width > 0 && canvas.height > 0,
+            hollow: d.classList.contains('kind-terminal')
+          }
+        })()`
+      )
+    )
+    t.check(
+      "the workspace animation places the tab as a dot in its group's lane on the brand field",
+      !!dot &&
+        dot.lane === 'Analytics group' &&
+        dot.canvas &&
+        ['working', 'idle', 'blocked'].includes(dot.column) &&
+        dot.hollow === false,
+      JSON.stringify(dot)
+    )
+
+    // The footer's gear opens the settings page in the same pane; the gap saved there is on
+    // the page's footer the moment the live stream brings the next frame.
+    await inGuest(win, `document.querySelector('.gear').click(); true`)
+    const settingsTitle = await until(() =>
+      inGuest(
+        win,
+        `document.querySelector('.deck-title')?.textContent === 'Analytics settings' || null`
+      )
+    )
+    t.check('the footer gear opens the settings page', !!settingsTitle)
+    await inGuest(
+      win,
+      `(() => {
+        const gap = document.getElementById('gap')
+        gap.value = '20'
+        gap.dispatchEvent(new Event('input', { bubbles: true }))
+        document.querySelector('[data-action="save-gap"]').click()
+        return true
+      })()`
+    )
+    const saved = await until(() =>
+      inGuest(
+        win,
+        `(document.querySelector('.settings-status')?.textContent === 'Saved' && document.getElementById('gap')?.value === '20') || null`
+      )
+    )
+    t.check('the activity gap saves from the settings page', !!saved)
+    await inGuest(win, `document.querySelector('.settings-back').click(); true`)
+    const footer = await until(async () => {
+      const text = await inGuest(
+        win,
+        `document.querySelector('.deck-foot .foot-text')?.textContent ?? ''`
+      )
+      return typeof text === 'string' && text.includes('less than 20 minutes apart') ? text : null
+    })
+    t.check('back on the page, the footer counts with the new gap', !!footer, String(footer))
 
     // Switched off, the plugin leaves no entry and no page behind.
     await win.evaluate((id) => window.electronAPI.pluginsDisable(id), PLUGIN)

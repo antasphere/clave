@@ -1,22 +1,28 @@
 import * as nodeFs from 'node:fs'
 import { join } from 'node:path'
 import { LEDGER_VERSION, emptyLedger, type Ledger, type SessionRow } from './ledger'
+import type { PriceTable } from './prices'
+import { DEFAULT_SETTINGS, parseSettings, type Settings } from './settings'
 
 /**
  * The plugin's own files in its data folder, each written atomically (`<file>.tmp`, then
- * `rename`): `server.json` (the port and the URL token), `ledger.json`, and `prices.json`,
- * the price override a person may drop there (absent by default, never written here).
+ * `rename`): `server.json` (the port, the URL token and the viewer's port), `ledger.json`,
+ * `settings.json` (the activity gap) and `prices.json`, the price override the settings page
+ * writes (absent by default; a copy a person drops there by hand reads the same). The deck
+ * folders under `decks/` are the deck writer's.
  */
 
 export interface ServerInfo {
   port: number
   token: string
+  /** The port the Slideless viewer listened on last, asked for again at the next start. */
+  viewerPort?: number
 }
 
 export type Logger = (level: 'debug' | 'info' | 'warn' | 'error', message: string) => void
 export type StoreFs = Pick<
   typeof nodeFs,
-  'mkdirSync' | 'readFileSync' | 'writeFileSync' | 'renameSync'
+  'mkdirSync' | 'readFileSync' | 'writeFileSync' | 'renameSync' | 'existsSync' | 'rmSync'
 >
 
 const isObj = (v: unknown): v is Record<string, unknown> =>
@@ -45,6 +51,7 @@ const isTally = (v: unknown): boolean =>
   isNum(v['toolCalls']) &&
   isNum(v['prompts']) &&
   Array.isArray(v['stamps']) &&
+  Array.isArray(v['toolStamps']) &&
   isStrOrNull(v['firstAt']) &&
   isStrOrNull(v['lastAt'])
 const isCursor = (v: unknown): boolean =>
@@ -113,8 +120,12 @@ export class Store {
         Number.isInteger(raw.port) &&
         typeof raw.token === 'string' &&
         /^[0-9a-f]{32}$/.test(raw.token)
-      )
-        return { port: raw.port, token: raw.token }
+      ) {
+        const viewerPort = raw.viewerPort
+        return typeof viewerPort === 'number' && Number.isInteger(viewerPort) && viewerPort > 0
+          ? { port: raw.port, token: raw.token, viewerPort }
+          : { port: raw.port, token: raw.token }
+      }
     } catch {
       /* missing or unreadable: a new one is minted */
     }
@@ -123,6 +134,34 @@ export class Store {
 
   writeServer(info: ServerInfo): void {
     this.writeJson('server.json', info)
+  }
+
+  /** The settings in the data folder; the defaults when the file is missing or off. */
+  readSettings(): Settings {
+    try {
+      return parseSettings(this.readJson('settings.json'))
+    } catch {
+      return { ...DEFAULT_SETTINGS }
+    }
+  }
+
+  writeSettings(settings: Settings): void {
+    this.writeJson('settings.json', settings)
+  }
+
+  /** Whether a price override sits in the data folder. */
+  hasPrices(): boolean {
+    return this.fs.existsSync(this.pricesPath)
+  }
+
+  /** Writes the person's own price table over the shipped one. */
+  writePrices(table: PriceTable): void {
+    this.writeJson('prices.json', table)
+  }
+
+  /** Removes the override: the shipped table is in force again. */
+  removePrices(): void {
+    this.fs.rmSync(this.pricesPath, { force: true })
   }
 
   /** The stored ledger, or an empty one when the file is missing or does not parse. */

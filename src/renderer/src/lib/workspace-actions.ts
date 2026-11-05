@@ -507,6 +507,13 @@ export function applyServerWorkspaces(serverId: string, workspaces: Workspace[])
   const owned = workspaces.filter((w) => workspaceServer(w.id) === serverId)
   useWorkspaceStore.setState({ serverWorkspaces: { ...serverWorkspaces, [serverId]: owned } })
   cacheServerWorkspaces()
+  rehomeRemovedWorkspaceViewers(
+    new Set(
+      (serverWorkspaces[serverId] ?? [])
+        .filter((w) => !owned.some((next) => next.id === w.id))
+        .map((w) => w.id)
+    )
+  )
   const shown = owned.find((w) => w.id === activeWorkspaceId)
   const status = useFleetStore.getState().statuses[serverId]
   if (shown) refreshServerPins(shown, status)
@@ -527,8 +534,25 @@ function retainServerWorkspaces(retained: Set<string>): void {
   for (const id of gone) delete next[id]
   useWorkspaceStore.setState({ serverWorkspaces: next })
   cacheServerWorkspaces()
+  rehomeRemovedWorkspaceViewers(
+    new Set(gone.flatMap((id) => serverWorkspaces[id].map((w) => w.id)))
+  )
   const shownOn = workspaceServer(activeWorkspaceId)
   if (shownOn && gone.includes(shownOn)) landElsewhere(activeWorkspaceId!)
+}
+
+/** File viewers live in this window even when their workspace is served
+ * elsewhere. Keep them reachable when a server's registry loses their home. */
+function rehomeRemovedWorkspaceViewers(removed: Set<string>): void {
+  if (removed.size === 0) return
+  const state = useWorkspaceStore.getState()
+  const remaining = allWorkspaces(state)
+  const target = remaining.find((w) => w.id === state.activeWorkspaceId) ?? remaining[0]
+  useSessionStore.setState((s) => ({
+    fileTabs: s.fileTabs.map((f) =>
+      f.workspaceId && removed.has(f.workspaceId) ? { ...f, workspaceId: target?.id } : f
+    )
+  }))
 }
 
 function landElsewhere(from: string): void {
@@ -837,7 +861,8 @@ function stampUnowned(workspaceId: string): void {
     x.workspaceId == null && !isRemoteKey(x.id)
   useSessionStore.setState({
     sessions: sessionState.sessions.map((s) => (unowned(s) ? { ...s, workspaceId } : s)),
-    groups: sessionState.groups.map((g) => (unowned(g) ? { ...g, workspaceId } : g))
+    groups: sessionState.groups.map((g) => (unowned(g) ? { ...g, workspaceId } : g)),
+    fileTabs: sessionState.fileTabs.map((f) => (unowned(f) ? { ...f, workspaceId } : f))
   })
   for (const s of sessionState.sessions) {
     if (unowned(s) && s.sessionType === 'local') {
@@ -952,6 +977,9 @@ export async function removeWorkspace(id: string): Promise<void> {
     ),
     groups: sessionState.groups.map((g) =>
       g.workspaceId === id ? { ...g, workspaceId: targetId ?? undefined } : g
+    ),
+    fileTabs: sessionState.fileTabs.map((f) =>
+      f.workspaceId === id ? { ...f, workspaceId: targetId ?? undefined } : f
     )
   })
   for (const s of affectedSessions) {

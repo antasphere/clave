@@ -6,14 +6,22 @@ export function pickTheme(value: string | null | undefined): Theme {
   return (THEMES as readonly string[]).includes(value ?? '') ? (value as Theme) : 'dark'
 }
 
+export type PageMode = 'live' | 'deck'
+
 export interface PageOptions {
   title: string
   data: unknown
   /** The live-update URL; null renders a page that never updates. */
   events: string | null
   theme: Theme
-  /** The path the page's assets are served under (the token's root). */
+  /** The plugin server's token root: where the assets, the open route and the settings live.
+   *  A path on the served page, an absolute URL on a deck. */
   base?: string
+  /** `live` on the page the plugin serves; `deck` on a deck the viewer serves (the stream
+   *  named absolute, every link through the open route). */
+  mode?: PageMode
+  /** The footer's last line: what serves the page, or why the viewer does not. */
+  note?: string
 }
 
 function escapeHtml(text: string): string {
@@ -36,19 +44,22 @@ export function jsonBlock(data: unknown): string {
 
 /**
  * Fills the page template: `{{title}}`, `{{theme}}` (on `<html data-theme>`), `{{events}}`
- * (the `analytics-events` meta), `{{base}}` (asset paths) and `{{data}}` (inside the
- * `slideless-data` JSON block).
+ * (the `analytics-events` meta), `{{mode}}` (the `analytics-mode` meta), `{{base}}` (the
+ * asset paths and the `analytics-base` meta), `{{note}}` (the `analytics-note` meta) and
+ * `{{data}}` (inside the `slideless-data` JSON block).
  */
 export function renderPage(template: string, options: PageOptions): string {
   const values: Record<string, string> = {
     title: escapeHtml(options.title),
     theme: options.theme,
     events: escapeHtml(options.events ?? ''),
+    mode: options.mode ?? 'live',
     base: escapeHtml(options.base ?? '/'),
+    note: escapeHtml(options.note ?? ''),
     data: jsonBlock(options.data)
   }
   return template.replace(
-    /\{\{(title|theme|events|base|data)\}\}/g,
+    /\{\{(title|theme|events|mode|base|note|data)\}\}/g,
     (_, key: string) => values[key]!
   )
 }

@@ -376,3 +376,266 @@ a.card:hover {
     grid-column: 1 / -1;
   }
 }
+
+/* ── The drawings ───────────────────────────────────────────────────────── */
+
+.deck-figure:empty {
+  display: none;
+}
+
+figure.timeline,
+figure.swimlane,
+figure.live-figure {
+  position: relative;
+  margin: 0;
+  padding: calc(var(--control-px) * 2);
+  border: var(--frame-border) solid var(--color-border);
+  border-radius: var(--radius-xl);
+  background: var(--surface-50);
+}
+
+.figure-title {
+  color: var(--text-tertiary);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin-bottom: var(--control-px);
+}
+
+.figure-empty {
+  color: var(--text-tertiary);
+  font-size: 12px;
+  padding: var(--control-px) 0;
+}
+
+.plot {
+  min-width: 0;
+}
+
+.chart {
+  display: block;
+  overflow: visible;
+}
+
+/* The marks: thin, one hue, rounded ends; the wait between two blocks a hairline. */
+.chart .block {
+  fill: var(--color-accent);
+  transition: fill 150ms var(--ease-out-expo);
+}
+.chart .block.lit {
+  fill: var(--color-accent-hover);
+}
+.chart .wait {
+  stroke: var(--color-border);
+  stroke-width: var(--frame-border);
+  transition: stroke 150ms var(--ease-out-expo);
+}
+.chart .wait.lit {
+  stroke: var(--text-tertiary);
+}
+.chart .axis,
+.chart .rule {
+  stroke: var(--color-border);
+  stroke-width: var(--frame-border);
+}
+.chart .rule {
+  stroke: var(--rule-color);
+}
+.chart .tick-label {
+  fill: var(--text-tertiary);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.chart .tick-label.day {
+  fill: var(--text-secondary);
+}
+.chart .hit {
+  cursor: default;
+  outline: none;
+}
+.chart .hit:focus-visible {
+  stroke: var(--color-accent);
+  stroke-width: 1.5px;
+}
+
+/* The hover card: a small menu surface placed by the pointer. */
+.tip {
+  position: absolute;
+  z-index: 1;
+  pointer-events: none;
+  padding: var(--control-gap) var(--control-px);
+  border: var(--frame-border) solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--surface-0);
+  box-shadow: var(--overlay-shadow);
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.tip-head {
+  color: var(--text-primary);
+}
+
+/* The swimlane: the names on the left, one row each, the plot beside them. */
+.lanes {
+  display: grid;
+  grid-template-columns: calc(var(--control-h) * 6) minmax(0, 1fr);
+  gap: calc(var(--control-px) * 1.5);
+  align-items: start;
+}
+.lane-label {
+  display: flex;
+  align-items: center;
+  gap: var(--control-gap);
+  height: var(--control-h);
+  min-width: 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+.lane-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The workspace's animation on the brand field. */
+.live-host {
+  min-height: calc(var(--control-h) * 3);
+}
+.live {
+  position: relative;
+  display: grid;
+  grid-template-columns: calc(var(--control-h) * 6) minmax(0, 1fr);
+  grid-template-rows: auto auto;
+  gap: 0 calc(var(--control-px) * 1.5);
+  overflow: hidden;
+  border-radius: var(--radius-lg);
+  isolation: isolate;
+}
+.live-ground {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 0;
+}
+.live-head {
+  grid-column: 2;
+  grid-row: 1;
+  z-index: 1;
+  display: flex;
+  padding: var(--control-px) 0 var(--surface-inset);
+}
+.live-head[hidden] {
+  display: none;
+}
+.live-col {
+  flex: 1 1 0;
+  text-align: center;
+  color: var(--text-tertiary);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.live-labels {
+  grid-column: 1;
+  grid-row: 2;
+  z-index: 1;
+  padding-left: var(--control-px);
+}
+.live-lane-label {
+  display: block;
+  height: calc(var(--control-h) * 1.5);
+  line-height: calc(var(--control-h) * 1.5);
+  color: var(--text-secondary);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.live-plot {
+  grid-column: 2;
+  grid-row: 2;
+  z-index: 1;
+  display: block;
+  width: 100%;
+  overflow: visible;
+}
+.live-rule {
+  stroke: var(--color-border);
+  stroke-width: var(--frame-border);
+}
+.live-dot {
+  stroke: var(--surface-0);
+  stroke-width: calc(var(--frame-border) * 2);
+  fill: var(--text-tertiary);
+}
+.live-dot.state-working {
+  fill: var(--color-accent);
+}
+.live-dot.state-blocked {
+  fill: var(--color-warning);
+}
+/* A plain terminal is no agent: hollow whatever its state, so the lane does not read as
+   idle agents; the rule sits after the state rules so it wins at equal specificity. */
+.live-dot.kind-terminal {
+  fill: var(--surface-0);
+  stroke: var(--text-tertiary);
+  stroke-width: var(--frame-border);
+}
+.live-empty {
+  grid-column: 1 / -1;
+  grid-row: 2;
+  z-index: 1;
+  padding: calc(var(--control-px) * 3) calc(var(--control-px) * 2);
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+.live-empty[hidden] {
+  display: none;
+}
+
+/* ── The footer ─────────────────────────────────────────────────────────── */
+
+.deck-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: calc(var(--control-px) * 2);
+  flex-wrap: wrap;
+}
+.foot-text {
+  flex: 1 1 calc(var(--control-h) * 12);
+}
+.foot-note {
+  display: block;
+  margin-top: var(--control-gap);
+}
+.foot-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--control-px);
+}
+.gear {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--control-h);
+  height: var(--control-h);
+  border-radius: var(--control-radius);
+  color: var(--text-tertiary);
+}
+.gear:hover {
+  color: var(--text-primary);
+  background: var(--surface-100);
+}
+.gear:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 1.5px var(--color-accent);
+}
+.gear .icon {
+  width: var(--control-icon);
+  height: var(--control-icon);
+}

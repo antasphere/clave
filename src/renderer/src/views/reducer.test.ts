@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest'
 import {
   answeredSince,
   emptyConversation,
+  openRequests,
   reduceConversation,
   type Conversation,
   type ChatEvent
@@ -262,6 +263,95 @@ describe('conversation stream', () => {
     expect(keyOf(merged, 'new question')).toBe(before)
     expect(merged.first).toBe(live.first - 3)
     expect(reduceConversation(merged, { prepend: [] })).toBe(merged)
+  })
+})
+
+describe('a request the agent no longer holds', () => {
+  const ask = (id: string): ChatEvent => ({
+    type: 'permission_request',
+    id,
+    description: 'Run a command?',
+    toolName: 'Bash',
+    input: { command: `echo ${id}` },
+    options: [
+      { id: 'allow-once', label: 'Allow once' },
+      { id: 'deny', label: 'Deny' }
+    ]
+  })
+  const blocked: ChatEvent = { type: 'state_change', state: 'blocked' }
+  const working: ChatEvent = { type: 'state_change', state: 'working' }
+  const done: ChatEvent = { type: 'state_change', state: 'done' }
+  const withdrawn = (id: string): ChatEvent => ({ type: 'permission_withdrawn', id })
+  // The dock's own filter, as the views read it: what the reader can still answer.
+  const waiting = (state: Conversation): string[] =>
+    state.entries.flatMap((e) =>
+      e.kind === 'permission' && !e.answer && !e.answeredElsewhere ? [e.request.id] : []
+    )
+
+  it('keeps a request the adapter withdrew out of the queue when the next one puts the view back on blocked', () => {
+    // The adapter withdraws the old request and leaves blocked; the next
+    // request puts the view back on blocked. The old card must not come back
+    // ahead of the live one: an answer to it would only be refused.
+    const state = run([ask('old'), blocked, withdrawn('old'), working, ask('current'), blocked])
+    expect(waiting(state)).toEqual(['current'])
+    expect(elsewhere(state.entries[0])).toBe(true)
+    expect(state.state).toBe('blocked')
+    // The views read the same list through the reducer's own helper.
+    expect(openRequests(state.entries).map((r) => r.id)).toEqual(['current'])
+    // Answering the live one leaves nothing waiting: the old card never held
+    // the conversation on blocked.
+    const answered = reduceConversation(state, { answer: 'current', optionId: 'allow-once' })
+    expect(answered.state).toBe('working')
+    expect(waiting(answered)).toEqual([])
+  })
+  it('settles a withdrawn request through every later state word, and only that request', () => {
+    const both = run([ask('a'), ask('b'), blocked, withdrawn('a')])
+    expect(waiting(both)).toEqual(['b'])
+    expect(both.state).toBe('blocked')
+    const later = run([
+      ask('a'),
+      blocked,
+      withdrawn('a'),
+      done,
+      ask('b'),
+      blocked,
+      working,
+      blocked
+    ])
+    expect(waiting(later)).toEqual(['b'])
+    // A request this view answered is left as answered.
+    const mine = reduceConversation(run([ask('a'), blocked]), { answer: 'a', optionId: 'deny' })
+    expect(reduceConversation(mine, { event: withdrawn('a') }).entries[0]).toMatchObject({
+      answer: 'deny'
+    })
+  })
+  it('leaves a withdrawal naming another request alone, and keeps the entries array', () => {
+    const state = run([ask('p'), blocked])
+    const other = reduceConversation(state, { event: withdrawn('someone-else') })
+    expect(other.entries).toBe(state.entries)
+    expect(waiting(other)).toEqual(['p'])
+  })
+  it('retires a card whose answer the host refused as gone, without an answer', () => {
+    const state = run([ask('gone'), blocked, ask('live')])
+    const retired = reduceConversation(state, { retire: 'gone' })
+    expect(waiting(retired)).toEqual(['live'])
+    expect(retired.entries[0]).toMatchObject({ kind: 'permission', answeredElsewhere: true })
+    expect((retired.entries[0] as { answer?: string }).answer).toBe(undefined)
+    // The kernel's word is the state: nothing here changes it.
+    expect(retired.state).toBe('blocked')
+    // A later blocked does not bring the card back; an id nothing waits on
+    // changes nothing.
+    expect(waiting(reduceConversation(retired, { event: blocked }))).toEqual(['live'])
+    expect(reduceConversation(retired, { retire: 'nothing' })).toBe(retired)
+    expect(reduceConversation(retired, { retire: 'gone' })).toBe(retired)
+  })
+  it('still reopens a card closed on working or done when blocked follows, as Codex needs', () => {
+    // Codex says working at every turn start, approvals pending or not, and
+    // keeps an approval without a turn id past the turn's end: a card closed
+    // on those words alone comes back on blocked. Only the adapter's own
+    // withdrawal, or a refused answer, settles a card for good.
+    expect(waiting(run([ask('p'), blocked, working, blocked]))).toEqual(['p'])
+    expect(waiting(run([ask('p'), blocked, done, blocked]))).toEqual(['p'])
   })
 })
 

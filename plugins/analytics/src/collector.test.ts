@@ -152,6 +152,25 @@ describe('Collector', () => {
     expect(row.stateSpans.at(-1)?.to).toBe('2026-10-01T12:01:00.000Z')
   })
 
+  it('takes a new gap, keeps it on the ledger and wakes every row; touch wakes without reading', () => {
+    writeFileSync(join(projectDir(), 'conv-1.jsonl'), fixture)
+    const c = collector()
+    c.setSessions([claudeSession(), claudeSession({ id: 'tab-2', providerSessionId: 'conv-2' })])
+    const changed: Set<string>[] = []
+    c.on('changed', (ids: Set<string>) => changed.push(ids))
+    c.setGap(20)
+    expect(c.ledger.gapMinutes).toBe(20)
+    expect(changed).toHaveLength(1)
+    expect([...changed[0]!].sort()).toEqual(['tab-1', 'tab-2'])
+    // The same gap again is no change.
+    c.setGap(20)
+    expect(changed).toHaveLength(1)
+    const before = c.ledger.sessions['tab-1']!.root!.tally.messages
+    c.touch()
+    expect(changed).toHaveLength(2)
+    expect(c.ledger.sessions['tab-1']!.root!.tally.messages).toBe(before)
+  })
+
   it('starts and stops without leaving a watcher or a timer behind', () => {
     const c = collector()
     c.setSessions([claudeSession()])

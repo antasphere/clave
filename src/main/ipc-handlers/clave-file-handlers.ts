@@ -136,6 +136,11 @@ export function registerClaveFileHandlers(): void {
 
   ipcMain.handle('preferences:set', (_event, key: string, value: unknown) => {
     preferencesManager.set(key, value)
+    if (key === 'useRecommendedAccount') {
+      for (const win of BrowserWindow.getAllWindows()) {
+        win.webContents.send('accounts:recommended-launch-changed', value === true)
+      }
+    }
   })
 }
 
