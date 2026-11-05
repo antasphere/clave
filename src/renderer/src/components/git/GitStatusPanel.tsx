@@ -1689,6 +1689,15 @@ function RepoDirRow({
           if (e.detail > 1) return
           onToggle()
         }}
+        // A folder drags its path into a session the way a repository row
+        // does (MultiRepoSection): the same text/plain absolute path that
+        // pathsFromDataTransfer reads on every drop target. `node.path` is the
+        // folder's absolute path as the tree was built (buildRepoTree).
+        draggable
+        onDragStart={(e) => {
+          e.dataTransfer.setData('text/plain', node.path)
+          e.dataTransfer.effectAllowed = 'copy'
+        }}
       >
         <svg
           width="10"
