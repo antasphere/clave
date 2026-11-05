@@ -3146,14 +3146,17 @@ button.chat-turn-from:focus-visible {
    it. It is the wrap's child, so hovering it keeps the wrap hovered. The
    column's gap is one row of meta plus the air above it, so the copy
    button's hover fill never touches the text it copies. */
+/* The line starts flush under the turn and keeps its air as padding, so the
+   pointer moving down from the message onto the copy button never crosses a
+   strip that belongs to neither and drops the hover on the way. */
 .chat-turn-meta {
   position: absolute;
-  top: calc(100% + var(--spacing));
+  top: 100%;
   display: flex;
   align-items: center;
   gap: var(--spacing);
-  height: calc(var(--spacing) * 4);
-  padding: 0 var(--spacing);
+  height: calc(var(--spacing) * 5);
+  padding: var(--spacing) var(--spacing) 0;
   font-size: var(--text-xs);
   color: var(--text-tertiary);
   opacity: 0;
@@ -3168,6 +3171,14 @@ button.chat-turn-from:focus-visible {
 .chat-turn-wrap:hover .chat-turn-meta,
 .chat-turn-meta:focus-within {
   opacity: 1;
+}
+/* Each row is its own layer (the list's positioned, contained items), painted
+   in order, and the hover line hangs into the next row's top gap: lift the row
+   whose line is shown above its neighbours, or the next row covers the copy
+   button and takes the pointer the moment it arrives. */
+.chat-rows > :has(.chat-turn-wrap:hover),
+.chat-rows > :has(.chat-turn-meta:focus-within) {
+  z-index: 1;
 }
 .chat-turn-copy {
   display: inline-flex;
