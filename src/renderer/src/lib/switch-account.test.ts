@@ -121,7 +121,7 @@ describe('recommended account setting', () => {
     }
     useClaudeAccountsUsage.setState({ byAccount: usage })
     useCodexAccountsUsage.setState({ byAccount: usage })
-    const launch = (id?: string) =>
+    const launch = (id?: string): { id: string } =>
       provider === 'claude' ? accountForLaunch('claude', id) : accountForLaunch('codex', id)
     expect(launch().id).toBe('default')
     useAccountPolicyStore.setState({ useRecommendedAccount: true })

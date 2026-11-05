@@ -741,7 +741,7 @@ describe('opening a session', () => {
     'applies the recommended default to implicit %s tool launches only',
     async (provider) => {
       const h = setup(world())
-      const summary = (at: number) => ({
+      const summary = (at: number): ServedPoolAccount['usage'] => ({
         tightest: { kind: 'weekly_all', usedPercentage: 30 },
         windows: [{ kind: 'weekly_all', usedPercentage: 30, resetsAt: at }]
       })
@@ -750,7 +750,7 @@ describe('opening a session', () => {
         { id: 'acc-2', label: 'Second', usable: true, usage: summary(1000) }
       ]
       h.w.selected[provider] = 'default'
-      const chosen = () =>
+      const chosen = (): string =>
         (h.argsOf('sessions.start').at(-1) as { options: Record<string, string> }).options[
           provider === 'claude' ? 'claudeProfileId' : 'codexAccountId'
         ]

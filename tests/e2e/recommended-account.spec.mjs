@@ -103,9 +103,10 @@ export async function run(t) {
         return false
       }
     })
+    const mainWindow = await app.browserWindow(win)
     const settings = () =>
-      app.evaluate(({ BrowserWindow }) =>
-        BrowserWindow.getAllWindows()[0].webContents.send('menu:open-settings-section', 'accounts')
+      mainWindow.evaluate((window) =>
+        window.webContents.send('menu:open-settings-section', 'accounts')
       )
     await settings()
     const toggle = win.getByRole('switch', { name: LABEL, exact: true })
@@ -136,7 +137,7 @@ export async function run(t) {
     )
     t.equal(
       'the preference is saved on disk',
-      JSON.parse(readFileSync(`${DIR}/preferences.json`, 'utf8')).useRecommendedAccount,
+      JSON.parse(readFileSync(`${DIR}/clave-preferences.json`, 'utf8')).useRecommendedAccount,
       true
     )
     await app.evaluate(

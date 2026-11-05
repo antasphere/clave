@@ -1,12 +1,18 @@
 import { Effect, Layer, Schema } from 'effect'
 import { HandlerRegistry, layer as busesLayer } from '@structure-ai/cqrs'
-import { defineFixture, defineScenario, makeCatalog, run } from '@structure-ai/fixtures'
+import {
+  defineFixture,
+  defineScenario,
+  makeCatalog,
+  run,
+  type RunReport
+} from '@structure-ai/fixtures'
 
 /** Creates the account through Settings commands in an isolated Electron app.
  * Usage and provider processes are test adapters, with no real account reads. */
 export async function loadRecommendedAccountFixture(
   createAccount: (label: string) => Promise<{ id: string }>
-) {
+): Promise<RunReport<Readonly<Record<string, unknown>>>> {
   const catalog = makeCatalog({
     base: {},
     scenarios: [
