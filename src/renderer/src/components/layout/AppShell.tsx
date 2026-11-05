@@ -900,10 +900,9 @@ export function AppShell(): React.JSX.Element {
             >
               <div
                 className={cn(
-                  'absolute top-0 right-0 h-full transition-colors border-r border-border/20',
-                  draggingLeft ? 'bg-accent' : 'group-hover/resize:bg-accent/50'
+                  'absolute top-0 right-0 h-full w-px transition-colors',
+                  draggingLeft ? 'bg-accent' : 'bg-border/20 group-hover/resize:bg-accent/50'
                 )}
-                style={{ width: '1.5px' }}
               />
             </div>
           </motion.div>
@@ -911,11 +910,17 @@ export function AppShell(): React.JSX.Element {
       </AnimatePresence>
 
       {/* Inset main content — transparent flex container for floating boxes */}
+      {/* The resize line sits exactly in the middle of the gap between a side
+          panel and the content. A panel pads its content 8px, and its 1px line
+          is the last pixel of that padding, so 7px of air are left inside it;
+          the content keeps the same 7px outside it (8px less the line). With
+          no panel open, the content keeps a plain 8px from the window edge.
+          Measured, not eyeballed: 6.5px against 8px read as visibly uneven. */}
       <div
         className={cn(
-          'flex-1 flex flex-col min-w-0 my-2 gap-2 z-10 transition-[margin] duration-200',
-          sidebarOpen ? 'ml-1' : 'ml-2',
-          fileTreeOpen ? 'mr-1' : 'mr-2'
+          'flex-1 flex flex-col min-w-0 my-2 gap-2 z-10',
+          sidebarOpen ? 'ml-[calc(0.5rem-1px)]' : 'ml-2',
+          fileTreeOpen ? 'mr-[calc(0.5rem-1px)]' : 'mr-2'
         )}
       >
         {/* Toolbar — its own floating card. Its row height is a token because
@@ -1067,10 +1072,9 @@ export function AppShell(): React.JSX.Element {
             >
               <div
                 className={cn(
-                  'absolute top-0 left-0 h-full transition-colors border-l border-border/20',
-                  draggingRight ? 'bg-accent' : 'group-hover/resize:bg-accent/50'
+                  'absolute top-0 left-0 h-full w-px transition-colors',
+                  draggingRight ? 'bg-accent' : 'bg-border/20 group-hover/resize:bg-accent/50'
                 )}
-                style={{ width: '1.5px' }}
               />
             </div>
             <SidePanel />
