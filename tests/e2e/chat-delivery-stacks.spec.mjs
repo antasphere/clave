@@ -17,9 +17,9 @@ import { until, fixturePath, REPO } from './harness.mjs'
    - consecutive messages from other tabs stack in one deck, and the next one
      after the agent spoke starts another; a deck the reader opened stays open
      as it grows; human turns and decks keep their order;
-   - the view reopened on its history shows the same thing;
    - the expansion survives a virtualised remount, and the deck fits a narrow
-     pane in the four themes. */
+     pane in the four themes.
+   A conversation restored from its transcript is chat-delivery-history's. */
 
 const CHOICES = ['Merge the fix now.', 'Wait for the verifier.', 'Drop the change.']
 
@@ -183,21 +183,31 @@ export async function run(t) {
       const fresh = await third.getAttribute('data-messages')
       await third.scrollIntoViewIfNeeded()
       await third.locator('> summary').click()
-      assert.equal(await third.evaluate((el) => el.open), true)
+      // The toggle event that mounts the bodies follows the click in its own
+      // task: wait for the first body before the deck is grown.
+      await third.locator('[data-from="tab"]').first().waitFor()
       await inject(fixture, record.id, [deliveredMessage('Lane verifier', 'Sixth payload.')])
-      assert.ok(await until(async () => (await third.getAttribute('data-messages')) === '2'))
-      const grown = await third.evaluate((el) => ({
-        open: el.open,
-        bodies: el.querySelectorAll('[data-from="tab"]').length,
-        messages: el.dataset.messages
-      }))
-      grown.fresh = fresh
+      const state = () =>
+        third.evaluate((el) => ({
+          open: el.open,
+          bodies: el.querySelectorAll('[data-from="tab"]').length,
+          messages: el.dataset.messages
+        }))
+      await until(async () => {
+        const now = await state()
+        return now.open && now.bodies === 2 && now.messages === '2'
+      })
+      const grown = { ...(await state()), fresh }
       t.check(
         `${mode}: a message arriving after the agent spoke starts a new deck, and a deck the reader opened stays open as it grows`,
         fresh === '1' && grown.open && grown.bodies === 2 && grown.messages === '2',
         grown
       )
-      await third.locator('> summary').press('Space')
+      await third.locator('> summary').click()
+      assert.ok(
+        await until(async () => !(await third.evaluate((el) => el.open))),
+        'the grown deck closes again'
+      )
 
       // Human turns and decks keep their order, and every answer is on screen.
       await inject(fixture, record.id, [
@@ -231,25 +241,11 @@ export async function run(t) {
         JSON.stringify(expected.slice(expected.length - sequence.length)) ===
           JSON.stringify(sequence)
       const sequence = await order()
+      const closed = await allClosed()
       t.check(
         `${mode}: every answer after a deck is on screen, and human turns and decks keep their order`,
-        endsExpected(sequence) && (await allClosed()),
-        { sequence }
-      )
-
-      // Reopened on its history, the view shows the same transcript.
-      await win.evaluate(() => window.electronAPI.pluginsDisable('clave.chat-view'))
-      await win.locator('.xterm').waitFor()
-      await win.evaluate(() =>
-        window.electronAPI.pluginsEnable('clave.chat-view', ['sessions.read', 'sessions.write'])
-      )
-      await win.locator(`[data-testid="${mode}-view"] textarea:not(:disabled)`).waitFor()
-      await view.getByText('My follow-up.', { exact: true }).waitFor()
-      const reopened = { sequence: await order(), closed: await allClosed() }
-      t.check(
-        `${mode}: reopened on its history, the decks come back collapsed and the agent's words stay on screen in the same order`,
-        endsExpected(reopened.sequence) && reopened.closed,
-        reopened
+        endsExpected(sequence) && closed,
+        { sequence, closed }
       )
 
       // The deck fits a narrow pane in the four themes, and respects reduced motion.
