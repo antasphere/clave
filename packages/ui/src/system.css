@@ -5500,6 +5500,27 @@ details[open] > .chat-approval-items {
   color: var(--text-secondary);
   white-space: nowrap;
 }
+/* Every item keeps its width: one that could shrink let its text spill over
+   its neighbours (the account's "79% left" over the pin and attach buttons)
+   without the row ever counting as too wide, so useFitRow dropped nothing. */
+.term-status > *,
+.term-status > .term-fit > * {
+  flex-shrink: 0;
+}
+/* An item the row dropped for room (useFitRow in fit.ts). */
+.term-status [data-fit-hidden] {
+  display: none;
+}
+/* A wrapper the row can drop, with no box of its own. */
+.term-fit {
+  display: contents;
+}
+/* The effort and the mode follow the model as one run of chips: their own
+   padding already spaces them, so they give back the row's gap. With the gap
+   on top, the space before the mode read twice the space before the effort. */
+.term-status .term-chip-next {
+  margin-left: calc(var(--spacing) * -3);
+}
 .term-status .chat-composer-tool[data-active] {
   color: var(--color-accent);
 }
@@ -5508,6 +5529,9 @@ details[open] > .chat-approval-items {
   align-items: center;
   gap: var(--spacing);
   margin-left: auto;
+  /* Never squeezed: the row drops its other items to keep these two. Its
+     overflow: hidden would otherwise let it shrink to nothing first. */
+  flex-shrink: 0;
   overflow: hidden;
   text-overflow: ellipsis;
 }
