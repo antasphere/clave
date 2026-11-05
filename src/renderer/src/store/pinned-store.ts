@@ -5,6 +5,7 @@ import { launchSession } from '../lib/launch-session'
 import type { AgentSetup } from './launch-prefs'
 import { resolveAccountRef, type AccountProvider } from '../lib/switch-account'
 import { getClaudeProfile } from './claude-profile-store'
+import { useAccountPolicyStore } from './account-policy-store'
 import { getCodexAccount } from './codex-account-store'
 import { substituteTokens } from './prompt-tokens'
 import type {
@@ -64,9 +65,15 @@ function resolvePinnedAccount(
       ? 'claude'
       : null
   if (!provider) return {}
+  // With "Use the recommended account" on, a pinned group starts every agent
+  // tab on the recommendation. The `account` a .clave carries is mostly the
+  // one the tab happened to run on when the group was saved (pinnedAccountField
+  // writes it from the live session), so honouring it replayed yesterday's
+  // account instead of the one with the headroom.
+  const ref = useAccountPolicyStore.getState().useRecommendedAccount ? undefined : session.account
   let account: { id: string; label: string }
   try {
-    account = resolveAccountRef(provider, session.account)
+    account = resolveAccountRef(provider, ref)
   } catch {
     account = provider === 'codex' ? getCodexAccount('default') : getClaudeProfile('default')
     void window.electronAPI?.showNotification?.({
