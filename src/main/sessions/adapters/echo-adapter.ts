@@ -14,6 +14,7 @@ import type {
   SpawnSpec,
   Unsubscribe
 } from '../adapter'
+import type { HistoryItem } from '../../../shared/session-model'
 
 // Echo 1 takes efforts and Echo 2 none, so the effort chip can be seen to
 // come and go with the model.
@@ -43,12 +44,28 @@ export class EchoAdapter implements SessionAdapter {
   readonly transports = ['events'] as const
   readonly images = true
   private handles = new Map<string, EventEmitter>()
+  /** Every event a session's stream carried, oldest first: what a view that
+   *  opens on the session later reads as its past, the way a Claude chat
+   *  reads its transcript. Without it a view reopened on an echo session
+   *  (a plugin switched off and on, a window reloaded) started empty. */
+  private pasts = new Map<string, HistoryItem[]>()
   private sequence = 0
 
   prepare(spec: SpawnSpec): SessionHandle {
     if (this.handles.has(spec.id)) throw new Error(`Echo session already exists: ${spec.id}`)
-    this.handles.set(spec.id, new EventEmitter())
+    const emitter = new EventEmitter()
+    const past: HistoryItem[] = []
+    emitter.on('stream', (frame: SessionAdapterEvents['stream']) => {
+      if (frame.kind === 'event') past.push({ event: frame.event, at: Date.now() })
+    })
+    this.handles.set(spec.id, emitter)
+    this.pasts.set(spec.id, past)
     return { id: spec.id }
+  }
+
+  history(handle: SessionHandle): HistoryItem[] {
+    this.emitter(handle)
+    return [...(this.pasts.get(handle.id) ?? [])]
   }
 
   async spawn(spec: SpawnSpec): Promise<SessionHandle> {
@@ -130,6 +147,7 @@ export class EchoAdapter implements SessionAdapter {
     const emitter = this.handles.get(handle.id)
     if (!emitter) return
     this.handles.delete(handle.id)
+    this.pasts.delete(handle.id)
     emitter.emit('exit', 0)
     emitter.removeAllListeners()
   }

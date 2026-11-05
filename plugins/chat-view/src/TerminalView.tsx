@@ -430,22 +430,7 @@ function TerminalTurn({
               key={key}
               group={block}
               id={key}
-              renderEntry={(entry) =>
-                entry.kind === 'tool-group' ? (
-                  <ToolRow
-                    group={entry}
-                    live={
-                      key === liveRun &&
-                      entry ===
-                        block.exchanges
-                          .at(-1)
-                          ?.responses.findLast((response) => response.kind === 'tool-group')
-                    }
-                  />
-                ) : (
-                  <EntryRow entry={entry} onError={onError} />
-                )
-              }
+              renderEntry={(entry) => <EntryRow entry={entry} onError={onError} />}
             />
           ) : block.kind === 'tool-group' ? (
             <ToolRow key={key} group={block} live={key === liveRun} />

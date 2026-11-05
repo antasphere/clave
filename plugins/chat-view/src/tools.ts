@@ -17,14 +17,18 @@ export interface ToolGroup {
   id: string
   tools: ToolEntry[]
 }
-export type ExchangeResponse = Extract<Entry, { kind: 'assistant' }> | ToolGroup
-export interface DeliveryExchange {
-  message: Extract<Entry, { kind: 'user' }>
-  responses: ExchangeResponse[]
-}
+/** A message another tab sent, recognised by its provenance header and by
+ *  nothing else. */
+export type DeliveryEntry = Extract<Entry, { kind: 'user' }>
+/** A run of consecutive messages from other tabs: one deck that opens to them.
+ *  It holds the messages ALONE. What the agent says and does after them is the
+ *  transcript's, in its place: on 5 November 2026 a deck that captured every
+ *  reply and tool run until the reader wrote again hid, closed, the question
+ *  the agent was asking the reader. Who the agent's words are for is never
+ *  read off the words, the final flag or the turn before them. */
 export interface DeliveryGroup {
   kind: 'delivery-group'
-  exchanges: DeliveryExchange[]
+  messages: DeliveryEntry[]
 }
 /** A run of approvals the reader allowed, one row that opens to its receipts
  *  (`approvals.ts` says which rows fold). Two or more: a lone one stays the
@@ -51,37 +55,33 @@ export function visibleEntries(entries: Entry[]): Entry[] {
   )
 }
 
-/** A peer's delivery owns the replies and tools that follow it. A human
- *  message ends that context; permissions and errors stay outside the deck so
- *  actionable notices can never be concealed. Approvals the reader allowed
- *  fold into one run (the wall of identical grey rows of 3 November 2026);
- *  what the reader must still see on its own (a request waiting, a refusal,
- *  one settled from another client, a question) keeps its row and ends the
- *  run, and so do a message and an error; the tool an approval was for does
- *  not, since it joined the open run of tools before the row. */
+/** Messages from other tabs stack in one deck while they follow one another;
+ *  anything else ends the deck and stays in the transcript: the agent's words
+ *  (final or still streaming), its tools, a permission, an error, the reader's
+ *  message. A message from another tab ends a run of tools like any message.
+ *  Approvals the reader allowed fold into one run (the wall of identical grey
+ *  rows of 3 November 2026); what the reader must still see on its own (a
+ *  request waiting, a refusal, one settled from another client, a question)
+ *  keeps its row and ends the run, and so do a message and an error; the tool
+ *  an approval was for does not, since it joined the open run of tools before
+ *  the row. */
 export function groupEntries(entries: Entry[]): Block[] {
   const blocks: Block[] = []
   let open: ToolGroup | undefined
   let allowed: ApprovalGroup | undefined
   let deliveries: DeliveryGroup | undefined
-  let exchange: DeliveryExchange | undefined
   for (const entry of entries) {
     if (entry.kind === 'user' && parseDelivery(entry.text)) {
       if (!deliveries) {
-        deliveries = { kind: 'delivery-group', exchanges: [] }
+        deliveries = { kind: 'delivery-group', messages: [] }
         blocks.push(deliveries)
       }
-      exchange = { message: entry, responses: [] }
-      deliveries.exchanges.push(exchange)
+      deliveries.messages.push(entry)
       open = undefined
       allowed = undefined
       continue
     }
-    if (entry.kind === 'user' || entry.kind === 'permission' || entry.kind === 'error') {
-      if (exchange) open = undefined
-      deliveries = undefined
-      exchange = undefined
-    }
+    deliveries = undefined
     if (entry.kind === 'permission' && settledApproval(entry)) {
       if (!allowed) {
         allowed = { kind: 'approval-group', approvals: [] }
@@ -94,14 +94,12 @@ export function groupEntries(entries: Entry[]): Block[] {
     if (entry.kind === 'tool') {
       if (!open) {
         open = { kind: 'tool-group', id: entry.id, tools: [] }
-        if (exchange) exchange.responses.push(open)
-        else blocks.push(open)
+        blocks.push(open)
       }
       open.tools.push(entry)
       continue
     }
-    if (exchange && entry.kind === 'assistant') exchange.responses.push(entry)
-    else blocks.push(entry)
+    blocks.push(entry)
     if (entry.kind === 'user' || entry.kind === 'assistant') open = undefined
   }
   // A run of one is the row it always was.
@@ -122,7 +120,7 @@ export function blockKey(block: Block, ordinal: (entry: Entry) => number | undef
     case 'approval-group':
       return `approvals-${ordinal(block.approvals[0])}`
     case 'delivery-group':
-      return `deliveries-${ordinal(block.exchanges[0].message)}`
+      return `deliveries-${ordinal(block.messages[0])}`
     default:
       return `entry-${ordinal(block)}`
   }

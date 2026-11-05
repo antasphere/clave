@@ -5,6 +5,24 @@ import { build } from 'esbuild'
 import { openChat, inject } from './chat-view.spec.mjs'
 import { until, fixturePath, REPO } from './harness.mjs'
 
+/* Messages from other tabs fold into decks; the agent's own words never do.
+   On 5 November 2026 a collapsed deck hid an explanation, three numbered
+   choices and "So I'm waiting on one answer from you: option 1, 2 or 3.",
+   because the deck captured every reply and every tool run after a message
+   from another tab until the reader wrote again. What this spec holds, in
+   both presentations:
+   - with every deck collapsed, the agent's explanation and its choices are
+     on screen, while they stream and once the turn is final;
+   - a tool run after a message from another tab keeps its own row;
+   - consecutive messages from other tabs stack in one deck, and the next one
+     after the agent spoke starts another; a deck the reader opened stays open
+     as it grows; human turns and decks keep their order;
+   - the view reopened on its history shows the same thing;
+   - the expansion survives a virtualised remount, and the deck fits a narrow
+     pane in the four themes. */
+
+const CHOICES = ['Merge the fix now.', 'Wait for the verifier.', 'Drop the change.']
+
 export async function run(t) {
   const modulePath = fixturePath('chat-deliveries-fixture.mjs')
   await build({
@@ -17,7 +35,9 @@ export async function run(t) {
       js: "import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);"
     }
   })
-  const { deliveredMessage, loadChatDeliveries } = await import(pathToFileURL(modulePath).href)
+  const { deliveredMessage, loadChatDeliveries, EXPLANATION_END } = await import(
+    pathToFileURL(modulePath).href
+  )
   for (const mode of ['chat', 'terminal']) {
     const chat = await openChat(
       `delivery-stacks-${mode}`,
@@ -27,29 +47,98 @@ export async function run(t) {
     const { win, record, fixture } = chat
     const view = win.locator(`[data-testid="${mode}-view"]`)
     const stacks = view.locator('.chat-delivery-stack')
-    const first = view.locator('.chat-delivery-stack[data-messages="3"]')
+    const toolRows = view.locator(mode === 'chat' ? '.chat-tool-run' : '.term-tools')
+    /** The agent's turn holding `text`, mounted in the transcript or not at all. */
+    const said = (text) => view.locator('.chat-turn[data-role="assistant"]', { hasText: text })
+    const visible = (locator) => until(() => locator.isVisible())
+    /** How many messages from other tabs the decks hold between them. */
+    const stacked = () =>
+      stacks.evaluateAll((els) => els.reduce((n, el) => n + Number(el.dataset.messages), 0))
+    const allClosed = () => stacks.evaluateAll((els) => els.every((el) => !el.open))
+    /** The deck whose cover previews `text`: a handle that survives the
+     *  virtualiser unmounting the decks above it, which a position does not. */
+    const deckOf = (text) =>
+      stacks.filter({ has: win.locator('.chat-delivery-preview', { hasText: text }) })
+    /** The transcript's order as mounted (the virtualiser keeps the end of the
+     *  conversation in the DOM): decks by their size, turns by their first words. */
+    const order = () =>
+      view
+        .locator(
+          '.chat-delivery-stack, .chat-turn[data-role="assistant"], .chat-turn[data-role="user"]:not([data-from="tab"])'
+        )
+        .evaluateAll((els) =>
+          els.map((el) =>
+            el.classList.contains('chat-delivery-stack')
+              ? `deck of ${el.dataset.messages}`
+              : el.textContent.trim().split('\n')[0].slice(0, 40)
+          )
+        )
     try {
       const receipt = await loadChatDeliveries(
         (events) => inject(fixture, record.id, events),
         async () => {
-          await first.waitFor()
+          assert.ok(
+            await until(async () => (await stacked()) === 4),
+            'four messages from other tabs arrived'
+          )
         }
       )
       assert.ok(receipt)
       console.log(JSON.stringify({ scenario: 'chat/cross-session-stacks', mode, receipt }))
-      assert.equal(await first.evaluate((el) => el.open), false)
+
+      // The regression. Every deck is closed, and the agent's explanation to
+      // the reader, still streaming, is on screen with its three choices.
+      const streaming = {
+        closed: await allClosed(),
+        explanation: await visible(said('Here is where things stand.')),
+        choices: []
+      }
+      for (const choice of CHOICES) streaming.choices.push(await visible(said(choice)))
+      t.check(
+        `${mode}: with every deck collapsed, the agent's explanation and its three choices are on screen while it streams`,
+        streaming.closed && streaming.explanation && streaming.choices.every(Boolean),
+        streaming
+      )
+      await inject(fixture, record.id, [
+        { type: 'assistant_text', delta: EXPLANATION_END, final: true }
+      ])
+      const final = { question: await visible(said(EXPLANATION_END)), closed: await allClosed() }
+      t.check(
+        `${mode}: the question the agent asks the reader is on screen once the turn is final, the decks still collapsed`,
+        final.question && final.closed,
+        final
+      )
+      const rows = await toolRows.count()
+      t.check(
+        `${mode}: a tool run after a message from another tab keeps its own row in the transcript`,
+        rows === 2,
+        { rows }
+      )
+      const shape = {
+        decks: await stacks.evaluateAll((els) => els.map((el) => el.dataset.messages)),
+        reply: await visible(said('Reply to the coordinator.')),
+        progress: await view.getByText('I will report progress here.', { exact: true }).isVisible(),
+        human: await view.getByText('Keep my conversation readable.', { exact: true }).isVisible()
+      }
+      t.check(
+        `${mode}: consecutive messages from other tabs stack in one deck, and the agent's reply between them stays in the transcript`,
+        shape.decks.join(',') === '1,3' && shape.reply && shape.progress && shape.human,
+        shape
+      )
+
+      // The deck itself: its cover, its layered cards, its keyboard expansion.
+      const deck = view.locator('.chat-delivery-stack[data-messages="3"]')
+      assert.equal(await deck.evaluate((el) => el.open), false)
       assert.equal(
         await view.locator('[data-from="tab"]').count(),
         0,
-        'closed message and response bodies stay unmounted'
+        'closed message bodies stay unmounted'
       )
       assert.match(
-        await first.locator('> summary').innerText(),
-        /Agent conversation.*3 exchanges.*Wave coordinator.*Lane verifier.*Another agent/s
+        await deck.locator('> summary').innerText(),
+        /Agent conversation.*3 messages.*Lane verifier.*Another agent.*Wave coordinator/s
       )
-      assert.ok(await view.getByText('Keep my conversation readable.', { exact: true }).isVisible())
-      assert.ok(await view.getByText('I will report progress here.', { exact: true }).isVisible())
-      const geometry = await first.evaluate((el) => {
+      const geometry = await deck.evaluate((el) => {
         const cover = el.querySelector('.chat-delivery-cover').getBoundingClientRect()
         return [...el.querySelectorAll('.chat-delivery-peek')].map((peek) => {
           const box = peek.getBoundingClientRect()
@@ -59,86 +148,112 @@ export async function run(t) {
       assert.equal(geometry.length, 2)
       assert.ok(geometry[0].inset > 0 && geometry[0].below > 0)
       assert.ok(geometry[1].inset > geometry[0].inset && geometry[1].below > geometry[0].below)
-      t.check(`${mode}: closed deck has inset layered cards; human turns stay visible`, true)
-
-      await first.locator('> summary').focus()
-      await first.locator('> summary').press('Enter')
-      await first.locator('.chat-delivery-items').waitFor()
-      const texts = await first.locator('[data-from="tab"]').allTextContents()
-      assert.equal(texts.length, 3)
-      assert.match(texts[0], /First payload.*Recovery details/s)
-      assert.match(texts[1], /Second payload, no omitted words/)
-      assert.match(texts[2], /Third anonymous payload/)
-      assert.ok(texts.every((s) => !s.includes('[Message from')))
-      assert.equal(await first.locator('.chat-exchange-card').count(), 3)
-      assert.match(
-        await first.locator('.chat-exchange-card').nth(0).innerText(),
-        /Reply to the coordinator/
-      )
-      assert.match(
-        await first.locator('.chat-exchange-card').nth(1).innerText(),
-        /Reply to the verifier/
-      )
-      assert.equal(
-        await first.locator(mode === 'chat' ? '.chat-tool-run' : '.term-tools').count(),
-        1
-      )
-      const command = first.locator(mode === 'chat' ? '.chat-tool-run' : '.term-tools')
-      await command.locator('> summary').click()
-      assert.ok(await command.evaluate((el) => el.open))
-      await inject(fixture, record.id, [deliveredMessage('Wave coordinator', 'Fourth payload.')])
-      const grown = view.locator('.chat-delivery-stack[data-messages="4"]')
-      await grown.waitFor()
-      assert.equal(await grown.evaluate((el) => el.open), true)
-      assert.equal(await grown.locator('[data-from="tab"]').count(), 4)
       t.check(
-        `${mode}: keyboard expansion preserves full text, senders and order as the stack grows`,
+        `${mode}: a closed deck counts its messages, names its senders and shows inset layered cards`,
         true
       )
-      await grown.locator('> summary').press('Space')
 
+      await deck.locator('> summary').focus()
+      await deck.locator('> summary').press('Enter')
+      await deck.locator('.chat-delivery-items').waitFor()
+      const texts = await deck.locator('[data-from="tab"]').allTextContents()
+      assert.equal(texts.length, 3)
+      assert.match(texts[0], /Second payload, no omitted words/)
+      assert.match(texts[1], /Third anonymous payload/)
+      assert.match(texts[2], /Fourth payload, the merge is pre-authorised/)
+      assert.ok(texts.every((s) => !s.includes('[Message from')))
+      assert.equal(await deck.locator('.chat-exchange-card').count(), 3)
+      assert.equal(
+        await deck.locator('.chat-turn[data-role="assistant"]').count(),
+        0,
+        'the deck holds no words of the agent'
+      )
+      await deck.locator('> summary').press('Space')
+      assert.equal(await deck.evaluate((el) => el.open), false)
+      t.check(
+        `${mode}: Enter opens the deck on its full messages, senders and order, with none of the agent's words; Space closes it`,
+        true
+      )
+
+      // A message arriving after the agent spoke starts a new deck, and a deck
+      // the reader opened stays open as consecutive messages stack on it.
+      await inject(fixture, record.id, [deliveredMessage('Wave coordinator', 'Fifth payload.')])
+      const third = deckOf('Fifth payload.')
+      await third.waitFor()
+      const fresh = await third.getAttribute('data-messages')
+      await third.scrollIntoViewIfNeeded()
+      await third.locator('> summary').click()
+      assert.equal(await third.evaluate((el) => el.open), true)
+      await inject(fixture, record.id, [deliveredMessage('Lane verifier', 'Sixth payload.')])
+      assert.ok(await until(async () => (await third.getAttribute('data-messages')) === '2'))
+      const grown = await third.evaluate((el) => ({
+        open: el.open,
+        bodies: el.querySelectorAll('[data-from="tab"]').length,
+        messages: el.dataset.messages
+      }))
+      grown.fresh = fresh
+      t.check(
+        `${mode}: a message arriving after the agent spoke starts a new deck, and a deck the reader opened stays open as it grows`,
+        fresh === '1' && grown.open && grown.bodies === 2 && grown.messages === '2',
+        grown
+      )
+      await third.locator('> summary').press('Space')
+
+      // Human turns and decks keep their order, and every answer is on screen.
       await inject(fixture, record.id, [
-        { type: 'assistant_text', delta: 'An answer to the fourth agent message.', final: true },
-        { type: 'tool_call', id: 'stack-command', name: 'Bash', input: { command: 'echo done' } },
-        { type: 'tool_result', id: 'stack-command', output: 'done' },
+        { type: 'assistant_text', delta: 'An answer after the sixth message.', final: true },
         { type: 'user_message', text: 'A new human question.' },
         { type: 'assistant_text', delta: 'A human-facing progress update.', final: true },
         deliveredMessage('Lane verifier', 'Lone payload.'),
         { type: 'assistant_text', delta: 'An answer to the lone agent.', final: true },
         { type: 'user_message', text: 'My follow-up.' }
       ])
-      const lone = view.locator('.chat-delivery-stack[data-messages="1"]')
-      await lone.waitFor()
-      // The fixture emits a sequence of frames; seeing the delivery does not
-      // mean the renderer has received the human turn that follows it yet.
       await view.getByText('My follow-up.', { exact: true }).waitFor()
-      assert.equal(await lone.evaluate((el) => el.open), false)
-      assert.equal(await stacks.count(), 2)
-      assert.ok(
-        await view.getByText('A human-facing progress update.', { exact: true }).isVisible()
-      )
-      assert.ok(await view.getByText('My follow-up.', { exact: true }).isVisible())
-      // Closing can let the virtualiser remount this deck. Its lazy bodies
-      // need not survive while closed; inspect them after explicitly opening.
-      await grown.locator('> summary').click()
-      assert.ok(
-        await until(
-          async () =>
-            (await grown.locator(mode === 'chat' ? '.chat-tool-run' : '.term-tools').count()) === 2
-        )
-      )
-      assert.match(await grown.textContent(), /An answer to the fourth agent message/)
-      await grown.locator('> summary').click()
-      assert.equal(
-        await lone.locator('.chat-exchange-card').count(),
-        0,
-        'closed replies remain unmounted'
-      )
+      const expected = [
+        'Keep my conversation readable.',
+        'I will report progress here.',
+        'deck of 1',
+        'Reply to the coordinator.',
+        'deck of 3',
+        'Here is where things stand.',
+        'deck of 2',
+        'An answer after the sixth message.',
+        'A new human question.',
+        'A human-facing progress update.',
+        'deck of 1',
+        'An answer to the lone agent.',
+        'My follow-up.'
+      ]
+      /** The mounted rows are the end of the expected order, from the deck of
+       *  two at least: what follows the agent's explanation is the point. */
+      const endsExpected = (sequence) =>
+        sequence.length >= expected.length - expected.indexOf('deck of 2') &&
+        JSON.stringify(expected.slice(expected.length - sequence.length)) ===
+          JSON.stringify(sequence)
+      const sequence = await order()
       t.check(
-        `${mode}: replies and commands belong to the agent deck; human turns divide decks`,
-        true
+        `${mode}: every answer after a deck is on screen, and human turns and decks keep their order`,
+        endsExpected(sequence) && (await allClosed()),
+        { sequence }
       )
 
+      // Reopened on its history, the view shows the same transcript.
+      await win.evaluate(() => window.electronAPI.pluginsDisable('clave.chat-view'))
+      await win.locator('.xterm').waitFor()
+      await win.evaluate(() =>
+        window.electronAPI.pluginsEnable('clave.chat-view', ['sessions.read', 'sessions.write'])
+      )
+      await win.locator(`[data-testid="${mode}-view"] textarea:not(:disabled)`).waitFor()
+      await view.getByText('My follow-up.', { exact: true }).waitFor()
+      const reopened = { sequence: await order(), closed: await allClosed() }
+      t.check(
+        `${mode}: reopened on its history, the decks come back collapsed and the agent's words stay on screen in the same order`,
+        endsExpected(reopened.sequence) && reopened.closed,
+        reopened
+      )
+
+      // The deck fits a narrow pane in the four themes, and respects reduced motion.
+      await deck.scrollIntoViewIfNeeded()
       const surfaces = new Set()
       for (const theme of ['dark', 'light', 'coffee', 'charcoal']) {
         const surface = await win.evaluate(async (theme) => {
@@ -156,17 +271,18 @@ export async function run(t) {
         )
         surfaces.add(surface)
         await win.setViewportSize({ width: 850, height: 700 })
-        assert.ok(await grown.locator('> summary').isVisible())
+        await deck.scrollIntoViewIfNeeded()
+        assert.ok(await deck.locator('> summary').isVisible())
         assert.ok(
-          await grown.locator('> summary').evaluate((el) => el.scrollWidth <= el.clientWidth)
+          await deck.locator('> summary').evaluate((el) => el.scrollWidth <= el.clientWidth)
         )
       }
       assert.equal(surfaces.size, 4, 'four different active palettes were exercised')
-      t.check(`${mode}: stack fits a narrow pane in all four themes`, true)
+      t.check(`${mode}: the deck fits a narrow pane in all four themes`, true)
 
       await win.emulateMedia({ reducedMotion: 'reduce' })
       assert.deepEqual(
-        await grown.evaluate((el) => [
+        await deck.evaluate((el) => [
           getComputedStyle(el).transitionDuration,
           getComputedStyle(el, '::details-content').transitionDuration,
           getComputedStyle(el.querySelector('.chat-delivery-peek')).transitionDuration
@@ -175,8 +291,9 @@ export async function run(t) {
       )
       await win.emulateMedia({ reducedMotion: 'no-preference' })
 
-      await grown.locator('> summary').click()
-
+      // The expansion survives a virtualised remount.
+      await deck.locator('> summary').click()
+      assert.equal(await deck.evaluate((el) => el.open), true)
       await inject(
         fixture,
         record.id,
@@ -191,18 +308,24 @@ export async function run(t) {
         el.scrollTop = el.scrollHeight
       })
       assert.ok(
-        await until(async () => (await grown.count()) === 0),
-        'stack unmounts outside the viewport'
+        await until(async () => (await deck.count()) === 0),
+        'the deck unmounts outside the viewport'
       )
       await scroller.evaluate((el) => {
         el.scrollTop = 0
       })
-      await grown.waitFor()
-      assert.equal(await grown.evaluate((el) => el.open), true)
-      assert.equal(await grown.locator('[data-from="tab"]').count(), 4)
-      await grown.locator('> summary').press('Space')
-      assert.equal(await grown.evaluate((el) => el.open), false)
-      t.check(`${mode}: expansion survives virtualised remount and Space collapses it`, true)
+      await deck.waitFor()
+      const remounted = {
+        open: await deck.evaluate((el) => el.open),
+        bodies: await deck.locator('[data-from="tab"]').count()
+      }
+      await deck.locator('> summary').press('Space')
+      remounted.closedAgain = !(await deck.evaluate((el) => el.open))
+      t.check(
+        `${mode}: the expansion survives a virtualised remount, and Space collapses it`,
+        remounted.open && remounted.bodies === 3 && remounted.closedAgain,
+        remounted
+      )
     } finally {
       await chat.close()
     }
