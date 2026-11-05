@@ -151,7 +151,11 @@ export function TerminalGrid(): React.JSX.Element {
   const agentSessionIds = new Set(
     sessions.filter((s) => s.sessionType === 'agent').map((s) => s.id)
   )
-  const selectedFileTabIds = selectedSessionIds.filter((id) => isFileTabId(id))
+  const selectedFileTabIds = selectedSessionIds.filter(
+    (id) =>
+      isFileTabId(id) &&
+      fileTabs.some((f) => f.id === id && inActiveWorkspace(f, activeWorkspaceId))
+  )
   // A dormant chat wakes the first time it is shown, and stays mounted after.
   useEffect(() => {
     const woken = sessions.filter(
@@ -420,7 +424,8 @@ export function TerminalGrid(): React.JSX.Element {
             the pane rather than left to collapse to zero, which would give away
             the box the `visibility` choice is there to keep. */}
         {fileTabs.map((fileTab) => {
-          const isSelected = selectedFileTabIds.includes(fileTab.id)
+          const isSelected =
+            selectedFileTabIds.includes(fileTab.id) && inActiveWorkspace(fileTab, activeWorkspaceId)
           return (
             <div
               key={fileTab.id}

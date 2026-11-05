@@ -436,3 +436,71 @@ describe('reordering workspaces', () => {
     )
   })
 })
+
+describe('window-local viewers when a server workspace disappears', () => {
+  it.each(['local', 'server', 'none'] as const)(
+    'reassigns the viewer to the %s landing workspace',
+    async (target) => {
+      const removed = serverWs('srv', 'removed')
+      const kept = serverWs('srv', 'kept')
+      localAtBoot = target === 'local' ? [LOCAL] : []
+      shownAtBoot = removed.id
+      await actions.bootWorkspaces()
+      actions.applyServerWorkspaces('srv', [removed, kept])
+      const { useSessionStore } = await import('../store/session-store')
+      useSessionStore.setState({
+        fileTabs: [
+          { id: 'file-remote-viewer', filePath: '/note.md', name: 'Note', workspaceId: removed.id }
+        ]
+      })
+      actions.applyServerWorkspaces('srv', target === 'none' ? [] : [kept])
+      await tick()
+      expect(useSessionStore.getState().fileTabs[0].workspaceId).toBe(
+        target === 'local' ? LOCAL.id : target === 'server' ? kept.id : undefined
+      )
+      useSessionStore.setState({ fileTabs: [] })
+    }
+  )
+  it('reassigns a hidden workspace viewer when its server is removed', async () => {
+    await actions.bootWorkspaces()
+    const removed = serverWs('srv', 'removed')
+    heardWorkspaces!({ serverId: 'srv', workspaces: [removed] })
+    const { useSessionStore } = await import('../store/session-store')
+    useSessionStore.setState({
+      fileTabs: [
+        { id: 'file-removed-server', filePath: '/note.md', name: 'Note', workspaceId: removed.id }
+      ]
+    })
+    heardConnections!([])
+    await tick()
+    expect(useSessionStore.getState().fileTabs[0].workspaceId).toBe(LOCAL.id)
+    useSessionStore.setState({ fileTabs: [] })
+  })
+})
+
+it('keeps other viewers in place and rehomes only to the active workspace', async () => {
+  const active = { ...LOCAL, id: 'active-second', rootDir: '/second', name: 'Second' }
+  localAtBoot = [LOCAL, active]
+  shownAtBoot = active.id
+  await actions.bootWorkspaces()
+  const removed = serverWs('srv', 'removed')
+  const kept = serverWs('srv', 'kept')
+  actions.applyServerWorkspaces('srv', [removed, kept])
+  const { useSessionStore } = await import('../store/session-store')
+  useSessionStore.setState({
+    fileTabs: [
+      { id: 'file-removed', filePath: '/removed.md', name: 'Removed', workspaceId: removed.id },
+      { id: 'file-local', filePath: '/local.md', name: 'Local', workspaceId: LOCAL.id },
+      { id: 'file-kept', filePath: '/kept.md', name: 'Kept', workspaceId: kept.id }
+    ]
+  })
+  actions.applyServerWorkspaces('srv', [kept])
+  await tick()
+  expect(useSessionStore.getState().fileTabs.map((f) => [f.id, f.workspaceId])).toEqual([
+    ['file-removed', active.id],
+    ['file-local', LOCAL.id],
+    ['file-kept', kept.id]
+  ])
+  expect(store.useWorkspaceStore.getState().activeWorkspaceId).toBe(active.id)
+  useSessionStore.setState({ fileTabs: [] })
+})

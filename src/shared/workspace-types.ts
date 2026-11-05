@@ -92,3 +92,19 @@ export interface WorkspaceStamp {
 
 /** The state as `workspace:load` answers it: the file, stamped. */
 export interface WorkspaceState extends WorkspaceStateFile, WorkspaceStamp {}
+
+/** Legacy records have no workspace stamp. Infer from their own path before
+ * consulting whichever workspace the window happens to show now. */
+export function workspaceForPath(
+  workspaces: readonly { id: string; rootDir: string }[],
+  cwd: string | undefined
+): string | undefined {
+  if (!cwd) return undefined
+  const path = cwd.replace(/\\/g, '/').replace(/\/+$/, '')
+  return workspaces
+    .filter((w) => {
+      const root = w.rootDir.replace(/\\/g, '/').replace(/\/+$/, '')
+      return path === root || path.startsWith(`${root}/`)
+    })
+    .sort((a, b) => b.rootDir.length - a.rootDir.length)[0]?.id
+}
