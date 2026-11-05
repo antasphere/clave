@@ -260,9 +260,14 @@ export async function run(t) {
           input: { command: 'echo between' }
         },
         { type: 'tool_result', id: 'between-decks', output: 'between' },
-        deliveredMessage('Lane verifier', 'Eighth payload.')
+        deliveredMessage('Lane verifier', 'Eighth payload.'),
+        // A turn of the agent's closes the frames: it is on screen whether the
+        // rule holds or not, so the check below reports in its own name when
+        // the rule regresses (the verifier's round 2 found a wait on the
+        // eighth deck crashed the spec instead).
+        { type: 'assistant_text', delta: 'Noted the eighth message.', final: true }
       ])
-      await deckOf('Eighth payload.').waitFor()
+      assert.ok(await visible(said('Noted the eighth message.')), 'the frames arrived')
       const between = (
         await view
           .locator(`.chat-delivery-stack, ${mode === 'chat' ? '.chat-tool-run' : '.term-tools'}`)
