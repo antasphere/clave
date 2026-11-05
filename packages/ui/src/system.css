@@ -3413,10 +3413,37 @@ button.chat-turn-from:focus-visible {
    declared on the open state, so it runs on every opening — a rule that
    stops matching ends it, one that matches again restarts it — and never on
    a row the reader has not touched. */
-details[open] > .chat-tool-items,
 details[open] > .chat-tool-item[data-lone],
 details[open] > .chat-tool-panel {
   animation: chat-reveal var(--default-transition-duration) var(--ease-out-expo);
+}
+/* A run's calls come in one after another rather than as one block: each
+   row fades and settles a beat after the one above it (chat-stagger-in,
+   below), so opening a run of twenty reads as a list arriving, not a slab
+   appearing. */
+details[open] > .chat-tool-items > .chat-tool-item,
+.term-tools[open] > .term-tools-body > .term-call {
+  animation: chat-stagger-in calc(var(--default-transition-duration) * 2) var(--ease-out-expo)
+    backwards;
+  animation-delay: var(--stagger-delay);
+}
+/* The stagger: a row's delay is its place in the list, a fifth of the open
+   transition per row (30ms at the default 150ms), capped at the tenth row so
+   a long run is whole within half a second; the height opens at the default
+   duration, so the first rows land while it is still opening and the rest
+   follow it down. `sibling-index()` reads the place, no markup needed. */
+:root {
+  --stagger-step: calc(var(--default-transition-duration) / 5);
+}
+details[open] > .chat-tool-items > .chat-tool-item,
+.term-tools[open] > .term-tools-body > .term-call {
+  --stagger-delay: calc(min(sibling-index() - 1, 10) * var(--stagger-step));
+}
+@keyframes chat-stagger-in {
+  from {
+    opacity: 0;
+    translate: 0 calc(var(--spacing) * -1);
+  }
 }
 @keyframes chat-reveal {
   from {
@@ -5216,15 +5243,26 @@ details[open] > .chat-approval-items {
   block-size: 0;
   overflow: clip;
   opacity: 0;
+  /* Closing: it swells a touch before it folds (an ease-in-back), the
+     closing's bounce; a height cannot go below zero, so the give is taken at
+     the start rather than the end. */
   transition:
-    block-size var(--default-transition-duration) var(--ease-out-expo),
-    opacity var(--default-transition-duration) var(--ease-out-expo),
-    content-visibility var(--default-transition-duration) allow-discrete;
+    block-size calc(var(--default-transition-duration) * 1.75) cubic-bezier(0.36, 0, 0.66, -0.3),
+    opacity calc(var(--default-transition-duration) * 1.75) var(--ease-out-expo),
+    content-visibility calc(var(--default-transition-duration) * 1.75) allow-discrete;
 }
 .term-tools[open]::details-content,
 .term-call[open]::details-content {
   block-size: auto;
   opacity: 1;
+  /* Opening: a spring that runs a few percent past the height and settles
+     back, the small bounce. Declared on the open state, so it is the opening's
+     curve; the closed state above carries the closing's. */
+  transition:
+    block-size calc(var(--default-transition-duration) * 2.5)
+      linear(0, 0.21 7%, 0.57 16%, 0.86 27%, 1.03 38%, 1.07 46%, 1.05 55%, 1.01 67%, 0.995 80%, 1),
+    opacity var(--default-transition-duration) var(--ease-out-expo),
+    content-visibility calc(var(--default-transition-duration) * 2.5) allow-discrete;
 }
 .term-tools-row,
 .term-call-row {
@@ -5290,6 +5328,16 @@ details[open] > .chat-approval-items {
   margin: calc(var(--spacing) * 0.5) 0 calc(var(--spacing) * 1) calc(var(--chat-glyph) / 2 - 0.5px);
   padding-left: calc(var(--chat-glyph) / 2 + var(--spacing) * 2);
   border-left: thin solid var(--border-subtle-color);
+}
+/* The hairline fades in over the whole stagger rather than being uncovered
+   by the height as it opens, which read as a line drawing itself down. */
+.term-tools[open] > .term-tools-body {
+  animation: term-hairline-in calc(var(--default-transition-duration) * 3) var(--ease-out-expo);
+}
+@keyframes term-hairline-in {
+  from {
+    border-left-color: transparent;
+  }
 }
 .term-call-icon {
   flex-shrink: 0;
@@ -5798,10 +5846,14 @@ button.term-agent-model:focus-visible {
     }
   }
   .chat-jump-end,
-  details[open] > .chat-tool-items,
   details[open] > .chat-tool-item[data-lone],
   details[open] > .chat-tool-panel {
     animation-name: scrim-in;
+  }
+  details[open] > .chat-tool-items > .chat-tool-item,
+  .term-tools[open] > .term-tools-body > .term-call,
+  .term-tools[open] > .term-tools-body {
+    animation: none;
   }
   .chat-turn-copy[data-copied='true'] svg,
   .chat-send svg,
