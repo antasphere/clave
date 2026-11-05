@@ -61,6 +61,17 @@ for line in sys.stdin:
     // Never waits: a cross that is not in the DOM is a finding, not a timeout.
     const width = async (loc) =>
       (await loc.count()) === 0 ? null : ((await loc.boundingBox())?.width ?? null)
+    // The slide is a transition: geometry is read once it has ended, never
+    // at its tail (the verifier's round 1 caught a poll landing mid-slide).
+    const settled = (id) =>
+      until(async () =>
+        closeOf(id).evaluate(
+          (el) =>
+            el.getAnimations().length === 0 &&
+            getComputedStyle(el).opacity === '1' &&
+            Math.abs(el.getBoundingClientRect().width - 20) < 0.5
+        )
+      )
     const awayFromTheSidebar = async () => {
       const size = await win.evaluate(() => [window.innerWidth, window.innerHeight])
       await win.mouse.move(size[0] * 0.75, size[1] * 0.5)
@@ -113,6 +124,11 @@ for line in sys.stdin:
     ]) {
       const rest = await geometry(id)
       t.equal(`${label}: the close cross takes no room at rest`, await width(closeOf(id)), 0)
+      t.check(
+        `${label}: the cross keeps the icon button's press dip and its easing`,
+        /scale/.test(rest.transition ?? ''),
+        rest.transition
+      )
       t.equal(
         `${label}: at rest the status glyph ends at the row's padding edge`,
         rest.statusGap,
@@ -126,7 +142,7 @@ for line in sys.stdin:
       const titleAtRest = await width(nameOf(id))
 
       await rowOf(id).hover()
-      const shown = await until(async () => Math.abs((await width(closeOf(id))) - 20) < 0.5)
+      const shown = await settled(id)
       t.check(
         `${label}: hovering the row slides the close cross in to its full width`,
         shown === true,
@@ -232,7 +248,7 @@ for line in sys.stdin:
         theme
       )
       await rowOf(grouped).hover()
-      await until(async () => (await width(closeOf(grouped))) === 20)
+      await settled(grouped)
       const ink = await closeOf(grouped).evaluate((el) => getComputedStyle(el).color)
       t.check(`${theme}: the cross has an ink`, ink && ink !== 'rgba(0, 0, 0, 0)', ink)
       await awayFromTheSidebar()
@@ -253,7 +269,7 @@ for line in sys.stdin:
     })
     t.check('the sidebar can be dragged narrow', !!narrow, narrow)
     await rowOf(grouped).hover()
-    await until(async () => (await width(closeOf(grouped))) === 20)
+    await settled(grouped)
     t.check(
       'narrow: the cross stays inside the row',
       await rowOf(grouped).evaluate((row) => {

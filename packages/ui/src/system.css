@@ -235,7 +235,8 @@ body,
     transform 150ms var(--ease-out-expo),
     opacity 150ms,
     color 150ms,
-    background-color 150ms;
+    background-color 150ms,
+    scale 120ms var(--ease-out-expo); /* the icon button's press dip keeps its easing */
 }
 .sidebar-item:hover .sidebar-item-close,
 .sidebar-item:focus-visible .sidebar-item-close,
@@ -440,7 +441,8 @@ canvas[data-orb-state] {
     transition:
       opacity 150ms,
       color 150ms,
-      background-color 150ms;
+      background-color 150ms,
+      scale 120ms var(--ease-out-expo);
   }
 }
 
