@@ -192,7 +192,8 @@ body,
   width: 100%;
   display: flex;
   align-items: center;
-  gap: 0.5rem; /* gap-2 */
+  --sidebar-item-gap: 0.5rem; /* gap-2; the close button cancels it while away */
+  gap: var(--sidebar-item-gap);
   height: var(--sidebar-row-h);
   padding: 0 var(--sidebar-row-px);
   border-radius: var(--control-radius);
@@ -210,12 +211,41 @@ body,
   color: var(--text-primary);
   background-color: var(--surface-100);
 }
-/* The row's close button sits as far from the row's right edge as from its
-   top and bottom: its box is pulled into the row's side padding by the
+/* The row's close button (SidebarTabItem). Away, it takes no room at all: no
+   width, and the row's gap cancelled by a negative margin, so the title has
+   the room the invisible box used to hold (PRDCT-4078). Hovering the row
+   slides it in from the right; keyboard focus on the row, or on a control
+   inside it (the button itself stays in the tab order while away), reveals
+   it the same way. Shown, it sits as far from the row's right edge as from
+   its top and bottom: its box is pulled into the row's side padding by the
    difference, so the glyph's inset is (row height - button) / 2 on all three
-   sides, at every density. */
-.sidebar-item-close {
+   sides, at every density. Two classes on purpose: `.btn-icon` and
+   `.btn-icon-xs` set the width further down this file and would win on one. */
+.sidebar-item .sidebar-item-close {
+  width: 0;
+  margin-left: calc(-1 * var(--sidebar-item-gap));
+  margin-right: 0;
+  opacity: 0;
+  transform: translateX(var(--sidebar-item-gap));
+  overflow: hidden;
+  pointer-events: none;
+  transition:
+    width 150ms var(--ease-out-expo),
+    margin 150ms var(--ease-out-expo),
+    transform 150ms var(--ease-out-expo),
+    opacity 150ms,
+    color 150ms,
+    background-color 150ms;
+}
+.sidebar-item:hover .sidebar-item-close,
+.sidebar-item:focus-visible .sidebar-item-close,
+.sidebar-item:has(:focus-visible) .sidebar-item-close {
+  width: var(--control-h-xs);
+  margin-left: 0;
   margin-right: calc((var(--sidebar-row-h) - var(--control-h-xs)) / 2 - var(--sidebar-row-px));
+  opacity: 1;
+  transform: none;
+  pointer-events: auto;
 }
 
 /* The row an emptied group shows in place of its sessions ("No sessions").
@@ -403,6 +433,14 @@ canvas[data-orb-state] {
   }
   .sidebar-tab-view {
     transition-timing-function: ease-out;
+  }
+  /* The close button appears in place: no slide, and no width that grows. */
+  .sidebar-item .sidebar-item-close {
+    transform: none;
+    transition:
+      opacity 150ms,
+      color 150ms,
+      background-color 150ms;
   }
 }
 
