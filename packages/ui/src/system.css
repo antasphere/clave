@@ -5753,6 +5753,7 @@ details[open] > .chat-approval-items {
   align-self: center;
   inline-size: calc(var(--spacing) * 1.5);
   block-size: calc(var(--spacing) * 1.5);
+  margin-inline: calc(var(--spacing) * 0.75);
   border-radius: var(--radius-full);
   background-color: var(--color-status-working);
   animation: pulse-dot calc(var(--default-transition-duration) * 10) ease-in-out infinite;
@@ -5761,14 +5762,15 @@ details[open] > .chat-approval-items {
   background-color: var(--color-term-mode);
 }
 /* A background command's row: the terminal glyph where an agent's dot is,
-   breathing the same way. Twice the dot's size, so it gives back the
-   difference at each side and the text column stays where the dot puts it. */
+   breathing the same way. Twice the dot's size; the dot takes the same
+   width in margin (below) so the text column lines up. It used to pull
+   itself out with negative margins instead, and the row's overflow: hidden
+   (the fold) cut the glyph's edges off. */
 .term-agent-icon {
   flex-shrink: 0;
   align-self: center;
   inline-size: calc(var(--spacing) * 3);
   block-size: calc(var(--spacing) * 3);
-  margin-inline: calc(var(--spacing) * -0.75);
   color: var(--color-term-mode);
   animation: pulse-dot calc(var(--default-transition-duration) * 10) ease-in-out infinite;
 }
