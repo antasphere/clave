@@ -60,7 +60,13 @@ export function PluginToolbar(): React.JSX.Element | null {
           )}
           title={`${entry.title} (${entry.pluginName})`}
           data-plugin-action={entry.id}
-          onClick={() => void runPluginAction(entry, workspaceTarget(activeWorkspaceId))}
+          // A toggle: pressed again while its own page shows, it puts the
+          // sessions back (the page has no close button of its own).
+          onClick={() =>
+            page?.pluginId === entry.pluginId && page.actionId === entry.id
+              ? usePluginUIStore.getState().openPage(null)
+              : void runPluginAction(entry, workspaceTarget(activeWorkspaceId))
+          }
         >
           <PluginIcon name={entry.icon} />
         </button>

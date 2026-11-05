@@ -7,6 +7,7 @@ import { clearSessionDraft } from '../views/draft-store'
 import { subagentPresentation } from '../lib/subagent-presentation'
 import { finishesTurn } from '../lib/tab-status'
 import { create } from 'zustand'
+import { usePluginUIStore } from '../components/plugins/plugin-ui-store'
 import type { GitRangeDirection } from '../../../shared/git-range'
 import type {
   Theme,
@@ -1085,6 +1086,12 @@ export function fileTabDedupKey(tab: FileTab): string {
   return `file:${tab.filePath}`
 }
 
+/** Close a plugin's page in the content column, if one is open (see selectSession). */
+function closePluginPage(): void {
+  const plugins = usePluginUIStore.getState()
+  if (plugins.page) plugins.openPage(null)
+}
+
 export const useSessionStore = create<SessionState>((set) => ({
   sessions: [],
   fileTabs: [],
@@ -1464,7 +1471,13 @@ export const useSessionStore = create<SessionState>((set) => ({
       return { sessions, selectedSessionIds, focusedSessionId, groups, displayOrder, ...viewPatch }
     }),
 
-  selectSession: (id, addToSelection) =>
+  // Picking a tab or a group is leaving whatever page a plugin opened in the
+  // content column (the Analytics home, a tab's analytics): the page stood in
+  // for the session you were on, and choosing a session, even the same one,
+  // puts that session back. Before, the page stayed over the mosaic and only
+  // its own back or close button removed it.
+  selectSession: (id, addToSelection) => {
+    closePluginPage()
     set((state) => {
       const session = state.sessions.find((s) => s.id === id)
       const targetView: ActiveView = session?.sessionType === 'agent' ? 'agents' : 'terminals'
@@ -1498,16 +1511,19 @@ export const useSessionStore = create<SessionState>((set) => ({
         activeGroupViewId: null,
         activeSessionViewId: null
       }
-    }),
+    })
+  },
 
-  selectSessions: (ids) =>
+  selectSessions: (ids) => {
+    closePluginPage()
     set(() => ({
       selectedSessionIds: ids,
       focusedSessionId: ids[0] ?? null,
       activeView: 'terminals' as ActiveView,
       activeGroupViewId: null,
       activeSessionViewId: null
-    })),
+    }))
+  },
 
   setFocusedSession: (id) => set(() => ({ focusedSessionId: id })),
 
