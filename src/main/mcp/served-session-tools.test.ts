@@ -945,6 +945,14 @@ describe('launching a pinned group', () => {
     records: { caller: record('caller', { workspaceId: 'ws2' }) },
     sessions: [session('caller')]
   })
+  it('uses a legacy caller cwd to choose between duplicate pinned names', async () => {
+    const h = setup({
+      ...world(),
+      records: { caller: record('caller', { cwd: '/two/project' }) },
+      windows: []
+    })
+    expect(await run(h, 'launchGroup', { group: 'Same' })).toMatchObject({ pinnedId: 'Twin2' })
+  })
   it('resolves by id, by name in the caller’s workspace, and refuses what is unknown or ambiguous', async () => {
     const h = setup({ ...world(), windows: [] })
     expect(await run(h, 'launchGroup', { group: 'same' })).toMatchObject({ pinnedId: 'Twin2' })

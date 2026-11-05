@@ -837,7 +837,8 @@ function stampUnowned(workspaceId: string): void {
     x.workspaceId == null && !isRemoteKey(x.id)
   useSessionStore.setState({
     sessions: sessionState.sessions.map((s) => (unowned(s) ? { ...s, workspaceId } : s)),
-    groups: sessionState.groups.map((g) => (unowned(g) ? { ...g, workspaceId } : g))
+    groups: sessionState.groups.map((g) => (unowned(g) ? { ...g, workspaceId } : g)),
+    fileTabs: sessionState.fileTabs.map((f) => (unowned(f) ? { ...f, workspaceId } : f))
   })
   for (const s of sessionState.sessions) {
     if (unowned(s) && s.sessionType === 'local') {
@@ -952,6 +953,9 @@ export async function removeWorkspace(id: string): Promise<void> {
     ),
     groups: sessionState.groups.map((g) =>
       g.workspaceId === id ? { ...g, workspaceId: targetId ?? undefined } : g
+    ),
+    fileTabs: sessionState.fileTabs.map((f) =>
+      f.workspaceId === id ? { ...f, workspaceId: targetId ?? undefined } : f
     )
   })
   for (const s of affectedSessions) {

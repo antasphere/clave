@@ -751,3 +751,44 @@ it('an offline server does not reject the window pin refresh', async () => {
     log.mockRestore()
   }
 })
+
+describe('workspace changes keep file viewers reachable', () => {
+  it('stamps unscoped file viewers when the first workspace is added', async () => {
+    const { useSessionStore } = await import('../store/session-store')
+    useWorkspaceStore.setState({ workspaces: [], activeWorkspaceId: null })
+    useSessionStore.setState({
+      sessions: [],
+      groups: [],
+      fileTabs: [{ id: 'file-legacy', filePath: '/note.md', name: 'Note' }]
+    })
+    window.electronAPI.trustWorkspaceRoot = vi.fn(async () => {})
+    window.electronAPI.discoverClaveFiles = vi.fn(async () => [])
+    const adding = actions.addWorkspace('/first', null)
+    await tick()
+    const id = useWorkspaceStore.getState().activeWorkspaceId
+    expect(id).toBeTruthy()
+    const stamp = useSessionStore.getState().fileTabs[0].workspaceId
+    await landAll({ revision: 1, instance: 'main' })
+    await adding
+    expect(stamp).toBe(id)
+    useSessionStore.setState({ fileTabs: [] })
+  })
+  it.each([false, true])(
+    'reassigns file viewers when their workspace is removed, last=%s',
+    async (last) => {
+      const { useSessionStore } = await import('../store/session-store')
+      useWorkspaceStore.setState({ workspaces: last ? [WS] : [WS, WS2], activeWorkspaceId: WS.id })
+      useSessionStore.setState({
+        sessions: [],
+        groups: [],
+        fileTabs: [{ id: 'file-owned', filePath: '/note.md', name: 'Note', workspaceId: WS.id }]
+      })
+      const removing = actions.removeWorkspace(WS.id)
+      await tick()
+      await landAll({ revision: 1, instance: 'main' })
+      await removing
+      expect(useSessionStore.getState().fileTabs[0].workspaceId).toBe(last ? undefined : WS2.id)
+      useSessionStore.setState({ fileTabs: [] })
+    }
+  )
+})

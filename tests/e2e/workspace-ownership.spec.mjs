@@ -78,11 +78,26 @@ export async function run(t) {
     )
     const first = receipt.values.viewer
     console.log(`fixture workspaces/ownership, run ${receipt.runId}, file ${first.fileTabId}`)
+    t.equal(
+      'A viewer has visible content before switching',
+      await win.locator('.floating-card button[title="Reveal in Finder"]:visible').count(),
+      1
+    )
     await switchTo(b.id)
     t.equal('A file is absent from B', await drawn(first.fileTabId), 0)
+    t.equal(
+      'A file content is hidden in B',
+      await win.locator('.floating-card button[title="Reveal in Finder"]:visible').count(),
+      0
+    )
     const background = await call('clave_open_file', { path: file })
     t.equal('a background caller reopens its own file', background.fileTabId, first.fileTabId)
     t.equal('background open does not leak to visible B', await drawn(first.fileTabId), 0)
+    t.equal(
+      'background open creates no extra file row in B',
+      await win.locator('[data-sidebar-item-id^="file-"]').count(),
+      0
+    )
     const group = await call('clave_create_group', { name: 'Caller group' })
     t.equal('background group belongs to A', group.workspaceId, a.id)
     const child = await call('clave_open_session', {
@@ -128,7 +143,17 @@ export async function run(t) {
       'same path in B gets its own viewer',
       !!second?.fileTabId && second.fileTabId !== first.fileTabId
     )
+    await call('clave_open_file', { path: file, view: 'source' })
+    const focused = await call('clave_list', { workspace: 'all' })
+    t.equal(
+      'background reopen keeps the visible B viewer selected',
+      focused.focusedSessionId,
+      second.fileTabId
+    )
+    await win.keyboard.press(process.platform === 'darwin' ? 'Meta+w' : 'Control+w')
+    await until(async () => !(await drawn(second.fileTabId)))
     await switchTo(a.id)
+    t.equal('closing a viewer in B keeps the hidden A viewer', await drawn(first.fileTabId), 1)
     t.equal('A viewer returns in A', await drawn(first.fileTabId), 1)
     t.equal('B viewer stays out of A', await drawn(second.fileTabId), 0)
     t.check('caller group is drawn in A', !!(await until(async () => await drawn(group.groupId))))

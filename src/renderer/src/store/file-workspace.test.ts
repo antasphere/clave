@@ -31,3 +31,27 @@ it('preserves an explicit caller workspace while another workspace is visible', 
   })
   expect(useSessionStore.getState().fileTabs[0].workspaceId).toBe('b')
 })
+
+it('keeps the visible selection and dashboard when a background caller opens or reopens a file', () => {
+  useSessionStore.setState({
+    selectedSessionIds: ['visible-session'],
+    focusedSessionId: 'visible-session',
+    activeGroupViewId: 'visible-dashboard',
+    activeView: 'terminals'
+  })
+  const tab = {
+    id: 'file-hidden',
+    filePath: '/background/report.html',
+    name: 'Report',
+    workspaceId: 'b'
+  }
+  const add = useSessionStore.getState().addFileTab
+  add(tab)
+  add({ ...tab, id: 'file-hidden-again', view: 'source' })
+  const state = useSessionStore.getState()
+  expect(state.fileTabs).toHaveLength(1)
+  expect(state.fileTabs[0].view).toBe('source')
+  expect(state.selectedSessionIds).toEqual(['visible-session'])
+  expect(state.focusedSessionId).toBe('visible-session')
+  expect(state.activeGroupViewId).toBe('visible-dashboard')
+})
