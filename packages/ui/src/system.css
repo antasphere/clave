@@ -186,6 +186,47 @@ body,
   outline-offset: -1.5px;
 }
 
+/* The side panel (Files and Git tabs) follows Appearance → Text size. Its rows
+   are written with fixed Tailwind sizes (text-xs, text-[11px], ...), which the
+   chrome's --ui-text-offset never reached: every label in the app moved but
+   the trees. Here each size the panel uses takes the offset on top. The row
+   height follows Density through --panel-row-h. */
+.side-panel :is(.text-xs) {
+  font-size: calc(0.75rem + var(--ui-text-offset));
+}
+.side-panel :is(.text-sm) {
+  font-size: calc(0.875rem + var(--ui-text-offset));
+}
+.side-panel .text-\[9px\] {
+  font-size: calc(9px + var(--ui-text-offset));
+}
+.side-panel .text-\[10px\] {
+  font-size: calc(10px + var(--ui-text-offset));
+}
+.side-panel .text-\[11px\] {
+  font-size: calc(11px + var(--ui-text-offset));
+}
+.side-panel .text-\[15px\] {
+  font-size: calc(15px + var(--ui-text-offset));
+}
+
+/* A folder of the Files tab whose contents are slow to arrive: its chevron,
+   already turned, pulses, from 400ms on so a fast read never shows it. */
+.tree-chevron[data-loading] {
+  animation: tree-chevron-wait 900ms ease-in-out 400ms infinite;
+}
+@keyframes tree-chevron-wait {
+  50% {
+    opacity: 0.35;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .tree-chevron[data-loading] {
+    animation: none;
+    opacity: 0.6;
+  }
+}
+
 /* ── Sidebar items ── */
 
 .sidebar-item {

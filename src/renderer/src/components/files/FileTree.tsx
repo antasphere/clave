@@ -5,7 +5,7 @@ import { useSessionStore } from '../../store/session-store'
 import { openSessionProgrammatically } from '../../lib/mcp-dispatcher'
 import { useFileTree, type FlatTreeNode } from '../../hooks/use-file-tree'
 import { FileTreeItem } from './FileTreeItem'
-import { TREE_INDENT_PX, TREE_ROW_PAD_PX } from './tree-metrics'
+import { TREE_ROW_PAD_PX, useTreeIndentPx } from './tree-metrics'
 import { ContextMenu } from '../ui/ContextMenu'
 import {
   ArrowDownTrayIcon,
@@ -49,6 +49,7 @@ function InlineCreateInput({
   onCreated: (path: string, type: 'file' | 'directory') => void
   onCancel: () => void
 }): React.JSX.Element {
+  const indentPx = useTreeIndentPx()
   const [value, setValue] = useState('')
   const [error, setError] = useState<string | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -100,7 +101,7 @@ function InlineCreateInput({
   return (
     <div
       className="flex items-center gap-1.5 h-control-md pr-3"
-      style={{ paddingLeft: `${TREE_ROW_PAD_PX + depth * TREE_INDENT_PX}px` }}
+      style={{ paddingLeft: `${TREE_ROW_PAD_PX + depth * indentPx}px` }}
     >
       <span className="w-2.5 flex-shrink-0" />
       <svg
@@ -165,11 +166,12 @@ function InlineCreateInput({
  * the tree.
  */
 function TreeRule({ depth }: { depth: number }): React.JSX.Element {
+  const indentPx = useTreeIndentPx()
   return (
     <div
       className="tree-rule"
       data-file-tree-rule={depth}
-      style={{ marginLeft: TREE_ROW_PAD_PX + depth * TREE_INDENT_PX, marginRight: 12 }}
+      style={{ marginLeft: TREE_ROW_PAD_PX + depth * indentPx, marginRight: 12 }}
     />
   )
 }

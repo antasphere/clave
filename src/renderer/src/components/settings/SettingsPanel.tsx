@@ -5,6 +5,8 @@ import { useSkinStore, skinAction } from '../../lib/skin'
 import { useState, useEffect, type ReactNode } from 'react'
 import {
   TREE_RULE_INTENSITIES,
+  TREE_INDENTS,
+  treeIndentPx,
   DENSITY_LEVELS,
   TEXT_SIZE_LEVELS,
   PANEL_ROOTS,
@@ -546,14 +548,37 @@ function AgentMarkSection(): React.JSX.Element | null {
 function TreeSeparatorsSection(): React.JSX.Element {
   const treeRuleIntensity = useSessionStore((s) => s.treeRuleIntensity)
   const setTreeRuleIntensity = useSessionStore((s) => s.setTreeRuleIntensity)
+  const treeIndent = useSessionStore((s) => s.treeIndent)
+  const setTreeIndent = useSessionStore((s) => s.setTreeIndent)
+  const step = treeIndentPx(treeIndent)
 
   return (
     <SettingsSection
-      title="Tree separators"
-      description="The hairlines between rows in the Files tab and the git panel."
+      title="Trees"
+      description="The Files tab and the git panel: how far each folder level steps in, and the hairlines between rows."
     >
       <SettingsCard>
-        <SettingsRow label="Weight" description="Applies to every tree in the app at once.">
+        <SettingsRow label="Indent" description="The space before each level of a folder.">
+          <div className="segmented" role="radiogroup" aria-label="Tree indent">
+            {TREE_INDENTS.map((level) => (
+              <button
+                key={level.id}
+                role="radio"
+                aria-checked={treeIndent === level.id}
+                onClick={() => setTreeIndent(level.id)}
+                data-active={treeIndent === level.id}
+                data-tree-indent={level.id}
+                className="segmented-item"
+              >
+                {level.label}
+              </button>
+            ))}
+          </div>
+        </SettingsRow>
+        <SettingsRow
+          label="Separators"
+          description="The hairlines between rows, in every tree at once."
+        >
           <div className="segmented">
             {TREE_RULE_INTENSITIES.map((level) => (
               <button
@@ -572,11 +597,14 @@ function TreeSeparatorsSection(): React.JSX.Element {
             {['src', 'components', 'main.css'].map((name, i) => (
               <div key={name}>
                 {i > 0 && (
-                  <div className="tree-rule" style={{ marginLeft: 12 + i * 12, marginRight: 12 }} />
+                  <div
+                    className="tree-rule"
+                    style={{ marginLeft: 12 + i * step, marginRight: 12 }}
+                  />
                 )}
                 <div
                   className="h-control-sm flex items-center text-[11px] text-text-tertiary"
-                  style={{ paddingLeft: 12 + i * 12 }}
+                  style={{ paddingLeft: 12 + i * step }}
                 >
                   {name}
                 </div>

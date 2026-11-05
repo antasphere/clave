@@ -1,6 +1,6 @@
 import { useCallback, useRef } from 'react'
 import { FileIcon } from './file-icons'
-import { TREE_INDENT_PX, TREE_ROW_PAD_PX } from './tree-metrics'
+import { TREE_ROW_PAD_PX, useTreeIndentPx } from './tree-metrics'
 import type { FlatTreeNode } from '../../hooks/use-file-tree'
 
 const DOUBLE_CLICK_MS = 300
@@ -28,6 +28,7 @@ export function FileTreeItem({
   onContextMenu,
   onDragStart
 }: FileTreeItemProps): React.JSX.Element {
+  const indentPx = useTreeIndentPx()
   const lastClickRef = useRef<{ time: number; path: string }>({ time: 0, path: '' })
 
   const handleClick = useCallback(
@@ -84,7 +85,7 @@ export function FileTreeItem({
       className={`flex items-center gap-1.5 h-[var(--panel-row-h)] pr-3 cursor-pointer select-none transition-colors text-sm ${
         isSelected ? 'bg-surface-200' : 'hover:bg-surface-100'
       } ${node.ignored ? 'opacity-40' : ''}`}
-      style={{ paddingLeft: `${TREE_ROW_PAD_PX + node.depth * TREE_INDENT_PX}px` }}
+      style={{ paddingLeft: `${TREE_ROW_PAD_PX + node.depth * indentPx}px` }}
       title={node.name}
       onClick={handleClick}
       onContextMenu={handleContextMenu}
@@ -95,41 +96,28 @@ export function FileTreeItem({
           git tree's rows carry theirs. A file holds the same column open with
           a spacer so the names line up. */}
       {node.type === 'directory' ? (
-        node.loading ? (
-          <svg
-            width="10"
-            height="10"
-            viewBox="0 0 12 12"
-            className="flex-shrink-0 animate-spin text-[color:var(--tree-chevron-color)]"
-          >
-            <circle
-              cx="6"
-              cy="6"
-              r="5"
-              stroke="currentColor"
-              strokeWidth="1.5"
-              fill="none"
-              strokeDasharray="20"
-              strokeDashoffset="10"
-            />
-          </svg>
-        ) : (
-          <svg
-            width="10"
-            height="10"
-            viewBox="0 0 10 10"
-            fill="none"
-            className={`flex-shrink-0 text-[color:var(--tree-chevron-color)] transition-transform duration-100 ${node.expanded ? 'rotate-90' : ''}`}
-          >
-            <path
-              d="M3 1.5L7 5L3 8.5"
-              stroke="currentColor"
-              strokeWidth="1.3"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
-          </svg>
-        )
+        // One chevron, always: it turns the moment the folder is opened, its
+        // contents still on the way. A first open used to swap it for a
+        // spinning ring while the folder was read, and a fast read made that a
+        // flicker followed by a chevron already turned, a different motion
+        // from every later toggle. A slow read still shows: past 400ms the
+        // chevron pulses (.tree-chevron[data-loading] in system.css).
+        <svg
+          width="10"
+          height="10"
+          viewBox="0 0 10 10"
+          fill="none"
+          data-loading={node.loading ? 'true' : undefined}
+          className={`tree-chevron flex-shrink-0 text-[color:var(--tree-chevron-color)] transition-transform duration-100 ${node.expanded || node.loading ? 'rotate-90' : ''}`}
+        >
+          <path
+            d="M3 1.5L7 5L3 8.5"
+            stroke="currentColor"
+            strokeWidth="1.3"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        </svg>
       ) : (
         <span className="w-2.5 flex-shrink-0" />
       )}

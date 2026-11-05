@@ -31,6 +31,7 @@ import { ownedFilePath } from '../../lib/fleet-identity'
 import { relativeFolderPrefix, repoDisplayName, repoDisplayPath } from '../../lib/git-paths'
 import { GitLogView } from './GitLogView'
 import { FileRow, GitTreeSection } from './GitFileRows'
+import { useTreeIndentPx } from '../files/tree-metrics'
 import {
   SectionHeader,
   ErrorBanner,
@@ -345,9 +346,10 @@ function RepoSection({
    *  + badge-button folds it away so only the sync ranges remain. */
   showChanges?: boolean
 }): React.JSX.Element {
-  const sectionIndentPx = 12 + depth * TREE_INDENT_PX
-  const fileIndentPx = sectionIndentPx + TREE_INDENT_PX
-  const treeBaseIndentPx = (depth + 1) * TREE_INDENT_PX
+  const indentPx = useTreeIndentPx()
+  const sectionIndentPx = 12 + depth * indentPx
+  const fileIndentPx = sectionIndentPx + indentPx
+  const treeBaseIndentPx = (depth + 1) * indentPx
   const gitViewMode = useSessionStore((s) => s.gitViewMode)
   const gitShowCommitBar = useSessionStore((s) => s.gitShowCommitBar)
   const setDiffPreview = useSessionStore((s) => s.setDiffPreview)
@@ -1118,8 +1120,8 @@ export function GitStatusPanel({
 // ---------------------------------------------------------------------------
 
 // Indent per tree level — header rows only; expanded repo content stays
-// full-width so file rows keep their room in the narrow panel.
-const TREE_INDENT_PX = 12
+// full-width so file rows keep their room in the narrow panel. The step is the
+// user's setting (useTreeIndentPx, shared with the Files tab), 12px at Normal.
 
 /**
  * The repo row's leading mark. A cube rather than a folder — the row is not a
@@ -1246,6 +1248,7 @@ type RowSection = 'incoming' | 'outgoing' | 'changes' | 'worktree' | 'base'
  * boundaries rather than on pixels.
  */
 function TreeRule({ depth, insetPx = 0 }: { depth: number; insetPx?: number }): React.JSX.Element {
+  const indentPx = useTreeIndentPx()
   return (
     <div
       className="tree-rule"
@@ -1253,7 +1256,7 @@ function TreeRule({ depth, insetPx = 0 }: { depth: number; insetPx?: number }): 
       // `insetPx` moves the rule's start past a column it must not cross:
       // a worktree row's rule begins after its guide, so the vertical line
       // there runs through unbroken.
-      style={{ marginLeft: 12 + depth * TREE_INDENT_PX + insetPx, marginRight: 12 }}
+      style={{ marginLeft: 12 + depth * indentPx + insetPx, marginRight: 12 }}
     />
   )
 }
@@ -1289,6 +1292,7 @@ function MultiRepoSection({
   /** Worktree rows follow this repo — draw the stem their guides continue. */
   hasWorktrees?: boolean
 }): React.JSX.Element {
+  const indentPx = useTreeIndentPx()
   const gitPanelMode = useSessionStore((s) => s.gitPanelMode)
   const openJourneyPanel = useSessionStore((s) => s.openJourneyPanel)
   const collapseAllTrigger = useSessionStore((s) => s.collapseAllTrigger)
@@ -1398,7 +1402,7 @@ function MultiRepoSection({
         <span
           className={`git-worktree-line ${worktree.last ? 'git-worktree-line--last' : ''}`}
           style={{
-            left: 12 + depth * TREE_INDENT_PX + TREE_GLYPH_CENTER_PX,
+            left: 12 + depth * indentPx + TREE_GLYPH_CENTER_PX,
             ...(worktree.last
               ? { height: `calc(var(--git-tree-row-h) / 2 + ${rule ? 1 : 0}px)` }
               : {})
@@ -1422,7 +1426,7 @@ function MultiRepoSection({
         className={`git-tree-row w-full flex items-center gap-1.5 pr-3 text-xs transition-colors ${
           isSelected ? 'bg-surface-200' : 'hover:bg-surface-100'
         }`}
-        style={{ paddingLeft: 12 + depth * TREE_INDENT_PX }}
+        style={{ paddingLeft: 12 + depth * indentPx }}
         onClick={handleClick}
         onDoubleClick={(e) => {
           e.stopPropagation()
@@ -1437,7 +1441,7 @@ function MultiRepoSection({
         {hasWorktrees && !expanded && (
           <span
             className="git-worktree-stem"
-            style={{ left: 12 + depth * TREE_INDENT_PX + TREE_GLYPH_CENTER_PX }}
+            style={{ left: 12 + depth * indentPx + TREE_GLYPH_CENTER_PX }}
             aria-hidden
           />
         )}
@@ -1578,7 +1582,7 @@ function MultiRepoSection({
       {isParentRepo && (
         <div
           className="flex items-center gap-1 pr-3 pb-1.5 text-[10px] text-text-tertiary"
-          style={{ paddingLeft: 12 + depth * TREE_INDENT_PX }}
+          style={{ paddingLeft: 12 + depth * indentPx }}
         >
           <InformationCircleIcon className="w-3 h-3 flex-shrink-0" />
           <Tooltip delayDuration={300}>
@@ -1653,6 +1657,7 @@ function RepoDirRow({
   /** Close the block above this one with a rule at this row's own depth. */
   rule?: boolean
 }): React.JSX.Element {
+  const indentPx = useTreeIndentPx()
   // Subtree roll-up — shown only while folded; expanded children carry their own.
   const rollup = useMemo(() => {
     let changes = 0
@@ -1677,7 +1682,7 @@ function RepoDirRow({
         data-tree-name={node.name}
         data-tree-collapsed={collapsed ? 'true' : undefined}
         className="git-tree-row w-full flex items-center gap-1.5 pr-3 text-xs hover:bg-surface-100 transition-colors"
-        style={{ paddingLeft: 12 + depth * TREE_INDENT_PX }}
+        style={{ paddingLeft: 12 + depth * indentPx }}
         // A double-click is one gesture, not two toggles. Every click used to
         // toggle, so a double-click on an open folder folded it and reopened it
         // in the same breath — and, while a fold still cleared the subtree from

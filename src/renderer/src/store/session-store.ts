@@ -15,6 +15,7 @@ import type {
   Density,
   TextSize,
   TreeRuleIntensity,
+  TreeIndent,
   PanelScope,
   ActivityStatus,
   GroupTerminalConfig,
@@ -71,6 +72,7 @@ export type {
   ExtensionsSection,
   SessionType,
   TreeRuleIntensity,
+  TreeIndent,
   Density,
   TextSize,
   PanelScope
@@ -80,6 +82,8 @@ export {
   GROUP_TERMINAL_ICONS,
   TERMINAL_COLOR_VALUES,
   TREE_RULE_INTENSITIES,
+  TREE_INDENTS,
+  treeIndentPx,
   PANEL_ROOTS,
   DENSITY_LEVELS,
   DEFAULT_DENSITY,
@@ -144,6 +148,8 @@ interface SessionState {
   appIcon: AppIcon
   /** How heavily every tree draws the hairlines between its rows. */
   treeRuleIntensity: TreeRuleIntensity
+  /** How far each level of a side-panel tree steps in (TREE_INDENTS). */
+  treeIndent: TreeIndent
   /** How tight the chrome is drawn — the preset written as `data-density`. */
   density: Density
   /** Px added to the chrome's labels on top of the preset (`--ui-text-offset`). */
@@ -331,6 +337,7 @@ interface SessionState {
   setTheme: (theme: Theme) => void
   setAppIcon: (icon: AppIcon) => void
   setTreeRuleIntensity: (intensity: TreeRuleIntensity) => void
+  setTreeIndent: (indent: TreeIndent) => void
   setDensity: (density: Density) => void
   setTextSize: (textSize: TextSize) => void
   setUiFont: (uiFont: UiFont) => void
@@ -1107,6 +1114,7 @@ export const useSessionStore = create<SessionState>((set) => ({
   appIcon: (localStorage.getItem('clave-app-icon') as AppIcon) || 'dark',
   treeRuleIntensity:
     (localStorage.getItem('clave-tree-rule-intensity') as TreeRuleIntensity) || 'normal',
+  treeIndent: (localStorage.getItem('clave-tree-indent') as TreeIndent) || 'normal',
   density: resolveDensity(
     localStorage.getItem(DENSITY_STORAGE_KEY),
     localStorage.getItem(LEGACY_DENSITY_STORAGE_KEY)
@@ -1852,6 +1860,11 @@ export const useSessionStore = create<SessionState>((set) => ({
   setTreeRuleIntensity: (treeRuleIntensity) => {
     localStorage.setItem('clave-tree-rule-intensity', treeRuleIntensity)
     set({ treeRuleIntensity })
+  },
+
+  setTreeIndent: (treeIndent) => {
+    localStorage.setItem('clave-tree-indent', treeIndent)
+    set({ treeIndent })
   },
 
   setDensity: (density) => {
