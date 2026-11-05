@@ -404,13 +404,7 @@ function TranscriptRow({
         <DeliveryStack
           group={block}
           id={rowKey}
-          renderEntry={(entry) =>
-            entry.kind === 'tool-group' ? (
-              <ToolRow group={entry} />
-            ) : (
-              <EntryRow entry={entry} onError={onError} />
-            )
-          }
+          renderEntry={(entry) => <EntryRow entry={entry} onError={onError} />}
         />
       ) : block.kind === 'tool-group' ? (
         <ToolRow group={block} />

@@ -3,8 +3,9 @@
 @import "@clave/ui/styles.css";
 @source "../../../../packages/ui/src";
 
-/* A peer conversation is a deck: inset faces remain visible beneath its
-   cover, then unfold into complete message-and-answer cards. */
+/* Messages from other tabs form a deck: inset faces remain visible beneath
+   its cover, then unfold into the messages, one card each. The agent's own
+   words never join the deck; they stay in the transcript beside it. */
 .chat-delivery-stack {
   --delivery-step: calc(var(--spacing) * 5);
   position: relative;
@@ -129,9 +130,6 @@
 .terminal-view .chat-exchange-card .chat-turn-wrap[data-side='end'] .chat-turn[data-role='user'][data-from='tab'] { background: transparent; }
 .chat-exchange-card .term-question { position: static; }
 .chat-exchange-card .chat-turn-meta { position: static; height: auto; justify-content: flex-end; padding-top: var(--spacing); }
-.chat-exchange-responses { display: flex; flex-direction: column; gap: calc(var(--spacing) * 4); padding: calc(var(--spacing) * 4) calc(var(--spacing) * 5); border-top: thin solid var(--border-subtle-color); }
-.chat-exchange-response-label { font-size: var(--text-xs); color: var(--text-tertiary); }
-.chat-exchange-responses .chat-turn[data-role='assistant'] { padding: 0; }
 @media (prefers-reduced-motion: reduce) {
   .chat-view .chat-row .chat-delivery-stack,
   .chat-delivery-stack, .chat-delivery-stack::details-content,

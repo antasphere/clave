@@ -9,12 +9,21 @@ export const deliveredMessage = (name, body) => ({
     : `[Message from a Clave agent]\n${body}`
 })
 
+/** What the agent tells the reader after the other tabs wrote: the stream's
+ *  opening, three numbered choices, then the question. The scenario leaves the
+ *  turn streaming after the choices; the spec sends the closing frame itself
+ *  once it has read the stream (the 5 November 2026 regression: a collapsed
+ *  deck hid exactly this text). */
+export const EXPLANATION_START =
+  'Here is where things stand.\n\n1. Merge the fix now.\n2. Wait for the verifier.\n3. Drop the change.\n\n'
+export const EXPLANATION_END = "So I'm waiting on one answer from you: option 1, 2 or 3."
+
 /** Echo transport only, in an isolated app. No real provider or external send. */
 export async function loadChatDeliveries(inject, ready) {
   const scenario = defineScenario({
     name: 'chat/cross-session-stacks',
     description:
-      'Agent exchanges include replies and tools, bounded by human turns and visible controls.',
+      "Messages from other tabs stack in decks; the agent's replies, its tool runs and the question it asks the reader stay in the transcript, in their place.",
     input: Schema.Struct({}),
     fixtures: () => ({
       transcript: defineFixture({
@@ -37,8 +46,16 @@ export async function loadChatDeliveries(inject, ready) {
               },
               { type: 'tool_result', id: 'fixture-agent-tool', output: 'checked' },
               deliveredMessage('Lane verifier', 'Second payload, no omitted words.'),
-              { type: 'assistant_text', delta: 'Reply to the verifier.', final: true },
-              deliveredMessage(null, 'Third anonymous payload.')
+              deliveredMessage(null, 'Third anonymous payload.'),
+              deliveredMessage('Wave coordinator', 'Fourth payload, the merge is pre-authorised.'),
+              {
+                type: 'tool_call',
+                id: 'fixture-options-tool',
+                name: 'Bash',
+                input: { command: 'echo options' }
+              },
+              { type: 'tool_result', id: 'fixture-options-tool', output: 'options' },
+              { type: 'assistant_text', delta: EXPLANATION_START, final: false }
             ])
             return { runId }
           })
