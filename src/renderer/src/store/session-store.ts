@@ -371,7 +371,7 @@ interface SessionState {
   setLimitReported: (id: string, reported: boolean) => void
   setSessionActivity: (id: string, status: ActivityStatus) => void
   setAgentState: (id: string, state: import('./session-types').AgentRunState) => void
-  setBackgroundTaskCount: (id: string, count: number) => void
+  setBackgroundTaskCount: (id: string, count: number, agents?: number) => void
   setSessionPromptWaiting: (id: string, promptType: string | null) => void
   setSessionDetectedUrl: (id: string, url: string | null) => void
   setSessionServerStatus: (id: string, status: import('./session-types').ServerStatus) => void
@@ -2005,13 +2005,19 @@ export const useSessionStore = create<SessionState>((set) => ({
       }
     }),
 
-  setBackgroundTaskCount: (id, count) =>
+  setBackgroundTaskCount: (id, count, agents = 0) =>
     set((state) => {
       const session = state.sessions.find((s) => s.id === id)
-      if (!session || (session.backgroundTasks ?? 0) === count) return state
+      if (
+        !session ||
+        ((session.backgroundTasks ?? 0) === count && (session.backgroundAgents ?? 0) === agents)
+      )
+        return state
       return {
         sessions: state.sessions.map((s) =>
-          s.id === id ? { ...s, backgroundTasks: count || undefined } : s
+          s.id === id
+            ? { ...s, backgroundTasks: count || undefined, backgroundAgents: agents || undefined }
+            : s
         )
       }
     }),

@@ -356,6 +356,23 @@ body,
   border: 1.5px solid currentColor;
   opacity: 0.45;
 }
+/* Subagents still at work: their count inside the spinner's ring. */
+.sidebar-tab-status:has(.sidebar-tab-agents) {
+  position: relative;
+}
+.sidebar-tab-agents {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 7px;
+  font-weight: 600;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+  color: var(--text-secondary);
+}
 /* The glyphs and the spinner meet in the middle. An outline check or ? draws
    its circle on 18 of its 24 units, so at the slot's 15px it read ~11px
    across while the spinner's ring filled all 15: the working row looked a
@@ -470,19 +487,10 @@ canvas[data-orb-state] {
   }
 }
 
-/* The row's right side, before the close button: what still runs in the
-   background, and a warning when the account is at its limit. */
-.tab-background-count {
-  flex-shrink: 0;
-  padding: 0 5px;
-  border-radius: 9999px;
-  background: var(--color-surface-100);
-  font-size: 10.5px;
-  line-height: 16px;
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-  color: var(--color-text-tertiary);
-}
+/* The row's right side, before the close button: a warning when the account
+   is at its limit. (Background work no longer has a counter here: subagents
+   keep the spinner turning with their count inside it, commands left running
+   are named in the status glyph's tooltip; tab-status.ts.) */
 .tab-limit-warning {
   display: inline-flex;
   flex-shrink: 0;

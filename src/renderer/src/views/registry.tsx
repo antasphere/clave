@@ -120,9 +120,12 @@ function RegisteredSessionView({
   // Background shells and subagents outlive the turn that started them; the
   // header and the sidebar say so, or a finished-looking chat hides live work.
   const backgroundTasks = useBackgroundTasks(sessionId)
+  const backgroundAgents = backgroundTasks.filter((task) => task.kind === 'agent').length
   useEffect(() => {
-    useViewSessionStore.getState().setBackgroundTaskCount(sessionId, backgroundTasks.length)
-  }, [sessionId, backgroundTasks.length])
+    useViewSessionStore
+      .getState()
+      .setBackgroundTaskCount(sessionId, backgroundTasks.length, backgroundAgents)
+  }, [sessionId, backgroundTasks.length, backgroundAgents])
   // The pane is the only writer of that count, so it takes it with it: a pane
   // gone while tasks ran used to leave the tab counting them for good. A new
   // pane reads the live list from main on subscribing.

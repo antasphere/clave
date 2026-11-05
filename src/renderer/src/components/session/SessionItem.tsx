@@ -20,7 +20,7 @@ import {
 } from '../../store/usage-store'
 import { isExhausted } from '../../lib/account-pool'
 import { accountProviderOf, sessionAccountId } from '../../lib/switch-account'
-import { tabIndicators, tabStatusPresentation, type TabGlyph } from '../../lib/tab-status'
+import { tabStatusPresentation, type TabGlyph } from '../../lib/tab-status'
 import { AccountMenuHeader } from '../layout/AccountMenuHeader'
 import { useMarkPack } from '../plugins/native-marks'
 import { tokenColor } from '../../lib/marks'
@@ -128,7 +128,7 @@ export function SessionStatus({
    *  the sidebar leaves the slot empty. */
   placeholder?: boolean
 }): React.JSX.Element {
-  const { status, glyph, tone, label } = tabStatusPresentation(session)
+  const { status, glyph, tone, label, agents } = tabStatusPresentation(session)
   const pack = useMarkPack()
   const Mark = pack && isProviderRow(session) ? pack.Agent : null
   const markInk =
@@ -153,7 +153,16 @@ export function SessionStatus({
       {Mark ? (
         <Mark working={status === 'working'} status={status} color={markInk} slot="tab" />
       ) : glyph === 'spinner' ? (
-        <span className="sidebar-tab-spinner" />
+        <>
+          <span className="sidebar-tab-spinner" />
+          {/* The subagents still at work, inside the ring rather than beside
+              it: one signal, not a spinner and a counter. */}
+          {agents ? (
+            <span className="sidebar-tab-agents" data-agents={agents}>
+              {agents > 9 ? '9+' : agents}
+            </span>
+          ) : null}
+        </>
       ) : Glyph ? (
         <Glyph />
       ) : placeholder ? (
@@ -195,22 +204,6 @@ function SessionViewButton({ session }: { session: Session }): React.JSX.Element
       }}
     >
       <WindowIcon />
-    </span>
-  )
-}
-
-/** Background shells and subagents a turn left running, in words on the row's
- *  right, so a finished tab with a server up still reads as finished. */
-function BackgroundCounter({ session }: { session: Session }): React.JSX.Element | null {
-  const { background } = tabIndicators(session)
-  if (!background) return null
-  return (
-    <span
-      className="tab-background-count"
-      data-background={background}
-      title={`${background} ${background === 1 ? 'task' : 'tasks'} still running in the background`}
-    >
-      {background} running
     </span>
   )
 }
@@ -282,7 +275,6 @@ function SessionItemImpl({
       }
       extraContent={
         <>
-          <BackgroundCounter session={session} />
           <AccountLimitBadge session={session} />
           {session.locationId && session.sessionType !== 'local' ? (
             <LocationBadge locationId={session.locationId} />

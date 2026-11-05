@@ -304,6 +304,10 @@ export interface Session {
   /** How many background shells/subagents a chat session left running past its
    *  turn, from the provider's own list. Runtime only; absent means none. */
   backgroundTasks?: number
+  /** How many of those are subagents (the rest are shells and other tasks).
+   *  A subagent is the agent still at work, so the tab reads working while
+   *  one runs; a shell is only something left running. Runtime only. */
+  backgroundAgents?: number
   promptWaiting: string | null
   claudeMode: boolean
   antigravityMode: boolean
