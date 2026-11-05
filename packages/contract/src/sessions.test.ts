@@ -120,6 +120,7 @@ const events: unknown[] = [
   { type: 'effort', effort: null },
   { type: 'error', message: 'boom', fatal: false },
   { type: 'turn_interrupted' },
+  { type: 'permission_withdrawn', id: 'p' },
   { type: 'context_usage', used: 10, window: 200, parent: 'p' },
   { type: 'subagent_model', parent: 'p', model: 'sonnet' },
   { type: 'permission_mode', mode: 'default', modes: [{ id: 'default', label: 'Default' }] },

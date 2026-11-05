@@ -200,6 +200,28 @@ it('reports malformed lines, unknown events, cancellation, UTF-8 fragmentation a
   })
   feed({ type: 'control_cancel_request', request_id: 'cancel' })
   expect(() => translator.response('cancel', 'deny')).toThrow()
+  // The views settle the card on the adapter's own word, never on the raw frame.
+  expect(events).toContainEqual({ type: 'permission_withdrawn', id: 'cancel' })
+  expect(events.filter((e) => e.type === 'permission_withdrawn')).toHaveLength(1)
+  // The word comes before the state word the cancel leaves on.
+  expect(events.findIndex((e) => e.type === 'permission_withdrawn')).toBeLessThan(
+    events.findLastIndex((e) => e.type === 'state_change' && e.state === 'working')
+  )
+  // A cancel naming no held request says nothing.
+  feed({ type: 'control_cancel_request', request_id: 'never-asked' })
+  expect(events.filter((e) => e.type === 'permission_withdrawn')).toHaveLength(1)
+  // A request still open when the turn ends is withdrawn before the turn is done.
+  feed({
+    type: 'control_request',
+    request_id: 'open',
+    request: { subtype: 'can_use_tool', tool_name: 'Bash', input: {} }
+  })
+  feed({ type: 'result', subtype: 'success', is_error: false, result: 'ok', session_id: 's' })
+  const withdrawn = events.findIndex((e) => e.type === 'permission_withdrawn' && e.id === 'open')
+  const done = events.findIndex((e) => e.type === 'state_change' && e.state === 'done')
+  expect(withdrawn).toBeGreaterThan(-1)
+  expect(withdrawn).toBeLessThan(done)
+  expect(() => translator.response('open', 'allow-once')).toThrow()
 })
 it('uses the shared shell/profile/account path, writes NDJSON and keeps secrets out of events', async () => {
   const child = Object.assign(new EventEmitter(), {

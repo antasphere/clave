@@ -270,6 +270,7 @@ export const SessionEvent = Schema.Union(
   Schema.Struct({ type: Schema.Literal('effort'), effort: Schema.NullOr(Schema.String) }),
   Schema.Struct({ type: Schema.Literal('error'), message: Schema.String, fatal: Schema.Boolean }),
   Schema.Struct({ type: Schema.Literal('turn_interrupted') }),
+  Schema.Struct({ type: Schema.Literal('permission_withdrawn'), id: Schema.String }),
   Schema.Struct({
     type: Schema.Literal('context_usage'),
     used: Schema.Number,
