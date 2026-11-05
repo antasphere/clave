@@ -3322,8 +3322,11 @@ button.chat-turn-from:focus-visible {
   border-radius: var(--radius-lg);
   border: thin solid var(--border-subtle-color);
   background-color: var(--surface-50);
-  overflow-x: auto;
-  white-space: pre;
+  /* Long lines wrap instead of scrolling sideways: an answer's code block is
+     mostly prose-like text (an email draft, a command, a path) that should be
+     readable at a glance, the way tool output already reads. */
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
   line-height: 1.5;
 }
 .chat-prose pre code {
