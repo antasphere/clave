@@ -248,7 +248,46 @@ export async function run(t) {
         { sequence, closed }
       )
 
-      // The deck fits a narrow pane in the four themes, and respects reduced motion.
+      // A tool run between two messages from other tabs keeps its row in its
+      // place: the second message does not join the first deck across it (the
+      // verifier's round 1 found the unit layer alone pinned this).
+      await inject(fixture, record.id, [
+        deliveredMessage('Wave coordinator', 'Seventh payload.'),
+        {
+          type: 'tool_call',
+          id: 'between-decks',
+          name: 'Bash',
+          input: { command: 'echo between' }
+        },
+        { type: 'tool_result', id: 'between-decks', output: 'between' },
+        deliveredMessage('Lane verifier', 'Eighth payload.')
+      ])
+      await deckOf('Eighth payload.').waitFor()
+      const between = (
+        await view
+          .locator(`.chat-delivery-stack, ${mode === 'chat' ? '.chat-tool-run' : '.term-tools'}`)
+          .evaluateAll((els) =>
+            els.map((el) =>
+              el.classList.contains('chat-delivery-stack')
+                ? `deck of ${el.dataset.messages}`
+                : 'tool run'
+            )
+          )
+      ).slice(-3)
+      t.check(
+        `${mode}: a tool run between two messages from other tabs keeps its row in its place, and the second message starts its own deck`,
+        JSON.stringify(between) === JSON.stringify(['deck of 1', 'tool run', 'deck of 1']),
+        { between }
+      )
+
+      // The deck fits a narrow pane in the four themes, and respects reduced
+      // motion. The deck sits near the top, unmounted once the transcript has
+      // grown past the viewport: scroll back to it first.
+      const scroller = view.locator('.chat-scroll')
+      await scroller.evaluate((el) => {
+        el.scrollTop = 0
+      })
+      await deck.waitFor()
       await deck.scrollIntoViewIfNeeded()
       const surfaces = new Set()
       for (const theme of ['dark', 'light', 'coffee', 'charcoal']) {
@@ -299,7 +338,6 @@ export async function run(t) {
             : { type: 'assistant_text', delta: 'A long response. '.repeat(60), final: true }
         )
       )
-      const scroller = view.locator('.chat-scroll')
       await scroller.evaluate((el) => {
         el.scrollTop = el.scrollHeight
       })
