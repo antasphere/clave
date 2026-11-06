@@ -141,10 +141,11 @@ export function writeDeck(input: {
   fs.writeFileSync(path.join(folder, 'data.json'), json + '\n')
   const index = path.join(folder, 'index.html')
   const html = fs.readFileSync(index, 'utf8')
-  const filled = html.replace(
-    DATA_BLOCK,
-    `<script type="application/json" id="slideless-data">\n${escapeForScript(json)}\n</script>`
-  )
+  // A function, not a string: a string replacement reads $', $& and $$ in
+  // the agent's data as patterns and the block no longer parses (the sync
+  // lane's verifier, 6 November 2026).
+  const block = `<script type="application/json" id="slideless-data">\n${escapeForScript(json)}\n</script>`
+  const filled = html.replace(DATA_BLOCK, () => block)
   fs.writeFileSync(index, filled)
   writeRootIndex(input.decksRoot)
   return { folder, relative: `${routineFolder}/${input.runId}/index.html` }

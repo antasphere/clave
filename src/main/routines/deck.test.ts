@@ -146,6 +146,29 @@ describe('writeDeck', () => {
   })
 })
 
+describe("the data block carries the agent's dollars as written (the sync lane's verifier, 6 November 2026)", () => {
+  it("writes $', $& and $$ as bytes, never as a replacement pattern, and the JSON still parses", () => {
+    const root = join(dir, 'ws')
+    const tpl = template(root)
+    const decksRoot = join(dir, 'decks')
+    const headline = "Cost $' and $& and $$ and $1 and $<name>"
+    const hostile = { ...envelope, run: { ...envelope.run, headline } }
+    const written = writeDeck({
+      decksRoot,
+      routineKey: 'k',
+      runId: 'run-d',
+      template: tpl,
+      envelope: hostile
+    })
+    const html = readFileSync(join(written.folder, 'index.html'), 'utf8')
+    const open = html.indexOf('<script type="application/json" id="slideless-data">')
+    const close = html.indexOf('</script>', open)
+    const inner = html.slice(html.indexOf('>', open) + 1, close)
+    expect(JSON.parse(inner).run.headline).toBe(headline)
+    expect(html.match(/id="slideless-data"/g)).toHaveLength(1)
+  })
+})
+
 describe('the data block never carries a raw < (round 1, F4 and the tautological test)', () => {
   it('escapes every < so neither a closing tag nor a comment opener can break the page, and the JSON still parses', () => {
     const root = join(dir, 'ws')
