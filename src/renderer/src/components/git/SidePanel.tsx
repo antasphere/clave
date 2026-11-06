@@ -361,8 +361,15 @@ function SidePanelBody(): React.JSX.Element {
   // render, against what the last render saw.
   const [visitedPluginKeys, setVisitedPluginKeys] = useState<ReadonlySet<string>>(() => new Set())
   const pluginKey = pluginTab ? `${pluginTab.pluginId}:${pluginTab.panelId}` : null
+  const currentPluginKeys = new Set(
+    sidePlugins.map((panel) => `${panel.pluginId}:${panel.panelId}`)
+  )
   if (pluginKey && !visitedPluginKeys.has(pluginKey)) {
     setVisitedPluginKeys((prev) => new Set(prev).add(pluginKey))
+  } else if ([...visitedPluginKeys].some((key) => !currentPluginKeys.has(key))) {
+    // A pane whose plugin was switched off or removed is forgotten with it:
+    // switching the plugin back on must open nothing the user did not click.
+    setVisitedPluginKeys((prev) => new Set([...prev].filter((key) => currentPluginKeys.has(key))))
   }
   const visitedPlugins = sidePlugins.filter((panel) =>
     visitedPluginKeys.has(`${panel.pluginId}:${panel.panelId}`)

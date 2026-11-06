@@ -112,18 +112,32 @@ const openTab = (win, label) =>
       ?.click()
   }, label)
 
-/** Click a tab and read the panel in the first frame the switch draws. */
-const openTabFirstFrame = (win, label, read) =>
+/** Click a tab and read the panel in the first frame the switch draws. The
+ *  readers live inside the page function: the renderer's content policy
+ *  allows no evaluated source, so a reader cannot travel as text. */
+const openTabFirstFrame = (win, label, what) =>
   win.evaluate(
-    ([label, read]) =>
+    ([label, what]) =>
       new Promise((resolve) => {
         ;[...document.querySelectorAll('.panel-tab')]
           .find((b) => b.textContent.trim() === label)
           ?.click()
-
-        requestAnimationFrame(() => resolve(new Function(`return (${read})()`)()))
+        requestAnimationFrame(() => {
+          if (what === 'app-row-open') {
+            resolve(
+              document.querySelector('[data-tree-kind="repo"][data-tree-name="app"]')?.dataset
+                .treeCollapsed === undefined
+            )
+            return
+          }
+          resolve({
+            title: document.querySelector('[data-testid="pr-title"]')?.textContent ?? null,
+            loading: document.querySelector('.pr-loading') !== null,
+            draft: document.querySelector('[data-testid="pr-composer"]')?.value ?? null
+          })
+        })
       }),
-    [label, read.toString()]
+    [label, what]
   )
 
 const rowNames = (win) =>
@@ -225,23 +239,13 @@ export async function run(t) {
     )
 
     // Git again: the app row is open in the FIRST frame after the switch.
-    const gitFirstFrame = await openTabFirstFrame(
-      win,
-      'Git',
-      () =>
-        document.querySelector('[data-tree-kind="repo"][data-tree-name="app"]')?.dataset
-          .treeCollapsed === undefined
-    )
+    const gitFirstFrame = await openTabFirstFrame(win, 'Git', 'app-row-open')
     t.check('back on Git, the app row is still open in the first frame', gitFirstFrame === true, {
       gitFirstFrame
     })
 
     // GitHub again: the record is on screen at once, the comment intact, no new read.
-    const prFirstFrame = await openTabFirstFrame(win, 'GitHub', () => ({
-      title: document.querySelector('[data-testid="pr-title"]')?.textContent ?? null,
-      loading: document.querySelector('.pr-loading') !== null,
-      draft: document.querySelector('[data-testid="pr-composer"]')?.value ?? null
-    }))
+    const prFirstFrame = await openTabFirstFrame(win, 'GitHub', 'pr-state')
     t.check(
       'back on GitHub, the pull request is on screen in the first frame with no loading state',
       prFirstFrame.title !== null && prFirstFrame.loading === false,
