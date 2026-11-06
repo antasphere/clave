@@ -155,7 +155,16 @@ export function RoutinePanel({
   return (
     <div
       className="routine-panel"
-      style={{ width: view.routine.report.width, height: view.routine.report.height }}
+      // The declared size is the size it wants, never more than the window
+      // gives: the popover's available room below the button and across, less
+      // a margin, so a short or narrow window shrinks the panel (its body
+      // flexes and scrolls) instead of running it off the edge.
+      style={{
+        width: view.routine.report.width,
+        height: view.routine.report.height,
+        maxWidth: 'calc(var(--radix-popover-content-available-width, 100vw) - 12px)',
+        maxHeight: 'calc(var(--radix-popover-content-available-height, 100vh) - 12px)'
+      }}
       data-testid="routine-panel"
       data-routine={view.routine.name}
       tabIndex={-1}
