@@ -3,11 +3,10 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import type { SessionHostService, StartInput } from '@clave/server'
-import { RoutineReportRefusal } from '@clave/server'
 import type { Session, SessionInfo, SessionStream } from '@clave/contract/sessions'
 import { WorkspaceFiles, memoryWorkspaceFilesStorage } from '@clave/server/workspace-files'
 import type { LaunchFacts } from './launch'
-import { createRoutineService, type RoutineService } from './service'
+import { RoutineReportRefusal, createRoutineService, type RoutineService } from './service'
 import { RoutinesStore, STORE_FILE } from './store'
 
 /**

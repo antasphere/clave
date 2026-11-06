@@ -17,7 +17,7 @@ import {
   RoutineReportRefused,
   RunRoutineNow
 } from '@clave/contract/routines'
-import { RoutineReportRefusal, Routines, type RoutinesService } from './port'
+import { Routines, type RoutinesService } from './port'
 
 const refused = (error: unknown): RoutineRefused =>
   new RoutineRefused({ message: error instanceof Error ? error.message : String(error) })
@@ -49,13 +49,16 @@ export const routineHandlers = [
             summary: p.summary,
             data: p.data
           }),
+        // A refusal carries its `errors` list (the shape of `RoutineReportRefusal`,
+        // whichever module defined the class: the implementation lives in the
+        // process that runs the server and must not load this package at boot).
         catch: (error) =>
-          error instanceof RoutineReportRefusal
-            ? new RoutineReportRefused({ message: error.message, errors: [...error.errors] })
-            : new RoutineReportRefused({
-                message: error instanceof Error ? error.message : String(error),
-                errors: []
-              })
+          new RoutineReportRefused({
+            message: error instanceof Error ? error.message : String(error),
+            errors: Array.isArray((error as { errors?: unknown }).errors)
+              ? [...(error as { errors: unknown[] }).errors.map(String)]
+              : []
+          })
       })
     )
   ),

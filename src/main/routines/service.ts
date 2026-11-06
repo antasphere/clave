@@ -18,9 +18,13 @@
  */
 import { randomUUID } from 'node:crypto'
 import * as path from 'node:path'
-import type { RoutineReportInput, RoutinesEvent, RoutinesService, Unsubscribe } from '@clave/server'
-import { RoutineReportRefusal } from '@clave/server'
-import type { SessionHostService } from '@clave/server'
+import type {
+  RoutineReportInput,
+  RoutinesEvent,
+  RoutinesService,
+  SessionHostService,
+  Unsubscribe
+} from '@clave/server'
 import type { WorkspaceFiles } from '@clave/server/workspace-files'
 import type {
   RoutineDeclaration,
@@ -41,6 +45,19 @@ import { ON_TIME_MS, TICK_MS, decideTick, nextRunAt } from './scheduler'
 import { SYSTEM_PROMPT_LINE, firstMessage } from './skill'
 import { RoutinesStore } from './store'
 import { type SchemaCheck, compileSchemaFile } from './validate'
+
+/** A report the scheduler would not take, with the schema's errors for the
+ *  agent. Defined here, not imported from the server package: main's entry
+ *  reaches this module at boot and must load no Effect module then
+ *  (`server/lazy-load.test.ts`); the server's handler reads the shape. */
+export class RoutineReportRefusal extends Error {
+  readonly errors: ReadonlyArray<string>
+  constructor(message: string, errors: ReadonlyArray<string> = []) {
+    super(message)
+    this.name = 'RoutineReportRefusal'
+    this.errors = errors
+  }
+}
 
 export const HIDDEN_COLS = 120
 export const HIDDEN_ROWS = 30
