@@ -38,6 +38,7 @@ import {
 } from './codex-app-server'
 import { effortLabel, isValidEffort } from '../../../shared/effort'
 import { lazyTerminalPorts } from '../../ports/terminals'
+import { commandTitle } from '../../../shared/command-title'
 import type { McpConfigPort } from '../../ports/mcp-config'
 
 const text = (value: unknown): string => (typeof value === 'string' ? value : '')
@@ -252,7 +253,73 @@ export class CodexTranslator {
       this.publishBackground()
       return true
     }
+    // The agent's own words and work, each under its thread (`parent`) for
+    // the view of that agent: its text as it streams, its commands, its
+    // edits and its tool calls. Nothing of it reaches the conversation.
+    if (frame.method === 'item/agentMessage/delta') {
+      this.streamText(text(p.itemId), text(p.delta), thread)
+      return true
+    }
+    if (frame.method === 'item/started' || frame.method === 'item/completed') {
+      const item = object(p.item)
+      const completed = frame.method === 'item/completed'
+      if (item.type === 'agentMessage') {
+        if (!completed) return false
+        this.finishText(text(item.id), text(item.text), thread)
+        return true
+      }
+      return this.emitItem(item, text(item.id), completed, thread)
+    }
     return false
+  }
+  /** A piece of the agent's answer as it streams; kept per item so the
+   *  completed item adds only what was not streamed. */
+  private streamText(itemId: string, delta: string, parent?: string): void {
+    this.streamed.set(itemId, (this.streamed.get(itemId) ?? '') + delta)
+    this.emit({ type: 'assistant_text', delta, final: false, ...(parent ? { parent } : {}) })
+  }
+  /** The answer whole: what the stream did not carry, then the close. */
+  private finishText(itemId: string, full: string, parent?: string): void {
+    const previous = this.streamed.get(itemId) ?? ''
+    // Some servers send only completed items; don't duplicate streamed text.
+    const delta = full.startsWith(previous) ? full.slice(previous.length) : ''
+    this.streamed.delete(itemId)
+    this.emit({ type: 'assistant_text', delta, final: true, ...(parent ? { parent } : {}) })
+  }
+  /** A command, an edit or a tool call as the transcript's call and result;
+   *  false for an item of another kind. */
+  private emitItem(
+    item: Record<string, unknown>,
+    id: string,
+    completed: boolean,
+    parent?: string
+  ): boolean {
+    if (!['commandExecution', 'fileChange', 'mcpToolCall'].includes(text(item.type))) return false
+    if (!completed)
+      this.emit({
+        type: 'tool_call',
+        id,
+        name:
+          item.type === 'mcpToolCall' ? `${text(item.server)}/${text(item.tool)}` : text(item.type),
+        input: item,
+        ...(parent ? { parent } : {})
+      })
+    else
+      this.emit({
+        type: 'tool_result',
+        id,
+        output:
+          item.type === 'commandExecution'
+            ? // A command that never ran has no aggregated output, and its
+              // reason is the only thing there is to show.
+              (item.aggregatedOutput ?? item.error)
+            : item.type === 'fileChange'
+              ? item.changes
+              : (item.result ?? item.error),
+        error: failed(item),
+        ...(parent ? { parent } : {})
+      })
+    return true
   }
   /** The v2 multi-agent lifecycle: Codex's own record of a subagent starting
    *  and ending, on the parent thread. False when it changes nothing. */
@@ -332,23 +399,14 @@ export class CodexTranslator {
         this.turnId = text(object(p.turn).id)
         this.emit({ type: 'state_change', state: 'working' })
         return
-      case 'item/agentMessage/delta': {
-        const delta = text(p.delta)
-        const itemId = text(p.itemId)
-        this.streamed.set(itemId, (this.streamed.get(itemId) ?? '') + delta)
-        this.emit({ type: 'assistant_text', delta, final: false })
+      case 'item/agentMessage/delta':
+        this.streamText(text(p.itemId), text(p.delta))
         return
-      }
       case 'item/started':
       case 'item/completed': {
         const completed = frame.method === 'item/completed'
         if (item.type === 'agentMessage' && completed) {
-          const previous = this.streamed.get(id) ?? ''
-          const full = text(item.text)
-          // Some servers send only completed items; don't duplicate streamed text.
-          const delta = full.startsWith(previous) ? full.slice(previous.length) : ''
-          this.streamed.delete(id)
-          this.emit({ type: 'assistant_text', delta, final: true })
+          this.finishText(id, text(item.text))
           return
         }
         if (item.type === 'subAgentActivity' || item.type === 'collabAgentToolCall') {
@@ -369,7 +427,8 @@ export class CodexTranslator {
               task: {
                 id,
                 kind: 'shell',
-                description: commandOf(item),
+                description: commandTitle(commandOf(item)),
+                command: commandOf(item),
                 toolUseId: id,
                 startedAt: Date.now()
               }
@@ -379,33 +438,7 @@ export class CodexTranslator {
             if (this.background.delete(id)) this.publishBackground()
           }
         }
-        if (['commandExecution', 'fileChange', 'mcpToolCall'].includes(text(item.type))) {
-          if (!completed)
-            this.emit({
-              type: 'tool_call',
-              id,
-              name:
-                item.type === 'mcpToolCall'
-                  ? `${text(item.server)}/${text(item.tool)}`
-                  : text(item.type),
-              input: item
-            })
-          else
-            this.emit({
-              type: 'tool_result',
-              id,
-              output:
-                item.type === 'commandExecution'
-                  ? // A command that never ran has no aggregated output, and its
-                    // reason is the only thing there is to show.
-                    (item.aggregatedOutput ?? item.error)
-                  : item.type === 'fileChange'
-                    ? item.changes
-                    : (item.result ?? item.error),
-              error: failed(item)
-            })
-          return
-        }
+        if (this.emitItem(item, id, completed)) return
         fallback()
         return
       }
