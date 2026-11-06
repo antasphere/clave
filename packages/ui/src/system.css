@@ -6283,9 +6283,16 @@ button.term-agent-model:focus-visible {
   min-width: calc(var(--spacing) * 44);
   padding: var(--surface-inset);
 }
-.routine-body {
+/* The stage the bodies cross-fade on: one box, each body filling it, so the
+   one leaving and the one arriving overlap. */
+.routine-stage {
+  position: relative;
   flex: 1;
   min-height: 0;
+}
+.routine-body {
+  position: absolute;
+  inset: 0;
   display: flex;
   flex-direction: column;
 }

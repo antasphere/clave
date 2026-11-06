@@ -9,7 +9,7 @@ import {
   QueueListIcon
 } from '@heroicons/react/24/outline'
 import { IconButton } from '@clave/ui/components'
-import { motion } from 'framer-motion'
+import { AnimatePresence, motion } from 'framer-motion'
 import type { RoutineRun, RoutineView } from '@clave/contract/routines/model'
 import type { Session } from '../../../../shared/session-model'
 import { ChatView } from '../../../../../plugins/chat-view/src/ChatView'
@@ -73,12 +73,6 @@ export function RoutinePanel({
   useEffect(() => {
     const t = setTimeout(() => setSettled(true), 200)
     return () => clearTimeout(t)
-  }, [])
-  // The first body comes up with the popover and fades with it, once; only a
-  // later body (another tab, another run) fades in on its own.
-  const firstBody = useRef(true)
-  useEffect(() => {
-    firstBody.current = false
   }, [])
   const menuRef = useRef<HTMLDivElement | null>(null)
   const run: RoutineRun | undefined = useMemo(
@@ -240,39 +234,48 @@ export function RoutinePanel({
         </div>
       </div>
 
-      {/* The body fades in on each LATER change of what it shows (the tab, the
-          run), the app's motion for content inside a box; at open it comes up
-          with the popover, in one fade (a second one made the body lag the
-          header, seen frame by frame on 6 November 2026). */}
-      <motion.div
-        key={`${tab}:${run?.id ?? 'none'}`}
-        className="routine-body"
-        initial={firstBody.current ? false : { opacity: 0 }}
-        animate={{ opacity: 1 }}
-        transition={{ duration: 0.16, ease: [0.2, 0, 0, 1] }}
-      >
-        {view.routine.invalid && (
-          <p className="routine-note" data-tone="failed" data-testid="routine-panel-invalid">
-            {view.routine.invalid}
-          </p>
-        )}
-        {error && (
-          <p className="routine-note" data-tone="failed" data-testid="routine-panel-error">
-            {error}
-          </p>
-        )}
-        {tab === 'report' ? (
-          <RoutineReport
-            view={view}
-            run={run}
-            viewerUrl={viewer.url}
-            viewerNote={viewer.note}
-            ready={settled}
-          />
-        ) : tab === 'discussion' ? (
-          discussion ? (
+      {(view.routine.invalid || error) && (
+        <p
+          className="routine-note"
+          data-tone="failed"
+          data-testid={view.routine.invalid ? 'routine-panel-invalid' : 'routine-panel-error'}
+        >
+          {view.routine.invalid ?? error}
+        </p>
+      )}
+
+      {/* Three bodies on one stage, every one mounted, the active one shown:
+          a tab switch is a cross-fade between painted bodies (the deck stays
+          loaded, the discussion stays open), never a blink to the ground and
+          a reload (seen frame by frame on 6 November 2026: the old content
+          dropped at once and the new one faded in from nothing). A web view
+          follows its parent's opacity, measured, so the deck fades with its
+          body. Inside the report body a change of run cross-fades too. */}
+      <div className="routine-stage">
+        <Body active={tab === 'report'} kind="report">
+          <AnimatePresence initial={false}>
+            <motion.div
+              key={run?.id ?? 'none'}
+              className="routine-body"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0, transition: { duration: 0.12, ease: 'easeOut' } }}
+              transition={{ duration: 0.16, ease: [0.2, 0, 0, 1] }}
+            >
+              <RoutineReport
+                view={view}
+                run={run}
+                viewerUrl={viewer.url}
+                viewerNote={viewer.note}
+                ready={settled}
+              />
+            </motion.div>
+          </AnimatePresence>
+        </Body>
+        <Body active={tab === 'discussion'} kind="discussion">
+          {discussion ? (
             <div className="chat-host flex-1 min-h-0" data-testid="routine-discussion">
-              <ChatView session={discussion} onState={() => {}} visible />
+              <ChatView session={discussion} onState={() => {}} visible={tab === 'discussion'} />
             </div>
           ) : (
             <div className="routine-state" data-testid="routine-discussion-pending">
@@ -284,12 +287,48 @@ export function RoutinePanel({
                   : 'Each run keeps its conversation; pick a run to continue it.'}
               </span>
             </div>
-          )
-        ) : (
+          )}
+        </Body>
+        <Body active={tab === 'runs'} kind="runs">
           <RunsTab view={view} selected={run} onPick={pickRun} />
-        )}
-      </motion.div>
+        </Body>
+      </div>
     </div>
+  )
+}
+
+/** One body on the stage: shown or hidden by a fade, hidden ones kept
+ *  mounted but out of the way (no pointer, no reading order, no paint once
+ *  the fade is done). */
+function Body({
+  active,
+  kind,
+  children
+}: {
+  active: boolean
+  kind: Tab
+  children: ReactNode
+}): React.JSX.Element {
+  return (
+    <motion.div
+      className="routine-body"
+      data-testid={`routine-body-${kind}`}
+      data-active={active ? 'true' : undefined}
+      initial={false}
+      // Visible from the first frame of a fade-in, hidden only once a fade-out
+      // has ended (a value set at the end stays until the next end, so a body
+      // fading in stayed hidden and popped at the end, seen 6 November 2026).
+      animate={
+        active
+          ? { opacity: 1, visibility: 'visible' }
+          : { opacity: 0, transitionEnd: { visibility: 'hidden' } }
+      }
+      style={{ pointerEvents: active ? 'auto' : 'none' }}
+      transition={{ duration: 0.16, ease: [0.2, 0, 0, 1] }}
+      aria-hidden={active ? undefined : true}
+    >
+      {children}
+    </motion.div>
   )
 }
 
