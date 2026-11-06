@@ -4,6 +4,8 @@ import { CheckIcon, ChevronDownIcon, CommandLineIcon } from '@heroicons/react/24
 import { ConfirmDialog } from '@clave/ui/components'
 import { claudeModelName, findClaudeModel } from '../../../src/shared/claude-models'
 import { compactTokens, type SubAgent } from './terminal-status'
+import { SubAgentPeek } from './SubAgentPeek'
+import type { SubagentLogs } from './subagents'
 
 /** How full the context is: a bar and "(used/window)". Before a turn has named
  *  the window the bar stays empty and only the count shows. The chat variant
@@ -160,10 +162,14 @@ function AgentModel({
  *  row. */
 export function SubAgentStack({
   agents,
+  logs,
   canRelaunch,
   onRelaunch
 }: {
   agents: SubAgent[]
+  /** Each agent's own conversation, by the row's id (`subagents.ts`): an
+   *  agent's row opens a window onto it. */
+  logs?: SubagentLogs
   /** Whether the conversation can launch this agent again; a row it says no
    *  to, and every command's row, offers no relaunch. */
   canRelaunch: (agent: SubAgent) => boolean
@@ -253,8 +259,27 @@ export function SubAgentStack({
                     )}
                   </span>
                 )}
-                {!shell && <span className="term-agent-type">{agent.type}</span>}
-                <span className="term-agent-description">{agent.description}</span>
+                {shell || gone ? (
+                  <>
+                    {!shell && <span className="term-agent-type">{agent.type}</span>}
+                    <span className="term-agent-description">{agent.description}</span>
+                  </>
+                ) : (
+                  /* The type and the task are the button that opens the
+                     window onto the agent; the model menu beside stays its
+                     own. The row's tooltip (its last step) is kept off the
+                     button, so hovering the words still says it. */
+                  <SubAgentPeek agent={agent} log={logs?.[agent.id]}>
+                    <button
+                      type="button"
+                      className="term-agent-open"
+                      aria-label={`Watch ${agent.description || agent.type}`}
+                    >
+                      <span className="term-agent-type">{agent.type}</span>
+                      <span className="term-agent-description">{agent.description}</span>
+                    </button>
+                  </SubAgentPeek>
+                )}
                 <span className="term-agent-meta">
                   {!shell && (
                     <AgentModel

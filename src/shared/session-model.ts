@@ -30,7 +30,10 @@ export const UserMessageSchema = z.object({
   text: z.string(),
   /** The files the reader attached, as the transcript shows them: names,
    *  paths and how each was delivered — never their bytes. */
-  attachments: AttachmentsSchema.optional()
+  attachments: AttachmentsSchema.optional(),
+  /** A subagent's brief (the prompt its call gave it), named by that call:
+   *  the first line of the subagent's own transcript, never the reader's. */
+  parent: z.string().optional()
 })
 export type UserMessage = z.infer<typeof UserMessageSchema>
 /** What the provider is handed once main has prepared the attachments: the
@@ -192,7 +195,15 @@ export const BackgroundTaskSchema = z.object({
 export type BackgroundTask = z.infer<typeof BackgroundTaskSchema>
 export const SessionEventSchema = z.discriminatedUnion('type', [
   UserMessageSchema,
-  z.object({ type: z.literal('assistant_text'), delta: z.string(), final: z.boolean() }),
+  /* `parent` on a message, a text, a call or a result names the call that
+     started the subagent speaking or acting: the event is that subagent's
+     own, for a view of it, and never the conversation's transcript. */
+  z.object({
+    type: z.literal('assistant_text'),
+    delta: z.string(),
+    final: z.boolean(),
+    parent: z.string().optional()
+  }),
   z.object({
     type: z.literal('tool_call'),
     id: z.string(),
@@ -209,7 +220,8 @@ export const SessionEventSchema = z.discriminatedUnion('type', [
     type: z.literal('tool_result'),
     id: z.string(),
     output: z.unknown(),
-    error: z.boolean().optional()
+    error: z.boolean().optional(),
+    parent: z.string().optional()
   }),
   z.object({
     type: z.literal('permission_request'),

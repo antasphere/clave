@@ -175,6 +175,7 @@ body,
 .launcher-btn:focus-visible,
 .launcher-icon-btn:focus-visible,
 .launcher-caret:focus-visible,
+.term-agent-open:focus-visible,
 .group-switcher-chip:focus-visible,
 .btn-icon:focus-visible,
 .btn-primary:focus-visible,
@@ -5999,6 +6000,99 @@ details[open] > .chat-approval-items {
 }
 .term-agent-quiet {
   color: var(--color-warning);
+}
+/* An agent's row opens a window onto it (SubAgentPeek): the type and the
+   task are the button; the model chip and the figures beside stay their
+   own. A dotted underline on approach says the words open something. */
+.term-agent-open {
+  display: inline-flex;
+  align-items: baseline;
+  gap: calc(var(--spacing) * 2);
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.term-agent-open:hover .term-agent-description,
+.term-agent-open[data-state='open'] .term-agent-description {
+  text-decoration: underline dotted;
+  text-underline-offset: 0.2em;
+}
+/* The window onto a subagent: the transcript's own rows, in a box over the
+   stack, the agent's name and figures on a line at its head. The box is
+   the popover's material; the scroller inside takes the height. */
+.term-peek {
+  /* Portaled out of .chat-host: the transcript's measures come along, the
+     glyph size the tool rows' chevrons and icons read in particular. */
+  --chat-column: 100%;
+  --chat-code-size: calc(var(--text-sm) - var(--spacing) / 4);
+  --chat-glyph: calc(var(--spacing) * 3.5);
+  display: flex;
+  flex-direction: column;
+  inline-size: min(40rem, calc(100vw - 2rem));
+  max-block-size: min(60vh, 36rem);
+  padding: 0;
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  line-height: 1.6;
+  color: var(--text-primary);
+}
+.term-peek-frame {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.term-peek-head {
+  display: flex;
+  flex-shrink: 0;
+  align-items: baseline;
+  gap: calc(var(--spacing) * 2);
+  padding: calc(var(--spacing) * 2) calc(var(--spacing) * 3);
+  border-bottom: 1px solid var(--color-border);
+  font-size: var(--text-xs);
+  white-space: nowrap;
+}
+.term-peek-type {
+  flex-shrink: 0;
+  color: var(--color-term-model);
+}
+.term-peek-description {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-primary);
+}
+.term-peek-meta {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: baseline;
+  margin-left: auto;
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+.term-peek-meta > * + *::before {
+  content: '·';
+  padding-inline: calc(var(--spacing) * 1.5);
+}
+.term-peek-readonly {
+  font-size: 0.85em;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.term-peek-scroll {
+  min-height: 0;
+  padding: calc(var(--spacing) * 3);
+}
+.term-peek-empty {
+  margin: 0;
+  padding: calc(var(--spacing) * 2) 0;
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
 }
 /* The model a subagent runs on: a chip opening the relaunch menu when the
    agent can be stopped on its own, plain words when it cannot. */

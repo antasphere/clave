@@ -130,6 +130,58 @@ export async function run(t) {
       seen
     )
 
+    /* 3b. The row opens a window onto the agent: its brief, its tool runs
+       and its words, rendered as the transcript renders the conversation,
+       with no field to type in; nothing of the subagent is in the transcript
+       itself. Escape closes it. */
+    await inject(fixture, record.id, [
+      { type: 'user_message', text: 'Map every view the registry knows', parent: 'call-1' },
+      { type: 'tool_result', id: 's1', output: 'registry.tsx: 2 matches', parent: 'call-1' },
+      {
+        type: 'assistant_text',
+        delta: 'Two views registered, both native.',
+        final: true,
+        parent: 'call-1'
+      }
+    ])
+    await row.locator('button.term-agent-open').click()
+    const peek = win.locator('.term-peek')
+    await peek.waitFor()
+    await until(async () =>
+      (await peek.innerText()).includes('Two views registered') ? true : null
+    )
+    const peeked = await peek.evaluate((el) => ({
+      head: el.querySelector('.term-peek-head')?.innerText ?? '',
+      brief: el.querySelector('.chat-turn[data-role="user"]')?.innerText ?? '',
+      runs: el.querySelectorAll('.term-tools').length,
+      words: el.querySelector('.chat-turn[data-role="assistant"]')?.innerText ?? '',
+      fields: el.querySelectorAll('textarea, input, [contenteditable="true"]').length
+    }))
+    // The transcript holds the Agent call's own run, and nothing the agent did.
+    const inTranscript = await view.locator('.chat-transcript .term-tools').evaluateAll((runs) => ({
+      runs: runs.length,
+      text: runs.map((el) => el.innerText).join(' | ')
+    }))
+    t.check(
+      'the window names the agent, shows its brief, one run of its tools and its words, and no field',
+      /Explore/.test(peeked.head) &&
+        /Map the views/.test(peeked.head) &&
+        /read-only/i.test(peeked.head) &&
+        peeked.brief === 'Map every view the registry knows' &&
+        peeked.runs === 1 &&
+        peeked.words === 'Two views registered, both native.' &&
+        peeked.fields === 0,
+      peeked
+    )
+    t.check(
+      "the subagent's calls are not in the transcript's run",
+      inTranscript.runs === 1 && !/registry\.tsx|Grep|Search|Read/.test(inTranscript.text),
+      inTranscript
+    )
+    await win.keyboard.press('Escape')
+    await until(async () => ((await win.locator('.term-peek').count()) === 0 ? true : null))
+    t.check('Escape closes the window', (await win.locator('.term-peek').count()) === 0)
+
     /* 4. Relaunch on Haiku: asked first, then the task stopped, then the ask. */
     await row.locator('button.term-agent-model').click()
     const menu = win.locator('.chat-model-menu[aria-label="Relaunch on"]')

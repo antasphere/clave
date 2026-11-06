@@ -90,7 +90,8 @@ export const UserMessage = Schema.Struct({
   type: Schema.Literal('user_message'),
   text: Schema.String,
   /** The files the reader attached, as the transcript shows them: never bytes. */
-  attachments: Schema.optional(Attachments)
+  attachments: Schema.optional(Attachments),
+  parent: Schema.optional(Schema.String)
 })
 export type UserMessage = typeof UserMessage.Type
 export const PreparedPrompt = Schema.Struct({
@@ -238,7 +239,8 @@ export const SessionEvent = Schema.Union(
   Schema.Struct({
     type: Schema.Literal('assistant_text'),
     delta: Schema.String,
-    final: Schema.Boolean
+    final: Schema.Boolean,
+    parent: Schema.optional(Schema.String)
   }),
   Schema.Struct({
     type: Schema.Literal('tool_call'),
@@ -251,7 +253,8 @@ export const SessionEvent = Schema.Union(
     type: Schema.Literal('tool_result'),
     id: Schema.String,
     output: Schema.Unknown,
-    error: Schema.optional(Schema.Boolean)
+    error: Schema.optional(Schema.Boolean),
+    parent: Schema.optional(Schema.String)
   }),
   Schema.Struct({
     type: Schema.Literal('permission_request'),

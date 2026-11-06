@@ -57,6 +57,22 @@ tells the view which request, so the cards it closed on the kernel's word come
 back rather than one of them staying unanswerable for the session's life. Transcripts currently live for the
 mounted view's lifetime; disabling the plugin releases its subscription.
 
+A SUBAGENT's row in the Terminal view's status stack opens a window onto it
+(`src/SubAgentPeek.tsx`): what it was asked, what it says and what it does, as
+it happens, rendered with the transcript's own rows (`src/TerminalEntry.tsx`,
+the rows moved out of the view for that) — a view only, with no field and no
+button that answers anything; the agent reports to the conversation when it is
+done. Its log is reduced off the same stream by `src/subagents.ts`: every
+message, text, call and result an adapter stamps with a `parent` (Claude the
+call that started the agent, Codex its thread) goes to that agent's own
+conversation, keyed as the row is (`SubAgent.id`), through the transcript's
+reducer; `reduceConversation` drops a parented event, so an agent's hundred
+calls no longer count into the run the conversation is on, as they did until
+6 November 2026. A page of the past folds in as it arrives; Claude's own
+transcript replay carries nothing of a subagent (sidechains are skipped), so a
+resumed session's finished agents have no log. The Chat view's header chip does
+not open the window yet.
+
 A RUN of tool calls — everything between two messages — is one row saying what
 the agent did, counted by kind ("Read 3 files · Ran 1 command"), with a loader
 while any call is in flight and the failure count beside it. It opens to one item

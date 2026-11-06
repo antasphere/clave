@@ -9,20 +9,17 @@ import { parseResourceKey } from '@clave/contract/fleet'
 import { bindFleetCatchup } from './fleet-sync'
 /** The Terminal view: a third reading of a session, started as a copy of
  *  `ChatView` and diverging from it on purpose. Shares its props with Chat. */
-import { memo, useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react'
-import ReactMarkdown, { type Components } from 'react-markdown'
-import { createEntryMarkdownPlugins } from './markdown-append'
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react'
 import {
   ArrowUpIcon,
   ChatBubbleLeftRightIcon,
-  CheckIcon,
-  ClipboardDocumentIcon,
   MapPinIcon,
   PaperClipIcon,
   StopIcon,
   XMarkIcon
 } from '@heroicons/react/24/outline'
 import type {
+  HistoryItem,
   PermissionModeOption,
   SessionEvent,
   SessionInput,
@@ -38,9 +35,7 @@ import {
 import { PermissionModeMenu } from './PermissionModeMenu'
 import { ModelMenu } from './ModelMenu'
 import { EffortMenu } from './EffortMenu'
-import { SenderChip } from './Delivery'
 import { DeliveryStack } from './DeliveryStack'
-import { parseDelivery } from '../../../src/shared/exchange-provenance'
 import { claudeContextWindow } from '../../../src/shared/claude-models'
 import { nextPermissionMode } from './permission-mode'
 import {
@@ -54,16 +49,9 @@ import {
 import { ContextMeter, SubAgentStack } from './TerminalStatus'
 import { AccountChip } from './AccountChip'
 import { useQuestionHeight } from './question-height'
-import {
-  blockKey,
-  groupEntries,
-  visibleEntries,
-  type Block,
-  type ToolGroup as ToolRun
-} from './tools'
-import { TerminalTools } from './TerminalTools'
+import { blockKey, groupEntries, visibleEntries, type Block } from './tools'
 import { ToolDisclosure } from './disclosure'
-import { ApprovalRun, PermissionRow, PromptDock } from './PromptDock'
+import { ApprovalRun, PromptDock } from './PromptDock'
 import { refusedAnswer } from './refused-answer'
 import { serverDock, withServerPending } from './server-requests'
 import { continueList } from './lists'
@@ -77,7 +65,6 @@ import { useViewSessionStore } from '../../../src/renderer/src/views/session-sto
 import { endIsCurrent } from '../../../src/renderer/src/views/session-end'
 import { acceptAccountProposal } from '../../../src/renderer/src/lib/account-policy'
 import type { HistoryListEntry } from '../../../src/preload/index.d'
-import { ChatCode } from './code'
 import { Attachments } from './Attachments'
 import { useComposerFocus } from './focus'
 import { useMessageHistory } from './history'
@@ -101,10 +88,11 @@ import {
   pathForMessage,
   pathsFromDataTransfer
 } from '../../../src/renderer/src/lib/dropped-paths'
-import { openLink, wantsExternal } from '../../../src/renderer/src/lib/open-link'
 import { ClaudeLogo, CodexLogo, PiLogo } from '../../../src/renderer/src/components/icons/cli-logos'
 import { useMarkPack } from '../../../src/renderer/src/components/plugins/native-marks'
 import type { ChatViewProps } from './ChatView'
+import { EntryRow, ToolRow } from './TerminalEntry'
+import { foldSubagents, noSubagents, reduceSubagents, type SubagentLogs } from './subagents'
 
 /** What a drag carries: files from a file manager or another app, or the
  *  paths Clave's own file and git panels write as text. */
@@ -113,45 +101,6 @@ const filesDrag = (dt: DataTransfer): boolean =>
   dt.types.includes('text/uri-list') ||
   dt.types.includes('application/x-clave-files')
 const pathsDrag = (dt: DataTransfer): boolean => dt.types.includes('text/plain')
-/** When a turn happened, the way a reader wants it: relative while fresh,
- *  clock time today, the date once it is older. */
-function whenLabel(at: number, now = Date.now()): string {
-  const seconds = Math.round((now - at) / 1000)
-  if (seconds < 45) return 'just now'
-  const minutes = Math.round(seconds / 60)
-  if (minutes < 60) return `${minutes} min ago`
-  const then = new Date(at)
-  const time = then.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-  const today = new Date(now)
-  if (then.toDateString() === today.toDateString()) return time
-  const yesterday = new Date(now - 86_400_000)
-  if (then.toDateString() === yesterday.toDateString()) return `yesterday ${time}`
-  return `${then.toLocaleDateString([], { day: 'numeric', month: 'short' })} ${time}`
-}
-/** The line under a turn that appears on approach: when it was said, and a copy of it. */
-function TurnMeta({ at, text }: { at: number; text: string }): React.JSX.Element {
-  const [copied, setCopied] = useState(false)
-  return (
-    <div className="chat-turn-meta">
-      <span title={new Date(at).toLocaleString()}>{whenLabel(at)}</span>
-      <button
-        type="button"
-        className="chat-turn-copy"
-        data-copied={copied ? 'true' : undefined}
-        aria-label="Copy message"
-        title="Copy message"
-        onClick={() => {
-          void navigator.clipboard.writeText(text).then(() => {
-            setCopied(true)
-            setTimeout(() => setCopied(false), 1500)
-          })
-        }}
-      >
-        {copied ? <CheckIcon /> : <ClipboardDocumentIcon />}
-      </button>
-    </div>
-  )
-}
 /** The provider's mark at the end of the transcript, breathing while the
  *  agent works — from the moment it starts, before any text — and gone the
  *  moment it stops. A finished answer stands on its own; a logo resting under
@@ -287,109 +236,6 @@ function SlashMenu({
 const STICK_THRESHOLD = 80
 const stickSlack = (): number => STICK_THRESHOLD
 const AGENT_NAMES: Record<string, string> = { claude: 'Claude', codex: 'Codex', pi: 'Pi' }
-/** One turn of the transcript. Memoised on the entry itself, which the
- *  reducer replaces only when that entry changes: a streamed delta re-renders
- *  the answer it grows and nothing above it, and a keystroke in the composer
- *  re-renders no turn at all. A long conversation used to re-parse the
- *  markdown of every answer it held on each of those. */
-const EntryRow = memo(function EntryRow({
-  entry,
-  onError
-}: {
-  entry: Entry
-  onError: (error: unknown) => void
-}): React.JSX.Element | null {
-  const streaming = entry.kind === 'assistant' && !entry.final
-  const remarkPlugins = useMemo(() => createEntryMarkdownPlugins(streaming), [streaming])
-  // Stable component types retain existing links/tables while text grows.
-  const markdownComponents = useMemo<Components>(
-    () => ({
-      code: ChatCode,
-      table: ({ children }) => (
-        <div className="chat-table-scroll">
-          <table>{children}</table>
-        </div>
-      ),
-      a: ({ href, children }) =>
-        href && /^(https?:|mailto:)/i.test(href) ? (
-          <a
-            href={href}
-            onClick={(event) => {
-              event.preventDefault()
-              void openLink(href, { external: wantsExternal(event) }).catch(onError)
-            }}
-          >
-            {children}
-          </a>
-        ) : (
-          <span>{children}</span>
-        )
-    }),
-    [onError]
-  )
-  if (entry.kind === 'user') {
-    // A message another tab sent: its sender in a chip, its words without
-    // the bracketed header, in the delivery's own tint.
-    const delivery = parseDelivery(entry.text)
-    const text = delivery ? delivery.body : entry.text
-    return (
-      <div
-        className="chat-turn-wrap"
-        data-side="end"
-        data-interrupted={entry.interrupted ? 'true' : undefined}
-      >
-        <Attachments files={entry.attachments ?? []} />
-        {text.trim() !== '' && (
-          // The message stands whole; one too tall to pin scrolls away with
-          // its exchange instead (question-height.ts).
-          <div className="term-question">
-            <article
-              className="chat-turn"
-              data-role="user"
-              data-from={delivery ? 'tab' : undefined}
-              data-interrupted={entry.interrupted ? 'true' : undefined}
-            >
-              {delivery && <SenderChip sender={delivery.sender} />}
-              {text.replace(/\s+$/, '')}
-            </article>
-          </div>
-        )}
-        {entry.interrupted && <span className="chat-turn-note">Interrupted</span>}
-        <TurnMeta at={entry.at} text={text} />
-      </div>
-    )
-  }
-  if (entry.kind === 'assistant')
-    return (
-      <div className="chat-turn-wrap" data-side="start">
-        <article className="chat-turn chat-prose" data-role="assistant">
-          <ReactMarkdown remarkPlugins={remarkPlugins} components={markdownComponents}>
-            {entry.text}
-          </ReactMarkdown>
-        </article>
-        <TurnMeta at={entry.at} text={entry.text} />
-      </div>
-    )
-  if (entry.kind === 'permission') return <PermissionRow entry={entry} />
-  if (entry.kind === 'error')
-    return (
-      <div className="chat-notice" data-tone="error" role="alert">
-        {entry.message}
-      </div>
-    )
-  return null
-})
-/** A run of tools, re-rendered only when one of its calls changed or it
- *  stops or starts being the run in flight: the run is rebuilt by
- *  `groupEntries` on every render, its calls are not. */
-const ToolRow = memo(
-  TerminalTools,
-  (a: { group: ToolRun; live: boolean }, b: { group: ToolRun; live: boolean }) =>
-    a.live === b.live &&
-    a.group.id === b.group.id &&
-    a.group.tools.length === b.group.tools.length &&
-    a.group.tools.every((tool, i) => tool === b.group.tools[i])
-)
 /** The Terminal view's names for the permission modes where they differ
  *  from the provider's: bypass is YOLO here, short and unmistakable. */
 const terminalModeLabel = (option: PermissionModeOption): string =>
@@ -461,6 +307,21 @@ export function TerminalView({
     (current: TerminalStatus, event: SessionEvent) => reduceStatus(current, event),
     emptyStatus
   )
+  // Each subagent's own conversation, off the same stream, for the window
+  // onto it that its row opens (`SubAgentPeek`). A page of the past folds
+  // in as it arrives; a fleet catch-up starts it over with the transcript.
+  const [subagents, dispatchSubagents] = useReducer(
+    (
+      logs: SubagentLogs,
+      action: { event: SessionEvent } | { items: HistoryItem[] } | { sync: HistoryItem[] }
+    ): SubagentLogs =>
+      'event' in action
+        ? reduceSubagents(logs, action.event)
+        : 'sync' in action
+          ? foldSubagents(noSubagents, action.sync)
+          : foldSubagents(logs, action.items),
+    noSubagents
+  )
   // Held by identity: the stack folds a row away when its list changes.
   const work = useMemo(() => shownWork(status.agents), [status.agents])
   // The count under the composer: the subagents and the commands apart, so
@@ -502,6 +363,7 @@ export function TerminalView({
     const catchup = bindFleetCatchup(session.id, (page) => {
       if (!live) return
       dispatch({ sync: page.items })
+      dispatchSubagents({ sync: page.items })
       setBefore(page.before)
       setReady(true)
     })
@@ -521,6 +383,7 @@ export function TerminalView({
       const take = (): void => {
         dispatch({ event })
         dispatchStatus(event)
+        dispatchSubagents({ event })
       }
       if (event.type === 'state_change' && event.state === 'ended') confirmed(take)
       else take()
@@ -540,6 +403,7 @@ export function TerminalView({
           .then((page) => {
             if (!live) return
             dispatch({ prepend: page.items })
+            dispatchSubagents({ items: page.items })
             setBefore(page.before)
             // The newest page holds the context as the conversation left it.
             const usage = page.items.findLast((item) => item.event.type === 'context_usage')
@@ -586,6 +450,7 @@ export function TerminalView({
     const page = await window.electronAPI.sessionsHistory(session.id, before)
     return () => {
       dispatch({ prepend: page.items })
+      dispatchSubagents({ items: page.items })
       setBefore(page.before)
     }
   }, [session.id, before])
@@ -1259,6 +1124,7 @@ export function TerminalView({
         </div>
         <SubAgentStack
           agents={work}
+          logs={subagents}
           // A relaunch asks for Claude's Agent tool on a Claude model: only an
           // agent that tool started (a pane remounted since never saw the call,
           // hence the session's provider) can be launched again that way.

@@ -223,6 +223,11 @@ export function reduceConversation(state: Conversation, action: Action): Convers
     const entries = settle(state.entries, (request) => request.id === event.id)
     return entries === state.entries ? state : { ...state, entries }
   }
+  // A subagent's own message, text, call or result (`parent`) is that
+  // agent's, read by the view of it (`subagents.ts`), never the
+  // conversation's: before this, a subagent's hundred calls were counted into
+  // the run the conversation was on, as if the agent had made them itself.
+  if ('parent' in event && event.parent) return state
   const entries = [...state.entries]
   switch (event.type) {
     case 'user_message':

@@ -67,16 +67,35 @@ describe('Codex agent tasks, from the recorded lifecycle', () => {
     const { translator: t, events } = translator()
     for (const frame of notifications) t.notification(frame)
     const text = events
-      .filter((e) => e.type === 'assistant_text')
+      .filter((e) => e.type === 'assistant_text' && !e.parent)
       .map((e) => (e.type === 'assistant_text' ? e.delta : ''))
       .join('')
     expect(text).toContain('I’ll run the protocol in the requested order.')
     expect(text).not.toMatch(/20-second wait|Done\./)
-    const calls = events.flatMap((e) => (e.type === 'tool_call' ? [e.id] : []))
+    const calls = events.flatMap((e) => (e.type === 'tool_call' && !e.parent ? [e.id] : []))
     expect(calls).toEqual([BACKGROUND, FOREGROUND])
     expect(calls).not.toContain(CHILD_COMMAND)
     // Exactly one done: the parent's turn, never the child's.
     expect(events.filter((e) => e.type === 'state_change' && e.state === 'done')).toHaveLength(1)
+  })
+
+  it("carries the child thread's text and tools under its thread, for the view of it", () => {
+    const { translator: t, events } = translator()
+    for (const frame of notifications) t.notification(frame)
+    const theirs = events.filter((e) => 'parent' in e && e.parent === 'thread-child')
+    const text = theirs.map((e) => (e.type === 'assistant_text' ? e.delta : '')).join('')
+    expect(text).toContain('I’ll run the 20-second wait, then report completion.')
+    expect(text).toContain('Done.')
+    // Streamed, then closed by the completed item: the close adds nothing twice.
+    expect(
+      theirs
+        .filter((e) => e.type === 'assistant_text' && e.final)
+        .map((e) => e.type === 'assistant_text' && e.delta)
+    ).toEqual(['', ''])
+    const calls = theirs.flatMap((e) => (e.type === 'tool_call' ? [e.id] : []))
+    const results = theirs.flatMap((e) => (e.type === 'tool_result' ? [e.id] : []))
+    expect(calls).toEqual([CHILD_COMMAND])
+    expect(results).toEqual([CHILD_COMMAND])
   })
 
   it("reads the subagent's own context under its row, and the parent's on the meter", () => {
@@ -454,7 +473,7 @@ describe('Codex agent tasks, schema-derived edges', () => {
     expect(events.slice(before).map((e) => e.type)).toEqual(stranger.map(() => 'provider_event'))
   })
 
-  it('keeps a known child thread to its row: its text, tools and turns stay out', () => {
+  it('keeps a known child thread to its row: its text under its thread, its turns out', () => {
     const { translator: t, events } = translator()
     t.notification(started('a', 'child-a'))
     const before = events.length
@@ -463,7 +482,10 @@ describe('Codex agent tasks, schema-derived edges', () => {
       params: { threadId: 'child-a', turnId: 'c', itemId: 'm', delta: 'leak' }
     })
     t.notification({ method: 'turn/completed', params: { threadId: 'child-a', turn: { id: 'c' } } })
-    expect(events.slice(before).map((e) => e.type)).toEqual(['provider_event', 'provider_event'])
+    expect(events.slice(before)).toEqual([
+      { type: 'assistant_text', delta: 'leak', final: false, parent: 'child-a' },
+      expect.objectContaining({ type: 'provider_event' })
+    ])
   })
 
   it('never promotes a poll of a running process into a row of its own', () => {

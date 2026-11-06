@@ -1635,6 +1635,67 @@ it('reports the context from the main thread and names the parent of a subagent 
     ['sub-1', 'agent-1']
   ])
 })
+it("carries a subagent's brief, words and results under its call, whole and never streamed", () => {
+  // The frames as the installed CLI sends them for one subagent
+  // (`claude -p --include-partial-messages`, 2026-11-06): the parent's
+  // Agent call, then the subagent's user text (its brief), its tool_use,
+  // its tool_result and its text, each with parent_tool_use_id; nothing of
+  // the subagent comes as a stream_event.
+  feed({
+    type: 'assistant',
+    parent_tool_use_id: null,
+    message: {
+      content: [
+        { type: 'tool_use', id: 'agent-1', name: 'Agent', input: { prompt: 'List the probe' } }
+      ]
+    }
+  })
+  feed({
+    type: 'user',
+    parent_tool_use_id: 'agent-1',
+    message: { role: 'user', content: [{ type: 'text', text: 'List the probe' }] }
+  })
+  feed({
+    type: 'assistant',
+    parent_tool_use_id: 'agent-1',
+    message: {
+      content: [{ type: 'tool_use', id: 'sub-1', name: 'Bash', input: { command: 'ls' } }]
+    }
+  })
+  feed({
+    type: 'user',
+    parent_tool_use_id: 'agent-1',
+    message: {
+      role: 'user',
+      content: [{ type: 'tool_result', tool_use_id: 'sub-1', content: 'err.txt', is_error: false }]
+    }
+  })
+  feed({
+    type: 'assistant',
+    parent_tool_use_id: 'agent-1',
+    message: { content: [{ type: 'text', text: 'DONE' }] }
+  })
+  // The conversation's own text, streamed, goes on untouched by the above.
+  feed({
+    type: 'stream_event',
+    event: { type: 'content_block_delta', delta: { type: 'text_delta', text: 'FIN' } }
+  })
+  const own = events.filter(
+    (e) =>
+      !('parent' in e && e.parent) && e.type !== 'provider_event' && e.type !== 'background_tasks'
+  )
+  expect(own).toEqual([
+    { type: 'tool_call', id: 'agent-1', name: 'Agent', input: { prompt: 'List the probe' } },
+    { type: 'assistant_text', delta: 'FIN', final: false }
+  ])
+  const theirs = events.filter((e) => 'parent' in e && e.parent)
+  expect(theirs).toEqual([
+    { type: 'user_message', text: 'List the probe', parent: 'agent-1' },
+    { type: 'tool_call', id: 'sub-1', name: 'Bash', input: { command: 'ls' }, parent: 'agent-1' },
+    { type: 'tool_result', id: 'sub-1', output: 'err.txt', error: false, parent: 'agent-1' },
+    { type: 'assistant_text', delta: 'DONE', final: true, parent: 'agent-1' }
+  ])
+})
 it('replays the context a resumed conversation stood at', () => {
   const line = (usage: object): string =>
     JSON.stringify({

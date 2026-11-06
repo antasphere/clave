@@ -668,7 +668,17 @@ export class ClaudeStreamTranslator {
       // own context, never the conversation's.
       const parent = typeof p.parent_tool_use_id === 'string' ? p.parent_tool_use_id : undefined
       for (const block of message.content) {
-        if (block.type === 'text' && p.type === 'user' && isInterruptNotice(block.text)) {
+        // A subagent's own words: its brief (the user text its call gave it)
+        // and what it says, whole, since the CLI streams nothing of a
+        // subagent (claude-stream/README.md). Each carries its parent, so a
+        // view of that agent reads them and the transcript never does; the
+        // conversation's own streaming state is not theirs to touch.
+        if (parent && block.type === 'text' && typeof block.text === 'string') {
+          if (p.type === 'user' && block.text.trim())
+            this.emit({ type: 'user_message', text: block.text, parent })
+          else if (p.type === 'assistant' && block.text.trim())
+            this.emit({ type: 'assistant_text', delta: block.text, final: true, parent })
+        } else if (block.type === 'text' && p.type === 'user' && isInterruptNotice(block.text)) {
           this.interrupted = true
         } else if (block.type === 'text' && p.type === 'assistant' && !this.streamed) {
           this.emit({ type: 'assistant_text', delta: z.string().parse(block.text), final: false })
@@ -690,7 +700,8 @@ export class ClaudeStreamTranslator {
             type: 'tool_result',
             id: z.string().parse(block.tool_use_id),
             output: block.content,
-            error: z.boolean().optional().catch(undefined).parse(block.is_error)
+            error: z.boolean().optional().catch(undefined).parse(block.is_error),
+            ...(parent ? { parent } : {})
           })
         }
       }
