@@ -6215,6 +6215,12 @@ button.term-agent-model:focus-visible {
   display: flex;
   background-color: var(--surface-0);
 }
+/* The veil's words wait: a deck that paints within 400 ms shows the panel's
+   ground and then the page, never a flash of "Opening the report"; only a
+   slow viewer earns the spinner and the words, which then fade in. */
+.routine-veil > * {
+  animation: scrim-in 200ms ease-out 400ms both;
+}
 /* The history: menu rows, the tone dot first, the headline, then the time,
    the duration and the trigger in tabular figures so a column of runs lines
    up. The same line heads the report card. */

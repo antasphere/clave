@@ -28,52 +28,73 @@ const PopoverContent = React.forwardRef<
     animated?: boolean
     /** Current open state — required when `animated` is true. */
     open?: boolean
+    /** `rise` drops the scale and keeps the fade and the 4px rise: for a
+     *  popover that holds a web view, which is composited out of process and
+     *  does not follow a scale on its parent, so it jumped against the frame
+     *  while the frame grew. Default `pop`. */
+    motion?: 'pop' | 'rise'
   }
->(({ className, align = 'start', sideOffset = 6, animated, open, children, ...props }, ref) => {
-  if (animated) {
-    return (
-      <AnimatePresence>
-        {open && (
-          <PopoverPrimitive.Portal forceMount>
-            <PopoverPrimitive.Content
-              ref={ref}
-              forceMount
-              align={align}
-              sideOffset={sideOffset}
-              className="z-50 outline-none"
-              {...props}
-              asChild
-            >
-              <motion.div
-                initial={{ opacity: 0, scale: 0.96, y: -4 }}
-                animate={{ opacity: 1, scale: 1, y: 0 }}
-                exit={{ opacity: 0, scale: 0.96, y: -4 }}
-                transition={popoverTransition}
-                className={cn('menu-surface w-auto p-1', className)}
+>(
+  (
+    {
+      className,
+      align = 'start',
+      sideOffset = 6,
+      animated,
+      open,
+      motion: kind = 'pop',
+      children,
+      ...props
+    },
+    ref
+  ) => {
+    const from = kind === 'rise' ? { opacity: 0, y: -4 } : { opacity: 0, scale: 0.96, y: -4 }
+    const to = kind === 'rise' ? { opacity: 1, y: 0 } : { opacity: 1, scale: 1, y: 0 }
+    if (animated) {
+      return (
+        <AnimatePresence>
+          {open && (
+            <PopoverPrimitive.Portal forceMount>
+              <PopoverPrimitive.Content
+                ref={ref}
+                forceMount
+                align={align}
+                sideOffset={sideOffset}
+                className="z-50 outline-none"
+                {...props}
+                asChild
               >
-                {children}
-              </motion.div>
-            </PopoverPrimitive.Content>
-          </PopoverPrimitive.Portal>
-        )}
-      </AnimatePresence>
+                <motion.div
+                  initial={from}
+                  animate={to}
+                  exit={from}
+                  transition={popoverTransition}
+                  className={cn('menu-surface w-auto p-1', className)}
+                >
+                  {children}
+                </motion.div>
+              </PopoverPrimitive.Content>
+            </PopoverPrimitive.Portal>
+          )}
+        </AnimatePresence>
+      )
+    }
+
+    return (
+      <PopoverPrimitive.Portal>
+        <PopoverPrimitive.Content
+          ref={ref}
+          align={align}
+          sideOffset={sideOffset}
+          className={cn('menu-surface menu-pop z-50 w-auto outline-none p-1', className)}
+          {...props}
+        >
+          {children}
+        </PopoverPrimitive.Content>
+      </PopoverPrimitive.Portal>
     )
   }
-
-  return (
-    <PopoverPrimitive.Portal>
-      <PopoverPrimitive.Content
-        ref={ref}
-        align={align}
-        sideOffset={sideOffset}
-        className={cn('menu-surface menu-pop z-50 w-auto outline-none p-1', className)}
-        {...props}
-      >
-        {children}
-      </PopoverPrimitive.Content>
-    </PopoverPrimitive.Portal>
-  )
-})
+)
 PopoverContent.displayName = PopoverPrimitive.Content.displayName
 
 export { Popover, PopoverTrigger, PopoverContent, PopoverAnchor }

@@ -74,6 +74,7 @@ export function RoutineToolbar(): React.JSX.Element | null {
                 </PopoverTrigger>
                 <PopoverContent
                   animated
+                  motion="rise"
                   open={open}
                   side="bottom"
                   align="end"

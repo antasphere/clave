@@ -114,7 +114,7 @@ function DeckGuest({ src, title }: { src: string; title?: string }): React.JSX.E
             className="routine-veil"
             initial={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            transition={{ duration: 0.16, ease: 'easeOut' }}
+            transition={{ duration: 0.2, ease: 'easeOut' }}
             data-testid="routine-report-veil"
           >
             <div className="routine-state">
