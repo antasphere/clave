@@ -2,70 +2,170 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Workspace health</title>
     <script type="application/json" id="slideless-data">{}</script>
     <style>
       :root {
         color-scheme: light dark;
-        --ink: #1a1a1a;
-        --muted: #6b6b6b;
-        --ok: #2f9e6b;
-        --fixed: #2a7fd4;
-        --attention: #d39a1f;
-        --failed: #d14646;
-        --line: rgba(128, 128, 128, 0.25);
-        font-family: 'Geist Sans', -apple-system, system-ui, sans-serif;
+        --ground: #fbfbf9;
+        --card: #ffffff;
+        --wash: #eeedeb;
+        --ink: #1b1b18;
+        --ink-2: #5c5c56;
+        --ink-3: #70706a;
+        --line: rgba(0, 0, 0, 0.1);
+        --ok: #1f9d5a;
+        --fixed: #1f5fcf;
+        --attention: #b7791f;
+        --failed: #d14343;
+        --running: #1f5fcf;
+        --radius: 10px;
+        font-family: 'Geist Sans', 'Geist', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+        -webkit-font-smoothing: antialiased;
       }
       @media (prefers-color-scheme: dark) {
-        :root { --ink: #ededed; --muted: #9a9a9a; }
+        :root {
+          --ground: #0e0d0c;
+          --card: #161513;
+          --wash: #1d1c19;
+          --ink: rgba(255, 255, 255, 0.95);
+          --ink-2: rgba(255, 255, 255, 0.6);
+          --ink-3: rgba(255, 255, 255, 0.47);
+          --line: rgba(255, 255, 255, 0.1);
+          --ok: #3fbf7a;
+          --fixed: #5aa2f7;
+          --attention: #e0a43a;
+          --failed: #ef6060;
+          --running: #5aa2f7;
+        }
       }
-      body { margin: 0; padding: 20px 22px; color: var(--ink); background: transparent; }
-      h1 { font-size: 17px; font-weight: 600; margin: 0 0 4px; line-height: 1.3; }
-      .meta { color: var(--muted); font-size: 12px; margin-bottom: 14px; }
-      .status { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 6px; vertical-align: middle; }
-      .status.ok { background: var(--ok); } .status.attention { background: var(--attention); } .status.failed { background: var(--failed); }
-      .check { border-top: 1px solid var(--line); padding: 10px 0; }
-      .check h2 { font-size: 13px; font-weight: 600; margin: 0 0 4px; display: flex; align-items: center; gap: 8px; }
-      .verdict { font-size: 11px; font-weight: 500; text-transform: uppercase; letter-spacing: 0.04em; }
-      .verdict.ok { color: var(--ok); } .verdict.fixed { color: var(--fixed); } .verdict.attention { color: var(--attention); } .verdict.failed { color: var(--failed); }
-      .check p { margin: 2px 0; font-size: 12px; color: var(--muted); }
-      .check ul { margin: 4px 0 0; padding-left: 18px; font-size: 12px; }
-      .list-title { font-size: 11px; color: var(--muted); margin-top: 6px; }
-      .summary { font-size: 12px; white-space: pre-wrap; border-top: 1px solid var(--line); padding-top: 10px; margin-top: 6px; }
-      .empty { color: var(--muted); font-size: 12px; }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; background: var(--ground); color: var(--ink); }
+      body { padding: 22px 22px 28px; font-size: 13px; line-height: 1.5; }
+      .tone-ok { --tone: var(--ok); }
+      .tone-fixed { --tone: var(--fixed); }
+      .tone-attention { --tone: var(--attention); }
+      .tone-failed { --tone: var(--failed); }
+      .tone-running, .tone-waiting { --tone: var(--running); }
+
+      /* The hero: the status as a pill, the headline, when. */
+      .hero {
+        position: relative;
+        padding: 18px 18px 16px;
+        border-radius: var(--radius);
+        background: linear-gradient(180deg, color-mix(in oklab, var(--tone, var(--ink-3)) 9%, var(--card)), var(--card));
+        border: 1px solid color-mix(in oklab, var(--tone, var(--ink-3)) 22%, var(--line));
+        overflow: hidden;
+      }
+      .hero svg.mark { position: absolute; right: 14px; top: 14px; width: 44px; height: 44px; }
+      .mark .ring { fill: none; stroke: color-mix(in oklab, var(--tone, var(--ink-3)) 45%, transparent); stroke-width: 1.2; }
+      .mark .ring-2 { fill: none; stroke: color-mix(in oklab, var(--tone, var(--ink-3)) 22%, transparent); stroke-width: 1; }
+      .mark .dot { fill: var(--tone, var(--ink-3)); }
+      .pill {
+        display: inline-flex; align-items: center; gap: 6px;
+        padding: 3px 9px 3px 7px; border-radius: 999px;
+        font-size: 11px; font-weight: 500; letter-spacing: 0.02em;
+        color: var(--tone); background: color-mix(in oklab, var(--tone) 12%, transparent);
+      }
+      .pill::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--tone); }
+      h1 { margin: 10px 56px 4px 0; font-size: 19px; line-height: 1.3; font-weight: 600; letter-spacing: -0.01em; text-wrap: balance; }
+      .when { color: var(--ink-3); font-size: 12px; font-variant-numeric: tabular-nums; }
+
+      /* The counts, one tile per verdict. */
+      .counts { display: grid; grid-template-columns: repeat(auto-fit, minmax(84px, 1fr)); gap: 8px; margin: 14px 0 4px; }
+      .count { padding: 10px 12px; border-radius: 8px; background: var(--wash); }
+      .count b { display: block; font-size: 18px; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--ink); }
+      .count span { font-size: 11px; color: var(--ink-3); }
+      .count.lit b { color: var(--tone); }
+
+      h2 { margin: 22px 2px 8px; font-size: 11px; font-weight: 500; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-3); }
+
+      /* One card per finding, its tone on the edge. */
+      .cards { display: flex; flex-direction: column; gap: 8px; }
+      .card {
+        position: relative; padding: 12px 14px 12px 16px; border-radius: 8px;
+        background: var(--card); border: 1px solid var(--line);
+      }
+      .card::before { content: ''; position: absolute; left: 0; top: 10px; bottom: 10px; width: 3px; border-radius: 0 3px 3px 0; background: var(--tone, var(--ink-3)); }
+      .card-head { display: flex; align-items: baseline; gap: 10px; }
+      .card-title { flex: 1; min-width: 0; font-weight: 600; font-size: 13px; overflow-wrap: anywhere; }
+      .chip { flex-shrink: 0; font-size: 10.5px; font-weight: 500; letter-spacing: 0.06em; text-transform: uppercase; color: var(--tone); }
+      .card p { margin: 4px 0 0; color: var(--ink-2); }
+      .card .list-title { margin-top: 10px; font-size: 11px; color: var(--ink-3); }
+      .card ul { margin: 4px 0 0; padding-left: 18px; color: var(--ink-2); }
+      .card li + li { margin-top: 2px; }
+
+      /* The agent's account, as prose. */
+      .prose { color: var(--ink-2); max-width: 64ch; }
+      .prose p { margin: 0 0 10px; }
+      .prose ul { margin: 0 0 10px; padding-left: 18px; }
+      .prose strong { color: var(--ink); font-weight: 600; }
+      .prose code { font: 12px ui-monospace, 'Geist Mono', SFMono-Regular, Menlo, monospace; padding: 1px 5px; border-radius: 4px; background: var(--wash); color: var(--ink); }
+      .empty { color: var(--ink-3); padding: 18px 2px; }
+
+      @media (prefers-reduced-motion: no-preference) {
+        .hero, .counts, h2, .card, .prose { animation: rise 420ms cubic-bezier(0.2, 0, 0, 1) both; }
+        .counts { animation-delay: 60ms; }
+        .card { animation-delay: calc(120ms + var(--i, 0) * 40ms); }
+        .prose { animation-delay: 160ms; }
+      }
+      @keyframes rise { from { opacity: 0; transform: translateY(4px); } }
     </style>
   </head>
   <body>
-    <h1 id="headline">Workspace health</h1>
-    <div class="meta" id="meta"></div>
-    <div id="checks"></div>
-    <div class="summary" id="summary"></div>
+    <main id="deck"></main>
     <script>
       // The data Clave filled in: the run's envelope (`run`, `routine`) and the agent's `data`.
       const doc = JSON.parse(document.getElementById('slideless-data').textContent || '{}')
       const run = doc.run || {}
       const data = doc.data || {}
       const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c])
-      const when = (t) => (t ? new Date(t).toLocaleString() : '')
-      document.getElementById('headline').innerHTML =
-        `<span class="status ${esc(run.status || '')}"></span>${esc(run.headline || 'No report yet')}`
-      document.getElementById('meta').textContent = run.reportedAt
-        ? `${when(run.reportedAt)} · ${run.trigger || ''}`
-        : 'This deck has no report yet.'
-      const checks = Array.isArray(data.checks) ? data.checks : []
-      document.getElementById('checks').innerHTML = checks.length
-        ? checks
-            .map(
-              (c) => `<section class="check">
-        <h2>${esc(c.name)} <span class="verdict ${esc(c.verdict)}">${esc(c.verdict)}</span></h2>
-        ${c.detail ? `<p>${esc(c.detail)}</p>` : ''}
-        ${c.fixed && c.fixed.length ? `<div class="list-title">Fixed</div><ul>${c.fixed.map((f) => `<li>${esc(f)}</li>`).join('')}</ul>` : ''}
-        ${c.proposed && c.proposed.length ? `<div class="list-title">Proposed</div><ul>${c.proposed.map((p) => `<li>${esc(p)}</li>`).join('')}</ul>` : ''}
+      const WORD = { ok: 'OK', fixed: 'Fixed', attention: 'Attention', failed: 'Failed', running: 'Running', waiting: 'Waiting on you' }
+      const when = (t) => {
+        if (!t) return ''
+        const d = new Date(t)
+        const time = d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
+        return new Date().toDateString() === d.toDateString() ? `Today, ${time}` : `${d.toLocaleDateString(undefined, { day: 'numeric', month: 'short' })}, ${time}`
+      }
+      // Markdown, the little an agent's summary uses: paragraphs, - lists, `code`, **bold**.
+      const inline = (s) => esc(s).replace(/`([^`]+)`/g, '<code>$1</code>').replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+      const prose = (md) => String(md || '').trim().split(/\n{2,}/).map((block) => {
+        const lines = block.split('\n')
+        return lines.every((l) => /^\s*[-*] /.test(l))
+          ? `<ul>${lines.map((l) => `<li>${inline(l.replace(/^\s*[-*] /, ''))}</li>`).join('')}</ul>`
+          : `<p>${lines.map(inline).join('<br>')}</p>`
+      }).join('')
+      const mark = `<svg class="mark" viewBox="0 0 44 44" aria-hidden="true"><circle class="ring-2" cx="22" cy="22" r="20"/><circle class="ring" cx="22" cy="22" r="13"/><circle class="dot" cx="22" cy="22" r="5"/></svg>`
+      const hero = () => `<section class="hero tone-${esc(run.status || 'none')}">${mark}
+        <span class="pill">${esc(WORD[run.status] || 'No report')}</span>
+        <h1>${esc(run.headline || 'No report yet')}</h1>
+        <div class="when">${run.reportedAt ? `${esc(when(run.reportedAt))} · ${esc(run.trigger === 'manual' ? 'run by hand' : run.trigger || '')}` : 'This deck has no report yet.'}</div>
       </section>`
-            )
-            .join('')
-        : '<p class="empty">No checks were reported.</p>'
-      document.getElementById('summary').textContent = run.summary || ''
+      const counts = (verdicts, order) => {
+        const n = Object.fromEntries(order.map((v) => [v, 0]))
+        for (const v of verdicts) if (v in n) n[v]++
+        return `<div class="counts">${order.map((v) => `<div class="count tone-${v}${n[v] ? ' lit' : ''}"><b>${n[v]}</b><span>${WORD[v]}</span></div>`).join('')}</div>`
+      }
+      const list = (title, items) => (items && items.length ? `<div class="list-title">${title}</div><ul>${items.map((x) => `<li>${inline(x)}</li>`).join('')}</ul>` : '')
+      const summary = () => (run.summary ? `<h2>Summary</h2><div class="prose">${prose(run.summary)}</div>` : '')
+      const checks = Array.isArray(data.checks) ? data.checks : []
+      document.getElementById('deck').innerHTML =
+        hero() +
+        (checks.length ? counts(checks.map((c) => c.verdict), ['ok', 'fixed', 'attention', 'failed']) : '') +
+        `<h2>Checks</h2>` +
+        (checks.length
+          ? `<div class="cards">${checks
+              .map(
+                (c, i) => `<article class="card tone-${esc(c.verdict)}" style="--i:${i}">
+          <div class="card-head"><span class="card-title">${esc(c.name)}</span><span class="chip">${esc(WORD[c.verdict] || c.verdict)}</span></div>
+          ${c.detail ? `<p>${inline(c.detail)}</p>` : ''}
+          ${list('Fixed', c.fixed)}${list('Proposed', c.proposed)}
+        </article>`
+              )
+              .join('')}</div>`
+          : '<p class="empty">No checks were reported.</p>') +
+        summary()
     </script>
   </body>
 </html>
