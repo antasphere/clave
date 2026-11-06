@@ -2,6 +2,9 @@ import { useEffect, useState } from 'react'
 import type { RoutineRun, RoutineView } from '@clave/contract/routines/model'
 import { durationLabel, runTone, stateLabel, whenLabel } from './run-labels'
 import { RoutineDrawing } from './RoutineDrawing'
+import { RunGlyph } from './RunGlyph'
+import { TroubleCard } from './RoutineTrouble'
+import { failedRunTrouble } from './trouble'
 import { PageGuest } from '../../../src/renderer/src/components/layout/PageGuest'
 import { MarkdownRenderer } from '../../../src/renderer/src/components/files/MarkdownRenderer'
 
@@ -52,13 +55,7 @@ export function RoutineReport({
   if (tone === 'running' || tone === 'waiting') {
     return (
       <div className="routine-state" data-testid="routine-report-card" data-tone={tone}>
-        {tone === 'running' ? (
-          <span className="routine-spinner" aria-hidden="true">
-            <span className="sidebar-tab-spinner" />
-          </span>
-        ) : (
-          <span className="routine-dot" data-tone={tone} aria-hidden="true" />
-        )}
+        <RunGlyph tone={tone} size="lg" />
         <strong data-testid="routine-report-state">{stateLabel(run)}</strong>
         <span>
           {tone === 'running'
@@ -69,10 +66,20 @@ export function RoutineReport({
       </div>
     )
   }
+  // A run that failed before any report: the trouble card, never red text.
+  if (tone === 'failed' && !run.summary) {
+    return (
+      <TroubleCard
+        trouble={failedRunTrouble(run.reason, run.headline)}
+        meta={meta}
+        testId="routine-report-card"
+      />
+    )
+  }
   return (
     <div className="flex flex-col gap-2 p-4 overflow-auto h-full" data-testid="routine-report-card">
       <div className="flex items-center gap-2">
-        <span className="routine-dot" data-tone={tone} aria-hidden="true" />
+        {tone !== 'none' && <RunGlyph tone={tone} />}
         <span className="text-xs text-text-secondary" data-testid="routine-report-state">
           {stateLabel(run)}
         </span>
@@ -84,9 +91,10 @@ export function RoutineReport({
         </p>
       )}
       {run.reason && (
-        <p className="text-xs text-destructive" data-testid="routine-report-reason">
-          {run.reason}
-        </p>
+        <details className="routine-details" data-testid="routine-report-reason">
+          <summary>Details</summary>
+          <pre>{run.reason}</pre>
+        </details>
       )}
       {run.summary && (
         <div className="text-xs">
@@ -142,9 +150,7 @@ function DeckGuest({
         data-testid="routine-report-veil"
       >
         <div className="routine-state">
-          <span className="routine-spinner" aria-hidden="true">
-            <span className="sidebar-tab-spinner" />
-          </span>
+          <RunGlyph tone="running" size="lg" label="Opening the report" />
           <strong>Opening the report</strong>
         </div>
       </div>

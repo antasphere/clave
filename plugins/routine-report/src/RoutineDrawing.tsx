@@ -109,3 +109,41 @@ export function DiscussionDrawing(): React.JSX.Element {
     </svg>
   )
 }
+
+/* Something stopped on the way: the same clock and page as the routine's
+   drawing, but the accent line leaves the clock and halts halfway, at the
+   ringed dot; the rest of the road to the page is a soft dashed line, and the
+   page's rows are left unwritten. Calm on purpose: a run that did not finish
+   is news, not an alarm, so no red goes in the drawing (the state's glyph
+   says the tone); the words below say what happened. Same hand and rules as
+   the drawings above. */
+export function TroubleDrawing(): React.JSX.Element {
+  return (
+    <svg viewBox="0 0 240 150" className="chat-drawing" aria-hidden="true">
+      <line className="ln ln--thin" x1="18" y1="132" x2="222" y2="132" />
+      {/* the clock */}
+      <circle className="bx" cx="64" cy="72" r="32" />
+      <line className="ln ln--thin" x1="64" y1="44" x2="64" y2="49" />
+      <line className="ln ln--thin" x1="92" y1="72" x2="87" y2="72" />
+      <line className="ln ln--thin" x1="64" y1="100" x2="64" y2="95" />
+      <line className="ln ln--thin" x1="36" y1="72" x2="41" y2="72" />
+      <line className="ln" x1="64" y1="72" x2="52" y2="84" />
+      <circle className="dot" cx="64" cy="72" r="2.5" />
+      {/* the page, its rows not written */}
+      <rect className="bx bx--front" x="146" y="46" width="76" height="86" rx="7" />
+      <line className="ln ln--soft" x1="158" y1="64" x2="200" y2="64" />
+      <line className="ln ln--soft" x1="158" y1="82" x2="208" y2="82" />
+      <line className="ln ln--soft" x1="158" y1="98" x2="202" y2="98" />
+      <line className="ln ln--soft" x1="158" y1="114" x2="196" y2="114" />
+      {/* the run leaves the clock and stops halfway */}
+      <path className="ln ln--c travel" pathLength={1} d="M64,72 L86,56 C94,50 100,46 106,44" />
+      {/* the road it did not take */}
+      <path className="ln ln--soft" d="M118,41 C126,40 134,43 142,50" />
+      {/* where it stopped */}
+      <circle className="bx bx--front" cx="112" cy="42" r="9" />
+      <circle className="ring" cx="112" cy="42" r="9" />
+      <circle className="ring ring--pulse" cx="112" cy="42" r="9" />
+      <circle className="dot dot--c" cx="112" cy="42" r="3.5" />
+    </svg>
+  )
+}
