@@ -1258,6 +1258,13 @@ canvas[data-orb-state] {
 }
 .panel-icon-btn:disabled {
   opacity: 0.4;
+  cursor: not-allowed;
+}
+/* A disabled control does not wake up under the pointer (the field guide's
+   "no hover fill"); the hover rule above would otherwise still fill it. */
+.panel-icon-btn:disabled:hover {
+  color: var(--text-tertiary);
+  background-color: transparent;
 }
 
 /* The root chip at the head of the path bar: one letter for which root the
@@ -6144,7 +6151,7 @@ button.term-agent-model:focus-visible {
   font-size: var(--text-sm);
   font-weight: var(--font-weight-medium);
 }
-.routine-state span {
+.routine-state > span:not(.routine-spinner, .routine-dot, .routine-meta) {
   max-width: 34ch;
   color: var(--text-tertiary);
   font-size: var(--text-xs);
@@ -6220,7 +6227,7 @@ button.term-agent-model:focus-visible {
 }
 .routine-history {
   flex-shrink: 0;
-  max-height: calc(var(--control-h-md) * 4);
+  max-height: calc(var(--control-h-md) * 4 + var(--menu-row-gap) * 3 + var(--spacing));
   overflow: auto;
   padding: calc(var(--spacing) * 0.5);
   border-top: thin solid var(--border-subtle-color);

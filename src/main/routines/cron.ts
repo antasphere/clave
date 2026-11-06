@@ -287,7 +287,9 @@ const stepOf = (values: ReadonlySet<number>, span: number): number | null => {
   const sorted = [...values].sort((a, b) => a - b)
   if (sorted.length < 2 || sorted[0] !== 0) return null
   const step = sorted[1]
-  if (step < 2 || sorted.length !== Math.ceil(span / step)) return null
+  // A step that does not divide the span is not "every N": */45 fires at
+  // :00 and :45, forty-five minutes then fifteen.
+  if (step < 2 || span % step !== 0 || sorted.length !== span / step) return null
   return sorted.every((v, i) => v === i * step) ? step : null
 }
 

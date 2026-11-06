@@ -270,7 +270,7 @@ export function RoutinePanel({
                 className="menu-item"
                 data-selected={r.id === run?.id ? 'true' : undefined}
                 data-testid="routine-history-row"
-                data-state={r.state}
+                data-run-state={r.state}
                 onClick={() => setSelectedId(r.id)}
               >
                 <span className="routine-dot" data-tone={runTone(r)} aria-hidden="true" />
