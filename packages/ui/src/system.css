@@ -551,7 +551,6 @@ canvas[data-orb-state] {
 }
 @media (prefers-reduced-motion: reduce) {
   .tab-status[data-status='working']::before,
-  .routine-button[data-working='true']::before,
   .sidebar-tab-spinner {
     animation-duration: 2.4s;
   }
@@ -6212,52 +6211,56 @@ button.term-agent-model:focus-visible {
 
 /* ── Routines (ADR 0004) ──
    A routine's toolbar button and its floating panel. The button is the
-   routine's own icon in its colour, and one signal at a time sits on it the
-   way a sidebar row's status slot works (`lib/tab-status.ts`): a run in
-   flight turns a ring around the icon (`.tab-status[data-status='working']`,
-   the app's one loader); a finished run the person has not seen is a STILL
-   dot in the run's tone on the icon's corner. Nothing pulses: a pulse reads
-   as an alarm, and a run on its way is not one (Romain, 6 November 2026). */
-.routine-dot {
-  display: inline-block;
-  flex-shrink: 0;
-  width: calc(var(--spacing) * 1.5);
-  height: calc(var(--spacing) * 1.5);
-  border-radius: 9999px;
-  background-color: var(--color-status-inactive);
-}
-.routine-dot[data-tone='ok'] {
-  background-color: var(--color-status-ready);
-}
-.routine-dot[data-tone='attention'],
-.routine-dot[data-tone='waiting'] {
-  background-color: var(--color-status-waiting);
-}
-.routine-dot[data-tone='failed'],
-.routine-dot[data-tone='invalid'] {
-  background-color: var(--color-destructive);
-}
-.routine-dot[data-tone='running'] {
-  background-color: var(--color-status-working);
-}
-/* On the toolbar icon's corner, ringed in the bar's ground so it reads over
-   the glyph's strokes. */
-.routine-badge-dot {
-  position: absolute;
-  right: calc(var(--spacing) * 0.75);
-  bottom: calc(var(--spacing) * 0.75);
-  box-shadow: 0 0 0 1.5px var(--surface-0);
-}
-/* The panel's loader while a run is in flight: the sidebar's eight-segment
-   spinner at a glyph's size, in the working blue. */
-.routine-spinner {
-  display: inline-flex;
-  flex-shrink: 0;
-  width: calc(var(--spacing) * 4);
-  height: calc(var(--spacing) * 4);
+   routine's own icon in its colour, and one signal at a time sits on its
+   corner, drawn with the sidebar's own status glyphs (`RunGlyph`, the same
+   set `SessionStatus` draws): the eight-segment spinner while a run is in
+   flight, then a check, a warning, a question or a cross while the last run
+   is unseen. Motion means working, colour means "go look"; nothing pulses
+   (Romain, 6 November 2026). */
+.routine-glyph[data-tone='running'] {
   color: var(--color-status-working);
 }
-.routine-spinner > .sidebar-tab-spinner {
+.routine-glyph[data-tone='ok'] {
+  color: var(--color-status-ready);
+}
+.routine-glyph[data-tone='waiting'],
+.routine-glyph[data-tone='attention'] {
+  color: var(--color-status-waiting);
+}
+.routine-glyph[data-tone='failed'],
+.routine-glyph[data-tone='invalid'] {
+  color: var(--color-destructive);
+}
+.routine-glyph[data-tone='seen'] {
+  opacity: 0.45;
+}
+/* The state view's centrepiece: the same glyph at a heading's size. */
+.routine-glyph[data-size='lg'] {
+  width: calc(var(--spacing) * 6);
+  height: calc(var(--spacing) * 6);
+}
+.routine-glyph[data-size='lg'] > .sidebar-tab-spinner {
+  width: 100%;
+  height: 100%;
+}
+/* On the toolbar icon's corner: a small glyph on a disc of the bar's ground,
+   so it reads over the icon's strokes. */
+.routine-glyph[data-size='badge'] {
+  position: absolute;
+  right: calc(var(--spacing) * 0.25);
+  bottom: calc(var(--spacing) * 0.25);
+  width: calc(var(--spacing) * 2.75);
+  height: calc(var(--spacing) * 2.75);
+  border-radius: 9999px;
+  background-color: var(--surface-0);
+  box-shadow: 0 0 0 1px var(--surface-0);
+}
+.routine-glyph[data-size='badge'] > svg {
+  width: 100%;
+  height: 100%;
+  stroke-width: 2.25;
+}
+.routine-glyph[data-size='badge'] > .sidebar-tab-spinner {
   width: 100%;
   height: 100%;
 }
@@ -6284,7 +6287,7 @@ button.term-agent-model:focus-visible {
   font-size: var(--text-sm);
   font-weight: var(--font-weight-medium);
 }
-.routine-state > span:not(.routine-spinner, .routine-dot, .routine-meta) {
+.routine-state > span:not(.routine-glyph, .routine-meta, .routine-trouble-title) {
   max-width: 34ch;
   color: var(--text-tertiary);
   font-size: var(--text-xs);
@@ -6293,22 +6296,6 @@ button.term-agent-model:focus-visible {
 .routine-state[data-tone='waiting'] strong {
   color: var(--color-status-waiting);
 }
-/* The ring around the toolbar icon while a run is in flight: the rule of
-   `.tab-status[data-status='working']`, on the button itself so its glyph
-   stays a direct child and keeps the framed glyph size at every density;
-   its reduced-motion pace sits with the sidebar spinner's, above (the chat
-   motion test reads the LAST reduced-motion block of this file as the
-   chat's own). */
-.routine-button[data-working='true']::before {
-  content: '';
-  position: absolute;
-  inset: calc(var(--spacing) * 0.75);
-  border-radius: 9999px;
-  border: 1.5px solid color-mix(in srgb, currentColor 22%, transparent);
-  border-top-color: currentColor;
-  animation: tab-status-spin 0.9s linear infinite;
-}
-
 /* The placeholder under the deck's guest until its first paint: the panel's
    ground and, after a wait, the spinner and the words. It sits UNDER the
    guest (a guest paints above every DOM sibling anyway) and stays mounted,
@@ -6431,11 +6418,71 @@ button.term-agent-model:focus-visible {
 }
 .routine-note {
   margin: calc(var(--spacing) * 3) calc(var(--spacing) * 4) 0;
-  color: var(--text-secondary);
+  padding: calc(var(--spacing) * 2.5) calc(var(--spacing) * 3);
+  display: flex;
+  align-items: flex-start;
+  gap: calc(var(--spacing) * 2.5);
+  border-radius: var(--radius-lg);
+  background-color: var(--surface-50);
+  border: 1px solid var(--border-subtle-color);
   font-size: var(--control-text-sm);
 }
-.routine-note[data-tone='failed'] {
-  color: var(--color-destructive);
+.routine-note > .routine-glyph {
+  margin-top: 1px;
+}
+.routine-note-text {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--spacing) * 0.5);
+}
+.routine-note-text strong {
+  color: var(--text-primary);
+  font-weight: var(--font-weight-medium);
+}
+.routine-note-text > span {
+  color: var(--text-secondary);
+  line-height: 1.45;
+}
+/* The trouble card: the state view with its drawing, the glyph beside the
+   title, and the raw words folded under Details. */
+.routine-trouble-title {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(var(--spacing) * 1.5);
+}
+/* The exact words the app or the agent gave, kept but quiet: a disclosure,
+   then a small monospace block on the panel's sunken ground, never red. */
+.routine-details {
+  align-self: stretch;
+  max-width: 100%;
+  text-align: left;
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+.routine-details > summary {
+  width: fit-content;
+  cursor: pointer;
+  user-select: none;
+  color: var(--text-tertiary);
+}
+.routine-details > summary:hover {
+  color: var(--text-secondary);
+}
+.routine-details > pre {
+  margin-top: calc(var(--spacing) * 1.5);
+  padding: calc(var(--spacing) * 2) calc(var(--spacing) * 2.5);
+  max-height: calc(var(--spacing) * 40);
+  overflow: auto;
+  border-radius: var(--radius-md);
+  background-color: var(--surface-inset);
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.routine-trouble .routine-details {
+  max-width: 44ch;
 }
 /* The Runs tab: the facts as a quiet two-column list, then the runs. */
 .routine-runs {

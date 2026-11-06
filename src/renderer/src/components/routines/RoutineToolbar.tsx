@@ -7,15 +7,17 @@ import { useWorkspaceStore } from '../../store/workspace-store'
 import { getTerminalIconComponent } from '../ui/terminal-icons'
 import { resolveColorHex, type GroupTerminalIcon } from '../../store/session-types'
 import { RoutinePanel } from './RoutinePanel'
+import { RunGlyph } from '../../../../../plugins/routine-report/src/RunGlyph'
 import { routineBadge, routineInk } from './routine-badge'
 import { routineTitle } from './routine-title'
 
 /**
  * The routines of the active workspace in the toolbar (ADR 0004): one button
  * per routine, its icon in its colour, grouped by the group that declares
- * them, with the one signal `routineBadge` decides (a ring turning around the
- * icon while a run is in flight, a still dot in the run's tone while the last
- * run is unseen) and the floating panel on a click.
+ * them, with the one signal `routineBadge` decides, drawn on the icon's
+ * corner with the sidebar's own glyphs (`RunGlyph`): its spinner while a run
+ * is in flight, its check, warning, question or cross while the last run is
+ * unseen; and the floating panel on a click.
  */
 export function RoutineToolbar(): React.JSX.Element | null {
   const routines = useRoutinesStore((s) => s.routines)
@@ -60,16 +62,13 @@ export function RoutineToolbar(): React.JSX.Element | null {
                     data-testid="routine-button"
                     data-routine={view.routine.name}
                     data-state={badge.state}
-                    data-working={badge.working ? 'true' : undefined}
                   >
                     <Icon className="w-4 h-4" />
-                    {badge.dot && (
-                      <span
-                        className="routine-dot routine-badge-dot"
-                        data-tone={badge.dot}
-                        data-testid="routine-dot"
-                      />
-                    )}
+                    {badge.working ? (
+                      <RunGlyph tone="running" size="badge" testId="routine-working" />
+                    ) : badge.dot ? (
+                      <RunGlyph tone={badge.dot} size="badge" testId="routine-dot" />
+                    ) : null}
                   </button>
                 </PopoverTrigger>
                 <PopoverContent

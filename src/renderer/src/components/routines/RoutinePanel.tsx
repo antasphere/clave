@@ -24,6 +24,9 @@ import {
   stateLabel,
   whenLabel
 } from '../../../../../plugins/routine-report/src/run-labels'
+import { RunGlyph } from '../../../../../plugins/routine-report/src/RunGlyph'
+import { TroubleNote } from '../../../../../plugins/routine-report/src/RoutineTrouble'
+import { invalidTrouble, storeTrouble } from '../../../../../plugins/routine-report/src/trouble'
 import { claudeModelName } from '../../../../shared/claude-models'
 import { useRoutinesStore } from '../../store/routines-store'
 import { adoptServerStartedSessions } from '../../lib/adopt-record'
@@ -243,15 +246,33 @@ export function RoutinePanel({
         </div>
       </div>
 
-      {(view.routine.invalid || error) && (
-        <p
-          className="routine-note"
-          data-tone="failed"
-          data-testid={view.routine.invalid ? 'routine-panel-invalid' : 'routine-panel-error'}
-        >
-          {view.routine.invalid ?? error}
-        </p>
-      )}
+      {/* What went wrong, if anything, in words and a glyph, the raw message
+          folded under Details; a window still reaching its server says it is
+          connecting, which is not trouble at all. */}
+      {view.routine.invalid ? (
+        <TroubleNote
+          trouble={invalidTrouble(view.routine.invalid)}
+          testId="routine-panel-invalid"
+        />
+      ) : error ? (
+        (() => {
+          const trouble = storeTrouble(error)
+          return trouble ? (
+            <TroubleNote trouble={trouble} testId="routine-panel-error" />
+          ) : (
+            <div
+              className="routine-note"
+              data-tone="running"
+              data-testid="routine-panel-connecting"
+            >
+              <RunGlyph tone="running" label="Connecting" />
+              <div className="routine-note-text">
+                <span>Connecting to Clave&rsquo;s server…</span>
+              </div>
+            </div>
+          )
+        })()
+      ) : null}
 
       {/* Three bodies on one stage, every one mounted, the active one shown:
           a tab switch is a cross-fade between painted bodies (the deck stays
@@ -386,7 +407,12 @@ function RunsTab({
                 title={`${stateLabel(r)} · ${durationLabel(r)} · ${r.trigger}`}
                 onClick={() => onPick(r.id)}
               >
-                <span className="routine-dot" data-tone={runTone(r)} aria-hidden="true" />
+                {runTone(r) !== 'none' && (
+                  <RunGlyph
+                    tone={runTone(r) as Exclude<ReturnType<typeof runTone>, 'none'>}
+                    label={stateLabel(r)}
+                  />
+                )}
                 <span className="truncate flex-1">{r.headline ?? r.reason ?? stateLabel(r)}</span>
                 <span className="routine-meta">{whenLabel(r.startedAt)}</span>
               </button>
