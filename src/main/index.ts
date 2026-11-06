@@ -433,6 +433,21 @@ function createWindow(entry: PersistedWindow, resolvedWorkspaceId?: string | nul
       // The attached pages (group and session views) are <webview> guests —
       // hardened and navigation-policed in view-guests.ts, never here.
       webviewTag: true,
+      // The native macOS rubber-band at the ends of every scroll area — the
+      // sidebar, a transcript, a side panel. Electron turns it OFF by default
+      // (its `scroll_bounce_flag.patch` makes Chromium's elastic overscroll
+      // follow this one switch), and this is the whole of turning it back on.
+      // Nothing in CSS or JavaScript imitates it: Chromium stretches the
+      // scroller on the compositor exactly as a browser tab does. Two things
+      // the bounce also needs, so a regression is read here first: Chromium
+      // 144+ (Electron 40+) is the first to bounce NON-root scrollers, which
+      // every one of ours is, and the feature is on by default only from
+      // Chromium 152 (Electron 44+); and no `overscroll-behavior: none` on the
+      // document or on the scroller — `contain` keeps the bounce and only cuts
+      // the chaining. A window with this flag never takes Electron's spare
+      // renderer, which is the one cost. Mirrored for the view guests in
+      // view-guests.ts.
+      scrollBounce: true,
       // A test window is never put on screen (see below); without this
       // Chromium would treat the hidden page as background and stop its
       // timers and animation frames — the driver needs them running.

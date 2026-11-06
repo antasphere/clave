@@ -131,7 +131,7 @@ export function AgentPickerPopover({
         left: anchorRect?.left ?? 0
       }}
     >
-      <div className="max-h-[50vh] overflow-y-auto">
+      <div className="max-h-[50vh] overflow-y-auto overscroll-contain">
         {locationGroups.map((group) => {
           return (
             <div key={group.locationId}>

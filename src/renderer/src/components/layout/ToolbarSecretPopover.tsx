@@ -66,7 +66,7 @@ export function ToolbarSecretPopover(): React.JSX.Element | null {
             <XMarkIcon className="w-3.5 h-3.5" />
           </button>
         </div>
-        <div className="max-h-[400px] overflow-y-auto">
+        <div className="max-h-[400px] overflow-y-auto overscroll-contain">
           {visible.map((request, i) => (
             <div key={request.id} className={cn(i > 0 && 'border-t border-border-subtle')}>
               <SecretRequestCard

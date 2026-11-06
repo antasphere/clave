@@ -623,7 +623,10 @@ export function FileTree({
         </p>
       )}
       {/* Tree list */}
-      <div className="flex-1 overflow-y-auto" onContextMenu={handleEmptyContextMenu}>
+      <div
+        className="flex-1 overflow-y-auto overscroll-contain"
+        onContextMenu={handleEmptyContextMenu}
+      >
         {!cwd ? (
           <div className="px-3 py-8 text-center text-xs text-text-tertiary">
             Open a workspace or focus a session to browse files

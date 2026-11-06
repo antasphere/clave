@@ -231,7 +231,7 @@ export function FilePalette(): React.JSX.Element {
               </div>
 
               {/* Results */}
-              <div ref={listRef} className="max-h-96 overflow-y-auto">
+              <div ref={listRef} className="max-h-96 overflow-y-auto overscroll-contain">
                 {noSession ? (
                   <div className="px-4 py-8 text-center text-sm text-text-tertiary">
                     Focus a session first

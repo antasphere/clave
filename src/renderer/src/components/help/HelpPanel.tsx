@@ -68,7 +68,7 @@ export function HelpPanel(): ReactNode {
           </button>
           <span className="text-xs font-medium text-text-primary truncate">{selectedTitle}</span>
         </div>
-        <div className="flex-1 overflow-y-auto pb-12">
+        <div className="flex-1 overflow-y-auto overscroll-contain pb-12">
           <MarkdownRenderer content={selectedDoc} />
         </div>
       </div>
@@ -86,7 +86,7 @@ export function HelpPanel(): ReactNode {
           className="flex-1 h-control-xs px-2 rounded bg-surface-100 text-[11px] text-text-primary placeholder:text-text-tertiary outline-none focus:ring-1 focus:ring-border transition-colors min-w-0"
         />
       </div>
-      <div className="flex-1 overflow-y-auto pb-12">
+      <div className="flex-1 overflow-y-auto overscroll-contain pb-12">
         <div className="p-3 border-b border-border-subtle">
           <button
             className="btn-secondary w-full"

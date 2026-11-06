@@ -247,7 +247,7 @@ export function ToolbarWorkspacePopover(): React.JSX.Element {
           ) : (
             <>
               <div className="menu-label">Workspaces</div>
-              <div className="max-h-[320px] overflow-y-auto">
+              <div className="max-h-[320px] overflow-y-auto overscroll-contain">
                 {workspaces.map((ws) => {
                   const isActive = ws.id === activeWorkspaceId
                   const server = workspaceServer(ws.id)
@@ -346,7 +346,7 @@ function ProfilePicker({
         <FolderOpenIcon className="w-3 h-3 flex-shrink-0" />
         <span className="truncate">Pick a profile — {shortenPath(pending.rootDir)}</span>
       </div>
-      <div className="max-h-[240px] overflow-y-auto">
+      <div className="max-h-[240px] overflow-y-auto overscroll-contain">
         {pending.candidates.map((c) => (
           <button
             key={c.path}
