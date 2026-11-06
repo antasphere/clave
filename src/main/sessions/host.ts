@@ -27,7 +27,12 @@ import type {
   SessionWrite
 } from '@clave/contract/sessions'
 import type { SessionInput } from '../../shared/session-model'
-import { applyWorkChange, WorkChangeRefusal, type WorkAssignment } from '@clave/contract/work-rules'
+import {
+  applyWorkChange,
+  takeoverRenames,
+  WorkChangeRefusal,
+  type WorkAssignment
+} from '@clave/contract/work-rules'
 import type { PtySpawnOptions } from '../pty-manager'
 import { type SessionManager, sessionManager } from './session-manager'
 import { preparePrompt } from './attachments'
@@ -219,12 +224,8 @@ export function createSessionHost(deps: SessionHostDeps): SessionHostService {
       for (const s of manager.list()) if (!all.has(s.id)) all.set(s.id, undefined)
       // A session neither listed nor running is unknown: the rule says so
       // (`WorkSessionUnknown`), and the server answers its declared not-found.
-      const updates = applyWorkChange(
-        [...all].map(([sid, work]) => ({ id: sid, work })),
-        id,
-        change,
-        Date.now()
-      )
+      const before = [...all].map(([sid, work]) => ({ id: sid, work }))
+      const updates = applyWorkChange(before, id, change, Date.now())
       const [first, ...rest] = updates
       // A refusal in words, not a failure of the host: an answer the server
       // turns into `CapabilityUnavailable` is the window-wide server notice.
@@ -235,7 +236,13 @@ export function createSessionHost(deps: SessionHostDeps): SessionHostService {
             : `The session ${first.id} keeps no record, so its work cannot be kept`
         )
       for (const update of rest) ptyManager.setSessionWork(update.id, update.work)
-      return updates
+      // An accepted handover renames (`takeoverRenames`): the successor takes
+      // its predecessor's name, the predecessor first becoming `<name> · gen
+      // <n>`, so no two open tabs share the name for a moment. Written as a
+      // rename is, protected from the auto-title.
+      const renamed = takeoverRenames(before, updates, id, change, (sid) => manager.get(sid)?.title)
+      for (const r of renamed) ptyManager.setSessionDisplayName(r.id, r.name, true)
+      return { changed: updates, renamed }
     },
     setPage: (id, page) => {
       if (!manager.get(id)) throw new Error(`Unknown session: ${id}`)

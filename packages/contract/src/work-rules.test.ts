@@ -3,6 +3,7 @@ import {
   applyWorkChange,
   deriveWorkUnits,
   sanitizeWork,
+  takeoverRenames,
   WorkChangeRefusal,
   type WorkAssignment,
   type WorkChange,
@@ -351,5 +352,63 @@ describe('deriveWorkUnits', () => {
       owner: { state: 'held', id: ID.lead }
     })
     expect(units[0]).not.toHaveProperty('wave')
+  })
+})
+
+describe('takeoverRenames', () => {
+  const names: Record<string, string> = { [ID.lead]: 'Lane A · lead', [ID.next]: 'Successor' }
+  const nameOf = (id: string): string | undefined => names[id]
+
+  it('gives the successor its predecessor’s name and the predecessor its generation, predecessor first', () => {
+    const s = store([{ id: ID.lead, work: lane() }, { id: ID.next }, { id: ID.third }])
+    s.change(ID.lead, { type: 'offer', to: ID.next })
+    const before = s.all()
+    const updates = s.change(ID.next, { type: 'accept' })
+    expect(takeoverRenames(before, updates, ID.next, { type: 'accept' }, nameOf)).toEqual([
+      { id: ID.lead, name: 'Lane A · lead · gen 1' },
+      { id: ID.next, name: 'Lane A · lead' }
+    ])
+    // The next handover is the second generation.
+    s.change(ID.next, { type: 'offer', to: ID.third })
+    const again = s.all()
+    const second = s.change(ID.third, { type: 'accept' })
+    expect(
+      takeoverRenames(again, second, ID.third, { type: 'accept' }, (id) =>
+        id === ID.next ? 'Lane A · lead' : undefined
+      )
+    ).toEqual([
+      { id: ID.next, name: 'Lane A · lead · gen 2' },
+      { id: ID.third, name: 'Lane A · lead' }
+    ])
+  })
+
+  it('renames nothing for a replace, an accept whose holder is gone, or a name not known', () => {
+    const s = store([{ id: ID.lead, work: lane() }, { id: ID.next }])
+    const before = s.all()
+    const replaced = s.change(ID.next, {
+      type: 'assign',
+      work: { unit: 'lane-a', role: 'lead' },
+      replace: true
+    })
+    expect(
+      takeoverRenames(
+        before,
+        replaced,
+        ID.next,
+        { type: 'assign', work: { unit: 'lane-a', role: 'lead' }, replace: true },
+        nameOf
+      )
+    ).toEqual([])
+    const t = store([{ id: ID.lead, work: lane() }, { id: ID.next }])
+    t.change(ID.lead, { type: 'offer', to: ID.next })
+    t.records.delete(ID.lead)
+    const gone = t.all()
+    const accepted = t.change(ID.next, { type: 'accept' })
+    expect(takeoverRenames(gone, accepted, ID.next, { type: 'accept' }, nameOf)).toEqual([])
+    const u = store([{ id: ID.lead, work: lane() }, { id: ID.next }])
+    u.change(ID.lead, { type: 'offer', to: ID.next })
+    const known = u.all()
+    const done = u.change(ID.next, { type: 'accept' })
+    expect(takeoverRenames(known, done, ID.next, { type: 'accept' }, () => undefined)).toEqual([])
   })
 })

@@ -8,7 +8,7 @@
  * Who may assign whom is the messaging tools' reach: a tab reaches itself,
  * the tab that opened it, the tabs it opened, and the tabs of its group.
  */
-import type { WorkChange, WorkUpdate } from '@clave/contract/work-rules'
+import type { WorkChange, WorkChangeResult } from '@clave/contract/work-rules'
 import {
   handOverChange,
   handOverRequest,
@@ -41,9 +41,9 @@ async function assertReach(
     )
 }
 
-async function changeWork(ctx: Ctx, id: string, change: WorkChange): Promise<WorkUpdate[]> {
+async function changeWork(ctx: Ctx, id: string, change: WorkChange): Promise<WorkChangeResult> {
   try {
-    return [...(await ctx.api.sessions.changeWork(id, change))]
+    return await ctx.api.sessions.changeWork(id, change)
   } catch (err) {
     const tag = tagOf(err)
     if (tag === 'WorkChangeRefused')

@@ -211,17 +211,38 @@ describe('the host’s change of work (ChangeSessionWork)', () => {
     work: { unit: 'stable-wave/lane-a', kind: 'lane', label: 'Lane A', role: 'lead' }
   } as const
 
+  it('gives the successor its predecessor’s name on accept, and the predecessor a generation', async () => {
+    const holder = await spawn()
+    const successor = await spawn()
+    host.changeWork(holder, assignLead)
+    ptyManager.setSessionDisplayName(holder, 'Lane A · lead', true)
+    expect(host.changeWork(holder, { type: 'offer', to: successor }).renamed).toEqual([])
+    const { renamed } = host.changeWork(successor, { type: 'accept' })
+    // The predecessor first: two open tabs never share the name.
+    expect(renamed).toEqual([
+      { id: holder, name: 'Lane A · lead · gen 1' },
+      { id: successor, name: 'Lane A · lead' }
+    ])
+    expect(readRecord(successor)).toMatchObject({ displayName: 'Lane A · lead', userRenamed: true })
+    expect(readRecord(holder)).toMatchObject({
+      displayName: 'Lane A · lead · gen 1',
+      userRenamed: true
+    })
+  })
+
   it('rewrites both records of an accepted handover, the predecessor’s waiting in a record', async () => {
     const holder = await spawn()
     const successor = await spawn()
     host.changeWork(holder, assignLead)
-    expect(host.changeWork(holder, { type: 'offer', to: successor })).toEqual([
+    expect(host.changeWork(holder, { type: 'offer', to: successor }).changed).toEqual([
       { id: successor, work: expect.objectContaining({ standing: 'pending', from: holder }) }
     ])
     // The holder quits before the successor accepts: its record stays, and
     // the rule still finds it among the records the host keeps.
     await ptyManager.kill(holder, false)
-    const updates = host.changeWork(successor, { type: 'accept' })
+    const { changed: updates, renamed } = host.changeWork(successor, { type: 'accept' })
+    // Its predecessor's tab had ended: no name to take, nothing renamed.
+    expect(renamed).toEqual([])
     expect(updates.map((u) => [u.id, u.work?.standing])).toEqual([
       [successor, 'current'],
       [holder, 'superseded']

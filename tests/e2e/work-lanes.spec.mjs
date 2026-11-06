@@ -312,9 +312,20 @@ export async function run(t) {
     )
 
     // ── 6. A verifier waiting on the person shows on its lane, and is reached ──
-    const stateDir = path.join(recordsRootOf(DIR), 'agent-state')
-    mkdirSync(stateDir, { recursive: true })
-    writeFileSync(path.join(stateDir, `${mb.ids.s06}.state`), 'blocked')
+    // The hook's word, written into both folders a state is read from: the
+    // process that runs the session (the server's under the separate server)
+    // and the app's own, the one whose watch reaches a window live there (a
+    // probe of 6 November 2026; the server's folder alone did not).
+    const stateDirs = [
+      ...new Set([path.join(recordsRootOf(DIR), 'agent-state'), path.join(DIR, 'agent-state')])
+    ]
+    const writeState = (id, word) => {
+      for (const d of stateDirs) {
+        mkdirSync(d, { recursive: true })
+        writeFileSync(path.join(d, `${id}.state`), word)
+      }
+    }
+    writeState(mb.ids.s06, 'blocked')
     const asks = await until(async () =>
       (await entry(win, 'fixture-mobile-a')
         .locator('.work-trigger')
@@ -335,10 +346,19 @@ export async function run(t) {
       'the menu reaches the exact tab that waits',
       (await until(async () => ((await focusedId()) === mb.ids.s06 ? true : null))) === true
     )
-    writeFileSync(path.join(stateDir, `${mb.ids.s06}.state`), 'idle')
+    writeState(mb.ids.s06, 'idle')
 
     // ── 7. The later phases: one more handoff, a failed transfer, the person ──
     const anchorsBefore = await readEntries(win, MB)
+    // The names before the later phases, by the shape's keys.
+    const namesBefore = {}
+    for (const x of (await callMcp(app, 'list', {}))?.sessions ?? []) {
+      const key = Object.entries(mb.ids).find(([, id]) => id === x.id)?.[0]
+      if (key) namesBefore[key] = x.name
+    }
+    // Sessions a phase closed: an entry anchored on one takes the next
+    // earliest member's place, so its place is not compared after that.
+    const closed = new Set()
     for (const phase of MB.then) {
       for (const s of phase.open ?? []) {
         const opened = await call(seedClient, 'clave_open_session', {
@@ -364,8 +384,10 @@ export async function run(t) {
           await win.keyboard.press('Escape')
         } else await applyStep(step, mb.ids)
       }
-      for (const key of phase.close ?? [])
+      for (const key of phase.close ?? []) {
         await callMcp(app, 'closeSession', { sessionId: mb.ids[key] })
+        closed.add(mb.ids[key])
+      }
       for (const [unit, want] of Object.entries(phase.expect)) {
         const settled = await until(async () => {
           const owner = await entry(win, unit).getAttribute('data-work-owner')
@@ -379,10 +401,31 @@ export async function run(t) {
           target: await entry(win, unit).getAttribute('data-work-target')
         })
       }
+      // An accepted handover renames (Valentin, 6 November 2026): the
+      // successor takes its predecessor's exact name, the predecessor
+      // becomes `<name> · gen <n>`, so no two open tabs share one name.
+      for (const step of phase.steps ?? []) {
+        if (step.change.type !== 'accept' || step.as === 'human') continue
+        const listed = (await callMcp(app, 'list', {}))?.sessions ?? []
+        const nameOf = (key) => listed.find((x) => x.id === mb.ids[key])?.name
+        const predecessor = MB.then
+          .flatMap((p) => p.steps ?? [])
+          .find((x) => x.change.type === 'offer' && x.change.to === step.as)?.as
+        t.equal(
+          `${phase.name}: the successor takes its predecessor's name`,
+          nameOf(step.as),
+          namesBefore[predecessor]
+        )
+        t.equal(
+          `${phase.name}: the predecessor's name says its generation`,
+          nameOf(predecessor),
+          `${namesBefore[predecessor]} · gen 1`
+        )
+      }
       const after = await readEntries(win, MB)
       for (const u of MB.expect.units) {
         const before = anchorsBefore[u.unit].anchor
-        if (Object.values(phase.close ?? []).some((k) => mb.ids[k] === before)) continue
+        if (closed.has(before)) continue
         t.equal(`${phase.name}: ${u.unit} keeps its place`, after[u.unit].anchor, before)
       }
       t.equal(
@@ -393,7 +436,8 @@ export async function run(t) {
     }
 
     // ── 8. The search still lists every session as its own row ──
-    await win.fill('.group-switcher-search input', 'Lane B · lead')
+    // Every session whose title names lane B, the three leads among them.
+    await win.fill('.group-switcher-search input', 'Lane B')
     for (const key of ['s08', 's09', 's37'])
       t.check(
         `the search shows ${key} as its own row`,

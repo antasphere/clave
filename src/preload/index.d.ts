@@ -19,7 +19,7 @@ import type {
   PullRequestView,
   ReviewEvent
 } from '../shared/github-pull'
-import type { WorkAssignment, WorkChange, WorkUpdate } from '@clave/contract/work-rules'
+import type { WorkAssignment, WorkChange, WorkChangeResult } from '@clave/contract/work-rules'
 
 /** Additive wire contract for adapter stream consumers. Existing PTY IPC is unchanged. */
 export interface ActivityAnswer {
@@ -774,8 +774,9 @@ export interface ElectronAPI extends FleetDesktopAPI {
     view: { url: string; title?: string; command?: string; cwd?: string } | null
   ) => Promise<void>
   /** PRDCT-4123: one change to the tab's work assignment, through the
-   *  server; answers every record rewritten, the tab's own first. */
-  sessionsChangeWork: (id: string, change: WorkChange) => Promise<WorkUpdate[]>
+   *  server; answers every record rewritten, the tab's own first, and the
+   *  names an accepted handover gave. */
+  sessionsChangeWork: (id: string, change: WorkChange) => Promise<WorkChangeResult>
   setSessionWorkspace: (id: string, workspaceId: string | null) => Promise<void>
   tmuxAvailable: () => Promise<boolean>
   listSessionRecords: (filter?: { ids?: string[] }) => Promise<SessionRecord[]>

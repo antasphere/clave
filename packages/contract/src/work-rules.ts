@@ -190,6 +190,19 @@ export interface WorkUpdate {
   work: WorkAssignment | null
 }
 
+/** A name a handover gives a session (`takeoverRenames`). */
+export interface WorkRename {
+  id: string
+  name: string
+}
+
+/** What a change did: the records it rewrote, the subject's first, and the
+ *  names an accepted handover gave. */
+export interface WorkChangeResult {
+  changed: WorkUpdate[]
+  renamed: WorkRename[]
+}
+
 /** A change the records refuse, in words an agent or a person can act on. */
 export class WorkChangeRefusal extends Error {
   override readonly name = 'WorkChangeRefusal'
@@ -458,6 +471,49 @@ function accept(
       updates.push({ id: h.id, work: { ...h.work, standing: 'superseded', since: now } })
   }
   return updates
+}
+
+/**
+ * The names a handover gives when the successor accepts it (Valentin,
+ * 6 November 2026): the successor takes its predecessor's exact name, the
+ * name the lane's tab is known by, and the predecessor is renamed
+ * `<name> · gen <n>`, n its generation among the role's superseded holders in
+ * the unit, so no two open tabs share the name a message is addressed by. The
+ * predecessor first, then the successor, in that order. Nothing for any other
+ * change, for an accept whose predecessor this change did not supersede (gone,
+ * or no longer the holder), or when the predecessor's name is not known:
+ * `nameOf` answers only for a session whose tab is open.
+ */
+export function takeoverRenames(
+  before: ReadonlyArray<WorkRecord>,
+  updates: ReadonlyArray<WorkUpdate>,
+  subject: string,
+  change: WorkChange,
+  nameOf: (id: string) => string | undefined
+): WorkRename[] {
+  if (change.type !== 'accept') return []
+  const mine = updates.find((u) => u.id === subject)?.work
+  if (!mine || mine.standing !== 'current' || !mine.from) return []
+  const predecessor = mine.from
+  const stepped = updates.find((u) => u.id === predecessor)?.work
+  if (
+    !stepped ||
+    stepped.standing !== 'superseded' ||
+    stepped.unit !== mine.unit ||
+    stepped.role !== mine.role
+  )
+    return []
+  const name = nameOf(predecessor)?.trim()
+  if (!name) return []
+  const after = new Map(before.map((r) => [r.id, r.work ? sanitizeWork(r.work) : undefined]))
+  for (const u of updates) after.set(u.id, u.work ?? undefined)
+  const generation = [...after.values()].filter(
+    (w) => w?.unit === mine.unit && w.role === mine.role && w.standing === 'superseded'
+  ).length
+  return [
+    { id: predecessor, name: `${name} · gen ${generation}` },
+    { id: subject, name }
+  ]
 }
 
 // ── Reading the entries ──

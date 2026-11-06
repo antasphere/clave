@@ -39,7 +39,7 @@ import type { SessionWrite } from '@clave/contract/sessions'
 import type { SidebarGroup } from '@clave/contract/sidebar'
 import { selectAdoptableRecords, type AdoptionScope } from '../shared/adoption-scope'
 import type { SessionRecord as WireSessionRecord } from '@clave/contract/sessions'
-import type { WorkAssignment, WorkChange, WorkUpdate } from '@clave/contract/work-rules'
+import type { WorkAssignment, WorkChange, WorkChangeResult } from '@clave/contract/work-rules'
 import {
   MIC_GET_ACCESS_CHANNEL,
   MIC_REQUEST_ACCESS_CHANNEL,
@@ -1306,9 +1306,9 @@ const electronAPI = {
   // The server's command alone: there is no IPC road for it, since the
   // server always runs, in-process or attached; a call made before main has
   // named it is refused rather than kept on main's copy of the record.
-  sessionsChangeWork: viaServer<[string, WorkChange], WorkUpdate[]>({
+  sessionsChangeWork: viaServer<[string, WorkChange], WorkChangeResult>({
     ipc: () => Promise.reject(new Error('Clave server is not available')),
-    server: async ({ api }, id, change) => [...(await api.sessions.changeWork(id, change))]
+    server: ({ api }, id, change) => api.sessions.changeWork(id, change)
   }),
 
   // Kept on the server's record once main names it, like the name (round 1

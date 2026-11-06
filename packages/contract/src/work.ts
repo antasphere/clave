@@ -73,6 +73,9 @@ export const WorkUpdate = Schema.Struct({
   work: Schema.NullOr(WorkAssignment)
 })
 
+/** A name an accepted handover gave a session. */
+export const WorkRename = Schema.Struct({ id: Schema.String, name: Schema.String })
+
 /** The records refused the change: the rule's own words. */
 export class WorkChangeRefused extends Schema.TaggedError<WorkChangeRefused>()(
   'WorkChangeRefused',

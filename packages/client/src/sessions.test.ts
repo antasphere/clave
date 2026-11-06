@@ -87,13 +87,13 @@ describe('a change of a session’s work (PRDCT-4123)', () => {
       sessions: {
         changeWork: ({ payload }: { payload: unknown }) => {
           payloads.push(payload)
-          return { changed }
+          return { changed, renamed: [] }
         }
       }
     }
     const call = (async (run: (c: unknown) => unknown) => run(client)) as unknown as Call
     const offer = { type: 'offer', to: '6f1c2c8e-1b9a-4d6e-9b1a-2f3c4d5e6f70' } as const
-    expect(await sessionsClient(call).changeWork('t', offer)).toEqual(changed)
+    expect(await sessionsClient(call).changeWork('t', offer)).toEqual({ changed, renamed: [] })
     expect(payloads).toEqual([{ id: 't', change: offer }])
   })
 })

@@ -12,7 +12,7 @@ import { Schema } from 'effect'
 import { Command, Query } from '@structure-ai/cqrs'
 import { CapabilityUnavailable } from './errors'
 import { LaunchProfileView } from './settings/launch-profiles'
-import { WorkAssignment, WorkChange, WorkChangeRefused, WorkUpdate } from './work'
+import { WorkAssignment, WorkChange, WorkChangeRefused, WorkRename, WorkUpdate } from './work'
 
 export const AgentState = Schema.Literal('idle', 'working', 'blocked', 'done', 'ended')
 export type AgentState = typeof AgentState.Type
@@ -820,10 +820,13 @@ export const KeepOnSessionRecord = Command.define('KeepOnSessionRecord', {
  * complete it, leave it, offer a handover, cancel that offer, or accept it.
  * The rules are `work-rules.ts`'s, applied over every record the host keeps;
  * the answer is every record rewritten, the subject's first, and the windows
- * follow through `session.work_changed`, one event per record.
+ * follow through `session.work_changed`, one event per record. An accepted
+ * handover also renames: the successor takes its predecessor's name and the
+ * predecessor becomes `<name> · gen <n>` (`takeoverRenames`), each told as
+ * `session.renamed`.
  */
 export const ChangeSessionWork = Command.define('ChangeSessionWork', {
   payload: Schema.Struct({ id: Schema.String, change: WorkChange }),
-  success: Schema.Struct({ changed: Schema.Array(WorkUpdate) }),
+  success: Schema.Struct({ changed: Schema.Array(WorkUpdate), renamed: Schema.Array(WorkRename) }),
   failure: Schema.Union(SessionNotFound, WorkChangeRefused, CapabilityUnavailable)
 })

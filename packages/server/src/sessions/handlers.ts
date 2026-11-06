@@ -259,7 +259,7 @@ export const sessionHandlers = [
   CommandHandler.make(ChangeSessionWork, (payload) =>
     Effect.gen(function* () {
       const host = yield* SessionHost
-      const changed = yield* Effect.try({
+      const result = yield* Effect.try({
         try: () => host.changeWork(payload.id, payload.change),
         catch: (error) =>
           error instanceof WorkSessionUnknown
@@ -271,9 +271,12 @@ export const sessionHandlers = [
                 : new CapabilityUnavailable({ capability: 'sessions', message: messageOf(error) })
       })
       const events = yield* ServerEvents
-      for (const update of changed)
+      for (const update of result.changed)
         yield* events.publish({ _tag: 'session.work_changed', id: update.id, work: update.work })
-      return { changed }
+      // The names an accepted handover gave, told as any rename is.
+      for (const rename of result.renamed)
+        yield* events.publish({ _tag: 'session.renamed', id: rename.id, name: rename.name })
+      return { changed: result.changed, renamed: result.renamed }
     })
   ),
   QueryHandler.make(ReadSessionScreen, (payload) =>

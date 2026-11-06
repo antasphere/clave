@@ -4,9 +4,9 @@ import {
   type WorkAssignInput,
   type WorkAssignment,
   type WorkChange,
+  type WorkChangeResult,
   type WorkKind,
-  type WorkRole,
-  type WorkUpdate
+  type WorkRole
 } from '@clave/contract/work-rules'
 
 /**
@@ -80,19 +80,22 @@ export function handOverChange(request: HandOverRequest, successorId?: string): 
   return { type: 'cancel' }
 }
 
-/** A tool's answer: the subject's assignment as it stands now, and every
- *  record the change rewrote. */
+/** A tool's answer: the subject's assignment as it stands now, every record
+ *  the change rewrote, and the names an accepted handover gave (the
+ *  successor's is the name its tab is addressed by from now on). */
 export function workToolAnswer(
   subject: string,
-  updates: readonly WorkUpdate[]
+  result: WorkChangeResult
 ): {
   sessionId: string
   work: WorkAssignment | null
   changed: { sessionId: string; work: WorkAssignment | null }[]
+  renamed: { sessionId: string; name: string }[]
 } {
   return {
     sessionId: subject,
-    work: updates.find((u) => u.id === subject)?.work ?? null,
-    changed: updates.map((u) => ({ sessionId: u.id, work: u.work }))
+    work: result.changed.find((u) => u.id === subject)?.work ?? null,
+    changed: result.changed.map((u) => ({ sessionId: u.id, work: u.work })),
+    renamed: result.renamed.map((r) => ({ sessionId: r.id, name: r.name }))
   }
 }

@@ -27,7 +27,8 @@ import {
   applyWorkChange,
   type WorkAssignment,
   type WorkChange,
-  type WorkUpdate
+  takeoverRenames,
+  type WorkChangeResult
 } from '@clave/contract/work-rules'
 import {
   type ServerFrame,
@@ -245,7 +246,7 @@ export class FakeSource implements SessionHostService {
   /** Each live session's assignment, as its record would keep it; the rule
    *  is the real one, applied over every session this host has. */
   readonly works = new Map<string, WorkAssignment>()
-  changeWork = (id: string, change: WorkChange): WorkUpdate[] => {
+  changeWork = (id: string, change: WorkChange): WorkChangeResult => {
     // As the app's host: a session it does not know is the rule's
     // `WorkSessionUnknown`, answered by the server as its not-found.
     const all = [...this.sessions.keys()].map((sid) => ({ id: sid, work: this.works.get(sid) }))
@@ -254,7 +255,19 @@ export class FakeSource implements SessionHostService {
       if (u.work) this.works.set(u.id, u.work)
       else this.works.delete(u.id)
     }
-    return updates
+    // The names an accepted handover gives, as the app's host writes them.
+    const renamed = takeoverRenames(
+      all,
+      updates,
+      id,
+      change,
+      (sid) => this.sessions.get(sid)?.title
+    )
+    for (const r of renamed) {
+      const session = this.sessions.get(r.id)
+      if (session) this.sessions.set(r.id, { ...session, title: r.name })
+    }
+    return { changed: updates, renamed }
   }
   screen = async (id: string): Promise<SessionScreen> => {
     if (!this.sessions.has(id)) throw new Error(`Unknown session: ${id}`)

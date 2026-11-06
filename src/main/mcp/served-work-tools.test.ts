@@ -80,7 +80,7 @@ function world(groupIds: string[] = [ID.lead, ID.next]): World {
           const all = Object.keys(records).map((sid) => ({ id: sid, work: works.get(sid) }))
           const updates = applyWorkChange(all, id, change, 1_000 + calls.length)
           for (const u of updates) works.set(u.id, u.work ?? undefined)
-          return updates
+          return { changed: updates, renamed: [] }
         } catch (err) {
           throw { _tag: 'WorkChangeRefused', id, message: (err as Error).message }
         }

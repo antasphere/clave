@@ -101,9 +101,13 @@ describe('a change of a session’s work', () => {
       work: offer.changed[0].work
     })
 
+    const leadName = source.sessions.get(LEAD)?.title
     const accepted = await change(NEXT, { type: 'accept' })
     expect(accepted.status).toBe(200)
-    const accept = (await accepted.json()) as { changed: Array<{ id: string; work: unknown }> }
+    const accept = (await accepted.json()) as {
+      changed: Array<{ id: string; work: unknown }>
+      renamed: Array<{ id: string; name: string }>
+    }
     expect(accept.changed).toEqual([
       { id: NEXT, work: expect.objectContaining({ standing: 'current', from: LEAD }) },
       { id: LEAD, work: expect.objectContaining({ standing: 'superseded' }) }
@@ -119,6 +123,19 @@ describe('a change of a session’s work', () => {
       id: LEAD,
       work: accept.changed[1].work
     })
+    // The accepted handover's names (Valentin, 6 November 2026): the
+    // predecessor first, so two open tabs never share one name, then the
+    // successor taking the predecessor's own.
+    expect(accept.renamed).toEqual([
+      { id: LEAD, name: `${leadName} · gen 1` },
+      { id: NEXT, name: leadName }
+    ])
+    expect(await eventOf(peer)).toEqual({
+      _tag: 'session.renamed',
+      id: LEAD,
+      name: `${leadName} · gen 1`
+    })
+    expect(await eventOf(peer)).toEqual({ _tag: 'session.renamed', id: NEXT, name: leadName })
     expect(source.works.get(LEAD)?.standing).toBe('superseded')
     expect(source.works.get(NEXT)?.standing).toBe('current')
     expect(await peer.silence()).toBe(true)
