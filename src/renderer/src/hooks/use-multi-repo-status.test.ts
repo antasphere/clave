@@ -231,6 +231,33 @@ it('skips the single-repo stage when discovery answers within the grace', async 
   await expect(whole).resolves.toBeUndefined()
 })
 
+it('skips the single-repo stage when discovery answers late but still within the grace', async () => {
+  // A scan that takes real time, well under the grace: the microtask case
+  // above would pass with a grace of zero; this one does not.
+  const child = deferred<{ isRepo: true; branch: string }>()
+  api.getGitStatus.mockImplementation((path: string) =>
+    path === root ? Promise.resolve(repoStatus('main')) : child.promise
+  )
+  api.discoverGitRepos.mockImplementation(
+    () =>
+      new Promise((resolve) =>
+        setTimeout(() => resolve({ repos: [{ name: 'child', path: CHILD }] }), 50)
+      )
+  )
+  const whole = read()
+  const seen: string[] = []
+  for (let i = 0; i < 4; i++) {
+    await new Promise((r) => setTimeout(r, 25))
+    seen.push(render().result.mode)
+  }
+  await pastGrace()
+  seen.push(render().result.mode)
+  expect(seen).not.toContain('single')
+  expect(render().result.mode).toBe('multi')
+  child.resolve(repoStatus('child-main'))
+  await expect(whole).resolves.toBeUndefined()
+})
+
 it('writes a late status of a folder the panel has left into neither list nor cache', async () => {
   // Folder A lists one child; folder B lists the same child path and another.
   // A's child status lands after the move to B: B's list and A's cache must

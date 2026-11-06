@@ -150,7 +150,10 @@ function KeepAlivePane({
   }, [])
   useLayoutEffect(() => {
     activeRef.current = active
+    // Shown: every scroller back where it was. Hidden: the scrollers gone
+    // since are forgotten now rather than at the next show.
     if (active) restoreScrolls(scrolls.current)
+    else for (const el of scrolls.current.keys()) if (!el.isConnected) scrolls.current.delete(el)
   }, [active])
   return (
     <div

@@ -323,6 +323,19 @@ export async function run(t) {
     const scrolledTo = await gitList(win)
     t.check('the list overflows and was scrolled to its end', scrolledTo.scrollTop > 0, scrolledTo)
 
+    // Straight to Files and back: the hidden git list gets a taller box behind
+    // Files (no controls row there) and is clamped while hidden; the first
+    // frame back must read the position it was left at.
+    await openTab(win, 'Files')
+    await win.waitForTimeout(300)
+    const hidden = await gitList(win)
+    const backFromFiles = await openTabFirstFrame(win, 'Git', 'git-list')
+    t.check(
+      'back from Files, the list is scrolled where it was left in the first frame',
+      backFromFiles.scrollTop === scrolledTo.scrollTop,
+      { left: scrolledTo.scrollTop, hidden: hidden?.scrollTop, back: backFromFiles.scrollTop }
+    )
+
     // GitHub: a pull request pasted into the empty state, a comment started.
     await until(async () =>
       win.evaluate(() =>
