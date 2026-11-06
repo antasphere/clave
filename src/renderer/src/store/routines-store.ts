@@ -29,12 +29,13 @@ export const useRoutinesStore = create<RoutinesState>((set, get) => ({
   error: null,
   loaded: false,
   setListing: (listing) =>
-    set({ routines: [...listing.routines], viewer: listing.viewer, loaded: true }),
+    set({ routines: [...listing.routines], viewer: listing.viewer, loaded: true, error: null }),
   refresh: async () => {
     try {
       get().setListing(await window.electronAPI.routinesList())
     } catch (error) {
-      // A window that has not reached the server yet asks again on the next change.
+      // A window that has not reached the server yet asks again once it does
+      // (`onServerConnected`, below) and on every change.
       set({ error: message(error) })
     }
   },
@@ -72,8 +73,16 @@ export const useRoutinesStore = create<RoutinesState>((set, get) => ({
 export function initRoutinesStore(): () => void {
   const store = useRoutinesStore.getState()
   const unsubscribe = window.electronAPI.onRoutinesChanged(() => void store.refresh())
+  // The first read can come before the window reaches its server (a packaged
+  // app runs it as a child, so main's own arm refuses): read again each time
+  // the connection opens, as the plugin views do, or the toolbar stays empty
+  // with the refusal on show until a routine happens to change.
+  const stopConnected = window.electronAPI.onServerConnected(() => void store.refresh())
   void store.refresh()
-  return unsubscribe
+  return () => {
+    unsubscribe()
+    stopConnected()
+  }
 }
 
 /** The latest run of a routine, newest first in the listing. */
