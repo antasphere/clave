@@ -261,7 +261,8 @@ export class FakeSource implements SessionHostService {
       updates,
       id,
       change,
-      (sid) => this.sessions.get(sid)?.title
+      (sid) => this.sessions.get(sid)?.title,
+      new Set([...this.sessions.values()].map((s) => s.title))
     )
     for (const r of renamed) {
       const session = this.sessions.get(r.id)

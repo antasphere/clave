@@ -11,6 +11,14 @@ import type { Session } from '../../store/session-types'
 import type { WorkEntry } from '../../lib/work-presentation'
 import { tabIndicators } from '../../lib/tab-status'
 import { subagentAttention } from '../../lib/subagent-presentation'
+import {
+  ROLE_LABEL,
+  STANDING_LABEL,
+  breadcrumbOf,
+  unresolvedWords,
+  vacantWords,
+  workStateLabel
+} from '../../lib/work-words'
 import { SidebarTabItem } from './SidebarTabItem'
 import { SessionStatus } from './SessionItem'
 import type { SessionMenuEvent } from './SubagentMenu'
@@ -19,65 +27,13 @@ import type { SessionMenuEvent } from './SubagentMenu'
  * A wave or a lane in the sidebar (PRDCT-4123): one stable row for a unit of
  * work, whatever sessions have held it. The row reads the unit's label, the
  * status of the session that holds it in the usual slot, and a chip when the
- * unit is unresolved, being handed over or completed; a click goes to the
- * holder, or opens the summary when nobody holds it. The menu beside it lists
- * every session of the unit by role, the agents they spawned, the handovers
- * waiting and the history, and offers the person the two ways to settle an
- * unresolved unit. Nothing here closes a process or reads a title.
+ * unit is unresolved, being handed over, completed, or has no owner among
+ * this window's sessions; a click goes to the holder, or opens the summary
+ * when nobody holds it. The menu beside it lists every session of the unit by
+ * role, the agents they spawned, the handovers waiting and the history, and
+ * offers the person the two ways to settle an unresolved unit. Nothing here
+ * closes a process or reads a title. Its words are `lib/work-words.ts`.
  */
-
-const ROLE_LABEL: Record<WorkRole, string> = {
-  coordinator: 'Coordinator',
-  lead: 'Lead',
-  verifier: 'Verifier',
-  worker: 'Worker'
-}
-
-const STANDING_LABEL: Record<string, string> = {
-  current: 'Current',
-  pending: 'Taking over',
-  superseded: 'Superseded',
-  completed: 'Completed'
-}
-
-/** What a session is doing, in words that never claim a delivery: a turn that
- *  ended is a turn that ended. */
-function workStateLabel(session: Session): string {
-  const { status } = tabIndicators(session)
-  switch (status) {
-    case 'needs-you':
-      return 'Waiting on you'
-    case 'working':
-      return 'Working'
-    case 'unread':
-      return session.injectedFrom ? `Message from ${session.injectedFrom}` : 'New activity'
-    case 'ended':
-      return 'Ended'
-    case 'idle':
-      return session.agentState === 'done' ? 'Turn ended' : 'Idle'
-  }
-}
-
-const kindWord = (entry: WorkEntry): string => (entry.kind === 'wave' ? 'wave' : 'lane')
-
-/** The words an unresolved unit is shown with: what disagrees, not a guess. */
-function unresolvedWords(entry: WorkEntry): string | null {
-  const owner = entry.owner
-  if (owner.state !== 'unresolved') return null
-  const role = ROLE_LABEL[entry.ownerRole].toLowerCase()
-  switch (owner.reason) {
-    case 'several':
-      return `Unresolved: ${owner.candidates.length} sessions say they are this ${kindWord(entry)}'s ${role}`
-    case 'not-accepted':
-      return `Unresolved: a handover to a new ${role} was never accepted`
-    case 'no-current':
-      return `Unresolved: this ${kindWord(entry)} has no current ${role}`
-  }
-}
-
-function breadcrumbOf(entry: Pick<WorkEntry, 'label' | 'wave'>): string {
-  return entry.wave ? `${entry.wave.label} › ${entry.label}` : entry.label
-}
 
 /** A pending handover of the unit's own role, while its holder still holds it. */
 function handingOver(entry: WorkEntry): boolean {
@@ -109,6 +65,17 @@ function EntryStatus({
         <QuestionMarkCircleIcon />
       </span>
     )
+  const vacant = vacantWords(entry)
+  if (vacant)
+    return (
+      <span
+        className="sidebar-tab-status"
+        data-work-status="vacant"
+        title={vacant}
+        role="img"
+        aria-label={vacant}
+      />
+    )
   return <span className="sidebar-tab-status" aria-hidden="true" />
 }
 
@@ -127,6 +94,10 @@ function EntryChips({ entry }: { entry: WorkEntry }): React.JSX.Element {
       ) : entry.owner.state === 'completed' ? (
         <span className="badge work-chip" data-chip="completed">
           Completed
+        </span>
+      ) : entry.owner.state === 'vacant' ? (
+        <span className="badge work-chip" data-chip="no-owner">
+          {`No ${ROLE_LABEL[entry.ownerRole].toLowerCase()}`}
         </span>
       ) : handingOver(entry) ? (
         <span className="badge work-chip" data-chip="handing-over">
@@ -159,7 +130,7 @@ export function WorkEntryItem(props: WorkEntryItemProps): React.JSX.Element {
   const { entry, sessionsById } = props
   const [open, setOpen] = useState(false)
   const holder = entry.target ? sessionsById.get(entry.target) : undefined
-  const words = unresolvedWords(entry)
+  const words = unresolvedWords(entry) ?? vacantWords(entry)
   const title = [
     breadcrumbOf(entry),
     holder ? `${ROLE_LABEL[entry.ownerRole]}: ${holder.name}` : (words ?? null)
@@ -332,12 +303,27 @@ function WorkMenu({
   const holding = (role: WorkRole, title: string): React.JSX.Element[] => {
     const h = role === entry.ownerRole ? entry.owner : entry.reviewer
     const out: React.JSX.Element[] = []
-    if (h.state === 'vacant') return out
+    // A unit with no verifier is a normal state between rounds and says
+    // nothing; one with no owner in this window says so, and why it may be.
+    if (h.state === 'vacant' && role !== entry.ownerRole) return out
     out.push(
       <DropdownMenu.Label key={`${role}-label`} className="menu-label">
         {title}
       </DropdownMenu.Label>
     )
+    if (h.state === 'vacant') {
+      out.push(
+        <DropdownMenu.Item
+          key={`${role}-vacant`}
+          className="menu-item menu-item--muted"
+          data-work-vacant=""
+          disabled
+        >
+          {vacantWords(entry)}
+        </DropdownMenu.Item>
+      )
+      return out
+    }
     if (h.state === 'held' || h.state === 'completed') {
       const s = at(h.id)
       if (s)

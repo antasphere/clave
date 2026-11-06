@@ -170,6 +170,61 @@ describe('applyWorkChange: assign', () => {
     ).toThrow(/hand that over or leave it/)
   })
 
+  it('refuses to move the current worker of one lane into another, whatever its role', () => {
+    const s = store([
+      { id: ID.lead, work: lane() },
+      { id: ID.worker, work: lane({ unit: 'lane-b', label: 'History', role: 'worker' }) }
+    ])
+    const before = s.work(ID.worker)
+    expect(() =>
+      s.change(ID.worker, { type: 'assign', work: { unit: 'lane-a', role: 'verifier' } })
+    ).toThrow(
+      'This tab is the current worker of "History"; hand that over or leave it before joining "Pair the phone"'
+    )
+    expect(s.work(ID.worker)).toEqual(before)
+  })
+
+  it('assigns a completed member of another lane again: an explicit reuse', () => {
+    const s = store([
+      { id: ID.lead, work: lane() },
+      {
+        id: ID.worker,
+        work: lane({ unit: 'lane-b', label: 'History', role: 'worker', standing: 'completed' })
+      }
+    ])
+    expect(
+      s.change(ID.worker, { type: 'assign', work: { unit: 'lane-a', role: 'verifier' } })
+    ).toEqual([
+      {
+        id: ID.worker,
+        work: expect.objectContaining({
+          unit: 'lane-a',
+          label: 'Pair the phone',
+          role: 'verifier',
+          standing: 'current'
+        })
+      }
+    ])
+  })
+
+  it('refuses another role to a successor still waiting on a handover; leaving stays its decline', () => {
+    const s = store([{ id: ID.lead, work: lane() }, { id: ID.next }])
+    s.change(ID.lead, { type: 'offer', to: ID.next })
+    const waiting = s.work(ID.next)
+    const refusal = `This tab has a pending handover from ${ID.lead}: accept it with clave_hand_over, or leave it, before taking another role`
+    expect(() =>
+      s.change(ID.next, {
+        type: 'assign',
+        work: { unit: 'lane-b', kind: 'lane', label: 'History', role: 'lead' }
+      })
+    ).toThrow(refusal)
+    expect(() =>
+      s.change(ID.next, { type: 'assign', work: { unit: 'lane-a', role: 'verifier' } })
+    ).toThrow(refusal)
+    expect(s.work(ID.next)).toEqual(waiting)
+    expect(s.change(ID.next, { type: 'leave' })).toEqual([{ id: ID.next, work: null }])
+  })
+
   it('refuses a role the kind does not take, and a kind the unit is not', () => {
     const s = store([{ id: ID.lead, work: lane() }, { id: ID.next }])
     expect(() =>
@@ -246,6 +301,73 @@ describe('applyWorkChange: handover', () => {
       { id: ID.next, work: lane({ unit: 'lane-b', label: 'History' }) }
     ])
     expect(() => s.change(ID.lead, { type: 'offer', to: ID.next })).toThrow(/cannot take/)
+  })
+
+  it('refuses an offer to the current verifier of the same lane, whose record stays as it is', () => {
+    const s = store([
+      { id: ID.lead, work: lane() },
+      { id: ID.verifier, work: lane({ role: 'verifier', joinedAt: 20, since: 20 }) }
+    ])
+    const before = s.work(ID.verifier)
+    expect(() => s.change(ID.lead, { type: 'offer', to: ID.verifier })).toThrow(
+      'That tab is already the current verifier of "Pair the phone"; it would lose that role. Have it leave that role first, or offer to another tab'
+    )
+    expect(s.work(ID.verifier)).toEqual(before)
+    expect(s.work(ID.lead)?.standing).toBe('current')
+  })
+
+  it('refuses an offer to the current worker of another lane', () => {
+    const s = store([
+      { id: ID.lead, work: lane() },
+      { id: ID.worker, work: lane({ unit: 'lane-b', label: 'History', role: 'worker' }) }
+    ])
+    const before = s.work(ID.worker)
+    expect(() => s.change(ID.lead, { type: 'offer', to: ID.worker })).toThrow(
+      'That tab is the current worker of "History"; it cannot take "Pair the phone" over too'
+    )
+    expect(s.work(ID.worker)).toEqual(before)
+  })
+
+  it('refuses an offer to a tab waiting on a handover from another holder', () => {
+    const s = store([
+      { id: ID.lead, work: lane() },
+      { id: ID.other, work: lane({ unit: 'lane-b', label: 'History' }) },
+      { id: ID.next }
+    ])
+    s.change(ID.other, { type: 'offer', to: ID.next })
+    const waiting = s.work(ID.next)
+    expect(waiting).toMatchObject({ unit: 'lane-b', standing: 'pending', from: ID.other })
+    expect(() => s.change(ID.lead, { type: 'offer', to: ID.next })).toThrow(
+      'That tab already has a pending handover; it must accept or leave it first'
+    )
+    expect(s.work(ID.next)).toEqual(waiting)
+  })
+
+  it('offers to a superseded member of the same lane, which keeps its join time', () => {
+    const s = store([
+      { id: ID.lead, work: lane({ standing: 'superseded', since: 30 }) },
+      { id: ID.next, work: lane({ joinedAt: 20, since: 30, from: ID.lead }) }
+    ])
+    expect(s.change(ID.next, { type: 'offer', to: ID.lead })).toEqual([
+      {
+        id: ID.lead,
+        work: expect.objectContaining({
+          role: 'lead',
+          standing: 'pending',
+          from: ID.next,
+          joinedAt: 10
+        })
+      }
+    ])
+  })
+
+  it('re-issues an offer made again to the same successor, its since refreshed', () => {
+    const s = store([{ id: ID.lead, work: lane() }, { id: ID.next }])
+    s.change(ID.lead, { type: 'offer', to: ID.next })
+    const first = s.work(ID.next)!
+    expect(first).toMatchObject({ standing: 'pending', from: ID.lead })
+    const again = s.change(ID.lead, { type: 'offer', to: ID.next })
+    expect(again).toEqual([{ id: ID.next, work: { ...first, since: first.since + 10 } }])
   })
 
   it('refuses an accept when someone else took the role meanwhile, unless told to replace', () => {
@@ -364,7 +486,16 @@ describe('takeoverRenames', () => {
     s.change(ID.lead, { type: 'offer', to: ID.next })
     const before = s.all()
     const updates = s.change(ID.next, { type: 'accept' })
-    expect(takeoverRenames(before, updates, ID.next, { type: 'accept' }, nameOf)).toEqual([
+    expect(
+      takeoverRenames(
+        before,
+        updates,
+        ID.next,
+        { type: 'accept' },
+        nameOf,
+        new Set(['Lane A · lead', 'Successor'])
+      )
+    ).toEqual([
       { id: ID.lead, name: 'Lane A · lead · gen 1' },
       { id: ID.next, name: 'Lane A · lead' }
     ])
@@ -373,8 +504,13 @@ describe('takeoverRenames', () => {
     const again = s.all()
     const second = s.change(ID.third, { type: 'accept' })
     expect(
-      takeoverRenames(again, second, ID.third, { type: 'accept' }, (id) =>
-        id === ID.next ? 'Lane A · lead' : undefined
+      takeoverRenames(
+        again,
+        second,
+        ID.third,
+        { type: 'accept' },
+        (id) => (id === ID.next ? 'Lane A · lead' : undefined),
+        new Set(['Lane A · lead · gen 1', 'Lane A · lead'])
       )
     ).toEqual([
       { id: ID.next, name: 'Lane A · lead · gen 2' },
@@ -396,7 +532,8 @@ describe('takeoverRenames', () => {
         replaced,
         ID.next,
         { type: 'assign', work: { unit: 'lane-a', role: 'lead' }, replace: true },
-        nameOf
+        nameOf,
+        new Set()
       )
     ).toEqual([])
     const t = store([{ id: ID.lead, work: lane() }, { id: ID.next }])
@@ -404,11 +541,52 @@ describe('takeoverRenames', () => {
     t.records.delete(ID.lead)
     const gone = t.all()
     const accepted = t.change(ID.next, { type: 'accept' })
-    expect(takeoverRenames(gone, accepted, ID.next, { type: 'accept' }, nameOf)).toEqual([])
+    expect(takeoverRenames(gone, accepted, ID.next, { type: 'accept' }, nameOf, new Set())).toEqual(
+      []
+    )
     const u = store([{ id: ID.lead, work: lane() }, { id: ID.next }])
     u.change(ID.lead, { type: 'offer', to: ID.next })
     const known = u.all()
     const done = u.change(ID.next, { type: 'accept' })
-    expect(takeoverRenames(known, done, ID.next, { type: 'accept' }, () => undefined)).toEqual([])
+    expect(
+      takeoverRenames(known, done, ID.next, { type: 'accept' }, () => undefined, new Set())
+    ).toEqual([])
+  })
+
+  it('never gives a generation an open tab bears: a predecessor that left keeps its own', () => {
+    const s = store([{ id: ID.lead, work: lane() }, { id: ID.next }, { id: ID.third }])
+    // The open tabs' names, as the host keeps them: each rename lands here.
+    const open: Record<string, string> = {
+      [ID.lead]: 'Lane A · lead',
+      [ID.next]: 'Successor',
+      [ID.third]: 'Third'
+    }
+    const accept = (subject: string): ReturnType<typeof takeoverRenames> => {
+      const before = s.all()
+      const updates = s.change(subject, { type: 'accept' })
+      const renamed = takeoverRenames(
+        before,
+        updates,
+        subject,
+        { type: 'accept' },
+        (id) => open[id],
+        new Set(Object.values(open))
+      )
+      for (const r of renamed) open[r.id] = r.name
+      return renamed
+    }
+    s.change(ID.lead, { type: 'offer', to: ID.next })
+    expect(accept(ID.next)).toEqual([
+      { id: ID.lead, name: 'Lane A · lead · gen 1' },
+      { id: ID.next, name: 'Lane A · lead' }
+    ])
+    // L leaves the lane while its tab stays open as "Lane A · lead · gen 1":
+    // the lane counts one superseded lead again, V, once V hands over.
+    s.change(ID.lead, { type: 'leave' })
+    s.change(ID.next, { type: 'offer', to: ID.third })
+    expect(accept(ID.third)).toEqual([
+      { id: ID.next, name: 'Lane A · lead · gen 2' },
+      { id: ID.third, name: 'Lane A · lead' }
+    ])
   })
 })

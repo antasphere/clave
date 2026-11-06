@@ -9,6 +9,7 @@
  * both are stubbed first, as server-layout-apply.test.ts does.
  */
 import { beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import type { WorkAssignment } from '@clave/contract/work-rules'
 import type { SessionRecord } from '../../../preload/index.d'
 import type { Session, SessionGroup } from '../store/session-types'
 
@@ -515,5 +516,56 @@ describe('a record the host already runs', () => {
     await attached
     expect(killed).toEqual([])
     expect(ids()).toEqual([])
+  })
+})
+
+/**
+ * Which wave or lane a tab works on (PRDCT-4123) is on its record, and the
+ * restore keeps two copies of a tab built from one: `sessionFromRecord` (a
+ * record the restore spawns, its placeholder and its settled tab) and
+ * `sessionOfRecord` (a record the host already runs, on the restore and on
+ * the layout path). Each must carry the assignment, or the sidebar draws the
+ * tab as an ordinary row after a restart.
+ */
+describe('the work a record carries', () => {
+  const work: WorkAssignment = {
+    unit: 'lane-a',
+    kind: 'lane',
+    label: 'Pair the phone',
+    wave: 'wave-1',
+    waveLabel: 'Mobile beta',
+    role: 'verifier',
+    standing: 'current',
+    joinedAt: 10,
+    since: 20
+  }
+  const workOf = (id: string): Session['work'] =>
+    useSessionStore.getState().sessions.find((s) => s.id === id)?.work
+
+  it('a record the restore spawns keeps it, placed and once its spawn settles', async () => {
+    const { placed, attached } = placeRecords([{ ...record('restored'), work }], null)
+    expect(placed).toEqual(['restored'])
+    expect(workOf('restored')).toEqual(work)
+    await flush()
+    expect(spawned).toEqual(['restored'])
+    pending.get('restored')!(true)
+    expect(await attached).toEqual(['restored'])
+    expect(restoring()).toEqual([])
+    expect(workOf('restored')).toEqual(work)
+  })
+
+  it('a record the host already runs keeps it on the restore', async () => {
+    const running = { ...record('running'), live: true, running: true, work } as SessionRecord
+    const { attached } = placeRecords([running], null)
+    expect(await attached).toEqual(['running'])
+    expect(spawned).toEqual([])
+    expect(workOf('running')).toEqual(work)
+  })
+
+  it('a tab the server opened keeps it on the layout path', async () => {
+    byIdRecords = [{ ...record('opened'), live: true, running: true, work } as SessionRecord]
+    await adoptServerStartedSessions(['opened'])
+    expect(spawned).toEqual([])
+    expect(workOf('opened')).toEqual(work)
   })
 })

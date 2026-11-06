@@ -16,8 +16,10 @@
  * contract): a role is held by one session at a time when it is exclusive, a
  * successor is `pending` until it takes over, a predecessor it replaces is
  * `superseded`, and an assignment that ended normally is `completed`. `unresolved` is never
- * stored: it is what the derivation says when the records disagree, and an
- * owner is never picked by time or by title.
+ * stored: it is what the derivation says when the records disagree, and who
+ * holds a role is never picked by time or by title; when several sessions
+ * completed it, the entry shows the one whose standing changed last, a display
+ * choice that decides nothing.
  *
  * Plain TypeScript with no Effect, because the renderer imports it for the
  * sidebar; the wire schema in `work.ts` mirrors these types and `work.test.ts`
@@ -316,6 +318,13 @@ function assign(
     refuse(`A wave label is 1 to ${WORK_LIMITS.label} characters`)
   if (input.kind !== undefined && !oneOf(WORK_KINDS, input.kind))
     refuse(`A kind is one of ${WORK_KINDS.join(', ')}`)
+  // A successor settles the handover offered to it first: taking another
+  // role would drop the offer without a word to the holder that made it.
+  // Leaving stays open to it: that is its explicit decline.
+  if (self?.standing === 'pending')
+    refuse(
+      `This tab has a pending handover from ${self.from ?? 'another tab'}: accept it with clave_hand_over, or leave it, before taking another role`
+    )
 
   const members = membersOf(unit)
   const sameUnit = self?.unit === unit
@@ -350,8 +359,10 @@ function assign(
   } as WorkAssignment)
 
   // A session holds one unit at a time: leaving a role it holds now in
-  // another unit would orphan that unit without a word, so it is refused.
-  if (self && !sameUnit && self.standing === 'current' && EXCLUSIVE_ROLES.has(self.role))
+  // another unit, any role, would take it from that unit without a word, so
+  // it is refused. A superseded or completed member of another unit may be
+  // assigned again: that is an explicit reuse.
+  if (self && !sameUnit && self.standing === 'current')
     refuse(
       `This tab is the current ${roleName(self.role)} of "${self.label}"; hand that over or leave it before joining "${label}"`
     )
@@ -413,15 +424,22 @@ function offer(
   if (!byId.has(to)) refuse(`No session with id "${to}"`)
   const target = byId.get(to)
   const holder = self!
-  if (
-    target &&
-    target.unit !== holder.unit &&
-    target.standing === 'current' &&
-    EXCLUSIVE_ROLES.has(target.role)
-  )
+  // An offer never overwrites a role its target holds, nor a handover it
+  // waits on: the target settles that first. A superseded or completed
+  // member, of this unit or another, may be offered the role. An offer to the
+  // tab already waiting on this holder's role is the same offer again (a
+  // retried call): it is re-issued, its `since` refreshed.
+  if (target?.standing === 'current')
     refuse(
-      `That tab is the current ${roleName(target.role)} of "${target.label}"; it cannot take "${holder.label}" over too`
+      target.unit === holder.unit
+        ? `That tab is already the current ${roleName(target.role)} of "${target.label}"; it would lose that role. Have it leave that role first, or offer to another tab`
+        : `That tab is the current ${roleName(target.role)} of "${target.label}"; it cannot take "${holder.label}" over too`
     )
+  if (
+    target?.standing === 'pending' &&
+    !(target.unit === holder.unit && target.role === holder.role && target.from === id)
+  )
+    refuse('That tab already has a pending handover; it must accept or leave it first')
   const updates: WorkUpdate[] = []
   // An earlier offer for the same role is withdrawn: one successor at a time.
   for (const m of membersOf(holder.unit)) {
@@ -478,18 +496,22 @@ function accept(
  * 6 November 2026): the successor takes its predecessor's exact name, the
  * name the lane's tab is known by, and the predecessor is renamed
  * `<name> · gen <n>`, n its generation among the role's superseded holders in
- * the unit, so no two open tabs share the name a message is addressed by. The
- * predecessor first, then the successor, in that order. Nothing for any other
- * change, for an accept whose predecessor this change did not supersede (gone,
- * or no longer the holder), or when the predecessor's name is not known:
- * `nameOf` answers only for a session whose tab is open.
+ * the unit, raised past any `<name> · gen <n>` an open tab already bears
+ * (`namesInUse`, the names of every open session: a holder that left the unit
+ * keeps its generation's name while its tab is open), so no two open tabs
+ * share the name a message is addressed by. The predecessor first, then the
+ * successor, in that order. Nothing for any other change, for an accept whose
+ * predecessor this change did not supersede (gone, or no longer the holder),
+ * or when the predecessor's name is not known: `nameOf` answers only for a
+ * session whose tab is open.
  */
 export function takeoverRenames(
   before: ReadonlyArray<WorkRecord>,
   updates: ReadonlyArray<WorkUpdate>,
   subject: string,
   change: WorkChange,
-  nameOf: (id: string) => string | undefined
+  nameOf: (id: string) => string | undefined,
+  namesInUse: ReadonlySet<string>
 ): WorkRename[] {
   if (change.type !== 'accept') return []
   const mine = updates.find((u) => u.id === subject)?.work
@@ -503,13 +525,17 @@ export function takeoverRenames(
     stepped.role !== mine.role
   )
     return []
-  const name = nameOf(predecessor)?.trim()
+  const current = nameOf(predecessor)
+  const name = current?.trim()
   if (!name) return []
   const after = new Map(before.map((r) => [r.id, r.work ? sanitizeWork(r.work) : undefined]))
   for (const u of updates) after.set(u.id, u.work ?? undefined)
-  const generation = [...after.values()].filter(
+  let generation = [...after.values()].filter(
     (w) => w?.unit === mine.unit && w.role === mine.role && w.standing === 'superseded'
   ).length
+  // The predecessor's own name is about to change, so it never counts.
+  const taken = (candidate: string): boolean => candidate !== current && namesInUse.has(candidate)
+  while (taken(`${name} · gen ${generation}`)) generation += 1
   return [
     { id: predecessor, name: `${name} · gen ${generation}` },
     { id: subject, name }
@@ -587,6 +613,9 @@ function holdingOf(
   const pending = withRole.filter((m) => m.work.standing === 'pending')
   if (pending.length)
     return { state: 'unresolved', reason: 'not-accepted', candidates: pending.map((m) => m.id) }
+  // Who holds a role is never picked by time or by title; when several
+  // sessions completed it, the entry shows the one whose standing changed
+  // last, a display choice that decides nothing.
   const completed = withRole
     .filter((m) => m.work.standing === 'completed')
     .sort((a, b) => b.work.since - a.work.since)

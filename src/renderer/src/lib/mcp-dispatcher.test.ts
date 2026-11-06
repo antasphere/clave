@@ -250,3 +250,107 @@ it('launches the legacy caller pinned group when pinned names match across works
   expect(await response).toMatchObject({ ok: true, result: { pinnedId: 'pin-home' } })
   unsubscribe()
 })
+
+/* The work tools on the window road (PRDCT-4123): a call the server does not
+   serve reads its arguments as the server's road does, keeps this store's
+   reach rule, and sends the change through the preload. The served road is
+   pinned in served-work-tools.test.ts; this road had no test. */
+describe('clave_set_work and clave_hand_over on the window road', () => {
+  const work = {
+    unit: 'lane-a',
+    kind: 'lane',
+    label: 'Pair the phone',
+    role: 'lead',
+    standing: 'current',
+    joinedAt: 10,
+    since: 10
+  }
+  let sessionsChangeWork: ReturnType<typeof vi.fn>
+  /** One command as main sends it to this window, and the window's answer. */
+  const dispatch = async (
+    command: string,
+    payload: Record<string, unknown>
+  ): Promise<{ ok: boolean; result?: unknown; error?: string }> => {
+    let receive: (msg: { requestId: string; command: string; payload: unknown }) => void = () => {}
+    const response = new Promise<{ ok: boolean; result?: unknown; error?: string }>((resolve) => {
+      globals.window.electronAPI.onMcpCommand = (handler: typeof receive) => {
+        receive = handler
+        return () => {}
+      }
+      globals.window.electronAPI.mcpRespond = resolve
+    })
+    const unsubscribe = initMcpDispatcher()
+    receive({ requestId: command, command, payload })
+    try {
+      return await response
+    } finally {
+      unsubscribe()
+    }
+  }
+  beforeEach(() => {
+    sessionsChangeWork = vi.fn(async () => ({ changed: [], renamed: [] }))
+    globals.window.electronAPI.sessionsChangeWork = sessionsChangeWork
+    // The caller leads lane A; a mate shares its group; a stranger shares
+    // nothing with it: no parent link, no group.
+    useSessionStore.setState({
+      sessions: [
+        { id: 'caller', name: 'Lead', sessionType: 'local', work } as never,
+        { id: 'mate', name: 'Mate', sessionType: 'local' } as never,
+        { id: 'stranger', name: 'Stranger', sessionType: 'local' } as never
+      ],
+      groups: [
+        {
+          id: 'g-lane',
+          name: 'Lane A',
+          sessionIds: ['caller', 'mate'],
+          terminals: [],
+          collapsed: false,
+          cwd: null
+        }
+      ]
+    })
+  })
+
+  it('refuses to assign a tab the caller is not related to, before any change', async () => {
+    const answer = await dispatch('setWork', {
+      callerSessionId: 'caller',
+      sessionId: 'stranger',
+      role: 'verifier'
+    })
+    expect(answer.ok).toBe(false)
+    expect(answer.error).toMatch(/not related to yours/)
+    expect(sessionsChangeWork).not.toHaveBeenCalled()
+  })
+
+  it("assigns a tab of the caller's group to the caller's own unit when none is named", async () => {
+    const answer = await dispatch('setWork', {
+      callerSessionId: 'caller',
+      sessionId: 'mate',
+      role: 'verifier'
+    })
+    expect(answer).toMatchObject({ ok: true, result: { sessionId: 'mate' } })
+    expect(sessionsChangeWork).toHaveBeenCalledTimes(1)
+    expect(sessionsChangeWork).toHaveBeenCalledWith('mate', {
+      type: 'assign',
+      work: { unit: 'lane-a', role: 'verifier' }
+    })
+  })
+
+  it("offers the caller's role to a tab of its group", async () => {
+    const answer = await dispatch('handOver', { callerSessionId: 'caller', to: 'mate' })
+    expect(answer).toMatchObject({ ok: true, result: { sessionId: 'caller' } })
+    expect(sessionsChangeWork).toHaveBeenCalledTimes(1)
+    expect(sessionsChangeWork).toHaveBeenCalledWith('caller', { type: 'offer', to: 'mate' })
+  })
+
+  it('refuses a hand over that both names a successor and accepts', async () => {
+    const answer = await dispatch('handOver', {
+      callerSessionId: 'caller',
+      to: 'mate',
+      accept: true
+    })
+    expect(answer.ok).toBe(false)
+    expect(answer.error).toMatch(/exactly one of/)
+    expect(sessionsChangeWork).not.toHaveBeenCalled()
+  })
+})

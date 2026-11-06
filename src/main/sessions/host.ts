@@ -238,9 +238,17 @@ export function createSessionHost(deps: SessionHostDeps): SessionHostService {
       for (const update of rest) ptyManager.setSessionWork(update.id, update.work)
       // An accepted handover renames (`takeoverRenames`): the successor takes
       // its predecessor's name, the predecessor first becoming `<name> · gen
-      // <n>`, so no two open tabs share the name for a moment. Written as a
-      // rename is, protected from the auto-title.
-      const renamed = takeoverRenames(before, updates, id, change, (sid) => manager.get(sid)?.title)
+      // <n>`, n past every generation an open tab already bears, so no two
+      // open tabs share the name for a moment. Written as a rename is,
+      // protected from the auto-title.
+      const renamed = takeoverRenames(
+        before,
+        updates,
+        id,
+        change,
+        (sid) => manager.get(sid)?.title,
+        new Set(manager.list().map((s) => s.title))
+      )
       for (const r of renamed) ptyManager.setSessionDisplayName(r.id, r.name, true)
       return { changed: updates, renamed }
     },

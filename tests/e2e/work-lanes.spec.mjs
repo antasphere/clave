@@ -13,6 +13,8 @@
  * - each wave's group draws one entry per unit and its ordinary sessions,
  *   nothing else, each entry named by its unit's label, never a title;
  * - each entry goes to the session that holds it, or says it is unresolved;
+ * - members outside any group fold into one row that goes to the lead, and a
+ *   lane with no lead among the window's sessions says so;
  * - an entry's menu lists the lead, the verifier, the workers, the spawned
  *   agents (one spawned by a superseded lead included, current) and the
  *   history; a pane shows where its session sits as a breadcrumb;
@@ -237,6 +239,88 @@ export async function run(t) {
           1
         )
     }
+
+    // ── 2b. Members outside any group fold too; a lane with no lead says so ──
+    // Three tabs at the top level, opened by the seed tab as its children so
+    // the reach rule lets it assign them: the two members of one lane draw
+    // one row that goes to the lead; a lane whose only member here is its
+    // verifier reads vacant and says it has no lead.
+    const loose = {}
+    for (const [key, name] of [
+      ['lead', 'Loose · lead'],
+      ['verifier', 'Loose · verifier'],
+      ['lone', 'Lone · verifier']
+    ]) {
+      const opened = await call(seedClient, 'clave_open_session', {
+        cwd: ROOT,
+        name,
+        mode: 'claude',
+        profile: 'builtin-claude',
+        attachToParent: true
+      })
+      loose[key] = opened.sessionId
+    }
+    const looseLane = { unit: 'fixture-loose', kind: 'lane', label: 'Loose lane' }
+    await call(seedClient, 'clave_set_work', { sessionId: loose.lead, ...looseLane, role: 'lead' })
+    await call(seedClient, 'clave_set_work', {
+      sessionId: loose.verifier,
+      ...looseLane,
+      role: 'verifier'
+    })
+    await call(seedClient, 'clave_set_work', {
+      sessionId: loose.lone,
+      unit: 'fixture-lone',
+      kind: 'lane',
+      label: 'Lone lane',
+      role: 'verifier'
+    })
+    // The window holds all three assignments before its rows are counted.
+    const assigned = await until(async () => {
+      const listed = (await callMcp(app, 'list', {}))?.sessions ?? []
+      const unitOf = (id) => listed.find((x) => x.id === id)?.work?.unit
+      return unitOf(loose.lead) === 'fixture-loose' &&
+        unitOf(loose.verifier) === 'fixture-loose' &&
+        unitOf(loose.lone) === 'fixture-lone'
+        ? true
+        : null
+    })
+    t.check('the three top-level tabs carry their assignments in the window', assigned === true)
+    t.equal(
+      'the loose lane is drawn as one entry',
+      await until(async () => ((await entry(win, 'fixture-loose').count()) === 1 ? 1 : null)),
+      1
+    )
+    const looseRows = async () =>
+      (await win.locator(`[data-sidebar-item-id="${loose.lead}"]`).count()) +
+      (await win.locator(`[data-sidebar-item-id="${loose.verifier}"]`).count())
+    t.equal(
+      'two members outside any group draw one row',
+      await until(async () => ((await looseRows()) === 1 ? 1 : null)),
+      1
+    )
+    await entry(win, 'fixture-loose').locator('.sidebar-item').click()
+    t.check(
+      'clicking the loose lane goes to its lead',
+      (await until(async () => ((await focusedId()) === loose.lead ? true : null))) === true
+    )
+    const lone = entry(win, 'fixture-lone')
+    t.equal(
+      'a lane with no lead in the window reads vacant',
+      await until(async () =>
+        (await lone.count()) === 1 && (await lone.getAttribute('data-work-owner')) === 'vacant'
+          ? 'vacant'
+          : null
+      ),
+      'vacant'
+    )
+    t.equal(
+      'and its entry says it has no lead',
+      await until(async () => {
+        const chip = lone.locator('[data-chip="no-owner"]')
+        return (await chip.count()) === 1 ? (await chip.innerText()).trim() : null
+      }),
+      'No lead'
+    )
 
     const mb = all['mobile-beta']
     const MB = SHAPES.find((s) => s.name === 'mobile-beta')
