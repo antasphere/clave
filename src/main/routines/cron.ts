@@ -95,7 +95,9 @@ function parseField(
       lo = min
       hi = max
     } else {
-      const [a, b] = rangeText.split('-')
+      const [a, b, ...beyond] = rangeText.split('-')
+      if (beyond.length > 0)
+        throw new CronParseError(`${field}: "${part}" is not a value, a range or a step`)
       const parse = (t: string): number => {
         if (DIGITS.test(t)) return Number(t)
         const named = names ? nameToNumber(t, names, field) : null

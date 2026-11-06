@@ -354,3 +354,49 @@ describe('the conversation id the discussion resumes on', () => {
     expect(sessionId).toBe('s2')
   })
 })
+
+describe('what the record says of a run that never started (round 2, N1 and F12)', () => {
+  it('records the run before the agent-tools wait, so a stop during it is recoverable', async () => {
+    const file = workspace([routine('Health')])
+    const host = fakeHost()
+    let seen: unknown = null
+    const service = await build(file, host, memory(), {
+      agentToolsReady: async () => {
+        seen = service.list().routines[0].runs[0]
+        throw new Error('no MCP yet')
+      }
+    })
+    const failed = await service.runNow(key(file, 'Health'))
+    expect(failed.state).toBe('failed')
+    expect(seen).toMatchObject({ id: failed.id, state: 'running' })
+  })
+
+  it('marks a late due occurrence of a routine that cannot run as a catch-up', async () => {
+    // Hourly at the minute half an hour away: the latest occurrence is about
+    // thirty minutes old, past the on-time threshold (a per-minute schedule
+    // would always be on time, the e2e spec's own lesson).
+    const hourly = `${(new Date().getMinutes() + 30) % 60} * * * *`
+    const file = workspace([routine('Team', { scope: 'team', schedule: hourly })])
+    const storage = memory()
+    const store = new RoutinesStore(storage)
+    store.considered(key(file, 'Team'), Date.now() - 3 * 3_600_000, hourly)
+    const service = await build(file, fakeHost(), storage)
+    await service.tick()
+    const run = service.list().routines[0].runs[0]
+    expect(run.state).toBe('failed')
+    expect(run.reason).toBe('team scope is not built yet')
+    expect(run.trigger).toBe('catch-up')
+  })
+})
+
+describe('the agents that can report (round 2, gap)', () => {
+  it('fails an Antigravity routine too, before any agent starts', async () => {
+    const host = fakeHost()
+    const file = workspace([routine('Agy', { agent: 'antigravity' })])
+    const service = await build(file, host)
+    const run = await service.runNow(key(file, 'Agy'))
+    expect(run.state).toBe('failed')
+    expect(run.reason).toContain('cannot report')
+    expect(host.starts).toEqual([])
+  })
+})

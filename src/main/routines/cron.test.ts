@@ -147,3 +147,11 @@ describe('lastOccurrence (round 1, F8)', () => {
     expect(lastOccurrence(parseCron('0 0 31 2 *'), local(2026, 11, 6, 9, 0))).toBeNull()
   })
 })
+
+describe('ranges with a third segment and malformed steps (round 2, F7)', () => {
+  it('refuses 1-3-5, mon-fri-foo and a step that is not digits', () => {
+    for (const bad of ['1-3-5 * * * *', '* * * * mon-fri-foo', '*/0x2 * * * *', '1-5/x * * * *']) {
+      expect(() => parseCron(bad), bad).toThrow(CronParseError)
+    }
+  })
+})

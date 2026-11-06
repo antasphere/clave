@@ -301,25 +301,6 @@ export function createRoutineService(options: RoutineServiceOptions): RoutineSer
       )
     const schema: SchemaCheck = compileSchemaFile(d.report.schema)
     if (!schema.ok) return recordFailed(d, trigger, schema.reason)
-    // The run reports through the agent tools: without an address for them
-    // it would start with no way to report, so it waits for one, bounded.
-    if (options.agentToolsReady) {
-      const deadline = now() + (options.agentToolsWaitMs ?? AGENT_TOOLS_WAIT_MS)
-      let reachable = false
-      while (!reachable) {
-        try {
-          await options.agentToolsReady()
-          reachable = true
-        } catch (error) {
-          if (now() >= deadline)
-            return recordFailed(
-              d,
-              trigger,
-              `the agent tools are not reachable: no MCP address within ${Math.round((options.agentToolsWaitMs ?? AGENT_TOOLS_WAIT_MS) / 1000)} seconds, so the run could not report (${error instanceof Error ? error.message : String(error)})`
-            )
-        }
-      }
-    }
     const run: RoutineRun = {
       id: randomUUID(),
       routineKey: d.key,
@@ -351,6 +332,38 @@ export function createRoutineService(options: RoutineServiceOptions): RoutineSer
     live.set(run.id, entry)
     store.addRun(run)
     emit()
+    // The run reports through the agent tools: without an address for them it
+    // would start with no way to report, so it waits for one, bounded and
+    // paced. The run is already on the record, so a server that stops during
+    // the wait leaves a run its next start marks failed (round 2, N1), and
+    // a readiness that refuses at once cannot spin (round 2, N2).
+    if (options.agentToolsReady) {
+      const waitMs = options.agentToolsWaitMs ?? AGENT_TOOLS_WAIT_MS
+      const deadline = now() + waitMs
+      let reachable = false
+      let lastError: unknown = null
+      while (!reachable) {
+        try {
+          await options.agentToolsReady()
+          reachable = true
+        } catch (error) {
+          lastError = error
+          if (now() >= deadline) break
+          await new Promise((resolve) => setTimeout(resolve, Math.min(1_000, waitMs)))
+        }
+      }
+      if (!reachable) {
+        entry.ended = true
+        live.delete(run.id)
+        store.updateRun(run.id, {
+          state: 'failed',
+          endedAt: now(),
+          reason: `the agent tools are not reachable: no MCP address within ${Math.round(waitMs / 1000)} seconds, so the run could not report (${lastError instanceof Error ? lastError.message : String(lastError)})`
+        })
+        emit()
+        return store.run(run.id) ?? run
+      }
+    }
     const message = firstMessage({ routine: d, run, pluginDir: options.pluginDir })
     const spawn: SpawnOptions = {
       ...resolved.spawn,
@@ -431,7 +444,7 @@ export function createRoutineService(options: RoutineServiceOptions): RoutineSer
           } else {
             const claimed = claims.claim(d.key, decision.occurrence)
             if (claimed.kind === 'claimed') {
-              if (decision.kind === 'run') await startRun(d, decision.trigger)
+              if (decision.kind === 'run') void startRun(d, decision.trigger)
               else
                 recordFailed(
                   d,

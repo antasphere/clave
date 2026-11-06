@@ -331,7 +331,11 @@ export const SessionLink = Schema.Union(
   Schema.Struct({ kind: Schema.Literal('session-view'), ownerId: Schema.String }),
   Schema.Struct({ kind: Schema.Literal('toolbar'), key: Schema.String }),
   /** A routine's run (ADR 0004): never a sidebar row, the server's to run and to stop. */
-  Schema.Struct({ kind: Schema.Literal('routine'), routineKey: Schema.String, runId: Schema.String })
+  Schema.Struct({
+    kind: Schema.Literal('routine'),
+    routineKey: Schema.String,
+    runId: Schema.String
+  })
 )
 export type SessionLink = typeof SessionLink.Type
 
