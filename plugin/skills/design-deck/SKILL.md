@@ -143,10 +143,38 @@ the same calm, and the reader's eye going to the one thing the run or the page s
 6. **An empty state**, when there is nothing: one short sentence in tertiary ink, and a
    drawing (Part 1) when the deck has room.
 
-### The colours, light and dark
+### The colours: Clave's tokens by name, with fallbacks
 
-The deck follows the system scheme (`prefers-color-scheme`); Clave's panel injects the
-app's theme. Use Clave's values, never a palette of your own:
+A deck Clave shows is handed the app's resolved tokens (the panel injects EVERY custom
+property of the app's root at load, with `!important`: the theme, the density preset, the
+text size), so the deck names Clave's tokens and keeps its own fallback for a browser,
+light and dark through `prefers-color-scheme`. The deck's own variables carry a `--deck-`
+prefix: an unprefixed name the app's root also defines (`--ink`, `--line`, `--radius`…)
+would be overwritten by the injection and the deck would lose its ink:
+
+```css
+:root { --deck-f-ground: #fbfbf9; … }                       /* the deck's own light values */
+@media (prefers-color-scheme: dark) { :root { --deck-f-ground: #0e0d0c; … } }
+:root {
+  --deck-ground: var(--surface-0, var(--deck-f-ground));
+  --deck-card: var(--surface-raised, var(--deck-f-card));
+  --deck-wash: var(--surface-100, var(--deck-f-wash));
+  --deck-ink: var(--text-primary, var(--deck-f-ink));
+  --deck-ink-2: var(--text-secondary, var(--deck-f-ink-2));
+  --deck-ink-3: var(--text-tertiary, var(--deck-f-ink-3));
+  --deck-line: var(--color-border, var(--deck-f-line));
+  --deck-ok: var(--color-status-ready, var(--deck-f-ok));
+  --deck-attention: var(--color-status-waiting, var(--deck-f-attention));
+  --deck-failed: var(--color-destructive, var(--deck-f-failed));
+  --deck-fixed: var(--color-accent, var(--deck-f-fixed));
+  --deck-radius: var(--radius-xl, 10px);        /* a surface's corner, per density */
+  --deck-radius-sm: var(--radius-lg, 8px);      /* a card's or tile's corner */
+  font-family: var(--font-sans, 'Geist Sans', system-ui, sans-serif);
+}
+body { font-size: var(--control-text, 13px); }
+```
+
+The fallbacks are Clave's own values, never a palette of your own:
 
 | Role | Light | Dark |
 |---|---|---|
@@ -157,8 +185,13 @@ app's theme. Use Clave's values, never a palette of your own:
 | line | `rgba(0,0,0,.1)` | `rgba(255,255,255,.1)` |
 | ok, fixed, attention, failed | `#1f9d5a`, `#1f5fcf`, `#b7791f`, `#d14343` | `#3fbf7a`, `#5aa2f7`, `#e0a43a`, `#ef6060` |
 
-Type: Geist Sans, falling back to the system face; 13 px body, line height 1.5, tabular
-figures for every number. Corners 8 px on cards and tiles, 10 px on the hero.
+Type: Geist Sans through `--font-sans`, falling back to the system face; the body at
+`--control-text` (13 px), line height 1.5, tabular figures for every number. Corners:
+`--radius-xl` on the hero and the figures (a surface's corner, the one the sidebar's
+cards wear), `--radius-lg` on cards and tiles. A page built inside the app's own
+stylesheet (the Analytics pages ship `packages/ui/src/system.css`) uses the real
+classes instead: `panel-tabs` / `panel-tab` for a switch, `panel-icon-btn` for an icon
+button, `floating-card` for a surface, and never redraws them.
 
 ### Motion
 

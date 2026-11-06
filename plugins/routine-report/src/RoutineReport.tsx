@@ -153,6 +153,7 @@ function DeckGuest({
           src={src}
           title={title}
           onFirstLoad={() => setLoaded(true)}
+          theme
           className={`transition-opacity duration-200 ease-out ${shown ? 'opacity-100' : 'opacity-0'}`}
         />
       )}

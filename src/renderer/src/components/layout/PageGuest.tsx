@@ -1,5 +1,6 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef } from 'react'
 import type { WebviewTag } from 'electron'
+import { attachGuestTheme } from '../../lib/guest-theme'
 
 /** Mirrors VIEW_PARTITION in src/main/view-guests.ts, where the session's
  *  permission handlers and the preview protocol live; the renderer cannot
@@ -53,9 +54,13 @@ export const PageGuest = forwardRef<
      *  (or its error is), so whatever was standing in for it can go. Once per
      *  mount; a later navigation is the page's own business. */
     onFirstLoad?: () => void
+    /** Keep the page on the app's theme: the root's tokens inserted into the guest
+     *  (`attachGuestTheme`), for a page that carries Clave's tokens itself, a routine's
+     *  deck or an analytics page. Off for a page that is not ours. */
+    theme?: boolean
     className?: string
   }
->(function PageGuest({ src, title, onTrail, onFirstLoad, className }, ref) {
+>(function PageGuest({ src, title, onTrail, onFirstLoad, theme, className }, ref) {
   const webviewRef = useRef<WebviewTag | null>(null)
   const onTrailRef = useRef(onTrail)
   useEffect(() => {
@@ -80,6 +85,12 @@ export const PageGuest = forwardRef<
       for (const e of ['did-finish-load', 'did-fail-load']) wv.removeEventListener(e, firstLoad)
     }
   }, [src])
+
+  useEffect(() => {
+    const wv = webviewRef.current
+    if (!wv || !theme) return
+    return attachGuestTheme(wv)
+  }, [src, theme])
 
   useEffect(() => {
     const wv = webviewRef.current

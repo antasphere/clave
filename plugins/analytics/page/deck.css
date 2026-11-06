@@ -2,9 +2,13 @@
    (prepended to this file by scripts/build-plugins.mjs); the 12 and 11 px type sizes are the
    one exception the app's field guide itself makes. */
 
+/* system.css (shipped into this sheet) sizes html and body to the window and
+   hides their overflow for the app's shell; a page scrolls. */
 html,
 body {
+  height: auto;
   margin: 0;
+  overflow: auto;
   background: var(--surface-0);
   color: var(--text-primary);
   font-family: var(--font-sans);
@@ -35,16 +39,13 @@ body {
   column-gap: calc(var(--control-px) * 3);
   row-gap: calc(var(--control-px) * 1.5);
   align-items: center;
-  padding: calc(var(--control-px) * 2.25) calc(var(--control-px) * 2.5)
-    calc(var(--control-px) * 2.25);
-  border: var(--frame-border) solid var(--color-border);
-  border-radius: var(--radius-xl);
+  padding: calc(var(--control-px) * 2.25) calc(var(--control-px) * 2.5);
+  /* over .floating-card's ground: a faint wash of the accent at the top */
   background: linear-gradient(
     180deg,
-    color-mix(in oklab, var(--color-accent) 6%, var(--surface-raised)),
-    var(--surface-raised)
+    color-mix(in oklab, var(--color-accent) 6%, var(--surface-0)),
+    var(--surface-0)
   );
-  overflow: hidden;
 }
 .deck-head > div:first-child {
   grid-area: 1 / 1;
@@ -143,31 +144,13 @@ body {
   box-shadow: inset 0 0 0 var(--frame-border) var(--color-border);
 }
 
-/* ── Range chips ────────────────────────────────────────────────────────── */
+/* ── Range: the side panel's tab frame (`.panel-tabs` / `.panel-tab`) ────── */
 
 .ranges {
-  display: flex;
-  gap: var(--surface-inset);
+  justify-self: start;
 }
-
-.chip {
-  display: inline-flex;
-  align-items: center;
-  height: var(--control-h-sm);
-  padding: 0 var(--control-px);
-  border-radius: var(--radius-full);
-  border: var(--frame-border) solid var(--color-border);
-  color: var(--text-secondary);
-  font-size: 12px;
+.ranges .chip {
   text-decoration: none;
-}
-.chip:hover {
-  background: var(--surface-100);
-  color: var(--text-primary);
-}
-.chip.selected {
-  border-color: var(--color-accent);
-  color: var(--color-accent);
 }
 
 /* ── KPI tiles ──────────────────────────────────────────────────────────── */
@@ -186,7 +169,7 @@ body {
   justify-content: flex-end;
   gap: calc(var(--surface-inset) * 0.75);
   padding: calc(var(--control-px) * 1.5) calc(var(--control-px) * 1.75);
-  border-radius: var(--radius-lg);
+  border-radius: var(--radius-xl);
   background: var(--surface-100);
   min-width: 0;
 }
@@ -359,9 +342,6 @@ tfoot td {
   gap: var(--control-px);
   padding: calc(var(--control-px) * 1.75) calc(var(--control-px) * 2) calc(var(--control-px) * 1.75)
     calc(var(--control-px) * 2.25);
-  border: var(--frame-border) solid var(--color-border);
-  border-radius: var(--radius-lg);
-  background: var(--surface-raised);
   color: inherit;
   text-decoration: none;
 }
@@ -436,7 +416,7 @@ a.card:hover {
   color: var(--text-tertiary);
   text-align: center;
   border: var(--frame-border) dashed var(--color-border);
-  border-radius: var(--radius-lg);
+  border-radius: var(--radius-xl);
 }
 
 /* ── Footer ─────────────────────────────────────────────────────────────── */
@@ -468,9 +448,7 @@ figure.live-figure {
   position: relative;
   margin: 0;
   padding: calc(var(--control-px) * 2);
-  border: var(--frame-border) solid var(--color-border);
-  border-radius: var(--radius-lg);
-  background: var(--surface-raised);
+  overflow: visible;
 }
 
 .figure-title {
@@ -694,25 +672,11 @@ figure.live-figure {
   gap: var(--control-px);
 }
 .gear {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: var(--control-h);
-  height: var(--control-h);
-  border-radius: var(--control-radius);
-  color: var(--text-tertiary);
-}
-.gear:hover {
-  color: var(--text-primary);
-  background: var(--surface-100);
-}
-.gear:focus-visible {
-  outline: none;
-  box-shadow: inset 0 0 0 1.5px var(--color-accent);
+  text-decoration: none;
 }
 .gear .icon {
-  width: var(--control-icon);
-  height: var(--control-icon);
+  width: var(--control-icon, 16px);
+  height: var(--control-icon, 16px);
 }
 
 /* ── The drawing hand ──────────────────────────────────────────────────────
