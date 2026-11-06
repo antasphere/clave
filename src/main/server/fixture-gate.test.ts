@@ -53,7 +53,8 @@ describe('the fixture route is turned on by the test flag and nothing else', () 
       // the entry's own assignment is the flag, and only it.
       const own = assignments(text)
         .filter((value) => !value.startsWith('options.'))
-        .map((value) => value.replace(/^\w+\./, ''))
+        // A namespace the bundler names may carry a `$` (`service$2.`).
+        .map((value) => value.replace(/^[\w$]+\./, ''))
       expect(own, entry).toEqual(['TEST_NO_ACTIVATE'])
     }
     const everywhere = [readFileSync(join(main, 'index.js'), 'utf8'), ...chunks].join('\n')
