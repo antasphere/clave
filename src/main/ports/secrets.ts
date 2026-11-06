@@ -14,16 +14,21 @@ import * as fs from 'fs'
  * (`keychainSecrets` below). An opaque string from one adapter opens to
  * nothing on the other, by design: moving an install between the two means
  * signing in again, never a plaintext copy in between.
+ *
+ * Every method is asynchronous: Electron's own adapter is (its synchronous
+ * `safeStorage` calls go away in Electron 46), and the Keychain and file
+ * adapters, synchronous underneath, answer through the same shape so a
+ * domain is written once.
  */
 export interface SecretPort {
   /** Whether the port can seal at all. A domain never falls back to plaintext. */
-  available(): boolean
-  /** Put a value away; the string returned is what the domain keeps. Throws when unavailable. */
-  seal(plain: string): string
+  available(): Promise<boolean>
+  /** Put a value away; the string returned is what the domain keeps. Rejects when unavailable. */
+  seal(plain: string): Promise<string>
   /** The value a string stands for, or undefined when it cannot be opened here. */
-  open(sealed: string): string | undefined
+  open(sealed: string): Promise<string | undefined>
   /** Forget what a string stands for, where the port keeps anything of its own. */
-  discard(sealed: string): void
+  discard(sealed: string): Promise<void>
 }
 
 /** Runs the `security` command: the arguments, the text on its standard
@@ -79,9 +84,9 @@ export function keychainSecrets(options: {
   const handleOf = (sealed: string): string | null =>
     sealed.startsWith(KEYCHAIN_HANDLE_PREFIX) ? sealed.slice(KEYCHAIN_HANDLE_PREFIX.length) : null
   const port: SecretPort = {
-    available: () => platform === 'darwin' && exists(SECURITY),
-    seal(plain) {
-      if (!port.available()) throw new Error('The macOS Keychain is unavailable here.')
+    available: async () => platform === 'darwin' && exists(SECURITY),
+    async seal(plain) {
+      if (!(await port.available())) throw new Error('The macOS Keychain is unavailable here.')
       // Printable ASCII only. `security -i` reads one command per line, so a
       // line break or another control character would be read as a second
       // command; and `find-generic-password -w` prints anything beyond ASCII
@@ -101,9 +106,9 @@ export function keychainSecrets(options: {
       )
       return `${KEYCHAIN_HANDLE_PREFIX}${handle}`
     },
-    open(sealed) {
+    async open(sealed) {
       const handle = handleOf(sealed)
-      if (handle === null || !port.available()) return undefined
+      if (handle === null || !(await port.available())) return undefined
       try {
         return run([
           'find-generic-password',
@@ -118,9 +123,9 @@ export function keychainSecrets(options: {
         return undefined
       }
     },
-    discard(sealed) {
+    async discard(sealed) {
       const handle = handleOf(sealed)
-      if (handle === null || !port.available()) return
+      if (handle === null || !(await port.available())) return
       try {
         run(['delete-generic-password', '-s', options.service, '-a', handle, ...keychain])
       } catch {
@@ -161,7 +166,7 @@ export function fileSecrets(options: { directory: string }): SecretPort {
     return value
   }
   return {
-    available() {
+    async available() {
       try {
         key(true)
         return true
@@ -169,7 +174,7 @@ export function fileSecrets(options: { directory: string }): SecretPort {
         return false
       }
     },
-    seal(plain) {
+    async seal(plain) {
       if (Buffer.byteLength(plain) > 1024 * 1024) throw new Error('Server secret is too large')
       const handle = `${prefix}${randomUUID()}`
       const nonce = randomBytes(12)
@@ -179,7 +184,7 @@ export function fileSecrets(options: { directory: string }): SecretPort {
       createPrivateFile(fileOf(handle)!, Buffer.concat([nonce, cipher.getAuthTag(), encrypted]))
       return handle
     },
-    open(sealed) {
+    async open(sealed) {
       const file = fileOf(sealed)
       if (!file) return undefined
       try {
@@ -194,7 +199,7 @@ export function fileSecrets(options: { directory: string }): SecretPort {
         return undefined
       }
     },
-    discard(sealed) {
+    async discard(sealed) {
       const file = fileOf(sealed)
       if (file) fs.rmSync(file, { force: true })
     }

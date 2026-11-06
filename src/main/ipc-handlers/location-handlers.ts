@@ -25,7 +25,7 @@ export function registerLocationHandlers(): void {
   })
 
   ipcMain.handle('location:test-connection', async (_event, id: string) => {
-    const config = locationManager.getCredentials(id)
+    const config = await locationManager.getCredentials(id)
     if (!config) return { success: false, error: 'No credentials found' }
     try {
       await sshManager.connect(id, config)
@@ -67,7 +67,7 @@ export function registerLocationHandlers(): void {
     try {
       // Reconnect SSH — test-connection disconnects after testing
       if (!sshManager.isConnected(id)) {
-        const config = locationManager.getCredentials(id)
+        const config = await locationManager.getCredentials(id)
         if (!config) return { success: false, error: 'No credentials found' }
         await sshManager.connect(id, config)
       }

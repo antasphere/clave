@@ -22,9 +22,9 @@ function port(security = fakeSecurity(), platform: NodeJS.Platform = 'darwin'): 
  * handle hands the wrong account's token to a spawn.
  */
 describe('keychainSecrets', () => {
-  it('seals a value into one item under a fresh handle, and the handle says nothing about it', () => {
+  it('seals a value into one item under a fresh handle, and the handle says nothing about it', async () => {
     const security = fakeSecurity()
-    const sealed = port(security).seal(TOKEN)
+    const sealed = await port(security).seal(TOKEN)
     expect(sealed.startsWith(KEYCHAIN_HANDLE_PREFIX)).toBe(true)
     expect(sealed).not.toContain(TOKEN)
     expect([...security.items.values()]).toEqual([TOKEN])
@@ -33,27 +33,27 @@ describe('keychainSecrets', () => {
     )
   })
 
-  it('hands the value to security on its standard input, never as an argument', () => {
+  it('hands the value to security on its standard input, never as an argument', async () => {
     const security = fakeSecurity()
-    port(security).seal(TOKEN)
+    await port(security).seal(TOKEN)
     const [add] = security.calls
     expect(add.args).toEqual(['-i'])
     expect(add.input).toContain(`-w "${TOKEN}"`)
     expect(add.input).toContain('add-generic-password -U -s "Clave test"')
   })
 
-  it('quotes what the security line parser treats specially', () => {
+  it('quotes what the security line parser treats specially', async () => {
     const security = fakeSecurity()
     const odd = 'pa"ss\\word'
-    const sealed = port(security).seal(odd)
-    expect(port(security).open(sealed)).toBe(odd)
+    const sealed = await port(security).seal(odd)
+    expect(await port(security).open(sealed)).toBe(odd)
   })
 
-  it('opens what it sealed, through a read that prints the value and nothing else', () => {
+  it('opens what it sealed, through a read that prints the value and nothing else', async () => {
     const security = fakeSecurity()
     const p = port(security)
-    const sealed = p.seal(TOKEN)
-    expect(p.open(sealed)).toBe(TOKEN)
+    const sealed = await p.seal(TOKEN)
+    expect(await p.open(sealed)).toBe(TOKEN)
     const read = security.calls[security.calls.length - 1]
     expect(read.args).toEqual([
       'find-generic-password',
@@ -66,61 +66,63 @@ describe('keychainSecrets', () => {
     expect(read.input).toBeUndefined()
   })
 
-  it('opens a string that is not its own to nothing, without asking the keychain', () => {
+  it('opens a string that is not its own to nothing, without asking the keychain', async () => {
     const security = fakeSecurity()
     const p = port(security)
-    expect(p.open(Buffer.from(`enc:${TOKEN}`).toString('base64'))).toBeUndefined()
-    expect(p.open('')).toBeUndefined()
+    expect(await p.open(Buffer.from(`enc:${TOKEN}`).toString('base64'))).toBeUndefined()
+    expect(await p.open('')).toBeUndefined()
     expect(security.calls).toEqual([])
   })
 
-  it('opens a handle whose item is gone to nothing', () => {
+  it('opens a handle whose item is gone to nothing', async () => {
     const security = fakeSecurity()
     const p = port(security)
-    const sealed = p.seal(TOKEN)
+    const sealed = await p.seal(TOKEN)
     security.items.clear()
-    expect(p.open(sealed)).toBeUndefined()
+    expect(await p.open(sealed)).toBeUndefined()
   })
 
-  it('discards the item, and discarding twice or discarding a foreign string is quiet', () => {
+  it('discards the item, and discarding twice or discarding a foreign string is quiet', async () => {
     const security = fakeSecurity()
     const p = port(security)
-    const sealed = p.seal(TOKEN)
-    p.discard(sealed)
+    const sealed = await p.seal(TOKEN)
+    await p.discard(sealed)
     expect(security.items.size).toBe(0)
-    p.discard(sealed)
-    p.discard('not-ours')
+    await p.discard(sealed)
+    await p.discard('not-ours')
     expect(security.calls.filter((c) => c.args[0] === 'delete-generic-password')).toHaveLength(2)
   })
 
-  it('refuses a value outside printable ASCII, and stores nothing', () => {
+  it('refuses a value outside printable ASCII, and stores nothing', async () => {
     const security = fakeSecurity()
     const p = port(security)
     // A line break would be read by `security -i` as a second command.
-    expect(() => p.seal('first\nadd-generic-password -s x -a y -w z')).toThrow(/printable ASCII/)
-    expect(() => p.seal('tab\there')).toThrow(/printable ASCII/)
+    await expect(p.seal('first\nadd-generic-password -s x -a y -w z')).rejects.toThrow(
+      /printable ASCII/
+    )
+    await expect(p.seal('tab\there')).rejects.toThrow(/printable ASCII/)
     // An accent is filed, but read back as hex by `find-generic-password -w`.
-    expect(() => p.seal('p\u00e4ssword')).toThrow(/printable ASCII/)
-    expect(() => p.seal('line\u2028separator')).toThrow(/printable ASCII/)
+    await expect(p.seal('p\u00e4ssword')).rejects.toThrow(/printable ASCII/)
+    await expect(p.seal('line\u2028separator')).rejects.toThrow(/printable ASCII/)
     expect(security.calls).toEqual([])
     expect(security.items.size).toBe(0)
-    expect(p.open(p.seal('sk-ant-oat01-abc_DEF-123 "quoted" \\slash'))).toBe(
+    expect(await p.open(await p.seal('sk-ant-oat01-abc_DEF-123 "quoted" \\slash'))).toBe(
       'sk-ant-oat01-abc_DEF-123 "quoted" \\slash'
     )
   })
 
-  it('is unavailable off macOS, and sealing there throws rather than storing plaintext', () => {
+  it('is unavailable off macOS, and sealing there throws rather than storing plaintext', async () => {
     const security = fakeSecurity()
     const p = port(security, 'linux')
-    expect(p.available()).toBe(false)
-    expect(() => p.seal(TOKEN)).toThrow(/Keychain/)
+    expect(await p.available()).toBe(false)
+    await expect(p.seal(TOKEN)).rejects.toThrow(/Keychain/)
     expect(security.items.size).toBe(0)
-    expect(p.open(`${KEYCHAIN_HANDLE_PREFIX}x`)).toBeUndefined()
+    expect(await p.open(`${KEYCHAIN_HANDLE_PREFIX}x`)).toBeUndefined()
   })
 })
 
 describe('keychainSecrets on a keychain file of its own', () => {
-  it('names the file last on every subcommand, and nothing else changes', () => {
+  it('names the file last on every subcommand, and nothing else changes', async () => {
     const security = fakeSecurity()
     const port = keychainSecrets({
       service: 'Clave test',
@@ -129,10 +131,10 @@ describe('keychainSecrets on a keychain file of its own', () => {
       exists: () => true,
       keychainFile: '/tmp/run 1/test.keychain-db'
     })
-    const sealed = port.seal('value-1')
-    expect(port.open(sealed)).toBe('value-1')
-    port.discard(sealed)
-    expect(port.open(sealed)).toBeUndefined()
+    const sealed = await port.seal('value-1')
+    expect(await port.open(sealed)).toBe('value-1')
+    await port.discard(sealed)
+    expect(await port.open(sealed)).toBeUndefined()
     const [add, find, del] = security.calls
     expect(add.args).toEqual(['-i'])
     expect(add.input).toMatch(/ -w "value-1" "\/tmp\/run 1\/test\.keychain-db"\n$/)
@@ -149,7 +151,7 @@ describe('keychainSecrets on a keychain file of its own', () => {
     expect(security.items.size).toBe(0)
   })
 
-  it('without a file, no subcommand names one: the login keychain as before', () => {
+  it('without a file, no subcommand names one: the login keychain as before', async () => {
     const security = fakeSecurity()
     const port = keychainSecrets({
       service: 'Clave test',
@@ -157,7 +159,7 @@ describe('keychainSecrets on a keychain file of its own', () => {
       platform: 'darwin',
       exists: () => true
     })
-    port.open(port.seal('v'))
+    await port.open(await port.seal('v'))
     expect(security.calls[0].input).toMatch(/ -w "v"\n$/)
     expect(security.calls[1].args.at(-1)).toBe('-w')
   })

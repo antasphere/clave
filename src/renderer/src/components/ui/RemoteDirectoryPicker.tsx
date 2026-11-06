@@ -341,7 +341,7 @@ export function RemoteDirectoryPicker({
         </div>
 
         {/* Directory listing */}
-        <div className="flex-1 overflow-y-auto min-h-0 p-1.5">
+        <div className="flex-1 overflow-y-auto overscroll-contain min-h-0 p-1.5">
           {loading ? (
             <div className="flex flex-col items-center justify-center gap-2 py-12 text-text-tertiary">
               <ArrowPathIcon className="w-5 h-5 animate-spin" />

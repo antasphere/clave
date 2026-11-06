@@ -15,7 +15,7 @@ const setToken = vi.fn()
 vi.mock('./claude-accounts', () => ({
   claudeAccountsManager: {
     get: (id: string) => ({ id, label: 'Work' }),
-    setToken: (id: string, token: string) => setToken(id, token)
+    setToken: async (id: string, token: string) => setToken(id, token)
   }
 }))
 vi.mock('./codex-accounts', () => ({ codexAccountsManager: {} }))
@@ -151,17 +151,18 @@ describe('the Claude login job', () => {
     ptySpawn.mockReset()
   })
 
-  it('stores the token the CLI printed, not the word painted after it', () => {
+  it('stores the token the CLI printed, not the word painted after it', async () => {
     const p = fakePty()
     accountLoginManager.startClaudeLogin('acct-1')
     p.data(SUCCESS_FRAME(TOKEN))
     expect(setToken).toHaveBeenCalledTimes(1)
     expect(setToken).toHaveBeenCalledWith('acct-1', TOKEN)
-    expect(lastJob().status).toBe('done')
+    // The store answers asynchronously; the job is done once it has.
+    await vi.waitFor(() => expect(lastJob().status).toBe('done'))
     expect(p.killed()).toBe(true)
   })
 
-  it('waits for the whole token when a chunk boundary cuts it', () => {
+  it('waits for the whole token when a chunk boundary cuts it', async () => {
     const p = fakePty()
     accountLoginManager.startClaudeLogin('acct-2')
     const frame = SUCCESS_FRAME(TOKEN)
@@ -170,17 +171,19 @@ describe('the Claude login job', () => {
     expect(setToken).not.toHaveBeenCalled()
     p.data(frame.slice(cut))
     expect(setToken).toHaveBeenCalledWith('acct-2', TOKEN)
-    expect(lastJob().status).toBe('done')
+    // The store answers asynchronously; the job is done once it has.
+    await vi.waitFor(() => expect(lastJob().status).toBe('done'))
   })
 
-  it('still takes a token that is the last thing the CLI printed before exiting', () => {
+  it('still takes a token that is the last thing the CLI printed before exiting', async () => {
     const p = fakePty()
     accountLoginManager.startClaudeLogin('acct-3')
     p.data(`Your OAuth token (valid for 365 days):\r\n${TOKEN}`)
     expect(setToken).not.toHaveBeenCalled()
     p.exit(0)
     expect(setToken).toHaveBeenCalledWith('acct-3', TOKEN)
-    expect(lastJob().status).toBe('done')
+    // The store answers asynchronously; the job is done once it has.
+    await vi.waitFor(() => expect(lastJob().status).toBe('done'))
   })
 
   it('fails when the command ends without a token', () => {

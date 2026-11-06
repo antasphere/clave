@@ -18,14 +18,14 @@ describe.each(eachTestPorts())('on %s', (_name, makePorts) => {
     (ports as ReturnType<typeof standaloneTestPorts>).security
   const credentialsPath = (): string => path.join(ports.dir, 'claude-accounts-credentials.json')
 
-  beforeEach(() => {
+  beforeEach(async () => {
     for (const account of manager.list()) {
-      if (account.id !== 'default') manager.remove(account.id)
+      if (account.id !== 'default') await manager.remove(account.id)
     }
   })
 
   describe('the account list', () => {
-    it('always starts with the Default, the machine login', () => {
+    it('always starts with the Default, the machine login', async () => {
       expect(manager.list()[0]).toMatchObject({
         id: 'default',
         hasToken: false,
@@ -33,7 +33,7 @@ describe.each(eachTestPorts())('on %s', (_name, makePorts) => {
       })
     })
 
-    it('keeps the pool in the order given; the Default stays first', () => {
+    it('keeps the pool in the order given; the Default stays first', async () => {
       const a = manager.add({ label: 'A' })
       const b = manager.add({ label: 'B' })
       const c = manager.add({ label: 'C' })
@@ -43,30 +43,30 @@ describe.each(eachTestPorts())('on %s', (_name, makePorts) => {
       expect(manager.list().map((x) => x.id)).toEqual(['default', b.id, c.id, a.id])
     })
 
-    it('adds, renames, resolves by id or name, and removes', () => {
+    it('adds, renames, resolves by id or name, and removes', async () => {
       const work = manager.add({ label: 'Work' })
       expect(manager.resolve('Work')?.id).toBe(work.id)
       expect(manager.resolve('work')?.id).toBe(work.id)
       expect(manager.resolve(work.id)?.label).toBe('Work')
       manager.update(work.id, { label: 'Work (Max)' })
       expect(manager.get(work.id)?.label).toBe('Work (Max)')
-      expect(manager.remove(work.id)).toBe(true)
+      expect(await manager.remove(work.id)).toBe(true)
       expect(manager.resolve('Work (Max)')).toBeUndefined()
     })
 
-    it('does not resolve an ambiguous name', () => {
+    it('does not resolve an ambiguous name', async () => {
       manager.add({ label: 'Twin' })
       manager.add({ label: 'twin' })
       expect(manager.resolve('Twin')?.label).toBe('Twin')
       expect(manager.resolve('TWIN')).toBeUndefined()
     })
 
-    it('never removes or renames the Default', () => {
-      expect(manager.remove('default')).toBe(false)
+    it('never removes or renames the Default', async () => {
+      expect(await manager.remove('default')).toBe(false)
       expect(manager.update('default', { label: 'x' })?.label).toBe('Default')
     })
 
-    it('survives a reload from disk', () => {
+    it('survives a reload from disk', async () => {
       const work = manager.add({ label: 'Persisted' })
       const raw = JSON.parse(fs.readFileSync(path.join(ports.dir, 'claude-accounts.json'), 'utf-8'))
       expect(raw.accounts).toEqual([{ id: work.id, label: 'Persisted' }])
@@ -79,7 +79,7 @@ describe.each(eachTestPorts())('on %s', (_name, makePorts) => {
    * fresh manager on a file the previous build wrote.
    */
   describe('the migration of config-dir accounts', () => {
-    it('drops the directory, keeps the account, names it as needing a login, and writes back', () => {
+    it('drops the directory, keeps the account, names it as needing a login, and writes back', async () => {
       const other = tempDataDir('clave-accounts-migrate-')
       fs.writeFileSync(
         path.join(other, 'claude-accounts.json'),
@@ -104,69 +104,69 @@ describe.each(eachTestPorts())('on %s', (_name, makePorts) => {
         { id: 'tok-1', label: 'Token one' }
       ])
       // A token lands: the account is a token account like any other.
-      fresh.setToken('dir-1', TOKEN)
+      await fresh.setToken('dir-1', TOKEN)
       expect(fresh.migratedAccountIds()).toEqual([])
     })
   })
 
   describe('the tokens', () => {
-    it('stores a token encrypted, reports it, and hands it back only in main', () => {
+    it('stores a token encrypted, reports it, and hands it back only in main', async () => {
       const work = manager.add({ label: 'Work' })
-      manager.setToken(work.id, `  ${TOKEN}\n`)
+      await manager.setToken(work.id, `  ${TOKEN}\n`)
       expect(manager.get(work.id)?.hasToken).toBe(true)
-      expect(manager.getToken(work.id)).toBe(TOKEN)
+      expect(await manager.getToken(work.id)).toBe(TOKEN)
       const onDisk = fs.readFileSync(credentialsPath(), 'utf-8')
       expect(onDisk).not.toContain(TOKEN)
       expect(JSON.stringify(manager.list())).not.toContain(TOKEN)
     })
 
-    it('writes the credentials file and the account list readable by this user only', () => {
+    it('writes the credentials file and the account list readable by this user only', async () => {
       const work = manager.add({ label: 'Work' })
-      manager.setToken(work.id, TOKEN)
+      await manager.setToken(work.id, TOKEN)
       if (process.platform !== 'win32') {
         expect(fs.statSync(credentialsPath()).mode & 0o777).toBe(0o600)
         expect(fs.statSync(path.join(ports.dir, 'claude-accounts.json')).mode & 0o777).toBe(0o600)
       }
     })
 
-    it('a seal that fails leaves the working token in place', () => {
+    it('a seal that fails leaves the working token in place', async () => {
       const work = manager.add({ label: 'Work' })
-      manager.setToken(work.id, TOKEN)
+      await manager.setToken(work.id, TOKEN)
       const locked = new ClaudeAccountsManager({
         ...ports,
         secrets: {
           ...ports.secrets,
-          seal: () => {
+          seal: async () => {
             throw new Error('the keychain is locked')
           }
         }
       })
-      expect(() => locked.setToken(work.id, TOKEN + 'x')).toThrow(/locked/)
+      await expect(locked.setToken(work.id, TOKEN + 'x')).rejects.toThrow(/locked/)
       // Nothing moved: the file still names the old value, and it still opens.
-      expect(new ClaudeAccountsManager(ports).getToken(work.id)).toBe(TOKEN)
+      expect(await new ClaudeAccountsManager(ports).getToken(work.id)).toBe(TOKEN)
       if (standalone) expect([...security().items.values()]).toEqual([TOKEN])
     })
 
-    it('replaces an entry that holds no token without tripping on it', () => {
+    it('replaces an entry that holds no token without tripping on it', async () => {
       const work = manager.add({ label: 'Work' })
       fs.writeFileSync(credentialsPath(), JSON.stringify({ [work.id]: { setAt: 1 } }))
       const fresh = new ClaudeAccountsManager(ports)
       expect(fresh.hasToken(work.id)).toBe(false)
       const seen: number[] = []
       const off = fresh.onChange((list) => seen.push(list.length))
-      fresh.setToken(work.id, TOKEN)
+      await fresh.setToken(work.id, TOKEN)
       off()
-      expect(fresh.getToken(work.id)).toBe(TOKEN)
+      expect(await fresh.getToken(work.id)).toBe(TOKEN)
       expect(seen).toEqual([2])
       if (standalone) expect([...security().items.values()]).toEqual([TOKEN])
       // The suite's own manager never saw this token: forget it through the
       // instance that holds it, so the shared keychain stand-in ends empty.
-      fresh.clearToken(work.id)
+      await fresh.clearToken(work.id)
     })
 
-    it('a write that fails after the seal leaves the working token in place too', () => {
+    it('a write that fails after the seal leaves the working token in place too', async () => {
       const work = manager.add({ label: 'Work' })
-      manager.setToken(work.id, TOKEN)
+      await manager.setToken(work.id, TOKEN)
       // The old token was refused by the service: that mark must survive the
       // failed re-paste too, so the pool does not re-admit a dead token.
       manager.markTokenInvalid(work.id)
@@ -179,16 +179,16 @@ describe.each(eachTestPorts())('on %s', (_name, makePorts) => {
           }
         }
       })
-      expect(() => full.setToken(work.id, TOKEN + 'x')).toThrow(/no space/)
+      await expect(full.setToken(work.id, TOKEN + 'x')).rejects.toThrow(/no space/)
       // The old handle is still what the file names, so the old item must still
       // open; the item sealed for the write that failed is not left behind.
-      expect(new ClaudeAccountsManager(ports).getToken(work.id)).toBe(TOKEN)
-      expect(full.getToken(work.id)).toBe(TOKEN)
+      expect(await new ClaudeAccountsManager(ports).getToken(work.id)).toBe(TOKEN)
+      expect(await full.getToken(work.id)).toBe(TOKEN)
       expect(full.get(work.id)?.tokenInvalid).toBe(true)
       if (standalone) expect([...security().items.values()]).toEqual([TOKEN])
     })
 
-    it('an account still waiting for its first login stays listed as such when the write fails', () => {
+    it('an account still waiting for its first login stays listed as such when the write fails', async () => {
       const other = tempDataDir('clave-accounts-migrate-fail-')
       fs.writeFileSync(
         path.join(other, 'claude-accounts.json'),
@@ -209,14 +209,14 @@ describe.each(eachTestPorts())('on %s', (_name, makePorts) => {
         }
       })
       expect(fresh.migratedAccountIds()).toEqual(['dir-1'])
-      expect(() => fresh.setToken('dir-1', TOKEN)).toThrow(/disk full/)
+      await expect(fresh.setToken('dir-1', TOKEN)).rejects.toThrow(/disk full/)
       expect(fresh.migratedAccountIds()).toEqual(['dir-1'])
       expect(fresh.hasToken('dir-1')).toBe(false)
     })
 
-    it('the file holds what the port handed back, never the value', () => {
+    it('the file holds what the port handed back, never the value', async () => {
       const work = manager.add({ label: 'Work' })
-      manager.setToken(work.id, TOKEN)
+      await manager.setToken(work.id, TOKEN)
       const stored = JSON.parse(fs.readFileSync(credentialsPath(), 'utf-8'))[work.id].token
       expect(typeof stored).toBe('string')
       expect(stored).not.toBe(TOKEN)
@@ -228,7 +228,7 @@ describe.each(eachTestPorts())('on %s', (_name, makePorts) => {
       }
     })
 
-    it('a token sealed by the other adapter opens to nothing', () => {
+    it('a token sealed by the other adapter opens to nothing', async () => {
       const work = manager.add({ label: 'Work' })
       fs.writeFileSync(
         credentialsPath(),
@@ -236,50 +236,50 @@ describe.each(eachTestPorts())('on %s', (_name, makePorts) => {
       )
       const fresh = new ClaudeAccountsManager(ports)
       expect(fresh.hasToken(work.id)).toBe(true)
-      expect(fresh.getToken(work.id)).toBeUndefined()
+      expect(await fresh.getToken(work.id)).toBeUndefined()
       expect(JSON.stringify(fresh.list())).not.toContain('not-this-adapters')
     })
 
     it.runIf(standalone)(
       'replacing or clearing a token forgets the old one in the secret store',
-      () => {
+      async () => {
         const items = security().items
         expect(items.size).toBe(0)
         const work = manager.add({ label: 'Work' })
-        manager.setToken(work.id, TOKEN)
-        manager.setToken(work.id, TOKEN + 'x')
+        await manager.setToken(work.id, TOKEN)
+        await manager.setToken(work.id, TOKEN + 'x')
         expect([...items.values()]).toEqual([TOKEN + 'x'])
-        manager.clearToken(work.id)
+        await manager.clearToken(work.id)
         expect(items.size).toBe(0)
-        manager.setToken(work.id, TOKEN)
+        await manager.setToken(work.id, TOKEN)
         expect(items.size).toBe(1)
-        manager.remove(work.id)
+        await manager.remove(work.id)
         expect(items.size).toBe(0)
       }
     )
 
-    it('refuses a value that is not a token, and the Default account', () => {
+    it('refuses a value that is not a token, and the Default account', async () => {
       const work = manager.add({ label: 'Work' })
-      expect(() => manager.setToken(work.id, 'hello')).toThrow(/does not look like/)
-      expect(() => manager.setToken('default', TOKEN)).toThrow(/Default/)
+      await expect(manager.setToken(work.id, 'hello')).rejects.toThrow(/does not look like/)
+      await expect(manager.setToken('default', TOKEN)).rejects.toThrow(/Default/)
       expect(manager.hasToken(work.id)).toBe(false)
     })
 
-    it('never falls back to plaintext when the OS cannot encrypt', () => {
+    it('never falls back to plaintext when the OS cannot encrypt', async () => {
       const work = manager.add({ label: 'Work' })
       const locked = new ClaudeAccountsManager({
         ...ports,
-        secrets: { ...ports.secrets, available: () => false }
+        secrets: { ...ports.secrets, available: async () => false }
       })
-      expect(() => locked.setToken(work.id, TOKEN)).toThrow(/encryption/)
+      await expect(locked.setToken(work.id, TOKEN)).rejects.toThrow(/encryption/)
       expect(locked.hasToken(work.id)).toBe(false)
       expect(manager.hasToken(work.id)).toBe(false)
     })
 
-    it('dates the token, assumes a year of life, and marks a refused one dead until the next', () => {
+    it('dates the token, assumes a year of life, and marks a refused one dead until the next', async () => {
       const work = manager.add({ label: 'Work' })
       const before = Date.now()
-      manager.setToken(work.id, TOKEN)
+      await manager.setToken(work.id, TOKEN)
       const account = manager.get(work.id)!
       expect(account.tokenSetAt).toBeGreaterThanOrEqual(before)
       expect(account.tokenExpiresAt).toBe(account.tokenSetAt! + 365 * 24 * 3600 * 1000)
@@ -287,8 +287,8 @@ describe.each(eachTestPorts())('on %s', (_name, makePorts) => {
       manager.markTokenInvalid(work.id)
       expect(manager.get(work.id)?.tokenInvalid).toBe(true)
       // Still held: the user sees which account died, and can still spawn on it.
-      expect(manager.getToken(work.id)).toBe(TOKEN)
-      manager.setToken(work.id, TOKEN + 'x')
+      expect(await manager.getToken(work.id)).toBe(TOKEN)
+      await manager.setToken(work.id, TOKEN + 'x')
       expect(manager.get(work.id)?.tokenInvalid).toBe(false)
       // Nothing to mark on an account without a token.
       const bare = manager.add({ label: 'Bare' })
@@ -296,23 +296,23 @@ describe.each(eachTestPorts())('on %s', (_name, makePorts) => {
       expect(manager.get(bare.id)?.tokenInvalid).toBe(false)
     })
 
-    it('forgets the token with the account, and on clear', () => {
+    it('forgets the token with the account, and on clear', async () => {
       const work = manager.add({ label: 'Work' })
-      manager.setToken(work.id, TOKEN)
-      manager.clearToken(work.id)
-      expect(manager.getToken(work.id)).toBeUndefined()
-      manager.setToken(work.id, TOKEN)
-      manager.remove(work.id)
+      await manager.setToken(work.id, TOKEN)
+      await manager.clearToken(work.id)
+      expect(await manager.getToken(work.id)).toBeUndefined()
+      await manager.setToken(work.id, TOKEN)
+      await manager.remove(work.id)
       const onDisk = JSON.parse(fs.readFileSync(credentialsPath(), 'utf-8'))
       expect(onDisk[work.id]).toBeUndefined()
     })
 
-    it('tells listeners on every change', () => {
+    it('tells listeners on every change', async () => {
       const seen: number[] = []
       const off = manager.onChange((list) => seen.push(list.length))
       const work = manager.add({ label: 'Work' })
-      manager.setToken(work.id, TOKEN)
-      manager.remove(work.id)
+      await manager.setToken(work.id, TOKEN)
+      await manager.remove(work.id)
       off()
       expect(seen).toEqual([2, 2, 1])
     })
@@ -320,7 +320,7 @@ describe.each(eachTestPorts())('on %s', (_name, makePorts) => {
 })
 
 describe('isPlausibleOauthToken', () => {
-  it('accepts what setup-token prints and refuses the rest', () => {
+  it('accepts what setup-token prints and refuses the rest', async () => {
     expect(isPlausibleOauthToken(TOKEN)).toBe(true)
     expect(isPlausibleOauthToken('sk-ant-api03-' + 'x'.repeat(30))).toBe(true)
     expect(isPlausibleOauthToken('')).toBe(false)

@@ -21,7 +21,8 @@
  * dies. The lease, the panel and the revoke therefore come through these arms
  * in both modes; the other methods the preload sends to the server itself.
  */
-import { app, BrowserWindow, dialog, ipcMain, Notification } from 'electron'
+import { app, BrowserWindow, ipcMain, Notification } from 'electron'
+import { openDialogs } from '../dialog-paths'
 import type { ClaveApiClient } from '@clave/client'
 import type {
   PluginActionPreviewRow,
@@ -242,7 +243,7 @@ export function registerPluginHandlers(): void {
     const selected =
       folder ??
       (
-        await dialog.showOpenDialog(win, {
+        await openDialogs.open('plugin', win, {
           properties: ['openDirectory'],
           title: 'Link Clave plugin folder'
         })

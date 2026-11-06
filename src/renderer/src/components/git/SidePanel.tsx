@@ -768,7 +768,7 @@ function SidePanelBody(): React.JSX.Element {
               >
                 {/* The scroll lives one level in: the surface clips its own
                     corners, so it cannot also be the thing that scrolls. */}
-                <div className="max-h-[60vh] overflow-y-auto">
+                <div className="max-h-[60vh] overflow-y-auto overscroll-contain">
                   {parentPaths.map((item) => (
                     <button
                       key={item.path}

@@ -29,7 +29,7 @@ export function TriageDialog(): React.JSX.Element {
         if (!open) state.closeDialog()
       }}
     >
-      <DialogContent className="w-[560px] max-w-[calc(100vw-32px)] max-h-[90vh] overflow-y-auto p-6">
+      <DialogContent className="w-[560px] max-w-[calc(100vw-32px)] max-h-[90vh] overflow-y-auto overscroll-contain p-6">
         <DialogTitle>Debug Clave</DialogTitle>
         <DialogDescription className="mt-1.5">
           Start a support conversation about this running app. Your other sessions keep running.

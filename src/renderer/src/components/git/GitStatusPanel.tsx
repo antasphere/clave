@@ -802,7 +802,9 @@ function RepoSection({
         {error && <ErrorBanner message={error} />}
         {/* Scroll container — a long range list must scroll here exactly as
             it does in the dirty layout (verifier round 4, finding 1). */}
-        <div className={`${fillHeight ? 'flex-1 overflow-y-auto' : ''} flex flex-col`}>
+        <div
+          className={`${fillHeight ? 'flex-1 overflow-y-auto overscroll-contain' : ''} flex flex-col`}
+        >
           <EmptyStateBox
             label={
               changesHidden
@@ -849,7 +851,7 @@ function RepoSection({
           Filtered to: {relativeFilterPrefix}
         </div>
       )}
-      <div className={`${fillHeight ? 'flex-1 overflow-y-auto' : ''}`}>
+      <div className={`${fillHeight ? 'flex-1 overflow-y-auto overscroll-contain' : ''}`}>
         {staged.length > 0 && (
           <>
             <SectionHeader
@@ -2036,7 +2038,7 @@ export function MultiRepoGitPanel({
   return (
     <div className="flex-1 flex flex-col min-h-0">
       {/* The list is the container the narrow-row rules read: see .git-repo-list. */}
-      <div className="git-repo-list flex-1 overflow-y-auto">
+      <div className="git-repo-list flex-1 overflow-y-auto overscroll-contain">
         {/* Root repo */}
         {rootRepo && (
           <MultiRepoSection

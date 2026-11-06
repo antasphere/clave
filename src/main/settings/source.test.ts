@@ -389,7 +389,7 @@ describe('the Antasphere account through the source (PRDCT-3259)', () => {
         calls.push('cancel')
         return status('signed-out')
       },
-      signOut: () => {
+      signOut: async () => {
         calls.push('signOut')
         return status('signed-out')
       },
