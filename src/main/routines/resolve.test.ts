@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { WorkspaceFiles, memoryWorkspaceFilesStorage } from '@clave/server/workspace-files'
-import { resolveRoutines, substituteParams } from './resolve'
+import { MAX_TIMEOUT_MINUTES, resolveRoutines, substituteParams } from './resolve'
 
 let root: string
 beforeEach(() => {
@@ -201,5 +201,34 @@ describe('resolveRoutines', () => {
     expect(fromRomain.declarations.map((d) => d.name)).toEqual(['proj-romain'])
     expect(fromRomain.declarations[0].workspaceId).toBe('ws')
     expect(fromRomain.declarations[0].cwd).toBe(project)
+  })
+})
+
+describe('bounds and confinement (round 1, F5 and F11)', () => {
+  it('clamps the timeout to a week and refuses a schema outside the file folder', async () => {
+    template(root, 'ok')
+    const file = profile(root, 'default', {
+      name: 'G',
+      cwd: '.',
+      sessions: [],
+      terminals: [],
+      routines: [
+        health({ name: 'long', timeoutMinutes: 40000, report: { template: '.clave/routines/ok' } }),
+        health({
+          name: 'schema-out',
+          report: { template: '.clave/routines/ok', schema: '../elsewhere/schema.json' }
+        })
+      ]
+    })
+    const files = new WorkspaceFiles(memoryWorkspaceFilesStorage())
+    files.trustRoot(root)
+    const { declarations } = await resolveRoutines(files, [
+      { id: 'ws', name: 'A', rootDir: root, profileFile: file }
+    ])
+    const byName = Object.fromEntries(declarations.map((d) => [d.name, d]))
+    expect(byName.long.timeoutMinutes).toBe(MAX_TIMEOUT_MINUTES)
+    expect(byName.long.invalid).toBeNull()
+    expect(byName['schema-out'].invalid).toContain('schema')
+    expect(byName['schema-out'].invalid).toContain('outside')
   })
 })

@@ -385,14 +385,23 @@ export async function run(t) {
     t.check('the Discussion toggle mounts the chat view inside the panel', !!discussion)
     // The discussion is a new process on the run's own conversation id: resumed
     // when the transcript exists, started again under the same id here (the
-    // fixture writes no transcript); either way the second spawn of that id.
-    const sameConversation = log().filter(
-      (e) => e.kind === 'spawn' && e.sid === first[0].providerSessionId
+    // fixture writes no transcript); either way the second spawn of that id,
+    // waited for (the fixture logs it a moment after the chat view mounts).
+    const sameConversation = await until(
+      () => {
+        const spawns = log().filter(
+          (e) => e.kind === 'spawn' && e.sid === first[0].providerSessionId
+        )
+        return spawns.length >= 2 ? spawns : null
+      },
+      { tries: 40, gapMs: 250 }
     )
     t.check(
       "the discussion opened the run's conversation again",
-      sameConversation.length >= 2,
-      sameConversation.map((e) => ({ resume: e.resume, argv: e.argv.slice(0, 2) }))
+      !!sameConversation,
+      log()
+        .filter((e) => e.kind === 'spawn')
+        .map((e) => ({ sid: e.sid, resume: e.resume }))
     )
     await win.keyboard.press('Escape')
 
@@ -440,6 +449,28 @@ export async function run(t) {
     t.equal('a run with no report is failed', silent?.state, 'failed')
     t.check('with the reason', /without a report/.test(silent?.reason ?? ''), silent?.reason)
     t.equal('a manual run is marked so', silent?.trigger, 'manual')
+    await win.keyboard.press('Escape')
+
+    // ── Open as a tab: an ordinary tab on the run's conversation, in this window ──
+    await button.click()
+    await panel.waitFor({ timeout: 5000 })
+    const rowsBefore = await win.locator('.sidebar-item').count()
+    await panel.locator('[data-testid="routine-open-tab"]').click()
+    const rowAdded = await until(
+      async () => ((await win.locator('.sidebar-item').count()) > rowsBefore ? true : null),
+      { tries: 40, gapMs: 250 }
+    )
+    t.check('Open as a tab adds a sidebar row', !!rowAdded, { rowsBefore })
+    const thirdSpawn = await until(
+      () => {
+        const spawns = log().filter(
+          (e) => e.kind === 'spawn' && e.sid === first[0].providerSessionId
+        )
+        return spawns.length >= 3 ? spawns.length : null
+      },
+      { tries: 60, gapMs: 250 }
+    )
+    t.check("the tab started the run's conversation", !!thirdSpawn, thirdSpawn)
     await win.keyboard.press('Escape')
 
     // ── 4. Invalid data is refused back with the errors; the corrected call lands ──

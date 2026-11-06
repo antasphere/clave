@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   CronParseError,
   describeCron,
+  lastOccurrence,
   matchesAt,
   nextOccurrence,
   occurrencesBetween,
@@ -114,5 +115,35 @@ describe('describeCron', () => {
     expect(describeCron('0 0 1 * *')).toBe('on the 1st of every month at 00:00')
     expect(describeCron('*/15 * * * *')).toBe('"*/15 * * * *"')
     expect(describeCron('not cron')).toBe('"not cron"')
+  })
+})
+
+describe('malformed tokens (round 1, F7)', () => {
+  it('refuses what is neither digits nor a month or weekday name', () => {
+    for (const bad of [
+      '/2 * * * *',
+      '-5 * * * *',
+      '0x5 * * * *',
+      '1e1 * * * *',
+      '* * * * fried',
+      '1//2 * * * *',
+      '* * * * fr'
+    ]) {
+      expect(() => parseCron(bad), bad).toThrow(CronParseError)
+    }
+    expect([...parseCron('* * * * friday').dayOfWeek.values]).toEqual([5])
+    expect([...parseCron('0 0 1 january *').month.values]).toEqual([1])
+    expect([...parseCron('05 * * * *').minute.values]).toEqual([5])
+  })
+})
+
+describe('lastOccurrence (round 1, F8)', () => {
+  it('names the latest occurrence at or before an instant, for a dense and a sparse schedule', () => {
+    const minutely = parseCron('* * * * *')
+    const at = local(2026, 11, 6, 9, 0) + 30_000
+    expect(lastOccurrence(minutely, at)).toBe(local(2026, 11, 6, 9, 0))
+    const yearly = parseCron('0 0 1 jan *')
+    expect(lastOccurrence(yearly, local(2026, 11, 6, 9, 0))).toBe(local(2026, 1, 1, 0, 0))
+    expect(lastOccurrence(parseCron('0 0 31 2 *'), local(2026, 11, 6, 9, 0))).toBeNull()
   })
 })

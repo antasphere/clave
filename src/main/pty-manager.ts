@@ -385,6 +385,10 @@ class PtyManager {
       codexAccountLabel: codex ? options?.codexAccountLabel : undefined,
       workspaceId: options?.workspaceId,
       windowKey: options?.windowKey,
+      // What this session is the hidden half of (a routine's run, ADR 0004):
+      // the PTY record carried it, the events record did not, and a chat run
+      // came back as a sidebar tab at the next boot (round 1, F2).
+      link: options?.link,
       spawnedBy: lineageOf(session.id, options?.spawnedBy, previous?.spawnedBy),
       // Which work it does (PRDCT-4123): a restart's, else the record's.
       work: sanitizeWork(options?.work) ?? sanitizeWork(previous?.work)

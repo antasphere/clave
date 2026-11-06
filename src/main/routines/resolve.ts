@@ -19,6 +19,8 @@ import { parseCron } from './cron'
 import { checkTemplate } from './deck'
 
 export const DEFAULT_TIMEOUT_MINUTES = 30
+/** A week: above it a JavaScript timer overflows and fires at once (round 1, F5). */
+export const MAX_TIMEOUT_MINUTES = 7 * 24 * 60
 export const DEFAULT_PANEL = { width: 560, height: 640 }
 
 export interface RegistryWorkspace {
@@ -90,6 +92,10 @@ export function declare(
   else {
     const checked = context.template(template, rootDir)
     if (!checked.ok) reasons.push(checked.reason)
+    // The schema is read by the server: it stays inside the file's folder too.
+    const rel = path.relative(path.resolve(rootDir), path.resolve(report.schema))
+    if (rel.startsWith('..') || path.isAbsolute(rel))
+      reasons.push(`the report schema ${report.schema} is outside the .clave file's folder`)
   }
   const launch = {
     ...(routine.agent !== undefined ? { agent: routine.agent as 'claude' } : {}),
@@ -121,7 +127,10 @@ export function declare(
     icon: routine.icon ?? null,
     color: routine.color ?? null,
     catchUp: routine.catchUp ?? true,
-    timeoutMinutes: routine.timeoutMinutes ?? DEFAULT_TIMEOUT_MINUTES,
+    timeoutMinutes: Math.min(
+      routine.timeoutMinutes ?? DEFAULT_TIMEOUT_MINUTES,
+      MAX_TIMEOUT_MINUTES
+    ),
     scope: scope === 'team' ? 'team' : 'machine',
     report,
     invalid: reasons.length ? reasons.join('; ') : null

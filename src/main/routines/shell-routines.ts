@@ -27,6 +27,7 @@ import { fileStorage } from '../ports/storage'
 import { workspaceFiles } from '../workspace-files'
 import { broadcastToAllWindows } from '../window-routing'
 import { TEST_NO_ACTIVATE } from '../test-mode'
+import { waitForMcpRuntime } from '../mcp/mcp-runtime'
 import { launchFactsFromManagers } from './facts'
 import { createRoutineService, type RoutineService } from './service'
 import { contractPluginDir } from './skill'
@@ -76,6 +77,8 @@ export function shellRoutines(): RoutineService {
       const record = ptyManager.getSessionRecord(sessionId)
       return record?.claudeSessionId ?? record?.codexThreadId ?? null
     },
+    // A run reports through the shell's MCP server: a run starts once it listens.
+    agentToolsReady: () => waitForMcpRuntime(),
     log: (level, message) =>
       (level === 'warn' ? console.warn : console.log)(`[routines] ${message}`)
   })

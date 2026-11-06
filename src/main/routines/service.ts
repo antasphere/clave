@@ -37,7 +37,7 @@ import { Claims } from './claims'
 import { DECKS_DIR, type DeckEnvelope, removeRoutineDecks, writeDeck, writeRootIndex } from './deck'
 import { type LaunchFacts, REPORTING_AGENTS, resolveLaunch } from './launch'
 import { type RegistryWorkspace, resolveRoutines } from './resolve'
-import { TICK_MS, decideTick, nextRunAt } from './scheduler'
+import { ON_TIME_MS, TICK_MS, decideTick, nextRunAt } from './scheduler'
 import { SYSTEM_PROMPT_LINE, firstMessage } from './skill'
 import { RoutinesStore } from './store'
 import { type SchemaCheck, compileSchemaFile } from './validate'
@@ -46,6 +46,8 @@ export const HIDDEN_COLS = 120
 export const HIDDEN_ROWS = 30
 export const REPORT_VIEW_ID = 'clave.routine-report/report'
 export const CHAT_VIEW_ID = 'clave.chat-view/chat'
+/** How long a run waits for the agent tools before it is failed unstarted. */
+export const AGENT_TOOLS_WAIT_MS = 90_000
 
 export interface RoutineServiceOptions {
   readonly sessions: SessionHostService
@@ -72,6 +74,13 @@ export interface RoutineServiceOptions {
   readonly rehome: (sessionId: string, windowKey: string) => void
   /** The provider's own conversation id of a session (a Claude session id, a Codex thread), when known. */
   readonly providerSessionIdOf: (sessionId: string) => string | null
+  /** Resolves once the agent tools have an address a run can report to (the
+   *  MCP server listening in-process, the shell's address announced to a
+   *  standalone server). A run waits for it, bounded, and is failed with the
+   *  reason rather than started with no way to report (round 1, F1). */
+  readonly agentToolsReady?: () => Promise<void>
+  /** The bound on that wait; tests shorten it. */
+  readonly agentToolsWaitMs?: number
   readonly now?: () => number
   readonly tickMs?: number
   /** Whether the scheduler ticks at all; off, the routines are listed and run by hand only (tests). */
@@ -90,6 +99,8 @@ interface LiveRun {
 }
 
 export interface RoutineService extends RoutinesService {
+  /** The listing, answered at once: this implementation needs no await. */
+  list(): RoutinesListing
   /** Read the files and arm the tick; idempotent. */
   start(): Promise<void>
   /** Read the routines again now (a file changed, the registry changed). */
@@ -286,6 +297,25 @@ export function createRoutineService(options: RoutineServiceOptions): RoutineSer
       )
     const schema: SchemaCheck = compileSchemaFile(d.report.schema)
     if (!schema.ok) return recordFailed(d, trigger, schema.reason)
+    // The run reports through the agent tools: without an address for them
+    // it would start with no way to report, so it waits for one, bounded.
+    if (options.agentToolsReady) {
+      const deadline = now() + (options.agentToolsWaitMs ?? AGENT_TOOLS_WAIT_MS)
+      let reachable = false
+      while (!reachable) {
+        try {
+          await options.agentToolsReady()
+          reachable = true
+        } catch (error) {
+          if (now() >= deadline)
+            return recordFailed(
+              d,
+              trigger,
+              `the agent tools are not reachable: no MCP address within ${Math.round((options.agentToolsWaitMs ?? AGENT_TOOLS_WAIT_MS) / 1000)} seconds, so the run could not report (${error instanceof Error ? error.message : String(error)})`
+            )
+        }
+      }
+    }
     const run: RoutineRun = {
       id: randomUUID(),
       routineKey: d.key,
@@ -398,7 +428,12 @@ export function createRoutineService(options: RoutineServiceOptions): RoutineSer
             const claimed = claims.claim(d.key, decision.occurrence)
             if (claimed.kind === 'claimed') {
               if (decision.kind === 'run') await startRun(d, decision.trigger)
-              else recordFailed(d, 'scheduled', decision.reason)
+              else
+                recordFailed(
+                  d,
+                  at - decision.occurrence < ON_TIME_MS ? 'scheduled' : 'catch-up',
+                  decision.reason
+                )
               changed = true
             } else if (claimed.kind === 'taken') {
               log(

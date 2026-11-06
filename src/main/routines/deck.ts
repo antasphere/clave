@@ -113,8 +113,10 @@ function copyFolder(from: string, to: string): void {
   }
 }
 
-/** A `</script>` inside the data would close the block early. */
-const escapeForScript = (json: string): string => json.replace(/<\//g, '<\\/')
+/** No `<` survives inside the block: a `</script>` would close it early and
+ *  a `<!--<script` would put the HTML tokenizer in its double-escaped state
+ *  (round 1, F4). `\u003c` is the same character to JSON. */
+export const escapeForScript = (json: string): string => json.replace(/</g, '\\u003c')
 
 export interface WrittenDeck {
   /** The run's folder on disk. */

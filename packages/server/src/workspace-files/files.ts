@@ -159,7 +159,8 @@ interface RawGroup {
 }
 /** A routine as the document writes it (ADR 0004): read loosely, every
  *  field checked for its type; what is not a string, a boolean or a number
- *  where one is expected is dropped, never coerced. */
+ *  where one is expected is dropped (a `params` value is the one exception:
+ *  a number or a boolean there is written into the prompt as its text). */
 interface RawRoutine {
   name?: unknown
   schedule?: unknown

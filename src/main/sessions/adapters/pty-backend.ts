@@ -877,7 +877,10 @@ function sanitizeSessionLink(link: unknown): SessionLink | undefined {
     return key ? { kind: 'toolbar', key } : undefined
   }
   if (l.kind === 'routine') {
-    const routineKey = typeof l.routineKey === 'string' && l.routineKey.length > 0 && l.routineKey.length <= 1000 ? l.routineKey : null
+    const routineKey =
+      typeof l.routineKey === 'string' && l.routineKey.length > 0 && l.routineKey.length <= 1000
+        ? l.routineKey
+        : null
     const runId = str(l.runId)
     return routineKey && runId ? { kind: 'routine', routineKey, runId } : undefined
   }

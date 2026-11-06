@@ -18,6 +18,7 @@ import {
   whenLabel
 } from '../../../../../plugins/routine-report/src/run-labels'
 import { useRoutinesStore } from '../../store/routines-store'
+import { adoptServerStartedSessions } from '../../lib/adopt-record'
 import { describeCron } from '../../../../main/routines/cron'
 
 /**
@@ -83,7 +84,12 @@ export function RoutinePanel({
   const openAsTab = async (): Promise<void> => {
     if (!run) return
     const sessionId = await openDiscussion(run.id, 'tab')
-    if (sessionId) onClose()
+    if (!sessionId) return
+    // The server started the session on this window; the window takes it in
+    // as a focused tab, the way it takes in a tab an agent opened through the
+    // server (round 1, F3: nothing placed it before).
+    await adoptServerStartedSessions([sessionId], { focus: true })
+    onClose()
   }
 
   return (

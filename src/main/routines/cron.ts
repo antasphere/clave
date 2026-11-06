@@ -30,6 +30,21 @@ export interface CronSchedule {
 
 const MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec']
 const DAYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat']
+const FULL_MONTHS = [
+  'january',
+  'february',
+  'march',
+  'april',
+  'may',
+  'june',
+  'july',
+  'august',
+  'september',
+  'october',
+  'november',
+  'december'
+]
+const FULL_DAYS = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday']
 
 export class CronParseError extends Error {
   constructor(message: string) {
@@ -38,12 +53,19 @@ export class CronParseError extends Error {
   }
 }
 
+/** A name is its three-letter form or its full form, nothing in between and
+ *  nothing beyond (`fri`, `friday`; never `fried`, round 1 F7). */
 function nameToNumber(token: string, names: string[], field: string): number | null {
-  const at = names.indexOf(token.slice(0, 3).toLowerCase())
+  const lower = token.toLowerCase()
+  const full = field === 'month' ? FULL_MONTHS : FULL_DAYS
+  const at = lower.length === 3 ? names.indexOf(lower) : full.indexOf(lower)
   if (at < 0) return null
   // Months are 1-based in cron, weekdays 0-based.
   return field === 'month' ? at + 1 : at
 }
+
+/** A whole number written in digits, nothing else (`05` is 5; `0x5`, `1e1`, `-5` are not values). */
+const DIGITS = /^\d+$/
 
 function parseField(
   text: string,
@@ -59,8 +81,10 @@ function parseField(
   }
   for (const part of text.split(',')) {
     if (part === '') throw new CronParseError(`${field}: an empty list item in "${text}"`)
-    const [rangeText, stepText] = part.split('/')
-    const step = stepText === undefined ? 1 : Number(stepText)
+    const [rangeText, stepText, ...more] = part.split('/')
+    if (more.length > 0 || rangeText === '')
+      throw new CronParseError(`${field}: "${part}" is not a value, a range or a step`)
+    const step = stepText === undefined ? 1 : DIGITS.test(stepText) ? Number(stepText) : NaN
     if (stepText !== undefined && (!Number.isInteger(step) || step <= 0))
       throw new CronParseError(
         `${field}: a step must be a positive whole number, got "${stepText}"`
@@ -73,8 +97,7 @@ function parseField(
     } else {
       const [a, b] = rangeText.split('-')
       const parse = (t: string): number => {
-        const n = Number(t)
-        if (Number.isInteger(n)) return n
+        if (DIGITS.test(t)) return Number(t)
         const named = names ? nameToNumber(t, names, field) : null
         if (named === null) throw new CronParseError(`${field}: "${t}" is not a value`)
         return named
@@ -171,6 +194,26 @@ function matchesDay(schedule: CronSchedule, at: Date): boolean {
   if (!schedule.dayOfMonth.any) return domOk
   if (!schedule.dayOfWeek.any) return dowOk
   return true
+}
+
+/** The last occurrence at or before `at`, or null when none within four
+ *  years: the latest of a deep catch-up is named by this, never by the
+ *  thousandth miss (round 1, F8). Windows of growing size are searched back. */
+export function lastOccurrence(schedule: CronSchedule, at: number): number | null {
+  for (const days of [2, 60, 400, 366 * 4]) {
+    const from = at - days * 86_400_000
+    let cursor = from
+    let last: number | null = null
+    // Walk the window forward; a sparse schedule has few occurrences in it.
+    for (;;) {
+      const next = nextOccurrence(schedule, cursor, days + 1)
+      if (next === null || next > at) break
+      last = next
+      cursor = next
+    }
+    if (last !== null) return last
+  }
+  return null
 }
 
 /** Every occurrence in `(from, to]`, oldest first, at most `limit` of them

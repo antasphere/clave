@@ -158,3 +158,23 @@ describe('nextRunAt', () => {
     expect(nextRunAt('not cron', null, now)).toBeNull()
   })
 })
+
+describe('a catch-up deeper than the list bound (round 1, F8)', () => {
+  it('is still named by the LATEST occurrence, not the thousandth miss', () => {
+    // Thirty days of per-minute occurrences missed: 43 200 of them.
+    const now = local(2026, 11, 6, 9, 0) + 20_000
+    const decision = decideTick({
+      schedule: '* * * * *',
+      catchUp: true,
+      invalid: null,
+      running: false,
+      clock: { lastConsideredAt: now - 30 * 86_400_000, schedule: '* * * * *' },
+      now
+    })
+    expect(decision).toMatchObject({
+      kind: 'run',
+      trigger: 'scheduled',
+      occurrence: local(2026, 11, 6, 9, 0)
+    })
+  })
+})

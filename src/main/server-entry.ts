@@ -85,6 +85,7 @@ import { usageManager } from './usage-manager'
 import { codexUsageManager } from './codex-usage'
 import { preferencesManager, type Preferences } from './preferences-manager'
 import { fileStorage } from './ports/storage'
+import { lazyTerminalPorts } from './ports/terminals'
 import { standaloneSessionHost } from './sessions/standalone-host'
 import { installE2eHooks } from './sessions/e2e-hooks'
 import { publishSessionStates, setServerEventPublisher } from './server/session-events'
@@ -343,6 +344,10 @@ async function main(): Promise<void> {
     pluginDir: contractPluginDir(path.resolve(__dirname, '..', '..', 'resources')),
     viewer: TEST_NO_ACTIVATE ? false : { env: () => loginShellEnvAsync() },
     rehome: (sessionId, windowKey) => ptyManager.setSessionWindowKey(sessionId, windowKey),
+    // A run reports through the agent tools: the daemon's own MCP once it
+    // listens, the attached shell's address once it is announced (round 1,
+    // F1: a run due at launch started with no --mcp-config before this).
+    agentToolsReady: () => lazyTerminalPorts.mcpConfig.ready?.() ?? Promise.resolve(),
     providerSessionIdOf: (sessionId) => {
       const record = ptyManager.getSessionRecord(sessionId)
       return record?.claudeSessionId ?? record?.codexThreadId ?? null

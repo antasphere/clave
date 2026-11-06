@@ -10,7 +10,14 @@ import {
 } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { DATA_BLOCK, checkTemplate, removeRoutineDecks, writeDeck, type DeckEnvelope } from './deck'
+import {
+  DATA_BLOCK,
+  checkTemplate,
+  escapeForScript,
+  removeRoutineDecks,
+  writeDeck,
+  type DeckEnvelope
+} from './deck'
 import { hashKey } from './claims'
 
 let dir: string
@@ -136,5 +143,36 @@ describe('writeDeck', () => {
     removeRoutineDecks(decksRoot, 'k')
     expect(existsSync(first.folder)).toBe(false)
     expect(readFileSync(join(decksRoot, 'index.html'), 'utf8')).not.toContain('run-1')
+  })
+})
+
+describe('the data block never carries a raw < (round 1, F4 and the tautological test)', () => {
+  it('escapes every < so neither a closing tag nor a comment opener can break the page, and the JSON still parses', () => {
+    const root = join(dir, 'ws')
+    const tpl = template(root)
+    const decksRoot = join(dir, 'decks')
+    const hostile = {
+      ...envelope,
+      run: { ...envelope.run, summary: 'x <!--<script> y </script><script>alert(1)</script>' }
+    }
+    const written = writeDeck({
+      decksRoot,
+      routineKey: 'k',
+      runId: 'run-h',
+      template: tpl,
+      envelope: hostile
+    })
+    const html = readFileSync(join(written.folder, 'index.html'), 'utf8')
+    const open = html.indexOf('<script type="application/json" id="slideless-data">')
+    const close = html.indexOf('</script>', open)
+    const inner = html.slice(html.indexOf('>', open) + 1, close)
+    // Count by the raw text, not by the extraction regex: no < at all inside the block.
+    expect(inner.includes('<')).toBe(false)
+    expect(inner).toContain('\\u003c!--\\u003cscript')
+    expect(JSON.parse(inner).run.summary).toBe(hostile.run.summary)
+    // The page keeps exactly one data block and its head and body are intact.
+    expect(html.match(/id="slideless-data"/g)).toHaveLength(1)
+    expect(html).toContain('<div id="deck"></div>')
+    expect(escapeForScript('a<b</c')).toBe('a\\u003cb\\u003c/c')
   })
 })

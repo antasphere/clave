@@ -708,7 +708,7 @@ function buildServer(callerSessionId: string | undefined): McpServer {
     'clave_create_group',
     {
       description:
-        'Create a new (empty) group in the Clave sidebar. Returns the new groupId. Follow up with clave_open_session to put a tab in it — some interactions prune empty groups.',
+        "Create a new (empty) group in the Clave sidebar. Returns the new groupId. Follow up with clave_open_session to put a tab in it — some interactions prune empty groups. A group's routines (the scheduled agent sessions of ADR 0004) are declared in the .clave file alone; this tool takes none.",
       inputSchema: {
         name: z.string().describe('Display name for the group'),
         prompt: z
@@ -884,7 +884,7 @@ function buildServer(callerSessionId: string | undefined): McpServer {
     'clave_add_group_terminal',
     {
       description:
-        'Attach a quick-launch terminal to a Clave group: a saved shell command (e.g. a dev server) shown as a colored icon on the group, re-runnable on click. By default it also launches right away. Returns { terminalId, groupId, sessionId }.',
+        "Attach a quick-launch terminal to a Clave group: a saved shell command (e.g. a dev server) shown as a colored icon on the group, re-runnable on click. By default it also launches right away. Returns { terminalId, groupId, sessionId }. A group's routines (the scheduled agent sessions of ADR 0004) are declared in the .clave file alone: this tool adds terminals, never routines.",
       inputSchema: {
         groupId: z.string().describe('Target group: a group id, an exact group name, or "mine"'),
         command: z.string().describe('Shell command this terminal runs, e.g. "npm run dev"'),

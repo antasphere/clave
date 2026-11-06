@@ -18,7 +18,7 @@
  * A sleep needs no power event: the gap in the ticks is the gap in the
  * occurrences, and the same rule applies when the machine wakes.
  */
-import { type CronSchedule, occurrencesBetween, parseCron } from './cron'
+import { type CronSchedule, lastOccurrence, occurrencesBetween, parseCron } from './cron'
 
 /** An occurrence under this old at the tick is on time; older is a catch-up. */
 export const ON_TIME_MS = 90_000
@@ -98,7 +98,12 @@ export function decideTick(input: TickInput): TickDecision {
   }
   const due = occurrencesBetween(scheduleOf(input.schedule), clock.lastConsideredAt, now)
   if (due.length === 0) return { kind: 'idle' }
-  const occurrence = due[due.length - 1]
+  // A catch-up deeper than the list's bound is still named by the LATEST
+  // occurrence, found directly (round 1, F8).
+  const occurrence =
+    due.length >= 1000
+      ? (lastOccurrence(scheduleOf(input.schedule), now) ?? due[due.length - 1])
+      : due[due.length - 1]
   if (input.running) return { kind: 'skip', occurrence, reason: 'running' }
   const trigger: 'scheduled' | 'catch-up' = now - occurrence < ON_TIME_MS ? 'scheduled' : 'catch-up'
   if (trigger === 'catch-up' && !input.catchUp)
