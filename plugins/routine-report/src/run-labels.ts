@@ -1,7 +1,10 @@
 import type { RoutineRun } from '@clave/contract/routines/model'
 
-/** The words and colours of a run, shared by the badge, the panel and the view. */
-/** The dot's colour for a run, the same rule on the badge and in the history. */
+/** The words and tones of a run, shared by the badge, the panel and the view.
+ *  A tone is drawn by `.routine-dot[data-tone]` (system.css), still in every
+ *  state: motion belongs to the ring around the toolbar icon and to the
+ *  panel's spinner, never to a dot. */
+/** The tone of a run, the same rule on the badge and in the history. */
 export function runTone(
   run: RoutineRun | undefined
 ): 'none' | 'running' | 'waiting' | 'ok' | 'attention' | 'failed' {
@@ -10,14 +13,7 @@ export function runTone(
   return run.state
 }
 
-export const TONE_CLASS: Record<ReturnType<typeof runTone>, string> = {
-  none: '',
-  running: 'bg-accent animate-pulse',
-  waiting: 'bg-amber-400 animate-pulse',
-  ok: 'bg-emerald-500',
-  attention: 'bg-amber-400',
-  failed: 'bg-red-500'
-}
+export type RunTone = ReturnType<typeof runTone>
 
 export function stateLabel(run: RoutineRun): string {
   switch (run.state) {

@@ -1,13 +1,16 @@
 import type { RoutineRun, RoutineView } from '@clave/contract/routines/model'
-import { TONE_CLASS, durationLabel, runTone, stateLabel, whenLabel } from './run-labels'
+import { durationLabel, runTone, stateLabel, whenLabel } from './run-labels'
+import { RoutineDrawing } from './RoutineDrawing'
 import { PageGuest } from '../../../src/renderer/src/components/layout/PageGuest'
 import { MarkdownRenderer } from '../../../src/renderer/src/components/files/MarkdownRenderer'
 
 /**
- * One run's report: the deck served by the viewer in the hardened page guest,
- * or the envelope as a card when there is no deck yet, no viewer, or the run
- * failed before any report. The same component in the toolbar's panel and in
- * the session view.
+ * One run's report: the deck served by the viewer in the hardened page guest;
+ * a state view while the run is in flight or waits on the person (the
+ * sidebar's spinner, never a pulse); the envelope as a card when a finished
+ * run has no deck (no viewer, or failed before any report); and the drawing
+ * when nothing ran yet. The same component in the toolbar's panel and in the
+ * session view.
  */
 export function RoutineReport({
   view,
@@ -22,8 +25,14 @@ export function RoutineReport({
 }): React.JSX.Element {
   if (!run) {
     return (
-      <div className="p-4 text-xs text-text-tertiary" data-testid="routine-report-empty">
-        {view ? 'No run yet.' : 'This session is not a routine run.'}
+      <div className="routine-state" data-testid="routine-report-empty">
+        {view && <RoutineDrawing />}
+        <strong>{view ? 'No run yet' : 'This session is not a routine run'}</strong>
+        <span>
+          {view
+            ? 'The first run lands its report here, on the schedule or on Run now.'
+            : 'Only a run a routine started reads as a report.'}
+        </span>
       </div>
     )
   }
@@ -36,16 +45,35 @@ export function RoutineReport({
     )
   }
   const tone = runTone(run)
+  const meta = `${whenLabel(run.startedAt)} · ${durationLabel(run)} · ${run.trigger}`
+  if (tone === 'running' || tone === 'waiting') {
+    return (
+      <div className="routine-state" data-testid="routine-report-card" data-tone={tone}>
+        {tone === 'running' ? (
+          <span className="routine-spinner" aria-hidden="true">
+            <span className="sidebar-tab-spinner" />
+          </span>
+        ) : (
+          <span className="routine-dot" data-tone={tone} aria-hidden="true" />
+        )}
+        <strong data-testid="routine-report-state">{stateLabel(run)}</strong>
+        <span>
+          {tone === 'running'
+            ? 'The agent is on the job; the report lands here when it reports.'
+            : 'The agent asked something. Answer it in the discussion, or the run times out.'}
+        </span>
+        <span className="routine-meta">{meta}</span>
+      </div>
+    )
+  }
   return (
     <div className="flex flex-col gap-2 p-4 overflow-auto h-full" data-testid="routine-report-card">
       <div className="flex items-center gap-2">
-        <span className={`w-2 h-2 rounded-full ${TONE_CLASS[tone]}`} />
+        <span className="routine-dot" data-tone={tone} aria-hidden="true" />
         <span className="text-xs text-text-secondary" data-testid="routine-report-state">
           {stateLabel(run)}
         </span>
-        <span className="text-[10px] text-text-tertiary ml-auto">
-          {whenLabel(run.startedAt)} · {durationLabel(run)} · {run.trigger}
-        </span>
+        <span className="routine-meta ml-auto">{meta}</span>
       </div>
       {run.headline && (
         <p className="text-sm text-text-primary leading-snug" data-testid="routine-report-headline">
@@ -53,7 +81,7 @@ export function RoutineReport({
         </p>
       )}
       {run.reason && (
-        <p className="text-xs text-red-400" data-testid="routine-report-reason">
+        <p className="text-xs text-destructive" data-testid="routine-report-reason">
           {run.reason}
         </p>
       )}
@@ -63,7 +91,7 @@ export function RoutineReport({
         </div>
       )}
       {run.deck && !viewerUrl && (
-        <p className="text-[10px] text-text-tertiary" data-testid="routine-report-viewer-note">
+        <p className="text-xs text-text-tertiary" data-testid="routine-report-viewer-note">
           {viewerNote}
         </p>
       )}

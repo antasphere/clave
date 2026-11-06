@@ -1,17 +1,18 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import {
   ArrowPathIcon,
   ArrowTopRightOnSquareIcon,
+  ChatBubbleLeftRightIcon,
   CheckIcon,
+  DocumentChartBarIcon,
   XMarkIcon
 } from '@heroicons/react/24/outline'
-import { cn } from '@clave/ui/components'
+import { IconButton } from '@clave/ui/components'
 import type { RoutineRun, RoutineView } from '@clave/contract/routines/model'
 import type { Session } from '../../../../shared/session-model'
 import { ChatView } from '../../../../../plugins/chat-view/src/ChatView'
 import { RoutineReport } from '../../../../../plugins/routine-report/src/RoutineReport'
 import {
-  TONE_CLASS,
   durationLabel,
   runTone,
   stateLabel,
@@ -22,17 +23,26 @@ import { adoptServerStartedSessions } from '../../lib/adopt-record'
 import { describeCron } from '../../../../main/routines/cron'
 
 /**
- * The floating panel of a routine (ADR 0004): the routine's name and
- * schedule, the Report / Discussion toggle, the selected run's report (the
- * deck in the page guest, or the envelope card), Run again, Open as a tab,
- * Dismiss, and the history. The discussion is the run's session continued in
- * the chat view inside the panel, re-homed to this window by the server.
+ * The floating panel of a routine (ADR 0004), built from the side panel's
+ * own parts so it reads as one of its bars at every density: a pane header
+ * (the routine's icon in its colour, its name, the schedule in words), the
+ * Report / Discussion switch as a `panel-tabs` frame, the actions as a
+ * `panel-bar` of `panel-icon-btn`s with the run's state in words between
+ * them (Run again, Open as a tab, Dismiss), and the history as menu rows.
+ * The discussion is the run's session continued in the chat view inside the
+ * panel, re-homed to this window by the server.
  */
 export function RoutinePanel({
   view,
+  icon,
+  color,
   onClose
 }: {
   view: RoutineView
+  /** The routine's toolbar glyph, drawn again in the header. */
+  icon?: ReactNode
+  /** The ink the toolbar draws the glyph in. */
+  color?: string
   onClose: () => void
 }): React.JSX.Element {
   const viewer = useRoutinesStore((s) => s.viewer)
@@ -92,6 +102,12 @@ export function RoutinePanel({
     onClose()
   }
 
+  const status = run
+    ? `${stateLabel(run)} · ${whenLabel(run.startedAt)} · ${durationLabel(run)} · ${run.trigger}`
+    : view.routine.invalid
+      ? 'Cannot run'
+      : 'No run yet'
+
   return (
     <div
       className="flex flex-col min-h-0"
@@ -99,56 +115,65 @@ export function RoutinePanel({
       data-testid="routine-panel"
       data-routine={view.routine.name}
     >
-      <div className="flex items-center gap-2 px-3 py-1.5 border-b border-border-subtle">
-        <div className="flex flex-col min-w-0 flex-1">
-          <span className="text-xs text-text-primary truncate" data-testid="routine-panel-name">
-            {view.routine.name}
-          </span>
-          <span
-            className="text-[10px] text-text-tertiary truncate"
-            data-testid="routine-panel-schedule"
-          >
-            {describeCron(view.routine.schedule)}
-            {next ? ` · next ${next}` : view.routine.invalid ? ' · cannot run' : ''}
-            {run?.account ? ` · ${run.account}` : ''}
-            {run?.model ? ` · ${run.model}` : ''}
-          </span>
+      <div className="pane-header" data-testid="routine-panel-header">
+        <div className="pane-header-lead">
+          {icon && (
+            <span className="routine-panel-icon" style={{ color }} aria-hidden="true">
+              {icon}
+            </span>
+          )}
+          <div className="flex flex-col min-w-0">
+            <span className="pane-header-title" data-testid="routine-panel-name">
+              {view.routine.name}
+            </span>
+            <span className="pane-header-meta" data-testid="routine-panel-schedule">
+              {describeCron(view.routine.schedule)}
+              {next ? ` · next ${next}` : view.routine.invalid ? ' · cannot run' : ''}
+              {run?.account ? ` · ${run.account}` : ''}
+              {run?.model ? ` · ${run.model}` : ''}
+            </span>
+          </div>
         </div>
-        <div className="flex items-center rounded-md bg-surface-200 p-0.5" role="tablist">
-          <button
-            role="tab"
-            aria-selected={tab === 'report'}
-            className={cn(
-              'px-2 py-0.5 text-[11px] rounded',
-              tab === 'report' && 'bg-surface-0 text-text-primary'
-            )}
-            data-testid="routine-tab-report"
-            onClick={() => setTab('report')}
+        <div className="pane-header-actions">
+          <div className="panel-tabs" role="tablist" data-panel-bar="routine-tabs">
+            <button
+              role="tab"
+              className="panel-tab"
+              aria-selected={tab === 'report'}
+              data-selected={tab === 'report' ? 'true' : undefined}
+              data-testid="routine-tab-report"
+              onClick={() => setTab('report')}
+            >
+              <DocumentChartBarIcon className="w-3.5 h-3.5 flex-shrink-0" />
+              <span>Report</span>
+            </button>
+            <button
+              role="tab"
+              className="panel-tab"
+              aria-selected={tab === 'discussion'}
+              data-selected={tab === 'discussion' ? 'true' : undefined}
+              data-testid="routine-tab-discussion"
+              disabled={!run}
+              onClick={() => void showDiscussion()}
+            >
+              <ChatBubbleLeftRightIcon className="w-3.5 h-3.5 flex-shrink-0" />
+              <span>Discussion</span>
+            </button>
+          </div>
+          <IconButton
+            onClick={onClose}
+            className="panel-icon-btn"
+            aria-label="Close"
+            tooltip="Close"
           >
-            Report
-          </button>
-          <button
-            role="tab"
-            aria-selected={tab === 'discussion'}
-            className={cn(
-              'px-2 py-0.5 text-[11px] rounded',
-              tab === 'discussion' && 'bg-surface-0 text-text-primary'
-            )}
-            data-testid="routine-tab-discussion"
-            disabled={!run}
-            onClick={() => void showDiscussion()}
-          >
-            Discussion
-          </button>
+            <XMarkIcon className="w-4 h-4" />
+          </IconButton>
         </div>
-        <button onClick={onClose} className="btn-icon btn-icon-xs" aria-label="Close">
-          <XMarkIcon className="w-3.5 h-3.5" />
-        </button>
       </div>
 
       <div className="flex-1 min-h-0 flex flex-col">
         {view.routine.invalid && (
-          <p className="px-3 py-2 text-xs text-red-400" data-testid="routine-panel-invalid">
+          <p className="px-3 py-2 text-xs text-destructive" data-testid="routine-panel-invalid">
             {view.routine.invalid}
           </p>
         )}
@@ -159,75 +184,88 @@ export function RoutinePanel({
             <ChatView session={discussion} onState={() => {}} visible />
           </div>
         ) : (
-          <div className="p-4 text-xs text-text-tertiary" data-testid="routine-discussion-pending">
-            {opening ? 'Opening the discussion…' : (error ?? 'No discussion yet.')}
+          <div className="routine-state" data-testid="routine-discussion-pending">
+            {opening && (
+              <span className="routine-spinner" aria-hidden="true">
+                <span className="sidebar-tab-spinner" />
+              </span>
+            )}
+            <strong>{opening ? 'Opening the discussion' : (error ?? 'No discussion yet')}</strong>
+            {opening && (
+              <span>The conversation of the run is picked up where the agent left it.</span>
+            )}
           </div>
         )}
       </div>
 
       {error && tab === 'report' && (
         <p
-          className="px-3 py-1 text-[10px] text-red-400 border-t border-border-subtle"
+          className="px-3 py-1 text-xs text-destructive border-t border-border-subtle"
           data-testid="routine-panel-error"
         >
           {error}
         </p>
       )}
 
-      <div className="flex items-center gap-1 px-2 py-1.5 border-t border-border-subtle">
-        <button
-          className="btn-secondary flex items-center gap-1"
-          data-testid="routine-run-again"
-          disabled={running || !!view.routine.invalid}
-          title={running ? 'A run is in flight' : 'Run now, whatever the schedule'}
-          onClick={() => void runNow(view.routine.key)}
-        >
-          <ArrowPathIcon className="w-3 h-3" />
-          {view.runs.length ? 'Run again' : 'Run now'}
-        </button>
-        <button
-          className="btn-secondary flex items-center gap-1"
-          data-testid="routine-open-tab"
-          disabled={!run}
-          title="Continue this run's conversation in an ordinary tab"
-          onClick={() => void openAsTab()}
-        >
-          <ArrowTopRightOnSquareIcon className="w-3 h-3" />
-          Open as a tab
-        </button>
-        <button
-          className="btn-secondary flex items-center gap-1 ml-auto"
-          data-testid="routine-dismiss"
-          disabled={!run || run.seen}
-          title="Put the badge away"
-          onClick={() => run && void dismiss(run.id)}
-        >
-          <CheckIcon className="w-3 h-3" />
-          Dismiss
-        </button>
+      <div className="routine-panel-foot">
+        <div className="panel-bar panel-bar--nowrap" data-panel-bar="routine">
+          <IconButton
+            className="panel-icon-btn"
+            data-testid="routine-run-again"
+            aria-label={view.runs.length ? 'Run again' : 'Run now'}
+            disabled={running || !!view.routine.invalid}
+            tooltip={
+              running
+                ? 'A run is in flight'
+                : view.runs.length
+                  ? 'Run again, whatever the schedule'
+                  : 'Run now, whatever the schedule'
+            }
+            onClick={() => void runNow(view.routine.key)}
+          >
+            <ArrowPathIcon className="w-4 h-4" />
+          </IconButton>
+          <IconButton
+            className="panel-icon-btn"
+            data-testid="routine-open-tab"
+            aria-label="Open as a tab"
+            disabled={!run}
+            tooltip="Continue this run's conversation in an ordinary tab"
+            onClick={() => void openAsTab()}
+          >
+            <ArrowTopRightOnSquareIcon className="w-4 h-4" />
+          </IconButton>
+          <span className="panel-sep" aria-hidden="true" />
+          <span className="panel-bar-label routine-bar-status" data-testid="routine-bar-status">
+            {status}
+          </span>
+          <IconButton
+            className="panel-icon-btn"
+            data-testid="routine-dismiss"
+            aria-label="Dismiss"
+            disabled={!run || run.seen}
+            tooltip="Dismiss: put the badge away"
+            onClick={() => run && void dismiss(run.id)}
+          >
+            <CheckIcon className="w-4 h-4" />
+          </IconButton>
+        </div>
       </div>
 
       {view.runs.length > 1 && (
-        <ul
-          className="max-h-28 overflow-auto border-t border-border-subtle"
-          data-testid="routine-history"
-        >
+        <ul className="routine-history" data-testid="routine-history">
           {view.runs.map((r) => (
             <li key={r.id}>
               <button
-                className={cn(
-                  'w-full flex items-center gap-2 px-3 py-1 text-left text-[11px] hover:bg-surface-200',
-                  r.id === run?.id && 'bg-surface-200'
-                )}
+                className="menu-item"
+                data-selected={r.id === run?.id ? 'true' : undefined}
                 data-testid="routine-history-row"
                 data-state={r.state}
                 onClick={() => setSelectedId(r.id)}
               >
-                <span className={cn('w-1.5 h-1.5 rounded-full shrink-0', TONE_CLASS[runTone(r)])} />
-                <span className="truncate flex-1 text-text-primary">
-                  {r.headline ?? r.reason ?? stateLabel(r)}
-                </span>
-                <span className="text-text-tertiary shrink-0">
+                <span className="routine-dot" data-tone={runTone(r)} aria-hidden="true" />
+                <span className="truncate flex-1">{r.headline ?? r.reason ?? stateLabel(r)}</span>
+                <span className="routine-meta">
                   {whenLabel(r.startedAt)} · {durationLabel(r)} · {r.trigger}
                 </span>
               </button>

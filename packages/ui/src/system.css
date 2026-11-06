@@ -6068,3 +6068,152 @@ button.term-agent-model:focus-visible {
     scale: none;
   }
 }
+
+/* ── Routines (ADR 0004) ──
+   A routine's toolbar button and its floating panel. The button is the
+   routine's own icon in its colour, and one signal at a time sits on it the
+   way a sidebar row's status slot works (`lib/tab-status.ts`): a run in
+   flight turns a ring around the icon (`.tab-status[data-status='working']`,
+   the app's one loader); a finished run the person has not seen is a STILL
+   dot in the run's tone on the icon's corner. Nothing pulses: a pulse reads
+   as an alarm, and a run on its way is not one (Romain, 6 November 2026). */
+.routine-dot {
+  display: inline-block;
+  flex-shrink: 0;
+  width: calc(var(--spacing) * 1.5);
+  height: calc(var(--spacing) * 1.5);
+  border-radius: 9999px;
+  background-color: var(--color-status-inactive);
+}
+.routine-dot[data-tone='ok'] {
+  background-color: var(--color-status-ready);
+}
+.routine-dot[data-tone='attention'],
+.routine-dot[data-tone='waiting'] {
+  background-color: var(--color-status-waiting);
+}
+.routine-dot[data-tone='failed'],
+.routine-dot[data-tone='invalid'] {
+  background-color: var(--color-destructive);
+}
+.routine-dot[data-tone='running'] {
+  background-color: var(--color-status-working);
+}
+/* On the toolbar icon's corner, ringed in the bar's ground so it reads over
+   the glyph's strokes. */
+.routine-badge-dot {
+  position: absolute;
+  right: calc(var(--spacing) * 0.75);
+  bottom: calc(var(--spacing) * 0.75);
+  box-shadow: 0 0 0 1.5px var(--surface-0);
+}
+/* The panel's loader while a run is in flight: the sidebar's eight-segment
+   spinner at a glyph's size, in the working blue. */
+.routine-spinner {
+  display: inline-flex;
+  flex-shrink: 0;
+  width: calc(var(--spacing) * 4);
+  height: calc(var(--spacing) * 4);
+  color: var(--color-status-working);
+}
+.routine-spinner > .sidebar-tab-spinner {
+  width: 100%;
+  height: 100%;
+}
+/* The panel's state view (a run in flight, a run waiting, no run yet): the
+   chat's empty-state shape, centred in the report area, with the drawing
+   above the words when there is one. */
+.routine-state {
+  margin: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: calc(var(--spacing) * 2);
+  padding: calc(var(--spacing) * 6) calc(var(--spacing) * 5);
+  text-align: center;
+}
+.routine-state .chat-drawing {
+  width: calc(var(--spacing) * 44);
+  max-width: 100%;
+  height: auto;
+  margin-bottom: calc(var(--spacing) * 1);
+}
+.routine-state strong {
+  color: var(--text-primary);
+  font-size: var(--text-sm);
+  font-weight: var(--font-weight-medium);
+}
+.routine-state span {
+  max-width: 34ch;
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+  line-height: 1.45;
+}
+.routine-state[data-tone='waiting'] strong {
+  color: var(--color-status-waiting);
+}
+/* The ring around the toolbar icon while a run is in flight: the rule of
+   `.tab-status[data-status='working']`, on the button itself so its glyph
+   stays a direct child and keeps the framed glyph size at every density. */
+.routine-button[data-working='true']::before {
+  content: '';
+  position: absolute;
+  inset: calc(var(--spacing) * 0.75);
+  border-radius: 9999px;
+  border: 1.5px solid color-mix(in srgb, currentColor 22%, transparent);
+  border-top-color: currentColor;
+  animation: tab-status-spin 0.9s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .routine-button[data-working='true']::before {
+    animation-duration: 2.4s;
+  }
+}
+/* The routine's icon in the panel's header, in its colour, a glyph's size. */
+.routine-panel-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: calc(var(--spacing) * 4);
+  height: calc(var(--spacing) * 4);
+}
+.routine-panel-icon > svg {
+  width: 100%;
+  height: 100%;
+}
+/* The panel's foot: a panel bar held off the panel's edge by the surface
+   inset, the controls one size down inside it as in the side panel's bars. */
+.routine-panel-foot {
+  flex-shrink: 0;
+  padding: calc(var(--spacing) * 1);
+  border-top: thin solid var(--border-subtle-color);
+}
+/* The run's state in words, in the bar's label slot between the controls. */
+.routine-bar-status {
+  min-width: 0;
+  padding: 0 calc(var(--control-px) / 2);
+  color: var(--text-tertiary);
+  font-size: var(--control-text-sm);
+  font-variant-numeric: tabular-nums;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* The history: menu rows, the tone dot first, the headline, then the time,
+   the duration and the trigger in tabular figures so a column of runs lines
+   up. The same line heads the report card. */
+.routine-meta {
+  flex-shrink: 0;
+  color: var(--text-tertiary);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.routine-history {
+  flex-shrink: 0;
+  max-height: calc(var(--control-h-md) * 4);
+  overflow: auto;
+  padding: calc(var(--spacing) * 0.5);
+  border-top: thin solid var(--border-subtle-color);
+}
