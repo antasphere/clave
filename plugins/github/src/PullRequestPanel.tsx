@@ -21,7 +21,6 @@ import {
   type CheckStatus,
   type GithubFailureKind,
   type MergeMethod,
-  type PullDiffFile,
   type PullRef,
   type PullRequestView,
   type PullTimelineItem,
@@ -31,7 +30,7 @@ import { MarkdownRenderer } from '../../../src/renderer/src/components/files/Mar
 import { DiffLinesView } from '../../../src/renderer/src/components/git/DiffLinesView'
 import { parseDiffLines } from '../../../src/renderer/src/lib/diff-utils'
 import { openLink } from '../../../src/renderer/src/lib/open-link'
-import { useGithubPanelStore } from './store'
+import { EMPTY_RECORD, useGithubPanelStore } from './store'
 import { openPullRequest } from './open'
 import { whenLabel } from './when'
 
@@ -156,21 +155,21 @@ function PullRequestEmpty(): React.JSX.Element {
   )
 }
 
-interface Failure {
-  kind: GithubFailureKind
-  message: string
-}
-
 function PullRequestDetail({ pullRef }: { pullRef: PullRef }): React.JSX.Element {
   const remember = useGithubPanelStore((s) => s.remember)
   const close = useGithubPanelStore((s) => s.close)
-  const [view, setView] = useState<PullRequestView | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [failure, setFailure] = useState<Failure | null>(null)
-  const [diff, setDiff] = useState<PullDiffFile[] | null>(null)
+  // The record, the diff and the draft are the store's, keyed by pull request
+  // (PRDCT-4142): this view drawn again finds them where it left them, and a
+  // pull request already read shows its record at once while the fresh read
+  // runs behind it. Only the moment-to-moment state stays here.
+  const update = useGithubPanelStore((s) => s.update)
+  const record = useGithubPanelStore((s) => s.records[pullRefKey(pullRef)]) ?? EMPTY_RECORD
+  const { view, failure, diff, draft } = record
+  const setDraft = (draft: string): void => update(pullRef, { draft })
+  // The loading state is for a pull request never read.
+  const [loading, setLoading] = useState(!record.view)
   const [diffLoading, setDiffLoading] = useState(false)
   const [diffFailure, setDiffFailure] = useState<string | null>(null)
-  const [draft, setDraft] = useState('')
   const [busy, setBusy] = useState<string | null>(null)
   const [actionFailure, setActionFailure] = useState<string | null>(null)
   const [mergeMethod, setMergeMethod] = useState<MergeMethod | null>(null)
@@ -179,13 +178,12 @@ function PullRequestDetail({ pullRef }: { pullRef: PullRef }): React.JSX.Element
   const apply = useCallback(
     (result: Awaited<ReturnType<typeof window.electronAPI.githubPull>>): void => {
       if (result.ok) {
-        setView(result.value)
-        setFailure(null)
+        update(pullRef, { view: result.value, failure: null })
         remember(pullRef, result.value.title)
-      } else setFailure({ kind: result.kind, message: result.message })
+      } else update(pullRef, { failure: { kind: result.kind, message: result.message } })
       setLoading(false)
     },
-    [pullRef, remember]
+    [pullRef, remember, update]
   )
   useEffect(() => {
     let live = true
@@ -206,10 +204,10 @@ function PullRequestDetail({ pullRef }: { pullRef: PullRef }): React.JSX.Element
     setDiffLoading(true)
     setDiffFailure(null)
     const result = await window.electronAPI.githubPullDiff(pullRef)
-    if (result.ok) setDiff(result.value)
+    if (result.ok) update(pullRef, { diff: result.value })
     else setDiffFailure(result.message)
     setDiffLoading(false)
-  }, [pullRef, diff, diffLoading])
+  }, [pullRef, diff, diffLoading, update])
 
   /** One writer for every action: the panel is busy while it runs, a refusal
    *  is shown under the composer, and a success reloads the record and clears
@@ -222,8 +220,7 @@ function PullRequestDetail({ pullRef }: { pullRef: PullRef }): React.JSX.Element
     setActionFailure(null)
     const result = await run()
     if (result.ok) {
-      setDraft('')
-      setDiff(null)
+      update(pullRef, { draft: '', diff: null })
       await load()
     } else setActionFailure(result.message)
     setBusy(null)

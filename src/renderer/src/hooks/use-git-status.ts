@@ -19,7 +19,14 @@ import {
  * Now the panel shows what it last knew in the first frame and the read
  * refreshes it.
  */
-const statusCache = new Map<string, GitStatusResult>()
+const statusCache = new Map<string, { status: GitStatusResult; at: number }>()
+
+/** Hand this hook a status another read already has for the folder: the
+ *  multi-repo reading reads the root's status first, and the single-repo
+ *  panel it hands over to should open on it rather than ask git again. */
+export function primeGitStatus(cwd: string, status: GitStatusResult): void {
+  statusCache.set(cwd, { status, at: Date.now() })
+}
 
 export function useGitStatus(
   cwd: string | null,
@@ -39,7 +46,7 @@ export function useGitStatus(
     if (!cwd || !window.electronAPI?.getGitStatus) return
     try {
       const result = await window.electronAPI.getGitStatus(cwd)
-      statusCache.set(cwd, result)
+      statusCache.set(cwd, { status: result, at: Date.now() })
       // Only update if cwd hasn't changed during the fetch
       if (cwdRef.current === cwd) {
         setStatus(result)
@@ -59,7 +66,7 @@ export function useGitStatus(
   const [seen, setSeen] = useState<{ cwd: string | null; active: boolean } | null>(null)
   if (!seen || seen.cwd !== cwd || seen.active !== active) {
     setSeen({ cwd, active })
-    const cached = cwd ? (statusCache.get(cwd) ?? null) : null
+    const cached = cwd ? (statusCache.get(cwd)?.status ?? null) : null
     setStatus(cached)
     setError(null)
     setLoading(!!cwd && active && !cached)
@@ -75,16 +82,19 @@ export function useGitStatus(
   // change, with a timer behind it — every five seconds while the repo is not
   // watched, every thirty once it is. A round never starts before the last
   // one ended, and a hidden window skips its rounds until it is shown again.
+  // A reading younger than the poll interval is as fresh as a new one would
+  // be, so coming back to the tab a moment after leaving it costs no read.
   useEffect(() => {
     if (!cwd || !active) return
     let watched = false
     const subscriberId = newWatchSubscriberId('git-status')
+    const last = statusCache.get(cwd)
     const loop = startPollLoop({
       run: () => fetch().finally(() => setLoading(false)),
       intervalMs: () => (watched ? GIT_STATUS_BACKSTOP_MS : GIT_STATUS_POLL_MS),
       maxIntervalMs: GIT_STATUS_MAX_POLL_MS,
       isHidden: isDocumentHidden,
-      immediate: true
+      immediate: !last || Date.now() - last.at >= GIT_STATUS_POLL_MS
     })
     const offChanged = window.electronAPI.onGitReposChanged?.((repos) => {
       if (repos.includes(cwd)) loop.trigger()

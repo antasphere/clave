@@ -32,7 +32,7 @@ export const newWatchSubscriberId = (kind: string): string =>
  */
 export function mergeStatuses<
   S,
-  R extends { mode: string; repos?: Array<{ path: string; status: S }> }
+  R extends { mode: string; repos?: Array<{ path: string; status: S | null }> }
 >(result: R, updates: Array<{ path: string; status: S }>): R {
   if (result.mode !== 'multi' || !result.repos || updates.length === 0) return result
   const byPath = new Map(updates.map((u) => [u.path, u.status]))

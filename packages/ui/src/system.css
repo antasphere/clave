@@ -204,6 +204,33 @@ body,
    chrome's --ui-text-offset never reached: every label in the app moved but
    the trees. Here each size the panel uses takes the offset on top. The row
    height follows Density through --panel-row-h. */
+/* The side panel's panes (PRDCT-4142). Every pane visited stays mounted: the
+   file tree, the git list and a plugin's pane each keep their content, their
+   open rows, their scroll and a typed draft across a tab switch, so a return
+   redraws nothing. The inactive ones are hidden in place with their layout box
+   kept, since a pane taken out of layout (display: none) drops its scroll
+   offset with the box. The hooks behind a hidden pane are told it is inactive
+   and read nothing. */
+.panel-panes {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 0%;
+  min-height: 0;
+}
+.panel-pane {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 0%;
+  min-height: 0;
+}
+.panel-pane:not([data-active]) {
+  position: absolute;
+  inset: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+
 .side-panel :is(.text-xs) {
   font-size: calc(0.75rem + var(--ui-text-offset));
 }

@@ -342,12 +342,31 @@ function SidePanelBody(): React.JSX.Element {
   // The legacy remote kinds have no git: their panel is the files tab.
   const effectiveTab = legacyRemote ? 'files' : sidePanelTab
   const pluginTab = isRemoteSession ? null : activePluginPanel
-  const isGitTabActive = effectiveTab === 'git'
+  // A plugin tab sits over Files and Git: while it is shown, neither of them
+  // is the active pane, and the git hooks read nothing (PRDCT-4142).
+  const isFilesTabActive = effectiveTab === 'files' && !pluginTab
+  const isGitTabActive = effectiveTab === 'git' && !pluginTab
   const multiRepo = useMultiRepoStatus(gitCwd, isGitTabActive)
 
-  // Single-repo git status — used for branch badge in path row
-  const isSingleRepo = isGitTabActive && multiRepo.result.mode === 'single'
-  const singleRepoGit = useGitStatus(isSingleRepo ? gitCwd : null, isSingleRepo)
+  // Single-repo git status — used for branch badge in path row. The folder is
+  // the hook's whether or not the git pane is shown, so the pane keeps its
+  // status (and its rows) while hidden; only the reading is gated.
+  const isSingleRepo = multiRepo.result.mode === 'single'
+  const singleRepoGit = useGitStatus(isSingleRepo ? gitCwd : null, isSingleRepo && isGitTabActive)
+
+  // The plugin panes visited so far (PRDCT-4142): each stays mounted and
+  // hidden once seen, so a return shows it as it was. A plugin that stops
+  // drops out of `sidePlugins` and takes its pane with it; one that restarts
+  // comes back with a new generation and remounts on its key. Adjusted during
+  // render, against what the last render saw.
+  const [visitedPluginKeys, setVisitedPluginKeys] = useState<ReadonlySet<string>>(() => new Set())
+  const pluginKey = pluginTab ? `${pluginTab.pluginId}:${pluginTab.panelId}` : null
+  if (pluginKey && !visitedPluginKeys.has(pluginKey)) {
+    setVisitedPluginKeys((prev) => new Set(prev).add(pluginKey))
+  }
+  const visitedPlugins = sidePlugins.filter((panel) =>
+    visitedPluginKeys.has(`${panel.pluginId}:${panel.panelId}`)
+  )
 
   // Single-repo sections, driven by the toolbar's ↓/↑/+ badge-buttons.
   // Per-repo state: a folder switch resets it (guarded adjust-during-render).
@@ -368,8 +387,11 @@ function SidePanelBody(): React.JSX.Element {
 
   // Every repo the panel lists — what Magic sync acts on, since committing and
   // pushing is about each repo's own local work.
+  // A row whose first reading is still on its way is not acted on: nothing
+  // is known about it yet (PRDCT-4142).
   const allRepoPaths = useMemo(() => {
-    if (multiRepo.result.mode === 'multi') return multiRepo.result.repos.map((r) => r.path)
+    if (multiRepo.result.mode === 'multi')
+      return multiRepo.result.repos.filter((r) => r.status).map((r) => r.path)
     if (isSingleRepo && gitCwd) return [gitCwd]
     return []
   }, [multiRepo.result, isSingleRepo, gitCwd])
@@ -379,7 +401,7 @@ function SidePanelBody(): React.JSX.Element {
   // pulls what you can see, and finding more is the refresh's job.
   const behindRepoPaths = useMemo(() => {
     if (multiRepo.result.mode === 'multi') {
-      return multiRepo.result.repos.filter((r) => r.status.behind > 0).map((r) => r.path)
+      return multiRepo.result.repos.filter((r) => (r.status?.behind ?? 0) > 0).map((r) => r.path)
     }
     if (isSingleRepo && gitCwd && (singleRepoGit.status?.behind ?? 0) > 0) return [gitCwd]
     return []
@@ -940,38 +962,40 @@ function SidePanelBody(): React.JSX.Element {
           </div>
         )}
 
-      {/* Active tab content */}
-      {pluginTab ? (
-        <div className="flex flex-col flex-1 min-h-0" data-plugin-side-panel={pluginTab.panelId}>
-          <PluginPanelHost
-            key={`${pluginTab.pluginId}:${pluginTab.panelId}:${pluginTab.generation}`}
-            pluginId={pluginTab.pluginId}
-            panelId={pluginTab.panelId}
-            title={pluginTab.title}
-            generation={pluginTab.generation}
-          />
-        </div>
-      ) : effectiveTab === 'help' ? (
-        <HelpPanel />
-      ) : legacyRemote &&
+      {/* The panes. Every pane visited stays mounted and hidden in place
+          (PRDCT-4142): the file tree, the git list and a plugin's pane each
+          keep their content, their open rows, their scroll and a typed draft
+          across a tab switch, so a return redraws nothing. Hiding keeps the
+          layout box (.panel-pane in system.css): a pane taken out of layout
+          loses its scroll position. The hooks' `active` flags gate the
+          reading, so a hidden pane reads nothing. */}
+      {legacyRemote ? (
         remoteLocationId &&
         effectiveCwd &&
         effectiveCwd !== '' &&
         effectiveCwd !== '~' &&
         effectiveCwd.startsWith('/') ? (
-        <RemoteFileTree locationId={remoteLocationId} cwd={effectiveCwd} />
-      ) : legacyRemote ? (
-        <div className="flex-1 flex items-center justify-center px-3">
-          <span className="text-xs text-text-tertiary text-center">No working directory</span>
-        </div>
+          <RemoteFileTree locationId={remoteLocationId} cwd={effectiveCwd} />
+        ) : (
+          <div className="flex-1 flex items-center justify-center px-3">
+            <span className="text-xs text-text-tertiary text-center">No working directory</span>
+          </div>
+        )
       ) : (
-        <>
-          {/* Keep FileTree mounted across tab switches so folder expansion state is preserved. */}
-          <div className={sidePanelTab === 'files' ? 'flex flex-col flex-1 min-h-0' : 'hidden'}>
+        <div className="panel-panes">
+          <div
+            className="panel-pane"
+            data-pane="files"
+            data-active={isFilesTabActive ? 'true' : undefined}
+          >
             <FileTree cwd={gitCwd} onNavigateToFolder={handleNavigateToFolder} />
           </div>
-          {sidePanelTab === 'git' &&
-            (multiRepo.result.mode === 'multi' ? (
+          <div
+            className="panel-pane"
+            data-pane="git"
+            data-active={isGitTabActive ? 'true' : undefined}
+          >
+            {multiRepo.result.mode === 'multi' ? (
               <MultiRepoGitPanel
                 repos={multiRepo.result.repos}
                 rootPath={multiRepo.hasNestedRepos ? gitCwd : null}
@@ -986,6 +1010,12 @@ function SidePanelBody(): React.JSX.Element {
               <div className="flex-1 flex items-center justify-center px-3">
                 <span className="text-xs text-text-tertiary text-center">Not a git repository</span>
               </div>
+            ) : multiRepo.result.mode === 'loading' ? (
+              // A folder never read, for the moment it takes git to answer
+              // about the root; the rows follow as they come.
+              <div className="flex-1 flex items-center justify-center px-3" data-git-reading>
+                <span className="text-xs text-text-tertiary text-center">Reading…</span>
+              </div>
             ) : singleRepoGit.error && !singleRepoGit.status ? (
               <ErrorBanner message="Could not read this folder's git status." />
             ) : (
@@ -999,8 +1029,39 @@ function SidePanelBody(): React.JSX.Element {
                 showOutgoing={showOutgoingSingle}
                 showChanges={showChangesSingle}
               />
-            ))}
-        </>
+            )}
+          </div>
+          {visitedPlugins.map((panel) => {
+            const active =
+              pluginTab?.pluginId === panel.pluginId && pluginTab?.panelId === panel.panelId
+            return (
+              <div
+                key={`${panel.pluginId}:${panel.panelId}`}
+                className="panel-pane"
+                data-pane={`plugin:${panel.panelId}`}
+                data-active={active ? 'true' : undefined}
+              >
+                <div
+                  className="flex flex-col flex-1 min-h-0"
+                  data-plugin-side-panel={panel.panelId}
+                >
+                  <PluginPanelHost
+                    key={`${panel.pluginId}:${panel.panelId}:${panel.generation}`}
+                    pluginId={panel.pluginId}
+                    panelId={panel.panelId}
+                    title={panel.title}
+                    generation={panel.generation}
+                  />
+                </div>
+              </div>
+            )
+          })}
+          {effectiveTab === 'help' && !pluginTab && (
+            <div className="panel-pane" data-pane="help" data-active="true">
+              <HelpPanel />
+            </div>
+          )}
+        </div>
       )}
     </div>
   )

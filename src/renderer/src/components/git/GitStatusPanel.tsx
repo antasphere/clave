@@ -64,6 +64,56 @@ function getExpandedCache(cwd: string): ExpandedCache {
   return cache
 }
 
+// ---------------------------------------------------------------------------
+// Per-repo row state — which rows are open and which of their sections
+// (PRDCT-4142). It lives outside the rows: the list is rebuilt whenever the
+// panel's folder changes, and a row that comes back for the same repository
+// opens as it was left, rather than folded.
+// ---------------------------------------------------------------------------
+
+interface RowState {
+  expanded: boolean
+  incoming: boolean
+  outgoing: boolean
+  base: boolean
+  worktree: boolean
+  changes: boolean
+}
+
+// A repo row starts CLOSED, whatever it is carrying (see MultiRepoSection);
+// the local changes are what it unfolds INTO once opened.
+const ROW_DEFAULT: RowState = {
+  expanded: false,
+  incoming: false,
+  outgoing: false,
+  base: false,
+  worktree: false,
+  changes: true
+}
+const rowStateCache = new Map<string, RowState>()
+
+function useRowState(
+  repoPath: string
+): [RowState, (patch: Partial<RowState> | ((prev: RowState) => Partial<RowState>)) => void] {
+  const [state, setState] = useState<RowState>(() => rowStateCache.get(repoPath) ?? ROW_DEFAULT)
+  const update = useCallback(
+    (patch: Partial<RowState> | ((prev: RowState) => Partial<RowState>)) => {
+      setState((prev) => {
+        const next = { ...prev, ...(typeof patch === 'function' ? patch(prev) : patch) }
+        rowStateCache.set(repoPath, next)
+        return next
+      })
+    },
+    [repoPath]
+  )
+  return [state, update]
+}
+
+// The last file list of each range section (incoming, outgoing, a worktree's
+// two), keyed by repository and direction: a section that comes back shows
+// its last list at once and the read refreshes it (PRDCT-4142).
+const rangeFilesCache = new Map<string, GitFileStatus[]>()
+
 // Short clock label (HH:MM) for the "Updated …" hint in the paused banner.
 function formatUpdatedAt(ts: number): string {
   return new Date(ts).toLocaleTimeString([], {
@@ -137,8 +187,14 @@ function RangeSection({
   const gitViewMode = useSessionStore((s) => s.gitViewMode)
   const setDiffPreview = useSessionStore((s) => s.setDiffPreview)
   const diffPreview = useSessionStore((s) => s.diffPreview)
-  const [files, setFiles] = useState<GitFileStatus[] | null>(null)
-  const [treeExpanded, setTreeExpanded] = useState<Set<string>>(new Set())
+  const rangeKey = `${cwd}\n${direction}`
+  const [files, setFiles] = useState<GitFileStatus[] | null>(
+    () => rangeFilesCache.get(rangeKey) ?? null
+  )
+  const [treeExpanded, setTreeExpanded] = useState<Set<string>>(() => {
+    const cached = rangeFilesCache.get(rangeKey)
+    return cached ? collectAllDirPaths(compactTree(buildGitTree(cached))) : new Set()
+  })
 
   useEffect(() => {
     let cancelled = false
@@ -149,6 +205,7 @@ function RangeSection({
         status: RANGE_STATUS_WORD[f.status] ?? 'modified',
         staged: false
       }))
+      rangeFilesCache.set(`${cwd}\n${direction}`, mapped)
       setFiles(mapped)
       setTreeExpanded(collectAllDirPaths(compactTree(buildGitTree(mapped))))
     })
@@ -1281,7 +1338,9 @@ function MultiRepoSection({
 }: {
   name: string
   repoPath: string
-  status: GitStatusResult
+  /** `null` while the row's first reading is on its way (PRDCT-4142): the row
+   *  is drawn by name with a reading state where its branch and badges go. */
+  status: GitStatusResult | null
   refresh: () => void
   isSelected?: boolean
   onSelect?: (path: string, metaKey: boolean) => void
@@ -1298,12 +1357,13 @@ function MultiRepoSection({
   const gitPanelMode = useSessionStore((s) => s.gitPanelMode)
   const openJourneyPanel = useSessionStore((s) => s.openJourneyPanel)
   const collapseAllTrigger = useSessionStore((s) => s.collapseAllTrigger)
-  const changeCount = status.files.length
-  const wt = status.worktree
+  const changeCount = status?.files.length ?? 0
+  const wt = status?.worktree
   // The opened folder isn't itself a repo root — git resolved it to a parent
   // repository, so the changes shown actually belong to that parent.
-  const isParentRepo = !!status.repoRoot && status.repoRoot !== repoPath
-  const parentRepoName = isParentRepo ? repoDisplayName(status.repoRoot) : ''
+  const repoRoot = status?.repoRoot ?? ''
+  const isParentRepo = !!repoRoot && repoRoot !== repoPath
+  const parentRepoName = isParentRepo ? repoDisplayName(repoRoot) : ''
 
   // A repo row starts CLOSED, whatever it is carrying.
   //
@@ -1319,41 +1379,39 @@ function MultiRepoSection({
   // the counter never resets; the row now mounts folded regardless, so there
   // is no default left for a stale press to override, and the trigger is not
   // read here at all.
-  const [expanded, setExpanded] = useState(false)
-  const [showIncoming, setShowIncoming] = useState(false)
-  const [showOutgoing, setShowOutgoing] = useState(false)
-  // A worktree row's two purple sections (PRDCT-2356): what its base gained
-  // since the cut, and what the worktree added.
-  const [showBase, setShowBase] = useState(false)
-  const [showWorktree, setShowWorktree] = useState(false)
-  // The local work is what the panel is for, so this one starts on — it is
-  // what the row unfolds INTO once you open it, not whether it is open.
-  const [showChanges, setShowChanges] = useState(true)
+  //
+  // The state is the row's, kept by repository path outside the component
+  // (PRDCT-4142): a list rebuilt on a folder change or a pane shown again
+  // draws the row as it was left. `incoming` and `outgoing` are the ↓ ↑
+  // sections, `base` and `worktree` a worktree row's two purple sections
+  // (PRDCT-2356: what its base gained since the cut, and what the worktree
+  // added), `changes` the local work, on from the start since it is what the
+  // row unfolds INTO once you open it, not whether it is open.
+  const [row, updateRow] = useRowState(repoPath)
+  const {
+    expanded,
+    incoming: showIncoming,
+    outgoing: showOutgoing,
+    base: showBase,
+    worktree: showWorktree,
+    changes: showChanges
+  } = row
 
   // The badges are buttons: each unfolds its own section inside the repo's
   // content (and opens the repo if it was folded).
   const toggleSection = useCallback(
     (e: React.MouseEvent, section: RowSection) => {
       e.stopPropagation()
-      const sections: Record<RowSection, [boolean, (open: boolean) => void]> = {
-        incoming: [showIncoming, setShowIncoming],
-        outgoing: [showOutgoing, setShowOutgoing],
-        changes: [showChanges, setShowChanges],
-        worktree: [showWorktree, setShowWorktree],
-        base: [showBase, setShowBase]
-      }
-      const [isOpen, setter] = sections[section]
-      if (!isOpen) {
-        setter(true)
-        setExpanded(true)
-      } else if (!expanded) {
+      if (!row[section]) {
+        updateRow({ [section]: true, expanded: true })
+      } else if (!row.expanded) {
         // Section already on but the repo is folded: reveal, don't toggle off.
-        setExpanded(true)
+        updateRow({ expanded: true })
       } else {
-        setter(false)
+        updateRow({ [section]: false })
       }
     },
-    [showIncoming, showOutgoing, showChanges, showWorktree, showBase, expanded]
+    [row, updateRow]
   )
 
   // Collapse all when trigger fires. Still honoured — a press must shut a row
@@ -1364,7 +1422,7 @@ function MultiRepoSection({
   const [collapseSeen, setCollapseSeen] = useState(collapseAllTrigger)
   if (collapseAllTrigger !== collapseSeen) {
     setCollapseSeen(collapseAllTrigger)
-    if (collapseAllTrigger > 0) setExpanded(false)
+    if (collapseAllTrigger > 0) updateRow({ expanded: false })
   }
 
   const handleDragStart = useCallback(
@@ -1388,9 +1446,9 @@ function MultiRepoSection({
         return
       }
       onSelect?.(repoPath, false)
-      setExpanded((v) => !v)
+      updateRow((prev) => ({ expanded: !prev.expanded }))
     },
-    [repoPath, onSelect]
+    [repoPath, onSelect, updateRow]
   )
 
   return (
@@ -1425,6 +1483,7 @@ function MultiRepoSection({
         // rendered below — which reads as "shut" just as well when the folder
         // ABOVE it is closed and the row is not on screen at all.
         data-tree-collapsed={expanded ? undefined : 'true'}
+        data-tree-reading={status ? undefined : 'true'}
         className={`git-tree-row w-full flex items-center gap-1.5 pr-3 text-xs transition-colors ${
           isSelected ? 'bg-surface-200' : 'hover:bg-surface-100'
         }`}
@@ -1453,7 +1512,7 @@ function MultiRepoSection({
         {worktree && wt && (
           <WorktreeGuide
             merged={wt.merged}
-            card={<WorktreeCard branch={status.branch} wt={wt} />}
+            card={<WorktreeCard branch={status?.branch ?? ''} wt={wt} />}
           />
         )}
 
@@ -1497,8 +1556,14 @@ function MultiRepoSection({
         {/* Branch badge. It gives way before the name does: in a narrow panel a
             worktree row carries up to four badges, and a name cut to one letter
             says less than a branch cut short. */}
-        <span className="git-tree-row-branch text-text-tertiary truncate [flex-shrink:4]">
-          {status.branch}
+        {/* A row whose first reading is on its way says so where its branch
+            will go; its badges land with the status (PRDCT-4142). */}
+        <span
+          className={`git-tree-row-branch text-text-tertiary truncate [flex-shrink:4] ${
+            status ? '' : 'italic opacity-70'
+          }`}
+        >
+          {status ? status.branch : 'reading…'}
         </span>
 
         {/* The base badge (PRDCT-2356): the branch this worktree was cut from
@@ -1542,7 +1607,7 @@ function MultiRepoSection({
 
         {/* Badges (right-aligned) — one toggle per section of the repo's content */}
         <span className="ml-auto flex-shrink-0 flex items-center gap-1.5">
-          {status.behind > 0 && (
+          {status && status.behind > 0 && (
             <GitSyncBadge
               tone="incoming"
               count={status.behind}
@@ -1555,7 +1620,7 @@ function MultiRepoSection({
               badge stays (it is the "unpublished" count the worktree rows lean
               on) but says so, instead of promising a push that has nowhere to
               go. */}
-          {status.ahead > 0 && (
+          {status && status.ahead > 0 && (
             <GitSyncBadge
               tone="outgoing"
               count={status.ahead}
@@ -1593,14 +1658,14 @@ function MultiRepoSection({
             </TooltipTrigger>
             <TooltipContent side="bottom" className="font-mono max-w-[300px]">
               This folder isn’t a git repository. The changes shown belong to the parent repository{' '}
-              {shortenPath(repoDisplayPath(status.repoRoot))}, which contains it.
+              {shortenPath(repoDisplayPath(repoRoot))}, which contains it.
             </TooltipContent>
           </Tooltip>
         </div>
       )}
 
-      {/* Expanded content */}
-      {expanded && (
+      {/* Expanded content — once the row has a status to unfold. */}
+      {expanded && status && (
         <div className="flex flex-col">
           {gitPanelMode === 'log' ? (
             <GitLogView
@@ -1849,7 +1914,8 @@ export function MultiRepoGitPanel({
   refreshing = false,
   lastUpdated = null
 }: {
-  repos: Array<{ name: string; path: string; status: GitStatusResult }>
+  /** A row's status is `null` while its first reading is on its way (PRDCT-4142). */
+  repos: Array<{ name: string; path: string; status: GitStatusResult | null }>
   rootPath?: string | null
   /** The panel's folder — the tree's root. Falls back to a flat list when null. */
   basePath?: string | null
@@ -1883,32 +1949,43 @@ export function MultiRepoGitPanel({
   const hasRoot = rootRepo !== null
 
   const nestedChangeCount = useMemo(
-    () => nestedRepos.reduce((sum, r) => sum + r.status.files.length, 0),
+    () => nestedRepos.reduce((sum, r) => sum + (r.status?.files.length ?? 0), 0),
     [nestedRepos]
   )
 
-  const statusByPath = useMemo(() => new Map(repos.map((r) => [r.path, r.status])), [repos])
+  // The rows still being read have no status to file: the maps hold the
+  // others, and a row looks its own up and draws the reading state on a miss.
+  const statusByPath = useMemo(
+    () =>
+      new Map<string, GitStatusResult>(
+        repos.flatMap((r) => (r.status ? [[r.path, r.status] as const] : []))
+      ),
+    [repos]
+  )
   // The tree below is built over the repos' READABLE paths: a Clave server's
   // repository is keyed by its owner (`lib/git-paths.ts`), and a key is no
   // path to split on '/'. Each row maps back to the key its status and its
   // actions are filed under; on the Mac the two are the same string.
   const statusByDisplay = useMemo(
-    () => new Map(repos.map((r) => [repoDisplayPath(r.path), r.status])),
+    () =>
+      new Map<string, GitStatusResult>(
+        repos.flatMap((r) => (r.status ? [[repoDisplayPath(r.path), r.status] as const] : []))
+      ),
     [repos]
   )
 
   // Each worktree's source, as discovery spells the source's path (PRDCT-2356):
   // git names it resolved, the list may hold it through a symlink.
   const roots = useMemo(
-    () => repos.map((r) => ({ path: r.path, repoRoot: r.status.repoRoot })),
+    () => repos.flatMap((r) => (r.status ? [{ path: r.path, repoRoot: r.status.repoRoot }] : [])),
     [repos]
   )
   const withSources = useMemo(
     () =>
       nestedRepos.map((r) => ({
         ...r,
-        worktreeOf: worktreeSourcePath(r.status.worktree?.of, roots),
-        createdAt: r.status.worktree?.createdAt ?? null
+        worktreeOf: worktreeSourcePath(r.status?.worktree?.of, roots),
+        createdAt: r.status?.worktree?.createdAt ?? null
       })),
     [nestedRepos, roots]
   )
@@ -2014,8 +2091,8 @@ export function MultiRepoGitPanel({
       )
     }
     const repoKey = keyByDisplay.get(row.node.path) ?? row.node.path
-    const status = statusByPath.get(repoKey)
-    if (!status) return null
+    // No status yet: the row is drawn in its place with the reading state.
+    const status = statusByPath.get(repoKey) ?? null
     const isWorktree = row.node.type === 'worktree'
     return (
       <MultiRepoSection
