@@ -15,21 +15,73 @@ body {
 .deck {
   display: flex;
   flex-direction: column;
-  gap: calc(var(--control-px) * 3);
-  padding: calc(var(--control-px) * 4) calc(var(--control-px) * 5);
+  gap: calc(var(--control-px) * 3.5);
+  padding: calc(var(--control-px) * 3) calc(var(--control-px) * 3) calc(var(--control-px) * 5);
   max-width: calc(var(--control-h) * 44);
   margin: 0 auto;
   box-sizing: border-box;
 }
 
-/* ── Header ─────────────────────────────────────────────────────────────── */
+/* ── The hero ────────────────────────────────────────────────────────────
+   The page's name, its one quiet line, the range, and the page's drawing in
+   the corner: the shape the design-deck skill gives every deck Clave shows
+   (plugin/skills/design-deck). A card on the raised surface with a faint
+   wash of the accent at the top. */
 
 .deck-head {
-  display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: calc(var(--control-px) * 2);
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-rows: auto auto;
+  column-gap: calc(var(--control-px) * 3);
+  row-gap: calc(var(--control-px) * 1.5);
+  align-items: center;
+  padding: calc(var(--control-px) * 2.25) calc(var(--control-px) * 2.5)
+    calc(var(--control-px) * 2.25);
+  border: var(--frame-border) solid var(--color-border);
+  border-radius: var(--radius-xl);
+  background: linear-gradient(
+    180deg,
+    color-mix(in oklab, var(--color-accent) 6%, var(--surface-raised)),
+    var(--surface-raised)
+  );
+  overflow: hidden;
+}
+.deck-head > div:first-child {
+  grid-area: 1 / 1;
+  min-width: 0;
+}
+.deck-head > .ranges {
+  grid-area: 2 / 1;
+}
+.deck-head > .ranges:empty {
+  display: none;
+}
+.deck-mark {
+  grid-area: 1 / 2 / 3 / 3;
+  align-self: center;
+  width: calc(var(--control-h) * 5.5);
+  height: auto;
+  pointer-events: none;
+}
+@media (max-width: 36em) {
+  .deck-mark {
+    display: none;
+  }
+}
+
+/* A section's label: small, tracked, tertiary. */
+.section-label,
+.figure-title {
+  margin: 0;
+  color: var(--text-tertiary);
+  font-size: 11px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.section-label {
+  margin-bottom: calc(var(--control-px) * -2);
+  padding: 0 var(--surface-inset);
 }
 
 .deck-title-row {
@@ -43,11 +95,14 @@ body {
   font-size: calc(var(--control-text) * 1.5);
   font-weight: 600;
   letter-spacing: -0.01em;
+  line-height: 1.25;
+  text-wrap: balance;
+  overflow-wrap: anywhere;
 }
 
 .deck-meta {
   margin-top: var(--surface-inset);
-  color: var(--text-secondary);
+  color: var(--text-tertiary);
   font-size: 12px;
   display: flex;
   gap: var(--control-gap);
@@ -123,38 +178,43 @@ body {
   gap: calc(var(--control-px) * 1.5);
 }
 
+/* The count tiles of the skill: the figure large, the word under it, on the
+   wash, no border; the first (the cost) is the one the eye lands on. */
 .tile {
   display: flex;
   flex-direction: column;
   justify-content: flex-end;
-  gap: var(--surface-inset);
-  padding: calc(var(--control-px) * 2);
-  border: var(--frame-border) solid var(--color-border);
-  border-radius: var(--radius-xl);
-  background: var(--surface-50);
+  gap: calc(var(--surface-inset) * 0.75);
+  padding: calc(var(--control-px) * 1.5) calc(var(--control-px) * 1.75);
+  border-radius: var(--radius-lg);
+  background: var(--surface-100);
   min-width: 0;
 }
 
 .tile-label {
+  order: 2;
   color: var(--text-tertiary);
   font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
 }
 
 .tile-value {
-  font-size: calc(var(--control-h) * 0.8);
-  font-weight: 500;
+  order: 1;
+  font-size: calc(var(--control-h) * 0.72);
+  font-weight: 600;
   letter-spacing: -0.01em;
   line-height: 1.1;
   white-space: nowrap;
+  font-variant-numeric: tabular-nums;
 }
 
 .tile.hero .tile-value {
-  font-size: calc(var(--control-h) * 2);
-  font-weight: 600;
-  letter-spacing: -0.03em;
+  font-size: calc(var(--control-h) * 1.5);
+  letter-spacing: -0.02em;
   line-height: 1;
+}
+
+.tile-note {
+  order: 3;
 }
 
 .tile-note {
@@ -293,15 +353,34 @@ tfoot td {
 }
 
 .card {
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: var(--control-px);
-  padding: calc(var(--control-px) * 2);
+  padding: calc(var(--control-px) * 1.75) calc(var(--control-px) * 2) calc(var(--control-px) * 1.75)
+    calc(var(--control-px) * 2.25);
   border: var(--frame-border) solid var(--color-border);
-  border-radius: var(--radius-xl);
-  background: var(--surface-50);
+  border-radius: var(--radius-lg);
+  background: var(--surface-raised);
   color: inherit;
   text-decoration: none;
+}
+/* The skill's tone bar on the card's edge: the group's state, working first. */
+.card::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: calc(var(--control-px) * 1.25);
+  bottom: calc(var(--control-px) * 1.25);
+  width: 3px;
+  border-radius: 0 3px 3px 0;
+  background: var(--color-border);
+}
+.card[data-state='working']::before {
+  background: var(--color-accent);
+}
+.card[data-state='blocked']::before {
+  background: var(--color-warning);
 }
 a.card:hover {
   background: var(--surface-100);
@@ -357,7 +436,7 @@ a.card:hover {
   color: var(--text-tertiary);
   text-align: center;
   border: var(--frame-border) dashed var(--color-border);
-  border-radius: var(--radius-xl);
+  border-radius: var(--radius-lg);
 }
 
 /* ── Footer ─────────────────────────────────────────────────────────────── */
@@ -390,16 +469,12 @@ figure.live-figure {
   margin: 0;
   padding: calc(var(--control-px) * 2);
   border: var(--frame-border) solid var(--color-border);
-  border-radius: var(--radius-xl);
-  background: var(--surface-50);
+  border-radius: var(--radius-lg);
+  background: var(--surface-raised);
 }
 
 .figure-title {
-  color: var(--text-tertiary);
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  margin-bottom: var(--control-px);
+  margin-bottom: calc(var(--control-px) * 1.5);
 }
 
 .figure-empty {
@@ -638,4 +713,100 @@ figure.live-figure {
 .gear .icon {
   width: var(--control-icon);
   height: var(--control-icon);
+}
+
+/* ── The drawing hand ──────────────────────────────────────────────────────
+   `.chat-drawing` of packages/ui/src/system.css, on the same tokens, for the
+   page's drawings (plugin/skills/design-deck, Part 1). */
+.drawing {
+  --ink: var(--text-primary);
+  --paper: var(--surface-raised);
+  --ground: var(--surface-100);
+  display: block;
+  overflow: visible;
+}
+.drawing :is(.ln, .bx, .ring, .head) {
+  vector-effect: non-scaling-stroke;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.drawing .ln {
+  fill: none;
+  stroke: color-mix(in oklab, var(--ink) 45%, transparent);
+  stroke-width: 1.2;
+}
+.drawing .ln--soft {
+  stroke: color-mix(in oklab, var(--ink) 34%, transparent);
+  stroke-dasharray: 4 5;
+}
+.drawing .ln--thin {
+  stroke: color-mix(in oklab, var(--ink) 30%, transparent);
+  stroke-width: 1;
+}
+.drawing .bx {
+  fill: color-mix(in oklab, var(--ground) 40%, transparent);
+  stroke: color-mix(in oklab, var(--ink) 40%, transparent);
+  stroke-width: 1;
+}
+.drawing .bx--front {
+  fill: var(--paper);
+}
+.drawing .dot {
+  fill: color-mix(in oklab, var(--ink) 78%, transparent);
+}
+.drawing .dot--seat {
+  fill: color-mix(in oklab, var(--ink) 40%, transparent);
+}
+.drawing .ring {
+  fill: none;
+  stroke: color-mix(in oklab, var(--ink) 42%, transparent);
+  stroke-width: 1;
+}
+.drawing .head {
+  fill: none;
+  stroke: color-mix(in oklab, var(--ink) 55%, transparent);
+  stroke-width: 1.1;
+}
+.drawing .ln--c {
+  stroke: var(--color-accent);
+  stroke-width: 1.7;
+}
+.drawing .head--c {
+  stroke: var(--color-accent);
+  stroke-width: 1.5;
+}
+.drawing .dot--c {
+  fill: var(--color-accent);
+}
+.drawing .ring--pulse {
+  opacity: 0;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+.drawing .travel {
+  stroke-dasharray: 1;
+  stroke-dashoffset: 0;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .drawing .travel {
+    animation: drawing-draw 900ms var(--ease-out-expo) 180ms 1 backwards;
+  }
+  .drawing .ring--pulse {
+    animation: drawing-pulse 1400ms var(--ease-out-expo) 900ms 1;
+  }
+}
+@keyframes drawing-draw {
+  from {
+    stroke-dashoffset: 1;
+  }
+}
+@keyframes drawing-pulse {
+  from {
+    opacity: 0.7;
+    transform: scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: scale(2.2);
+  }
 }

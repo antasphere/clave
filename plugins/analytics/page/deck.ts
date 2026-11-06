@@ -23,6 +23,7 @@ import {
   type TimeScale,
   type Wait
 } from '../src/timeline'
+import { DRAWINGS } from './drawings'
 import { mountLive, type Live } from './live'
 
 /**
@@ -171,8 +172,10 @@ interface Parts {
   dot: HTMLSpanElement
   meta: HTMLDivElement
   ranges: HTMLElement
+  mark: SVGSVGElement
   tiles: Record<string, { value: HTMLDivElement; note: HTMLDivElement }>
   figure: HTMLElement
+  bodyLabel: HTMLElement
   body: HTMLElement
   footText: HTMLDivElement
   footActions: HTMLDivElement
@@ -194,7 +197,13 @@ function skeleton(root: HTMLElement): Parts {
   left.append(titleRow, meta)
   const ranges = el('nav', 'ranges')
   ranges.setAttribute('aria-label', 'Range')
-  head.append(left, ranges)
+  // The page's drawing, in the hero's corner: the skill's asset for the kind.
+  const mark = svgEl('svg', {
+    class: 'drawing deck-mark',
+    viewBox: '0 0 240 150',
+    'aria-hidden': 'true'
+  })
+  head.append(left, ranges, mark)
 
   const kpis = el('section', 'kpis')
   const tiles: Parts['tiles'] = {}
@@ -214,13 +223,26 @@ function skeleton(root: HTMLElement): Parts {
   }
 
   const figure = el('section', 'deck-figure')
+  const bodyLabel = el('h2', 'section-label')
   const body = el('section', 'deck-body')
   const foot = el('footer', 'deck-foot')
   const footText = el('div', 'foot-text')
   const footActions = el('div', 'foot-actions')
   foot.append(footText, footActions)
-  root.append(head, kpis, figure, body, foot)
-  return { title, dot: stateDot, meta, ranges, tiles, figure, body, footText, footActions }
+  root.append(head, kpis, figure, bodyLabel, body, foot)
+  return {
+    title,
+    dot: stateDot,
+    meta,
+    ranges,
+    mark,
+    tiles,
+    figure,
+    bodyLabel,
+    body,
+    footText,
+    footActions
+  }
 }
 
 // ─── Header, tiles, footer ───────────────────────────────────────────────────
@@ -240,6 +262,12 @@ function drawHeader(p: Parts, v: ScopeView): void {
     )
   }
   p.meta.replaceChildren(...meta.map((m) => el('span', undefined, m)))
+  if (p.mark.dataset.kind !== v.kind) {
+    p.mark.innerHTML = DRAWINGS[v.kind]
+    p.mark.dataset.kind = v.kind
+  }
+  p.bodyLabel.textContent =
+    v.kind === 'workspace' ? 'Groups' : v.kind === 'group' ? 'Sessions' : 'This session'
 
   if (v.kind === 'session') {
     p.ranges.replaceChildren()
@@ -489,6 +517,8 @@ function drawCards(body: HTMLElement, v: ScopeView): void {
           node.href = openUrl({ kind: 'group', id: card.id }, null)
         }
         node.title = cardWords(card)
+        node.dataset.state =
+          card.counts.working > 0 ? 'working' : card.counts.blocked > 0 ? 'blocked' : 'quiet'
         const states = el('div', 'card-states')
         states.append(...stateChips(card))
         const figures = el('div', 'card-figures')
