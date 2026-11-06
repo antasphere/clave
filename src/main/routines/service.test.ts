@@ -327,3 +327,30 @@ describe('the agent tools must be reachable (round 1, F1)', () => {
     expect(spawn.initialPrompt).toContain('/clave-routine:run Routine: Health')
   })
 })
+
+describe('the conversation id the discussion resumes on', () => {
+  it('keeps what the stream named when the record answers nothing at the end', async () => {
+    const host = fakeHost()
+    const file = workspace([routine('Health')])
+    const service = await build(file, host, memory(), { providerSessionIdOf: () => null })
+    const run = await service.runNow(key(file, 'Health'))
+    host.emit('s1', {
+      kind: 'event',
+      event: { type: 'session_meta', model: 'm', providerSessionId: 'conv-1' }
+    })
+    await service.report({
+      sessionId: 's1',
+      status: 'ok',
+      headline: 'h',
+      summary: 's',
+      data: { n: 1 }
+    })
+    host.emit('s1', { kind: 'event', event: { type: 'state_change', state: 'done' } })
+    expect(service.list().routines[0].runs[0].providerSessionId).toBe('conv-1')
+    const { sessionId } = await service.openDiscussion(run.id, 'w1', 'tab')
+    expect(host.starts[1].options?.resumeSessionId).toBe('conv-1')
+    expect(host.starts[1].windowKey).toBe('w1')
+    expect(host.starts[1].options?.link).toBeUndefined()
+    expect(sessionId).toBe('s2')
+  })
+})

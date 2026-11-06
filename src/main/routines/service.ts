@@ -236,13 +236,17 @@ export function createRoutineService(options: RoutineServiceOptions): RoutineSer
     if (entry.timeout) clearTimeout(entry.timeout)
     const status = entry.report?.status ?? 'failed'
     const reason = entry.report ? null : (outcome.reason ?? 'ended without a report')
+    // The conversation id the stream named stands; the record is the fallback
+    // (a server whose record answers nothing must not erase what the stream
+    // said, which is what the discussion resumes on).
+    const providerSessionId =
+      store.run(entry.run.id)?.providerSessionId ??
+      (entry.run.sessionId ? options.providerSessionIdOf(entry.run.sessionId) : null)
     store.updateRun(entry.run.id, {
       state: status,
       endedAt: now(),
       ...(reason !== null ? { reason } : {}),
-      ...(entry.run.sessionId
-        ? { providerSessionId: options.providerSessionIdOf(entry.run.sessionId) }
-        : {})
+      providerSessionId
     })
     live.delete(entry.run.id)
     // The process stops with the run: the transcript stays, the discussion resumes it.
