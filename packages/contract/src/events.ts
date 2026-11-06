@@ -12,6 +12,7 @@ import { Schema } from 'effect'
 import { Client } from './clients'
 import { FilesDirsChanged } from './files'
 import { AccountOverride, AgentState, SessionPage, RestartRequestId } from './sessions'
+import { WorkAssignment } from './work'
 import { SettingsEvent } from './settings'
 import { SidebarEvent } from './sidebar/layout'
 import { WorkspaceFilesEvent } from './workspace-files/model'
@@ -54,6 +55,12 @@ export const ServerEvent = Schema.Union(
     id: Schema.String,
     page: Schema.NullOr(SessionPage),
     servingSessionId: Schema.NullOr(Schema.String)
+  }),
+  /** A session's work assignment changed: the record's new one, or null when
+   *  it belongs to no wave or lane any more. */
+  Schema.TaggedStruct('session.work_changed', {
+    id: Schema.String,
+    work: Schema.NullOr(WorkAssignment)
   }),
   /** Another tab's agent typed a message into this one (`from` is its name,
    *  null when it had none): the window marks the row so the message is

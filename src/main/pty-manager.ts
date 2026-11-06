@@ -16,6 +16,7 @@ import {
   type PtySpawnOptions
 } from './sessions/adapters/pty-backend'
 import { lineageOf } from './sessions/lineage'
+import { sanitizeWork, type WorkAssignment } from '@clave/contract/work-rules'
 import { codexRoot, findCodexThreadForSession, hasCodexRollout } from './session-history/codex'
 import { ptyAdapter } from './sessions/adapters/pty-adapter'
 import { ClaudeAdapter, findTranscript } from './sessions/adapters/claude-adapter'
@@ -377,7 +378,9 @@ class PtyManager {
       codexAccountLabel: codex ? options?.codexAccountLabel : undefined,
       workspaceId: options?.workspaceId,
       windowKey: options?.windowKey,
-      spawnedBy: lineageOf(session.id, options?.spawnedBy, previous?.spawnedBy)
+      spawnedBy: lineageOf(session.id, options?.spawnedBy, previous?.spawnedBy),
+      // Which work it does (PRDCT-4123): a restart's, else the record's.
+      work: sanitizeWork(options?.work) ?? sanitizeWork(previous?.work)
     })
   }
 
@@ -519,6 +522,11 @@ class PtyManager {
       // spawn could read it, and a spawn made without one (an older restore)
       // would lose the child its parent (#259, V1-F1).
       spawnedBy: previous.spawnedBy ?? ptyBackend.getSessionRecord(id)?.spawnedBy,
+      // Which work it does (PRDCT-4123): the record's, read now, for the same
+      // reason. Never the spawn's own options: a restart carried one into
+      // them, and a change of work since (a handover accepted, a lane left)
+      // wrote the record alone, so a second restart would bring the old back.
+      work: ptyBackend.getSessionRecord(id)?.work,
       ...account
     }
     return { cwd: spawn.cwd, options, resumed: conversationId !== null }
@@ -561,6 +569,15 @@ class PtyManager {
   setSessionWindowKey(id: string, windowKey: string): void {
     if (sessionManager.get(id)) sessionManager.update(id, { windowKey })
     ptyBackend.setSessionWindowKey(id, windowKey)
+  }
+  /** Which work the session does, on its record (PRDCT-4123); false when it
+   *  keeps no record. The host's `changeWork` is the only caller. */
+  setSessionWork(id: string, work: WorkAssignment | null): boolean {
+    return ptyBackend.setSessionWork(id, work)
+  }
+  /** Every record's work assignment, read without side effects (PRDCT-4123). */
+  listWorkAssignments(): ReturnType<typeof ptyBackend.listWorkAssignments> {
+    return ptyBackend.listWorkAssignments()
   }
   /** The persisted record of a live session, as it is now. */
   getSessionRecord = ptyBackend.getSessionRecord.bind(ptyBackend)

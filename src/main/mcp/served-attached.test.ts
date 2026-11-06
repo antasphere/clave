@@ -98,14 +98,16 @@ function fakes(): {
 }
 
 describe('the attached shell', () => {
-  it('names the seven commands', () => {
+  it('names the seven commands and the two work tools', () => {
     expect([...ATTACHED_COMMANDS].sort()).toEqual([
+      'handOver',
       'launchGroup',
       'openSession',
       'readSession',
       'rename',
       'sendToSession',
       'setSessionView',
+      'setWork',
       'switchAccount'
     ])
   })

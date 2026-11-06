@@ -39,7 +39,9 @@ import {
   KeepOnSessionRecord,
   RestartSession,
   SetSessionPage,
-  TypeIntoSession
+  TypeIntoSession,
+  // ── PRDCT-4123: which work a session does ──
+  ChangeSessionWork
 } from '@clave/contract/sessions'
 import { AnswerViewRequest, RequestView } from '@clave/contract/views'
 import { AnnounceAgentTools, ResolveAgentToken } from '@clave/contract/agent-tools'
@@ -124,6 +126,8 @@ export const SessionsLive = HttpApiBuilder.group(ClaveApi, 'sessions', (handlers
     .handle('screen', HttpCqrs.query(ReadSessionScreen))
     .handle('type', HttpCqrs.command(TypeIntoSession))
     .handle('restart', HttpCqrs.command(RestartSession))
+    // ── PRDCT-4123: which work a session does ──
+    .handle('changeWork', HttpCqrs.command(ChangeSessionWork))
 )
 
 // ── Lane A: the clients the shell registers as ──

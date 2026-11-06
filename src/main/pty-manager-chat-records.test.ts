@@ -201,6 +201,31 @@ describe('a Claude chat tab survives a restart', () => {
     )
   })
 
+  it('carries its work when restored, a restart’s own winning (PRDCT-4123)', async () => {
+    const work = {
+      unit: 'stable-wave/lane-a',
+      kind: 'lane',
+      label: 'Lane A',
+      role: 'lead',
+      standing: 'current',
+      joinedAt: 1,
+      since: 1
+    } as const
+    mocks.backend.getSessionRecord.mockImplementation(((id: string) =>
+      id === TAB ? { id: TAB, work } : null) as never)
+    const restore = { launchProfileId: 'claude-chat', adoptSessionId: TAB }
+    await ptyManager.spawn('/project', { ...restore, resumeSessionId: CONVERSATION })
+    expect(mocks.backend.writeEventSessionRecord).toHaveBeenLastCalledWith(
+      expect.objectContaining({ id: TAB, work })
+    )
+    await ptyManager.kill(TAB, true)
+    const handedOver = { ...work, standing: 'superseded' as const, since: 2 }
+    await ptyManager.spawn('/project', { ...restore, work: handedOver })
+    expect(mocks.backend.writeEventSessionRecord).toHaveBeenLastCalledWith(
+      expect.objectContaining({ id: TAB, work: handedOver })
+    )
+  })
+
   it('relaunches fresh under the same id when the tab never got a message', async () => {
     mocks.findTranscript.mockReturnValue(null)
 

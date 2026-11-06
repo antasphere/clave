@@ -38,6 +38,7 @@ import {
   workspaceNameOf
 } from './served-core'
 import { sessionTools } from './served-session-tools'
+import { workTools } from './served-work-tools'
 import { ATTACHED_COMMANDS, attachedShell } from './served-attached'
 
 export {
@@ -353,7 +354,9 @@ async function list(ctx: Ctx, key: string, p: Payload): Promise<unknown> {
       view: record?.view ? { url: record.view.url, title: record.view.title ?? null } : null,
       workspaceId: record?.workspaceId ?? null,
       workspaceName: workspaceNameOf(ctx, record?.workspaceId),
-      windowId: windowIdOf(s.windowKey)
+      windowId: windowIdOf(s.windowKey),
+      // Which wave or lane the tab works on, as its record keeps it (PRDCT-4123).
+      work: record?.work ?? null
     }))
   // The layouts of live windows only: a key the server keeps for a window
   // that is gone is an orphan the primary takes at its next read, and the
@@ -418,7 +421,8 @@ const TOOLS: Record<string, (ctx: Ctx, key: string, p: Payload) => Promise<unkno
   moveSession,
   addGroupTerminal,
   closeSession,
-  ...sessionTools.others
+  ...sessionTools.others,
+  ...workTools
 }
 const SERVED = new Set(Object.keys(TOOLS))
 

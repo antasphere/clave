@@ -7,7 +7,8 @@
  * replaces leaves); a message typed into a tab marks its row as a sibling's
  * message does; a tab about to restart on another account is marked so its
  * exit is not announced, and the restart remounts its pane on the new
- * process; a pinned group the server launched is linked to its pin.
+ * process; a pinned group the server launched is linked to its pin; a tab's
+ * work assignment (PRDCT-4123) lands as its record now keeps it.
  */
 import { useSessionStore } from '../store/session-store'
 import { usePinnedStore } from '../store/pinned-store'
@@ -25,6 +26,7 @@ export function initServedToolsEvents(): void {
   api.onSessionRenamed?.(({ id, name }) => {
     useSessionStore.getState().applyServedRename(id, name)
   })
+  api.onSessionWorkChanged?.(({ id, work }) => useSessionStore.getState().applyServedWork(id, work))
   api.onSessionPageChanged?.(({ id, page, servingSessionId }) => {
     const store = useSessionStore.getState()
     if (!store.sessions.some((s) => s.id === id)) return

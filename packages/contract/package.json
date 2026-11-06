@@ -15,6 +15,8 @@
     "./events": "./src/events.ts",
     "./push": "./src/push.ts",
     "./sessions": "./src/sessions.ts",
+    "./work": "./src/work.ts",
+    "./work-rules": "./src/work-rules.ts",
     "./settings": "./src/settings/index.ts",
     "./sidebar": "./src/sidebar/index.ts",
     "./sidebar/ops": "./src/sidebar/ops.ts",

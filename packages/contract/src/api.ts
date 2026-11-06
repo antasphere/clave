@@ -43,7 +43,9 @@ import {
   KeepOnSessionRecord,
   RestartSession,
   SetSessionPage,
-  TypeIntoSession
+  TypeIntoSession,
+  // ── PRDCT-4123: which work a session does ──
+  ChangeSessionWork
 } from './sessions'
 import { agentToolsGroup } from './agent-tools'
 import { settingsGroup } from './settings/api'
@@ -91,6 +93,8 @@ export const sessionsGroup = ApiGroup.make('sessions')
   .add(HttpCqrs.queryEndpoint('screen', '/sessions/screen', ReadSessionScreen))
   .add(HttpCqrs.commandEndpoint('type', '/sessions/type', TypeIntoSession))
   .add(HttpCqrs.commandEndpoint('restart', '/sessions/restart', RestartSession))
+  // ── PRDCT-4123: which work a session does ──
+  .add(HttpCqrs.commandEndpoint('changeWork', '/sessions/work', ChangeSessionWork))
 
 // ── Clients (lane A, for the shell) ──
 export const clientsGroup = ApiGroup.make('clients')

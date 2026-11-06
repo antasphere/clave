@@ -51,6 +51,12 @@ import { getRegisteredTerminal } from './terminal-registry'
 import { getDraftShadow, type DraftStash } from './draft-shadow'
 import { sanitizeForPaste } from '../../../shared/paste-sanitize'
 import { shareAGroup } from '../../../shared/group-reach'
+import {
+  handOverChange,
+  handOverRequest,
+  setWorkChange,
+  workToolAnswer
+} from '../../../shared/work-tools'
 import { resolveSpawnModes, resolveProfileRef } from './open-session-modes'
 import {
   buildCheckpointProvenance,
@@ -220,6 +226,8 @@ function handleList(payload: { callerSessionId?: string; workspace?: string }): 
       mode: sessionMode(s),
       alive: s.alive,
       agentState: s.agentState ?? null,
+      // Which wave or lane the tab works on, as its record keeps it (PRDCT-4123).
+      work: s.work ?? null,
       // The account the tab runs on (Claude or Codex); the Default when the
       // tab predates accounts or was launched without naming one. Whether
       // that account is about to hit its limit, for an agent to act on.
@@ -1094,7 +1102,7 @@ function resolveTargetSession(ref: string, callerSessionId: string | undefined):
 function assertCanReach(
   callerSessionId: string | undefined,
   target: Session,
-  verb: 'message' | 'read'
+  verb: 'message' | 'read' | 'assign' | 'hand over to'
 ): void {
   // Identity is the token-derived callerSessionId (unforgeable), NOT the
   // caller's presence in THIS window's store: with several windows the caller
@@ -1104,7 +1112,7 @@ function assertCanReach(
   // whatever this store can see.
   if (!callerSessionId) {
     throw new Error(
-      `clave_${verb === 'message' ? 'send_to' : 'read'}_session must be called from inside a Clave agent tab — this request has no tab identity.`
+      `${verb === 'message' ? 'clave_send_to_session' : verb === 'read' ? 'clave_read_session' : verb === 'assign' ? 'clave_set_work' : 'clave_hand_over'} must be called from inside a Clave agent tab — this request has no tab identity.`
     )
   }
   if (callerSessionId === target.id) return
@@ -1126,6 +1134,46 @@ function assertCanReach(
       `Refusing to ${verb} tab "${target.name}": it is not related to yours. You can only reach the tab that opened yours ("parent"), tabs you opened, or tabs in the same group. Put both tabs in one group to allow this.`
     )
   }
+}
+
+/**
+ * The work tools on the window's road (PRDCT-4123), for a call the server
+ * does not serve: the same arguments read the same way (`shared/work-tools`),
+ * this store's reach rule, and the server's command through the preload, so
+ * the change is the server's and every window hears it.
+ */
+async function handleSetWork(payload: Record<string, unknown>): Promise<unknown> {
+  const caller = typeof payload.callerSessionId === 'string' ? payload.callerSessionId : undefined
+  if (!caller)
+    throw new Error(
+      'clave_set_work must be called from inside a Clave agent tab — this request has no tab identity.'
+    )
+  const ref = typeof payload.sessionId === 'string' ? payload.sessionId : 'mine'
+  const target = resolveTargetSession(ref === 'mine' ? caller : ref, caller)
+  assertCanReach(caller, target, 'assign')
+  const callerUnit = useSessionStore.getState().sessions.find((s) => s.id === caller)?.work?.unit
+  const change = setWorkChange(payload, callerUnit)
+  return workToolAnswer(target.id, await window.electronAPI.sessionsChangeWork(target.id, change))
+}
+
+async function handleHandOver(payload: Record<string, unknown>): Promise<unknown> {
+  const caller = typeof payload.callerSessionId === 'string' ? payload.callerSessionId : undefined
+  if (!caller)
+    throw new Error(
+      'clave_hand_over must be called from inside a Clave agent tab — this request has no tab identity.'
+    )
+  const request = handOverRequest(payload)
+  if (request.type !== 'offer')
+    return workToolAnswer(
+      caller,
+      await window.electronAPI.sessionsChangeWork(caller, handOverChange(request))
+    )
+  const successor = resolveTargetSession(request.to, caller)
+  assertCanReach(caller, successor, 'hand over to')
+  return workToolAnswer(
+    caller,
+    await window.electronAPI.sessionsChangeWork(caller, handOverChange(request, successor.id))
+  )
 }
 
 /**
@@ -1553,6 +1601,10 @@ async function execute(command: string, payload: unknown): Promise<unknown> {
       return handleSendToSession(payload as Parameters<typeof handleSendToSession>[0])
     case 'readSession':
       return handleReadSession(payload as Parameters<typeof handleReadSession>[0])
+    case 'setWork':
+      return handleSetWork(payload as Record<string, unknown>)
+    case 'handOver':
+      return handleHandOver(payload as Record<string, unknown>)
     case 'flushLinkedDocument': {
       const p = payload as { sessionId: string; allowConflict?: boolean }
       await flushLinkedDocument(p.sessionId, p.allowConflict)

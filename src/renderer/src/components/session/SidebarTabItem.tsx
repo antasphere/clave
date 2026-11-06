@@ -16,6 +16,10 @@ export interface SidebarTabItemProps {
   onContextMenu: (e: React.MouseEvent) => void
   /** Called when the name is committed after editing */
   onRename: (id: string, newName: string) => void
+  /** False for a row whose name is not its own to edit (a wave or lane entry
+   *  shows its unit's label): no double-click or keyboard rename, and Enter
+   *  activates the row like a click. Defaults to true. */
+  renameable?: boolean
   /** Called when the close button is clicked. If omitted, no close button is shown. */
   onDelete?: () => void
 
@@ -52,6 +56,7 @@ export function SidebarTabItem({
   onClick,
   onContextMenu,
   onRename,
+  renameable = true,
   onDelete,
   icon,
   extraContent,
@@ -78,7 +83,7 @@ export function SidebarTabItem({
     name,
     onCommit: (newName) => onRename(id, newName),
     onEditingDone,
-    forceEditing
+    forceEditing: renameable && forceEditing
   })
 
   const handleClick = useCallback(
@@ -103,7 +108,7 @@ export function SidebarTabItem({
       <button
         onClick={handleClick}
         onContextMenu={onContextMenu}
-        onKeyDown={handleButtonKeyDown}
+        onKeyDown={renameable ? handleButtonKeyDown : undefined}
         title={title}
         data-selected={
           isSelected && (!grouped || (!!rowControl && !groupSelected)) ? 'true' : undefined
@@ -154,7 +159,7 @@ export function SidebarTabItem({
           <span
             data-testid="session-tab-name"
             className="flex-1 min-w-0 text-control font-medium truncate"
-            onDoubleClick={handleDoubleClick}
+            onDoubleClick={renameable ? handleDoubleClick : undefined}
           >
             {name}
           </span>
