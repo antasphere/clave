@@ -42,6 +42,7 @@ import {
 import { CommitBar } from './GitCommitBar'
 import type { GitFileStatus, GitStatusResult } from '../../../../preload/index.d'
 import type { GitRangeDirection } from '../../../../shared/git-range'
+import { useRowState } from './git-row-state'
 
 // ---------------------------------------------------------------------------
 // Per-cwd expanded directory cache — survives RepoSection unmount/remount
@@ -62,51 +63,6 @@ function getExpandedCache(cwd: string): ExpandedCache {
     expandedCacheMap.set(cwd, cache)
   }
   return cache
-}
-
-// ---------------------------------------------------------------------------
-// Per-repo row state — which rows are open and which of their sections
-// (PRDCT-4142). It lives outside the rows: the list is rebuilt whenever the
-// panel's folder changes, and a row that comes back for the same repository
-// opens as it was left, rather than folded.
-// ---------------------------------------------------------------------------
-
-interface RowState {
-  expanded: boolean
-  incoming: boolean
-  outgoing: boolean
-  base: boolean
-  worktree: boolean
-  changes: boolean
-}
-
-// A repo row starts CLOSED, whatever it is carrying (see MultiRepoSection);
-// the local changes are what it unfolds INTO once opened.
-const ROW_DEFAULT: RowState = {
-  expanded: false,
-  incoming: false,
-  outgoing: false,
-  base: false,
-  worktree: false,
-  changes: true
-}
-const rowStateCache = new Map<string, RowState>()
-
-function useRowState(
-  repoPath: string
-): [RowState, (patch: Partial<RowState> | ((prev: RowState) => Partial<RowState>)) => void] {
-  const [state, setState] = useState<RowState>(() => rowStateCache.get(repoPath) ?? ROW_DEFAULT)
-  const update = useCallback(
-    (patch: Partial<RowState> | ((prev: RowState) => Partial<RowState>)) => {
-      setState((prev) => {
-        const next = { ...prev, ...(typeof patch === 'function' ? patch(prev) : patch) }
-        rowStateCache.set(repoPath, next)
-        return next
-      })
-    },
-    [repoPath]
-  )
-  return [state, update]
 }
 
 // The last file list of each range section (incoming, outgoing, a worktree's
@@ -195,6 +151,15 @@ function RangeSection({
     const cached = rangeFilesCache.get(rangeKey)
     return cached ? collectAllDirPaths(compactTree(buildGitTree(cached))) : new Set()
   })
+  // A folder change under a mounted section: show that folder's last list
+  // at once, during render, so no frame shows the previous folder's files.
+  const [seenKey, setSeenKey] = useState(rangeKey)
+  if (seenKey !== rangeKey) {
+    setSeenKey(rangeKey)
+    const cached = rangeFilesCache.get(rangeKey) ?? null
+    setFiles(cached)
+    setTreeExpanded(cached ? collectAllDirPaths(compactTree(buildGitTree(cached))) : new Set())
+  }
 
   useEffect(() => {
     let cancelled = false
@@ -1914,8 +1879,15 @@ export function MultiRepoGitPanel({
   refreshing = false,
   lastUpdated = null
 }: {
-  /** A row's status is `null` while its first reading is on its way (PRDCT-4142). */
-  repos: Array<{ name: string; path: string; status: GitStatusResult | null }>
+  /** A row's status is `null` while its first reading is on its way (PRDCT-4142);
+   *  `worktreeOf` is what discovery read from a linked worktree's `.git` file,
+   *  so the row hangs under its source before its status says the same. */
+  repos: Array<{
+    name: string
+    path: string
+    status: GitStatusResult | null
+    worktreeOf?: string | null
+  }>
   rootPath?: string | null
   /** The panel's folder — the tree's root. Falls back to a flat list when null. */
   basePath?: string | null
@@ -1984,7 +1956,7 @@ export function MultiRepoGitPanel({
     () =>
       nestedRepos.map((r) => ({
         ...r,
-        worktreeOf: worktreeSourcePath(r.status?.worktree?.of, roots),
+        worktreeOf: worktreeSourcePath(r.status?.worktree?.of ?? r.worktreeOf, roots),
         createdAt: r.status?.worktree?.createdAt ?? null
       })),
     [nestedRepos, roots]

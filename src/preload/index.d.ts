@@ -1155,7 +1155,10 @@ export interface ElectronAPI extends FleetDesktopAPI {
   discoverGitRepos: (
     cwd: string,
     force?: boolean
-  ) => Promise<{ repos: Array<{ name: string; path: string }>; truncated: boolean }>
+  ) => Promise<{
+    repos: Array<{ name: string; path: string; worktreeOf?: string | null }>
+    truncated: boolean
+  }>
   gitStage: (cwd: string, files: string[]) => Promise<void>
   gitUnstage: (cwd: string, files: string[]) => Promise<void>
   gitCommit: (cwd: string, message: string) => Promise<GitCommitResult>

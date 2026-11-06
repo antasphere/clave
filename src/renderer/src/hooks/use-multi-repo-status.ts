@@ -19,7 +19,15 @@ import {
 /** One row of the list. `status` is `null` while the row's first reading is
  *  on its way: the row is there by name, in its place, and its badges land
  *  when git answers (PRDCT-4142). */
-export type RepoEntry = { name: string; path: string; status: GitStatusResult | null }
+export type RepoEntry = {
+  name: string
+  path: string
+  status: GitStatusResult | null
+  /** The source repository of a linked worktree, as discovery read it from
+   *  the worktree's `.git` file: the row hangs under its source from the
+   *  first frame, before its status says the same. */
+  worktreeOf: string | null
+}
 
 export type MultiRepoMode =
   | { mode: 'single' }
@@ -48,6 +56,14 @@ interface CachedReading {
   hasNestedRepos: boolean
 }
 const readingCache = new Map<string, CachedReading>()
+
+/** How long the first reading of a repository folder waits for discovery
+ *  before showing the single-repo panel. A discovery that answers within it
+ *  (the usual case: a plain repository, or a folder discovery has cached)
+ *  publishes the final shape directly, so a folder that turns out to hold
+ *  nested repositories is not drawn as a single repository and then as a
+ *  list. A slower discovery still gets the root on screen first. */
+export const FIRST_READ_GRACE_MS = 150
 
 export function useMultiRepoStatus(
   cwd: string | null,
@@ -173,10 +189,25 @@ export function useMultiRepoStatus(
           // row's status refreshed in place.
           primeGitStatus(cwd, status)
           const prev = readingCache.get(cwd)?.result
-          if (!prev || prev.mode === 'loading') publish({ mode: 'single' })
-          else if (prev.mode === 'multi') publish(mergeStatuses(prev, [{ path: cwd, status }]))
+          const discovery = window.electronAPI.discoverGitRepos(cwd, force)
+          if (prev?.mode === 'multi') {
+            publish(mergeStatuses(prev, [{ path: cwd, status }]))
+          } else if (!prev || prev.mode === 'loading') {
+            // A discovery that answers within the grace skips this stage.
+            const answered = await Promise.race([
+              discovery.then(
+                () => true,
+                () => true
+              ),
+              new Promise<boolean>((resolve) =>
+                setTimeout(() => resolve(false), FIRST_READ_GRACE_MS)
+              )
+            ])
+            if (cwdRef.current !== cwd) return
+            if (!answered) publish({ mode: 'single' })
+          }
 
-          const { repos: nested } = await window.electronAPI.discoverGitRepos(cwd, force)
+          const { repos: nested } = await discovery
           if (cwdRef.current !== cwd) return
 
           setHasNestedRepos(nested.length > 0)
@@ -195,11 +226,12 @@ export function useMultiRepoStatus(
           publish({
             mode: 'multi',
             repos: [
-              { name: rootName, path: cwd, status },
+              { name: rootName, path: cwd, status, worktreeOf: null },
               ...nested.map((r) => ({
                 name: r.name,
                 path: r.path,
-                status: was.get(r.path) ?? null
+                status: was.get(r.path) ?? null,
+                worktreeOf: r.worktreeOf ?? null
               }))
             ],
             truncated: false,
@@ -231,7 +263,8 @@ export function useMultiRepoStatus(
           repos: discovered.map((r) => ({
             name: r.name,
             path: r.path,
-            status: was.get(r.path) ?? null
+            status: was.get(r.path) ?? null,
+            worktreeOf: r.worktreeOf ?? null
           })),
           truncated,
           live

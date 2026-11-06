@@ -73,6 +73,8 @@ function deferred<T>(): {
   return { promise, resolve, reject }
 }
 const settle = (): Promise<void> => new Promise((r) => setTimeout(r, 0))
+/** Past the grace the first reading gives discovery before showing the root alone. */
+const pastGrace = (): Promise<void> => new Promise((r) => setTimeout(r, 220))
 
 let api: {
   getGitStatus: ReturnType<typeof vi.fn>
@@ -155,9 +157,11 @@ it('publishes in stages: the root as soon as git answers, every row on discovery
   const whole = read()
   await settle()
   // Stage 1: the root is a repository; the single-repo panel can open on it,
-  // primed with the status in hand.
-  expect(render().result).toEqual({ mode: 'single' })
+  // primed with the status in hand, once discovery has had its grace.
   expect(primeGitStatus).toHaveBeenCalledWith(root, repoStatus('main'))
+  expect(render().result).toEqual({ mode: 'loading' })
+  await pastGrace()
+  expect(render().result).toEqual({ mode: 'single' })
   expect(render().lastUpdated).toBeNull()
 
   // Stage 2: discovery names the rows, in its order, each without a status.
@@ -172,9 +176,9 @@ it('publishes in stages: the root as soon as git answers, every row on discovery
   expect(listed.result).toEqual({
     mode: 'multi',
     repos: [
-      { name: 'repo', path: root, status: repoStatus('main') },
-      { name: 'child', path: CHILD, status: null },
-      { name: 'other', path: OTHER, status: null }
+      { name: 'repo', path: root, status: repoStatus('main'), worktreeOf: null },
+      { name: 'child', path: CHILD, status: null, worktreeOf: null },
+      { name: 'other', path: OTHER, status: null, worktreeOf: null }
     ],
     truncated: false,
     live: false
@@ -206,6 +210,82 @@ it('publishes in stages: the root as soon as git answers, every row on discovery
   expect(full.lastUpdated).toBe(clock)
 })
 
+it('skips the single-repo stage when discovery answers within the grace', async () => {
+  const child = deferred<{ isRepo: true; branch: string }>()
+  api.getGitStatus.mockImplementation((path: string) =>
+    path === root ? Promise.resolve(repoStatus('main')) : child.promise
+  )
+  const seen: string[] = []
+  const whole = read()
+  // Discovery answers at once (a cached scan): the list is the first thing
+  // published, never the single-repo panel.
+  for (let i = 0; i < 5; i++) {
+    await settle()
+    seen.push(render().result.mode)
+  }
+  await pastGrace()
+  seen.push(render().result.mode)
+  expect(seen).not.toContain('single')
+  expect(render().result.mode).toBe('multi')
+  child.resolve(repoStatus('child-main'))
+  await expect(whole).resolves.toBeUndefined()
+})
+
+it('writes a late status of a folder the panel has left into neither list nor cache', async () => {
+  // Folder A lists one child; folder B lists the same child path and another.
+  // A's child status lands after the move to B: B's list and A's cache must
+  // both be as if it never came.
+  const aChild = deferred<{ isRepo: true; branch: string }>()
+  api.getGitStatus.mockImplementation((path: string) =>
+    path === root ? Promise.resolve({ isRepo: false }) : aChild.promise
+  )
+  const previous = read()
+  await settle()
+  expect(render().result.mode).toBe('multi')
+  const nextRoot = resourceKey('file', 'server', '/other')
+  api.getGitStatus.mockImplementation((path: string) =>
+    path === nextRoot ? Promise.resolve({ isRepo: false }) : Promise.resolve(repoStatus('b-main'))
+  )
+  api.discoverGitRepos.mockResolvedValue({
+    repos: [
+      { name: 'child', path: CHILD },
+      { name: 'other', path: OTHER }
+    ],
+    truncated: false
+  })
+  await expect(read(nextRoot)).resolves.toBeUndefined()
+  const b = render(nextRoot).result
+  expect(b.mode === 'multi' && b.repos.map((r) => r.status?.branch)).toEqual(['b-main', 'b-main'])
+  aChild.resolve(repoStatus('a-main'))
+  await expect(previous).resolves.toBeUndefined()
+  const bAfter = render(nextRoot).result
+  expect(bAfter).toBe(b)
+  // Back on A: its cache holds its own one-row list, the child still unread.
+  clock += 10_000
+  const cachedA = render(root)
+  hooks.effects[0]()
+  const a = render(root).result
+  expect(a.mode === 'multi' && a.repos.map((r) => [r.path, r.status])).toEqual([[CHILD, null]])
+  expect(cachedA.result.mode).toBe('multi')
+})
+
+it('carries the worktree source discovery read, so a worktree row hangs under its repository before its status', async () => {
+  api.getGitStatus.mockResolvedValue({ isRepo: false })
+  api.discoverGitRepos.mockResolvedValue({
+    repos: [
+      { name: 'app', path: '/repo/app' },
+      { name: 'wt-lane', path: '/repo/wt-lane', worktreeOf: '/repo/app' }
+    ],
+    truncated: false
+  })
+  await expect(read()).resolves.toBeUndefined()
+  const result = render().result
+  expect(result.mode === 'multi' && result.repos.map((r) => [r.name, r.worktreeOf])).toEqual([
+    ['app', null],
+    ['wt-lane', '/repo/app']
+  ])
+})
+
 it('lists the rows of a folder that is not itself a repository before any status is read', async () => {
   const child = deferred<{ isRepo: true; branch: string }>()
   api.getGitStatus.mockImplementation((path: string) =>
@@ -215,7 +295,7 @@ it('lists the rows of a folder that is not itself a repository before any status
   await settle()
   expect(render().result).toEqual({
     mode: 'multi',
-    repos: [{ name: 'child', path: CHILD, status: null }],
+    repos: [{ name: 'child', path: CHILD, status: null, worktreeOf: null }],
     truncated: undefined,
     live: false
   })

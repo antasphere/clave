@@ -103,6 +103,68 @@ function getParentPaths(fullPath: string): { path: string; name: string }[] {
 }
 
 /**
+ * One pane of the side panel (PRDCT-4142). Every pane visited stays mounted;
+ * an inactive one is hidden in place with its layout box kept (.panel-pane in
+ * system.css). The box a hidden pane gets is the host's, whose height follows
+ * the active tab's chrome (the Git tab has a controls row the others lack), so
+ * a scroller near its bottom would be clamped while hidden and come back short
+ * of where it was left. The pane therefore remembers every scroll position its
+ * descendants reach while it is active, and puts them back the moment it is
+ * shown again, before the frame is painted.
+ */
+/** Put every remembered scroller back where it was; forget the ones gone. */
+function restoreScrolls(scrolls: Map<Element, number>): void {
+  for (const [el, top] of scrolls) {
+    if (!el.isConnected) {
+      scrolls.delete(el)
+      continue
+    }
+    if (el.scrollTop !== top) el.scrollTop = top
+  }
+}
+
+function KeepAlivePane({
+  pane,
+  active,
+  children
+}: {
+  pane: string
+  active: boolean
+  children: React.ReactNode
+}): React.JSX.Element {
+  const ref = useRef<HTMLDivElement>(null)
+  const scrolls = useRef(new Map<Element, number>())
+  const activeRef = useRef(active)
+  useEffect(() => {
+    const el = ref.current
+    if (!el) return
+    // Captured, so every scroller inside the pane reports here; ignored while
+    // hidden, so the clamp that follows the hide overwrites nothing.
+    const onScroll = (e: Event): void => {
+      if (!activeRef.current) return
+      const target = e.target
+      if (target instanceof Element) scrolls.current.set(target, target.scrollTop)
+    }
+    el.addEventListener('scroll', onScroll, true)
+    return () => el.removeEventListener('scroll', onScroll, true)
+  }, [])
+  useLayoutEffect(() => {
+    activeRef.current = active
+    if (active) restoreScrolls(scrolls.current)
+  }, [active])
+  return (
+    <div
+      ref={ref}
+      className="panel-pane"
+      data-pane={pane}
+      data-active={active ? 'true' : undefined}
+    >
+      {children}
+    </div>
+  )
+}
+
+/**
  * The panel, with the batch-op context around it.
  *
  * The provider has to sit ABOVE the body rather than inside its JSX: the body
@@ -990,18 +1052,10 @@ function SidePanelBody(): React.JSX.Element {
         )
       ) : (
         <div className="panel-panes">
-          <div
-            className="panel-pane"
-            data-pane="files"
-            data-active={isFilesTabActive ? 'true' : undefined}
-          >
+          <KeepAlivePane pane="files" active={isFilesTabActive}>
             <FileTree cwd={gitCwd} onNavigateToFolder={handleNavigateToFolder} />
-          </div>
-          <div
-            className="panel-pane"
-            data-pane="git"
-            data-active={isGitTabActive ? 'true' : undefined}
-          >
+          </KeepAlivePane>
+          <KeepAlivePane pane="git" active={isGitTabActive}>
             {multiRepo.result.mode === 'multi' ? (
               <MultiRepoGitPanel
                 repos={multiRepo.result.repos}
@@ -1037,16 +1091,15 @@ function SidePanelBody(): React.JSX.Element {
                 showChanges={showChangesSingle}
               />
             )}
-          </div>
+          </KeepAlivePane>
           {visitedPlugins.map((panel) => {
             const active =
               pluginTab?.pluginId === panel.pluginId && pluginTab?.panelId === panel.panelId
             return (
-              <div
+              <KeepAlivePane
                 key={`${panel.pluginId}:${panel.panelId}`}
-                className="panel-pane"
-                data-pane={`plugin:${panel.panelId}`}
-                data-active={active ? 'true' : undefined}
+                pane={`plugin:${panel.panelId}`}
+                active={active}
               >
                 <div
                   className="flex flex-col flex-1 min-h-0"
@@ -1060,7 +1113,7 @@ function SidePanelBody(): React.JSX.Element {
                     generation={panel.generation}
                   />
                 </div>
-              </div>
+              </KeepAlivePane>
             )
           })}
           {effectiveTab === 'help' && !pluginTab && (

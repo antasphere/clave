@@ -11,8 +11,14 @@
  *
  * The proof is on the DOM: the very elements of each pane are the same
  * objects after the round trip (a remount would make new ones), the open row
- * is still open in the FIRST frame after the switch, the comment is still in
+ * is still open in the FIRST frame after the switch, the list is scrolled
+ * where it was left, the log view shows no spinner, the comment is still in
  * the composer, and the `gh` stub was asked for the pull request exactly once.
+ *
+ * The first open of the Git tab is read in stages: every row is there by name
+ * before any status, a worktree already under its repository, in the order
+ * that holds once the statuses land; a row clicked while still reading opens
+ * without harm. `git status` is slowed on the PATH while that is observed.
  *
  * `/private/tmp` rather than `/tmp`, so git's resolved repo root matches the
  * discovered path. `gh` on the PATH is a stub answering from the fixtures and
@@ -35,8 +41,13 @@ const DIR = userDataDir('side-panel-keep-alive-data')
 const ROOT = fixturePath('side-panel-keep-alive', { real: true })
 const APP = path.join(ROOT, 'app')
 const LIB = path.join(ROOT, 'lib')
+const WT = path.join(ROOT, 'wt-lane')
+// Enough rows to overflow the list at the window height set below.
+const MORE = Array.from({ length: 38 }, (_, i) => `r${String(i + 3).padStart(2, '0')}`)
 const BIN = fixturePath('side-panel-keep-alive-bin')
 const CALLS = `${BIN}/gh-calls.jsonl`
+const SLOW_STATUS = `${BIN}/slow-status`
+const REAL_GIT = '/usr/bin/git'
 const PULL_URL = 'https://github.com/acme/widgets/pull/42'
 const COMMENT = 'Half a thought, left in the composer'
 const WS = {
@@ -56,13 +67,14 @@ const commit = (cwd, file, message) => {
 
 function seed() {
   rmSync(ROOT, { recursive: true, force: true })
-  for (const repo of [APP, LIB]) {
+  for (const repo of [APP, LIB, ...MORE.map((name) => path.join(ROOT, name))]) {
     mkdirSync(repo, { recursive: true })
     git(repo, 'init', '-q', '-b', 'main')
     commit(repo, 'README.md', `seed ${path.basename(repo)}`)
     // Dirty, so an open row has a file list to show.
     writeFileSync(path.join(repo, 'notes.md'), 'work in progress\n')
   }
+  git(APP, 'worktree', 'add', '-q', WT, '-b', 'lane', 'main')
 }
 
 function writeStubs() {
@@ -74,6 +86,15 @@ function writeStubs() {
     '#!/bin/sh\nif [ "$1" = "-lic" ]; then env -0; else shift; exec /bin/bash --noprofile --norc "$@"; fi\n',
     { mode: 0o755 }
   )
+  // git itself, with `status` held back while the marker file exists: long
+  // enough for the rows to be seen before their statuses, short enough for
+  // forty of them to land within the run.
+  writeFileSync(
+    `${BIN}/git`,
+    `#!/bin/sh\ncase " $* " in *" status "*) [ -f "${SLOW_STATUS}" ] && sleep 0.6 ;; esac\nexec ${REAL_GIT} "$@"\n`,
+    { mode: 0o755 }
+  )
+  writeFileSync(SLOW_STATUS, '')
   const fixture = (name) => JSON.stringify(path.join(REPO, 'tests/e2e/fixtures/github', name))
   writeFileSync(
     `${BIN}/gh`,
@@ -130,6 +151,19 @@ const openTabFirstFrame = (win, label, what) =>
             )
             return
           }
+          if (what === 'git-list') {
+            const pane = document.querySelector('[data-pane="git"]')
+            const text = pane?.textContent ?? ''
+            resolve({
+              appOpen:
+                document.querySelector('[data-tree-kind="repo"][data-tree-name="app"]')?.dataset
+                  .treeCollapsed === undefined,
+              scrollTop: pane?.querySelector('.git-repo-list')?.scrollTop ?? null,
+              logLoading: text.includes('Loading history'),
+              logShown: text.includes('seed app')
+            })
+            return
+          }
           resolve({
             title: document.querySelector('[data-testid="pr-title"]')?.textContent ?? null,
             loading: document.querySelector('.pr-loading') !== null,
@@ -140,10 +174,30 @@ const openTabFirstFrame = (win, label, what) =>
     [label, what]
   )
 
-const rowNames = (win) =>
+/** Every repository and worktree row, in the list's order, with what it is. */
+const rows = (win) =>
   win.evaluate(() =>
-    [...document.querySelectorAll('[data-tree-kind="repo"]')].map((el) => el.dataset.treeName)
+    [...document.querySelectorAll('[data-tree-kind="repo"], [data-tree-kind="worktree"]')].map(
+      (el) => ({
+        name: el.dataset.treeName,
+        kind: el.dataset.treeKind,
+        of: el.dataset.treeWorktreeOf ?? null,
+        reading: el.dataset.treeReading === 'true',
+        open: el.dataset.treeCollapsed === undefined
+      })
+    )
   )
+const gitList = (win) =>
+  win.evaluate(() => {
+    const list = document.querySelector('[data-pane="git"] .git-repo-list')
+    return list
+      ? {
+          scrollTop: list.scrollTop,
+          scrollHeight: list.scrollHeight,
+          clientHeight: list.clientHeight
+        }
+      : null
+  })
 const appRowOpen = (win) =>
   win.evaluate(
     () =>
@@ -194,16 +248,80 @@ export async function run(t) {
       initial
     )
 
-    // Git: the two repos, one of them opened.
+    // A window short enough for forty rows to overflow the list.
+    await app.evaluate(({ BrowserWindow }) => {
+      BrowserWindow.getAllWindows()[0].setContentSize(1100, 560)
+    })
+    await win.waitForTimeout(300)
+
+    // Git, read in stages: the rows by name before any status, the worktree
+    // already under its repository, a row clicked while reading.
     await openTab(win, 'Git')
-    await until(async () => (await rowNames(win)).length === 2)
-    await until(
-      async () =>
-        (await win.evaluate(() => document.querySelectorAll('[data-tree-reading]').length)) === 0
+    const total = MORE.length + 3 // app, lib, the worktree, and the rest
+    await until(async () => (await rows(win)).length === total, { tries: 80, gapMs: 250 })
+    const early = await rows(win)
+    t.check(
+      'every row is listed by name before its status has been read',
+      early.length === total && early.some((r) => r.reading),
+      { rows: early.length, reading: early.filter((r) => r.reading).length }
     )
+    const worktreeEarly = early.find((r) => r.name === 'wt-lane')
+    t.check(
+      'the worktree hangs under its repository from the first frame, before its status',
+      worktreeEarly?.kind === 'worktree' &&
+        early.findIndex((r) => r.name === 'app') + 1 === early.indexOf(worktreeEarly),
+      worktreeEarly
+    )
+    const readingRow = early.find((r) => r.reading && r.kind === 'repo' && r.name.startsWith('r'))
+    if (readingRow) {
+      await win.click(`[data-tree-kind="repo"][data-tree-name="${readingRow.name}"]`)
+      await win.waitForTimeout(300)
+      const afterClick = await rows(win)
+      t.check(
+        'a row clicked while still reading opens without harm to the list',
+        afterClick.length === total &&
+          afterClick.find((r) => r.name === readingRow.name)?.open === true,
+        { clicked: readingRow.name, rows: afterClick.length }
+      )
+    } else {
+      t.check('a row was still reading when the list appeared', false, early)
+    }
+    await until(async () => (await rows(win)).every((r) => !r.reading), { tries: 120, gapMs: 250 })
+    rmSync(SLOW_STATUS, { force: true })
+    const settled = await rows(win)
+    t.check(
+      'the rows keep the order they appeared in once every status has landed',
+      settled.map((r) => r.name).join(',') === early.map((r) => r.name).join(','),
+      { early: early.map((r) => r.name).join(','), settled: settled.map((r) => r.name).join(',') }
+    )
+    if (readingRow) {
+      const opened = await win.evaluate(
+        (name) =>
+          document
+            .querySelector(`[data-tree-kind="repo"][data-tree-name="${name}"]`)
+            ?.parentElement?.textContent.includes('notes.md') ?? false,
+        readingRow.name
+      )
+      t.check('and the row opened while reading shows its files once its status landed', opened)
+    }
+
+    // The app row open, in log mode, and the list scrolled to its end.
     await win.click('[data-tree-kind="repo"][data-tree-name="app"]')
     await until(() => appRowOpen(win))
     t.check('the app row is open on the git tab', await appRowOpen(win))
+    await win.click('[data-panel-bar="git"] button[aria-label="Commit log"]')
+    await until(async () =>
+      win.evaluate(() => {
+        const text = document.querySelector('[data-pane="git"]')?.textContent ?? ''
+        return text.includes('seed app') && !text.includes('Loading history')
+      })
+    )
+    await win.evaluate(() => {
+      const list = document.querySelector('[data-pane="git"] .git-repo-list')
+      list.scrollTop = list.scrollHeight
+    })
+    const scrolledTo = await gitList(win)
+    t.check('the list overflows and was scrolled to its end', scrolledTo.scrollTop > 0, scrolledTo)
 
     // GitHub: a pull request pasted into the empty state, a comment started.
     await until(async () =>
@@ -238,11 +356,26 @@ export async function run(t) {
       afterFiles
     )
 
-    // Git again: the app row is open in the FIRST frame after the switch.
-    const gitFirstFrame = await openTabFirstFrame(win, 'Git', 'app-row-open')
-    t.check('back on Git, the app row is still open in the first frame', gitFirstFrame === true, {
+    // Git again: the app row is open, its log shown without a spinner and the
+    // list scrolled where it was left, all in the FIRST frame after the switch.
+    const gitFirstFrame = await openTabFirstFrame(win, 'Git', 'git-list')
+    t.check(
+      'back on Git, the app row is still open in the first frame',
+      gitFirstFrame.appOpen === true,
+      {
+        gitFirstFrame
+      }
+    )
+    t.check(
+      'the log view is on screen in the first frame with no spinner',
+      gitFirstFrame.logShown && !gitFirstFrame.logLoading,
       gitFirstFrame
-    })
+    )
+    t.check(
+      'the list is scrolled where it was left',
+      gitFirstFrame.scrollTop === scrolledTo.scrollTop,
+      { left: scrolledTo.scrollTop, back: gitFirstFrame.scrollTop }
+    )
 
     // GitHub again: the record is on screen at once, the comment intact, no new read.
     const prFirstFrame = await openTabFirstFrame(win, 'GitHub', 'pr-state')
