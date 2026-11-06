@@ -25,7 +25,7 @@
  */
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import {
   launchApp,
@@ -47,6 +47,13 @@ const WS = { id: 'routines-ws', name: 'Routines', rootDir: ROOT, profileFile: CL
 // The server's data directory: the app's own in-process, its child's otherwise.
 const DATA = serverMode() === 'in-process' ? DIR : separateServerDataDir(DIR)
 const MINUTE = 60_000
+const HOUR = 60 * MINUTE
+// Hourly, at the minute half an hour from now: the latest occurrence is always
+// about thirty minutes old, so a run for it is a catch-up, never on time; and
+// nothing fires by itself during the test. The manual routines never come.
+const MINUTE_OF_HOUR = (new Date().getMinutes() + 30) % 60
+const HOURLY = `${MINUTE_OF_HOUR} * * * *`
+const NEVER = '0 0 31 2 *'
 
 const key = (name) => `${CLAVE}::${name}`
 const hashKey = (k) => createHash('sha256').update(k).digest('hex').slice(0, 24)
@@ -92,7 +99,7 @@ function template(name) {
 
 const routine = (name, mode, extra = {}) => ({
   name,
-  schedule: '* * * * *',
+  schedule: NEVER,
   prompt: `ROUTINE-MODE:${mode} Check the machine at @root_path. {{extra}}`,
   params: { extra: 'Be brief.' },
   model: 'fixture-model',
@@ -119,8 +126,8 @@ function seedFixture() {
           sessions: [],
           terminals: [],
           routines: [
-            routine('Workspace health', 'ok'),
-            routine('Claimed elsewhere', 'ok'),
+            routine('Workspace health', 'ok', { schedule: HOURLY }),
+            routine('Claimed elsewhere', 'ok', { schedule: HOURLY }),
             routine('Silent', 'silent'),
             routine('Retry', 'retry'),
             routine('Team job', 'ok', { scope: 'team' })
@@ -153,7 +160,7 @@ const sid = at('--session-id') || at('--resume');
 const cfgPath = at('--mcp-config');
 let url = null, token = null;
 try { const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf8')); url = cfg.mcpServers.clave.url; token = cfg.mcpServers.clave.headers.Authorization.replace('Bearer ', '') } catch {}
-fs.appendFileSync(LOG, JSON.stringify({ kind: 'spawn', sid, argv, cwd: process.cwd(), hasMcp: !!url, pluginDir: at('--plugin-dir'), systemPrompt: at('--append-system-prompt'), model: at('--model'), dangerous: argv.includes('--dangerously-skip-permissions'), resume: at('--resume') }) + '\\n');
+fs.appendFileSync(LOG, JSON.stringify({ kind: 'spawn', sid, argv, cwd: fs.realpathSync(process.cwd()), hasMcp: !!url, pluginDir: at('--plugin-dir'), systemPrompt: at('--append-system-prompt'), model: at('--model'), dangerous: argv.includes('--dangerously-skip-permissions') || at('--permission-mode') === 'bypassPermissions', resume: at('--resume') }) + '\\n');
 process.on('SIGTERM', () => process.exit(0));
 const emit = (f) => process.stdout.write(JSON.stringify(f) + '\\n');
 let rpc = 0;
@@ -211,7 +218,7 @@ function seedClock(names, agoMs) {
     doc.routines[key(name)] = {
       ...state,
       lastConsideredAt: Date.now() - agoMs,
-      schedule: '* * * * *',
+      schedule: HOURLY,
       lastSeenAt: Date.now()
     }
   }
@@ -223,8 +230,9 @@ function seedClock(names, agoMs) {
 function seedClaims(name, fromMs, toMs) {
   const folder = path.join(DATA, 'routine-claims', hashKey(key(name)))
   mkdirSync(folder, { recursive: true })
-  const first = Math.floor(fromMs / MINUTE) * MINUTE
-  for (let t = first; t <= toMs; t += MINUTE)
+  const start = new Date(fromMs)
+  start.setMinutes(MINUTE_OF_HOUR, 0, 0)
+  for (let t = start.getTime(); t <= toMs; t += HOUR)
     writeFileSync(
       path.join(folder, `${t}.json`),
       JSON.stringify({
@@ -252,8 +260,8 @@ export async function run(t) {
   seedTrustedRoots(DIR, [ROOT])
   // Ten minutes of missed occurrences for the two scheduled routines; the
   // claimed one has every occurrence taken by another server already.
-  seedClock(['Workspace health', 'Claimed elsewhere'], 10 * MINUTE)
-  seedClaims('Claimed elsewhere', Date.now() - 12 * MINUTE, Date.now() + 3 * MINUTE)
+  seedClock(['Workspace health', 'Claimed elsewhere'], 10 * HOUR)
+  seedClaims('Claimed elsewhere', Date.now() - 12 * HOUR, Date.now() + 3 * HOUR)
 
   const env = { SHELL: path.join(BIN, 'bash'), PATH: `${BIN}:${process.env.PATH}` }
   let { app, win, fixture } = await launchApp(DIR, { env })
@@ -296,9 +304,13 @@ export async function run(t) {
       /clave-routine:run/.test(spawn?.systemPrompt ?? ''),
       spawn?.systemPrompt
     )
-    t.check('permissions were off as declared', spawn?.dangerous === true, spawn)
+    t.check(
+      'permissions were off as declared (the chat form takes the bypass mode)',
+      spawn?.dangerous === true,
+      spawn
+    )
     t.equal('the model flag is the declared one', spawn?.model, 'fixture-model')
-    t.equal('the run worked in the routine cwd', spawn?.cwd, ROOT)
+    t.equal('the run worked in the routine cwd', spawn?.cwd, realpathSync(ROOT))
     const message = log().find((e) => e.kind === 'message' && e.sid === spawn?.sid)
     t.check(
       'the first message invokes the contract skill with the facts',
@@ -352,7 +364,7 @@ export async function run(t) {
     )
     t.check(
       'the panel names the schedule in words',
-      /every minute/.test(
+      /every hour at minute/.test(
         await panel.locator('[data-testid="routine-panel-schedule"]').textContent()
       )
     )
@@ -371,11 +383,16 @@ export async function run(t) {
       { tries: 60, gapMs: 500 }
     )
     t.check('the Discussion toggle mounts the chat view inside the panel', !!discussion)
-    const resumed = log().filter((e) => e.kind === 'spawn' && e.resume)
+    // The discussion is a new process on the run's own conversation id: resumed
+    // when the transcript exists, started again under the same id here (the
+    // fixture writes no transcript); either way the second spawn of that id.
+    const sameConversation = log().filter(
+      (e) => e.kind === 'spawn' && e.sid === first[0].providerSessionId
+    )
     t.check(
-      "the discussion resumed the run's conversation",
-      resumed.some((e) => e.resume === first[0].providerSessionId),
-      resumed
+      "the discussion opened the run's conversation again",
+      sameConversation.length >= 2,
+      sameConversation.map((e) => ({ resume: e.resume, argv: e.argv.slice(0, 2) }))
     )
     await win.keyboard.press('Escape')
 
@@ -455,8 +472,30 @@ export async function run(t) {
     await app.close()
   }
 
-  // ── 7. A relaunch with a missed occurrence catches up exactly once more ──
-  seedClock(['Workspace health'], 10 * MINUTE)
+  // ── 7a. A relaunch inside the same occurrence runs nothing twice ──
+  // The quit left the clock ten hours back again; the latest occurrence is
+  // the one the first life already claimed, so the claim holds and the first
+  // tick skips it: a quit and a relaunch within the hour never double a run.
+  seedClock(['Workspace health'], 10 * HOUR)
+  ;({ app, win, fixture } = await launchApp(DIR, { env }))
+  try {
+    await until(async () => (await listRoutines(fixture)).routines.length > 0, { tries: 120 })
+    await fixture.evaluate(async () => globalThis.__claveE2E.routines.tick())
+    await sleep(1000)
+    const same = await runsOf(fixture, 'Workspace health')
+    t.equal('a relaunch inside the claimed occurrence adds no run', same.length, 1)
+  } finally {
+    await app.close()
+  }
+
+  // ── 7b. A relaunch once a new occurrence is due catches up exactly once ──
+  // The hour passing is stood in for by the previous claims going (an
+  // occurrence of the next hour has no claim yet); the clock is ten hours back.
+  rmSync(path.join(DATA, 'routine-claims', hashKey(key('Workspace health'))), {
+    recursive: true,
+    force: true
+  })
+  seedClock(['Workspace health'], 10 * HOUR)
   ;({ app, win, fixture } = await launchApp(DIR, { env }))
   try {
     const after = await until(
