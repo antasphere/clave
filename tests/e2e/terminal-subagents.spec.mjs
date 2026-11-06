@@ -103,22 +103,11 @@ export async function run(t) {
     ])
     const row = view.locator('.term-agent').first()
     await until(async () => (await row.innerText()).includes('2 steps'))
-    /** The status line's count of the stack; null when it shows none. */
-    const countLabel = () =>
-      view
-        .locator('.term-status .term-running')
-        .evaluateAll((spans) => spans.map((el) => el.textContent.replace(/^[·\s]+/, ''))[0] ?? null)
-    const oneAgent = await countLabel()
-    t.check(
-      'one subagent on the stack reads "1 agent" on the status line',
-      oneAgent === '1 agent',
-      {
-        count: oneAgent
-      }
-    )
+    const cards = () => view.locator('.term-agent:not([data-leaving])').count()
+    t.check('one subagent is one card under the composer', (await cards()) === 1)
     const seen = await row.evaluate((el) => ({
       text: el.innerText,
-      title: el.querySelector('.term-agent-row').getAttribute('title'),
+      title: el.querySelector('.work-card-open').getAttribute('title'),
       model: el.querySelector('.term-agent-model')?.textContent
     }))
     t.check(
@@ -144,7 +133,7 @@ export async function run(t) {
         parent: 'call-1'
       }
     ])
-    await row.locator('button.term-agent-open').click()
+    await row.locator('button.work-card-open').click()
     const peek = win.locator('.term-peek')
     await peek.waitFor()
     await until(async () =>
@@ -166,7 +155,6 @@ export async function run(t) {
       'the window names the agent, shows its brief, one run of its tools and its words, and no field',
       /Explore/.test(peeked.head) &&
         /Map the views/.test(peeked.head) &&
-        /read-only/i.test(peeked.head) &&
         peeked.brief === 'Map every view the registry knows' &&
         peeked.runs === 1 &&
         peeked.words === 'Two views registered, both native.' &&
@@ -246,63 +234,47 @@ export async function run(t) {
       items.map((el) => ({
         kind: el.getAttribute('data-kind'),
         description: el.querySelector('.term-agent-description')?.textContent,
-        icon: !!el.querySelector('svg.term-agent-icon'),
-        dot: !!el.querySelector('.term-agent-dot'),
+        drawing: el.querySelector('svg.work-drawing')?.getAttribute('data-kind') ?? null,
         model: el.querySelector('.term-agent-model')?.textContent ?? null,
         relaunch: !!el.querySelector('button.term-agent-model')
       }))
     )
-    const mixed = await countLabel()
     t.check(
-      'an agent and a background command read "1 agent · 1 command", never "2 agents"',
-      mixed === '1 agent · 1 command',
-      { count: mixed }
-    )
-    t.check(
-      'a background shell stacks after the agent with the terminal glyph and no model; the agent keeps its relaunch',
+      'a background shell is a card after the agent, with the terminal drawing and no model; the agent keeps its relaunch',
       stack.length === 2 &&
         stack[0].kind === 'agent' &&
+        stack[0].drawing === 'agent' &&
         stack[0].relaunch &&
         stack[1].kind === 'shell' &&
         stack[1].description === 'npm run dev' &&
-        stack[1].icon &&
-        !stack[1].dot &&
+        stack[1].drawing === 'shell' &&
         stack[1].model === null &&
         !stack[1].relaunch,
       stack
     )
-    /* 6. A command the turn waits on is off the stack (PR #256), so it is off
-       the count: the line still reads one agent and one command while the call
-       is in flight. A context reading is the sync point, since nothing on the
-       line is expected to change. */
+    /* 6. A command the turn waits on is off the cards (PR #256): still one
+       agent and one command while the call is in flight. A context reading
+       is the sync point, since nothing on the line is expected to change. */
     await inject(fixture, record.id, [
       { type: 'tool_call', id: 'bash-2', name: 'Bash', input: { command: 'git status -sb' } },
       { type: 'context_usage', used: 13_000, window: null }
     ])
     await until(async () => (await meter.innerText()).includes('13k/1M'))
-    const waited = {
-      count: await countLabel(),
-      rows: await view.locator('.term-agent:not([data-leaving])').count()
-    }
+    const waited = { rows: await cards() }
     await inject(fixture, record.id, [
       { type: 'tool_result', id: 'bash-2', output: '## main' },
       { type: 'context_usage', used: 14_000, window: null }
     ])
     await until(async () => (await meter.innerText()).includes('14k/1M'))
-    const answered = { count: await countLabel(), rows: await view.locator('.term-agent').count() }
+    const answered = { rows: await view.locator('.term-agent').count() }
     t.check(
-      'a command the turn waits on is neither on the stack nor in the count, in flight or answered',
-      waited.count === '1 agent · 1 command' &&
-        waited.rows === 2 &&
-        answered.count === '1 agent · 1 command' &&
-        answered.rows === 2,
+      'a command the turn waits on is not a card, in flight or answered',
+      waited.rows === 2 && answered.rows === 2,
       { waited, answered }
     )
     await inject(fixture, record.id, [{ type: 'background_tasks', tasks: [] }])
     const cleared = await until(async () => (await view.locator('.term-agent').count()) === 0)
-    t.check('an empty list folds both rows away', !!cleared)
-    const none = await countLabel()
-    t.check('and takes the count with it', none === null, { count: none })
+    t.check('an empty list folds both cards away', !!cleared)
   } finally {
     await chat.close()
   }

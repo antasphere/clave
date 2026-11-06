@@ -85,12 +85,6 @@ function PeekBody({
               {compactTokens(agent.contextUsed)} ctx
             </span>
           )}
-          <span
-            className="term-peek-readonly"
-            title="A view of the agent: nothing here is sent to it"
-          >
-            read-only
-          </span>
         </span>
       </header>
       <div className="term-peek-scroll chat-scroll" ref={scroll}>

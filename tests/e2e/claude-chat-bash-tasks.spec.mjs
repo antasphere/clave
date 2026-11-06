@@ -24,8 +24,10 @@ import {
      card for it, now background work;
    - the background card stays past the turn, with no model and no relaunch,
      and leaves at its completion;
-   - the background card reads as its command in every frame painted, though
-     the list names it by a prose description.
+   - the background card reads by the title its call gave it (the Bash
+     `description`, PROSE below) in every frame painted, from its tool_use
+     through its promotion to its end: one text, never the command the list
+     echoes, never a second text for a frame.
    The capture's model (Haiku) gave its background call no Bash
    `description`, so the list named the task by its command. A model that
    writes one (Opus, in the coordinator's live capture) has the list name the
@@ -123,16 +125,11 @@ const readRows = (view) =>
       kind: el.getAttribute('data-kind'),
       background: el.hasAttribute('data-background'),
       description: el.querySelector('.term-agent-description')?.textContent ?? null,
-      icon: !!el.querySelector('svg.term-agent-icon'),
+      icon: el.querySelector('svg.work-drawing')?.getAttribute('data-kind') === 'shell',
       model: el.querySelector('.term-agent-model')?.textContent ?? null,
       relaunch: !!el.querySelector('button.term-agent-model')
     }))
   )
-/** The footer's count of the stack, "1 command"; null when it shows none. */
-const countLabel = (view) =>
-  view
-    .locator('.term-status .term-running')
-    .evaluateAll((spans) => spans.map((el) => el.textContent.replace(/^[·\s]+/, ''))[0] ?? null)
 const describe = (rows) =>
   rows.map((row) => `${row.kind}:${row.description}:${row.background ? 'bg' : 'run'}`).join('|')
 
@@ -174,7 +171,7 @@ export async function run(t) {
       )
 
     /* 1. The background call's tool_use alone: its card, as running work. */
-    const first = await reach('shell:sleep 10 && echo bgc:run')
+    const first = await reach(`shell:${PROSE}:run`)
     t.check(
       'a Bash call asked for the background shows its terminal card from its tool_use, before any background notification',
       !!first && first[0].icon && first[0].model === null && !first[0].relaunch,
@@ -202,36 +199,33 @@ export async function run(t) {
       { tries: 60 }
     )
     const waitedRows = await readRows(view)
-    const waitedCount = await countLabel(view)
     t.check(
-      'the waited-on Bash call shows in the transcript only: no card of its own, and the footer counts one command, no agent',
-      !!inTranscript &&
-        describe(waitedRows) === 'shell:sleep 10 && echo bgc:run' &&
-        waitedCount === '1 command',
-      { inTranscript, rows: describe(waitedRows), count: waitedCount }
+      'the waited-on Bash call shows in the transcript only: no card of its own',
+      !!inTranscript && describe(waitedRows) === `shell:${PROSE}:run`,
+      { inTranscript, rows: describe(waitedRows) }
     )
     // Every render from here to the promotion: the background command's card
     // must never be drawn twice, not even for a frame (a row folding out
     // counts, it is on screen).
-    await view.evaluate((el) => {
+    await view.evaluate((el, prose) => {
       window.__bashMostCards = 0
       new MutationObserver(() => {
         const cards = [...el.querySelectorAll('.term-agent-description')].filter(
-          (d) => d.textContent === 'sleep 10 && echo bgc'
+          (d) => d.textContent === prose
         ).length
         window.__bashMostCards = Math.max(window.__bashMostCards, cards)
       }).observe(el, { subtree: true, childList: true, attributes: true, characterData: true })
-    })
+    }, PROSE)
     gate('waited-call')
 
     /* 3. The background list names the call: the same card, promoted. */
-    const promoted = await reach('shell:sleep 10 && echo bgc:bg')
+    const promoted = await reach(`shell:${PROSE}:bg`)
     await new Promise((resolve) => setTimeout(resolve, 500))
     const mostCards = await view.evaluate(() => window.__bashMostCards)
     t.check(
       'the background list promotes the same card, never drawing a second one, even for a frame',
       !!promoted &&
-        promoted.filter((row) => row.description === 'sleep 10 && echo bgc').length === 1 &&
+        promoted.filter((row) => row.description === PROSE).length === 1 &&
         mostCards === 1,
       { rows: describe(await readRows(view)), mostCards }
     )
@@ -241,9 +235,7 @@ export async function run(t) {
     const ended = await until(
       async () => {
         const rows = await readRows(view)
-        return describe(rows) === 'shell:sleep 10 && echo bgc:bg' && (await state()) === 'done'
-          ? rows
-          : null
+        return describe(rows) === `shell:${PROSE}:bg` && (await state()) === 'done' ? rows : null
       },
       { tries: 60 }
     )
@@ -267,8 +259,8 @@ export async function run(t) {
       return window.__bgTexts
     })
     t.check(
-      'the background card reads as its command in every frame painted, never as the prose the list gives',
-      texts.length === 1 && texts[0] === 'sleep 10 && echo bgc',
+      "the background card reads by its call's title in every frame painted, never a second text",
+      texts.length === 1 && texts[0] === PROSE,
       { texts }
     )
   } finally {

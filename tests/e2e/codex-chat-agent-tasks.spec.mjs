@@ -122,7 +122,7 @@ setInterval(() => {}, 1000);
 const readRows = (view) =>
   view.locator('.term-agent:not([data-leaving])').evaluateAll((items) =>
     items.map((el) => {
-      const icon = el.querySelector('svg.term-agent-icon')
+      const icon = el.querySelector('svg.work-drawing[data-kind="shell"] .work-pulse')
       return {
         kind: el.getAttribute('data-kind'),
         background: el.hasAttribute('data-background'),
@@ -130,10 +130,10 @@ const readRows = (view) =>
         description: el.querySelector('.term-agent-description')?.textContent ?? null,
         model: el.querySelector('.term-agent-model')?.textContent ?? null,
         relaunch: !!el.querySelector('button.term-agent-model'),
-        dot: !!el.querySelector('.term-agent-dot'),
+        dot: !!el.querySelector('svg.work-drawing[data-kind="agent"] .work-pulse'),
         icon: icon
           ? {
-              width: Math.round(icon.getBoundingClientRect().width),
+              kind: icon.closest('svg').getAttribute('data-kind'),
               animation: getComputedStyle(icon).animationName
             }
           : null
@@ -235,7 +235,7 @@ export async function run(t) {
       'the command left running is background work now, behind the glyph breathing like the dot, with no model or type',
       shell?.description === 'sleep 30 && echo bg2' &&
         shell?.background === true &&
-        shell?.icon?.width === 12 &&
+        shell?.icon?.kind === 'shell' &&
         shell?.icon?.animation === 'pulse-dot' &&
         shell?.dot === false &&
         shell?.model === null &&

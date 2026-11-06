@@ -24,6 +24,7 @@ import type {
   SessionInput,
   AgentState,
   CommandOption,
+  HistoryItem,
   SessionEvent
 } from '../../../src/shared/session-model'
 import {
@@ -65,7 +66,15 @@ import { acceptAccountProposal } from '../../../src/renderer/src/lib/account-pol
 import type { HistoryListEntry } from '../../../src/preload/index.d'
 import { ChatCode } from './code'
 import { ContextMeter } from './TerminalStatus'
-import { emptyStatus, reduceStatus, type TerminalStatus } from './terminal-status'
+import {
+  emptyStatus,
+  reduceStatus,
+  relaunchRequest,
+  shownWork,
+  type TerminalStatus
+} from './terminal-status'
+import { WorkCards } from './WorkCards'
+import { foldSubagents, noSubagents, reduceSubagents, type SubagentLogs } from './subagents'
 import { claudeContextWindow } from '../../../src/shared/claude-models'
 import { Attachments } from './Attachments'
 import { useComposerFocus } from './focus'
@@ -428,6 +437,21 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
     (current: TerminalStatus, event: SessionEvent) => reduceStatus(current, event),
     emptyStatus
   )
+  // The work running now, for the cards under the composer, and each
+  // subagent's own conversation for the window a card opens (`WorkCards`).
+  const work = useMemo(() => shownWork(status.agents), [status.agents])
+  const [subagents, dispatchSubagents] = useReducer(
+    (
+      logs: SubagentLogs,
+      action: { event: SessionEvent } | { items: HistoryItem[] } | { sync: HistoryItem[] }
+    ): SubagentLogs =>
+      'event' in action
+        ? reduceSubagents(logs, action.event)
+        : 'sync' in action
+          ? foldSubagents(noSubagents, action.sync)
+          : foldSubagents(logs, action.items),
+    noSubagents
+  )
   const [ready, setReady] = useState(false)
   // A resumed conversation's past lives in main and arrives a page at a time,
   // the newest first: `before` is what to ask for next, null once nothing is
@@ -469,6 +493,7 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
     const catchup = bindFleetCatchup(session.id, (page) => {
       if (!live) return
       dispatch({ sync: page.items })
+      dispatchSubagents({ sync: page.items })
       setBefore(page.before)
       setReady(true)
     })
@@ -488,6 +513,7 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
       const take = (): void => {
         dispatch({ event })
         dispatchStatus(event)
+        dispatchSubagents({ event })
       }
       if (event.type === 'state_change' && event.state === 'ended') confirmed(take)
       else take()
@@ -511,6 +537,7 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
         pastReader.current = readPast(() => window.electronAPI.sessionsHistory(session.id), {
           read: (page) => {
             dispatch({ prepend: page.items })
+            dispatchSubagents({ items: page.items })
             setBefore(page.before)
             // The newest page holds the context as the conversation left it.
             const usage = page.items.findLast((item) => item.event.type === 'context_usage')
@@ -571,6 +598,7 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
     const page = await window.electronAPI.sessionsHistory(session.id, before)
     return () => {
       dispatch({ prepend: page.items })
+      dispatchSubagents({ items: page.items })
       setBefore(page.before)
     }
   }, [session.id, before])
@@ -1163,6 +1191,22 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
             />
           </div>
         </div>
+        <WorkCards
+          agents={work}
+          logs={subagents}
+          // A relaunch asks for Claude's Agent tool on a Claude model: only an
+          // agent that tool started (a pane remounted since never saw the call,
+          // hence the session's provider) can be launched again that way.
+          canRelaunch={(agent) => agent.fromAgentTool || session.provider === 'claude'}
+          onRelaunch={(agent, alias) => {
+            if (!agent.taskId) return
+            // Stopped first, then asked for again: the conversation made the
+            // agent, and it alone holds the prompt it was given.
+            void write({ type: 'stop_task', taskId: agent.taskId })
+              .then(() => write({ type: 'user_message', text: relaunchRequest(agent, alias) }))
+              .catch(report)
+          }}
+        />
       </div>
     </div>
   )

@@ -26,12 +26,11 @@ import { emitTabClosed } from '../lib/exchange-capture'
 import { ConfirmDialog } from '@clave/ui/components'
 import { LinkedDocumentReopen } from '../components/files/LinkedDocumentReopen'
 import { AccountProposal } from '../components/terminal/AccountProposal'
-import { useBackgroundTasks } from './background-tasks'
-import { BackgroundTasksChip } from './BackgroundTasksChip'
 import { SessionStatus } from '../components/session/SessionItem'
 import { WorkBreadcrumb } from '../components/session/WorkEntryItem'
 import { PaneSearch } from './PaneSearch'
 import { usePaneSearchStore } from './pane-search'
+import { useBackgroundTasks } from './background-tasks'
 
 /** The pane's view picker: every view that renders this session, the current
  *  one checked. Hidden when a session has only one view to be read in — a menu
@@ -118,9 +117,9 @@ function RegisteredSessionView({
   // the pane falls back to the terminal, and a claim kept there would never
   // reach zero — main would go on streaming into a log nobody reads.
   useSessionLog(session?.transport === 'events' && viewId ? sessionId : '')
+  const backgroundTasks = useBackgroundTasks(sessionId)
   // Background shells and subagents outlive the turn that started them; the
   // header and the sidebar say so, or a finished-looking chat hides live work.
-  const backgroundTasks = useBackgroundTasks(sessionId)
   const backgroundAgents = backgroundTasks.filter((task) => task.kind === 'agent').length
   useEffect(() => {
     useViewSessionStore
@@ -285,10 +284,6 @@ function RegisteredSessionView({
         <div className="pane-header-actions">
           <FleetResume sessionId={sessionId} />
           <LinkedDocumentReopen sessionId={sessionId} />
-          {/* The terminal view lists the running work under its status line
-              itself; the chip would say it twice. The chat view has no such
-              list, so it keeps the chip. */}
-          {viewId !== 'clave.chat-view/terminal' && <BackgroundTasksChip tasks={backgroundTasks} />}
           {/* The state in words, for assistive tech and the specs only: the
               status glyph before the title says it on screen. */}
           <span className="chat-state sr-only" data-state={meta.state}>

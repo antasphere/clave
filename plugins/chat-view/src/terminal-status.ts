@@ -33,6 +33,9 @@ export interface SubAgent {
   description: string
   /** A command's full text, for the row's tooltip; null for an agent. */
   command: string | null
+  /** Where the provider writes a command's output, when it says (Claude's
+   *  background shells); null for an agent, or a command it names none for. */
+  outputFile: string | null
   /** Run in the background (the CLI's default) rather than waited on by the turn. */
   background: boolean
   startedAt: number
@@ -120,6 +123,7 @@ function fromBackground(task: BackgroundTask, known: SubAgent | undefined): SubA
       known?.description ||
       '',
     command: known?.command ?? task.command ?? null,
+    outputFile: task.outputFile ?? known?.outputFile ?? null,
     background: true,
     startedAt: known?.startedAt ?? task.startedAt,
     lastAction: known?.lastAction ?? null,
@@ -177,6 +181,7 @@ export function reduceStatus(
           // every Codex command, reads by the command shortened.
           description: (claude && text(input.description).trim()) || commandTitle(line),
           command: line,
+          outputFile: null,
           background: false,
           startedAt: now,
           lastAction: null,
@@ -197,6 +202,7 @@ export function reduceStatus(
         type: text(input.subagent_type) || 'agent',
         description: text(input.description),
         command: null,
+        outputFile: null,
         background: input.run_in_background === true,
         startedAt: now,
         lastAction: null,
@@ -280,21 +286,6 @@ export function shownWork(agents: SubAgent[]): SubAgent[] {
   return agents.filter(
     (agent) => agent.kind !== 'shell' || agent.background || agent.requestedBackground
   )
-}
-
-/** The status line's count of the work it shows: the subagents and the
- *  commands counted apart, each by its own word ("3 agents · 4 commands"),
- *  since a command left running is no agent; empty when nothing runs. The
- *  rows say the rest. */
-export function runningLabel(work: SubAgent[]): string {
-  const agents = work.filter((item) => item.kind === 'agent').length
-  const commands = work.filter((item) => item.kind === 'shell').length
-  return [
-    agents > 0 ? `${agents} agent${agents === 1 ? '' : 's'}` : '',
-    commands > 0 ? `${commands} command${commands === 1 ? '' : 's'}` : ''
-  ]
-    .filter(Boolean)
-    .join(' · ')
 }
 
 /** "12k", "1M": the status line's own compact count. */

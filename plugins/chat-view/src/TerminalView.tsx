@@ -42,11 +42,11 @@ import {
   emptyStatus,
   reduceStatus,
   relaunchRequest,
-  runningLabel,
   shownWork,
   type TerminalStatus
 } from './terminal-status'
-import { ContextMeter, SubAgentStack } from './TerminalStatus'
+import { ContextMeter } from './TerminalStatus'
+import { WorkCards } from './WorkCards'
 import { AccountChip } from './AccountChip'
 import { useQuestionHeight } from './question-height'
 import { blockKey, groupEntries, visibleEntries, type Block } from './tools'
@@ -324,9 +324,6 @@ export function TerminalView({
   )
   // Held by identity: the stack folds a row away when its list changes.
   const work = useMemo(() => shownWork(status.agents), [status.agents])
-  // The count under the composer: the subagents and the commands apart, so
-  // four background commands beside three agents never read as seven agents.
-  const running = runningLabel(work)
   const [ready, setReady] = useState(false)
   // A resumed conversation's past lives in main and arrives a page at a time,
   // the newest first: `before` is what to ask for next, null once nothing is
@@ -1084,15 +1081,6 @@ export function TerminalView({
           <span className="term-fit" data-fit-drop="3">
             <AccountChip sessionId={session.id} />
           </span>
-          {running && (
-            <span
-              className="term-dim term-running"
-              title="Running now: the subagents, and the commands sent to the background"
-              data-fit-drop="4"
-            >
-              · {running}
-            </span>
-          )}
           <span className="term-status-end">
             <button
               type="button"
@@ -1122,7 +1110,7 @@ export function TerminalView({
             </button>
           </span>
         </div>
-        <SubAgentStack
+        <WorkCards
           agents={work}
           logs={subagents}
           // A relaunch asks for Claude's Agent tool on a Claude model: only an

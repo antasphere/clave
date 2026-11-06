@@ -175,7 +175,7 @@ body,
 .launcher-btn:focus-visible,
 .launcher-icon-btn:focus-visible,
 .launcher-caret:focus-visible,
-.term-agent-open:focus-visible,
+.work-card-open:focus-visible,
 .group-switcher-chip:focus-visible,
 .btn-icon:focus-visible,
 .btn-primary:focus-visible,
@@ -5862,44 +5862,47 @@ details[open] > .chat-approval-items {
 /* The subagents, stacked under the status line while they run. Each row
    folds open as its agent starts and shut as it ends (a grid track going
    from 0fr to 1fr), and the stack's own rule and room go with its last row. */
-.term-agents {
+/* The work running now (WorkCards): one card per subagent and per command
+   left running, under the composer of both views. A card is its drawing
+   and two lines of text; the drawing breathes while the work goes on and
+   stills once an agent has been quiet a minute. A card folds open as its
+   work starts and folds shut as it ends, so the strip is held for the
+   length of the fold after a card has gone; the strip folds away with its
+   last card. Clicking a card opens the window onto its work. */
+.work-cards {
   display: grid;
   grid-template-rows: 1fr;
   margin-top: calc(var(--spacing) * 2);
-  padding-top: calc(var(--spacing) * 2);
-  border-top: thin dashed var(--border-subtle-color);
   font-size: var(--text-xs);
   transition:
     grid-template-rows calc(var(--default-transition-duration) * 2) var(--ease-out-expo),
     margin-top calc(var(--default-transition-duration) * 2) var(--ease-out-expo),
-    padding-top calc(var(--default-transition-duration) * 2) var(--ease-out-expo),
-    border-color calc(var(--default-transition-duration) * 2) var(--ease-out-expo),
     opacity calc(var(--default-transition-duration) * 2) var(--ease-out-expo);
   @starting-style {
     grid-template-rows: 0fr;
     margin-top: 0;
-    padding-top: 0;
-    border-color: transparent;
     opacity: 0;
   }
 }
-.term-agents[data-empty] {
+.work-cards[data-empty] {
   grid-template-rows: 0fr;
   margin-top: 0;
-  padding-top: 0;
-  border-color: transparent;
   opacity: 0;
 }
-.term-agents-list {
+.work-cards-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: calc(var(--spacing) * 2);
   min-height: 0;
   overflow: hidden;
   margin: 0;
-  padding: 0 calc(var(--spacing) * 2);
+  padding: 0;
   list-style: none;
 }
-.term-agent {
+.work-card {
   display: grid;
   grid-template-rows: 1fr;
+  inline-size: min(18rem, 100%);
   opacity: 1;
   transition:
     grid-template-rows calc(var(--default-transition-duration) * 2) var(--ease-out-expo),
@@ -5909,104 +5912,32 @@ details[open] > .chat-approval-items {
     opacity: 0;
   }
 }
-.term-agent[data-leaving] {
+.work-card[data-leaving] {
   grid-template-rows: 0fr;
   opacity: 0;
 }
-.term-agent-row {
+.work-card-row {
   display: flex;
-  align-items: baseline;
-  gap: calc(var(--spacing) * 2);
-  min-width: 0;
+  align-items: center;
+  gap: var(--spacing);
   min-height: 0;
   overflow: hidden;
-  padding: calc(var(--spacing) / 4) 0;
-  white-space: nowrap;
+  padding: calc(var(--spacing) * 1.5) calc(var(--spacing) * 2) calc(var(--spacing) * 1.5)
+    calc(var(--spacing) * 1.5);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background-color: var(--surface-0);
+  transition: border-color var(--default-transition-duration) var(--ease-out-expo);
 }
-.term-agent-dot {
-  position: relative;
-  flex-shrink: 0;
-  align-self: center;
-  inline-size: calc(var(--spacing) * 1.5);
-  block-size: calc(var(--spacing) * 1.5);
-  margin-inline: calc(var(--spacing) * 0.75);
-  border-radius: var(--radius-full);
-  background-color: var(--color-status-working);
-  animation: pulse-dot calc(var(--default-transition-duration) * 10) ease-in-out infinite;
+.work-card-row:hover {
+  border-color: color-mix(in oklab, var(--text-primary) 24%, var(--color-border));
 }
-.term-agent[data-background] .term-agent-dot {
-  background-color: var(--color-term-mode);
-}
-/* A background command's row: the terminal glyph where an agent's dot is,
-   breathing the same way. Twice the dot's size; the dot takes the same
-   width in margin (below) so the text column lines up. It used to pull
-   itself out with negative margins instead, and the row's overflow: hidden
-   (the fold) cut the glyph's edges off. */
-.term-agent-icon {
-  flex-shrink: 0;
-  align-self: center;
-  inline-size: calc(var(--spacing) * 3);
-  block-size: calc(var(--spacing) * 3);
-  color: var(--color-term-mode);
-  animation: pulse-dot calc(var(--default-transition-duration) * 10) ease-in-out infinite;
-}
-/* Each new step: a ring leaves the dot once. The element is remounted per
-   step, so the one-shot animation is the tick. */
-.term-agent-tick {
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  background-color: inherit;
-  animation: term-agent-tick calc(var(--default-transition-duration) * 5) var(--ease-out-expo)
-    forwards;
-}
-@keyframes term-agent-tick {
-  from {
-    opacity: 0.8;
-    scale: 1;
-  }
-  to {
-    opacity: 0;
-    scale: 3;
-  }
-}
-/* A minute without a step: the dot stops breathing and dims, and the row
-   says for how long. */
-.term-agent[data-quiet] .term-agent-dot {
-  animation: none;
-  opacity: 0.4;
-}
-.term-agent-type {
-  flex-shrink: 0;
-  color: var(--color-term-model);
-}
-.term-agent-description {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  color: var(--text-primary);
-}
-.term-agent-meta {
-  display: inline-flex;
-  flex-shrink: 0;
-  align-items: baseline;
-  margin-left: auto;
-  color: var(--text-tertiary);
-  font-variant-numeric: tabular-nums;
-}
-.term-agent-meta > * + *::before {
-  content: '·';
-  padding-inline: calc(var(--spacing) * 1.5);
-}
-.term-agent-quiet {
-  color: var(--color-warning);
-}
-/* An agent's row opens a window onto it (SubAgentPeek): the type and the
-   task are the button; the model chip and the figures beside stay their
-   own. A dotted underline on approach says the words open something. */
-.term-agent-open {
-  display: inline-flex;
-  align-items: baseline;
+/* The card's face is the button that opens the window onto its work; an
+   agent's model chip beside it is its own. */
+.work-card-open {
+  display: flex;
+  flex: 1;
+  align-items: center;
   gap: calc(var(--spacing) * 2);
   min-width: 0;
   padding: 0;
@@ -6018,10 +5949,68 @@ details[open] > .chat-approval-items {
   text-align: left;
   cursor: pointer;
 }
-.term-agent-open:hover .term-agent-description,
-.term-agent-open[data-state='open'] .term-agent-description {
+.work-card-open:hover .term-agent-description,
+.work-card-open[data-state='open'] .term-agent-description {
   text-decoration: underline dotted;
   text-underline-offset: 0.2em;
+}
+.work-drawing {
+  flex-shrink: 0;
+  inline-size: calc(var(--spacing) * 9);
+  block-size: calc(var(--spacing) * 7.5);
+}
+/* The focal dot breathes while the work goes on; a quiet agent's rests. */
+.work-drawing .work-pulse {
+  transform-origin: center;
+  animation: pulse-dot calc(var(--default-transition-duration) * 10) ease-in-out infinite;
+}
+.work-drawing:not([data-working]) .work-pulse {
+  animation: none;
+  opacity: 0.45;
+}
+.work-card-text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+  line-height: 1.4;
+}
+.work-card-title {
+  display: flex;
+  gap: calc(var(--spacing) * 1.5);
+  min-width: 0;
+  white-space: nowrap;
+}
+.term-agent-type {
+  flex-shrink: 0;
+  color: var(--color-term-model);
+}
+.term-agent-description {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-primary);
+}
+.work-card-meta {
+  display: flex;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.work-card-meta > * + *::before {
+  content: '·';
+  padding-inline: calc(var(--spacing) * 1.5);
+}
+.term-agent-quiet {
+  color: var(--color-warning);
+}
+@media (prefers-reduced-motion: reduce) {
+  .work-drawing .work-pulse {
+    animation: none;
+  }
 }
 /* The window onto a subagent: the transcript's own rows, in a box over the
    stack, the agent's name and figures on a line at its head. The box is
@@ -6079,11 +6068,6 @@ details[open] > .chat-approval-items {
   content: '·';
   padding-inline: calc(var(--spacing) * 1.5);
 }
-.term-peek-readonly {
-  font-size: 0.85em;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-}
 .term-peek-scroll {
   min-height: 0;
   padding: calc(var(--spacing) * 3);
@@ -6093,6 +6077,28 @@ details[open] > .chat-approval-items {
   padding: calc(var(--spacing) * 2) 0;
   color: var(--text-tertiary);
   font-size: var(--text-xs);
+}
+/* The command's full line under the shell window's head, and its output. */
+.term-peek-command {
+  display: block;
+  flex-shrink: 0;
+  overflow: hidden;
+  padding: calc(var(--spacing) * 1.5) calc(var(--spacing) * 3);
+  border-bottom: 1px solid var(--color-border);
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.term-shell-output {
+  margin: 0;
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 /* The model a subagent runs on: a chip opening the relaunch menu when the
    agent can be stopped on its own, plain words when it cannot. */
