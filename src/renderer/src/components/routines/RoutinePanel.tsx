@@ -1,11 +1,12 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import {
   ArrowPathIcon,
   ArrowTopRightOnSquareIcon,
   ChatBubbleLeftRightIcon,
   CheckIcon,
   DocumentChartBarIcon,
-  XMarkIcon
+  EllipsisHorizontalIcon,
+  QueueListIcon
 } from '@heroicons/react/24/outline'
 import { IconButton } from '@clave/ui/components'
 import { motion } from 'framer-motion'
@@ -14,24 +15,34 @@ import type { Session } from '../../../../shared/session-model'
 import { ChatView } from '../../../../../plugins/chat-view/src/ChatView'
 import { RoutineReport } from '../../../../../plugins/routine-report/src/RoutineReport'
 import {
+  DiscussionDrawing,
+  RoutineDrawing
+} from '../../../../../plugins/routine-report/src/RoutineDrawing'
+import {
   durationLabel,
   runTone,
   stateLabel,
   whenLabel
 } from '../../../../../plugins/routine-report/src/run-labels'
+import { claudeModelName } from '../../../../shared/claude-models'
 import { useRoutinesStore } from '../../store/routines-store'
 import { adoptServerStartedSessions } from '../../lib/adopt-record'
 import { describeCron } from '../../../../main/routines/cron'
 
+type Tab = 'report' | 'discussion' | 'runs'
+
 /**
- * The floating panel of a routine (ADR 0004), built from the side panel's
- * own parts so it reads as one of its bars at every density: a pane header
- * (the routine's icon in its colour, its name, the schedule in words), the
- * Report / Discussion switch as a `panel-tabs` frame, the actions as a
- * `panel-bar` of `panel-icon-btn`s with the run's state in words between
- * them (Run again, Open as a tab, Dismiss), and the history as menu rows.
- * The discussion is the run's session continued in the chat view inside the
- * panel, re-homed to this window by the server.
+ * The floating panel of a routine (ADR 0004). Three things a reader asks of
+ * a routine, one tab each, so the panel shows one at a time and breathes:
+ *
+ *   Report      the selected run's deck (the latest by default)
+ *   Discussion  that run's conversation, continued in the chat view
+ *   Runs        the facts (schedule, next run, model, account) and the history
+ *
+ * Above them a title in the menu's manner (the routine's icon on a tile, its
+ * name, the schedule in words) and one row: the tabs, Run now, and a small
+ * menu for the two rarer acts (Open as a tab, Dismiss). Nothing repeats what
+ * the deck already says.
  */
 export function RoutinePanel({
   view,
@@ -40,7 +51,7 @@ export function RoutinePanel({
   onClose
 }: {
   view: RoutineView
-  /** The routine's toolbar glyph, drawn again in the header. */
+  /** The routine's toolbar glyph, drawn again on the title's tile. */
   icon?: ReactNode
   /** The ink the toolbar draws the glyph in. */
   color?: string
@@ -52,9 +63,11 @@ export function RoutinePanel({
   const dismiss = useRoutinesStore((s) => s.dismiss)
   const openDiscussion = useRoutinesStore((s) => s.openDiscussion)
   const [selectedId, setSelectedId] = useState<string | null>(null)
-  const [tab, setTab] = useState<'report' | 'discussion'>('report')
+  const [tab, setTab] = useState<Tab>('report')
   const [discussion, setDiscussion] = useState<Session | null>(null)
   const [opening, setOpening] = useState(false)
+  const [menuOpen, setMenuOpen] = useState(false)
+  const menuRef = useRef<HTMLDivElement | null>(null)
   const run: RoutineRun | undefined = useMemo(
     () => view.runs.find((r) => r.id === selectedId) ?? view.runs[0],
     [view.runs, selectedId]
@@ -66,8 +79,16 @@ export function RoutinePanel({
   // Switching runs leaves the discussion of the previous one.
   useEffect(() => {
     setDiscussion(null)
-    setTab('report')
   }, [run?.id])
+  // The small menu closes on a click anywhere else in the panel.
+  useEffect(() => {
+    if (!menuOpen) return
+    const away = (e: PointerEvent): void => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenuOpen(false)
+    }
+    document.addEventListener('pointerdown', away, true)
+    return () => document.removeEventListener('pointerdown', away, true)
+  }, [menuOpen])
 
   const running = view.runs.some((r) => r.state === 'running' || r.state === 'waiting')
   const next = view.nextRunAt ? whenLabel(view.nextRunAt) : null
@@ -93,6 +114,7 @@ export function RoutinePanel({
   }
 
   const openAsTab = async (): Promise<void> => {
+    setMenuOpen(false)
     if (!run) return
     const sessionId = await openDiscussion(run.id, 'tab')
     if (!sessionId) return
@@ -103,181 +125,201 @@ export function RoutinePanel({
     onClose()
   }
 
-  const status = run
-    ? `${stateLabel(run)} · ${whenLabel(run.startedAt)} · ${durationLabel(run)} · ${run.trigger}`
-    : view.routine.invalid
-      ? 'Cannot run'
-      : 'No run yet'
+  const pickRun = (id: string): void => {
+    setSelectedId(id)
+    setTab('report')
+  }
+
+  const tabButton = (id: Tab, label: string, Glyph: typeof DocumentChartBarIcon): ReactNode => (
+    <button
+      role="tab"
+      className="panel-tab"
+      aria-selected={tab === id}
+      data-selected={tab === id ? 'true' : undefined}
+      data-testid={`routine-tab-${id}`}
+      disabled={id === 'discussion' && !run}
+      onClick={() => (id === 'discussion' ? void showDiscussion() : setTab(id))}
+    >
+      <Glyph className="w-3.5 h-3.5 flex-shrink-0" />
+      <span>{label}</span>
+    </button>
+  )
 
   return (
     <div
-      className="flex flex-col min-h-0"
+      className="routine-panel"
       style={{ width: view.routine.report.width, height: view.routine.report.height }}
       data-testid="routine-panel"
       data-routine={view.routine.name}
+      tabIndex={-1}
     >
-      <div className="pane-header" data-testid="routine-panel-header">
-        <div className="pane-header-lead">
-          {icon && (
-            <span className="routine-panel-icon" style={{ color }} aria-hidden="true">
-              {icon}
-            </span>
-          )}
-          <div className="flex flex-col min-w-0">
-            <span className="pane-header-title" data-testid="routine-panel-name">
-              {view.routine.name}
-            </span>
-            <span className="pane-header-meta" data-testid="routine-panel-schedule">
-              {describeCron(view.routine.schedule)}
-              {next ? ` · next ${next}` : view.routine.invalid ? ' · cannot run' : ''}
-              {run?.account ? ` · ${run.account}` : ''}
-              {run?.model ? ` · ${run.model}` : ''}
-            </span>
-          </div>
-        </div>
-        <div className="pane-header-actions">
-          <div className="panel-tabs" role="tablist" data-panel-bar="routine-tabs">
-            <button
-              role="tab"
-              className="panel-tab"
-              aria-selected={tab === 'report'}
-              data-selected={tab === 'report' ? 'true' : undefined}
-              data-testid="routine-tab-report"
-              onClick={() => setTab('report')}
-            >
-              <DocumentChartBarIcon className="w-3.5 h-3.5 flex-shrink-0" />
-              <span>Report</span>
-            </button>
-            <button
-              role="tab"
-              className="panel-tab"
-              aria-selected={tab === 'discussion'}
-              data-selected={tab === 'discussion' ? 'true' : undefined}
-              data-testid="routine-tab-discussion"
-              disabled={!run}
-              onClick={() => void showDiscussion()}
-            >
-              <ChatBubbleLeftRightIcon className="w-3.5 h-3.5 flex-shrink-0" />
-              <span>Discussion</span>
-            </button>
-          </div>
-          <IconButton
-            onClick={onClose}
-            className="panel-icon-btn"
-            aria-label="Close"
-            tooltip="Close"
-          >
-            <XMarkIcon className="w-4 h-4" />
-          </IconButton>
+      <div className="routine-head" data-testid="routine-panel-header">
+        <span className="routine-mark" style={{ color }} aria-hidden="true">
+          {icon}
+        </span>
+        <div className="routine-head-text">
+          <span className="routine-head-title" data-testid="routine-panel-name">
+            {view.routine.name}
+          </span>
+          <span className="routine-head-sub" data-testid="routine-panel-schedule">
+            {view.routine.invalid
+              ? 'Cannot run'
+              : `${describeCron(view.routine.schedule)}${next ? ` · next ${next}` : ''}`}
+          </span>
         </div>
       </div>
 
-      {/* The body fades in on each change of what it shows (the tab, the run),
-          the app's motion for content inside a box: a filled frame replacing
-          another with no transition read as a jolt (Romain, 6 November 2026). */}
-      <motion.div
-        key={`${tab}:${run?.id ?? 'none'}`}
-        className="flex-1 min-h-0 flex flex-col"
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        transition={{ duration: 0.16, ease: [0.2, 0, 0, 1] }}
-      >
-        {view.routine.invalid && (
-          <p className="px-3 py-2 text-xs text-destructive" data-testid="routine-panel-invalid">
-            {view.routine.invalid}
-          </p>
-        )}
-        {tab === 'report' ? (
-          <RoutineReport view={view} run={run} viewerUrl={viewer.url} viewerNote={viewer.note} />
-        ) : discussion ? (
-          <div className="chat-host flex-1 min-h-0" data-testid="routine-discussion">
-            <ChatView session={discussion} onState={() => {}} visible />
-          </div>
-        ) : (
-          <div className="routine-state" data-testid="routine-discussion-pending">
-            {opening && (
-              <span className="routine-spinner" aria-hidden="true">
-                <span className="sidebar-tab-spinner" />
-              </span>
-            )}
-            <strong>{opening ? 'Opening the discussion' : (error ?? 'No discussion yet')}</strong>
-            {opening && (
-              <span>The conversation of the run is picked up where the agent left it.</span>
-            )}
-          </div>
-        )}
-      </motion.div>
-
-      {error && tab === 'report' && (
-        <p
-          className="px-3 py-1 text-xs text-destructive border-t border-border-subtle"
-          data-testid="routine-panel-error"
-        >
-          {error}
-        </p>
-      )}
-
-      <div className="routine-panel-foot">
-        <div className="panel-bar panel-bar--nowrap" data-panel-bar="routine">
+      <div className="routine-nav">
+        <div className="panel-tabs" role="tablist" data-panel-bar="routine-tabs">
+          {tabButton('report', 'Report', DocumentChartBarIcon)}
+          {tabButton('discussion', 'Discussion', ChatBubbleLeftRightIcon)}
+          {tabButton('runs', 'Runs', QueueListIcon)}
+        </div>
+        <div className="routine-nav-actions" ref={menuRef}>
           <IconButton
             className="panel-icon-btn"
             data-testid="routine-run-again"
-            aria-label={view.runs.length ? 'Run again' : 'Run now'}
+            aria-label="Run now"
             disabled={running || !!view.routine.invalid}
-            tooltip={
-              running
-                ? 'A run is in flight'
-                : view.runs.length
-                  ? 'Run again, whatever the schedule'
-                  : 'Run now, whatever the schedule'
-            }
+            tooltip={running ? 'A run is in flight' : 'Run now'}
             onClick={() => void runNow(view.routine.key)}
           >
             <ArrowPathIcon className="w-4 h-4" />
           </IconButton>
           <IconButton
             className="panel-icon-btn"
-            data-testid="routine-open-tab"
-            aria-label="Open as a tab"
-            disabled={!run}
-            tooltip="Continue this run's conversation in an ordinary tab"
-            onClick={() => void openAsTab()}
+            data-testid="routine-more"
+            aria-label="More"
+            aria-expanded={menuOpen}
+            data-active={menuOpen ? 'true' : undefined}
+            tooltip="More"
+            onClick={() => setMenuOpen((o) => !o)}
           >
-            <ArrowTopRightOnSquareIcon className="w-4 h-4" />
+            <EllipsisHorizontalIcon className="w-4 h-4" />
           </IconButton>
-          <span className="panel-sep" aria-hidden="true" />
-          <span className="panel-bar-label routine-bar-status" data-testid="routine-bar-status">
-            {status}
-          </span>
-          <IconButton
-            className="panel-icon-btn"
-            data-testid="routine-dismiss"
-            aria-label="Dismiss"
-            disabled={!run || run.seen}
-            tooltip="Dismiss: put the badge away"
-            onClick={() => run && void dismiss(run.id)}
-          >
-            <CheckIcon className="w-4 h-4" />
-          </IconButton>
+          {menuOpen && (
+            <div className="routine-menu menu-surface menu-pop-mount" role="menu">
+              <button
+                role="menuitem"
+                className="menu-item"
+                data-testid="routine-open-tab"
+                disabled={!run}
+                onClick={() => void openAsTab()}
+              >
+                <ArrowTopRightOnSquareIcon className="menu-glyph" />
+                Open as a tab
+              </button>
+              <button
+                role="menuitem"
+                className="menu-item"
+                data-testid="routine-dismiss"
+                disabled={!run || run.seen}
+                onClick={() => {
+                  setMenuOpen(false)
+                  if (run) void dismiss(run.id)
+                }}
+              >
+                <CheckIcon className="menu-glyph" />
+                Dismiss
+              </button>
+            </div>
+          )}
         </div>
       </div>
 
-      {view.runs.length > 1 && (
+      {/* The body fades in on each change of what it shows (the tab, the run),
+          the app's motion for content inside a box. */}
+      <motion.div
+        key={`${tab}:${run?.id ?? 'none'}`}
+        className="routine-body"
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        transition={{ duration: 0.16, ease: [0.2, 0, 0, 1] }}
+      >
+        {view.routine.invalid && (
+          <p className="routine-note" data-tone="failed" data-testid="routine-panel-invalid">
+            {view.routine.invalid}
+          </p>
+        )}
+        {error && (
+          <p className="routine-note" data-tone="failed" data-testid="routine-panel-error">
+            {error}
+          </p>
+        )}
+        {tab === 'report' ? (
+          <RoutineReport view={view} run={run} viewerUrl={viewer.url} viewerNote={viewer.note} />
+        ) : tab === 'discussion' ? (
+          discussion ? (
+            <div className="chat-host flex-1 min-h-0" data-testid="routine-discussion">
+              <ChatView session={discussion} onState={() => {}} visible />
+            </div>
+          ) : (
+            <div className="routine-state" data-testid="routine-discussion-pending">
+              <DiscussionDrawing />
+              <strong>{opening ? 'Opening the conversation' : 'No conversation yet'}</strong>
+              <span>
+                {opening
+                  ? 'Picked up where the agent left it.'
+                  : 'Each run keeps its conversation; pick a run to continue it.'}
+              </span>
+            </div>
+          )
+        ) : (
+          <RunsTab view={view} selected={run} onPick={pickRun} />
+        )}
+      </motion.div>
+    </div>
+  )
+}
+
+/** The Runs tab: the routine's facts, then its runs, newest first. */
+function RunsTab({
+  view,
+  selected,
+  onPick
+}: {
+  view: RoutineView
+  selected: RoutineRun | undefined
+  onPick: (id: string) => void
+}): React.JSX.Element {
+  const last = view.runs[0]
+  const facts: Array<[string, string]> = [
+    ['Schedule', view.routine.schedule],
+    ['Next run', view.nextRunAt ? whenLabel(view.nextRunAt) : '—'],
+    ['Model', claudeModelName(last?.model) ?? 'Workspace default'],
+    ['Account', last?.account ?? 'From the pool']
+  ]
+  return (
+    <div className="routine-runs">
+      <dl className="routine-facts">
+        {facts.map(([k, v]) => (
+          <div key={k}>
+            <dt>{k}</dt>
+            <dd>{v}</dd>
+          </div>
+        ))}
+      </dl>
+      {view.runs.length === 0 ? (
+        <div className="routine-state">
+          <RoutineDrawing />
+          <strong>No run yet</strong>
+          <span>The first one lands here, on the schedule or on Run now.</span>
+        </div>
+      ) : (
         <ul className="routine-history" data-testid="routine-history">
           {view.runs.map((r) => (
             <li key={r.id}>
               <button
                 className="menu-item"
-                data-selected={r.id === run?.id ? 'true' : undefined}
+                data-selected={r.id === selected?.id ? 'true' : undefined}
                 data-testid="routine-history-row"
                 data-run-state={r.state}
-                onClick={() => setSelectedId(r.id)}
+                title={`${stateLabel(r)} · ${durationLabel(r)} · ${r.trigger}`}
+                onClick={() => onPick(r.id)}
               >
                 <span className="routine-dot" data-tone={runTone(r)} aria-hidden="true" />
                 <span className="truncate flex-1">{r.headline ?? r.reason ?? stateLabel(r)}</span>
-                <span className="routine-meta">
-                  {whenLabel(r.startedAt)} · {durationLabel(r)} · {r.trigger}
-                </span>
+                <span className="routine-meta">{whenLabel(r.startedAt)}</span>
               </button>
             </li>
           ))}

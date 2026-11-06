@@ -368,6 +368,8 @@ export async function run(t) {
         await panel.locator('[data-testid="routine-panel-schedule"]').textContent()
       )
     )
+    // Dismiss and Open as a tab live in the panel's small menu, behind More.
+    await panel.locator('[data-testid="routine-more"]').click()
     await panel.locator('[data-testid="routine-dismiss"]').click()
     await until(async () => (await button.getAttribute('data-state')) === 'seen', { tries: 40 })
     t.equal(
@@ -455,6 +457,7 @@ export async function run(t) {
     await button.click()
     await panel.waitFor({ timeout: 5000 })
     const rowsBefore = await win.locator('.sidebar-item').count()
+    await panel.locator('[data-testid="routine-more"]').click()
     await panel.locator('[data-testid="routine-open-tab"]').click()
     const rowAdded = await until(
       async () => ((await win.locator('.sidebar-item').count()) > rowsBefore ? true : null),

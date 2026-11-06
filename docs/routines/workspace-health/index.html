@@ -50,7 +50,7 @@
       document.getElementById('headline').innerHTML =
         `<span class="status ${esc(run.status || '')}"></span>${esc(run.headline || 'No report yet')}`
       document.getElementById('meta').textContent = run.reportedAt
-        ? `${esc(doc.routine?.name || '')} · ${when(run.reportedAt)} · ${run.trigger || ''}${run.account ? ' · ' + run.account : ''}${run.model ? ' · ' + run.model : ''}`
+        ? `${when(run.reportedAt)} · ${run.trigger || ''}`
         : 'This deck has no report yet.'
       const checks = Array.isArray(data.checks) ? data.checks : []
       document.getElementById('checks').innerHTML = checks.length

@@ -58,3 +58,54 @@ export function RoutineDrawing(): React.JSX.Element {
     </svg>
   )
 }
+
+/* The discussion opening: the report's page on the left, a speech bubble on
+   the right, and the accent line carrying the run's conversation from the
+   page into the bubble, where the ringed dot waits. Same hand and same rules
+   as the drawing above. */
+export function DiscussionDrawing(): React.JSX.Element {
+  return (
+    <svg viewBox="0 0 240 150" className="chat-drawing" aria-hidden="true">
+      <defs>
+        <marker
+          id="routine-discussion-head"
+          viewBox="0 0 10 10"
+          refX="8"
+          refY="5"
+          markerWidth="10"
+          markerHeight="10"
+          orient="auto-start-reverse"
+          markerUnits="userSpaceOnUse"
+        >
+          <path className="head head--c" d="M1.5,1.5 L8,5 L1.5,8.5" />
+        </marker>
+      </defs>
+      <line className="ln ln--thin" x1="18" y1="132" x2="222" y2="132" />
+      {/* the report the conversation comes from */}
+      <rect className="bx" x="24" y="38" width="66" height="80" rx="7" />
+      <line className="ln" x1="35" y1="54" x2="72" y2="54" />
+      <circle className="dot dot--seat" cx="38" cy="72" r="3" />
+      <line className="ln ln--thin" x1="46" y1="72" x2="78" y2="72" />
+      <circle className="dot dot--seat" cx="38" cy="88" r="3" />
+      <line className="ln ln--thin" x1="46" y1="88" x2="74" y2="88" />
+      {/* the conversation: a bubble with its tail, two lines of text */}
+      <path
+        className="bx bx--front"
+        d="M142,40 H206 a8,8 0 0 1 8,8 V86 a8,8 0 0 1 -8,8 H168 l-12,12 v-12 H142 a8,8 0 0 1 -8,-8 V48 a8,8 0 0 1 8,-8 Z"
+      />
+      <line className="ln ln--thin" x1="148" y1="58" x2="200" y2="58" />
+      <line className="ln ln--thin" x1="148" y1="72" x2="186" y2="72" />
+      {/* the run's conversation carried over */}
+      <path
+        className="ln ln--c travel"
+        pathLength={1}
+        d="M90,80 C104,80 112,76 124,72"
+        markerEnd="url(#routine-discussion-head)"
+      />
+      <circle className="bx bx--front" cx="132" cy="70" r="9" />
+      <circle className="ring" cx="132" cy="70" r="9" />
+      <circle className="ring ring--pulse" cx="132" cy="70" r="9" />
+      <circle className="dot dot--c" cx="132" cy="70" r="3.5" />
+    </svg>
+  )
+}

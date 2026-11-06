@@ -6175,37 +6175,7 @@ button.term-agent-model:focus-visible {
   border-top-color: currentColor;
   animation: tab-status-spin 0.9s linear infinite;
 }
-/* The routine's icon in the panel's header, in its colour, a glyph's size. */
-.routine-panel-icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-  width: calc(var(--spacing) * 4);
-  height: calc(var(--spacing) * 4);
-}
-.routine-panel-icon > svg {
-  width: 100%;
-  height: 100%;
-}
-/* The panel's foot: a panel bar held off the panel's edge by the surface
-   inset, the controls one size down inside it as in the side panel's bars. */
-.routine-panel-foot {
-  flex-shrink: 0;
-  padding: calc(var(--spacing) * 1);
-  border-top: thin solid var(--border-subtle-color);
-}
-/* The run's state in words, in the bar's label slot between the controls. */
-.routine-bar-status {
-  min-width: 0;
-  padding: 0 calc(var(--control-px) / 2);
-  color: var(--text-tertiary);
-  font-size: var(--control-text-sm);
-  font-variant-numeric: tabular-nums;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
+
 /* The veil over the deck's guest until its first paint, on the panel's own
    ground so nothing white shows through; it fades out once the page is there. */
 .routine-veil {
@@ -6231,10 +6201,130 @@ button.term-agent-model:focus-visible {
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
-.routine-history {
+
+/* The panel: a column the size the routine declares. */
+.routine-panel {
+  outline: none;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+/* The title, in the manner of a menu's head: the routine's icon on a soft
+   tile in its colour, the name, and one quiet line saying when it runs. */
+.routine-head {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--spacing) * 3);
+  padding: calc(var(--spacing) * 3.5) calc(var(--spacing) * 4) calc(var(--spacing) * 2.5);
+}
+.routine-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   flex-shrink: 0;
-  max-height: calc(var(--control-h-md) * 4 + var(--menu-row-gap) * 3 + var(--spacing));
+  width: calc(var(--control-h-md) + var(--spacing) * 2);
+  height: calc(var(--control-h-md) + var(--spacing) * 2);
+  border-radius: var(--radius-xl);
+  background-color: var(--surface-100);
+}
+.routine-mark > svg {
+  width: calc(var(--spacing) * 5);
+  height: calc(var(--spacing) * 5);
+}
+.routine-head-text {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--spacing) * 0.5);
+  min-width: 0;
+}
+.routine-head-title {
+  color: var(--text-primary);
+  font-size: var(--control-text);
+  font-weight: var(--font-weight-medium);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.routine-head-sub {
+  color: var(--text-tertiary);
+  font-size: var(--control-text-sm);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.routine-head-sub::first-letter {
+  text-transform: uppercase;
+}
+/* One row: the tabs on the left, Run now and the small menu on the right. */
+.routine-nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: calc(var(--spacing) * 2);
+  padding: 0 calc(var(--spacing) * 3) calc(var(--spacing) * 2.5) calc(var(--spacing) * 4);
+  border-bottom: thin solid var(--border-subtle-color);
+}
+.routine-nav-actions {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+/* The small menu under the More button, held inside the panel (a second
+   portal would read as a click outside the popover and close it). */
+.routine-menu {
+  position: absolute;
+  top: calc(100% + var(--spacing));
+  right: 0;
+  z-index: 20;
+  min-width: calc(var(--spacing) * 44);
+  padding: var(--surface-inset);
+}
+.routine-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.routine-note {
+  margin: calc(var(--spacing) * 3) calc(var(--spacing) * 4) 0;
+  color: var(--text-secondary);
+  font-size: var(--control-text-sm);
+}
+.routine-note[data-tone='failed'] {
+  color: var(--color-destructive);
+}
+/* The Runs tab: the facts as a quiet two-column list, then the runs. */
+.routine-runs {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
   overflow: auto;
-  padding: calc(var(--spacing) * 0.5);
-  border-top: thin solid var(--border-subtle-color);
+}
+.routine-facts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: calc(var(--spacing) * 3) calc(var(--spacing) * 4);
+  margin: 0;
+  padding: calc(var(--spacing) * 4);
+  border-bottom: thin solid var(--border-subtle-color);
+}
+.routine-facts dt {
+  color: var(--text-tertiary);
+  font-size: 11px;
+}
+.routine-facts dd {
+  margin: 2px 0 0;
+  color: var(--text-primary);
+  font-size: var(--control-text-sm);
+  font-variant-numeric: tabular-nums;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.routine-history {
+  margin: 0;
+  padding: calc(var(--spacing) * 2) calc(var(--spacing) * 2);
+  list-style: none;
 }

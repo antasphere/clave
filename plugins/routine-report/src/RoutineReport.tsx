@@ -57,8 +57,8 @@ export function RoutineReport({
         <strong data-testid="routine-report-state">{stateLabel(run)}</strong>
         <span>
           {tone === 'running'
-            ? 'The agent is on the job; the report lands here when it reports.'
-            : 'The agent asked something. Answer it in the discussion, or the run times out.'}
+            ? 'The report lands here when the agent is done.'
+            : 'The agent asked something. Answer it in Discussion.'}
         </span>
         <span className="routine-meta">{meta}</span>
       </div>

@@ -81,6 +81,15 @@ export function RoutineToolbar(): React.JSX.Element | null {
                   sideOffset={8}
                   className="p-0 overflow-hidden"
                   onFocusOutside={(e) => e.preventDefault()}
+                  // Focus stays on the panel, not on its first tab: a ring on
+                  // Report the moment the panel opens read as a selection
+                  // border. The keyboard still tabs in from the panel.
+                  onOpenAutoFocus={(e) => {
+                    e.preventDefault()
+                    ;(e.currentTarget as HTMLElement | null)
+                      ?.querySelector<HTMLElement>('[data-testid="routine-panel"]')
+                      ?.focus()
+                  }}
                 >
                   <RoutinePanel
                     view={view}
