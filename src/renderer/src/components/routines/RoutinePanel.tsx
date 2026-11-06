@@ -8,6 +8,7 @@ import {
   XMarkIcon
 } from '@heroicons/react/24/outline'
 import { IconButton } from '@clave/ui/components'
+import { motion } from 'framer-motion'
 import type { RoutineRun, RoutineView } from '@clave/contract/routines/model'
 import type { Session } from '../../../../shared/session-model'
 import { ChatView } from '../../../../../plugins/chat-view/src/ChatView'
@@ -171,7 +172,16 @@ export function RoutinePanel({
         </div>
       </div>
 
-      <div className="flex-1 min-h-0 flex flex-col">
+      {/* The body fades in on each change of what it shows (the tab, the run),
+          the app's motion for content inside a box: a filled frame replacing
+          another with no transition read as a jolt (Romain, 6 November 2026). */}
+      <motion.div
+        key={`${tab}:${run?.id ?? 'none'}`}
+        className="flex-1 min-h-0 flex flex-col"
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        transition={{ duration: 0.16, ease: [0.2, 0, 0, 1] }}
+      >
         {view.routine.invalid && (
           <p className="px-3 py-2 text-xs text-destructive" data-testid="routine-panel-invalid">
             {view.routine.invalid}
@@ -196,7 +206,7 @@ export function RoutinePanel({
             )}
           </div>
         )}
-      </div>
+      </motion.div>
 
       {error && tab === 'report' && (
         <p

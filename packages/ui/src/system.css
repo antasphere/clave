@@ -6200,6 +6200,15 @@ button.term-agent-model:focus-visible {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* The veil over the deck's guest until its first paint, on the panel's own
+   ground so nothing white shows through; it fades out once the page is there. */
+.routine-veil {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  display: flex;
+  background-color: var(--surface-0);
+}
 /* The history: menu rows, the tone dot first, the headline, then the time,
    the duration and the trigger in tabular figures so a column of runs lines
    up. The same line heads the report card. */

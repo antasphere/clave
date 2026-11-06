@@ -1,3 +1,5 @@
+import { useState } from 'react'
+import { AnimatePresence, motion } from 'framer-motion'
 import type { RoutineRun, RoutineView } from '@clave/contract/routines/model'
 import { durationLabel, runTone, stateLabel, whenLabel } from './run-labels'
 import { RoutineDrawing } from './RoutineDrawing'
@@ -38,11 +40,7 @@ export function RoutineReport({
   }
   if (run.deck && viewerUrl) {
     const src = `${viewerUrl.replace(/\/$/, '')}/${run.deck}`
-    return (
-      <div className="relative flex-1 min-h-0 h-full" data-testid="routine-report-deck">
-        <PageGuest key={src} src={src} title={run.headline ?? view?.routine.name} />
-      </div>
-    )
+    return <DeckGuest key={src} src={src} title={run.headline ?? view?.routine.name} />
   }
   const tone = runTone(run)
   const meta = `${whenLabel(run.startedAt)} · ${durationLabel(run)} · ${run.trigger}`
@@ -95,6 +93,39 @@ export function RoutineReport({
           {viewerNote}
         </p>
       )}
+    </div>
+  )
+}
+
+/** The deck in the page guest, veiled until its first paint: the guest is
+ *  blank while the viewer answers, and a blank frame popping into a filled
+ *  one is the jolt the veil removes (the way `WebViewPane` holds its notice
+ *  over a served page). Keyed by its source from the caller, so a new run's
+ *  deck starts veiled again. */
+function DeckGuest({ src, title }: { src: string; title?: string }): React.JSX.Element {
+  const [loaded, setLoaded] = useState(false)
+  return (
+    <div className="relative flex-1 min-h-0 h-full" data-testid="routine-report-deck">
+      <PageGuest src={src} title={title} onFirstLoad={() => setLoaded(true)} />
+      <AnimatePresence>
+        {!loaded && (
+          <motion.div
+            key="veil"
+            className="routine-veil"
+            initial={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.16, ease: 'easeOut' }}
+            data-testid="routine-report-veil"
+          >
+            <div className="routine-state">
+              <span className="routine-spinner" aria-hidden="true">
+                <span className="sidebar-tab-spinner" />
+              </span>
+              <strong>Opening the report</strong>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   )
 }
