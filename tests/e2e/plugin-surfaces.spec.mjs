@@ -219,10 +219,19 @@ export async function run(t) {
       0
     )
     await win.click('[data-panel-bar="tabs"] button:has-text("Files")')
+    // The pane stays mounted and hidden in place once visited (PRDCT-4142), so
+    // a return shows it as it was; what Files takes back is the active slot.
     t.equal(
       'Files takes the panel back',
-      await win.locator('[data-plugin-side-panel="hello"]').count(),
-      0
+      await win.locator('[data-pane="files"][data-active="true"]').count(),
+      1
+    )
+    t.equal(
+      'and the visited plugin pane stays mounted, hidden, for the way back',
+      await win
+        .locator('[data-pane="plugin:hello"]:not([data-active]) [data-plugin-side-panel="hello"]')
+        .count(),
+      1
     )
 
     // 5. The main placement: the content column, not the side panel.

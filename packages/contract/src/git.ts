@@ -100,7 +100,16 @@ export const GitJourneyResult = Schema.Struct({
 })
 export type GitJourneyResult = typeof GitJourneyResult.Type
 
-export const GitRepoInfo = Schema.Struct({ name: Schema.String, path: Schema.String })
+/** A discovered repository. `worktreeOf` is the source repository of a linked
+ *  worktree, read from its `.git` file at discovery (PRDCT-4142), so the panel
+ *  hangs the row under its source before the row's status is read; absent or
+ *  null for a repository of its own. Optional so an older server's answer still
+ *  decodes. */
+export const GitRepoInfo = Schema.Struct({
+  name: Schema.String,
+  path: Schema.String,
+  worktreeOf: Schema.optional(Schema.NullOr(Schema.String))
+})
 export type GitRepoInfo = typeof GitRepoInfo.Type
 export const GitDiscoverResult = Schema.Struct({
   repos: Schema.Array(GitRepoInfo),
