@@ -5233,9 +5233,13 @@ details[open] > .chat-approval-items {
    untouched. */
 .terminal-view {
   --chat-column: var(--container-6xl);
+  /* The view's ink: the primary text eased a fifth of the way towards the
+     secondary, so a long transcript reads soft rather than heavy. */
+  --term-ink: color-mix(in oklch, var(--text-primary) 80%, var(--text-secondary));
 }
 .terminal-view .chat-prose {
   font-size: calc(var(--text-sm) + var(--spacing) / 4);
+  color: var(--term-ink);
 }
 .terminal-view .chat-turn-wrap[data-side='end'] {
   align-items: stretch;
@@ -5261,7 +5265,7 @@ details[open] > .chat-approval-items {
   font-size: var(--text-sm);
   font-weight: 450;
   line-height: 1.5;
-  color: var(--text-primary);
+  color: var(--term-ink);
 }
 /* The caret sits on the message's first line: a box one line tall at the
    padding's edge, the glyph centred in it, whatever the fonts' metrics. */
@@ -5623,7 +5627,9 @@ details[open] > .chat-approval-items {
   transition: border-color var(--default-transition-duration);
 }
 .term-prompt:focus-within {
-  border-color: var(--text-tertiary);
+  /* Focus darkens the two rules only a step: the field is focused nearly
+     all the time, and full tertiary ink made them the heaviest lines on screen. */
+  border-color: color-mix(in oklch, var(--text-tertiary) 35%, transparent);
 }
 .term-prompt[data-dragging='true'] {
   border-color: var(--color-accent);
@@ -5633,7 +5639,7 @@ details[open] > .chat-approval-items {
   padding-top: calc(var(--spacing) * 1.25);
   font-size: var(--text-sm);
   line-height: 1.5;
-  color: var(--text-primary);
+  color: var(--term-ink);
 }
 .term-prompt textarea {
   flex: 1;
@@ -5648,7 +5654,7 @@ details[open] > .chat-approval-items {
   font: inherit;
   font-size: var(--text-sm);
   line-height: 1.5;
-  color: var(--text-primary);
+  color: var(--term-ink);
   field-sizing: content;
   overflow-y: auto;
 }
