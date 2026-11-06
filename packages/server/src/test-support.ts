@@ -5,7 +5,6 @@
  */
 import { WebSocket } from 'ws'
 import {
-  SessionNotFound,
   type AccountOverride,
   type CommandOption,
   type SessionControl,
@@ -247,8 +246,8 @@ export class FakeSource implements SessionHostService {
    *  is the real one, applied over every session this host has. */
   readonly works = new Map<string, WorkAssignment>()
   changeWork = (id: string, change: WorkChange): WorkUpdate[] => {
-    // As the app's host: no record either is an unknown session.
-    if (!this.sessions.has(id)) throw new SessionNotFound({ id })
+    // As the app's host: a session it does not know is the rule's
+    // `WorkSessionUnknown`, answered by the server as its not-found.
     const all = [...this.sessions.keys()].map((sid) => ({ id: sid, work: this.works.get(sid) }))
     const updates = applyWorkChange(all, id, change, Date.now())
     for (const u of updates) {

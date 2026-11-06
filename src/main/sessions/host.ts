@@ -26,7 +26,6 @@ import type {
   SessionStream,
   SessionWrite
 } from '@clave/contract/sessions'
-import { SessionNotFound } from '@clave/contract/sessions'
 import type { SessionInput } from '../../shared/session-model'
 import { applyWorkChange, WorkChangeRefusal, type WorkAssignment } from '@clave/contract/work-rules'
 import type { PtySpawnOptions } from '../pty-manager'
@@ -218,7 +217,8 @@ export function createSessionHost(deps: SessionHostDeps): SessionHostService {
       for (const r of ptyManager.listWorkAssignments()) all.set(r.id, r.work)
       // A live session whose record is not on disk yet still counts.
       for (const s of manager.list()) if (!all.has(s.id)) all.set(s.id, undefined)
-      if (!all.has(id)) throw new SessionNotFound({ id })
+      // A session neither listed nor running is unknown: the rule says so
+      // (`WorkSessionUnknown`), and the server answers its declared not-found.
       const updates = applyWorkChange(
         [...all].map(([sid, work]) => ({ id: sid, work })),
         id,

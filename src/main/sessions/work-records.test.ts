@@ -2,8 +2,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import fs from 'fs'
 import path from 'path'
 import { Schema } from 'effect'
-import { SessionNotFound, SessionRecord as WireRecord } from '@clave/contract/sessions'
-import { WorkChangeRefusal, type WorkAssignment } from '@clave/contract/work-rules'
+import { SessionRecord as WireRecord } from '@clave/contract/sessions'
+import {
+  WorkChangeRefusal,
+  WorkSessionUnknown,
+  type WorkAssignment
+} from '@clave/contract/work-rules'
 import { installSettingsPorts, resetSettingsPorts } from '../ports/registry'
 import { installTerminalPorts, resetTerminalPorts } from '../ports/terminals'
 import { fileStorage } from '../ports/storage'
@@ -248,7 +252,7 @@ describe('the host’s change of work (ChangeSessionWork)', () => {
     // No live session and no record: the declared not-found, which the
     // server answers as such (no live-only check before the host).
     expect(() => host.changeWork('77777777-7777-4777-8777-777777777777', assignLead)).toThrow(
-      SessionNotFound
+      WorkSessionUnknown
     )
   })
 })

@@ -195,6 +195,13 @@ export class WorkChangeRefusal extends Error {
   override readonly name = 'WorkChangeRefusal'
 }
 
+/** The change names a session no record and no running session knows. A
+ *  plain class, so the shell can throw it without loading the wire schema
+ *  at boot; the server answers it as its declared not-found. */
+export class WorkSessionUnknown extends Error {
+  override readonly name = 'WorkSessionUnknown'
+}
+
 /** A session as the transitions read it: its id and its assignment, if any. */
 export interface WorkRecord {
   id: string
@@ -240,7 +247,7 @@ export function applyWorkChange(
   now: number
 ): WorkUpdate[] {
   const byId = new Map(all.map((r) => [r.id, r.work ? sanitizeWork(r.work) : undefined]))
-  if (!byId.has(id)) refuse(`No session with id "${id}"`)
+  if (!byId.has(id)) throw new WorkSessionUnknown(`No session with id "${id}"`)
   const self = byId.get(id)
   const membersOf = (unit: string): { id: string; work: WorkAssignment }[] =>
     [...byId]

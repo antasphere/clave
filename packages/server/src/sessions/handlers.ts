@@ -41,7 +41,7 @@ import {
   ChangeSessionWork
 } from '@clave/contract/sessions'
 import { WorkChangeRefused } from '@clave/contract/work'
-import { WorkChangeRefusal } from '@clave/contract/work-rules'
+import { WorkChangeRefusal, WorkSessionUnknown } from '@clave/contract/work-rules'
 import { SessionHost, type SessionHostService } from './port'
 import { ServerEvents } from '../events'
 
@@ -262,11 +262,13 @@ export const sessionHandlers = [
       const changed = yield* Effect.try({
         try: () => host.changeWork(payload.id, payload.change),
         catch: (error) =>
-          error instanceof WorkChangeRefusal
-            ? new WorkChangeRefused({ id: payload.id, message: error.message })
-            : error instanceof SessionNotFound || error instanceof CapabilityUnavailable
-              ? error
-              : new CapabilityUnavailable({ capability: 'sessions', message: messageOf(error) })
+          error instanceof WorkSessionUnknown
+            ? new SessionNotFound({ id: payload.id })
+            : error instanceof WorkChangeRefusal
+              ? new WorkChangeRefused({ id: payload.id, message: error.message })
+              : error instanceof SessionNotFound || error instanceof CapabilityUnavailable
+                ? error
+                : new CapabilityUnavailable({ capability: 'sessions', message: messageOf(error) })
       })
       const events = yield* ServerEvents
       for (const update of changed)
