@@ -12,6 +12,7 @@ import { Schema } from 'effect'
 import { Command, Query } from '@structure-ai/cqrs'
 import { CapabilityUnavailable } from './errors'
 import { LaunchProfileView } from './settings/launch-profiles'
+import { WorkAssignment, WorkChange, WorkChangeRefused, WorkUpdate } from './work'
 
 export const AgentState = Schema.Literal('idle', 'working', 'blocked', 'done', 'ended')
 export type AgentState = typeof AgentState.Type
@@ -587,6 +588,7 @@ export const SessionRecord = Schema.Struct({
   view: Schema.optional(SessionRecordView),
   link: Schema.optional(SessionLink),
   spawnedBy: Schema.optional(Schema.String),
+  work: Schema.optional(WorkAssignment),
   live: Schema.optional(Schema.Boolean),
   running: Schema.optional(Schema.Boolean)
 })
@@ -809,4 +811,19 @@ export const KeepOnSessionRecord = Command.define('KeepOnSessionRecord', {
   payload: Schema.Struct({ id: Schema.String, ...SessionRecordFields.fields }),
   success: Schema.Void,
   failure: CapabilityUnavailable
+})
+
+// ── PRDCT-4123: which work a session does ──
+
+/**
+ * Change the work assignment of one session: assign it to a wave or a lane,
+ * complete it, leave it, offer a handover, cancel that offer, or accept it.
+ * The rules are `work-rules.ts`'s, applied over every record the host keeps;
+ * the answer is every record rewritten, the subject's first, and the windows
+ * follow through `session.work_changed`, one event per record.
+ */
+export const ChangeSessionWork = Command.define('ChangeSessionWork', {
+  payload: Schema.Struct({ id: Schema.String, change: WorkChange }),
+  success: Schema.Struct({ changed: Schema.Array(WorkUpdate) }),
+  failure: Schema.Union(SessionNotFound, WorkChangeRefused, CapabilityUnavailable)
 })

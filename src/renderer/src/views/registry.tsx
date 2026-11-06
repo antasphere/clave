@@ -29,6 +29,7 @@ import { AccountProposal } from '../components/terminal/AccountProposal'
 import { useBackgroundTasks } from './background-tasks'
 import { BackgroundTasksChip } from './BackgroundTasksChip'
 import { SessionStatus } from '../components/session/SessionItem'
+import { WorkBreadcrumb } from '../components/session/WorkEntryItem'
 import { PaneSearch } from './PaneSearch'
 import { usePaneSearchStore } from './pane-search'
 
@@ -266,6 +267,7 @@ function RegisteredSessionView({
           <span className="pane-header-title" title={session.cwd}>
             {name ?? session.title}
           </span>
+          {record && <WorkBreadcrumb session={record} />}
           {meta.model && (
             <span className="pane-header-meta" title={meta.model}>
               {claudeModelName(meta.model)}

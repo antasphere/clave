@@ -25,6 +25,7 @@ import {
   SessionWrite,
   type SpawnOptions
 } from '@clave/contract/sessions'
+import type { WorkChange, WorkUpdate } from '@clave/contract/work-rules'
 import type { Call } from './call'
 
 export interface StartSessionInput {
@@ -85,6 +86,10 @@ export interface SessionsClient {
     resendRejected?: boolean,
     requestId?: string
   ) => Promise<RestartedSession>
+  // ── PRDCT-4123: which work a session does ──
+  /** One change to the session's work assignment, answered with every record
+   *  it rewrote, the session's own first. */
+  readonly changeWork: (id: string, change: WorkChange) => Promise<ReadonlyArray<WorkUpdate>>
 }
 
 /** A write goes over the wire in its encoded form: bytes as base64. */
@@ -188,5 +193,8 @@ export const sessionsClient = (call: Call, historyCall: Call = call): SessionsCl
           ...(requestId !== undefined && { requestId })
         }
       })
-    )
+    ),
+  // ── PRDCT-4123 ──
+  changeWork: (id, change) =>
+    call((c) => c.sessions.changeWork({ payload: { id, change } })).then((r) => r.changed)
 })

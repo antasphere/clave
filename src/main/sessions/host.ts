@@ -26,7 +26,9 @@ import type {
   SessionStream,
   SessionWrite
 } from '@clave/contract/sessions'
+import { SessionNotFound } from '@clave/contract/sessions'
 import type { SessionInput } from '../../shared/session-model'
+import { applyWorkChange, WorkChangeRefusal, type WorkAssignment } from '@clave/contract/work-rules'
 import type { PtySpawnOptions } from '../pty-manager'
 import { type SessionManager, sessionManager } from './session-manager'
 import { preparePrompt } from './attachments'
@@ -200,6 +202,40 @@ export function createSessionHost(deps: SessionHostDeps): SessionHostService {
       if (page !== undefined) ptyManager.setSessionViewRecord(id, page)
       if (claudeSessionId !== undefined) ptyManager.setSessionClaudeSessionId(id, claudeSessionId)
       if (workspaceId !== undefined) ptyManager.setSessionWorkspace(id, workspaceId)
+    },
+    // ── PRDCT-4123: which work a session does, on the records ──
+    // The rule (`work-rules.ts`) reads every record this host keeps, the
+    // live sessions' and those waiting to be brought back, so a role's
+    // holder and both ends of a handover are known whichever of them runs.
+    // They are read as they are, never through the restore listing: that
+    // one runs tmux and prunes records, a boot's business, not a change's.
+    // The first record the rule answers is written first: it is the one
+    // that may have no record to keep it (a session joining a unit, the
+    // successor offered a role), and then nothing at all is written. Every
+    // other record it answers carries an assignment already, so it exists.
+    changeWork: (id, change) => {
+      const all = new Map<string, WorkAssignment | undefined>()
+      for (const r of ptyManager.listWorkAssignments()) all.set(r.id, r.work)
+      // A live session whose record is not on disk yet still counts.
+      for (const s of manager.list()) if (!all.has(s.id)) all.set(s.id, undefined)
+      if (!all.has(id)) throw new SessionNotFound({ id })
+      const updates = applyWorkChange(
+        [...all].map(([sid, work]) => ({ id: sid, work })),
+        id,
+        change,
+        Date.now()
+      )
+      const [first, ...rest] = updates
+      // A refusal in words, not a failure of the host: an answer the server
+      // turns into `CapabilityUnavailable` is the window-wide server notice.
+      if (first && !ptyManager.setSessionWork(first.id, first.work))
+        throw new WorkChangeRefusal(
+          first.id === id
+            ? 'This session keeps no record, so its work cannot be kept'
+            : `The session ${first.id} keeps no record, so its work cannot be kept`
+        )
+      for (const update of rest) ptyManager.setSessionWork(update.id, update.work)
+      return updates
     },
     setPage: (id, page) => {
       if (!manager.get(id)) throw new Error(`Unknown session: ${id}`)

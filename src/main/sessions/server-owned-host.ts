@@ -228,6 +228,10 @@ export function serverOwnedSessionHost(options: ServerOwnedHostOptions): {
       requireLive(id)
       base.setPage(id, page)
     },
+    // A session's work is its record's (PRDCT-4123), so a stopped session's
+    // can change too: no requireLive. Its Resume carries the work on, the
+    // spawn reading the record by the id `resumeOptions` adopts.
+    changeWork: (id, change) => base.changeWork(id, change),
     // Releasing a client window is not a server lifecycle operation.
     release: () => ({ released: [], refused: [] }),
     restart: (id, account, resendRejected) => {

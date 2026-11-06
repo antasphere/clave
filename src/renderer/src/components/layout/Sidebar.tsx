@@ -12,6 +12,7 @@ import {
   type GroupTerminalColor
 } from '../../store/session-store'
 import { subagentPresentation } from '../../lib/subagent-presentation'
+import { entryTarget, workPresentation } from '../../lib/work-presentation'
 import { resolveGroupLaunchCwd } from '../../store/group-defaults'
 import { useWorkspaceStore, getWorkspaceById } from '../../store/workspace-store'
 import ColorPicker from '../ui/ColorPicker'
@@ -19,6 +20,7 @@ import type { SessionMenuEvent } from '../session/SubagentMenu'
 import { SessionItem as BaseSessionItem } from '../session/SessionItem'
 import { FileTabItem } from '../session/FileTabItem'
 import { SessionGroupItem } from '../session/SessionGroupItem'
+import { WorkEntryItem } from '../session/WorkEntryItem'
 import { ContextMenu, type ContextMenuItem } from '../ui/ContextMenu'
 import { pluginActionMenuItems } from '../plugins/plugin-actions'
 import { ConfirmDialog } from '@clave/ui/components'
@@ -656,7 +658,7 @@ export function Sidebar(): React.JSX.Element {
     )
   }, [displayItems, activeGroupFilter])
 
-  const subagents = useMemo(() => {
+  const reachableRows = useMemo(() => {
     const reachable = new Set<string>()
     for (const item of scopedItems ?? []) {
       if (item.type === 'session') reachable.add(item.sessionId)
@@ -668,24 +670,62 @@ export function Sidebar(): React.JSX.Element {
       }
     }
     for (const id of linkedHiddenIds) reachable.delete(id)
-    return subagentPresentation(
-      sessions.filter((s) => inActiveWorkspace(s, activeWorkspaceId)),
-      reachable,
-      renamingId
-    )
-  }, [scopedItems, groups, linkedHiddenIds, sessions, activeWorkspaceId, renamingId])
+    return reachable
+  }, [scopedItems, groups, linkedHiddenIds])
+  const workspaceSessions = useMemo(
+    () => sessions.filter((s) => inActiveWorkspace(s, activeWorkspaceId)),
+    [sessions, activeWorkspaceId]
+  )
+  const subagents = useMemo(
+    () => subagentPresentation(workspaceSessions, reachableRows, renamingId),
+    [workspaceSessions, reachableRows, renamingId]
+  )
+  // The wave and lane entries (PRDCT-4123): one row per unit of work, read
+  // from the sessions' own assignments, its members and their agents folded
+  // into it. Never a title, never a move: the search still lists every
+  // session as its own row.
+  const work = useMemo(
+    () => workPresentation(workspaceSessions, reachableRows, subagents.descendants, renamingId),
+    [workspaceSessions, reachableRows, subagents, renamingId]
+  )
+  const sessionsById = useMemo(
+    () => new Map<string, (typeof sessions)[number]>(sessions.map((s) => [s.id, s])),
+    [sessions]
+  )
   const subagentRootsRef = useRef(subagents.rootById)
   subagentRootsRef.current = subagents.rootById
+  // Every session an entry stands for (its members and their agents), to the
+  // id the entry is selected and counted by: its holder, else its anchor.
+  const workRepresented = useMemo(() => {
+    const map = new Map<string, string>()
+    for (const entry of work.entryByAnchor.values()) {
+      const target = entryTarget(entry)
+      for (const id of entry.members) map.set(id, target)
+      for (const agent of entry.agents) map.set(agent.id, target)
+    }
+    return map
+  }, [work])
+  const workRepresentedRef = useRef(workRepresented)
+  workRepresentedRef.current = workRepresented
   const visibleItems = useMemo(
     () =>
       scopedItems?.filter(
-        (item) => item.type !== 'session' || !subagents.rootById.has(item.sessionId)
+        (item) =>
+          item.type !== 'session' ||
+          !(subagents.rootById.has(item.sessionId) || work.folded.has(item.sessionId))
       ) ?? null,
-    [scopedItems, subagents]
+    [scopedItems, subagents, work]
   )
-  const representedSelection = (id: string): boolean =>
-    selectedSessionIds.includes(id) ||
-    (subagents.descendants.get(id)?.some((s) => selectedSessionIds.includes(s.id)) ?? false)
+  const representedSelection = (id: string): boolean => {
+    if (selectedSessionIds.includes(id)) return true
+    if (subagents.descendants.get(id)?.some((s) => selectedSessionIds.includes(s.id))) return true
+    const entry = work.entryByAnchor.get(id)
+    return (
+      !!entry &&
+      (entry.members.some((m) => selectedSessionIds.includes(m)) ||
+        entry.agents.some((a) => selectedSessionIds.includes(a.id)))
+    )
+  }
 
   // Flat ordered list of session/file tab IDs for range selection
   const flatSessionOrder = useMemo(() => {
@@ -694,21 +734,28 @@ export function Sidebar(): React.JSX.Element {
     const order: string[] = []
     for (const item of visibleItems) {
       if (item.type === 'session') {
-        order.push(item.sessionId)
+        const entry = work.entryByAnchor.get(item.sessionId)
+        order.push(entry ? entryTarget(entry) : item.sessionId)
       } else if (item.type === 'fileTab') {
         order.push(item.fileTabId)
       } else {
         const group = groups.find((g) => g.id === item.groupId)
         if (group && !group.collapsed)
           order.push(
-            ...group.sessionIds.filter(
-              (id) => !subagents.rootById.has(id) && !linkedHiddenIds.has(id)
-            )
+            ...group.sessionIds
+              .filter(
+                (id) =>
+                  !subagents.rootById.has(id) && !work.folded.has(id) && !linkedHiddenIds.has(id)
+              )
+              .map((id) => {
+                const entry = work.entryByAnchor.get(id)
+                return entry ? entryTarget(entry) : id
+              })
           )
       }
     }
     return order
-  }, [filteredSessions, visibleItems, sessions, groups, subagents, linkedHiddenIds])
+  }, [filteredSessions, visibleItems, sessions, groups, subagents, work, linkedHiddenIds])
 
   // Live ref so row-facing handlers can read the current order without listing it
   // as a dependency. Keeping those handlers' identity stable lets the memoized row
@@ -1509,7 +1556,11 @@ export function Sidebar(): React.JSX.Element {
       if (modifiers.shiftKey) {
         // Range select from anchor
         const anchor = selectionAnchorRef.current
-        const anchorId = anchor ? (subagentRootsRef.current.get(anchor) ?? anchor) : null
+        const anchorId = anchor
+          ? (workRepresentedRef.current.get(anchor) ??
+            subagentRootsRef.current.get(anchor) ??
+            anchor)
+          : null
         if (!anchorId) {
           selectSession(sessionId, false)
           selectionAnchorRef.current = sessionId
@@ -1813,34 +1864,52 @@ export function Sidebar(): React.JSX.Element {
                       } else if (item.type === 'session') {
                         const session = sessions.find((s) => s.id === item.sessionId)
                         if (!session) return null
+                        const entry = work.entryByAnchor.get(session.id)
                         return (
                           <div key={session.id}>
                             <DropGap active={gapBefore} />
-                            <SessionItem
-                              session={session}
-                              isSelected={representedSelection(session.id)}
-                              subagents={subagents.descendants.get(session.id)}
-                              onSubagentContextMenu={handleSessionContextMenu}
-                              selectedIds={
-                                subagents.descendants.has(session.id)
-                                  ? selectedSessionIds
-                                  : undefined
-                              }
-                              focusedId={
-                                subagents.descendants.has(session.id) ? focusedSessionId : undefined
-                              }
-                              onSelectSubagent={(id) =>
-                                handleSessionClick(id, { metaKey: false, shiftKey: false })
-                              }
-                              dimmed={hasSelection && !representedSelection(session.id)}
-                              onClick={(modifiers) => handleSessionClick(session.id, modifiers)}
-                              onContextMenu={(e) => handleSessionContextMenu(e, session.id)}
-                              forceEditing={renamingId === session.id}
-                              onEditingDone={clearRenaming}
-                              onPointerDown={(e) => handlePointerDown(e, session.id, false)}
-                              isDragging={draggedIds.includes(session.id)}
-                              onDelete={() => setDeleteConfirmSessionId(session.id)}
-                            />
+                            {entry ? (
+                              <WorkEntryItem
+                                entry={entry}
+                                sessionsById={sessionsById}
+                                isSelected={representedSelection(session.id)}
+                                selectedIds={selectedSessionIds}
+                                focusedId={focusedSessionId}
+                                onActivate={(id, modifiers) => handleSessionClick(id, modifiers)}
+                                onSessionContextMenu={handleSessionContextMenu}
+                                dimmed={hasSelection && !representedSelection(session.id)}
+                                onPointerDown={(e) => handlePointerDown(e, session.id, false)}
+                                isDragging={draggedIds.includes(session.id)}
+                              />
+                            ) : (
+                              <SessionItem
+                                session={session}
+                                isSelected={representedSelection(session.id)}
+                                subagents={subagents.descendants.get(session.id)}
+                                onSubagentContextMenu={handleSessionContextMenu}
+                                selectedIds={
+                                  subagents.descendants.has(session.id)
+                                    ? selectedSessionIds
+                                    : undefined
+                                }
+                                focusedId={
+                                  subagents.descendants.has(session.id)
+                                    ? focusedSessionId
+                                    : undefined
+                                }
+                                onSelectSubagent={(id) =>
+                                  handleSessionClick(id, { metaKey: false, shiftKey: false })
+                                }
+                                dimmed={hasSelection && !representedSelection(session.id)}
+                                onClick={(modifiers) => handleSessionClick(session.id, modifiers)}
+                                onContextMenu={(e) => handleSessionContextMenu(e, session.id)}
+                                forceEditing={renamingId === session.id}
+                                onEditingDone={clearRenaming}
+                                onPointerDown={(e) => handlePointerDown(e, session.id, false)}
+                                isDragging={draggedIds.includes(session.id)}
+                                onDelete={() => setDeleteConfirmSessionId(session.id)}
+                              />
+                            )}
                             {isLastItem && (
                               <DropGap
                                 edge="after"
@@ -1860,7 +1929,9 @@ export function Sidebar(): React.JSX.Element {
                           group.sessionIds.length > 0 &&
                           group.sessionIds.every((id) => selectedSessionIds.includes(id))
                         const groupColorHex = resolveColorHex(group.color)
-                        const rowIds = group.sessionIds.filter((id) => !subagents.rootById.has(id))
+                        const rowIds = group.sessionIds.filter(
+                          (id) => !subagents.rootById.has(id) && !work.folded.has(id)
+                        )
                         const railEmpty = rowIds.length === 0
                         return (
                           <div key={group.id}>
@@ -2011,50 +2082,75 @@ export function Sidebar(): React.JSX.Element {
                                       }
                                       const session = sessions.find((s) => s.id === sid)
                                       if (!session) return null
+                                      const entry = work.entryByAnchor.get(session.id)
                                       return (
                                         <div key={session.id}>
                                           <DropGap active={childGapBefore} />
-                                          <SessionItem
-                                            session={session}
-                                            isSelected={representedSelection(session.id)}
-                                            subagents={subagents.descendants.get(session.id)}
-                                            onSubagentContextMenu={handleSessionContextMenu}
-                                            selectedIds={
-                                              subagents.descendants.has(session.id)
-                                                ? selectedSessionIds
-                                                : undefined
-                                            }
-                                            focusedId={
-                                              subagents.descendants.has(session.id)
-                                                ? focusedSessionId
-                                                : undefined
-                                            }
-                                            onSelectSubagent={(id) =>
-                                              handleSessionClick(id, {
-                                                metaKey: false,
-                                                shiftKey: false
-                                              })
-                                            }
-                                            dimmed={
-                                              hasSelection && !representedSelection(session.id)
-                                            }
-                                            onClick={(modifiers) =>
-                                              handleSessionClick(session.id, modifiers)
-                                            }
-                                            onContextMenu={(e) =>
-                                              handleSessionContextMenu(e, session.id)
-                                            }
-                                            grouped
-                                            groupSelected={allGroupSelected}
-                                            groupColorHex={groupColorHex}
-                                            forceEditing={renamingId === session.id}
-                                            onEditingDone={clearRenaming}
-                                            onPointerDown={(e) =>
-                                              handlePointerDown(e, session.id, false)
-                                            }
-                                            isDragging={draggedIds.includes(session.id)}
-                                            onDelete={() => setDeleteConfirmSessionId(session.id)}
-                                          />
+                                          {entry ? (
+                                            <WorkEntryItem
+                                              entry={entry}
+                                              sessionsById={sessionsById}
+                                              isSelected={representedSelection(session.id)}
+                                              selectedIds={selectedSessionIds}
+                                              focusedId={focusedSessionId}
+                                              onActivate={(id, modifiers) =>
+                                                handleSessionClick(id, modifiers)
+                                              }
+                                              onSessionContextMenu={handleSessionContextMenu}
+                                              dimmed={
+                                                hasSelection && !representedSelection(session.id)
+                                              }
+                                              grouped
+                                              groupSelected={allGroupSelected}
+                                              groupColorHex={groupColorHex}
+                                              onPointerDown={(e) =>
+                                                handlePointerDown(e, session.id, false)
+                                              }
+                                              isDragging={draggedIds.includes(session.id)}
+                                            />
+                                          ) : (
+                                            <SessionItem
+                                              session={session}
+                                              isSelected={representedSelection(session.id)}
+                                              subagents={subagents.descendants.get(session.id)}
+                                              onSubagentContextMenu={handleSessionContextMenu}
+                                              selectedIds={
+                                                subagents.descendants.has(session.id)
+                                                  ? selectedSessionIds
+                                                  : undefined
+                                              }
+                                              focusedId={
+                                                subagents.descendants.has(session.id)
+                                                  ? focusedSessionId
+                                                  : undefined
+                                              }
+                                              onSelectSubagent={(id) =>
+                                                handleSessionClick(id, {
+                                                  metaKey: false,
+                                                  shiftKey: false
+                                                })
+                                              }
+                                              dimmed={
+                                                hasSelection && !representedSelection(session.id)
+                                              }
+                                              onClick={(modifiers) =>
+                                                handleSessionClick(session.id, modifiers)
+                                              }
+                                              onContextMenu={(e) =>
+                                                handleSessionContextMenu(e, session.id)
+                                              }
+                                              grouped
+                                              groupSelected={allGroupSelected}
+                                              groupColorHex={groupColorHex}
+                                              forceEditing={renamingId === session.id}
+                                              onEditingDone={clearRenaming}
+                                              onPointerDown={(e) =>
+                                                handlePointerDown(e, session.id, false)
+                                              }
+                                              isDragging={draggedIds.includes(session.id)}
+                                              onDelete={() => setDeleteConfirmSessionId(session.id)}
+                                            />
+                                          )}
                                           {isLastInGroup && (
                                             <DropGap
                                               edge="after"
@@ -2082,7 +2178,9 @@ export function Sidebar(): React.JSX.Element {
                                         data-group-id={group.id}
                                       >
                                         {group.sessionIds.length
-                                          ? 'Subagents shown with their parent'
+                                          ? group.sessionIds.some((id) => work.folded.has(id))
+                                            ? 'Shown with their wave or lane'
+                                            : 'Subagents shown with their parent'
                                           : 'No sessions'}
                                       </div>
                                     )}

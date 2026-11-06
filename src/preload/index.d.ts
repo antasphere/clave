@@ -19,6 +19,7 @@ import type {
   PullRequestView,
   ReviewEvent
 } from '../shared/github-pull'
+import type { WorkAssignment, WorkChange, WorkUpdate } from '@clave/contract/work-rules'
 
 /** Additive wire contract for adapter stream consumers. Existing PTY IPC is unchanged. */
 export interface ActivityAnswer {
@@ -417,6 +418,9 @@ export interface SessionRecord {
   /** The tab whose agent opened this one: the boot restore folds it under
    *  that parent again and `"parent"` still reaches it. Absent = a user's tab. */
   spawnedBy?: string
+  /** Which wave or lane the tab works on, its role and its standing
+   *  (PRDCT-4123). Absent = an ordinary tab. */
+  work?: WorkAssignment
   /** True → reattach to a still-running tmux session. False → the tmux server
    *  died (reboot) but the sidecar survived; re-spawn fresh (Claude resumes). */
   live?: boolean
@@ -769,6 +773,9 @@ export interface ElectronAPI extends FleetDesktopAPI {
     id: string,
     view: { url: string; title?: string; command?: string; cwd?: string } | null
   ) => Promise<void>
+  /** PRDCT-4123: one change to the tab's work assignment, through the
+   *  server; answers every record rewritten, the tab's own first. */
+  sessionsChangeWork: (id: string, change: WorkChange) => Promise<WorkUpdate[]>
   setSessionWorkspace: (id: string, workspaceId: string | null) => Promise<void>
   tmuxAvailable: () => Promise<boolean>
   listSessionRecords: (filter?: { ids?: string[] }) => Promise<SessionRecord[]>
@@ -791,6 +798,11 @@ export interface ElectronAPI extends FleetDesktopAPI {
   ackRehomed: (sessionIds: string[]) => void
   // ── Wave 4, lane D: what the served agent tools did to a session (push only) ──
   onSessionRenamed: (callback: (payload: { id: string; name: string }) => void) => () => void
+  /** PRDCT-4123: a tab's work assignment changed on its record; null when it
+   *  belongs to no wave or lane any more. */
+  onSessionWorkChanged: (
+    callback: (payload: { id: string; work: WorkAssignment | null }) => void
+  ) => () => void
   onSessionPageChanged: (
     callback: (payload: {
       id: string

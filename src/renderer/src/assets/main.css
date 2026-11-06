@@ -1,6 +1,6 @@
-@import "tailwindcss";
-@import "@mdxeditor/editor/style.css";
-@import "@clave/ui/styles.css";
+@import 'tailwindcss';
+@import '@mdxeditor/editor/style.css';
+@import '@clave/ui/styles.css';
 @source "../../../../packages/ui/src";
 
 /* Messages from other tabs form a deck: inset faces remain visible beneath
@@ -25,16 +25,21 @@
 }
 /* Keep the deck's spacing transition beside the transcript's arrival fade. */
 .chat-view .chat-row .chat-delivery-stack {
-  transition: margin-bottom var(--default-transition-duration) var(--ease-out-expo),
+  transition:
+    margin-bottom var(--default-transition-duration) var(--ease-out-expo),
     opacity var(--default-transition-duration) var(--ease-out-expo),
     translate var(--default-transition-duration) var(--ease-out-expo);
 }
-.chat-delivery-summary::-webkit-details-marker { display: none; }
+.chat-delivery-summary::-webkit-details-marker {
+  display: none;
+}
 .chat-delivery-summary:focus-visible .chat-delivery-cover {
   outline: thin solid var(--color-accent);
   outline-offset: var(--spacing);
 }
-.chat-delivery-cover, .chat-delivery-peek, .chat-exchange-card {
+.chat-delivery-cover,
+.chat-delivery-peek,
+.chat-exchange-card {
   border: thin solid var(--border-subtle-color);
   border-radius: var(--radius-2xl);
 }
@@ -47,7 +52,9 @@
   padding: calc(var(--spacing) * 4) calc(var(--spacing) * 5);
   background: var(--surface-100);
   box-shadow: var(--raised-shadow);
-  transition: background var(--default-transition-duration), box-shadow var(--default-transition-duration);
+  transition:
+    background var(--default-transition-duration),
+    box-shadow var(--default-transition-duration);
 }
 .chat-delivery-summary:hover .chat-delivery-cover {
   background: color-mix(in oklch, var(--surface-100) 75%, var(--surface-0));
@@ -59,9 +66,22 @@
   color: var(--text-tertiary);
   font-size: var(--text-xs);
 }
-.chat-delivery-eyebrow { display: inline-flex; align-items: center; gap: var(--spacing); min-width: 0; }
-.chat-delivery-eyebrow svg { width: var(--chat-glyph); height: var(--chat-glyph); flex-shrink: 0; }
-.chat-delivery-count { margin-left: auto; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.chat-delivery-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing);
+  min-width: 0;
+}
+.chat-delivery-eyebrow svg {
+  width: var(--chat-glyph);
+  height: var(--chat-glyph);
+  flex-shrink: 0;
+}
+.chat-delivery-count {
+  margin-left: auto;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
 .chat-delivery-chevron {
   width: var(--chat-glyph);
   height: var(--chat-glyph);
@@ -93,30 +113,67 @@
   display: flex;
   align-items: flex-end;
   padding: 0 calc(var(--spacing) * 5) calc(var(--spacing) * 0.5);
-  background: color-mix(in oklch, var(--surface-200) calc(40% + var(--delivery-layer) * 20%), var(--surface-100));
+  background: color-mix(
+    in oklch,
+    var(--surface-200) calc(40% + var(--delivery-layer) * 20%),
+    var(--surface-100)
+  );
   transform: translateY(calc(var(--delivery-layer) * var(--delivery-step)));
   color: var(--text-tertiary);
   font-size: var(--text-xs);
-  transition: transform var(--default-transition-duration) var(--ease-out-expo), opacity var(--default-transition-duration);
+  transition:
+    transform var(--default-transition-duration) var(--ease-out-expo),
+    opacity var(--default-transition-duration);
 }
-.chat-delivery-peek > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.chat-delivery-stack[open] { margin-bottom: 0; }
-.chat-delivery-stack[open] .chat-delivery-peek { transform: translateY(0); opacity: 0; }
-.chat-delivery-stack[open] .chat-delivery-chevron { rotate: 180deg; }
-.chat-delivery-stack[open] .chat-delivery-preview { display: none; }
+.chat-delivery-peek > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chat-delivery-stack[open] {
+  margin-bottom: 0;
+}
+.chat-delivery-stack[open] .chat-delivery-peek {
+  transform: translateY(0);
+  opacity: 0;
+}
+.chat-delivery-stack[open] .chat-delivery-chevron {
+  rotate: 180deg;
+}
+.chat-delivery-stack[open] .chat-delivery-preview {
+  display: none;
+}
 .chat-delivery-stack::details-content {
   block-size: 0;
   overflow: clip;
   opacity: 0;
-  transition: block-size var(--default-transition-duration) var(--ease-out-expo),
+  transition:
+    block-size var(--default-transition-duration) var(--ease-out-expo),
     opacity var(--default-transition-duration),
     content-visibility var(--default-transition-duration) allow-discrete;
 }
-.chat-delivery-stack[open]::details-content { block-size: auto; opacity: 1; }
-.chat-delivery-items { display: flex; flex-direction: column; gap: calc(var(--spacing) * 3); padding-top: calc(var(--spacing) * 3); }
-.chat-exchange-card { min-width: 0; background: var(--surface-0); overflow: hidden; }
-.chat-exchange-message { padding: calc(var(--spacing) * 4) calc(var(--spacing) * 5); background: color-mix(in oklch, var(--color-term-model) 5%, var(--surface-0)); }
-.chat-exchange-card .chat-turn-wrap[data-side='end'] { align-items: stretch; }
+.chat-delivery-stack[open]::details-content {
+  block-size: auto;
+  opacity: 1;
+}
+.chat-delivery-items {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--spacing) * 3);
+  padding-top: calc(var(--spacing) * 3);
+}
+.chat-exchange-card {
+  min-width: 0;
+  background: var(--surface-0);
+  overflow: hidden;
+}
+.chat-exchange-message {
+  padding: calc(var(--spacing) * 4) calc(var(--spacing) * 5);
+  background: color-mix(in oklch, var(--color-term-model) 5%, var(--surface-0));
+}
+.chat-exchange-card .chat-turn-wrap[data-side='end'] {
+  align-items: stretch;
+}
 .chat-exchange-card .chat-turn[data-role='user'][data-from='tab'] {
   padding: 0;
   max-width: none;
@@ -126,14 +183,33 @@
   font-size: var(--text-sm);
   font-weight: 400;
 }
-.chat-exchange-card .chat-turn[data-role='user']::before { display: none; }
-.terminal-view .chat-exchange-card .chat-turn-wrap[data-side='end'] .chat-turn[data-role='user'][data-from='tab'] { background: transparent; }
-.chat-exchange-card .term-question { position: static; }
-.chat-exchange-card .chat-turn-meta { position: static; height: auto; justify-content: flex-end; padding-top: var(--spacing); }
+.chat-exchange-card .chat-turn[data-role='user']::before {
+  display: none;
+}
+.terminal-view
+  .chat-exchange-card
+  .chat-turn-wrap[data-side='end']
+  .chat-turn[data-role='user'][data-from='tab'] {
+  background: transparent;
+}
+.chat-exchange-card .term-question {
+  position: static;
+}
+.chat-exchange-card .chat-turn-meta {
+  position: static;
+  height: auto;
+  justify-content: flex-end;
+  padding-top: var(--spacing);
+}
 @media (prefers-reduced-motion: reduce) {
   .chat-view .chat-row .chat-delivery-stack,
-  .chat-delivery-stack, .chat-delivery-stack::details-content,
-  .chat-delivery-chevron, .chat-delivery-peek, .chat-delivery-cover { transition: none; }
+  .chat-delivery-stack,
+  .chat-delivery-stack::details-content,
+  .chat-delivery-chevron,
+  .chat-delivery-peek,
+  .chat-delivery-cover {
+    transition: none;
+  }
 }
 
 /* Appearance → Font: Synonym, with the website's corrections (size-adjust is on
@@ -150,7 +226,7 @@ html[data-ui-font='synonym'] {
    restated as a literal, not a var(--accent) mix: lib/skin.ts snapshots these
    --cm-* values while the previous skin's tokens are still on the root, so a
    reference would freeze the selection in the theme being left. */
-[data-theme="dark"],
+[data-theme='dark'],
 :root {
   /* CodeMirror syntax tokens — driven by CSS vars so the editor recolors on theme switch */
   --cm-selection: rgba(90, 162, 247, 0.3);
@@ -169,7 +245,7 @@ html[data-ui-font='synonym'] {
   --cm-punctuation: #8b949e;
 }
 
-[data-theme="light"] {
+[data-theme='light'] {
   /* CodeMirror syntax tokens — GitHub-light-inspired, tuned for the warm light surface */
   --cm-selection: rgba(31, 95, 207, 0.18);
   --cm-active-line: rgba(0, 0, 0, 0.03);
@@ -187,7 +263,7 @@ html[data-ui-font='synonym'] {
   --cm-punctuation: #57606a;
 }
 
-[data-theme="coffee"] {
+[data-theme='coffee'] {
   /* CodeMirror syntax tokens — warm palette tuned for the cream surface */
   --cm-selection: rgba(31, 91, 196, 0.18);
   --cm-active-line: rgba(120, 100, 80, 0.05);
@@ -205,7 +281,7 @@ html[data-ui-font='synonym'] {
   --cm-punctuation: #756e66;
 }
 
-[data-theme="charcoal"] {
+[data-theme='charcoal'] {
   /* CodeMirror syntax tokens — dark's github-dark family, desaturated a notch
      for the lifted ground and with the two greys (comment, punctuation) taken
      off their cool #8b949e onto the theme's own warm axis. */
@@ -371,14 +447,17 @@ html[data-ui-font='synonym'] {
 .group-scope:has(.group-header:hover) {
   background-color: var(--group-bg-hover, color-mix(in srgb, var(--surface-100) 60%, transparent));
 }
-.group-scope[data-selected="true"] {
-  background-color: var(--group-bg-selected, color-mix(in srgb, var(--surface-200) 60%, transparent));
+.group-scope[data-selected='true'] {
+  background-color: var(
+    --group-bg-selected,
+    color-mix(in srgb, var(--surface-200) 60%, transparent)
+  );
   border-color: var(--group-border-selected, var(--color-border));
   box-shadow: 0 0 0.5px var(--selected-ring);
 }
 /* Selected AND hovered still moves — a card that stops responding once selected
    reads as disabled. */
-.group-scope[data-selected="true"]:has(.group-header:hover) {
+.group-scope[data-selected='true']:has(.group-header:hover) {
   background-color: var(--group-active-bg, color-mix(in srgb, var(--surface-200) 80%, transparent));
 }
 
@@ -389,7 +468,7 @@ html[data-ui-font='synonym'] {
 .group-scope .sidebar-item:hover {
   background-color: var(--group-hover-bg, var(--surface-100));
 }
-.group-scope .sidebar-item[data-selected="true"] {
+.group-scope .sidebar-item[data-selected='true'] {
   background-color: var(--group-active-bg, var(--surface-200));
 }
 
@@ -482,7 +561,9 @@ body.reorder-dragging * {
   gap: 2px;
   width: auto;
   min-width: var(--control-h-xs);
-  transition: color 150ms, background-color 150ms;
+  transition:
+    color 150ms,
+    background-color 150ms;
 }
 /* Air on both edges, and only once there IS a count: the count reads as part of
    the button rather than pinned to its border, while a group with no terminals
@@ -567,7 +648,10 @@ body.reorder-dragging * {
   font-weight: var(--font-weight-medium);
   color: var(--text-tertiary);
   background-color: transparent;
-  transition: color 150ms, background-color 150ms, scale 120ms var(--ease-out-expo);
+  transition:
+    color 150ms,
+    background-color 150ms,
+    scale 120ms var(--ease-out-expo);
 }
 .idle-group-start:hover {
   color: var(--text-primary);
@@ -644,7 +728,10 @@ body.reorder-dragging * {
   border: 1px solid var(--border-subtle-color);
   background-color: var(--surface-100);
   text-align: left;
-  transition: border-color 150ms, background-color 150ms, transform 150ms;
+  transition:
+    border-color 150ms,
+    background-color 150ms,
+    transform 150ms;
 }
 .group-picker-card:hover {
   border-color: var(--color-border);
@@ -802,9 +889,15 @@ body.reorder-dragging * {
   animation: trail-miss 300ms ease-out;
 }
 @keyframes trail-miss {
-  25% { transform: translateX(-4px); }
-  55% { transform: translateX(4px); }
-  80% { transform: translateX(-2px); }
+  25% {
+    transform: translateX(-4px);
+  }
+  55% {
+    transform: translateX(4px);
+  }
+  80% {
+    transform: translateX(-2px);
+  }
 }
 /* The one-message face (collapsed): the whole line is the scroll-to button.
    Min-height and centering keep a single-line message level with the 28px
@@ -840,7 +933,10 @@ body.reorder-dragging * {
   background-color: color-mix(in srgb, var(--surface-0) 90%, transparent);
   opacity: 0;
   pointer-events: none;
-  transition: opacity 120ms, color 150ms, background-color 150ms;
+  transition:
+    opacity 120ms,
+    color 150ms,
+    background-color 150ms;
 }
 .message-trail:hover .message-trail-peek {
   opacity: 1;
@@ -1248,7 +1344,9 @@ body.reorder-dragging * {
   border-radius: var(--radius-md);
   font-size: 10px;
   color: var(--text-tertiary);
-  transition: color 150ms, background-color 150ms;
+  transition:
+    color 150ms,
+    background-color 150ms;
 }
 .git-footnote-action:hover:not(:disabled) {
   color: var(--text-primary);
@@ -1313,10 +1411,10 @@ body.reorder-dragging * {
   color: var(--text-secondary);
   pointer-events: none;
 }
-.keymap-command-hud[data-state="matched"] {
+.keymap-command-hud[data-state='matched'] {
   color: var(--color-status-ready);
 }
-.keymap-command-hud[data-state="cancelled"] {
+.keymap-command-hud[data-state='cancelled'] {
   color: var(--text-tertiary);
 }
 
@@ -1340,7 +1438,10 @@ body.reorder-dragging * {
   color: var(--text-secondary);
   font-size: 12px;
   font-variant-numeric: tabular-nums;
-  transition: color 150ms, border-color 150ms, background-color 150ms;
+  transition:
+    color 150ms,
+    border-color 150ms,
+    background-color 150ms;
 }
 .keymap-binding:hover,
 .keymap-binding:focus-visible {
@@ -1366,13 +1467,17 @@ body.reorder-dragging * {
   border-radius: var(--radius-lg);
   background-color: var(--surface-200);
   color: var(--text-secondary);
-  transition: background-color 150ms, color 150ms, box-shadow 150ms, scale 120ms var(--ease-out-expo);
+  transition:
+    background-color 150ms,
+    color 150ms,
+    box-shadow 150ms,
+    scale 120ms var(--ease-out-expo);
 }
 .avatar-cell:hover {
   background-color: var(--surface-300);
   color: var(--text-primary);
 }
-.avatar-cell[data-selected="true"] {
+.avatar-cell[data-selected='true'] {
   color: var(--color-accent);
   background-color: color-mix(in srgb, var(--color-accent) 15%, transparent);
   box-shadow: 0 0 0 1px var(--color-accent);
@@ -2577,10 +2682,15 @@ body.reorder-dragging * {
   animation: linked-document-in 150ms ease-out;
 }
 @keyframes linked-document-in {
-  from { opacity: 0; translate: 8px 0; }
+  from {
+    opacity: 0;
+    translate: 8px 0;
+  }
 }
 @media (prefers-reduced-motion: reduce) {
-  .linked-document-panel { animation: none; }
+  .linked-document-panel {
+    animation: none;
+  }
 }
 /* One row, like an artifact's: kind and title on the left, then save state,
    the view toggle and hide. The title gives way first; the controls never wrap. */
@@ -2593,18 +2703,43 @@ body.reorder-dragging * {
   border-bottom: 1px solid var(--border-subtle-color);
   flex-shrink: 0;
 }
-.linked-document-header > :not(:first-child) { flex-shrink: 0; }
-.linked-document-header > [role="status"] { max-width: 12rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex-shrink: 1; }
-.linked-document-content { flex: 1; overflow: auto; min-height: 0; }
-.linked-document-notice { padding: 0.5rem; font-size: 0.75rem; color: var(--text-secondary); background: var(--surface-100); }
-.linked-email-composer { display: flex; flex-direction: column; min-height: 100%; }
+.linked-document-header > :not(:first-child) {
+  flex-shrink: 0;
+}
+.linked-document-header > [role='status'] {
+  max-width: 12rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex-shrink: 1;
+}
+.linked-document-content {
+  flex: 1;
+  overflow: auto;
+  min-height: 0;
+}
+.linked-document-notice {
+  padding: 0.5rem;
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  background: var(--surface-100);
+}
+.linked-email-composer {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+}
 
 /* The header fields are ONE block, not five controls. A boxed .input-field per
    line reads as a form to fill in; a mail header is a block you scan, so the
    rows carry the list hairline and the input itself has no chrome until the row
    is focused — then an accent bar on the leading edge says which line you are
    typing into, the same signal a selected row uses elsewhere. */
-.linked-email-fields { display: flex; flex-direction: column; flex-shrink: 0; }
+.linked-email-fields {
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+}
 .linked-email-field {
   display: flex;
   align-items: center;
@@ -2615,9 +2750,18 @@ body.reorder-dragging * {
   box-shadow: inset 2px 0 0 transparent;
   transition: box-shadow 150ms;
 }
-.linked-email-field:last-child { border-bottom: 0; }
-.linked-email-field:focus-within { box-shadow: inset 2px 0 0 var(--color-accent); }
-.linked-email-field > span { width: 3.5rem; flex-shrink: 0; font-size: 12px; color: var(--text-tertiary); }
+.linked-email-field:last-child {
+  border-bottom: 0;
+}
+.linked-email-field:focus-within {
+  box-shadow: inset 2px 0 0 var(--color-accent);
+}
+.linked-email-field > span {
+  width: 3.5rem;
+  flex-shrink: 0;
+  font-size: 12px;
+  color: var(--text-tertiary);
+}
 .linked-email-field > input {
   flex: 1;
   min-width: 0;
@@ -2628,10 +2772,14 @@ body.reorder-dragging * {
   color: var(--text-primary);
   outline: none;
 }
-.linked-email-field > input::placeholder { color: var(--text-tertiary); }
+.linked-email-field > input::placeholder {
+  color: var(--text-tertiary);
+}
 /* The subject closes the header block, so it takes the structural seam the
    repeating row hairline is deliberately too soft to carry. */
-.linked-email-field--subject { border-top: 1px solid var(--border-subtle-color); }
+.linked-email-field--subject {
+  border-top: 1px solid var(--border-subtle-color);
+}
 
 /* The body is a document, not a hole in the panel: the light ground belongs to
    the email, so it is framed as a sheet inside the panel rather than bled to
@@ -2645,8 +2793,16 @@ body.reorder-dragging * {
   transition: border-color 150ms;
   flex-shrink: 0;
 }
-.linked-email-sheet:focus-within { border-color: var(--color-accent); }
-.linked-email-body { display: block; width: 100%; border: 0; background: white; color-scheme: light; }
+.linked-email-sheet:focus-within {
+  border-color: var(--color-accent);
+}
+.linked-email-body {
+  display: block;
+  width: 100%;
+  border: 0;
+  background: white;
+  color-scheme: light;
+}
 
 /* Section headers for signature and attachments. The panel titlebar class used
    to draw these, which put a section label at the weight of the document title. */
@@ -2680,24 +2836,49 @@ body.reorder-dragging * {
   font-size: 12px;
   color: var(--text-secondary);
   outline: none;
-  transition: color 150ms, background-color 150ms;
+  transition:
+    color 150ms,
+    background-color 150ms;
 }
-.linked-email-select:hover { color: var(--text-primary); background: var(--surface-200); }
-.linked-email-select:focus-visible { box-shadow: 0 0 0 1px var(--color-accent); }
-.linked-email-section-toggle { color: var(--text-tertiary); }
-.linked-email-section-toggle svg { transition: rotate 150ms; }
-.linked-email-section-toggle[data-state="closed"] svg { rotate: -90deg; }
+.linked-email-select:hover {
+  color: var(--text-primary);
+  background: var(--surface-200);
+}
+.linked-email-select:focus-visible {
+  box-shadow: 0 0 0 1px var(--color-accent);
+}
+.linked-email-section-toggle {
+  color: var(--text-tertiary);
+}
+.linked-email-section-toggle svg {
+  transition: rotate 150ms;
+}
+.linked-email-section-toggle[data-state='closed'] svg {
+  rotate: -90deg;
+}
 .linked-email-signature {
   margin: 0 0.75rem 0.75rem;
   border-radius: var(--radius-lg);
   border: 1px solid var(--border-subtle-color);
   overflow: hidden;
 }
-.linked-signature-preview { display: block; width: 100%; min-height: 0; border: 0; background: white; color-scheme: light; }
+.linked-signature-preview {
+  display: block;
+  width: 100%;
+  min-height: 0;
+  border: 0;
+  background: white;
+  color-scheme: light;
+}
 
 /* One chip per attachment, so a draft's files read as a set at a glance
    instead of as one full-width row each. */
-.linked-email-attachments { display: flex; flex-wrap: wrap; gap: 0.375rem; padding: 0 0.75rem 0.75rem; }
+.linked-email-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.375rem;
+  padding: 0 0.75rem 0.75rem;
+}
 .linked-email-attachment {
   display: inline-flex;
   align-items: center;
@@ -2712,10 +2893,20 @@ body.reorder-dragging * {
   color: var(--text-tertiary);
   transition: background-color 150ms;
 }
-.linked-email-attachment:hover { background: var(--surface-200); }
-.linked-email-attachment > button { min-width: 0; color: var(--text-primary); }
-.linked-email-attachment > button:hover { text-decoration: underline; }
-.linked-email-attachment > span { font-variant-numeric: tabular-nums; flex-shrink: 0; }
+.linked-email-attachment:hover {
+  background: var(--surface-200);
+}
+.linked-email-attachment > button {
+  min-width: 0;
+  color: var(--text-primary);
+}
+.linked-email-attachment > button:hover {
+  text-decoration: underline;
+}
+.linked-email-attachment > span {
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+}
 /* The remove control matters only on approach — the same 20px hover-revealed
    affordance the git rows use, so a chip is not two buttons at rest. */
 .linked-email-attachment-remove {
@@ -2728,11 +2919,19 @@ body.reorder-dragging * {
   border-radius: var(--radius-md);
   color: var(--text-tertiary);
   opacity: 0;
-  transition: opacity 150ms, color 150ms, background-color 150ms;
+  transition:
+    opacity 150ms,
+    color 150ms,
+    background-color 150ms;
 }
 .linked-email-attachment:hover .linked-email-attachment-remove,
-.linked-email-attachment-remove:focus-visible { opacity: 1; }
-.linked-email-attachment-remove:hover { color: var(--text-primary); background: var(--surface-300); }
+.linked-email-attachment-remove:focus-visible {
+  opacity: 1;
+}
+.linked-email-attachment-remove:hover {
+  color: var(--text-primary);
+  background: var(--surface-300);
+}
 
 /* The save state of an email lives in one bar at the foot, under its
    attachments, instead of in the titlebar; the alert surface stays for trouble. */
@@ -2749,15 +2948,35 @@ body.reorder-dragging * {
   color: var(--text-tertiary);
   flex-shrink: 0;
 }
-.linked-email-foot > span { min-width: 0; }
-.linked-email-foot-dot { width: 6px; height: 6px; border-radius: 999px; flex-shrink: 0; background: var(--color-accent); }
-.linked-email-foot-dot[data-state="saving"] { background: var(--text-tertiary); }
-.linked-email-foot-dot[data-state="error"] { background: var(--danger-toggle-icon); }
+.linked-email-foot > span {
+  min-width: 0;
+}
+.linked-email-foot-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  flex-shrink: 0;
+  background: var(--color-accent);
+}
+.linked-email-foot-dot[data-state='saving'] {
+  background: var(--text-tertiary);
+}
+.linked-email-foot-dot[data-state='error'] {
+  background: var(--danger-toggle-icon);
+}
 /* The gap between session and card is the handle: invisible at rest, a
    hairline on approach, the accent while focused — the file tree's handle. */
-.linked-document-divider { position: absolute; left: 0; top: 0; bottom: 0; width: var(--linked-inset); cursor: col-resize; outline: none; }
+.linked-document-divider {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: var(--linked-inset);
+  cursor: col-resize;
+  outline: none;
+}
 .linked-document-divider::after {
-  content: "";
+  content: '';
   position: absolute;
   left: 50%;
   top: 0.75rem;
@@ -2768,13 +2987,19 @@ body.reorder-dragging * {
   background: transparent;
   transition: background-color 150ms;
 }
-.linked-document-divider:hover::after { background: color-mix(in srgb, var(--color-accent) 50%, transparent); }
+.linked-document-divider:hover::after {
+  background: color-mix(in srgb, var(--color-accent) 50%, transparent);
+}
 .linked-document-divider:focus-visible::after,
-.linked-document-divider:active::after { background: var(--color-accent); }
+.linked-document-divider:active::after {
+  background: var(--color-accent);
+}
 
 /* A hidden document stays one click away: a chip naming it in the session's
    header (LinkedDocumentReopen), like an artifact chip in its conversation. */
-.linked-document-reopen { max-width: 12rem; }
+.linked-document-reopen {
+  max-width: 12rem;
+}
 
 /* ── Release notes, HTML branch ────────────────────────────────────────────
    GitHub's releases feed serves each body already rendered to HTML, so the
@@ -3418,7 +3643,9 @@ body.reorder-dragging * {
   border-radius: var(--radius-sm);
   background: var(--surface-300);
 }
-.mic-level-segment[data-state='lit'] { background: var(--color-accent); }
+.mic-level-segment[data-state='lit'] {
+  background: var(--color-accent);
+}
 .mic-level-segment[data-state='peak'] {
   background: color-mix(in srgb, var(--color-accent) 40%, transparent);
 }
@@ -3426,7 +3653,10 @@ body.reorder-dragging * {
 /* ── Background work (BackgroundTasksChip) ──
    A chat's turn can end while shells and subagents it started keep running.
    The chip names how many, in the pane header; its popover lists them. */
-.background-tasks-chip { gap: 0.375rem; color: var(--text-secondary); }
+.background-tasks-chip {
+  gap: 0.375rem;
+  color: var(--text-secondary);
+}
 .background-tasks-pulse {
   width: 6px;
   height: 6px;
@@ -3435,8 +3665,15 @@ body.reorder-dragging * {
   background: var(--color-status-working);
   animation: pulse-dot 5s cubic-bezier(0.4, 0, 0.6, 1) infinite;
 }
-.background-tasks-popover { width: 22rem; max-width: calc(100vw - 2rem); padding: 0.25rem; }
-.background-task-list { display: flex; flex-direction: column; }
+.background-tasks-popover {
+  width: 22rem;
+  max-width: calc(100vw - 2rem);
+  padding: 0.25rem;
+}
+.background-task-list {
+  display: flex;
+  flex-direction: column;
+}
 .background-task {
   display: flex;
   align-items: center;
@@ -3447,13 +3684,27 @@ body.reorder-dragging * {
   font-size: 12px;
   color: var(--text-tertiary);
 }
-.background-task:hover { background: var(--surface-100); }
-.background-task-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-primary); }
-.background-task-time { flex-shrink: 0; font-variant-numeric: tabular-nums; }
+.background-task:hover {
+  background: var(--surface-100);
+}
+.background-task-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-primary);
+}
+.background-task-time {
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+}
 @media (prefers-reduced-motion: reduce) {
   .background-tasks-pulse,
   .pane-status-dot[data-status='background'],
-  .sidebar-tab-icon[data-background] { animation: none !important; }
+  .sidebar-tab-icon[data-background] {
+    animation: none !important;
+  }
 }
 
 /* A live subagent selector shares the model picker's chip and menu material.
@@ -3467,20 +3718,48 @@ body.reorder-dragging * {
   flex: 1;
   min-width: 0;
 }
-.subagent-trigger {
+.subagent-trigger,
+.work-trigger {
   --chat-glyph: var(--framed-control-icon);
   flex-shrink: 0;
   max-width: 45%;
   cursor: pointer;
 }
-.subagent-trigger .tab-status {
+.subagent-trigger .tab-status,
+.work-trigger .tab-status {
   flex-shrink: 0;
 }
-.subagent-trigger[data-active='true'] {
+.subagent-trigger[data-active='true'],
+.work-trigger[data-active='true'] {
   color: var(--text-primary);
   background-color: var(--surface-200);
 }
 .subagent-menu {
   max-height: var(--radix-dropdown-menu-content-available-height);
   overflow-y: auto;
+}
+
+/* A wave or lane entry (PRDCT-4123): one row for a unit of work, its chips
+   before the status slot. The chips are short words, never a count of work
+   done; amber is the one tone that asks the person to look. */
+.work-chip {
+  flex-shrink: 0;
+  color: var(--text-tertiary);
+  background-color: var(--surface-100);
+}
+.work-chip[data-tone='amber'] {
+  color: var(--color-status-waiting);
+}
+.work-menu-breadcrumb {
+  color: var(--text-secondary);
+}
+.work-menu-action {
+  color: var(--text-secondary);
+  padding-inline-start: 22px;
+}
+.work-breadcrumb {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }

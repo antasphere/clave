@@ -25,6 +25,21 @@ import {
 import { CapabilityUnavailable } from './errors'
 import { ServerEvent } from './events'
 
+/** A whole valid work assignment (PRDCT-4123), as a record keeps it. */
+const work = {
+  unit: 'stable-wave/lane-a',
+  kind: 'lane',
+  label: 'Stable wave lanes',
+  wave: 'stable-wave',
+  waveLabel: 'Stable waves',
+  role: 'lead',
+  task: 'the plumbing',
+  standing: 'current',
+  joinedAt: 1,
+  since: 2,
+  from: '6f1c2c8e-1b9a-4d6e-9b1a-2f3c4d5e6f70'
+}
+
 const decode = <A, I>(schema: Schema.Schema<A, I>, input: unknown): Either.Either<A, string> =>
   Either.mapLeft(Schema.decodeUnknownEither(schema)(input), (e) => e.message)
 
@@ -312,7 +327,7 @@ describe('starting a session on the wire', () => {
       )
     ).toBe(true)
   })
-  it('round-trips a stopped record with and without a carried launch profile', () => {
+  it('round-trips a stopped record with and without a carried launch profile, and with its work', () => {
     const bare = {
       id: 'stopped-1',
       cwd: '/work/app',
@@ -324,7 +339,11 @@ describe('starting a session on the wire', () => {
       claudeAgentsMode: false,
       dangerousMode: false
     }
-    for (const record of [bare, { ...bare, launchProfile: full.launchProfile }]) {
+    for (const record of [
+      bare,
+      { ...bare, launchProfile: full.launchProfile },
+      { ...bare, work }
+    ]) {
       expect(decode(SessionRecord, record)).toEqual(Either.right(record))
       const decoded = Schema.decodeUnknownSync(SessionRecord)(record)
       expect(Schema.encodeSync(SessionRecord)(decoded)).toEqual(record)
@@ -380,7 +399,9 @@ describe('the sessions’ server events', () => {
     { _tag: 'session.title_changed', id: 's1', title: 'Fix the build' },
     { _tag: 'session.plan_detected', id: 's1', path: '/plans/plan.md' },
     { _tag: 'session.cleared', id: 's1', providerSessionId: null },
-    { _tag: 'session.cleared', id: 's1', providerSessionId: 'c2' }
+    { _tag: 'session.cleared', id: 's1', providerSessionId: 'c2' },
+    { _tag: 'session.work_changed', id: 's1', work },
+    { _tag: 'session.work_changed', id: 's1', work: null }
   ]
   it.each(events.map((event) => [JSON.stringify(event), event]))('decodes %s', (_, event) => {
     expect(decode(ServerEvent, event)).toEqual(Either.right(event))

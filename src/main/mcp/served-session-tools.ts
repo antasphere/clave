@@ -97,6 +97,27 @@ async function resolveTarget(ctx: Ctx, key: string, ref: string): Promise<Sessio
   return found
 }
 
+/** Whether two tabs are related for the agent tools' reach: the same tab, one
+ *  opened the other, or they share a group (its terminals included). The one
+ *  rule the messaging tools and the work tools (`served-work-tools.ts`) share. */
+export function isRelated(
+  ctx: Ctx,
+  layouts: readonly LayoutSnapshot[],
+  caller: string,
+  targetId: string
+): boolean {
+  return (
+    caller === targetId ||
+    parentOfSession(ctx, targetId) === caller ||
+    parentOfSession(ctx, caller) === targetId ||
+    shareAGroup(
+      layouts.flatMap((l) => l.groups),
+      caller,
+      targetId
+    )
+  )
+}
+
 /** The renderer's reach rule, over the server's facts: a tab reaches itself,
  *  the tab that opened it, a tab it opened, or a tab or terminal in the same
  *  group. */
@@ -112,16 +133,7 @@ function assertCanReach(
       `clave_${verb === 'message' ? 'send_to' : 'read'}_session must be called from inside a Clave agent tab — this request has no tab identity.`
     )
   }
-  if (caller === target.id) return
-  const related =
-    parentOfSession(ctx, target.id) === caller ||
-    parentOfSession(ctx, caller) === target.id ||
-    shareAGroup(
-      layouts.flatMap((l) => l.groups),
-      caller,
-      target.id
-    )
-  if (!related) {
+  if (!isRelated(ctx, layouts, caller, target.id)) {
     throw new Error(
       `Refusing to ${verb} tab "${nameOf(ctx, target)}": it is not related to yours. You can only reach the tab that opened yours ("parent"), tabs you opened, or tabs in the same group. Put both tabs in one group to allow this.`
     )

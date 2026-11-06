@@ -1,3 +1,5 @@
+import type { WorkAssignment } from '@clave/contract/work-rules'
+
 /**
  * Every skin the app ships, as a runtime list — the union is derived from it
  * rather than written beside it. A theme is four things that live in four files
@@ -342,10 +344,15 @@ export interface Session {
    *  can diverge from it afterwards without Clave knowing. */
   model?: string
   /** Session id of the tab whose agent opened this one via clave_open_session,
-   *  so the child can target "parent" in clave_send_to_session /
-   *  clave_read_session. Session-lifetime only: not persisted to the tmux
-   *  sidecar, so the link is gone after an app restart. */
+   *  set only when that agent asked `attachToParent`: what folds the tab under
+   *  its parent in the sidebar and what "parent" reaches in
+   *  clave_send_to_session / clave_read_session. Persisted on the session's
+   *  record since #259, so it comes back at a restore (`adopt-record.ts`). */
   spawnedBy?: string
+  /** Which wave or lane this tab works on, its role and its standing, as its
+   *  record keeps it (PRDCT-4123). Absent means an ordinary tab. Set by the
+   *  agent tools and the entry's menu through the server, never by a title. */
+  work?: WorkAssignment
   claudeSessionId: string | null
   piSessionId?: string | null
   launchProfileId?: string

@@ -203,7 +203,8 @@ const SUBJECT_SESSION_COMMANDS = new Set([
   'rename',
   'moveSession',
   'setSessionView',
-  'switchAccount'
+  'switchAccount',
+  'setWork'
 ])
 
 /** A workspace ref (id or name) → its id, main-side (the registry is global). */
@@ -1025,6 +1026,65 @@ function buildServer(callerSessionId: string | undefined): McpServer {
       }
     },
     (args) => run('rename', args)
+  )
+
+  server.registerTool(
+    'clave_set_work',
+    {
+      description:
+        'Say which wave or lane a tab works on and its role, so the sidebar shows one stable entry per lane with its current lead, its verifier and its history, instead of one row per session. Use it when you coordinate a wave or lead a lane: for yourself ("mine", the default) or for a tab you can reach (one you opened, the one that opened you, or a tab in your group). A unit is a stable key you choose (a workstream stem, a run and lane id) with a short label; a lane may name its wave. Roles: coordinator (holds a wave), lead (holds a lane), verifier, worker. A role someone else holds is refused unless replace is true; to pass your own role to a successor use clave_hand_over. action "complete" marks your assignment done, "leave" removes it. clave_list shows every tab\'s assignment as work.',
+      inputSchema: {
+        sessionId: z
+          .string()
+          .optional()
+          .describe('The tab to assign: "mine" (the default) or a session id you can reach'),
+        action: z
+          .enum(['assign', 'complete', 'leave'])
+          .optional()
+          .describe('assign (the default), complete, or leave'),
+        unit: z
+          .string()
+          .max(200)
+          .optional()
+          .describe("The unit's stable key; defaults to your own unit when you assign a tab to it"),
+        kind: z.enum(['wave', 'lane']).optional().describe('Required for a new unit'),
+        label: z
+          .string()
+          .max(80)
+          .optional()
+          .describe('The short label the sidebar entry shows; required for a new unit'),
+        wave: z.string().max(200).optional().describe("A lane's wave, by its unit key"),
+        waveLabel: z.string().max(80).optional().describe("The wave's label, for the breadcrumb"),
+        role: z
+          .enum(['coordinator', 'lead', 'verifier', 'worker'])
+          .optional()
+          .describe('Required to assign'),
+        task: z.string().max(80).optional().describe("A worker's bounded task"),
+        replace: z
+          .boolean()
+          .optional()
+          .describe('Take the role over from the tab that holds it now (explicit reconciliation)')
+      }
+    },
+    (args) => run('setWork', { ...args, callerSessionId })
+  )
+
+  server.registerTool(
+    'clave_hand_over',
+    {
+      description:
+        "Hand your role in a wave or lane to a successor tab, or take over a role handed to you. As the holder: open the successor first (clave_open_session), then pass to: its session id; it shows as taking over and you keep the role until it accepts. As the successor: once you have read the handover, pass accept: true; the role becomes yours and the holder moves to the entry's history, its process left running. cancel: true withdraws your offer. The sidebar entry keeps its place through every handover, and a handover never accepted stays visible as pending.",
+      inputSchema: {
+        to: z.string().optional().describe("The successor's session id"),
+        accept: z.boolean().optional().describe('Take over the role handed to you'),
+        cancel: z.boolean().optional().describe('Withdraw your offer'),
+        replace: z
+          .boolean()
+          .optional()
+          .describe('With accept: take the role even if another tab holds it now')
+      }
+    },
+    (args) => run('handOver', { ...args, callerSessionId })
   )
 
   server.registerTool(

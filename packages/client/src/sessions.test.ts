@@ -75,3 +75,25 @@ describe('what the window keeps on a record (PRDCT-3526, round 2 of the verifier
     ])
   })
 })
+
+describe('a change of a session’s work (PRDCT-4123)', () => {
+  it('sends the session and the change, and answers the records the server rewrote', async () => {
+    const payloads: unknown[] = []
+    const changed = [
+      { id: 't', work: null },
+      { id: 'u', work: null }
+    ]
+    const client = {
+      sessions: {
+        changeWork: ({ payload }: { payload: unknown }) => {
+          payloads.push(payload)
+          return { changed }
+        }
+      }
+    }
+    const call = (async (run: (c: unknown) => unknown) => run(client)) as unknown as Call
+    const offer = { type: 'offer', to: '6f1c2c8e-1b9a-4d6e-9b1a-2f3c4d5e6f70' } as const
+    expect(await sessionsClient(call).changeWork('t', offer)).toEqual(changed)
+    expect(payloads).toEqual([{ id: 't', change: offer }])
+  })
+})

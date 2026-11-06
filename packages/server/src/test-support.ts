@@ -5,6 +5,7 @@
  */
 import { WebSocket } from 'ws'
 import {
+  SessionNotFound,
   type AccountOverride,
   type CommandOption,
   type SessionControl,
@@ -23,6 +24,12 @@ import {
   type SessionStream,
   type SessionWrite
 } from '@clave/contract/sessions'
+import {
+  applyWorkChange,
+  type WorkAssignment,
+  type WorkChange,
+  type WorkUpdate
+} from '@clave/contract/work-rules'
 import {
   type ServerFrame,
   decodeServerFrame,
@@ -234,6 +241,21 @@ export class FakeSource implements SessionHostService {
   readonly kept: Array<{ id: string; fields: SessionRecordFields }> = []
   keepOnRecord = (id: string, fields: SessionRecordFields): void => {
     this.kept.push({ id, fields })
+  }
+  // ── PRDCT-4123: which work a session does, kept by hand ──
+  /** Each live session's assignment, as its record would keep it; the rule
+   *  is the real one, applied over every session this host has. */
+  readonly works = new Map<string, WorkAssignment>()
+  changeWork = (id: string, change: WorkChange): WorkUpdate[] => {
+    // As the app's host: no record either is an unknown session.
+    if (!this.sessions.has(id)) throw new SessionNotFound({ id })
+    const all = [...this.sessions.keys()].map((sid) => ({ id: sid, work: this.works.get(sid) }))
+    const updates = applyWorkChange(all, id, change, Date.now())
+    for (const u of updates) {
+      if (u.work) this.works.set(u.id, u.work)
+      else this.works.delete(u.id)
+    }
+    return updates
   }
   screen = async (id: string): Promise<SessionScreen> => {
     if (!this.sessions.has(id)) throw new Error(`Unknown session: ${id}`)

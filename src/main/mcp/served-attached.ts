@@ -29,10 +29,14 @@ const NEEDS: Record<string, ReadonlyArray<'records' | 'accounts' | 'profiles' | 
   sendToSession: ['records'],
   switchAccount: ['records', 'accounts'],
   openSession: ['records', 'accounts', 'profiles'],
-  launchGroup: ['records', 'accounts', 'pins']
+  launchGroup: ['records', 'accounts', 'pins'],
+  // PRDCT-4123: the caller's own unit and the parents the reach rule reads.
+  setWork: ['records'],
+  handOver: ['records']
 }
 
-/** The commands that take the attached road: the wave 4 seven. The wave 3
+/** The commands that take the attached road: the wave 4 seven and the two
+ *  work tools (PRDCT-4123). The wave 3
  *  tools keep the window attached, as their record says. */
 export const ATTACHED_COMMANDS: ReadonlySet<string> = new Set(Object.keys(NEEDS))
 

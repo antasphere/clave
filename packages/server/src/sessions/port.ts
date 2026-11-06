@@ -32,6 +32,7 @@ import type {
   SessionWrite,
   SpawnOptions
 } from '@clave/contract/sessions'
+import type { WorkChange, WorkUpdate } from '@clave/contract/work-rules'
 
 export type Unsubscribe = () => void
 
@@ -100,6 +101,11 @@ export interface SessionHostService extends SessionStreamSource {
    *  when it has one; a field left out is left as it is. Nothing is
    *  published. */
   readonly keepOnRecord: (id: string, fields: SessionRecordFields) => void
+  /** PRDCT-4123: one change to a session's work assignment, applied over
+   *  every record this host keeps (`applyWorkChange`), the records it answers
+   *  rewritten, the subject's first. Throws when the session is unknown, and
+   *  `WorkChangeRefusal` when the records refuse the change. */
+  readonly changeWork: (id: string, change: WorkChange) => ReadonlyArray<WorkUpdate>
   /** The last `lines` rendered lines of a terminal session. Throws when the
    *  session is unknown; rejects with `SessionScreenUnavailable` when it has
    *  no screen this host kept (a chat tab). */
@@ -186,6 +192,9 @@ export class SessionHost extends Context.Tag('@clave/server/SessionHost')<
       throw new Error(`Unknown session: ${id}`)
     },
     keepOnRecord: () => {
+      throw NO_SESSIONS
+    },
+    changeWork: () => {
       throw NO_SESSIONS
     },
     screen: (id) => Promise.reject(new Error(`Unknown session: ${id}`)),
