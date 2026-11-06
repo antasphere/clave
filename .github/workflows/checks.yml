@@ -47,6 +47,12 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # Since Electron 42 the npm package no longer downloads its binary on
+      # install (supply-chain hardening); the first run of the bin does. The
+      # steps below run the real app, so fetch it here, explicitly.
+      - name: Download the Electron binary
+        run: npx install-electron
+
       - name: Build secure filesystem helper
         run: npm run native:build
 
@@ -103,6 +109,12 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      # Since Electron 42 the npm package no longer downloads its binary on
+      # install (supply-chain hardening); the first run of the bin does. The
+      # steps below run the real app, so fetch it here, explicitly.
+      - name: Download the Electron binary
+        run: npx install-electron
 
       - name: Build native helpers
         run: npm run native:build

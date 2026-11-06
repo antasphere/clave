@@ -1034,6 +1034,9 @@ export class ClaudeAdapter implements SessionAdapter {
     // else the profile's, which the CLI obeys all the same.
     const profilePermissions = claudeProfilePermissions(profile)
     const launchMode = options.permissionMode ?? profilePermissions.mode
+    // The account's token, read now (the store answers asynchronously) and
+    // held in this closure until the process starts, never on the record.
+    const oauthToken = await accountTokenForSpawn('claude', context.claudeProfileId)
     const emitter = new EventEmitter()
     const emit = (event: SessionEvent): void => {
       if (event.type === 'permission_mode') live.permissionMode = event.mode
@@ -1130,7 +1133,7 @@ export class ClaudeAdapter implements SessionAdapter {
         const env: Record<string, string> = {
           ...buildSpawnEnv(getLoginShellEnv(), {
             configDir: context.configDir,
-            oauthToken: accountTokenForSpawn('claude', context.claudeProfileId)
+            oauthToken
           }),
           CLAVE_SESSION_ID: spec.id
         }

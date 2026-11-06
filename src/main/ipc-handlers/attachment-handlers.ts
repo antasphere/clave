@@ -1,5 +1,6 @@
 import { constants } from 'node:fs'
-import { app, BrowserWindow, dialog, ipcMain, nativeImage, shell } from 'electron'
+import { app, BrowserWindow, ipcMain, nativeImage, shell } from 'electron'
+import { openDialogs } from '../dialog-paths'
 import { open, readdir } from 'node:fs/promises'
 import { isAbsolute, join } from 'node:path'
 import { z } from 'zod'
@@ -49,7 +50,7 @@ export function registerAttachmentHandlers(): void {
     if (!win) throw new Error('Files require an application window.')
     const value = requestSchema.parse(input)
     if (value.type === 'pick') {
-      const result = await dialog.showOpenDialog(win, {
+      const result = await openDialogs.open('attachment', win, {
         title: 'Add files to the message',
         properties: ['openFile', 'multiSelections']
       })

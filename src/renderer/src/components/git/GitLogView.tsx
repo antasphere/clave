@@ -383,7 +383,7 @@ export function GitLogView({
         <div className="px-3 py-1.5 bg-red-500/10 text-red-400 text-xs flex-shrink-0">{error}</div>
       )}
 
-      <div className="flex-1 overflow-y-auto">
+      <div className="flex-1 overflow-y-auto overscroll-contain">
         {/* Outgoing commits */}
         {hasOutgoing && (
           <>

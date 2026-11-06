@@ -8,6 +8,7 @@ import { terminalJournal } from './terminal-journal'
 import { lastHookState } from './agent-state-manager'
 import {
   ptyBackend,
+  accountTokenForSpawn,
   buildSpawnEnv,
   codexHomeForSpawn,
   getLoginShellEnv,
@@ -202,7 +203,16 @@ class PtyManager {
           launchProfileId: profileId,
           model: options?.model
         }
-      : ptyAdapter.prepare(cwd, options)
+      : ptyAdapter.prepare(cwd, {
+          ...options,
+          // The account's token, decrypted here where the spawn is already
+          // asynchronous, for the synchronous plan below (and only for a
+          // Claude session: accountTokenForSpawn opens the store for no other).
+          oauthToken: await accountTokenForSpawn(
+            options?.claudeAgentsMode ? 'claude-agents' : family === 'claude' ? 'claude' : null,
+            options?.claudeProfileId
+          )
+        })
     // A live tmux session this process takes BACK (an app relaunch, a move
     // from another window) is born with the word its hooks last wrote, not
     // idle: the hook watch forwards a change only, so a tab adopted while its

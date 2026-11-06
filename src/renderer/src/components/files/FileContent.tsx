@@ -96,7 +96,7 @@ export function FileContent({
   // Markdown page — directly editable (Notion-style) when the file is writable
   if (isMarkdown && effectiveMode === 'page' && canEdit) {
     return (
-      <div className="flex-1 overflow-auto min-h-0">
+      <div className="flex-1 overflow-auto overscroll-contain min-h-0">
         <MarkdownPageEditor
           key={`${cwd}/${filePath}`}
           content={content}
@@ -111,7 +111,7 @@ export function FileContent({
   // Markdown, rendered read-only (compact preview, or page for non-writable files)
   if (isMarkdown && effectiveMode !== 'source') {
     return (
-      <div className="flex-1 overflow-auto min-h-0">
+      <div className="flex-1 overflow-auto overscroll-contain min-h-0">
         <MarkdownRenderer
           content={content}
           variant={effectiveMode === 'page' ? 'page' : 'compact'}

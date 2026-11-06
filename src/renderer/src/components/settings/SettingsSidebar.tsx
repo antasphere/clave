@@ -95,7 +95,7 @@ export function SettingsSidebar(): React.JSX.Element {
         </div>
       </div>
 
-      <nav className="px-2 overflow-y-auto" data-settings-nav>
+      <nav className="px-2 overflow-y-auto overscroll-contain" data-settings-nav>
         {GROUPS.map((group) => (
           <div key={group.label}>
             <div className="settings-nav-label">{group.label}</div>

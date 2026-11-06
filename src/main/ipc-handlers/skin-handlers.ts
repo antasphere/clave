@@ -1,4 +1,5 @@
-import { app, BrowserWindow, dialog, ipcMain } from 'electron'
+import { app, BrowserWindow, ipcMain } from 'electron'
+import { openDialogs } from '../dialog-paths'
 import { join } from 'path'
 import { homedir } from 'os'
 import { SkinStore } from '../skins/skin-store'
@@ -24,7 +25,7 @@ export function registerSkinHandlers(): void {
   ipcMain.handle('skins:remove', (_event, id: string) => store.remove(id))
   ipcMain.handle('skins:import', async (_event, source?: string) => {
     if (!source) {
-      const result = await dialog.showOpenDialog({
+      const result = await openDialogs.open('skin', undefined, {
         title: 'Import skin',
         properties: ['openFile', 'openDirectory'],
         filters: [{ name: 'Skin tokens', extensions: ['json'] }]

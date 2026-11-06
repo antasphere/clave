@@ -346,7 +346,7 @@ describe.each(eachTestPorts())('on %s', (_name, makePorts) => {
     const h = harness(ports)
     await signIn(h)
     const before = { ...provider.state.counts }
-    const status = h.manager.signOut()
+    const status = await h.manager.signOut()
     expect(status).toMatchObject({ phase: 'signed-out', account: null, lastFailure: null })
     expect(exists(ports.dir, SESSION)).toBe(false)
     // The registration is the install's, not the login's: it stays for the next sign-in.
@@ -379,7 +379,7 @@ describe('the registration is the install’s', () => {
       expect((await settled(h)).phase).toBe('signed-in')
       expect(h.manager.status().account?.email).toBe('ada@example.test')
       expect(exists(ports.dir, SESSION)).toBe(true)
-      h.manager.signOut()
+      await h.manager.signOut()
       const second = await h.manager.start()
       expect(second.handoff).not.toBeNull()
       expect(new URL(second.handoff!.url).searchParams.get('client_id')).toBe(
@@ -437,7 +437,7 @@ describe('the registration is the install’s', () => {
     await signIn(h)
     const first = JSON.parse(readFile(ports.dir, CLIENT))
     const registrations = provider.state.counts.register
-    h.manager.signOut()
+    await h.manager.signOut()
     await signIn(h)
     expect(provider.state.counts.register).toBe(registrations)
     expect(JSON.parse(readFile(ports.dir, CLIENT))).toEqual(first)
@@ -452,7 +452,7 @@ describe('the registration is the install’s', () => {
     const h = harness(ports)
     await signIn(h)
     const first = JSON.parse(readFile(ports.dir, CLIENT))
-    h.manager.signOut()
+    await h.manager.signOut()
     // Somebody else now holds the port the registration names.
     const squatter = createServer()
     await new Promise<void>((resolve, reject) => {
@@ -468,7 +468,7 @@ describe('the registration is the install’s', () => {
       expect(replaced.redirectPort).not.toBe(first.redirectPort)
       expect(h.logs.some((l) => l.event === 'antasphere.listener.port-taken')).toBe(true)
       // And the replacement is what the next login reuses.
-      h.manager.signOut()
+      await h.manager.signOut()
       await signIn(h)
       expect(provider.state.counts.register).toBe(registrations + 1)
     } finally {
@@ -679,7 +679,7 @@ describe('cancelling and signing out beat any answer still in flight', () => {
     const refreshes = brief.state.counts.refresh
     const restoring = later.manager.restore()
     await waitFor(() => brief.state.counts.refresh > refreshes, 'the refresh')
-    later.manager.signOut()
+    await later.manager.signOut()
     await restoring
     expect(later.manager.status()).toMatchObject({ phase: 'signed-out', account: null })
     expect(exists(ports.dir, SESSION)).toBe(false)
@@ -816,7 +816,7 @@ describe('restoring a stored session', () => {
     const file2 = JSON.parse(readFile(ports2.dir, SESSION))
     fs.writeFileSync(
       path.join(ports2.dir, SESSION),
-      JSON.stringify({ ...file2, sealed: ports2.secrets.seal('{"v":1,"not":"a session"}') })
+      JSON.stringify({ ...file2, sealed: await ports2.secrets.seal('{"v":1,"not":"a session"}') })
     )
     const h2 = harness(ports2)
     await h2.manager.restore()
@@ -849,6 +849,10 @@ describe('restoring a stored session', () => {
     expect(dark.manager.status().lastFailure).toBe('storage')
     expect(dark.opened).toEqual([])
     flag.available = true
+    // The port answers asynchronously: the status carries what the last probe
+    // said, and a restore, a login or a renewal asks again first.
+    expect(dark.manager.status().secureStorage).toBe(false)
+    expect(await dark.manager.probeSecureStorage()).toBe(true)
     expect(dark.manager.status().secureStorage).toBe(true)
   })
 
@@ -896,7 +900,7 @@ describe('restoring a stored session', () => {
     })
     await h.manager.restore()
     expect(h.manager.status().phase).toBe('signed-in')
-    expect(h.manager.signOut()).toMatchObject({
+    expect(await h.manager.signOut()).toMatchObject({
       phase: 'signed-out',
       account: null,
       lastFailure: null
@@ -928,7 +932,7 @@ describe('restoring a stored session', () => {
     })
     await h.manager.restore()
     expect(h.manager.status().phase).toBe('signed-in')
-    expect(() => h.manager.signOut()).not.toThrow()
+    await expect(h.manager.signOut()).resolves.toBeDefined()
     expect(h.manager.status()).toMatchObject({
       phase: 'signed-out',
       account: null,
@@ -1055,7 +1059,7 @@ describe('a lapsed identity with a refresh token', () => {
         v: 1,
         issuer,
         clientId,
-        sealed: ports.secrets.seal(JSON.stringify(secret)),
+        sealed: await ports.secrets.seal(JSON.stringify(secret)),
         savedAt: Date.now()
       })
     )
@@ -1386,7 +1390,7 @@ describe('the secret port holds one item per login', () => {
     await waitFor(() => h.logs.some((l) => l.event === 'antasphere.renew.ok'), 'a renewal')
     expect(ports.security.items.size).toBe(1)
     expect([...ports.security.items.keys()][0]).not.toBe(first)
-    h.manager.signOut()
+    await h.manager.signOut()
     expect(ports.security.items.size).toBe(0)
   })
 
@@ -1593,7 +1597,7 @@ describe('what crosses to the windows', () => {
     expect(h.manager.status().phase).toBe('signed-in')
     // A sign-out, and a shutdown, confirm nothing either.
     const third = await h.manager.start()
-    h.manager.signOut()
+    await h.manager.signOut()
     expect(h.manager.confirmHandoff(third.handoff!)).toBe(false)
     const fourth = await h.manager.start()
     h.manager.shutdown()
@@ -1677,7 +1681,7 @@ describe('a Unicode identity on the Keychain adapter', () => {
     )
     expect(again.manager.status().account?.name).toBe(UNICODE_USER.name)
     // Sign-out leaves nothing filed.
-    again.manager.signOut()
+    await again.manager.signOut()
     expect(ports.security.items.size).toBe(0)
   })
 
@@ -1689,14 +1693,14 @@ describe('a Unicode identity on the Keychain adapter', () => {
     // Rewrite the record the way the previous version sealed it: the JSON
     // itself, Unicode and all, through the same `safeStorage` stand-in.
     const file = JSON.parse(readFile(ports.dir, SESSION))
-    const opened = ports.secrets.open(file.sealed)!
+    const opened = (await ports.secrets.open(file.sealed))!
     const secret = JSON.parse(opened)
     expect(secret.account.name).toBe(UNICODE_USER.name)
     const legacy = JSON.stringify(secret)
     expect(legacy).toContain('Zoë')
     fs.writeFileSync(
       path.join(ports.dir, SESSION),
-      JSON.stringify({ ...file, sealed: ports.secrets.seal(legacy) })
+      JSON.stringify({ ...file, sealed: await ports.secrets.seal(legacy) })
     )
     const h = harness(ports, {}, accented)
     await h.manager.restore()

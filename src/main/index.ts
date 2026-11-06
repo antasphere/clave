@@ -195,7 +195,7 @@ async function bootServer(): Promise<void> {
       // (server-migration.ts): the plain ones copied, the Claude tokens and
       // the Antasphere session opened with this process's safeStorage and
       // sealed again in the Keychain the server reads, in memory only.
-      startSeparate: () => {
+      startSeparate: async () => {
         // The client main reaches that server with, loaded while it starts
         // rather than once it has answered, when the first window has shown
         // (PRDCT-3527): half a second of synchronous requires, which held the
@@ -211,7 +211,7 @@ async function bootServer(): Promise<void> {
         else if (first) afterLoad(first)
         else app.once('browser-window-created', (_event, win) => afterLoad(win))
         const dataDir = join(app.getPath('userData'), 'server')
-        const migration = migrateAppDataToServer({
+        const migration = await migrateAppDataToServer({
           appDir: app.getPath('userData'),
           serverDir: dataDir,
           from: safeStorageSecrets(safeStorage),
@@ -433,6 +433,21 @@ function createWindow(entry: PersistedWindow, resolvedWorkspaceId?: string | nul
       // The attached pages (group and session views) are <webview> guests —
       // hardened and navigation-policed in view-guests.ts, never here.
       webviewTag: true,
+      // The native macOS rubber-band at the ends of every scroll area — the
+      // sidebar, a transcript, a side panel. Electron turns it OFF by default
+      // (its `scroll_bounce_flag.patch` makes Chromium's elastic overscroll
+      // follow this one switch), and this is the whole of turning it back on.
+      // Nothing in CSS or JavaScript imitates it: Chromium stretches the
+      // scroller on the compositor exactly as a browser tab does. Two things
+      // the bounce also needs, so a regression is read here first: Chromium
+      // 144+ (Electron 40+) is the first to bounce NON-root scrollers, which
+      // every one of ours is, and the feature is on by default only from
+      // Chromium 152 (Electron 44+); and no `overscroll-behavior: none` on the
+      // document or on the scroller — `contain` keeps the bounce and only cuts
+      // the chaining. A window with this flag never takes Electron's spare
+      // renderer, which is the one cost. Mirrored for the view guests in
+      // view-guests.ts.
+      scrollBounce: true,
       // A test window is never put on screen (see below); without this
       // Chromium would treat the hidden page as background and stop its
       // timers and animation frames — the driver needs them running.
@@ -626,22 +641,21 @@ app.whenReady().then(() => {
   const locations = locationManager.getLocations()
   for (const loc of locations) {
     if (loc.type === 'remote' && loc.autoConnect) {
-      const config = locationManager.getCredentials(loc.id)
-      if (config) {
-        sshManager
-          .connect(loc.id, config)
-          .then(() => {
-            locationManager.setLocationStatus(loc.id, 'connected')
-            // Connect OpenClaw if detected
-            if (loc.openclawPort && loc.host) {
-              const token = locationManager.getOpenclawToken(loc.id)
-              openclawClient.connect(loc.id, buildOpenclawWsUrl(loc), token).catch(() => {})
-            }
-          })
-          .catch(() => {
-            locationManager.setLocationStatus(loc.id, 'error')
-          })
-      }
+      void (async () => {
+        const config = await locationManager.getCredentials(loc.id)
+        if (!config) return
+        try {
+          await sshManager.connect(loc.id, config)
+          locationManager.setLocationStatus(loc.id, 'connected')
+          // Connect OpenClaw if detected
+          if (loc.openclawPort && loc.host) {
+            const token = await locationManager.getOpenclawToken(loc.id)
+            openclawClient.connect(loc.id, buildOpenclawWsUrl(loc), token).catch(() => {})
+          }
+        } catch {
+          locationManager.setLocationStatus(loc.id, 'error')
+        }
+      })()
     }
   }
 
