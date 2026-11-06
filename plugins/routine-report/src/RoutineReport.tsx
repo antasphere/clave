@@ -1,5 +1,4 @@
-import { useState } from 'react'
-import { AnimatePresence, motion } from 'framer-motion'
+import { useEffect, useState } from 'react'
 import type { RoutineRun, RoutineView } from '@clave/contract/routines/model'
 import { durationLabel, runTone, stateLabel, whenLabel } from './run-labels'
 import { RoutineDrawing } from './RoutineDrawing'
@@ -18,12 +17,16 @@ export function RoutineReport({
   view,
   run,
   viewerUrl,
-  viewerNote
+  viewerNote,
+  ready = true
 }: {
   view: RoutineView | undefined
   run: RoutineRun | undefined
   viewerUrl: string | null
   viewerNote: string
+  /** Whether the host has settled (its own motion done): the deck's web view
+   *  is mounted only then, the veil standing in before. */
+  ready?: boolean
 }): React.JSX.Element {
   if (!run) {
     return (
@@ -40,7 +43,9 @@ export function RoutineReport({
   }
   if (run.deck && viewerUrl) {
     const src = `${viewerUrl.replace(/\/$/, '')}/${run.deck}`
-    return <DeckGuest key={src} src={src} title={run.headline ?? view?.routine.name} />
+    return (
+      <DeckGuest key={src} src={src} title={run.headline ?? view?.routine.name} ready={ready} />
+    )
   }
   const tone = runTone(run)
   const meta = `${whenLabel(run.startedAt)} · ${durationLabel(run)} · ${run.trigger}`
@@ -97,35 +102,60 @@ export function RoutineReport({
   )
 }
 
-/** The deck in the page guest, veiled until its first paint: the guest is
- *  blank while the viewer answers, and a blank frame popping into a filled
- *  one is the jolt the veil removes (the way `WebViewPane` holds its notice
- *  over a served page). Keyed by its source from the caller, so a new run's
- *  deck starts veiled again. */
-function DeckGuest({ src, title }: { src: string; title?: string }): React.JSX.Element {
+/** The deck in the page guest, invisible until it has painted. Seen frame by
+ *  frame on 6 November 2026: a web view's guest is composited above every
+ *  DOM sibling, so a veil over it hides nothing once the guest has a frame;
+ *  and unmounting that veil re-embedded the guest, which dropped a frame
+ *  (the deck visible at 604 ms, the body blank at 716 ms, the deck back at
+ *  819 ms). So the guest carries its own opacity, 0 until its first load
+ *  plus a beat for the first frame to land, then a 200 ms fade; the
+ *  placeholder sits UNDER it and stays mounted, hidden once the deck shows,
+ *  so the layer tree never changes. The guest is mounted only once the host
+ *  has settled (`ready`). Keyed by its source from the caller, so a new
+ *  run's deck starts hidden again. */
+function DeckGuest({
+  src,
+  title,
+  ready
+}: {
+  src: string
+  title?: string
+  ready: boolean
+}): React.JSX.Element {
   const [loaded, setLoaded] = useState(false)
+  const [shown, setShown] = useState(false)
+  useEffect(() => {
+    if (!loaded) return
+    const t = setTimeout(() => setShown(true), 120)
+    return () => clearTimeout(t)
+  }, [loaded])
   return (
-    <div className="relative flex-1 min-h-0 h-full" data-testid="routine-report-deck">
-      <PageGuest src={src} title={title} onFirstLoad={() => setLoaded(true)} />
-      <AnimatePresence>
-        {!loaded && (
-          <motion.div
-            key="veil"
-            className="routine-veil"
-            initial={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.2, ease: 'easeOut' }}
-            data-testid="routine-report-veil"
-          >
-            <div className="routine-state">
-              <span className="routine-spinner" aria-hidden="true">
-                <span className="sidebar-tab-spinner" />
-              </span>
-              <strong>Opening the report</strong>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+    <div
+      className="relative flex-1 min-h-0 h-full"
+      data-testid="routine-report-deck"
+      data-shown={shown ? 'true' : undefined}
+    >
+      <div
+        className="routine-veil"
+        style={{ visibility: shown ? 'hidden' : 'visible' }}
+        aria-hidden={shown ? true : undefined}
+        data-testid="routine-report-veil"
+      >
+        <div className="routine-state">
+          <span className="routine-spinner" aria-hidden="true">
+            <span className="sidebar-tab-spinner" />
+          </span>
+          <strong>Opening the report</strong>
+        </div>
+      </div>
+      {ready && (
+        <PageGuest
+          src={src}
+          title={title}
+          onFirstLoad={() => setLoaded(true)}
+          className={`transition-opacity duration-200 ease-out ${shown ? 'opacity-100' : 'opacity-0'}`}
+        />
+      )}
     </div>
   )
 }

@@ -6176,20 +6176,23 @@ button.term-agent-model:focus-visible {
   animation: tab-status-spin 0.9s linear infinite;
 }
 
-/* The veil over the deck's guest until its first paint, on the panel's own
-   ground so nothing white shows through; it fades out once the page is there. */
+/* The placeholder under the deck's guest until its first paint: the panel's
+   ground and, after a wait, the spinner and the words. It sits UNDER the
+   guest (a guest paints above every DOM sibling anyway) and stays mounted,
+   hidden once the deck shows, so the layer tree never changes under the
+   guest; the guest's own opacity is what reveals the deck. */
 .routine-veil {
   position: absolute;
   inset: 0;
-  z-index: 10;
   display: flex;
   background-color: var(--surface-0);
 }
-/* The veil's words wait: a deck that paints within 400 ms shows the panel's
-   ground and then the page, never a flash of "Opening the report"; only a
-   slow viewer earns the spinner and the words, which then fade in. */
+/* The veil's words wait: a deck that paints within 700 ms (the popover's
+   rise, the guest's mount, the viewer's answer) shows the panel's ground and
+   then the page, never a flash of "Opening the report"; only a slow viewer
+   earns the spinner and the words, which then fade in. */
 .routine-veil > * {
-  animation: scrim-in 200ms ease-out 400ms both;
+  animation: scrim-in 200ms ease-out 700ms both;
 }
 /* The history: menu rows, the tone dot first, the headline, then the time,
    the duration and the trigger in tabular figures so a column of runs lines

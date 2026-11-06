@@ -162,9 +162,10 @@ figures for every number. Corners 8 px on cards and tiles, 10 px on the hero.
 
 ### Motion
 
-The parts rise in once when the page opens (4 px, 420 ms, the app's curve
-`cubic-bezier(0.2, 0, 0, 1)`), cards staggered by 40 ms, under
-`prefers-reduced-motion: no-preference` only. Nothing loops, nothing pulses.
+None of the deck's own. The host reveals the page (Clave's panel fades the deck in once
+it has painted); an entrance animation inside the deck plays under that reveal and ends
+mid-flight when the reader first sees it, which reads as a glitch. Nothing loops, nothing
+pulses, nothing rises in.
 
 ### The rules a deck keeps
 

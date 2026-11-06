@@ -67,6 +67,19 @@ export function RoutinePanel({
   const [discussion, setDiscussion] = useState<Session | null>(null)
   const [opening, setOpening] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
+  // The popover's rise is done: the deck's web view may mount (RoutineReport).
+  // A timer, not the motion's callback: the first body does not animate.
+  const [settled, setSettled] = useState(false)
+  useEffect(() => {
+    const t = setTimeout(() => setSettled(true), 200)
+    return () => clearTimeout(t)
+  }, [])
+  // The first body comes up with the popover and fades with it, once; only a
+  // later body (another tab, another run) fades in on its own.
+  const firstBody = useRef(true)
+  useEffect(() => {
+    firstBody.current = false
+  }, [])
   const menuRef = useRef<HTMLDivElement | null>(null)
   const run: RoutineRun | undefined = useMemo(
     () => view.runs.find((r) => r.id === selectedId) ?? view.runs[0],
@@ -227,12 +240,14 @@ export function RoutinePanel({
         </div>
       </div>
 
-      {/* The body fades in on each change of what it shows (the tab, the run),
-          the app's motion for content inside a box. */}
+      {/* The body fades in on each LATER change of what it shows (the tab, the
+          run), the app's motion for content inside a box; at open it comes up
+          with the popover, in one fade (a second one made the body lag the
+          header, seen frame by frame on 6 November 2026). */}
       <motion.div
         key={`${tab}:${run?.id ?? 'none'}`}
         className="routine-body"
-        initial={{ opacity: 0 }}
+        initial={firstBody.current ? false : { opacity: 0 }}
         animate={{ opacity: 1 }}
         transition={{ duration: 0.16, ease: [0.2, 0, 0, 1] }}
       >
@@ -247,7 +262,13 @@ export function RoutinePanel({
           </p>
         )}
         {tab === 'report' ? (
-          <RoutineReport view={view} run={run} viewerUrl={viewer.url} viewerNote={viewer.note} />
+          <RoutineReport
+            view={view}
+            run={run}
+            viewerUrl={viewer.url}
+            viewerNote={viewer.note}
+            ready={settled}
+          />
         ) : tab === 'discussion' ? (
           discussion ? (
             <div className="chat-host flex-1 min-h-0" data-testid="routine-discussion">
