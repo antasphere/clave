@@ -463,6 +463,9 @@ export type SessionLink =
   /** A toolbar button's persistent terminal — never a sidebar row at all;
    *  `key` is the `${pinId}:${terminalIndex}` of the toolbar registry. */
   | { kind: 'toolbar'; key: string }
+  /** A routine's run (ADR 0004): the hidden session the server started for
+   *  one occurrence; never a sidebar row, never adopted by a window at boot. */
+  | { kind: 'routine'; routineKey: string; runId: string }
 
 /** What the renderer needs to recreate + reattach a surviving session's tab.
  *
@@ -798,6 +801,18 @@ export interface PtySpawnOptions {
    *  moved to (ADR 0002). Main's own — `pty:spawn` drops it, only a restart
    *  built in main carries one. */
   initialInput?: UserMessageInput
+  // ── ADR 0004: what a routine run declares beyond a tab's launch ──
+  /** Claude's reasoning effort to start on (`--effort`). A chat with none
+   *  starts on the effort last picked in a composer. */
+  effort?: string
+  /** The mode a Claude session without `dangerousMode` asks under
+   *  (`--permission-mode`); the skip flag wins when both are set. */
+  permissionMode?: 'default' | 'acceptEdits' | 'plan'
+  /** A Claude Code plugin folder loaded for this session alone (`--plugin-dir`):
+   *  the routine contract skill rides on it. */
+  pluginDir?: string
+  /** One paragraph appended to Claude's system prompt (`--append-system-prompt`). */
+  appendSystemPrompt?: string
   /** Opt-in: run this session inside a persistent tmux session. */
   tmuxMode?: boolean
   /** Reattach to this exact existing tmux session instead of deriving a new
@@ -860,6 +875,11 @@ function sanitizeSessionLink(link: unknown): SessionLink | undefined {
   if (l.kind === 'toolbar') {
     const key = str(l.key)
     return key ? { kind: 'toolbar', key } : undefined
+  }
+  if (l.kind === 'routine') {
+    const routineKey = typeof l.routineKey === 'string' && l.routineKey.length > 0 && l.routineKey.length <= 1000 ? l.routineKey : null
+    const runId = str(l.runId)
+    return routineKey && runId ? { kind: 'routine', routineKey, runId } : undefined
   }
   return undefined
 }
@@ -1157,7 +1177,12 @@ export class PtyBackend {
           claudeSettings:
             kind === 'claude' ? (buildClaudeHookSettingsArg(id) ?? undefined) : undefined,
           mcpConfigPath: mcpConfigPath ?? undefined,
-          piStateExtensionPath: piExtensionPath
+          piStateExtensionPath: piExtensionPath,
+          // ── ADR 0004: a routine run's own flags (Claude only) ──
+          effort: options?.effort,
+          permissionMode: options?.permissionMode,
+          pluginDir: options?.pluginDir,
+          appendSystemPrompt: options?.appendSystemPrompt
         })
         const assignments = [`CLAVE_SESSION_ID=${shellSingleQuote(id)}`]
         if (kind === 'pi')

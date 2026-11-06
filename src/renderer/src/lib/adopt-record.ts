@@ -343,7 +343,7 @@ export async function adoptHiddenRecord(
   window.electronAPI.startSession(spawned.session.id, 120, 30)
   if (link.kind === 'group-terminal') {
     store.setGroupTerminalSessionId(link.groupId, link.terminalId, spawned.session.id)
-  } else if (ownerView) {
+  } else if (ownerView && link.kind === 'session-view') {
     store.setSessionView(link.ownerId, { ...ownerView, serverSessionId: spawned.session.id })
   }
   return spawned.session.id

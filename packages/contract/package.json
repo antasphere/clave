@@ -32,7 +32,9 @@
     "./git": "./src/git.ts",
     "./server-info": "./src/server-info.ts",
     "./release-version": "./src/release-version.ts",
-    "./upgrade-failure": "./src/upgrade-failure.ts"
+    "./upgrade-failure": "./src/upgrade-failure.ts",
+    "./routines": "./src/routines/index.ts",
+    "./routines/model": "./src/routines/model.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"

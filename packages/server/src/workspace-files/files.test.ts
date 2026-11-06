@@ -214,7 +214,8 @@ describe('the review', () => {
         folder: root,
         autoCommands: ['npm run dev'],
         prompts: ['GROUP-BRIEF drive the lane', 'S'],
-        dangerous: true
+        dangerous: true,
+        routines: []
       }
     ])
   })

@@ -45,6 +45,10 @@ export { GitPort, type GitService } from './git/port'
 import { ServerInfoPort, type ServerInfoService } from './server-info/port'
 
 export { ServerInfoPort, type ServerInfoService } from './server-info/port'
+// ── ADR 0004: the routines ──
+import { Routines, type RoutinesService } from './routines/port'
+
+export { Routines, type RoutinesService } from './routines/port'
 
 export interface ServerPorts {
   readonly requests?: RequestsService
@@ -75,6 +79,9 @@ export interface ServerPorts {
   // ── Issue #266: the server domain ──
   /** The version this server runs and its self-upgrade. `ServerInfoPort.none` when absent: no version reported, no upgrade. */
   readonly serverInfo?: ServerInfoService
+  // ── ADR 0004: the routines ──
+  /** The scheduler and its runs. `Routines.none` when absent: nothing listed, every act refused as unavailable. */
+  readonly routines?: RoutinesService
 }
 
 /** Every port as a layer, the domain's `none` where the entry gave nothing. */
@@ -95,6 +102,8 @@ export const PortsLive = (
   | GitPort
   // ── Issue #266: the server domain ──
   | ServerInfoPort
+  // ── ADR 0004: the routines ──
+  | Routines
 > =>
   Layer.mergeAll(
     RequestsPort.layer(ports.requests ?? RequestsPort.none),
@@ -111,5 +120,7 @@ export const PortsLive = (
     // ── Wave wcs1023, lane C: the git domain ──
     GitPort.layer(ports.git ?? GitPort.none),
     // ── Issue #266: the server domain ──
-    ServerInfoPort.layer(ports.serverInfo ?? ServerInfoPort.none)
+    ServerInfoPort.layer(ports.serverInfo ?? ServerInfoPort.none),
+    // ── ADR 0004: the routines ──
+    Routines.layer(ports.routines ?? Routines.none)
   )

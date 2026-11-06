@@ -29,6 +29,8 @@ import { requestsClient, type RequestsClient } from './requests'
 import { gitClient, type GitClient } from './git'
 // ── Issue #266: the server's version and its self-upgrade ──
 import { serverInfoClient, type ServerInfoClient } from './server-info'
+// ── ADR 0004: the routines ──
+import { routinesClient, type RoutinesClient } from './routines'
 
 export interface ApiClientOptions {
   readonly url: string
@@ -81,6 +83,8 @@ export interface ClaveApiClient {
   readonly git: GitClient
   // ── Issue #266: the server domain (`./server-info.ts`) ──
   readonly server: ServerInfoClient
+  // ── ADR 0004: the routines (`./routines.ts`) ──
+  readonly routines: RoutinesClient
   // ── Lane B: terminals ──
   readonly health: {
     readonly live: () => Promise<boolean>
@@ -161,6 +165,8 @@ export function createApiClient(options: ApiClientOptions): ClaveApiClient {
     git: gitClient(call, patientCall),
     // ── Issue #266: the server domain ──
     server: serverInfoClient(call, options.url),
+    // ── ADR 0004: the routines ──
+    routines: routinesClient(call),
     health: {
       live: () => call((c) => c.health.live()).then((answer) => answer.status === 'live')
     },

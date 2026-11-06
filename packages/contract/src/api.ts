@@ -59,6 +59,8 @@ import { requestsGroup } from './requests'
 import { gitGroup } from './git'
 // ── Issue #266: the server's version and its self-upgrade (`server-info.ts`) ──
 import { serverInfoGroup } from './server-info'
+// ── ADR 0004: the routines (`routines.ts`) ──
+import { routinesGroup } from './routines/api'
 
 // ── Sessions (lane A) ──
 export const sessionsGroup = ApiGroup.make('sessions')
@@ -143,6 +145,8 @@ export { gitGroup }
 
 // ── Issue #266: the server domain (`server-info.ts`) ──
 export { serverInfoGroup }
+// ── ADR 0004: the routines ──
+export { routinesGroup }
 
 // ── Lane B: terminals ──
 
@@ -164,6 +168,8 @@ export const ClaveApi = Api.make('clave')
   .add(gitGroup)
   // ── Issue #266: the server domain ──
   .add(serverInfoGroup)
+  // ── ADR 0004: the routines ──
+  .add(routinesGroup)
   .add(Health.group)
   .pipe(annotate({ title: 'Clave', version: '1', description: "Clave's server API" }))
 export type ClaveApi = typeof ClaveApi

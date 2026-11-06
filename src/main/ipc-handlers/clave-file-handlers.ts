@@ -44,9 +44,14 @@ export function registerClaveFileHandlers(): void {
         autoCommands: string[]
         prompts: string[]
         dangerous: boolean
+        routines?: string[]
         server?: string
       }
-    ): Promise<ReviewAnswer> => showReview(BrowserWindow.fromWebContents(event.sender), review)
+    ): Promise<ReviewAnswer> =>
+      showReview(BrowserWindow.fromWebContents(event.sender), {
+        ...review,
+        routines: review.routines ?? []
+      })
   )
 
   ipcMain.handle(

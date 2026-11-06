@@ -148,11 +148,15 @@ export function serverOwnedSessionHost(options: ServerOwnedHostOptions): {
         windowKey: SERVER_LAYOUT_KEY,
         options: { ...input.options, tmuxMode: false }
       })
-      sidebar.placeSession(
-        SERVER_LAYOUT_KEY,
-        result.id,
-        input.options?.link?.kind === 'group-terminal' ? input.options.link.groupId : null
-      )
+      // A routine's run (ADR 0004) is never a sidebar row: the scheduler
+      // starts, watches and stops it, and the daemon's shared sidebar never
+      // shows it.
+      if (input.options?.link?.kind !== 'routine')
+        sidebar.placeSession(
+          SERVER_LAYOUT_KEY,
+          result.id,
+          input.options?.link?.kind === 'group-terminal' ? input.options.link.groupId : null
+        )
       bind(result.id)
       if (base.get(result.id)?.transport === 'events') options.ready(result.id)
       return result

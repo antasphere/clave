@@ -9,7 +9,12 @@
  * when absent and extended in place, never replaced, so whichever domain
  * installs first, the others' hooks stay.
  */
-import type { PluginsService, SessionHostService, SettingsSourceService } from '@clave/server'
+import type {
+  PluginsService,
+  RoutinesService,
+  SessionHostService,
+  SettingsSourceService
+} from '@clave/server'
 import type { SessionStream } from '../../shared/session-model'
 import type { AccountUsageManager } from '../usage-manager'
 import { TEST_NO_ACTIVATE } from '../test-mode'
@@ -39,6 +44,9 @@ export interface E2eHooks {
     codex: AccountUsageManager
     start: (intervalMs?: number) => void
   }
+  /** ADR 0004: the routines service the server answers from, for the specs
+   *  that drive a tick by hand instead of waiting on the clock. */
+  routines: RoutinesService & { tick(): Promise<boolean>; refresh(): Promise<void> }
   // ── later lanes add theirs here ──
 }
 

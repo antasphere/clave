@@ -86,6 +86,9 @@ import { terminalPorts } from './ports/terminals'
 import { workspaceFiles } from './workspace-files'
 // ── Wave 5, lane C: the plugins, the shell's own service (plugins/shell-plugins.ts) ──
 import { shellPlugins } from './plugins/shell-plugins'
+// ── ADR 0004: the routines, the shell's own service in-process (routines/shell-routines.ts) ──
+import { installRoutinesIpc, shellRoutines } from './routines/shell-routines'
+import { waitForMcpRuntime } from './mcp/mcp-runtime'
 
 // The server to attach to, if any: ONE decision for the whole shell, taken
 // off the environment and the command line in `server-launch.ts` (the
@@ -179,14 +182,32 @@ async function bootServer(): Promise<void> {
             // ── Wave 3, lane A: the workspace files, the shell's own instance (workspace-files.ts) ──
             workspaceFiles: workspaceFiles(),
             // ── Wave 5, lane C: the plugins, the shell's own service (plugins/shell-plugins.ts) ──
-            plugins: shellPlugins()
+            plugins: shellPlugins(),
+            // ── ADR 0004: the routines, the shell's own scheduler (routines/shell-routines.ts) ──
+            routines: shellRoutines()
           },
           // ── Lane C of wave 3: the end-to-end fixture route, test mode only ──
           testFixtures: TEST_NO_ACTIVATE,
           // ── Issue #266: the version it reports, the one its child gets too ──
           appVersion: app.getVersion()
         })
-        return { url: endpoint.url, token: endpoint.token, stop: stopClaveServer }
+        // The scheduler reads its routines and arms its tick once the
+        // server is up and the agent tools listen: a run it starts reaches
+        // `clave_routine_report` through them, so the first tick waits for
+        // the MCP server (bounded; a run on an app without it fails with
+        // "without a report" rather than never starting).
+        void waitForMcpRuntime()
+          .catch(() => undefined)
+          .then(() => shellRoutines().start())
+          .catch((error) => console.error('[routines] could not start', error))
+        return {
+          url: endpoint.url,
+          token: endpoint.token,
+          stop: async () => {
+            await shellRoutines().close()
+            await stopClaveServer()
+          }
+        }
       },
       // The separate server (wave 5): the standalone entry as a child of this
       // process, from the bundles beside this one, on a data directory of
@@ -606,6 +627,8 @@ app.whenReady().then(() => {
 
   registerIpcHandlers({ onChanged: () => buildAppMenu({ openWindow }) })
   registerWindowHandlers({ openWindow })
+  // ── ADR 0004: the routines' IPC arm, the shell's own service in-process only ──
+  installRoutinesIpc(serverLaunch.mode === 'in-process' ? shellRoutines() : null)
   registerMcpWindowOpener(openWindow)
   installPreviewProtocol()
   installViewGuestPolicy()

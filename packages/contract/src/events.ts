@@ -20,6 +20,8 @@ import { WorkspaceFilesEvent } from './workspace-files/model'
 import { GitEvent } from './git'
 // ── Issue #266: the server domain ──
 import { ServerUpgradeEvent } from './server-info'
+// ── ADR 0004: the routines ──
+import { RoutinesChanged } from './routines/model'
 
 export const ServerEvent = Schema.Union(
   FilesDirsChanged,
@@ -98,7 +100,9 @@ export const ServerEvent = Schema.Union(
   // ── Wave wcs1023, lane C: the git domain (a watched repository changed on the server's disk, a batch moved) ──
   ...GitEvent.members,
   // ── Issue #266: the server's self-upgrade changed state ──
-  ServerUpgradeEvent
+  ServerUpgradeEvent,
+  // ── ADR 0004: the routines (the routines or their runs changed) ──
+  RoutinesChanged
   // ── Lane B: terminals ──
 )
 export type ServerEvent = typeof ServerEvent.Type

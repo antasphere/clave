@@ -570,6 +570,36 @@ export interface PinnedGroupTerminal {
   groupView?: boolean
 }
 
+/** A routine of a `.clave` group (ADR 0004): a prompt the server runs on a
+ *  cron schedule in a hidden session, reported in the toolbar. Mirrors
+ *  `ClaveRoutine` of the contract; the renderer carries it through the pin
+ *  round-trip and never schedules it (the server does). */
+export interface PinnedGroupRoutine {
+  name: string
+  schedule: string
+  prompt: string
+  params?: Record<string, string>
+  skill?: string
+  cwd?: string | null
+  agent?: string
+  form?: string
+  model?: string
+  effort?: string
+  thinking?: string
+  provider?: string
+  profile?: string
+  account?: string
+  dangerousMode?: boolean
+  permissionMode?: string
+  /** The terminals' enums, kept as written: an unknown icon falls back to the clock. */
+  icon?: string
+  color?: string
+  catchUp?: boolean
+  timeoutMinutes?: number
+  scope?: string
+  report?: { template: string; schema?: string; width?: number; height?: number }
+}
+
 export interface PinnedGroup {
   id: string
   name: string
@@ -585,6 +615,8 @@ export interface PinnedGroup {
   view?: string | null
   sessions: PinnedGroupSession[]
   terminals: PinnedGroupTerminal[]
+  /** The group's routines (ADR 0004), carried through the round-trip; the server schedules them. */
+  routines?: PinnedGroupRoutine[]
   createdAt: number
   filePath?: string | null
   rootDir?: string | null // Root dir for resolving paths (null = file's parent dir)

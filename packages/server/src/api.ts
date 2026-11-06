@@ -69,6 +69,8 @@ import { WorkspaceFilesLive } from './workspace-files/api'
 import { FilesLive } from './files/api'
 // ── Wave wcs1023, lane C: the git domain (`git/api.ts`) ──
 import { GitLive } from './git/api'
+// ── ADR 0004: the routines (`routines/api.ts`) ──
+import { RoutinesLive } from './routines/api'
 // ── Issue #266: the server's version and its self-upgrade ──
 import { GetServerInfo, RequestServerUpgrade } from '@clave/contract/server-info'
 import { ListPendingRequests, ResolvePendingRequest } from '../../contract/src/requests'
@@ -239,6 +241,8 @@ export const ApiLive = HttpApiBuilder.api(ClaveApi).pipe(
       GitLive,
       // ── Issue #266: the server domain ──
       ServerInfoLive,
+      // ── ADR 0004: the routines ──
+      RoutinesLive,
       HealthLive
     )
   )

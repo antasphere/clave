@@ -187,7 +187,8 @@ class PtyManager {
     // The effort last picked goes with every chat, a restored one included:
     // the record does not keep the one a tab ran at, and the last pick is
     // what the reader would pick again.
-    const effort = isEvents ? rememberedChatEffort(adapter.id) : undefined
+    // A launch that names an effort (a routine, ADR 0004) gets exactly that.
+    const effort = isEvents ? (options?.effort ?? rememberedChatEffort(adapter.id)) : undefined
     const session: PtySession = isEvents
       ? {
           // A restored chat tab keeps its id, as a restored terminal does: the
@@ -296,7 +297,13 @@ class PtyManager {
                 : adapter.provider === 'claude'
                   ? 'bypassPermissions'
                   : undefined
-              : undefined,
+              : // ADR 0004: the mode a routine asks under when its permissions
+                // stay on; the CLI spells the ask-every-time mode `manual`.
+                adapter.provider === 'claude' && options?.permissionMode
+                ? options.permissionMode === 'default'
+                  ? 'manual'
+                  : options.permissionMode
+                : undefined,
             // What `--yolo` means to a Codex terminal: no approvals AND no
             // sandbox. The app-server takes the two separately, and without
             // this a dangerous chat ran in the config's sandbox.
