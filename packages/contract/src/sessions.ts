@@ -223,6 +223,7 @@ export const BackgroundTask = Schema.Struct({
   id: Schema.String,
   kind: Schema.Literal('shell', 'agent', 'other'),
   description: Schema.String,
+  command: Schema.optional(Schema.String),
   toolUseId: Schema.optional(Schema.String),
   startedAt: Schema.Number,
   outputFile: Schema.optional(Schema.String),

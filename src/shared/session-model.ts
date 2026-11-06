@@ -173,7 +173,11 @@ export type SessionInput = z.infer<typeof SessionInputSchema>
 export const BackgroundTaskSchema = z.object({
   id: z.string(),
   kind: z.enum(['shell', 'agent', 'other']),
+  /** What a row says: an agent's task, or a shell's title (the call's own
+   *  description, else the command shortened). */
   description: z.string(),
+  /** A shell's full command line, when known, for a tooltip. */
+  command: z.string().optional(),
   /** The tool call that started it, when the provider says. */
   toolUseId: z.string().optional(),
   /** When this host first heard of it (epoch ms), for the elapsed timer. */

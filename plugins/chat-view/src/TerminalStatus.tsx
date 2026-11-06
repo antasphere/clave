@@ -236,7 +236,7 @@ export function SubAgentStack({
                 className="term-agent-row"
                 title={
                   shell
-                    ? `${agent.background ? 'Running in the background' : 'Running'}: ${agent.description}`
+                    ? `${agent.background ? 'Running in the background' : 'Running'}: ${agent.command ?? agent.description}`
                     : agent.lastAction
                       ? `Last step: ${agent.lastAction}`
                       : 'No step yet'

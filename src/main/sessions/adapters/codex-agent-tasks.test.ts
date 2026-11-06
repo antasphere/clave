@@ -107,6 +107,7 @@ describe('Codex agent tasks, from the recorded lifecycle', () => {
         id: BACKGROUND,
         kind: 'shell',
         description: 'sleep 30 && echo bg2',
+        command: 'sleep 30 && echo bg2',
         toolUseId: BACKGROUND,
         startedAt: expect.any(Number)
       }

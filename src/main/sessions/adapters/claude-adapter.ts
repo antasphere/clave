@@ -51,6 +51,7 @@ import {
   type PtySpawnOptions
 } from './pty-backend'
 import { NdjsonLines } from './ndjson'
+import { commandTitle } from '../../../shared/command-title'
 
 const object = z.record(z.string(), z.unknown())
 const envelope = object.and(z.object({ type: z.string() }))
@@ -227,6 +228,10 @@ export class ClaudeStreamTranslator {
   private readonly background = new Map<string, BackgroundTask>()
   /** tool_use_id → the output file its "running in background" result named. */
   private readonly outputFiles = new Map<string, string>()
+  /** tool_use_id → a Bash call's command and the title the model gave it,
+   *  so a background shell reads by that title rather than by the command
+   *  the CLI echoes. Bounded: only the recent calls can still be promoted. */
+  private readonly bashCalls = new Map<string, { command: string; title?: string }>()
   /** A list held back because it named a task its call is not known for. */
   private heldList = false
   /** task_id → the call of a task the turn waits on (a foreground
@@ -292,11 +297,22 @@ export class ClaudeStreamTranslator {
       const tool = toolUseId ?? known?.toolUseId ?? this.foregroundCalls.get(id)
       this.foregroundCalls.delete(id)
       const outputFile = known?.outputFile ?? (tool ? this.outputFiles.get(tool) : undefined)
+      const kind = known?.kind ?? kindOf(type)
+      const said = typeof description === 'string' && description ? description : undefined
+      // A shell reads by the title its call gave it, else by the name the CLI
+      // lists it under (its own prose, or the command shortened). The whole
+      // command rides along for a tooltip.
+      const call = kind === 'shell' && tool ? this.bashCalls.get(tool) : undefined
+      const command = kind === 'shell' ? (call?.command ?? known?.command ?? said) : undefined
       this.background.set(id, {
         id,
-        kind: known?.kind ?? kindOf(type),
+        kind,
         description:
-          typeof description === 'string' && description ? description : (known?.description ?? id),
+          call?.title ||
+          (kind === 'shell' && said ? commandTitle(said) : said) ||
+          known?.description ||
+          (call ? commandTitle(call.command) : id),
+        ...(command ? { command } : {}),
         startedAt: known?.startedAt ?? Date.now(),
         ...(tool ? { toolUseId: tool } : {}),
         ...(outputFile ? { outputFile } : {})
@@ -662,6 +678,7 @@ export class ClaudeStreamTranslator {
             .parse(block)
           if (!this.tools.has(tool.id)) {
             this.tools.add(tool.id)
+            if (tool.name === 'Bash' && !parent) this.noteBashCall(tool.id, tool.input)
             this.emit({ type: 'tool_call', ...tool, ...(parent ? { parent } : {}) })
           }
         } else if (block.type === 'tool_result') {
@@ -827,6 +844,15 @@ export class ClaudeStreamTranslator {
       this.streamed = false
       this.finished = false
     } else fallback()
+  }
+  private noteBashCall(id: string, input: unknown): void {
+    const call = z
+      .object({ command: z.string(), description: z.string().optional() })
+      .safeParse(input)
+    if (!call.success) return
+    const title = call.data.description?.trim()
+    this.bashCalls.set(id, { command: call.data.command, ...(title ? { title } : {}) })
+    if (this.bashCalls.size > 200) this.bashCalls.delete(this.bashCalls.keys().next().value!)
   }
   /** A background call's result names the file its output goes to; keep it
    *  for the task that call started, whichever of the two frames came first. */

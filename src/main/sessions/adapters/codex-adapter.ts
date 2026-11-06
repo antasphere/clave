@@ -38,6 +38,7 @@ import {
 } from './codex-app-server'
 import { effortLabel, isValidEffort } from '../../../shared/effort'
 import { lazyTerminalPorts } from '../../ports/terminals'
+import { commandTitle } from '../../../shared/command-title'
 import type { McpConfigPort } from '../../ports/mcp-config'
 
 const text = (value: unknown): string => (typeof value === 'string' ? value : '')
@@ -369,7 +370,8 @@ export class CodexTranslator {
               task: {
                 id,
                 kind: 'shell',
-                description: commandOf(item),
+                description: commandTitle(commandOf(item)),
+                command: commandOf(item),
                 toolUseId: id,
                 startedAt: Date.now()
               }

@@ -47,6 +47,7 @@ it('stacks a subagent from its call, follows its own calls, and drops it on its 
       requestedBackground: false,
       type: 'Explore',
       description: 'Find the reducer',
+      command: null,
       background: false,
       startedAt: 1000,
       lastAction: expect.stringContaining('reducer.ts'),
@@ -105,6 +106,7 @@ it('stacks a background shell beside the agents, named by its command', () => {
       requestedBackground: false,
       type: 'shell',
       description: 'npm run dev',
+      command: 'npm run dev',
       background: true,
       // The card opened at the call, and the promotion keeps it.
       startedAt: 1000,
@@ -137,6 +139,7 @@ it('shows a Codex command while it runs, as running rather than background, unti
       requestedBackground: false,
       type: 'shell',
       description: 'echo fg',
+      command: 'echo fg',
       background: false,
       startedAt: 1000,
       lastAction: null,
@@ -599,7 +602,7 @@ it('settles to one card when the list named the task before its call id was know
   expect(rowsOf(status)).toEqual(['shell:b1:bg:1000'])
 })
 
-it("keeps a Bash card's command text through its promotion, whatever the list calls it", () => {
+it("keeps a Bash card's title through its promotion, whatever the list calls it", () => {
   const status = at(
     [
       bash('b1', 'sleep 8 && echo CLAVE_BG', true),
@@ -619,9 +622,9 @@ it("keeps a Bash card's command text through its promotion, whatever the list ca
     ],
     1000
   )
-  expect(status.agents.map((a) => `${a.id}:${a.background}:${a.description}`)).toEqual([
-    'b1:true:sleep 8 && echo CLAVE_BG'
-  ])
+  expect(status.agents.map((a) => `${a.id}:${a.background}:${a.description}:${a.command}`)).toEqual(
+    ['b1:true:sleep 8 && echo CLAVE_BG:sleep 8 && echo CLAVE_BG']
+  )
   // A task with no card of its own is named as the provider names it.
   const discovered = at(
     [
@@ -725,4 +728,19 @@ it('counts the subagents and the commands apart under the composer, each by its 
   const waited = at([bash('b5', 'git status -sb')], 2000, status)
   expect(runningLabel(shownWork(waited.agents))).toBe('3 agents · 4 commands')
   expect(runningLabel([])).toBe('')
+})
+
+it('names a Claude Bash card by the title its call gives, else by the command shortened', () => {
+  const command = `pkill -f 'demo/user-data' 2>/dev/null; cd /repo/clave-app && exec npm run dev -- --user-data-dir="$HOME/demo" > "$HOME/dev.log" 2>&1`
+  const titled = at(
+    [call('b1', 'Bash', { command, description: 'Restart the demo app', run_in_background: true })],
+    1000
+  )
+  expect(titled.agents.map((a) => [a.description, a.command])).toEqual([
+    ['Restart the demo app', command]
+  ])
+  const untitled = at([bash('b2', command, true)], 1000)
+  expect(untitled.agents.map((a) => [a.description, a.command])).toEqual([
+    ['npm run dev in clave-app', command]
+  ])
 })

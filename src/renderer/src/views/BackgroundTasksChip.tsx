@@ -32,7 +32,7 @@ function TaskRow({ task, now }: { task: BackgroundTask; now: number }): React.JS
   return (
     <li className="background-task" data-kind={task.kind}>
       <Icon className="w-3.5 h-3.5 flex-shrink-0" aria-label={kind} />
-      <span className="background-task-name" title={task.description}>
+      <span className="background-task-name" title={task.command ?? task.description}>
         {task.description}
       </span>
       <span className="background-task-time">{elapsed(task.startedAt, now)}</span>

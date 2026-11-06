@@ -1484,6 +1484,54 @@ const lastBackground = ():
       | Extract<SessionEvent, { type: 'background_tasks' }>
       | undefined
   )?.tasks
+it('names a background shell by the title its Bash call gave, keeping the command beside it', () => {
+  const command = 'cd /repo/clave-app && exec npm run dev > dev.log 2>&1'
+  feed({
+    type: 'assistant',
+    parent_tool_use_id: null,
+    message: {
+      content: [
+        {
+          type: 'tool_use',
+          id: 'toolu_t',
+          name: 'Bash',
+          input: { command, description: 'Start the dev app', run_in_background: true }
+        }
+      ]
+    }
+  })
+  // The CLI lists it by the command, before naming its call.
+  feed({
+    type: 'system',
+    subtype: 'background_tasks_changed',
+    tasks: [{ task_id: 'bt', task_type: 'local_bash', description: command }]
+  })
+  feed({
+    type: 'system',
+    subtype: 'task_started',
+    task_id: 'bt',
+    tool_use_id: 'toolu_t',
+    description: command,
+    is_backgrounded: true,
+    task_type: 'local_bash'
+  })
+  expect(lastBackground()).toEqual([
+    expect.objectContaining({ id: 'bt', description: 'Start the dev app', command })
+  ])
+})
+it('names a background shell with no titled call by its command, shortened', async () => {
+  const command = 'cd /repo/clave-app && exec npm run dev > dev.log 2>&1'
+  feed({
+    type: 'system',
+    subtype: 'background_tasks_changed',
+    tasks: [{ task_id: 'bu', task_type: 'local_bash', description: command }]
+  })
+  // Unlinked to a call, the list waits for the end of the read.
+  await Promise.resolve()
+  expect(lastBackground()).toEqual([
+    expect.objectContaining({ id: 'bu', description: 'npm run dev in clave-app', command })
+  ])
+})
 it('publishes a background shell, with its call and output file, until the CLI retires it', () => {
   feed({
     type: 'system',

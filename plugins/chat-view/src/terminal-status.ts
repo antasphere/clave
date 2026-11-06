@@ -1,6 +1,7 @@
 import type { BackgroundTask, SessionEvent } from '../../../src/shared/session-model'
 import { describeToolHead } from './tools'
 import { claudeModelName } from '../../../src/shared/claude-models'
+import { commandTitle } from '../../../src/shared/command-title'
 
 /** The Terminal view's status line, read off the same session stream the
  *  transcript is: how full the context is (`context_usage`), and the work
@@ -27,7 +28,11 @@ export interface SubAgent {
   /** What the agent is (`general-purpose`, `Explore`, …), as the call asked;
    *  `shell` for a command. */
   type: string
+  /** What the row says: the agent's task, or a command's title (the call's
+   *  own `description` when it gives one, else the command shortened). */
   description: string
+  /** A command's full text, for the row's tooltip; null for an agent. */
+  command: string | null
   /** Run in the background (the CLI's default) rather than waited on by the turn. */
   background: boolean
   startedAt: number
@@ -105,14 +110,16 @@ function fromBackground(task: BackgroundTask, known: SubAgent | undefined): SubA
     fromAgentTool: known?.fromAgentTool ?? false,
     requestedBackground: false,
     type: known?.type ?? kind,
-    // A command keeps the text its card opened with (the command itself);
-    // the provider may name it otherwise (Claude's Bash `description`). A
-    // task with no card of its own, and an agent, read as the provider says.
+    // A command keeps the title its card opened with (its call's own
+    // description, else the command shortened), so a promotion never renames
+    // it. A task with no card of its own, and an agent, read as the provider
+    // says (the adapters title a shell the same way).
     description:
       (known?.kind === 'shell' && known.description) ||
       task.description ||
       known?.description ||
       '',
+    command: known?.command ?? task.command ?? null,
     background: true,
     startedAt: known?.startedAt ?? task.startedAt,
     lastAction: known?.lastAction ?? null,
@@ -158,6 +165,7 @@ export function reduceStatus(
         // no task of its own: the command it polls already has its row.
         if (input.source === 'unifiedExecInteraction') return status
         const claude = event.name === CLAUDE_BASH
+        const line = claude ? text(input.command) : commandOf(input)
         const command: SubAgent = {
           id: event.id,
           taskId: null,
@@ -165,7 +173,10 @@ export function reduceStatus(
           fromAgentTool: false,
           requestedBackground: claude && input.run_in_background === true,
           type: 'shell',
-          description: claude ? text(input.command) : commandOf(input),
+          // Claude writes a title for each call; a call without one, and
+          // every Codex command, reads by the command shortened.
+          description: (claude && text(input.description).trim()) || commandTitle(line),
+          command: line,
           background: false,
           startedAt: now,
           lastAction: null,
@@ -185,6 +196,7 @@ export function reduceStatus(
         requestedBackground: false,
         type: text(input.subagent_type) || 'agent',
         description: text(input.description),
+        command: null,
         background: input.run_in_background === true,
         startedAt: now,
         lastAction: null,
