@@ -523,6 +523,7 @@ canvas[data-orb-state] {
 }
 @media (prefers-reduced-motion: reduce) {
   .tab-status[data-status='working']::before,
+  .routine-button[data-working='true']::before,
   .sidebar-tab-spinner {
     animation-duration: 2.4s;
   }
@@ -6154,7 +6155,10 @@ button.term-agent-model:focus-visible {
 }
 /* The ring around the toolbar icon while a run is in flight: the rule of
    `.tab-status[data-status='working']`, on the button itself so its glyph
-   stays a direct child and keeps the framed glyph size at every density. */
+   stays a direct child and keeps the framed glyph size at every density;
+   its reduced-motion pace sits with the sidebar spinner's, above (the chat
+   motion test reads the LAST reduced-motion block of this file as the
+   chat's own). */
 .routine-button[data-working='true']::before {
   content: '';
   position: absolute;
@@ -6163,11 +6167,6 @@ button.term-agent-model:focus-visible {
   border: 1.5px solid color-mix(in srgb, currentColor 22%, transparent);
   border-top-color: currentColor;
   animation: tab-status-spin 0.9s linear infinite;
-}
-@media (prefers-reduced-motion: reduce) {
-  .routine-button[data-working='true']::before {
-    animation-duration: 2.4s;
-  }
 }
 /* The routine's icon in the panel's header, in its colour, a glyph's size. */
 .routine-panel-icon {
