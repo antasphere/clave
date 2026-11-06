@@ -253,7 +253,13 @@ export function describeCron(source: string): string {
         ? `every hour at minute ${[...s.minute.values][0]}`
         : s.hour.any && s.minute.any
           ? 'every minute'
-          : null
+          : s.hour.any && stepOf(s.minute.values, 60)
+            ? `every ${stepOf(s.minute.values, 60)} minutes`
+            : s.minute.values.size === 1 &&
+                [...s.minute.values][0] === 0 &&
+                stepOf(s.hour.values, 24)
+              ? `every ${stepOf(s.hour.values, 24)} hours`
+              : null
   if (!time) return `"${source}"`
   if (!s.month.any) return `"${source}"`
   const dow = [...s.dayOfWeek.values].sort((a, b) => a - b).join(',')
@@ -271,7 +277,18 @@ export function describeCron(source: string): string {
           ? `every ${capitalize(DAYS[[...s.dayOfWeek.values][0]])}`
           : null
   if (!days || (!s.dayOfMonth.any && !s.dayOfWeek.any)) return `"${source}"`
-  return `${days} ${time}`
+  // "every day every minute" says every day twice.
+  return days === 'every day' && time.startsWith('every') ? time : `${days} ${time}`
+}
+
+/** The step a field's values are the multiples of (`*\/N`: 0, N, 2N, … up to
+ *  the field's span), or null when they are not one. */
+const stepOf = (values: ReadonlySet<number>, span: number): number | null => {
+  const sorted = [...values].sort((a, b) => a - b)
+  if (sorted.length < 2 || sorted[0] !== 0) return null
+  const step = sorted[1]
+  if (step < 2 || sorted.length !== Math.ceil(span / step)) return null
+  return sorted.every((v, i) => v === i * step) ? step : null
 }
 
 const capitalize = (t: string): string => t.charAt(0).toUpperCase() + t.slice(1)
