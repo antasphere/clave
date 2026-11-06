@@ -87,10 +87,18 @@ export async function buildPlugins() {
       target: 'es2022'
     })
   }
+  // The whole design system, so a page is built from the app's own classes
+  // (the side panel's tab frame, its icon buttons, the floating card) and
+  // follows the density presets; inside Clave the host injects the root's
+  // resolved tokens on top, so Appearance (theme, density, text size) reaches
+  // the page; in a browser the tokens' own defaults stand.
+  const ui = (name) => readFileSync(path.join(root, 'packages', 'ui', 'src', name), 'utf8')
   const css = [
-    `/* Built by scripts/build-plugins.mjs: Geist Sans, packages/ui/src/tokens.css, page/deck.css, page/settings.css. */`,
+    `/* Built by scripts/build-plugins.mjs: Geist Sans, packages/ui/src/{tokens,density,system}.css, page/deck.css, page/settings.css. */`,
     ...[400, 500, 600].map(fontFace),
     tokensForBrowser(),
+    ui('density.css'),
+    ui('system.css'),
     readFileSync(path.join(plugin, 'page', 'deck.css'), 'utf8'),
     readFileSync(path.join(plugin, 'page', 'settings.css'), 'utf8')
   ].join('\n')

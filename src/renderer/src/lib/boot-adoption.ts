@@ -61,6 +61,12 @@ export function planBootAdoption<R extends BootRecordLike>(records: R[]): BootPl
       ;(r.live || r.transport === 'events' ? plan.liveTabs : plan.deadTabs).push(r)
       continue
     }
+    // A routine's run (ADR 0004) is the server's: it starts, watches and
+    // stops it, and a window never draws it, live or not.
+    if (kind === 'routine') {
+      plan.discard.push(r)
+      continue
+    }
     if (!r.live) {
       plan.discard.push(r)
       continue

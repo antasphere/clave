@@ -1,0 +1,86 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 150" class="drawing" aria-hidden="true">
+  <!-- A group: its sessions as rows of working blocks on one clock, now down the clock to the block at work. -->
+  <style>
+/* Clave's drawing hand, for a self-contained page (a Slideless deck, a
+   standalone .svg). Inside the app, the same classes are `.chat-drawing` in
+   packages/ui/src/system.css and read the app's tokens; here they read the
+   six variables below, set per scheme. Paste this block into the page's
+   style element, or into the drawing's own style element for a standalone
+   file. (No angle brackets in this comment: an SVG inlined into HTML is
+   parsed as HTML, and a tag name inside a comment would open an element.) */
+.drawing {
+  --ink: #1b1b18;
+  --paper: #ffffff;
+  --ground: #eeedeb;
+  --accent: #1f5fcf;
+  display: block;
+  overflow: visible;
+}
+@media (prefers-color-scheme: dark) {
+  .drawing {
+    --ink: #f2f2f0;
+    --paper: #161513;
+    --ground: #1d1c19;
+    --accent: #5aa2f7;
+  }
+}
+.drawing :is(.ln, .bx, .ring, .head) {
+  vector-effect: non-scaling-stroke;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.drawing .ln { fill: none; stroke: color-mix(in oklab, var(--ink) 45%, transparent); stroke-width: 1.2; }
+.drawing .ln--soft { stroke: color-mix(in oklab, var(--ink) 34%, transparent); stroke-dasharray: 4 5; }
+.drawing .ln--thin { stroke: color-mix(in oklab, var(--ink) 30%, transparent); stroke-width: 1; }
+.drawing .bx { fill: color-mix(in oklab, var(--ground) 40%, transparent); stroke: color-mix(in oklab, var(--ink) 40%, transparent); stroke-width: 1; }
+.drawing .bx--front { fill: var(--paper); }
+.drawing .dot { fill: color-mix(in oklab, var(--ink) 78%, transparent); }
+.drawing .dot--seat { fill: color-mix(in oklab, var(--ink) 40%, transparent); }
+.drawing .ring { fill: none; stroke: color-mix(in oklab, var(--ink) 42%, transparent); stroke-width: 1; }
+.drawing .head { fill: none; stroke: color-mix(in oklab, var(--ink) 55%, transparent); stroke-width: 1.1; }
+/* the one place the accent goes */
+.drawing .ln--c { stroke: var(--accent); stroke-width: 1.7; }
+.drawing .head--c { stroke: var(--accent); stroke-width: 1.5; }
+.drawing .dot--c { fill: var(--accent); }
+.drawing .ring--pulse { opacity: 0; transform-box: fill-box; transform-origin: center; }
+.drawing .travel { stroke-dasharray: 1; stroke-dashoffset: 0; }
+@media (prefers-reduced-motion: no-preference) {
+  .drawing .travel { animation: drawing-draw 900ms cubic-bezier(0.2, 0, 0, 1) 180ms 1 backwards; }
+  .drawing .ring--pulse { animation: drawing-pulse 1400ms cubic-bezier(0.2, 0, 0, 1) 900ms 1; }
+}
+@keyframes drawing-draw { from { stroke-dashoffset: 1; } }
+@keyframes drawing-pulse {
+  from { opacity: 0.7; transform: scale(1); }
+  to { opacity: 0; transform: scale(2.2); }
+}
+  </style>
+  <defs>
+    <marker id="group-head" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="10" markerHeight="10" orient="auto-start-reverse" markerUnits="userSpaceOnUse">
+      <path class="head head--c" d="M1.5,1.5 L8,5 L1.5,8.5" />
+    </marker>
+  </defs>
+  <!-- the clock: the ground and its hour ticks -->
+  <line class="ln ln--thin" x1="18" y1="132" x2="222" y2="132" />
+  <line class="ln ln--thin" x1="40" y1="128" x2="40" y2="136" />
+  <line class="ln ln--thin" x1="90" y1="128" x2="90" y2="136" />
+  <line class="ln ln--thin" x1="140" y1="128" x2="140" y2="136" />
+  <line class="ln ln--thin" x1="190" y1="128" x2="190" y2="136" />
+  <!-- three sessions, each a row: its state dot, its working blocks on the clock -->
+  <circle class="dot dot--seat" cx="26" cy="38" r="3" />
+  <rect class="bx" x="38" y="32" width="38" height="12" rx="4" />
+  <rect class="bx" x="104" y="32" width="22" height="12" rx="4" />
+  <circle class="dot dot--seat" cx="26" cy="68" r="3" />
+  <rect class="bx" x="52" y="62" width="58" height="12" rx="4" />
+  <line class="ln ln--soft" x1="114" y1="68" x2="136" y2="68" />
+  <rect class="bx bx--front" x="140" y="62" width="34" height="12" rx="4" />
+  <circle class="dot dot--seat" cx="26" cy="98" r="3" />
+  <rect class="bx" x="38" y="92" width="24" height="12" rx="4" />
+  <rect class="bx" x="86" y="92" width="44" height="12" rx="4" />
+  <!-- now: THE line, down the clock to the block at work -->
+  <path class="ln ln--c travel" pathLength="1" d="M190,18 L190,50 C190,60 188,66 184,68" marker-end="url(#group-head)" />
+  <line class="ln ln--soft" x1="190" y1="80" x2="190" y2="126" />
+  <circle class="bx bx--front" cx="174" cy="68" r="9" />
+  <circle class="ring" cx="174" cy="68" r="9" />
+  <circle class="ring ring--pulse" cx="174" cy="68" r="9" />
+  <circle class="dot dot--c" cx="174" cy="68" r="3.5" />
+</svg>

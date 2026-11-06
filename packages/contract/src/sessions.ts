@@ -333,7 +333,13 @@ export const SessionLink = Schema.Union(
     terminalId: Schema.String
   }),
   Schema.Struct({ kind: Schema.Literal('session-view'), ownerId: Schema.String }),
-  Schema.Struct({ kind: Schema.Literal('toolbar'), key: Schema.String })
+  Schema.Struct({ kind: Schema.Literal('toolbar'), key: Schema.String }),
+  /** A routine's run (ADR 0004): never a sidebar row, the server's to run and to stop. */
+  Schema.Struct({
+    kind: Schema.Literal('routine'),
+    routineKey: Schema.String,
+    runId: Schema.String
+  })
 )
 export type SessionLink = typeof SessionLink.Type
 
@@ -364,6 +370,15 @@ export const SpawnOptions = Schema.Struct({
   initialCommand: Schema.optional(Schema.String),
   autoExecute: Schema.optional(Schema.Boolean),
   initialPrompt: Schema.optional(Schema.String),
+  // ── ADR 0004: what a routine run declares beyond a tab's launch ──
+  /** Claude's reasoning effort to start on (`--effort`); a chat defaults to the last picked. */
+  effort: Schema.optional(Schema.String),
+  /** The permission mode a Claude session without `dangerousMode` asks under. */
+  permissionMode: Schema.optional(Schema.Literal('default', 'acceptEdits', 'plan')),
+  /** A Claude Code plugin folder loaded for this session alone (`--plugin-dir`). */
+  pluginDir: Schema.optional(Schema.String),
+  /** One paragraph appended to Claude's system prompt (`--append-system-prompt`). */
+  appendSystemPrompt: Schema.optional(Schema.String),
   tmuxMode: Schema.optional(Schema.Boolean),
   adoptTmuxName: Schema.optional(Schema.String),
   adoptSessionId: Schema.optional(Schema.String),

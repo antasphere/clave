@@ -151,6 +151,14 @@ describe('a Claude chat tab survives a restart', () => {
     )
   })
 
+  it("writes the link of a routine's run on the record, so the boot never adopts it as a tab (ADR 0004)", async () => {
+    const link = { kind: 'routine' as const, routineKey: '/w/default.clave::Health', runId: 'r1' }
+    const session = await ptyManager.spawn('/project', { launchProfileId: 'claude-chat', link })
+    expect(mocks.backend.writeEventSessionRecord).toHaveBeenCalledWith(
+      expect.objectContaining({ id: session.id, transport: 'events', link })
+    )
+  })
+
   it('comes back under its own id, resuming its conversation', async () => {
     const session = await ptyManager.spawn('/project', {
       launchProfileId: 'claude-chat',

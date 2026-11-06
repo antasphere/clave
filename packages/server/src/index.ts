@@ -93,3 +93,12 @@ export { PendingRequests, type RequestInput, type RequestResult } from './reques
 export { RequestsPort, type RequestsService } from './requests/port'
 
 export { FileTreeWatcher } from './files/watch'
+// ── ADR 0004: the routines ──
+export {
+  Routines,
+  RoutineReportRefusal,
+  type RoutinesService,
+  type RoutinesEvent,
+  type RoutineReportInput,
+  routineHandlers
+} from './routines'

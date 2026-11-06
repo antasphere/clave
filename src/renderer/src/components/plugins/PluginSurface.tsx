@@ -1,20 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { WebviewTag } from 'electron'
 import { SettingsCallout } from '../settings/primitives'
-
-/** Enumerate the computed custom properties, including tokens introduced by a skin.
- * No mirrored token inventory: the live app stylesheet is the authority. Each value is
- * `!important`: a sheet inserted into a guest sits BEFORE the page's own in the cascade,
- * so a page that declares the same tokens itself (the analytics pages carry the app's
- * tokens so they also stand alone in a browser) would otherwise win on equal specificity
- * and never follow the app's theme. */
-function themeCSS(): string {
-  const style = getComputedStyle(document.documentElement)
-  return `:root {${Array.from(style)
-    .filter((name) => name.startsWith('--'))
-    .map((name) => `${name}: ${style.getPropertyValue(name)} !important;`)
-    .join('\n')}}`
-}
+import { attachGuestTheme } from '../../lib/guest-theme'
 
 /** The one host for a plugin's `ui: surface` HTML: the settings page, the side panel and the
  * tiled area all render a plugin through this component, so the CSP the main process attached
@@ -37,46 +24,13 @@ export function PluginSurface({
   useEffect(() => {
     const guest = ref.current
     if (!guest) return
-    let disposed = false
-    let cssKey: string | undefined
-    let ready = false
-    let queue = Promise.resolve()
-    const inject = (): void => {
-      queue = queue
-        .then(async () => {
-          if (!ready || disposed) return
-          const next = await guest.insertCSS(themeCSS())
-          if (cssKey) await guest.removeInsertedCSS(cssKey)
-          cssKey = next
-        })
-        .catch((error) => {
-          if (!disposed) setError(String(error))
-        })
-    }
-    const loaded = (): void => {
-      ready = true
-      inject()
-    }
     const failed = (event: Event): void => {
       setError((event as Event & { errorDescription: string }).errorDescription)
     }
-    guest.addEventListener('dom-ready', loaded)
     guest.addEventListener('did-fail-load', failed)
-    const observer = new MutationObserver(inject)
-    observer.observe(document.documentElement, {
-      attributes: true,
-      attributeFilter: ['data-theme', 'style', 'class']
-    })
-    observer.observe(document.head, {
-      childList: true,
-      subtree: true,
-      characterData: true,
-      attributes: true
-    })
+    const detach = attachGuestTheme(guest, setError)
     return () => {
-      disposed = true
-      observer.disconnect()
-      guest.removeEventListener('dom-ready', loaded)
+      detach()
       guest.removeEventListener('did-fail-load', failed)
     }
   }, [url])

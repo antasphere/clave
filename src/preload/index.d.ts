@@ -270,6 +270,34 @@ export interface ClaveFileGroupData {
     /** Bind this terminal's `serverUrl` as the group's web view at launch. */
     groupView?: boolean
   }[]
+  /** The group's routines (ADR 0004): elevated as a whole; mirrors `ClaveRoutine` of the contract. */
+  routines?: ClaveFileRoutineData[]
+}
+
+/** A routine as the file carries it (ADR 0004), its paths absolute once read. */
+export interface ClaveFileRoutineData {
+  name: string
+  schedule: string
+  prompt: string
+  params?: Record<string, string>
+  skill?: string
+  cwd?: string | null
+  agent?: string
+  form?: string
+  model?: string
+  effort?: string
+  thinking?: string
+  provider?: string
+  profile?: string
+  account?: string
+  dangerousMode?: boolean
+  permissionMode?: string
+  icon?: string
+  color?: string
+  catchUp?: boolean
+  timeoutMinutes?: number
+  scope?: string
+  report?: { template: string; schema?: string; width?: number; height?: number }
 }
 
 export type ClaveFileReadResult =
@@ -309,6 +337,7 @@ export interface ClaveFileWriteData {
     serverUrl?: string
     groupView?: boolean
   }[]
+  routines?: ClaveFileRoutineData[]
   groups?: Array<{
     name: string
     cwd: string | null
@@ -342,6 +371,7 @@ export interface ClaveFileWriteData {
       serverUrl?: string
       groupView?: boolean
     }[]
+    routines?: ClaveFileRoutineData[]
   }>
 }
 
@@ -364,6 +394,8 @@ export type SessionLink =
   | { kind: 'group-terminal'; groupId: string; terminalId: string }
   | { kind: 'session-view'; ownerId: string }
   | { kind: 'toolbar'; key: string }
+  /** A routine's run (ADR 0004): the server's, never a sidebar row. */
+  | { kind: 'routine'; routineKey: string; runId: string }
 
 export interface SessionRecord {
   /** How the session's process talks: a terminal (`pty`) or a chat's
@@ -920,6 +952,13 @@ export interface ElectronAPI extends FleetDesktopAPI {
   secretDismiss: (id: string) => Promise<SecretRequestView>
   onSecretRequestsChanged: (callback: (requests: SecretRequestView[]) => void) => () => void
   linkedDocuments: LinkedDocumentsAPI
+  // ── ADR 0004: the routines a server schedules, read and driven from the toolbar ──
+  routinesList: () => Promise<import('@clave/contract/routines/model').RoutinesListing>
+  routinesRunNow: (key: string) => Promise<import('@clave/contract/routines/model').RoutineRun>
+  routinesDismiss: (runId: string) => Promise<void>
+  /** The run's conversation continued: in the panel (the session re-homed to this window) or as a tab (a new session this window places). */
+  routinesOpenDiscussion: (runId: string, mode: 'panel' | 'tab') => Promise<{ sessionId: string }>
+  onRoutinesChanged: (callback: () => void) => () => void
   copyOfferList: () => Promise<CopyOfferView[]>
   copyOfferCopy: (id: string) => Promise<CopyOfferView>
   copyOfferDismiss: (id: string) => Promise<void>

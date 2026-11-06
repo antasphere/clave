@@ -75,6 +75,17 @@ import {
   ServerInfoPort
 } from '@clave/server'
 import { standaloneSettingsSource } from './settings/standalone-source'
+// ── ADR 0004: the routines, this server's own scheduler ──
+import { createRoutineService } from './routines/service'
+import { launchFactsFromManagers } from './routines/facts'
+import { contractPluginDir } from './routines/skill'
+import { claudeAccountsManager } from './claude-accounts'
+import { codexAccountsManager } from './codex-accounts'
+import { usageManager } from './usage-manager'
+import { codexUsageManager } from './codex-usage'
+import { preferencesManager, type Preferences } from './preferences-manager'
+import { fileStorage } from './ports/storage'
+import { lazyTerminalPorts } from './ports/terminals'
 import { standaloneSessionHost } from './sessions/standalone-host'
 import { installE2eHooks } from './sessions/e2e-hooks'
 import { publishSessionStates, setServerEventPublisher } from './server/session-events'
@@ -307,6 +318,43 @@ async function main(): Promise<void> {
       idleMs: upgradeIdleMs(process.argv.slice(2), TEST_NO_ACTIVATE)
     })
   }
+  // ── Wave 3, lane A: the `.clave` files of this machine, their trust store under `--data-dir` ──
+  const workspaceFilesInstance = new WorkspaceFiles(fileWorkspaceFilesStorage(dataDir))
+  // ── ADR 0004: the routines this server schedules, off its own workspace files ──
+  const routines = createRoutineService({
+    sessions,
+    files: workspaceFilesInstance,
+    workspaces: async () => (await standalone.settings.workspaces.load()).workspaces,
+    onWorkspacesChanged: (listener) =>
+      standalone.settings.subscribe((event) => {
+        if (event._tag === 'workspaces.state_changed') listener()
+      }),
+    facts: launchFactsFromManagers({
+      claudeAccounts: claudeAccountsManager,
+      codexAccounts: codexAccountsManager,
+      claudeUsage: usageManager,
+      codexUsage: codexUsageManager,
+      launchProfiles: launchProfileManager,
+      preference: (key) => preferencesManager.get(key as keyof Preferences)
+    }),
+    storage: fileStorage(dataDir),
+    dataDir,
+    ...(TEST_NO_ACTIVATE ? { claimsDir: path.join(dataDir, 'routine-claims') } : {}),
+    holder: `clave-server:${process.pid}`,
+    pluginDir: contractPluginDir(path.resolve(__dirname, '..', '..', 'resources')),
+    viewer: TEST_NO_ACTIVATE ? false : { env: () => loginShellEnvAsync() },
+    rehome: (sessionId, windowKey) => ptyManager.setSessionWindowKey(sessionId, windowKey),
+    // A run reports through the agent tools: the daemon's own MCP once it
+    // listens, the attached shell's address once it is announced (round 1,
+    // F1: a run due at launch started with no --mcp-config before this).
+    agentToolsReady: () => lazyTerminalPorts.mcpConfig.ready?.() ?? Promise.resolve(),
+    providerSessionIdOf: (sessionId) => {
+      const record = ptyManager.getSessionRecord(sessionId)
+      return record?.claudeSessionId ?? record?.codexThreadId ?? null
+    },
+    log: (level, message) => process.stderr.write(`clave-server: routines ${level}: ${message}\n`)
+  })
+  installE2eHooks({ routines })
   const server = await startEmbedded({
     ports: {
       sessions,
@@ -321,7 +369,9 @@ async function main(): Promise<void> {
       // The workspace files (wave 3, lane A): the `.clave` files of this
       // machine, their trust store under `--data-dir`; a review a read needs
       // is published to the clients and the read waits for the answer.
-      workspaceFiles: new WorkspaceFiles(fileWorkspaceFilesStorage(dataDir)),
+      workspaceFiles: workspaceFilesInstance,
+      // ── ADR 0004: the routines ──
+      routines,
       // ── Wave 4, lane C: the agent tokens, resolved for the attached shell ──
       // A desktop may still announce its own endpoint for old servers. This
       // server owns its endpoint and never points local providers at a Mac.
@@ -352,6 +402,7 @@ async function main(): Promise<void> {
         sessions,
         agentTools,
         requests,
+        routines,
         ...(sidebar && { sidebar }),
         // An agent's profile must belong to the mode it opens (a chat or
         // plugin profile, or one of this server's custom profiles).
@@ -375,6 +426,11 @@ async function main(): Promise<void> {
       })
     : undefined
   if (mcp) agentTools.announce(mcp.url)
+  // The scheduler arms once the server listens and the agent tools have an
+  // address: a run it starts must reach `clave_routine_report`.
+  void routines.start().catch((error) => {
+    process.stderr.write(`clave-server: the routines did not start: ${(error as Error).message}\n`)
+  })
 
   // A session's title, plan, clear and state go out as server events to
   // every attached client (`server/session-events.ts`), as the in-process
@@ -459,6 +515,8 @@ async function main(): Promise<void> {
     setServerEventPublisher(null)
     // ── Wave 5, lane C: the plugin processes go with the server ──
     plugins.close()
+    // ── ADR 0004: the scheduler's tick and viewer go with the server; the runs die with their sessions ──
+    void routines.close()
     // The sessions go with the server, as they go with the app at its quit
     // (`index.ts`): a chat's CLI is a detached child of this process and
     // would outlive it; a terminal's tmux session is left for the next

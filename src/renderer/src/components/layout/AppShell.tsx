@@ -68,6 +68,9 @@ import { savedLayoutSessionIds } from '../../../../shared/adoption-scope'
 import { parkToolbarSurvivor } from '../../lib/toolbar-terminal-registry'
 import { initSecretStore } from '../../store/secret-store'
 import { initCopyOfferStore } from '../../store/copy-offer-store'
+// ── ADR 0004: the routines in the toolbar ──
+import { initRoutinesStore } from '../../store/routines-store'
+import { RoutineToolbar } from '../routines/RoutineToolbar'
 import { ToolbarSecretPopover } from './ToolbarSecretPopover'
 import { ToolbarWorkspacePopover } from './ToolbarWorkspacePopover'
 import { resolveColorHex } from '../../store/session-types'
@@ -168,6 +171,7 @@ export function AppShell(): React.JSX.Element {
     initServedToolsEvents()
     initSecretStore()
     initCopyOfferStore()
+    initRoutinesStore()
     initPluginUI()
     // Re-homing: take in what another window hands over — a closing window's
     // sessions with its groups, a tab or a group moved here — and drop a tab
@@ -973,6 +977,9 @@ export function AppShell(): React.JSX.Element {
               style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
             >
               <ToolbarQuickActions />
+              {/* The routines of the active workspace (ADR 0004): one button per
+                  routine with its badge, the floating report panel on a click. */}
+              <RoutineToolbar />
               <ToolbarSecretPopover />
               {/* Plugin contributions sit with the app's own toolbar controls, left of the
                   search and file-tree pair: a plugin configures this bar, it does not get

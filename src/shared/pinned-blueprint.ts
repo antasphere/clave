@@ -42,6 +42,8 @@ export interface PinnedBlueprint {
   view?: string | null
   sessions: PinnedBlueprintSession[]
   terminals: PinnedBlueprintTerminal[]
+  /** The group's routines (ADR 0004), opaque here: the server reads them off the file itself. */
+  routines?: unknown[]
   rootDir?: string | null
   workspaceRoot?: string | null
   workspaceId?: string | null

@@ -4,6 +4,7 @@ import { isRemoteKey } from '../lib/fleet-identity'
 import { launchSession } from '../lib/launch-session'
 import type { AgentSetup } from './launch-prefs'
 import { resolveAccountRef, type AccountProvider } from '../lib/switch-account'
+import type { PinnedGroupRoutine } from './session-types'
 import { getClaudeProfile } from './claude-profile-store'
 import { useAccountPolicyStore } from './account-policy-store'
 import { getCodexAccount } from './codex-account-store'
@@ -317,6 +318,7 @@ function syncToClaveFile(pg: PinnedGroup): void {
           serverUrl: t.serverUrl,
           groupView: t.groupView
         })),
+        ...(p.routines?.length ? { routines: p.routines } : {}),
         ...(p.category ? { category: p.category } : {})
       })
 
@@ -371,6 +373,7 @@ function createPinnedFromGroup(
       serverUrl?: string
       groupView?: boolean
     }[]
+    routines?: PinnedGroupRoutine[]
   },
   filePath: string,
   groupIndex?: number,
@@ -388,6 +391,7 @@ function createPinnedFromGroup(
     view: g.view ?? null,
     sessions: g.sessions,
     terminals: groupDataToPinnedTerminals(g.terminals),
+    ...(g.routines?.length ? { routines: g.routines } : {}),
     createdAt: Date.now(),
     filePath,
     rootDir: rootDir ?? null,
@@ -464,7 +468,8 @@ export async function importClaveFile(
             logo: result.logo,
             prompt: result.prompt,
             sessions: result.sessions,
-            terminals: result.terminals
+            terminals: result.terminals,
+            routines: result.routines
           }
         ]
 
@@ -485,6 +490,7 @@ export async function importClaveFile(
           prompt: g.prompt ?? null,
           sessions: g.sessions,
           terminals: groupDataToPinnedTerminals(g.terminals),
+          routines: (g.routines as PinnedGroupRoutine[] | undefined) ?? [],
           groupIndex: result.type === 'multi' ? i : undefined,
           toolbar: g.toolbar,
           logo: g.logo,
@@ -674,6 +680,7 @@ export async function exportClaveFile(
       serverUrl: t.serverUrl,
       groupView: t.groupView
     })),
+    ...(pg.routines?.length ? { routines: pg.routines } : {}),
     ...(pg.category ? { category: pg.category } : {})
   })
 
@@ -723,7 +730,8 @@ export function initClaveFileWatchers(): () => void {
               logo: result.logo,
               prompt: result.prompt,
               sessions: result.sessions,
-              terminals: result.terminals
+              terminals: result.terminals,
+              routines: result.routines
             }
           ]
 
@@ -750,6 +758,9 @@ export function initClaveFileWatchers(): () => void {
           prompt: g.prompt ?? null,
           sessions: g.sessions,
           terminals: groupDataToPinnedTerminals(g.terminals),
+          // The routines (ADR 0004) reload with the file like every other
+          // field; the server reads the file itself to schedule them.
+          routines: (g.routines as PinnedGroupRoutine[] | undefined) ?? [],
           groupIndex
         })
       } else {

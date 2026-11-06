@@ -708,7 +708,7 @@ function buildServer(callerSessionId: string | undefined): McpServer {
     'clave_create_group',
     {
       description:
-        'Create a new (empty) group in the Clave sidebar. Returns the new groupId. Follow up with clave_open_session to put a tab in it — some interactions prune empty groups.',
+        "Create a new (empty) group in the Clave sidebar. Returns the new groupId. Follow up with clave_open_session to put a tab in it — some interactions prune empty groups. A group's routines (the scheduled agent sessions of ADR 0004) are declared in the .clave file alone; this tool takes none.",
       inputSchema: {
         name: z.string().describe('Display name for the group'),
         prompt: z
@@ -832,7 +832,7 @@ function buildServer(callerSessionId: string | undefined): McpServer {
     'clave_launch_group',
     {
       description:
-        'Launch a pinned workspace group (a template from a .clave file): spawns all its sessions and attaches its quick-launch terminals as one group. If the group is already running but hidden, it is shown instead. Use clave_list to see the available pinned groups and their state. A name existing in several workspaces resolves to your own workspace first, then the active one; still-ambiguous names error with qualified candidates.',
+        "Launch a pinned workspace group (a template from a .clave file): spawns all its sessions and attaches its quick-launch terminals as one group. A group's routines (the scheduled agent sessions of ADR 0004) are the server's to run from the file itself and are not launched here. If the group is already running but hidden, it is shown instead. Use clave_list to see the available pinned groups and their state. A name existing in several workspaces resolves to your own workspace first, then the active one; still-ambiguous names error with qualified candidates.",
       inputSchema: {
         group: z.string().describe('Pinned group id or name (case-insensitive)'),
         workspace: z
@@ -884,7 +884,7 @@ function buildServer(callerSessionId: string | undefined): McpServer {
     'clave_add_group_terminal',
     {
       description:
-        'Attach a quick-launch terminal to a Clave group: a saved shell command (e.g. a dev server) shown as a colored icon on the group, re-runnable on click. By default it also launches right away. Returns { terminalId, groupId, sessionId }.',
+        "Attach a quick-launch terminal to a Clave group: a saved shell command (e.g. a dev server) shown as a colored icon on the group, re-runnable on click. By default it also launches right away. Returns { terminalId, groupId, sessionId }. A group's routines (the scheduled agent sessions of ADR 0004) are declared in the .clave file alone: this tool adds terminals, never routines.",
       inputSchema: {
         groupId: z.string().describe('Target group: a group id, an exact group name, or "mine"'),
         command: z.string().describe('Shell command this terminal runs, e.g. "npm run dev"'),
@@ -1391,6 +1391,60 @@ function buildServer(callerSessionId: string | undefined): McpServer {
             text: JSON.stringify({ ok: true, offerId: offer.id, label: offer.label })
           }
         ]
+      }
+    }
+  )
+
+  server.registerTool(
+    'clave_routine_report',
+    {
+      description:
+        'You are a Clave routine run: report your result. Call this ONCE when the job is done, with status (ok | attention | failed), a one-line headline, a markdown summary and data matching the routine schema named in your first message. Invalid data is refused with the errors: correct it and call again. A run that ends without a valid report counts as failed. Refused from any session that is not a routine run.',
+      inputSchema: {
+        status: z
+          .enum(['ok', 'attention', 'failed'])
+          .describe('ok, attention (the person must look), or failed'),
+        headline: z
+          .string()
+          .min(1)
+          .max(120)
+          .describe('One line, what the person needs to know at a glance'),
+        summary: z
+          .string()
+          .min(1)
+          .max(4000)
+          .describe('Markdown: what you did, what you found, what you propose'),
+        data: z
+          .unknown()
+          .describe('The object the routine schema describes; validated before it is taken')
+      }
+    },
+    async (args) => {
+      if (!callerSessionId) {
+        return errorResult(
+          'clave_routine_report requires a per-session token: it reports the run its caller is.'
+        )
+      }
+      try {
+        const api = await serverClient.api()
+        const result = await api.routines.report({
+          sessionId: callerSessionId,
+          status: args.status,
+          headline: args.headline,
+          summary: args.summary,
+          data: args.data
+        })
+        return { content: [{ type: 'text', text: JSON.stringify({ ok: true, ...result }) }] }
+      } catch (error) {
+        const detail = error as { message?: string; errors?: unknown; cause?: { errors?: unknown } }
+        const errors = Array.isArray(detail.errors)
+          ? detail.errors
+          : Array.isArray(detail.cause?.errors)
+            ? detail.cause.errors
+            : []
+        return errorResult(
+          [detail.message ?? String(error), ...errors.map((e) => `- ${String(e)}`)].join('\n')
+        )
       }
     }
   )

@@ -270,6 +270,11 @@ export function buildAgentArgv(input: {
   claudeSettings?: string
   mcpConfigPath?: string
   piStateExtensionPath?: string
+  // ── ADR 0004: a routine run's own flags, Claude only ──
+  effort?: string
+  permissionMode?: 'default' | 'acceptEdits' | 'plan'
+  pluginDir?: string
+  appendSystemPrompt?: string
 }): string[] {
   const expectedFamily = input.kind === 'claude-agents' ? 'claude' : input.kind
   if (input.profile.family !== expectedFamily)
@@ -289,6 +294,16 @@ export function buildAgentArgv(input: {
     if (input.model) argv.push('--model', input.model)
     if (input.claudeSettings) argv.push('--settings', input.claudeSettings)
     if (input.mcpConfigPath) argv.push('--mcp-config', input.mcpConfigPath)
+    // ADR 0004: a routine run's own flags. The CLI names the ask-every-time
+    // mode `manual` on its command line; `default` is its running name.
+    if (input.effort) argv.push('--effort', input.effort)
+    if (input.permissionMode && !input.dangerousMode)
+      argv.push(
+        '--permission-mode',
+        input.permissionMode === 'default' ? 'manual' : input.permissionMode
+      )
+    if (input.pluginDir) argv.push('--plugin-dir', input.pluginDir)
+    if (input.appendSystemPrompt) argv.push('--append-system-prompt', input.appendSystemPrompt)
   } else if (input.kind === 'codex') {
     // A resumed thread goes through the `resume` subcommand, which takes the
     // long spelling of the approvals flag and the thread id last.

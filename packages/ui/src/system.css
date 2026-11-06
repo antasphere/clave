@@ -524,6 +524,7 @@ canvas[data-orb-state] {
 }
 @media (prefers-reduced-motion: reduce) {
   .tab-status[data-status='working']::before,
+  .routine-button[data-working='true']::before,
   .sidebar-tab-spinner {
     animation-duration: 2.4s;
   }
@@ -1258,6 +1259,13 @@ canvas[data-orb-state] {
 }
 .panel-icon-btn:disabled {
   opacity: 0.4;
+  cursor: not-allowed;
+}
+/* A disabled control does not wake up under the pointer (the field guide's
+   "no hover fill"); the hover rule above would otherwise still fill it. */
+.panel-icon-btn:disabled:hover {
+  color: var(--text-tertiary);
+  background-color: transparent;
 }
 
 /* The root chip at the head of the path bar: one letter for which root the
@@ -6173,4 +6181,266 @@ button.term-agent-model:focus-visible {
   .chat-send[data-kind='stop'] svg[data-glyph='send'] {
     scale: none;
   }
+}
+
+/* ── Routines (ADR 0004) ──
+   A routine's toolbar button and its floating panel. The button is the
+   routine's own icon in its colour, and one signal at a time sits on it the
+   way a sidebar row's status slot works (`lib/tab-status.ts`): a run in
+   flight turns a ring around the icon (`.tab-status[data-status='working']`,
+   the app's one loader); a finished run the person has not seen is a STILL
+   dot in the run's tone on the icon's corner. Nothing pulses: a pulse reads
+   as an alarm, and a run on its way is not one (Romain, 6 November 2026). */
+.routine-dot {
+  display: inline-block;
+  flex-shrink: 0;
+  width: calc(var(--spacing) * 1.5);
+  height: calc(var(--spacing) * 1.5);
+  border-radius: 9999px;
+  background-color: var(--color-status-inactive);
+}
+.routine-dot[data-tone='ok'] {
+  background-color: var(--color-status-ready);
+}
+.routine-dot[data-tone='attention'],
+.routine-dot[data-tone='waiting'] {
+  background-color: var(--color-status-waiting);
+}
+.routine-dot[data-tone='failed'],
+.routine-dot[data-tone='invalid'] {
+  background-color: var(--color-destructive);
+}
+.routine-dot[data-tone='running'] {
+  background-color: var(--color-status-working);
+}
+/* On the toolbar icon's corner, ringed in the bar's ground so it reads over
+   the glyph's strokes. */
+.routine-badge-dot {
+  position: absolute;
+  right: calc(var(--spacing) * 0.75);
+  bottom: calc(var(--spacing) * 0.75);
+  box-shadow: 0 0 0 1.5px var(--surface-0);
+}
+/* The panel's loader while a run is in flight: the sidebar's eight-segment
+   spinner at a glyph's size, in the working blue. */
+.routine-spinner {
+  display: inline-flex;
+  flex-shrink: 0;
+  width: calc(var(--spacing) * 4);
+  height: calc(var(--spacing) * 4);
+  color: var(--color-status-working);
+}
+.routine-spinner > .sidebar-tab-spinner {
+  width: 100%;
+  height: 100%;
+}
+/* The panel's state view (a run in flight, a run waiting, no run yet): the
+   chat's empty-state shape, centred in the report area, with the drawing
+   above the words when there is one. */
+.routine-state {
+  margin: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: calc(var(--spacing) * 2);
+  padding: calc(var(--spacing) * 6) calc(var(--spacing) * 5);
+  text-align: center;
+}
+.routine-state .chat-drawing {
+  width: calc(var(--spacing) * 44);
+  max-width: 100%;
+  height: auto;
+  margin-bottom: calc(var(--spacing) * 1);
+}
+.routine-state strong {
+  color: var(--text-primary);
+  font-size: var(--text-sm);
+  font-weight: var(--font-weight-medium);
+}
+.routine-state > span:not(.routine-spinner, .routine-dot, .routine-meta) {
+  max-width: 34ch;
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+  line-height: 1.45;
+}
+.routine-state[data-tone='waiting'] strong {
+  color: var(--color-status-waiting);
+}
+/* The ring around the toolbar icon while a run is in flight: the rule of
+   `.tab-status[data-status='working']`, on the button itself so its glyph
+   stays a direct child and keeps the framed glyph size at every density;
+   its reduced-motion pace sits with the sidebar spinner's, above (the chat
+   motion test reads the LAST reduced-motion block of this file as the
+   chat's own). */
+.routine-button[data-working='true']::before {
+  content: '';
+  position: absolute;
+  inset: calc(var(--spacing) * 0.75);
+  border-radius: 9999px;
+  border: 1.5px solid color-mix(in srgb, currentColor 22%, transparent);
+  border-top-color: currentColor;
+  animation: tab-status-spin 0.9s linear infinite;
+}
+
+/* The placeholder under the deck's guest until its first paint: the panel's
+   ground and, after a wait, the spinner and the words. It sits UNDER the
+   guest (a guest paints above every DOM sibling anyway) and stays mounted,
+   hidden once the deck shows, so the layer tree never changes under the
+   guest; the guest's own opacity is what reveals the deck. */
+.routine-veil {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  background-color: var(--surface-0);
+}
+/* The veil's words wait: a deck that paints within 700 ms (the popover's
+   rise, the guest's mount, the viewer's answer) shows the panel's ground and
+   then the page, never a flash of "Opening the report"; only a slow viewer
+   earns the spinner and the words, which then fade in. */
+.routine-veil > * {
+  animation: scrim-in 200ms ease-out 700ms both;
+}
+/* The history: menu rows, the tone dot first, the headline, then the time,
+   the duration and the trigger in tabular figures so a column of runs lines
+   up. The same line heads the report card. */
+.routine-meta {
+  flex-shrink: 0;
+  color: var(--text-tertiary);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* The panel: a column the size the routine declares. */
+.routine-panel {
+  outline: none;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+/* The title, in the manner of a menu's head: the routine's icon on a soft
+   tile in its colour, the name, and one quiet line saying when it runs. */
+.routine-head {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--spacing) * 3);
+  padding: calc(var(--spacing) * 3.5) calc(var(--spacing) * 4) calc(var(--spacing) * 2.5);
+}
+.routine-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: calc(var(--control-h-md) + var(--spacing) * 2);
+  height: calc(var(--control-h-md) + var(--spacing) * 2);
+  border-radius: var(--radius-xl);
+  background-color: var(--surface-100);
+}
+.routine-mark > svg {
+  width: calc(var(--spacing) * 5);
+  height: calc(var(--spacing) * 5);
+}
+.routine-head-text {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--spacing) * 0.5);
+  min-width: 0;
+}
+.routine-head-title {
+  color: var(--text-primary);
+  font-size: var(--control-text);
+  font-weight: var(--font-weight-medium);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.routine-head-sub {
+  color: var(--text-tertiary);
+  font-size: var(--control-text-sm);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.routine-head-sub::first-letter {
+  text-transform: uppercase;
+}
+/* One row: the tabs on the left, Run now and the small menu on the right. */
+.routine-nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: calc(var(--spacing) * 2);
+  padding: 0 calc(var(--spacing) * 3) calc(var(--spacing) * 2.5) calc(var(--spacing) * 4);
+  border-bottom: thin solid var(--border-subtle-color);
+}
+.routine-nav-actions {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+/* The small menu under the More button, held inside the panel (a second
+   portal would read as a click outside the popover and close it). */
+.routine-menu {
+  position: absolute;
+  top: calc(100% + var(--spacing));
+  right: 0;
+  z-index: 20;
+  min-width: calc(var(--spacing) * 44);
+  padding: var(--surface-inset);
+}
+/* The stage the bodies cross-fade on: one box, each body filling it, so the
+   one leaving and the one arriving overlap. */
+.routine-stage {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+}
+.routine-body {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+}
+.routine-note {
+  margin: calc(var(--spacing) * 3) calc(var(--spacing) * 4) 0;
+  color: var(--text-secondary);
+  font-size: var(--control-text-sm);
+}
+.routine-note[data-tone='failed'] {
+  color: var(--color-destructive);
+}
+/* The Runs tab: the facts as a quiet two-column list, then the runs. */
+.routine-runs {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: auto;
+}
+.routine-facts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: calc(var(--spacing) * 3) calc(var(--spacing) * 4);
+  margin: 0;
+  padding: calc(var(--spacing) * 4);
+  border-bottom: thin solid var(--border-subtle-color);
+}
+.routine-facts dt {
+  color: var(--text-tertiary);
+  font-size: 11px;
+}
+.routine-facts dd {
+  margin: 2px 0 0;
+  color: var(--text-primary);
+  font-size: var(--control-text-sm);
+  font-variant-numeric: tabular-nums;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.routine-history {
+  margin: 0;
+  padding: calc(var(--spacing) * 2) calc(var(--spacing) * 2);
+  list-style: none;
 }

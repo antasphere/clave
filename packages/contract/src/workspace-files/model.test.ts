@@ -18,6 +18,7 @@ describe('the .clave wire shape', () => {
         'logo',
         'name',
         'prompt',
+        'routines',
         'sessions',
         'terminals',
         'toolbar',

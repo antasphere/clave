@@ -825,7 +825,8 @@ const workspaceFilesRelay = createReviewRelay({
       folder: review.folder,
       autoCommands: [...review.autoCommands],
       prompts: [...review.prompts],
-      dangerous: review.dangerous
+      dangerous: review.dangerous,
+      ...(review.routines ? { routines: [...review.routines] } : {})
     }) as Promise<{ response: 0 | 1 | 2; checkboxChecked: boolean }>,
   answer: (reviewId, answer) => {
     if (!answerReviewOn) return Promise.reject(new Error('no server to answer the review on'))
@@ -1643,6 +1644,36 @@ const electronAPI = {
       ipcRenderer.invoke('linked-documents:choose-files', signature),
     onChanged: (callback: () => void) => createIpcListener<[]>('linked-documents:changed', callback)
   },
+  // ── ADR 0004: the routines, the server's; IPC until the window reaches it ──
+  routinesList: viaServer<[], import('@clave/contract/routines/model').RoutinesListing>({
+    ipc: () => ipcRenderer.invoke('routines:list'),
+    server: ({ api }) => api.routines.list()
+  }),
+  routinesRunNow: viaServer<[string], import('@clave/contract/routines/model').RoutineRun>({
+    ipc: (key) => ipcRenderer.invoke('routines:run-now', key),
+    server: ({ api }, key) => api.routines.runNow(key)
+  }),
+  routinesDismiss: viaServer<[string], void>({
+    ipc: (runId) => ipcRenderer.invoke('routines:dismiss', runId),
+    server: ({ api }, runId) => api.routines.dismiss(runId)
+  }),
+  routinesOpenDiscussion: viaServer<[string, 'panel' | 'tab'], { sessionId: string }>({
+    ipc: async (runId, mode) => {
+      const identity: WindowIdentity | null = await ipcRenderer.invoke('window:identity')
+      return ipcRenderer.invoke('routines:discussion', runId, identity?.windowKey ?? '', mode)
+    },
+    server: async ({ api }, runId, mode) => {
+      // The window the discussion lands in: this one, by its persisted key.
+      const identity: WindowIdentity | null = await ipcRenderer.invoke('window:identity')
+      return api.routines.openDiscussion(runId, identity?.windowKey ?? '', mode)
+    }
+  }),
+  onRoutinesChanged: (callback: () => void) =>
+    viaServerEvent<'routines.changed', null>(
+      'routines:changed',
+      'routines.changed',
+      () => null
+    )(callback),
   copyOfferList: () => ipcRenderer.invoke('copy-offer:list'),
 
   copyOfferCopy: (id: string) => ipcRenderer.invoke('copy-offer:copy', id),

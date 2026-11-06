@@ -1167,6 +1167,11 @@ export class ClaudeAdapter implements SessionAdapter {
         if (options.permissionMode) argv.push('--permission-mode', options.permissionMode)
         // A model that takes no effort (Haiku) runs at none whatever this says.
         if (options.effort) argv.push('--effort', options.effort)
+        // ADR 0004: a routine run's contract skill and its one-line system
+        // prompt, from the spawn's own context; a tab's launch carries none.
+        if (context.pluginDir) argv.push('--plugin-dir', context.pluginDir)
+        if (context.appendSystemPrompt)
+          argv.push('--append-system-prompt', context.appendSystemPrompt)
         const env: Record<string, string> = {
           ...buildSpawnEnv(getLoginShellEnv(), {
             configDir: context.configDir,
