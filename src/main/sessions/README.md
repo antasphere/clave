@@ -204,9 +204,15 @@ by its thread and its end drops it; a command still in progress when the turn
 completes is listed until its own `item/completed`. A known subagent whose
 thread starts another turn (work sent to it after it finished) is listed
 again, under the name and model it was first listed with. A listed subagent's thread
-contributes only its context usage, under its row; every other frame of it,
-and every frame of a thread no row names, stays a `provider_event`
-(`fixtures/codex-app-server/README.md`).
+contributes its context usage, under its row, and its text, commands, edits
+and tool calls as `assistant_text`, `tool_call` and `tool_result` carrying
+`parent` (the thread), for the chat view's window onto that agent; its turns,
+and every frame of a thread no row names, stay a `provider_event`
+(`fixtures/codex-app-server/README.md`). Claude's subagent frames come the
+same way: its brief (the user text its call gave it) as a `user_message`, its
+words as a whole `assistant_text` (the CLI streams nothing of a subagent), its
+results as `tool_result`, each with `parent` the Agent call, beside the
+`tool_call` that carried it already.
 Unknown frames and complete message metadata remain `provider_event`; malformed
 frames produce nonfatal errors. Text snapshots do not duplicate partial text.
 A final empty text event closes each assistant message. Result usage/cost remains

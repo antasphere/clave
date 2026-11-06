@@ -151,6 +151,14 @@ describe('a Claude chat tab survives a restart', () => {
     )
   })
 
+  it("writes the link of a routine's run on the record, so the boot never adopts it as a tab (ADR 0004)", async () => {
+    const link = { kind: 'routine' as const, routineKey: '/w/default.clave::Health', runId: 'r1' }
+    const session = await ptyManager.spawn('/project', { launchProfileId: 'claude-chat', link })
+    expect(mocks.backend.writeEventSessionRecord).toHaveBeenCalledWith(
+      expect.objectContaining({ id: session.id, transport: 'events', link })
+    )
+  })
+
   it('comes back under its own id, resuming its conversation', async () => {
     const session = await ptyManager.spawn('/project', {
       launchProfileId: 'claude-chat',
@@ -198,6 +206,31 @@ describe('a Claude chat tab survives a restart', () => {
     })
     expect(mocks.backend.writeEventSessionRecord).toHaveBeenLastCalledWith(
       expect.objectContaining({ id: TAB, spawnedBy: parent })
+    )
+  })
+
+  it('carries its work when restored, a restart’s own winning (PRDCT-4123)', async () => {
+    const work = {
+      unit: 'stable-wave/lane-a',
+      kind: 'lane',
+      label: 'Lane A',
+      role: 'lead',
+      standing: 'current',
+      joinedAt: 1,
+      since: 1
+    } as const
+    mocks.backend.getSessionRecord.mockImplementation(((id: string) =>
+      id === TAB ? { id: TAB, work } : null) as never)
+    const restore = { launchProfileId: 'claude-chat', adoptSessionId: TAB }
+    await ptyManager.spawn('/project', { ...restore, resumeSessionId: CONVERSATION })
+    expect(mocks.backend.writeEventSessionRecord).toHaveBeenLastCalledWith(
+      expect.objectContaining({ id: TAB, work })
+    )
+    await ptyManager.kill(TAB, true)
+    const handedOver = { ...work, standing: 'superseded' as const, since: 2 }
+    await ptyManager.spawn('/project', { ...restore, work: handedOver })
+    expect(mocks.backend.writeEventSessionRecord).toHaveBeenLastCalledWith(
+      expect.objectContaining({ id: TAB, work: handedOver })
     )
   })
 

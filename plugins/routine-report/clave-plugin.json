@@ -1,0 +1,13 @@
+{
+  "id": "clave.routine-report",
+  "name": "Routine report",
+  "version": "1.0.0",
+  "kind": "plugin",
+  "engines": { "clave": ">=2.4.0 <3.0.0" },
+  "ui": "native",
+  "main": "main.mjs",
+  "contributes": {
+    "views": [{ "id": "report", "title": "Routine report", "renders": ["events"] }]
+  },
+  "permissions": ["sessions.read"]
+}

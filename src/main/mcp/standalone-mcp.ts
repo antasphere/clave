@@ -7,7 +7,8 @@ import { isAbsolute } from 'node:path'
 import { z } from 'zod'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
-import type { AgentTokensService, SessionHostService } from '@clave/server'
+import type { AgentTokensService, RoutinesService, SessionHostService } from '@clave/server'
+import { RoutineReportRefusal } from '../routines/service'
 import { SERVER_LAYOUT_KEY } from '@clave/contract/sidebar'
 import type { SidebarLayouts } from '@clave/server/sidebar-layouts'
 import { BUILT_IN_LAUNCH_PROFILES, type LauncherFamily } from '../../shared/agent-launch'
@@ -23,6 +24,8 @@ export interface StandaloneMcpOptions {
   readonly sessions: SessionHostService
   readonly agentTools: AgentTokensService
   readonly requests: PendingRequests
+  /** ADR 0004: the routines this server schedules; absent, the report tool says so. */
+  readonly routines?: RoutinesService | undefined
   readonly executeSecret: (action: SecretAction, value: string) => Promise<void>
   /** The daemon's one sidebar, where the groups live; absent, the group tools
    *  say this server keeps none. */
@@ -428,6 +431,40 @@ function buildServer(
       text(
         await sessions.type(args.sessionId === 'mine' ? sessionId : args.sessionId, args.message)
       )
+  )
+  server.registerTool(
+    'clave_routine_report',
+    {
+      description:
+        'You are a Clave routine run: report your result. Call this ONCE when the job is done, with status (ok | attention | failed), a one-line headline, a markdown summary and data matching the routine schema named in your first message. Invalid data is refused with the errors: correct it and call again. A run that ends without a valid report counts as failed. Refused from any session that is not a routine run.',
+      inputSchema: {
+        status: z.enum(['ok', 'attention', 'failed']),
+        headline: z.string().min(1).max(120),
+        summary: z.string().min(1).max(4000),
+        data: z.unknown()
+      }
+    },
+    async (args) => {
+      if (!options.routines)
+        return {
+          content: [{ type: 'text', text: 'This server runs no routines.' }],
+          isError: true
+        }
+      try {
+        const result = await options.routines.report({
+          sessionId,
+          status: args.status,
+          headline: args.headline,
+          summary: args.summary,
+          data: args.data
+        })
+        return text({ ok: true, ...result })
+      } catch (error) {
+        const lines = [message(error)]
+        if (error instanceof RoutineReportRefusal) lines.push(...error.errors.map((e) => `- ${e}`))
+        return { content: [{ type: 'text', text: lines.join('\n') }], isError: true }
+      }
+    }
   )
   return server
 }

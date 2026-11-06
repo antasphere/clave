@@ -13,7 +13,8 @@ export function latestBackgroundTasks(log: SessionLog | undefined): BackgroundTa
   return log.background
 }
 
-/** The session's background work, for as long as the host holds its log. */
+/** The session's background work, for as long as the host holds its log (the
+ *  sidebar's count reads it; the cards under the composer read the stream). */
 export function useBackgroundTasks(sessionId: string): BackgroundTask[] {
   return useConversationStore((state) => latestBackgroundTasks(state.logs[sessionId]))
 }

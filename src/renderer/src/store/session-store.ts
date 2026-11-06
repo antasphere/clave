@@ -5,10 +5,12 @@ import { adoptServerStartedTerminals, adoptServerStartedSessions } from '../lib/
 import { emitTabClosed } from '../lib/exchange-capture'
 import { clearSessionDraft } from '../views/draft-store'
 import { subagentPresentation } from '../lib/subagent-presentation'
+import { entryTarget, workPresentation } from '../lib/work-presentation'
 import { finishesTurn } from '../lib/tab-status'
 import { create } from 'zustand'
 import { usePluginUIStore } from '../components/plugins/plugin-ui-store'
 import type { GitRangeDirection } from '../../../shared/git-range'
+import type { WorkAssignment } from '@clave/contract/work-rules'
 import type {
   Theme,
   AppIcon,
@@ -393,6 +395,10 @@ interface SessionState {
    *  clave_set_session_view): the record already holds it, nothing is
    *  written back; the serving session the view had before leaves the store. */
   applyServedPage: (id: string, view: SessionViewConfig | null) => void
+  /** PRDCT-4123: the server changed the tab's work assignment (null: it
+   *  belongs to no wave or lane any more). The record already holds it,
+   *  nothing is written back. */
+  applyServedWork: (id: string, work: WorkAssignment | null) => void
   renameSession: (id: string, name: string) => void
   autoRenameSession: (id: string, name: string) => void
   resetSessionName: (id: string) => void
@@ -1052,8 +1058,17 @@ export function getVisibleFlatOrder(
   ).filter((id) => ids.has(id))
   // Rendered search results are already presented, including direct child rows.
   if (sidebarRowIds) return order
-  const presentation = subagentPresentation(sessions, new Set(order))
-  return order.filter((id) => !presentation.rootById.has(id))
+  const reachable = new Set(order)
+  const presentation = subagentPresentation(sessions, reachable)
+  // A wave or lane entry is one row (PRDCT-4123), counted where its anchor
+  // sits and answering with the session that holds it.
+  const work = workPresentation(sessions, reachable, presentation.descendants)
+  return order
+    .filter((id) => !presentation.rootById.has(id) && !work.folded.has(id))
+    .map((id) => {
+      const entry = work.entryByAnchor.get(id)
+      return entry ? entryTarget(entry) : id
+    })
 }
 
 export function getDisplayOrder(state: {
@@ -2117,6 +2132,14 @@ export const useSessionStore = create<SessionState>((set) => ({
           .filter((s) => s.id !== gone)
           .map((s) => (s.id === id ? { ...s, view } : s)),
         ...(view === null && state.activeSessionViewId === id ? { activeSessionViewId: null } : {})
+      }
+    }),
+
+  applyServedWork: (id, work) =>
+    set((state) => {
+      if (!state.sessions.some((s) => s.id === id)) return state
+      return {
+        sessions: state.sessions.map((s) => (s.id === id ? { ...s, work: work ?? undefined } : s))
       }
     }),
 

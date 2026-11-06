@@ -29,7 +29,11 @@ function isLocalAgent(session: Session): boolean {
 /** A view of the live sessions, never a change to their ownership or order.
  * Only follow links whose rows are reachable in this particular sidebar view.
  * Search passes no candidates so its results remain direct session links.
- * An editable target is a temporary presented root, with its real links intact. */
+ * An editable target is a temporary presented root, with its real links intact.
+ * A session with a work assignment (PRDCT-4123) is never folded under the tab
+ * that spawned it, and the climb stops at the first one: work membership wins
+ * over spawn ancestry, and an agent spawned by a member folds into that
+ * member's wave or lane entry (`work-presentation.ts`). */
 export function subagentPresentation(
   sessions: readonly Session[],
   reachableIds: ReadonlySet<string>,
@@ -45,7 +49,7 @@ export function subagentPresentation(
   for (const session of available.values()) {
     let current = session
     const seen = new Set([current.id])
-    while (isLocalAgent(current) && current.spawnedBy) {
+    while (!current.work && isLocalAgent(current) && current.spawnedBy) {
       const parent = available.get(current.spawnedBy)
       if (!parent || parent.sessionType !== 'local' || parent.workspaceId !== session.workspaceId)
         break

@@ -8,6 +8,7 @@ import { terminalJournal } from './terminal-journal'
 import { lastHookState } from './agent-state-manager'
 import {
   ptyBackend,
+  accountTokenForSpawn,
   buildSpawnEnv,
   codexHomeForSpawn,
   getLoginShellEnv,
@@ -15,6 +16,7 @@ import {
   type PtySpawnOptions
 } from './sessions/adapters/pty-backend'
 import { lineageOf } from './sessions/lineage'
+import { sanitizeWork, type WorkAssignment } from '@clave/contract/work-rules'
 import { codexRoot, findCodexThreadForSession, hasCodexRollout } from './session-history/codex'
 import { ptyAdapter } from './sessions/adapters/pty-adapter'
 import { ClaudeAdapter, findTranscript } from './sessions/adapters/claude-adapter'
@@ -185,7 +187,8 @@ class PtyManager {
     // The effort last picked goes with every chat, a restored one included:
     // the record does not keep the one a tab ran at, and the last pick is
     // what the reader would pick again.
-    const effort = isEvents ? rememberedChatEffort(adapter.id) : undefined
+    // A launch that names an effort (a routine, ADR 0004) gets exactly that.
+    const effort = isEvents ? (options?.effort ?? rememberedChatEffort(adapter.id)) : undefined
     const session: PtySession = isEvents
       ? {
           // A restored chat tab keeps its id, as a restored terminal does: the
@@ -201,7 +204,16 @@ class PtyManager {
           launchProfileId: profileId,
           model: options?.model
         }
-      : ptyAdapter.prepare(cwd, options)
+      : ptyAdapter.prepare(cwd, {
+          ...options,
+          // The account's token, decrypted here where the spawn is already
+          // asynchronous, for the synchronous plan below (and only for a
+          // Claude session: accountTokenForSpawn opens the store for no other).
+          oauthToken: await accountTokenForSpawn(
+            options?.claudeAgentsMode ? 'claude-agents' : family === 'claude' ? 'claude' : null,
+            options?.claudeProfileId
+          )
+        })
     // A live tmux session this process takes BACK (an app relaunch, a move
     // from another window) is born with the word its hooks last wrote, not
     // idle: the hook watch forwards a change only, so a tab adopted while its
@@ -285,7 +297,13 @@ class PtyManager {
                 : adapter.provider === 'claude'
                   ? 'bypassPermissions'
                   : undefined
-              : undefined,
+              : // ADR 0004: the mode a routine asks under when its permissions
+                // stay on; the CLI spells the ask-every-time mode `manual`.
+                adapter.provider === 'claude' && options?.permissionMode
+                ? options.permissionMode === 'default'
+                  ? 'manual'
+                  : options.permissionMode
+                : undefined,
             // What `--yolo` means to a Codex terminal: no approvals AND no
             // sandbox. The app-server takes the two separately, and without
             // this a dangerous chat ran in the config's sandbox.
@@ -367,7 +385,13 @@ class PtyManager {
       codexAccountLabel: codex ? options?.codexAccountLabel : undefined,
       workspaceId: options?.workspaceId,
       windowKey: options?.windowKey,
-      spawnedBy: lineageOf(session.id, options?.spawnedBy, previous?.spawnedBy)
+      // What this session is the hidden half of (a routine's run, ADR 0004):
+      // the PTY record carried it, the events record did not, and a chat run
+      // came back as a sidebar tab at the next boot (round 1, F2).
+      link: options?.link,
+      spawnedBy: lineageOf(session.id, options?.spawnedBy, previous?.spawnedBy),
+      // Which work it does (PRDCT-4123): a restart's, else the record's.
+      work: sanitizeWork(options?.work) ?? sanitizeWork(previous?.work)
     })
   }
 
@@ -509,6 +533,11 @@ class PtyManager {
       // spawn could read it, and a spawn made without one (an older restore)
       // would lose the child its parent (#259, V1-F1).
       spawnedBy: previous.spawnedBy ?? ptyBackend.getSessionRecord(id)?.spawnedBy,
+      // Which work it does (PRDCT-4123): the record's, read now, for the same
+      // reason. Never the spawn's own options: a restart carried one into
+      // them, and a change of work since (a handover accepted, a lane left)
+      // wrote the record alone, so a second restart would bring the old back.
+      work: ptyBackend.getSessionRecord(id)?.work,
       ...account
     }
     return { cwd: spawn.cwd, options, resumed: conversationId !== null }
@@ -551,6 +580,15 @@ class PtyManager {
   setSessionWindowKey(id: string, windowKey: string): void {
     if (sessionManager.get(id)) sessionManager.update(id, { windowKey })
     ptyBackend.setSessionWindowKey(id, windowKey)
+  }
+  /** Which work the session does, on its record (PRDCT-4123); false when it
+   *  keeps no record. The host's `changeWork` is the only caller. */
+  setSessionWork(id: string, work: WorkAssignment | null): boolean {
+    return ptyBackend.setSessionWork(id, work)
+  }
+  /** Every record's work assignment, read without side effects (PRDCT-4123). */
+  listWorkAssignments(): ReturnType<typeof ptyBackend.listWorkAssignments> {
+    return ptyBackend.listWorkAssignments()
   }
   /** The persisted record of a live session, as it is now. */
   getSessionRecord = ptyBackend.getSessionRecord.bind(ptyBackend)

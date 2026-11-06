@@ -53,6 +53,8 @@ import { Plugins, PluginsEventsLive, pluginHandlers } from './plugins'
 import { GitEventsLive, GitPort, gitHandlers } from './git'
 // ── Issue #266: the server's version and its self-upgrade ──
 import { ServerInfoEventsLive, ServerInfoPort, serverInfoHandlers } from './server-info'
+// ── ADR 0004: the routines ──
+import { Routines, RoutinesEventsLive, routineHandlers } from './routines'
 
 export interface ServerOptions {
   /** The bearer token every request and every push hello must present. */
@@ -96,6 +98,8 @@ export type ServerServices =
   | GitPort
   // ── Issue #266: the server domain ──
   | ServerInfoPort
+  // ── ADR 0004: the routines ──
+  | Routines
 
 /** Everything but the listener. */
 export const ServicesLive = (options: ServerOptions): Layer.Layer<ServerServices> => {
@@ -135,6 +139,8 @@ export const ServicesLive = (options: ServerOptions): Layer.Layer<ServerServices
   const requestEvents = RequestEventsLive.pipe(Layer.provide(services))
   // ── Issue #266: the self-upgrade's state told to the clients ──
   const serverInfoEvents = ServerInfoEventsLive.pipe(Layer.provide(services))
+  // ── ADR 0004: the scheduler's news told to the clients ──
+  const routinesEvents = RoutinesEventsLive.pipe(Layer.provide(services))
   return Layer.mergeAll(
     services,
     requestEvents,
@@ -152,7 +158,9 @@ export const ServicesLive = (options: ServerOptions): Layer.Layer<ServerServices
     // ── Wave wcs1023, lane C: the git domain ──
     gitEvents,
     // ── Issue #266: the server domain ──
-    serverInfoEvents
+    serverInfoEvents,
+    // ── ADR 0004: the routines ──
+    routinesEvents
   )
 }
 
@@ -192,7 +200,9 @@ export const BusesLive = busesLayer.pipe(
       // ── Wave wcs1023, lane C: the git domain ──
       ...gitHandlers,
       // ── Issue #266: the server domain ──
-      ...serverInfoHandlers
+      ...serverInfoHandlers,
+      // ── ADR 0004: the routines ──
+      ...routineHandlers
       // ── Lane B: ...terminalHandlers ──
     )
   )

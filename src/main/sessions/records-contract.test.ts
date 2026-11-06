@@ -46,6 +46,19 @@ const full = {
   view: { url: 'http://127.0.0.1:1', title: 't', command: 'serve', cwd: '/v' },
   link: { kind: 'group-terminal' as const, groupId: 'g1', terminalId: 't1' },
   spawnedBy: '6f1c2c8e-1b9a-4d6e-9b1a-2f3c4d5e6f70',
+  work: {
+    unit: 'stable-wave/lane-a',
+    kind: 'lane' as const,
+    label: 'Stable wave lanes',
+    wave: 'stable-wave',
+    waveLabel: 'Stable waves',
+    role: 'lead' as const,
+    task: 'the plumbing',
+    standing: 'current' as const,
+    joinedAt: 100,
+    since: 200,
+    from: '0b7d4c1e-5f6a-4b3c-8d2e-1f0a9b8c7d6e'
+  },
   live: true,
   running: true
 }

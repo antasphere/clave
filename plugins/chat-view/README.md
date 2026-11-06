@@ -57,6 +57,33 @@ tells the view which request, so the cards it closed on the kernel's word come
 back rather than one of them staying unanswerable for the session's life. Transcripts currently live for the
 mounted view's lifetime; disabling the plugin releases its subscription.
 
+The WORK RUNNING NOW — the subagents, and the commands left running in the
+background — is a strip of cards under the composer of both views
+(`src/WorkCards.tsx`): one card each, with a drawing of what it is
+(`src/WorkDrawing.tsx`, in the hand of the drop card's drawings, breathing
+while the work goes on), the type and the task or the command's title, and
+the figures (steps, the agent's own context, how long it has run, or how long
+it has been quiet). The cards are the one place that says it: the pane
+header's "in background" chip and the Terminal view's status-line count are
+gone (6 November 2026). Clicking a card opens a window onto its work: an
+agent's (`src/SubAgentPeek.tsx`) shows what it was asked, what it says and
+what it does, as it happens, rendered with the transcript's own rows
+(`src/TerminalEntry.tsx`, the rows moved out of the view for that); a
+command's (`src/ShellPeek.tsx`) shows its full command line and what it has
+written so far, read again every second from the file Claude names for a
+background command (Codex names none; its output lands in the transcript at
+completion). Both are views only, with no field and no button that answers
+anything; the agent reports to the conversation when it is done. An agent's
+log is reduced off the same stream by `src/subagents.ts`: every
+message, text, call and result an adapter stamps with a `parent` (Claude the
+call that started the agent, Codex its thread) goes to that agent's own
+conversation, keyed as the row is (`SubAgent.id`), through the transcript's
+reducer; `reduceConversation` drops a parented event, so an agent's hundred
+calls no longer count into the run the conversation is on, as they did until
+6 November 2026. A page of the past folds in as it arrives; Claude's own
+transcript replay carries nothing of a subagent (sidechains are skipped), so a
+resumed session's finished agents have no log.
+
 A RUN of tool calls — everything between two messages — is one row saying what
 the agent did, counted by kind ("Read 3 files · Ran 1 command"), with a loader
 while any call is in flight and the failure count beside it. It opens to one item

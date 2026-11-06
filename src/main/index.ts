@@ -86,6 +86,9 @@ import { terminalPorts } from './ports/terminals'
 import { workspaceFiles } from './workspace-files'
 // ── Wave 5, lane C: the plugins, the shell's own service (plugins/shell-plugins.ts) ──
 import { shellPlugins } from './plugins/shell-plugins'
+// ── ADR 0004: the routines, the shell's own service in-process (routines/shell-routines.ts) ──
+import { installRoutinesIpc, shellRoutines } from './routines/shell-routines'
+import { waitForMcpRuntime } from './mcp/mcp-runtime'
 
 // The server to attach to, if any: ONE decision for the whole shell, taken
 // off the environment and the command line in `server-launch.ts` (the
@@ -179,14 +182,32 @@ async function bootServer(): Promise<void> {
             // ── Wave 3, lane A: the workspace files, the shell's own instance (workspace-files.ts) ──
             workspaceFiles: workspaceFiles(),
             // ── Wave 5, lane C: the plugins, the shell's own service (plugins/shell-plugins.ts) ──
-            plugins: shellPlugins()
+            plugins: shellPlugins(),
+            // ── ADR 0004: the routines, the shell's own scheduler (routines/shell-routines.ts) ──
+            routines: shellRoutines()
           },
           // ── Lane C of wave 3: the end-to-end fixture route, test mode only ──
           testFixtures: TEST_NO_ACTIVATE,
           // ── Issue #266: the version it reports, the one its child gets too ──
           appVersion: app.getVersion()
         })
-        return { url: endpoint.url, token: endpoint.token, stop: stopClaveServer }
+        // The scheduler reads its routines and arms its tick once the
+        // server is up and the agent tools listen: a run it starts reaches
+        // `clave_routine_report` through them, so the first tick waits for
+        // the MCP server (bounded; a run on an app without it fails with
+        // "without a report" rather than never starting).
+        void waitForMcpRuntime()
+          .catch(() => undefined)
+          .then(() => shellRoutines().start())
+          .catch((error) => console.error('[routines] could not start', error))
+        return {
+          url: endpoint.url,
+          token: endpoint.token,
+          stop: async () => {
+            await shellRoutines().close()
+            await stopClaveServer()
+          }
+        }
       },
       // The separate server (wave 5): the standalone entry as a child of this
       // process, from the bundles beside this one, on a data directory of
@@ -195,7 +216,7 @@ async function bootServer(): Promise<void> {
       // (server-migration.ts): the plain ones copied, the Claude tokens and
       // the Antasphere session opened with this process's safeStorage and
       // sealed again in the Keychain the server reads, in memory only.
-      startSeparate: () => {
+      startSeparate: async () => {
         // The client main reaches that server with, loaded while it starts
         // rather than once it has answered, when the first window has shown
         // (PRDCT-3527): half a second of synchronous requires, which held the
@@ -211,7 +232,7 @@ async function bootServer(): Promise<void> {
         else if (first) afterLoad(first)
         else app.once('browser-window-created', (_event, win) => afterLoad(win))
         const dataDir = join(app.getPath('userData'), 'server')
-        const migration = migrateAppDataToServer({
+        const migration = await migrateAppDataToServer({
           appDir: app.getPath('userData'),
           serverDir: dataDir,
           from: safeStorageSecrets(safeStorage),
@@ -433,6 +454,21 @@ function createWindow(entry: PersistedWindow, resolvedWorkspaceId?: string | nul
       // The attached pages (group and session views) are <webview> guests —
       // hardened and navigation-policed in view-guests.ts, never here.
       webviewTag: true,
+      // The native macOS rubber-band at the ends of every scroll area — the
+      // sidebar, a transcript, a side panel. Electron turns it OFF by default
+      // (its `scroll_bounce_flag.patch` makes Chromium's elastic overscroll
+      // follow this one switch), and this is the whole of turning it back on.
+      // Nothing in CSS or JavaScript imitates it: Chromium stretches the
+      // scroller on the compositor exactly as a browser tab does. Two things
+      // the bounce also needs, so a regression is read here first: Chromium
+      // 144+ (Electron 40+) is the first to bounce NON-root scrollers, which
+      // every one of ours is, and the feature is on by default only from
+      // Chromium 152 (Electron 44+); and no `overscroll-behavior: none` on the
+      // document or on the scroller — `contain` keeps the bounce and only cuts
+      // the chaining. A window with this flag never takes Electron's spare
+      // renderer, which is the one cost. Mirrored for the view guests in
+      // view-guests.ts.
+      scrollBounce: true,
       // A test window is never put on screen (see below); without this
       // Chromium would treat the hidden page as background and stop its
       // timers and animation frames — the driver needs them running.
@@ -591,6 +627,8 @@ app.whenReady().then(() => {
 
   registerIpcHandlers({ onChanged: () => buildAppMenu({ openWindow }) })
   registerWindowHandlers({ openWindow })
+  // ── ADR 0004: the routines' IPC arm, the shell's own service in-process only ──
+  installRoutinesIpc(serverLaunch.mode === 'in-process' ? shellRoutines() : null)
   registerMcpWindowOpener(openWindow)
   installPreviewProtocol()
   installViewGuestPolicy()
@@ -626,22 +664,21 @@ app.whenReady().then(() => {
   const locations = locationManager.getLocations()
   for (const loc of locations) {
     if (loc.type === 'remote' && loc.autoConnect) {
-      const config = locationManager.getCredentials(loc.id)
-      if (config) {
-        sshManager
-          .connect(loc.id, config)
-          .then(() => {
-            locationManager.setLocationStatus(loc.id, 'connected')
-            // Connect OpenClaw if detected
-            if (loc.openclawPort && loc.host) {
-              const token = locationManager.getOpenclawToken(loc.id)
-              openclawClient.connect(loc.id, buildOpenclawWsUrl(loc), token).catch(() => {})
-            }
-          })
-          .catch(() => {
-            locationManager.setLocationStatus(loc.id, 'error')
-          })
-      }
+      void (async () => {
+        const config = await locationManager.getCredentials(loc.id)
+        if (!config) return
+        try {
+          await sshManager.connect(loc.id, config)
+          locationManager.setLocationStatus(loc.id, 'connected')
+          // Connect OpenClaw if detected
+          if (loc.openclawPort && loc.host) {
+            const token = await locationManager.getOpenclawToken(loc.id)
+            openclawClient.connect(loc.id, buildOpenclawWsUrl(loc), token).catch(() => {})
+          }
+        } catch {
+          locationManager.setLocationStatus(loc.id, 'error')
+        }
+      })()
     }
   }
 

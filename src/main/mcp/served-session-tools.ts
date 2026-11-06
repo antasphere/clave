@@ -18,8 +18,13 @@ import type { LayoutSnapshot } from '@clave/contract/sidebar'
 import type { AccountOverride, Session } from '@clave/contract/sessions'
 import { sanitizeForPaste } from '../../shared/paste-sanitize'
 import { buildCheckpointProvenance, buildProvenanceHeader } from '../../shared/exchange-provenance'
-import { pickAccount, type PoolAccount } from '../../shared/account-pool'
-import { usageSummaryForModel } from '../../shared/usage-summary'
+import { pickAccount } from '../../shared/account-pool'
+import {
+  poolOf,
+  resolveAccountRef as resolveAccountRefFrom,
+  spawnFieldsOf,
+  usageOf
+} from './served-accounts'
 import { resolveProfileRef, resolveSpawnModes } from '../../shared/open-session-modes'
 import { substituteTokens } from '../../shared/prompt-tokens'
 import { resolveDeclaredGroupView } from '../../shared/group-view'
@@ -97,6 +102,27 @@ async function resolveTarget(ctx: Ctx, key: string, ref: string): Promise<Sessio
   return found
 }
 
+/** Whether two tabs are related for the agent tools' reach: the same tab, one
+ *  opened the other, or they share a group (its terminals included). The one
+ *  rule the messaging tools and the work tools (`served-work-tools.ts`) share. */
+export function isRelated(
+  ctx: Ctx,
+  layouts: readonly LayoutSnapshot[],
+  caller: string,
+  targetId: string
+): boolean {
+  return (
+    caller === targetId ||
+    parentOfSession(ctx, targetId) === caller ||
+    parentOfSession(ctx, caller) === targetId ||
+    shareAGroup(
+      layouts.flatMap((l) => l.groups),
+      caller,
+      targetId
+    )
+  )
+}
+
 /** The renderer's reach rule, over the server's facts: a tab reaches itself,
  *  the tab that opened it, a tab it opened, or a tab or terminal in the same
  *  group. */
@@ -112,16 +138,7 @@ function assertCanReach(
       `clave_${verb === 'message' ? 'send_to' : 'read'}_session must be called from inside a Clave agent tab — this request has no tab identity.`
     )
   }
-  if (caller === target.id) return
-  const related =
-    parentOfSession(ctx, target.id) === caller ||
-    parentOfSession(ctx, caller) === target.id ||
-    shareAGroup(
-      layouts.flatMap((l) => l.groups),
-      caller,
-      target.id
-    )
-  if (!related) {
+  if (!isRelated(ctx, layouts, caller, target.id)) {
     throw new Error(
       `Refusing to ${verb} tab "${nameOf(ctx, target)}": it is not related to yours. You can only reach the tab that opened yours ("parent"), tabs you opened, or tabs in the same group. Put both tabs in one group to allow this.`
     )
@@ -341,61 +358,13 @@ async function sendToSession(ctx: Ctx, key: string, p: Payload): Promise<unknown
   }
 }
 
-// ── Accounts ──
+// ── Accounts: the pool's rule, shared with the routines (`served-accounts.ts`) ──
 
-const poolOf = (accounts: ServedPoolAccount[]): PoolAccount[] =>
-  accounts.map((a) => ({ id: a.id, usable: a.usable, ...(a.fallback ? { fallback: true } : {}) }))
-const usageOf = (
-  accounts: ServedPoolAccount[],
-  context?: { model?: string }
-): Record<string, ServedPoolAccount['usage']> =>
-  Object.fromEntries(
-    accounts.map((a) => [a.id, context ? usageSummaryForModel(a.usage, context.model) : a.usage])
-  )
-
-/** The renderer's `accountForLaunch`: a named account is honoured; with none
- *  named, follow the launch setting: the recommendation, or the selected
- *  one while it has headroom, else the next along. */
-function accountForLaunch(ctx: Ctx, provider: AccountProvider): ServedPoolAccount {
-  const accounts = ctx.shell.accounts(provider)
-  const selected = ctx.shell.selectedAccountId(provider) ?? 'default'
-  const id = pickAccount({
-    accounts: poolOf(accounts),
-    usage: usageOf(accounts),
-    preferredId: selected,
-    preferRecommended: ctx.shell.useRecommendedAccount?.() === true
-  })
-  return accounts.find((a) => a.id === id) ?? accounts[0] ?? { id, label: id, usable: true }
-}
-
-/** The renderer's `resolveAccountRef`: an id, a label, or "any" for the
- *  pool's pick; an unknown name errors with the names that exist. */
-function resolveAccountRef(
+const resolveAccountRef = (
   ctx: Ctx,
   provider: AccountProvider,
   ref: string | undefined
-): ServedPoolAccount {
-  if (!ref || ref === 'any') return accountForLaunch(ctx, provider)
-  const accounts = ctx.shell.accounts(provider)
-  const byId = accounts.find((a) => a.id === ref)
-  if (byId) return byId
-  const exact = accounts.filter((a) => a.label === ref)
-  if (exact.length === 1) return exact[0]
-  const loose = accounts.filter((a) => a.label.toLowerCase() === ref.toLowerCase())
-  if (loose.length === 1) return loose[0]
-  const names = accounts.map((a) => `"${a.label}" (${a.id})`).join(', ')
-  throw new Error(
-    `Unknown ${provider === 'codex' ? 'Codex' : 'Claude'} account "${ref}". Available: ${names}`
-  )
-}
-
-const spawnFieldsOf = (
-  provider: AccountProvider,
-  account: { id: string; label: string }
-): AccountOverride =>
-  provider === 'codex'
-    ? { codexAccountId: account.id, codexAccountLabel: account.label }
-    : { claudeProfileId: account.id, claudeProfileLabel: account.label }
+): ServedPoolAccount => resolveAccountRefFrom(ctx.shell, provider, ref)
 
 const providerOf = (ctx: Ctx, session: Session): AccountProvider | null => {
   const mode = modeOfSession(ctx, session)

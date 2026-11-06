@@ -200,7 +200,11 @@ export async function run(t) {
     assert.ok(await until(async () => (await external()).includes(PULL_URL)))
     t.check('other links and modifier clicks open externally', true)
 
-    // 7. gh refusing is shown as gh's own words, with the way out.
+    // 7. gh refusing is shown as gh's own words, with the way out. A pull
+    //    request already read keeps its record under the notice, on refresh
+    //    and when it is closed and opened again (PRDCT-4142: the record is the
+    //    store's, not the view's); the full-page failure is for a pull request
+    //    never read.
     writeFileSync(FAIL, '')
     await panel.locator('[data-testid="pr-refresh"]').click()
     const stale = panel.locator('[data-testid="pr-error"][data-kind="auth"]')
@@ -209,22 +213,39 @@ export async function run(t) {
     await panel.getByRole('button', { name: 'Close pull request', exact: true }).click()
     await panel.locator('[data-testid="pr-empty"]').waitFor()
     await panel.locator('[data-pr-recent="acme/widgets#42"]').click()
+    await panel.locator('[data-testid="pr-title"]').waitFor()
+    await stale.waitFor()
+    assert.equal(await panel.locator('.pr-failure').count(), 0)
+    t.check(
+      'a reopened pull request keeps its record, with the refresh failure as a notice over it',
+      true
+    )
+    await panel.getByRole('button', { name: 'Close pull request', exact: true }).click()
+    await panel
+      .locator('[data-testid="pr-empty"] input')
+      .fill('https://github.com/acme/widgets/pull/43')
+    await panel.locator('[data-testid="pr-empty"] input').press('Enter')
     const failure = panel.locator('.pr-failure[data-kind="auth"]')
     await failure.waitFor()
     assert.match(await failure.innerText(), /Sign in with gh auth login/)
     unlinkSync(FAIL)
-    t.check('a gh failure is shown as its own words, on refresh and on open', true)
+    t.check('a gh failure is shown as its own words, on refresh and on a first open', true)
 
     // 7b. A gh with no stored login is signed in by the shell's token after
     //     all: the run without it is refused, the one retry with it answers.
+    //     The pull request's kept record is on screen meanwhile, so the proof
+    //     is the two calls, not the title.
     writeFileSync(NEEDS_TOKEN, '')
     const viewsBefore = calls().filter((c) => c.args[0] === 'pr' && c.args[1] === 'view').length
     await panel.getByRole('button', { name: 'Close pull request', exact: true }).click()
     await panel.locator('[data-pr-recent="acme/widgets#42"]').click()
     await panel.locator('[data-testid="pr-title"]').waitFor()
-    const views = calls()
-      .filter((c) => c.args[0] === 'pr' && c.args[1] === 'view')
-      .slice(viewsBefore)
+    const views = await until(() => {
+      const since = calls()
+        .filter((c) => c.args[0] === 'pr' && c.args[1] === 'view')
+        .slice(viewsBefore)
+      return since.length >= 2 ? since : null
+    })
     assert.deepEqual(
       views.map((c) => c.token),
       [null, SHELL_TOKEN],

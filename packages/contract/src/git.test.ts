@@ -3,6 +3,7 @@ import { Schema } from 'effect'
 import { ClaveApi } from './api'
 import { ServerEvent } from './events'
 import {
+  GitDiscoverResult,
   DiscoverGitRepos,
   GitDiff,
   GitLog,
@@ -18,6 +19,20 @@ import {
  * members of `ServerEvent`.
  */
 describe('the git contract', () => {
+  it('carries a discovered worktree with its source, and an older answer without it', () => {
+    const withSource = {
+      repos: [
+        { name: 'app', path: '/srv/app', worktreeOf: null },
+        { name: 'wt-lane', path: '/srv/wt-lane', worktreeOf: '/srv/app' }
+      ],
+      truncated: false
+    }
+    expect(Schema.decodeUnknownSync(GitDiscoverResult)(withSource)).toEqual(withSource)
+    expect(Schema.encodeSync(GitDiscoverResult)(withSource)).toEqual(withSource)
+    const older = { repos: [{ name: 'app', path: '/srv/app' }], truncated: true }
+    expect(Schema.decodeUnknownSync(GitDiscoverResult)(older)).toEqual(older)
+  })
+
   it('carries a status with its worktree reading and back', () => {
     const status = {
       isRepo: true,

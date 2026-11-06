@@ -59,7 +59,7 @@ export function RemoteFileTree({ locationId, cwd }: RemoteFileTreeProps): React.
       </div>
 
       {/* Tree content */}
-      <div className="flex-1 overflow-y-auto px-1">
+      <div className="flex-1 overflow-y-auto overscroll-contain px-1">
         {flatNodes.length === 0 ? (
           <div className="px-3 py-6 text-center text-xs text-text-tertiary">Empty directory</div>
         ) : (

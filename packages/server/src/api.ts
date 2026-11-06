@@ -39,7 +39,9 @@ import {
   KeepOnSessionRecord,
   RestartSession,
   SetSessionPage,
-  TypeIntoSession
+  TypeIntoSession,
+  // ── PRDCT-4123: which work a session does ──
+  ChangeSessionWork
 } from '@clave/contract/sessions'
 import { AnswerViewRequest, RequestView } from '@clave/contract/views'
 import { AnnounceAgentTools, ResolveAgentToken } from '@clave/contract/agent-tools'
@@ -67,6 +69,8 @@ import { WorkspaceFilesLive } from './workspace-files/api'
 import { FilesLive } from './files/api'
 // ── Wave wcs1023, lane C: the git domain (`git/api.ts`) ──
 import { GitLive } from './git/api'
+// ── ADR 0004: the routines (`routines/api.ts`) ──
+import { RoutinesLive } from './routines/api'
 // ── Issue #266: the server's version and its self-upgrade ──
 import { GetServerInfo, RequestServerUpgrade } from '@clave/contract/server-info'
 import { ListPendingRequests, ResolvePendingRequest } from '../../contract/src/requests'
@@ -124,6 +128,8 @@ export const SessionsLive = HttpApiBuilder.group(ClaveApi, 'sessions', (handlers
     .handle('screen', HttpCqrs.query(ReadSessionScreen))
     .handle('type', HttpCqrs.command(TypeIntoSession))
     .handle('restart', HttpCqrs.command(RestartSession))
+    // ── PRDCT-4123: which work a session does ──
+    .handle('changeWork', HttpCqrs.command(ChangeSessionWork))
 )
 
 // ── Lane A: the clients the shell registers as ──
@@ -235,6 +241,8 @@ export const ApiLive = HttpApiBuilder.api(ClaveApi).pipe(
       GitLive,
       // ── Issue #266: the server domain ──
       ServerInfoLive,
+      // ── ADR 0004: the routines ──
+      RoutinesLive,
       HealthLive
     )
   )

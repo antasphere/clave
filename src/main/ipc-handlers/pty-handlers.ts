@@ -86,13 +86,14 @@ export function registerPtyHandlers(): void {
   })
 
   // `initialInput` is main's own (a restart's resend, pty-manager.ts): a
-  // renderer's spawn never carries one.
+  // renderer's spawn never carries one. Nor `work` (PRDCT-4123): a session's
+  // work changes only through the server's ChangeSessionWork.
   ipcMain.handle('pty:spawn', (_event, cwd: string, options?: PtySpawnOptions) =>
     spawnForWindow(
       BrowserWindow.fromWebContents(_event.sender),
       cwd,
       // A carried definition crosses to a server; a Mac-local start resolves its own ids.
-      options && { ...options, initialInput: undefined, launchProfile: undefined }
+      options && { ...options, initialInput: undefined, launchProfile: undefined, work: undefined }
     )
   )
 

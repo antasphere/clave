@@ -103,6 +103,71 @@ function getParentPaths(fullPath: string): { path: string; name: string }[] {
 }
 
 /**
+ * One pane of the side panel (PRDCT-4142). Every pane visited stays mounted;
+ * an inactive one is hidden in place with its layout box kept (.panel-pane in
+ * system.css). The box a hidden pane gets is the host's, whose height follows
+ * the active tab's chrome (the Git tab has a controls row the others lack), so
+ * a scroller near its bottom would be clamped while hidden and come back short
+ * of where it was left. The pane therefore remembers every scroll position its
+ * descendants reach while it is active, and puts them back the moment it is
+ * shown again, before the frame is painted.
+ */
+/** Put every remembered scroller back where it was; forget the ones gone. */
+function restoreScrolls(scrolls: Map<Element, number>): void {
+  for (const [el, top] of scrolls) {
+    if (!el.isConnected) {
+      scrolls.delete(el)
+      continue
+    }
+    if (el.scrollTop !== top) el.scrollTop = top
+  }
+}
+
+function KeepAlivePane({
+  pane,
+  active,
+  children
+}: {
+  pane: string
+  active: boolean
+  children: React.ReactNode
+}): React.JSX.Element {
+  const ref = useRef<HTMLDivElement>(null)
+  const scrolls = useRef(new Map<Element, number>())
+  const activeRef = useRef(active)
+  useEffect(() => {
+    const el = ref.current
+    if (!el) return
+    // Captured, so every scroller inside the pane reports here; ignored while
+    // hidden, so the clamp that follows the hide overwrites nothing.
+    const onScroll = (e: Event): void => {
+      if (!activeRef.current) return
+      const target = e.target
+      if (target instanceof Element) scrolls.current.set(target, target.scrollTop)
+    }
+    el.addEventListener('scroll', onScroll, true)
+    return () => el.removeEventListener('scroll', onScroll, true)
+  }, [])
+  useLayoutEffect(() => {
+    activeRef.current = active
+    // Shown: every scroller back where it was. Hidden: the scrollers gone
+    // since are forgotten now rather than at the next show.
+    if (active) restoreScrolls(scrolls.current)
+    else for (const el of scrolls.current.keys()) if (!el.isConnected) scrolls.current.delete(el)
+  }, [active])
+  return (
+    <div
+      ref={ref}
+      className="panel-pane"
+      data-pane={pane}
+      data-active={active ? 'true' : undefined}
+    >
+      {children}
+    </div>
+  )
+}
+
+/**
  * The panel, with the batch-op context around it.
  *
  * The provider has to sit ABOVE the body rather than inside its JSX: the body
@@ -342,12 +407,38 @@ function SidePanelBody(): React.JSX.Element {
   // The legacy remote kinds have no git: their panel is the files tab.
   const effectiveTab = legacyRemote ? 'files' : sidePanelTab
   const pluginTab = isRemoteSession ? null : activePluginPanel
-  const isGitTabActive = effectiveTab === 'git'
+  // A plugin tab sits over Files and Git: while it is shown, neither of them
+  // is the active pane, and the git hooks read nothing (PRDCT-4142).
+  const isFilesTabActive = effectiveTab === 'files' && !pluginTab
+  const isGitTabActive = effectiveTab === 'git' && !pluginTab
   const multiRepo = useMultiRepoStatus(gitCwd, isGitTabActive)
 
-  // Single-repo git status — used for branch badge in path row
-  const isSingleRepo = isGitTabActive && multiRepo.result.mode === 'single'
-  const singleRepoGit = useGitStatus(isSingleRepo ? gitCwd : null, isSingleRepo)
+  // Single-repo git status — used for branch badge in path row. The folder is
+  // the hook's whether or not the git pane is shown, so the pane keeps its
+  // status (and its rows) while hidden; only the reading is gated.
+  const isSingleRepo = multiRepo.result.mode === 'single'
+  const singleRepoGit = useGitStatus(isSingleRepo ? gitCwd : null, isSingleRepo && isGitTabActive)
+
+  // The plugin panes visited so far (PRDCT-4142): each stays mounted and
+  // hidden once seen, so a return shows it as it was. A plugin that stops
+  // drops out of `sidePlugins` and takes its pane with it; one that restarts
+  // comes back with a new generation and remounts on its key. Adjusted during
+  // render, against what the last render saw.
+  const [visitedPluginKeys, setVisitedPluginKeys] = useState<ReadonlySet<string>>(() => new Set())
+  const pluginKey = pluginTab ? `${pluginTab.pluginId}:${pluginTab.panelId}` : null
+  const currentPluginKeys = new Set(
+    sidePlugins.map((panel) => `${panel.pluginId}:${panel.panelId}`)
+  )
+  if (pluginKey && !visitedPluginKeys.has(pluginKey)) {
+    setVisitedPluginKeys((prev) => new Set(prev).add(pluginKey))
+  } else if ([...visitedPluginKeys].some((key) => !currentPluginKeys.has(key))) {
+    // A pane whose plugin was switched off or removed is forgotten with it:
+    // switching the plugin back on must open nothing the user did not click.
+    setVisitedPluginKeys((prev) => new Set([...prev].filter((key) => currentPluginKeys.has(key))))
+  }
+  const visitedPlugins = sidePlugins.filter((panel) =>
+    visitedPluginKeys.has(`${panel.pluginId}:${panel.panelId}`)
+  )
 
   // Single-repo sections, driven by the toolbar's ↓/↑/+ badge-buttons.
   // Per-repo state: a folder switch resets it (guarded adjust-during-render).
@@ -368,8 +459,11 @@ function SidePanelBody(): React.JSX.Element {
 
   // Every repo the panel lists — what Magic sync acts on, since committing and
   // pushing is about each repo's own local work.
+  // A row whose first reading is still on its way is not acted on: nothing
+  // is known about it yet (PRDCT-4142).
   const allRepoPaths = useMemo(() => {
-    if (multiRepo.result.mode === 'multi') return multiRepo.result.repos.map((r) => r.path)
+    if (multiRepo.result.mode === 'multi')
+      return multiRepo.result.repos.filter((r) => r.status).map((r) => r.path)
     if (isSingleRepo && gitCwd) return [gitCwd]
     return []
   }, [multiRepo.result, isSingleRepo, gitCwd])
@@ -379,7 +473,7 @@ function SidePanelBody(): React.JSX.Element {
   // pulls what you can see, and finding more is the refresh's job.
   const behindRepoPaths = useMemo(() => {
     if (multiRepo.result.mode === 'multi') {
-      return multiRepo.result.repos.filter((r) => r.status.behind > 0).map((r) => r.path)
+      return multiRepo.result.repos.filter((r) => (r.status?.behind ?? 0) > 0).map((r) => r.path)
     }
     if (isSingleRepo && gitCwd && (singleRepoGit.status?.behind ?? 0) > 0) return [gitCwd]
     return []
@@ -768,7 +862,7 @@ function SidePanelBody(): React.JSX.Element {
               >
                 {/* The scroll lives one level in: the surface clips its own
                     corners, so it cannot also be the thing that scrolls. */}
-                <div className="max-h-[60vh] overflow-y-auto">
+                <div className="max-h-[60vh] overflow-y-auto overscroll-contain">
                   {parentPaths.map((item) => (
                     <button
                       key={item.path}
@@ -940,38 +1034,32 @@ function SidePanelBody(): React.JSX.Element {
           </div>
         )}
 
-      {/* Active tab content */}
-      {pluginTab ? (
-        <div className="flex flex-col flex-1 min-h-0" data-plugin-side-panel={pluginTab.panelId}>
-          <PluginPanelHost
-            key={`${pluginTab.pluginId}:${pluginTab.panelId}:${pluginTab.generation}`}
-            pluginId={pluginTab.pluginId}
-            panelId={pluginTab.panelId}
-            title={pluginTab.title}
-            generation={pluginTab.generation}
-          />
-        </div>
-      ) : effectiveTab === 'help' ? (
-        <HelpPanel />
-      ) : legacyRemote &&
+      {/* The panes. Every pane visited stays mounted and hidden in place
+          (PRDCT-4142): the file tree, the git list and a plugin's pane each
+          keep their content, their open rows, their scroll and a typed draft
+          across a tab switch, so a return redraws nothing. Hiding keeps the
+          layout box (.panel-pane in system.css): a pane taken out of layout
+          loses its scroll position. The hooks' `active` flags gate the
+          reading, so a hidden pane reads nothing. */}
+      {legacyRemote ? (
         remoteLocationId &&
         effectiveCwd &&
         effectiveCwd !== '' &&
         effectiveCwd !== '~' &&
         effectiveCwd.startsWith('/') ? (
-        <RemoteFileTree locationId={remoteLocationId} cwd={effectiveCwd} />
-      ) : legacyRemote ? (
-        <div className="flex-1 flex items-center justify-center px-3">
-          <span className="text-xs text-text-tertiary text-center">No working directory</span>
-        </div>
-      ) : (
-        <>
-          {/* Keep FileTree mounted across tab switches so folder expansion state is preserved. */}
-          <div className={sidePanelTab === 'files' ? 'flex flex-col flex-1 min-h-0' : 'hidden'}>
-            <FileTree cwd={gitCwd} onNavigateToFolder={handleNavigateToFolder} />
+          <RemoteFileTree locationId={remoteLocationId} cwd={effectiveCwd} />
+        ) : (
+          <div className="flex-1 flex items-center justify-center px-3">
+            <span className="text-xs text-text-tertiary text-center">No working directory</span>
           </div>
-          {sidePanelTab === 'git' &&
-            (multiRepo.result.mode === 'multi' ? (
+        )
+      ) : (
+        <div className="panel-panes">
+          <KeepAlivePane pane="files" active={isFilesTabActive}>
+            <FileTree cwd={gitCwd} onNavigateToFolder={handleNavigateToFolder} />
+          </KeepAlivePane>
+          <KeepAlivePane pane="git" active={isGitTabActive}>
+            {multiRepo.result.mode === 'multi' ? (
               <MultiRepoGitPanel
                 repos={multiRepo.result.repos}
                 rootPath={multiRepo.hasNestedRepos ? gitCwd : null}
@@ -986,6 +1074,12 @@ function SidePanelBody(): React.JSX.Element {
               <div className="flex-1 flex items-center justify-center px-3">
                 <span className="text-xs text-text-tertiary text-center">Not a git repository</span>
               </div>
+            ) : multiRepo.result.mode === 'loading' ? (
+              // A folder never read, for the moment it takes git to answer
+              // about the root; the rows follow as they come.
+              <div className="flex-1 flex items-center justify-center px-3" data-git-reading>
+                <span className="text-xs text-text-tertiary text-center">Reading…</span>
+              </div>
             ) : singleRepoGit.error && !singleRepoGit.status ? (
               <ErrorBanner message="Could not read this folder's git status." />
             ) : (
@@ -999,8 +1093,38 @@ function SidePanelBody(): React.JSX.Element {
                 showOutgoing={showOutgoingSingle}
                 showChanges={showChangesSingle}
               />
-            ))}
-        </>
+            )}
+          </KeepAlivePane>
+          {visitedPlugins.map((panel) => {
+            const active =
+              pluginTab?.pluginId === panel.pluginId && pluginTab?.panelId === panel.panelId
+            return (
+              <KeepAlivePane
+                key={`${panel.pluginId}:${panel.panelId}`}
+                pane={`plugin:${panel.panelId}`}
+                active={active}
+              >
+                <div
+                  className="flex flex-col flex-1 min-h-0"
+                  data-plugin-side-panel={panel.panelId}
+                >
+                  <PluginPanelHost
+                    key={`${panel.pluginId}:${panel.panelId}:${panel.generation}`}
+                    pluginId={panel.pluginId}
+                    panelId={panel.panelId}
+                    title={panel.title}
+                    generation={panel.generation}
+                  />
+                </div>
+              </KeepAlivePane>
+            )
+          })}
+          {effectiveTab === 'help' && !pluginTab && (
+            <div className="panel-pane" data-pane="help" data-active="true">
+              <HelpPanel />
+            </div>
+          )}
+        </div>
       )}
     </div>
   )

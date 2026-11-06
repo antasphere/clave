@@ -12,6 +12,7 @@ import { Schema } from 'effect'
 import { Command, Query } from '@structure-ai/cqrs'
 import { CapabilityUnavailable } from './errors'
 import { LaunchProfileView } from './settings/launch-profiles'
+import { WorkAssignment, WorkChange, WorkChangeRefused, WorkRename, WorkUpdate } from './work'
 
 export const AgentState = Schema.Literal('idle', 'working', 'blocked', 'done', 'ended')
 export type AgentState = typeof AgentState.Type
@@ -89,7 +90,8 @@ export const UserMessage = Schema.Struct({
   type: Schema.Literal('user_message'),
   text: Schema.String,
   /** The files the reader attached, as the transcript shows them: never bytes. */
-  attachments: Schema.optional(Attachments)
+  attachments: Schema.optional(Attachments),
+  parent: Schema.optional(Schema.String)
 })
 export type UserMessage = typeof UserMessage.Type
 export const PreparedPrompt = Schema.Struct({
@@ -222,6 +224,7 @@ export const BackgroundTask = Schema.Struct({
   id: Schema.String,
   kind: Schema.Literal('shell', 'agent', 'other'),
   description: Schema.String,
+  command: Schema.optional(Schema.String),
   toolUseId: Schema.optional(Schema.String),
   startedAt: Schema.Number,
   outputFile: Schema.optional(Schema.String),
@@ -236,7 +239,8 @@ export const SessionEvent = Schema.Union(
   Schema.Struct({
     type: Schema.Literal('assistant_text'),
     delta: Schema.String,
-    final: Schema.Boolean
+    final: Schema.Boolean,
+    parent: Schema.optional(Schema.String)
   }),
   Schema.Struct({
     type: Schema.Literal('tool_call'),
@@ -249,7 +253,8 @@ export const SessionEvent = Schema.Union(
     type: Schema.Literal('tool_result'),
     id: Schema.String,
     output: Schema.Unknown,
-    error: Schema.optional(Schema.Boolean)
+    error: Schema.optional(Schema.Boolean),
+    parent: Schema.optional(Schema.String)
   }),
   Schema.Struct({
     type: Schema.Literal('permission_request'),
@@ -328,7 +333,13 @@ export const SessionLink = Schema.Union(
     terminalId: Schema.String
   }),
   Schema.Struct({ kind: Schema.Literal('session-view'), ownerId: Schema.String }),
-  Schema.Struct({ kind: Schema.Literal('toolbar'), key: Schema.String })
+  Schema.Struct({ kind: Schema.Literal('toolbar'), key: Schema.String }),
+  /** A routine's run (ADR 0004): never a sidebar row, the server's to run and to stop. */
+  Schema.Struct({
+    kind: Schema.Literal('routine'),
+    routineKey: Schema.String,
+    runId: Schema.String
+  })
 )
 export type SessionLink = typeof SessionLink.Type
 
@@ -359,6 +370,15 @@ export const SpawnOptions = Schema.Struct({
   initialCommand: Schema.optional(Schema.String),
   autoExecute: Schema.optional(Schema.Boolean),
   initialPrompt: Schema.optional(Schema.String),
+  // ── ADR 0004: what a routine run declares beyond a tab's launch ──
+  /** Claude's reasoning effort to start on (`--effort`); a chat defaults to the last picked. */
+  effort: Schema.optional(Schema.String),
+  /** The permission mode a Claude session without `dangerousMode` asks under. */
+  permissionMode: Schema.optional(Schema.Literal('default', 'acceptEdits', 'plan')),
+  /** A Claude Code plugin folder loaded for this session alone (`--plugin-dir`). */
+  pluginDir: Schema.optional(Schema.String),
+  /** One paragraph appended to Claude's system prompt (`--append-system-prompt`). */
+  appendSystemPrompt: Schema.optional(Schema.String),
   tmuxMode: Schema.optional(Schema.Boolean),
   adoptTmuxName: Schema.optional(Schema.String),
   adoptSessionId: Schema.optional(Schema.String),
@@ -587,6 +607,7 @@ export const SessionRecord = Schema.Struct({
   view: Schema.optional(SessionRecordView),
   link: Schema.optional(SessionLink),
   spawnedBy: Schema.optional(Schema.String),
+  work: Schema.optional(WorkAssignment),
   live: Schema.optional(Schema.Boolean),
   running: Schema.optional(Schema.Boolean)
 })
@@ -809,4 +830,22 @@ export const KeepOnSessionRecord = Command.define('KeepOnSessionRecord', {
   payload: Schema.Struct({ id: Schema.String, ...SessionRecordFields.fields }),
   success: Schema.Void,
   failure: CapabilityUnavailable
+})
+
+// ── PRDCT-4123: which work a session does ──
+
+/**
+ * Change the work assignment of one session: assign it to a wave or a lane,
+ * complete it, leave it, offer a handover, cancel that offer, or accept it.
+ * The rules are `work-rules.ts`'s, applied over every record the host keeps;
+ * the answer is every record rewritten, the subject's first, and the windows
+ * follow through `session.work_changed`, one event per record. An accepted
+ * handover also renames: the successor takes its predecessor's name and the
+ * predecessor becomes `<name> · gen <n>` (`takeoverRenames`), each told as
+ * `session.renamed`.
+ */
+export const ChangeSessionWork = Command.define('ChangeSessionWork', {
+  payload: Schema.Struct({ id: Schema.String, change: WorkChange }),
+  success: Schema.Struct({ changed: Schema.Array(WorkUpdate), renamed: Schema.Array(WorkRename) }),
+  failure: Schema.Union(SessionNotFound, WorkChangeRefused, CapabilityUnavailable)
 })

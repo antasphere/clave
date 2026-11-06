@@ -43,7 +43,9 @@ import {
   KeepOnSessionRecord,
   RestartSession,
   SetSessionPage,
-  TypeIntoSession
+  TypeIntoSession,
+  // ── PRDCT-4123: which work a session does ──
+  ChangeSessionWork
 } from './sessions'
 import { agentToolsGroup } from './agent-tools'
 import { settingsGroup } from './settings/api'
@@ -57,6 +59,8 @@ import { requestsGroup } from './requests'
 import { gitGroup } from './git'
 // ── Issue #266: the server's version and its self-upgrade (`server-info.ts`) ──
 import { serverInfoGroup } from './server-info'
+// ── ADR 0004: the routines (`routines.ts`) ──
+import { routinesGroup } from './routines/api'
 
 // ── Sessions (lane A) ──
 export const sessionsGroup = ApiGroup.make('sessions')
@@ -91,6 +95,8 @@ export const sessionsGroup = ApiGroup.make('sessions')
   .add(HttpCqrs.queryEndpoint('screen', '/sessions/screen', ReadSessionScreen))
   .add(HttpCqrs.commandEndpoint('type', '/sessions/type', TypeIntoSession))
   .add(HttpCqrs.commandEndpoint('restart', '/sessions/restart', RestartSession))
+  // ── PRDCT-4123: which work a session does ──
+  .add(HttpCqrs.commandEndpoint('changeWork', '/sessions/work', ChangeSessionWork))
 
 // ── Clients (lane A, for the shell) ──
 export const clientsGroup = ApiGroup.make('clients')
@@ -139,6 +145,8 @@ export { gitGroup }
 
 // ── Issue #266: the server domain (`server-info.ts`) ──
 export { serverInfoGroup }
+// ── ADR 0004: the routines ──
+export { routinesGroup }
 
 // ── Lane B: terminals ──
 
@@ -160,6 +168,8 @@ export const ClaveApi = Api.make('clave')
   .add(gitGroup)
   // ── Issue #266: the server domain ──
   .add(serverInfoGroup)
+  // ── ADR 0004: the routines ──
+  .add(routinesGroup)
   .add(Health.group)
   .pipe(annotate({ title: 'Clave', version: '1', description: "Clave's server API" }))
 export type ClaveApi = typeof ClaveApi

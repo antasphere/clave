@@ -14,6 +14,8 @@ export interface ReviewDisclosure {
   readonly autoCommands: ReadonlyArray<string>
   readonly prompts: ReadonlyArray<string>
   readonly dangerous: boolean
+  /** The routines the file would schedule (ADR 0004), by name; absent from an older server. */
+  readonly routines?: ReadonlyArray<string>
 }
 
 export interface ReviewDialogText {
@@ -39,6 +41,13 @@ export function reviewDialogText(review: ReviewDisclosure): ReviewDialogText {
         return `  • ${flat.length > 120 ? flat.slice(0, 117) + '…' : flat}`
       })
     )
+  }
+  if (review.routines && review.routines.length > 0) {
+    if (detailLines.length > 0) detailLines.push('')
+    detailLines.push(
+      `${review.routines.length} routine${review.routines.length === 1 ? '' : 's'} would run on a schedule, with nobody at the keyboard:`
+    )
+    detailLines.push(...review.routines.map((name) => `  • ${name}`))
   }
   if (review.dangerous) {
     detailLines.push('')

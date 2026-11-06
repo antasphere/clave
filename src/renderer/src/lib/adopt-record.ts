@@ -218,6 +218,8 @@ function sessionFromRecord(
     // The tab whose agent opened this one: folded under it again, and its
     // "parent" still answers (#259).
     spawnedBy: s.spawnedBy,
+    // Which wave or lane it works on, as its record keeps it (PRDCT-4123).
+    work: s.work,
     // A chat that is not running comes back without starting its agent:
     // its pane mounts, and the agent starts, when the tab is first shown.
     ...(s.transport === 'events' && !s.live ? { dormant: true } : {}),
@@ -341,7 +343,7 @@ export async function adoptHiddenRecord(
   window.electronAPI.startSession(spawned.session.id, 120, 30)
   if (link.kind === 'group-terminal') {
     store.setGroupTerminalSessionId(link.groupId, link.terminalId, spawned.session.id)
-  } else if (ownerView) {
+  } else if (ownerView && link.kind === 'session-view') {
     store.setSessionView(link.ownerId, { ...ownerView, serverSessionId: spawned.session.id })
   }
   return spawned.session.id
@@ -463,6 +465,7 @@ function sessionOfRecord(s: SessionRecord, workspaceId: string | undefined): Ses
     workspaceId,
     view: s.view ? { ...s.view } : undefined,
     spawnedBy: s.spawnedBy,
+    work: s.work,
     detectedUrl: null,
     serverStatus: null,
     serverCommand: null,

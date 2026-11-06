@@ -19,6 +19,7 @@ import type {
   PullRequestView,
   ReviewEvent
 } from '../shared/github-pull'
+import type { WorkAssignment, WorkChange, WorkChangeResult } from '@clave/contract/work-rules'
 
 /** Additive wire contract for adapter stream consumers. Existing PTY IPC is unchanged. */
 export interface ActivityAnswer {
@@ -269,6 +270,34 @@ export interface ClaveFileGroupData {
     /** Bind this terminal's `serverUrl` as the group's web view at launch. */
     groupView?: boolean
   }[]
+  /** The group's routines (ADR 0004): elevated as a whole; mirrors `ClaveRoutine` of the contract. */
+  routines?: ClaveFileRoutineData[]
+}
+
+/** A routine as the file carries it (ADR 0004), its paths absolute once read. */
+export interface ClaveFileRoutineData {
+  name: string
+  schedule: string
+  prompt: string
+  params?: Record<string, string>
+  skill?: string
+  cwd?: string | null
+  agent?: string
+  form?: string
+  model?: string
+  effort?: string
+  thinking?: string
+  provider?: string
+  profile?: string
+  account?: string
+  dangerousMode?: boolean
+  permissionMode?: string
+  icon?: string
+  color?: string
+  catchUp?: boolean
+  timeoutMinutes?: number
+  scope?: string
+  report?: { template: string; schema?: string; width?: number; height?: number }
 }
 
 export type ClaveFileReadResult =
@@ -308,6 +337,7 @@ export interface ClaveFileWriteData {
     serverUrl?: string
     groupView?: boolean
   }[]
+  routines?: ClaveFileRoutineData[]
   groups?: Array<{
     name: string
     cwd: string | null
@@ -341,6 +371,7 @@ export interface ClaveFileWriteData {
       serverUrl?: string
       groupView?: boolean
     }[]
+    routines?: ClaveFileRoutineData[]
   }>
 }
 
@@ -363,6 +394,8 @@ export type SessionLink =
   | { kind: 'group-terminal'; groupId: string; terminalId: string }
   | { kind: 'session-view'; ownerId: string }
   | { kind: 'toolbar'; key: string }
+  /** A routine's run (ADR 0004): the server's, never a sidebar row. */
+  | { kind: 'routine'; routineKey: string; runId: string }
 
 export interface SessionRecord {
   /** How the session's process talks: a terminal (`pty`) or a chat's
@@ -417,6 +450,9 @@ export interface SessionRecord {
   /** The tab whose agent opened this one: the boot restore folds it under
    *  that parent again and `"parent"` still reaches it. Absent = a user's tab. */
   spawnedBy?: string
+  /** Which wave or lane the tab works on, its role and its standing
+   *  (PRDCT-4123). Absent = an ordinary tab. */
+  work?: WorkAssignment
   /** True → reattach to a still-running tmux session. False → the tmux server
    *  died (reboot) but the sidecar survived; re-spawn fresh (Claude resumes). */
   live?: boolean
@@ -769,6 +805,10 @@ export interface ElectronAPI extends FleetDesktopAPI {
     id: string,
     view: { url: string; title?: string; command?: string; cwd?: string } | null
   ) => Promise<void>
+  /** PRDCT-4123: one change to the tab's work assignment, through the
+   *  server; answers every record rewritten, the tab's own first, and the
+   *  names an accepted handover gave. */
+  sessionsChangeWork: (id: string, change: WorkChange) => Promise<WorkChangeResult>
   setSessionWorkspace: (id: string, workspaceId: string | null) => Promise<void>
   tmuxAvailable: () => Promise<boolean>
   listSessionRecords: (filter?: { ids?: string[] }) => Promise<SessionRecord[]>
@@ -791,6 +831,11 @@ export interface ElectronAPI extends FleetDesktopAPI {
   ackRehomed: (sessionIds: string[]) => void
   // ── Wave 4, lane D: what the served agent tools did to a session (push only) ──
   onSessionRenamed: (callback: (payload: { id: string; name: string }) => void) => () => void
+  /** PRDCT-4123: a tab's work assignment changed on its record; null when it
+   *  belongs to no wave or lane any more. */
+  onSessionWorkChanged: (
+    callback: (payload: { id: string; work: WorkAssignment | null }) => void
+  ) => () => void
   onSessionPageChanged: (
     callback: (payload: {
       id: string
@@ -907,6 +952,13 @@ export interface ElectronAPI extends FleetDesktopAPI {
   secretDismiss: (id: string) => Promise<SecretRequestView>
   onSecretRequestsChanged: (callback: (requests: SecretRequestView[]) => void) => () => void
   linkedDocuments: LinkedDocumentsAPI
+  // ── ADR 0004: the routines a server schedules, read and driven from the toolbar ──
+  routinesList: () => Promise<import('@clave/contract/routines/model').RoutinesListing>
+  routinesRunNow: (key: string) => Promise<import('@clave/contract/routines/model').RoutineRun>
+  routinesDismiss: (runId: string) => Promise<void>
+  /** The run's conversation continued: in the panel (the session re-homed to this window) or as a tab (a new session this window places). */
+  routinesOpenDiscussion: (runId: string, mode: 'panel' | 'tab') => Promise<{ sessionId: string }>
+  onRoutinesChanged: (callback: () => void) => () => void
   copyOfferList: () => Promise<CopyOfferView[]>
   copyOfferCopy: (id: string) => Promise<CopyOfferView>
   copyOfferDismiss: (id: string) => Promise<void>
@@ -1103,7 +1155,10 @@ export interface ElectronAPI extends FleetDesktopAPI {
   discoverGitRepos: (
     cwd: string,
     force?: boolean
-  ) => Promise<{ repos: Array<{ name: string; path: string }>; truncated: boolean }>
+  ) => Promise<{
+    repos: Array<{ name: string; path: string; worktreeOf?: string | null }>
+    truncated: boolean
+  }>
   gitStage: (cwd: string, files: string[]) => Promise<void>
   gitUnstage: (cwd: string, files: string[]) => Promise<void>
   gitCommit: (cwd: string, message: string) => Promise<GitCommitResult>

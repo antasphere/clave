@@ -39,6 +39,7 @@ import type { SessionWrite } from '@clave/contract/sessions'
 import type { SidebarGroup } from '@clave/contract/sidebar'
 import { selectAdoptableRecords, type AdoptionScope } from '../shared/adoption-scope'
 import type { SessionRecord as WireSessionRecord } from '@clave/contract/sessions'
+import type { WorkAssignment, WorkChange, WorkChangeResult } from '@clave/contract/work-rules'
 import {
   MIC_GET_ACCESS_CHANNEL,
   MIC_REQUEST_ACCESS_CHANNEL,
@@ -824,7 +825,8 @@ const workspaceFilesRelay = createReviewRelay({
       folder: review.folder,
       autoCommands: [...review.autoCommands],
       prompts: [...review.prompts],
-      dangerous: review.dangerous
+      dangerous: review.dangerous,
+      ...(review.routines ? { routines: [...review.routines] } : {})
     }) as Promise<{ response: 0 | 1 | 2; checkboxChecked: boolean }>,
   answer: (reviewId, answer) => {
     if (!answerReviewOn) return Promise.reject(new Error('no server to answer the review on'))
@@ -1301,6 +1303,15 @@ const electronAPI = {
     }
   }),
 
+  // ── PRDCT-4123: which work a tab does, on its record ──
+  // The server's command alone: there is no IPC road for it, since the
+  // server always runs, in-process or attached; a call made before main has
+  // named it is refused rather than kept on main's copy of the record.
+  sessionsChangeWork: viaServer<[string, WorkChange], WorkChangeResult>({
+    ipc: () => Promise.reject(new Error('Clave server is not available')),
+    server: ({ api }, id, change) => api.sessions.changeWork(id, change)
+  }),
+
   // Kept on the server's record once main names it, like the name (round 1
   // of wave 6 lane A's verifier): over IPC it reached main's copy only.
   setSessionWorkspace: viaServer<[string, string | null], void>({
@@ -1359,6 +1370,13 @@ const electronAPI = {
   // anything back. Push only: these facts exist only when a server runs.
   onSessionRenamed: (callback: (payload: { id: string; name: string }) => void) =>
     onServerEventOf('session.renamed', (event) => callback({ id: event.id, name: event.name })),
+  // PRDCT-4123: a tab's work assignment, as the server's record now keeps it.
+  onSessionWorkChanged: (
+    callback: (payload: { id: string; work: WorkAssignment | null }) => void
+  ) =>
+    onServerEventOf('session.work_changed', (event) =>
+      callback({ id: event.id, work: event.work as WorkAssignment | null })
+    ),
   onSessionPageChanged: (
     callback: (payload: {
       id: string
@@ -1626,6 +1644,36 @@ const electronAPI = {
       ipcRenderer.invoke('linked-documents:choose-files', signature),
     onChanged: (callback: () => void) => createIpcListener<[]>('linked-documents:changed', callback)
   },
+  // ── ADR 0004: the routines, the server's; IPC until the window reaches it ──
+  routinesList: viaServer<[], import('@clave/contract/routines/model').RoutinesListing>({
+    ipc: () => ipcRenderer.invoke('routines:list'),
+    server: ({ api }) => api.routines.list()
+  }),
+  routinesRunNow: viaServer<[string], import('@clave/contract/routines/model').RoutineRun>({
+    ipc: (key) => ipcRenderer.invoke('routines:run-now', key),
+    server: ({ api }, key) => api.routines.runNow(key)
+  }),
+  routinesDismiss: viaServer<[string], void>({
+    ipc: (runId) => ipcRenderer.invoke('routines:dismiss', runId),
+    server: ({ api }, runId) => api.routines.dismiss(runId)
+  }),
+  routinesOpenDiscussion: viaServer<[string, 'panel' | 'tab'], { sessionId: string }>({
+    ipc: async (runId, mode) => {
+      const identity: WindowIdentity | null = await ipcRenderer.invoke('window:identity')
+      return ipcRenderer.invoke('routines:discussion', runId, identity?.windowKey ?? '', mode)
+    },
+    server: async ({ api }, runId, mode) => {
+      // The window the discussion lands in: this one, by its persisted key.
+      const identity: WindowIdentity | null = await ipcRenderer.invoke('window:identity')
+      return api.routines.openDiscussion(runId, identity?.windowKey ?? '', mode)
+    }
+  }),
+  onRoutinesChanged: (callback: () => void) =>
+    viaServerEvent<'routines.changed', null>(
+      'routines:changed',
+      'routines.changed',
+      () => null
+    )(callback),
   copyOfferList: () => ipcRenderer.invoke('copy-offer:list'),
 
   copyOfferCopy: (id: string) => ipcRenderer.invoke('copy-offer:copy', id),

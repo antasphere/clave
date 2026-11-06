@@ -203,7 +203,8 @@ const SUBJECT_SESSION_COMMANDS = new Set([
   'rename',
   'moveSession',
   'setSessionView',
-  'switchAccount'
+  'switchAccount',
+  'setWork'
 ])
 
 /** A workspace ref (id or name) → its id, main-side (the registry is global). */
@@ -707,7 +708,7 @@ function buildServer(callerSessionId: string | undefined): McpServer {
     'clave_create_group',
     {
       description:
-        'Create a new (empty) group in the Clave sidebar. Returns the new groupId. Follow up with clave_open_session to put a tab in it — some interactions prune empty groups.',
+        "Create a new (empty) group in the Clave sidebar. Returns the new groupId. Follow up with clave_open_session to put a tab in it — some interactions prune empty groups. A group's routines (the scheduled agent sessions of ADR 0004) are declared in the .clave file alone; this tool takes none.",
       inputSchema: {
         name: z.string().describe('Display name for the group'),
         prompt: z
@@ -831,7 +832,7 @@ function buildServer(callerSessionId: string | undefined): McpServer {
     'clave_launch_group',
     {
       description:
-        'Launch a pinned workspace group (a template from a .clave file): spawns all its sessions and attaches its quick-launch terminals as one group. If the group is already running but hidden, it is shown instead. Use clave_list to see the available pinned groups and their state. A name existing in several workspaces resolves to your own workspace first, then the active one; still-ambiguous names error with qualified candidates.',
+        "Launch a pinned workspace group (a template from a .clave file): spawns all its sessions and attaches its quick-launch terminals as one group. A group's routines (the scheduled agent sessions of ADR 0004) are the server's to run from the file itself and are not launched here. If the group is already running but hidden, it is shown instead. Use clave_list to see the available pinned groups and their state. A name existing in several workspaces resolves to your own workspace first, then the active one; still-ambiguous names error with qualified candidates.",
       inputSchema: {
         group: z.string().describe('Pinned group id or name (case-insensitive)'),
         workspace: z
@@ -883,7 +884,7 @@ function buildServer(callerSessionId: string | undefined): McpServer {
     'clave_add_group_terminal',
     {
       description:
-        'Attach a quick-launch terminal to a Clave group: a saved shell command (e.g. a dev server) shown as a colored icon on the group, re-runnable on click. By default it also launches right away. Returns { terminalId, groupId, sessionId }.',
+        "Attach a quick-launch terminal to a Clave group: a saved shell command (e.g. a dev server) shown as a colored icon on the group, re-runnable on click. By default it also launches right away. Returns { terminalId, groupId, sessionId }. A group's routines (the scheduled agent sessions of ADR 0004) are declared in the .clave file alone: this tool adds terminals, never routines.",
       inputSchema: {
         groupId: z.string().describe('Target group: a group id, an exact group name, or "mine"'),
         command: z.string().describe('Shell command this terminal runs, e.g. "npm run dev"'),
@@ -1025,6 +1026,65 @@ function buildServer(callerSessionId: string | undefined): McpServer {
       }
     },
     (args) => run('rename', args)
+  )
+
+  server.registerTool(
+    'clave_set_work',
+    {
+      description:
+        'Say which wave or lane a tab works on and its role, so the sidebar shows one stable entry per lane with its current lead, its verifier and its history, instead of one row per session. Use it when you coordinate a wave or lead a lane: for yourself ("mine", the default) or for a tab you can reach (one you opened, the one that opened you, or a tab in your group). A unit is a stable key you choose (a workstream stem, a run and lane id) with a short label; a lane may name its wave. Roles: coordinator (holds a wave), lead (holds a lane), verifier, worker. A role someone else holds is refused unless replace is true; to pass your own role to a successor use clave_hand_over. action "complete" marks your assignment done, "leave" removes it. clave_list shows every tab\'s assignment as work.',
+      inputSchema: {
+        sessionId: z
+          .string()
+          .optional()
+          .describe('The tab to assign: "mine" (the default) or a session id you can reach'),
+        action: z
+          .enum(['assign', 'complete', 'leave'])
+          .optional()
+          .describe('assign (the default), complete, or leave'),
+        unit: z
+          .string()
+          .max(200)
+          .optional()
+          .describe("The unit's stable key; defaults to your own unit when you assign a tab to it"),
+        kind: z.enum(['wave', 'lane']).optional().describe('Required for a new unit'),
+        label: z
+          .string()
+          .max(80)
+          .optional()
+          .describe('The short label the sidebar entry shows; required for a new unit'),
+        wave: z.string().max(200).optional().describe("A lane's wave, by its unit key"),
+        waveLabel: z.string().max(80).optional().describe("The wave's label, for the breadcrumb"),
+        role: z
+          .enum(['coordinator', 'lead', 'verifier', 'worker'])
+          .optional()
+          .describe('Required to assign'),
+        task: z.string().max(80).optional().describe("A worker's bounded task"),
+        replace: z
+          .boolean()
+          .optional()
+          .describe('Take the role over from the tab that holds it now (explicit reconciliation)')
+      }
+    },
+    (args) => run('setWork', { ...args, callerSessionId })
+  )
+
+  server.registerTool(
+    'clave_hand_over',
+    {
+      description:
+        "Hand your role in a wave or lane to a successor tab, or take over a role handed to you. As the holder: open the successor first (clave_open_session), then pass to: its session id; it shows as taking over and you keep the role until it accepts. As the successor: once you have read the handover, pass accept: true; the role becomes yours and the holder moves to the entry's history, its process left running. cancel: true withdraws your offer. The sidebar entry keeps its place through every handover, and a handover never accepted stays visible as pending.",
+      inputSchema: {
+        to: z.string().optional().describe("The successor's session id"),
+        accept: z.boolean().optional().describe('Take over the role handed to you'),
+        cancel: z.boolean().optional().describe('Withdraw your offer'),
+        replace: z
+          .boolean()
+          .optional()
+          .describe('With accept: take the role even if another tab holds it now')
+      }
+    },
+    (args) => run('handOver', { ...args, callerSessionId })
   )
 
   server.registerTool(
@@ -1331,6 +1391,60 @@ function buildServer(callerSessionId: string | undefined): McpServer {
             text: JSON.stringify({ ok: true, offerId: offer.id, label: offer.label })
           }
         ]
+      }
+    }
+  )
+
+  server.registerTool(
+    'clave_routine_report',
+    {
+      description:
+        'You are a Clave routine run: report your result. Call this ONCE when the job is done, with status (ok | attention | failed), a one-line headline, a markdown summary and data matching the routine schema named in your first message. Invalid data is refused with the errors: correct it and call again. A run that ends without a valid report counts as failed. Refused from any session that is not a routine run.',
+      inputSchema: {
+        status: z
+          .enum(['ok', 'attention', 'failed'])
+          .describe('ok, attention (the person must look), or failed'),
+        headline: z
+          .string()
+          .min(1)
+          .max(120)
+          .describe('One line, what the person needs to know at a glance'),
+        summary: z
+          .string()
+          .min(1)
+          .max(4000)
+          .describe('Markdown: what you did, what you found, what you propose'),
+        data: z
+          .unknown()
+          .describe('The object the routine schema describes; validated before it is taken')
+      }
+    },
+    async (args) => {
+      if (!callerSessionId) {
+        return errorResult(
+          'clave_routine_report requires a per-session token: it reports the run its caller is.'
+        )
+      }
+      try {
+        const api = await serverClient.api()
+        const result = await api.routines.report({
+          sessionId: callerSessionId,
+          status: args.status,
+          headline: args.headline,
+          summary: args.summary,
+          data: args.data
+        })
+        return { content: [{ type: 'text', text: JSON.stringify({ ok: true, ...result }) }] }
+      } catch (error) {
+        const detail = error as { message?: string; errors?: unknown; cause?: { errors?: unknown } }
+        const errors = Array.isArray(detail.errors)
+          ? detail.errors
+          : Array.isArray(detail.cause?.errors)
+            ? detail.cause.errors
+            : []
+        return errorResult(
+          [detail.message ?? String(error), ...errors.map((e) => `- ${String(e)}`)].join('\n')
+        )
       }
     }
   )

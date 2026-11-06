@@ -36,8 +36,12 @@ import {
   // ── Wave 4, lane C: the session records and a session's release ──
   DiscardSessionRecord,
   ListAdoptableRecords,
-  ReleaseSessions
+  ReleaseSessions,
+  // ── PRDCT-4123: which work a session does ──
+  ChangeSessionWork
 } from '@clave/contract/sessions'
+import { WorkChangeRefused } from '@clave/contract/work'
+import { WorkChangeRefusal, WorkSessionUnknown } from '@clave/contract/work-rules'
 import { SessionHost, type SessionHostService } from './port'
 import { ServerEvents } from '../events'
 
@@ -244,6 +248,35 @@ export const sessionHandlers = [
         page: payload.page,
         servingSessionId: payload.servingSessionId
       })
+    })
+  ),
+  // ── PRDCT-4123: which work a session does. The host applies the rule over
+  // every record it keeps; each record it rewrote is a fact the windows
+  // follow, published once the host wrote them all. A refusal is the rule's
+  // own words, and nothing is published. The subject need not be running:
+  // its record is enough (a person settles a lane whose candidate's process
+  // ended), and the host says when there is no record either. ──
+  CommandHandler.make(ChangeSessionWork, (payload) =>
+    Effect.gen(function* () {
+      const host = yield* SessionHost
+      const result = yield* Effect.try({
+        try: () => host.changeWork(payload.id, payload.change),
+        catch: (error) =>
+          error instanceof WorkSessionUnknown
+            ? new SessionNotFound({ id: payload.id })
+            : error instanceof WorkChangeRefusal
+              ? new WorkChangeRefused({ id: payload.id, message: error.message })
+              : error instanceof SessionNotFound || error instanceof CapabilityUnavailable
+                ? error
+                : new CapabilityUnavailable({ capability: 'sessions', message: messageOf(error) })
+      })
+      const events = yield* ServerEvents
+      for (const update of result.changed)
+        yield* events.publish({ _tag: 'session.work_changed', id: update.id, work: update.work })
+      // The names an accepted handover gave, told as any rename is.
+      for (const rename of result.renamed)
+        yield* events.publish({ _tag: 'session.renamed', id: rename.id, name: rename.name })
+      return { changed: result.changed, renamed: result.renamed }
     })
   ),
   QueryHandler.make(ReadSessionScreen, (payload) =>

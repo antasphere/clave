@@ -35,6 +35,18 @@ summary,
   cursor: pointer;
 }
 
+/* The app shell never scrolls: the window is one fixed frame of panes, each
+   with a scroller of its own. That frame is why every pane-level scroller
+   also declares `overscroll-behavior: contain` (`.chat-scroll`, the sidebar
+   viewport, the side panels, the lists in dialogs and popovers). A trackpad
+   gesture that reaches the end of a scroller latches to it only if the
+   scroller does not chain; a chaining one hands the gesture up to this root,
+   which has nothing to give back, and the native macOS rubber-band never
+   shows. Inner scrollers (a code block, a diff, a `pre` in a popover) stay
+   `auto` on the vertical axis so a wheel over them still reaches the pane.
+   The bounce itself is Chromium's own, switched on by the window's
+   `scrollBounce` (src/main/index.ts) and present for non-root scrollers from
+   Chromium 152 (Electron 44); nothing here imitates it. */
 html,
 body,
 #root {
@@ -163,6 +175,7 @@ body,
 .launcher-btn:focus-visible,
 .launcher-icon-btn:focus-visible,
 .launcher-caret:focus-visible,
+.work-card-open:focus-visible,
 .group-switcher-chip:focus-visible,
 .btn-icon:focus-visible,
 .btn-primary:focus-visible,
@@ -191,6 +204,33 @@ body,
    chrome's --ui-text-offset never reached: every label in the app moved but
    the trees. Here each size the panel uses takes the offset on top. The row
    height follows Density through --panel-row-h. */
+/* The side panel's panes (PRDCT-4142). Every pane visited stays mounted: the
+   file tree, the git list and a plugin's pane each keep their content, their
+   open rows, their scroll and a typed draft across a tab switch, so a return
+   redraws nothing. The inactive ones are hidden in place with their layout box
+   kept, since a pane taken out of layout (display: none) drops its scroll
+   offset with the box. The hooks behind a hidden pane are told it is inactive
+   and read nothing. */
+.panel-panes {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 0%;
+  min-height: 0;
+}
+.panel-pane {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 0%;
+  min-height: 0;
+}
+.panel-pane:not([data-active]) {
+  position: absolute;
+  inset: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+
 .side-panel :is(.text-xs) {
   font-size: calc(0.75rem + var(--ui-text-offset));
 }
@@ -511,6 +551,7 @@ canvas[data-orb-state] {
 }
 @media (prefers-reduced-motion: reduce) {
   .tab-status[data-status='working']::before,
+  .routine-button[data-working='true']::before,
   .sidebar-tab-spinner {
     animation-duration: 2.4s;
   }
@@ -1245,6 +1286,13 @@ canvas[data-orb-state] {
 }
 .panel-icon-btn:disabled {
   opacity: 0.4;
+  cursor: not-allowed;
+}
+/* A disabled control does not wake up under the pointer (the field guide's
+   "no hover fill"); the hover rule above would otherwise still fill it. */
+.panel-icon-btn:disabled:hover {
+  color: var(--text-tertiary);
+  background-color: transparent;
 }
 
 /* The root chip at the head of the path bar: one letter for which root the
@@ -2276,6 +2324,7 @@ canvas[data-orb-state] {
 .settings-scroller {
   flex: 1 1 0%;
   overflow-y: auto;
+  overscroll-behavior: contain;
   scrollbar-gutter: stable;
   padding: 2rem;
 }
@@ -2645,6 +2694,7 @@ canvas[data-orb-state] {
   min-width: var(--radix-dropdown-menu-trigger-width);
   max-height: min(20rem, var(--radix-dropdown-menu-content-available-height));
   overflow-y: auto;
+  overscroll-behavior: contain;
 }
 .select-option {
   font-size: 12px;
@@ -4088,6 +4138,7 @@ details[open] > .chat-tool-row .chat-tool-chevron,
   resize: none;
   field-sizing: content;
   overflow-y: auto;
+  overscroll-behavior: contain;
   overflow-wrap: anywhere;
   outline: none;
 }
@@ -4227,6 +4278,7 @@ details[open] > .chat-tool-row .chat-tool-chevron,
   flex-direction: column;
   max-height: calc(var(--spacing) * 72);
   overflow-y: auto;
+  overscroll-behavior: contain;
 }
 .chat-resume-option {
   display: flex;
@@ -4751,6 +4803,7 @@ details[open] > .chat-approval-items {
   flex-basis: 100%;
   max-height: 30vh;
   overflow-y: auto;
+  overscroll-behavior: contain;
   padding: var(--spacing) 0 calc(var(--spacing) * 1.5);
 }
 .chat-attachments {
@@ -4944,6 +4997,7 @@ details[open] > .chat-approval-items {
 .chat-attachment-dialog-body {
   max-height: 60vh;
   overflow: auto;
+  overscroll-behavior: contain;
   margin: 0 calc(var(--spacing) * 4);
   padding: calc(var(--spacing) * 3);
   border: 1px solid var(--border-subtle-color);
@@ -5181,6 +5235,7 @@ details[open] > .chat-approval-items {
 .chat-slash-list {
   max-height: calc(var(--spacing) * 72);
   overflow-y: auto;
+  overscroll-behavior: contain;
 }
 .chat-slash-option {
   gap: calc(var(--spacing) * 3);
@@ -5214,9 +5269,13 @@ details[open] > .chat-approval-items {
    untouched. */
 .terminal-view {
   --chat-column: var(--container-6xl);
+  /* The view's ink: the primary text eased a fifth of the way towards the
+     secondary, so a long transcript reads soft rather than heavy. */
+  --term-ink: color-mix(in oklch, var(--text-primary) 80%, var(--text-secondary));
 }
 .terminal-view .chat-prose {
   font-size: calc(var(--text-sm) + var(--spacing) / 4);
+  color: var(--term-ink);
 }
 .terminal-view .chat-turn-wrap[data-side='end'] {
   align-items: stretch;
@@ -5242,7 +5301,7 @@ details[open] > .chat-approval-items {
   font-size: var(--text-sm);
   font-weight: 450;
   line-height: 1.5;
-  color: var(--text-primary);
+  color: var(--term-ink);
 }
 /* The caret sits on the message's first line: a box one line tall at the
    padding's edge, the glyph centred in it, whatever the fonts' metrics. */
@@ -5604,7 +5663,9 @@ details[open] > .chat-approval-items {
   transition: border-color var(--default-transition-duration);
 }
 .term-prompt:focus-within {
-  border-color: var(--text-tertiary);
+  /* Focus darkens the two rules only a step: the field is focused nearly
+     all the time, and full tertiary ink made them the heaviest lines on screen. */
+  border-color: color-mix(in oklch, var(--text-tertiary) 35%, transparent);
 }
 .term-prompt[data-dragging='true'] {
   border-color: var(--color-accent);
@@ -5614,7 +5675,7 @@ details[open] > .chat-approval-items {
   padding-top: calc(var(--spacing) * 1.25);
   font-size: var(--text-sm);
   line-height: 1.5;
-  color: var(--text-primary);
+  color: var(--term-ink);
 }
 .term-prompt textarea {
   flex: 1;
@@ -5629,7 +5690,7 @@ details[open] > .chat-approval-items {
   font: inherit;
   font-size: var(--text-sm);
   line-height: 1.5;
-  color: var(--text-primary);
+  color: var(--term-ink);
   field-sizing: content;
   overflow-y: auto;
 }
@@ -5842,44 +5903,47 @@ details[open] > .chat-approval-items {
 /* The subagents, stacked under the status line while they run. Each row
    folds open as its agent starts and shut as it ends (a grid track going
    from 0fr to 1fr), and the stack's own rule and room go with its last row. */
-.term-agents {
+/* The work running now (WorkCards): one card per subagent and per command
+   left running, under the composer of both views. A card is its drawing
+   and two lines of text; the drawing breathes while the work goes on and
+   stills once an agent has been quiet a minute. A card folds open as its
+   work starts and folds shut as it ends, so the strip is held for the
+   length of the fold after a card has gone; the strip folds away with its
+   last card. Clicking a card opens the window onto its work. */
+.work-cards {
   display: grid;
   grid-template-rows: 1fr;
   margin-top: calc(var(--spacing) * 2);
-  padding-top: calc(var(--spacing) * 2);
-  border-top: thin dashed var(--border-subtle-color);
   font-size: var(--text-xs);
   transition:
     grid-template-rows calc(var(--default-transition-duration) * 2) var(--ease-out-expo),
     margin-top calc(var(--default-transition-duration) * 2) var(--ease-out-expo),
-    padding-top calc(var(--default-transition-duration) * 2) var(--ease-out-expo),
-    border-color calc(var(--default-transition-duration) * 2) var(--ease-out-expo),
     opacity calc(var(--default-transition-duration) * 2) var(--ease-out-expo);
   @starting-style {
     grid-template-rows: 0fr;
     margin-top: 0;
-    padding-top: 0;
-    border-color: transparent;
     opacity: 0;
   }
 }
-.term-agents[data-empty] {
+.work-cards[data-empty] {
   grid-template-rows: 0fr;
   margin-top: 0;
-  padding-top: 0;
-  border-color: transparent;
   opacity: 0;
 }
-.term-agents-list {
+.work-cards-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: calc(var(--spacing) * 2);
   min-height: 0;
   overflow: hidden;
   margin: 0;
-  padding: 0 calc(var(--spacing) * 2);
+  padding: 0;
   list-style: none;
 }
-.term-agent {
+.work-card {
   display: grid;
   grid-template-rows: 1fr;
+  inline-size: min(18rem, 100%);
   opacity: 1;
   transition:
     grid-template-rows calc(var(--default-transition-duration) * 2) var(--ease-out-expo),
@@ -5889,72 +5953,74 @@ details[open] > .chat-approval-items {
     opacity: 0;
   }
 }
-.term-agent[data-leaving] {
+.work-card[data-leaving] {
   grid-template-rows: 0fr;
   opacity: 0;
 }
-.term-agent-row {
+.work-card-row {
   display: flex;
-  align-items: baseline;
-  gap: calc(var(--spacing) * 2);
-  min-width: 0;
+  align-items: center;
+  gap: var(--spacing);
   min-height: 0;
   overflow: hidden;
-  padding: calc(var(--spacing) / 4) 0;
-  white-space: nowrap;
+  padding: calc(var(--spacing) * 1.5) calc(var(--spacing) * 2) calc(var(--spacing) * 1.5)
+    calc(var(--spacing) * 1.5);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background-color: var(--surface-0);
+  transition: border-color var(--default-transition-duration) var(--ease-out-expo);
 }
-.term-agent-dot {
-  position: relative;
+.work-card-row:hover {
+  border-color: color-mix(in oklab, var(--text-primary) 24%, var(--color-border));
+}
+/* The card's face is the button that opens the window onto its work; an
+   agent's model chip beside it is its own. */
+.work-card-open {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: calc(var(--spacing) * 2);
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.work-card-open:hover .term-agent-description,
+.work-card-open[data-state='open'] .term-agent-description {
+  text-decoration: underline dotted;
+  text-underline-offset: 0.2em;
+}
+.work-drawing {
   flex-shrink: 0;
-  align-self: center;
-  inline-size: calc(var(--spacing) * 1.5);
-  block-size: calc(var(--spacing) * 1.5);
-  margin-inline: calc(var(--spacing) * 0.75);
-  border-radius: var(--radius-full);
-  background-color: var(--color-status-working);
+  inline-size: calc(var(--spacing) * 9);
+  block-size: calc(var(--spacing) * 7.5);
+}
+/* The focal dot breathes while the work goes on; a quiet agent's rests. */
+.work-drawing .work-pulse {
+  transform-origin: center;
   animation: pulse-dot calc(var(--default-transition-duration) * 10) ease-in-out infinite;
 }
-.term-agent[data-background] .term-agent-dot {
-  background-color: var(--color-term-mode);
-}
-/* A background command's row: the terminal glyph where an agent's dot is,
-   breathing the same way. Twice the dot's size; the dot takes the same
-   width in margin (below) so the text column lines up. It used to pull
-   itself out with negative margins instead, and the row's overflow: hidden
-   (the fold) cut the glyph's edges off. */
-.term-agent-icon {
-  flex-shrink: 0;
-  align-self: center;
-  inline-size: calc(var(--spacing) * 3);
-  block-size: calc(var(--spacing) * 3);
-  color: var(--color-term-mode);
-  animation: pulse-dot calc(var(--default-transition-duration) * 10) ease-in-out infinite;
-}
-/* Each new step: a ring leaves the dot once. The element is remounted per
-   step, so the one-shot animation is the tick. */
-.term-agent-tick {
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  background-color: inherit;
-  animation: term-agent-tick calc(var(--default-transition-duration) * 5) var(--ease-out-expo)
-    forwards;
-}
-@keyframes term-agent-tick {
-  from {
-    opacity: 0.8;
-    scale: 1;
-  }
-  to {
-    opacity: 0;
-    scale: 3;
-  }
-}
-/* A minute without a step: the dot stops breathing and dims, and the row
-   says for how long. */
-.term-agent[data-quiet] .term-agent-dot {
+.work-drawing:not([data-working]) .work-pulse {
   animation: none;
-  opacity: 0.4;
+  opacity: 0.45;
+}
+.work-card-text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+  line-height: 1.4;
+}
+.work-card-title {
+  display: flex;
+  gap: calc(var(--spacing) * 1.5);
+  min-width: 0;
+  white-space: nowrap;
 }
 .term-agent-type {
   flex-shrink: 0;
@@ -5966,7 +6032,72 @@ details[open] > .chat-approval-items {
   text-overflow: ellipsis;
   color: var(--text-primary);
 }
-.term-agent-meta {
+.work-card-meta {
+  display: flex;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.work-card-meta > * + *::before {
+  content: '·';
+  padding-inline: calc(var(--spacing) * 1.5);
+}
+.term-agent-quiet {
+  color: var(--color-warning);
+}
+@media (prefers-reduced-motion: reduce) {
+  .work-drawing .work-pulse {
+    animation: none;
+  }
+}
+/* The window onto a subagent: the transcript's own rows, in a box over the
+   stack, the agent's name and figures on a line at its head. The box is
+   the popover's material; the scroller inside takes the height. */
+.term-peek {
+  /* Portaled out of .chat-host: the transcript's measures come along, the
+     glyph size the tool rows' chevrons and icons read in particular. */
+  --chat-column: 100%;
+  --chat-code-size: calc(var(--text-sm) - var(--spacing) / 4);
+  --chat-glyph: calc(var(--spacing) * 3.5);
+  display: flex;
+  flex-direction: column;
+  inline-size: min(40rem, calc(100vw - 2rem));
+  max-block-size: min(60vh, 36rem);
+  padding: 0;
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  line-height: 1.6;
+  color: var(--text-primary);
+}
+.term-peek-frame {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.term-peek-head {
+  display: flex;
+  flex-shrink: 0;
+  align-items: baseline;
+  gap: calc(var(--spacing) * 2);
+  padding: calc(var(--spacing) * 2) calc(var(--spacing) * 3);
+  border-bottom: 1px solid var(--color-border);
+  font-size: var(--text-xs);
+  white-space: nowrap;
+}
+.term-peek-type {
+  flex-shrink: 0;
+  color: var(--color-term-model);
+}
+.term-peek-description {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-primary);
+}
+.term-peek-meta {
   display: inline-flex;
   flex-shrink: 0;
   align-items: baseline;
@@ -5974,12 +6105,41 @@ details[open] > .chat-approval-items {
   color: var(--text-tertiary);
   font-variant-numeric: tabular-nums;
 }
-.term-agent-meta > * + *::before {
+.term-peek-meta > * + *::before {
   content: '·';
   padding-inline: calc(var(--spacing) * 1.5);
 }
-.term-agent-quiet {
-  color: var(--color-warning);
+.term-peek-scroll {
+  min-height: 0;
+  padding: calc(var(--spacing) * 3);
+}
+.term-peek-empty {
+  margin: 0;
+  padding: calc(var(--spacing) * 2) 0;
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+}
+/* The command's full line under the shell window's head, and its output. */
+.term-peek-command {
+  display: block;
+  flex-shrink: 0;
+  overflow: hidden;
+  padding: calc(var(--spacing) * 1.5) calc(var(--spacing) * 3);
+  border-bottom: 1px solid var(--color-border);
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.term-shell-output {
+  margin: 0;
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 /* The model a subagent runs on: a chip opening the relaunch menu when the
    agent can be stopped on its own, plain words when it cannot. */
@@ -6048,4 +6208,266 @@ button.term-agent-model:focus-visible {
   .chat-send[data-kind='stop'] svg[data-glyph='send'] {
     scale: none;
   }
+}
+
+/* ── Routines (ADR 0004) ──
+   A routine's toolbar button and its floating panel. The button is the
+   routine's own icon in its colour, and one signal at a time sits on it the
+   way a sidebar row's status slot works (`lib/tab-status.ts`): a run in
+   flight turns a ring around the icon (`.tab-status[data-status='working']`,
+   the app's one loader); a finished run the person has not seen is a STILL
+   dot in the run's tone on the icon's corner. Nothing pulses: a pulse reads
+   as an alarm, and a run on its way is not one (Romain, 6 November 2026). */
+.routine-dot {
+  display: inline-block;
+  flex-shrink: 0;
+  width: calc(var(--spacing) * 1.5);
+  height: calc(var(--spacing) * 1.5);
+  border-radius: 9999px;
+  background-color: var(--color-status-inactive);
+}
+.routine-dot[data-tone='ok'] {
+  background-color: var(--color-status-ready);
+}
+.routine-dot[data-tone='attention'],
+.routine-dot[data-tone='waiting'] {
+  background-color: var(--color-status-waiting);
+}
+.routine-dot[data-tone='failed'],
+.routine-dot[data-tone='invalid'] {
+  background-color: var(--color-destructive);
+}
+.routine-dot[data-tone='running'] {
+  background-color: var(--color-status-working);
+}
+/* On the toolbar icon's corner, ringed in the bar's ground so it reads over
+   the glyph's strokes. */
+.routine-badge-dot {
+  position: absolute;
+  right: calc(var(--spacing) * 0.75);
+  bottom: calc(var(--spacing) * 0.75);
+  box-shadow: 0 0 0 1.5px var(--surface-0);
+}
+/* The panel's loader while a run is in flight: the sidebar's eight-segment
+   spinner at a glyph's size, in the working blue. */
+.routine-spinner {
+  display: inline-flex;
+  flex-shrink: 0;
+  width: calc(var(--spacing) * 4);
+  height: calc(var(--spacing) * 4);
+  color: var(--color-status-working);
+}
+.routine-spinner > .sidebar-tab-spinner {
+  width: 100%;
+  height: 100%;
+}
+/* The panel's state view (a run in flight, a run waiting, no run yet): the
+   chat's empty-state shape, centred in the report area, with the drawing
+   above the words when there is one. */
+.routine-state {
+  margin: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: calc(var(--spacing) * 2);
+  padding: calc(var(--spacing) * 6) calc(var(--spacing) * 5);
+  text-align: center;
+}
+.routine-state .chat-drawing {
+  width: calc(var(--spacing) * 44);
+  max-width: 100%;
+  height: auto;
+  margin-bottom: calc(var(--spacing) * 1);
+}
+.routine-state strong {
+  color: var(--text-primary);
+  font-size: var(--text-sm);
+  font-weight: var(--font-weight-medium);
+}
+.routine-state > span:not(.routine-spinner, .routine-dot, .routine-meta) {
+  max-width: 34ch;
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+  line-height: 1.45;
+}
+.routine-state[data-tone='waiting'] strong {
+  color: var(--color-status-waiting);
+}
+/* The ring around the toolbar icon while a run is in flight: the rule of
+   `.tab-status[data-status='working']`, on the button itself so its glyph
+   stays a direct child and keeps the framed glyph size at every density;
+   its reduced-motion pace sits with the sidebar spinner's, above (the chat
+   motion test reads the LAST reduced-motion block of this file as the
+   chat's own). */
+.routine-button[data-working='true']::before {
+  content: '';
+  position: absolute;
+  inset: calc(var(--spacing) * 0.75);
+  border-radius: 9999px;
+  border: 1.5px solid color-mix(in srgb, currentColor 22%, transparent);
+  border-top-color: currentColor;
+  animation: tab-status-spin 0.9s linear infinite;
+}
+
+/* The placeholder under the deck's guest until its first paint: the panel's
+   ground and, after a wait, the spinner and the words. It sits UNDER the
+   guest (a guest paints above every DOM sibling anyway) and stays mounted,
+   hidden once the deck shows, so the layer tree never changes under the
+   guest; the guest's own opacity is what reveals the deck. */
+.routine-veil {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  background-color: var(--surface-0);
+}
+/* The veil's words wait: a deck that paints within 700 ms (the popover's
+   rise, the guest's mount, the viewer's answer) shows the panel's ground and
+   then the page, never a flash of "Opening the report"; only a slow viewer
+   earns the spinner and the words, which then fade in. */
+.routine-veil > * {
+  animation: scrim-in 200ms ease-out 700ms both;
+}
+/* The history: menu rows, the tone dot first, the headline, then the time,
+   the duration and the trigger in tabular figures so a column of runs lines
+   up. The same line heads the report card. */
+.routine-meta {
+  flex-shrink: 0;
+  color: var(--text-tertiary);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* The panel: a column the size the routine declares. */
+.routine-panel {
+  outline: none;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+/* The title, in the manner of a menu's head: the routine's icon on a soft
+   tile in its colour, the name, and one quiet line saying when it runs. */
+.routine-head {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--spacing) * 3);
+  padding: calc(var(--spacing) * 3.5) calc(var(--spacing) * 4) calc(var(--spacing) * 2.5);
+}
+.routine-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: calc(var(--control-h-md) + var(--spacing) * 2);
+  height: calc(var(--control-h-md) + var(--spacing) * 2);
+  border-radius: var(--radius-xl);
+  background-color: var(--surface-100);
+}
+.routine-mark > svg {
+  width: calc(var(--spacing) * 5);
+  height: calc(var(--spacing) * 5);
+}
+.routine-head-text {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--spacing) * 0.5);
+  min-width: 0;
+}
+.routine-head-title {
+  color: var(--text-primary);
+  font-size: var(--control-text);
+  font-weight: var(--font-weight-medium);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.routine-head-sub {
+  color: var(--text-tertiary);
+  font-size: var(--control-text-sm);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.routine-head-sub::first-letter {
+  text-transform: uppercase;
+}
+/* One row: the tabs on the left, Run now and the small menu on the right. */
+.routine-nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: calc(var(--spacing) * 2);
+  padding: 0 calc(var(--spacing) * 3) calc(var(--spacing) * 2.5) calc(var(--spacing) * 4);
+  border-bottom: thin solid var(--border-subtle-color);
+}
+.routine-nav-actions {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+/* The small menu under the More button, held inside the panel (a second
+   portal would read as a click outside the popover and close it). */
+.routine-menu {
+  position: absolute;
+  top: calc(100% + var(--spacing));
+  right: 0;
+  z-index: 20;
+  min-width: calc(var(--spacing) * 44);
+  padding: var(--surface-inset);
+}
+/* The stage the bodies cross-fade on: one box, each body filling it, so the
+   one leaving and the one arriving overlap. */
+.routine-stage {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+}
+.routine-body {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+}
+.routine-note {
+  margin: calc(var(--spacing) * 3) calc(var(--spacing) * 4) 0;
+  color: var(--text-secondary);
+  font-size: var(--control-text-sm);
+}
+.routine-note[data-tone='failed'] {
+  color: var(--color-destructive);
+}
+/* The Runs tab: the facts as a quiet two-column list, then the runs. */
+.routine-runs {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: auto;
+}
+.routine-facts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: calc(var(--spacing) * 3) calc(var(--spacing) * 4);
+  margin: 0;
+  padding: calc(var(--spacing) * 4);
+  border-bottom: thin solid var(--border-subtle-color);
+}
+.routine-facts dt {
+  color: var(--text-tertiary);
+  font-size: 11px;
+}
+.routine-facts dd {
+  margin: 2px 0 0;
+  color: var(--text-primary);
+  font-size: var(--control-text-sm);
+  font-variant-numeric: tabular-nums;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.routine-history {
+  margin: 0;
+  padding: calc(var(--spacing) * 2) calc(var(--spacing) * 2);
+  list-style: none;
 }

@@ -34,7 +34,7 @@ function FleetDialog({
         </Dialog.Overlay>
         <Dialog.Content asChild onCloseAutoFocus={(event) => event.preventDefault()}>
           <ModalPositioner className="w-[min(92vw,40rem)]">
-            <div className="modal-card modal-pop w-full max-h-[80vh] overflow-auto p-5 flex flex-col gap-3">
+            <div className="modal-card modal-pop w-full max-h-[80vh] overflow-auto overscroll-contain p-5 flex flex-col gap-3">
               <Dialog.Title className="text-base text-text-primary">{title}</Dialog.Title>
               <Dialog.Description className="text-xs text-text-secondary">
                 Use the selected Clave server over your private network.

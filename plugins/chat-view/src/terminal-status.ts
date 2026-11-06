@@ -1,6 +1,7 @@
 import type { BackgroundTask, SessionEvent } from '../../../src/shared/session-model'
 import { describeToolHead } from './tools'
 import { claudeModelName } from '../../../src/shared/claude-models'
+import { commandTitle } from '../../../src/shared/command-title'
 
 /** The Terminal view's status line, read off the same session stream the
  *  transcript is: how full the context is (`context_usage`), and the work
@@ -27,7 +28,14 @@ export interface SubAgent {
   /** What the agent is (`general-purpose`, `Explore`, …), as the call asked;
    *  `shell` for a command. */
   type: string
+  /** What the row says: the agent's task, or a command's title (the call's
+   *  own `description` when it gives one, else the command shortened). */
   description: string
+  /** A command's full text, for the row's tooltip; null for an agent. */
+  command: string | null
+  /** Where the provider writes a command's output, when it says (Claude's
+   *  background shells); null for an agent, or a command it names none for. */
+  outputFile: string | null
   /** Run in the background (the CLI's default) rather than waited on by the turn. */
   background: boolean
   startedAt: number
@@ -105,14 +113,17 @@ function fromBackground(task: BackgroundTask, known: SubAgent | undefined): SubA
     fromAgentTool: known?.fromAgentTool ?? false,
     requestedBackground: false,
     type: known?.type ?? kind,
-    // A command keeps the text its card opened with (the command itself);
-    // the provider may name it otherwise (Claude's Bash `description`). A
-    // task with no card of its own, and an agent, read as the provider says.
+    // A command keeps the title its card opened with (its call's own
+    // description, else the command shortened), so a promotion never renames
+    // it. A task with no card of its own, and an agent, read as the provider
+    // says (the adapters title a shell the same way).
     description:
       (known?.kind === 'shell' && known.description) ||
       task.description ||
       known?.description ||
       '',
+    command: known?.command ?? task.command ?? null,
+    outputFile: task.outputFile ?? known?.outputFile ?? null,
     background: true,
     startedAt: known?.startedAt ?? task.startedAt,
     lastAction: known?.lastAction ?? null,
@@ -158,6 +169,7 @@ export function reduceStatus(
         // no task of its own: the command it polls already has its row.
         if (input.source === 'unifiedExecInteraction') return status
         const claude = event.name === CLAUDE_BASH
+        const line = claude ? text(input.command) : commandOf(input)
         const command: SubAgent = {
           id: event.id,
           taskId: null,
@@ -165,7 +177,11 @@ export function reduceStatus(
           fromAgentTool: false,
           requestedBackground: claude && input.run_in_background === true,
           type: 'shell',
-          description: claude ? text(input.command) : commandOf(input),
+          // Claude writes a title for each call; a call without one, and
+          // every Codex command, reads by the command shortened.
+          description: (claude && text(input.description).trim()) || commandTitle(line),
+          command: line,
+          outputFile: null,
           background: false,
           startedAt: now,
           lastAction: null,
@@ -185,6 +201,8 @@ export function reduceStatus(
         requestedBackground: false,
         type: text(input.subagent_type) || 'agent',
         description: text(input.description),
+        command: null,
+        outputFile: null,
         background: input.run_in_background === true,
         startedAt: now,
         lastAction: null,
@@ -268,21 +286,6 @@ export function shownWork(agents: SubAgent[]): SubAgent[] {
   return agents.filter(
     (agent) => agent.kind !== 'shell' || agent.background || agent.requestedBackground
   )
-}
-
-/** The status line's count of the work it shows: the subagents and the
- *  commands counted apart, each by its own word ("3 agents · 4 commands"),
- *  since a command left running is no agent; empty when nothing runs. The
- *  rows say the rest. */
-export function runningLabel(work: SubAgent[]): string {
-  const agents = work.filter((item) => item.kind === 'agent').length
-  const commands = work.filter((item) => item.kind === 'shell').length
-  return [
-    agents > 0 ? `${agents} agent${agents === 1 ? '' : 's'}` : '',
-    commands > 0 ? `${commands} command${commands === 1 ? '' : 's'}` : ''
-  ]
-    .filter(Boolean)
-    .join(' · ')
 }
 
 /** "12k", "1M": the status line's own compact count. */

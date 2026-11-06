@@ -52,6 +52,9 @@ export function hardenViewHost(win: BrowserWindow): void {
     webPreferences.contextIsolation = true
     webPreferences.sandbox = true
     webPreferences.webSecurity = true
+    // The guest scrolls like the app around it: the native macOS rubber-band
+    // (see the main window's `scrollBounce` in index.ts for the full story).
+    webPreferences.scrollBounce = true
     if (!ATTACHABLE.test(params.src ?? '')) event.preventDefault()
   })
 }

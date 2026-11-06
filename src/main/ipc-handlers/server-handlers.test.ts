@@ -75,10 +75,10 @@ describe('saved fleet connection IPC', () => {
       {
         storage: fileStorage(dir),
         secrets: {
-          available: () => true,
-          seal: () => 'opaque-ref',
-          open: () => 'private-token',
-          discard: vi.fn()
+          available: async () => true,
+          seal: async () => 'opaque-ref',
+          open: async () => 'private-token',
+          discard: vi.fn(async () => {})
         }
       },
       () => 'server-a'
@@ -93,12 +93,12 @@ describe('saved fleet connection IPC', () => {
     return handler!({}, ...args)
   }
 
-  it('returns only public records and broadcasts save/disconnect/connect/remove to all windows', () => {
-    const saved = invoke(FLEET_IPC.save, {
+  it('returns only public records and broadcasts save/disconnect/connect/remove to all windows', async () => {
+    const saved = (await invoke(FLEET_IPC.save, {
       name: 'VPS',
       url: 'http://100.64.0.1:9000',
       token: 'private-token'
-    }) as SavedServerConnection
+    })) as SavedServerConnection
     expect(saved).toEqual({
       id: 'server-a',
       name: 'VPS',
@@ -106,11 +106,14 @@ describe('saved fleet connection IPC', () => {
       enabled: true
     })
     expect(invoke(FLEET_IPC.list)).toEqual([saved])
-    expect(invoke(FLEET_IPC.endpoint, saved.id)).toEqual({ url: saved.url, token: 'private-token' })
+    expect(await invoke(FLEET_IPC.endpoint, saved.id)).toEqual({
+      url: saved.url,
+      token: 'private-token'
+    })
     expect(invoke(FLEET_IPC.disconnect, saved.id)).toEqual({ ...saved, enabled: false })
-    expect(() => invoke(FLEET_IPC.endpoint, saved.id)).toThrow(/disconnected/i)
+    await expect(invoke(FLEET_IPC.endpoint, saved.id)).rejects.toThrow(/disconnected/i)
     expect(invoke(FLEET_IPC.connect, saved.id)).toEqual(saved)
-    invoke(FLEET_IPC.remove, saved.id)
+    await invoke(FLEET_IPC.remove, saved.id)
     expect(invoke(FLEET_IPC.list)).toEqual([])
     expect(sent).toEqual(
       Array.from({ length: 4 }, () => [
@@ -122,14 +125,14 @@ describe('saved fleet connection IPC', () => {
     expect(handlers.get('server:endpoint')?.()).toBeNull()
   })
 
-  it('does not broadcast failed mutations and leaves the local endpoint intact', () => {
+  it('does not broadcast failed mutations and leaves the local endpoint intact', async () => {
     setClaveServerEndpoint({ url: 'http://127.0.0.1:9', token: 'local-token', mode: 'in-process' })
     sent.length = 0
-    expect(() =>
+    await expect(
       invoke(FLEET_IPC.save, { name: 'bad', url: 'http://user:private-token@host' })
-    ).toThrow()
-    expect(() => invoke(FLEET_IPC.remove, 'missing')).toThrow()
-    expect(() => invoke(FLEET_IPC.endpoint, 'local')).toThrow()
+    ).rejects.toThrow()
+    await expect(invoke(FLEET_IPC.remove, 'missing')).rejects.toThrow()
+    await expect(invoke(FLEET_IPC.endpoint, 'local')).rejects.toThrow()
     expect(sent).toEqual([])
     expect(handlers.get('server:endpoint')?.()).toEqual({
       url: 'http://127.0.0.1:9',
@@ -152,14 +155,14 @@ describe('the version sync behind the fleet IPC (issue #266)', () => {
       {
         storage: fileStorage(dir),
         secrets: {
-          available: () => true,
-          seal: (token: string) => {
+          available: async () => true,
+          seal: async (token: string) => {
             const ref = `ref-${++tokens}`
             sealed.set(ref, token)
             return ref
           },
-          open: (ref: string) => sealed.get(ref)!,
-          discard: vi.fn()
+          open: async (ref: string) => sealed.get(ref)!,
+          discard: vi.fn(async () => {})
         }
       },
       () => `server-${++ids}`
@@ -187,7 +190,11 @@ describe('the version sync behind the fleet IPC (issue #266)', () => {
     }
     registerServerHandlers(registry, { versionSync: sync })
     expect(calls).toEqual(['start'])
-    invoke(FLEET_IPC.save, { name: 'VPS', url: 'http://100.64.0.1:9000', token: 'private-token' })
+    await invoke(FLEET_IPC.save, {
+      name: 'VPS',
+      url: 'http://100.64.0.1:9000',
+      token: 'private-token'
+    })
     expect(calls).toEqual(['start', 'refresh'])
     expect(await invoke(FLEET_IPC.versions)).toEqual([])
     expect(await invoke(FLEET_IPC.versions, true)).toEqual([])
@@ -243,8 +250,8 @@ describe('the version sync behind the fleet IPC (issue #266)', () => {
     stops.push(() => new Promise((resolve) => old.close(resolve)))
     const oldUrl = `http://127.0.0.1:${(old.address() as { port: number }).port}`
     registerServerHandlers(registry)
-    registry.save({ name: 'VPS', url: daemon.url, token: daemon.token })
-    registry.save({ name: 'Old', url: oldUrl, token: 'old-token' })
+    await registry.save({ name: 'VPS', url: daemon.url, token: daemon.token })
+    await registry.save({ name: 'Old', url: oldUrl, token: 'old-token' })
     const results = (await invoke(FLEET_IPC.versions, true)) as Array<Record<string, unknown>>
     expect(results).toEqual([
       expect.objectContaining({
@@ -291,7 +298,7 @@ describe('the version sync behind the fleet IPC (issue #266)', () => {
       })
       stops.push(() => daemon.stop())
       registerServerHandlers(registry)
-      registry.save({ name: 'VPS', url: daemon.url, token: daemon.token })
+      await registry.save({ name: 'VPS', url: daemon.url, token: daemon.token })
       const [result] = (await invoke(FLEET_IPC.versions, true)) as Array<Record<string, unknown>>
       expect(result).toMatchObject({ kind: 'upgrade', automatic: false })
       await expect(invoke(FLEET_IPC.upgradeNow, 'server-1') as Promise<unknown>).rejects.toThrow(

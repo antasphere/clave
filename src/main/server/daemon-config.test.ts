@@ -73,47 +73,47 @@ describe('daemon configuration and credential persistence', () => {
 })
 
 describe('Linux file secret port', () => {
-  it('encrypts Unicode secrets durably, keeps key/value files private, and discards one handle', () => {
+  it('encrypts Unicode secrets durably, keeps key/value files private, and discards one handle', async () => {
     const dir = join(directory(), 'secrets')
     const port = fileSecrets({ directory: dir })
-    expect(port.available()).toBe(true)
+    expect(await port.available()).toBe(true)
     const plain = 'private-token-é\nwith-newline'
-    const handle = port.seal(plain)
+    const handle = await port.seal(plain)
     expect(handle).not.toContain(plain)
-    expect(fileSecrets({ directory: dir }).open(handle)).toBe(plain)
+    expect(await fileSecrets({ directory: dir }).open(handle)).toBe(plain)
     for (const name of fs.readdirSync(dir)) {
       const file = join(dir, name)
       expect(fs.statSync(file).mode & 0o777).toBe(0o600)
       expect(fs.readFileSync(file).includes(Buffer.from(plain))).toBe(false)
     }
-    expect(port.open('keychain:foreign')).toBeUndefined()
-    expect(port.open('file:v1:../../outside')).toBeUndefined()
-    port.discard(handle)
-    expect(port.open(handle)).toBeUndefined()
+    expect(await port.open('keychain:foreign')).toBeUndefined()
+    expect(await port.open('file:v1:../../outside')).toBeUndefined()
+    await port.discard(handle)
+    expect(await port.open(handle)).toBeUndefined()
   })
 
-  it('rejects ciphertext swapping/tampering, exposed keys, and missing-key regeneration', () => {
+  it('rejects ciphertext swapping/tampering, exposed keys, and missing-key regeneration', async () => {
     const dir = join(directory(), 'secrets')
     const port = fileSecrets({ directory: dir })
-    const first = port.seal('first-token')
-    const second = port.seal('second-token')
+    const first = await port.seal('first-token')
+    const second = await port.seal('second-token')
     const file = (handle: string): string => join(dir, `${handle.slice('file:v1:'.length)}.secret`)
     fs.copyFileSync(file(first), file(second))
-    expect(port.open(second)).toBeUndefined()
+    expect(await port.open(second)).toBeUndefined()
     fs.chmodSync(join(dir, 'master.key'), 0o644)
-    expect(port.available()).toBe(false)
-    expect(port.open(first)).toBeUndefined()
-    expect(() => port.seal('secret')).toThrow()
+    expect(await port.available()).toBe(false)
+    expect(await port.open(first)).toBeUndefined()
+    await expect(port.seal('secret')).rejects.toThrow()
     fs.unlinkSync(join(dir, 'master.key'))
-    expect(port.available()).toBe(false)
-    expect(() => port.seal('secret')).toThrow('missing')
+    expect(await port.available()).toBe(false)
+    await expect(port.seal('secret')).rejects.toThrow('missing')
   })
 
-  it('selects encrypted file storage for Linux standalone settings', () => {
+  it('selects encrypted file storage for Linux standalone settings', async () => {
     const dir = directory()
     const port = standalonePorts({ dataDir: dir, platform: 'linux' }).secrets
-    const handle = port.seal('linux-settings-token')
-    expect(standalonePorts({ dataDir: dir, platform: 'linux' }).secrets.open(handle)).toBe(
+    const handle = await port.seal('linux-settings-token')
+    expect(await standalonePorts({ dataDir: dir, platform: 'linux' }).secrets.open(handle)).toBe(
       'linux-settings-token'
     )
   })

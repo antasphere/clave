@@ -24,7 +24,7 @@ export function AgentChatPanel(): React.JSX.Element {
   return (
     <div className="flex-1 flex flex-col min-h-0">
       <AgentHeader />
-      <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-6">
+      <div ref={scrollRef} className="flex-1 overflow-y-auto overscroll-contain px-4 py-6">
         {messages.length === 0 ? (
           <div className="flex items-center justify-center h-full">
             <p className="text-sm text-text-tertiary">Start a conversation with {agent.name}</p>

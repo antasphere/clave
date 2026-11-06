@@ -1,4 +1,5 @@
-import { ipcMain, dialog, shell, BrowserWindow } from 'electron'
+import { ipcMain, shell, BrowserWindow } from 'electron'
+import { openDialogs } from '../dialog-paths'
 import net from 'node:net'
 import http from 'node:http'
 import https from 'node:https'
@@ -85,7 +86,7 @@ export function registerShellHandlers(): void {
 
   ipcMain.handle('dialog:openFolder', async (_event, defaultPath?: string) => {
     const win = BrowserWindow.fromWebContents(_event.sender)
-    const result = await dialog.showOpenDialog(win!, {
+    const result = await openDialogs.open('folder', win ?? undefined, {
       properties: ['openDirectory'],
       ...(defaultPath ? { defaultPath } : {})
     })

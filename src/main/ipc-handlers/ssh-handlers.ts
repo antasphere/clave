@@ -6,7 +6,7 @@ import { broadcastToAllWindows } from '../window-routing'
 
 export function registerSshHandlers(): void {
   ipcMain.handle('ssh:connect', async (_event, locationId: string) => {
-    const config = locationManager.getCredentials(locationId)
+    const config = await locationManager.getCredentials(locationId)
     if (!config) throw new Error('No credentials for location')
     await sshManager.connect(locationId, config)
     locationManager.setLocationStatus(locationId, 'connected')

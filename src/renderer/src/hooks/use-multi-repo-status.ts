@@ -4,6 +4,7 @@ import { useSessionStore } from '../store/session-store'
 import { useGitBatch } from '../components/git/git-batch-context'
 import { startPollLoop } from '../lib/poll-loop'
 import { repoDisplayName } from '../lib/git-paths'
+import { primeGitStatus } from './use-git-status'
 import {
   GIT_FETCH_JITTER_MS,
   GIT_FETCH_POLL_MS,
@@ -15,7 +16,18 @@ import {
   newWatchSubscriberId
 } from '../lib/git-poll'
 
-type RepoEntry = { name: string; path: string; status: GitStatusResult }
+/** One row of the list. `status` is `null` while the row's first reading is
+ *  on its way: the row is there by name, in its place, and its badges land
+ *  when git answers (PRDCT-4142). */
+export type RepoEntry = {
+  name: string
+  path: string
+  status: GitStatusResult | null
+  /** The source repository of a linked worktree, as discovery read it from
+   *  the worktree's `.git` file: the row hangs under its source from the
+   *  first frame, before its status says the same. */
+  worktreeOf: string | null
+}
 
 export type MultiRepoMode =
   | { mode: 'single' }
@@ -28,6 +40,15 @@ export type MultiRepoMode =
  * Switching from the git tab to the files tab and back used to reset the
  * panel to its loading state and wait for the whole tree to be read again;
  * now the panel opens on what it last showed and the read refreshes it.
+ *
+ * A first reading is published in stages rather than at its end (PRDCT-4142).
+ * It used to read the root, discover the nested repositories, read every one
+ * of them in one batch and publish once the slowest had answered, so a
+ * workspace of ninety repositories showed nothing for the whole wait. Now the
+ * root's status is shown as soon as git returns it, every nested row appears
+ * by name the moment discovery returns, in discovery's order, and each row's
+ * badges land as its own status does. Nothing moves: the rows are fixed at
+ * discovery, and a status fills its row in place.
  */
 interface CachedReading {
   result: MultiRepoMode
@@ -35,6 +56,14 @@ interface CachedReading {
   hasNestedRepos: boolean
 }
 const readingCache = new Map<string, CachedReading>()
+
+/** How long the first reading of a repository folder waits for discovery
+ *  before showing the single-repo panel. A discovery that answers within it
+ *  (the usual case: a plain repository, or a folder discovery has cached)
+ *  publishes the final shape directly, so a folder that turns out to hold
+ *  nested repositories is not drawn as a single repository and then as a
+ *  list. A slower discovery still gets the root on screen first. */
+export const FIRST_READ_GRACE_MS = 150
 
 export function useMultiRepoStatus(
   cwd: string | null,
@@ -106,41 +135,109 @@ export function useMultiRepoStatus(
     async (force = false) => {
       if (!cwd || !window.electronAPI) return
 
+      // What this folder's rows already show: a row keeps its last badges
+      // while its new reading is on its way, and only a row never read shows
+      // the reading state.
+      const known = (): Map<string, GitStatusResult> => {
+        const prev = readingCache.get(cwd)?.result
+        const m = new Map<string, GitStatusResult>()
+        if (prev?.mode === 'multi')
+          for (const r of prev.repos) if (r.status) m.set(r.path, r.status)
+        return m
+      }
+      const publish = (next: MultiRepoMode): void => {
+        if (cwdRef.current === cwd) setResult(next)
+      }
+      // Stage 3: one read per row, through main's queue, each folded into the
+      // list as it lands. The round ends when the last one has answered, so the
+      // poll loop never starts the next round beside it.
+      const readEach = async (paths: string[]): Promise<void> => {
+        await Promise.all(
+          paths.map(async (path) => {
+            try {
+              const status = await window.electronAPI.getGitStatus(path)
+              if (cwdRef.current !== cwd) return
+              setResultState((prev) => {
+                const next = mergeStatuses(prev, [{ path, status }])
+                if (next !== prev) remember(cwd, { result: next })
+                return next
+              })
+            } catch (error) {
+              // The row keeps what it had, or its reading state; the next
+              // round reads it again.
+              if (cwdRef.current === cwd)
+                console.warn(
+                  '[clave] git repo read failed',
+                  path,
+                  error instanceof Error ? error.message : 'Failed to get git status'
+                )
+            }
+          })
+        )
+        if (cwdRef.current === cwd) setLastUpdated(Date.now())
+      }
+
       try {
         const status = await window.electronAPI.getGitStatus(cwd)
         if (cwdRef.current !== cwd) return
 
         if (status.isRepo) {
-          const { repos: nested } = await window.electronAPI.discoverGitRepos(cwd, force)
+          // Stage 1: the root is a repository and its status is in hand. The
+          // single-repo panel opens on it now (primed, so it does not ask git
+          // again); discovery decides below whether nested repositories turn
+          // the folder into a list, and a list already shown gets its root
+          // row's status refreshed in place.
+          primeGitStatus(cwd, status)
+          const prev = readingCache.get(cwd)?.result
+          const discovery = window.electronAPI.discoverGitRepos(cwd, force)
+          if (prev?.mode === 'multi') {
+            publish(mergeStatuses(prev, [{ path: cwd, status }]))
+          } else if (!prev || prev.mode === 'loading') {
+            // A discovery that answers within the grace skips this stage.
+            const answered = await Promise.race([
+              discovery.then(
+                () => true,
+                () => true
+              ),
+              new Promise<boolean>((resolve) =>
+                setTimeout(() => resolve(false), FIRST_READ_GRACE_MS)
+              )
+            ])
+            if (cwdRef.current !== cwd) return
+            if (!answered) publish({ mode: 'single' })
+          }
+
+          const { repos: nested } = await discovery
           if (cwdRef.current !== cwd) return
 
           setHasNestedRepos(nested.length > 0)
 
           if (nested.length === 0) {
-            setResult({ mode: 'single' })
+            publish({ mode: 'single' })
+            setLastUpdated(Date.now())
             return
           }
 
-          // Root + nested repos. Reuse the status we already have for the root.
+          // Stage 2: every row by name, the root's status in hand, each nested
+          // row's last known status or the reading state.
           const rootName = repoDisplayName(cwd)
-          const nameByPath = new Map<string, string>([[cwd, rootName]])
-          for (const r of nested) nameByPath.set(r.path, r.name)
-
-          const allPaths = [cwd, ...nested.map((r) => r.path)]
-          const live = isLive(allPaths.length)
-          const statuses = await window.electronAPI.getGitStatusBatch(nested.map((r) => r.path))
-          if (cwdRef.current !== cwd) return
-
-          const repos: RepoEntry[] = [
-            { name: rootName, path: cwd, status },
-            ...statuses.map((s) => ({
-              name: nameByPath.get(s.path) ?? s.path,
-              path: s.path,
-              status: s.status
-            }))
-          ]
-          setResult({ mode: 'multi', repos, truncated: false, live })
-          setLastUpdated(Date.now())
+          const live = isLive(nested.length + 1)
+          const was = known()
+          publish({
+            mode: 'multi',
+            repos: [
+              { name: rootName, path: cwd, status, worktreeOf: null },
+              ...nested.map((r) => ({
+                name: r.name,
+                path: r.path,
+                status: was.get(r.path) ?? null,
+                worktreeOf: r.worktreeOf ?? null
+              }))
+            ],
+            truncated: false,
+            live
+          })
+          await readEach(nested.map((r) => r.path))
           return
         }
 
@@ -154,22 +251,25 @@ export function useMultiRepoStatus(
         if (cwdRef.current !== cwd) return
 
         if (discovered.length === 0) {
-          setResult({ mode: 'none' })
+          publish({ mode: 'none' })
+          setLastUpdated(Date.now())
           return
         }
 
         const live = isLive(discovered.length)
-        const nameByPath = new Map(discovered.map((r) => [r.path, r.name]))
-        const statuses = await window.electronAPI.getGitStatusBatch(discovered.map((r) => r.path))
-        if (cwdRef.current !== cwd) return
-
-        const repos: RepoEntry[] = statuses.map((s) => ({
-          name: nameByPath.get(s.path) ?? s.path,
-          path: s.path,
-          status: s.status
-        }))
-        setResult({ mode: 'multi', repos, truncated, live })
-        setLastUpdated(Date.now())
+        const was = known()
+        publish({
+          mode: 'multi',
+          repos: discovered.map((r) => ({
+            name: r.name,
+            path: r.path,
+            status: was.get(r.path) ?? null,
+            worktreeOf: r.worktreeOf ?? null
+          })),
+          truncated,
+          live
+        })
+        await readEach(discovered.map((r) => r.path))
       } catch (error) {
         if (cwdRef.current !== cwd) return
         console.warn(
@@ -189,7 +289,9 @@ export function useMultiRepoStatus(
 
   // On a folder change or a return to the git tab: show the folder's last
   // reading at once (the loading state only for a folder never read), then
-  // read it again.
+  // read it again — unless that reading is younger than the poll interval,
+  // in which case it is as fresh as a new one would be and the loop's own
+  // schedule takes over. A quick bounce between tabs costs no read.
   useEffect(() => {
     cwdRef.current = cwd
     if (!cwd) {
@@ -201,6 +303,7 @@ export function useMultiRepoStatus(
     setHasNestedReposState(cached?.hasNestedRepos ?? false)
     setLastUpdatedState(cached?.lastUpdated ?? null)
     if (!active) return
+    if (cached?.lastUpdated != null && Date.now() - cached.lastUpdated < GIT_STATUS_POLL_MS) return
     fetchAll()
   }, [cwd, active, fetchAll])
 

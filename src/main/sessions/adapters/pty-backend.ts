@@ -22,6 +22,7 @@ import { CODEX_TITLE_CONFIG } from '../../../shared/codex-state'
 import { isValidModelName } from '../../../shared/model-name'
 import { tmuxKillSessionArgs } from '../../tmux-args'
 import { lineageOf } from '../lineage'
+import { sanitizeWork, type WorkAssignment } from '@clave/contract/work-rules'
 import {
   buildAgentArgv,
   type AgentKind,
@@ -462,6 +463,9 @@ export type SessionLink =
   /** A toolbar button's persistent terminal — never a sidebar row at all;
    *  `key` is the `${pinId}:${terminalIndex}` of the toolbar registry. */
   | { kind: 'toolbar'; key: string }
+  /** A routine's run (ADR 0004): the hidden session the server started for
+   *  one occurrence; never a sidebar row, never adopted by a window at boot. */
+  | { kind: 'routine'; routineKey: string; runId: string }
 
 /** What the renderer needs to recreate + reattach a surviving session's tab.
  *
@@ -558,6 +562,10 @@ export interface SessionRecord {
    *  memory, gone at a quit; this is what brings the link back. Absent for a
    *  tab the user opened. Carried forward across adoption like the name. */
   spawnedBy?: string
+  /** Which wave or lane this session works on, its role and its standing
+   *  (PRDCT-4123): carried across adoption like spawnedBy, changed only
+   *  through the server's ChangeSessionWork. */
+  work?: WorkAssignment
   /** Populated only on the listAdoptableSessions() path (not persisted in
    *  the record). True when the backing tmux session is still running (app
    *  quit/reopen, no reboot) → reattach to the live process. False when the
@@ -644,7 +652,23 @@ function readSessionRecord(key: string): SessionRecord | null {
   if (!isValidRecordKey(key)) return null
   sessionRecordsDir()
   const raw = readJson(lazyTerminalPorts.storage, recordDocument(key))
-  return raw && typeof raw === 'object' ? migrateSessionAdapterRecord(raw as SessionRecord) : null
+  return raw && typeof raw === 'object'
+    ? withValidWork(migrateSessionAdapterRecord(raw as SessionRecord))
+    : null
+}
+
+/** A record as it is read back keeps its work assignment only when it is a
+ *  whole valid one (PRDCT-4123, `sanitizeWork`); a malformed one is dropped
+ *  alone and the record loads whole. Both readers of whole records go
+ *  through this, the read by key and the adoptable listing: the wire schema
+ *  refuses the WHOLE listing for one record it cannot decode, and the
+ *  restore would bring nothing back. */
+function withValidWork(meta: SessionRecord): SessionRecord {
+  if (!('work' in meta)) return meta
+  const work = sanitizeWork(meta.work)
+  if (work) meta.work = work
+  else delete meta.work
+  return meta
 }
 
 function deleteSessionRecord(key: string): void {
@@ -777,6 +801,18 @@ export interface PtySpawnOptions {
    *  moved to (ADR 0002). Main's own — `pty:spawn` drops it, only a restart
    *  built in main carries one. */
   initialInput?: UserMessageInput
+  // ── ADR 0004: what a routine run declares beyond a tab's launch ──
+  /** Claude's reasoning effort to start on (`--effort`). A chat with none
+   *  starts on the effort last picked in a composer. */
+  effort?: string
+  /** The mode a Claude session without `dangerousMode` asks under
+   *  (`--permission-mode`); the skip flag wins when both are set. */
+  permissionMode?: 'default' | 'acceptEdits' | 'plan'
+  /** A Claude Code plugin folder loaded for this session alone (`--plugin-dir`):
+   *  the routine contract skill rides on it. */
+  pluginDir?: string
+  /** One paragraph appended to Claude's system prompt (`--append-system-prompt`). */
+  appendSystemPrompt?: string
   /** Opt-in: run this session inside a persistent tmux session. */
   tmuxMode?: boolean
   /** Reattach to this exact existing tmux session instead of deriving a new
@@ -791,6 +827,10 @@ export interface PtySpawnOptions {
   /** Profile metadata persisted for restore + the session-header badge. */
   claudeProfileId?: string
   claudeProfileLabel?: string
+  /** The account's token, decrypted by the caller that spawns (the secret
+   *  store answers asynchronously; the spawn itself is planned synchronously)
+   *  and held only until the process starts — never on the record. */
+  oauthToken?: string
   /** Codex account (ADR 0002): sets `CODEX_HOME` for a Codex session, and
    *  only for one; every other kind ignores it. */
   codexAccountId?: string
@@ -808,6 +848,10 @@ export interface PtySpawnOptions {
   /** The session id of the tab whose agent opened this one — persisted on
    *  the record (SessionRecord.spawnedBy). Omitted = opened by the user. */
   spawnedBy?: string
+  /** The assignment a restart carries: read from the record before the kill
+   *  (pty-manager `restartSpawn`), never from a client; a spawn without it
+   *  keeps the previous record's. */
+  work?: WorkAssignment
 }
 
 /** Validate a link crossing the IPC boundary. It is only ever compared to
@@ -831,6 +875,14 @@ function sanitizeSessionLink(link: unknown): SessionLink | undefined {
   if (l.kind === 'toolbar') {
     const key = str(l.key)
     return key ? { kind: 'toolbar', key } : undefined
+  }
+  if (l.kind === 'routine') {
+    const routineKey =
+      typeof l.routineKey === 'string' && l.routineKey.length > 0 && l.routineKey.length <= 1000
+        ? l.routineKey
+        : null
+    const runId = str(l.runId)
+    return routineKey && runId ? { kind: 'routine', routineKey, runId } : undefined
   }
   return undefined
 }
@@ -857,17 +909,27 @@ interface PendingSpawn {
  * mistake) must never inherit a subscription token into its environment.
  * Pure over the account store, so the boundary has a test of its own.
  */
-export function accountTokenForSpawn(
+export function accountTokenRequired(
   kind: AgentKind | null,
   accountId: string | undefined,
-  getToken: (id: string | undefined) => string | undefined = (id) =>
-    claudeAccountsManager.getToken(id)
+  token: string | undefined
 ): string | undefined {
   if (kind !== 'claude' && kind !== 'claude-agents') return undefined
-  const token = getToken(accountId)
   if (accountId && accountId !== DEFAULT_CLAUDE_ACCOUNT_ID && !token)
     throw new Error('The selected Claude account is no longer available.')
   return token
+}
+
+/** The same boundary with the read: the token is decrypted for a Claude
+ *  session only, so another kind never even opens the store. */
+export async function accountTokenForSpawn(
+  kind: AgentKind | null,
+  accountId: string | undefined,
+  getToken: (id: string | undefined) => Promise<string | undefined> | string | undefined = (id) =>
+    claudeAccountsManager.getToken(id)
+): Promise<string | undefined> {
+  if (kind !== 'claude' && kind !== 'claude-agents') return undefined
+  return accountTokenRequired(kind, accountId, await getToken(accountId))
 }
 
 /**
@@ -996,7 +1058,9 @@ export class PtyBackend {
     const codexHome = codexHomeForSpawn(kind, options?.codexAccountId)
     // Refuse a missing explicit token before writing any restore metadata.
     // The renderer never receives the token; only a Claude process uses it.
-    const oauthToken = accountTokenForSpawn(kind, options?.claudeProfileId)
+    // The caller decrypted it (PtyManager.spawn, asynchronously); here the
+    // plan is synchronous, so the check is all that is left.
+    const oauthToken = accountTokenRequired(kind, options?.claudeProfileId, options?.oauthToken)
     const model = options?.model ?? (usePiMode ? launchProfile?.pi?.model : undefined)
     const piProvider = usePiMode ? (options?.piProvider ?? launchProfile?.pi?.provider) : undefined
     const piThinking = usePiMode ? (options?.piThinking ?? launchProfile?.pi?.thinking) : undefined
@@ -1116,7 +1180,12 @@ export class PtyBackend {
           claudeSettings:
             kind === 'claude' ? (buildClaudeHookSettingsArg(id) ?? undefined) : undefined,
           mcpConfigPath: mcpConfigPath ?? undefined,
-          piStateExtensionPath: piExtensionPath
+          piStateExtensionPath: piExtensionPath,
+          // ── ADR 0004: a routine run's own flags (Claude only) ──
+          effort: options?.effort,
+          permissionMode: options?.permissionMode,
+          pluginDir: options?.pluginDir,
+          appendSystemPrompt: options?.appendSystemPrompt
         })
         const assignments = [`CLAVE_SESSION_ID=${shellSingleQuote(id)}`]
         if (kind === 'pi')
@@ -1198,7 +1267,10 @@ export class PtyBackend {
       link: sanitizeSessionLink(options?.link) ?? previous?.link,
       // Who opened it: the opening agent's tab, else what the record already
       // said, so a reattach, a respawn or an account switch keeps the child.
-      spawnedBy: lineageOf(id, options?.spawnedBy, previous?.spawnedBy)
+      spawnedBy: lineageOf(id, options?.spawnedBy, previous?.spawnedBy),
+      // Which work it does (PRDCT-4123), the same way: a restart's, read off
+      // the record before its kill, else what the record already said.
+      work: sanitizeWork(options?.work) ?? sanitizeWork(previous?.work)
     }
     let recordKey: string | null = null
 
@@ -1499,6 +1571,39 @@ export class PtyBackend {
     writeSessionRecord({ ...meta, view: view ?? undefined })
   }
 
+  /** Every record's work assignment, by session id, read without touching
+   *  anything (PRDCT-4123): no tmux call, no pruning, no record discarded.
+   *  What the server's ChangeSessionWork reads to know a role's holder and
+   *  both ends of a handover, whichever of them runs. A file that does not
+   *  read as a record is skipped here; pruning it is the boot listing's job
+   *  (`listAdoptableSessions`), never a work change's. */
+  listWorkAssignments(): { id: string; work?: WorkAssignment }[] {
+    sessionRecordsDir()
+    const storage = lazyTerminalPorts.storage
+    const out: { id: string; work?: WorkAssignment }[] = []
+    for (const file of storage.list(SESSION_RECORDS_FOLDER).filter((f) => f.endsWith('.json'))) {
+      const raw = readJson(storage, `${SESSION_RECORDS_FOLDER}/${file}`)
+      if (!raw || typeof raw !== 'object') continue
+      const id = (raw as { id?: unknown }).id
+      if (typeof id !== 'string' || !id) continue
+      const work = sanitizeWork((raw as { work?: unknown }).work)
+      out.push(work ? { id, work } : { id })
+    }
+    return out
+  }
+
+  /** Persist (or clear, with null) which work the session does in its record
+   *  (PRDCT-4123): the one write behind the server's ChangeSessionWork.
+   *  Mirrors setSessionViewRecord, and answers whether a record was written:
+   *  false for a session that keeps none, whose work cannot be kept. */
+  setSessionWork(id: string, work: WorkAssignment | null): boolean {
+    const key = this.recordKeyForSession(id)
+    if (!key) return false
+    const meta = readSessionRecord(key)
+    if (!meta) return false
+    return writeSessionRecord({ ...meta, work: work ?? undefined })
+  }
+
   /**
    * Re-stamp a session's workspace in its persisted record (workspace removal
    * reassigns sessions; a future "move to workspace" uses the same primitive).
@@ -1590,7 +1695,9 @@ export class PtyBackend {
     for (const file of files) {
       const raw = readJson(storage, `${SESSION_RECORDS_FOLDER}/${file}`)
       const meta: SessionRecord | null =
-        raw && typeof raw === 'object' ? migrateSessionAdapterRecord(raw as SessionRecord) : null
+        raw && typeof raw === 'object'
+          ? withValidWork(migrateSessionAdapterRecord(raw as SessionRecord))
+          : null
       if (meta && meta.antigravityMode === undefined) {
         // Legacy records (written before the Antigravity switch) carry the old
         // `antigravityMode`'s predecessor key. Map it forward so a survivor of the

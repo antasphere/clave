@@ -192,7 +192,14 @@ async function runKind(t, kind, open) {
     const client = mcpHttpClient(mcpEndpoint(DIR), agent.token)
     await client.init()
     const opened = toolPayload(
-      await client.call('clave_open_session', { cwd: ROOT, name: 'Delegated', ...open })
+      // Attached on purpose: a parent is set only when the opener asks for it
+      // (attachToParent, opt-in since 7ccde5fb), as a delegated agent does.
+      await client.call('clave_open_session', {
+        cwd: ROOT,
+        name: 'Delegated',
+        attachToParent: true,
+        ...open
+      })
     )
     child = opened?.sessionId ?? null
     t.check(say('the parent opens it'), typeof child === 'string', opened)

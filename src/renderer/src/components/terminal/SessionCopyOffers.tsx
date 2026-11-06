@@ -84,7 +84,7 @@ export function SessionCopyOffers({ sessionId }: { sessionId: string }): React.J
             <XMarkIcon className="w-3.5 h-3.5" />
           </button>
         </div>
-        <div className="max-h-[400px] overflow-y-auto">
+        <div className="max-h-[400px] overflow-y-auto overscroll-contain">
           {offers.map((offer, i) => (
             <div key={offer.id} className={cn(i > 0 && 'border-t border-border-subtle')}>
               <CopyOfferCard offer={offer} />

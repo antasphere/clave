@@ -447,7 +447,8 @@ describe.skipIf(!built)('the terminal process beside the server (from the built 
         'clave.echo-provider',
         'clave.github',
         'clave.hello',
-        'clave.orbs'
+        'clave.orbs',
+        'clave.routine-report'
       ])
       for (const id of required) {
         expect(byId[id], id).toMatchObject({ enabled: true, status: 'active', source: 'bundled' })

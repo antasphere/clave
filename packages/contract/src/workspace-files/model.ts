@@ -61,6 +61,62 @@ export const ClaveTerminalWrite = Schema.Struct({
 })
 export type ClaveTerminalWrite = typeof ClaveTerminalWrite.Type
 
+/** A routine's launch parameters as the file writes them (ADR 0004): every
+ *  one optional, a missing one the workspace's launch default, an invalid
+ *  one a failed run. Mirrors `RoutineLaunch` of `../routines.ts` in the
+ *  file's own vocabulary. */
+export const ClaveRoutineLaunch = Schema.Struct({
+  agent: Schema.optional(Schema.String),
+  form: Schema.optional(Schema.String),
+  model: Schema.optional(Schema.String),
+  effort: Schema.optional(Schema.String),
+  thinking: Schema.optional(Schema.String),
+  provider: Schema.optional(Schema.String),
+  profile: Schema.optional(Schema.String),
+  account: Schema.optional(Schema.String),
+  dangerousMode: Schema.optional(Schema.Boolean),
+  permissionMode: Schema.optional(Schema.String)
+})
+
+/** The deck a routine's report is written into: the template folder and
+ *  the data's schema, resolved against the file's root like `cwd`, and the
+ *  panel's size. */
+export const ClaveRoutineReport = Schema.Struct({
+  template: Schema.String,
+  schema: Schema.optional(Schema.String),
+  width: Schema.optional(Schema.Number),
+  height: Schema.optional(Schema.Number)
+})
+
+/** A routine (ADR 0004): a prompt the server runs on a cron schedule in a
+ *  hidden session. Elevated as a whole: it acts with nobody at the keyboard,
+ *  so `trust.ts` discloses it and drops it from an untrusted file. */
+export const ClaveRoutine = Schema.Struct({
+  name: Schema.String,
+  schedule: Schema.String,
+  /** The job, the raw template: `{{param}}` and the `@`-tokens substituted at run time. */
+  prompt: Schema.String,
+  params: Schema.optional(Schema.Record({ key: Schema.String, value: Schema.String })),
+  skill: Schema.optional(Schema.String),
+  /** Absolute once read; absent means the group's. */
+  cwd: Schema.optional(Schema.String),
+  ...ClaveRoutineLaunch.fields,
+  icon: Schema.optional(Schema.String),
+  color: Schema.optional(Schema.String),
+  catchUp: Schema.optional(Schema.Boolean),
+  timeoutMinutes: Schema.optional(Schema.Number),
+  scope: Schema.optional(Schema.String),
+  report: Schema.optional(ClaveRoutineReport)
+})
+export type ClaveRoutine = typeof ClaveRoutine.Type
+
+/** A routine as a window hands it to the writer: the same shape, its `cwd` nullable. */
+export const ClaveRoutineWrite = Schema.Struct({
+  ...ClaveRoutine.fields,
+  cwd: Schema.optional(Schema.NullOr(Schema.String))
+})
+export type ClaveRoutineWrite = typeof ClaveRoutineWrite.Type
+
 const groupFields = {
   name: Schema.String,
   cwd: Schema.String,
@@ -73,7 +129,9 @@ const groupFields = {
   /** The group's web view when no terminal serves it: elevated. */
   view: Schema.optional(Schema.String),
   sessions: Schema.Array(ClaveSession),
-  terminals: Schema.Array(ClaveTerminal)
+  terminals: Schema.Array(ClaveTerminal),
+  /** The group's routines (ADR 0004): elevated as a whole. */
+  routines: Schema.optional(Schema.Array(ClaveRoutine))
 }
 
 export const ClaveGroup = Schema.Struct(groupFields)
@@ -101,7 +159,8 @@ const writeGroupFields = {
   prompt: Schema.optional(Schema.String),
   view: Schema.optional(Schema.String),
   sessions: Schema.Array(ClaveSession),
-  terminals: Schema.Array(ClaveTerminalWrite)
+  terminals: Schema.Array(ClaveTerminalWrite),
+  routines: Schema.optional(Schema.Array(ClaveRoutineWrite))
 }
 export const ClaveFileWriteGroup = Schema.Struct(writeGroupFields)
 export type ClaveFileWriteGroup = typeof ClaveFileWriteGroup.Type
@@ -117,6 +176,7 @@ export const ClaveFileWriteData = Schema.Struct({
   view: Schema.optional(Schema.String),
   sessions: Schema.optional(Schema.Array(ClaveSession)),
   terminals: Schema.optional(Schema.Array(ClaveTerminalWrite)),
+  routines: Schema.optional(Schema.Array(ClaveRoutineWrite)),
   /** Present for a multi-group file; the single-group fields are ignored then. */
   groups: Schema.optional(Schema.Array(ClaveFileWriteGroup))
 })
@@ -308,7 +368,9 @@ export const WorkspaceFileReviewNeeded = Schema.TaggedStruct('workspace_files.re
   folder: Schema.String,
   autoCommands: Schema.Array(Schema.String),
   prompts: Schema.Array(Schema.String),
-  dangerous: Schema.Boolean
+  dangerous: Schema.Boolean,
+  /** The routines the file would schedule (ADR 0004), by name; absent on an older server. */
+  routines: Schema.optional(Schema.Array(Schema.String))
 })
 
 export const WorkspaceFilesEvent = Schema.Union(WorkspaceFileChanged, WorkspaceFileReviewNeeded)

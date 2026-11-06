@@ -481,7 +481,7 @@ function HistoryPanel({ presetGroupId }: { presetGroupId: string | null }): Reac
           </div>
         </div>
 
-        <div className="flex-1 overflow-y-auto px-3 pb-3" data-history-list>
+        <div className="flex-1 overflow-y-auto overscroll-contain px-3 pb-3" data-history-list>
           {entries === null ? (
             <p className="py-10 text-center text-xs text-text-tertiary">Reading…</p>
           ) : rows.length === 0 ? (

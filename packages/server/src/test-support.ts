@@ -24,6 +24,13 @@ import {
   type SessionWrite
 } from '@clave/contract/sessions'
 import {
+  applyWorkChange,
+  type WorkAssignment,
+  type WorkChange,
+  takeoverRenames,
+  type WorkChangeResult
+} from '@clave/contract/work-rules'
+import {
   type ServerFrame,
   decodeServerFrame,
   encodeClientFrame,
@@ -234,6 +241,34 @@ export class FakeSource implements SessionHostService {
   readonly kept: Array<{ id: string; fields: SessionRecordFields }> = []
   keepOnRecord = (id: string, fields: SessionRecordFields): void => {
     this.kept.push({ id, fields })
+  }
+  // ── PRDCT-4123: which work a session does, kept by hand ──
+  /** Each live session's assignment, as its record would keep it; the rule
+   *  is the real one, applied over every session this host has. */
+  readonly works = new Map<string, WorkAssignment>()
+  changeWork = (id: string, change: WorkChange): WorkChangeResult => {
+    // As the app's host: a session it does not know is the rule's
+    // `WorkSessionUnknown`, answered by the server as its not-found.
+    const all = [...this.sessions.keys()].map((sid) => ({ id: sid, work: this.works.get(sid) }))
+    const updates = applyWorkChange(all, id, change, Date.now())
+    for (const u of updates) {
+      if (u.work) this.works.set(u.id, u.work)
+      else this.works.delete(u.id)
+    }
+    // The names an accepted handover gives, as the app's host writes them.
+    const renamed = takeoverRenames(
+      all,
+      updates,
+      id,
+      change,
+      (sid) => this.sessions.get(sid)?.title,
+      new Set([...this.sessions.values()].map((s) => s.title))
+    )
+    for (const r of renamed) {
+      const session = this.sessions.get(r.id)
+      if (session) this.sessions.set(r.id, { ...session, title: r.name })
+    }
+    return { changed: updates, renamed }
   }
   screen = async (id: string): Promise<SessionScreen> => {
     if (!this.sessions.has(id)) throw new Error(`Unknown session: ${id}`)

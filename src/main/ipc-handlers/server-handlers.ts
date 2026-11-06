@@ -46,7 +46,7 @@ function mainVersionSync(connections: () => ServerConnectionRegistry): VersionSy
     serverId: string,
     run: (api: import('../../../packages/client/src/api').ClaveApiClient) => Promise<T>
   ): Promise<T> => {
-    const endpoint = connections().endpoint(serverId)
+    const endpoint = await connections().endpoint(serverId)
     const { createApiClient } = await import('../../../packages/client/src/api')
     const api = createApiClient(endpoint)
     try {
@@ -108,8 +108,8 @@ export function registerServerHandlers(
     void versions?.refresh().catch(() => undefined)
   }
   ipcMain.handle(FLEET_IPC.list, () => connections().list())
-  ipcMain.handle(FLEET_IPC.save, (_event, input: SaveServerConnection) => {
-    const result = connections().save(input)
+  ipcMain.handle(FLEET_IPC.save, async (_event, input: SaveServerConnection) => {
+    const result = await connections().save(input)
     changed()
     return result
   })
@@ -123,8 +123,8 @@ export function registerServerHandlers(
     changed()
     return result
   })
-  ipcMain.handle(FLEET_IPC.remove, (_event, id: string) => {
-    connections().remove(id)
+  ipcMain.handle(FLEET_IPC.remove, async (_event, id: string) => {
+    await connections().remove(id)
     changed()
   })
   // Privileged preload only. E must not bridge this channel to renderer.

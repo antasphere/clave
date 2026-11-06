@@ -641,11 +641,11 @@ export const usageManager = new AccountUsageManager(
   {
     ids: () => claudeAccountsManager.list().map((a) => a.id),
     exists: (id) => !!claudeAccountsManager.get(id),
-    read: (id) =>
+    read: async (id) =>
       readLimitsWith(
         credentialFor(
           claudeAccountsManager.get(id),
-          claudeAccountsManager.getToken(id),
+          await claudeAccountsManager.getToken(id),
           !TEST_NO_MACHINE_USAGE
         )
       ),

@@ -74,7 +74,7 @@ export interface AntasphereAccountLike {
   start(): Promise<AntasphereSignInResult>
   confirmHandoff(handoff: AntasphereHandoff): boolean
   cancel(): AntasphereAccountStatus
-  signOut(): AntasphereAccountStatus
+  signOut(): Promise<AntasphereAccountStatus>
   dismissFailure(): AntasphereAccountStatus
   onChange(listener: (status: AntasphereAccountStatus) => void): () => void
 }
@@ -220,12 +220,12 @@ export function settingsSourceFromManagers(m: SettingsManagers): SettingsSourceS
       remove: (id) => m.claudeAccounts.remove(id),
       // Storing the token and reading the account's limits with it are one
       // call: the read is what tells the user the paste worked.
-      setToken: (id, token) => {
-        m.claudeAccounts.setToken(id, token)
+      setToken: async (id, token) => {
+        await m.claudeAccounts.setToken(id, token)
         return m.claudeUsage.getLimits(id, { force: true })
       },
-      clearToken: (id) => {
-        m.claudeAccounts.clearToken(id)
+      clearToken: async (id) => {
+        await m.claudeAccounts.clearToken(id)
         m.claudeUsage.forget(id)
       }
     },

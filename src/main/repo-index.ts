@@ -12,6 +12,11 @@ import {
 export interface RepoInfo {
   name: string
   path: string
+  /** The source repository of a linked worktree, read from its `.git` file at
+   *  discovery (PRDCT-4142), so the panel hangs the row under its source from
+   *  the first frame rather than once the row's status has been read. `null`
+   *  for a repository of its own. */
+  worktreeOf?: string | null
 }
 
 export interface DiscoverResult {
@@ -46,14 +51,31 @@ function isStrictlyUnder(parent: string, child: string): boolean {
   return child !== parent && isAncestor(parent, child)
 }
 
-async function isRepoDir(dir: string): Promise<boolean> {
+/** What `dir` is to git: `null` when it is no repository root, else whether it
+ *  is a linked worktree and of which repository. A linked worktree's `.git` is
+ *  a FILE naming its gitdir inside the source repository
+ *  (`gitdir: <source>/.git/worktrees/<name>`); a repository's is a directory. */
+async function repoKind(dir: string): Promise<{ worktreeOf: string | null } | null> {
+  const dotGit = path.join(dir, '.git')
+  let stat: fs.Stats
   try {
-    await fs.promises.access(path.join(dir, '.git'))
-    return true
+    stat = await fs.promises.stat(dotGit)
   } catch {
-    return false
+    return null
+  }
+  if (stat.isDirectory()) return { worktreeOf: null }
+  if (!stat.isFile()) return null
+  try {
+    const text = await fs.promises.readFile(dotGit, 'utf8')
+    const gitdir = /^gitdir:\s*(.+?)\s*$/m.exec(text)?.[1] ?? ''
+    const cut = gitdir.indexOf('/.git/worktrees/')
+    return { worktreeOf: cut > 0 ? gitdir.slice(0, cut) : null }
+  } catch {
+    return { worktreeOf: null }
   }
 }
+
+export { repoKind }
 
 /**
  * Stateful, cached, incremental discovery of git repos beneath a directory.
@@ -145,8 +167,8 @@ class RepoIndexManager {
     const capHit = (): boolean =>
       found.size >= MAX_DISCOVERY_REPOS || dirsVisited >= MAX_DISCOVERY_DIRS
 
-    const addRepo = (name: string, p: string): void => {
-      if (!found.has(p)) found.set(p, { name, path: p })
+    const addRepo = (name: string, p: string, worktreeOf: string | null = null): void => {
+      if (!found.has(p)) found.set(p, { name, path: p, worktreeOf })
     }
 
     const worker = async (): Promise<void> => {
@@ -175,15 +197,17 @@ class RepoIndexManager {
           // Reuse a previously-scanned complete subtree instead of descending.
           const cached = this.freshComplete(full)
           if (cached) {
-            if (await isRepoDir(full)) addRepo(e.name, full)
-            for (const r of cached.repos) addRepo(r.name, r.path)
+            const kind = await repoKind(full)
+            if (kind) addRepo(e.name, full, kind.worktreeOf)
+            for (const r of cached.repos) addRepo(r.name, r.path, r.worktreeOf ?? null)
             continue
           }
 
-          if (await isRepoDir(full)) {
+          const kind = await repoKind(full)
+          if (kind) {
             // A repo root: record it, don't descend (nested repos are rare and
             // surface via their own scan if the user opens them directly).
-            addRepo(e.name, full)
+            addRepo(e.name, full, kind.worktreeOf)
             continue
           }
 
