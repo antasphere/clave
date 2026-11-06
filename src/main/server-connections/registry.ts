@@ -68,7 +68,7 @@ export class ServerConnectionRegistry {
     return this.load().map(publicConnection)
   }
 
-  save(input: SaveServerConnection): SavedServerConnection {
+  async save(input: SaveServerConnection): Promise<SavedServerConnection> {
     if (!object(input) || !text(input.name, 120) || !input.name.trim())
       throw new Error('Enter a server name of at most 120 characters.')
     const url = normalizeServerUrl(input.url)
@@ -82,8 +82,8 @@ export class ServerConnectionRegistry {
     let sealed: string | undefined
     if (input.token !== undefined) {
       try {
-        if (!this.ports.secrets.available()) throw new Error('unavailable')
-        sealed = this.ports.secrets.seal(input.token)
+        if (!(await this.ports.secrets.available())) throw new Error('unavailable')
+        sealed = await this.ports.secrets.seal(input.token)
         if (!text(sealed, 65536) || sealed === input.token) throw new Error('not sealed')
       } catch {
         throw new Error('Secure credential storage is unavailable. The connection was not saved.')
@@ -91,7 +91,7 @@ export class ServerConnectionRegistry {
     }
     const id = old?.id ?? this.id()
     if (!validId(id) || (!old && records.some((record) => record.id === id))) {
-      if (sealed) this.discard(sealed)
+      if (sealed) await this.discard(sealed)
       throw new Error('Could not allocate a server connection identity.')
     }
     const record: StoredConnection = {
@@ -107,10 +107,10 @@ export class ServerConnectionRegistry {
     try {
       this.persist(next)
     } catch (error) {
-      if (sealed) this.discard(sealed)
+      if (sealed) await this.discard(sealed)
       throw error
     }
-    if (sealed && old) this.discard(old.credentialRef)
+    if (sealed && old) await this.discard(old.credentialRef)
     return publicConnection(record)
   }
 
@@ -122,19 +122,19 @@ export class ServerConnectionRegistry {
     return this.setEnabled(id, false)
   }
 
-  remove(id: string): void {
+  async remove(id: string): Promise<void> {
     const record = this.find(id)
     this.persist(this.load().filter((value) => value.id !== id))
-    this.discard(record.credentialRef)
+    await this.discard(record.credentialRef)
   }
 
   /** Privileged IPC only. The preload must never expose this to renderer. */
-  endpoint(id: string): Endpoint {
+  async endpoint(id: string): Promise<Endpoint> {
     const record = this.find(id)
     if (!record.enabled) throw new Error('This server connection is disconnected.')
     let token: string | undefined
     try {
-      token = this.ports.secrets.open(record.credentialRef)
+      token = await this.ports.secrets.open(record.credentialRef)
     } catch {
       // Adapter errors may include secret material. Return only our safe error.
     }
@@ -166,9 +166,9 @@ export class ServerConnectionRegistry {
     this.records = records
   }
 
-  private discard(ref: string): void {
+  private async discard(ref: string): Promise<void> {
     try {
-      this.ports.secrets.discard(ref)
+      await this.ports.secrets.discard(ref)
     } catch {
       // The committed document remains authoritative. Never undo a committed
       // rotation or expose an adapter error after the public operation succeeds.

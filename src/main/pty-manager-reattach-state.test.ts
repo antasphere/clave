@@ -52,6 +52,7 @@ const mocks = vi.hoisted(() => {
 
 vi.mock('./agent-state-manager', () => ({ lastHookState: mocks.lastHookState }))
 vi.mock('./sessions/adapters/pty-backend', () => ({
+  accountTokenForSpawn: async () => undefined,
   ptyBackend: mocks.backend,
   buildSpawnEnv: (base: Record<string, string>) => ({ ...base }),
   codexHomeForSpawn: () => undefined,

@@ -34,19 +34,19 @@ import {
 
 const appSeal = (plain: string): string => `app:${Buffer.from(plain).toString('base64')}`
 const from = {
-  open: (sealed: string) =>
+  open: async (sealed: string) =>
     sealed.startsWith('app:') ? Buffer.from(sealed.slice(4), 'base64').toString() : undefined
 }
 const server = (): {
   sealed: string[]
-  to: { available: () => boolean; seal: (p: string) => string }
+  to: { available: () => Promise<boolean>; seal: (p: string) => Promise<string> }
 } => {
   const sealed: string[] = []
   return {
     sealed,
     to: {
-      available: () => true,
-      seal: (plain) => {
+      available: async () => true,
+      seal: async (plain) => {
         sealed.push(plain)
         return `kc:${sealed.length}`
       }
@@ -65,7 +65,7 @@ function dirs(): { app: string; srv: string; clean: () => void } {
 const json = (file: string): unknown => JSON.parse(readFileSync(file, 'utf-8'))
 
 describe('the migration of the app data into the server directory', () => {
-  it('copies the plain documents with their mode, re-seals the secrets, copies the Codex homes with their symlinks, and writes the marker', () => {
+  it('copies the plain documents with their mode, re-seals the secrets, copies the Codex homes with their symlinks, and writes the marker', async () => {
     const { app, srv, clean } = dirs()
     try {
       writeFileSync(path.join(app, 'workspace-state.json'), '{"workspaces":[1]}', { mode: 0o644 })
@@ -95,7 +95,7 @@ describe('the migration of the app data into the server directory', () => {
       symlinkSync('/somewhere/sessions', path.join(home, 'sessions'))
       const { sealed, to } = server()
       const log: string[] = []
-      const report = migrateAppDataToServer({
+      const report = await migrateAppDataToServer({
         appDir: app,
         serverDir: srv,
         from,
@@ -168,18 +168,28 @@ describe('the migration of the app data into the server directory', () => {
     }
   })
 
-  it('is done once: the marker stops a second run, and a document the server already has is kept', () => {
+  it('is done once: the marker stops a second run, and a document the server already has is kept', async () => {
     const { app, srv, clean } = dirs()
     try {
       writeFileSync(path.join(app, 'preferences.json'), '{"theme":"dark"}')
       mkdirSync(srv, { recursive: true })
       writeFileSync(path.join(srv, 'preferences.json'), '{"theme":"light"}')
-      const first = migrateAppDataToServer({ appDir: app, serverDir: srv, from, to: server().to })
+      const first = await migrateAppDataToServer({
+        appDir: app,
+        serverDir: srv,
+        from,
+        to: server().to
+      })
       expect(first.outcome).toBe('migrated')
       expect(first.kept).toEqual(['preferences.json'])
       expect(first.copied).toEqual([])
       expect(json(path.join(srv, 'preferences.json'))).toEqual({ theme: 'light' })
-      const second = migrateAppDataToServer({ appDir: app, serverDir: srv, from, to: server().to })
+      const second = await migrateAppDataToServer({
+        appDir: app,
+        serverDir: srv,
+        from,
+        to: server().to
+      })
       expect(second.outcome).toBe('already')
       expect(second.copied).toEqual([])
     } finally {
@@ -187,10 +197,15 @@ describe('the migration of the app data into the server directory', () => {
     }
   })
 
-  it('an app with no data of its own writes the marker and migrates nothing', () => {
+  it('an app with no data of its own writes the marker and migrates nothing', async () => {
     const { app, srv, clean } = dirs()
     try {
-      const report = migrateAppDataToServer({ appDir: app, serverDir: srv, from, to: server().to })
+      const report = await migrateAppDataToServer({
+        appDir: app,
+        serverDir: srv,
+        from,
+        to: server().to
+      })
       expect(report.outcome).toBe('nothing')
       expect(existsSync(path.join(srv, MIGRATION_MARKER))).toBe(true)
       expect(json(path.join(srv, MIGRATION_MARKER))).toMatchObject({ outcome: 'nothing' })
@@ -199,7 +214,7 @@ describe('the migration of the app data into the server directory', () => {
     }
   })
 
-  it('a step that fails writes no marker, and the next run resumes where it stopped', () => {
+  it('a step that fails writes no marker, and the next run resumes where it stopped', async () => {
     const { app, srv, clean } = dirs()
     try {
       writeFileSync(path.join(app, 'workspace-state.json'), '{"w":1}')
@@ -208,13 +223,13 @@ describe('the migration of the app data into the server directory', () => {
         JSON.stringify({ work: { token: appSeal('t'), setAt: 1 } })
       )
       const refusing = {
-        available: () => true,
-        seal: () => {
+        available: async () => true,
+        seal: async () => {
           throw new Error('The macOS Keychain is unavailable here.')
         }
       }
       const log: string[] = []
-      const first = migrateAppDataToServer({
+      const first = await migrateAppDataToServer({
         appDir: app,
         serverDir: srv,
         from,
@@ -230,7 +245,7 @@ describe('the migration of the app data into the server directory', () => {
       expect(existsSync(path.join(srv, CLAUDE_CREDENTIALS_FILE))).toBe(false)
       expect(log.some((l) => /tried again at the next start/.test(l))).toBe(true)
       const { sealed, to } = server()
-      const second = migrateAppDataToServer({ appDir: app, serverDir: srv, from, to })
+      const second = await migrateAppDataToServer({ appDir: app, serverDir: srv, from, to })
       expect(second.kept).toEqual(['workspace-state.json'])
       expect(second.copied).toEqual([CLAUDE_CREDENTIALS_FILE])
       expect(sealed).toEqual(['t'])
@@ -241,7 +256,7 @@ describe('the migration of the app data into the server directory', () => {
     }
   })
 
-  it('a server adapter that cannot seal fails the secret step: nothing dropped, no marker, the rest copied', () => {
+  it('a server adapter that cannot seal fails the secret step: nothing dropped, no marker, the rest copied', async () => {
     const { app, srv, clean } = dirs()
     try {
       writeFileSync(path.join(app, 'preferences.json'), '{"p":1}')
@@ -253,11 +268,11 @@ describe('the migration of the app data into the server directory', () => {
         path.join(app, ANTASPHERE_SESSION_FILE),
         JSON.stringify({ v: 1, revoked: true })
       )
-      const report = migrateAppDataToServer({
+      const report = await migrateAppDataToServer({
         appDir: app,
         serverDir: srv,
         from,
-        to: { available: () => false, seal: () => 'never' }
+        to: { available: async () => false, seal: async () => 'never' }
       })
       // The token is not dropped as "not opened" and the marker not written,
       // so a later boot on a machine that can seal still carries it.
@@ -275,7 +290,7 @@ describe('the migration of the app data into the server directory', () => {
     }
   })
 
-  it('a seal that throws half way discards the items it filed before, so a retry leaves no orphan', () => {
+  it('a seal that throws half way discards the items it filed before, so a retry leaves no orphan', async () => {
     const { app, srv, clean } = dirs()
     try {
       writeFileSync(
@@ -288,23 +303,23 @@ describe('the migration of the app data into the server directory', () => {
       const filed = new Set<string>()
       let calls = 0
       const flaky = {
-        available: () => true,
-        seal: (plain: string) => {
+        available: async () => true,
+        seal: async (plain: string) => {
           calls += 1
           if (calls === 2) throw new Error('the Keychain refused the item')
           const handle = `kc:${plain}`
           filed.add(handle)
           return handle
         },
-        discard: (sealed: string) => {
+        discard: async (sealed: string) => {
           filed.delete(sealed)
         }
       }
-      const first = migrateAppDataToServer({ appDir: app, serverDir: srv, from, to: flaky })
+      const first = await migrateAppDataToServer({ appDir: app, serverDir: srv, from, to: flaky })
       expect(first.failed).toEqual([`${CLAUDE_CREDENTIALS_FILE}: the Keychain refused the item`])
       expect(filed.size).toBe(0)
       expect(existsSync(path.join(srv, CLAUDE_CREDENTIALS_FILE))).toBe(false)
-      const second = migrateAppDataToServer({ appDir: app, serverDir: srv, from, to: flaky })
+      const second = await migrateAppDataToServer({ appDir: app, serverDir: srv, from, to: flaky })
       expect(second.failed).toEqual([])
       expect([...filed].sort()).toEqual(['kc:first', 'kc:second'])
       expect(existsSync(path.join(srv, MIGRATION_MARKER))).toBe(true)
@@ -313,7 +328,7 @@ describe('the migration of the app data into the server directory', () => {
     }
   })
 
-  it('a Codex homes copy that fails half way is copied again whole at the next run', () => {
+  it('a Codex homes copy that fails half way is copied again whole at the next run', async () => {
     const { app, srv, clean } = dirs()
     try {
       const a = path.join(app, CODEX_HOMES_DIR, 'a')
@@ -323,12 +338,22 @@ describe('the migration of the app data into the server directory', () => {
       writeFileSync(path.join(a, 'auth.json'), '{"a":1}')
       writeFileSync(path.join(b, 'auth.json'), '{"b":1}')
       chmodSync(path.join(b, 'auth.json'), 0o000)
-      const first = migrateAppDataToServer({ appDir: app, serverDir: srv, from, to: server().to })
+      const first = await migrateAppDataToServer({
+        appDir: app,
+        serverDir: srv,
+        from,
+        to: server().to
+      })
       expect(first.failed.some((f) => f.startsWith(`${CODEX_HOMES_DIR}:`))).toBe(true)
       expect(existsSync(path.join(srv, CODEX_HOMES_DIR))).toBe(false)
       expect(existsSync(path.join(srv, MIGRATION_MARKER))).toBe(false)
       chmodSync(path.join(b, 'auth.json'), 0o600)
-      const second = migrateAppDataToServer({ appDir: app, serverDir: srv, from, to: server().to })
+      const second = await migrateAppDataToServer({
+        appDir: app,
+        serverDir: srv,
+        from,
+        to: server().to
+      })
       expect(second.failed).toEqual([])
       expect(second.copied).toContain(CODEX_HOMES_DIR)
       expect(json(path.join(srv, CODEX_HOMES_DIR, 'b', 'auth.json'))).toEqual({ b: 1 })
@@ -337,7 +362,7 @@ describe('the migration of the app data into the server directory', () => {
       clean()
     }
   })
-  it('the Antasphere session whose write fails discards the item it filed', () => {
+  it('the Antasphere session whose write fails discards the item it filed', async () => {
     const { app, srv, clean } = dirs()
     try {
       writeFileSync(
@@ -354,18 +379,18 @@ describe('the migration of the app data into the server directory', () => {
       mkdirSync(srv, { recursive: true })
       const filed = new Set<string>()
       const to = {
-        available: () => true,
-        seal: (plain: string) => {
+        available: async () => true,
+        seal: async (plain: string) => {
           const h = `kc:${plain}`
           filed.add(h)
           return h
         },
-        discard: (sealed: string) => {
+        discard: async (sealed: string) => {
           filed.delete(sealed)
         }
       }
       chmodSync(srv, 0o500)
-      const report = migrateAppDataToServer({ appDir: app, serverDir: srv, from, to })
+      const report = await migrateAppDataToServer({ appDir: app, serverDir: srv, from, to })
       chmodSync(srv, 0o700)
       expect(report.failed.some((f) => f.startsWith(`${ANTASPHERE_SESSION_FILE}:`))).toBe(true)
       expect(filed.size).toBe(0)
@@ -376,7 +401,7 @@ describe('the migration of the app data into the server directory', () => {
     }
   })
 
-  it('a stale partial Codex copy from a killed run is cleared before the next copy', () => {
+  it('a stale partial Codex copy from a killed run is cleared before the next copy', async () => {
     const { app, srv, clean } = dirs()
     try {
       mkdirSync(path.join(app, CODEX_HOMES_DIR, 'a'), { recursive: true })
@@ -384,7 +409,12 @@ describe('the migration of the app data into the server directory', () => {
       // What a run killed mid-copy leaves: a partial folder with a stray file.
       mkdirSync(path.join(srv, `${CODEX_HOMES_DIR}.partial`, 'gone'), { recursive: true })
       writeFileSync(path.join(srv, `${CODEX_HOMES_DIR}.partial`, 'gone', 'auth.json'), '{"gone":1}')
-      const report = migrateAppDataToServer({ appDir: app, serverDir: srv, from, to: server().to })
+      const report = await migrateAppDataToServer({
+        appDir: app,
+        serverDir: srv,
+        from,
+        to: server().to
+      })
       expect(report.failed).toEqual([])
       expect(existsSync(path.join(srv, CODEX_HOMES_DIR, 'gone'))).toBe(false)
       expect(json(path.join(srv, CODEX_HOMES_DIR, 'a', 'auth.json'))).toEqual({ a: 1 })
@@ -429,7 +459,7 @@ describe('the migration of the app data into the server directory', () => {
       )
     }
 
-    it('an install migrated by beta.1 gets its records once: the missing ones copied, the names put back, nothing else changed', () => {
+    it('an install migrated by beta.1 gets its records once: the missing ones copied, the names put back, nothing else changed', async () => {
       const { app, srv, clean } = dirs()
       try {
         writeFileSync(path.join(app, 'preferences.json'), '{"theme":"dark"}')
@@ -445,7 +475,7 @@ describe('the migration of the app data into the server directory', () => {
         put(srv, 'kept.json', record('kept', { displayName: 'Renamed since', userRenamed: true }))
         put(srv, 'server-only.json', record('server-only', { displayName: 'New tab' }))
 
-        const report = migrateAppDataToServer({
+        const report = await migrateAppDataToServer({
           appDir: app,
           serverDir: srv,
           from,
@@ -496,7 +526,12 @@ describe('the migration of the app data into the server directory', () => {
         })
         // Once: a second boot changes nothing, a name cleared since stays cleared.
         put(srv, 'named.json', record('named', { model: 'server-model', windowKey: 'w1' }))
-        const again = migrateAppDataToServer({ appDir: app, serverDir: srv, from, to: server().to })
+        const again = await migrateAppDataToServer({
+          appDir: app,
+          serverDir: srv,
+          from,
+          to: server().to
+        })
         expect(again.outcome).toBe('already')
         expect(read(srv, 'named.json')).toEqual(
           record('named', { model: 'server-model', windowKey: 'w1' })
@@ -506,12 +541,12 @@ describe('the migration of the app data into the server directory', () => {
       }
     })
 
-    it('a first separate boot carries version 1 and the records in one run', () => {
+    it('a first separate boot carries version 1 and the records in one run', async () => {
       const { app, srv, clean } = dirs()
       try {
         writeFileSync(path.join(app, 'preferences.json'), '{"theme":"dark"}')
         put(app, 'tab.json', record('tab', { displayName: 'My tab', userRenamed: true }))
-        const report = migrateAppDataToServer({
+        const report = await migrateAppDataToServer({
           appDir: app,
           serverDir: srv,
           from,
@@ -531,11 +566,11 @@ describe('the migration of the app data into the server directory', () => {
       }
     })
 
-    it('an app with records only is not "nothing"', () => {
+    it('an app with records only is not "nothing"', async () => {
       const { app, srv, clean } = dirs()
       try {
         put(app, 'tab.json', record('tab'))
-        const report = migrateAppDataToServer({
+        const report = await migrateAppDataToServer({
           appDir: app,
           serverDir: srv,
           from,
@@ -548,7 +583,7 @@ describe('the migration of the app data into the server directory', () => {
       }
     })
 
-    it('a record either side cannot read is left as it is, and the step still completes', () => {
+    it('a record either side cannot read is left as it is, and the step still completes', async () => {
       const { app, srv, clean } = dirs()
       try {
         beta1Marker(srv)
@@ -556,7 +591,7 @@ describe('the migration of the app data into the server directory', () => {
         mkdirSync(path.join(srv, SESSION_RECORDS_DIR), { recursive: true })
         writeFileSync(path.join(srv, SESSION_RECORDS_DIR, 'broken.json'), '{ not json')
         put(app, 'notes.txt', 'not a record')
-        const report = migrateAppDataToServer({
+        const report = await migrateAppDataToServer({
           appDir: app,
           serverDir: srv,
           from,
@@ -573,14 +608,14 @@ describe('the migration of the app data into the server directory', () => {
       }
     })
 
-    it('a records step that fails writes no new marker, and the next boot runs it', () => {
+    it('a records step that fails writes no new marker, and the next boot runs it', async () => {
       const { app, srv, clean } = dirs()
       try {
         beta1Marker(srv)
         put(app, 'tab.json', record('tab', { displayName: 'Mine' }))
         // A file where the server's records folder should be: the copy fails.
         writeFileSync(path.join(srv, SESSION_RECORDS_DIR), 'in the way')
-        const failed = migrateAppDataToServer({
+        const failed = await migrateAppDataToServer({
           appDir: app,
           serverDir: srv,
           from,
@@ -589,7 +624,7 @@ describe('the migration of the app data into the server directory', () => {
         expect(failed.failed).toHaveLength(1)
         expect(json(path.join(srv, MIGRATION_MARKER))).toMatchObject({ v: 1 })
         rmSync(path.join(srv, SESSION_RECORDS_DIR))
-        const healed = migrateAppDataToServer({
+        const healed = await migrateAppDataToServer({
           appDir: app,
           serverDir: srv,
           from,
@@ -602,7 +637,7 @@ describe('the migration of the app data into the server directory', () => {
       }
     })
 
-    it('the name fill changes nothing else of a record the server wrote, whatever the app had (F4)', () => {
+    it('the name fill changes nothing else of a record the server wrote, whatever the app had (F4)', async () => {
       const { app, srv, clean } = dirs()
       try {
         beta1Marker(srv)
@@ -624,7 +659,7 @@ describe('the migration of the app data into the server directory', () => {
           record('tab', { claudeSessionId: 'new-after-clear', cwd: '/new' }),
           0o600
         )
-        migrateAppDataToServer({ appDir: app, serverDir: srv, from, to: server().to })
+        await migrateAppDataToServer({ appDir: app, serverDir: srv, from, to: server().to })
         expect(read(srv, 'tab.json')).toEqual(
           record('tab', {
             claudeSessionId: 'new-after-clear',
@@ -640,14 +675,14 @@ describe('the migration of the app data into the server directory', () => {
       }
     })
 
-    it('a marker without a version is version 1: the records are carried (F5)', () => {
+    it('a marker without a version is version 1: the records are carried (F5)', async () => {
       const { app, srv, clean } = dirs()
       try {
         mkdirSync(srv, { recursive: true })
         writeFileSync(path.join(srv, MIGRATION_MARKER), JSON.stringify({ at: 'x' }))
         writeFileSync(path.join(app, 'preferences.json'), '{"theme":"dark"}')
         put(app, 'tab.json', record('tab'))
-        const report = migrateAppDataToServer({
+        const report = await migrateAppDataToServer({
           appDir: app,
           serverDir: srv,
           from,
@@ -660,13 +695,13 @@ describe('the migration of the app data into the server directory', () => {
       }
     })
 
-    it('a marker that cannot be parsed is version 1 too', () => {
+    it('a marker that cannot be parsed is version 1 too', async () => {
       const { app, srv, clean } = dirs()
       try {
         mkdirSync(srv, { recursive: true })
         writeFileSync(path.join(srv, MIGRATION_MARKER), '{ not json')
         put(app, 'tab.json', record('tab'))
-        const report = migrateAppDataToServer({
+        const report = await migrateAppDataToServer({
           appDir: app,
           serverDir: srv,
           from,

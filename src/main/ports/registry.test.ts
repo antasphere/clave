@@ -44,11 +44,11 @@ describe('the standalone composition', () => {
     expect(dataDirFromEnv({ [DATA_DIR_ENV]: '/srv/clave' })).toBe('/srv/clave')
   })
 
-  it('files documents under the given directory and seals through the Keychain', () => {
+  it('files documents under the given directory and seals through the Keychain', async () => {
     const ports = standalonePorts({ dataDir: '/srv/clave' })
     expect(ports.storage.pathOf('a.json')).toBe('/srv/clave/a.json')
     // Availability follows the platform and the presence of `security`; the
     // adapter itself is proven in secrets.test.ts over a stand-in.
-    expect(typeof ports.secrets.available()).toBe('boolean')
+    expect(typeof (await ports.secrets.available())).toBe('boolean')
   })
 })

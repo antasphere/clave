@@ -791,6 +791,10 @@ export interface PtySpawnOptions {
   /** Profile metadata persisted for restore + the session-header badge. */
   claudeProfileId?: string
   claudeProfileLabel?: string
+  /** The account's token, decrypted by the caller that spawns (the secret
+   *  store answers asynchronously; the spawn itself is planned synchronously)
+   *  and held only until the process starts — never on the record. */
+  oauthToken?: string
   /** Codex account (ADR 0002): sets `CODEX_HOME` for a Codex session, and
    *  only for one; every other kind ignores it. */
   codexAccountId?: string
@@ -857,17 +861,27 @@ interface PendingSpawn {
  * mistake) must never inherit a subscription token into its environment.
  * Pure over the account store, so the boundary has a test of its own.
  */
-export function accountTokenForSpawn(
+export function accountTokenRequired(
   kind: AgentKind | null,
   accountId: string | undefined,
-  getToken: (id: string | undefined) => string | undefined = (id) =>
-    claudeAccountsManager.getToken(id)
+  token: string | undefined
 ): string | undefined {
   if (kind !== 'claude' && kind !== 'claude-agents') return undefined
-  const token = getToken(accountId)
   if (accountId && accountId !== DEFAULT_CLAUDE_ACCOUNT_ID && !token)
     throw new Error('The selected Claude account is no longer available.')
   return token
+}
+
+/** The same boundary with the read: the token is decrypted for a Claude
+ *  session only, so another kind never even opens the store. */
+export async function accountTokenForSpawn(
+  kind: AgentKind | null,
+  accountId: string | undefined,
+  getToken: (id: string | undefined) => Promise<string | undefined> | string | undefined = (id) =>
+    claudeAccountsManager.getToken(id)
+): Promise<string | undefined> {
+  if (kind !== 'claude' && kind !== 'claude-agents') return undefined
+  return accountTokenRequired(kind, accountId, await getToken(accountId))
 }
 
 /**
@@ -996,7 +1010,9 @@ export class PtyBackend {
     const codexHome = codexHomeForSpawn(kind, options?.codexAccountId)
     // Refuse a missing explicit token before writing any restore metadata.
     // The renderer never receives the token; only a Claude process uses it.
-    const oauthToken = accountTokenForSpawn(kind, options?.claudeProfileId)
+    // The caller decrypted it (PtyManager.spawn, asynchronously); here the
+    // plan is synchronous, so the check is all that is left.
+    const oauthToken = accountTokenRequired(kind, options?.claudeProfileId, options?.oauthToken)
     const model = options?.model ?? (usePiMode ? launchProfile?.pi?.model : undefined)
     const piProvider = usePiMode ? (options?.piProvider ?? launchProfile?.pi?.provider) : undefined
     const piThinking = usePiMode ? (options?.piThinking ?? launchProfile?.pi?.thinking) : undefined

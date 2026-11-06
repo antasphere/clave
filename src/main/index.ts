@@ -195,7 +195,7 @@ async function bootServer(): Promise<void> {
       // (server-migration.ts): the plain ones copied, the Claude tokens and
       // the Antasphere session opened with this process's safeStorage and
       // sealed again in the Keychain the server reads, in memory only.
-      startSeparate: () => {
+      startSeparate: async () => {
         // The client main reaches that server with, loaded while it starts
         // rather than once it has answered, when the first window has shown
         // (PRDCT-3527): half a second of synchronous requires, which held the
@@ -211,7 +211,7 @@ async function bootServer(): Promise<void> {
         else if (first) afterLoad(first)
         else app.once('browser-window-created', (_event, win) => afterLoad(win))
         const dataDir = join(app.getPath('userData'), 'server')
-        const migration = migrateAppDataToServer({
+        const migration = await migrateAppDataToServer({
           appDir: app.getPath('userData'),
           serverDir: dataDir,
           from: safeStorageSecrets(safeStorage),
@@ -641,22 +641,21 @@ app.whenReady().then(() => {
   const locations = locationManager.getLocations()
   for (const loc of locations) {
     if (loc.type === 'remote' && loc.autoConnect) {
-      const config = locationManager.getCredentials(loc.id)
-      if (config) {
-        sshManager
-          .connect(loc.id, config)
-          .then(() => {
-            locationManager.setLocationStatus(loc.id, 'connected')
-            // Connect OpenClaw if detected
-            if (loc.openclawPort && loc.host) {
-              const token = locationManager.getOpenclawToken(loc.id)
-              openclawClient.connect(loc.id, buildOpenclawWsUrl(loc), token).catch(() => {})
-            }
-          })
-          .catch(() => {
-            locationManager.setLocationStatus(loc.id, 'error')
-          })
-      }
+      void (async () => {
+        const config = await locationManager.getCredentials(loc.id)
+        if (!config) return
+        try {
+          await sshManager.connect(loc.id, config)
+          locationManager.setLocationStatus(loc.id, 'connected')
+          // Connect OpenClaw if detected
+          if (loc.openclawPort && loc.host) {
+            const token = await locationManager.getOpenclawToken(loc.id)
+            openclawClient.connect(loc.id, buildOpenclawWsUrl(loc), token).catch(() => {})
+          }
+        } catch {
+          locationManager.setLocationStatus(loc.id, 'error')
+        }
+      })()
     }
   }
 

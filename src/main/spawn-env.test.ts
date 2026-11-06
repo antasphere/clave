@@ -30,37 +30,37 @@ import {
 describe('accountTokenForSpawn', () => {
   const getToken = (id: string | undefined): string | undefined =>
     id === 'work' ? 'sk-ant-work' : undefined
-  it('hands the account token to a Claude session', () => {
-    expect(accountTokenForSpawn('claude', 'work', getToken)).toBe('sk-ant-work')
-    expect(accountTokenForSpawn('claude-agents', 'work', getToken)).toBe('sk-ant-work')
+  it('hands the account token to a Claude session', async () => {
+    expect(await accountTokenForSpawn('claude', 'work', getToken)).toBe('sk-ant-work')
+    expect(await accountTokenForSpawn('claude-agents', 'work', getToken)).toBe('sk-ant-work')
   })
-  it('never to a terminal or another agent, whatever account id they carry', () => {
-    expect(accountTokenForSpawn(null, 'work', getToken)).toBeUndefined()
-    expect(accountTokenForSpawn('codex', 'work', getToken)).toBeUndefined()
-    expect(accountTokenForSpawn('antigravity', 'work', getToken)).toBeUndefined()
-    expect(accountTokenForSpawn('pi', 'work', getToken)).toBeUndefined()
+  it('never to a terminal or another agent, whatever account id they carry', async () => {
+    expect(await accountTokenForSpawn(null, 'work', getToken)).toBeUndefined()
+    expect(await accountTokenForSpawn('codex', 'work', getToken)).toBeUndefined()
+    expect(await accountTokenForSpawn('antigravity', 'work', getToken)).toBeUndefined()
+    expect(await accountTokenForSpawn('pi', 'work', getToken)).toBeUndefined()
   })
   it.each(['claude', 'claude-agents'] as const)(
     'keeps machine-login behavior for Default or omitted accounts in %s',
-    (kind) => {
-      expect(accountTokenForSpawn(kind, 'default', getToken)).toBeUndefined()
-      expect(accountTokenForSpawn(kind, undefined, getToken)).toBeUndefined()
+    async (kind) => {
+      expect(await accountTokenForSpawn(kind, 'default', getToken)).toBeUndefined()
+      expect(await accountTokenForSpawn(kind, undefined, getToken)).toBeUndefined()
     }
   )
   it.each(['claude', 'claude-agents'] as const)(
     'refuses a missing or cleared non-default token in %s instead of using the machine login',
-    (kind) => {
-      expect(() => accountTokenForSpawn(kind, 'removed-account', () => undefined)).toThrow(
+    async (kind) => {
+      await expect(accountTokenForSpawn(kind, 'removed-account', () => undefined)).rejects.toThrow(
         'The selected Claude account is no longer available.'
       )
     }
   )
-  it('does not look up Claude tokens for another provider or a plain terminal', () => {
+  it('does not look up Claude tokens for another provider or a plain terminal', async () => {
     const getToken = (): never => {
       throw new Error('A non-Claude session must not consult Claude tokens')
     }
     for (const kind of [null, 'codex', 'antigravity', 'pi'] as const)
-      expect(accountTokenForSpawn(kind, 'removed-account', getToken)).toBeUndefined()
+      expect(await accountTokenForSpawn(kind, 'removed-account', getToken)).toBeUndefined()
   })
 })
 

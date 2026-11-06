@@ -472,20 +472,20 @@ function generateTitle(
  * the session's own, the workspace's default, or the built-in — so a Codex
  * chat, a plugin's agent or the echo fixture is still named by Claude.
  */
-function titleLaunch(context: TitleLaunchContext): OneShotLaunch {
+async function titleLaunch(context: TitleLaunchContext): Promise<OneShotLaunch> {
   return buildOneShotLaunch({
     profile: launchProfileManager.resolveClaudeCli(context.workspaceId, context.launchProfileId),
     args: TITLE_CLI_ARGS,
     loginEnv: getLoginShellEnv(),
     account: {
       configDir: context.configDir,
-      oauthToken: accountTokenForSpawn('claude', context.claudeProfileId)
+      oauthToken: await accountTokenForSpawn('claude', context.claudeProfileId)
     },
     userShell: getUserShell()
   })
 }
 
-function runTitleGeneration(
+async function runTitleGeneration(
   sessionId: string,
   userMessage: string,
   context: TitleLaunchContext
@@ -500,7 +500,7 @@ Rules:
 User's message:
 ${userMessage}`
 
-  const launch = titleLaunch(context)
+  const launch = await titleLaunch(context)
 
   return new Promise<string>((resolve, reject) => {
     const child = execFile(

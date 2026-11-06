@@ -540,7 +540,9 @@ export class AntasphereAccountManager {
     this.session = null
     this.lastFailure = 'expired'
     this.clearTimer()
-    this.clearSession()
+    // Off a timer: nothing waits for the record to go, and a port that keeps
+    // an item of its own forgets it as it can.
+    void this.clearSession()
     this.log('antasphere.session.expired')
     // The windows hear it on the next tick, whoever noticed first: a read
     // must not re-enter the listeners, and the timer's own emit is a no-op
@@ -548,12 +550,25 @@ export class AntasphereAccountManager {
     queueMicrotask(() => this.emit())
   }
 
+  /** What the secret port last answered, as `status()` reports it. The port
+   *  answers asynchronously (Electron's `safeStorage` does, since 45), so
+   *  the read model carries the last probe: a restore, a login and a renewal
+   *  each ask again first. Unknown until then reads as available — a boot
+   *  that has not asked yet is not a storage failure. */
+  private secureStorage: boolean | null = null
+
   private secureStorageAvailable(): boolean {
+    return this.secureStorage ?? true
+  }
+
+  /** Ask the secret port again and carry its answer into the status. */
+  async probeSecureStorage(): Promise<boolean> {
     try {
-      return this.ports.secrets.available()
+      this.secureStorage = await this.ports.secrets.available()
     } catch {
-      return false
+      this.secureStorage = false
     }
+    return this.secureStorage
   }
 
   private emit(): void {
@@ -588,7 +603,7 @@ export class AntasphereAccountManager {
    *  the previous sealed value is discarded only once the new file is in
    *  place, and a new value whose file could not be written is discarded
    *  itself, so the secret port holds exactly one item for this login. */
-  private writeSession(session: SessionSecret): void {
+  private async writeSession(session: SessionSecret): Promise<void> {
     let previous: SessionFile | null = null
     try {
       previous = readSessionFile(readJson(this.ports.storage, SESSION_FILE))
@@ -597,7 +612,7 @@ export class AntasphereAccountManager {
     }
     let sealed: string
     try {
-      sealed = this.ports.secrets.seal(serializeSessionSecret(session))
+      sealed = await this.ports.secrets.seal(serializeSessionSecret(session))
     } catch (err) {
       throw new LoginFailure('storage', (err as Error).message)
     }
@@ -611,15 +626,15 @@ export class AntasphereAccountManager {
     try {
       writeJson(this.ports.storage, SESSION_FILE, file, { mode: 0o600 })
     } catch (err) {
-      this.discardSealed(sealed)
+      await this.discardSealed(sealed)
       throw new LoginFailure('storage', (err as Error).message)
     }
-    if (previous && previous.sealed !== sealed) this.discardSealed(previous.sealed)
+    if (previous && previous.sealed !== sealed) await this.discardSealed(previous.sealed)
   }
 
-  private discardSealed(sealed: string): void {
+  private async discardSealed(sealed: string): Promise<void> {
     try {
-      this.ports.secrets.discard(sealed)
+      await this.ports.secrets.discard(sealed)
     } catch {
       // The port's own record, if it keeps one; nothing else depends on it.
     }
@@ -634,14 +649,14 @@ export class AntasphereAccountManager {
    * or the other: a caller that promised the user a sign-out tells them when
    * it is not.
    */
-  private clearSession(): boolean {
+  private async clearSession(): Promise<boolean> {
     let stored: SessionFile | null = null
     try {
       stored = readSessionFile(readJson(this.ports.storage, SESSION_FILE))
     } catch {
       stored = null
     }
-    if (stored) this.discardSealed(stored.sealed)
+    if (stored) await this.discardSealed(stored.sealed)
     try {
       this.ports.storage.remove(SESSION_FILE)
       return true
@@ -695,10 +710,10 @@ export class AntasphereAccountManager {
       stored.clientId !== clientFile.clientId
     ) {
       this.log('antasphere.session.discarded', { reason: 'binding' })
-      this.clearSession()
+      await this.clearSession()
       return
     }
-    if (!this.secureStorageAvailable()) {
+    if (!(await this.probeSecureStorage())) {
       // Kept on disk: the OS encryption may be back next time. Not a login.
       this.lastFailure = 'storage'
       this.log('antasphere.session.unreadable', { reason: 'storage' })
@@ -707,14 +722,14 @@ export class AntasphereAccountManager {
     }
     let opened: string | undefined
     try {
-      opened = this.ports.secrets.open(stored.sealed)
+      opened = await this.ports.secrets.open(stored.sealed)
     } catch {
       opened = undefined
     }
     const secret = opened === undefined ? null : parseSessionSecret(opened)
     if (!secret || secret.issuer !== stored.issuer || secret.clientId !== stored.clientId) {
       this.log('antasphere.session.discarded', { reason: 'corrupt' })
-      this.clearSession()
+      await this.clearSession()
       return
     }
     if (secret.expiresAt > this.now()) {
@@ -727,7 +742,7 @@ export class AntasphereAccountManager {
     }
     if (!secret.refreshToken) {
       this.log('antasphere.session.discarded', { reason: 'expired' })
-      this.clearSession()
+      await this.clearSession()
       return
     }
     await this.renew(secret, epoch)
@@ -867,7 +882,7 @@ export class AntasphereAccountManager {
         expiresAt,
         refreshToken: tokens.refresh_token ?? session.refreshToken
       }
-      this.writeSession(renewed)
+      await this.writeSession(renewed)
       this.session = renewed
       this.lastFailure = null
       this.scheduleSessionTimer()
@@ -884,7 +899,7 @@ export class AntasphereAccountManager {
       this.session = null
       this.clearTimer()
       this.lastFailure = failure
-      if (permanent) this.clearSession()
+      if (permanent) await this.clearSession()
       this.emit()
     }
   }
@@ -1178,7 +1193,7 @@ export class AntasphereAccountManager {
       this.emit()
       return answer(null)
     }
-    if (!this.secureStorageAvailable()) {
+    if (!(await this.probeSecureStorage())) {
       this.lastFailure = 'storage'
       this.log('antasphere.login.refused', { reason: 'storage' })
       this.emit()
@@ -1293,7 +1308,7 @@ export class AntasphereAccountManager {
       if (session.expiresAt <= this.now()) {
         throw new LoginFailure('invalid-response', 'the identity has already expired')
       }
-      this.writeSession(session)
+      await this.writeSession(session)
       this.closePending(pending)
       this.session = session
       this.lastFailure = null
@@ -1331,7 +1346,7 @@ export class AntasphereAccountManager {
 
   /** Forget the login here. Local to Clave: the hub's own session is not
    *  touched. Everything pending is dropped, the files go, every window hears. */
-  signOut(): AntasphereAccountStatus {
+  async signOut(): Promise<AntasphereAccountStatus> {
     this.epoch++
     const pending = this.pending
     if (pending) {
@@ -1343,7 +1358,7 @@ export class AntasphereAccountManager {
     // The login in memory is gone whatever the disk says; a record that
     // could neither be removed nor invalidated is a storage failure the
     // user sees, not a sign-out they were promised.
-    this.lastFailure = this.clearSession() ? null : 'storage'
+    this.lastFailure = (await this.clearSession()) ? null : 'storage'
     this.log('antasphere.signed-out', { cleared: this.lastFailure === null })
     this.emit()
     return this.status()

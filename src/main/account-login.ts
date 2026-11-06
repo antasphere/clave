@@ -226,12 +226,14 @@ class AccountLoginManager {
     const running = this.runningFor('claude', accountId)
     if (running) return running
     const store = (live: LiveJob, token: string): void => {
-      try {
-        claudeAccountsManager.setToken(accountId, token)
-        live.finish('done')
-      } catch (error) {
-        live.finish('failed', error instanceof Error ? error.message : 'Could not store the token.')
-      }
+      void claudeAccountsManager.setToken(accountId, token).then(
+        () => live.finish('done'),
+        (error: unknown) =>
+          live.finish(
+            'failed',
+            error instanceof Error ? error.message : 'Could not store the token.'
+          )
+      )
     }
     return this.startJob(
       'claude',

@@ -52,7 +52,7 @@ const mocks = vi.hoisted(() => ({
   }
 }))
 vi.mock('electron', () => ({
-  app: { once: vi.fn() },
+  app: { once: vi.fn(), getPath: () => '/tmp' },
   BrowserWindow: { fromWebContents: mocks.fromWebContents },
   dialog: { showOpenDialog: mocks.showOpenDialog },
   ipcMain: { handle: (name: string, fn: never) => mocks.handlers.set(name, fn) },

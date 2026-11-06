@@ -65,13 +65,13 @@ export const CODEX_HOMES_DIR = 'codex-homes'
 
 /** What the migration asks of a secret adapter: the app's opens, the server's seals. */
 export interface OpensSecrets {
-  open(sealed: string): string | undefined
+  open(sealed: string): Promise<string | undefined>
 }
 export interface SealsSecrets {
-  available(): boolean
-  seal(plain: string): string
+  available(): Promise<boolean>
+  seal(plain: string): Promise<string>
   /** Forget an item this run filed, when the step it belongs to fails. */
-  discard?(sealed: string): void
+  discard?(sealed: string): Promise<void>
 }
 
 /** Seal every value of a step or none: a seal that throws discards the
@@ -79,19 +79,21 @@ export interface SealsSecrets {
  *  next boot leaves no orphan Keychain item behind (round 4's finding). An
  *  adapter that cannot seal at all fails the step rather than dropping the
  *  secret: the marker is then not written and nothing is lost. */
-function sealAll(to: SealsSecrets): { seal: (plain: string) => string; rollback: () => void } {
-  if (!to.available()) throw new Error('the server cannot seal a secret on this machine')
+async function sealAll(
+  to: SealsSecrets
+): Promise<{ seal: (plain: string) => Promise<string>; rollback: () => Promise<void> }> {
+  if (!(await to.available())) throw new Error('the server cannot seal a secret on this machine')
   const filed: string[] = []
   return {
-    seal: (plain) => {
-      const sealed = to.seal(plain)
+    seal: async (plain) => {
+      const sealed = await to.seal(plain)
       filed.push(sealed)
       return sealed
     },
-    rollback: () => {
+    rollback: async () => {
       for (const sealed of filed) {
         try {
-          to.discard?.(sealed)
+          await to.discard?.(sealed)
         } catch {
           /* an item that cannot be discarded is left; the next run files anew */
         }
@@ -150,7 +152,7 @@ const writeJson = (file: string, value: unknown, mode: number): void => {
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
 
-export function migrateAppDataToServer(options: MigrationOptions): MigrationReport {
+export async function migrateAppDataToServer(options: MigrationOptions): Promise<MigrationReport> {
   const log = options.log ?? (() => {})
   const { appDir, serverDir } = options
   const report: MigrationReport = {
@@ -187,9 +189,9 @@ export function migrateAppDataToServer(options: MigrationOptions): MigrationRepo
     return { ...report, outcome: 'nothing' }
   }
 
-  const step = (name: string, run: () => void): void => {
+  const step = async (name: string, run: () => void | Promise<void>): Promise<void> => {
     try {
-      run()
+      await run()
     } catch (err) {
       const reason = `${name}: ${(err as Error).message}`
       report.failed.push(reason)
@@ -197,8 +199,8 @@ export function migrateAppDataToServer(options: MigrationOptions): MigrationRepo
     }
   }
 
-  if (ran < 1) carryVersion1(options, report, step)
-  if (ran < 2) step(SESSION_RECORDS_DIR, () => carryRecords(appDir, serverDir, report))
+  if (ran < 1) await carryVersion1(options, report, step)
+  if (ran < 2) await step(SESSION_RECORDS_DIR, () => carryRecords(appDir, serverDir, report))
 
   if (report.failed.length === 0) writeMarker(marker, appDir, report, options.now, previous)
   log(
@@ -216,11 +218,11 @@ export function migrateAppDataToServer(options: MigrationOptions): MigrationRepo
 }
 
 /** Version 1: the settings documents, the sealed secrets, the Codex homes. */
-function carryVersion1(
+async function carryVersion1(
   options: MigrationOptions,
   report: MigrationReport,
-  step: (name: string, run: () => void) => void
-): void {
+  step: (name: string, run: () => void | Promise<void>) => Promise<void>
+): Promise<void> {
   const { appDir, serverDir } = options
   // The plain documents, as they are, with their mode.
   for (const name of MIGRATED_DOCUMENTS) {
@@ -231,7 +233,7 @@ function carryVersion1(
       report.kept.push(name)
       continue
     }
-    step(name, () => {
+    await step(name, () => {
       const mode = fs.statSync(source).mode & 0o777
       fs.copyFileSync(source, target, fs.constants.COPYFILE_EXCL)
       fs.chmodSync(target, mode)
@@ -240,7 +242,7 @@ function carryVersion1(
   }
 
   // The Claude tokens: `{ [id]: { token: sealed, setAt, invalidAt? } }`.
-  step(CLAUDE_CREDENTIALS_FILE, () => {
+  await step(CLAUDE_CREDENTIALS_FILE, async () => {
     const source = path.join(appDir, CLAUDE_CREDENTIALS_FILE)
     const target = path.join(serverDir, CLAUDE_CREDENTIALS_FILE)
     if (!exists(source)) return
@@ -251,23 +253,23 @@ function carryVersion1(
     const parsed = readJson(source)
     if (!isRecord(parsed)) return
     const out: Record<string, unknown> = {}
-    const sealer = sealAll(options.to)
+    const sealer = await sealAll(options.to)
     const unopened: string[] = []
     let resealed = 0
     try {
       for (const [id, credential] of Object.entries(parsed)) {
         if (!isRecord(credential) || typeof credential.token !== 'string') continue
-        const plain = options.from.open(credential.token)
+        const plain = await options.from.open(credential.token)
         if (plain === undefined) {
           unopened.push(`claude:${id}`)
           continue
         }
-        out[id] = { ...credential, token: sealer.seal(plain) }
+        out[id] = { ...credential, token: await sealer.seal(plain) }
         resealed += 1
       }
       writeJson(target, out, 0o600)
     } catch (err) {
-      sealer.rollback()
+      await sealer.rollback()
       throw err
     }
     report.unopened.push(...unopened)
@@ -277,7 +279,7 @@ function carryVersion1(
 
   // The Antasphere session: `{ v: 1, issuer, clientId, sealed, savedAt }`,
   // or `{ v: 1, revoked: true }`, which is copied as it is.
-  step(ANTASPHERE_SESSION_FILE, () => {
+  await step(ANTASPHERE_SESSION_FILE, async () => {
     const source = path.join(appDir, ANTASPHERE_SESSION_FILE)
     const target = path.join(serverDir, ANTASPHERE_SESSION_FILE)
     if (!exists(source)) return
@@ -292,16 +294,16 @@ function carryVersion1(
       report.copied.push(ANTASPHERE_SESSION_FILE)
       return
     }
-    const plain = options.from.open(parsed.sealed)
+    const plain = await options.from.open(parsed.sealed)
     if (plain === undefined) {
       report.unopened.push('antasphere')
       return
     }
-    const sealer = sealAll(options.to)
+    const sealer = await sealAll(options.to)
     try {
-      writeJson(target, { ...parsed, sealed: sealer.seal(plain) }, 0o600)
+      writeJson(target, { ...parsed, sealed: await sealer.seal(plain) }, 0o600)
     } catch (err) {
-      sealer.rollback()
+      await sealer.rollback()
       throw err
     }
     report.resealed.antasphere = true
@@ -309,7 +311,7 @@ function carryVersion1(
   })
 
   // The Codex homes, symlinks kept as symlinks.
-  step(CODEX_HOMES_DIR, () => {
+  await step(CODEX_HOMES_DIR, () => {
     const source = path.join(appDir, CODEX_HOMES_DIR)
     const target = path.join(serverDir, CODEX_HOMES_DIR)
     if (!exists(source)) return

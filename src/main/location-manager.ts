@@ -21,7 +21,10 @@ const LOCAL_LOCATION: Location = {
 class LocationManager {
   private locationsPath: string
   private credentialsPath: string
-  private migrated = false
+  /** The one-time move of plaintext tokens into the encrypted store, started
+   *  on the first access (after app-ready, when `safeStorage` works) and
+   *  awaited by every read of a secret, never by the plain listing. */
+  private migration: Promise<void> | null = null
 
   constructor() {
     this.locationsPath = path.join(app.getPath('userData'), 'locations.json')
@@ -30,12 +33,7 @@ class LocationManager {
 
   /** Public locations never carry the OpenClaw token — it lives encrypted in the credentials store. */
   getLocations(): Location[] {
-    // Lazy migration: runs on first access (post app-ready, when safeStorage works),
-    // never at module-eval time in the constructor.
-    if (!this.migrated) {
-      this.migrated = true
-      this.migrateOpenclawTokens()
-    }
+    void this.ensureMigrated()
     try {
       const raw = fs.readFileSync(this.locationsPath, 'utf-8')
       const locations = JSON.parse(raw) as Location[]
@@ -46,8 +44,14 @@ class LocationManager {
     }
   }
 
+  private ensureMigrated(): Promise<void> {
+    this.migration ??= this.migrateOpenclawTokens()
+    return this.migration
+  }
+
   /** Decrypt and return the OpenClaw token for a location (main process only). */
-  getOpenclawToken(id: string): string | undefined {
+  async getOpenclawToken(id: string): Promise<string | undefined> {
+    await this.ensureMigrated()
     const cred = this.loadCredentials()[id]
     if (!cred?.openclawToken) return undefined
     return this.decryptSecret(cred.openclawToken)
@@ -60,23 +64,23 @@ class LocationManager {
     return copy
   }
 
-  private encryptSecret(value: string): string {
-    if (!safeStorage.isEncryptionAvailable()) {
+  private async encryptSecret(value: string): Promise<string> {
+    if (!(await safeStorage.isAsyncEncryptionAvailable())) {
       throw new Error('OS encryption (safeStorage) is unavailable — cannot store secret securely')
     }
-    return safeStorage.encryptString(value).toString('base64')
+    return (await safeStorage.encryptStringAsync(value)).toString('base64')
   }
 
-  private decryptSecret(b64: string): string | undefined {
+  private async decryptSecret(b64: string): Promise<string | undefined> {
     try {
-      return safeStorage.decryptString(Buffer.from(b64, 'base64'))
+      return (await safeStorage.decryptStringAsync(Buffer.from(b64, 'base64'))).result
     } catch {
       return undefined
     }
   }
 
   /** One-time migration: move any plaintext openclawToken from locations.json into the encrypted store. */
-  private migrateOpenclawTokens(): void {
+  private async migrateOpenclawTokens(): Promise<void> {
     let locations: Location[]
     try {
       locations = JSON.parse(fs.readFileSync(this.locationsPath, 'utf-8')) as Location[]
@@ -92,7 +96,7 @@ class LocationManager {
         try {
           credentials[loc.id] = {
             ...credentials[loc.id],
-            openclawToken: this.encryptSecret(loc.openclawToken as string)
+            openclawToken: await this.encryptSecret(loc.openclawToken as string)
           }
         } catch {
           // encryption unavailable — leave token in place rather than lose it
@@ -106,7 +110,8 @@ class LocationManager {
     }
   }
 
-  addLocation(loc: Omit<Location, 'id' | 'status'>, password?: string): Location {
+  async addLocation(loc: Omit<Location, 'id' | 'status'>, password?: string): Promise<Location> {
+    await this.ensureMigrated()
     const locations = this.getLocations().filter((l) => l.id !== 'local')
     const id = randomUUID()
     const { openclawToken, ...rest } = loc
@@ -121,8 +126,8 @@ class LocationManager {
     if (password || openclawToken) {
       const credentials = this.loadCredentials()
       const cred: EncryptedCredentials = { ...credentials[id] }
-      if (password) cred.password = this.encryptSecret(password)
-      if (openclawToken) cred.openclawToken = this.encryptSecret(openclawToken)
+      if (password) cred.password = await this.encryptSecret(password)
+      if (openclawToken) cred.openclawToken = await this.encryptSecret(openclawToken)
       credentials[id] = cred
       this.saveCredentials(credentials)
     }
@@ -130,10 +135,11 @@ class LocationManager {
     return this.stripSecrets(newLocation)
   }
 
-  updateLocation(id: string, updates: Partial<Location>): Location {
+  async updateLocation(id: string, updates: Partial<Location>): Promise<Location> {
     if (id === 'local') {
       throw new Error('Cannot update the local location')
     }
+    await this.ensureMigrated()
 
     const locations = this.getLocations().filter((l) => l.id !== 'local')
     const index = locations.findIndex((l) => l.id === id)
@@ -147,7 +153,7 @@ class LocationManager {
       const credentials = this.loadCredentials()
       const cred: EncryptedCredentials = { ...credentials[id] }
       if (updates.openclawToken) {
-        cred.openclawToken = this.encryptSecret(updates.openclawToken)
+        cred.openclawToken = await this.encryptSecret(updates.openclawToken)
       } else {
         delete cred.openclawToken
       }
@@ -176,7 +182,8 @@ class LocationManager {
     this.saveCredentials(credentials)
   }
 
-  getCredentials(id: string): SSHConnectionConfig | null {
+  async getCredentials(id: string): Promise<SSHConnectionConfig | null> {
+    await this.ensureMigrated()
     const locations = this.getLocations()
     const location = locations.find((l) => l.id === id)
     if (!location || location.type === 'local') {
@@ -195,8 +202,9 @@ class LocationManager {
 
     if (cred?.password) {
       try {
-        const decrypted = safeStorage.decryptString(Buffer.from(cred.password, 'base64'))
-        config.password = decrypted
+        config.password = (
+          await safeStorage.decryptStringAsync(Buffer.from(cred.password, 'base64'))
+        ).result
       } catch {
         // Password decryption failed, return config without password
       }

@@ -41,8 +41,10 @@ export interface CopyOfferView {
 
 /** What the shell gives the store: where a copy lands, who hears a change. */
 export interface CopyOfferShell {
-  /** Put the exact bytes on the OS clipboard. */
-  writeClipboard(text: string): void
+  /** Put the exact bytes on the OS clipboard. Electron's clipboard follows
+   *  the W3C API since 44, so the write is a promise; the copy is reported
+   *  only once it has landed. */
+  writeClipboard(text: string): void | Promise<void>
   /** Tell every window the offers changed (the copy button sits in the
    *  offering tab's own header, which may be in any window). */
   broadcast(views: CopyOfferView[]): void
@@ -116,11 +118,11 @@ export function createOffer(input: {
 }
 
 /** Copy the exact stored bytes to the OS clipboard and stamp the offer. */
-export function copyOfferToClipboard(id: string): CopyOfferView {
+export async function copyOfferToClipboard(id: string): Promise<CopyOfferView> {
   const offer = offers.get(id)
   if (!offer) throw new Error(`No copy offer "${id}"`)
   if (!shell) throw new Error('This process has no clipboard: the copy offer stays in the tab.')
-  shell.writeClipboard(offer.value)
+  await shell.writeClipboard(offer.value)
   offer.copiedAt = Date.now()
   pushToRenderer()
   return toView(offer)
