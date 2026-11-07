@@ -46,6 +46,10 @@ import {
   DropdownMenuSubContent
 } from '@clave/ui/components'
 import { useShortcutLabel } from '../../store/keymap-store'
+import { useFleetStore } from '../../store/fleet-store'
+import { pairedServerWorkspaces, usePairingStore } from '../../store/pairing-store'
+import { getWorkspaceById } from '../../store/workspace-store'
+import { ServerIcon } from '@heroicons/react/24/outline'
 
 /** What the caret's remote entries hand back to the sidebar, which owns the
  *  remote directory picker (remote launches never touch the local cwd rules). */
@@ -162,7 +166,21 @@ export function SessionLauncher({ onRemoteLaunch }: SessionLauncherProps): React
   const connectedRemoteLocations = locations.filter(
     (l) => l.type === 'remote' && l.status === 'connected'
   )
-  const hasRemoteLocations = connectedRemoteLocations.length > 0
+  // The servers whose workspace is paired with this one (PRDCT-4151): a new
+  // tab starts on this Mac unless one of their rows is picked.
+  const pairings = usePairingStore((s) => s.servers)
+  const connections = useFleetStore((s) => s.connections)
+  const statuses = useFleetStore((s) => s.statuses)
+  const pairedServers = pairedServerWorkspaces(activeWorkspaceId)
+    .map(({ serverId, workspaceId }) => ({
+      serverId,
+      workspace: getWorkspaceById(workspaceId),
+      name: connections.find((c) => c.id === serverId)?.name ?? 'Server',
+      color: pairings[serverId]?.color,
+      online: statuses[serverId]?.state === 'connected'
+    }))
+    .filter((s) => s.workspace !== undefined)
+  const hasRemoteLocations = connectedRemoteLocations.length > 0 || pairedServers.length > 0
   const hasAgentLocations = agents.length > 0
   const multiProfile = profiles.length > 1
 
@@ -491,6 +509,71 @@ export function SessionLauncher({ onRemoteLaunch }: SessionLauncherProps): React
                 {renderCodexEntry('Codex CLI', codexShortcut ?? undefined, false)}
                 {renderCodexEntry('Codex CLI (YOLO)', yoloCodexShortcut ?? undefined, true)}
                 {renderAgentEntry('pi', 'Pi', piShortcut ?? undefined)}
+
+                {pairedServers.map((server) => (
+                  <div
+                    key={`${server.serverId}:${server.workspace!.id}`}
+                    data-run-on-server={server.serverId}
+                  >
+                    <DropdownMenuSeparator />
+                    <DropdownMenuLabel>
+                      <span className="flex items-center gap-1.5">
+                        <ServerIcon
+                          className="w-3 h-3 flex-shrink-0"
+                          style={server.color ? { color: server.color } : undefined}
+                        />
+                        <span className="truncate">Run on {server.name}</span>
+                        {!server.online && (
+                          <span className="text-text-tertiary/60 font-normal normal-case">
+                            (offline)
+                          </span>
+                        )}
+                      </span>
+                    </DropdownMenuLabel>
+                    <DropdownMenuItem
+                      disabled={!server.online}
+                      onSelect={() =>
+                        void run({
+                          serverId: server.serverId,
+                          setup: null,
+                          cwd: { kind: 'path', path: server.workspace!.rootDir },
+                          workspaceId: server.workspace!.id
+                        })
+                      }
+                    >
+                      <CommandLineIcon className="w-3.5 h-3.5 flex-shrink-0 text-text-tertiary" />
+                      <span className="flex-1">Terminal</span>
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      disabled={!server.online}
+                      onSelect={() =>
+                        void run({
+                          serverId: server.serverId,
+                          setup: { kind: 'claude', dangerousMode: false },
+                          cwd: { kind: 'path', path: server.workspace!.rootDir },
+                          workspaceId: server.workspace!.id
+                        })
+                      }
+                    >
+                      <ClaudeLogo className="w-3.5 h-3.5 flex-shrink-0 text-text-tertiary" />
+                      <span className="flex-1">Claude Code</span>
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      disabled={!server.online}
+                      onSelect={() =>
+                        void run({
+                          serverId: server.serverId,
+                          setup: { kind: 'codex', dangerousMode: false },
+                          cwd: { kind: 'path', path: server.workspace!.rootDir },
+                          workspaceId: server.workspace!.id
+                        })
+                      }
+                    >
+                      <CodexLogo className="w-3.5 h-3.5 flex-shrink-0 text-text-tertiary" />
+                      <span className="flex-1">Codex CLI</span>
+                    </DropdownMenuItem>
+                  </div>
+                ))}
 
                 {connectedRemoteLocations.map((loc) => (
                   <div key={loc.id}>

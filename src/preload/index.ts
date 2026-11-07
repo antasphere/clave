@@ -40,6 +40,7 @@ import type { SidebarGroup } from '@clave/contract/sidebar'
 import { selectAdoptableRecords, type AdoptionScope } from '../shared/adoption-scope'
 import type { SessionRecord as WireSessionRecord } from '@clave/contract/sessions'
 import type { WorkAssignment, WorkChange, WorkChangeResult } from '@clave/contract/work-rules'
+import type { ServerPairingChange, ServerPairings } from '@clave/contract/fleet'
 import {
   MIC_GET_ACCESS_CHANNEL,
   MIC_REQUEST_ACCESS_CHANNEL,
@@ -1889,6 +1890,15 @@ const electronAPI = {
   // carries this window's key as its origin, and the change event carries it
   // back so this window drops its own echo, the way the IPC handler skips
   // the sender. ──
+  // ── Paired workspaces (PRDCT-4151): main's document, every window told.
+  // The channel names are `PAIRING_IPC` in `@clave/contract/fleet`, spelled
+  // here because the preload imports nothing of the contract at window
+  // start (lazy-load.test.ts). ──
+  serverPairingsLoad: () => ipcRenderer.invoke('server:pairings:load') as Promise<ServerPairings>,
+  serverPairingsChange: (change: ServerPairingChange) =>
+    ipcRenderer.invoke('server:pairings:change', change) as Promise<ServerPairings>,
+  onServerPairingsChanged: (callback: (state: ServerPairings) => void) =>
+    createIpcListener<[ServerPairings]>('server:pairings:changed', callback),
   workspaceLoad: viaServer<[], WorkspaceState>({
     ipc: () => ipcRenderer.invoke('workspace:load'),
     server: async ({ api }) => loose<WorkspaceState>(await api.settings.workspaces.load())
@@ -2234,6 +2244,7 @@ const electronAPI = {
   gitCheckIgnored: (cwd: string, paths: string[]) =>
     ipcRenderer.invoke('git:check-ignored', cwd, paths),
   getGitStatus: (cwd: string) => ipcRenderer.invoke('git:status', cwd),
+  gitRemoteUrl: (cwd: string) => ipcRenderer.invoke('git:remote-url', cwd),
   getGitStatusBatch: (paths: string[]) => ipcRenderer.invoke('git:status-batch', paths),
   gitFetch: (cwd: string) => ipcRenderer.invoke('git:fetch', cwd),
   gitFetchBatch: (paths: string[]) => ipcRenderer.invoke('git:fetch-batch', paths),

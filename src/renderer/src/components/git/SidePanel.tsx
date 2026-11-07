@@ -10,6 +10,7 @@ import { useLocationStore } from '../../store/location-store'
 import { useWorkspaceStore } from '../../store/workspace-store'
 import { FileTree } from '../files/FileTree'
 import { RemoteFileTree } from '../files/RemoteFileTree'
+import { MachineChip } from '../fleet/FleetControls'
 import { GitStatusPanel, MultiRepoGitPanel } from './GitStatusPanel'
 import {
   MagicPullButton,
@@ -690,6 +691,9 @@ function SidePanelBody(): React.JSX.Element {
               className="flex-1 min-w-0 px-0.5 flex items-center"
               style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
             >
+              {/* The panel follows the focused tab's machine; when that is a
+                  server, the chip says which (PRDCT-4151). */}
+              {fleetRemote && <MachineChip serverId={fleetOwner} />}
               {isRemoteSession && locationName ? (
                 <div
                   className="flex items-center gap-1.5 text-xs font-medium text-text-secondary truncate"

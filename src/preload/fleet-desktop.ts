@@ -1491,6 +1491,12 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
         () => local.getGitStatus(cwd),
         async (b, path, owner) => loose(ownedStatus(owner, await b.api.git.status(path)))
       ),
+    gitRemoteUrl: (cwd) =>
+      gitRoute(
+        cwd,
+        () => local.gitRemoteUrl(cwd),
+        async (b, path) => (await b.api.git.remote(path)).url
+      ),
     getGitStatusBatch: (keys) =>
       gitBatch(
         keys,

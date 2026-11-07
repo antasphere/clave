@@ -24,6 +24,8 @@ import { useSessionStore } from '../store/session-store'
 import { isRemoteKey } from './fleet-identity'
 import { useFleetStore } from '../store/fleet-store'
 import type { ServerConnectionStatus } from '@clave/contract/fleet'
+import { bootPairings } from '../store/pairing-store'
+import { forgetServerRemotes, refreshPairingProposals } from './workspace-pairing'
 
 /** Orchestration layer above the stores. The stores stay import-acyclic
  *  (session→workspace, pinned→workspace); everything that has to touch several
@@ -437,6 +439,10 @@ function subscribeToMain(): void {
     const state = useWorkspaceStore.getState()
     const shown = findWorkspace(state, state.activeWorkspaceId)
     if (shown && workspaceServer(shown.id) === status.serverId) refreshServerPins(shown, status)
+    // The server's disk may have changed since the last read: its roots'
+    // remotes are read again for the pairing proposals (PRDCT-4151).
+    forgetServerRemotes(status.serverId)
+    void refreshPairingProposals()
   })
   window.electronAPI?.onFleetConnectionsChanged?.((connections) =>
     retainServerWorkspaces(new Set(connections.map((c) => c.id)))
@@ -517,6 +523,8 @@ export function applyServerWorkspaces(serverId: string, workspaces: Workspace[])
   const shown = owned.find((w) => w.id === activeWorkspaceId)
   const status = useFleetStore.getState().statuses[serverId]
   if (shown) refreshServerPins(shown, status)
+  // A workspace the server gained may be the same tree as one of this Mac's.
+  void refreshPairingProposals()
   if (
     workspaceServer(activeWorkspaceId) === serverId &&
     !owned.some((w) => w.id === activeWorkspaceId)
@@ -721,6 +729,9 @@ export async function bootWorkspaces(): Promise<void> {
     isPrimary: identity?.isPrimary ?? true
   })
   subscribeToMain()
+  // The paired workspaces (PRDCT-4151): main's document, then the proposals
+  // this window can make from what it already knows.
+  void bootPairings().then(() => refreshPairingProposals())
 
   let pins: PinnedGroupBlueprint[]
   if (state && !state.pinsMigrated) {
@@ -846,6 +857,8 @@ export async function addWorkspace(
   // Main learns the workspace (and, on the first, that this window shows it).
   await persistWorkspaceRegistry()
   if (isFirst) await claimWorkspace(ws.id)
+  // A new Mac workspace may be the same tree as a connected server's.
+  void refreshPairingProposals()
 
   await refreshWorkspacePins(ws)
   return ws

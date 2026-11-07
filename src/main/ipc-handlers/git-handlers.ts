@@ -63,6 +63,7 @@ export function registerGitHandlers(): void {
   ipcMain.handle('git:fetch', (_event, cwd: string) => gitManager.fetch(cwd))
   ipcMain.handle('git:fetch-batch', (_event, paths: string[]) => gitManager.fetchBatch(paths))
   ipcMain.handle('git:status', (_event, cwd: string) => gitManager.getStatus(cwd))
+  ipcMain.handle('git:remote-url', (_event, cwd: string) => gitManager.remoteUrl(cwd))
   ipcMain.handle('git:status-batch', (_event, paths: string[]) => gitManager.getStatusBatch(paths))
   ipcMain.handle('git:discover-repos', (_event, cwd: string, force?: boolean) =>
     repoIndexManager.discover(cwd, force)
