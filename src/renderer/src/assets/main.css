@@ -303,50 +303,6 @@ html[data-ui-font='synonym'] {
   transition: color 200ms;
 }
 
-/* The attribution sits a step back from the name — same ink, less of it, the
-   way it is a step smaller and a weight lighter. It is two boxes, "by" and the
-   company name, held apart by the word space the phrase itself sets (160 of the
-   frame's units, 0.2102 of Clave's ink): each box is cropped to its own ink, so
-   the space between them is not in either drawing. See Wordmark.tsx. */
-.wordmark-by {
-  display: flex;
-  align-items: flex-end;
-  gap: calc(var(--wordmark-h) * 0.2102);
-  color: var(--text-tertiary);
-}
-.wordmark-by .wordmark {
-  color: inherit;
-}
-
-/* The company name is the way out to the house's own site. The strip it sits in
-   is a window drag region under a `pointer-events: none` mark, so the link has
-   to opt out of BOTH: without the first a click drags the window instead, and
-   without the second it never reaches the button at all. */
-.wordmark-link {
-  display: block;
-  padding: 0;
-  border: 0;
-  background: none;
-  color: inherit;
-  cursor: pointer;
-  pointer-events: auto;
-  -webkit-app-region: no-drag;
-  transition: color 150ms;
-}
-.wordmark-link:hover,
-.wordmark-link:focus-visible {
-  color: var(--text-secondary);
-}
-
-/* 130px is the lockup at the default size (Clave 46 + gap 6 + the attribution
-   78). Below it the second word would be clipped mid-letter, which is worse
-   than not being there. */
-@container wordmark (max-width: 134px) {
-  .wordmark-by {
-    display: none;
-  }
-}
-
 /* ── Groups ── */
 
 /* A group is a tinted card, and every state it has is drawn from the colour it
