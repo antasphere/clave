@@ -3111,8 +3111,21 @@ button.extension-card:hover {
    own foot padding is taller than the fade, so the last line sits clear of
    it once the reader is at the end. */
 .chat-transcript > .chat-scroll {
-  --chat-fade: calc(var(--spacing) * 8);
-  mask-image: linear-gradient(to bottom, black calc(100% - var(--chat-fade)), transparent);
+  --chat-fade: calc(var(--spacing) * 7);
+  /* A cosine ease over eight steps: no visible edge where the fade begins,
+     none where it ends, and no banding between. */
+  mask-image: linear-gradient(
+    to bottom,
+    black calc(100% - var(--chat-fade)),
+    color-mix(in srgb, black 96%, transparent) calc(100% - var(--chat-fade) * 0.875),
+    color-mix(in srgb, black 85%, transparent) calc(100% - var(--chat-fade) * 0.75),
+    color-mix(in srgb, black 69%, transparent) calc(100% - var(--chat-fade) * 0.625),
+    color-mix(in srgb, black 50%, transparent) calc(100% - var(--chat-fade) * 0.5),
+    color-mix(in srgb, black 31%, transparent) calc(100% - var(--chat-fade) * 0.375),
+    color-mix(in srgb, black 15%, transparent) calc(100% - var(--chat-fade) * 0.25),
+    color-mix(in srgb, black 4%, transparent) calc(100% - var(--chat-fade) * 0.125),
+    transparent
+  );
 }
 /* The way back down. The transcript follows the stream only while the reader
    is at its end (`useTranscriptEnd`); one who scrolled up to re-read is left
@@ -6000,9 +6013,6 @@ details[open] > .chat-approval-items {
   text-align: left;
   cursor: pointer;
 }
-.work-card-open:has(+ .term-agent-model) {
-  padding-inline-end: var(--spacing);
-}
 /* The face's target spans the whole card, the margin around the chip too;
    the chip sits above it and keeps its own menu. */
 .work-card-open::after {
@@ -6011,11 +6021,25 @@ details[open] > .chat-approval-items {
   inset: 0;
   border-radius: inherit;
 }
+/* An agent's model sits at the end of the card's second line, so the title
+   has the card's whole width: laid over its room in that line
+   (.work-card-model-room), above the face's target, keeping its own menu. */
 .work-card-row > .term-agent-model {
-  position: relative;
+  position: absolute;
   z-index: 1;
-  align-self: center;
-  margin-inline: 0 calc(var(--spacing) * 2);
+  inset-inline-end: calc(var(--spacing) * 2);
+  bottom: calc(var(--spacing) * 1.5);
+  margin: 0;
+  line-height: 1.4;
+}
+.work-card-model-room {
+  flex-shrink: 0;
+  margin: 0 0 0 auto;
+  padding-inline-start: calc(var(--spacing) * 3);
+  visibility: hidden;
+}
+.work-card-meta > .work-card-model-room::before {
+  content: none;
 }
 .work-card-open:hover .term-agent-description,
 .work-card-open[data-state='open'] .term-agent-description {
@@ -6038,6 +6062,7 @@ details[open] > .chat-approval-items {
 }
 .work-card-text {
   display: flex;
+  flex: 1;
   flex-direction: column;
   gap: 1px;
   min-width: 0;
