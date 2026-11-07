@@ -52,6 +52,16 @@ describe('parseInstallEnv', () => {
     expect(parseInstallEnv(text)).toEqual(values)
   })
 
+  it('decodes the octal bytes of a non-ASCII path as UTF-8, as a C-locale bash writes them', () => {
+    // bash 3.2 under LC_ALL=C writes each byte of "ü" as an octal escape.
+    const written = execFileSync('/bin/bash', ['-c', 'printf "%q" "$1"', '_', '/tmp/ü data'], {
+      encoding: 'utf8',
+      env: { ...process.env, LC_ALL: 'C' }
+    })
+    expect(parseInstallEnv(`V=${written}`)).toEqual({ V: '/tmp/ü data' })
+    expect(parseInstallEnv("V=$'/tmp/\\303\\274'")).toEqual({ V: '/tmp/ü' })
+  })
+
   it('reads single-quoted and $-quoted words', () => {
     expect(parseInstallEnv("A='x y'\nB=$'a\\nb\\'c\\\\'\nC=a\\ b\\\\c")).toEqual({
       A: 'x y',
@@ -81,6 +91,19 @@ describe('readInstalledServer', () => {
 })
 
 describe('readIdentityToken', () => {
+  it("refuses a token one character short of the daemon's own rule, takes one at the floor", () => {
+    const data = mkdtempSync(join(tmpdir(), 'clave-identity-'))
+    mkdirSync(join(data, 'daemon'), { recursive: true })
+    const write = (token: string): void =>
+      writeFileSync(join(data, 'daemon', 'identity.json'), JSON.stringify({ serverId: 's', token }))
+    write('x'.repeat(31))
+    expect(() => readIdentityToken(data)).toThrow(/no valid token/)
+    write('x'.repeat(32))
+    expect(readIdentityToken(data)).toBe('x'.repeat(32))
+    write('y'.repeat(4097))
+    expect(() => readIdentityToken(data)).toThrow(/no valid token/)
+  })
+
   it('accepts a good token and refuses a short one', () => {
     const data = temp()
     mkdirSync(join(data, 'daemon'))

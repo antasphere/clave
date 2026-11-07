@@ -123,12 +123,42 @@ function seedClaudeStub(dir) {
   return dir
 }
 
+/** A `codex` on the daemon's PATH that takes an API key on stdin and writes
+ *  the credential file Codex would write into `CODEX_HOME`, and nothing
+ *  else: the login a server takes from its own shell, without a provider. */
+function seedCodexStub(dir) {
+  mkdirSync(dir, { recursive: true, mode: 0o755 })
+  const file = path.join(dir, 'codex')
+  writeFileSync(
+    file,
+    [
+      '#!/bin/sh',
+      'if [ "$1" = login ] && [ "$2" = --with-api-key ]; then',
+      '  key=$(/bin/cat)',
+      '  [ -n "$key" ] && [ -n "$CODEX_HOME" ] || { echo "codex: no key or no home" >&2; exit 1; }',
+      '  case "$key" in sk-*) ;; *) echo "codex: invalid API key" >&2; exit 1 ;; esac',
+      '  printf \'{"OPENAI_API_KEY":"stub"}\' > "$CODEX_HOME/auth.json"',
+      '  exit 0',
+      'fi',
+      'echo "codex stub: unsupported" >&2',
+      'exit 1',
+      ''
+    ].join('\n')
+  )
+  chmodSync(file, 0o755)
+  return dir
+}
+
 /**
  * `count` daemons (two by default), each started with the fleet flags plus
  * `serverArgs`; `world.mac(label, { args })` adds app flags to a Mac's launch
- * (the server upgrade spec's `--test-version`, issue #266).
+ * (the server upgrade spec's `--test-version`, issue #266). `codexStub` puts
+ * a stand-in `codex` on the daemons' PATH for the API-key login.
  */
-export async function fleetWorld(label, { gitRepo = false, count = 2, serverArgs = [] } = {}) {
+export async function fleetWorld(
+  label,
+  { gitRepo = false, count = 2, serverArgs = [], codexStub = false } = {}
+) {
   const run = `${label}-${randomUUID()}`
   const servers = []
   const clients = new Set()
@@ -157,10 +187,12 @@ export async function fleetWorld(label, { gitRepo = false, count = 2, serverArgs
   const seed = fixturePath(`${run}-settings`)
   seedProfiles(seed)
   const claudeStub = gitRepo ? seedClaudeStub(fixturePath(`${run}-claude-stub`)) : null
+  const codexStubDir = codexStub ? seedCodexStub(fixturePath(`${run}-codex-stub`)) : null
+  const stubs = [claudeStub, codexStubDir].filter(Boolean)
   const options = {
     env: {
       SHELL: '/bin/sh',
-      ...(claudeStub && { PATH: `${claudeStub}:${process.env.PATH ?? ''}` })
+      ...(stubs.length && { PATH: `${stubs.join(':')}:${process.env.PATH ?? ''}` })
     },
     seedFrom: seed,
     args: [

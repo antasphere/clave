@@ -65,9 +65,12 @@ function ServerOverview({
   const workspaces = useWorkspaceStore((s) => s.serverWorkspaces[id] ?? NO_WORKSPACES)
   const setSettingsSection = useSessionStore((s) => s.setSettingsSection)
 
+  // Read at the connection, and again at every account list the server
+  // pushes, so the badges follow an account added on the server.
   useEffect(() => {
     let current = true
-    if (connected) {
+    if (!connected) return
+    const read = (): void => {
       void window.electronAPI.fleetLaunchSettings(id).then(
         (value) => {
           if (current) setRead(value)
@@ -77,8 +80,14 @@ function ServerOverview({
         }
       )
     }
+    read()
+    const off = window.electronAPI.onFleetSettingsEvent((event) => {
+      if (event.serverId !== id) return
+      if (event.kind === 'claude-accounts' || event.kind === 'codex-accounts') read()
+    })
     return () => {
       current = false
+      off()
     }
   }, [id, connected])
 
@@ -326,8 +335,14 @@ function ThisMacServer(): React.JSX.Element {
   }
   useEffect(() => {
     refresh()
+    // The phases reach every window; a run started elsewhere (another
+    // window) settles here too, its outcome shown where it was started.
     const off = window.electronAPI.onServerSetupProgress(({ phase }) => {
-      if (phase === 'done' || phase === 'failed') return
+      if (phase === 'done' || phase === 'failed') {
+        setStep((step) => (step.kind === 'running' ? { kind: 'idle' } : step))
+        refresh()
+        return
+      }
       setStep({ kind: 'running', phase })
     })
     return () => {
@@ -383,7 +398,7 @@ function ThisMacServer(): React.JSX.Element {
           label="Run Clave as a server on this Mac"
           description={
             installed
-              ? `Installed. Running the install again updates it to the latest release; ${listen}`
+              ? 'Installed. Running the install again updates it to the latest release and keeps the address it was given.'
               : `Installs the standalone server as a background service of your user, built from the latest release. ${listen}`
           }
         >
@@ -544,8 +559,8 @@ function TailnetScan({
         scan.machines.map((machine) => (
           <div
             className="settings-row"
-            key={machine.ip}
-            data-tailnet-machine={machine.ip}
+            key={machine.dnsName || machine.ip || machine.name}
+            data-tailnet-machine={machine.ip || machine.name}
             data-clave-server={machine.claveServer ? 'true' : undefined}
             data-online={machine.online ? 'true' : undefined}
           >
@@ -556,7 +571,7 @@ function TailnetScan({
                 {!machine.online && <span className="badge badge-muted">Offline</span>}
               </div>
               <p className="settings-row-description truncate">
-                {machine.ip}
+                {machine.ip || 'No IPv4 address'}
                 {machine.os ? ` · ${machine.os}` : ''}
               </p>
             </div>
@@ -564,7 +579,7 @@ function TailnetScan({
               <button
                 className="btn-secondary"
                 onClick={() => onPick({ name: machine.name, url: machine.url })}
-                disabled={!machine.online}
+                disabled={!machine.online || !machine.url}
                 data-tailnet-use
               >
                 Use

@@ -64,8 +64,19 @@ export async function run(t) {
     const { script, record, failMarker } = standIn(path.join(base, 'stand-in'), server)
     const configDir = path.join(base, 'config')
     mkdirSync(configDir, { recursive: true, mode: 0o700 })
-    const statusFile = path.join(base, 'tailscale-stopped.json')
-    writeFileSync(statusFile, JSON.stringify({ BackendState: 'Stopped', Self: {}, Peer: {} }))
+    // Tailscale up for the first install (the address is chosen then), stopped
+    // for the second (the saved address must stay): the file is read each time.
+    const statusFile = path.join(base, 'tailscale.json')
+    const tailscale = (state) =>
+      writeFileSync(
+        statusFile,
+        JSON.stringify({
+          BackendState: state,
+          Self: { HostName: 'this-mac', TailscaleIPs: ['100.64.0.1'], Online: true },
+          Peer: {}
+        })
+      )
+    tailscale('Running')
 
     const mac = await world.mac('a', {
       args: [
@@ -85,9 +96,16 @@ export async function run(t) {
       'not-installed'
     )
     t.check(
-      'without Tailscale the page says the server listens on this Mac only',
-      (await card.innerText()).includes('listens on this Mac only (127.0.0.1)')
+      "with Tailscale up the page names this Mac's tailnet address",
+      (await card.innerText()).includes("listens on this Mac's Tailscale address, 100.64.0.1")
     )
+    // Every progress event the window hears, kept to prove none carries the token.
+    await win.evaluate(() => {
+      window.__installProgress = []
+      window.electronAPI.onServerSetupProgress((p) =>
+        window.__installProgress.push(JSON.stringify(p))
+      )
+    })
     await card.locator('[data-install-server]').click()
     t.check(
       'the install warns what it does before running anything',
@@ -118,11 +136,19 @@ export async function run(t) {
       [...phases].join(',')
     )
     t.equal(
-      'the script got the loopback address when Tailscale is stopped, and nothing else',
+      "the first install gives the script this Mac's tailnet address, and nothing else",
       calls(record)
         .filter((line) => !line.startsWith('env '))
         .join('|'),
-      '--host 127.0.0.1'
+      '--host 100.64.0.1'
+    )
+    const progress = await win.evaluate(() => window.__installProgress)
+    t.check(
+      'the phases reached the window as events, none carrying the token',
+      progress.some((p) => p.includes('"build"')) &&
+        progress.some((p) => p.includes('"done"')) &&
+        !progress.some((p) => p.includes(server.token)),
+      progress.join(' ')
     )
     t.equal(
       'the script wrote under the test config directory',
@@ -178,11 +204,33 @@ export async function run(t) {
     t.check(
       "the run was logged under the app's own data, without the token",
       existsSync(log) &&
-        readFileSync(log, 'utf8').includes('--host 127.0.0.1') &&
+        readFileSync(log, 'utf8').includes('--host 100.64.0.1') &&
         !readFileSync(log, 'utf8').includes(server.token)
     )
 
     // A failed run: the fixed sentence of the code, the exit and the log, nothing the script printed.
+    // Install again, with Tailscale stopped meanwhile: the saved address is
+    // kept (the script gets no host), and the answer carries no token.
+    tailscale('Stopped')
+    const again = await win.evaluate(() => window.electronAPI.serverSetupInstall())
+    t.check(
+      'a second install succeeds and answers the server and its state, never the token',
+      again.ok === true &&
+        again.url === server.url &&
+        !JSON.stringify(again).includes(server.token),
+      JSON.stringify(again).includes(server.token) ? 'token in the answer' : JSON.stringify(again)
+    )
+    // The stand-in records one `env` line per run and the arguments it got:
+    // the second run brought none (an empty line, dropped by the reader).
+    t.equal(
+      'a later install keeps the saved address: the script gets no host',
+      JSON.stringify({
+        runs: calls(record).filter((line) => line.startsWith('env ')).length,
+        args: calls(record).filter((line) => !line.startsWith('env '))
+      }),
+      JSON.stringify({ runs: 2, args: ['--host 100.64.0.1'] })
+    )
+
     writeFileSync(failMarker, '')
     t.check(
       'an installed Mac offers to install again',

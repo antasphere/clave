@@ -21,6 +21,7 @@ import {
 } from './fixtures/fleet-world.mjs'
 
 const TOKEN = 'sk-ant-oat01-studio-token-for-the-e2e-run-0123456789'
+const API_KEY = 'sk-codex-key-for-the-e2e-run-0123456789'
 
 /** Pick a machine in the settings sidebar's picker: the menu is a popover
  *  that opens on the trigger's pointer-down, so the open is waited for. */
@@ -55,7 +56,7 @@ function serverAccounts(server, args, stdin = '') {
 }
 
 export async function run(t) {
-  const world = await fleetWorld('settings-machine', { count: 1 })
+  const world = await fleetWorld('settings-machine', { count: 1, codexStub: true })
   try {
     const [a] = world.servers
     // The daemon's usage reads record instead of reaching a provider.
@@ -117,6 +118,39 @@ export async function run(t) {
     const studio = accounts.find((account) => account.label === 'Studio login')
     t.check('the server holds the account with a token', !!studio && studio.hasToken === true)
 
+    // A refused token leaves nothing behind, and is never echoed.
+    const junk = await serverAccounts(a, ['claude', 'add', 'Junk'], 'not a token at all')
+    t.check(
+      'a refused token is said in one line and leaves no account behind',
+      junk.code === 1 &&
+        junk.stderr.includes('Nothing was added.') &&
+        !(await request(a, '/accounts/claude')).some((account) => account.label === 'Junk'),
+      junk.stderr
+    )
+    t.check(
+      'the refused paste is not echoed',
+      !(junk.stdout + junk.stderr).includes('not a token at all')
+    )
+
+    // The one login a daemon takes: a Codex API key, through Codex's own
+    // command on the server (a stand-in here), the key in no output.
+    const keyed = await serverAccounts(a, ['codex', 'add-key', 'Billing key'], API_KEY)
+    t.equal('the server command adds a Codex API-key account', keyed.code, 0, keyed.stderr)
+    t.check('the key is printed nowhere', !(keyed.stdout + keyed.stderr).includes(API_KEY))
+    const codexListed = await serverAccounts(a, ['codex', 'list'])
+    t.check(
+      'the Codex account holds its credential',
+      codexListed.code === 0 && /Billing key.*yes/.test(codexListed.stdout),
+      codexListed.stdout
+    )
+    const billing = (await request(a, '/accounts/codex')).find(
+      (account) => account.label === 'Billing key'
+    )
+    t.check(
+      "the daemon stored the credential in the account's own home",
+      !!billing && billing.hasCredential === true
+    )
+
     // ── The Mac ──
     const mac = await world.mac('a')
     const { win } = mac
@@ -172,6 +206,17 @@ export async function run(t) {
       (await accountsPage.innerText()).includes('Accounts are signed in on the server itself')
     )
     t.check('the token never reaches the page', !(await accountsPage.innerText()).includes(TOKEN))
+    await eventually(
+      async () =>
+        (await accountsPage.locator(`[data-server-codex-account="${billing.id}"]`).count()) === 1,
+      "the server's Codex account is listed"
+    )
+    t.check(
+      'the Codex account reads as signed in, the key nowhere',
+      !(
+        await accountsPage.locator(`[data-server-codex-account="${billing.id}"]`).innerText()
+      ).includes('Needs login') && !(await accountsPage.innerText()).includes(API_KEY)
+    )
 
     // ── Usage, read on the server ──
     await win.locator('[data-settings-nav-row="usage"]').click()
@@ -253,6 +298,21 @@ export async function run(t) {
         (await accountsPage.locator(`[data-server-claude-account="${second.id}"]`).count()) === 1,
       'an account added on the server appears without a reload'
     )
+
+    // ── The overview follows an account added on the server ──
+    await win.locator('[data-settings-nav-row="servers"]').click()
+    await win.locator('[data-settings-page="servers"]').waitFor()
+    await eventually(
+      async () => (await row.locator(`[data-server-login="${second.id}"]`).count()) === 1,
+      'the overview shows the account added while the Accounts page was open'
+    )
+    const third = await request(a, '/accounts/codex', { label: 'Third key', kind: 'apiKey' })
+    await eventually(
+      async () => (await row.locator(`[data-server-login="${third.id}"]`).count()) === 1,
+      'the overview follows an account added while it is on screen'
+    )
+    await win.locator('[data-settings-nav-row="accounts"]').click()
+    await accountsPage.locator(`[data-server-settings="${owner.id}"]`).waitFor()
 
     // ── Back to this Mac ──
     await pickMachine(win, 'This Mac', 'local')

@@ -62,21 +62,32 @@ function unquote(word: string): string {
       i = stop + 1
     } else if (c === '$' && word[i + 1] === "'") {
       i += 2
+      // Octal escapes are BYTES: under a C locale (a GUI-launched app's,
+      // bash 3.2) a non-ASCII character is written one escape per byte of
+      // its UTF-8, so a run of them is decoded together, not one by one.
+      let bytes: number[] = []
+      const flush = (): void => {
+        if (bytes.length) out += Buffer.from(bytes).toString('utf8')
+        bytes = []
+      }
       while (i < word.length && word[i] !== "'") {
         if (word[i] !== '\\') {
+          flush()
           out += word[i++]
           continue
         }
         const next = word[i + 1] ?? ''
         const octal = /^[0-7]{1,3}/.exec(word.slice(i + 1))
         if (octal) {
-          out += String.fromCharCode(parseInt(octal[0], 8))
+          bytes.push(parseInt(octal[0], 8))
           i += 1 + octal[0].length
         } else {
+          flush()
           out += ANSI_C[next] ?? next
           i += 2
         }
       }
+      flush()
       i += 1
     } else {
       out += c

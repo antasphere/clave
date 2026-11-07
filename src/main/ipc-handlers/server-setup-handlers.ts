@@ -94,13 +94,10 @@ function connectionFor(url: string): string | null {
   )
 }
 
-/** This Mac's name for its connection: the host name without `.local`. */
+/** This Mac's name for its connection: the host name's first label, since
+ *  the network may have given it a DNS suffix of its own. */
 function thisMacName(): string {
-  return (
-    hostname()
-      .replace(/\.local$/i, '')
-      .trim() || 'This Mac'
-  )
+  return hostname().split('.')[0].trim() || 'This Mac'
 }
 
 function publishPhase(phase: ServerInstallPhase): void {
@@ -110,7 +107,12 @@ function publishPhase(phase: ServerInstallPhase): void {
 
 async function install(): Promise<ServerInstallResult> {
   publishPhase('starting')
-  const host = (await selfTailnetIp()) ?? '127.0.0.1'
+  // The address is chosen on the first install only: a later run updates
+  // the release and keeps the saved address, so a Tailscale that happens to
+  // be down at that moment never moves a tailnet server to loopback (the
+  // script's own guard, which a host given again would override).
+  const first = readInstalledServer({ configDir: configDir(), name: SERVER_NAME }) === null
+  const host = first ? ((await selfTailnetIp()) ?? '127.0.0.1') : null
   const script =
     TEST_INSTALL_SCRIPT ??
     installScriptPath({
@@ -120,7 +122,7 @@ async function install(): Promise<ServerInstallResult> {
     })
   const run = await runInstallScript({
     script,
-    args: ['--host', host],
+    args: host ? ['--host', host] : [],
     // The script needs node, git and npm: the login shell's PATH, not the app's.
     env: {
       ...getLoginShellEnv(),

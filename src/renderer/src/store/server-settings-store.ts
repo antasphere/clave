@@ -98,6 +98,17 @@ export function serverSettingsFor(serverId: string): ServerSettings {
 const generations = new Map<string, number>()
 const generationOf = (serverId: string): number => generations.get(serverId) ?? 0
 
+// Bumped on every pushed account list, so a load answered after a push keeps
+// the pushed list (the newer one) rather than its own older answer.
+const listPushes = new Map<string, { claude: number; codex: number }>()
+const listPushesOf = (serverId: string): { claude: number; codex: number } => ({
+  ...(listPushes.get(serverId) ?? { claude: 0, codex: 0 })
+})
+const bumpListPush = (serverId: string, provider: ServerUsageProvider): void => {
+  const current = listPushesOf(serverId)
+  listPushes.set(serverId, { ...current, [provider]: current[provider] + 1 })
+}
+
 function patch(serverId: string, change: (current: ServerSettings) => ServerSettings): void {
   useServerSettingsStore.setState((state) => ({
     byServer: {
@@ -229,6 +240,7 @@ export function loadServerSettings(serverId: string): Promise<void> {
   if (running) return running
   const run = (async (): Promise<void> => {
     const generation = generationOf(serverId)
+    const pushesAtStart = listPushesOf(serverId)
     patch(serverId, (current) => ({ ...current, status: 'loading', error: null }))
     const api = window.electronAPI
     let answers: [
@@ -251,33 +263,39 @@ export function loadServerSettings(serverId: string): Promise<void> {
     }
     if (generationOf(serverId) !== generation) return
     const [accounts, launch, claudeSnapshot, codexSnapshot] = answers
-    const claude = claudeWithDefault(accounts.claude)
-    const codex = codexWithDefault(accounts.codex)
+    const pushes = listPushesOf(serverId)
     const live: LiveRead[] = []
-    patch(serverId, (current) => ({
-      status: 'ready',
-      error: null,
-      claude,
-      codex,
-      migrated: [...accounts.migrated],
-      profiles: launch.profiles,
-      usage: {
-        claude: fromSnapshot(
-          'claude',
-          claude.map((a) => a.id),
-          claudeSnapshot,
-          current.usage.claude,
-          live
-        ),
-        codex: fromSnapshot(
-          'codex',
-          codex.map((a) => a.id),
-          codexSnapshot,
-          current.usage.codex,
-          live
-        )
+    patch(serverId, (current) => {
+      // A list pushed while this load was out is newer than the load's answer.
+      const claude =
+        pushes.claude === pushesAtStart.claude ? claudeWithDefault(accounts.claude) : current.claude
+      const codex =
+        pushes.codex === pushesAtStart.codex ? codexWithDefault(accounts.codex) : current.codex
+      return {
+        status: 'ready',
+        error: null,
+        claude,
+        codex,
+        migrated: [...accounts.migrated],
+        profiles: launch.profiles,
+        usage: {
+          claude: fromSnapshot(
+            'claude',
+            claude.map((a) => a.id),
+            claudeSnapshot,
+            current.usage.claude,
+            live
+          ),
+          codex: fromSnapshot(
+            'codex',
+            codex.map((a) => a.id),
+            codexSnapshot,
+            current.usage.codex,
+            live
+          )
+        }
       }
-    }))
+    })
     for (const read of live)
       void readServerUsage(serverId, read.provider, read.accountId, read.force)
   })().finally(() => loads.delete(serverId))
@@ -329,12 +347,14 @@ export async function setServerGlobalLaunchProfile(
 export function applyServerSettingsEvent(event: FleetSettingsEvent): void {
   switch (event.kind) {
     case 'claude-accounts':
+      bumpListPush(event.serverId, 'claude')
       patch(event.serverId, (current) => ({
         ...current,
         claude: claudeWithDefault(event.accounts)
       }))
       return
     case 'codex-accounts':
+      bumpListPush(event.serverId, 'codex')
       patch(event.serverId, (current) => ({ ...current, codex: codexWithDefault(event.accounts) }))
       return
     case 'claude-usage':
@@ -350,6 +370,7 @@ export function applyServerSettingsEvent(event: FleetSettingsEvent): void {
 
 function dropServer(serverId: string): void {
   generations.set(serverId, generationOf(serverId) + 1)
+  listPushes.delete(serverId)
   loads.delete(serverId)
   useServerSettingsStore.setState((state) => {
     const byServer = { ...state.byServer }

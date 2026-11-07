@@ -102,6 +102,43 @@ describe('server-accounts', () => {
     expect(stdout + stderr).not.toContain(SECRET)
   })
 
+  it('removes the account again when the server refuses its token, echoing nothing', async () => {
+    answers['POST /accounts/claude'] = [200, { id: 'j1', label: 'Junk', hasToken: false }]
+    answers['POST /accounts/claude/token'] = [
+      422,
+      { message: 'That does not look like a Claude Code token (expected sk-ant-…).' }
+    ]
+    answers['POST /accounts/claude/remove'] = [200, true]
+    const result = await run(['claude', 'add', 'Junk'], 'not a token at all')
+    expect(result.code).toBe(1)
+    expect(result.stderr).toContain('The server answered 422: That does not look like')
+    expect(result.stderr).toContain('Nothing was added.')
+    expect(calls.map((c) => [c.method, c.path, c.body])).toEqual([
+      ['POST', '/accounts/claude', { label: 'Junk' }],
+      ['POST', '/accounts/claude/token', { id: 'j1', token: 'not a token at all' }],
+      ['POST', '/accounts/claude/remove', { id: 'j1' }]
+    ])
+    expect(result.stdout + result.stderr).not.toContain('not a token at all')
+  })
+
+  it('removes the Codex account again when the key is refused', async () => {
+    answers['POST /accounts/codex'] = [200, { id: 'k1', label: 'Key', kind: 'apiKey' }]
+    answers['POST /accounts/login/api-key'] = [
+      200,
+      { id: 'job', status: 'failed', message: 'codex login exited with status 1.' }
+    ]
+    answers['POST /accounts/codex/remove'] = [200, true]
+    const result = await run(['codex', 'add-key', 'Key'], 'sk-REFUSED-KEY')
+    expect(result.code).toBe(1)
+    expect(result.stderr).toContain('The key was refused: codex login exited with status 1.')
+    expect(calls.map((c) => [c.method, c.path])).toEqual([
+      ['POST', '/accounts/codex'],
+      ['POST', '/accounts/login/api-key'],
+      ['POST', '/accounts/codex/remove']
+    ])
+    expect(result.stdout + result.stderr).not.toContain('sk-REFUSED-KEY')
+  })
+
   it('refuses an empty paste before creating anything', async () => {
     const { code, stderr } = await run(['claude', 'add', 'Team'], '\n')
     expect(code).toBe(1)

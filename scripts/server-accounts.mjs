@@ -155,10 +155,21 @@ export async function run(argv) {
       printAccounts(await call('GET', '/accounts/claude'), (a) => a.hasToken)
       return
     case 'claude add': {
-      // The token first: an empty paste must not leave an account behind.
+      // The token first: an empty paste must not leave an account behind,
+      // and neither must a refused one, so the account goes if the server
+      // refuses its token.
       const token = await readSecret('token')
       const account = await call('POST', '/accounts/claude', { label: args.value })
-      reportFirstRead(await call('POST', '/accounts/claude/token', { id: account.id, token }))
+      let read
+      try {
+        read = await call('POST', '/accounts/claude/token', { id: account.id, token })
+      } catch (error) {
+        await call('POST', '/accounts/claude/remove', { id: account.id }).catch(() => undefined)
+        if (error instanceof Refusal)
+          throw new Refusal(`${error.message} Nothing was added.`, error.code)
+        throw error
+      }
+      reportFirstRead(read)
       process.stdout.write(`Added ${account.id}  ${account.label}, with its token.\n`)
       return
     }
@@ -174,11 +185,21 @@ export async function run(argv) {
     case 'codex add-key': {
       const apiKey = await readSecret('API key')
       const account = await call('POST', '/accounts/codex', { label: args.value, kind: 'apiKey' })
-      const job = await call('POST', '/accounts/login/api-key', { accountId: account.id, apiKey })
-      if (job?.status === 'failed')
+      let job
+      try {
+        job = await call('POST', '/accounts/login/api-key', { accountId: account.id, apiKey })
+      } catch (error) {
+        await call('POST', '/accounts/codex/remove', { id: account.id }).catch(() => undefined)
+        if (error instanceof Refusal)
+          throw new Refusal(`${error.message} Nothing was added.`, error.code)
+        throw error
+      }
+      if (job?.status === 'failed') {
+        await call('POST', '/accounts/codex/remove', { id: account.id }).catch(() => undefined)
         throw new Refusal(
-          `Added ${account.id}, but the key was refused${job.message ? `: ${job.message}` : '.'}`
+          `The key was refused${job.message ? `: ${job.message}` : '.'} Nothing was added.`
         )
+      }
       process.stdout.write(`Added ${account.id}  ${account.label}, with its API key.\n`)
       return
     }

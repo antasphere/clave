@@ -320,7 +320,12 @@ function ServerUsageRefresh({
   const [busy, setBusy] = useState(false)
   const now = useNow(15_000)
   const visible = Object.values(settings.usage[tool])
-  const reads = visible.map((s) => s.fetchedAt).filter((at): at is number => typeof at === 'number')
+  // The age of the numbers on screen: a failed read shows none, so it
+  // counts for nothing here.
+  const reads = visible
+    .filter((s) => s.status === 'ready')
+    .map((s) => s.fetchedAt)
+    .filter((at): at is number => typeof at === 'number')
   const spinning = busy || visible.some((s) => s.refreshing)
   const age = reads.length > 0 ? formatAge(Math.min(...reads), now) : null
   return (

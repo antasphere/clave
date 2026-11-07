@@ -57,6 +57,8 @@ describe('scanTailnet', () => {
           claveServer: true
         }),
         expect.objectContaining({ name: 'build-box', claveServer: false, online: true }),
+        // Listed, never probed, never picked: no address to reach it on.
+        expect.objectContaining({ name: 'no-ipv4', ip: '', url: '', claveServer: false }),
         expect.objectContaining({ name: 'sleeping', claveServer: false, online: false })
       ]
     })
@@ -100,7 +102,9 @@ describe('probeLive', () => {
   let base = ''
   beforeAll(async () => {
     server = http.createServer((req, res) => {
-      if (req.url === '/ok') res.end('live')
+      if (req.url === '/ok') res.end('{"status":"live","checks":{}}')
+      else if (req.url === '/imposter') res.end('hello')
+      else if (req.url === '/dead') res.end('{"status":"down"}')
       else if (req.url === '/stall') res.writeHead(200).write('x')
       else res.writeHead(404).end()
     })
@@ -112,8 +116,10 @@ describe('probeLive', () => {
     server.close()
   })
 
-  it('is true on a 2xx only', async () => {
+  it("is true on a 2xx whose body is the server's own liveness answer only", async () => {
     expect(await probeLive(`${base}/ok`)).toBe(true)
+    expect(await probeLive(`${base}/imposter`)).toBe(false)
+    expect(await probeLive(`${base}/dead`)).toBe(false)
     expect(await probeLive(`${base}/missing`)).toBe(false)
     expect(await probeLive('not a url')).toBe(false)
     expect(await probeLive(`${base}/stall`, 200)).toBe(false)

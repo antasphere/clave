@@ -19,19 +19,18 @@ export async function scanTailnet(opts: {
 }): Promise<TailnetScan> {
   const { status, port, probe } = opts
   if (status.backendState !== 'Running') return { available: false, reason: 'not-running' }
-  const peers = status.peers.filter(
-    (peer): peer is typeof peer & { ip: string } => peer.ip !== null
-  )
-  const machines: TailnetMachine[] = peers.map((peer) => ({
+  // A peer with no IPv4 address is listed, never probed and never picked:
+  // a Clave server listens on its tailnet IPv4 (`tailscale ip -4`).
+  const machines: TailnetMachine[] = status.peers.map((peer) => ({
     name: peer.hostName,
     dnsName: peer.dnsName,
-    ip: peer.ip,
+    ip: peer.ip ?? '',
     os: peer.os,
     online: peer.online,
-    url: `http://${peer.ip}:${port}`,
+    url: peer.ip ? `http://${peer.ip}:${port}` : '',
     claveServer: false
   }))
-  const queue = machines.filter((machine) => machine.online)
+  const queue = machines.filter((machine) => machine.online && machine.url)
   const worker = async (): Promise<void> => {
     for (let machine = queue.shift(); machine; machine = queue.shift())
       machine.claveServer = await probe(`${machine.url}/health/live`).catch(() => false)
@@ -41,9 +40,26 @@ export async function scanTailnet(opts: {
   return { available: true, self: { name: status.self.hostName, ip: status.self.ip }, machines }
 }
 
-/** Whether `url` answers a GET with a 2xx, its body read whole, within
- *  `timeoutMs` in all: a server that sends its headers and then stalls is as
- *  absent as one that never answers. Never throws. */
+/** The most of a liveness answer that is read; a Clave server's is a few bytes. */
+const LIVE_BODY_BYTES = 4096
+
+/** Whether `url` answers a GET with a 2xx whose JSON body says `status:
+ *  "live"`, the server's own liveness answer, within `timeoutMs` in all:
+ *  any other service on the port, or a server that sends its headers and
+ *  then stalls, is as absent as one that never answers. Never throws. */
+function saysLive(body: string): boolean {
+  try {
+    const parsed: unknown = JSON.parse(body)
+    return (
+      typeof parsed === 'object' &&
+      parsed !== null &&
+      (parsed as { status?: unknown }).status === 'live'
+    )
+  } catch {
+    return false
+  }
+}
+
 export function probeLive(url: string, timeoutMs = 1500): Promise<boolean> {
   return new Promise((resolve) => {
     let settled = false
@@ -73,8 +89,11 @@ export function probeLive(url: string, timeoutMs = 1500): Promise<boolean> {
     try {
       req = http.get(parsed, { timeout: timeoutMs }, (res) => {
         const ok = (res.statusCode ?? 0) >= 200 && (res.statusCode ?? 0) < 300
-        res.resume()
-        res.once('end', () => done(ok))
+        let body = ''
+        res.on('data', (chunk: Buffer) => {
+          if (body.length < LIVE_BODY_BYTES) body += chunk.toString('utf8', 0, LIVE_BODY_BYTES)
+        })
+        res.once('end', () => done(ok && saysLive(body)))
         res.once('error', () => done(false))
       })
       req.once('timeout', () => {

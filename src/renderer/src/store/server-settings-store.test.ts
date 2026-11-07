@@ -177,6 +177,51 @@ describe("a server's settings as the Mac sees them", () => {
     expect(store.useServerSettingsStore.getState().byServer.s1).toBeUndefined()
   })
 
+  it("keeps a list pushed while the load was out, over the load's older answer", async () => {
+    let answer: (value: unknown) => void = () => {}
+    api.fleetAccounts.mockImplementation(() => new Promise((resolve) => (answer = resolve)))
+    const load = store.loadServerSettings('s1')
+    await flush()
+    emit({ serverId: 's1', kind: 'claude-accounts', accounts: [claude('new', 'New')] })
+    answer({ claude: [claude('w1', 'Work')], codex: [codex('k1', 'Key')], migrated: [] })
+    await load
+    const ids = store.serverSettingsFor('s1').claude.map((a) => a.id)
+    expect(ids).toContain('new')
+    expect(ids).not.toContain('w1')
+    expect(store.serverSettingsFor('s1').codex.map((a) => a.id)).toEqual(['default', 'k1'])
+  })
+
+  it('keeps the newer read when an older one lands after it', async () => {
+    await store.loadServerSettings('s1')
+    emit({
+      serverId: 's1',
+      kind: 'claude-usage',
+      accountId: 'w1',
+      result: read(300, cap('5h', 50))
+    })
+    emit({ serverId: 's1', kind: 'claude-usage', accountId: 'w1', result: read(200, cap('5h', 5)) })
+    expect(store.serverSettingsFor('s1').usage.claude.w1.fetchedAt).toBe(300)
+    expect(store.serverSettingsFor('s1').usage.claude.w1.tightest?.usedPercentage).toBe(50)
+  })
+
+  it('lets a read or a load in flight for a removed server land nowhere', async () => {
+    await store.loadServerSettings('s1')
+    let answerRead: (value: unknown) => void = () => {}
+    api.fleetUsage.mockImplementation(() => new Promise((resolve) => (answerRead = resolve)))
+    const reading = store.readServerUsage('s1', 'claude', 'w1', true)
+    let answerLoad: (value: unknown) => void = () => {}
+    api.fleetAccounts.mockImplementation(() => new Promise((resolve) => (answerLoad = resolve)))
+    const loading = store.loadServerSettings('s1')
+    await flush()
+    fleet.useFleetStore.setState({ connections: [], statuses: {} })
+    expect(store.useServerSettingsStore.getState().byServer.s1).toBeUndefined()
+    answerRead(read(900, cap('5h', 1)))
+    answerLoad({ claude: [claude('w1', 'Work')], codex: [], migrated: [] })
+    await reading
+    await loading
+    expect(store.useServerSettingsStore.getState().byServer.s1).toBeUndefined()
+  })
+
   it('replaces the profiles with the answer of a write', async () => {
     const mine: LaunchProfile = {
       id: 'p1',
