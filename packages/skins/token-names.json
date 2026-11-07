@@ -73,6 +73,8 @@
   "--heatmap-2",
   "--heatmap-3",
   "--heatmap-4",
+  "--key-wash",
+  "--key-wash-strong",
   "--overlay-shadow",
   "--overlay-shadow-lg",
   "--radius-full",
