@@ -239,7 +239,9 @@ function TableBlock({ node, t }: { node: Table; t: Theme }): ReactNode {
 function MarkdownImage({ url, alt, t }: { url: string; alt?: string | null; t: Theme }): ReactNode {
   const [failed, setFailed] = useState(false)
   const [width, setWidth] = useState(300)
-  const [ratio, setRatio] = useState(1.6)
+  const [size, setSize] = useState<{ width: number; height: number } | null>(null)
+  const imageWidth = Math.min(width, size?.width ?? width)
+  const ratio = size ? size.width / size.height : 1.6
   if (failed || !/^(https?:\/\/|data:image\/(?:png|jpe?g|gif|webp);base64,)/i.test(url))
     return <Text style={[type(text.sm), { color: t.colors.textSecondary }]}>{alt || url}</Text>
   return (
@@ -247,12 +249,12 @@ function MarkdownImage({ url, alt, t }: { url: string; alt?: string | null; t: T
       <Image
         source={{ uri: url }}
         resizeMode="contain"
-        style={{ width: '100%', height: Math.max(48, Math.min(320, width / ratio)) }}
+        style={{ width: imageWidth, height: Math.min(320, imageWidth / ratio) }}
         accessibilityLabel={alt || 'Image'}
         testID="markdown-image"
         onLoad={(e) => {
           const { width, height } = e.nativeEvent.source
-          if (width > 0 && height > 0) setRatio(width / height)
+          if (width > 0 && height > 0) setSize({ width, height })
         }}
         onError={() => setFailed(true)}
       />
