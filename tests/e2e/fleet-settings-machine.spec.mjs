@@ -117,6 +117,10 @@ export async function run(t) {
     const accounts = await request(a, '/accounts/claude')
     const studio = accounts.find((account) => account.label === 'Studio login')
     t.check('the server holds the account with a token', !!studio && studio.hasToken === true)
+    // On macOS the token went to the run's own keychain file, never the
+    // developer's login keychain (the count is of items, never of values).
+    if (world.keychain)
+      t.check("the token was filed in the run's own keychain file", world.keychain.items() >= 1)
 
     // A refused token leaves nothing behind, and is never echoed.
     const junk = await serverAccounts(a, ['claude', 'add', 'Junk'], 'not a token at all')
@@ -149,6 +153,22 @@ export async function run(t) {
     t.check(
       "the daemon stored the credential in the account's own home",
       !!billing && billing.hasCredential === true
+    )
+    // A key Codex refuses (the stand-in refuses anything but sk-…, writing no
+    // credential) leaves nothing behind and is never echoed, not even in the
+    // reason the daemon gives.
+    const badKey = await serverAccounts(a, ['codex', 'add-key', 'Bad key'], 'not-an-api-key-at-all')
+    t.check(
+      'a refused key is said in one line and leaves no account behind',
+      badKey.code === 1 &&
+        badKey.stderr.includes('The key was refused') &&
+        badKey.stderr.includes('Nothing was added.') &&
+        !(await request(a, '/accounts/codex')).some((account) => account.label === 'Bad key'),
+      `exit ${badKey.code}: ${badKey.stderr}`
+    )
+    t.check(
+      'the refused key is not echoed',
+      !(badKey.stdout + badKey.stderr).includes('not-an-api-key-at-all')
     )
 
     // ── The Mac ──

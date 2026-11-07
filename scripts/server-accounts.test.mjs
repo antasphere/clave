@@ -139,6 +139,40 @@ describe('server-accounts', () => {
     expect(result.stdout + result.stderr).not.toContain('sk-REFUSED-KEY')
   })
 
+  it('removes the Codex account again when the server refuses the key login itself', async () => {
+    // An older server without the API-key login answers the route with a refusal.
+    answers['POST /accounts/codex'] = [200, { id: 'k2', label: 'Key', kind: 'apiKey' }]
+    answers['POST /accounts/login/api-key'] = [
+      422,
+      { title: 'Unavailable', message: 'This server cannot store a Codex login.' }
+    ]
+    answers['POST /accounts/codex/remove'] = [200, true]
+    const result = await run(['codex', 'add-key', 'Key'], 'sk-OLDER-SERVER-KEY')
+    expect(result.code).toBe(1)
+    expect(result.stderr).toContain(
+      'The server answered 422: This server cannot store a Codex login. Nothing was added.'
+    )
+    expect(calls.map((c) => [c.method, c.path])).toEqual([
+      ['POST', '/accounts/codex'],
+      ['POST', '/accounts/login/api-key'],
+      ['POST', '/accounts/codex/remove']
+    ])
+    expect(result.stdout + result.stderr).not.toContain('sk-OLDER-SERVER-KEY')
+  })
+
+  it('ends the reason with a full stop before saying nothing was added', async () => {
+    answers['POST /accounts/codex'] = [200, { id: 'k3', label: 'Key', kind: 'apiKey' }]
+    answers['POST /accounts/login/api-key'] = [
+      200,
+      { id: 'job', status: 'failed', message: '/bin/sh: exec: codex: not found' }
+    ]
+    answers['POST /accounts/codex/remove'] = [200, true]
+    const result = await run(['codex', 'add-key', 'Key'], 'sk-NO-CODEX-KEY')
+    expect(result.stderr).toContain(
+      'The key was refused: /bin/sh: exec: codex: not found. Nothing was added.'
+    )
+  })
+
   it('refuses an empty paste before creating anything', async () => {
     const { code, stderr } = await run(['claude', 'add', 'Team'], '\n')
     expect(code).toBe(1)

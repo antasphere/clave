@@ -5,7 +5,8 @@
 // loopback daemon) and the daemon's identity file, under the test's config
 // directory (`--test-install-config`) and never a service: nothing of the
 // machine's own server install or launchd is read or written. Tailscale is
-// read from a stopped status, so the address is loopback. The page shows
+// read from a status file: up for the first install (the address is chosen
+// then, and offered only while Tailscale runs), stopped later. The page shows
 // the phases, adds the server to this Mac's list, which connects for real,
 // offers the token to copy (landing on the test hooks, never the clipboard,
 // never the page) and shows the service running with its version. A second
@@ -98,6 +99,21 @@ export async function run(t) {
     t.check(
       "with Tailscale up the page names this Mac's tailnet address",
       (await card.innerText()).includes("listens on this Mac's Tailscale address, 100.64.0.1")
+    )
+    // The address follows Tailscale's state at the moment it is read: stopped,
+    // no tailnet address is offered (a first install would listen on loopback),
+    // even though the status still names this Mac's IP.
+    tailscale('Stopped')
+    t.equal(
+      'with Tailscale stopped no tailnet address is offered for the install',
+      (await win.evaluate(() => window.electronAPI.serverSetupInstallStatus())).tailscaleIp,
+      null
+    )
+    tailscale('Running')
+    t.equal(
+      "with Tailscale up again the status names this Mac's tailnet address",
+      (await win.evaluate(() => window.electronAPI.serverSetupInstallStatus())).tailscaleIp,
+      '100.64.0.1'
     )
     // Every progress event the window hears, kept to prove none carries the token.
     await win.evaluate(() => {

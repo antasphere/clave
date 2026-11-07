@@ -7,6 +7,7 @@ import path from 'node:path'
 import { bunBinary } from '../../../scripts/server-process.mjs'
 import { namespaceOf } from '../namespace.mjs'
 import { observeDaemon } from './fleet-http-observer.mjs'
+import { runKeychain } from './run-keychain.mjs'
 import {
   REPO,
   fixturePath,
@@ -186,12 +187,21 @@ export async function fleetWorld(
   }
   const seed = fixturePath(`${run}-settings`)
   seedProfiles(seed)
+  // The daemons file their secrets (a Claude token set on the server) in a
+  // keychain file of the run's own on macOS (PRDCT-3259), never in the
+  // developer's login keychain; created before they start, deleted at close.
+  const keychain =
+    process.platform === 'darwin'
+      ? runKeychain(fixturePath(`${run}-keychain/e2e.keychain-db`))
+      : null
+  keychain?.create()
   const claudeStub = gitRepo ? seedClaudeStub(fixturePath(`${run}-claude-stub`)) : null
   const codexStubDir = codexStub ? seedCodexStub(fixturePath(`${run}-codex-stub`)) : null
   const stubs = [claudeStub, codexStubDir].filter(Boolean)
   const options = {
     env: {
       SHELL: '/bin/sh',
+      ...(keychain && { CLAVE_KEYCHAIN_FILE: keychain.file }),
       ...(stubs.length && { PATH: `${stubs.join(':')}:${process.env.PATH ?? ''}` })
     },
     seedFrom: seed,
@@ -207,6 +217,8 @@ export async function fleetWorld(
   const world = {
     run,
     servers,
+    /** The run's own keychain file (macOS), or null; `items()` counts what the daemons filed. */
+    keychain,
     async observeFiles() {
       for (const server of servers) {
         const observer = await observeDaemon(server.url)
@@ -318,7 +330,11 @@ export async function fleetWorld(
         try {
           for (const observer of observers) await observer.close()
         } finally {
-          for (const server of [...servers].reverse()) await server.stop()
+          try {
+            for (const server of [...servers].reverse()) await server.stop()
+          } finally {
+            keychain?.remove()
+          }
         }
       }
     }

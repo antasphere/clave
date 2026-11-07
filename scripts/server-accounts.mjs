@@ -196,9 +196,8 @@ export async function run(argv) {
       }
       if (job?.status === 'failed') {
         await call('POST', '/accounts/codex/remove', { id: account.id }).catch(() => undefined)
-        throw new Refusal(
-          `The key was refused${job.message ? `: ${job.message}` : '.'} Nothing was added.`
-        )
+        const said = job.message ? `: ${job.message.trim().replace(/[.!?]?$/, '.')}` : '.'
+        throw new Refusal(`The key was refused${said} Nothing was added.`)
       }
       process.stdout.write(`Added ${account.id}  ${account.label}, with its API key.\n`)
       return
