@@ -86,6 +86,7 @@ export async function run(t) {
     assert.deepEqual(await win.getByRole('menuitem').allInnerTexts(), [
       'Chat',
       'Enclave',
+      'Folio',
       'Fixture log'
     ])
     await win.keyboard.press('Escape')

@@ -1,6 +1,7 @@
 import type { ComponentType } from 'react'
 import { ChatView, type ChatViewProps } from '../../../../plugins/chat-view/src/ChatView'
 import { TerminalView } from '../../../../plugins/chat-view/src/TerminalView'
+import { FolioView } from '../../../../plugins/chat-view/src/lab/FolioView'
 import { RoutineReportView } from '../../../../plugins/routine-report/src/RoutineReportView'
 
 /** Bundled native views, keyed by the id a session carries: `<pluginId>/<viewId>`.
@@ -9,6 +10,8 @@ import { RoutineReportView } from '../../../../plugins/routine-report/src/Routin
 export const nativeViews: Record<string, ComponentType<ChatViewProps>> = {
   'clave.chat-view/chat': ChatView,
   'clave.chat-view/terminal': TerminalView,
+  // The experimental view (`src/lab/`), offered by the onboarding by this id.
+  'clave.chat-view/lab': FolioView,
   // ADR 0004: a routine run's report, beside chat and terminal in the picker.
   'clave.routine-report/report': RoutineReportView
 }
