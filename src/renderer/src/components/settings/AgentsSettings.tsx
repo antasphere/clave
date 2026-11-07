@@ -12,6 +12,7 @@ import { getLastAgentSetup, rememberAgentSetup } from '../../store/launch-prefs'
 import { useWorkspaceStore } from '../../store/workspace-store'
 import type {
   LaunchProfile,
+  LaunchProfilePreferences,
   LauncherFamily,
   PiThinkingLevel
 } from '../../../../shared/agent-launch'
@@ -113,16 +114,18 @@ function TokenEditor({
 
 function ProfileEditor({
   profile,
+  onSave,
   onDone
 }: {
   profile: LaunchProfile
+  onSave: (profile: LaunchProfile) => Promise<void>
   onDone: () => void
 }): React.JSX.Element {
   const [draft, setDraft] = useState(profile)
   const [error, setError] = useState<string | null>(null)
   const save = async (): Promise<void> => {
     try {
-      await saveLaunchProfile({
+      await onSave({
         ...draft,
         name: draft.name.trim(),
         command: draft.command.filter((token) => token.length > 0),
@@ -217,31 +220,79 @@ function ProfileEditor({
   )
 }
 
-export function AgentsSettings(): React.JSX.Element {
+/**
+ * Where a page's launch profiles come from and where its edits go: this
+ * Mac's store, or a connected server's settings read and written over its
+ * connection (the machine picker of the settings sidebar). The page is the
+ * same either way; the source decides the machine.
+ */
+export interface LaunchProfileSource {
+  preferences: LaunchProfilePreferences
+  profilesFor: (family: LauncherFamily) => LaunchProfile[]
+  upsert: (profile: LaunchProfile) => Promise<void>
+  remove: (profileId: string) => Promise<void>
+  setGlobal: (family: LauncherFamily, profileId: string | null) => Promise<void>
+  /** This Mac's active workspace, whose override row the page draws; a
+   *  server's profiles have no workspace row here. */
+  workspaceId: string | null
+  setWorkspace?: (
+    workspaceId: string,
+    family: LauncherFamily,
+    profileId: string | null
+  ) => Promise<void>
+}
+
+/** This Mac's profiles, from the launch profile store. */
+function useLocalLaunchProfileSource(): LaunchProfileSource {
   const preferences = useLaunchProfileStore((state) => state.preferences)
   const activeWorkspaceId = useWorkspaceStore((state) => state.activeWorkspaceId)
+  return {
+    preferences,
+    profilesFor,
+    upsert: saveLaunchProfile,
+    remove: deleteLaunchProfile,
+    setGlobal: setGlobalLaunchProfile,
+    workspaceId: activeWorkspaceId,
+    setWorkspace: async (workspaceId, family, profileId) => {
+      await setWorkspaceLaunchProfile(workspaceId, family, profileId)
+      const setup = getLastAgentSetup(workspaceId)
+      const setupFamily = setup.kind === 'claude-agents' ? 'claude' : setup.kind
+      if (setupFamily !== family) return
+      rememberAgentSetup(workspaceId, {
+        ...setup,
+        launchProfileId: profileId ?? undefined
+      })
+    }
+  }
+}
+
+export function AgentsSettings(props: {
+  source?: LaunchProfileSource
+  title?: string
+  description?: React.ReactNode
+}): React.JSX.Element {
+  const local = useLocalLaunchProfileSource()
+  const source = props.source ?? local
+  const { preferences, workspaceId: activeWorkspaceId } = source
   const [editing, setEditing] = useState<LaunchProfile | null>(null)
   const setWorkspaceDefault = async (
     workspaceId: string,
     family: LauncherFamily,
     profileId: string | null
   ): Promise<void> => {
-    await setWorkspaceLaunchProfile(workspaceId, family, profileId)
-    const setup = getLastAgentSetup(workspaceId)
-    const setupFamily = setup.kind === 'claude-agents' ? 'claude' : setup.kind
-    if (setupFamily !== family) return
-    rememberAgentSetup(workspaceId, {
-      ...setup,
-      launchProfileId: profileId ?? undefined
-    })
+    await source.setWorkspace?.(workspaceId, family, profileId)
   }
   return (
     <SettingsPage
-      title="Agents"
-      description="The command each agent family launches with. Keep passwords and API keys out of it: profiles are stored in plain text."
+      title={props.title ?? 'Agents'}
+      description={
+        props.description ??
+        'The command each agent family launches with. Keep passwords and API keys out of it: profiles are stored in plain text.'
+      }
+      testId="agents"
     >
       {FAMILIES.map(({ id: family, label, Logo }) => {
-        const profiles = profilesFor(family)
+        const profiles = source.profilesFor(family)
         const globalId =
           preferences.globalDefaults[family] ?? profiles.find((profile) => profile.builtIn)?.id
         const workspaceId = activeWorkspaceId
@@ -266,12 +317,12 @@ export function AgentsSettings(): React.JSX.Element {
                 <SettingsSelect
                   value={globalId ?? ''}
                   options={profileOptions}
-                  onChange={(value) => void setGlobalLaunchProfile(family, value)}
+                  onChange={(value) => void source.setGlobal(family, value)}
                   ariaLabel={`Global default profile for ${label}`}
                   testId={`global-${family}`}
                 />
               </SettingsRow>
-              {activeWorkspaceId && (
+              {activeWorkspaceId && source.setWorkspace && (
                 <SettingsRow
                   label="This workspace"
                   description="Overrides the global default here only"
@@ -314,7 +365,7 @@ export function AgentsSettings(): React.JSX.Element {
                           </button>
                           <button
                             className="btn-icon btn-icon-sm btn-icon--danger"
-                            onClick={() => void deleteLaunchProfile(profile.id)}
+                            onClick={() => void source.remove(profile.id)}
                             title="Delete profile"
                             aria-label={`Delete profile ${profile.name}`}
                           >
@@ -341,7 +392,11 @@ export function AgentsSettings(): React.JSX.Element {
               </button>
             </SettingsCard>
             {editing?.family === family && (
-              <ProfileEditor profile={editing} onDone={() => setEditing(null)} />
+              <ProfileEditor
+                profile={editing}
+                onSave={source.upsert}
+                onDone={() => setEditing(null)}
+              />
             )}
           </SettingsSection>
         )

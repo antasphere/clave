@@ -1,14 +1,29 @@
 import { useEffect, useRef, useState } from 'react'
+import { ArrowPathIcon } from '@heroicons/react/24/outline'
 import type { SavedServerConnection, ServerConnectionStatus } from '@clave/contract/fleet'
 import type { FleetDesktopAPI } from '../../../../preload/fleet-types'
+import type { Workspace } from '../../../../shared/workspace-types'
+import type {
+  ServerInstallPhase,
+  ServerInstallResult,
+  ServerInstallStatus,
+  TailnetScan
+} from '../../../../shared/server-setup-types'
 import {
   describeAddError,
+  describeInstallFailure,
   describeServerState,
   describeServerVersion,
+  INSTALL_PHASE_WORDS,
+  INSTALL_WARNING,
+  SCAN_UNAVAILABLE,
   UPGRADE_NOW_WARNING
 } from '../../lib/server-connection-text'
 import { reportFleetError, useFleetStore } from '../../store/fleet-store'
 import { ServerCombineRow } from '../fleet/ServerCombineRow'
+import { useSessionStore, type SettingsSection as Section } from '../../store/session-store'
+import { useSettingsMachineStore } from '../../store/settings-machine-store'
+import { useWorkspaceStore } from '../../store/workspace-store'
 import {
   SettingsPage,
   SettingsSection,
@@ -17,27 +32,45 @@ import {
   SettingsCallout
 } from './primitives'
 
-type ServerLogins = Pick<
-  Awaited<ReturnType<FleetDesktopAPI['fleetLaunchSettings']>>,
-  'claudeAccounts' | 'codexAccounts'
->
+type ServerSettingsRead = Awaited<ReturnType<FleetDesktopAPI['fleetLaunchSettings']>>
 
-function ServerLogins({
+/** One stable empty list: a selector answering a fresh array for a server
+ *  whose workspace list has not arrived yet would re-render without end. */
+const NO_WORKSPACES: Workspace[] = []
+
+/** Opens one of the Agents pages with this server picked in the machine
+ *  picker, so a line of the overview leads to its full page. */
+function openServerPage(serverId: string, section: Section): void {
+  useSettingsMachineStore.getState().setMachine(serverId)
+  useSessionStore.getState().setSettingsSection(section)
+}
+
+/**
+ * What a connected server is about, in a few lines under its connection
+ * (PRDCT-4152): its workspaces, the accounts its agents run on, its launch
+ * profiles, its usage and its activity, each leading to the full page with
+ * this server picked. The accounts and profiles are read once per
+ * connection; the workspaces come from the server's own registry, already
+ * followed by the workspace store.
+ */
+function ServerOverview({
   id,
   connected
 }: {
   id: string
   connected: boolean
 }): React.JSX.Element | null {
-  const [logins, setLogins] = useState<ServerLogins | null>(null)
+  const [read, setRead] = useState<ServerSettingsRead | null>(null)
   const [failed, setFailed] = useState(false)
+  const workspaces = useWorkspaceStore((s) => s.serverWorkspaces[id] ?? NO_WORKSPACES)
+  const setSettingsSection = useSessionStore((s) => s.setSettingsSection)
 
   useEffect(() => {
     let current = true
     if (connected) {
       void window.electronAPI.fleetLaunchSettings(id).then(
-        ({ claudeAccounts, codexAccounts }) => {
-          if (current) setLogins({ claudeAccounts, codexAccounts })
+        (value) => {
+          if (current) setRead(value)
         },
         () => {
           if (current) setFailed(true)
@@ -50,30 +83,85 @@ function ServerLogins({
   }, [id, connected])
 
   if (!connected) return null
-  const notice = failed ? "Could not read this server's logins." : logins ? '' : 'Reading…'
+  const notice = failed ? "Could not read this server's settings." : read ? '' : 'Reading…'
+  const customProfiles = read?.profiles.customProfiles.length ?? 0
+  const open = (section: Section): React.JSX.Element => (
+    <button
+      className="btn-secondary"
+      onClick={() => openServerPage(id, section)}
+      data-server-overview-link={section}
+    >
+      Open
+    </button>
+  )
   return (
-    <SettingsRow
-      label="Logins on this server"
-      description={`The Claude and Codex accounts signed in on the server. Sessions started there use them; manage them on the server.${notice ? ` ${notice}` : ''}`}
-      tags={
-        logins && (
-          <>
-            <span className="badge badge-muted">Claude</span>
-            {logins.claudeAccounts.map((account) => (
-              <span className="badge badge-muted" key={account.id} data-server-login={account.id}>
-                {account.label}
-              </span>
-            ))}
-            <span className="badge badge-muted">Codex</span>
-            {logins.codexAccounts.map((account) => (
-              <span className="badge badge-muted" key={account.id} data-server-login={account.id}>
-                {account.label}
-              </span>
-            ))}
-          </>
-        )
-      }
-    />
+    <div className="settings-card-group" data-server-overview>
+      <SettingsRow
+        label="Workspaces"
+        description={
+          workspaces.length
+            ? workspaces.map((ws) => ws.name).join(' · ')
+            : 'No workspace on this server yet. Add one under General → Workspaces.'
+        }
+      >
+        <button
+          className="btn-secondary"
+          onClick={() => setSettingsSection('general')}
+          data-server-overview-link="general"
+        >
+          Open
+        </button>
+      </SettingsRow>
+      <SettingsRow
+        label="Accounts"
+        description={`The Claude and Codex accounts signed in on the server. Sessions started there use them.${notice ? ` ${notice}` : ''}`}
+        tags={
+          read && (
+            <>
+              <span className="badge badge-muted">Claude</span>
+              {read.claudeAccounts.map((account) => (
+                <span className="badge badge-muted" key={account.id} data-server-login={account.id}>
+                  {account.label}
+                </span>
+              ))}
+              <span className="badge badge-muted">Codex</span>
+              {read.codexAccounts.map((account) => (
+                <span className="badge badge-muted" key={account.id} data-server-login={account.id}>
+                  {account.label}
+                </span>
+              ))}
+            </>
+          )
+        }
+      >
+        {open('accounts')}
+      </SettingsRow>
+      <SettingsRow
+        label="Agents"
+        description={
+          read
+            ? customProfiles
+              ? `${customProfiles} custom launch profile${customProfiles === 1 ? '' : 's'} beside the built-in ones.`
+              : 'The built-in launch profiles, no custom one yet.'
+            : 'The launch profiles its agents start with.'
+        }
+      >
+        {open('agents')}
+      </SettingsRow>
+      <SettingsRow
+        label="Usage"
+        description="How much of each account's limits is used, read on the server every five minutes."
+      >
+        {open('usage')}
+      </SettingsRow>
+      <SettingsRow
+        label="Activity"
+        description="Not recorded on a server yet: a Clave server running on its own keeps no activity record."
+      >
+        {open('activity')}
+      </SettingsRow>
+      {/* Lane A mounts its per-server pairing switch here, as one line. */}
+    </div>
   )
 }
 
@@ -198,13 +286,292 @@ function ServerRow({
         </div>
         {error && <SettingsCallout tone="danger" inset role="alert" text={error} />}
         {connection.enabled && <ServerVersion id={connection.id} />}
-        <ServerLogins
+        <ServerOverview
           key={`${connection.id}:${connected}`}
           id={connection.id}
           connected={connected}
         />
         <ServerCombineRow id={connection.id} />
       </div>
+    </div>
+  )
+}
+
+// ── This Mac as a server (PRDCT-4153) ───────────────────────────────────────
+
+type InstallStep =
+  | { kind: 'idle' }
+  | { kind: 'confirming' }
+  | { kind: 'running'; phase: ServerInstallPhase }
+  | { kind: 'failed'; result: Extract<ServerInstallResult, { ok: false }> }
+
+const SERVICE_WORDS = { running: 'Running', stopped: 'Stopped', 'not-installed': 'Not installed' }
+
+/**
+ * "Run Clave as a server on this Mac": the standalone service installed by
+ * the repository's install script, the Tailscale address picked for it,
+ * the server added to this Mac's own list, the token offered to copy and
+ * never shown, and the service's state afterwards. The script runs in main;
+ * this page sees its phases and its outcome, never its output.
+ */
+function ThisMacServer(): React.JSX.Element {
+  const [status, setStatus] = useState<ServerInstallStatus | null>(null)
+  const [step, setStep] = useState<InstallStep>({ kind: 'idle' })
+  const [copied, setCopied] = useState<'no' | 'yes' | 'failed'>('no')
+  const version = useFleetStore((s) => (status?.serverId ? s.versions[status.serverId] : undefined))
+  const resetCopied = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const refresh = (): void => {
+    void window.electronAPI.serverSetupInstallStatus().then(setStatus, () => undefined)
+  }
+  useEffect(() => {
+    refresh()
+    const off = window.electronAPI.onServerSetupProgress(({ phase }) => {
+      if (phase === 'done' || phase === 'failed') return
+      setStep({ kind: 'running', phase })
+    })
+    return () => {
+      off()
+      if (resetCopied.current) clearTimeout(resetCopied.current)
+    }
+  }, [])
+
+  const install = async (): Promise<void> => {
+    setStep({ kind: 'running', phase: 'starting' })
+    try {
+      const result = await window.electronAPI.serverSetupInstall()
+      if (result.ok) {
+        setStep({ kind: 'idle' })
+        // The version sync reads the new server on its own clock; ask now so
+        // the service line has it when the page reads it again.
+        void window.electronAPI.fleetServerVersions(true).catch(() => undefined)
+      } else setStep({ kind: 'failed', result })
+    } catch {
+      setStep({
+        kind: 'failed',
+        result: { ok: false, code: 'launch-failed', logPath: '' }
+      })
+    }
+    refresh()
+  }
+
+  const copyToken = async (): Promise<void> => {
+    try {
+      await window.electronAPI.serverSetupCopyToken()
+      setCopied('yes')
+    } catch {
+      setCopied('failed')
+    }
+    if (resetCopied.current) clearTimeout(resetCopied.current)
+    resetCopied.current = setTimeout(() => setCopied('no'), 1500)
+  }
+
+  const installed = status?.installed ?? false
+  const running = step.kind === 'running'
+  const listen = status?.tailscaleIp
+    ? `It listens on this Mac's Tailscale address, ${status.tailscaleIp}, so your other Macs reach it over your tailnet.`
+    : 'Tailscale is not running on this Mac, so it listens on this Mac only (127.0.0.1): another Mac reaches it through an SSH tunnel.'
+  const versionText = describeServerVersion(version)
+
+  return (
+    <SettingsSection
+      title="This Mac as a server"
+      description="A Clave server that outlives the app: its sessions keep running after you quit, and your other Macs work in them."
+    >
+      <SettingsCard data-this-mac-server data-install-state={status?.state ?? 'unknown'}>
+        <SettingsRow
+          label="Run Clave as a server on this Mac"
+          description={
+            installed
+              ? `Installed. Running the install again updates it to the latest release; ${listen}`
+              : `Installs the standalone server as a background service of your user, built from the latest release. ${listen}`
+          }
+        >
+          {!running && step.kind !== 'confirming' && (
+            <button
+              className="btn-primary"
+              onClick={() => setStep({ kind: 'confirming' })}
+              data-install-server
+            >
+              {installed ? 'Install again' : 'Run Clave as a server on this Mac'}
+            </button>
+          )}
+          {running && (
+            <span className="status-text" data-status="connecting" data-install-phase={step.phase}>
+              <ArrowPathIcon className="w-3.5 h-3.5 animate-spin inline-block mr-1 align-[-2px]" />
+              {INSTALL_PHASE_WORDS[step.phase]}…
+            </span>
+          )}
+        </SettingsRow>
+        {step.kind === 'confirming' && (
+          <SettingsCallout
+            tone="accent"
+            inset
+            text={INSTALL_WARNING}
+            actions={
+              <>
+                <button className="btn-secondary" onClick={() => setStep({ kind: 'idle' })}>
+                  Cancel
+                </button>
+                <button className="btn-primary" onClick={() => void install()} data-install-confirm>
+                  Install the server
+                </button>
+              </>
+            }
+          />
+        )}
+        {step.kind === 'failed' && (
+          <SettingsCallout
+            tone="danger"
+            inset
+            role="alert"
+            title="The install failed"
+            text={
+              <span className="whitespace-pre-line">{describeInstallFailure(step.result)}</span>
+            }
+            actions={
+              <button className="btn-secondary" onClick={() => setStep({ kind: 'idle' })}>
+                Dismiss
+              </button>
+            }
+          />
+        )}
+        {installed && status?.url && (
+          <>
+            <SettingsRow label="Address" description="What another Mac adds under Add a server.">
+              <code className="settings-row-value font-mono select-text" data-install-url>
+                {status.url}
+              </code>
+            </SettingsRow>
+            <SettingsRow
+              label="Token"
+              description="The bearer token another Mac pastes with the address. Copied, never shown."
+            >
+              <button
+                className="btn-secondary"
+                onClick={() => void copyToken()}
+                data-install-copy-token
+              >
+                {copied === 'yes'
+                  ? 'Copied'
+                  : copied === 'failed'
+                    ? 'Could not copy'
+                    : 'Copy token'}
+              </button>
+            </SettingsRow>
+            <SettingsRow
+              label="Service"
+              description={
+                versionText?.version
+                  ? `${versionText.version} · ${versionText.state}`
+                  : 'The background service on this Mac.'
+              }
+            >
+              <span
+                className="status-text"
+                data-status={status.state === 'running' ? 'connected' : 'idle'}
+                data-install-service={status.state}
+              >
+                {SERVICE_WORDS[status.state]}
+              </span>
+              <button
+                className="btn-icon btn-icon-sm"
+                onClick={refresh}
+                title="Read the state again"
+                aria-label="Read the service state again"
+              >
+                <ArrowPathIcon className="w-3.5 h-3.5" />
+              </button>
+            </SettingsRow>
+          </>
+        )}
+      </SettingsCard>
+    </SettingsSection>
+  )
+}
+
+// ── The tailnet scan (PRDCT-4153) ───────────────────────────────────────────
+
+/**
+ * The machines of this Mac's tailnet, from Tailscale's own status, the ones
+ * answering as a Clave server on the default port marked; a pick fills the
+ * address and the name, the token stays pasted by hand.
+ */
+function TailnetScan({
+  onPick
+}: {
+  onPick: (machine: { name: string; url: string }) => void
+}): React.JSX.Element {
+  const [scan, setScan] = useState<TailnetScan | null>(null)
+  const [busy, setBusy] = useState(false)
+  const run = async (): Promise<void> => {
+    setBusy(true)
+    try {
+      setScan(await window.electronAPI.serverSetupScan())
+    } catch {
+      setScan({ available: false, reason: 'failed' })
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <div data-tailnet-scan>
+      <SettingsRow
+        label="Your Tailscale machines"
+        description="The machines of your tailnet, with the ones running a Clave server marked. Pick one to fill the address."
+      >
+        <button
+          className="btn-secondary"
+          onClick={() => void run()}
+          disabled={busy}
+          data-tailnet-scan-button
+        >
+          <ArrowPathIcon className={`w-3.5 h-3.5 ${busy ? 'animate-spin' : ''}`} />
+          {scan ? 'Scan again' : 'Scan Tailscale'}
+        </button>
+      </SettingsRow>
+      {scan && !scan.available && (
+        <div className="settings-row" data-tailnet-unavailable={scan.reason}>
+          <p className="settings-row-description">{SCAN_UNAVAILABLE[scan.reason]}</p>
+        </div>
+      )}
+      {scan?.available && scan.machines.length === 0 && (
+        <div className="settings-row">
+          <p className="settings-row-description">No other machine on your tailnet.</p>
+        </div>
+      )}
+      {scan?.available &&
+        scan.machines.map((machine) => (
+          <div
+            className="settings-row"
+            key={machine.ip}
+            data-tailnet-machine={machine.ip}
+            data-clave-server={machine.claveServer ? 'true' : undefined}
+            data-online={machine.online ? 'true' : undefined}
+          >
+            <div className="min-w-0">
+              <div className="flex items-center gap-2 min-w-0">
+                <p className="settings-row-title truncate">{machine.name}</p>
+                {machine.claveServer && <span className="badge badge-muted">Clave server</span>}
+                {!machine.online && <span className="badge badge-muted">Offline</span>}
+              </div>
+              <p className="settings-row-description truncate">
+                {machine.ip}
+                {machine.os ? ` · ${machine.os}` : ''}
+              </p>
+            </div>
+            <div className="settings-row-controls">
+              <button
+                className="btn-secondary"
+                onClick={() => onPick({ name: machine.name, url: machine.url })}
+                disabled={!machine.online}
+                data-tailnet-use
+              >
+                Use
+              </button>
+            </div>
+          </div>
+        ))}
     </div>
   )
 }
@@ -267,8 +634,16 @@ export function ServersSettings(): React.JSX.Element {
         {error && <SettingsCallout tone="danger" role="alert" text={error} />}
       </SettingsSection>
 
+      <ThisMacServer />
+
       <SettingsSection title="Add a server">
         <SettingsCard>
+          <TailnetScan
+            onPick={(machine) => {
+              setName(machine.name)
+              setUrl(machine.url)
+            }}
+          />
           <div className="settings-row">
             <div className="min-w-0 flex-1">
               <label className="field-label">
