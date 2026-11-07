@@ -14,6 +14,12 @@ import { describeTool, safeJson, type ApprovalGroup, type ToolKind } from './too
 import { approvalRunSummary, decisionWord, describeApproval, isQuestion } from './approvals'
 import { useDisclosure } from './disclosure'
 import { ChatCode } from './code'
+import { Key } from './prompt-bits'
+import { InputPrompt } from './InputPrompt'
+import { isDeny, isInputRequest } from './input-request'
+import { useQuestionHost, type Answer } from './question-context'
+
+export type { Answer } from './question-context'
 
 /* What the agent is waiting on, docked above the composer so it is always in
    the same place and never scrolls away: a tool to allow, or questions to
@@ -21,10 +27,8 @@ import { ChatCode } from './code'
    the record of what was asked and what the reader said. */
 
 type PermissionEntry = Extract<Entry, { kind: 'permission' }>
-export type Answer = (id: string, optionId: string, answers?: Record<string, string>) => void
 
 const stringify = (value: unknown): string => (typeof value === 'string' ? value : safeJson(value))
-const isDeny = (id: string): boolean => /deny|decline|cancel|reject|abort/i.test(id)
 const basename = (path: string): string => path.split('/').filter(Boolean).at(-1) ?? path
 
 /** The prompt's body takes focus as it arrives, so its keys work at once
@@ -33,16 +37,6 @@ function useFocusOnArrival(): React.RefObject<HTMLDivElement | null> {
   const body = useRef<HTMLDivElement>(null)
   useEffect(() => body.current?.focus({ preventScroll: true }), [])
   return body
-}
-
-/** A keycap beside a button: the key that presses it. Hidden from the
- *  accessible name, which stays the button's own words. */
-function Key({ children }: { children: React.ReactNode }): React.JSX.Element {
-  return (
-    <kbd className="chat-prompt-key" aria-hidden="true">
-      {children}
-    </kbd>
-  )
 }
 
 const VERBS: Record<ToolKind, string> = {
@@ -582,12 +576,15 @@ export function PromptDock({
   requests,
   agent,
   busy,
-  onAnswer
+  onAnswer,
+  remote = false
 }: {
   requests: Permission[]
   agent: string
   busy: (id: string) => boolean
   onAnswer: Answer
+  /** The session runs on another machine: a path picked here would be this Mac's. */
+  remote?: boolean
 }): React.JSX.Element | null {
   const request = requests[0]
   if (!request) return null
@@ -601,7 +598,16 @@ export function PromptDock({
       {requests.length > 1 && (
         <div className="chat-prompt-queue">1 of {requests.length} waiting</div>
       )}
-      {question ? (
+      {question && isInputRequest(request) ? (
+        <InputPrompt
+          key={request.id}
+          request={request}
+          busy={busy(request.id)}
+          agent={agent}
+          remote={remote}
+          onAnswer={onAnswer}
+        />
+      ) : question ? (
         <QuestionPrompt
           key={request.id}
           request={request}
@@ -618,6 +624,68 @@ export function PromptDock({
         />
       )}
     </section>
+  )
+}
+
+/** A question still waiting, drawn in the transcript where the agent asked it
+ *  (PRDCT-4157): the same card the dock held, inline under the agent's turn,
+ *  with the room of the column. The view provides how it answers
+ *  (`QuestionContext`); without a provider (a view that keeps its dock) the
+ *  row is the muted record as before. The answered card collapses into that
+ *  record (`PermissionRow`). */
+export function InlineQuestion({ entry }: { entry: PermissionEntry }): React.JSX.Element {
+  const host = useQuestionHost()
+  const { request } = entry
+  if (!host || entry.answer || entry.answeredElsewhere || !isQuestion(request))
+    return <PermissionRow entry={entry} />
+  const busy = host.busy(request.id)
+  return (
+    <section className="chat-prompt" data-kind="question" data-inline="true" aria-label="Question">
+      {isInputRequest(request) ? (
+        <InputPrompt
+          key={request.id}
+          request={request}
+          busy={busy}
+          agent={host.agent}
+          remote={host.remote}
+          drafts={host.drafts}
+          onAnswer={host.answer}
+        />
+      ) : (
+        <QuestionPrompt key={request.id} request={request} busy={busy} onAnswer={host.answer} />
+      )}
+    </section>
+  )
+}
+
+/** The reader's answers to a request's questions, one line each, the way the
+ *  record reads them: a multi-select's labels together, a confirmed link as
+ *  its button's words, a private answer as dots. */
+function AnswerList({
+  request,
+  answers
+}: {
+  request: Permission
+  answers: Record<string, string | string[]>
+}): React.JSX.Element {
+  return (
+    <dl className="chat-permission-answers">
+      {(request.questions ?? []).flatMap((q) => {
+        const value = answers[questionKey(q)]
+        if (value === undefined) return []
+        const text = Array.isArray(value)
+          ? value.join(', ')
+          : q.kind === 'link'
+            ? (q.confirm ?? "I'm back")
+            : value
+        return [
+          <div key={questionKey(q)} className="chat-permission-answer">
+            <dt>{q.question}</dt>
+            <dd>{questionIsPrivate(q, request.input) ? '••••••' : text}</dd>
+          </div>
+        ]
+      })}
+    </dl>
   )
 }
 
@@ -640,7 +708,12 @@ export function PermissionRow({ entry }: { entry: PermissionEntry }): React.JSX.
   const subject = approval
     ? [approval.label, approval.target].filter(Boolean).join(' ')
     : request.description
-  const answers = entry.answers ? Object.values(entry.answers).join('; ') : null
+  const hosted = isInputRequest(request)
+  const answers = entry.answers
+    ? Object.values(entry.answers)
+        .map((v) => (Array.isArray(v) ? v.join(', ') : v))
+        .join('; ')
+    : null
   // An answer on the entry is the truth, whatever the kernel said meanwhile.
   const status =
     entry.answeredElsewhere && !entry.answer
@@ -665,7 +738,12 @@ export function PermissionRow({ entry }: { entry: PermissionEntry }): React.JSX.
       <span className="chat-permission-row-text">
         <span className="chat-tool-name">{status}</span>
         <span className="chat-tool-summary">{subject}</span>
-        {answers && question && <span className="chat-permission-row-answer">→ {answers}</span>}
+        {answers && question && !hosted && (
+          <span className="chat-permission-row-answer">→ {answers}</span>
+        )}
+        {entry.answers && question && hosted && (
+          <AnswerList request={request} answers={entry.answers} />
+        )}
       </span>
     </div>
   )

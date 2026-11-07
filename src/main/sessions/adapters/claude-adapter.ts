@@ -19,7 +19,8 @@ import {
   type ModelOption,
   type CommandOption,
   type PermissionModeOption,
-  type SessionControl
+  type SessionControl,
+  flattenAnswers
 } from '../../../shared/session-model'
 import { buildAgentArgv, claudeProfilePermissions } from '../../../shared/agent-launch'
 import { isValidModelName } from '../../../shared/model-name'
@@ -1346,7 +1347,7 @@ export class ClaudeAdapter implements SessionAdapter {
         : prompt.text
       send({ type: 'user', message: { role: 'user', content } })
     } else if (input.type === 'permission_response') {
-      send(live.translator.response(input.id, input.optionId, input.answers))
+      send(live.translator.response(input.id, input.optionId, flattenAnswers(input.answers)))
       if (!live.translator.permissions.size)
         live.emitter.emit('stream', {
           kind: 'event',

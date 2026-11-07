@@ -64,7 +64,7 @@ describe('shared requests over authenticated HTTP and push', () => {
                 input.id,
                 input.optionId,
                 { respond } as unknown as CodexConnection,
-                input.answers
+                input.answers as Record<string, string> | undefined
               )
           }
         },

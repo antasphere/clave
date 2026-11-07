@@ -344,6 +344,10 @@ export async function run(t) {
         ]
       }
     ])
+    // A question is drawn inline, at the end of the transcript (PRDCT-4157):
+    // a reader scrolled up is told above the composer and brought to it.
+    const waiting = view.locator('.chat-waiting')
+    if (await waiting.isVisible().catch(() => false)) await waiting.click()
     const dock = view.locator('.chat-prompt[data-kind="question"]')
     await dock.waitFor()
     const other = dock.getByPlaceholder('Type your own answer')

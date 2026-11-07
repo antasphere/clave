@@ -298,3 +298,185 @@ describe('server native requests without clients', () => {
     expect(f.requests.snapshot().pending).toEqual([])
   })
 })
+
+/* PRDCT-4157: a request an agent tool puts to the person rides the native
+   road. Created through the wrapper, it is published into the session's
+   stream as a question, the session reads as waiting, the view's answer
+   settles it for the tool, and its withdrawal reaches every view. */
+describe('hosted requests on the native road', () => {
+  const onboarding = {
+    sessionId: session.id,
+    description: 'Before we start.',
+    questions: [{ id: 'email', question: 'Your team e-mail', kind: 'email' as const, options: [] }]
+  }
+  function hostedFixture(): ReturnType<typeof fixture> & {
+    published: SessionEvent[]
+    states: string[]
+    createHosted: ReturnType<typeof requestAwareSessionHost>['createHosted']
+  } {
+    const listeners = new Set<(value: SessionStream) => void>()
+    const all = new Set<(id: string, value: SessionStream) => void>()
+    const published: SessionEvent[] = []
+    const states: string[] = []
+    const write = vi.fn(async () => {})
+    let current: Session = { ...session, state: 'working' }
+    const host: SessionHostService = {
+      ...SessionHost.none,
+      get: (id) => (id === session.id ? current : undefined),
+      list: () => [current],
+      subscribe: (_id, listener) => {
+        listeners.add(listener)
+        return () => {
+          listeners.delete(listener)
+        }
+      },
+      write
+    }
+    const requests = new PendingRequests()
+    const wrapped = requestAwareSessionHost({
+      host,
+      requests,
+      subscribeAll: (listener) => {
+        all.add(listener)
+        return () => {
+          all.delete(listener)
+        }
+      },
+      publish: (id, event) => {
+        published.push(event)
+        for (const listener of listeners) listener({ kind: 'event', event: event as never })
+        for (const listener of all) listener(id, { kind: 'event', event: event as never })
+      },
+      setState: (_id, state) => {
+        states.push(state)
+        current = { ...current, state }
+      }
+    })
+    return {
+      host: wrapped.host,
+      requests,
+      write,
+      published,
+      states,
+      createHosted: wrapped.createHosted,
+      emit: (event) => {
+        for (const listener of listeners) listener({ kind: 'event', event })
+        for (const listener of all) listener(session.id, { kind: 'event', event })
+      }
+    }
+  }
+
+  it('publishes the request as a question into the stream and marks the session waiting', () => {
+    const f = hostedFixture()
+    const seen: SessionEvent[] = []
+    f.host.subscribe(session.id, (value) => {
+      if (value.kind === 'event') seen.push(value.event)
+    })
+    const request = f.createHosted(onboarding)
+    expect(f.published).toHaveLength(1)
+    expect(seen).toHaveLength(1)
+    expect(seen[0]).toMatchObject({
+      type: 'permission_request',
+      id: request.providerRequestId,
+      description: 'Before we start.',
+      toolName: 'clave_request_input',
+      options: [
+        { id: 'answer', label: 'Send' },
+        { id: 'deny', label: 'Skip' }
+      ]
+    })
+    expect(f.states).toEqual(['blocked'])
+    // The wrapper's own listener saw its own event and minted no second record.
+    expect(f.requests.snapshot().pending).toHaveLength(1)
+    f.requests.close()
+  })
+
+  it("the view's answer settles it for the tool, never a provider, and withdraws the card", async () => {
+    const f = hostedFixture()
+    const request = f.createHosted(onboarding)
+    await f.host.write(session.id, {
+      type: 'permission_response',
+      id: request.providerRequestId!,
+      optionId: 'answer',
+      answers: { email: 'luca@antasphere.com' }
+    })
+    expect(f.write).not.toHaveBeenCalled()
+    expect(await f.requests.resultAfter(request.id, session.id)).toEqual({
+      requestId: request.id,
+      status: 'completed',
+      answers: { email: 'luca@antasphere.com' }
+    })
+    expect(f.published.at(-1)).toEqual({
+      type: 'permission_withdrawn',
+      id: request.providerRequestId
+    })
+    expect(f.states).toEqual(['blocked', 'working'])
+    f.requests.close()
+  })
+
+  it('a second answer is refused as settled, like a native one', async () => {
+    const f = hostedFixture()
+    const request = f.createHosted(onboarding)
+    await f.host.write(session.id, {
+      type: 'permission_response',
+      id: request.providerRequestId!,
+      optionId: 'deny'
+    })
+    await expect(
+      f.host.write(session.id, {
+        type: 'permission_response',
+        id: request.providerRequestId!,
+        optionId: 'deny'
+      })
+    ).rejects.toMatchObject({ code: 'closed' })
+    expect((await f.requests.resultAfter(request.id, session.id)).status).toBe('dismissed')
+    f.requests.close()
+  })
+
+  it('an answer that does not fit its kind is refused and the card stays', async () => {
+    const f = hostedFixture()
+    const request = f.createHosted(onboarding)
+    await expect(
+      f.host.write(session.id, {
+        type: 'permission_response',
+        id: request.providerRequestId!,
+        optionId: 'answer',
+        answers: { email: 'not an email' }
+      })
+    ).rejects.toMatchObject({ code: 'invalid' })
+    expect(f.published.filter((e) => e.type === 'permission_withdrawn')).toHaveLength(0)
+    expect((await f.requests.resultAfter(request.id, session.id)).status).toBe('pending')
+    f.requests.close()
+  })
+
+  it('a later subscriber is replayed the request still waiting', () => {
+    const f = hostedFixture()
+    const request = f.createHosted(onboarding)
+    const seen: SessionEvent[] = []
+    f.host.subscribe(session.id, (value) => {
+      if (value.kind === 'event') seen.push(value.event)
+    })
+    expect(seen).toHaveLength(1)
+    expect(seen[0]).toMatchObject({ type: 'permission_request', id: request.providerRequestId })
+    f.requests.close()
+  })
+
+  it("the turn's end cancels it, as a native question, and the card is withdrawn", async () => {
+    const f = hostedFixture()
+    const request = f.createHosted(onboarding)
+    f.emit({ type: 'state_change', state: 'done' })
+    expect((await f.requests.resultAfter(request.id, session.id)).status).toBe('cancelled')
+    expect(f.published.at(-1)).toEqual({
+      type: 'permission_withdrawn',
+      id: request.providerRequestId
+    })
+    f.requests.close()
+  })
+
+  it('refuses a session the host does not know', () => {
+    const f = hostedFixture()
+    expect(() => f.createHosted({ ...onboarding, sessionId: 'nobody' })).toThrow('Unknown session')
+    expect(f.published).toHaveLength(0)
+    f.requests.close()
+  })
+})

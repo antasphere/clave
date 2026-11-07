@@ -1993,8 +1993,7 @@ canvas[data-orb-state] {
 }
 .orb-swatch[data-selected='true'] {
   color: var(--text-primary);
-  box-shadow:
-    0 0 0 1.5px var(--color-accent);
+  box-shadow: 0 0 0 1.5px var(--color-accent);
 }
 .orb-swatch-label {
   font-size: 11px;
@@ -2836,8 +2835,7 @@ canvas[data-orb-state] {
 /* Chosen: the accent edge drawn twice as firm as a focus ring, and no halo —
    a selection is a state that stays, a focus ring is a place that moves. */
 .theme-swatch[data-selected='true'] {
-  box-shadow:
-    0 0 0 1.5px var(--color-accent);
+  box-shadow: 0 0 0 1.5px var(--color-accent);
 }
 .theme-swatch-preview {
   padding: 0.75rem;
@@ -4339,6 +4337,260 @@ details[open] > .chat-tool-row .chat-tool-chevron,
 }
 .chat-prompt-option .chat-prompt-key {
   color: var(--text-tertiary);
+}
+/* ── The question card, inline (PRDCT-4157) ──
+   A question the agent asks is answered where it asked it: the card sits in
+   the transcript under the agent's turn, with the column's whole width, in
+   the paper of the composer (the hairline in the shadow, the soft drop), and
+   collapses into its muted record once answered. The dock keeps a tool to
+   allow. The fields are the paper's own controls (tokens.css "Paper"): the
+   control surface with its hairline, the focus ring on the caret, the
+   destructive ring and one quiet line under a field whose answer does not
+   fit. Every size here is a token, so Density and Text size carry the card. */
+.chat-turn-wrap > .chat-prompt[data-inline='true'],
+.chat-row .chat-prompt[data-inline='true'] {
+  align-self: stretch;
+  width: 100%;
+  margin: 0;
+  padding: calc(var(--spacing) * 3.5) calc(var(--spacing) * 4) calc(var(--spacing) * 3.5);
+  border: 0;
+  box-shadow:
+    0 0 0 0.5px var(--edge-color),
+    var(--raised-shadow);
+}
+.chat-prompt[data-inline='true']:focus-within {
+  border: 0;
+  box-shadow:
+    0 0 0 1px var(--color-border),
+    var(--raised-shadow);
+}
+/* Who asks, in a quiet eyebrow with the question glyph. */
+.chat-prompt-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(var(--spacing) * 1.5);
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.chat-prompt-eyebrow svg {
+  width: var(--chat-glyph);
+  height: var(--chat-glyph);
+}
+/* What the agent asks, in its own words, under the eyebrow. */
+.chat-prompt-ask {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.chat-fields {
+  gap: calc(var(--spacing) * 3.5);
+}
+.chat-field-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--spacing) * 1.25);
+  min-width: 0;
+}
+.chat-field-label {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: calc(var(--spacing) * 1.5);
+  color: var(--text-primary);
+  font-size: var(--text-sm);
+}
+.chat-field-label .chat-prompt-hint {
+  margin-left: 0;
+}
+.chat-field-hint {
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+  line-height: 1.45;
+}
+.chat-field {
+  width: 100%;
+  min-height: var(--control-h-md);
+  padding: 0 calc(var(--control-px) * 1.5);
+  border: 0;
+  border-radius: var(--control-radius);
+  background-color: var(--control-surface);
+  box-shadow: var(--field-shadow);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: var(--text-sm);
+  line-height: 1.5;
+  outline: none;
+  transition:
+    box-shadow 150ms,
+    background-color 150ms;
+}
+.chat-field::placeholder {
+  color: var(--text-tertiary);
+}
+.chat-field:focus {
+  box-shadow: var(--focus-ring);
+}
+.chat-field[aria-invalid='true'] {
+  box-shadow:
+    0 0 0 1px var(--color-destructive),
+    0 0 0 4px color-mix(in srgb, var(--color-destructive) 18%, transparent);
+}
+.chat-field:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.chat-field--long {
+  min-height: calc(var(--spacing) * 18);
+  max-height: calc(var(--spacing) * 60);
+  padding: calc(var(--spacing) * 1.75) calc(var(--control-px) * 1.5);
+  resize: none;
+  field-sizing: content;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+/* The date field keeps the system's own picker glyph in the card's ink. */
+.chat-field[type='date']::-webkit-calendar-picker-indicator {
+  opacity: 0.6;
+  cursor: pointer;
+}
+/* A path and its Choose button side by side; the button carries its glyph. */
+.chat-field-row {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--spacing) * 1.5);
+}
+.chat-field-row .chat-field {
+  flex: 1;
+  min-width: 0;
+}
+.chat-prompt-btn svg {
+  width: var(--chat-glyph);
+  height: var(--chat-glyph);
+  flex-shrink: 0;
+}
+/* One quiet line under the field: what to type instead. */
+.chat-field-problem {
+  font-size: var(--text-xs);
+  color: var(--color-destructive);
+  line-height: 1.45;
+}
+.chat-field-ok {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(var(--spacing) * 1.5);
+  height: var(--control-h-sm);
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
+.chat-field-ok svg {
+  width: var(--chat-glyph);
+  height: var(--chat-glyph);
+  color: var(--color-status-ready);
+}
+/* A link to open and come back from: the drawing, the address, two steps. */
+.chat-link {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--spacing) * 3);
+  padding: calc(var(--spacing) * 2) calc(var(--spacing) * 2.5);
+  border-radius: var(--radius-lg);
+  background-color: var(--surface-50);
+}
+.chat-link .ask-drawing {
+  flex-shrink: 0;
+  width: calc(var(--spacing) * 24);
+  height: auto;
+}
+.chat-link-body {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--spacing) * 1.5);
+  min-width: 0;
+}
+.chat-link-host {
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+.chat-link-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: calc(var(--spacing) * 1.5);
+}
+.chat-link[data-done='true'] .ask-drawing .ln--c {
+  stroke: color-mix(in oklab, var(--ink) 45%, transparent);
+}
+/* The record of a form once answered: each question, and what was said. */
+.chat-permission-answers {
+  display: flex;
+  flex-direction: column;
+  flex-basis: 100%;
+  gap: calc(var(--spacing) * 0.75);
+  margin: calc(var(--spacing) * 0.5) 0 0;
+  min-width: 0;
+}
+.chat-permission-answer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: calc(var(--spacing) * 1.5);
+  min-width: 0;
+}
+.chat-permission-answer dt {
+  color: var(--text-tertiary);
+}
+.chat-permission-answer dd {
+  margin: 0;
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+/* The way down when a question waits at the end of the transcript and the
+   reader is up it: the arrow's place and material, widened to say what waits. */
+.chat-waiting {
+  position: absolute;
+  bottom: calc(var(--spacing) * 3);
+  left: 0;
+  right: 0;
+  z-index: 10;
+  display: inline-flex;
+  align-items: center;
+  gap: calc(var(--spacing) * 1.5);
+  width: fit-content;
+  height: var(--control-h-md);
+  margin-inline: auto;
+  padding: 0 calc(var(--control-px) * 1.5);
+  border-radius: var(--radius-full);
+  background-color: var(--surface-raised);
+  box-shadow:
+    0 0 0 0.5px var(--edge-color),
+    var(--raised-shadow);
+  color: var(--text-primary);
+  font-size: var(--text-xs);
+  white-space: nowrap;
+  transition:
+    background-color var(--default-transition-duration),
+    scale var(--default-transition-duration) var(--ease-out-expo);
+}
+.chat-waiting:hover {
+  background-color: var(--surface-100);
+}
+.chat-waiting:active {
+  scale: 0.97;
+}
+.chat-waiting svg {
+  width: var(--chat-glyph);
+  height: var(--chat-glyph);
+  flex-shrink: 0;
+}
+.chat-waiting svg:first-child {
+  color: var(--color-accent);
 }
 .chat-permission-input pre {
   margin-top: 0;

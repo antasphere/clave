@@ -17,6 +17,7 @@ import type {
   UsageError
 } from './index.d'
 import type { LaunchProfile, LauncherFamily } from '../shared/agent-launch'
+import type { InputKind } from '@clave/contract/input-kinds'
 
 export interface FleetSnapshot {
   serverId: string
@@ -142,6 +143,16 @@ export interface FleetPendingRequest {
     header?: string
     options: readonly { label: string; description?: string }[]
     multiSelect?: boolean
+    /** A hosted input request's question (PRDCT-4157); see the contract's `input-kinds.ts`. */
+    kind?: InputKind
+    hint?: string
+    placeholder?: string
+    default?: string
+    optional?: boolean
+    url?: string
+    confirm?: string
+    min?: number
+    max?: number
   }[]
   secretQuestions?: readonly string[]
   toolName?: string
@@ -152,7 +163,7 @@ export interface FleetPendingRequest {
     | { type: 'env-file'; file: string; key: string }
 }
 export type FleetRequestResponse =
-  | { type: 'permission'; optionId: string; answers?: Record<string, string> }
-  | { type: 'clarification'; answers: Record<string, string> }
+  | { type: 'permission'; optionId: string; answers?: Record<string, string | string[]> }
+  | { type: 'clarification'; answers: Record<string, string | string[]> }
   | { type: 'secret'; value: string }
   | { type: 'dismiss' }

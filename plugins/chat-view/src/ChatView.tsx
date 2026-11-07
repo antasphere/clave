@@ -11,10 +11,12 @@ import { memo, useCallback, useEffect, useMemo, useReducer, useRef, useState } f
 import ReactMarkdown, { type Components } from 'react-markdown'
 import { createEntryMarkdownPlugins } from './markdown-append'
 import {
+  ArrowDownIcon,
   ArrowUpIcon,
   CheckIcon,
   ClipboardDocumentIcon,
   PaperClipIcon,
+  QuestionMarkCircleIcon,
   StopIcon,
   XMarkIcon
 } from '@heroicons/react/24/outline'
@@ -54,7 +56,10 @@ import { useTimelineDigests } from './digest'
 import { digestKey } from '../../../src/shared/exchange-digest'
 import { useExchangeJump } from './jump'
 import { useSessionStore } from '../../../src/renderer/src/store/session-store'
-import { ApprovalRun, PermissionRow, PromptDock } from './PromptDock'
+import { ApprovalRun, InlineQuestion, PermissionRow, PromptDock } from './PromptDock'
+import { isQuestion } from './approvals'
+import { QuestionContext } from './question-context'
+import type { Values } from './input-request'
 import { refusedAnswer } from './refused-answer'
 import { serverDock, withServerPending } from './server-requests'
 import { continueList } from './lists'
@@ -373,7 +378,12 @@ const EntryRow = memo(function EntryRow({
         <TurnMeta at={entry.at} text={entry.text} />
       </div>
     )
-  if (entry.kind === 'permission') return <PermissionRow entry={entry} />
+  if (entry.kind === 'permission')
+    return isQuestion(entry.request) && !entry.answer && !entry.answeredElsewhere ? (
+      <InlineQuestion entry={entry} />
+    ) : (
+      <PermissionRow entry={entry} />
+    )
   if (entry.kind === 'error')
     return (
       <div className="chat-notice" data-tone="error" role="alert">
@@ -679,7 +689,7 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
   const answer = async (
     id: string,
     optionId: string,
-    answers?: Record<string, string>
+    answers?: Record<string, string | string[]>
   ): Promise<void> => {
     setPending((current) => [...current, id])
     try {
@@ -687,9 +697,11 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
         // The dock's id is the server's request key: the answer settles that
         // one record, and one already settled (on another Mac, or dropped by
         // the provider) is refused rather than recorded.
-        const request = remotePending?.find((r) => r.id === id)
+        // The dock names the server's key; a card inline names the provider's
+        // id the stream carried. Either settles the one record.
+        const request = remotePending?.find((r) => r.id === id || r.providerRequestId === id)
         if (!request?.providerRequestId) throw new Error('This request is no longer waiting.')
-        const { accepted } = await window.electronAPI.fleetResolve(id, {
+        const { accepted } = await window.electronAPI.fleetResolve(request.id, {
           type: 'permission',
           optionId,
           ...(answers ? { answers } : {})
@@ -846,6 +858,8 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
   }, [presentation.entries, presentation.first, remotePending, session.id])
   // The reader's open tool rows, kept across the rows' unmounts (`ToolDisclosure`).
   const [disclosure] = useState(() => new Map<string, boolean>())
+  // What the reader typed into a question card, kept across the rows' unmounts.
+  const [questionDrafts] = useState(() => new Map<string, Values>())
   // Each message from another tab with what this session sent that tab
   // around it, for the exchange timeline's cards (`indexExchanges`).
   // The digest runs the agent the tab runs, on its account: the store's
@@ -994,25 +1008,38 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
             {/* Mounted from the start, empty or not: what it gains is told apart
                 from what it opened on by the rows it rendered before. */}
             <ToolDisclosure.Provider value={disclosure}>
-              <ExchangeContext.Provider value={exchanges}>
-                <TranscriptRows
-                  rows={blocks}
-                  settled={pastRead}
-                  scroll={transcript.scroll}
-                  reveal={reveal}
-                >
-                  {({ block, key }, index, arriving) => (
-                    <TranscriptRow
-                      rowKey={key}
-                      key={key}
-                      block={block}
-                      first={index === 0}
-                      arriving={arriving}
-                      onError={report}
-                    />
-                  )}
-                </TranscriptRows>
-              </ExchangeContext.Provider>
+              <QuestionContext.Provider
+                // PRDCT-4157: how a question card drawn in the transcript
+                // answers: the view's own path, so a card inline and the
+                // dock's say the same thing to the same host.
+                value={{
+                  answer,
+                  busy: (id) => !ready || state === 'ended' || pending.includes(id),
+                  agent: AGENT_NAMES[session.provider] ?? 'the agent',
+                  remote: isRemoteKey(session.id),
+                  drafts: questionDrafts
+                }}
+              >
+                <ExchangeContext.Provider value={exchanges}>
+                  <TranscriptRows
+                    rows={blocks}
+                    settled={pastRead}
+                    scroll={transcript.scroll}
+                    reveal={reveal}
+                  >
+                    {({ block, key }, index, arriving) => (
+                      <TranscriptRow
+                        rowKey={key}
+                        key={key}
+                        block={block}
+                        first={index === 0}
+                        arriving={arriving}
+                        onError={report}
+                      />
+                    )}
+                  </TranscriptRows>
+                </ExchangeContext.Provider>
+              </QuestionContext.Provider>
             </ToolDisclosure.Provider>
             {showMark && <ProviderMark provider={session.provider} />}
             {state === 'ended' && (
@@ -1021,7 +1048,24 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
           </div>
         </div>
         {jump.status ? <JumpPill status={jump.status} /> : earlier.loading && <EarlierLoading />}
-        {transcript.away && <JumpToEnd onClick={transcript.jump} />}
+        {transcript.away &&
+          (waitingOn.some(isQuestion) ? (
+            // A question arrived while the reader was up the transcript: the
+            // card is at its end, inline (PRDCT-4157), so the way down says
+            // what waits there, in place of the bare arrow.
+            <button
+              type="button"
+              className="chat-waiting"
+              onClick={transcript.jump}
+              aria-label="Scroll to the question"
+            >
+              <QuestionMarkCircleIcon />
+              {AGENT_NAMES[session.provider] ?? 'The agent'} asks a question
+              <ArrowDownIcon />
+            </button>
+          ) : (
+            <JumpToEnd onClick={transcript.jump} />
+          ))}
       </div>
       <div className="chat-composer-wrap">
         {panel === 'resume' && (
@@ -1060,7 +1104,11 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
           // Only /resume hides the dock; MCP and plugin panels keep pending
           // prompts in sight. A server's session answers in this same dock, by
           // the server's own request key (server-requests.ts).
-          requests={panel === 'resume' ? [] : waitingOn}
+          // A question is answered where the agent asked it, inline in the
+          // transcript (InlineQuestion); the dock keeps what it always held
+          // best, a tool to allow, in reach above the composer.
+          requests={panel === 'resume' ? [] : waitingOn.filter((r) => !isQuestion(r))}
+          remote={isRemoteKey(session.id)}
           agent={AGENT_NAMES[session.provider] ?? 'the agent'}
           busy={(id) => !ready || state === 'ended' || pending.includes(id)}
           onAnswer={(id, optionId, answers) => void answer(id, optionId, answers)}

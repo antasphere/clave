@@ -5,11 +5,24 @@ import {
   PendingRequest,
   RequestRejected,
   RequestResponse,
+  type Answers,
+  type HostedRequestInput,
+  type RequestResultView,
   type RequestSnapshot,
   type ResolveRequestInput
 } from '../../../contract/src/requests'
+import {
+  INPUT_REQUEST_OPTIONS,
+  INPUT_REQUEST_TOOL,
+  answerProblem
+} from '../../../contract/src/input-kinds'
 
 export type RequestInput = Omit<PendingRequest, 'id' | 'createdAt'>
+/** The prefix of the id a hosted request carries as its provider id. */
+export const HOSTED_REQUEST_PREFIX = 'clave:'
+/** The longest the result query holds its answer waiting for the person: under
+ *  the client's own deadline, so a poll never dies on the wire. */
+export const RESULT_WAIT_MAX_MS = 45_000
 export type RequestStatus =
   | 'pending'
   | 'running'
@@ -29,7 +42,12 @@ interface Entry {
   result: RequestResult
   resolve?: Resolver
   expiresAt?: number
+  /** A request an agent tool created (`createHosted`): answered to the tool
+   *  that polls, never written to a provider. */
+  hosted?: boolean
 }
+export type SettledListener = (request: PendingRequest, result: RequestResult) => void
+const isSettled = (status: RequestStatus): boolean => status !== 'pending' && status !== 'running'
 const invalid = (): RequestRejected =>
   new RequestRejected({
     code: 'invalid',
@@ -41,6 +59,7 @@ const invalid = (): RequestRejected =>
 export class PendingRequests {
   private readonly entries = new Map<string, Entry>()
   private readonly listeners = new Set<(revision: number) => void>()
+  private readonly settled = new Set<SettledListener>()
   private revision = 0
   private closed = false
   constructor(
@@ -68,6 +87,94 @@ export class PendingRequests {
         /* listener owns its failure */
       }
     }
+  }
+  /** Told once per request as it leaves pending: answered, dismissed,
+   *  cancelled or failed. What the hosted road publishes to the views from. */
+  onSettled(listener: SettledListener): () => void {
+    this.settled.add(listener)
+    return () => {
+      this.settled.delete(listener)
+    }
+  }
+  private settle(entry: Entry): void {
+    for (const listener of [...this.settled]) {
+      try {
+        listener(structuredClone(entry.request), structuredClone(entry.result))
+      } catch {
+        /* listener owns its failure */
+      }
+    }
+  }
+  /**
+   * A request an agent tool puts to the person (`clave_request_input`,
+   * PRDCT-4157): a clarification with the server's own provider id, so it
+   * rides the native question road into every view of the session, answered
+   * with the question card's two words (`answer` with the answers, `deny` to
+   * skip) and kept for the tool's poll rather than written to a provider.
+   */
+  createHosted(input: HostedRequestInput): PendingRequest {
+    const request = this.create({
+      sessionId: input.sessionId,
+      kind: 'clarification',
+      description: input.description,
+      providerRequestId: `${HOSTED_REQUEST_PREFIX}${randomUUID()}`,
+      options: INPUT_REQUEST_OPTIONS.map((o) => ({ ...o })),
+      questions: input.questions,
+      toolName: INPUT_REQUEST_TOOL,
+      input: { tool: INPUT_REQUEST_TOOL, layout: input.layout ?? 'form' }
+    })
+    const entry = this.entries.get(request.id)
+    if (entry) entry.hosted = true
+    return request
+  }
+  /** Whether the request was created by `createHosted`. */
+  isHosted(id: string): boolean {
+    return this.entries.get(id)?.hosted === true
+  }
+  /** The hosted requests of a session still waiting for the person. */
+  hostedPending(sessionId: string): PendingRequest[] {
+    return [...this.entries.values()]
+      .filter((e) => e.hosted && e.request.sessionId === sessionId && e.result.status === 'pending')
+      .map((e) => structuredClone(e.request))
+  }
+  /**
+   * Where a request stands, for the tool that created it: at once, or after
+   * waiting up to `waitMs` (bounded) for the person. A hosted request's
+   * answers travel here and nowhere else; a secret's value never does.
+   */
+  async resultAfter(requestId: string, sessionId: string, waitMs = 0): Promise<RequestResultView> {
+    const view = (): RequestResultView => {
+      const result = this.result(requestId, sessionId)
+      const entry = this.entries.get(requestId)
+      const response = result.response
+      const skipped =
+        entry?.hosted && response?.type === 'permission' && response.optionId === 'deny'
+      const answers =
+        entry?.hosted && response?.type === 'permission' && response.optionId === 'answer'
+          ? response.answers
+          : undefined
+      return {
+        requestId,
+        status: skipped && result.status === 'completed' ? 'dismissed' : result.status,
+        ...(answers && { answers: answers as Answers })
+      }
+    }
+    const first = view()
+    const wait = Math.min(Math.max(0, waitMs), RESULT_WAIT_MAX_MS)
+    if (isSettled(first.status) || wait === 0) return first
+    await new Promise<void>((resolve) => {
+      const timer = setTimeout(done, wait)
+      const off = this.subscribe(() => {
+        const entry = this.entries.get(requestId)
+        if (!entry || isSettled(entry.result.status)) done()
+      })
+      function done(): void {
+        clearTimeout(timer)
+        off()
+        resolve()
+      }
+    })
+    return view()
   }
   create(input: RequestInput, resolve?: Resolver): PendingRequest {
     if (this.closed)
@@ -158,7 +265,9 @@ export class PendingRequests {
         requestId: input.requestId,
         status: response.type === 'dismiss' ? 'dismissed' : 'completed',
         ...(response.type !== 'secret' &&
-          !entry.request.providerRequestId && { response: structuredClone(response) })
+          (entry.hosted || !entry.request.providerRequestId) && {
+            response: structuredClone(response)
+          })
       }
     } catch {
       // Raw exceptions can contain a secret, file content or a provider payload.
@@ -166,6 +275,7 @@ export class PendingRequests {
     }
     entry.expiresAt = this.now() + (this.options.resultTtlMs ?? 600_000)
     this.changed()
+    this.settle(entry)
     return { accepted: true }
   }
   private validate(request: PendingRequest, response: RequestResponse): void {
@@ -188,19 +298,26 @@ export class PendingRequests {
     if (response.type !== 'clarification') throw invalid()
     this.validateAnswers(request, response.answers)
   }
-  private validateAnswers(
-    request: PendingRequest,
-    answers: Readonly<Record<string, string>> | undefined
-  ): void {
+  private validateAnswers(request: PendingRequest, answers: Answers | undefined): void {
     const questions = request.questions ?? []
+    if (!answers) throw invalid()
+    const keys = new Set(questions.map((q) => q.id ?? q.question))
+    if (Object.keys(answers).some((key) => !keys.has(key))) throw invalid()
+    if (this.entries.get(request.id)?.hosted || request.toolName === INPUT_REQUEST_TOOL) {
+      // A hosted request's answers are judged by each question's kind, the
+      // same rule the card applied as they were typed; an optional question
+      // may be left out.
+      for (const q of questions) {
+        const value = answers[q.id ?? q.question]
+        if (answerProblem(q, value) !== null) throw invalid()
+      }
+      return
+    }
     if (
-      !answers ||
       Object.keys(answers).length !== questions.length ||
       questions.some((q) => {
-        const key = q.id ?? q.question
-        return (
-          !Object.hasOwn(answers, key) || typeof answers[key] !== 'string' || !answers[key].trim()
-        )
+        const value = answers[q.id ?? q.question]
+        return typeof value !== 'string' || !value.trim()
       })
     )
       throw invalid()
@@ -218,19 +335,23 @@ export class PendingRequests {
   }
   private cancel(matches: (request: PendingRequest) => boolean): void {
     let changed = false
+    const cancelled: Entry[] = []
     for (const entry of this.entries.values()) {
       if (!matches(entry.request) || entry.result.status !== 'pending') continue
       entry.result = { requestId: entry.request.id, status: 'cancelled' }
       delete entry.resolve
       entry.expiresAt = this.now() + (this.options.resultTtlMs ?? 600_000)
       changed = true
+      cancelled.push(entry)
     }
     if (changed) this.changed()
+    for (const entry of cancelled) this.settle(entry)
   }
   close(): void {
     this.closed = true
     for (const id of new Set([...this.entries.values()].map((e) => e.request.sessionId)))
       this.cancelSession(id)
     this.listeners.clear()
+    this.settled.clear()
   }
 }

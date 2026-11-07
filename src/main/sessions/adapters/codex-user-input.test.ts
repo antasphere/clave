@@ -5,6 +5,7 @@ import type { SessionEvent } from '../../../shared/session-model'
 import { SessionHost } from '@clave/server'
 import { PendingRequests } from '../../../../packages/server/src/requests/service'
 import { requestAwareSessionHost } from '../request-aware-host'
+import { flattenAnswers } from '../../../shared/session-model'
 
 // Shape from installed codex-cli 0.163.0, generated with
 // codex app-server generate-json-schema --experimental --out <private-dir>.
@@ -78,7 +79,7 @@ describe('installed Codex native request_user_input', () => {
         subscribe: () => () => {},
         write: async (_id, input) => {
           if (input.type === 'permission_response')
-            translator.answer(input.id, input.optionId, connection, input.answers)
+            translator.answer(input.id, input.optionId, connection, flattenAnswers(input.answers))
         }
       },
       requests,
@@ -180,7 +181,7 @@ describe('installed Codex native request_user_input', () => {
     )
     const write = vi.fn(async (_id, input) => {
       if (input.type === 'permission_response')
-        translator.answer(input.id, input.optionId, connection, input.answers)
+        translator.answer(input.id, input.optionId, connection, flattenAnswers(input.answers))
     })
     const wrapped = requestAwareSessionHost({
       host: { ...SessionHost.none, write, subscribe: () => () => {} },

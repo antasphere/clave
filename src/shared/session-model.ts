@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { INPUT_KINDS } from '@clave/contract/input-kinds'
 import { AttachmentsSchema, ProviderImageSchema } from './attachments'
 import { isValidEffort } from './effort'
 
@@ -69,10 +70,26 @@ export const PermissionResponseSchema = z.object({
   type: z.literal('permission_response'),
   id: z.string(),
   optionId: z.string(),
-  /** A request carrying `questions`: question text → the chosen label(s),
-   *  several joined by ", ", or the reader's own words. */
-  answers: z.record(z.string(), z.string()).optional()
+  /** A request carrying `questions`: the question's key → the chosen label(s)
+   *  or the reader's own words; a hosted multi-select answers with the labels
+   *  as an array, a provider's own question with one string (several joined
+   *  by ", "). */
+  answers: z.record(z.string(), z.union([z.string(), z.array(z.string())])).optional()
 })
+/** The answers as a provider's wire takes them: one string per question, a
+ *  hosted multi-select's labels joined by ", ". The adapters call this at
+ *  their boundary; a hosted request's answers never reach a provider. */
+export function flattenAnswers(
+  answers: Readonly<Record<string, string | readonly string[]>> | undefined
+): Record<string, string> | undefined {
+  if (!answers) return undefined
+  return Object.fromEntries(
+    Object.entries(answers).map(([key, value]) => [
+      key,
+      typeof value === 'string' ? value : value.join(', ')
+    ])
+  )
+}
 export const InterruptSchema = z.object({ type: z.literal('interrupt') })
 /** Switch the session's model; null asks the provider for its own default. */
 export const SetModelSchema = z.object({
@@ -110,7 +127,20 @@ export const AgentQuestionSchema = z.object({
   question: z.string(),
   header: z.string().optional(),
   options: z.array(z.object({ label: z.string(), description: z.string().optional() })),
-  multiSelect: z.boolean().optional()
+  multiSelect: z.boolean().optional(),
+  /** A hosted input request's question (clave_request_input, PRDCT-4157):
+   *  the kind of value asked for and the field's own words; absent on a
+   *  provider's native question. Mirrors `packages/contract/src/sessions.ts`;
+   *  the one rule for whether an answer fits is the contract's `input-kinds.ts`. */
+  kind: z.enum(INPUT_KINDS).optional(),
+  hint: z.string().optional(),
+  placeholder: z.string().optional(),
+  default: z.string().optional(),
+  optional: z.boolean().optional(),
+  url: z.string().optional(),
+  confirm: z.string().optional(),
+  min: z.number().optional(),
+  max: z.number().optional()
 })
 export type AgentQuestion = z.infer<typeof AgentQuestionSchema>
 export const SessionInputSchema = z.discriminatedUnion('type', [

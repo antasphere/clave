@@ -42,8 +42,9 @@ export type Entry =
       kind: 'permission'
       request: Permission
       answer?: string
-      /** What the reader chose, for a request that asked questions. */
-      answers?: Record<string, string>
+      /** What the reader chose, for a request that asked questions: one
+       *  string per question, or the labels of a hosted multi-select. */
+      answers?: Record<string, string | string[]>
       /* The kernel left blocked while this request was still open, so the
          adapter is no longer holding it: it abandoned the request (Claude's
          `control_cancel_request` and the end-of-turn `result` both drop their
@@ -92,7 +93,7 @@ export const emptyConversation: Conversation = {
 }
 export type Action =
   | { event: ChatEvent; at?: number }
-  | { answer: string; optionId: string; answers?: Record<string, string> }
+  | { answer: string; optionId: string; answers?: Record<string, string | string[]> }
   | { exit: number }
   /** A page of the conversation's past, oldest first, in front of what is here.
    *  Main only cuts a page where nothing pairs across the cut (a tool call and

@@ -73,12 +73,19 @@ import { GitLive } from './git/api'
 import { RoutinesLive } from './routines/api'
 // ── Issue #266: the server's version and its self-upgrade ──
 import { GetServerInfo, RequestServerUpgrade } from '@clave/contract/server-info'
-import { ListPendingRequests, ResolvePendingRequest } from '../../contract/src/requests'
+import {
+  CreatePendingRequest,
+  ReadPendingRequestResult,
+  ListPendingRequests,
+  ResolvePendingRequest
+} from '../../contract/src/requests'
 
 export const RequestsLive = HttpApiBuilder.group(ClaveApi, 'requests', (handlers) =>
   handlers
     .handle('list', HttpCqrs.query(ListPendingRequests))
     .handle('resolve', HttpCqrs.command(ResolvePendingRequest))
+    .handle('create', HttpCqrs.command(CreatePendingRequest))
+    .handle('result', HttpCqrs.command(ReadPendingRequestResult))
 )
 import {
   AbsorbLayout,

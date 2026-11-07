@@ -235,6 +235,66 @@ describe('the session stream on the wire', () => {
       )
     ).toEqual({ kind: 'event', event })
   })
+  it('carries a hosted input request and its typed answers through both schemas (PRDCT-4157)', () => {
+    const event = {
+      type: 'permission_request',
+      id: 'clave:7c1e',
+      description: 'Before we set up your machine.',
+      toolName: 'clave_request_input',
+      input: { tool: 'clave_request_input', layout: 'form' },
+      options: [
+        { id: 'answer', label: 'Send' },
+        { id: 'deny', label: 'Skip' }
+      ],
+      questions: [
+        {
+          id: 'email',
+          question: 'Your team e-mail',
+          kind: 'email',
+          hint: 'The one on the hub',
+          placeholder: 'you@antasphere.com',
+          optional: false,
+          options: []
+        },
+        {
+          id: 'projects',
+          question: 'Projects you join',
+          kind: 'choice',
+          multiSelect: true,
+          optional: true,
+          options: [{ label: 'reb' }, { label: 'wat' }]
+        },
+        {
+          id: 'sign',
+          question: 'Sign in',
+          kind: 'link',
+          url: 'https://github.com/login',
+          confirm: "I'm signed in",
+          options: []
+        },
+        { id: 'seats', question: 'Seats', kind: 'number', min: 1, max: 10, options: [] }
+      ]
+    }
+    expect(ZodSessionEvent.parse(event)).toEqual(event)
+    expect(Schema.decodeUnknownSync(SessionEvent)(event)).toEqual(event)
+    const reply = {
+      type: 'permission_response',
+      id: 'clave:7c1e',
+      optionId: 'answer',
+      answers: { email: 'luca@antasphere.com', projects: ['reb', 'wat'], sign: 'done', seats: '3' }
+    }
+    expect(ZodSessionInput.parse(reply)).toEqual(reply)
+    expect(Schema.decodeUnknownSync(SessionInput)(reply)).toEqual(reply)
+    expect(() =>
+      ZodSessionEvent.parse({ ...event, questions: [{ ...event.questions[0], kind: 'secret' }] })
+    ).toThrow()
+    expect(() =>
+      Schema.decodeUnknownSync(SessionEvent)({
+        ...event,
+        questions: [{ ...event.questions[0], kind: 'secret' }]
+      })
+    ).toThrow()
+  })
   it('carries terminal bytes as base64 and gives them back as bytes', () => {
     const bytes = new Uint8Array([0x1b, 0x5b, 0x48, 0xc3, 0xa9])
     const encoded = Schema.encodeSync(SessionStream)({ kind: 'pty', data: bytes })

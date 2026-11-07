@@ -2,6 +2,7 @@ import {
   SessionSchema,
   type AgentState,
   type Session,
+  type SessionEvent,
   type SessionStream,
   type SessionInput,
   type ModelOption,
@@ -10,6 +11,7 @@ import {
   type HistoryPage,
   type BackgroundTask
 } from '../../shared/session-model'
+import type { SessionEvent as ContractSessionEvent } from '@clave/contract/sessions'
 import { pageHistory } from './history'
 import type { SessionAdapter, SessionHandle, SpawnSpec, Unsubscribe } from './adapter'
 
@@ -289,6 +291,19 @@ export class SessionManager {
     return () => {
       entry.exits.delete(listener)
     }
+  }
+
+  /** Publish an event the HOST raised into a session's stream, as if the
+   *  adapter had: a request an agent tool put to the person
+   *  (`request-aware-host.ts`, PRDCT-4157) reaches every view of the session
+   *  the way a native question does. A state change goes through `setState`,
+   *  never here. */
+  publishHostEvent(id: string, event: ContractSessionEvent): void {
+    if (event.type === 'state_change')
+      throw new Error('A state change is set with setState, not published')
+    // The contract's event and the renderer's model are the same shape, held
+    // together by packages/contract/src/sessions.test.ts.
+    this.publish(this.require(id), { kind: 'event', event: event as SessionEvent })
   }
 
   subscribeAll(callback: (id: string, stream: SessionStream) => void): Unsubscribe {

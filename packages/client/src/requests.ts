@@ -1,5 +1,11 @@
 import type { ServerEventEnvelope } from '@clave/contract/events'
-import type { RequestSnapshot, ResolveRequestInput } from '../../contract/src/requests'
+import type {
+  HostedRequestInput,
+  PendingRequest,
+  RequestResultView,
+  RequestSnapshot,
+  ResolveRequestInput
+} from '../../contract/src/requests'
 import type { Call } from './call'
 import type { PushStatus } from './push-client'
 
@@ -10,6 +16,13 @@ interface RequestPush {
 export interface RequestsClient {
   readonly list: () => Promise<RequestSnapshot>
   readonly resolve: (input: ResolveRequestInput) => Promise<{ accepted: boolean }>
+  /** A request an agent tool puts to the person (PRDCT-4157), and where it stands. */
+  readonly create: (input: HostedRequestInput) => Promise<PendingRequest>
+  readonly result: (input: {
+    requestId: string
+    sessionId: string
+    waitMs?: number
+  }) => Promise<RequestResultView>
   readonly watch: (
     push: RequestPush,
     listener: (snapshot: RequestSnapshot) => void,
@@ -22,6 +35,8 @@ export const requestsClient = (call: Call, resolutionCall: Call = call): Request
   return {
     list,
     resolve: (payload) => resolutionCall((c) => c.requests.resolve({ payload })),
+    create: (payload) => call((c) => c.requests.create({ payload })),
+    result: (payload) => call((c) => c.requests.result({ payload })),
     watch: (push, listener, onError) => {
       let stopped = false
       let generation = 0

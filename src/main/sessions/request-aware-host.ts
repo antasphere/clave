@@ -1,6 +1,10 @@
-import type { SessionHostService } from '@clave/server'
-import type { SessionEvent, SessionStream } from '@clave/contract/sessions'
-import { RequestRejected, type PendingRequest } from '../../../packages/contract/src/requests'
+import type { RequestsService, SessionHostService } from '@clave/server'
+import type { AgentState, SessionEvent, SessionStream } from '@clave/contract/sessions'
+import {
+  RequestRejected,
+  type HostedRequestInput,
+  type PendingRequest
+} from '../../../packages/contract/src/requests'
 import type { PendingRequests } from '../../../packages/server/src/requests/service'
 import { REQUEST_GONE } from '../../shared/request-refusals'
 
@@ -22,8 +26,46 @@ export function requestAwareSessionHost(options: {
   requests: PendingRequests
   subscribeAll: (listener: (id: string, value: SessionStream) => void) => () => void
   subscribeRemoved?: (listener: (id: string) => void) => () => void
-}): { host: SessionHostService; close: () => void } {
+  /** The hosted road (PRDCT-4157): how a request an agent tool created
+   *  reaches a session's open views, as the adapter's own events do, and how
+   *  the session is marked waiting while it stands. Without them a hosted
+   *  request is seen by a view only when it subscribes. */
+  publish?: (id: string, event: SessionEvent) => void
+  setState?: (id: string, state: AgentState) => void
+}): {
+  host: SessionHostService
+  close: () => void
+  /** A request an agent tool puts to the person: created, published to the
+   *  session's views as a question, the session marked waiting. */
+  createHosted: (input: HostedRequestInput) => PendingRequest
+  /** The requests port the server answers from: the service's own reads and
+   *  resolution, the hosted create through this road. */
+  port: RequestsService
+} {
   const { host: base, requests } = options
+  const publish = options.publish ?? ((): void => {})
+  const setState = options.setState ?? ((): void => {})
+  const createHosted = (input: HostedRequestInput): PendingRequest => {
+    if (!base.get(input.sessionId)) throw new Error(`Unknown session "${input.sessionId}".`)
+    const request = requests.createHosted(input)
+    publish(input.sessionId, eventOf(request))
+    setState(input.sessionId, 'blocked')
+    return request
+  }
+  // A hosted request leaving pending (answered, skipped, cancelled with the
+  // turn) is withdrawn from every view, the way the adapter withdraws a
+  // native one; the session stops reading as waiting once nothing is.
+  const offSettled = requests.onSettled((request) => {
+    if (!request.providerRequestId || !requests.isHosted(request.id)) return
+    const id = request.sessionId
+    try {
+      publish(id, { type: 'permission_withdrawn', id: request.providerRequestId })
+    } catch {
+      /* the session is gone with its views */
+    }
+    const waiting = requests.snapshot().pending.some((r) => r.sessionId === id)
+    if (!waiting && base.get(id)?.state === 'blocked') setState(id, 'working')
+  })
   const off = options.subscribeAll((id, stream) => {
     if (stream.kind !== 'event') return
     const event = stream.event
@@ -102,7 +144,17 @@ export function requestAwareSessionHost(options: {
   return {
     close: () => {
       off()
+      offSettled()
       offRemoved?.()
+    },
+    createHosted,
+    port: {
+      snapshot: () => requests.snapshot(),
+      resolve: (input) => requests.resolve(input),
+      subscribe: (listener) => requests.subscribe(listener),
+      createHosted,
+      resultAfter: (requestId, sessionId, waitMs) =>
+        requests.resultAfter(requestId, sessionId, waitMs)
     },
     host: {
       ...base,
