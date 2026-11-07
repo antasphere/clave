@@ -50,6 +50,12 @@ import {
 } from '../shared/mic'
 import { TRIAGE_IPC, type TriagePrepareResult, type TriageSnapshot } from '../shared/triage'
 import type { DigestRequest } from '../shared/exchange-digest'
+import type {
+  ServerInstallProgress,
+  ServerInstallResult,
+  ServerInstallStatus,
+  TailnetScan
+} from '../shared/server-setup-types'
 
 /** Creates a typed IPC event listener with cleanup function. */
 function createIpcListener<T extends unknown[]>(
@@ -1721,6 +1727,15 @@ const electronAPI = {
   checkPort: (port: number) => ipcRenderer.invoke('net:check-port', port) as Promise<boolean>,
   probeServerUrl: (url: string, timeoutMs?: number) =>
     ipcRenderer.invoke('net:probe-url', url, timeoutMs) as Promise<boolean>,
+  // ── Lane B (server wave): a Mac as a server, the tailnet scan ──
+  serverSetupScan: () => ipcRenderer.invoke('server-setup:scan') as Promise<TailnetScan>,
+  serverSetupInstallStatus: () =>
+    ipcRenderer.invoke('server-setup:install-status') as Promise<ServerInstallStatus>,
+  serverSetupInstall: () =>
+    ipcRenderer.invoke('server-setup:install') as Promise<ServerInstallResult>,
+  serverSetupCopyToken: () => ipcRenderer.invoke('server-setup:copy-token') as Promise<void>,
+  onServerSetupProgress: (callback: (progress: ServerInstallProgress) => void) =>
+    createIpcListener('server-setup:install-progress', callback),
 
   openPath: (filePath: string) => ipcRenderer.invoke('shell:openPath', filePath),
 

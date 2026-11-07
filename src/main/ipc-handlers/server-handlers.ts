@@ -24,6 +24,17 @@ import {
 import { TEST_NO_ACTIVATE, TEST_VERSION } from '../test-mode'
 
 let shared: ServerConnectionRegistry | undefined
+
+/** What a change to the saved connections sets off (the windows told, the
+ *  versions read again); a no-op until `registerServerHandlers` has run. */
+let notifyChanged: () => void = () => {}
+
+/** Tells the windows and the version sync that the saved connections
+ *  changed, for a handler outside this file that saved one itself. */
+export function fleetConnectionsChanged(): void {
+  notifyChanged()
+}
+
 /** The saved server connections, one instance for main: the IPC below and
  *  the version sync resolve endpoints through it. Lazy: the boot may
  *  register IPC before safeStorage and userData are ready. */
@@ -107,6 +118,7 @@ export function registerServerHandlers(
       if (!win.isDestroyed()) win.webContents.send(FLEET_IPC.changed)
     void versions?.refresh().catch(() => undefined)
   }
+  notifyChanged = changed
   ipcMain.handle(FLEET_IPC.list, () => connections().list())
   ipcMain.handle(FLEET_IPC.save, async (_event, input: SaveServerConnection) => {
     const result = await connections().save(input)

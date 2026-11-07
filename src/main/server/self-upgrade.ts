@@ -57,12 +57,6 @@ import {
   type ServerUpgradeRequest,
   type ServerUpgradeStatus
 } from '@clave/contract/server-info'
-import {
-  isServerUpgradeFailureCode,
-  isServerUpgradePhase,
-  type ServerUpgradeFailureCode,
-  type ServerUpgradePhase
-} from '@clave/contract/upgrade-failure'
 import type { ServerInfoService } from '@clave/server'
 import type { SessionManager } from '../sessions/session-manager'
 
@@ -233,43 +227,10 @@ function readStatus(file: string): string | null {
   }
 }
 
-const STATUS_LINE = /^(code|phase)=([a-z-]+)$/
-
-/**
- * What a run's status file says: the last code and the last phase it names
- * from the contract's lists. Every other line (text, a value off the lists,
- * a carriage return) is ignored, so nothing but those values is ever read.
- */
-export function readRunStatus(text: string | null): {
-  code?: ServerUpgradeFailureCode
-  phase?: ServerUpgradePhase
-} {
-  let code: ServerUpgradeFailureCode | undefined
-  let phase: ServerUpgradePhase | undefined
-  for (const line of (text ?? '').split('\n')) {
-    const match = STATUS_LINE.exec(line)
-    if (!match) continue
-    const [, key, value] = match
-    if (key === 'code' && isServerUpgradeFailureCode(value)) code = value
-    if (key === 'phase' && isServerUpgradePhase(value)) phase = value
-  }
-  return { ...(code && { code }), ...(phase && { phase }) }
-}
-
-/** A run's failure as it leaves the server: `unknown` when the script wrote no code. */
-export function runFailure(
-  status: string | null,
-  exitCode: number,
-  logPath: string
-): ServerUpgradeFailure {
-  const said = readRunStatus(status)
-  return {
-    code: said.code ?? 'unknown',
-    ...(said.phase && { phase: said.phase }),
-    exitCode,
-    logPath
-  }
-}
+// The status file's reading lives in `install-status.ts`, an Effect-free
+// module the app's own install shares with this one.
+import { readRunStatus, runFailure } from './install-status'
+export { readRunStatus, runFailure }
 
 export interface RunResult {
   /** The script's exit code (systemd-run --wait passes it on); 1 when killed by a signal. */
