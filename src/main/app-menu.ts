@@ -6,6 +6,7 @@ import { checkForUpdatesNow, openUpdaterLog, RELEASES_URL } from './auto-updater
 import { getStoredKeymapConfig } from './ipc-handlers/keymap-handlers'
 import { isMouseChord, type KeymapActionId } from '../shared/keymaps'
 import { TRIAGE_IPC } from '../shared/triage'
+import { ONBOARDING_IPC } from '../shared/onboarding'
 
 const REPO_URL = 'https://github.com/antasphere/clave'
 // electron-builder's productName, stated rather than read: `app.name` is the
@@ -28,6 +29,14 @@ function openTriage(): void {
   if (!win) return
   bringForward(win)
   win.webContents.send(TRIAGE_IPC.open)
+}
+
+/** "Welcome to Clave…": the window in front walks the first-run steps again. */
+function openOnboarding(): void {
+  const win = focusedOrPrimaryWindow()
+  if (!win) return
+  bringForward(win)
+  win.webContents.send(ONBOARDING_IPC.open)
 }
 
 /**
@@ -193,6 +202,10 @@ export function buildAppMenu(deps: AppMenuDeps): void {
           }
         },
         { type: 'separator' },
+        {
+          label: 'Welcome to Clave…',
+          click: openOnboarding
+        },
         {
           label: 'Debug Clave…',
           click: openTriage

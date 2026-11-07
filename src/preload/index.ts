@@ -49,6 +49,13 @@ import {
   type MicAccessState
 } from '../shared/mic'
 import { TRIAGE_IPC, type TriagePrepareResult, type TriageSnapshot } from '../shared/triage'
+import {
+  ONBOARDING_IPC,
+  type OnboardingAgent,
+  type OnboardingAgentId,
+  type OnboardingInstallResult,
+  type OnboardingState
+} from '../shared/onboarding'
 import type { DigestRequest } from '../shared/exchange-digest'
 import type {
   ServerInstallProgress,
@@ -1773,6 +1780,19 @@ const electronAPI = {
 
   // The menu's "Debug Clave…" (issue #227): the window opens its triage.
   onOpenTriage: (callback: () => void) => createIpcListener<[]>(TRIAGE_IPC.open, callback),
+
+  // The first-run walk (src/main/onboarding.ts), and Help → Welcome to Clave…
+  onboardingGetState: () => ipcRenderer.invoke(ONBOARDING_IPC.getState) as Promise<OnboardingState>,
+  onboardingAgents: (fresh?: boolean) =>
+    ipcRenderer.invoke(ONBOARDING_IPC.agents, fresh === true) as Promise<OnboardingAgent[]>,
+  onboardingInstall: (id: OnboardingAgentId) =>
+    ipcRenderer.invoke(ONBOARDING_IPC.install, id) as Promise<OnboardingInstallResult>,
+  onboardingComplete: () => ipcRenderer.invoke(ONBOARDING_IPC.complete) as Promise<void>,
+  onboardingSetChatView: (viewId: string) =>
+    ipcRenderer.invoke(ONBOARDING_IPC.setChatView, viewId) as Promise<void>,
+  onboardingCreateFolder: (parent: string, name: string) =>
+    ipcRenderer.invoke(ONBOARDING_IPC.createFolder, parent, name) as Promise<string>,
+  onOpenOnboarding: (callback: () => void) => createIpcListener<[]>(ONBOARDING_IPC.open, callback),
 
   onMissionControlEntered: (callback: () => void) =>
     createIpcListener<[]>('mission-control:entered', callback),

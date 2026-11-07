@@ -337,6 +337,42 @@
      box-shadow, so it costs no layout. Restated per theme because an edge
      that reads on off-black is invisible on warm white, and the reverse. */
   --raised-control-shadow: 0 0 0 0.5px rgba(255, 255, 255, 0.16), 0 1px 2px rgb(0 0 0 / 0.4);
+  /* ── Paper: the one material of the primitives (2026-11-07) ──
+     The sidebar and the composer are drawn in paper: a sheet a step off its
+     ground, edged by a hairline and lifted by a soft drop, never a 1px box
+     line and never a grey well. Every primitive now wears it, on two tiers:
+
+     - --card-surface / --card-shadow: what HOLDS rows — a settings card, a
+       callout, a menu, a popover, a dialog. A card lying on the page is
+       edged by the hairline alone; what floats (menus, dialogs, the
+       composer) adds its drop on top.
+     - --control-surface / --field-shadow: what you TYPE IN — a field, and
+       the swatches and radio that sit in the same place: the paper with its
+       hairline, no drop.
+     - --key-wash / --key-wash-strong: what you PRESS — a secondary button, a
+       select. A wash of the theme's own ink, no edge and no drop (round 2,
+       2026-11-07): a paper key with its own hairline and shadow on a paper
+       card with its own was three outlined layers for one choice. Derived
+       from --text-primary, so every skin gets its own for free.
+
+     On the light grounds both tiers are near-white and the hairline does the
+     edging; on the dark ones elevation is lightness, so the control sits a
+     clear step above the card it lies on. --edge-color is that hairline,
+     drawn at 0.5px inside a box-shadow so it costs no layout.
+
+     Focus on a field is --focus-ring: a 1px accent edge with a soft halo of
+     the same hue, in place of the 2px solid accent box it replaces. The 1px
+     edge alone clears 3:1 against every ground (the accent is cut to 4.5:1
+     as text on --surface-50); the halo is what makes it read at a glance. */
+  --edge-color: rgba(255, 255, 255, 0.11);
+  --card-surface: #141311;
+  --card-shadow: 0 0 0 0.5px var(--edge-color);
+  --key-wash: color-mix(in srgb, var(--text-primary) 7%, transparent);
+  --key-wash-strong: color-mix(in srgb, var(--text-primary) 11%, transparent);
+  --control-surface: #201e1b;
+  --field-shadow: 0 0 0 0.5px rgba(255, 255, 255, 0.14);
+  --focus-ring:
+    0 0 0 1px var(--color-accent), 0 0 0 4px color-mix(in srgb, var(--color-accent) 22%, transparent);
   --surface-200: #262420;
   --surface-300: #2f2c28;
   --surface-400: #38352f;
@@ -444,6 +480,13 @@
   --action-hover: #353532;
   --action-foreground: #fbfbf9;
   --raised-control-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.16), 0 1px 2px rgb(0 0 0 / 0.08);
+  --edge-color: rgba(0, 0, 0, 0.09);
+  --card-surface: #ffffff;
+  --card-shadow: 0 0 0 0.5px var(--edge-color);
+  --control-surface: #ffffff;
+  --field-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.16);
+  --key-wash: color-mix(in srgb, var(--text-primary) 6%, transparent);
+  --key-wash-strong: color-mix(in srgb, var(--text-primary) 10%, transparent);
   --surface-200: #e4e3e0;
   --surface-300: #d7d6d3;
   --surface-400: #c9c8c5;
@@ -522,6 +565,11 @@
   --action-hover: #34302a;
   --action-foreground: #f5f1eb;
   --raised-control-shadow: 0 0 0 0.5px rgb(60 45 30 / 0.22), 0 1px 2px rgb(60 45 30 / 0.1);
+  --edge-color: rgb(60 45 30 / 0.13);
+  --card-surface: #fbf9f5;
+  --card-shadow: 0 0 0 0.5px var(--edge-color);
+  --control-surface: #fefcf9;
+  --field-shadow: 0 0 0 0.5px rgb(60 45 30 / 0.22);
   --surface-200: #ddd9d1;
   --surface-300: #d0cbc3;
   --surface-400: #c3bdb4;
@@ -621,6 +669,11 @@
   --action-hover: #d9d5d2;
   --action-foreground: #2b2722;
   --raised-control-shadow: 0 0 0 0.5px rgba(255, 243, 232, 0.16), 0 1px 2px rgb(9 6 4 / 0.4);
+  --edge-color: rgba(255, 243, 232, 0.1);
+  --card-surface: #302c27;
+  --card-shadow: 0 0 0 0.5px var(--edge-color);
+  --control-surface: #3d3934;
+  --field-shadow: 0 0 0 0.5px rgba(255, 243, 232, 0.14);
   --surface-200: #4c4743;
   --surface-300: #5a5651;
   --surface-400: #6a6560;

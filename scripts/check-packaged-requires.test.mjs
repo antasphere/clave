@@ -235,9 +235,9 @@ describe('the gates that run the check', () => {
     const key = (k) => new RegExp(`^\\s+['"]?(${k})['"]?\\s*:`)
     expect(step.filter((l) => key('continue-on-error|shell').test(l))).toEqual([])
     expect(step.filter((l) => key('if').test(l))).toEqual([
-      "        if: ${{ !cancelled() && steps.build.outcome == 'success' && (matrix.task == '1' || matrix.task == 'baseline') }}"
+      "        if: ${{ !cancelled() && steps.build.outcome == 'success' && (matrix.task == '2' || matrix.task == 'baseline') }}"
     ])
-    expect(yml).toContain('fromJSON(\'["1","2"]\')')
+    expect(yml).toContain('fromJSON(\'["1","2","3","4"]\')')
     expect(yml).toContain('fromJSON(\'["baseline"]\')')
     expect(yml).toContain('    needs: e2e-run')
     expect(yml).toContain('          RESULT: ${{ needs.e2e-run.result }}')

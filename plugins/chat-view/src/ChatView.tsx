@@ -12,7 +12,6 @@ import ReactMarkdown, { type Components } from 'react-markdown'
 import { createEntryMarkdownPlugins } from './markdown-append'
 import {
   ArrowUpIcon,
-  ChatBubbleLeftRightIcon,
   CheckIcon,
   ClipboardDocumentIcon,
   PaperClipIcon,
@@ -99,6 +98,7 @@ import {
 } from '../../../src/shared/attachments'
 import { useComposerAttachments } from './composer-attachments'
 import { DropDrawing } from './DropDrawing'
+import { ViewEmpty } from './EmptyDrawing'
 import {
   failureText,
   pathForMessage,
@@ -984,15 +984,12 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
               />
             )}
             {head === 'empty' && (
-              <div className="chat-empty">
-                <div className="chat-empty-icon">
-                  <ChatBubbleLeftRightIcon />
-                </div>
-                <div>
-                  <h2>Start a conversation</h2>
-                  <p>Ask a question or describe what you want to build.</p>
-                </div>
-              </div>
+              <ViewEmpty
+                kind="chat"
+                eyebrow="Chat"
+                title="Start a conversation"
+                text="Ask in plain words, or drop a file to show what you mean. The answer is written here as it comes."
+              />
             )}
             {/* Mounted from the start, empty or not: what it gains is told apart
                 from what it opened on by the rows it rendered before. */}
@@ -1279,7 +1276,7 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
  * already in automatic mode, one click away in propose mode, or nowhere to
  * go — and never reads as a crash. Any other end is the plain exit.
  */
-function EndedNotice({
+export function EndedNotice({
   sessionId,
   exitCode
 }: {

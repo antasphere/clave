@@ -99,9 +99,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        task: ${{ inputs.baseline && fromJSON('["baseline"]') || fromJSON('["1","2"]') }}
+        task: ${{ inputs.baseline && fromJSON('["baseline"]') || fromJSON('["1","2","3","4"]') }}
     runs-on: macos-latest
-    timeout-minutes: ${{ inputs.baseline && 90 || 35 }}
+    timeout-minutes: ${{ inputs.baseline && 120 || 35 }}
     steps:
       - uses: actions/checkout@v4
 
@@ -138,7 +138,7 @@ jobs:
         if: ${{ !cancelled() && steps.build.outcome == 'success' && matrix.task != 'baseline' }}
         continue-on-error: true
         env:
-          HOST_BATCH: ${{ format('{0}/2', matrix.task) }}
+          HOST_BATCH: ${{ format('{0}/4', matrix.task) }}
         run: node tests/e2e/ci-batch.mjs "$HOST_BATCH" --report-dir=e2e-reports
 
       - name: All worker processes completed
@@ -157,7 +157,7 @@ jobs:
       # and 2.2.0 shipped that way (PRDCT-3418). An unsigned arm64 --dir
       # package is the same asar the release builds, without the signing.
       - name: Gate, the packaged app loads what its bundles require
-        if: ${{ !cancelled() && steps.build.outcome == 'success' && (matrix.task == '1' || matrix.task == 'baseline') }}
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && (matrix.task == '2' || matrix.task == 'baseline') }}
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
         run: |
@@ -178,7 +178,7 @@ jobs:
         run: node tests/e2e/run.mjs server-boot
 
       - name: Gate, the server spec with the server attached
-        if: ${{ !cancelled() && steps.build.outcome == 'success' && (matrix.task == '2' || matrix.task == 'baseline') }}
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && (matrix.task == '3' || matrix.task == 'baseline') }}
         run: node tests/e2e/run.mjs server-boot
         env:
           CLAVE_E2E_SERVER: attached
@@ -188,7 +188,7 @@ jobs:
       # starts, a killed terminal process is started again, the quit stops
       # both.
       - name: Gate, the server spec with the server separate
-        if: ${{ !cancelled() && steps.build.outcome == 'success' && (matrix.task == '2' || matrix.task == 'baseline') }}
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && (matrix.task == '4' || matrix.task == 'baseline') }}
         run: node tests/e2e/run.mjs server-boot
         env:
           CLAVE_E2E_SERVER: separate
@@ -200,14 +200,14 @@ jobs:
       # manager of its own, idle, to confirm the handoff the server had
       # issued). The separate spec is red on the code before that fix.
       - name: Gate, the Antasphere sign-in on the three servers
-        if: ${{ !cancelled() && steps.build.outcome == 'success' && (matrix.task == '2' || matrix.task == 'baseline') }}
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && (matrix.task == '4' || matrix.task == 'baseline') }}
         run: node tests/e2e/run.mjs antasphere-account
 
       # A daemon on an older version, with a stand-in install script, and an
       # app on a newer test version (issue #266): the server upgrades to the
       # app's version only once no agent works, and Upgrade now runs it at once.
       - name: Gate, connected servers follow the app's version
-        if: ${{ !cancelled() && steps.build.outcome == 'success' && (matrix.task == '1' || matrix.task == 'baseline') }}
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && (matrix.task == '3' || matrix.task == 'baseline') }}
         run: node tests/e2e/run.mjs fleet-server-upgrade
 
       # Current full-renderer completeness, lifecycle and responsiveness gates.
@@ -217,7 +217,7 @@ jobs:
         run: node tests/e2e/run.mjs markdown-parser-deep-client markdown-full-native renderer-responsiveness
 
       - name: Gate, MCP sessions on connected servers
-        if: ${{ !cancelled() && steps.build.outcome == 'success' && (matrix.task == '1' || matrix.task == 'baseline') }}
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && (matrix.task == '3' || matrix.task == 'baseline') }}
         run: node tests/e2e/run.mjs mcp-fleet-sessions
 
       - name: Report, sequential baseline suite
@@ -254,7 +254,7 @@ jobs:
           merge-multiple: true
       - name: Every spec completed exactly once
         env:
-          SHARDS: ${{ inputs.baseline && '1' || '6' }}
+          SHARDS: ${{ inputs.baseline && '1' || '4' }}
         run: |
           node tests/e2e/merge-reports.mjs e2e-reports "$SHARDS" e2e-summary.md
           cat e2e-summary.md >> "$GITHUB_STEP_SUMMARY"

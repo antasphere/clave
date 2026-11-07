@@ -5,12 +5,14 @@ and `npx electron-vite build`. The suite needs macOS and tmux. Each app runs hid
 with its own user data. It does not use the installed Clave app.
 
 `npm run test:e2e` retains the sequential runner. Arguments filter spec names.
-`npm run test:e2e:parallel -- --workers=4` runs the full suite in four independent
-Node processes. It prints the directory containing each worker's log and JSON
-results. A failed assertion or crashed worker fails the command. Choose fewer
-workers on a machine with less memory. The default is at most four, bounded by
-the machine's available CPUs. The parallel command currently merges in-process
-results; use the sequential runner for attached or separate server modes.
+`npm run test:e2e:parallel` defaults to one local worker and prints each worker's
+log and JSON report directory. An explicit `--workers=N` runs a co-resident
+diagnostic. Electron apps on one Mac share keychain and keyboard state; the
+co-resident trials aborted specs. Use one worker per Mac for full-suite
+validation, as CI does. A failed assertion or crashed worker fails the command,
+including an OS exit that disagrees with an otherwise valid report. The local
+command merges in-process results; use the sequential runner for attached or
+separate server modes.
 
 For independent CI runners, use `node tests/e2e/run.mjs --shard 1/8 --report
 e2e-reports/shard-1.json`, changing the index for each runner. Selection sorts the
@@ -37,22 +39,28 @@ checkout do not sweep each other's files or tmux sessions. Run only one suite
 per namespace. SIGINT and SIGTERM ask workers to clean up their own apps,
 servers and tmux sessions. Failed runs retain fixtures for diagnosis.
 
-CI uses two macOS jobs, each running three independent worker processes. Host 1
-runs global shards 1/6, 2/6 and 3/6; host 2 runs 4/6, 5/6 and 6/6. To reproduce
-one host's batch, run `node tests/e2e/ci-batch.mjs 1/2 --report-dir=e2e-reports`
+CI uses four macOS jobs, each running one worker process. Host k runs global
+shard k/4. One worker per Mac keeps per-user keychain and keyboard state
+isolated between workers; fixture namespaces isolate files and tmux. To
+reproduce one host, run `node tests/e2e/ci-batch.mjs 1/4 --report-dir=e2e-reports`
 on a built Mac checkout, using a separate empty report directory on each host.
 The batch command accepts no filename filters or worker-count override.
 
 Every child process status must agree with its report. The coordinator alone
-writes a completion output after checking all three workers. A separate required
+writes a completion output after checking the worker. A separate required
 step checks that output, so a fatal process exit cannot hide behind the report
 step's `continue-on-error`. Ordinary failed assertions still appear as FAIL,
 KNOWN or UNSTABLE and retain the original report policy. The aggregate requires
 all six original shard reports against the checkout's full inventory.
 
+The sequential measurement control (`baseline=true`) has a 120-minute job
+budget: the previous 195-spec control used 85.6 of 90 minutes before the next
+base added work. Normal jobs keep their 35-minute limit. Per-spec deadlines
+and all report and gate policies are unchanged.
+
 Each host then runs its assigned gates. Every existing gate and all three server
-modes still run once. This needs two hosted Mac slots, with at most three suite
-workers on either host. Each job installs and builds its own checkout. Account
+modes still run once. This needs four hosted Mac slots, with one suite
+worker on each host. Each job installs and builds its own checkout. Account
 capacity and unrelated runs can still add queue time.
 
 Each batch also preserves `resources-host-N.json`: host CPU/memory capacity,

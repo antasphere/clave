@@ -3,6 +3,7 @@ import { subscribeAccountLaunchPolicy } from './store/account-policy-store'
 import { MotionConfig } from 'framer-motion'
 import { AppShell } from './components/layout/AppShell'
 import { TooltipProvider } from '@clave/ui/components'
+import { Onboarding } from './components/onboarding/Onboarding'
 
 function App(): React.JSX.Element {
   useEffect(() => subscribeAccountLaunchPolicy(), [])
@@ -14,6 +15,7 @@ function App(): React.JSX.Element {
     <MotionConfig reducedMotion="user">
       <TooltipProvider delayDuration={700} skipDelayDuration={300}>
         <AppShell />
+        <Onboarding />
       </TooltipProvider>
     </MotionConfig>
   )

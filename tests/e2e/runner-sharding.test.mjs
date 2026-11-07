@@ -98,6 +98,37 @@ describe('the real runner process shards without hiding failures', () => {
       rmSync(dir, { recursive: true, force: true })
     }
   }, 30_000)
+  it('defaults to one local worker with the original complete selection', async () => {
+    const dir = fixture({ 'a.spec.mjs': passing, 'b.spec.mjs': passing })
+    const reports = path.join(dir, 'reports')
+    try {
+      const result = await invoke('parallel.mjs', [`--report-dir=${reports}`], dir)
+      expect(result.code, result.output).toBe(0)
+      const report = JSON.parse(readFileSync(path.join(reports, 'shard-1.json'), 'utf8'))
+      expect(report.shard).toEqual({ index: 1, total: 1 })
+      expect(report.selected).toEqual(['a.spec.mjs', 'b.spec.mjs'])
+      expect(existsSync(path.join(reports, 'shard-2.json'))).toBe(false)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  }, 30_000)
+  it('refuses OS exits that disagree with otherwise valid local reports', async () => {
+    for (const failed of [false, true]) {
+      const dir = fixture({
+        'a.spec.mjs': `export async function run(t) {
+          process.on('exit', () => { process.exitCode = ${failed ? 0 : 1} })
+          t.check('recorded assertion', ${!failed})
+        }`
+      })
+      try {
+        const result = await invoke('parallel.mjs', ['--workers=1'], dir)
+        expect(result.code, result.output).not.toBe(0)
+        expect(result.output).toContain('status disagrees with its report')
+      } finally {
+        rmSync(dir, { recursive: true, force: true })
+      }
+    }
+  }, 30_000)
   it('parallel runs preserve failing assertions and empty-spec failures', async () => {
     const dir = fixture({
       'a.spec.mjs': passing,

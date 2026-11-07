@@ -8,6 +8,7 @@ import { accountForLaunch } from './switch-account'
 import { getActiveWorkspaceId, getWorkspaceById, workspaceServer } from '../store/workspace-store'
 import { pickServerFolder } from '../store/server-folder-store'
 import { clearLaunchNotice, showLaunchNotice } from '../store/launch-notice-store'
+import { deliverPendingChatView, pendingChatView } from './pending-chat-view'
 import {
   agentAcceptsPrompt,
   agentSetupToModes,
@@ -173,6 +174,16 @@ async function launchOnServer(serverId: string, req: LaunchRequest): Promise<str
  *
  *  Returns the new session id, or null when the launch was cancelled or failed. */
 export async function launchSession(req: LaunchRequest): Promise<string | null> {
+  const id = await launchSessionNow(req)
+  // A chat style picked in the first-run walk and not yet known to the
+  // process that opens sessions rides on the first chat (pending-chat-view.ts).
+  if (id && req.setup && pendingChatView()) {
+    await deliverPendingChatView(id, window.electronAPI).catch(() => false)
+  }
+  return id
+}
+
+async function launchSessionNow(req: LaunchRequest): Promise<string | null> {
   clearLaunchNotice()
   const serverId = launchServer(req)
   if (serverId !== LOCAL_SERVER_ID) return launchOnServer(serverId, req)

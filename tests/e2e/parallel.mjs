@@ -1,7 +1,8 @@
 #!/usr/bin/env node
-// Separate Node processes keep spec globals, Electron pids and cleanup independent.
+// Processes separate spec globals and fixture cleanup, but a Mac still shares
+// its keychain and keyboard state. Use one worker by default.
 import { spawn } from 'node:child_process'
-import { availableParallelism, tmpdir } from 'node:os'
+import { tmpdir } from 'node:os'
 import { randomUUID } from 'node:crypto'
 import {
   closeSync,
@@ -26,7 +27,7 @@ if (args.filter((a) => a.startsWith('--workers=')).length > 1)
   throw new Error('Duplicate --workers')
 if (args.filter((a) => a.startsWith('--report-dir=')).length > 1)
   throw new Error('Duplicate --report-dir')
-const workers = workersArg ? Number(workersArg.split('=')[1]) : Math.min(4, availableParallelism())
+const workers = workersArg ? Number(workersArg.split('=')[1]) : 1
 if (!Number.isInteger(workers) || workers < 1 || workers > 32)
   throw new Error('--workers must be an integer between 1 and 32')
 const filters = args.filter((a) => a !== workersArg && a !== reportArg)
@@ -89,7 +90,11 @@ const outcomes = await Promise.all(
 )
 if (interrupted || outcomes.some(({ code }) => ![0, 1].includes(code)))
   throw new Error(`A worker did not complete; inspect ${directory}`)
-const reports = outcomes.map(({ report }) => JSON.parse(readFileSync(report, 'utf8')))
+const reports = outcomes.map(({ code, report }) => {
+  const value = JSON.parse(readFileSync(report, 'utf8'))
+  if (value.exitCode !== code) throw new Error(`Worker status disagrees with its report: ${report}`)
+  return value
+})
 // mergeReports also proves every spec and assertion result exists exactly once.
 const merged = mergeReports(reports, specs, workers)
 console.log(
