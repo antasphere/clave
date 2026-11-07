@@ -7,7 +7,7 @@ const workflow = parse(
 )
 const jobs = workflow.jobs
 const matrix =
-  '${{ inputs.baseline && fromJSON(\'["baseline"]\') || fromJSON(\'["1","2","3","4"]\') }}'
+  '${{ inputs.baseline && fromJSON(\'["baseline"]\') || fromJSON(\'["1","2","3","4","5"]\') }}'
 const expectedGates = new Map([
   ['Gate, actual renderer and native view module audit', 'node scripts/renderer-module-audit.mjs'],
   ['Gate, the packaged app loads what its bundles require', null],
@@ -35,22 +35,24 @@ const expectedGates = new Map([
 const gatePartitions = new Map([
   ['Gate, actual renderer and native view module audit', '1'],
   ['Gate, the packaged app loads what its bundles require', '2'],
-  ['Gate, the terminal process from the built bundle', '1'],
-  ['Gate, the server spec with the server in-process', '2'],
-  ['Gate, the server spec with the server attached', '3'],
+  ['Gate, the terminal process from the built bundle', '3'],
+  ['Gate, the server spec with the server in-process', '1'],
+  ['Gate, the server spec with the server attached', '5'],
   ['Gate, the server spec with the server separate', '4'],
-  ['Gate, the Antasphere sign-in on the three servers', '4'],
-  ["Gate, connected servers follow the app's version", '3'],
-  ['Gate, full Markdown client, native lifecycle and responsiveness', '1'],
-  ['Gate, MCP sessions on connected servers', '3']
+  ['Gate, the Antasphere sign-in on the three servers', '2'],
+  ["Gate, connected servers follow the app's version", '4'],
+  ['Gate, full Markdown client, native lifecycle and responsiveness', '3'],
+  ['Gate, MCP sessions on connected servers', '5']
 ])
 
 describe('the required CI check cannot silently lose execution', () => {
-  it('uses one worker per host on four isolated Macs', () => {
+  it('uses one worker per host on five isolated Macs', () => {
     expect(jobs['e2e-run']['timeout-minutes']).toBe('${{ inputs.baseline && 120 || 35 }}')
     const expression = jobs['e2e-run'].strategy.matrix.task
     const normal = JSON.parse([...expression.matchAll(/fromJSON\('([^']+)'\)/g)][1][1])
-    expect(normal).toEqual(['1', '2', '3', '4'])
+    expect(normal).toEqual(['1', '2', '3', '4', '5'])
+    for (const host of normal)
+      expect([...gatePartitions.values()].filter((task) => task === host)).toHaveLength(2)
   })
   it('schedules every existing gate exactly once in the normal matrix', () => {
     const job = jobs['e2e-run']
@@ -93,7 +95,7 @@ describe('the required CI check cannot silently lose execution', () => {
     expect(result.env.RESULT).toBe('${{ needs.e2e-run.result }}')
     expect(result.run).toBe('test "$RESULT" = success')
     const inventory = aggregate.steps.find((s) => s.name === 'Every spec completed exactly once')
-    expect(inventory.env.SHARDS).toBe("${{ inputs.baseline && '1' || '4' }}")
+    expect(inventory.env.SHARDS).toBe("${{ inputs.baseline && '1' || '5' }}")
     expect(inventory.run.trim().split('\n')).toEqual([
       'node tests/e2e/merge-reports.mjs e2e-reports "$SHARDS" e2e-summary.md',
       'cat e2e-summary.md >> "$GITHUB_STEP_SUMMARY"'
@@ -103,7 +105,7 @@ describe('the required CI check cannot silently lose execution', () => {
     const suite = jobs['e2e-run'].steps.find((s) => s.name === 'Report, hosted suite batch')
     expect(suite['continue-on-error']).toBe(true)
     expect(suite.run).toBe('node tests/e2e/ci-batch.mjs "$HOST_BATCH" --report-dir=e2e-reports')
-    expect(suite.env).toEqual({ HOST_BATCH: "${{ format('{0}/4', matrix.task) }}" })
+    expect(suite.env).toEqual({ HOST_BATCH: "${{ format('{0}/5', matrix.task) }}" })
     expect(suite.id).toBe('suite')
     expect(suite.if).toBe(
       "${{ !cancelled() && steps.build.outcome == 'success' && matrix.task != 'baseline' }}"

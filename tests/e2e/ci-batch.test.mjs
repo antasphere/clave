@@ -56,7 +56,7 @@ function completed(file) {
 }
 
 describe('hosted worker batches', () => {
-  it('runs all four global shards exactly once with independent worker namespaces', async () => {
+  it('runs all five global shards exactly once with independent worker namespaces', async () => {
     const names = [
       ...CLIPBOARD_SPECS,
       ...Array.from({ length: 15 }, (_, i) => `probe-${i}.spec.mjs`)
@@ -64,23 +64,23 @@ describe('hosted worker batches', () => {
     const dir = fixture(Object.fromEntries(names.map((n) => [n, passing])))
     try {
       const batches = await Promise.all(
-        ['1/4', '2/4', '3/4', '4/4'].map((host) => launch(dir, host).done)
+        ['1/5', '2/5', '3/5', '4/5', '5/5'].map((host) => launch(dir, host).done)
       )
       expect(
         batches.map((b) => b.code),
         batches.map((b) => b.text).join('\n')
-      ).toEqual([0, 0, 0, 0])
+      ).toEqual([0, 0, 0, 0, 0])
       const reports = batches.flatMap((b) => reportsAt(b.reports))
-      expect(reports.map((r) => r.shard.index).sort()).toEqual([1, 2, 3, 4])
-      expect(mergeReports(reports, names, 4).specs).toBe(names.length)
+      expect(reports.map((r) => r.shard.index).sort()).toEqual([1, 2, 3, 4, 5])
+      expect(mergeReports(reports, names, 5).specs).toBe(names.length)
       const namespaces = []
       for (const report of reports) {
-        expect(report.shard.total).toBe(4)
+        expect(report.shard.total).toBe(5)
         expect(report.selected).toEqual(selectShard(names, report.shard))
         if (report.selected.some((n) => CLIPBOARD_SPECS.has(n))) expect(report.shard.index).toBe(1)
         if (report.selected.length) namespaces.push(report.results[report.selected[0]][0].detail)
       }
-      expect(new Set(namespaces).size).toBe(4)
+      expect(new Set(namespaces).size).toBe(5)
       for (const [i, batch] of batches.entries()) {
         expect(completed(batch.output)).toBe(true)
         const resource = JSON.parse(
@@ -88,7 +88,7 @@ describe('hosted worker batches', () => {
         )
         expect(resource.completed).toBe(true)
         expect(resource.workers).toBe(1)
-        expect(resource.globalShards).toBe(4)
+        expect(resource.globalShards).toBe(5)
         expect(resource.workerOutcomes).toHaveLength(1)
         expect(resource.workerOutcomes.map((w) => w.index)).toEqual([i + 1])
         expect(resource.totalMemoryBytes).toBeGreaterThan(0)
@@ -113,7 +113,7 @@ describe('hosted worker batches', () => {
     const dir = fixture(files)
     try {
       const batches = await Promise.all(
-        ['1/4', '2/4', '3/4', '4/4'].map((host) => launch(dir, host).done)
+        ['1/5', '2/5', '3/5', '4/5', '5/5'].map((host) => launch(dir, host).done)
       )
       expect(batches.some((b) => b.code === 1)).toBe(true)
       expect(batches.every((b) => completed(b.output))).toBe(true)
@@ -124,7 +124,7 @@ describe('hosted worker batches', () => {
       const merged = mergeReports(
         batches.flatMap((b) => reportsAt(b.reports)),
         Object.keys(files).sort(),
-        4
+        5
       )
       expect(merged.totals.failed).toBe(1)
       expect(merged.totals.known).toBe(1)
@@ -146,7 +146,7 @@ describe('hosted worker batches', () => {
         : `export async function run() { process.exit(7) }`
       const dir = fixture({ 'probe.spec.mjs': body })
       try {
-        const result = await launch(dir, '1/4').done
+        const result = await launch(dir, '1/5').done
         expect(result.code, result.text).not.toBe(0)
         expect(result.text).toContain('worker did not complete')
         expect(completed(result.output)).toBe(false)
@@ -175,7 +175,7 @@ describe('hosted worker batches', () => {
     }`
     })
     try {
-      const result = await launch(dir, '1/4').done
+      const result = await launch(dir, '1/5').done
       expect(result.code).not.toBe(0)
       expect(result.text).toContain('status disagrees with its report')
       expect(completed(result.output)).toBe(false)
@@ -189,21 +189,22 @@ describe('hosted worker batches', () => {
     try {
       for (const args of [
         [],
-        ['0/4'],
-        ['5/4'],
-        ['1/3'],
-        ['1/4', '--report-dir='],
-        ['1/4', '--report-dir=x', 'probe']
+        ['0/5', `--report-dir=${path.join(dir, 'invalid-reports')}`],
+        ['6/5', `--report-dir=${path.join(dir, 'invalid-reports')}`],
+        ['1/4', `--report-dir=${path.join(dir, 'invalid-reports')}`],
+        ['1/5', '--report-dir='],
+        ['1/5', '--report-dir=x', 'probe']
       ]) {
-        const result = await launch(dir, '1/4', `invalid-${args.length}-${String(args[0])}`, args)
+        const result = await launch(dir, '1/5', `invalid-${args.length}-${String(args[0])}`, args)
           .done
         expect(result.code).not.toBe(0)
         expect(result.text).toContain('Usage:')
         expect(completed(result.output)).toBe(false)
+        expect(existsSync(path.join(dir, 'invalid-reports'))).toBe(false)
       }
-      const first = await launch(dir, '1/4', 'stale').done
+      const first = await launch(dir, '1/5', 'stale').done
       expect(first.code, first.text).toBe(0)
-      const stale = await launch(dir, '1/4', 'stale').done
+      const stale = await launch(dir, '1/5', 'stale').done
       expect(stale.code).not.toBe(0)
       expect(stale.text).toContain('Report directory must be empty')
     } finally {
@@ -216,7 +217,7 @@ describe('hosted worker batches', () => {
       Object.fromEntries(Array.from({ length: 6 }, (_, i) => [`probe-${i}.spec.mjs`, passing]))
     )
     try {
-      const batches = await Promise.all(['one', 'two'].map((name) => launch(dir, '1/4', name).done))
+      const batches = await Promise.all(['one', 'two'].map((name) => launch(dir, '1/5', name).done))
       expect(batches.map((b) => b.code)).toEqual([0, 0])
       const namespaces = batches.flatMap((b) =>
         reportsAt(b.reports).map((r) => r.results[r.selected[0]][0].detail)
@@ -240,7 +241,7 @@ describe('hosted worker batches', () => {
       ])
     )
     const dir = fixture(files)
-    const batch = launch(dir, '1/4')
+    const batch = launch(dir, '1/5')
     try {
       const limit = Date.now() + 10_000
       while (readdirSync(dir).filter((n) => n.startsWith('pid-')).length < 1 && Date.now() < limit)

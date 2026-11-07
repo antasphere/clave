@@ -24,7 +24,7 @@ order, then the shard index. Each shard runs its specs in the original order;
 Empty shards are valid, but an empty selection before sharding is an error.
 
 `shard-durations.json` contains placement hints from the three complete runs
-linked in that file. Each hint is the median per-spec duration, rounded to
+linked in that file (all 196 specs at the aebb75ea tree). Each hint is the median per-spec duration, rounded to
 seconds with a minimum of 1. New or renamed specs use the explicit 14-second
 fallback, the median of those hints. Removed specs' hints add no work. Missing
 or malformed hint data and nonpositive or nonnumeric values fail explicitly.
@@ -39,10 +39,10 @@ checkout do not sweep each other's files or tmux sessions. Run only one suite
 per namespace. SIGINT and SIGTERM ask workers to clean up their own apps,
 servers and tmux sessions. Failed runs retain fixtures for diagnosis.
 
-CI uses four macOS jobs, each running one worker process. Host k runs global
-shard k/4. One worker per Mac keeps per-user keychain and keyboard state
+CI uses five macOS jobs, each running one worker process. Host k runs global
+shard k/5. One worker per Mac keeps per-user keychain and keyboard state
 isolated between workers; fixture namespaces isolate files and tmux. To
-reproduce one host, run `node tests/e2e/ci-batch.mjs 1/4 --report-dir=e2e-reports`
+reproduce one host, run `node tests/e2e/ci-batch.mjs 1/5 --report-dir=e2e-reports`
 on a built Mac checkout, using a separate empty report directory on each host.
 The batch command accepts no filename filters or worker-count override.
 
@@ -51,7 +51,7 @@ writes a completion output after checking the worker. A separate required
 step checks that output, so a fatal process exit cannot hide behind the report
 step's `continue-on-error`. Ordinary failed assertions still appear as FAIL,
 KNOWN or UNSTABLE and retain the original report policy. The aggregate requires
-all six original shard reports against the checkout's full inventory.
+all five original shard reports against the checkout's full inventory.
 
 The sequential measurement control (`baseline=true`) has a 120-minute job
 budget: the previous 195-spec control used 85.6 of 90 minutes before the next
@@ -59,7 +59,7 @@ base added work. Normal jobs keep their 35-minute limit. Per-spec deadlines
 and all report and gate policies are unchanged.
 
 Each host then runs its assigned gates. Every existing gate and all three server
-modes still run once. This needs four hosted Mac slots, with one suite
+modes still run once. This needs five hosted Mac slots, with one suite
 worker on each host. Each job installs and builds its own checkout. Account
 capacity and unrelated runs can still add queue time.
 
