@@ -70,6 +70,12 @@ describe('inActiveWorkspace with a paired server workspace', () => {
     )
     // The server workspace itself still shows its own tabs.
     expect(store.inActiveWorkspace(remoteTab('studio', ws), ws)).toBe(true)
+    // A pin or a file viewer loaded for the server workspace (a local id
+    // carrying the server workspace's id) is not combined: the Mac workspace
+    // shows its own pins, not the same tree's pins twice (verifier, round 1).
+    expect(store.inActiveWorkspace({ id: 'pin-1', workspaceId: ws }, 'mac-ws')).toBe(false)
+    expect(store.inActiveWorkspace({ id: 'pin-1', workspaceId: ws }, ws)).toBe(true)
+    expect(store.inActiveWorkspace({ workspaceId: ws }, 'mac-ws')).toBe(false)
   })
 
   it('never shows a Mac tab in the server workspace, whatever the pairing', () => {

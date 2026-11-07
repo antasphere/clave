@@ -148,7 +148,16 @@ export function inActiveWorkspace(
   // other way round: a server workspace shows only its own.
   if (x.workspaceId != null) {
     if (x.workspaceId === activeId) return true
-    return !isRemoteKey(activeId) && (combinedWorkspaces.get(activeId)?.has(x.workspaceId) ?? false)
+    // Only an item that is itself the server's (its id a remote key: a tab, a
+    // group) combines. A pin or a file viewer this window loaded while it
+    // showed the server workspace carries that workspace's id under a local
+    // id, and stays there: the same tree has the same pins on both machines,
+    // and the Mac's own are the ones a Mac workspace shows (round 1).
+    return (
+      isRemoteKey(x.id) &&
+      !isRemoteKey(activeId) &&
+      (combinedWorkspaces.get(activeId)?.has(x.workspaceId) ?? false)
+    )
   }
   // Unstamped. A local item keeps the safety net (it predates the model). A
   // remote tab the daemon left without a server workspace shows in any

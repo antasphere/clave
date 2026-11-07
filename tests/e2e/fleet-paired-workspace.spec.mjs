@@ -23,7 +23,7 @@
  */
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
-import { readFileSync, realpathSync } from 'node:fs'
+import { mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import {
   fleetWorld,
@@ -92,6 +92,32 @@ export async function run(t) {
     // the Mac will be seeded with, before its window boots.
     const rootA = fixturePath(`${world.run}-local-a`)
     execFileSync('git', ['clone', '-q', server.origin, rootA], { stdio: 'inherit' })
+    // The server tree declares a toolbar button; the Mac clone does not share
+    // it (a bare Mac workspace has no pins), so a pin that leaked would be
+    // the only toolbar button in the Mac workspace (verifier, round 1).
+    mkdirSync(path.join(server.root, '.clave', 'workspaces'), { recursive: true })
+    writeFileSync(
+      path.join(server.root, '.clave', 'workspaces', 'default.clave'),
+      JSON.stringify({
+        $schema: 'clave/1.0',
+        groups: [
+          {
+            name: 'Server toolbar',
+            cwd: '.',
+            toolbar: true,
+            sessions: [],
+            terminals: [
+              {
+                name: 'Server button',
+                command: 'echo paired-toolbar-probe',
+                commandMode: 'prefill',
+                color: 'teal'
+              }
+            ]
+          }
+        ]
+      })
+    )
     const macA = await world.mac('a')
     assert.ok(sameDir(macA.root, rootA), 'the Mac workspace is the clone')
     await connectMac(macA, world.servers, { ui: false })
@@ -236,10 +262,29 @@ export async function run(t) {
           .count(),
         0
       )
+      // The server tree's toolbar button shows here, in the server workspace.
+      await eventually(
+        async () =>
+          (await win
+            .locator('[data-toolbar-row] button[title^="echo paired-toolbar-probe"]')
+            .count()) === 1,
+        'the server workspace shows its toolbar button'
+      )
       await switchTo(win, 'mac-a')
       await row(win, localSession.id).waitFor()
+      // ...and not in the Mac workspace it is paired with: the Mac's pins are its own.
+      await eventually(
+        async () => (await row(win, owned('session', owner, first.id)).count()) === 1,
+        'back in the Mac workspace, the server tab is still combined'
+      )
+      assert.equal(
+        await win.locator('[data-toolbar-row] button[title^="echo paired-toolbar-probe"]').count(),
+        0,
+        'the server’s pin does not leak into the Mac workspace'
+      )
     })
     t.check('the server’s own workspace shows the server’s tabs and never the Mac’s', true)
+    t.check('the server tree’s pinned toolbar button stays out of the paired Mac workspace', true)
 
     await step('the switch in Settings takes the server’s tabs out, and back', async () => {
       await win.click('.sidebar-footer-btn[aria-label="Settings"]')

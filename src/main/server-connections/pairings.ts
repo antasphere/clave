@@ -115,9 +115,19 @@ export class ServerPairingRegistry {
         next = { ...entry, pairs }
         break
       }
+      case 'ask-again': {
+        if (!text(change.serverWorkspaceId)) throw new Error('Name the server workspace.')
+        next = {
+          ...entry,
+          declined: entry.declined.filter((id) => id !== change.serverWorkspaceId)
+        }
+        break
+      }
       case 'combine': {
         if (typeof change.on !== 'boolean') throw new Error('Say whether the switch is on.')
-        next = { ...entry, combine: change.on }
+        // Turned on by hand, the person wants pairings: what they declined
+        // before is proposed again (verifier, round 1).
+        next = { ...entry, combine: change.on, declined: change.on ? [] : entry.declined }
         break
       }
       default:

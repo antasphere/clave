@@ -115,6 +115,8 @@ describe('the daemon’s git port over a real checkout', () => {
       expect(await port.remote(clone)).toEqual({ url: repo })
       git(clone, 'remote', 'set-url', 'origin', 'git@example.test:acme/repo.git')
       expect(await port.remote(clone)).toEqual({ url: 'git@example.test:acme/repo.git' })
+      git(clone, 'remote', 'set-url', 'origin', 'https://me:s3cret@example.test/acme/repo.git')
+      expect(await port.remote(clone)).toEqual({ url: 'https://example.test/acme/repo.git' })
       expect(await port.remote(repo)).toEqual({ url: null })
       expect(await port.remote(elsewhere)).toEqual({ url: null })
     } finally {

@@ -1,5 +1,5 @@
 import { resourceKey } from '@clave/contract/fleet'
-import { XMarkIcon } from '@heroicons/react/24/outline'
+import { ArrowPathIcon, XMarkIcon } from '@heroicons/react/24/outline'
 import { useWorkspaceStore } from '../../store/workspace-store'
 import { changePairing, usePairingStore } from '../../store/pairing-store'
 import { SettingsRow, Toggle } from '../settings/primitives'
@@ -22,6 +22,12 @@ export function ServerCombineRow({ id }: { id: string }): React.JSX.Element {
       'a workspace the server no longer lists',
     local: localWorkspaces.find((w) => w.id === localId)?.name ?? 'a removed workspace'
   }))
+  const declined = (pairing?.declined ?? []).map((raw) => ({
+    raw,
+    server:
+      serverWorkspaces?.find((w) => w.id === resourceKey('workspace', id, raw))?.name ??
+      'a workspace the server no longer lists'
+  }))
   const label = "Show this server's tabs in my matching local workspace"
   return (
     <div data-server-combine={id} data-combine={on ? 'on' : 'off'}>
@@ -33,8 +39,33 @@ export function ServerCombineRow({ id }: { id: string }): React.JSX.Element {
             : 'Off, this server’s tabs show only in its own workspaces, and Clave proposes no pairing for it. On, a workspace of this server that is the same tree as one of this Mac’s (the same git remote) is offered as a pairing, confirmed once.'
         }
         tags={
-          pairs.length > 0 ? (
+          pairs.length > 0 || declined.length > 0 ? (
             <>
+              {declined.map((entry) => (
+                <span
+                  key={`declined:${entry.raw}`}
+                  className="badge badge-muted"
+                  data-server-declined={entry.raw}
+                  title="You answered Not now to this pairing"
+                >
+                  {entry.server} · not paired
+                  <button
+                    type="button"
+                    className="btn-icon btn-icon-xs"
+                    aria-label={`Ask again about ${entry.server}`}
+                    title="Propose this pairing again"
+                    onClick={() =>
+                      void changePairing({
+                        kind: 'ask-again',
+                        serverId: id,
+                        serverWorkspaceId: entry.raw
+                      })
+                    }
+                  >
+                    <ArrowPathIcon className="w-3 h-3" />
+                  </button>
+                </span>
+              ))}
               {pairs.map((pair) => (
                 <span key={pair.raw} className="badge badge-muted" data-server-pair={pair.raw}>
                   {pair.server} · {pair.local}

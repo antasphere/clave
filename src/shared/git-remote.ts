@@ -30,7 +30,10 @@ export function normalizeGitRemote(url: string | null | undefined): string | nul
       path = scp[2]
     }
   }
-  path = path.replace(/\/+$/, '').replace(/\.git$/i, '').replace(/\/+$/, '')
+  path = path
+    .replace(/\/+$/, '')
+    .replace(/\.git$/i, '')
+    .replace(/\/+$/, '')
   if (host) path = path.replace(/^\/+/, '')
   if (!path) return null
   return host ? `${host}/${path}`.toLowerCase() : path

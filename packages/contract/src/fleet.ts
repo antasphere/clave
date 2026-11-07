@@ -202,6 +202,9 @@ export type ServerPairingChange =
     }
   | { readonly kind: 'decline'; readonly serverId: ServerId; readonly serverWorkspaceId: string }
   | { readonly kind: 'forget'; readonly serverId: ServerId; readonly serverWorkspaceId: string }
+  /** Take a declined server workspace off the declined list, so it is proposed again. */
+  | { readonly kind: 'ask-again'; readonly serverId: ServerId; readonly serverWorkspaceId: string }
+  /** The switch; turned on, every decline is forgotten too. */
   | { readonly kind: 'combine'; readonly serverId: ServerId; readonly on: boolean }
 export const PAIRING_IPC = {
   load: 'server:pairings:load',

@@ -66,16 +66,18 @@ describe('proposePairings (PRDCT-4151)', () => {
         remote: 'github.com/antasphere/workspace'
       }
     ])
-    expect(proposePairings({ ...input, servers: {}, connected: (id) => id === 'vps' })).toHaveLength(
-      1
-    )
+    expect(
+      proposePairings({ ...input, servers: {}, connected: (id) => id === 'vps' })
+    ).toHaveLength(1)
   })
 
   it('proposes nothing already paired, declined, or on a server turned off', () => {
     const entry = { color: '#5e6ad2', pairs: {}, declined: [] as string[] }
     expect(
-      proposePairings({ ...input, servers: { studio: { ...entry, pairs: { 'ws-1': 'mac-a' } } } })
-        .map((p) => p.serverId)
+      proposePairings({
+        ...input,
+        servers: { studio: { ...entry, pairs: { 'ws-1': 'mac-a' } } }
+      }).map((p) => p.serverId)
     ).toEqual(['vps'])
     expect(
       proposePairings({ ...input, servers: { studio: { ...entry, declined: ['ws-1'] } } }).map(

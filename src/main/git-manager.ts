@@ -1599,7 +1599,9 @@ No quotes, no markdown, no extra formatting. Just two lines of plain text.`
       // again exactly then. `--get` on an unset key exits 1, which simple-git
       // throws, as does a folder outside any repository: no origin.
       const url = (await readOnlyGit(cwd).raw(['config', '--get', 'remote.origin.url'])).trim()
-      return url || null
+      // A credential embedded in the URL stays in the checkout's config: the
+      // pairing needs the host and the path, nothing a person could reuse.
+      return url ? url.replace(/^([a-z][a-z0-9+.-]*:\/\/)[^/@]*@/i, '$1') : null
     } catch {
       return null
     }
