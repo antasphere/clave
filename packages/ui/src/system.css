@@ -116,7 +116,8 @@ body,
 .launcher-panel,
 .group-switcher-panel,
 .panel-bar,
-.panel-tabs {
+.panel-tabs,
+.segmented {
   border-radius: var(--frame-radius);
   border: var(--frame-border) solid var(--color-border);
   background-color: color-mix(in srgb, var(--surface-0) 70%, transparent);
@@ -124,7 +125,7 @@ body,
 .frame {
   height: var(--frame-h);
 }
-:is(.frame, .launcher-panel, .group-switcher-panel, .panel-bar, .panel-tabs)
+:is(.frame, .launcher-panel, .group-switcher-panel, .panel-bar, .panel-tabs, .segmented)
   :is(
     .launcher-btn,
     .launcher-icon-btn,
@@ -135,7 +136,8 @@ body,
     .panel-tab,
     .panel-path,
     .btn-icon-md,
-    .search-field
+    .search-field,
+    .segmented-item
   ) {
   height: var(--framed-control-h);
   border-radius: var(--framed-control-radius);
@@ -1826,13 +1828,16 @@ canvas[data-orb-state] {
   cursor: not-allowed;
 }
 
-/* Secondary: a neutral raised control, the quieter partner beside a primary.
-   It keeps a body of its own (the control tier of paper, a hairline edge and a
-   soft drop, all one box-shadow so it takes no layout) because a bare word next to
-   an ink-filled button reads as a label rather than as the other choice. It
-   draws its own edge, so a border utility beside it doubles the line. A
-   control that stands among icons and links in a bar is not this: it takes
-   the borderless family of its box (.panel-icon-btn, .btn-icon, .launcher-btn). */
+/* Secondary: the quieter partner beside a primary, and the key a settings row
+   holds (Edit, Redraw, Import skin). It keeps a body of its own because a bare
+   word next to an ink-filled button reads as a label rather than as the other
+   choice — but the body is a WASH of the ink (--key-wash), not a raised key:
+   no edge and no drop (round 2, 2026-11-07). A paper key with its own hairline
+   and shadow, on a paper card with its own, was three outlined layers for one
+   choice; a tonal step says "press me" with none. The select below is the same
+   key. A control that stands among icons and links in a bar is not this: it
+   takes the borderless family of its box (.panel-icon-btn, .btn-icon,
+   .launcher-btn). */
 .btn-secondary {
   display: inline-flex;
   align-items: center;
@@ -1845,20 +1850,18 @@ canvas[data-orb-state] {
   font-size: var(--control-text-sm);
   font-weight: var(--font-weight-medium);
   color: var(--text-primary);
-  background-color: var(--control-surface);
-  box-shadow: var(--raised-control-shadow);
+  background-color: var(--key-wash);
   transition:
     color 150ms,
     background-color 150ms,
     scale 120ms var(--ease-out-expo);
 }
-/* Hover darkens (or, on the dark grounds, lightens) the paper itself by a
-   breath of the ink, rather than swapping it for the grey hover fill of a
-   list row: a raised key stays a raised key under the pointer. */
+/* Hover and an open select deepen the same wash a step: the key stays the same
+   shape under the pointer, only more present. */
 .btn-secondary:hover,
 .select-trigger:hover,
 .select-trigger[data-state='open'] {
-  background-color: color-mix(in oklab, var(--control-surface), var(--text-primary) 5%);
+  background-color: var(--key-wash-strong);
 }
 .btn-secondary:disabled {
   opacity: 0.4;
@@ -1976,7 +1979,7 @@ canvas[data-orb-state] {
   padding: calc(var(--spacing) * 3) calc(var(--spacing) * 2);
   border-radius: var(--radius-lg);
   background-color: var(--control-surface);
-  box-shadow: var(--raised-control-shadow);
+  box-shadow: var(--field-shadow);
   color: var(--text-tertiary);
   cursor: pointer;
   transition:
@@ -1991,8 +1994,7 @@ canvas[data-orb-state] {
 .orb-swatch[data-selected='true'] {
   color: var(--text-primary);
   box-shadow:
-    0 0 0 1.5px var(--color-accent),
-    0 1px 2px rgb(0 0 0 / 0.12);
+    0 0 0 1.5px var(--color-accent);
 }
 .orb-swatch-label {
   font-size: 11px;
@@ -2003,40 +2005,47 @@ canvas[data-orb-state] {
   height: 48px !important;
 }
 
-/* Segmented control: compact inline mode switcher (e.g. Page/Preview/Source
-   in file headers). Items mark their active state via data-active="true".
-   The track is a shallow well, half the hover grey; the chosen segment is a
-   paper key lifted out of it (the control tier, tokens.css "Paper"), so the
-   choice reads by elevation rather than by a second, darker grey. */
+/* Segmented control: every tab-like switch in the app (Page/Preview/Source
+   in a file header, Text size, the side-panel root, a step rail). It IS the
+   right side panel's tab bar (2026-11-07, round 2 of the paper): the frame
+   above (one control tall, the frame's border and ground) holding framed
+   controls one size down, each a .panel-tab — transparent, tertiary ink at
+   the control's label size, the hover fill under the pointer, and the
+   selected one filled --surface-200 in primary ink. No thumb, no shadow: the
+   macOS segmented control it used to be was the one tab bar in the app that
+   did not look like the app's tabs. Items mark their state with
+   data-active="true". */
 .segmented {
   display: inline-flex;
   align-items: center;
   gap: 2px;
-  padding: 2px;
-  border-radius: var(--radius-lg);
-  background-color: color-mix(in srgb, var(--surface-100) 70%, transparent);
+  height: var(--frame-h);
+  padding: var(--frame-inset);
 }
 .segmented-item {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  padding: 2px 8px;
-  border-radius: var(--radius-md);
-  font-size: 11px;
+  justify-content: center;
+  gap: var(--control-gap);
+  flex-shrink: 0;
+  padding: 0 var(--control-px);
+  font-size: var(--control-text-sm);
   font-weight: var(--font-weight-medium);
+  white-space: nowrap;
   color: var(--text-tertiary);
+  background-color: transparent;
   transition:
     color 150ms,
     background-color 150ms,
     scale 120ms var(--ease-out-expo);
 }
 .segmented-item:hover {
-  color: var(--text-secondary);
+  color: var(--text-primary);
+  background-color: var(--surface-100);
 }
 .segmented-item[data-active='true'] {
-  background-color: var(--control-surface);
-  box-shadow: var(--raised-control-shadow);
   color: var(--text-primary);
+  background-color: var(--surface-200);
 }
 
 /* ── The control spec, as classes a component can wear ──
@@ -2439,11 +2448,17 @@ canvas[data-orb-state] {
 }
 
 /* Grouped settings are a sheet of paper on the page (the card tier,
-   tokens.css "Paper"): a step off the ground, edged by the 0.5px hairline and
-   a soft drop, the way the composer and the sidebar's foot sit. It used to be
-   a 1px outline on the bare ground, which with the grey fields inside it read
-   as a form kit rather than as Clave. The rows inside keep their quiet
-   seams. */
+   tokens.css "Paper"): a step off the ground, edged by the 0.5px hairline —
+   lying ON the page, so no drop (round 2: a drop is for what floats, the
+   menus and the composer). It used to be a 1px outline on the bare ground,
+   which with the grey fields inside it read as a form kit rather than as
+   Clave.
+
+   The seams between rows are INSET to the row's own padding and drawn in the
+   subtle ink, the way a list's rules sit in the sidebar and the menus: a rule
+   that runs edge to edge cuts the card into boxes, one that stops short of
+   the edges only spaces a list. A background image rather than a border, so
+   it takes no layout and leaves a row's own fill (an inset callout) alone. */
 .settings-card {
   border-radius: var(--radius-xl);
   background-color: var(--card-surface);
@@ -2452,7 +2467,10 @@ canvas[data-orb-state] {
 }
 .settings-card > * + *,
 .settings-card-group > * + * {
-  border-top: 1px solid var(--border-subtle-color);
+  background-image: linear-gradient(var(--border-subtle-color), var(--border-subtle-color));
+  background-size: calc(100% - 2rem) 1px;
+  background-position: 1rem 0;
+  background-repeat: no-repeat;
 }
 
 /* Single row inside a settings card: text block left, control right */
@@ -2519,7 +2537,7 @@ canvas[data-orb-state] {
 
 /* A callout under a card: a confirmation, a picker, an error. Same paper as
    the card; a tone tints the hairline and washes the sheet a breath, so it
-   holds on every theme without a box line. */
+   holds on every theme without a box line or a second edge. */
 .settings-callout {
   padding: 0.75rem 0.875rem;
   border-radius: var(--radius-xl);
@@ -2527,16 +2545,12 @@ canvas[data-orb-state] {
   box-shadow: var(--card-shadow);
 }
 .settings-callout[data-tone='danger'] {
-  background-color: color-mix(in srgb, var(--color-destructive) 5%, var(--card-surface));
-  box-shadow:
-    0 0 0 1px color-mix(in srgb, var(--color-destructive) 35%, transparent),
-    var(--card-shadow);
+  background-color: color-mix(in srgb, var(--color-destructive) 6%, var(--card-surface));
+  box-shadow: 0 0 0 0.5px color-mix(in srgb, var(--color-destructive) 40%, transparent);
 }
 .settings-callout[data-tone='accent'] {
-  background-color: color-mix(in srgb, var(--color-accent) 5%, var(--card-surface));
-  box-shadow:
-    0 0 0 1px color-mix(in srgb, var(--color-accent) 35%, transparent),
-    var(--card-shadow);
+  background-color: color-mix(in srgb, var(--color-accent) 6%, var(--card-surface));
+  box-shadow: 0 0 0 0.5px color-mix(in srgb, var(--color-accent) 40%, transparent);
 }
 .settings-callout-title {
   font-size: var(--control-text);
@@ -2623,7 +2637,7 @@ canvas[data-orb-state] {
 }
 
 /* The radio: one of a set (the default Claude account, the profile file to
-   adopt). Off, a 14px paper key (the control tier, its hairline and drop);
+   adopt). Off, a 14px ring of the ink on the control paper, no drop;
    chosen, it fills with the accent and holds the switch's white knob as its
    dot — the two "on" controls of the system say it the same way. State is
    data-checked like the switch. */
@@ -2634,15 +2648,13 @@ canvas[data-orb-state] {
   height: 0.875rem;
   border-radius: 999px;
   background-color: var(--control-surface);
-  box-shadow: var(--raised-control-shadow);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--text-primary) 22%, transparent);
   transition:
     box-shadow 150ms,
     background-color 150ms;
 }
 .radio:hover {
-  box-shadow:
-    0 0 0 1px color-mix(in srgb, var(--text-tertiary) 60%, transparent),
-    0 1px 2px rgb(0 0 0 / 0.12);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--text-primary) 38%, transparent);
 }
 .radio[data-checked='true'] {
   background-color: var(--color-accent);
@@ -2673,8 +2685,7 @@ canvas[data-orb-state] {
 }
 
 /* The select: a key that opens a menu, so it is cut like .btn-secondary (the
-   control tier of paper, its hairline and drop; hover with it, above) with the
-   caret held off the edge, and the app's own menu surface for the options
+   ink wash, no edge; hover with it, above) with the caret held off the edge, and the app's own menu surface for the options
    (the native popover drew the browser's chevron against the border and its
    own list). Open, it stays pressed-in like a hover rather than ringing in
    the accent: the menu under it already says where you are. */
@@ -2686,9 +2697,8 @@ canvas[data-orb-state] {
   max-width: 100%;
   padding: 0 0.375rem 0 0.625rem;
   border-radius: var(--radius-lg);
-  background-color: var(--control-surface);
-  box-shadow: var(--raised-control-shadow);
-  font-size: 12px;
+  background-color: var(--key-wash);
+  font-size: var(--control-text-sm);
   font-weight: var(--font-weight-medium);
   color: var(--text-primary);
   transition:
@@ -2724,7 +2734,7 @@ canvas[data-orb-state] {
   overscroll-behavior: contain;
 }
 .select-option {
-  font-size: 12px;
+  font-size: var(--control-text-sm);
   min-height: var(--control-h-md);
 }
 .select-option-check {
@@ -2786,20 +2796,18 @@ canvas[data-orb-state] {
   translate: 0.875rem 0;
 }
 
-/* Keyboard focus on the paper keys. The keys the paper rules above lift off
-   the page — the two buttons, the select, the switch, the radio, a segment —
-   take the fields' --focus-ring (a 1px accent edge and a soft halo) OUTSIDE
-   their edge, instead of the 1.5px outline the flat rows draw inside theirs:
-   inside a white key that line read as a second border, and on the ink
-   button as a blue stripe in the label's way. Declared after every rule that
-   sets their box-shadow, so a checked radio or a chosen segment still shows
-   where the keyboard is. */
+/* Keyboard focus on the keys. The buttons, the select, the switch and the
+   radio take the fields' --focus-ring (a 1px accent edge and a soft halo)
+   OUTSIDE their edge, instead of the 1.5px outline the flat rows and the tabs
+   draw inside theirs: inside a filled key that line read as a second border,
+   and on the ink button as a blue stripe in the label's way. Declared after
+   every rule that sets their box-shadow, so a checked radio still shows where
+   the keyboard is. */
 .btn-primary:focus-visible,
 .btn-secondary:focus-visible,
 .select-trigger:focus-visible,
 .switch:focus-visible,
-.radio:focus-visible,
-.segmented-item:focus-visible {
+.radio:focus-visible {
   outline: none;
   box-shadow: var(--focus-ring);
 }
@@ -2812,7 +2820,7 @@ canvas[data-orb-state] {
   padding: 0.25rem;
   border-radius: var(--radius-xl);
   background-color: var(--control-surface);
-  box-shadow: var(--raised-control-shadow);
+  box-shadow: var(--field-shadow);
   transition:
     background-color 150ms,
     box-shadow 150ms;
@@ -2824,8 +2832,7 @@ canvas[data-orb-state] {
    a selection is a state that stays, a focus ring is a place that moves. */
 .theme-swatch[data-selected='true'] {
   box-shadow:
-    0 0 0 1.5px var(--color-accent),
-    0 1px 2px rgb(0 0 0 / 0.12);
+    0 0 0 1.5px var(--color-accent);
 }
 .theme-swatch-preview {
   padding: 0.75rem;
