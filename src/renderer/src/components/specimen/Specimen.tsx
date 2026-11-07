@@ -773,7 +773,8 @@ export function Specimen(): React.JSX.Element | null {
                     </span>
                     <div className="chat-composer-controls">
                       <button type="button" className="chat-model-trigger">
-                        Echo 1<ChevronDownIcon className="w-3 h-3" />
+                        <span className="chat-model-trigger-label">Echo 1</span>
+                        <ChevronDownIcon />
                       </button>
                     </div>
                   </div>
