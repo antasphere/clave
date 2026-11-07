@@ -17,10 +17,15 @@ export function tooTallToPin(messageHeight: number, paneHeight: number): boolean
   return messageHeight > paneHeight * PIN_SHARE
 }
 
-export function useQuestionHeight(scroll: RefObject<HTMLElement | null>): void {
+export function useQuestionHeight(
+  scroll: RefObject<HTMLElement | null>,
+  /** Questions are pinned (the view's toggle): off, nothing is measured and
+   *  nothing runs on scroll. */
+  enabled: boolean
+): void {
   useEffect(() => {
     const root = scroll.current
-    if (!root) return
+    if (!root || !enabled) return
     const view = root.closest<HTMLElement>('.chat-view') ?? root
     /** Each long row's sticky top in pixels, resolved once per measure. */
     const tops = new WeakMap<HTMLElement, number>()
@@ -99,5 +104,5 @@ export function useQuestionHeight(scroll: RefObject<HTMLElement | null>): void {
       resize.disconnect()
       mutations.disconnect()
     }
-  }, [scroll])
+  }, [scroll, enabled])
 }

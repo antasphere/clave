@@ -758,7 +758,7 @@ export function TerminalView({
       localStorage.setItem(PIN_KEY, value ? 'off' : 'on')
       return !value
     })
-  useQuestionHeight(transcript.scroll)
+  useQuestionHeight(transcript.scroll, pinQuestions)
   // The mark is the agent at work, nothing else: it leaves with the state.
   const showMark = state === 'working'
   // The run in flight: the last one, while the turn it belongs to still runs
