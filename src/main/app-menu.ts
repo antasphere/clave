@@ -1,4 +1,4 @@
-import { Menu, shell, type MenuItemConstructorOptions } from 'electron'
+import { app, Menu, shell, type MenuItemConstructorOptions } from 'electron'
 import { focusedOrPrimaryWindow, bringForward } from './window-routing'
 import { windowRegistry } from './window-registry'
 import { windowWorkspaces, initialWindowWorkspace } from './window-workspaces'
@@ -7,6 +7,7 @@ import { getStoredKeymapConfig } from './ipc-handlers/keymap-handlers'
 import { isMouseChord, type KeymapActionId } from '../shared/keymaps'
 import { TRIAGE_IPC } from '../shared/triage'
 import { ONBOARDING_IPC } from '../shared/onboarding'
+import { SPECIMEN_IPC } from '../shared/specimen'
 
 const REPO_URL = 'https://github.com/antasphere/clave'
 // electron-builder's productName, stated rather than read: `app.name` is the
@@ -37,6 +38,14 @@ function openOnboarding(): void {
   if (!win) return
   bringForward(win)
   win.webContents.send(ONBOARDING_IPC.open)
+}
+
+/** Temporary (tmp/specimen): "Component specimen", dev builds only. */
+function openSpecimen(): void {
+  const win = focusedOrPrimaryWindow()
+  if (!win) return
+  bringForward(win)
+  win.webContents.send(SPECIMEN_IPC.open)
 }
 
 /**
@@ -206,6 +215,9 @@ export function buildAppMenu(deps: AppMenuDeps): void {
           label: 'Welcome to Clave…',
           click: openOnboarding
         },
+        ...(app.isPackaged
+          ? []
+          : [{ label: 'Component specimen', click: openSpecimen } as MenuItemConstructorOptions]),
         {
           label: 'Debug Clave…',
           click: openTriage

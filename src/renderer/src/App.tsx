@@ -4,6 +4,7 @@ import { MotionConfig } from 'framer-motion'
 import { AppShell } from './components/layout/AppShell'
 import { TooltipProvider } from '@clave/ui/components'
 import { Onboarding } from './components/onboarding/Onboarding'
+import { Specimen } from './components/specimen/Specimen'
 
 function App(): React.JSX.Element {
   useEffect(() => subscribeAccountLaunchPolicy(), [])
@@ -16,6 +17,8 @@ function App(): React.JSX.Element {
       <TooltipProvider delayDuration={700} skipDelayDuration={300}>
         <AppShell />
         <Onboarding />
+        {/* Temporary (tmp/specimen): Help → Component specimen, dev only. */}
+        <Specimen />
       </TooltipProvider>
     </MotionConfig>
   )

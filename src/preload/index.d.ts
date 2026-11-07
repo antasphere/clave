@@ -1038,6 +1038,7 @@ export interface ElectronAPI extends FleetDesktopAPI {
   onboardingSetChatView: (viewId: string) => Promise<void>
   onboardingCreateFolder: (parent: string, name: string) => Promise<string>
   onOpenOnboarding: (callback: () => void) => () => void
+  onOpenSpecimen: (callback: () => void) => () => void
   onMissionControlEntered: (callback: () => void) => () => void
   onMissionControlExited: (callback: () => void) => () => void
   missionControlGetEnabled: () => Promise<boolean>

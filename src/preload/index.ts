@@ -56,6 +56,7 @@ import {
   type OnboardingInstallResult,
   type OnboardingState
 } from '../shared/onboarding'
+import { SPECIMEN_IPC } from '../shared/specimen'
 import type { DigestRequest } from '../shared/exchange-digest'
 import type {
   ServerInstallProgress,
@@ -1793,6 +1794,8 @@ const electronAPI = {
   onboardingCreateFolder: (parent: string, name: string) =>
     ipcRenderer.invoke(ONBOARDING_IPC.createFolder, parent, name) as Promise<string>,
   onOpenOnboarding: (callback: () => void) => createIpcListener<[]>(ONBOARDING_IPC.open, callback),
+  // Temporary (tmp/specimen): Help → Component specimen.
+  onOpenSpecimen: (callback: () => void) => createIpcListener<[]>(SPECIMEN_IPC.open, callback),
 
   onMissionControlEntered: (callback: () => void) =>
     createIpcListener<[]>('mission-control:entered', callback),
