@@ -1,11 +1,15 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { Alert, View } from 'react-native'
 import { useServices, useStoreApi } from '../state/context'
-import { Button, ErrorText, Field, Muted } from '../ui/components'
-import { space } from '../ui/theme'
+import { Icon } from '../ui/Icon'
+import { Button, Callout, Card, Field, Notice, Row, SectionTitle } from '../ui/components'
+import { control, space, useTheme } from '../ui/theme'
 import type { AuthStatus } from './sign-in'
 
+/** Settings → Accounts on the desktop: who is signed in and how, as a row of
+ *  a card; under it the team relay the beta reaches its machines through. */
 export function AccountPanel(): ReactNode {
+  const t = useTheme()
   const beta = useServices().beta
   const store = useStoreApi()
   const [status, setStatus] = useState<AuthStatus | null>(beta?.auth.status() ?? null)
@@ -33,69 +37,91 @@ export function AccountPanel(): ReactNode {
       setError(cause instanceof Error ? cause.message : 'The relay address could not be saved.')
     }
   }
+  const account = status.account
+  const name = account?.name ?? account?.email ?? 'your Antasphere account'
   return (
-    <View style={{ padding: space.lg, gap: space.md }}>
-      <Muted>
-        {status.account
-          ? `Signed in as ${status.account.name ?? status.account.email ?? 'your Antasphere account'}`
-          : 'Sign in with your Antasphere account to see your machines.'}
-      </Muted>
-      {status.lastFailure ? (
-        <ErrorText testID="account-error">
-          Sign-in could not complete: {status.lastFailure}. Try again.
-        </ErrorText>
-      ) : null}
-      <Button
-        title={
-          status.account
-            ? 'Sign out'
-            : status.phase === 'signing-in'
-              ? 'Signing in…'
-              : 'Sign in with Antasphere'
-        }
-        disabled={status.phase === 'signing-in' || signingOut}
-        testID="account-sign-in"
-        onPress={() => {
-          store.getState().disconnectAll()
-          if (!status.account) {
-            void beta.auth.signIn()
-            return
-          }
-          setSigningOut(true)
-          void beta
-            .signOut()
-            .then((result) => {
-              if (result.pending !== 0)
-                Alert.alert(
-                  'Signed out',
-                  result.retryRecorded
-                    ? 'Some machines could not confirm notification removal and may still send updates. Removal will retry when you sign back in to this account. You can also revoke this phone in Settings → Mobile on the Mac.'
-                    : 'Some machines could not confirm notification removal and may still send updates. Try signing in and signing out again, or revoke this phone in Settings → Mobile on the Mac.'
-                )
-            })
-            .catch(() => setError('Sign-out could not complete. Try again.'))
-            .finally(() => setSigningOut(false))
-        }}
+    <View>
+      <SectionTitle
+        title="Account"
+        description="The Antasphere account the phone's machines belong to."
       />
-      {status.account ? (
-        <>
-          <Field
-            label="Team relay address"
-            value={relay}
-            onChangeText={setRelay}
-            placeholder="https://your-team-relay.example"
-            testID="relay-address"
-          />
-          <Button
-            title="Connect to team relay"
-            kind="secondary"
-            disabled={signingOut}
-            onPress={() => void refresh()}
-            testID="relay-connect"
-          />
-        </>
+      <Card>
+        <Row
+          title={account ? name : 'Not signed in'}
+          description={
+            account
+              ? 'Signed in with Antasphere'
+              : 'Sign in with your Antasphere account to see your machines.'
+          }
+          leading={<Icon name="user-circle" size={control.icon} color={t.colors.textTertiary} />}
+          controls={
+            <Button
+              title={
+                account ? 'Sign out' : status.phase === 'signing-in' ? 'Signing in…' : 'Sign in'
+              }
+              kind={account ? 'secondary' : 'primary'}
+              compact
+              disabled={status.phase === 'signing-in' || signingOut}
+              testID="account-sign-in"
+              onPress={() => {
+                store.getState().disconnectAll()
+                if (!account) {
+                  void beta.auth.signIn()
+                  return
+                }
+                setSigningOut(true)
+                void beta
+                  .signOut()
+                  .then((result) => {
+                    if (result.pending !== 0)
+                      Alert.alert(
+                        'Signed out',
+                        result.retryRecorded
+                          ? 'Some machines could not confirm notification removal and may still send updates. Removal will retry when you sign back in to this account. You can also revoke this phone in Settings → Mobile on the Mac.'
+                          : 'Some machines could not confirm notification removal and may still send updates. Try signing in and signing out again, or revoke this phone in Settings → Mobile on the Mac.'
+                      )
+                  })
+                  .catch(() => setError('Sign-out could not complete. Try again.'))
+                  .finally(() => setSigningOut(false))
+              }}
+            />
+          }
+        />
+        {account ? (
+          <View style={{ padding: 14, paddingHorizontal: 16, gap: space(3) }}>
+            <Field
+              label="Team relay address"
+              value={relay}
+              onChangeText={setRelay}
+              placeholder="https://your-team-relay.example"
+              keyboardType="url"
+              testID="relay-address"
+            />
+            <View style={{ flexDirection: 'row', justifyContent: 'flex-end' }}>
+              <Button
+                title="Connect to team relay"
+                kind="secondary"
+                compact
+                disabled={signingOut}
+                onPress={() => void refresh()}
+                testID="relay-connect"
+              />
+            </View>
+          </View>
+        ) : null}
+      </Card>
+      {status.lastFailure ? (
+        <View style={{ marginTop: space(2) }}>
+          <Callout tone="danger" title="Sign-in could not complete" testID="account-error">
+            {`${status.lastFailure}. Try again.`}
+          </Callout>
+        </View>
       ) : null}
-      {error ? <ErrorText>{error}</ErrorText> : null}
+      {error ? (
+        <Notice tone="error" style={{ marginTop: space(2) }}>
+          {error}
+        </Notice>
+      ) : null}
     </View>
   )
 }

@@ -8,16 +8,20 @@
 import type { NativeStackScreenProps } from '@react-navigation/native-stack'
 import { useState, type ReactNode } from 'react'
 import { ScrollView, Text, View } from 'react-native'
+import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import type { RootStackParamList } from '../navigation/RootNavigator'
 import { useStoreApi } from '../state/context'
-import { Button, ErrorText, Field, Screen } from '../ui/components'
-import { colors, font, space } from '../ui/theme'
+import { PaneHeader } from '../ui/PaneHeader'
+import { Button, Field, Notice, Screen } from '../ui/components'
+import { gutter, space, text, type, useTheme } from '../ui/theme'
 
 export const DEVELOPER_CONNECTION_MARKER = 'clave-mobile:developer-connection'
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Developer'>
 
 export function DeveloperScreen({ navigation }: Props): ReactNode {
+  const t = useTheme()
+  const insets = useSafeAreaInsets()
   const store = useStoreApi()
   const [url, setUrl] = useState('')
   const [token, setToken] = useState('')
@@ -42,14 +46,24 @@ export function DeveloperScreen({ navigation }: Props): ReactNode {
 
   return (
     <Screen>
+      <PaneHeader
+        title="Developer connection"
+        meta="Development builds only"
+        onBack={() => navigation.goBack()}
+      />
       <ScrollView
-        contentContainerStyle={{ padding: space.lg, gap: space.lg }}
+        contentContainerStyle={{
+          paddingTop: space(4),
+          paddingHorizontal: gutter,
+          paddingBottom: insets.bottom + space(6),
+          gap: space(4)
+        }}
         keyboardShouldPersistTaps="handled"
         testID={DEVELOPER_CONNECTION_MARKER}
       >
-        <Text style={{ color: colors.textSecondary, fontSize: font.sm }}>
+        <Text style={[type(text.xs, 400, 1.5), { color: t.colors.textSecondary }]}>
           A standalone Clave server on this network, by its address and token: what `npm run
-          dev:server` prints. Development builds only; the beta signs in instead.
+          dev:server` prints. The beta signs in instead.
         </Text>
         <Field
           label="Server address"
@@ -72,8 +86,12 @@ export function DeveloperScreen({ navigation }: Props): ReactNode {
           testID="developer-token"
         />
         <Field label="Name" value={name} onChangeText={setName} testID="developer-name" />
-        {error ? <ErrorText testID="developer-error">{error}</ErrorText> : null}
-        <View>
+        {error ? (
+          <Notice tone="error" style={{ marginHorizontal: 0 }} testID="developer-error">
+            {error}
+          </Notice>
+        ) : null}
+        <View style={{ flexDirection: 'row', justifyContent: 'flex-end' }}>
           <Button
             title={busy ? 'Connecting…' : 'Connect'}
             onPress={() => void connect()}

@@ -8,41 +8,58 @@
  */
 import {
   DarkTheme,
+  DefaultTheme,
   NavigationContainer,
   useNavigationContainerRef,
   type LinkingOptions,
   type NavigationState
 } from '@react-navigation/native'
+import { useFonts } from 'expo-font'
 import { StatusBar } from 'expo-status-bar'
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
-import { Linking } from 'react-native'
-import { SafeAreaProvider } from 'react-native-safe-area-context'
+import { Linking, View } from 'react-native'
+import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context'
 import { RootNavigator, type RootStackParamList } from './navigation/RootNavigator'
 import { LAST_MACHINE_KEY, machineIdOf, stateForPath } from './navigation/persistence'
 import { createServices } from './services'
 import { StoreProvider } from './state/StoreProvider'
 import { createStore, type Services } from './state/store'
-import { nativeAccount, nativeOwnerStores } from './platform/account'
+import { nativeAccount, nativeOwnerStores, rawKeyValueStore } from './platform/account'
 import type { AuthStatus } from './auth/sign-in'
 import * as Notifications from 'expo-notifications'
 import { configureNativeNotifications, ownerNotificationResponse } from './platform/notifications'
 import { navigationStateOf, type DeepLink } from './notifications/deeplink'
 import { NotificationInbox } from './notifications/inbox'
 import { EnrollmentRecords } from './enroll/records'
-import { ErrorText, Screen } from './ui/components'
-import { colors } from './ui/theme'
+import { Notice, Screen } from './ui/components'
+import { AppearanceProvider } from './ui/appearance'
+import { useAppearance } from './ui/appearance-context'
+import { ThemeProvider, family, useResolvedTheme, useTheme, type Theme } from './ui/theme'
 import type { DevicePushToken } from './notifications/port'
 
-const theme = {
-  ...DarkTheme,
+/** The navigator's own colours, from the Clave theme: the ground, the card
+ *  and the hairline it draws between screens while one slides in. */
+const navigationTheme = (t: Theme): typeof DarkTheme => ({
+  ...(t.dark ? DarkTheme : DefaultTheme),
   colors: {
-    ...DarkTheme.colors,
-    primary: colors.accent,
-    background: colors.surface0,
-    card: colors.surface50,
-    text: colors.textPrimary,
-    border: colors.border
+    ...(t.dark ? DarkTheme : DefaultTheme).colors,
+    primary: t.colors.accent,
+    background: t.colors.surface0,
+    card: t.colors.surface0,
+    text: t.colors.textPrimary,
+    border: t.colors.borderSubtle,
+    notification: t.colors.accent
   }
+})
+
+/** Geist Sans at the three weights the desktop loads (`family` in theme.ts),
+ *  derived from the same files (`scripts/build-fonts.mjs`). */
+const FONTS = {
+  /* eslint-disable @typescript-eslint/no-require-imports -- the bundler reads the asset paths at build time */
+  [family[400]]: require('../assets/fonts/Geist-Regular.otf'),
+  [family[500]]: require('../assets/fonts/Geist-Medium.otf'),
+  [family[600]]: require('../assets/fonts/Geist-SemiBold.otf')
+  /* eslint-enable @typescript-eslint/no-require-imports */
 }
 
 type LinkState = ReturnType<NonNullable<LinkingOptions<RootStackParamList>['getStateFromPath']>>
@@ -55,6 +72,30 @@ const linking: LinkingOptions<RootStackParamList> = {
 }
 
 export function App(): ReactNode {
+  return (
+    <AppearanceProvider kv={rawKeyValueStore}>
+      <Themed>
+        <Account />
+      </Themed>
+    </AppearanceProvider>
+  )
+}
+
+/** The theme the appearance resolves to, over every screen; the fonts loaded
+ *  before anything is drawn in them (a failure draws the system face). */
+function Themed({ children }: { children: ReactNode }): ReactNode {
+  const { appearance } = useAppearance()
+  const theme = useResolvedTheme(appearance)
+  const [fontsLoaded, fontsError] = useFonts(FONTS)
+  return (
+    <ThemeProvider value={theme}>
+      {fontsLoaded || fontsError ? children : <Screen>{null}</Screen>}
+      <StatusBar style={theme.dark ? 'light' : 'dark'} />
+    </ThemeProvider>
+  )
+}
+
+function Account(): ReactNode {
   const auth = useMemo(() => nativeAccount(), [])
   const [status, setStatus] = useState<AuthStatus | null>(null)
   const [owner, setOwner] = useState<{ key: string; services: Services } | null>(null)
@@ -81,7 +122,20 @@ export function App(): ReactNode {
   )
 }
 
+/** The notice the app itself carries, inside the safe area rather than
+ *  under the status bar. */
+function AppNotice({ children }: { children: ReactNode }): ReactNode {
+  const insets = useSafeAreaInsets()
+  return (
+    <View style={{ paddingTop: insets.top + 4, paddingBottom: 4 }}>
+      <Notice tone="error">{children}</Notice>
+    </View>
+  )
+}
+
 function OwnerApp({ services }: { services: Services }): ReactNode {
+  const t = useTheme()
+  const theme = useMemo(() => navigationTheme(t), [t])
   const navigation = useNavigationContainerRef<RootStackParamList>()
   const [notificationError, setNotificationError] = useState(false)
   const store = useMemo(() => createStore(services), [services])
@@ -169,7 +223,7 @@ function OwnerApp({ services }: { services: Services }): ReactNode {
     <SafeAreaProvider>
       <StoreProvider store={store} services={services}>
         {notificationError ? (
-          <ErrorText>Notifications could not be enabled on this build.</ErrorText>
+          <AppNotice>Notifications could not be enabled on this build.</AppNotice>
         ) : null}
         {initial ? (
           <NavigationContainer
@@ -191,7 +245,6 @@ function OwnerApp({ services }: { services: Services }): ReactNode {
           <Screen>{null}</Screen>
         )}
       </StoreProvider>
-      <StatusBar style="light" />
     </SafeAreaProvider>
   )
 }

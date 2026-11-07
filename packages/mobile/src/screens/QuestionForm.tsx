@@ -2,20 +2,23 @@
  * The form of an agent's questions: each with its options (one pick, or any
  * with `multiSelect`) and a free answer; the replies shaped by
  * `requests/answers.ts` on submit. Shared by a request card and a chat's
- * permission card.
+ * prompt. The rows are the desktop prompt dock's options: a full-width
+ * choice, the box or the tick carrying the pick, and "Other" a card whose
+ * body is the field.
  */
 import type { ReactNode } from 'react'
-import { Pressable, StyleSheet, Text, View } from 'react-native'
+import { StyleSheet, Text, View } from 'react-native'
 import type { AgentQuestion } from '../contract/types'
 import { questionKey, type QuestionReply } from '../requests/answers'
-import { Field } from '../ui/components'
-import { colors, font, radius, space } from '../ui/theme'
+import { BareInput, OptionRow } from '../ui/components'
+import { space, text, type, useTheme } from '../ui/theme'
 
 export function QuestionForm({
   questions,
   replies,
   onChange,
   secretKeys = [],
+  disabled,
   testID
 }: {
   questions: readonly AgentQuestion[]
@@ -23,8 +26,10 @@ export function QuestionForm({
   onChange: (key: string, reply: QuestionReply) => void
   /** The question keys whose free answer is a secret: masked as typed. */
   secretKeys?: readonly string[]
+  disabled?: boolean
   testID?: string
 }): ReactNode {
+  const t = useTheme()
   return (
     <View style={styles.form} testID={testID}>
       {questions.map((q, index) => {
@@ -38,39 +43,68 @@ export function QuestionForm({
             : [label]
           onChange(key, { ...reply, picked })
         }
+        const other = reply.other ?? ''
         return (
           <View key={key} style={styles.question}>
-            {q.header ? <Text style={styles.header}>{q.header}</Text> : null}
-            <Text style={styles.text}>{q.question}</Text>
-            {q.multiSelect ? <Text style={styles.hint}>Choose any</Text> : null}
-            {q.options.map((option) => {
-              const on = reply.picked.includes(option.label)
-              return (
-                <Pressable
-                  key={option.label}
-                  onPress={() => pick(option.label)}
-                  accessibilityRole={q.multiSelect ? 'checkbox' : 'radio'}
-                  accessibilityState={{ checked: on }}
-                  testID={`question-${index}-option-${option.label}`}
-                  style={[styles.option, on && styles.optionOn]}
-                >
-                  <Text style={[styles.optionText, on && { color: colors.accent }]}>
-                    {on ? '● ' : '○ '}
-                    {option.label}
+            <View style={styles.head}>
+              {questions.length > 1 ? (
+                <View style={[styles.step, { backgroundColor: t.colors.surface100 }]}>
+                  <Text style={[type(text.xs), styles.tabular, { color: t.colors.textSecondary }]}>
+                    {index + 1}/{questions.length}
                   </Text>
-                  {option.description ? (
-                    <Text style={styles.description}>{option.description}</Text>
-                  ) : null}
-                </Pressable>
-              )
-            })}
-            <Field
-              placeholder="Something else"
-              value={reply.other ?? ''}
-              onChangeText={(other) => onChange(key, { ...reply, other })}
-              secureTextEntry={secretKeys.includes(key)}
-              testID={`question-${index}-other`}
-            />
+                </View>
+              ) : null}
+              <Text
+                style={[
+                  type(text.control, 500, 1.5),
+                  styles.title,
+                  { color: t.colors.textPrimary }
+                ]}
+              >
+                {q.question}
+                {q.header ? (
+                  <Text
+                    style={[type(text.xs), { color: t.colors.textTertiary }]}
+                  >{`  ${q.header}`}</Text>
+                ) : null}
+                {q.multiSelect ? (
+                  <Text style={[type(text.xs), { color: t.colors.textTertiary }]}>
+                    {'  Choose any'}
+                  </Text>
+                ) : null}
+              </Text>
+            </View>
+            <View style={styles.options}>
+              {q.options.map((option) => (
+                <OptionRow
+                  key={option.label}
+                  label={option.label}
+                  hint={option.description}
+                  selected={reply.picked.includes(option.label)}
+                  multi={q.multiSelect}
+                  disabled={disabled}
+                  onPress={() => pick(option.label)}
+                  testID={`question-${index}-option-${option.label}`}
+                />
+              ))}
+              <OptionRow
+                label="Other"
+                selected={other.trim() !== ''}
+                disabled={disabled}
+                onPress={() => {}}
+              >
+                <BareInput
+                  placeholder="Type your own answer"
+                  value={other}
+                  onChangeText={(value) => onChange(key, { ...reply, other: value })}
+                  secureTextEntry={secretKeys.includes(key)}
+                  multiline={!secretKeys.includes(key)}
+                  editable={!disabled}
+                  testID={`question-${index}-other`}
+                  style={{ marginTop: 2 }}
+                />
+              </OptionRow>
+            </View>
           </View>
         )
       })}
@@ -79,25 +113,11 @@ export function QuestionForm({
 }
 
 const styles = StyleSheet.create({
-  form: { gap: space.lg },
-  question: { gap: space.sm },
-  header: {
-    color: colors.textSecondary,
-    fontSize: font.xs,
-    fontWeight: '600',
-    textTransform: 'uppercase'
-  },
-  text: { color: colors.textPrimary, fontSize: font.md },
-  hint: { color: colors.textTertiary, fontSize: font.xs },
-  option: {
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: radius.md,
-    paddingHorizontal: space.md,
-    paddingVertical: space.sm,
-    gap: 2
-  },
-  optionOn: { borderColor: colors.accent },
-  optionText: { color: colors.textPrimary, fontSize: font.md },
-  description: { color: colors.textSecondary, fontSize: font.sm }
+  form: { gap: space(4) },
+  question: { gap: space(2) },
+  head: { flexDirection: 'row', alignItems: 'flex-start', gap: space(2) },
+  step: { paddingHorizontal: 6, paddingVertical: 1, borderRadius: 999, marginTop: 1 },
+  title: { flex: 1, minWidth: 0 },
+  tabular: { fontVariant: ['tabular-nums'] },
+  options: { gap: 0 }
 })

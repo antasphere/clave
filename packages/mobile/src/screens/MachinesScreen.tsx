@@ -1,13 +1,28 @@
 import type { NativeStackScreenProps } from '@react-navigation/native-stack'
 import { useEffect, type ReactNode } from 'react'
-import { Alert, FlatList, RefreshControl, View } from 'react-native'
+import { Alert, ScrollView, RefreshControl, View } from 'react-native'
+import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import type { RootStackParamList } from '../navigation/RootNavigator'
 import type { Machine } from '../machines/types'
 import { AccountPanel } from '../auth/AccountPanel'
 import { useServices, useSel, useStoreApi } from '../state/context'
 import { REACHABILITY_LABEL } from '../state/session-state'
-import { Button, ErrorText, Muted, Pill, Row, Screen, Spinner } from '../ui/components'
-import { colors, space } from '../ui/theme'
+import { reachStatus } from '../ui/status'
+import { Icon } from '../ui/Icon'
+import { PaneHeader } from '../ui/PaneHeader'
+import {
+  Badge,
+  Card,
+  EmptyState,
+  IconButton,
+  Loading,
+  Notice,
+  Row,
+  Screen,
+  SectionTitle,
+  StatusText
+} from '../ui/components'
+import { control, space, useTheme } from '../ui/theme'
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Machines'>
 
@@ -30,6 +45,8 @@ const describe = (m: Machine): string => {
 }
 
 export function MachinesScreen({ navigation }: Props): ReactNode {
+  const t = useTheme()
+  const insets = useSafeAreaInsets()
   const store = useStoreApi()
   const services = useServices()
   const machines = useSel((s) => s.machines)
@@ -73,84 +90,119 @@ export function MachinesScreen({ navigation }: Props): ReactNode {
 
   return (
     <Screen>
-      <FlatList
-        data={machines}
-        keyExtractor={(m) => m.id}
+      <PaneHeader
+        title="Machines"
+        meta="Your Macs and Clave servers"
+        actions={
+          <IconButton
+            name="paint-brush"
+            label="Appearance"
+            onPress={() => navigation.navigate('Appearance')}
+            testID="open-appearance"
+          />
+        }
+      />
+      <ScrollView
+        contentContainerStyle={{
+          paddingTop: space(4),
+          paddingBottom: insets.bottom + space(6),
+          gap: space(9)
+        }}
         refreshControl={
           <RefreshControl
             refreshing={loading}
             onRefresh={() => void store.getState().loadMachines()}
-            tintColor={colors.textSecondary}
+            tintColor={t.colors.textSecondary}
+            colors={[t.colors.textSecondary]}
+            progressBackgroundColor={t.colors.surface100}
           />
         }
-        renderItem={({ item }) => {
-          const reach = reachability[item.id]
-          return (
-            <Row
-              title={item.name}
-              subtitle={describe(item)}
-              onPress={() => open(item)}
-              testID={`machine-row-${item.id}`}
-              right={
-                <View style={{ alignItems: 'flex-end', gap: space.xs }}>
-                  {mainMachineId === item.id ? <Pill text="Main" tone="accent" /> : null}
-                  {reach ? (
-                    <Pill
-                      text={REACHABILITY_LABEL[reach]}
-                      tone={
-                        reach === 'reachable'
-                          ? 'success'
-                          : reach === 'connecting'
-                            ? 'neutral'
-                            : 'danger'
-                      }
-                    />
-                  ) : (
-                    <Pill
-                      text={item.online ? 'Online' : 'Offline'}
-                      tone={item.online ? 'success' : 'neutral'}
-                    />
-                  )}
-                  <Button
-                    title="…"
-                    kind="secondary"
-                    onPress={() => actions(item)}
-                    testID={`machine-actions-${item.id}`}
+        keyboardShouldPersistTaps="handled"
+      >
+        <AccountPanel />
+        <View>
+          <SectionTitle
+            title="Machines"
+            description="A Mac running Clave, or a Clave server, paired with this phone."
+          />
+          {error ? (
+            <Notice tone="error" style={{ marginBottom: space(2) }}>
+              {error}
+            </Notice>
+          ) : null}
+          {machines.length ? (
+            <Card>
+              {machines.map((item) => {
+                const reach = reachability[item.id]
+                return (
+                  <Row
+                    key={item.id}
+                    title={item.name}
+                    description={describe(item)}
+                    leading={
+                      <Icon
+                        name={item.platform === 'macos' ? 'computer-desktop' : 'server-stack'}
+                        size={control.icon}
+                        color={t.colors.textTertiary}
+                      />
+                    }
+                    onPress={() => open(item)}
+                    onLongPress={() => actions(item)}
+                    testID={`machine-row-${item.id}`}
+                    controls={
+                      <>
+                        {mainMachineId === item.id ? <Badge>Main</Badge> : null}
+                        {reach ? (
+                          <StatusText status={reachStatus(reach)}>
+                            {REACHABILITY_LABEL[reach]}
+                          </StatusText>
+                        ) : (
+                          <StatusText status={item.online ? 'connected' : 'neutral'}>
+                            {item.online ? 'Online' : 'Offline'}
+                          </StatusText>
+                        )}
+                        <IconButton
+                          name="ellipsis-horizontal"
+                          size="sm"
+                          label={`More about ${item.name}`}
+                          onPress={() => actions(item)}
+                          testID={`machine-actions-${item.id}`}
+                        />
+                      </>
+                    }
                   />
-                </View>
-              }
-            />
-          )
-        }}
-        ListEmptyComponent={
-          loading ? (
-            <Spinner />
+                )
+              })}
+            </Card>
+          ) : loading ? (
+            <Loading />
           ) : (
-            <Muted testID="machines-empty">
-              No machine yet. Sign in to see your own machines; in a development build, add a server
-              below.
-            </Muted>
-          )
-        }
-        ListHeaderComponent={
-          <>
-            <AccountPanel />
-            {error ? <ErrorText>{error}</ErrorText> : null}
-          </>
-        }
-        ListFooterComponent={
-          __DEV__ ? (
-            <View style={{ padding: space.lg }}>
-              <Button
+            <EmptyState
+              icon="computer-desktop"
+              title="No machine yet"
+              text="Sign in to see your own machines; in a development build, add a server below."
+              testID="machines-empty"
+            />
+          )}
+        </View>
+        {__DEV__ ? (
+          <View>
+            <SectionTitle title="Development" description="This build only." />
+            <Card>
+              <Row
                 title="Developer connection"
-                kind="secondary"
+                description="A standalone server on this network, by address and token."
+                leading={
+                  <Icon name="command-line" size={control.icon} color={t.colors.textTertiary} />
+                }
                 onPress={() => navigation.navigate('Developer')}
+                chevron
                 testID="developer-connection"
               />
-            </View>
-          ) : undefined
-        }
-      />
+            </Card>
+          </View>
+        ) : null}
+      </ScrollView>
     </Screen>
   )
 }

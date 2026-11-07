@@ -1,14 +1,16 @@
 /**
  * The pending requests of a machine (decision 8 of the spec): the server
  * owns them and their first-valid-answer rule; the phone lists them,
- * refreshes on `requests.changed`, renders each kind as a native form and
- * resolves it through the server's own route. A resolution the server
- * refuses (another client answered first) is shown and the request goes.
- * A secret is entered here and travels in the resolve body only.
+ * refreshes on `requests.changed`, renders each kind as the desktop's prompt
+ * dock card and resolves it through the server's own route. A resolution
+ * the server refuses (another client answered first) is shown and the
+ * request goes. A secret is entered here and travels in the resolve body
+ * only.
  */
 import type { NativeStackScreenProps } from '@react-navigation/native-stack'
 import { useEffect, useState, type ReactNode } from 'react'
-import { FlatList, RefreshControl, StyleSheet, Text, View } from 'react-native'
+import { RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native'
+import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import type { PendingRequest, RequestResponse, Session } from '../contract/types'
 import type { RootStackParamList } from '../navigation/RootNavigator'
 import {
@@ -20,8 +22,17 @@ import {
   type QuestionReply
 } from '../requests/answers'
 import { useSel, useStoreApi } from '../state/context'
-import { Button, ErrorText, Field, Muted, Screen, Spinner } from '../ui/components'
-import { colors, font, radius, space } from '../ui/theme'
+import { PaneHeader } from '../ui/PaneHeader'
+import {
+  EmptyState,
+  Field,
+  IconButton,
+  Loading,
+  Notice,
+  PromptButton,
+  Screen
+} from '../ui/components'
+import { codeSize, gutter, radius, space, text, type, useTheme } from '../ui/theme'
 import { QuestionForm } from './QuestionForm'
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Requests'>
@@ -29,9 +40,14 @@ type Props = NativeStackScreenProps<RootStackParamList, 'Requests'>
 // A stable default: a selector must not answer a new array every render.
 const NO_SESSIONS: readonly Session[] = []
 
-export function RequestsScreen({ route }: Props): ReactNode {
+const isDeny = (id: string): boolean => /deny|decline|cancel|reject|abort/i.test(id)
+
+export function RequestsScreen({ route, navigation }: Props): ReactNode {
   const { machineId, requestId } = route.params
+  const t = useTheme()
+  const insets = useSafeAreaInsets()
   const store = useStoreApi()
+  const machine = useSel((s) => s.machines.find((m) => m.id === machineId))
   const requests = useSel((s) => s.requests[machineId])
   const sessions = useSel((s) => s.sessions[machineId]) ?? NO_SESSIONS
   const [notices, setNotices] = useState<Record<string, string>>({})
@@ -63,54 +79,93 @@ export function RequestsScreen({ route }: Props): ReactNode {
 
   return (
     <Screen>
-      <FlatList
-        data={pending}
-        keyExtractor={(r) => r.id}
+      <PaneHeader title="Requests" meta={machine?.name} onBack={() => navigation.goBack()} />
+      <ScrollView
+        contentContainerStyle={{
+          paddingTop: space(4),
+          paddingBottom: insets.bottom + space(6),
+          gap: space(3)
+        }}
         refreshControl={
           <RefreshControl
             refreshing={requests?.loading ?? false}
             onRefresh={() => void store.getState().loadRequests(machineId)}
-            tintColor={colors.textSecondary}
+            tintColor={t.colors.textSecondary}
+            colors={[t.colors.textSecondary]}
+            progressBackgroundColor={t.colors.surface100}
           />
         }
-        contentContainerStyle={{ padding: space.lg, gap: space.md }}
-        renderItem={({ item }) => (
+        keyboardShouldPersistTaps="handled"
+      >
+        {Object.entries(notices)
+          .filter(([id]) => !pending.some((r) => r.id === id))
+          .map(([id, body]) => (
+            <Notice key={id} testID="request-notice">
+              {body}
+            </Notice>
+          ))}
+        {requests?.error ? (
+          <Notice tone="error">{requests.error}</Notice>
+        ) : requests?.unavailable ? (
+          <Notice testID="requests-unavailable">
+            This server keeps no request list. Answer the agent&apos;s questions in its chat.
+          </Notice>
+        ) : null}
+        {pending.map((item) => (
           <RequestCard
+            key={item.id}
             request={item}
             sessionTitle={sessions.find((s) => s.id === item.sessionId)?.title}
             notice={notices[item.id]}
             onResolve={(response) => void resolve(item, response)}
           />
-        )}
-        ListHeaderComponent={
-          <View>
-            {Object.entries(notices).map(([id, text]) => (
-              <Text key={id} style={styles.notice} testID="request-notice">
-                {text}
-              </Text>
-            ))}
-            {requests?.error ? (
-              <ErrorText>{requests.error}</ErrorText>
-            ) : requests?.unavailable ? (
-              <Muted testID="requests-unavailable">
-                This server keeps no request list. Answer the agent&apos;s questions in its chat.
-              </Muted>
-            ) : null}
-          </View>
-        }
-        ListEmptyComponent={
+        ))}
+        {!pending.length ? (
           !requests || (requests.loading && !requests.snapshot) ? (
-            <Spinner />
-          ) : requests.unavailable ? undefined : (
-            <Muted testID="requests-empty">
-              {requestId
-                ? 'This request is already settled or no longer available.'
-                : 'Nothing is waiting for you.'}
-            </Muted>
+            <Loading />
+          ) : requests.unavailable ? null : (
+            <EmptyState
+              icon="inbox-stack"
+              title={requestId ? 'Already settled' : 'Nothing is waiting for you'}
+              text={
+                requestId
+                  ? 'This request is already settled or no longer available.'
+                  : 'A tool to allow or a question to answer lands here.'
+              }
+              testID="requests-empty"
+            />
           )
-        }
-      />
+        ) : null}
+      </ScrollView>
     </Screen>
+  )
+}
+
+/** `.chat-prompt`: the raised card of the desktop's prompt dock. */
+export function PromptCard({
+  children,
+  kicker,
+  testID
+}: {
+  children: ReactNode
+  kicker?: string
+  testID?: string
+}): ReactNode {
+  const t = useTheme()
+  return (
+    <View
+      style={[
+        styles.card,
+        t.raised,
+        { borderColor: t.colors.borderSubtle, backgroundColor: t.colors.surfaceRaised }
+      ]}
+      testID={testID}
+    >
+      {kicker ? (
+        <Text style={[type(text.xs), { color: t.colors.textTertiary }]}>{kicker}</Text>
+      ) : null}
+      {children}
+    </View>
   )
 }
 
@@ -125,6 +180,7 @@ function RequestCard({
   notice: string | undefined
   onResolve: (response: RequestResponse) => void
 }): ReactNode {
+  const t = useTheme()
   const [replies, setReplies] = useState<Record<string, QuestionReply>>({})
   const [secret, setSecret] = useState('')
   /** The secret is masked as typed; a person may reveal it to check it. */
@@ -139,65 +195,85 @@ function RequestCard({
     onResolve(shaped.response)
     setSecret('')
   }
+  const options = request.options ?? []
+  const denies = options.filter((o) => isDeny(o.id))
+  const allows = options.filter((o) => !isDeny(o.id))
 
   return (
-    <View style={styles.card} testID={`request-${request.kind}`}>
-      <Text style={styles.kicker}>
-        {kind}
-        {sessionTitle ? ` · ${sessionTitle}` : ''}
-        {request.toolName ? ` · ${request.toolName}` : ''}
+    <PromptCard
+      kicker={[kind, sessionTitle, request.toolName].filter(Boolean).join(' · ')}
+      testID={`request-${request.kind}`}
+    >
+      <Text style={[type(text.control, 500, 1.5), { color: t.colors.textPrimary }]}>
+        {request.description}
       </Text>
-      <Text style={styles.title}>{request.description}</Text>
-      {request.detail ? <Text style={styles.detail}>{request.detail}</Text> : undefined}
+      {request.detail ? (
+        <Text style={[type(text.control, 400, 1.5), { color: t.colors.textSecondary }]}>
+          {request.detail}
+        </Text>
+      ) : null}
       {notice ? (
-        <Text style={styles.notice} testID="request-notice">
+        <Text
+          style={[type(text.xs, 400, 1.5), { color: t.colors.warning }]}
+          testID="request-notice"
+        >
           {notice}
         </Text>
       ) : null}
 
       {request.kind === 'secret' ? (
-        <View style={{ gap: space.sm }}>
+        <View style={{ gap: space(3) }}>
           {request.action ? (
-            <Text style={styles.detail}>
-              {request.action.type === 'run'
-                ? `Used as ${request.action.envVar} by: ${request.action.command}`
-                : `Written to ${request.action.file} as ${request.action.key}`}
-            </Text>
+            <View
+              style={[
+                styles.code,
+                { backgroundColor: t.colors.surface50, borderColor: t.colors.borderSubtle }
+              ]}
+            >
+              <Text style={[type(codeSize, 400, 1.5), { color: t.colors.textSecondary }]}>
+                {request.action.type === 'run'
+                  ? `Used as ${request.action.envVar} by: ${request.action.command}`
+                  : `Written to ${request.action.file} as ${request.action.key}`}
+              </Text>
+            </View>
           ) : null}
-          <Field
-            label="The secret"
-            value={secret}
-            onChangeText={setSecret}
-            secureTextEntry={!secretShown}
-            autoComplete="off"
-            textContentType="none"
-            testID="secret-input"
-            placeholder="Stays on the phone until you send it"
-          />
-          <View style={styles.options}>
-            <Button
-              title={secretShown ? 'Hide' : 'Show'}
-              kind="secondary"
+          <View style={styles.secretRow}>
+            <View style={{ flex: 1 }}>
+              <Field
+                label="The secret"
+                value={secret}
+                onChangeText={setSecret}
+                secureTextEntry={!secretShown}
+                autoComplete="off"
+                textContentType="none"
+                testID="secret-input"
+                placeholder="Stays on the phone until you send it"
+              />
+            </View>
+            <IconButton
+              name={secretShown ? 'eye-slash' : 'eye'}
+              label={secretShown ? 'Hide the secret' : 'Show the secret'}
               onPress={() => setSecretShown(!secretShown)}
               testID="secret-toggle"
             />
           </View>
-          <View style={styles.options}>
-            <Button
-              title="Send the secret"
-              onPress={() => submit(shapeSecret(secret))}
-              testID="secret-send"
-            />
-            <Button
+          <View style={styles.actions}>
+            <PromptButton
               title="Dismiss"
-              kind="secondary"
               onPress={() => onResolve(dismissal)}
               testID="request-dismiss"
+            />
+            <View style={{ flex: 1 }} />
+            <PromptButton
+              title="Send the secret"
+              primary
+              onPress={() => submit(shapeSecret(secret))}
+              testID="secret-send"
             />
           </View>
         </View>
       ) : (
-        <View style={{ gap: space.sm }}>
+        <View style={{ gap: space(3) }}>
           {request.questions?.length ? (
             <QuestionForm
               questions={request.questions}
@@ -207,56 +283,63 @@ function RequestCard({
               testID="request-questions"
             />
           ) : null}
-          {problem ? <Text style={styles.problem}>{problem}</Text> : null}
-          <View style={styles.options}>
+          {problem ? (
+            <Text style={[type(text.xs, 400, 1.5), { color: t.colors.destructive }]}>
+              {problem}
+            </Text>
+          ) : null}
+          <View style={styles.actions}>
+            {answersAsPermission(request)
+              ? denies.map((option) => (
+                  <PromptButton
+                    key={option.id}
+                    title={option.label}
+                    onPress={() => submit(shapePermission(request, option.id, replies))}
+                    testID={`request-option-${option.id}`}
+                  />
+                ))
+              : null}
+            <PromptButton
+              title="Dismiss"
+              onPress={() => onResolve(dismissal)}
+              testID="request-dismiss"
+            />
+            <View style={{ flex: 1 }} />
             {answersAsPermission(request) ? (
-              (request.options ?? []).map((option) => (
-                <Button
+              [...allows.slice(1).reverse(), ...allows.slice(0, 1)].map((option) => (
+                <PromptButton
                   key={option.id}
                   title={option.label}
-                  kind={option.id === 'deny' ? 'secondary' : 'primary'}
+                  primary={option === allows[0]}
                   onPress={() => submit(shapePermission(request, option.id, replies))}
                   testID={`request-option-${option.id}`}
                 />
               ))
             ) : (
-              <Button
+              <PromptButton
                 title="Answer"
+                primary
                 onPress={() => submit(shapeClarification(request, replies))}
                 testID="request-answer"
               />
             )}
-            <Button
-              title="Dismiss"
-              kind="secondary"
-              onPress={() => onResolve(dismissal)}
-              testID="request-dismiss"
-            />
           </View>
         </View>
       )}
-    </View>
+    </PromptCard>
   )
 }
 
 const styles = StyleSheet.create({
   card: {
+    marginHorizontal: gutter,
+    padding: 12,
+    paddingHorizontal: 14,
+    gap: space(2),
     borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: radius.lg,
-    padding: space.md,
-    gap: space.sm,
-    backgroundColor: colors.surface50
+    borderRadius: radius.xxl
   },
-  kicker: {
-    color: colors.warning,
-    fontSize: font.xs,
-    fontWeight: '600',
-    textTransform: 'uppercase'
-  },
-  title: { color: colors.textPrimary, fontSize: font.md },
-  detail: { color: colors.textSecondary, fontSize: font.sm },
-  notice: { color: colors.warning, fontSize: font.sm },
-  problem: { color: colors.destructive, fontSize: font.sm },
-  options: { flexDirection: 'row', flexWrap: 'wrap', gap: space.sm }
+  code: { padding: 8, paddingHorizontal: 10, borderRadius: radius.md, borderWidth: 1 },
+  secretRow: { flexDirection: 'row', alignItems: 'flex-end', gap: space(2) },
+  actions: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 6 }
 })

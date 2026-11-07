@@ -3,7 +3,8 @@ import { useEffect, useState, type ReactNode } from 'react'
 import { View } from 'react-native'
 import type { RootStackParamList } from '../navigation/RootNavigator'
 import { useServices, useStoreApi } from '../state/context'
-import { Button, ErrorText, Muted, Screen, Spinner } from '../ui/components'
+import { PaneHeader } from '../ui/PaneHeader'
+import { Button, EmptyState, Notice, Screen, Spinner } from '../ui/components'
 import { space } from '../ui/theme'
 import type { PairingState } from './pairing'
 
@@ -12,6 +13,7 @@ export function PairingScreen({ route, navigation }: Props): ReactNode {
   const { machineId } = route.params
   const beta = useServices().beta
   const store = useStoreApi()
+  const machine = store.getState().machines.find((candidate) => candidate.id === machineId)
   const [state, setState] = useState<PairingState>({ kind: 'requesting' })
   const [attempt, setAttempt] = useState(0)
   const [pushNote, setPushNote] = useState<string | null>(null)
@@ -57,29 +59,34 @@ export function PairingScreen({ route, navigation }: Props): ReactNode {
   }, [beta, store, machineId, attempt])
   return (
     <Screen>
-      <View style={{ padding: space.lg, gap: space.md }}>
+      <PaneHeader title="Pair this phone" meta={machine?.name} onBack={() => navigation.goBack()} />
+      <View style={{ paddingTop: space(6), gap: space(4) }}>
         {state.kind === 'requesting' || state.kind === 'waiting' ? (
           <>
-            <Spinner />
-            <Muted testID="pairing-waiting">
+            <View style={{ alignItems: 'center' }}>
+              <Spinner size={18} />
+            </View>
+            <Notice testID="pairing-waiting">
               Approve this phone on your Mac in Settings → Mobile. Clave checks every two seconds.
-            </Muted>
+            </Notice>
           </>
         ) : state.kind === 'approved' ? (
-          <>
-            <Muted testID="pairing-approved">
-              This phone is paired with {state.record.serverName}.
-            </Muted>
-            {pushNote ? <Muted>{pushNote}</Muted> : null}
-            <Button
-              title="Open workspaces"
-              testID="pairing-open"
-              onPress={() => navigation.replace('Workspaces', { machineId })}
-            />
-          </>
+          <EmptyState
+            icon="shield-check"
+            title={`This phone is paired with ${state.record.serverName}.`}
+            text={pushNote ?? undefined}
+            action={
+              <Button
+                title="Open workspaces"
+                testID="pairing-open"
+                onPress={() => navigation.replace('Workspaces', { machineId })}
+              />
+            }
+            testID="pairing-approved"
+          />
         ) : (
           <>
-            <ErrorText testID="pairing-failed">
+            <Notice tone="error" testID="pairing-failed">
               {state.kind === 'refused'
                 ? 'The owner refused this pairing.'
                 : state.kind === 'expired'
@@ -87,8 +94,14 @@ export function PairingScreen({ route, navigation }: Props): ReactNode {
                   : state.kind === 'failed'
                     ? state.message
                     : 'Pairing was cancelled.'}
-            </ErrorText>
-            <Button title="Pair again" onPress={() => setAttempt((n) => n + 1)} />
+            </Notice>
+            <View style={{ alignItems: 'center' }}>
+              <Button
+                title="Pair again"
+                kind="secondary"
+                onPress={() => setAttempt((n) => n + 1)}
+              />
+            </View>
           </>
         )}
       </View>

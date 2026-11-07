@@ -1,17 +1,21 @@
 /**
- * One conversation: the history paged newest first and the stream by
- * subscription, reduced by the ported reducer; the tool activity as
- * collapsed rows; the agent's permission cards answered through the write
- * route; a document the agent presented for review shown as a card with
- * the file read from the server; a composer whose draft is kept per
+ * One conversation, in the desktop chat view's shapes (`ChatView.tsx` in
+ * `plugins/chat-view`): the history paged newest first and the stream by
+ * subscription, reduced by the ported reducer; the transcript a reading
+ * column where the person's turns are the one boxed thing and the agent
+ * writes straight on the ground; tool runs as muted rows; the approvals the
+ * reader allowed folded into one; the prompt dock above the composer for
+ * what the agent waits on; the composer one raised box with the round Send
+ * that turns into Stop; a document the agent presented for review as a row
+ * that opens to the file read from the server. The draft is kept per
  * session on the device.
  */
 import type { NativeStackScreenProps } from '@react-navigation/native-stack'
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import {
+  Alert,
   FlatList,
   KeyboardAvoidingView,
-  Platform,
   Pressable,
   StyleSheet,
   Text,
@@ -19,35 +23,107 @@ import {
   View
 } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
-import type { Entry } from '../chat/reducer'
+import type { Entry, Permission } from '../chat/reducer'
+import { parseDelivery } from '../chat/delivery'
+import { blockKey, groupEntries, visibleEntries, type Block, type ToolEntry } from '../chat/tools'
 import type { Attachment } from '../contract/types'
 import { attachmentDraftKey } from '../attachments/drafts'
 import { discardUnknownSend } from '../reconnect/pass'
 import { hasMore } from '../chat/history'
 import type { RootStackParamList } from '../navigation/RootNavigator'
-import { shapeAnswers, type QuestionReply } from '../requests/answers'
 import { useSel, useServices, useStoreApi } from '../state/context'
 import { conversationKey } from '../state/store'
 import { REACHABILITY_LABEL, SESSION_STATE_LABEL, phoneSessionState } from '../state/session-state'
-import { Button, ErrorText, Muted, Pill, Screen, Spinner } from '../ui/components'
-import { colors, font, radius, space } from '../ui/theme'
-import { QuestionForm } from './QuestionForm'
+import { Icon } from '../ui/Icon'
+import { PaneHeader } from '../ui/PaneHeader'
+import {
+  Callout,
+  EmptyState,
+  IconButton,
+  Loading,
+  Notice,
+  PromptButton,
+  Screen,
+  Spinner,
+  StatusText
+} from '../ui/components'
+import {
+  chatGlyph,
+  codeSize,
+  control,
+  controlSm,
+  radius,
+  space,
+  text,
+  type,
+  useTheme,
+  withAlpha
+} from '../ui/theme'
+import { dotOf, reachStatus, stateInk } from '../ui/status'
+import { Attachments } from './chat/Attachments'
+import { CodeBlock, Markdown } from './chat/Markdown'
+import { ApprovalRun, PermissionRow, PromptDock } from './chat/PromptDock'
+import { ProviderMark } from './chat/ProviderMark'
+import { ToolGroup } from './chat/ToolRows'
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Chat'>
 
 const SIDE_PANEL_TOOL = 'clave_open_side_panel'
 const isDocumentTool = (name: string | undefined): boolean =>
   typeof name === 'string' && name.endsWith(SIDE_PANEL_TOOL)
-const shortName = (name: string | undefined): string =>
-  (name ?? 'tool').replace(/^mcp__[^_]+__/, '').replace(/^mcp__/, '')
-const excerpt = (value: unknown, max = 1_500): string => {
+const excerpt = (value: unknown, max = 6_000): string => {
   const text = typeof value === 'string' ? value : (JSON.stringify(value, null, 2) ?? '')
   return text.length > max ? `${text.slice(0, max)}…` : text
 }
 const dirname = (path: string): string => path.replace(/\/[^/]*$/, '') || '/'
+const AGENT_NAMES: Record<string, string> = { claude: 'Claude', codex: 'Codex', pi: 'Pi' }
+
+/** A document the agent presented stands on its own row, out of the run of
+ *  tools around it, so the desktop's grouping holds for everything else. */
+type Row = { key: string; block: Block | { kind: 'document'; tool: ToolEntry } }
+function rowsOf(entries: Entry[], first: number): Row[] {
+  const ordinal = (entry: Entry): number | undefined => {
+    const index = entries.indexOf(entry)
+    return index < 0 ? undefined : first + index
+  }
+  const rows: Row[] = []
+  for (const block of groupEntries(visibleEntries(entries))) {
+    if (block.kind !== 'tool-group' || !block.tools.some((tool) => isDocumentTool(tool.name))) {
+      rows.push({ key: blockKey(block, ordinal), block })
+      continue
+    }
+    let run: ToolEntry[] = []
+    const flush = (): void => {
+      if (run.length)
+        rows.push({
+          key: `tools-${run[0]!.id}`,
+          block: { kind: 'tool-group', id: run[0]!.id, tools: run }
+        })
+      run = []
+    }
+    for (const tool of block.tools) {
+      if (isDocumentTool(tool.name)) {
+        flush()
+        rows.push({ key: `document-${tool.id}`, block: { kind: 'document', tool } })
+      } else run.push(tool)
+    }
+    flush()
+  }
+  return rows
+}
+
+/** The requests the agent still waits on, oldest first. */
+const openRequests = (entries: Entry[]): Permission[] =>
+  entries.flatMap((entry) =>
+    entry.kind === 'permission' && entry.answer === undefined && !entry.answeredElsewhere
+      ? [entry.request]
+      : []
+  )
 
 export function ChatScreen({ navigation, route }: Props): ReactNode {
   const { machineId, sessionId } = route.params
+  const t = useTheme()
+  const insets = useSafeAreaInsets()
   const store = useStoreApi()
   const services = useServices()
   const key = conversationKey(machineId, sessionId)
@@ -63,6 +139,7 @@ export function ChatScreen({ navigation, route }: Props): ReactNode {
   /** A send whose outcome nobody can tell: kept until the person decides. */
   const [delivery, setDelivery] = useState<{ clientMessageId: string; reason: string } | null>(null)
   const [sending, setSending] = useState(false)
+  const [pendingAnswers, setPendingAnswers] = useState<string[]>([])
   const latestDraft = useRef('')
 
   useEffect(() => {
@@ -125,25 +202,21 @@ export function ChatScreen({ navigation, route }: Props): ReactNode {
     void services.drafts.set(machineId, sessionId, text)
   }
 
-  useEffect(() => {
-    if (session?.title) navigation.setOptions({ title: session.title })
-  }, [navigation, session?.title])
-
   const conversation = state?.conversation
   const phoneState = conversation
     ? phoneSessionState(conversation.state, fatal)
     : session
       ? phoneSessionState(session.state, fatal)
       : null
+  const ended = conversation?.state === 'ended'
+  const working = phoneState === 'working'
 
-  const entries = useMemo(() => {
+  const rows = useMemo(() => {
     const list = conversation?.entries ?? []
     const first = conversation?.first ?? 0
-    return list
-      .map((entry, index) => ({ entry, id: first + index }))
-      .filter(({ entry }) => !(entry.kind === 'user' && entry.withdrawn))
-      .reverse()
+    return rowsOf(list, first).reverse()
   }, [conversation])
+  const waitingOn = useMemo(() => openRequests(conversation?.entries ?? []), [conversation])
 
   const send = async (): Promise<void> => {
     if ((!draft.trim() && !attachments.length) || sending || attaching) return
@@ -222,6 +295,20 @@ export function ChatScreen({ navigation, route }: Props): ReactNode {
       setAttaching(false)
     }
   }
+  const removeAttachment = (id: string): void => {
+    const next = attachments.filter((item) => item.id !== id)
+    setAttachments(next)
+    void services.kv.setItem(attachmentDraftKey(machineId, sessionId), JSON.stringify(next))
+  }
+  /** The paper clip asks which source, the phone's way of the desktop's file picker. */
+  const pickSource = (): void => {
+    Alert.alert('Add to the message', undefined, [
+      { text: 'Photos', onPress: () => void attach('photos') },
+      { text: 'Camera', onPress: () => void attach('camera') },
+      { text: 'File', onPress: () => void attach('files') },
+      { text: 'Cancel', style: 'cancel' }
+    ])
+  }
 
   const answer = useCallback(
     async (
@@ -229,253 +316,384 @@ export function ChatScreen({ navigation, route }: Props): ReactNode {
       optionId: string,
       answers?: Record<string, string>
     ): Promise<void> => {
-      const outcome = await store
-        .getState()
-        .answerInChat(machineId, sessionId, requestId, optionId, answers)
-      if (!outcome.ok) setSendError(outcome.error ?? 'The answer was not sent.')
+      setPendingAnswers((ids) => [...ids, requestId])
+      try {
+        const outcome = await store
+          .getState()
+          .answerInChat(machineId, sessionId, requestId, optionId, answers)
+        if (!outcome.ok) setSendError(outcome.error ?? 'The answer was not sent.')
+      } finally {
+        setPendingAnswers((ids) => ids.filter((id) => id !== requestId))
+      }
     },
     [store, machineId, sessionId]
   )
 
-  const insets = useSafeAreaInsets()
   const loadingOlder = state?.cursor.loading ?? false
+  const loaded = !!state && state.cursor.loaded
+  const attachBlocked = sending || attaching || attachments.length >= 10 || !services.beta
+  const hasDraft = draft.trim() !== '' || attachments.length > 0
+  const sendDisabled = !hasDraft || sending || attaching || !!delivery || ended || !draftLoaded
+  const title = session?.title || route.params.title || 'Chat'
 
   return (
     <Screen>
-      <KeyboardAvoidingView
-        style={{ flex: 1 }}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        keyboardVerticalOffset={Platform.OS === 'ios' ? insets.top + 44 : 0}
-      >
-        <View style={styles.status}>
-          {phoneState ? (
-            <Pill
-              text={SESSION_STATE_LABEL[phoneState]}
-              tone={
-                phoneState === 'working'
-                  ? 'accent'
-                  : phoneState === 'waiting'
-                    ? 'warning'
-                    : phoneState === 'error'
-                      ? 'danger'
-                      : 'neutral'
-              }
-              testID="chat-state"
-            />
-          ) : null}
-          <Pill
-            text={REACHABILITY_LABEL[reach]}
-            tone={reach === 'reachable' ? 'success' : reach === 'connecting' ? 'neutral' : 'danger'}
-            testID="chat-reachability"
-          />
-          <View style={{ flex: 1 }} />
-          {phoneState === 'working' ? (
-            <Button
-              title="Stop"
-              kind="secondary"
-              onPress={() => void store.getState().interrupt(machineId, sessionId)}
-              testID="chat-stop"
-            />
-          ) : null}
-        </View>
-        {state?.error ? <ErrorText testID="chat-error">{state.error}</ErrorText> : null}
-        {state?.cursor.truncated ? (
-          <Muted testID="history-retention">Only recent history is retained on this server.</Muted>
+      <PaneHeader
+        title={title}
+        meta={session ? `${AGENT_NAMES[session.provider] ?? session.provider}` : undefined}
+        status={phoneState ? dotOf[phoneState] : null}
+        onBack={() => navigation.goBack()}
+        actions={
+          <View style={styles.headerStatus}>
+            <StatusText status={reachStatus(reach)} testID="chat-reachability">
+              {REACHABILITY_LABEL[reach]}
+            </StatusText>
+          </View>
+        }
+      />
+      <KeyboardAvoidingView style={styles.fill} behavior="padding" keyboardVerticalOffset={0}>
+        {state?.error ? (
+          <Notice tone="error" style={{ marginTop: space(2) }} testID="chat-error">
+            {state.error}
+          </Notice>
         ) : null}
         <FlatList
           inverted
-          data={entries}
-          keyExtractor={(item) => String(item.id)}
+          data={rows}
+          keyExtractor={(row) => row.key}
           renderItem={({ item }) => (
-            <EntryRow entry={item.entry} machineId={machineId} onAnswer={answer} />
+            <TranscriptRow row={item} machineId={machineId} onAnswer={answer} />
           )}
           onEndReachedThreshold={0.6}
           onEndReached={() => {
             if (state && hasMore(state.cursor))
               void store.getState().loadOlder(machineId, sessionId)
           }}
-          ListFooterComponent={loadingOlder ? <Spinner /> : undefined}
+          ListHeaderComponent={
+            <View style={styles.foot}>
+              {working ? <ProviderMark provider={session?.provider ?? 'agent'} /> : null}
+              {ended ? (
+                <Notice testID="chat-ended">
+                  Session ended
+                  {conversation?.exitCode !== undefined ? ` (exit ${conversation.exitCode})` : ''}
+                </Notice>
+              ) : null}
+            </View>
+          }
+          ListFooterComponent={
+            <View style={styles.head}>
+              {state?.cursor.truncated ? (
+                <Notice testID="history-retention">
+                  Only recent history is retained on this server.
+                </Notice>
+              ) : null}
+              {loadingOlder ? (
+                <View
+                  style={[
+                    styles.earlier,
+                    t.overlay,
+                    { backgroundColor: t.colors.surfaceRaised, borderColor: t.colors.borderSubtle }
+                  ]}
+                >
+                  <Spinner size={chatGlyph} color={t.colors.textSecondary} />
+                  <Text style={[type(text.xs), { color: t.colors.textSecondary }]}>
+                    Reading earlier messages…
+                  </Text>
+                </View>
+              ) : null}
+            </View>
+          }
           ListEmptyComponent={
-            !state || !state.cursor.loaded ? (
-              <Spinner />
+            !loaded ? (
+              <View style={styles.emptyFlip}>
+                <Loading />
+              </View>
             ) : (
-              <Muted testID="chat-empty">Nothing in this conversation yet.</Muted>
+              <View style={styles.emptyFlip}>
+                <EmptyState
+                  icon="chat-bubble-left-right"
+                  title="Start a conversation"
+                  text="Ask a question or describe what you want to build."
+                  testID="chat-empty"
+                />
+              </View>
             )
           }
-          contentContainerStyle={styles.list}
+          contentContainerStyle={styles.column}
+          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="interactive"
           testID="chat-transcript"
         />
-        {sendError ? <ErrorText testID="send-error">{sendError}</ErrorText> : undefined}
-        {delivery && !sending ? (
-          <View style={styles.delivery} testID="delivery-unknown">
-            <Text style={styles.deliveryText}>Delivery unknown. {delivery.reason}</Text>
-            <View style={styles.options}>
-              <Button
-                title="Send again (may duplicate)"
-                kind="secondary"
-                onPress={() => void send()}
-                testID="delivery-send-again"
+        <View style={[styles.composerWrap, { paddingBottom: Math.max(insets.bottom, space(2)) }]}>
+          {sendError ? (
+            <Notice
+              tone="error"
+              style={{ marginHorizontal: 0, marginBottom: space(2) }}
+              testID="send-error"
+            >
+              {sendError}
+            </Notice>
+          ) : null}
+          {delivery && !sending ? (
+            <View style={{ marginBottom: space(2) }}>
+              <Callout
+                title="Delivery unknown"
+                testID="delivery-unknown"
+                actions={
+                  <>
+                    <PromptButton
+                      title="Discard"
+                      onPress={() => void discard()}
+                      testID="delivery-discard"
+                    />
+                    <PromptButton
+                      title="Send again (may duplicate)"
+                      primary
+                      onPress={() => void send()}
+                      testID="delivery-send-again"
+                    />
+                  </>
+                }
+              >
+                {delivery.reason}
+              </Callout>
+            </View>
+          ) : null}
+          {sending ? <Notice testID="sending">Sending…</Notice> : null}
+          <PromptDock
+            requests={waitingOn}
+            agent={AGENT_NAMES[session?.provider ?? ''] ?? 'the agent'}
+            busy={(id) => !loaded || ended || pendingAnswers.includes(id)}
+            onAnswer={(id, optionId, answers) => void answer(id, optionId, answers)}
+          />
+          <View
+            style={[
+              styles.composer,
+              t.raised,
+              { backgroundColor: t.colors.surfaceRaised, borderColor: t.colors.borderSubtle }
+            ]}
+          >
+            {attachments.length ? (
+              <View style={styles.files}>
+                <Attachments
+                  files={attachments}
+                  onRemove={sending || attaching ? undefined : removeAttachment}
+                />
+              </View>
+            ) : null}
+            <View style={styles.composerLine}>
+              <TextInput
+                style={[type(text.sm, 400, 1.5), styles.input, { color: t.colors.textPrimary }]}
+                multiline
+                value={draft}
+                onChangeText={changeDraft}
+                editable={draftLoaded && !sending && !ended}
+                placeholder={ended ? 'This session has ended' : 'Write a message…'}
+                placeholderTextColor={t.colors.textTertiary}
+                testID="composer-input"
+                accessibilityLabel="Message"
               />
-              <Button
-                title="Discard"
-                kind="secondary"
-                onPress={() => void discard()}
-                testID="delivery-discard"
-              />
+              {working ? (
+                <Pressable
+                  onPress={() => void store.getState().interrupt(machineId, sessionId)}
+                  style={({ pressed }) => [
+                    styles.send,
+                    { backgroundColor: pressed ? t.colors.actionHover : t.colors.action },
+                    pressed ? { transform: [{ scale: 0.97 }] } : null
+                  ]}
+                  accessibilityRole="button"
+                  accessibilityLabel="Interrupt"
+                  testID="chat-stop"
+                >
+                  <Icon name="stop" size={chatGlyph} color={t.colors.actionForeground} />
+                </Pressable>
+              ) : (
+                <Pressable
+                  onPress={() => void send()}
+                  disabled={sendDisabled}
+                  style={({ pressed }) => [
+                    styles.send,
+                    sendDisabled
+                      ? { backgroundColor: t.colors.surface200 }
+                      : { backgroundColor: pressed ? t.colors.actionHover : t.colors.action },
+                    pressed && !sendDisabled ? { transform: [{ scale: 0.97 }] } : null
+                  ]}
+                  accessibilityRole="button"
+                  accessibilityLabel="Send message"
+                  accessibilityState={{ disabled: sendDisabled }}
+                  testID="composer-send"
+                >
+                  <Icon
+                    name="arrow-up"
+                    size={chatGlyph}
+                    color={sendDisabled ? t.colors.textTertiary : t.colors.actionForeground}
+                  />
+                </Pressable>
+              )}
             </View>
           </View>
-        ) : undefined}
-        {sending ? <Muted testID="sending">Sending…</Muted> : undefined}
-        {attachments.length ? (
-          <View style={styles.options}>
-            {attachments.map((file) => (
-              <Button
-                key={file.id}
-                title={`${file.label ?? file.name} ×`}
-                kind="secondary"
-                disabled={sending || attaching}
-                onPress={() => {
-                  const next = attachments.filter((item) => item.id !== file.id)
-                  setAttachments(next)
-                  void services.kv.setItem(
-                    attachmentDraftKey(machineId, sessionId),
-                    JSON.stringify(next)
-                  )
-                }}
+          <View style={styles.footer}>
+            <View style={styles.footerLead}>
+              <IconButton
+                name="paper-clip"
+                size="sm"
+                label="Add files"
+                onPress={pickSource}
+                disabled={attachBlocked}
+                testID="attach-file"
               />
-            ))}
+              {phoneState && phoneState !== 'idle' && phoneState !== 'finished' ? (
+                <Text
+                  style={[type(text.xs), { color: stateInk(t, phoneState) }]}
+                  testID="chat-state"
+                >
+                  {SESSION_STATE_LABEL[phoneState]}
+                </Text>
+              ) : null}
+            </View>
+            {conversation?.model ? (
+              <Text style={[type(text.xs), { color: t.colors.textTertiary }]} numberOfLines={1}>
+                {conversation.model}
+              </Text>
+            ) : null}
           </View>
-        ) : null}
-        {services.beta ? (
-          <View style={styles.options}>
-            <Button
-              title="Photos"
-              kind="secondary"
-              disabled={sending || attaching || attachments.length >= 10}
-              onPress={() => void attach('photos')}
-              testID="attach-photos"
-            />
-            <Button
-              title="Camera"
-              kind="secondary"
-              disabled={sending || attaching || attachments.length >= 10}
-              onPress={() => void attach('camera')}
-            />
-            <Button
-              title="File"
-              kind="secondary"
-              disabled={sending || attaching || attachments.length >= 10}
-              onPress={() => void attach('files')}
-              testID="attach-file"
-            />
-          </View>
-        ) : null}
-        <View style={[styles.composer, { paddingBottom: Math.max(insets.bottom, space.sm) }]}>
-          <TextInput
-            style={styles.input}
-            multiline
-            value={draft}
-            onChangeText={changeDraft}
-            editable={draftLoaded && !sending}
-            placeholder="Message the agent"
-            placeholderTextColor={colors.textTertiary}
-            testID="composer-input"
-            accessibilityLabel="Message"
-          />
-          <Button
-            title="Send"
-            onPress={() => void send()}
-            disabled={(!draft.trim() && !attachments.length) || sending || attaching || !!delivery}
-            testID="composer-send"
-          />
         </View>
       </KeyboardAvoidingView>
     </Screen>
   )
 }
 
-function EntryRow({
-  entry,
+/** One block of the transcript as the desktop's `TranscriptRow` draws it,
+ *  with the column's air above it. */
+const TranscriptRow = memo(function TranscriptRow({
+  row,
   machineId,
   onAnswer
 }: {
-  entry: Entry
+  row: Row
   machineId: string
   onAnswer: (requestId: string, optionId: string, answers?: Record<string, string>) => Promise<void>
 }): ReactNode {
+  const { block } = row
+  return (
+    <View style={styles.row}>
+      {block.kind === 'tool-group' ? (
+        <ToolGroup group={block} />
+      ) : block.kind === 'approval-group' ? (
+        <ApprovalRun group={block} />
+      ) : block.kind === 'delivery-group' ? (
+        <View style={{ gap: space(5) }}>
+          {block.messages.map((entry, i) => (
+            <EntryRow key={i} entry={entry} />
+          ))}
+        </View>
+      ) : block.kind === 'document' ? (
+        <DocumentRow tool={block.tool} machineId={machineId} />
+      ) : (
+        <EntryRow entry={block} onAnswer={onAnswer} />
+      )}
+    </View>
+  )
+})
+
+function EntryRow({
+  entry
+}: {
+  entry: Entry
+  onAnswer?: (
+    requestId: string,
+    optionId: string,
+    answers?: Record<string, string>
+  ) => Promise<void>
+}): ReactNode {
+  const t = useTheme()
   switch (entry.kind) {
-    case 'user':
+    case 'user': {
+      const delivery = parseDelivery(entry.text)
+      const body = (delivery ? delivery.body : entry.text).replace(/\s+$/, '')
       return (
-        <View
-          style={[styles.bubble, styles.user, entry.interrupted && styles.dim]}
-          testID="entry-user"
-        >
-          <Text style={styles.userText}>{entry.text}</Text>
-          {entry.attachments?.length ? (
-            <Text style={styles.meta}>{entry.attachments.map((a) => a.name).join(', ')}</Text>
+        <View style={styles.turnEnd} testID="entry-user">
+          <Attachments files={entry.attachments ?? []} align="end" />
+          {body ? (
+            <View
+              style={[
+                styles.userTurn,
+                entry.interrupted
+                  ? {
+                      backgroundColor: 'transparent',
+                      borderWidth: 1,
+                      borderColor: t.colors.borderSubtle
+                    }
+                  : {
+                      backgroundColor: delivery
+                        ? withAlpha(t.colors.termModel, 0.12)
+                        : t.colors.surface100
+                    }
+              ]}
+            >
+              {delivery ? (
+                <View
+                  style={[styles.from, { backgroundColor: withAlpha(t.colors.termModel, 0.16) }]}
+                >
+                  <Icon name="arrow-turn-down-right" size={12} color={t.colors.termModel} />
+                  <Text style={[type(text.xs), { color: t.colors.termModel }]} numberOfLines={1}>
+                    {delivery.sender?.name ?? 'Another agent'}
+                  </Text>
+                </View>
+              ) : null}
+              <Text
+                style={[
+                  type(text.sm, 400, 1.6),
+                  { color: entry.interrupted ? t.colors.textTertiary : t.colors.textPrimary }
+                ]}
+                selectable
+              >
+                {body}
+              </Text>
+            </View>
           ) : null}
-          {entry.interrupted ? <Text style={styles.meta}>Stopped</Text> : null}
+          {entry.interrupted ? (
+            <Text
+              style={[
+                type(text.xs),
+                { color: t.colors.textTertiary, paddingTop: space(1), paddingHorizontal: space(1) }
+              ]}
+            >
+              Interrupted
+            </Text>
+          ) : null}
         </View>
       )
+    }
     case 'assistant':
       return entry.text.trim() ? (
-        <View style={[styles.bubble, styles.assistant]} testID="entry-assistant">
-          <Text style={styles.assistantText}>{entry.text}</Text>
+        <View style={styles.assistantTurn} testID="entry-assistant">
+          <Markdown text={entry.text} />
         </View>
       ) : null
-    case 'tool':
-      return isDocumentTool(entry.name) ? (
-        <DocumentCard entry={entry} machineId={machineId} />
-      ) : (
-        <ToolRow entry={entry} />
-      )
     case 'permission':
-      return <PermissionCard entry={entry} onAnswer={onAnswer} />
+      return <PermissionRow entry={entry} />
     case 'error':
       return (
-        <View style={[styles.bubble, styles.errorBubble]} testID="entry-error">
-          <Text style={{ color: colors.destructive, fontSize: font.sm }}>{entry.message}</Text>
-        </View>
+        <Notice tone="error" style={{ marginHorizontal: 0 }} testID="entry-error">
+          {entry.message}
+        </Notice>
       )
+    case 'tool':
+      return null
   }
 }
 
-function ToolRow({ entry }: { entry: Extract<Entry, { kind: 'tool' }> }): ReactNode {
-  const [open, setOpen] = useState(false)
-  return (
-    <Pressable onPress={() => setOpen(!open)} style={styles.tool} testID="entry-tool">
-      <Text style={[styles.toolTitle, entry.failed && { color: colors.destructive }]}>
-        {open ? '▾' : '▸'} {shortName(entry.name)}
-        {!entry.complete ? ' · running' : entry.failed ? ' · failed' : ''}
-      </Text>
-      {open ? (
-        <View style={{ gap: space.xs }}>
-          {entry.input !== undefined ? (
-            <Text style={styles.code}>{excerpt(entry.input)}</Text>
-          ) : null}
-          {entry.output !== undefined ? (
-            <Text style={styles.code}>{excerpt(entry.output)}</Text>
-          ) : null}
-        </View>
-      ) : null}
-    </Pressable>
-  )
-}
-
-/** The agent presented a document for review (`clave_open_side_panel`):
- *  the file is read from the server; editing is done on the Mac. */
-function DocumentCard({
-  entry,
-  machineId
-}: {
-  entry: Extract<Entry, { kind: 'tool' }>
-  machineId: string
-}): ReactNode {
+/** The agent presented a document for review (`clave_open_side_panel`): a
+ *  row like a tool's that opens to the file read from the server; editing
+ *  is done on the Mac. */
+function DocumentRow({ tool, machineId }: { tool: ToolEntry; machineId: string }): ReactNode {
+  const t = useTheme()
   const store = useStoreApi()
-  const input = (entry.input ?? {}) as {
+  const input = (tool.input ?? {}) as {
     path?: unknown
     title?: unknown
-    email?: { subject?: unknown; to?: unknown }
+    email?: { subject?: unknown }
   }
   const path = typeof input.path === 'string' ? input.path : null
   const title =
@@ -484,208 +702,168 @@ function DocumentCard({
       : path
         ? (path.split('/').pop() ?? path)
         : 'A document'
-  const [text, setText] = useState<string | null>(null)
+  const [body, setBody] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [open, setOpen] = useState(false)
   useEffect(() => {
-    if (!open || text !== null || !path) return
+    if (!open || body !== null || !path) return
     store
       .getState()
       .readFile(machineId, dirname(path), path)
       .then((file) =>
-        setText(file.binary ? 'This file is binary.' : file.content + (file.truncated ? '\n…' : ''))
+        setBody(file.binary ? 'This file is binary.' : file.content + (file.truncated ? '\n…' : ''))
       )
       .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
-  }, [open, text, path, machineId, store])
+  }, [open, body, path, machineId, store])
   const email = input.email
   return (
-    <Pressable onPress={() => setOpen(!open)} style={styles.document} testID="entry-document">
-      <Text style={styles.documentKicker}>Document for review</Text>
-      <Text style={styles.documentTitle}>{title}</Text>
-      {email ? (
-        <Text style={styles.meta}>
-          Email{typeof email.subject === 'string' ? `: ${email.subject}` : ''}
+    <View testID="entry-document">
+      <Pressable
+        onPress={() => setOpen(!open)}
+        style={styles.documentRow}
+        accessibilityRole="button"
+        accessibilityState={{ expanded: open }}
+      >
+        <Icon name="document-text" size={chatGlyph} color={t.colors.textTertiary} />
+        <Text
+          style={[type(codeSize), { color: t.colors.textTertiary, flexShrink: 1 }]}
+          numberOfLines={1}
+        >
+          Document for review
+          <Text>{`  ${title}`}</Text>
         </Text>
-      ) : null}
-      {path ? <Text style={styles.meta}>{path}</Text> : null}
-      <Text style={styles.meta}>Editing is done on the Mac.</Text>
-      {open && path ? (
-        error ? (
-          <Text style={{ color: colors.destructive, fontSize: font.sm }}>{error}</Text>
-        ) : text === null ? (
-          <Spinner />
-        ) : (
-          <Text style={styles.code} testID="document-text">
-            {excerpt(text, 6_000)}
+        <Icon
+          name="chevron-right"
+          size={chatGlyph}
+          color={t.colors.textTertiary}
+          style={{ transform: [{ rotate: open ? '90deg' : '0deg' }], opacity: open ? 1 : 0.6 }}
+        />
+      </Pressable>
+      {open ? (
+        <View
+          style={[
+            styles.panel,
+            { borderColor: t.colors.borderSubtle, backgroundColor: t.colors.surface50 }
+          ]}
+        >
+          <Text style={[type(text.xs), { color: t.colors.textTertiary }]}>
+            {email
+              ? `Email${typeof email.subject === 'string' ? `: ${email.subject}` : ''}`
+              : 'Document'}
+            {path ? `  ${path}` : ''}
           </Text>
-        )
-      ) : null}
-    </Pressable>
-  )
-}
-
-function PermissionCard({
-  entry,
-  onAnswer
-}: {
-  entry: Extract<Entry, { kind: 'permission' }>
-  onAnswer: (requestId: string, optionId: string, answers?: Record<string, string>) => Promise<void>
-}): ReactNode {
-  const { request } = entry
-  const [replies, setReplies] = useState<Record<string, QuestionReply>>({})
-  const [problem, setProblem] = useState<string | null>(null)
-  const settled = entry.answer !== undefined || entry.answeredElsewhere
-  const choose = (optionId: string): void => {
-    setProblem(null)
-    if (request.questions?.length && optionId === 'answer') {
-      const shaped = shapeAnswers(request.questions, replies)
-      if (!shaped.ok) return setProblem(shaped.problem)
-      void onAnswer(request.id, optionId, shaped.answers)
-      return
-    }
-    void onAnswer(request.id, optionId)
-  }
-  return (
-    <View style={styles.card} testID="entry-permission">
-      <Text style={styles.cardKicker}>
-        {request.toolName ? `${request.toolName} asks` : 'The agent asks'}
-      </Text>
-      <Text style={styles.cardTitle}>{request.description}</Text>
-      {request.detail ? <Text style={styles.code}>{excerpt(request.detail, 600)}</Text> : null}
-      {settled ? (
-        <Text style={styles.meta} testID="permission-settled">
-          {entry.answer
-            ? `Answered: ${request.options.find((o) => o.id === entry.answer)?.label ?? entry.answer}`
-            : 'Answered elsewhere'}
-        </Text>
-      ) : (
-        <View style={{ gap: space.sm }}>
-          {request.questions?.length ? (
-            <QuestionForm
-              questions={request.questions}
-              replies={replies}
-              onChange={(k, reply) => setReplies({ ...replies, [k]: reply })}
-            />
+          <Text style={[type(text.xs), { color: t.colors.textTertiary }]}>
+            Editing is done on the Mac.
+          </Text>
+          {path ? (
+            error ? (
+              <Text style={[type(text.xs), { color: t.colors.destructive }]}>{error}</Text>
+            ) : body === null ? (
+              <Spinner />
+            ) : (
+              <View testID="document-text">
+                <CodeBlock code={excerpt(body)} style="panel" />
+              </View>
+            )
           ) : null}
-          {problem ? (
-            <Text style={{ color: colors.destructive, fontSize: font.sm }}>{problem}</Text>
-          ) : null}
-          <View style={styles.options}>
-            {request.options.map((option) => (
-              <Button
-                key={option.id}
-                title={option.label}
-                kind={option.id === 'deny' ? 'secondary' : 'primary'}
-                onPress={() => choose(option.id)}
-                testID={`permission-option-${option.id}`}
-              />
-            ))}
-          </View>
         </View>
-      )}
+      ) : null}
     </View>
   )
 }
 
 const styles = StyleSheet.create({
-  status: {
+  fill: { flex: 1 },
+  headerStatus: { paddingHorizontal: controlSm.px },
+  column: {
+    paddingHorizontal: space(4),
+    paddingTop: space(6),
+    paddingBottom: space(4),
+    flexGrow: 1
+  },
+  row: { paddingTop: space(5) },
+  head: { gap: space(2), paddingBottom: space(2) },
+  foot: { gap: space(3) },
+  earlier: {
+    alignSelf: 'center',
     flexDirection: 'row',
     alignItems: 'center',
-    gap: space.sm,
-    paddingHorizontal: space.lg,
-    paddingVertical: space.sm
+    gap: space(1.5),
+    height: control.h,
+    paddingHorizontal: space(3),
+    borderRadius: radius.full,
+    borderWidth: 1
   },
-  list: { paddingHorizontal: space.lg, paddingVertical: space.md, gap: space.sm },
-  bubble: {
-    borderRadius: radius.lg,
-    paddingHorizontal: space.md,
-    paddingVertical: space.sm,
-    maxWidth: '92%'
+  emptyFlip: { transform: [{ scaleY: -1 }], flex: 1, justifyContent: 'center' },
+  turnEnd: { alignItems: 'flex-end', gap: space(1.5) },
+  userTurn: {
+    maxWidth: '85%',
+    paddingVertical: space(2),
+    paddingHorizontal: space(3.5),
+    borderRadius: radius.xxl,
+    gap: space(1)
   },
-  user: { alignSelf: 'flex-end', backgroundColor: colors.surface300 },
-  assistant: { alignSelf: 'flex-start', backgroundColor: colors.surface100 },
-  errorBubble: {
-    alignSelf: 'stretch',
-    backgroundColor: colors.surface100,
-    borderWidth: 1,
-    borderColor: colors.destructive
-  },
-  userText: { color: colors.textPrimary, fontSize: font.md },
-  assistantText: { color: colors.textPrimary, fontSize: font.md, lineHeight: 22 },
-  meta: { color: colors.textTertiary, fontSize: font.xs, marginTop: 2 },
-  dim: { opacity: 0.6 },
-  tool: { paddingHorizontal: space.sm, paddingVertical: space.xs, gap: space.xs },
-  toolTitle: { color: colors.textSecondary, fontSize: font.sm },
-  code: {
-    color: colors.textSecondary,
-    fontSize: font.xs,
-    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
-    backgroundColor: colors.surface50,
-    borderRadius: radius.sm,
-    padding: space.sm
-  },
-  card: {
-    borderWidth: 1,
-    borderColor: colors.warning,
-    borderRadius: radius.lg,
-    padding: space.md,
-    gap: space.sm,
-    backgroundColor: colors.surface50
-  },
-  cardKicker: {
-    color: colors.warning,
-    fontSize: font.xs,
-    fontWeight: '600',
-    textTransform: 'uppercase'
-  },
-  cardTitle: { color: colors.textPrimary, fontSize: font.md },
-  options: { flexDirection: 'row', flexWrap: 'wrap', gap: space.sm },
-  document: {
-    borderWidth: 1,
-    borderColor: colors.accent,
-    borderRadius: radius.lg,
-    padding: space.md,
-    gap: space.xs,
-    backgroundColor: colors.surface50
-  },
-  documentKicker: {
-    color: colors.accent,
-    fontSize: font.xs,
-    fontWeight: '600',
-    textTransform: 'uppercase'
-  },
-  documentTitle: { color: colors.textPrimary, fontSize: font.md },
-  delivery: {
-    marginHorizontal: space.lg,
-    marginBottom: space.sm,
-    padding: space.md,
-    gap: space.sm,
-    borderWidth: 1,
-    borderColor: colors.warning,
-    borderRadius: radius.md,
-    backgroundColor: colors.surface50
-  },
-  deliveryText: { color: colors.textPrimary, fontSize: font.sm },
-  composer: {
+  from: {
+    alignSelf: 'flex-start',
     flexDirection: 'row',
-    alignItems: 'flex-end',
-    gap: space.sm,
-    paddingHorizontal: space.lg,
-    paddingTop: space.sm,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: colors.border,
-    backgroundColor: colors.surface50
+    alignItems: 'center',
+    gap: space(1),
+    paddingHorizontal: space(1.5),
+    paddingVertical: 1,
+    borderRadius: space(1.5)
   },
+  assistantTurn: { paddingHorizontal: space(1) },
+  documentRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space(2),
+    paddingVertical: 3,
+    minHeight: 28
+  },
+  panel: {
+    gap: space(1.5),
+    marginTop: 2,
+    padding: space(2),
+    paddingHorizontal: space(2.5),
+    paddingBottom: space(2.5),
+    borderWidth: 1,
+    borderRadius: radius.lg
+  },
+  composerWrap: { paddingHorizontal: space(3), paddingTop: space(1) },
+  composer: {
+    borderWidth: 1,
+    borderRadius: radius.xxl,
+    paddingVertical: space(1.5),
+    paddingLeft: space(3.5),
+    paddingRight: space(1.5)
+  },
+  files: { paddingTop: space(1), paddingBottom: space(1.5) },
+  composerLine: { flexDirection: 'row', alignItems: 'flex-end', gap: space(2) },
   input: {
     flex: 1,
-    color: colors.textPrimary,
-    backgroundColor: colors.surface100,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: radius.md,
-    paddingHorizontal: space.md,
-    paddingVertical: space.sm,
-    fontSize: font.md,
-    maxHeight: 140
-  }
+    minWidth: 0,
+    minHeight: control.h - space(1.5),
+    maxHeight: 192,
+    paddingVertical: 5,
+    paddingHorizontal: 0
+  },
+  send: {
+    width: controlSm.h,
+    height: controlSm.h,
+    borderRadius: radius.full,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 2,
+    flexShrink: 0
+  },
+  footer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: space(2),
+    minHeight: space(5),
+    marginTop: space(1),
+    paddingHorizontal: space(1)
+  },
+  footerLead: { flexDirection: 'row', alignItems: 'center', gap: space(1.5), minWidth: 0 }
 })
