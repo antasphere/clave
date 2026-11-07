@@ -37,11 +37,29 @@ checkout do not sweep each other's files or tmux sessions. Run only one suite
 per namespace. SIGINT and SIGTERM ask workers to clean up their own apps,
 servers and tmux sessions. Failed runs retain fixtures for diagnosis.
 
-CI uses four macOS suite shards, with one Electron process per runner. Each
-runner then executes its assigned gates. Every existing gate and all three
-server modes still run once. This needs four runners in total; it avoids a
-separate gate job competing for a fifth slot. Each job installs and builds its
-own checkout. Account capacity and unrelated runs can still add queue time.
+CI uses two macOS jobs, each running three independent worker processes. Host 1
+runs global shards 1/6, 2/6 and 3/6; host 2 runs 4/6, 5/6 and 6/6. To reproduce
+one host's batch, run `node tests/e2e/ci-batch.mjs 1/2 --report-dir=e2e-reports`
+on a built Mac checkout, using a separate empty report directory on each host.
+The batch command accepts no filename filters or worker-count override.
+
+Every child process status must agree with its report. The coordinator alone
+writes a completion output after checking all three workers. A separate required
+step checks that output, so a fatal process exit cannot hide behind the report
+step's `continue-on-error`. Ordinary failed assertions still appear as FAIL,
+KNOWN or UNSTABLE and retain the original report policy. The aggregate requires
+all six original shard reports against the checkout's full inventory.
+
+Each host then runs its assigned gates. Every existing gate and all three server
+modes still run once. This needs two hosted Mac slots, with at most three suite
+workers on either host. Each job installs and builds its own checkout. Account
+capacity and unrelated runs can still add queue time.
+
+Each batch also preserves `resources-host-N.json`: host CPU/memory capacity,
+worker exit statuses, swap usage before/after, and process-tree resource samples
+every two seconds. RSS sums include shared pages and the short-lived probe;
+CPU percentages are process lifetime averages. These are sampled observations,
+not exact physical-memory peaks, and never affect placement or test policy.
 
 Clipboard specs share a shard because fixture namespaces cannot isolate the
 system pasteboard. List every clipboard producer or consumer in

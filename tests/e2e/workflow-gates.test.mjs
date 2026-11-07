@@ -6,8 +6,7 @@ const workflow = parse(
   readFileSync(new URL('../../.github/workflows/checks.yml', import.meta.url), 'utf8')
 )
 const jobs = workflow.jobs
-const matrix =
-  '${{ inputs.baseline && fromJSON(\'["baseline"]\') || fromJSON(\'["1","2","3","4"]\') }}'
+const matrix = '${{ inputs.baseline && fromJSON(\'["baseline"]\') || fromJSON(\'["1","2"]\') }}'
 const expectedGates = new Map([
   ['Gate, actual renderer and native view module audit', 'node scripts/renderer-module-audit.mjs'],
   ['Gate, the packaged app loads what its bundles require', null],
@@ -38,14 +37,19 @@ const gatePartitions = new Map([
   ['Gate, the terminal process from the built bundle', '1'],
   ['Gate, the server spec with the server in-process', '2'],
   ['Gate, the server spec with the server attached', '2'],
-  ['Gate, the server spec with the server separate', '3'],
-  ['Gate, the Antasphere sign-in on the three servers', '3'],
+  ['Gate, the server spec with the server separate', '2'],
+  ['Gate, the Antasphere sign-in on the three servers', '2'],
   ["Gate, connected servers follow the app's version", '1'],
-  ['Gate, full Markdown client, native lifecycle and responsiveness', '4'],
-  ['Gate, MCP sessions on connected servers', '4']
+  ['Gate, full Markdown client, native lifecycle and responsiveness', '1'],
+  ['Gate, MCP sessions on connected servers', '1']
 ])
 
 describe('the required CI check cannot silently lose execution', () => {
+  it('fits the hosted suite into two Mac runner slots', () => {
+    const expression = jobs['e2e-run'].strategy.matrix.task
+    const normal = JSON.parse([...expression.matchAll(/fromJSON\('([^']+)'\)/g)][1][1])
+    expect(normal).toEqual(['1', '2'])
+  })
   it('schedules every existing gate exactly once in the normal matrix', () => {
     const job = jobs['e2e-run']
     expect(job.if).toBeUndefined()
@@ -87,25 +91,33 @@ describe('the required CI check cannot silently lose execution', () => {
     expect(result.env.RESULT).toBe('${{ needs.e2e-run.result }}')
     expect(result.run).toBe('test "$RESULT" = success')
     const inventory = aggregate.steps.find((s) => s.name === 'Every spec completed exactly once')
-    expect(inventory.env.SHARDS).toBe("${{ inputs.baseline && '1' || '4' }}")
+    expect(inventory.env.SHARDS).toBe("${{ inputs.baseline && '1' || '6' }}")
     expect(inventory.run.trim().split('\n')).toEqual([
       'node tests/e2e/merge-reports.mjs e2e-reports "$SHARDS" e2e-summary.md',
       'cat e2e-summary.md >> "$GITHUB_STEP_SUMMARY"'
     ])
   })
   it('runs the complete suite without a hidden filename filter', () => {
-    const suite = jobs['e2e-run'].steps.find((s) => s.name === 'Report, hosted suite shard')
+    const suite = jobs['e2e-run'].steps.find((s) => s.name === 'Report, hosted suite batch')
     expect(suite['continue-on-error']).toBe(true)
-    expect(suite.run).toBe(
-      'node tests/e2e/run.mjs --shard "$SHARD" --report "e2e-reports/shard-$INDEX.json"'
-    )
-    expect(suite.env.SHARD).toBe("${{ format('{0}/4', matrix.task) }}")
-    expect(suite.env.INDEX).toBe('${{ matrix.task }}')
+    expect(suite.run).toBe('node tests/e2e/ci-batch.mjs "$HOST_BATCH" --report-dir=e2e-reports')
+    expect(suite.env).toEqual({ HOST_BATCH: "${{ format('{0}/2', matrix.task) }}" })
+    expect(suite.id).toBe('suite')
     expect(suite.if).toBe(
       "${{ !cancelled() && steps.build.outcome == 'success' && matrix.task != 'baseline' }}"
     )
     const steps = jobs['e2e-run'].steps
     expect(steps.indexOf(suite)).toBeLessThan(steps.findIndex((s) => s.name?.startsWith('Gate,')))
+    const completion = steps.find((s) => s.name === 'All worker processes completed')
+    expect(completion).toBeDefined()
+    expect(completion.if).toBe(suite.if)
+    expect(completion['continue-on-error']).toBeUndefined()
+    expect(completion.env.COMPLETE).toBe('${{ steps.suite.outputs.complete }}')
+    expect(completion.run).toBe('test "$COMPLETE" = true')
+    expect(steps.indexOf(completion)).toBeGreaterThan(steps.indexOf(suite))
+    expect(steps.indexOf(completion)).toBeLessThan(
+      steps.findIndex((s) => s.name?.startsWith('Gate,'))
+    )
     const baseline = steps.find((s) => s.name === 'Report, sequential baseline suite')
     expect(baseline['continue-on-error']).toBe(true)
     expect(baseline.if).toBe(
