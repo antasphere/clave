@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
-import { parseRunArgs, selectShard, validateReports } from './sharding.mjs'
+import { parseRunArgs, selectShard, validateReports, CLIPBOARD_SPECS } from './sharding.mjs'
+import { readdirSync, readFileSync } from 'node:fs'
 
 describe('E2E shard coverage', () => {
   const specs = Array.from({ length: 192 }, (_, i) => `${i}.spec.mjs`)
@@ -10,6 +11,26 @@ describe('E2E shard coverage', () => {
     expect(shards.flat().sort()).toEqual([...specs].sort())
     expect(new Set(shards.flat()).size).toBe(specs.length)
     expect(shards.every((s) => s.length === 24)).toBe(true)
+  })
+  it('serializes every spec that reads or writes the system clipboard', () => {
+    const dir = new URL('./', import.meta.url)
+    const inventory = readdirSync(dir)
+      .filter((f) => f.endsWith('.spec.mjs'))
+      .sort()
+    for (const file of inventory) {
+      if (/\bclipboard\.(?:read|write)\w*\s*\(/.test(readFileSync(new URL(file, dir), 'utf8')))
+        expect(CLIPBOARD_SPECS.has(file), file).toBe(true)
+    }
+    for (const total of [1, 2, 4, 6]) {
+      const partitions = Array.from({ length: total }, (_, i) =>
+        selectShard(inventory, { index: i + 1, total })
+      )
+      expect(partitions.flat().sort()).toEqual(inventory)
+      expect(partitions.filter((p) => p.some((f) => CLIPBOARD_SPECS.has(f)))).toHaveLength(1)
+      expect(partitions[0].filter((f) => CLIPBOARD_SPECS.has(f)).sort()).toEqual(
+        [...CLIPBOARD_SPECS].sort()
+      )
+    }
   })
   it('preserves filters and refuses malformed or duplicate options', () => {
     expect(parseRunArgs(['server-boot', '--shard', '2/8', '--report=out.json'])).toEqual({
@@ -55,5 +76,8 @@ describe('E2E shard coverage', () => {
     expect(() =>
       validateReports([reports[0], { ...reports[1], exitCode: 2 }], selected, 2)
     ).toThrow()
+    expect(() =>
+      validateReports([reports[0], { ...reports[1], results: { 'b.spec.mjs': [] } }], selected, 2)
+    ).toThrow('no assertions')
   })
 })

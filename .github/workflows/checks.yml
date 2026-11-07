@@ -99,7 +99,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        task: ${{ inputs.baseline && fromJSON('["baseline"]') || fromJSON('["suite","gates"]') }}
+        task: ${{ inputs.baseline && fromJSON('["baseline"]') || fromJSON('["1","2","3","4","gates"]') }}
     runs-on: macos-latest
     timeout-minutes: ${{ inputs.baseline && 90 || 35 }}
     steps:
@@ -210,19 +210,15 @@ jobs:
         if: ${{ !cancelled() && steps.build.outcome == 'success' && matrix.task != 'gates' }}
         continue-on-error: true
         env:
-          BASELINE: ${{ inputs.baseline && 'true' || 'false' }}
-        run: |
-          if [ "$BASELINE" = true ]; then
-            node tests/e2e/run.mjs --report e2e-reports/shard-1.json
-          else
-            node tests/e2e/parallel.mjs --workers=4 --report-dir=e2e-reports
-          fi
+          SHARD: ${{ matrix.task == 'baseline' && '1/1' || format('{0}/4', matrix.task) }}
+          INDEX: ${{ matrix.task == 'baseline' && '1' || matrix.task }}
+        run: node tests/e2e/run.mjs --shard "$SHARD" --report "e2e-reports/shard-$INDEX.json"
 
       - name: Preserve shard results
         if: ${{ always() && matrix.task != 'gates' }}
         uses: actions/upload-artifact@v4
         with:
-          name: e2e-reports
+          name: e2e-reports-${{ matrix.task }}
           path: e2e-reports/
           if-no-files-found: error
           retention-days: 14
@@ -242,7 +238,7 @@ jobs:
           node-version: '22'
       - uses: actions/download-artifact@v4
         with:
-          name: e2e-reports
+          pattern: e2e-reports-*
           path: e2e-reports
           merge-multiple: true
       - name: Every spec completed exactly once

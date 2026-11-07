@@ -31,8 +31,16 @@ export function parseRunArgs(args) {
   return options
 }
 
+// These specs use the host's real pasteboard. Keep them sequential even when
+// several workers share one Mac; fixture namespaces cannot isolate a clipboard.
+export const CLIPBOARD_SPECS = new Set([
+  'chat-view.spec.mjs',
+  'copy-contents.spec.mjs',
+  'copy-session-id.spec.mjs',
+  'triage-ui.spec.mjs'
+])
 export function selectShard(specs, { index, total }) {
-  return specs.filter((_, i) => i % total === index - 1)
+  return specs.filter((name, i) => (CLIPBOARD_SPECS.has(name) ? 0 : i % total) === index - 1)
 }
 
 // A normal assertion failure is still a report in CI. Missing execution is not.

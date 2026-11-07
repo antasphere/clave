@@ -1,13 +1,20 @@
 import { describe, it, expect } from 'vitest'
 import { spawn } from 'node:child_process'
-import { mkdtempSync, readFileSync, writeFileSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, writeFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { mergeReports } from './merge-reports.mjs'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
-function invoke(script, args, dir) {
+let reportAttempt = 0
+function invoke(script, args, dir, automaticReports = true) {
+  if (
+    automaticReports &&
+    script === 'parallel.mjs' &&
+    !args.some((a) => a.startsWith('--report-dir='))
+  )
+    args = [...args, `--report-dir=${path.join(dir, `reports-${++reportAttempt}`)}`]
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [path.join(HERE, script), ...args], {
       env: {
@@ -32,6 +39,34 @@ function fixture(files) {
 const passing = `export async function run(t) { t.check('ran', true, process.env.CLAVE_E2E_NS) }`
 
 describe('the real runner process shards without hiding failures', () => {
+  it('removes successful implicit reports but retains failed-run diagnostics', async () => {
+    const dir = fixture({ 'a.spec.mjs': passing })
+    let retained
+    try {
+      const green = await invoke('parallel.mjs', ['--workers=1'], dir, false)
+      expect(green.code, green.output).toBe(0)
+      const removed = green.output.match(/logs and reports: (.+)/)[1].trim()
+      expect(existsSync(removed)).toBe(false)
+      writeFileSync(
+        path.join(dir, 'a.spec.mjs'),
+        `export async function run(t) { t.check('failed', false) }`
+      )
+      const red = await invoke('parallel.mjs', ['--workers=1'], dir, false)
+      expect(red.code, red.output).toBe(1)
+      retained = red.output.match(/logs and reports: (.+)/)[1].trim()
+      expect(path.dirname(retained)).toBe(path.resolve(tmpdir()))
+      expect(path.basename(retained).startsWith('clave-e2e-parallel-')).toBe(true)
+      expect(existsSync(path.join(retained, 'shard-1.json'))).toBe(true)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+      if (
+        retained &&
+        path.dirname(retained) === path.resolve(tmpdir()) &&
+        path.basename(retained).startsWith('clave-e2e-parallel-')
+      )
+        rmSync(retained, { recursive: true, force: true })
+    }
+  }, 30_000)
   it('reports exactly the selected specs, including an empty shard', async () => {
     const dir = fixture({ 'a.spec.mjs': passing, 'b.spec.mjs': passing })
     try {
@@ -74,6 +109,7 @@ describe('the real runner process shards without hiding failures', () => {
       expect(result.code, result.output).toBe(1)
       expect(result.output).toContain('"failed":2')
       expect(result.output).toContain('3 specs;')
+      expect(result.output).toContain('FAIL b.spec.mjs: intentional failure')
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
@@ -120,4 +156,66 @@ describe('the real runner process shards without hiding failures', () => {
       rmSync(dir, { recursive: true, force: true })
     }
   }, 30_000)
+  it('simultaneous parallel runs from this checkout have distinct fixture namespaces', async () => {
+    const dir = fixture({ 'a.spec.mjs': passing, 'b.spec.mjs': passing })
+    try {
+      const folders = [path.join(dir, 'one'), path.join(dir, 'two')]
+      const results = await Promise.all(
+        folders.map((folder) =>
+          invoke('parallel.mjs', ['--workers=2', `--report-dir=${folder}`], dir)
+        )
+      )
+      expect(results.map((r) => r.code)).toEqual([0, 0])
+      const namespaces = folders.flatMap((folder) =>
+        [1, 2].map((index) => {
+          const report = JSON.parse(readFileSync(path.join(folder, `shard-${index}.json`), 'utf8'))
+          return Object.values(report.results)[0][0].detail
+        })
+      )
+      expect(new Set(namespaces).size).toBe(4)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  }, 30_000)
+  it('SIGTERM is a failing exit even when the spec has already asserted', async () => {
+    const dir = fixture({
+      'a.spec.mjs': `export async function run(t) { t.check('signal-ready', true); await new Promise(() => {}) }`
+    })
+    let child
+    try {
+      const result = await new Promise((resolve, reject) => {
+        child = spawn(process.execPath, [path.join(HERE, 'run.mjs')], {
+          env: {
+            ...process.env,
+            CLAVE_E2E_SPECS_DIR: dir,
+            CLAVE_E2E_SERVER: 'in-process',
+            CLAVE_E2E_NS: `clave-e2e-signal-${path.basename(dir)}`
+          }
+        })
+        const timer = setTimeout(() => {
+          child.kill('SIGKILL')
+          reject(new Error('signal cleanup did not finish'))
+        }, 10_000)
+        let output = ''
+        let signalled = false
+        child.stdout.on('data', (chunk) => {
+          output += chunk
+          if (!signalled && output.includes('signal-ready')) {
+            signalled = true
+            child.kill('SIGTERM')
+          }
+        })
+        child.stderr.resume()
+        child.once('error', reject)
+        child.once('close', (code) => {
+          clearTimeout(timer)
+          resolve({ code, output })
+        })
+      })
+      expect(result.code, result.output).toBe(143)
+    } finally {
+      child?.kill('SIGKILL')
+      rmSync(dir, { recursive: true, force: true })
+    }
+  }, 15_000)
 })

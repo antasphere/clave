@@ -24,16 +24,20 @@ checkout do not sweep each other's files or tmux sessions. Run only one suite
 per namespace. SIGINT and SIGTERM ask workers to clean up their own apps,
 servers and tmux sessions. Failed runs retain fixtures for diagnosis.
 
-CI uses two macOS jobs. One runs four full-suite workers in isolated Node
-processes. The other keeps all existing gates, including all three server modes,
-package, renderer, terminal-process, sign-in, server-upgrade and fleet checks.
-Each job installs and builds its own checkout. Two macOS runners avoid a long
-queue when the account's runner capacity is busy. All specs still run.
+CI uses four macOS suite shards, with one Electron process per runner, alongside
+one job retaining every existing gate and all three server modes. Each job
+installs and builds its own checkout. This requests five runners, so account
+capacity and unrelated runs can add queue time. Each suite worker gets a whole
+runner rather than competing with three Electron instances on the same host.
+All specs still run. Clipboard specs stay on one shard because a fixture
+namespace cannot isolate the system pasteboard.
 
 `--report-dir=e2e-reports` writes local parallel logs and JSON reports to an
 explicit empty directory, for example for CI artifact upload. The run still
 gets a unique fixture namespace. A nonempty directory is refused to prevent
-stale reports from passing a later run.
+stale reports from passing a later run. Successful runs without an explicit
+report directory remove their temporary logs. Explicit reports and failed-run
+logs remain available for diagnosis.
 
 The aggregate retains the existing `End-to-end (the real app, macOS)` check
 name. It checks every shard and the complete spec inventory. Missing reports,

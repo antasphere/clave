@@ -2,6 +2,7 @@
 // Separate Node processes keep spec globals, Electron pids and cleanup independent.
 import { spawn } from 'node:child_process'
 import { availableParallelism, tmpdir } from 'node:os'
+import { randomUUID } from 'node:crypto'
 import {
   closeSync,
   existsSync,
@@ -9,7 +10,8 @@ import {
   mkdtempSync,
   openSync,
   readFileSync,
-  readdirSync
+  readdirSync,
+  rmSync
 } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -37,9 +39,11 @@ const specs = readdirSync(specsDir)
   .filter((f) => !options.filters.length || options.filters.some((o) => f.includes(o)))
   .sort()
 if (!specs.length) throw new Error('No matching specs')
-const runDirectory = mkdtempSync(path.join(tmpdir(), 'clave-e2e-parallel-'))
 if (reportArg === '--report-dir=') throw new Error('--report-dir needs a path')
-const directory = reportArg ? path.resolve(reportArg.slice('--report-dir='.length)) : runDirectory
+const namespace = `clave-e2e-parallel-${randomUUID()}`
+const directory = reportArg
+  ? path.resolve(reportArg.slice('--report-dir='.length))
+  : mkdtempSync(path.join(tmpdir(), 'clave-e2e-parallel-'))
 if (existsSync(directory) && readdirSync(directory).length)
   throw new Error(`Report directory must be empty: ${directory}`)
 mkdirSync(directory, { recursive: true })
@@ -68,7 +72,7 @@ const outcomes = await Promise.all(
         report
       ],
       {
-        env: { ...process.env, CLAVE_E2E_NS: path.basename(runDirectory) },
+        env: { ...process.env, CLAVE_E2E_NS: namespace },
         stdio: ['ignore', log, log]
       }
     )
@@ -91,4 +95,6 @@ const merged = mergeReports(reports, specs, workers)
 console.log(
   `${merged.specs} specs; ${JSON.stringify(merged.totals)}; wall time ${Date.now() - started} ms`
 )
+for (const failed of merged.failedChecks) console.log(`  FAIL ${failed.spec}: ${failed.name}`)
+if (!reportArg && merged.exitCode === 0) rmSync(directory, { recursive: true, force: true })
 process.exit(merged.exitCode)

@@ -15,7 +15,10 @@ export function mergeReports(reports, specs, total) {
       throw new Error(`Shard ${report.shard.index} exit code disagrees with its assertions`)
   }
   const results = Object.assign({}, ...reports.map((r) => r.results))
-  return { ...summarize(results, known), specs: Object.keys(results).length }
+  const failedChecks = Object.entries(results).flatMap(([spec, checks]) =>
+    checks.filter((c) => !c.ok).map((c) => ({ spec, name: c.name }))
+  )
+  return { ...summarize(results, known), specs: Object.keys(results).length, failedChecks }
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
@@ -30,9 +33,14 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
   const { totals } = result
   const text = `${result.specs} specs; ${totals.passed} passed, ${totals.failed} failed, ${totals.known} known failures, ${totals.unstable} unstable`
   console.log(text)
+  for (const failed of result.failedChecks) console.log(`  FAIL ${failed.spec}: ${failed.name}`)
   if (output)
     writeFileSync(
       output,
-      `## Full Electron suite\n\n${text}\n\nAll ${count} shards completed. Assertion failures remain a report, as before. Missing or incomplete shards fail the aggregate check.\n`
+      `## Full Electron suite\n\n${text}\n\nAll ${count} shards completed. Assertion failures remain a report, as before. Missing or incomplete shards fail the aggregate check.\n\n` +
+        result.failedChecks
+          .map((c) => `- ${c.spec}: ${c.name.replace(/[\n\r]/g, ' ')}`)
+          .join('\n') +
+        '\n'
     )
 }
