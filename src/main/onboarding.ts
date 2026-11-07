@@ -93,6 +93,11 @@ export async function describeAgents(fresh = false): Promise<OnboardingAgent[]> 
  *  so a second window opened meanwhile never starts a second walk. */
 let walkWindow: number | null = null
 
+/** The walk's window closed: the next window that asks takes the walk. */
+export function releaseOnboardingWindow(windowId: number): void {
+  if (walkWindow === windowId) walkWindow = null
+}
+
 /** Cheap: read at every window's start, so it runs no shell. `windowId` is
  *  the asking window's web contents. */
 export function getOnboardingState(windowId: number | null = null): OnboardingState {

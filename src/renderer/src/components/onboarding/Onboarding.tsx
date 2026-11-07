@@ -16,6 +16,7 @@ import { loadClaudeProfiles, useClaudeProfileStore } from '../../store/claude-pr
 import { loadCodexAccounts, useCodexAccountStore } from '../../store/codex-account-store'
 import { addWorkspace, isUnderRoot, setActiveWorkspace } from '../../lib/workspace-actions'
 import { launchSession } from '../../lib/launch-session'
+import { setPendingChatView } from '../../lib/pending-chat-view'
 import { useWorkspaceStore } from '../../store/workspace-store'
 import './onboarding.css'
 
@@ -252,7 +253,7 @@ export function Onboarding(): React.JSX.Element | null {
       if (useWorkspaceStore.getState().activeWorkspaceId !== ws.id) await setActiveWorkspace(ws.id)
       if (agent) {
         const accountId = connections[agent]!
-        const id = await launchSession({
+        await launchSession({
           setup:
             agent === 'claude'
               ? { kind: 'claude', dangerousMode: false, claudeProfileId: accountId }
@@ -263,10 +264,6 @@ export function Onboarding(): React.JSX.Element | null {
           remember: true,
           throwOnError: true
         })
-        // The chosen style, on the session itself: this is also how the
-        // process that opens sessions (the separate server, on a packaged
-        // Mac) learns it as the default for every chat after this one.
-        if (id) await window.electronAPI.sessionsSetView(id, chatView).catch(() => undefined)
       }
       setOpened({ name: ws.name, agent })
       go('done')
@@ -400,6 +397,7 @@ export function Onboarding(): React.JSX.Element | null {
           className="btn-primary"
           onClick={() => {
             void window.electronAPI.onboardingSetChatView(chatView)
+            setPendingChatView(chatView)
             go(4)
           }}
         >
@@ -418,8 +416,9 @@ export function Onboarding(): React.JSX.Element | null {
           <span className="onb-label">Name</span>
           <input
             className="input-compact"
-            value={name}
+            value={made?.name ?? name}
             onChange={(e) => setName(e.target.value)}
+            disabled={made !== null}
             maxLength={120}
             aria-label="Workspace name"
           />
@@ -429,9 +428,9 @@ export function Onboarding(): React.JSX.Element | null {
           <div className="onb-folder">
             <FolderIcon className="w-4 h-4" />
             <span className="onb-folder-path">
-              {existing ?? folderPreview(state.home, parent ?? state.home, name)}
+              {made?.root ?? existing ?? folderPreview(state.home, parent ?? state.home, name)}
             </span>
-            {existing ? (
+            {made ? null : existing ? (
               <button type="button" className="onb-link" onClick={() => setExisting(null)}>
                 Make a new one instead
               </button>
@@ -441,7 +440,12 @@ export function Onboarding(): React.JSX.Element | null {
               </button>
             )}
           </div>
-          {!existing && (
+          {made && (
+            <p className="onb-footnote">
+              The workspace is made. Trying again only starts its conversation.
+            </p>
+          )}
+          {!existing && !made && (
             <button
               type="button"
               className="onb-link onb-link--quiet"

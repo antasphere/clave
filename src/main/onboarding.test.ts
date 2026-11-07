@@ -7,7 +7,13 @@ vi.mock('./agent-updates', () => ({
   agentUpdateManager: { checkAll: vi.fn(() => Promise.resolve()) }
 }))
 vi.mock('./test-mode', () => ({ TEST_NO_ACTIVATE: false, TEST_ONBOARDING: false }))
-vi.mock('./preferences-manager', () => ({ preferencesManager: { get: vi.fn(), set: vi.fn() } }))
+const prefs = vi.hoisted(() => ({ values: {} as Record<string, unknown> }))
+vi.mock('./preferences-manager', () => ({
+  preferencesManager: {
+    get: (key: string) => prefs.values[key],
+    set: (key: string, value: unknown) => void (prefs.values[key] = value)
+  }
+}))
 // The login environment the walk reads: a PATH a test sets, behind a delay
 // like the real login shell's, so two clicks can land inside it.
 const login = vi.hoisted(() => ({ env: {} as Record<string, string> }))
@@ -25,7 +31,9 @@ import {
   createWorkspaceFolder,
   findOnPath,
   folderNameOf,
+  getOnboardingState,
   installAgent,
+  releaseOnboardingWindow,
   runInstaller
 } from './onboarding'
 
@@ -134,5 +142,20 @@ describe('the one-click install', () => {
     expect(first.agents.concat(second.agents).some((a) => a.id === 'codex' && a.installed)).toBe(
       true
     )
+  })
+})
+
+describe('the window that shows the walk', () => {
+  it('is the first one that asks, until it closes', () => {
+    prefs.values.onboarding = 'pending'
+    expect(getOnboardingState(1).show).toBe(true)
+    expect(getOnboardingState(2).show).toBe(false)
+    expect(getOnboardingState(1).show).toBe(true)
+    releaseOnboardingWindow(2)
+    expect(getOnboardingState(2).show).toBe(false)
+    releaseOnboardingWindow(1)
+    expect(getOnboardingState(2).show).toBe(true)
+    prefs.values.onboarding = 'done'
+    expect(getOnboardingState(2).show).toBe(false)
   })
 })

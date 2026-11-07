@@ -5,6 +5,7 @@ import {
   describeAgents,
   getOnboardingState,
   installAgent,
+  releaseOnboardingWindow,
   setChatView
 } from '../onboarding'
 import { ONBOARDING_IPC, type OnboardingAgentId } from '../../shared/onboarding'
@@ -12,7 +13,12 @@ import { ONBOARDING_IPC, type OnboardingAgentId } from '../../shared/onboarding'
 const IDS = new Set<string>(['claude', 'codex'])
 
 export function registerOnboardingHandlers(): void {
-  ipcMain.handle(ONBOARDING_IPC.getState, (event) => getOnboardingState(event.sender.id))
+  ipcMain.handle(ONBOARDING_IPC.getState, (event) => {
+    const id = event.sender.id
+    const state = getOnboardingState(id)
+    if (state.show) event.sender.once('destroyed', () => releaseOnboardingWindow(id))
+    return state
+  })
   ipcMain.handle(ONBOARDING_IPC.agents, (_event, fresh: unknown) => describeAgents(fresh === true))
   ipcMain.handle(ONBOARDING_IPC.install, (_event, id: unknown) => {
     if (typeof id !== 'string' || !IDS.has(id)) throw new Error('Unknown agent')
