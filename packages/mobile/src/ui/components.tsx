@@ -71,7 +71,7 @@ export function Screen({
       collapsable={false}
       onLayout={measureFrame}
       style={[styles.screen, { backgroundColor: t.colors.surface0 }, style]}
-      testID={testID}
+      testID={testID ?? 'screen-frame'}
     >
       <KeyboardAvoidingView
         style={styles.screen}

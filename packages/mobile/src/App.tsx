@@ -17,8 +17,8 @@ import {
 import { useFonts } from 'expo-font'
 import { StatusBar } from 'expo-status-bar'
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
-import { Linking, View } from 'react-native'
-import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context'
+import { Linking } from 'react-native'
+import { SafeAreaProvider } from 'react-native-safe-area-context'
 import { RootNavigator, type RootStackParamList } from './navigation/RootNavigator'
 import { LAST_MACHINE_KEY, machineIdOf, stateForPath } from './navigation/persistence'
 import { createServices } from './services'
@@ -31,10 +31,11 @@ import { configureNativeNotifications, ownerNotificationResponse } from './platf
 import { navigationStateOf, type DeepLink } from './notifications/deeplink'
 import { NotificationInbox } from './notifications/inbox'
 import { EnrollmentRecords } from './enroll/records'
-import { Notice, Screen } from './ui/components'
+import { Screen } from './ui/components'
 import { AppearanceProvider } from './ui/appearance'
 import { useAppearance } from './ui/appearance-context'
-import { ThemeProvider, family, space, useResolvedTheme, useTheme, type Theme } from './ui/theme'
+import { ScreenNoticeContext } from './ui/screen-notice-context'
+import { ThemeProvider, family, useResolvedTheme, useTheme, type Theme } from './ui/theme'
 import type { DevicePushToken } from './notifications/port'
 
 /** The navigator's own colours, from the Clave theme: the ground, the card
@@ -89,8 +90,10 @@ function Themed({ children }: { children: ReactNode }): ReactNode {
   const [fontsLoaded, fontsError] = useFonts(FONTS)
   return (
     <ThemeProvider value={theme}>
-      {fontsLoaded || fontsError ? children : <Screen>{null}</Screen>}
-      <StatusBar style={theme.dark ? 'light' : 'dark'} />
+      <SafeAreaProvider style={{ flex: 1, backgroundColor: theme.colors.surface0 }}>
+        {fontsLoaded || fontsError ? children : <Screen>{null}</Screen>}
+        <StatusBar style={theme.dark ? 'light' : 'dark'} />
+      </SafeAreaProvider>
     </ThemeProvider>
   )
 }
@@ -119,16 +122,6 @@ function Account(): ReactNode {
     <OwnerApp key={key!} services={owner.services} />
   ) : (
     <Screen>{null}</Screen>
-  )
-}
-
-/** The notice the app itself carries, inside the safe area rather than
- *  under the status bar. */
-function AppNotice({ children }: { children: ReactNode }): ReactNode {
-  return (
-    <View style={{ paddingVertical: space(1) }}>
-      <Notice tone="error">{children}</Notice>
-    </View>
   )
 }
 
@@ -219,33 +212,30 @@ function OwnerApp({ services }: { services: Services }): ReactNode {
   }, [inbox, services])
 
   return (
-    <SafeAreaProvider style={{ flex: 1, backgroundColor: t.colors.surface0 }}>
-      <SafeAreaView edges={['top']} style={{ flex: 1, backgroundColor: t.colors.surface0 }}>
-        <StoreProvider store={store} services={services}>
-          {notificationError ? (
-            <AppNotice>Notifications could not be enabled on this build.</AppNotice>
-          ) : null}
-          {initial ? (
-            <NavigationContainer
-              ref={navigation}
-              theme={theme}
-              linking={linking}
-              initialState={initial.state}
-              onReady={() => {
-                void inbox.ready(navigateNotification).catch(() => setNotificationError(true))
-              }}
-              onStateChange={(state) => {
-                const machineId = machineIdOf(state)
-                if (machineId) void services.kv.setItem(LAST_MACHINE_KEY, machineId)
-              }}
-            >
-              <RootNavigator />
-            </NavigationContainer>
-          ) : (
-            <Screen>{null}</Screen>
-          )}
-        </StoreProvider>
-      </SafeAreaView>
-    </SafeAreaProvider>
+    <ScreenNoticeContext.Provider
+      value={notificationError ? 'Notifications could not be enabled on this build.' : null}
+    >
+      <StoreProvider store={store} services={services}>
+        {initial ? (
+          <NavigationContainer
+            ref={navigation}
+            theme={theme}
+            linking={linking}
+            initialState={initial.state}
+            onReady={() => {
+              void inbox.ready(navigateNotification).catch(() => setNotificationError(true))
+            }}
+            onStateChange={(state) => {
+              const machineId = machineIdOf(state)
+              if (machineId) void services.kv.setItem(LAST_MACHINE_KEY, machineId)
+            }}
+          >
+            <RootNavigator />
+          </NavigationContainer>
+        ) : (
+          <Screen>{null}</Screen>
+        )}
+      </StoreProvider>
+    </ScreenNoticeContext.Provider>
   )
 }
