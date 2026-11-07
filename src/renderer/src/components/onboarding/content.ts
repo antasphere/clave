@@ -1,3 +1,5 @@
+import { LAB_VIEW } from '../../../../../plugins/chat-view/src/lab/meta'
+
 /* The walk's words and the few pure rules under it (Onboarding.tsx). */
 
 /** The wording the reader may be told to look for: keep it as it is. */
@@ -25,8 +27,9 @@ export const CHAT_VIEWS = [
   },
   {
     id: 'clave.chat-view/lab',
-    title: 'Experimental',
-    tagline: 'A new way of talking to the assistant, still being shaped. Try it, switch any time.',
+    title: LAB_VIEW.title,
+    tagline:
+      'Each question gets a page of its own, written like a document. It can read the answer aloud.',
     preview: 'lab'
   }
 ] as const

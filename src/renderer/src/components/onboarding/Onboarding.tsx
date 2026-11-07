@@ -84,13 +84,29 @@ function ChatPreview({
       )}
       {kind === 'lab' && (
         <>
-          <circle className="ln ln--soft" cx="60" cy="36" r="22" />
-          <circle className="bx bx--front" cx="60" cy="36" r="12" />
-          <path
-            className="ln ln--c onb-lab-wave"
-            d="M30,36 C38,24 44,48 52,36 S66,24 74,36 S86,48 90,36"
-          />
-          <circle className="dot" cx="60" cy="36" r="2.5" />
+          {/* the strip of pages, the one being read in the accent */}
+          {[0, 1, 2, 3].map((i) => (
+            <line
+              key={i}
+              className={i === 2 ? 'ln ln--c' : 'ln ln--thin'}
+              x1={46 + i * 9}
+              y1="9"
+              x2={46 + i * 9}
+              y2={i === 2 ? 17 : 13 + (i % 2) * 2}
+            />
+          ))}
+          {/* the page: its title, the answer written as a document */}
+          <rect className="bx bx--front" x="16" y="22" width="62" height="42" rx="4" />
+          <line className="ln" x1="24" y1="31" x2="56" y2="31" />
+          <line className="ln ln--thin" x1="24" y1="40" x2="70" y2="40" />
+          <line className="ln ln--thin" x1="24" y1="47" x2="66" y2="47" />
+          <line className="ln ln--thin" x1="24" y1="54" x2="58" y2="54" />
+          {/* the margin: what the agent did, beside the paragraph it led to */}
+          <path className="ln ln--soft" d="M80,40 L86,40" />
+          <rect className="bx" x="88" y="35" width="22" height="10" rx="3" />
+          <path className="ln ln--soft" d="M80,54 L86,54" />
+          <circle className="dot dot--seat" cx="92" cy="54" r="2" />
+          <line className="ln ln--thin" x1="97" y1="54" x2="108" y2="54" />
         </>
       )}
     </svg>

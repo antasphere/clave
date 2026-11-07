@@ -623,10 +623,6 @@
   .onb-scene-caret {
     animation: onb-caret 1s steps(2) infinite;
   }
-  .onb-lab-wave {
-    stroke-dasharray: 6 4;
-    animation: onb-link-march 1.8s linear infinite;
-  }
   /* once the ring has closed, the space gathers itself and lets go */
   .onb-drawing .space--closed {
     animation: onb-space-release 560ms var(--travel) 1 forwards;
