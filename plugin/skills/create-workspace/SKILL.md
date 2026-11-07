@@ -118,7 +118,7 @@ Set at most one agent mode. If `antigravityMode`, `codexMode`, `piMode`, or `cla
 
 | Token | Expands to |
 |---|---|
-| `@root_path` | Absolute workspace root, e.g. `/Users/you/.codika` |
+| `@root_path` | Absolute workspace root, e.g. `/Users/you/.antasphere` |
 | `@project_path` | Project dir **relative to root**, e.g. `clients/acme` (derived from the file's location + its `cwd`) |
 | `@project_abs` | Project dir absolute path |
 
@@ -456,7 +456,7 @@ This is a per-project `.clave` living at `clients/acme/acme-app/.clave/workspace
       "claudeMode": true,
       "dangerousMode": true,
       "rootSession": true,
-      "prompt": "We're working on Acme. The project lives at @project_path and spans acme-app, acme-cli, acme-os, acme-website. When we start, read @project_path/acme-app/CLAUDE.md first. You're at the workspace root (@root_path), so you have full access. Don't explore yet, just reply that you're ready and wait for my request."
+      "prompt": "We're working on Acme. The project lives at @project_path and spans acme-app, acme-cli, acme-os, acme-website. When we start, read @project_path/acme-app/AGENTS.md first. You're at the workspace root (@root_path), so you have full access. Don't explore yet, just reply that you're ready and wait for my request."
     }
   ],
   "terminals": []
@@ -572,6 +572,88 @@ Two gotchas:
 - A workspace file literally named `default.clave` yields **no** workspace ID, so it always resolves to each repo's `default.clave`. To get per-user overrides, your umbrella file must be named after you.
 - Fully personal setups are often simpler as a **single multi-group umbrella file with `autoDiscover: false`**, defining every group and `category` inline. You lose automatic pickup of new repos and per-repo `logo` locality, but you gain complete control over the sections and touch nobody else's files.
 
+## Routines: agent sessions Clave runs on a schedule
+
+A **routine** is a prompt the Clave server runs by itself, on a cron schedule, in a fresh
+hidden session nobody opened, whose result lands on a toolbar icon as a badge and opens
+into a floating report. Declare them on a group, beside `terminals`; they render in the
+toolbar whatever the group's `toolbar` flag, after the group's terminals.
+
+```json
+"routines": [{
+  "name": "Workspace health",
+  "schedule": "30 8 * * 1-5",
+  "prompt": "Check this machine against the workspace's desired state and fix what is safe. {{extra}}",
+  "params": { "extra": "" },
+  "skill": "steward:workspace-health",
+  "cwd": ".",
+  "agent": "claude",
+  "form": "chat",
+  "model": "claude-opus-5-5",
+  "account": "any",
+  "dangerousMode": true,
+  "icon": "shield",
+  "color": "teal",
+  "catchUp": true,
+  "timeoutMinutes": 30,
+  "scope": "machine",
+  "report": {
+    "template": ".clave/routines/workspace-health",
+    "schema": ".clave/routines/workspace-health/schema.json",
+    "width": 560,
+    "height": 640
+  }
+}]
+```
+
+**Required:** `name` (unique in the file; the identity of the routine's history, so a rename
+starts a new one), `schedule` (five cron fields in the machine's local time: minute, hour,
+day of month, month, day of week; `*`, lists, ranges, steps, names; no `@daily`), `prompt`
+(the job; `{{name}}` is filled from `params`, and the `@root_path` / `@project_path` tokens
+expand as in a session prompt) and `report.template` (below).
+
+**The launch parameters**, every one optional, exactly the choices a person makes when
+opening a tab, resolved the way `clave_open_session` resolves them: `agent` (`claude`,
+`codex`, `pi`, `antigravity`; default `claude`), `form` (`chat` or `terminal`; a Claude or
+Codex routine runs in the chat view by default, the others in a terminal), `model`, `effort`
+(Claude's reasoning effort), `thinking` and `provider` (Pi's), `profile` (a launch profile by
+id or name), `account` (an id, a label, or `any` for the pool), `dangerousMode` (permissions
+off; the brief's `dangerous` is read the same), `permissionMode` (`default`, `acceptEdits` or
+`plan`, for a Claude run that keeps its permissions). A missing field takes the workspace's
+launch default. **An invalid value fails the run with the reason on the badge**, never a
+silent fallback: an unknown profile or account, a model the agent does not offer, `chat` on
+an agent without a chat view, `dangerousMode` on an agent without the flag.
+
+**Also optional:** `skill` (the routine's own skill, loaded on top of the contract skill Clave
+injects), `cwd` (resolved like a terminal's; the group's by default), `icon` and `color` (the
+terminals' enums), `catchUp` (default `true`: an occurrence missed while the server was down
+runs once at its next start), `timeoutMinutes` (default 30), `scope` (`machine`, the default
+and the only one built: one run per machine; `team`, one run for the whole team, is refused
+with "not built yet" until a shared claim exists).
+
+**The report is a deck.** `report.template` names a folder inside the `.clave` file's own
+folder (never outside it) holding `index.html` with a
+`<script type="application/json" id="slideless-data">` block, `schema.json` (a JSON Schema
+for the run's data; `report.schema` names another file) and `AGENT.md`. The run ends with the
+agent calling `clave_routine_report` with `status` (`ok`, `attention`, `failed`), a one-line
+`headline`, a markdown `summary` and `data`; Clave validates `data` against the schema (invalid
+data is refused back to the agent with the errors), copies the template into the run's deck
+folder, writes `data.json` and fills the data block with an envelope (`routine`, `run` with its
+status, headline and summary, and the agent's `data`). The Slideless viewer serves the deck
+on this Mac; the panel renders it at `report.width` by `report.height` (560 by 640 by default).
+A run that ends without a valid report is **failed**, with the reason.
+
+**Trust.** A routine acts with nobody at the keyboard, so the whole declaration is elevated:
+the review dialog lists the routines by name and their prompts, and "Open safely" drops them.
+Only a trusted file schedules anything; the scheduler never asks.
+
+**Where it runs.** The Clave server schedules (in the app, as its child, or as a daemon with
+no client attached), one occurrence per user across servers, and never from a window. The
+toolbar shows the active workspace's routines with a dot for the unseen last run (green ok,
+amber attention, red failed, pulsing while running or waiting on you); the panel has
+Report and Discussion (the run's conversation continued), Run again, Open as a tab, Dismiss
+and the last twenty runs.
+
 ## How to use
 
 1. **Create the file** — Save as `.clave/workspaces/default.clave` in your project (or `workspace.clave` in the root)
@@ -584,7 +666,7 @@ Two gotchas:
 
 Clave watches loaded `.clave` files and reloads on change, but only refreshes templates that already exist. **Adding or removing groups requires deactivating and reactivating the workspace** (or restarting Clave); editing an existing group applies live.
 
-Exporting a group back out to a `.clave` file (right-click → Export as .clave) is **lossy**: it drops `prompt`, `rootSession`, `logo`, and `autoLaunchLocalhost` (it keeps `cwd`, `persistent`, `serverUrl`, `groupView`, and the group's `view`). Hand-edit the dropped fields back in, or keep the source file as the source of truth.
+Exporting a group back out to a `.clave` file (right-click → Export as .clave) is **lossy**: it drops `prompt`, `rootSession`, `logo`, and `autoLaunchLocalhost` (it keeps `cwd`, `persistent`, `serverUrl`, `groupView`, the group's `view` and its `routines`). Hand-edit the dropped fields back in, or keep the source file as the source of truth.
 
 ## Best practices
 

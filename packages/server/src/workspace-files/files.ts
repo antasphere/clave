@@ -25,6 +25,8 @@ import { createHash } from 'node:crypto'
 import type {
   AutoDiscoverConfig,
   ClaveFileReadResult,
+  ClaveRoutine,
+  ClaveRoutineWrite,
   ClaveFileWriteData,
   ClaveFileWriteGroup,
   ClaveGroup,
@@ -95,6 +97,8 @@ export interface ReviewRequest {
   readonly autoCommands: ReadonlyArray<string>
   readonly prompts: ReadonlyArray<string>
   readonly dangerous: boolean
+  /** The routines the file would schedule (ADR 0004), by name. */
+  readonly routines: ReadonlyArray<string>
 }
 
 /** Whoever can ask the person: answers the dialog's buttons, or null when
@@ -132,6 +136,7 @@ interface ClaveFileRaw {
   prompt?: string
   sessions?: RawSession[]
   terminals?: RawTerminal[]
+  routines?: RawRoutine[]
   toolbar?: boolean
   category?: string
   logo?: string
@@ -149,7 +154,38 @@ interface RawGroup {
   prompt?: string
   sessions?: RawSession[]
   terminals?: RawTerminal[]
+  routines?: RawRoutine[]
   view?: string
+}
+/** A routine as the document writes it (ADR 0004): read loosely, every
+ *  field checked for its type; what is not a string, a boolean or a number
+ *  where one is expected is dropped (a `params` value is the one exception:
+ *  a number or a boolean there is written into the prompt as its text). */
+interface RawRoutine {
+  name?: unknown
+  schedule?: unknown
+  prompt?: unknown
+  params?: unknown
+  skill?: unknown
+  cwd?: unknown
+  agent?: unknown
+  form?: unknown
+  model?: unknown
+  effort?: unknown
+  thinking?: unknown
+  provider?: unknown
+  profile?: unknown
+  account?: unknown
+  dangerousMode?: unknown
+  /** The brief's spelling, read as `dangerousMode`. */
+  dangerous?: unknown
+  permissionMode?: unknown
+  icon?: unknown
+  color?: unknown
+  catchUp?: unknown
+  timeoutMinutes?: unknown
+  scope?: unknown
+  report?: unknown
 }
 interface RawSession {
   cwd?: string
@@ -220,6 +256,101 @@ function normalizeRoot(p: string): string {
 
 const isUrl = (value: string): boolean => /^https?:\/\//i.test(value)
 
+const text = (value: unknown): string | undefined =>
+  typeof value === 'string' && value.trim() ? value : undefined
+const flag = (value: unknown): boolean | undefined =>
+  typeof value === 'boolean' ? value : undefined
+const count = (value: unknown): number | undefined =>
+  typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : undefined
+
+/** One routine of the document (ADR 0004): the paths resolved against `dir`
+ *  like a terminal's, the prompt kept as the raw template, the launch
+ *  fields kept as written (resolved and judged at run time, where an invalid
+ *  one fails the run), `dangerous` read as `dangerousMode`. A routine with
+ *  no name, no schedule or no prompt is not a routine and is dropped. */
+export function resolveRoutine(raw: RawRoutine, dir: string): ClaveRoutine | null {
+  const name = text(raw.name)
+  const schedule = text(raw.schedule)
+  const prompt = typeof raw.prompt === 'string' ? raw.prompt : undefined
+  if (!name || !schedule || prompt === undefined) return null
+  const params =
+    raw.params && typeof raw.params === 'object' && !Array.isArray(raw.params)
+      ? Object.fromEntries(
+          Object.entries(raw.params as Record<string, unknown>).map(([k, v]) => [
+            k,
+            typeof v === 'string' ? v : String(v ?? '')
+          ])
+        )
+      : undefined
+  const report =
+    raw.report &&
+    typeof raw.report === 'object' &&
+    text((raw.report as { template?: unknown }).template)
+      ? (() => {
+          const r = raw.report as {
+            template: string
+            schema?: unknown
+            width?: unknown
+            height?: unknown
+          }
+          return {
+            template: path.resolve(dir, r.template),
+            ...(text(r.schema) ? { schema: path.resolve(dir, r.schema as string) } : {}),
+            ...(count(r.width) !== undefined ? { width: count(r.width) as number } : {}),
+            ...(count(r.height) !== undefined ? { height: count(r.height) as number } : {})
+          }
+        })()
+      : undefined
+  const dangerousMode = flag(raw.dangerousMode) ?? flag(raw.dangerous)
+  return {
+    name: name.trim(),
+    schedule: schedule.trim(),
+    prompt,
+    ...(params ? { params } : {}),
+    ...(text(raw.skill) ? { skill: (raw.skill as string).trim() } : {}),
+    ...(text(raw.cwd) ? { cwd: path.resolve(dir, raw.cwd as string) } : {}),
+    ...(text(raw.agent) ? { agent: (raw.agent as string).trim() } : {}),
+    ...(text(raw.form) ? { form: (raw.form as string).trim() } : {}),
+    ...(text(raw.model) ? { model: (raw.model as string).trim() } : {}),
+    ...(text(raw.effort) ? { effort: (raw.effort as string).trim() } : {}),
+    ...(text(raw.thinking) ? { thinking: (raw.thinking as string).trim() } : {}),
+    ...(text(raw.provider) ? { provider: (raw.provider as string).trim() } : {}),
+    ...(text(raw.profile) ? { profile: (raw.profile as string).trim() } : {}),
+    ...(text(raw.account) ? { account: (raw.account as string).trim() } : {}),
+    ...(dangerousMode !== undefined ? { dangerousMode } : {}),
+    ...(text(raw.permissionMode) ? { permissionMode: (raw.permissionMode as string).trim() } : {}),
+    ...(text(raw.icon) ? { icon: raw.icon as string } : {}),
+    ...(text(raw.color) ? { color: raw.color as string } : {}),
+    ...(flag(raw.catchUp) !== undefined ? { catchUp: flag(raw.catchUp) as boolean } : {}),
+    ...(count(raw.timeoutMinutes) !== undefined
+      ? { timeoutMinutes: count(raw.timeoutMinutes) as number }
+      : {}),
+    ...(text(raw.scope) ? { scope: (raw.scope as string).trim() } : {}),
+    ...(report ? { report } : {})
+  }
+}
+
+/** The mirror of `resolveRoutine`: the paths back to relative, the fields as written. */
+export function serializeRoutine(
+  r: ClaveRoutineWrite,
+  toRelative: (abs: string | null | undefined) => string
+): RawRoutine {
+  const { cwd, report, ...rest } = r
+  return {
+    ...rest,
+    ...(cwd ? { cwd: toRelative(cwd) } : {}),
+    ...(report
+      ? {
+          report: {
+            ...report,
+            template: toRelative(report.template),
+            ...(report.schema ? { schema: toRelative(report.schema) } : {})
+          }
+        }
+      : {})
+  }
+}
+
 /** The parser: one group of the document, every relative path resolved
  *  against `dir`, the logo read into a data URL, free text kept as it is. */
 export function resolveGroup(raw: RawGroup, dir: string, fallbackName: string): ClaveGroup {
@@ -267,7 +398,15 @@ export function resolveGroup(raw: RawGroup, dir: string, fallbackName: string): 
       persistent: t.persistent ?? undefined,
       serverUrl: t.serverUrl ?? undefined,
       groupView: t.groupView ?? undefined
-    }))
+    })),
+    // The routines (ADR 0004): dropped when none parses, so a group with no
+    // routines reads as it always did.
+    ...(() => {
+      const routines = (Array.isArray(raw.routines) ? raw.routines : [])
+        .map((r) => resolveRoutine(r, dir))
+        .filter((r): r is ClaveRoutine => r !== null)
+      return routines.length ? { routines } : {}
+    })()
   }
 }
 
@@ -312,7 +451,10 @@ export function serializeGroup(g: ClaveFileWriteGroup, dir: string): RawGroup {
       ...(t.persistent ? { persistent: true } : {}),
       ...(t.serverUrl ? { serverUrl: t.serverUrl } : {}),
       ...(t.groupView ? { groupView: true } : {})
-    }))
+    })),
+    ...(g.routines && g.routines.length
+      ? { routines: g.routines.map((r) => serializeRoutine(r, toRelative)) }
+      : {})
   }
 }
 
@@ -472,8 +614,9 @@ export class WorkspaceFiles {
       return null
     }
 
-    const { autoCommands, prompts, dangerous } = describeElevated(result)
-    const elevated = autoCommands.length > 0 || prompts.length > 0 || dangerous
+    const { autoCommands, prompts, dangerous, routines } = describeElevated(result)
+    const elevated =
+      autoCommands.length > 0 || prompts.length > 0 || dangerous || routines.length > 0
     const trusted =
       this.isUnderTrustedRoot(absolutePath) ||
       (rootDir != null && this.isUnderTrustedRoot(rootDir)) ||
@@ -481,7 +624,14 @@ export class WorkspaceFiles {
     if (!elevated || trusted) return result
 
     const folder = rootDir || path.dirname(absolutePath)
-    const answer = await reviewer({ path: absolutePath, folder, autoCommands, prompts, dangerous })
+    const answer = await reviewer({
+      path: absolutePath,
+      folder,
+      autoCommands,
+      prompts,
+      dangerous,
+      routines
+    })
     if (!answer || answer.response === 2) return null
     if (answer.checkboxChecked) this.trustRoot(folder)
     if (answer.response === 1) {
@@ -512,7 +662,8 @@ export class WorkspaceFiles {
               ...(pinned.prompt ? { prompt: pinned.prompt } : {}),
               ...(pinned.view ? { view: pinned.view } : {}),
               sessions: pinned.sessions ?? [],
-              terminals: pinned.terminals ?? []
+              terminals: pinned.terminals ?? [],
+              ...(pinned.routines ? { routines: pinned.routines } : {})
             },
             dir
           )
@@ -674,22 +825,79 @@ export class WorkspaceFiles {
     if (this.watchers.has(absolutePath)) return
     try {
       let debounceTimer: NodeJS.Timeout | null = null
+      let closed = false
+      // Native callbacks can straddle debounce windows for the same write.
+      // Compare the settled bytes, with absence distinct from unreadability.
+      const revision = (): string | undefined => {
+        // Workspace documents are small. Unsupported or oversized inputs
+        // invalidate conservatively instead of blocking on, or loading, them.
+        const limit = 1024 * 1024
+        let fd: number | undefined
+        try {
+          const candidate = fs.statSync(absolutePath, { bigint: true })
+          if (!candidate.isFile() || candidate.size > BigInt(limit)) return undefined
+          // A regular pathname may be swapped for a FIFO after stat. Opening
+          // nonblocking and checking the descriptor closes that race; stat
+          // follows symlinks so regular targets retain revision coalescing.
+          fd = fs.openSync(absolutePath, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK)
+          const before = fs.fstatSync(fd, { bigint: true })
+          if (!before.isFile() || before.size > BigInt(limit)) return undefined
+          const buffer = Buffer.alloc(Number(before.size) + 1)
+          const read = fs.readSync(fd, buffer, 0, buffer.length, 0)
+          const after = fs.fstatSync(fd, { bigint: true })
+          const current = fs.statSync(absolutePath, { bigint: true })
+          if (
+            read !== Number(before.size) ||
+            after.size !== before.size ||
+            after.mtimeNs !== before.mtimeNs ||
+            after.ctimeNs !== before.ctimeNs ||
+            current.dev !== after.dev ||
+            current.ino !== after.ino ||
+            current.size !== after.size ||
+            current.mtimeNs !== after.mtimeNs ||
+            current.ctimeNs !== after.ctimeNs
+          )
+            return undefined
+          return createHash('sha256').update(buffer.subarray(0, read)).digest('hex')
+        } catch (error) {
+          const failure = error as NodeJS.ErrnoException
+          if (typeof failure.errno !== 'number') throw error
+          if (failure.code === 'ENOENT') return 'missing'
+          // An unreadable revision still invalidates; the next successful
+          // read must be delivered too, even if its bytes match the old ones.
+          return undefined
+        } finally {
+          if (fd !== undefined) fs.closeSync(fd)
+        }
+      }
+      let lastRevision = revision()
       // Watch the parent directory, not the file itself: editors and agents
       // replace files via atomic rename, which orphans a file-inode watcher
       // after the first change. A directory watch survives inode swaps.
       const dir = path.dirname(absolutePath)
       const base = path.basename(absolutePath)
       const watcher = fs.watch(dir, (_eventType, filename) => {
+        if (closed) return
         // filename can be null on some platforms: treat as a possible match.
         if (filename && filename !== base) return
-        if (this.recentWrites.has(absolutePath)) return
+        if (this.recentWrites.has(absolutePath)) {
+          lastRevision = revision()
+          return
+        }
         if (debounceTimer) clearTimeout(debounceTimer)
         debounceTimer = setTimeout(() => {
           debounceTimer = null
+          const current = revision()
+          if (current !== undefined && current === lastRevision) return
+          lastRevision = current
+          // A timer queued before our write must not publish that write.
+          if (this.recentWrites.has(absolutePath)) return
           this.emit({ _tag: 'workspace_files.changed', path: absolutePath })
         }, this.debounceMs)
       })
       const cleanup = (): void => {
+        if (closed) return
+        closed = true
         if (debounceTimer) clearTimeout(debounceTimer)
         watcher.close()
         this.watchers.delete(absolutePath)

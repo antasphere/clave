@@ -11,7 +11,12 @@
  * (`windows.ts`), which the shell implements over its registry and the
  * standalone server over a map.
  */
-import { ptyManager, type PtySpawnOptions, type RestartOverrides } from '../pty-manager'
+import {
+  ptyManager,
+  loginShellEnvAsync,
+  type PtySpawnOptions,
+  type RestartOverrides
+} from '../pty-manager'
 import { workspaceManager } from '../workspace-manager'
 import * as titleGenerator from '../title-generator'
 import { clearState as clearAgentState } from '../agent-state-manager'
@@ -100,6 +105,10 @@ export async function spawnSession(
     (windowKey ? windows.workspaceOf(windowKey) : null) ??
     workspaceManager.getLastActiveWorkspaceId() ??
     undefined
+  // The spawn finds tmux and the agents on the login shell's PATH: waited
+  // for here, so it never takes the synchronous read that freezes the
+  // process for as long as the person's profile runs (PRDCT-3527).
+  await loginShellEnvAsync()
   // The asking window is the session's HOME: its persisted key goes on the
   // record, so the next boot brings the tab back in that window (an
   // adoption or a move re-stamps through this same path).

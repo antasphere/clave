@@ -1,3 +1,4 @@
+import { isRemoteKey, canOpenRemotePage } from '../../lib/fleet-identity'
 import { useSessionStore, type SessionGroup } from '../../store/session-store'
 import { ensureGroupTerminalRunning } from '../../lib/group-terminal'
 import { WebViewPane } from './WebViewPane'
@@ -34,6 +35,15 @@ export function GroupViewPanel({
     servingSessionId ? s.sessions.some((x) => x.id === servingSessionId && x.alive) : false
   )
   if (!view) return null
+  if (isRemoteKey(group.id) && !canOpenRemotePage(view.url))
+    return (
+      <div className="p-4 text-sm text-text-secondary">
+        This preview uses a server-local address. Open a reachable preview supplied by Contremaitre.
+        <button className="btn-secondary" onClick={() => setActiveGroupView(null)}>
+          Back to sessions
+        </button>
+      </div>
+    )
 
   return (
     <WebViewPane

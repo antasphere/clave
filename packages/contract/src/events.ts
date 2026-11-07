@@ -10,12 +10,22 @@
  */
 import { Schema } from 'effect'
 import { Client } from './clients'
-import { AccountOverride, AgentState, SessionPage } from './sessions'
+import { FilesDirsChanged } from './files'
+import { AccountOverride, AgentState, SessionPage, RestartRequestId } from './sessions'
+import { WorkAssignment } from './work'
 import { SettingsEvent } from './settings'
 import { SidebarEvent } from './sidebar/layout'
 import { WorkspaceFilesEvent } from './workspace-files/model'
+// ── Wave wcs1023, lane C: the git domain ──
+import { GitEvent } from './git'
+// ── Issue #266: the server domain ──
+import { ServerUpgradeEvent } from './server-info'
+// ── ADR 0004: the routines ──
+import { RoutinesChanged } from './routines/model'
 
 export const ServerEvent = Schema.Union(
+  FilesDirsChanged,
+  Schema.TaggedStruct('requests.changed', { revision: Schema.Number }),
   // ── Clients ──
   Schema.TaggedStruct('client.registered', { client: Client }),
   Schema.TaggedStruct('client.unregistered', { id: Schema.String }),
@@ -48,6 +58,12 @@ export const ServerEvent = Schema.Union(
     page: Schema.NullOr(SessionPage),
     servingSessionId: Schema.NullOr(Schema.String)
   }),
+  /** A session's work assignment changed: the record's new one, or null when
+   *  it belongs to no wave or lane any more. */
+  Schema.TaggedStruct('session.work_changed', {
+    id: Schema.String,
+    work: Schema.NullOr(WorkAssignment)
+  }),
   /** Another tab's agent typed a message into this one (`from` is its name,
    *  null when it had none): the window marks the row so the message is
    *  never silent. */
@@ -59,6 +75,7 @@ export const ServerEvent = Schema.Union(
    *  remounts its pane and shows the account. */
   Schema.TaggedStruct('session.restarted', {
     id: Schema.String,
+    requestId: Schema.optional(RestartRequestId),
     resumed: Schema.Boolean,
     account: AccountOverride
   }),
@@ -68,7 +85,24 @@ export const ServerEvent = Schema.Union(
     pinnedId: Schema.String,
     groupId: Schema.String,
     windowKey: Schema.String
-  })
+  }),
+  // ── Wave 5, lane C: the plugins ──
+  /** The installed plugins or their running state changed; a client re-lists. */
+  Schema.TaggedStruct('plugins.changed', {}),
+  /** A plugin's notification, for the client that shows notifications when
+   *  the server cannot. */
+  Schema.TaggedStruct('plugins.notified', {
+    pluginId: Schema.String,
+    name: Schema.String,
+    title: Schema.String,
+    body: Schema.optional(Schema.String)
+  }),
+  // ── Wave wcs1023, lane C: the git domain (a watched repository changed on the server's disk, a batch moved) ──
+  ...GitEvent.members,
+  // ── Issue #266: the server's self-upgrade changed state ──
+  ServerUpgradeEvent,
+  // ── ADR 0004: the routines (the routines or their runs changed) ──
+  RoutinesChanged
   // ── Lane B: terminals ──
 )
 export type ServerEvent = typeof ServerEvent.Type

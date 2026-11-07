@@ -7,26 +7,29 @@ import { createHash, timingSafeEqual } from 'crypto'
 import { app, Notification } from 'electron'
 import { TEST_NO_ACTIVATE } from '../test-mode'
 import { z } from 'zod'
+import { serverConnectionRegistry } from '../ipc-handlers/server-handlers'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import { callRenderer, callRendererAll, requestView } from './mcp-bridge'
 import { windowRegistry } from '../window-registry'
 import { focusedOrPrimaryWindow, bringForward } from '../window-routing'
 import { workspaceManager } from '../workspace-manager'
+import { windowWorkspaces, initialWindowWorkspace } from '../window-workspaces'
 import { moveSessionsToWindow, awaitRehomed } from '../ipc-handlers/window-handlers'
 import { sidebarLayouts, sidebarTransport } from '../sidebar-layouts'
 import { ptyManager } from '../pty-manager'
 import { captureMessage, captureTabClosed, captureTabSpawn } from '../exchange-capture/service'
 import { launchProfileManager } from '../launch-profile-manager'
 import { BUILT_IN_LAUNCH_PROFILES } from '../../shared/agent-launch'
+import { chatDefaultFor } from '../../shared/open-session-modes'
 import { getPreference } from '../ipc-handlers/clave-file-handlers'
 import { parentOf, setParent } from '../sessions/lineage'
 import { publishOrSend } from '../server/session-events'
 import { sessionWindows } from '../sessions/windows'
 import { shellSidebarClient } from './shell-sidebar'
-import { usageSummaryOf } from '../../shared/usage-summary'
+import { usageSummaryOf, usageSummaryForModel } from '../../shared/usage-summary'
 import type { PinnedBlueprint } from '../../shared/pinned-blueprint'
-import type { AccountUsageSummary } from '../../shared/account-pool'
+import { isExhausted, type AccountUsageSummary } from '../../shared/account-pool'
 import { claudeAccountsManager } from '../claude-accounts'
 import { codexAccountsManager } from '../codex-accounts'
 import { usageManager, type UsageError, type UsageLimits } from '../usage-manager'
@@ -200,7 +203,8 @@ const SUBJECT_SESSION_COMMANDS = new Set([
   'rename',
   'moveSession',
   'setSessionView',
-  'switchAccount'
+  'switchAccount',
+  'setWork'
 ])
 
 /** A workspace ref (id or name) → its id, main-side (the registry is global). */
@@ -396,11 +400,12 @@ const summaryOf = (read: UsageLimits | UsageError | undefined): AccountUsageSumm
 /** Whether an account's last usage read says it is about to stop: the
  *  tightest window critical, or about five percent left (the pool's rule);
  *  an unknown read is not exhaustion. */
-function exhaustedFrom(read: UsageLimits | UsageError | undefined): boolean {
-  const best = summaryOf(read)?.tightest
-  if (!best) return false
-  if (best.severity === 'critical') return true
-  return 100 - best.usedPercentage <= 5
+function exhaustedFrom(
+  read: UsageLimits | UsageError | undefined,
+  context?: { model?: string }
+): boolean {
+  const summary = summaryOf(read)
+  return isExhausted(context ? usageSummaryForModel(summary, context.model) : summary)
 }
 
 const switchModeOf = (raw: unknown): 'propose' | 'automatic' | null =>
@@ -448,7 +453,7 @@ const servedShell: ServedShell<NonNullable<BrowserWindowLike>> = {
       return {
         id,
         label: account?.label ?? record.claudeProfileLabel ?? 'Removed account',
-        exhausted: exhaustedFrom(read)
+        exhausted: exhaustedFrom(read, { model: record.model })
       }
     }
     return null
@@ -487,6 +492,7 @@ const servedShell: ServedShell<NonNullable<BrowserWindowLike>> = {
             ? { usage: summaryOf(usageManager.snapshot()[a.id]) }
             : {})
         })),
+  useRecommendedAccount: () => getPreference('useRecommendedAccount') === true,
   selectedAccountId: (provider) => {
     const raw = getPreference(
       provider === 'codex' ? 'selectedCodexAccountId' : 'selectedClaudeProfileId'
@@ -505,6 +511,8 @@ const servedShell: ServedShell<NonNullable<BrowserWindowLike>> = {
     [...BUILT_IN_LAUNCH_PROFILES, ...launchProfileManager.getPreferences().customProfiles]
       .filter((profile) => profile.family === family)
       .map(({ id, name }) => ({ id, name })),
+  chatDefault: (family, workspaceId) =>
+    chatDefaultFor(launchProfileManager.getPreferences(), family, workspaceId),
   pins: () => workspaceManager.load().pins as PinnedBlueprint[],
   parentOf: (sessionId) => parentOf(sessionId),
   setParent: (childId, parentId) => setParent(childId, parentId),
@@ -519,34 +527,39 @@ const servedShell: ServedShell<NonNullable<BrowserWindowLike>> = {
 
 /** Main's "open a new window", injected by the entry (index.ts owns
  *  createWindow; importing it here would be a cycle). */
-let windowOpener: ((workspaceId: string | null) => { windowId: number }) | null = null
+let windowOpener: ((workspaceId: string | null) => Promise<{ windowId: number }>) | null = null
 
 export function registerMcpWindowOpener(
-  fn: (workspaceId: string | null) => { windowId: number }
+  fn: (workspaceId: string | null) => Promise<{ windowId: number }>
 ): void {
   windowOpener = fn
 }
 
 /** `clave_open_window`: a new window on the given workspace, else on the
  *  caller's own (the app once more, where you are). */
-function openWindowFromTool(
+async function openWindowFromTool(
   p: Record<string, unknown>,
   callerSessionId: string | undefined
-): { windowId: number; workspaceId: string | null } {
+): Promise<{ windowId: number; workspaceId: string | null }> {
   if (!windowOpener) throw new Error('Clave cannot open windows yet')
+  const state = await windowWorkspaces.load()
   let workspaceId: string | null
   if (typeof p.workspace === 'string' && p.workspace.length > 0) {
-    workspaceId = resolveWorkspaceIdMain(p.workspace)
+    const ref = p.workspace
+    workspaceId =
+      state.workspaces.find((w) => w.id === ref)?.id ??
+      state.workspaces.find((w) => w.name === ref)?.id ??
+      state.workspaces.find((w) => w.name.toLowerCase() === ref.toLowerCase())?.id ??
+      null
     if (!workspaceId) throw new Error(`Unknown workspace "${p.workspace}"`)
   } else {
     const own =
       (callerSessionId ? windowRegistry.getWindowForSession(callerSessionId) : null) ??
       focusedOrPrimaryWindow()
     workspaceId =
-      (own ? windowRegistry.getWorkspaceForWindow(own.id) : null) ??
-      workspaceManager.resolveInitialWorkspaceId()
+      (own ? windowRegistry.getWorkspaceForWindow(own.id) : null) ?? initialWindowWorkspace(state)
   }
-  const { windowId } = windowOpener(workspaceId)
+  const { windowId } = await windowOpener(workspaceId)
   return { windowId, workspaceId }
 }
 
@@ -564,7 +577,7 @@ async function runCommand(command: string, payload: unknown, caller?: string): P
       caller ?? (typeof p.callerSessionId === 'string' ? p.callerSessionId : undefined)
     let result: unknown
     if (command === 'openWindow') {
-      result = openWindowFromTool(p, callerSessionId)
+      result = await openWindowFromTool(p, callerSessionId)
     } else {
       const win = await resolveCommandWindow(command, p, callerSessionId)
       // The road is the boot's decision: a call that lands before it waits for
@@ -585,7 +598,11 @@ async function runCommand(command: string, payload: unknown, caller?: string): P
       // (`shell-sidebar.ts`); `serveCommand` keeps the wave 3 tools on the
       // window there.
       const attached = getClaveServerEndpoint()?.mode === 'attached'
-      if (sidebarTransport() === 'server' || attached) {
+      // Fleet launches and listings need the window's merged owner inventory.
+      const fleetTool =
+        (command === 'openSession' || command === 'list') &&
+        (p.server !== undefined || serverConnectionRegistry().list().length > 0)
+      if (!fleetTool && (sidebarTransport() === 'server' || attached)) {
         const api = await serverClient.api()
         const served = await serveCommand(command, p, {
           api: attached ? { ...api, sidebar: shellSidebarClient(sidebarLayouts()) } : api,
@@ -629,6 +646,13 @@ async function runCommand(command: string, payload: unknown, caller?: string): P
         }
       }
       result = await callRenderer<unknown>(command, payload, win)
+      // A window-owned fleet launch keeps a messaging link in the renderer.
+      // Local read/send tools still run on the server, so retain the same
+      // authenticated relationship there independently of sidebar nesting.
+      if (command === 'openSession' && callerSessionId && result && typeof result === 'object') {
+        const childId = (result as { sessionId?: unknown }).sessionId
+        if (typeof childId === 'string') setParent(childId, callerSessionId)
+      }
       // Focusing a tab that lives in another window means the user should
       // SEE it: bring that window forward (inert under --test-no-activate).
       if (command === 'focus' && win) bringForward(win)
@@ -667,7 +691,7 @@ function buildServer(callerSessionId: string | undefined): McpServer {
     'clave_list',
     {
       description:
-        'List the open Clave windows (id, workspace, which is yours), the registered workspaces (root folders; each window shows one and scopes what the user sees in it), all groups and sessions (tabs) currently open across every window, plus the pinned workspace groups (launchable templates from .clave files, with their state: idle / active-visible / active-hidden), the focused session, and — when called from inside a Clave tab — which session/group/window is yours. Sessions and groups are annotated with their workspaceId/workspaceName and the windowId they live in; a Claude or Codex session also carries its account ({ id, label, exhausted }, the subscription it runs on and whether it is about to hit its limit).',
+        'List the saved servers (id, name, connection state), their workspaces, the open Clave windows (id, workspace, which is yours), the registered workspaces (root folders; each window shows one and scopes what the user sees in it), all groups and sessions (tabs) currently open across every window, plus the pinned workspace groups (launchable templates from .clave files, with their state: idle / active-visible / active-hidden), the focused session, and — when called from inside a Clave tab — which session/group/window is yours. Sessions and groups are annotated with their workspaceId/workspaceName and the windowId they live in; a Claude or Codex session also carries its account ({ id, label, exhausted }, the subscription it runs on and whether it is about to hit its limit).',
       inputSchema: {
         workspace: z
           .string()
@@ -684,7 +708,7 @@ function buildServer(callerSessionId: string | undefined): McpServer {
     'clave_create_group',
     {
       description:
-        'Create a new (empty) group in the Clave sidebar. Returns the new groupId. Follow up with clave_open_session to put a tab in it — some interactions prune empty groups.',
+        "Create a new (empty) group in the Clave sidebar. Returns the new groupId. Follow up with clave_open_session to put a tab in it — some interactions prune empty groups. A group's routines (the scheduled agent sessions of ADR 0004) are declared in the .clave file alone; this tool takes none.",
       inputSchema: {
         name: z.string().describe('Display name for the group'),
         prompt: z
@@ -709,8 +733,22 @@ function buildServer(callerSessionId: string | undefined): McpServer {
     'clave_open_session',
     {
       description:
-        'Open a new tab in Clave: a Claude Code, Antigravity, Codex, or Pi session, or a plain terminal, in the given directory. Claude and Codex can open in the terminal (default) or in Clave\'s CHAT VIEW — the conversation interface with message bubbles and a composer — with chat: true ("open a chat", "in chat mode", "chat session"). Optionally place it in a group — pass a groupId, an exact group name, or "mine" for the calling tab\'s own group. Returns { sessionId, groupId }.',
+        'Open a new tab in Clave: a Claude Code, Antigravity, Codex, or Pi session, or a plain terminal, in the given directory. Claude and Codex can open in the terminal (default) or in Clave\'s CHAT VIEW — the conversation interface with message bubbles and a composer — with chat: true ("open a chat", "in chat mode", "chat session"). Optionally place it in a group — pass a groupId, an exact group name, or "mine" for the calling tab\'s own group. Pass server to run on a connected server, using its own directory, profiles and accounts. clave_list shows server IDs and names. Returns { sessionId, groupId } plus serverId for a remote launch.',
       inputSchema: {
+        attachToParent: z
+          .boolean()
+          .default(false)
+          .describe(
+            'Nest the new tab under the calling session in the sidebar (default false). Use true for execution helpers and verifiers; false for lane leads and successors. The caller remains the messaging parent either way while the server is running. Without a caller, the tab stays separate.'
+          ),
+        server: z
+          .string()
+          .min(1)
+          .max(200)
+          .optional()
+          .describe(
+            'Destination server id or name from clave_list, or local for this Mac. Omit to follow the target group or workspace, then the calling tab. cwd is a path on the destination server. Conflicting group/workspace owners are refused.'
+          ),
         cwd: z.string().describe('Absolute path of the working directory for the new session'),
         mode: z
           // 'gemini' is kept as a deprecated alias (the Gemini CLI was retired
@@ -727,7 +765,7 @@ function buildServer(callerSessionId: string | undefined): McpServer {
           .boolean()
           .optional()
           .describe(
-            'Open the agent in Clave\'s chat view instead of the terminal: "chat", "chat mode", "chat session", "the chat UI". claude and codex modes only (Claude chat is macOS/Linux only); errors for any other mode. Takes the place of profile — it is the "claude-chat" / "codex-chat" launch profile.'
+            'Open the agent in Clave\'s chat view instead of the terminal: "chat", "chat mode", "chat session", "the chat UI". claude and codex modes only (Claude chat is macOS/Linux only); errors for any other mode. Opens the chat the launcher would in that workspace: the chat form of its default profile for the family (the person\'s own flags included), the built-in "claude-chat" / "codex-chat" otherwise; profile may name another chat profile by its id instead.'
           ),
         dangerous: z
           .boolean()
@@ -757,7 +795,7 @@ function buildServer(callerSessionId: string | undefined): McpServer {
           .max(128)
           .optional()
           .describe(
-            'Account (subscription) the new tab runs on: an account id or its exact name as set in Settings → Accounts ("default" is the machine login), or "any" for whichever account of the pool has headroom. claude and codex modes only. Omit to use the account selected in settings, moved along the pool when that one is about to hit its limit. Unknown names error with the list. clave_list reports each session\'s account.'
+            'Account (subscription) the new tab runs on: an account id or its exact name as set in Settings → Accounts ("default" is the machine login), or "any" for whichever account of the pool has headroom. claude and codex modes only. Omit to follow Settings → Accounts: the selected account, or the recommended account when enabled, moved along the pool when exhausted. Unknown names error with the list. clave_list reports each session\'s account.'
           ),
         provider: z.string().min(1).max(200).optional().describe('Pi provider id. Pi mode only.'),
         thinking: z
@@ -794,7 +832,7 @@ function buildServer(callerSessionId: string | undefined): McpServer {
     'clave_launch_group',
     {
       description:
-        'Launch a pinned workspace group (a template from a .clave file): spawns all its sessions and attaches its quick-launch terminals as one group. If the group is already running but hidden, it is shown instead. Use clave_list to see the available pinned groups and their state. A name existing in several workspaces resolves to your own workspace first, then the active one; still-ambiguous names error with qualified candidates.',
+        "Launch a pinned workspace group (a template from a .clave file): spawns all its sessions and attaches its quick-launch terminals as one group. A group's routines (the scheduled agent sessions of ADR 0004) are the server's to run from the file itself and are not launched here. If the group is already running but hidden, it is shown instead. Use clave_list to see the available pinned groups and their state. A name existing in several workspaces resolves to your own workspace first, then the active one; still-ambiguous names error with qualified candidates.",
       inputSchema: {
         group: z.string().describe('Pinned group id or name (case-insensitive)'),
         workspace: z
@@ -846,7 +884,7 @@ function buildServer(callerSessionId: string | undefined): McpServer {
     'clave_add_group_terminal',
     {
       description:
-        'Attach a quick-launch terminal to a Clave group: a saved shell command (e.g. a dev server) shown as a colored icon on the group, re-runnable on click. By default it also launches right away. Returns { terminalId, groupId, sessionId }.',
+        "Attach a quick-launch terminal to a Clave group: a saved shell command (e.g. a dev server) shown as a colored icon on the group, re-runnable on click. By default it also launches right away. Returns { terminalId, groupId, sessionId }. A group's routines (the scheduled agent sessions of ADR 0004) are declared in the .clave file alone: this tool adds terminals, never routines.",
       inputSchema: {
         groupId: z.string().describe('Target group: a group id, an exact group name, or "mine"'),
         command: z.string().describe('Shell command this terminal runs, e.g. "npm run dev"'),
@@ -988,6 +1026,65 @@ function buildServer(callerSessionId: string | undefined): McpServer {
       }
     },
     (args) => run('rename', args)
+  )
+
+  server.registerTool(
+    'clave_set_work',
+    {
+      description:
+        'Say which wave or lane a tab works on and its role, so the sidebar shows one stable entry per lane with its current lead, its verifier and its history, instead of one row per session. Use it when you coordinate a wave or lead a lane: for yourself ("mine", the default) or for a tab you can reach (one you opened, the one that opened you, or a tab in your group). A unit is a stable key you choose (a workstream stem, a run and lane id) with a short label; a lane may name its wave. Roles: coordinator (holds a wave), lead (holds a lane), verifier, worker. A role someone else holds is refused unless replace is true; to pass your own role to a successor use clave_hand_over. action "complete" marks your assignment done, "leave" removes it. clave_list shows every tab\'s assignment as work.',
+      inputSchema: {
+        sessionId: z
+          .string()
+          .optional()
+          .describe('The tab to assign: "mine" (the default) or a session id you can reach'),
+        action: z
+          .enum(['assign', 'complete', 'leave'])
+          .optional()
+          .describe('assign (the default), complete, or leave'),
+        unit: z
+          .string()
+          .max(200)
+          .optional()
+          .describe("The unit's stable key; defaults to your own unit when you assign a tab to it"),
+        kind: z.enum(['wave', 'lane']).optional().describe('Required for a new unit'),
+        label: z
+          .string()
+          .max(80)
+          .optional()
+          .describe('The short label the sidebar entry shows; required for a new unit'),
+        wave: z.string().max(200).optional().describe("A lane's wave, by its unit key"),
+        waveLabel: z.string().max(80).optional().describe("The wave's label, for the breadcrumb"),
+        role: z
+          .enum(['coordinator', 'lead', 'verifier', 'worker'])
+          .optional()
+          .describe('Required to assign'),
+        task: z.string().max(80).optional().describe("A worker's bounded task"),
+        replace: z
+          .boolean()
+          .optional()
+          .describe('Take the role over from the tab that holds it now (explicit reconciliation)')
+      }
+    },
+    (args) => run('setWork', { ...args, callerSessionId })
+  )
+
+  server.registerTool(
+    'clave_hand_over',
+    {
+      description:
+        "Hand your role in a wave or lane to a successor tab, or take over a role handed to you. As the holder: open the successor first (clave_open_session), then pass to: its session id; it shows as taking over and you keep the role until it accepts. As the successor: once you have read the handover, pass accept: true; the role becomes yours and the holder moves to the entry's history, its process left running. cancel: true withdraws your offer. The sidebar entry keeps its place through every handover, and a handover never accepted stays visible as pending.",
+      inputSchema: {
+        to: z.string().optional().describe("The successor's session id"),
+        accept: z.boolean().optional().describe('Take over the role handed to you'),
+        cancel: z.boolean().optional().describe('Withdraw your offer'),
+        replace: z
+          .boolean()
+          .optional()
+          .describe('With accept: take the role even if another tab holds it now')
+      }
+    },
+    (args) => run('handOver', { ...args, callerSessionId })
   )
 
   server.registerTool(
@@ -1294,6 +1391,60 @@ function buildServer(callerSessionId: string | undefined): McpServer {
             text: JSON.stringify({ ok: true, offerId: offer.id, label: offer.label })
           }
         ]
+      }
+    }
+  )
+
+  server.registerTool(
+    'clave_routine_report',
+    {
+      description:
+        'You are a Clave routine run: report your result. Call this ONCE when the job is done, with status (ok | attention | failed), a one-line headline, a markdown summary and data matching the routine schema named in your first message. Invalid data is refused with the errors: correct it and call again. A run that ends without a valid report counts as failed. Refused from any session that is not a routine run.',
+      inputSchema: {
+        status: z
+          .enum(['ok', 'attention', 'failed'])
+          .describe('ok, attention (the person must look), or failed'),
+        headline: z
+          .string()
+          .min(1)
+          .max(120)
+          .describe('One line, what the person needs to know at a glance'),
+        summary: z
+          .string()
+          .min(1)
+          .max(4000)
+          .describe('Markdown: what you did, what you found, what you propose'),
+        data: z
+          .unknown()
+          .describe('The object the routine schema describes; validated before it is taken')
+      }
+    },
+    async (args) => {
+      if (!callerSessionId) {
+        return errorResult(
+          'clave_routine_report requires a per-session token: it reports the run its caller is.'
+        )
+      }
+      try {
+        const api = await serverClient.api()
+        const result = await api.routines.report({
+          sessionId: callerSessionId,
+          status: args.status,
+          headline: args.headline,
+          summary: args.summary,
+          data: args.data
+        })
+        return { content: [{ type: 'text', text: JSON.stringify({ ok: true, ...result }) }] }
+      } catch (error) {
+        const detail = error as { message?: string; errors?: unknown; cause?: { errors?: unknown } }
+        const errors = Array.isArray(detail.errors)
+          ? detail.errors
+          : Array.isArray(detail.cause?.errors)
+            ? detail.cause.errors
+            : []
+        return errorResult(
+          [detail.message ?? String(error), ...errors.map((e) => `- ${String(e)}`)].join('\n')
+        )
       }
     }
   )

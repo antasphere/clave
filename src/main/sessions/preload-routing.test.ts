@@ -128,6 +128,9 @@ const answer = (table: Record<string, unknown>): void => {
   })
 }
 const channels = (): string[] => mocks.invoke.mock.calls.map(([c]) => c as string)
+/** The channels listened on over IPC, the server watch's own word aside. */
+const sessionChannels = (): string[] =>
+  mocks.on.mock.calls.map(([c]) => c as string).filter((c) => c !== 'server:endpoint-named')
 /** Lets the announce (a microtask queued by `connect`) and the dynamic import run. */
 const settle = async (): Promise<void> => {
   for (let i = 0; i < 20; i++) await Promise.resolve()
@@ -161,6 +164,7 @@ beforeEach(async () => {
     setView: vi.fn(async (id: string) => ({ id, via: 'server' })),
     models: vi.fn(async () => [{ id: 'm' }]),
     commands: vi.fn(async () => [{ name: 'c' }]),
+    control: vi.fn(async () => ({ mcpServers: [] })),
     capabilities: vi.fn(async () => ({ images: true })),
     history: vi.fn(async () => ({ items: [], via: 'server' })),
     start: vi.fn(async () => ({ id: 'new', via: 'server' })),
@@ -189,7 +193,9 @@ describe('the preload routes sessionsList', () => {
     expect(mocks.createApiClient).not.toHaveBeenCalled()
     // The preload asks for the endpoint once at its start too, for the
     // terminal pane's road (its mode), before any routed call.
-    expect(channels().filter((c) => c !== 'server:endpoint')).toEqual(['sessions:list'])
+    expect(channels().filter((c) => c !== 'server:endpoint' && c !== 'server:external')).toEqual([
+      'sessions:list'
+    ])
     expect(channels()[0]).toBe('server:endpoint')
   })
   it('goes to the server, scoped to this window, once main names an endpoint', async () => {
@@ -239,17 +245,21 @@ describe('the preload routes the other session calls', () => {
     await api.sessionsSetView('s1', 'chat')
     await api.sessionsModels('s1')
     await api.sessionsCommands('s1')
+    await api.sessionsControl('s1', { type: 'mcp_status' })
     await api.sessionsCapabilities('s1')
     await api.sessionsHistory('s1', 40, 20)
     await api.spawnSession('/repo', spawnOptions)
     await api.killSession('s1')
-    const ipc = mocks.invoke.mock.calls.filter(([c]) => c !== 'server:endpoint')
+    const ipc = mocks.invoke.mock.calls.filter(
+      ([c]) => c !== 'server:endpoint' && c !== 'server:external'
+    )
     expect(ipc).toEqual([
       ['sessions:write', 's1', bytes],
       ['sessions:write', 's1', typed],
       ['sessions:set-view', 's1', 'chat'],
       ['sessions:models', 's1'],
       ['sessions:commands', 's1'],
+      ['sessions:control', 's1', { type: 'mcp_status' }],
       ['sessions:capabilities', 's1'],
       ['sessions:history', 's1', 40, 20],
       ['pty:spawn', '/repo', spawnOptions],
@@ -265,6 +275,7 @@ describe('the preload routes the other session calls', () => {
     expect(await api.sessionsSetView('s1', 'chat')).toEqual({ id: 's1', via: 'server' })
     expect(await api.sessionsModels('s1')).toEqual([{ id: 'm' }])
     expect(await api.sessionsCommands('s1')).toEqual([{ name: 'c' }])
+    expect(await api.sessionsControl('s1', { type: 'mcp_status' })).toEqual({ mcpServers: [] })
     expect(await api.sessionsCapabilities('s1')).toEqual({ images: true })
     expect(await api.sessionsHistory('s1', 40, 20)).toEqual({ items: [], via: 'server' })
     expect(await api.spawnSession('/repo', spawnOptions)).toEqual({ id: 'new', via: 'server' })
@@ -277,6 +288,7 @@ describe('the preload routes the other session calls', () => {
     expect(mocks.sessions.setView).toHaveBeenCalledExactlyOnceWith('s1', 'chat')
     expect(mocks.sessions.models).toHaveBeenCalledExactlyOnceWith('s1')
     expect(mocks.sessions.commands).toHaveBeenCalledExactlyOnceWith('s1')
+    expect(mocks.sessions.control).toHaveBeenCalledExactlyOnceWith('s1', { type: 'mcp_status' })
     expect(mocks.sessions.capabilities).toHaveBeenCalledExactlyOnceWith('s1')
     expect(mocks.sessions.history).toHaveBeenCalledExactlyOnceWith('s1', 40, 20)
     expect(mocks.sessions.start).toHaveBeenCalledExactlyOnceWith({
@@ -285,7 +297,11 @@ describe('the preload routes the other session calls', () => {
       options: spawnOptions
     })
     expect(mocks.sessions.stop).toHaveBeenCalledExactlyOnceWith('s1')
-    expect(channels().filter((c) => c !== 'server:endpoint' && c !== 'window:identity')).toEqual([])
+    expect(
+      channels().filter(
+        (c) => c !== 'server:endpoint' && c !== 'server:external' && c !== 'window:identity'
+      )
+    ).toEqual([])
   })
 })
 
@@ -452,13 +468,30 @@ describe('a subscription is released on the transport it was taken on', () => {
 })
 
 describe('a session listener bound before the server arrives', () => {
+  it('connects at once when main names the server, not at the next tick (PRDCT-3527)', async () => {
+    answer({ 'server:endpoint': null })
+    const states = vi.fn()
+    api.onAgentState('s1', states)
+    await settle()
+    expect(mocks.push).toBeNull()
+    const named = mocks.on.mock.calls.find(([c]) => c === 'server:endpoint-named')?.[1] as
+      | (() => void)
+      | undefined
+    expect(named).toBeTypeOf('function')
+    answer({ 'server:endpoint': attachedEndpoint })
+    named!()
+    await settle()
+    // Well before the watch's two-second tick.
+    expect(mocks.push).not.toBeNull()
+    expect(mocks.push!.connect).toHaveBeenCalled()
+  })
   it('binds IPC at once and the push channel once a routed call connects', async () => {
     answer({ 'server:endpoint': null })
     const titles = vi.fn()
     const states = vi.fn()
     api.onSessionAutoTitle('s1', titles)
     api.onAgentState('s1', states)
-    expect(mocks.on.mock.calls.map(([c]) => c)).toEqual(['session:auto-title:s1', 'agent:state:s1'])
+    expect(sessionChannels()).toEqual(['session:auto-title:s1', 'agent:state:s1'])
     await settle()
     expect(mocks.push).toBeNull()
 
@@ -506,7 +539,7 @@ describe('a stream listener follows its subscription’s transport', () => {
     api.onSessionStream('s1', late)
     await settle()
     expect(mocks.push!.subscribe).not.toHaveBeenCalled()
-    expect(mocks.on.mock.calls.map(([c]) => c)).toEqual([
+    expect(sessionChannels()).toEqual([
       'sessions:stream:s1',
       'sessions:exit:s1',
       'sessions:stream:s1'
@@ -710,5 +743,27 @@ describe('the preload routes the session records', () => {
     await connectAttached()
     await api.discardSessionRecord('clave-r2')
     expect(mocks.sessions.discardRecord).toHaveBeenCalledWith('clave-r2')
+  })
+})
+
+describe('restart correlation at the preload boundary', () => {
+  it('keeps correlation outside account overrides and forwards it only on the served route', async () => {
+    answer(onServer)
+    mocks.sessions.restart = vi.fn(async () => ({ id: 's1', resumed: true, requestId: 'op-123' }))
+    expect(
+      await api.restartSession('s1', { claudeProfileId: 'play', resendRejected: true }, 'op-123')
+    ).toMatchObject({ requestId: 'op-123' })
+    expect(mocks.sessions.restart).toHaveBeenCalledExactlyOnceWith(
+      's1',
+      { claudeProfileId: 'play' },
+      true,
+      'op-123'
+    )
+    expect(channels()).not.toContain('pty:restart')
+  })
+  it('does not pass a request ID to the legacy IPC restart or invent an echo', async () => {
+    answer({ 'server:endpoint': null, 'pty:restart': { id: 's1', resumed: true } })
+    expect(await api.restartSession('s1', {}, 'op-123')).not.toHaveProperty('requestId')
+    expect(mocks.invoke).toHaveBeenCalledWith('pty:restart', 's1', {})
   })
 })

@@ -1,4 +1,11 @@
-import { API_VERSION, type PluginAPI, type PluginCommandHandler, type PluginSession } from './api'
+import {
+  API_VERSION,
+  type PluginAPI,
+  type PluginActionHandlers,
+  type PluginActionTarget,
+  type PluginCommandHandler,
+  type PluginSession
+} from './api'
 import type { PluginManifest, PluginPermission } from './manifest'
 
 export type RPCId = string | number
@@ -64,15 +71,18 @@ export function assertMethodPermission(
   if (
     method === 'ui.registerPanel' ||
     method === 'ui.registerCommand' ||
-    method === 'ui.registerToolbar'
+    method === 'ui.registerToolbar' ||
+    method === 'ui.registerAction'
   ) {
     const id = typeof params === 'object' && params !== null && 'id' in params ? params.id : null
-    const contributions =
+    const contributions: ReadonlyArray<{ id: string }> =
       method === 'ui.registerPanel'
         ? manifest.contributes.panels
         : method === 'ui.registerCommand'
           ? manifest.contributes.commands
-          : manifest.contributes.toolbar
+          : method === 'ui.registerAction'
+            ? manifest.contributes.actions
+            : manifest.contributes.toolbar
     if (!contributions.some((entry) => entry.id === id)) {
       throw Object.assign(new Error(`Undeclared contribution: ${String(id)}`), { code: -32001 })
     }
@@ -97,6 +107,7 @@ export function createPluginAPI(
     }
   >()
   const commands = new Map<string, PluginCommandHandler>()
+  const actions = new Map<string, PluginActionHandlers>()
   const listeners = new Set<(sessions: PluginSession[]) => void>()
   const contextListeners = new Set<(session: PluginSession | null) => void>()
   const request = <T>(
@@ -120,6 +131,37 @@ export function createPluginAPI(
         reject(error)
       }
     })
+  }
+  // A host request the plugin answers (a command, an action): the handler's value, or
+  // the error with its code, never posted once the API is disposed.
+  const answer = (id: RPCId, run: () => unknown): void => {
+    void Promise.resolve()
+      .then(run)
+      .then(
+        (result) => {
+          if (!disposed) transport.postMessage({ jsonrpc: '2.0', id, result: result ?? null })
+        },
+        (error: unknown) => {
+          if (!disposed)
+            transport.postMessage({
+              jsonrpc: '2.0',
+              id,
+              error: {
+                code:
+                  typeof error === 'object' &&
+                  error !== null &&
+                  'code' in error &&
+                  typeof error.code === 'number'
+                    ? error.code
+                    : -32603,
+                message: error instanceof Error ? error.message : String(error)
+              }
+            })
+        }
+      )
+      .catch(() => {
+        /* The host may have closed the port during completion. */
+      })
   }
   const unsubscribe = transport.subscribe((raw) => {
     if (disposed || !raw || typeof raw !== 'object' || !('jsonrpc' in raw) || raw.jsonrpc !== '2.0')
@@ -168,38 +210,24 @@ export function createPluginAPI(
     if (message.method === 'commands.execute' && 'id' in message) {
       const params = message.params as { id?: string; args?: unknown } | undefined
       const handler = params?.id ? commands.get(params.id) : undefined
-      void Promise.resolve()
-        .then(() => {
-          if (!handler)
-            throw Object.assign(new Error('Command is not registered'), { code: -32601 })
-          return handler(params?.args)
-        })
-        .then(
-          (result) => {
-            if (!disposed)
-              transport.postMessage({ jsonrpc: '2.0', id: message.id, result: result ?? null })
-          },
-          (error: unknown) => {
-            if (!disposed)
-              transport.postMessage({
-                jsonrpc: '2.0',
-                id: message.id,
-                error: {
-                  code:
-                    typeof error === 'object' &&
-                    error !== null &&
-                    'code' in error &&
-                    typeof error.code === 'number'
-                      ? error.code
-                      : -32603,
-                  message: error instanceof Error ? error.message : String(error)
-                }
-              })
-          }
-        )
-        .catch(() => {
-          /* The host may have closed the port during command completion. */
-        })
+      answer(message.id, () => {
+        if (!handler) throw Object.assign(new Error('Command is not registered'), { code: -32601 })
+        return handler(params?.args)
+      })
+    }
+    if (
+      (message.method === 'actions.invoke' || message.method === 'actions.preview') &&
+      'id' in message
+    ) {
+      const params = message.params as { id?: string; target?: PluginActionTarget } | undefined
+      const handlers = params?.id ? actions.get(params.id) : undefined
+      const invoke = message.method === 'actions.invoke'
+      answer(message.id, () => {
+        if (!handlers) throw Object.assign(new Error('Action is not registered'), { code: -32601 })
+        const target = params?.target as PluginActionTarget
+        if (invoke) return handlers.invoke(target)
+        return handlers.preview ? handlers.preview(target) : []
+      })
     }
   })
   const api: PluginAPI = {
@@ -240,6 +268,17 @@ export function createPluginAPI(
           else commands.delete(id)
           throw error
         }
+      },
+      registerAction: async (id, handlers) => {
+        const previous = actions.get(id)
+        actions.set(id, handlers)
+        try {
+          await request('ui.registerAction', { id })
+        } catch (error) {
+          if (previous) actions.set(id, previous)
+          else actions.delete(id)
+          throw error
+        }
       }
     },
     notify: (params) => request('notify', params),
@@ -257,6 +296,7 @@ export function createPluginAPI(
       listeners.clear()
       contextListeners.clear()
       commands.clear()
+      actions.clear()
       for (const entry of pending.values()) {
         clearTimeout(entry.timer)
         entry.reject(new Error('Plugin API has been disposed'))

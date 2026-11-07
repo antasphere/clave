@@ -63,6 +63,11 @@ export function registerDroppedFileHandlers(): void {
       if (!sourcePath) return null
       if (!isTransientSource(sourcePath)) return sourcePath
       if (!fs.existsSync(sourcePath)) return null
+      // A folder (a repository or folder row of the Git tab, a Finder folder)
+      // is passed through as it is: the copy below is for a single transient
+      // file, and copyFileSync on a folder throws, which dropped the whole
+      // drop on the floor for any folder under /tmp or /var/folders.
+      if (fs.statSync(sourcePath).isDirectory()) return sourcePath
 
       const dir = getDroppedFilesDir()
       fs.mkdirSync(dir, { recursive: true })

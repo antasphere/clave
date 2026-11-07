@@ -139,17 +139,17 @@ function hasManagedArg(family: LauncherFamily, args: string[]): boolean {
   )
 }
 
-function sanitizeProfile(value: unknown): LaunchProfile | null {
+function sanitizeProfile(value: unknown, carried = false): LaunchProfile | null {
   if (!value || typeof value !== 'object') return null
   const raw = value as Record<string, unknown>
-  const id = cleanText(raw.id, 128)
+  const id = cleanText(raw.id, carried ? 140 : 128)
   const name = cleanText(raw.name, 100)
   const family = raw.family
   const command = cleanTokens(raw.command, false)
   const additionalArgs = cleanTokens(raw.additionalArgs, true)
   if (
     !id ||
-    !PROFILE_ID_RE.test(id) ||
+    !(PROFILE_ID_RE.test(id) || (carried && chatProfileSource(id))) ||
     !name ||
     !FAMILY_VALUES.has(family as LauncherFamily) ||
     !command ||
@@ -157,8 +157,11 @@ function sanitizeProfile(value: unknown): LaunchProfile | null {
   ) {
     return null
   }
+  const chat = carried ? chatProfileSource(id) : undefined
+  if (chat && chat.family !== family) return null
   const typedFamily = family as LauncherFamily
   if (hasManagedArg(typedFamily, command) || hasManagedArg(typedFamily, additionalArgs)) return null
+  const sourceProfileId = carried ? cleanText(raw.sourceProfileId, 128) : undefined
   const piRaw = raw.pi && typeof raw.pi === 'object' ? (raw.pi as Record<string, unknown>) : null
   const provider = piRaw ? cleanText(piRaw.provider, 200) : undefined
   const model = piRaw ? cleanText(piRaw.model, 200) : undefined
@@ -172,6 +175,7 @@ function sanitizeProfile(value: unknown): LaunchProfile | null {
     family: typedFamily,
     command,
     additionalArgs,
+    ...(sourceProfileId && PROFILE_ID_RE.test(sourceProfileId) ? { sourceProfileId } : {}),
     ...(typedFamily === 'pi' && (provider || model || thinking)
       ? {
           pi: {
@@ -182,6 +186,11 @@ function sanitizeProfile(value: unknown): LaunchProfile | null {
         }
       : {})
   }
+}
+
+/** A start may carry a Mac's custom profile or its derived chat variant. */
+export function sanitizeCarriedLaunchProfile(raw: unknown): LaunchProfile | null {
+  return sanitizeProfile(raw, true)
 }
 
 function cleanDefaults(value: unknown): Partial<Record<LauncherFamily, string>> {
@@ -201,7 +210,7 @@ export function sanitizeLaunchProfilePreferences(raw: unknown): LaunchProfilePre
   const value = raw as Record<string, unknown>
   const customProfiles = Array.isArray(value.customProfiles)
     ? value.customProfiles
-        .map(sanitizeProfile)
+        .map((profile) => sanitizeProfile(profile))
         .filter((profile): profile is LaunchProfile => profile !== null)
     : []
   const seenIds = new Set(BUILT_IN_LAUNCH_PROFILES.map((profile) => profile.id))
@@ -261,6 +270,11 @@ export function buildAgentArgv(input: {
   claudeSettings?: string
   mcpConfigPath?: string
   piStateExtensionPath?: string
+  // ── ADR 0004: a routine run's own flags, Claude only ──
+  effort?: string
+  permissionMode?: 'default' | 'acceptEdits' | 'plan'
+  pluginDir?: string
+  appendSystemPrompt?: string
 }): string[] {
   const expectedFamily = input.kind === 'claude-agents' ? 'claude' : input.kind
   if (input.profile.family !== expectedFamily)
@@ -280,6 +294,16 @@ export function buildAgentArgv(input: {
     if (input.model) argv.push('--model', input.model)
     if (input.claudeSettings) argv.push('--settings', input.claudeSettings)
     if (input.mcpConfigPath) argv.push('--mcp-config', input.mcpConfigPath)
+    // ADR 0004: a routine run's own flags. The CLI names the ask-every-time
+    // mode `manual` on its command line; `default` is its running name.
+    if (input.effort) argv.push('--effort', input.effort)
+    if (input.permissionMode && !input.dangerousMode)
+      argv.push(
+        '--permission-mode',
+        input.permissionMode === 'default' ? 'manual' : input.permissionMode
+      )
+    if (input.pluginDir) argv.push('--plugin-dir', input.pluginDir)
+    if (input.appendSystemPrompt) argv.push('--append-system-prompt', input.appendSystemPrompt)
   } else if (input.kind === 'codex') {
     // A resumed thread goes through the `resume` subcommand, which takes the
     // long spelling of the approvals flag and the thread id last.

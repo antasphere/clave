@@ -1,18 +1,30 @@
 import type React from 'react'
-import { useRef, useState, type RefObject } from 'react'
+import { useEffect, useRef, useState, type RefObject } from 'react'
 import {
   Virtualizer,
   type VirtualizerHandle,
   type CustomContainerComponent,
   type CustomContainerComponentProps,
-  type CustomItemComponent
+  type CustomItemComponent,
+  type CustomItemComponentProps
 } from 'virtua'
+import type { Reveal } from './search'
 
 /** The rows' box, sized and positioned by the virtualiser; the class is what
  *  the stylesheet hangs the column's rhythm and entrance on. */
 function RowsBox({ style, children, ref }: CustomContainerComponentProps): React.JSX.Element {
   return (
     <div ref={ref} className="chat-rows" style={style}>
+      {children}
+    </div>
+  )
+}
+
+/** A row's box, carrying its index: the pane's search finds the row it
+ *  scrolled to by it, to mark the words there (search.ts). */
+function RowItem({ style, index, children, ref }: CustomItemComponentProps): React.JSX.Element {
+  return (
+    <div ref={ref} style={style} data-row-index={index}>
       {children}
     </div>
   )
@@ -74,6 +86,7 @@ export function TranscriptRows<T extends { key: string }>({
   as,
   item,
   holdAbove = false,
+  reveal = null,
   children
 }: {
   rows: readonly T[]
@@ -88,6 +101,8 @@ export function TranscriptRows<T extends { key: string }>({
   holdAbove?: boolean
   as?: CustomContainerComponent
   item?: CustomItemComponent
+  /** A row to bring into view and keep mounted: the pane search's match. */
+  reveal?: Reveal | null
   children: (row: T, index: number, arrive: boolean) => React.ReactElement
 }): React.JSX.Element {
   // Information from the previous render, kept the way React keeps it: in
@@ -108,6 +123,16 @@ export function TranscriptRows<T extends { key: string }>({
         if (above !== held) setHeld(above)
       }
     : undefined
+  useEffect(() => {
+    if (!reveal || reveal.index >= rows.length) return
+    handle.current?.scrollToIndex(reveal.index, { align: reveal.align })
+    // Only a new request scrolls; rows arriving must not pull the reader back.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reveal?.nonce])
+  const keep = [
+    ...(held !== null && held < rows.length ? [held] : []),
+    ...(reveal && reveal.index < rows.length ? [reveal.index] : [])
+  ]
   return (
     <Virtualizer
       ref={handle}
@@ -115,9 +140,9 @@ export function TranscriptRows<T extends { key: string }>({
       scrollRef={scroll}
       shift={shift}
       as={as ?? RowsBox}
-      item={item}
+      item={item ?? RowItem}
       onScroll={onScroll}
-      keepMounted={held !== null && held < rows.length ? [held] : undefined}
+      keepMounted={keep.length ? [...new Set(keep)].sort((a, b) => a - b) : undefined}
     >
       {(row: T, index: number) => children(row, index, arriving.has(row.key))}
     </Virtualizer>

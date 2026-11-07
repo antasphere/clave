@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { useAccountPolicyStore } from './account-policy-store'
 
 /** Which agent a session runs. One field instead of the four booleans
  *  (`claudeMode` / `claudeAgentsMode` / `antigravityMode` / `codexMode`) the
@@ -103,7 +104,21 @@ export const useLaunchPrefsStore = create<LaunchPrefsState>(() => ({
  *  there, or the default when that workspace has launched nothing yet. */
 export function getLastAgentSetup(workspaceId: string | null): AgentSetup {
   const key = workspaceId ?? NO_WORKSPACE_KEY
-  return useLaunchPrefsStore.getState().byWorkspace[key] ?? DEFAULT_AGENT_SETUP
+  const setup = useLaunchPrefsStore.getState().byWorkspace[key] ?? DEFAULT_AGENT_SETUP
+  // With "Use the recommended account" on, the account a past launch went out
+  // on is a memory, not a choice: the agent button, a group's `+` and the
+  // new-session button replay this setup, and a remembered account would reach
+  // accountForLaunch as an explicit pick and skip the recommendation every
+  // time. The kind, the permissions and the launch profile still replay; the
+  // account is picked fresh. An account clicked in the caret menu is still
+  // honoured for that launch, which goes through launchAgent, not here.
+  if (useAccountPolicyStore.getState().useRecommendedAccount) {
+    const rest = { ...setup }
+    delete rest.claudeProfileId
+    delete rest.codexAccountId
+    return rest
+  }
+  return setup
 }
 
 /** Remember a setup as this workspace's default. Called on every agent launch,

@@ -1,3 +1,4 @@
+import { isRemoteKey, ownerOf } from './fleet-identity'
 import { useSessionStore, inActiveWorkspace } from '../store/session-store'
 import { getActiveWorkspaceId } from '../store/workspace-store'
 import { SessionHistoryDiff, resumeTargetGroup } from './session-history-diff'
@@ -14,6 +15,7 @@ let diff: SessionHistoryDiff | null = null
 let unsubscribe: (() => void) | null = null
 
 function send(row: HistoryLedgerRow): void {
+  if (isRemoteKey(row.sessionId)) return
   try {
     window.electronAPI?.historyStamp?.(row)
   } catch {
@@ -61,6 +63,7 @@ export async function resumeHistoryEntry(
   const live = state.sessions.find(
     (s) =>
       s.alive &&
+      ownerOf(s.id) === ownerOf(entry.sessionId) &&
       (s.claudeSessionId === entry.claudeSessionId || s.piSessionId === entry.claudeSessionId)
   )
   if (live) {
@@ -74,7 +77,13 @@ export async function resumeHistoryEntry(
   if (!entry.cwd) return null
   const workspaceId = entry.workspaceId ?? getActiveWorkspaceId() ?? undefined
   try {
-    const info = await window.electronAPI.spawnSession(entry.cwd, {
+    const owner = ownerOf(entry.sessionId)
+    const start =
+      owner === 'local'
+        ? window.electronAPI.spawnSession
+        : (cwd: string, options: Parameters<typeof window.electronAPI.spawnSession>[1]) =>
+            window.electronAPI.fleetStart(owner, cwd, options)
+    const info = await start(entry.cwd, {
       claudeMode: entry.provider === 'claude',
       piMode: entry.provider === 'pi',
       dangerousMode: entry.provider === 'claude' && options.dangerousMode,

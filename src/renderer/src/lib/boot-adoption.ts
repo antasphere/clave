@@ -24,10 +24,13 @@ export interface BootRecordLike {
   id: string
   live?: boolean
   link?: SessionRecord['link']
+  transport?: SessionRecord['transport']
 }
 
 export interface BootPlan<R extends BootRecordLike> {
-  /** Ordinary tabs whose process is still running — reattach silently. */
+  /** Ordinary tabs that come back silently: a terminal whose process still
+   *  runs (reattached), and a chat (PRDCT-3527), whose agent restoring does
+   *  not start: it starts when the tab is first opened. */
   liveTabs: R[]
   /** Ordinary tabs whose process is gone — offered behind the restore prompt. */
   deadTabs: R[]
@@ -55,7 +58,13 @@ export function planBootAdoption<R extends BootRecordLike>(records: R[]): BootPl
   for (const r of records) {
     const kind = r.link?.kind
     if (!kind) {
-      ;(r.live ? plan.liveTabs : plan.deadTabs).push(r)
+      ;(r.live || r.transport === 'events' ? plan.liveTabs : plan.deadTabs).push(r)
+      continue
+    }
+    // A routine's run (ADR 0004) is the server's: it starts, watches and
+    // stops it, and a window never draws it, live or not.
+    if (kind === 'routine') {
+      plan.discard.push(r)
       continue
     }
     if (!r.live) {

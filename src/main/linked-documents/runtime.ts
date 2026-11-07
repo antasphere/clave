@@ -1,4 +1,5 @@
-import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
+import { app, BrowserWindow, ipcMain, shell } from 'electron'
+import { openDialogs } from '../dialog-paths'
 import { join } from 'path'
 import { LinkedDocumentStore } from './store'
 import { broadcastToAllWindows } from '../window-routing'
@@ -52,7 +53,7 @@ export function registerLinkedDocumentHandlers(): void {
   ipcMain.handle('linked-documents:choose-files', async (event, signature: boolean) => {
     const win = BrowserWindow.fromWebContents(event.sender)
     if (!win) throw new Error('Window unavailable')
-    const result = await dialog.showOpenDialog(win, {
+    const result = await openDialogs.open('document', win, {
       properties: signature ? ['openFile'] : ['openFile', 'multiSelections'],
       ...(signature ? { filters: [{ name: 'HTML signature', extensions: ['html', 'htm'] }] } : {})
     })

@@ -1,6 +1,12 @@
 import { create } from 'zustand'
+import { resourceKey, parseResourceKey } from '@clave/contract/fleet'
+import { isRemoteKey } from '../lib/fleet-identity'
+import { launchSession } from '../lib/launch-session'
+import type { AgentSetup } from './launch-prefs'
 import { resolveAccountRef, type AccountProvider } from '../lib/switch-account'
+import type { PinnedGroupRoutine } from './session-types'
 import { getClaudeProfile } from './claude-profile-store'
+import { useAccountPolicyStore } from './account-policy-store'
 import { getCodexAccount } from './codex-account-store'
 import { substituteTokens } from './prompt-tokens'
 import type {
@@ -13,7 +19,7 @@ import type {
 import { resolveGroupDefaults } from './group-defaults'
 import { resolveDeclaredGroupView } from '../../../shared/group-view'
 import { useSessionStore } from './session-store'
-import { getActiveWorkspaceId } from './workspace-store'
+import { getActiveWorkspaceId, workspaceServer } from './workspace-store'
 import type { ClaveFileWriteData } from '../../../preload/index.d'
 
 /** One group as `serializePin` writes it into a `.clave` file. */
@@ -60,9 +66,15 @@ function resolvePinnedAccount(
       ? 'claude'
       : null
   if (!provider) return {}
+  // With "Use the recommended account" on, a pinned group starts every agent
+  // tab on the recommendation. The `account` a .clave carries is mostly the
+  // one the tab happened to run on when the group was saved (pinnedAccountField
+  // writes it from the live session), so honouring it replayed yesterday's
+  // account instead of the one with the headroom.
+  const ref = useAccountPolicyStore.getState().useRecommendedAccount ? undefined : session.account
   let account: { id: string; label: string }
   try {
-    account = resolveAccountRef(provider, session.account)
+    account = resolveAccountRef(provider, ref)
   } catch {
     account = provider === 'codex' ? getCodexAccount('default') : getClaudeProfile('default')
     void window.electronAPI?.showNotification?.({
@@ -306,6 +318,7 @@ function syncToClaveFile(pg: PinnedGroup): void {
           serverUrl: t.serverUrl,
           groupView: t.groupView
         })),
+        ...(p.routines?.length ? { routines: p.routines } : {}),
         ...(p.category ? { category: p.category } : {})
       })
 
@@ -360,6 +373,7 @@ function createPinnedFromGroup(
       serverUrl?: string
       groupView?: boolean
     }[]
+    routines?: PinnedGroupRoutine[]
   },
   filePath: string,
   groupIndex?: number,
@@ -377,6 +391,7 @@ function createPinnedFromGroup(
     view: g.view ?? null,
     sessions: g.sessions,
     terminals: groupDataToPinnedTerminals(g.terminals),
+    ...(g.routines?.length ? { routines: g.routines } : {}),
     createdAt: Date.now(),
     filePath,
     rootDir: rootDir ?? null,
@@ -453,7 +468,8 @@ export async function importClaveFile(
             logo: result.logo,
             prompt: result.prompt,
             sessions: result.sessions,
-            terminals: result.terminals
+            terminals: result.terminals,
+            routines: result.routines
           }
         ]
 
@@ -474,6 +490,7 @@ export async function importClaveFile(
           prompt: g.prompt ?? null,
           sessions: g.sessions,
           terminals: groupDataToPinnedTerminals(g.terminals),
+          routines: (g.routines as PinnedGroupRoutine[] | undefined) ?? [],
           groupIndex: result.type === 'multi' ? i : undefined,
           toolbar: g.toolbar,
           logo: g.logo,
@@ -507,6 +524,10 @@ export async function importClaveFile(
       )
       usePinnedStore.getState().addPinnedGroup(pinned)
       if (autoLaunch) await togglePinnedGroup(pinned.id)
+    }
+    if (workspaceServer(workspaceId)) {
+      for (const pin of existingPins.slice(groups.length))
+        usePinnedStore.getState().removePinnedGroup(pin.id)
     }
     return { pinnedId: existingPins[0].id, alreadyExists: true }
   }
@@ -546,14 +567,26 @@ export async function refreshWorkspacePins(ws: {
   profileFile: string | null
 }): Promise<void> {
   const keep = new Set<string>()
+  const serverId = workspaceServer(ws.id)
+  const rootKey = serverId ? resourceKey('file', serverId, ws.rootDir) : ws.rootDir
+  let profileFile = ws.profileFile
+  if (serverId) {
+    if (profileFile) profileFile = resourceKey('file', serverId, profileFile)
+    else {
+      const discovered = await window.electronAPI.discoverClaveFiles(rootKey)
+      profileFile =
+        discovered.find((f) => f.name === 'default')?.path ??
+        (discovered.length === 1 ? discovered[0].path : null)
+    }
+  }
 
-  if (ws.profileFile) {
-    const exists = await window.electronAPI?.claveFileExists(ws.profileFile)
+  if (profileFile) {
+    const exists = await window.electronAPI?.claveFileExists(profileFile)
     if (exists) {
-      keep.add(ws.profileFile)
-      await importClaveFile(ws.profileFile, {
+      keep.add(profileFile)
+      await importClaveFile(profileFile, {
         autoLaunch: false,
-        rootDir: ws.rootDir,
+        rootDir: rootKey,
         workspaceRoot: ws.rootDir,
         workspaceId: ws.id
       })
@@ -561,20 +594,23 @@ export async function refreshWorkspacePins(ws: {
       // Auto-discover repo .clave files when the profile enables it. The
       // discovery workspaceId hint prefers a same-named profile inside each
       // repo (romain.clave over default.clave for the "romain" profile).
-      const adConfig = await window.electronAPI?.readAutoDiscoverConfig(ws.profileFile)
+      const adConfig = await window.electronAPI?.readAutoDiscoverConfig(profileFile)
       if (adConfig?.enabled) {
-        const profileName = ws.profileFile.split(/[\\/]/).pop()?.replace('.clave', '')
-        const discovered = await window.electronAPI?.discoverClaveFilesRecursive(ws.rootDir, {
+        const profileName = parseResourceKey('file', profileFile)
+          .id.split(/[\\/]/)
+          .pop()
+          ?.replace('.clave', '')
+        const discovered = await window.electronAPI?.discoverClaveFilesRecursive(rootKey, {
           ...adConfig,
           workspaceId: profileName && profileName !== 'default' ? profileName : undefined
         })
         for (const file of discovered ?? []) {
-          if (file.path === ws.profileFile) continue
+          if (file.path === profileFile) continue
           keep.add(file.path)
           await importClaveFile(file.path, {
             autoLaunch: false,
             rootDir: file.rootDir,
-            discoveredBy: ws.profileFile,
+            discoveredBy: profileFile,
             workspaceRoot: ws.rootDir,
             workspaceId: ws.id
           })
@@ -584,7 +620,7 @@ export async function refreshWorkspacePins(ws: {
     // Profile file missing → keep persisted pins as-is (stale but functional);
     // Settings surfaces the warning. Pruning here would punish a transient
     // unmount (network volume, git checkout) by wiping the workspace.
-    else return
+    else if (!serverId) return
   }
 
   // Prune file-backed pins of this workspace whose file left the set (profile
@@ -644,6 +680,7 @@ export async function exportClaveFile(
       serverUrl: t.serverUrl,
       groupView: t.groupView
     })),
+    ...(pg.routines?.length ? { routines: pg.routines } : {}),
     ...(pg.category ? { category: pg.category } : {})
   })
 
@@ -693,7 +730,8 @@ export function initClaveFileWatchers(): () => void {
               logo: result.logo,
               prompt: result.prompt,
               sessions: result.sessions,
-              terminals: result.terminals
+              terminals: result.terminals,
+              routines: result.routines
             }
           ]
 
@@ -720,6 +758,9 @@ export function initClaveFileWatchers(): () => void {
           prompt: g.prompt ?? null,
           sessions: g.sessions,
           terminals: groupDataToPinnedTerminals(g.terminals),
+          // The routines (ADR 0004) reload with the file like every other
+          // field; the server reads the file itself to schedule them.
+          routines: (g.routines as PinnedGroupRoutine[] | undefined) ?? [],
           groupIndex
         })
       } else {
@@ -786,6 +827,7 @@ export function initClaveFileWatchers(): () => void {
 
 /** Capture a live group as a pinned blueprint */
 export function pinGroupFromCurrent(groupId: string): void {
+  if (isRemoteKey(groupId)) return
   const { groups, sessions } = useSessionStore.getState()
   const group = groups.find((g) => g.id === groupId)
   if (!group) return
@@ -897,6 +939,9 @@ async function spawnPinnedGroup(
   const link = options?.link ?? true
 
   const spawnedIds: string[] = []
+  const serverId = workspaceServer(pg.workspaceId)
+  if (serverId && pg.sessions.some((s) => s.account))
+    console.info('[pinned] Server pin account labels use the server account pool.')
 
   for (const session of pg.sessions) {
     try {
@@ -917,6 +962,32 @@ async function spawnPinnedGroup(
       // The account (ADR 0002): what the file names by label, `any` or nothing
       // for the pool's pick — the same rule the launcher applies. A name this
       // Mac does not know falls back to the Default, and says so.
+      if (serverId) {
+        const kind: AgentSetup['kind'] | null = session.claudeAgentsMode
+          ? 'claude-agents'
+          : session.piMode
+            ? 'pi'
+            : session.codexMode
+              ? 'codex'
+              : session.antigravityMode
+                ? 'antigravity'
+                : session.claudeMode
+                  ? 'claude'
+                  : null
+        const id = await launchSession({
+          serverId,
+          cwd: { kind: 'path', path: spawnCwd },
+          setup: kind ? { kind, dangerousMode: session.dangerousMode } : null,
+          initialPrompt,
+          workspaceId: pg.workspaceId ?? undefined,
+          throwOnError: true
+        })
+        if (id) {
+          useSessionStore.getState().renameSession(id, session.name)
+          spawnedIds.push(id)
+        }
+        continue
+      }
       const accountFields = resolvePinnedAccount(session, pg.name, !!pinOtherProvider)
       const sessionInfo = await window.electronAPI.spawnSession(spawnCwd, {
         claudeMode: pinOtherProvider ? false : session.claudeMode,

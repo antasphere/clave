@@ -105,7 +105,14 @@ export async function run(t) {
     // ── A search reaching past the running groups opens it ──
     await win.fill('.group-switcher-search input', 'alpha')
     await win.waitForTimeout(600)
-    const found = await measure(win)
+    // The pins of the workspace's `.clave` file arrive with the boot's refresh,
+    // which on a separate server reads the file through it: up to about a
+    // second after the boot mark (PRDCT-3527), so the chip is waited for.
+    let found = await measure(win)
+    for (let i = 0; i < 20 && (found.chips !== 1 || !(found.panelH > HEAD_ONLY)); i++) {
+      await win.waitForTimeout(250)
+      found = await measure(win)
+    }
     t.equal('the search chip is on screen', found.chips, 1)
     t.equal('the row opened for it', found.empty, null)
     t.check('the panel grew with it', found.panelH > HEAD_ONLY, found)

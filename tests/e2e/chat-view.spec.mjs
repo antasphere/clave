@@ -1,10 +1,6 @@
-// Pinned to the in-process server (wave 3 of the server/client split,
-// PRDCT-3293): the chat's views are plugin views leased from the shell's
-// plugin host, which knows main's sessions and not the server's; attached,
-// a session on the standalone server mounts its chat but gets no view lease
-// (no view switcher, no chip that the view reports), so the pin stays until
-// the plugin host reaches the server, which the spec keeps in the shell
-// through wave 3. Not a known failure.
+// Runs in both modes (wave 5, lane C, PRDCT-3433): the plugin host runs
+// beside the server's sessions, so a chat on the separate server gets its
+// views and its view switcher as an in-process one does.
 // The chat view on the echo fixture. This spec and every spec built on its
 // `openChat` reach the sessions from inside (the echo adapter, the session host
 // wrapped to see what the composer wrote, synthetic frames) through the
@@ -14,8 +10,7 @@
 // `fixture.evaluate` runs the wraps there. Synthetic frames are injected where
 // the session lives (`__claveE2E.echo.inject`) and reach the window over its own
 // transport. Only what is Electron's (an `ipcMain` stub, a `BrowserWindow`
-// send) stays on `app.evaluate`. The specs themselves run in-process for the
-// reason above; the road is the same in both modes.
+// send) stays on `app.evaluate`. The road is the same in both modes.
 import assert from 'node:assert/strict'
 import { mkdirSync, rmSync } from 'node:fs'
 import { launchApp, seedWorkspaces, seedTrustedRoots, until, fixturePath } from './harness.mjs'
@@ -33,7 +28,11 @@ export async function openChat(
   env = {},
   /** Runs on the fresh user-data directory before the launch: a spec that
    *  needs a file the app reads at boot (a record, a ledger) writes it here. */
-  beforeLaunch = null
+  beforeLaunch = null,
+  /** Extra launch options, laid over the harness's: a spec whose feature is
+   *  not served attached yet pins itself with `{ server: 'in-process' }` and
+   *  says why in its header; the chat itself runs in both modes. */
+  launch = {}
 ) {
   const dir = fixturePath(`${suffix}`)
   const root = `${dir}-root`
@@ -48,7 +47,7 @@ export async function openChat(
   const { app, win, server, fixture } = await launchApp(dir, {
     args: ['--dev-echo-adapter', ...extraArgs],
     env,
-    server: 'in-process'
+    ...launch
   })
   // The session calls cross the server, not IPC (PRDCT-3239): what a spec
   // wraps is the session host the server exposes under --test-no-activate, the
@@ -106,10 +105,26 @@ export async function run(t) {
   const chat = await openChat()
   const { app, win, record, fixture } = chat
   try {
+    // The pane header names its view through the picker's title since the
+    // badge went with #135 (30 September 2026); this check read the badge
+    // until 13 October and had failed on dev since. The picker lists the
+    // plugin's views once the view registry has read the plugin records, a
+    // beat after the composer is enabled: wait for it, then read the pane.
+    const picker = win.getByLabel('Change view', { exact: true })
+    assert.ok(
+      await until(async () => {
+        if ((await picker.count()) !== 1) return null
+        return (await picker.getAttribute('title')) === 'View: Chat' ? true : null
+      }),
+      'the pane header names the Chat view within ten seconds'
+    )
     assert.equal(await win.locator('.xterm').count(), 0)
-    assert.equal(await win.getByLabel('Chat view', { exact: true }).count(), 1)
+    assert.equal(await win.locator('[data-testid="chat-view"]').count(), 1)
     assert.ok(await win.getByLabel('Show terminal', { exact: true }).isDisabled())
-    t.check('events session mounts chat, badge and explained disabled terminal toggle', true)
+    t.check(
+      'events session mounts chat, the picker names the view, and the terminal toggle is disabled and explained',
+      true
+    )
     // The tab was just opened from the launcher and nothing has been clicked
     // since: the caret must already be in the composer. `openChat` waited for
     // the field to be enabled, which is what the focus itself waits on.
@@ -205,7 +220,7 @@ export async function run(t) {
     await win.getByRole('button', { name: 'Allow once', exact: true }).waitFor()
     await win.locator('.chat-state[data-state="blocked"]').waitFor()
     const waitingDot = win.locator(
-      `[data-sidebar-item-id="${record.id}"] .sidebar-tab-icon[data-status="needs-you"]`
+      `[data-sidebar-item-id="${record.id}"] .sidebar-tab-status[data-status="needs-you"]`
     )
     assert.equal(
       (await win.evaluate(() => window.electronAPI.sessionsList())).find((s) => s.id === record.id)
@@ -337,7 +352,7 @@ export async function run(t) {
     await win.getByRole('button', { name: 'Interrupt', exact: true }).click()
     assert.match(
       await win
-        .locator(`[data-sidebar-item-id="${record.id}"] .sidebar-tab-icon`)
+        .locator(`[data-sidebar-item-id="${record.id}"] .sidebar-tab-status`)
         .getAttribute('data-status'),
       'working'
     )

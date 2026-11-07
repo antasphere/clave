@@ -34,7 +34,7 @@ vi.mock('child_process', () => ({
   }
 }))
 
-import { readLimitsWith } from './usage-manager'
+import { credentialFor, readLimitsWith } from './usage-manager'
 
 describe('the keychain read', () => {
   const fetchMock = vi.fn()
@@ -46,6 +46,15 @@ describe('the keychain read', () => {
     vi.stubGlobal('fetch', fetchMock)
   })
   afterEach(() => vi.unstubAllGlobals())
+
+  it('does not read credentials or make requests when the machine login is disabled', async () => {
+    const result = await readLimitsWith(credentialFor(undefined, undefined, false))
+    expect(result).toEqual({
+      error: 'No token for this account yet. Log in from Settings → Accounts.'
+    })
+    expect(calls).toEqual([])
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
 
   it('reads the login under the username, not the stray item beside it', async () => {
     const result = await readLimitsWith({ kind: 'keychain' })

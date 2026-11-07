@@ -24,17 +24,17 @@ export function tempDataDir(prefix = 'clave-ports-'): string {
 /** `safeStorage` as the tests have always stood it in: reversible, and
  *  visibly not the plaintext. `available` can be flipped mid-test. */
 export function fakeSafeStorage(state: { available: boolean } = { available: true }): {
-  isEncryptionAvailable(): boolean
-  encryptString(plain: string): Buffer
-  decryptString(encrypted: Buffer): string
+  isAsyncEncryptionAvailable(): Promise<boolean>
+  encryptStringAsync(plain: string): Promise<Buffer>
+  decryptStringAsync(encrypted: Buffer): Promise<{ result: string; shouldReEncrypt: boolean }>
 } {
   return {
-    isEncryptionAvailable: () => state.available,
-    encryptString: (plain) => Buffer.from(`enc:${plain}`),
-    decryptString: (encrypted) => {
+    isAsyncEncryptionAvailable: async () => state.available,
+    encryptStringAsync: async (plain) => Buffer.from(`enc:${plain}`),
+    decryptStringAsync: async (encrypted) => {
       const text = encrypted.toString()
       if (!text.startsWith('enc:')) throw new Error('not ours')
-      return text.slice(4)
+      return { result: text.slice(4), shouldReEncrypt: false }
     }
   }
 }

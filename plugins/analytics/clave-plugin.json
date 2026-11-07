@@ -1,0 +1,22 @@
+{
+  "id": "clave.analytics",
+  "name": "Analytics",
+  "version": "1.0.0",
+  "kind": "plugin",
+  "engines": { "clave": ">=1.90.0 <4.0.0" },
+  "ui": "none",
+  "main": "main.mjs",
+  "contributes": {
+    "actions": [
+      {
+        "id": "deck",
+        "title": "Analytics",
+        "icon": "ChartBarSquareIcon",
+        "targets": ["session", "group"],
+        "preview": true
+      },
+      { "id": "home", "title": "Analytics home", "icon": "HomeIcon", "targets": ["workspace"] }
+    ]
+  },
+  "permissions": ["sessions.read", "fs.read", "shell"]
+}

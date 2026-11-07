@@ -73,9 +73,16 @@ export async function run(t) {
       { type: 'user_message', text: 'the first turn' },
       { type: 'assistant_text', delta: 'the answer to it', final: true }
     ])
+    // The rows are read once their text is visible, not the instant they are
+    // counted: the transcript's virtualiser keeps a fresh row hidden until it
+    // has measured it, and a re-render landing on that instant (a plugin
+    // change re-listing every store at once) kept it so for the read.
     const rows = win.locator('.terminal-view .chat-turn')
-    await until(async () => (await rows.count()) >= 2)
-    const texts = await rows.allInnerTexts()
+    const texts = await until(async () => {
+      const read = await rows.allInnerTexts()
+      return read.length >= 2 && read.join('\n').includes('the answer to it') ? read : null
+    })
+    assert.ok(texts)
     assert.match(texts.join('\n'), /the first turn/)
     assert.match(texts.join('\n'), /the answer to it/)
     t.check('the view the profile named shows the session it reads', true)

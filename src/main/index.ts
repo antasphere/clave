@@ -4,7 +4,15 @@ import './user-data-override'
 // SECOND, before any manager: a pre-release's first run on a stable data
 // directory snapshots the state files before anything can rewrite them.
 import { prereleaseSnapshotOutcome } from './prerelease-snapshot-boot'
-import { app, BrowserWindow, shell, nativeImage, nativeTheme, Notification } from 'electron'
+import {
+  app,
+  BrowserWindow,
+  shell,
+  nativeImage,
+  nativeTheme,
+  Notification,
+  safeStorage
+} from 'electron'
 import { flushRendererStorage } from './flush-storage'
 import { TEST_NO_ACTIVATE } from './test-mode'
 import { join } from 'path'
@@ -28,6 +36,7 @@ import { locationManager } from './location-manager'
 import { openclawClient, buildOpenclawWsUrl } from './openclaw-client'
 import { preferencesManager } from './preferences-manager'
 import { workspaceManager } from './workspace-manager'
+import { windowWorkspaces } from './window-workspaces'
 import { windowRegistry } from './window-registry'
 import { windowState } from './window-state'
 import { sidebarLayoutManager } from './sidebar-layout-manager'
@@ -37,9 +46,9 @@ import {
   isAttachedServer,
   sessionIdsInWindow
 } from './sidebar-layouts'
-import { serverClient } from './mcp/server-client'
+import { serverClient, preloadServerClientModules } from './mcp/server-client'
 import { sessionWorkspaceResolver } from './session-records-index'
-import type { PersistedWindow } from '../shared/workspace-types'
+import { isServerWorkspaceId, type PersistedWindow } from '../shared/workspace-types'
 import {
   initMissionControl,
   cleanupMissionControl,
@@ -58,23 +67,42 @@ import { accountLoginManager } from './account-login'
 import { sweepSessionMcpConfigs } from './mcp/mcp-runtime'
 import { registerPreviewScheme, installPreviewProtocol } from './preview-protocol'
 import { hardenViewHost, installViewGuestPolicy } from './view-guests'
-import { startServer, takeServerLaunch, ServerBootError, type ServerHandle } from './server-boot'
+import { startServer, markServerGone, ServerBootError, type ServerHandle } from './server-boot'
+import { serverLaunch } from './server-launch'
+import { flagsForServerChild, startSeparateServer } from './server-child'
+import { migrateAppDataToServer } from './server-migration'
+import { safeStorageSecrets } from './ports/electron'
+import { keychainSecrets } from './ports/secrets'
+import { KEYCHAIN_SERVICE, keychainFileFromEnv } from './ports/standalone'
 import { QUIT_CEILING_MS, QUIT_HAMMER_MS, runQuitCleanup } from './quit-cleanup'
 import { startClaveServer, stopClaveServer } from './server/clave-server'
 import { quitActivityRecord } from './activity/service'
 import { markClaveServerBootSettled } from './server/endpoint'
-import { setClaveServerEndpoint } from './server/endpoint'
+import { setClaveServerEndpoint, setServerExternal, isServerExternal } from './server/endpoint'
 import { getSessionHost } from './sessions/host'
 import { installE2eHooks } from './sessions/e2e-hooks'
 import { shellSettingsSource, shellAntasphereAccount } from './settings/shell-source'
 import { terminalPorts } from './ports/terminals'
 import { workspaceFiles } from './workspace-files'
+// ── Wave 5, lane C: the plugins, the shell's own service (plugins/shell-plugins.ts) ──
+import { shellPlugins } from './plugins/shell-plugins'
+// ── ADR 0004: the routines, the shell's own service in-process (routines/shell-routines.ts) ──
+import { installRoutinesIpc, shellRoutines } from './routines/shell-routines'
+import { waitForMcpRuntime } from './mcp/mcp-runtime'
 
-// The server to attach to, if any, read ONCE off the environment and taken
-// out of it here, before anything in this process spawns: the token belongs
-// to what is meant to call the server, and no session, helper or nested Clave
-// may inherit it (ADR 0003).
-const serverLaunch = takeServerLaunch(process.env)
+// The server to attach to, if any: ONE decision for the whole shell, taken
+// off the environment and the command line in `server-launch.ts` (the
+// variables taken out of the environment there, before anything in this
+// process spawns, ADR 0003), and read by the settings source too, so the
+// shell's Antasphere account manager exists exactly when this process is
+// the server (the packaged default is the separate server, server-boot.ts).
+// ── Wave 6, lane B: a launch's restore waits on nothing it can start sooner (PRDCT-3527) ──
+// Where this shell's sessions live, for the boot's records listing, and the
+// login shell's environment read from here rather than from app ready: tmux
+// and the agents are found on its PATH, and the read takes as long as the
+// person's shell profile (two seconds on Valentin's machine).
+setServerExternal(serverLaunch.mode !== 'in-process')
+preloadLoginShellEnv()
 
 // Scheme privileges must be declared before app ready.
 registerPreviewScheme()
@@ -106,9 +134,11 @@ let quitting = false
 
 /**
  * The server the shell runs on (ADR 0003). In-process by default; attached to
- * one started elsewhere under `CLAVE_SERVER_URL` + `CLAVE_SERVER_TOKEN`. In
- * this wave nothing the window shows comes from it yet, so a failure is not
- * fatal — but it is never silent: an attach that fails is logged, written to
+ * one started elsewhere under `CLAVE_SERVER_URL` + `CLAVE_SERVER_TOKEN`; or,
+ * under `--server=separate` (wave 5), started by the shell as a child of its
+ * own from the bundles it carries, under its own binary as Node
+ * (server-child.ts), and attached to the same way. A failure is never
+ * silent: an attach or a child start that fails is logged, written to
  * `clave-server.json` as `ok: false`, and shown as a notification, and the
  * app does NOT start an in-process server in its place (server-boot.ts says
  * why). The url and the token live in `clave-server.json` (owner-only) and in
@@ -150,25 +180,128 @@ async function bootServer(): Promise<void> {
             // ── Lane C: the sidebar, the shell's own instance (sidebar-layouts.ts) ──
             sidebar: sidebarLayouts(),
             // ── Wave 3, lane A: the workspace files, the shell's own instance (workspace-files.ts) ──
-            workspaceFiles: workspaceFiles()
+            workspaceFiles: workspaceFiles(),
+            // ── Wave 5, lane C: the plugins, the shell's own service (plugins/shell-plugins.ts) ──
+            plugins: shellPlugins(),
+            // ── ADR 0004: the routines, the shell's own scheduler (routines/shell-routines.ts) ──
+            routines: shellRoutines()
           },
           // ── Lane C of wave 3: the end-to-end fixture route, test mode only ──
-          testFixtures: TEST_NO_ACTIVATE
+          testFixtures: TEST_NO_ACTIVATE,
+          // ── Issue #266: the version it reports, the one its child gets too ──
+          appVersion: app.getVersion()
         })
-        return { url: endpoint.url, token: endpoint.token, stop: stopClaveServer }
+        // The scheduler reads its routines and arms its tick once the
+        // server is up and the agent tools listen: a run it starts reaches
+        // `clave_routine_report` through them, so the first tick waits for
+        // the MCP server (bounded; a run on an app without it fails with
+        // "without a report" rather than never starting).
+        void waitForMcpRuntime()
+          .catch(() => undefined)
+          .then(() => shellRoutines().start())
+          .catch((error) => console.error('[routines] could not start', error))
+        return {
+          url: endpoint.url,
+          token: endpoint.token,
+          stop: async () => {
+            await shellRoutines().close()
+            await stopClaveServer()
+          }
+        }
+      },
+      // The separate server (wave 5): the standalone entry as a child of this
+      // process, from the bundles beside this one, on a data directory of
+      // its own under the app's, told this shell's test flags and pid. The
+      // first time, the app's own documents are carried into that directory
+      // (server-migration.ts): the plain ones copied, the Claude tokens and
+      // the Antasphere session opened with this process's safeStorage and
+      // sealed again in the Keychain the server reads, in memory only.
+      startSeparate: async () => {
+        // The client main reaches that server with, loaded while it starts
+        // rather than once it has answered, when the first window has shown
+        // (PRDCT-3527): half a second of synchronous requires, which held the
+        // windows' first calls to the server behind it when paid after the
+        // announcement, and the window's first paint when paid before.
+        const preload = (): void => void preloadServerClientModules()
+        const [first] = BrowserWindow.getAllWindows()
+        const afterLoad = (win: BrowserWindow): void => {
+          win.webContents.once('did-finish-load', () => setTimeout(preload, 0))
+        }
+        if (first && first.webContents.getURL() && !first.webContents.isLoading())
+          setTimeout(preload, 0)
+        else if (first) afterLoad(first)
+        else app.once('browser-window-created', (_event, win) => afterLoad(win))
+        const dataDir = join(app.getPath('userData'), 'server')
+        const migration = await migrateAppDataToServer({
+          appDir: app.getPath('userData'),
+          serverDir: dataDir,
+          from: safeStorageSecrets(safeStorage),
+          to: keychainSecrets({
+            service: KEYCHAIN_SERVICE,
+            keychainFile: keychainFileFromEnv(process.env)
+          }),
+          log: (line) => console.log(`[server] migration: ${line}`)
+        })
+        if (migration.outcome === 'migrated')
+          console.log(
+            `[server] migrated the app's data into ${dataDir}: ${migration.copied.length} copied, ${migration.kept.length} kept, ${migration.unopened.length} secret(s) not opened`
+          )
+        return startSeparateServer({
+          execPath: process.execPath,
+          bundleDir: __dirname,
+          dataDir,
+          parent: process.pid,
+          // The plugins the app ships and its version, for the plugin host
+          // on the server (lane C of wave 5): where plugin-ipc.ts finds them.
+          pluginsBundled: join(
+            app.isPackaged ? process.resourcesPath : app.getAppPath(),
+            'plugins'
+          ),
+          appVersion: app.getVersion(),
+          flags: flagsForServerChild(process.argv),
+          log: (line) => console.error(`[server] ${line}`),
+          onExit: (code) => {
+            // Nothing runs in its place and the windows keep its address:
+            // their calls say the server is gone, which is the truth; the
+            // discovery file says it too, so no reader finds a live-looking
+            // server that is not there.
+            console.error(`[server] the separate server is gone (${code}); the app runs without it`)
+            // Guarded: a write that fails (a full disk) must not stop the
+            // notification below from saying what happened.
+            try {
+              markServerGone(
+                app.getPath('userData'),
+                `the separate server exited (${code}) while the app was running`
+              )
+            } catch (error) {
+              console.error(`[server] could not mark the discovery file: ${String(error)}`)
+            }
+            if (!TEST_NO_ACTIVATE && Notification.isSupported())
+              new Notification({
+                title: "Clave's server stopped",
+                body: `It exited (${code}). Restart Clave to get it back.`,
+                silent: false
+              }).show()
+          }
+        })
       }
     })
-    console.log(`[server] ${serverHandle.mode} at ${serverHandle.url}`)
+    console.log(
+      `[server] ${serverHandle.mode} at ${serverHandle.url}` +
+        (serverHandle.serverPid ? ` (pid ${serverHandle.serverPid})` : '')
+    )
     // The sidebar's transport follows the boot: through the server's client
     // when the server runs in this process (the same instance main holds),
-    // over IPC when the app is attached to a server that cannot host windows.
-    setSidebarTransport(serverHandle.mode === 'in-process' ? 'server' : 'shell')
-    // An attached server is published to the windows too (wave 2): the
-    // sessions domain lives on the server now, so a window on an attached
-    // app asks that server, which says what it cannot do (a standalone
-    // server runs no sessions until its terminal process, wave 3). The
-    // in-process start publishes its own address in server/clave-server.ts.
-    if (serverHandle.mode === 'attached') {
+    // over IPC when the server is another process, which hosts no windows.
+    const external = serverHandle.mode !== 'in-process'
+    setSidebarTransport(external ? 'shell' : 'server')
+    // A server in another process, attached or the shell's own child, is
+    // published to the windows too (wave 2): the sessions domain lives on
+    // the server, so a window asks that server. The windows read the mode
+    // as `attached` either way: what it decides for them (the terminal
+    // pane's road, the sidebar's) is the same whoever started the process.
+    // The in-process start publishes its own address in server/clave-server.ts.
+    if (external) {
       setClaveServerEndpoint({ url: serverHandle.url, token: serverHandle.token, mode: 'attached' })
       // Tell the server where this shell's agent tools answer, so a Claude
       // session it starts reaches them (wave 4, lane C). It waits for the MCP
@@ -181,12 +314,15 @@ async function bootServer(): Promise<void> {
     setSidebarTransport('shell')
     if (
       err instanceof ServerBootError &&
-      err.mode === 'attached' &&
+      err.mode !== 'in-process' &&
       !TEST_NO_ACTIVATE &&
       Notification.isSupported()
     ) {
       new Notification({
-        title: 'Clave could not reach its server',
+        title:
+          err.mode === 'separate'
+            ? 'Clave could not start its server'
+            : 'Clave could not reach its server',
         body: `${message}. The app runs without it.`,
         silent: false
       }).show()
@@ -285,13 +421,17 @@ function trackBounds(win: BrowserWindow, key: string): void {
   win.on('move', save)
 }
 
-function createWindow(entry: PersistedWindow): BrowserWindow {
+function createWindow(entry: PersistedWindow, resolvedWorkspaceId?: string | null): BrowserWindow {
   const savedIcon = preferencesManager.get('appIcon')
   const icon = nativeImage.createFromPath(join(__dirname, `../../resources/icon-${savedIcon}.png`))
   const workspaceId =
-    entry.workspaceId && workspaceManager.isRegistered(entry.workspaceId)
-      ? entry.workspaceId
-      : workspaceManager.resolveInitialWorkspaceId()
+    resolvedWorkspaceId !== undefined
+      ? resolvedWorkspaceId
+      : isServerExternal() || isServerWorkspaceId(entry.workspaceId)
+        ? entry.workspaceId
+        : entry.workspaceId && workspaceManager.isRegistered(entry.workspaceId)
+          ? entry.workspaceId
+          : workspaceManager.resolveInitialWorkspaceId()
 
   const win = new BrowserWindow({
     width: entry.bounds?.width ?? 1400,
@@ -314,6 +454,21 @@ function createWindow(entry: PersistedWindow): BrowserWindow {
       // The attached pages (group and session views) are <webview> guests —
       // hardened and navigation-policed in view-guests.ts, never here.
       webviewTag: true,
+      // The native macOS rubber-band at the ends of every scroll area — the
+      // sidebar, a transcript, a side panel. Electron turns it OFF by default
+      // (its `scroll_bounce_flag.patch` makes Chromium's elastic overscroll
+      // follow this one switch), and this is the whole of turning it back on.
+      // Nothing in CSS or JavaScript imitates it: Chromium stretches the
+      // scroller on the compositor exactly as a browser tab does. Two things
+      // the bounce also needs, so a regression is read here first: Chromium
+      // 144+ (Electron 40+) is the first to bounce NON-root scrollers, which
+      // every one of ours is, and the feature is on by default only from
+      // Chromium 152 (Electron 44+); and no `overscroll-behavior: none` on the
+      // document or on the scroller — `contain` keeps the bounce and only cuts
+      // the chaining. A window with this flag never takes Electron's spare
+      // renderer, which is the one cost. Mirrored for the view guests in
+      // view-guests.ts.
+      scrollBounce: true,
       // A test window is never put on screen (see below); without this
       // Chromium would treat the hidden page as background and stop its
       // timers and animation frames — the driver needs them running.
@@ -406,10 +561,19 @@ function createWindow(entry: PersistedWindow): BrowserWindow {
 
 /** A new window, the app once more, on `workspaceId` (null = the
  *  no-workspace state). Persisted at once so it comes back at the next boot. */
-export function openWindow(workspaceId: string | null): { windowId: number } {
+export async function openWindow(workspaceId: string | null): Promise<{ windowId: number }> {
+  // A server workspace (#241) is held by its server, not this registry.
+  if (!isServerWorkspaceId(workspaceId)) {
+    const state = await windowWorkspaces.load()
+    if (workspaceId !== null && !state.workspaces.some((w) => w.id === workspaceId)) {
+      throw new Error(`No registered workspace with id "${workspaceId}"`)
+    }
+    await windowWorkspaces.setLastActive(workspaceId)
+  }
   const key = windowState.mintKey()
-  const win = createWindow({ key, workspaceId })
-  if (workspaceId) workspaceManager.setLastActive(workspaceId)
+  // The runtime command validated against the authoritative registry. The
+  // boot fallback in createWindow must not replace it with a local default.
+  const win = createWindow({ key, workspaceId }, workspaceId)
   broadcastIdentities()
   return { windowId: win.id }
 }
@@ -463,6 +627,8 @@ app.whenReady().then(() => {
 
   registerIpcHandlers({ onChanged: () => buildAppMenu({ openWindow }) })
   registerWindowHandlers({ openWindow })
+  // ── ADR 0004: the routines' IPC arm, the shell's own service in-process only ──
+  installRoutinesIpc(serverLaunch.mode === 'in-process' ? shellRoutines() : null)
   registerMcpWindowOpener(openWindow)
   installPreviewProtocol()
   installViewGuestPolicy()
@@ -498,22 +664,21 @@ app.whenReady().then(() => {
   const locations = locationManager.getLocations()
   for (const loc of locations) {
     if (loc.type === 'remote' && loc.autoConnect) {
-      const config = locationManager.getCredentials(loc.id)
-      if (config) {
-        sshManager
-          .connect(loc.id, config)
-          .then(() => {
-            locationManager.setLocationStatus(loc.id, 'connected')
-            // Connect OpenClaw if detected
-            if (loc.openclawPort && loc.host) {
-              const token = locationManager.getOpenclawToken(loc.id)
-              openclawClient.connect(loc.id, buildOpenclawWsUrl(loc), token).catch(() => {})
-            }
-          })
-          .catch(() => {
-            locationManager.setLocationStatus(loc.id, 'error')
-          })
-      }
+      void (async () => {
+        const config = await locationManager.getCredentials(loc.id)
+        if (!config) return
+        try {
+          await sshManager.connect(loc.id, config)
+          locationManager.setLocationStatus(loc.id, 'connected')
+          // Connect OpenClaw if detected
+          if (loc.openclawPort && loc.host) {
+            const token = await locationManager.getOpenclawToken(loc.id)
+            openclawClient.connect(loc.id, buildOpenclawWsUrl(loc), token).catch(() => {})
+          }
+        } catch {
+          locationManager.setLocationStatus(loc.id, 'error')
+        }
+      })()
     }
   }
 

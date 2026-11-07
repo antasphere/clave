@@ -6,8 +6,14 @@ const mocks = vi.hoisted(() => ({
   setSessionWindowKey: vi.fn(),
   getSessionRecord: vi.fn(),
   listAdoptableSessions: vi.fn((): unknown[] => []),
+  getAllSessions: vi.fn((): { id: string }[] => []),
   discardSessionRecord: vi.fn(),
-  unbind: vi.fn()
+  unbind: vi.fn(),
+  kernelGet: vi.fn(),
+  kernelStarted: vi.fn()
+}))
+vi.mock('./session-manager', () => ({
+  sessionManager: { get: mocks.kernelGet, started: mocks.kernelStarted }
 }))
 vi.mock('../pty-manager', () => ({
   ptyManager: {
@@ -16,6 +22,7 @@ vi.mock('../pty-manager', () => ({
     setSessionWindowKey: mocks.setSessionWindowKey,
     getSessionRecord: mocks.getSessionRecord,
     listAdoptableSessions: mocks.listAdoptableSessions,
+    getAllSessions: mocks.getAllSessions,
     discardSessionRecord: mocks.discardSessionRecord
   }
 }))
@@ -24,8 +31,9 @@ vi.mock('./windows', () => ({ sessionWindows: () => ({ unbind: mocks.unbind }) }
 import { sessionRecords } from './records'
 
 beforeEach(() => {
-  vi.clearAllMocks()
+  vi.resetAllMocks()
   mocks.listAdoptableSessions.mockReturnValue([] as unknown[])
+  mocks.getAllSessions.mockReturnValue([])
 })
 
 describe('the host’s session records', () => {
@@ -46,6 +54,60 @@ describe('the host’s session records', () => {
     const out = sessionRecords.listAdoptableRecords(['adoptable', 'live', 'ghost'])
     expect(out.map((r) => r.id).sort()).toEqual(['adoptable', 'live'])
     expect(out.find((r) => r.id === 'live')).toMatchObject({ running: true, live: true })
+  })
+
+  // Issue #183: the backend's listing knows only its own PTYs, so a chat the
+  // host already holds came back as a record to spawn: the window's spawn
+  // failed on the duplicate id and the tab left the sidebar.
+  describe('a chat session the host already holds', () => {
+    const chat = (id: string): Record<string, unknown> => ({
+      id,
+      cwd: '/c',
+      folderName: 'c',
+      transport: 'events',
+      live: false
+    })
+    beforeEach(() => {
+      mocks.listAdoptableSessions.mockReturnValue([chat('dormant'), chat('started'), chat('cold')])
+      const hosted = new Set(['dormant', 'started'])
+      // Registered in the kernel and in the manager's event sessions alike;
+      // `alive` there is membership, never whether the provider runs.
+      mocks.getSession.mockImplementation((id) => (hosted.has(id) ? { alive: true } : undefined))
+      mocks.kernelGet.mockImplementation((id) =>
+        hosted.has(id) ? { id, transport: 'events' } : undefined
+      )
+      mocks.kernelStarted.mockImplementation((id) => id === 'started')
+      mocks.getSessionRecord.mockImplementation((id) => chat(id))
+      mocks.getAllSessions.mockReturnValue([...hosted].map((id) => ({ id })))
+    })
+
+    it('is listed as running, live only when its provider was started', () => {
+      const out = sessionRecords.listAdoptableRecords()
+      expect(out.map((r) => [r.id, r.running, r.live])).toEqual([
+        ['dormant', true, false],
+        ['started', true, true],
+        ['cold', undefined, false]
+      ])
+    })
+
+    it('is answered by id the same way', () => {
+      const out = sessionRecords.listAdoptableRecords(['dormant', 'started', 'cold'])
+      expect(out.map((r) => [r.id, r.running, r.live])).toEqual([
+        ['dormant', true, false],
+        ['started', true, true],
+        ['cold', undefined, false]
+      ])
+    })
+  })
+
+  it('lists a live terminal tab the host runs, which the backend leaves out, as running', () => {
+    mocks.getAllSessions.mockReturnValue([{ id: 'term' }, { id: 'dead' }])
+    mocks.getSession.mockImplementation((id) =>
+      id === 'term' ? { alive: true } : id === 'dead' ? { alive: false } : undefined
+    )
+    mocks.getSessionRecord.mockImplementation((id) => ({ id, cwd: '/t', folderName: 't' }))
+    const out = sessionRecords.listAdoptableRecords()
+    expect(out.map((r) => [r.id, r.running, r.live])).toEqual([['term', true, true]])
   })
 
   it('discards a record by key', () => {

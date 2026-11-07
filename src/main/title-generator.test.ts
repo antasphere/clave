@@ -118,6 +118,27 @@ beforeEach(() => {
 })
 
 describe('a chat tab is named by its first message', () => {
+  it('continues the title queue after an account lookup refuses a job synchronously', async () => {
+    const { win, send } = window()
+    const refused = `chat-refused-${++sequence}`
+    mocks.getToken.mockImplementationOnce(() => {
+      throw new Error('The selected Claude account is no longer available.')
+    })
+    scheduleChatTitle(refused, { claudeProfileId: 'removed-account' })
+    notifyChatMessage(refused, 'please name the tab from this first message', win)
+    await settled()
+    expect(mocks.execFile).not.toHaveBeenCalled()
+
+    const next = `chat-default-${++sequence}`
+    scheduleChatTitle(next)
+    notifyChatMessage(next, 'please name this later Default tab from its first message', win)
+    await settled()
+    expect(mocks.execFile).toHaveBeenCalledTimes(1)
+    expect(send).toHaveBeenCalledWith(`session:auto-title:${next}`, 'follow the first message')
+    cleanup(refused)
+    cleanup(next)
+  })
+
   it('asks the CLI for a title from the first message and hands it to the tab', async () => {
     const id = `chat-${++sequence}`
     const { win, send } = window()
@@ -220,6 +241,38 @@ describe('a chat tab is named by its first message', () => {
     const id = `chat-${++sequence}`
     const { win, send } = window()
     mocks.error = new Error('spawn claude ENOENT')
+    scheduleChatTitle(id)
+    notifyChatMessage(id, 'please fix the auth middleware timeout on login', win)
+    await settled()
+    expect(send).toHaveBeenCalledWith(`session:auto-title:${id}`, 'fix the auth middleware')
+  })
+
+  it('a label Haiku puts before the title does not reach the tab', async () => {
+    // Found on a tab named "lowercase title, 2-4 words: explain centra": six
+    // words passed the word count, and the line break collapsed in the sidebar.
+    const id = `chat-${++sequence}`
+    const { win, send } = window()
+    mocks.stdout = 'lowercase title, 2-4 words:\n\nexplain centra\n'
+    scheduleChatTitle(id)
+    notifyChatMessage(id, 'tell me more about centra', win)
+    await settled()
+    expect(send).toHaveBeenCalledWith(`session:auto-title:${id}`, 'explain centra')
+  })
+
+  it('a reply on several lines that is not a label and a title falls back to the message', async () => {
+    const id = `chat-${++sequence}`
+    const { win, send } = window()
+    mocks.stdout = 'fix auth middleware\nfor login'
+    scheduleChatTitle(id)
+    notifyChatMessage(id, 'please fix the auth middleware timeout on login', win)
+    await settled()
+    expect(send).toHaveBeenCalledWith(`session:auto-title:${id}`, 'fix the auth middleware')
+  })
+
+  it('a label on the title line itself falls back to the message', async () => {
+    const id = `chat-${++sequence}`
+    const { win, send } = window()
+    mocks.stdout = 'title: fix auth middleware'
     scheduleChatTitle(id)
     notifyChatMessage(id, 'please fix the auth middleware timeout on login', win)
     await settled()

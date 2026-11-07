@@ -3,6 +3,139 @@
 @import "@clave/ui/styles.css";
 @source "../../../../packages/ui/src";
 
+/* Messages from other tabs form a deck: inset faces remain visible beneath
+   its cover, then unfold into the messages, one card each. The agent's own
+   words never join the deck; they stay in the transcript beside it. */
+.chat-delivery-stack {
+  --delivery-step: calc(var(--spacing) * 5);
+  position: relative;
+  align-self: stretch;
+  min-width: 0;
+  margin-bottom: calc(var(--delivery-layers) * var(--delivery-step));
+  interpolate-size: allow-keywords;
+  transition: margin-bottom var(--default-transition-duration) var(--ease-out-expo);
+}
+.chat-delivery-summary {
+  position: relative;
+  display: block;
+  list-style: none;
+  cursor: pointer;
+  outline: none;
+  -webkit-tap-highlight-color: transparent;
+}
+/* Keep the deck's spacing transition beside the transcript's arrival fade. */
+.chat-view .chat-row .chat-delivery-stack {
+  transition: margin-bottom var(--default-transition-duration) var(--ease-out-expo),
+    opacity var(--default-transition-duration) var(--ease-out-expo),
+    translate var(--default-transition-duration) var(--ease-out-expo);
+}
+.chat-delivery-summary::-webkit-details-marker { display: none; }
+.chat-delivery-summary:focus-visible .chat-delivery-cover {
+  outline: thin solid var(--color-accent);
+  outline-offset: var(--spacing);
+}
+.chat-delivery-cover, .chat-delivery-peek, .chat-exchange-card {
+  border: thin solid var(--border-subtle-color);
+  border-radius: var(--radius-2xl);
+}
+.chat-delivery-cover {
+  position: relative;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--spacing) * 2);
+  padding: calc(var(--spacing) * 4) calc(var(--spacing) * 5);
+  background: var(--surface-100);
+  box-shadow: var(--raised-shadow);
+  transition: background var(--default-transition-duration), box-shadow var(--default-transition-duration);
+}
+.chat-delivery-summary:hover .chat-delivery-cover {
+  background: color-mix(in oklch, var(--surface-100) 75%, var(--surface-0));
+}
+.chat-delivery-heading {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--spacing) * 3);
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+}
+.chat-delivery-eyebrow { display: inline-flex; align-items: center; gap: var(--spacing); min-width: 0; }
+.chat-delivery-eyebrow svg { width: var(--chat-glyph); height: var(--chat-glyph); flex-shrink: 0; }
+.chat-delivery-count { margin-left: auto; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.chat-delivery-chevron {
+  width: var(--chat-glyph);
+  height: var(--chat-glyph);
+  flex-shrink: 0;
+  transition: rotate var(--default-transition-duration) var(--ease-out-expo);
+}
+.chat-delivery-senders {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-primary);
+  font-size: var(--text-base);
+  font-weight: 500;
+}
+.chat-delivery-preview {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+}
+.chat-delivery-peek {
+  position: absolute;
+  z-index: calc(3 - var(--delivery-layer));
+  inset: 0 calc(var(--delivery-layer) * var(--spacing) * 3);
+  display: flex;
+  align-items: flex-end;
+  padding: 0 calc(var(--spacing) * 5) calc(var(--spacing) * 0.5);
+  background: color-mix(in oklch, var(--surface-200) calc(40% + var(--delivery-layer) * 20%), var(--surface-100));
+  transform: translateY(calc(var(--delivery-layer) * var(--delivery-step)));
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+  transition: transform var(--default-transition-duration) var(--ease-out-expo), opacity var(--default-transition-duration);
+}
+.chat-delivery-peek > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-delivery-stack[open] { margin-bottom: 0; }
+.chat-delivery-stack[open] .chat-delivery-peek { transform: translateY(0); opacity: 0; }
+.chat-delivery-stack[open] .chat-delivery-chevron { rotate: 180deg; }
+.chat-delivery-stack[open] .chat-delivery-preview { display: none; }
+.chat-delivery-stack::details-content {
+  block-size: 0;
+  overflow: clip;
+  opacity: 0;
+  transition: block-size var(--default-transition-duration) var(--ease-out-expo),
+    opacity var(--default-transition-duration),
+    content-visibility var(--default-transition-duration) allow-discrete;
+}
+.chat-delivery-stack[open]::details-content { block-size: auto; opacity: 1; }
+.chat-delivery-items { display: flex; flex-direction: column; gap: calc(var(--spacing) * 3); padding-top: calc(var(--spacing) * 3); }
+.chat-exchange-card { min-width: 0; background: var(--surface-0); overflow: hidden; }
+.chat-exchange-message { padding: calc(var(--spacing) * 4) calc(var(--spacing) * 5); background: color-mix(in oklch, var(--color-term-model) 5%, var(--surface-0)); }
+.chat-exchange-card .chat-turn-wrap[data-side='end'] { align-items: stretch; }
+.chat-exchange-card .chat-turn[data-role='user'][data-from='tab'] {
+  padding: 0;
+  max-width: none;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  font-size: var(--text-sm);
+  font-weight: 400;
+}
+.chat-exchange-card .chat-turn[data-role='user']::before { display: none; }
+.terminal-view .chat-exchange-card .chat-turn-wrap[data-side='end'] .chat-turn[data-role='user'][data-from='tab'] { background: transparent; }
+.chat-exchange-card .term-question { position: static; }
+.chat-exchange-card .chat-turn-meta { position: static; height: auto; justify-content: flex-end; padding-top: var(--spacing); }
+@media (prefers-reduced-motion: reduce) {
+  .chat-view .chat-row .chat-delivery-stack,
+  .chat-delivery-stack, .chat-delivery-stack::details-content,
+  .chat-delivery-chevron, .chat-delivery-peek, .chat-delivery-cover { transition: none; }
+}
+
 /* Appearance → Font: Synonym, with the website's corrections (size-adjust is on
    the face, see lib/ui-font.ts). Only the sans stack changes; monospace text
    and the terminal keep their own face. */
@@ -296,6 +429,40 @@ html[data-ui-font='synonym'] {
 .sidebar-drop-gap--after .sidebar-drop-line {
   top: auto;
   bottom: calc(var(--drop-seam, 2px) / -2 - 1.5px);
+}
+/* A row of a list that drags to reorder (use-list-reorder, #257: the workspace
+   switcher and Settings → Workspaces). The drop line is the sidebar's, drawn
+   just inside the edge of the row it lands beside, so a scrolling list never
+   clips it; the dragged row fades in place. */
+.reorder-row {
+  position: relative;
+}
+.reorder-row[data-dragging] {
+  opacity: 0.45;
+}
+.reorder-row[data-drop]::after {
+  content: '';
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  height: 3px;
+  border-radius: 9999px;
+  background-color: var(--color-accent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--color-accent) 25%, transparent);
+  pointer-events: none;
+  z-index: 5;
+  animation: overlay-in 100ms var(--ease-out-expo);
+}
+.reorder-row[data-drop='before']::after {
+  top: 0;
+}
+.reorder-row[data-drop='after']::after {
+  bottom: 0;
+}
+body.reorder-dragging,
+body.reorder-dragging * {
+  cursor: grabbing !important;
+  user-select: none;
 }
 /* The group header's two controls (PRDCT-1670). The terminals button carries
    the whole terminal story in one glyph: its colour is the first RUNNING
@@ -723,6 +890,7 @@ html[data-ui-font='synonym'] {
   text-overflow: clip;
   max-height: min(40vh, 320px);
   overflow-y: auto;
+  overscroll-behavior: contain;
 }
 .message-trail-reply {
   font-size: 11px;
@@ -1496,6 +1664,63 @@ html[data-ui-font='synonym'] {
 .account-preview-plot--even {
   justify-content: space-evenly;
   gap: 0;
+}
+/* The tab menu header's caps: one line per cap — name, a 4px bar, % used,
+   time to reset. */
+.account-usage-bars {
+  /* One grid for the whole stack (the rows are display: contents), so the
+     name and reset columns size to their longest entry and every bar still
+     starts and ends at the same x. */
+  display: grid;
+  grid-template-columns: max-content minmax(2.5rem, 1fr) max-content max-content;
+  grid-auto-rows: 1rem;
+  align-items: center;
+  column-gap: 0.5rem;
+  min-width: 0;
+  font-size: 0.6875rem;
+  line-height: 1;
+}
+.account-usage-bar {
+  display: contents;
+}
+.account-usage-bar-name {
+  max-width: 5rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: var(--font-weight-medium);
+  color: var(--text-secondary);
+}
+.account-usage-bar-track {
+  display: block;
+  height: 4px;
+  border-radius: 2px;
+  overflow: hidden;
+  background-color: var(--surface-200);
+}
+.account-usage-bar-fill {
+  display: block;
+  height: 100%;
+  border-radius: 2px;
+  transition:
+    width 300ms var(--ease-out-expo),
+    background-color 200ms;
+}
+.account-usage-bar-pct {
+  text-align: right;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+}
+.account-usage-bar-reset {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  color: var(--text-tertiary);
+}
+.account-usage-bars-empty {
+  font-size: 0.6875rem;
+  color: var(--text-tertiary);
 }
 .account-preview-divider {
   align-self: stretch;
@@ -2371,7 +2596,7 @@ html[data-ui-font='synonym'] {
 }
 .linked-document-header > :not(:first-child) { flex-shrink: 0; }
 .linked-document-header > [role="status"] { max-width: 12rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex-shrink: 1; }
-.linked-document-content { flex: 1; overflow: auto; min-height: 0; }
+.linked-document-content { flex: 1; overflow: auto; overscroll-behavior: contain; min-height: 0; }
 .linked-document-notice { padding: 0.5rem; font-size: 0.75rem; color: var(--text-secondary); background: var(--surface-100); }
 .linked-email-composer { display: flex; flex-direction: column; min-height: 100%; }
 
@@ -3182,35 +3407,82 @@ html[data-ui-font='synonym'] {
   gap: var(--control-gap);
 }
 
-/* ── Background work (BackgroundTasksChip) ──
-   A chat's turn can end while shells and subagents it started keep running.
-   The chip names how many, in the pane header; its popover lists them. */
-.background-tasks-chip { gap: 0.375rem; color: var(--text-secondary); }
-.background-tasks-pulse {
-  width: 6px;
-  height: 6px;
-  border-radius: 999px;
-  flex-shrink: 0;
-  background: var(--color-status-working);
-  animation: pulse-dot 5s cubic-bezier(0.4, 0, 0.6, 1) infinite;
-}
-.background-tasks-popover { width: 22rem; max-width: calc(100vw - 2rem); padding: 0.25rem; }
-.background-task-list { display: flex; flex-direction: column; }
-.background-task {
+/* Audio settings: the default input's segmented level meter. */
+.mic-level-meter {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-  min-height: var(--control-h-md);
-  padding: 0 0.25rem 0 0.5rem;
-  border-radius: var(--radius-control);
-  font-size: 12px;
-  color: var(--text-tertiary);
+  gap: calc(var(--control-h) / 14);
 }
-.background-task:hover { background: var(--surface-100); }
-.background-task-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-primary); }
-.background-task-time { flex-shrink: 0; font-variant-numeric: tabular-nums; }
+.mic-level-segment {
+  width: calc(var(--control-h) / 7);
+  height: calc(var(--control-h) / 2);
+  border-radius: var(--radius-sm);
+  background: var(--surface-300);
+}
+.mic-level-segment[data-state='lit'] { background: var(--color-accent); }
+.mic-level-segment[data-state='peak'] {
+  background: color-mix(in srgb, var(--color-accent) 40%, transparent);
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .background-tasks-pulse,
   .pane-status-dot[data-status='background'],
   .sidebar-tab-icon[data-background] { animation: none !important; }
+}
+
+/* A live subagent selector shares the model picker's chip and menu material.
+   Its button is a sibling of the parent row's button for keyboard access. */
+.subagent-session-row {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing);
+}
+.subagent-session-row > .sidebar-item {
+  flex: 1;
+  min-width: 0;
+}
+.subagent-trigger,
+.work-trigger {
+  --chat-glyph: var(--framed-control-icon);
+  flex-shrink: 0;
+  max-width: 45%;
+  cursor: pointer;
+}
+.subagent-trigger .tab-status,
+.work-trigger .tab-status {
+  flex-shrink: 0;
+}
+.subagent-trigger[data-active='true'],
+.work-trigger[data-active='true'] {
+  color: var(--text-primary);
+  background-color: var(--surface-200);
+}
+.subagent-menu {
+  max-height: var(--radix-dropdown-menu-content-available-height);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+/* A wave or lane entry (PRDCT-4123): one row for a unit of work, its chips
+   before the status slot. The chips are short words, never a count of work
+   done; amber is the one tone that asks the person to look. */
+.work-chip {
+  flex-shrink: 0;
+  color: var(--text-tertiary);
+  background-color: var(--surface-100);
+}
+.work-chip[data-tone='amber'] {
+  color: var(--color-status-waiting);
+}
+.work-menu-breadcrumb {
+  color: var(--text-secondary);
+}
+.work-menu-action {
+  color: var(--text-secondary);
+  padding-inline-start: 22px;
+}
+.work-breadcrumb {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }

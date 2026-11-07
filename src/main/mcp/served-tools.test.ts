@@ -124,6 +124,7 @@ function setup(partial: Partial<World> = {}): Harness {
     selectedAccountId: () => undefined,
     switchMode: () => 'propose',
     launchProfiles: () => [],
+    chatDefault: () => undefined,
     pins: () => [],
     parentOf: () => null,
     setParent: (child, parent) => note('setParent', [child, parent]),

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { Entry } from '../../../../plugins/chat-view/src/reducer'
 import {
+  blockKey,
   describeTool,
   describeToolHead,
   failureCount,
@@ -89,6 +90,169 @@ describe('groupEntries', () => {
 
   it('returns nothing for no entries', () => {
     expect(groupEntries([])).toEqual([])
+  })
+})
+
+/* The transcript's record of approvals. A run of approvals the reader allowed
+   is one block that opens to its receipts; anything the reader must still see
+   on its own (a request waiting, one refused, one settled from another client,
+   a question) keeps its row and ends the run. On 3 November 2026 a wave's
+   Codex chat kept one grey row per answer, a wall of them reading the same. */
+const approval = (
+  id: string,
+  over: Partial<Extract<Entry, { kind: 'permission' }>> & {
+    /** The protocol method or tool name; null for a request naming none. */
+    toolName?: string | null
+    options?: { id: string; label: string }[]
+    questions?: { question: string; options: { label: string }[] }[]
+  } = {}
+): Entry => {
+  const { toolName, options, questions, ...entry } = over
+  return {
+    kind: 'permission',
+    request: {
+      type: 'permission_request',
+      id,
+      description: `request ${id}`,
+      ...(toolName === null
+        ? {}
+        : { toolName: toolName ?? 'item/commandExecution/requestApproval' }),
+      input: { command: `cmd-${id}` },
+      options:
+        options ??
+        ['accept', 'acceptForSession', 'decline', 'cancel'].map((o) => ({ id: o, label: o })),
+      ...(questions ? { questions } : {})
+    },
+    answer: 'accept',
+    at: 0,
+    ...entry
+  }
+}
+const kinds = (entries: Entry[]): string[] => groupEntries(entries).map((b) => b.kind)
+const runOf = (entries: Entry[], index: number): string[] => {
+  const block = groupEntries(entries)[index]
+  return block.kind === 'approval-group' ? block.approvals.map((a) => a.request.id) : []
+}
+
+describe('groupEntries, the approvals', () => {
+  it('folds consecutive allowed approvals into one run keyed by the first', () => {
+    const entries = [
+      user('go'),
+      approval('a'),
+      approval('b'),
+      approval('c', { answer: 'acceptForSession' }),
+      assistant('done')
+    ]
+    expect(kinds(entries)).toEqual(['user', 'approval-group', 'assistant'])
+    expect(runOf(entries, 1)).toEqual(['a', 'b', 'c'])
+  })
+  it("keys a run by its first entry's ordinal, never by a request id Codex restarts at zero", () => {
+    // Two runs of one conversation, the second after a restart that counted
+    // its requests from zero again: the same request ids, two different rows.
+    const entries = [
+      approval('0'),
+      approval('1'),
+      user('and again, after the restart'),
+      approval('0'),
+      approval('1')
+    ]
+    const ordinal = new Map(entries.map((entry, i) => [entry, 10 + i]))
+    const keys = groupEntries(entries).map((block) => blockKey(block, (e) => ordinal.get(e)))
+    expect(keys).toEqual(['approvals-10', 'entry-12', 'approvals-13'])
+    expect(new Set(keys).size).toBe(keys.length)
+  })
+  it('leaves one allowed approval as its own row', () => {
+    expect(kinds([user('go'), approval('a')])).toEqual(['user', 'permission'])
+  })
+  it('does not split a run on the tool the approval was for', () => {
+    // The approval comes first, so its run does; the tool it allowed joins the
+    // run of tools after it, and the next approval joins the first run.
+    const entries = [user('go'), approval('a'), tool({ id: 't' }), approval('b')]
+    expect(kinds(entries)).toEqual(['user', 'approval-group', 'tool-group'])
+    expect(runOf(entries, 1)).toEqual(['a', 'b'])
+  })
+  it('keeps a refusal, a request still waiting and one closed from another client on their own rows', () => {
+    const entries = [
+      approval('a'),
+      approval('b', { answer: 'decline' }),
+      approval('c'),
+      approval('d', { answer: undefined }),
+      approval('e'),
+      approval('f', { answer: undefined, answeredElsewhere: true }),
+      approval('g'),
+      approval('h')
+    ]
+    expect(kinds(entries)).toEqual([
+      'permission',
+      'permission',
+      'permission',
+      'permission',
+      'permission',
+      'permission',
+      'approval-group'
+    ])
+    expect(runOf(entries, 6)).toEqual(['g', 'h'])
+  })
+  it('reads a refusal from the label when the ids say nothing, and from the id otherwise', () => {
+    const extra = [
+      { id: '{"permissions":{},"scope":"turn"}', label: 'Deny extra permissions' },
+      { id: '{"permissions":{"network":true},"scope":"turn"}', label: 'Allow for this turn' }
+    ]
+    const entries = [
+      approval('a', {
+        toolName: 'item/permissions/requestApproval',
+        options: extra,
+        answer: extra[0].id
+      }),
+      approval('b', {
+        toolName: 'item/permissions/requestApproval',
+        options: extra,
+        answer: extra[1].id
+      }),
+      approval('c', {
+        toolName: 'item/permissions/requestApproval',
+        options: extra,
+        answer: extra[1].id
+      }),
+      approval('d', {
+        toolName: 'Write',
+        options: [
+          { id: 'allow-once', label: 'Allow once' },
+          { id: 'deny', label: 'Deny' }
+        ],
+        answer: 'deny'
+      })
+    ]
+    expect(kinds(entries)).toEqual(['permission', 'approval-group', 'permission'])
+  })
+  it('never lets a question join a run', () => {
+    const question = approval('q', {
+      toolName: 'AskUserQuestion',
+      questions: [{ question: 'Which?', options: [{ label: 'A' }] }],
+      options: [
+        { id: 'answer', label: 'Submit' },
+        { id: 'deny', label: 'Skip' }
+      ],
+      answer: 'answer'
+    })
+    const plain = approval('p', { toolName: null, options: [{ id: 'x', label: 'X' }], answer: 'x' })
+    expect(kinds([approval('a'), question, approval('b'), approval('c'), plain])).toEqual([
+      'permission',
+      'permission',
+      'approval-group',
+      'permission'
+    ])
+  })
+  it('ends a run on a message and on an error, which keep their place', () => {
+    const error: Entry = { kind: 'error', message: 'boom', at: 0 }
+    expect(
+      kinds([approval('a'), approval('b'), user('next'), approval('c'), approval('d')])
+    ).toEqual(['approval-group', 'user', 'approval-group'])
+    expect(kinds([approval('a'), approval('b'), error, approval('c'), approval('d')])).toEqual([
+      'approval-group',
+      'error',
+      'approval-group'
+    ])
   })
 })
 

@@ -54,16 +54,19 @@ const guestFor = async (win, sessionId) =>
 
 export async function run(t) {
   const chat = await openChat('surface-view')
-  const { app, win, record, fixture } = chat
+  const { win, record, fixture } = chat
   try {
-    await app.evaluate(({ ipcMain }) => {
+    // The leases are the server's (PRDCT-3433): the wrap goes where the
+    // plugin service lives, in whichever process hosts the sessions.
+    await fixture.evaluate(() => {
       globalThis.__viewLeases = []
-      const original = ipcMain._invokeHandlers.get('plugins:view-lease')
-      ipcMain._invokeHandlers.set('plugins:view-lease', (event, ...args) => {
-        const granted = original(event, ...args)
+      const plugins = globalThis.__claveE2E.plugins
+      const original = plugins.leaseView
+      plugins.leaseView = (...args) => {
+        const granted = original.apply(plugins, args)
         globalThis.__viewLeases.push(granted.leaseId)
         return granted
-      })
+      }
     })
     const linked = await win.evaluate(async (dir) => {
       const id = await window.electronAPI.pluginsLink(dir)
@@ -109,8 +112,9 @@ export async function run(t) {
     t.check('the host hands the guest its session id over the init message', true)
 
     // Through the real path, not the renderer-side injection the chat specs
-    // use: the lease subscribes in MAIN, so only what the session manager
-    // publishes reaches it — which is the point of a lease.
+    // use: the lease fixes the session where the plugin service lives, and
+    // the guest hears the session's own stream on the window's transport,
+    // so only what the session manager publishes reaches it.
     await win.evaluate(
       (id) =>
         window.electronAPI.sessionsWrite(id, { type: 'user_message', text: 'seen by the guest' }),
@@ -200,7 +204,7 @@ export async function run(t) {
 
     // Disabling the plugin takes the view off the pane AND the authority with
     // it: the guest's frame goes, and the lease it held answers nothing.
-    const held = await app.evaluate(() => globalThis.__viewLeases.at(-1))
+    const held = await fixture.evaluate(() => globalThis.__viewLeases.at(-1))
     await win.evaluate(() => window.electronAPI.pluginsDisable('fixture.surface-view'))
     assert.ok(
       await until(async () => (await win.locator(`[data-view-id="${VIEW}"]`).count()) === 0)
@@ -232,7 +236,7 @@ export async function run(t) {
     // reloads cannot revoke what it no longer remembers, so main drops the
     // lease itself. Reload, then try the lease that was minted: it answers
     // nothing, although the plugin is still running and still granted.
-    const minted = await app.evaluate(() => globalThis.__viewLeases ?? [])
+    const minted = await fixture.evaluate(() => globalThis.__viewLeases ?? [])
     assert.ok(minted.length >= 1)
     await win.reload()
     await win.waitForLoadState('domcontentloaded')

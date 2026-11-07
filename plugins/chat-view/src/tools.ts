@@ -1,4 +1,6 @@
 import type { Entry } from './reducer'
+import { parseDelivery } from '../../../src/shared/exchange-provenance'
+import { settledApproval, type PermissionEntry } from './approvals'
 
 /* What a run of tool calls says between two messages, decided without a DOM so
    both views of this plugin read it the same way and a test can pin it.
@@ -15,7 +17,27 @@ export interface ToolGroup {
   id: string
   tools: ToolEntry[]
 }
-export type Block = Exclude<Entry, { kind: 'tool' }> | ToolGroup
+/** A message another tab sent, recognised by its provenance header and by
+ *  nothing else. */
+export type DeliveryEntry = Extract<Entry, { kind: 'user' }>
+/** A run of consecutive messages from other tabs: one deck that opens to them.
+ *  It holds the messages ALONE. What the agent says and does after them is the
+ *  transcript's, in its place: on 5 November 2026 a deck that captured every
+ *  reply and tool run until the reader wrote again hid, closed, the question
+ *  the agent was asking the reader. Who the agent's words are for is never
+ *  read off the words, the final flag or the turn before them. */
+export interface DeliveryGroup {
+  kind: 'delivery-group'
+  messages: DeliveryEntry[]
+}
+/** A run of approvals the reader allowed, one row that opens to its receipts
+ *  (`approvals.ts` says which rows fold). Two or more: a lone one stays the
+ *  row it always was. */
+export interface ApprovalGroup {
+  kind: 'approval-group'
+  approvals: PermissionEntry[]
+}
+export type Block = Exclude<Entry, { kind: 'tool' }> | ToolGroup | ApprovalGroup | DeliveryGroup
 
 /** A MESSAGE ends a run of tools; a permission card does not. The reader asked
  *  a question, the agent worked, the agent answered: the work between those two
@@ -33,10 +55,42 @@ export function visibleEntries(entries: Entry[]): Entry[] {
   )
 }
 
+/** Messages from other tabs stack in one deck while they follow one another;
+ *  anything else ends the deck and stays in the transcript: the agent's words
+ *  (final or still streaming), its tools, a permission, an error, the reader's
+ *  message. A message from another tab ends a run of tools like any message.
+ *  Approvals the reader allowed fold into one run (the wall of identical grey
+ *  rows of 3 November 2026); what the reader must still see on its own (a
+ *  request waiting, a refusal, one settled from another client, a question)
+ *  keeps its row and ends the run, and so do a message and an error; the tool
+ *  an approval was for does not, since it joined the open run of tools before
+ *  the row. */
 export function groupEntries(entries: Entry[]): Block[] {
   const blocks: Block[] = []
   let open: ToolGroup | undefined
+  let allowed: ApprovalGroup | undefined
+  let deliveries: DeliveryGroup | undefined
   for (const entry of entries) {
+    if (entry.kind === 'user' && parseDelivery(entry.text)) {
+      if (!deliveries) {
+        deliveries = { kind: 'delivery-group', messages: [] }
+        blocks.push(deliveries)
+      }
+      deliveries.messages.push(entry)
+      open = undefined
+      allowed = undefined
+      continue
+    }
+    deliveries = undefined
+    if (entry.kind === 'permission' && settledApproval(entry)) {
+      if (!allowed) {
+        allowed = { kind: 'approval-group', approvals: [] }
+        blocks.push(allowed)
+      }
+      allowed.approvals.push(entry)
+      continue
+    }
+    if (entry.kind !== 'tool') allowed = undefined
     if (entry.kind === 'tool') {
       if (!open) {
         open = { kind: 'tool-group', id: entry.id, tools: [] }
@@ -48,7 +102,28 @@ export function groupEntries(entries: Entry[]): Block[] {
     blocks.push(entry)
     if (entry.kind === 'user' || entry.kind === 'assistant') open = undefined
   }
-  return blocks
+  // A run of one is the row it always was.
+  return blocks.map((block) =>
+    block.kind === 'approval-group' && block.approvals.length === 1 ? block.approvals[0] : block
+  )
+}
+
+/** The key a view renders a block under, stable for the block's life: a run
+ *  of tools by its first call's id (the provider mints those unique), every
+ *  other block by its first entry's ordinal. A request's id is not a key: it
+ *  is Codex's RPC counter, which restarts at zero in every process, so two
+ *  approval runs of one conversation can share it after a restart. */
+export function blockKey(block: Block, ordinal: (entry: Entry) => number | undefined): string {
+  switch (block.kind) {
+    case 'tool-group':
+      return `tools-${block.id}`
+    case 'approval-group':
+      return `approvals-${ordinal(block.approvals[0])}`
+    case 'delivery-group':
+      return `deliveries-${ordinal(block.messages[0])}`
+    default:
+      return `entry-${ordinal(block)}`
+  }
 }
 
 export type ToolKind = 'read' | 'search' | 'edit' | 'command' | 'skill' | 'web' | 'agent' | 'other'

@@ -21,6 +21,9 @@ export interface ContextMenuItem {
   /** A card shown beside the menu while this entry is highlighted (hover or
    *  arrow keys): a look at what the entry leads to, never clickable. */
   preview?: React.ReactNode
+  /** A hairline above this entry: it opens a section of its own (the entries
+   *  a plugin contributes, below the app's). */
+  separatorBefore?: boolean
 }
 
 interface ContextMenuProps {
@@ -60,6 +63,7 @@ export function ContextMenu({
     return () => observer.disconnect()
   }, [contentEl])
   const at = size ? placeMenu(x, y, size.w, size.h, headerLift) : { left: x, top: y }
+  const { active, highlight, preview, hasPreviews } = useMenuHighlight(items)
 
   return (
     <DropdownMenuPrimitive.Root
@@ -111,10 +115,12 @@ export function ContextMenu({
               item={item}
               onClose={onClose}
               className={className}
+              onHighlight={hasPreviews ? (row) => highlight(item.label, row) : undefined}
             />
           ))}
         </DropdownMenuPrimitive.Content>
       </DropdownMenuPrimitive.Portal>
+      {preview && active && <MenuPreview row={active.row}>{preview}</MenuPreview>}
     </DropdownMenuPrimitive.Root>
   )
 }
@@ -138,52 +144,58 @@ function ContextMenuEntry({
       {item.label}
     </span>
   )
+  const separator = item.separatorBefore ? (
+    <DropdownMenuPrimitive.Separator className="menu-sep" />
+  ) : null
   if (item.submenu) {
     return (
-      <DropdownMenuPrimitive.Sub>
-        <DropdownMenuPrimitive.SubTrigger
-          disabled={item.disabled}
-          className="menu-item justify-between"
-        >
-          {body}
-          <ChevronRightIcon className="w-3 h-3 ml-4 flex-shrink-0 text-text-tertiary" />
-        </DropdownMenuPrimitive.SubTrigger>
-        <DropdownMenuPrimitive.Portal>
-          <SubmenuContent item={item} onClose={onClose} className={className} />
-        </DropdownMenuPrimitive.Portal>
-      </DropdownMenuPrimitive.Sub>
+      <>
+        {separator}
+        <DropdownMenuPrimitive.Sub>
+          <DropdownMenuPrimitive.SubTrigger
+            disabled={item.disabled}
+            className="menu-item justify-between"
+          >
+            {body}
+            <ChevronRightIcon className="w-3 h-3 ml-4 flex-shrink-0 text-text-tertiary" />
+          </DropdownMenuPrimitive.SubTrigger>
+          <DropdownMenuPrimitive.Portal>
+            <SubmenuContent item={item} onClose={onClose} className={className} />
+          </DropdownMenuPrimitive.Portal>
+        </DropdownMenuPrimitive.Sub>
+      </>
     )
   }
   return (
-    <DropdownMenuPrimitive.Item
-      disabled={item.disabled}
-      onSelect={() => {
-        item.onClick()
-        onClose()
-      }}
-      onFocus={onHighlight ? (e) => onHighlight(e.currentTarget) : undefined}
-      onBlur={onHighlight ? () => onHighlight(null) : undefined}
-      aria-label={item.content ? item.label : undefined}
-      className={cn('menu-item justify-between', item.danger && 'menu-item--danger')}
-    >
-      {body}
-      {item.shortcut && <span className="ml-4 text-text-tertiary">{item.shortcut}</span>}
-    </DropdownMenuPrimitive.Item>
+    <>
+      {separator}
+      <DropdownMenuPrimitive.Item
+        disabled={item.disabled}
+        onSelect={() => {
+          item.onClick()
+          onClose()
+        }}
+        onFocus={onHighlight ? (e) => onHighlight(e.currentTarget) : undefined}
+        onBlur={onHighlight ? () => onHighlight(null) : undefined}
+        aria-label={item.content ? item.label : undefined}
+        className={cn('menu-item justify-between', item.danger && 'menu-item--danger')}
+      >
+        {body}
+        {item.shortcut && <span className="ml-4 text-text-tertiary">{item.shortcut}</span>}
+      </DropdownMenuPrimitive.Item>
+    </>
   )
 }
 
-/** A submenu's surface, and the preview card of whichever of its entries is
- *  highlighted. Radix moves focus to the highlighted entry on hover and on
- *  the arrow keys alike, so focus is the one signal both follow. */
-function SubmenuContent({
-  item,
-  onClose,
-  className
-}: {
-  item: ContextMenuItem
-  onClose: () => void
-  className?: string
-}): React.JSX.Element {
+/** Which entry of one menu surface is highlighted, and the preview card it
+ *  carries. Radix moves focus to the highlighted entry on hover and on the
+ *  arrow keys alike, so focus is the one signal both follow. */
+function useMenuHighlight(items: ContextMenuItem[]): {
+  active: { label: string; row: HTMLElement } | null
+  highlight: (label: string, row: HTMLElement | null) => void
+  preview: React.ReactNode
+  hasPreviews: boolean
+} {
   const [active, setActive] = useState<{ label: string; row: HTMLElement } | null>(null)
   // A blur is followed at once by the next row's focus when the highlight
   // moves down the list: clear on the next frame so the card does not blink.
@@ -200,9 +212,24 @@ function SubmenuContent({
       setActive(null)
     })
   }
+  const hasPreviews = items.some((item) => item.preview)
+  const preview = active ? items.find((item) => item.label === active.label)?.preview : null
+  return { active, highlight, preview, hasPreviews }
+}
+
+/** A submenu's surface, and the preview card of whichever of its entries is
+ *  highlighted. */
+function SubmenuContent({
+  item,
+  onClose,
+  className
+}: {
+  item: ContextMenuItem
+  onClose: () => void
+  className?: string
+}): React.JSX.Element {
   const children = item.submenu ?? []
-  const hasPreviews = children.some((child) => child.preview)
-  const preview = active ? children.find((child) => child.label === active.label)?.preview : null
+  const { active, highlight, preview, hasPreviews } = useMenuHighlight(children)
   return (
     <>
       <DropdownMenuPrimitive.SubContent
@@ -230,7 +257,7 @@ function SubmenuContent({
 const PREVIEW_GAP = 6
 const VIEWPORT_PAD = 8
 
-/** The preview card: beside the submenu on whichever side has room, level
+/** The preview card: beside the menu or submenu on whichever side has room, level
  *  with the highlighted row, kept inside the window. It takes no pointer
  *  events, so the menu under the cursor stays the menu. */
 export function MenuPreview({

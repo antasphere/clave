@@ -1,0 +1,1787 @@
+import { createReviewRelay, type ReviewAnswer } from './workspace-files-relay'
+import { createFleetClient } from '@clave/client/fleet'
+import type { Backing, Endpoint } from '@clave/client/router'
+import {
+  FLEET_IPC,
+  LOCAL_SERVER_ID,
+  parseResourceKey,
+  parseSessionKey,
+  resourceKey,
+  sessionKey,
+  type SavedServerConnection,
+  type ServerConnectionStatus,
+  type ServerVersionStatus
+} from '@clave/contract/fleet'
+import type { LayoutSnapshot, WindowLayout } from '@clave/contract/sidebar'
+import type { SessionWrite } from '@clave/contract/sessions'
+import type { AttachmentSource as FileAttachmentSource } from '@clave/contract/files'
+import type { GitStatusResult as WireGitStatus, GitWatchSubscription } from '@clave/contract/git'
+import type { ServerEvent } from '@clave/contract/events'
+import type { SessionEvent, SessionStream, SessionInput } from '../shared/session-model'
+import { isFileAttachment, type AttachmentSource, type FileAttachment } from '../shared/attachments'
+import { BUILT_IN_LAUNCH_PROFILES } from '../shared/agent-launch'
+import type { Workspace } from '../shared/workspace-types'
+import { orderByIds } from '../shared/workspace-order'
+import type { ElectronAPI, SessionRecord, SessionInfo } from './index.d'
+import type { FleetDesktopAPI, FleetSnapshot, FleetRequests, FleetWorkspaces } from './fleet-types'
+
+interface FleetPorts {
+  invoke(channel: string, ...args: unknown[]): Promise<unknown>
+  changed(callback: () => void): () => void
+  connect(endpoint: Endpoint): Promise<Backing>
+  /** Main's version decisions as it publishes them (issue #266). */
+  versions?(callback: (statuses: ServerVersionStatus[]) => void): () => void
+}
+const noop = (): void => {}
+const remote = (id: string): boolean => parseSessionKey(id).serverId !== LOCAL_SERVER_ID
+const key = (serverId: string, id: string): string => sessionKey({ serverId, sessionId: id })
+
+/** Only identities are transformed. Paths and transcript contents remain wire data. */
+export function ownedLayout(serverId: string, layout: LayoutSnapshot): LayoutSnapshot {
+  const groups = new Set(layout.groups.map((g) => g.id))
+  return {
+    ...layout,
+    groups: layout.groups.map((g) => ({
+      ...g,
+      id: resourceKey('group', serverId, g.id),
+      sessionIds: g.sessionIds.map((id) => key(serverId, id)),
+      workspaceId: g.workspaceId ? resourceKey('workspace', serverId, g.workspaceId) : undefined,
+      terminals: g.terminals.map((t) => ({
+        ...t,
+        sessionId: t.sessionId ? key(serverId, t.sessionId) : null
+      }))
+    })),
+    displayOrder: layout.displayOrder.map((id) =>
+      resourceKey(groups.has(id) ? 'group' : 'session', serverId, id)
+    )
+  }
+}
+export function wireLayout(serverId: string, layout: WindowLayout): WindowLayout {
+  const decode = (kind: 'session' | 'group' | 'workspace', value: string): string => {
+    const ref = parseResourceKey(kind, value)
+    if (ref.serverId !== serverId)
+      throw new Error('A shared layout cannot contain another server owner.')
+    return ref.id
+  }
+  const groupIds = new Set(layout.groups.map((g) => g.id))
+  return {
+    groups: layout.groups.map((g) => ({
+      ...g,
+      id: decode('group', g.id),
+      collapsed: false,
+      sessionIds: g.sessionIds.map((id) => decode('session', id)),
+      workspaceId: g.workspaceId ? decode('workspace', g.workspaceId) : undefined,
+      terminals: g.terminals.map((t) => ({
+        ...t,
+        sessionId: t.sessionId ? decode('session', t.sessionId) : null
+      }))
+    })),
+    displayOrder: layout.displayOrder.map((id) =>
+      decode(groupIds.has(id) ? 'group' : 'session', id)
+    )
+  }
+}
+
+/** Preserve the existing local bridge; remote IDs can only reach their exact backing. */
+export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): ElectronAPI {
+  const snapshotListeners = new Set<(snapshot: FleetSnapshot) => void>()
+  const requestListeners = new Set<(snapshot: FleetRequests) => void>()
+  const statusListeners = new Set<(status: ServerConnectionStatus) => void>()
+  const connectionListeners = new Set<(connections: SavedServerConnection[]) => void>()
+  const workspaceListeners = new Set<(update: FleetWorkspaces) => void>()
+  let connections: SavedServerConnection[] = []
+  const watched = new Map<string, { backing: Backing; off: () => void }>()
+  const pendingSnapshots = new Map<string, Promise<FleetSnapshot>>()
+  const queuedSnapshots = new Set<string>()
+  const lastSnapshots = new Map<string, FleetSnapshot>()
+  const streamRefs = new Map<string, { refs: number; release: () => void }>()
+  const chains = new Map<string, Promise<void>>()
+  const attachmentSessions = new Map<string, string>()
+  const generations = new Map<string, number>()
+  const invalidate = (serverId: string): void => {
+    generations.set(serverId, (generations.get(serverId) ?? 0) + 1)
+    pendingSnapshots.delete(serverId)
+    queuedSnapshots.delete(serverId)
+    for (const [id, held] of streamRefs)
+      if (parseSessionKey(id).serverId === serverId) {
+        held.release()
+        streamRefs.delete(id)
+      }
+  }
+  const fleet = createFleetClient({
+    resolve: async (serverId) =>
+      (await ports.invoke(FLEET_IPC.endpoint, serverId)) as Endpoint | null,
+    connect: (endpoint) => ports.connect(endpoint)
+  })
+  const backing = (serverId: string): Promise<Backing> => fleet.backing(serverId)
+  const scopeRecord = (serverId: string, record: SessionRecord): SessionRecord => ({
+    ...record,
+    id: key(serverId, record.id),
+    workspaceId: record.workspaceId
+      ? resourceKey('workspace', serverId, record.workspaceId)
+      : undefined,
+    link:
+      record.link?.kind === 'group-terminal'
+        ? { ...record.link, groupId: resourceKey('group', serverId, record.link.groupId) }
+        : record.link?.kind === 'session-view'
+          ? { ...record.link, ownerId: key(serverId, record.link.ownerId) }
+          : record.link,
+    spawnedBy: record.spawnedBy ? key(serverId, record.spawnedBy) : undefined
+  })
+  const watchRequests = (serverId: string, b: Backing): void => {
+    if (watched.get(serverId)?.backing === b) return
+    watched.get(serverId)?.off()
+    const off = b.api.requests.watch(
+      b.push,
+      (snapshot) => {
+        const scoped: FleetRequests = {
+          serverId,
+          revision: snapshot.revision,
+          pending: snapshot.pending.map((r) => ({
+            ...r,
+            id: resourceKey('request', serverId, r.id),
+            sessionId: key(serverId, r.sessionId)
+          }))
+        }
+        for (const listener of requestListeners) listener(scoped)
+      },
+      noop
+    )
+    watched.set(serverId, { backing: b, off })
+  }
+  const snapshot = (serverId: string): Promise<FleetSnapshot> => {
+    const running = pendingSnapshots.get(serverId)
+    if (running) return running
+    const generation = generations.get(serverId) ?? 0
+    const read = (async (): Promise<FleetSnapshot> => {
+      const b = await backing(serverId)
+      watchRequests(serverId, b)
+      const [sessions, records, layout] = await Promise.all([
+        b.api.sessions.list(),
+        b.api.sessions.listAdoptable(),
+        b.api.sidebar.getLayout('server')
+      ])
+      const result: FleetSnapshot = {
+        serverId,
+        sessions: sessions.map((s) => ({
+          ...s,
+          id: key(serverId, s.id),
+          groupId: s.groupId ? resourceKey('group', serverId, s.groupId) : undefined
+        })),
+        records: records.map((r) => scopeRecord(serverId, r as SessionRecord)),
+        layout: ownedLayout(serverId, layout)
+      }
+      if (
+        generation !== (generations.get(serverId) ?? 0) ||
+        !connections.some((c) => c.id === serverId && c.enabled)
+      )
+        throw new Error('Server discovery was cancelled.')
+      lastSnapshots.set(serverId, result)
+      for (const listener of snapshotListeners) listener(result)
+      return result
+    })()
+    pendingSnapshots.set(serverId, read)
+    void read
+      .finally(() => {
+        if (pendingSnapshots.get(serverId) !== read) return
+        pendingSnapshots.delete(serverId)
+        if (queuedSnapshots.delete(serverId)) refresh(serverId)
+      })
+      .catch(noop)
+    return read
+  }
+  const refresh = (serverId: string): void => {
+    if (pendingSnapshots.has(serverId)) {
+      queuedSnapshots.add(serverId)
+      return
+    }
+    void snapshot(serverId).catch(noop)
+  }
+  // ── Server workspaces (#241) ──────────────────────────────────────────────
+  // A server keeps its own workspace registry; the desktop wraps each id as a
+  // remote key. What reaches the renderer comes over the server's live push
+  // socket only: the list the server sends each socket at its welcome, then
+  // every change. One socket is one connection to one process, and the
+  // client drops the frames of a socket it replaced, so these lists arrive
+  // in the order that process sent them; an HTTP answer carries no order
+  // against them (a late one may come from a process since restarted) and is
+  // never published. Within one process the revision decides, since the
+  // welcome list and a change can cross; a list from another process means
+  // the server restarted, and is taken.
+  type Stamp = { revision: number; instance: string }
+  const stamps = new Map<string, Stamp>()
+  const scopeWorkspace = (serverId: string, ws: Workspace): Workspace => ({
+    id: resourceKey('workspace', serverId, ws.id),
+    name: ws.name,
+    rootDir: ws.rootDir,
+    profileFile: ws.profileFile,
+    createdAt: ws.createdAt
+  })
+  const publishWorkspaces = (serverId: string, list: readonly Workspace[], stamp: Stamp): void => {
+    const last = stamps.get(serverId)
+    if (last && last.instance === stamp.instance && stamp.revision <= last.revision) return
+    stamps.set(serverId, { revision: stamp.revision, instance: stamp.instance })
+    const workspaces = list.map((ws) => scopeWorkspace(serverId, ws))
+    for (const listener of workspaceListeners) listener({ serverId, workspaces })
+  }
+  const loadWorkspaces = async (serverId: string): Promise<Workspace[]> => {
+    const b = await backing(serverId)
+    const state = await b.api.settings.workspaces.load()
+    return (state.workspaces as Workspace[]).map((ws) => scopeWorkspace(serverId, ws))
+  }
+  // A write replaces the server's whole list, so it is made against the
+  // stamp it read, and the server refuses it as `stale` when another writer
+  // got in between; it is then read and applied again. Its answer goes back
+  // to the caller; the list it made reaches the renderer as the change.
+  const registryChains = new Map<string, Promise<unknown>>()
+  const STALE_RETRIES = 5
+  const editRegistry = <T>(
+    serverId: string,
+    edit: (current: Workspace[]) => { next: Workspace[]; result: T }
+  ): Promise<T> => {
+    const run = (registryChains.get(serverId) ?? Promise.resolve()).catch(noop).then(async () => {
+      const b = await backing(serverId)
+      for (let attempt = 0; ; attempt++) {
+        const state = await b.api.settings.workspaces.load()
+        const { next, result } = edit([...(state.workspaces as Workspace[])])
+        const written = await b.api.settings.workspaces.updateRegistry(next, undefined, {
+          revision: state.revision,
+          instance: state.instance
+        })
+        if (written.ok) return result
+        if (written.reason !== 'stale' || attempt >= STALE_RETRIES)
+          throw new Error('The server refused the workspace list.')
+      }
+    })
+    registryChains.set(serverId, run)
+    return run
+  }
+  // One folder, one spelling: `.` and `..` resolved, `//` collapsed, no
+  // trailing slash, so two spellings of a folder overlap as they should.
+  const normalFolder = (path: string): string => {
+    const parts: string[] = []
+    for (const part of path.split('/')) {
+      if (part === '' || part === '.') continue
+      if (part === '..') parts.pop()
+      else parts.push(part)
+    }
+    return `/${parts.join('/')}`
+  }
+  const insideRoot = (root: string, p: string): boolean =>
+    p === root || p.startsWith(root === '/' ? root : `${root}/`)
+  // ── Issue #266: main reads a server's version again when this window hears
+  // its upgrade change or its (re)welcome, the way an upgraded server returns ──
+  const versionChanged = (serverId: string): void => {
+    void ports.invoke(FLEET_IPC.versionRefresh, serverId).catch(noop)
+  }
+  fleet.onStatus((status) => {
+    for (const listener of statusListeners) listener(status)
+    if (status.state === 'connected') {
+      invalidate(status.serverId)
+      refresh(status.serverId)
+      versionChanged(status.serverId)
+    }
+  })
+  fleet.onEvent(({ serverId, value }) => {
+    const tag = value.event._tag
+    if (tag === 'server.upgrade_changed') versionChanged(serverId)
+    if (tag === 'sidebar.layout_changed' || tag.startsWith('session.')) refresh(serverId)
+    if (value.event._tag === 'workspaces.state_changed')
+      publishWorkspaces(serverId, value.event.workspaces as Workspace[], value.event)
+  })
+  let savedRead: Promise<SavedServerConnection[]> | null = null
+  let watchingChanges = false
+  let syncQueued = false
+  const sync = (): Promise<SavedServerConnection[]> => {
+    if (!watchingChanges) {
+      watchingChanges = true
+      ports.changed(() => {
+        void sync().catch(noop)
+      })
+    }
+    if (savedRead) {
+      syncQueued = true
+      return savedRead
+    }
+    const run = (async () => {
+      const next = (await ports.invoke(FLEET_IPC.list)) as SavedServerConnection[] | null
+      const previous = connections
+      connections = Array.isArray(next) ? next : []
+      for (const old of previous) {
+        if (!connections.some((c) => c.id === old.id && c.enabled)) {
+          invalidate(old.id)
+          if (!connections.some((c) => c.id === old.id)) lastSnapshots.delete(old.id)
+          watched.get(old.id)?.off()
+          watched.delete(old.id)
+          await fleet.disconnect(old.id)
+        }
+      }
+      for (const listener of connectionListeners) listener(connections)
+      // One stalled owner cannot hold back discovery or any other owner's boot.
+      for (const connection of connections) {
+        if (connection.enabled) void fleet.connect(connection.id).catch(noop)
+      }
+      return connections
+    })()
+    savedRead = run
+    void run
+      .finally(() => {
+        if (savedRead === run) savedRead = null
+        if (syncQueued) {
+          syncQueued = false
+          void sync().catch(noop)
+        }
+      })
+      .catch(noop)
+    return run
+  }
+  const route = async <T>(
+    id: string,
+    localCall: (id: string) => Promise<T>,
+    call: (b: Backing, wireId: string) => Promise<T>
+  ): Promise<T> => {
+    const ref = parseSessionKey(id)
+    return ref.serverId === LOCAL_SERVER_ID
+      ? localCall(ref.sessionId)
+      : call(await backing(ref.serverId), ref.sessionId)
+  }
+  const listen = <T>(
+    id: string,
+    localCall: () => () => void,
+    bind: (b: Backing, wireId: string, callback: (value: T) => void) => () => void,
+    callback: (value: T) => void
+  ): (() => void) => {
+    const ref = parseSessionKey(id)
+    if (ref.serverId === LOCAL_SERVER_ID) return localCall()
+    let gone = false
+    let off = noop
+    let bound: Backing | null = null
+    const bindCurrent = (): void => {
+      void backing(ref.serverId).then((b) => {
+        if (gone || bound === b) return
+        off()
+        bound = b
+        off = bind(b, ref.sessionId, callback)
+      }, noop)
+    }
+    const stopStatus = fleet.onStatus((status) => {
+      if (status.serverId !== ref.serverId) return
+      if (status.state === 'connected') bindCurrent()
+      if (status.state === 'disconnected') {
+        off()
+        off = noop
+        bound = null
+      }
+    })
+    bindCurrent()
+    return () => {
+      gone = true
+      stopStatus()
+      off()
+    }
+  }
+  const terminal = (
+    id: string,
+    localCall: () => void | Promise<void>,
+    call: (b: Backing, wireId: string) => Promise<void>
+  ): Promise<void> => {
+    if (!remote(id)) return Promise.resolve(localCall())
+    const next = (chains.get(id) ?? Promise.resolve())
+      .catch(noop)
+      .then(() => route(id, async () => {}, call))
+    chains.set(id, next)
+    void next
+      .finally(() => {
+        if (chains.get(id) === next) chains.delete(id)
+      })
+      .catch(noop)
+    return next
+  }
+  const fileLocation = (
+    root: string,
+    path: string
+  ): { serverId: string; root: string; path: string } => {
+    const ref = parseResourceKey('file', root)
+    const file = path.startsWith('clave-owner:')
+      ? parseResourceKey('file', path)
+      : { serverId: ref.serverId, id: path }
+    if (file.serverId !== ref.serverId)
+      throw new Error('File and root have different server owners.')
+    return { serverId: ref.serverId, root: ref.id, path: file.id }
+  }
+  const fileRoute = async <T>(
+    root: string,
+    path: string,
+    localCall: () => Promise<T>,
+    call: (b: Backing, location: { root: string; path: string }) => Promise<T>
+  ): Promise<T> => {
+    const location = fileLocation(root, path)
+    return location.serverId === LOCAL_SERVER_ID
+      ? localCall()
+      : call(await backing(location.serverId), location)
+  }
+  // ── Wave wcs1023, lane C: the git panel on a server's checkout (#242) ──
+  // A repository is named by the key of its folder: `resourceKey('file',
+  // serverId, path)` for a server's, the plain path for the Mac's own. The
+  // owner of the key answers, and every path the server answers (a repo
+  // root, a worktree's source, a discovered repo, a batch's repo) comes back
+  // under that owner's key, so the renderer never holds a server path that
+  // reads like a Mac one: the same folder on two machines is two repositories
+  // to every store keyed by folder.
+  const gitRef = (key: string): { serverId: string; id: string } => parseResourceKey('file', key)
+  const ownedPath = (owner: string, path: string): string => resourceKey('file', owner, path)
+  // A folder that is no repository answers an empty `repoRoot`: nothing to
+  // key, and `resourceKey` refuses an empty id (verifier round 1, finding 2).
+  const ownedStatus = (owner: string, status: WireGitStatus): WireGitStatus => ({
+    ...status,
+    repoRoot: status.repoRoot ? ownedPath(owner, status.repoRoot) : status.repoRoot,
+    ...(status.worktree && {
+      worktree: { ...status.worktree, of: ownedPath(owner, status.worktree.of) }
+    })
+  })
+  const loose = <T>(value: unknown): T => value as T
+  const gitRoute = async <T>(
+    cwd: string,
+    localCall: () => Promise<T>,
+    call: (b: Backing, path: string, owner: string) => Promise<T>
+  ): Promise<T> => {
+    const ref = gitRef(cwd)
+    return ref.serverId === LOCAL_SERVER_ID
+      ? localCall()
+      : call(await backing(ref.serverId), ref.id, ref.serverId)
+  }
+  /** A batch names repositories of ONE owner: a list that spans two servers
+   *  is refused before anything runs anywhere. An empty list is the Mac's. */
+  const gitBatch = async <T>(
+    keys: string[],
+    localCall: () => Promise<T>,
+    call: (b: Backing, paths: string[], owner: string) => Promise<T>
+  ): Promise<T> => {
+    const refs = keys.map(gitRef)
+    const owner = refs[0]?.serverId ?? LOCAL_SERVER_ID
+    if (refs.some((ref) => ref.serverId !== owner))
+      throw new Error('A git batch cannot span two servers.')
+    return owner === LOCAL_SERVER_ID
+      ? localCall()
+      : call(
+          await backing(owner),
+          refs.map((ref) => ref.id),
+          owner
+        )
+  }
+  // What this Mac watches on each server is ONE complete map per owner (every
+  // panel's subscription with its paths), named by this preload's namespace
+  // (one per Mac window) and replaced as a whole under an increasing
+  // generation: a panel's set changing, a panel closing, a connection
+  // opening all send the current complete map, and the server keeps only the
+  // newest generation it has seen. There are no single watches to order, no
+  // removals to remember, nothing to replay but the map itself
+  // (`lane-c/watch-rule.md`). Two Macs never share a namespace.
+  const gitNamespace = `mac-${Math.random().toString(36).slice(2, 10)}`
+  const gitDesired = new Map<string, Map<string, string[]>>()
+  const gitGeneration = new Map<string, number>()
+  /** Counts an owner's connections: an answer that crossed one came from a
+   *  daemon that may be gone and says nothing about the one now there. */
+  const gitEpoch = new Map<string, number>()
+  const gitMapOf = (owner: string): GitWatchSubscription[] =>
+    [...(gitDesired.get(owner) ?? [])].map(([id, paths]) => ({ id, paths }))
+  const sameMap = (
+    a: ReadonlyArray<GitWatchSubscription>,
+    b: ReadonlyArray<GitWatchSubscription>
+  ): boolean => JSON.stringify(a) === JSON.stringify(b)
+  /** Send `owner` this Mac's current complete map. Answers what the server
+   *  watches per subscription while the map it described is still the
+   *  current one (a later send of the SAME map, a connection's, changes
+   *  nothing about it); null when the map moved on or the owner is
+   *  unreachable (it hears the current map at its next connection). */
+  const gitSync = async (owner: string): Promise<ReadonlyArray<GitWatchSubscription> | null> => {
+    const subscriptions = gitMapOf(owner)
+    const generation = (gitGeneration.get(owner) ?? 0) + 1
+    gitGeneration.set(owner, generation)
+    try {
+      const b = await backing(owner)
+      // The connection this sync rides is the one it was made on; only a
+      // connection opening after it makes the answer cross one.
+      const epoch = gitEpoch.get(owner) ?? 0
+      const answered = await b.api.git.syncWatches(gitNamespace, generation, subscriptions)
+      // An answer that crossed a connection of this owner (the connection
+      // dropped and came back, a daemon restarted) came from a daemon that may
+      // be gone: it says nothing about the one now there, which the
+      // connection's own sync addresses. The panel polls until its next set.
+      if (gitEpoch.get(owner) !== epoch) return null
+      return sameMap(subscriptions, gitMapOf(owner)) ? answered : null
+    } catch {
+      return null
+    }
+  }
+  fleet.onStatus((status) => {
+    // Every connection, the first included, whatever else is in flight: a
+    // server that lost its state gets the map back, one that kept it applies
+    // the same map again. A sync still in flight may be answered by a daemon
+    // that is gone; this one reaches the daemon that is there.
+    if (status.state !== 'connected') return
+    gitEpoch.set(status.serverId, (gitEpoch.get(status.serverId) ?? 0) + 1)
+    if (gitDesired.has(status.serverId)) void gitSync(status.serverId)
+  })
+  // The batches THIS Mac has in flight on a server, by the id it gave each
+  // one: a server publishes a batch's progress to every attached Mac, and two
+  // Macs may run the same op on the same repositories at once, so neither the
+  // op nor the paths tell a batch apart (verifier rounds 1 and 2). The id
+  // travels with the command and comes back on every event of that batch;
+  // only an event of a batch in flight here reaches the renderer.
+  const runningBatches = new Set<string>()
+  let batchSerial = 0
+  const gitBatchOp = async <T>(
+    keys: string[],
+    localCall: () => Promise<T>,
+    call: (b: Backing, paths: string[], owner: string, batchId: string) => Promise<T>
+  ): Promise<T> =>
+    gitBatch(keys, localCall, async (b, paths, owner) => {
+      const batchId = `${gitNamespace}:${++batchSerial}`
+      runningBatches.add(batchId)
+      try {
+        return await call(b, paths, owner, batchId)
+      } finally {
+        runningBatches.delete(batchId)
+      }
+    })
+  const scopeEvent = (sessionId: string, event: SessionEvent): SessionEvent => {
+    if (event.type !== 'user_message' || !event.attachments) return event
+    const ref = parseSessionKey(sessionId)
+    return {
+      ...event,
+      // A session record names a tab, not a file: it carries no path to scope.
+      attachments: event.attachments.map((file) => {
+        if (!isFileAttachment(file)) return file
+        const path = resourceKey('file', ref.serverId, file.path)
+        attachmentSessions.set(path, ref.sessionId)
+        return { ...file, path }
+      })
+    }
+  }
+  const wireOptions = async (
+    serverId: string,
+    options: Parameters<ElectronAPI['spawnSession']>[1]
+  ): Promise<Parameters<ElectronAPI['spawnSession']>[1]> => {
+    if (!options) return options
+    if (options.adoptSessionId)
+      throw new Error('Remote recovered sessions require explicit Resume.')
+    const decode = (kind: 'workspace' | 'group' | 'session', id: string): string => {
+      const ref = parseResourceKey(kind, id)
+      if (ref.serverId !== serverId) throw new Error('Launch context belongs to another server.')
+      return ref.id
+    }
+    const sameServerParent = (id: string): string | undefined => {
+      try {
+        const ref = parseResourceKey('session', id)
+        return ref.serverId === serverId ? ref.id : undefined
+      } catch {
+        return undefined
+      }
+    }
+    const decoded = {
+      ...options,
+      workspaceId: options.workspaceId ? decode('workspace', options.workspaceId) : undefined,
+      link:
+        options.link?.kind === 'group-terminal'
+          ? { ...options.link, groupId: decode('group', options.link.groupId) }
+          : options.link?.kind === 'session-view'
+            ? { ...options.link, ownerId: decode('session', options.link.ownerId) }
+            : options.link,
+      // A parent on another server (a local agent opening a remote tab) is
+      // no parent there: the tab opens all the same, unfolded.
+      spawnedBy: options.spawnedBy ? sameServerParent(options.spawnedBy) : undefined
+    }
+    if (options.launchProfileId && !options.launchProfile) {
+      const prefs = await local.launchProfilesList()
+      const profile = [...BUILT_IN_LAUNCH_PROFILES, ...prefs.customProfiles].find(
+        (profile) => profile.id === options.launchProfileId
+      )
+      if (profile)
+        decoded.launchProfile = {
+          id: profile.id,
+          name: profile.name,
+          family: profile.family,
+          command: [...profile.command],
+          additionalArgs: [...profile.additionalArgs],
+          ...(profile.sourceProfileId ? { sourceProfileId: profile.sourceProfileId } : {}),
+          ...(profile.pi ? { pi: profile.pi } : {})
+        }
+    }
+    return decoded
+  }
+  const eventListener = <T extends ServerEvent['_tag']>(
+    tag: T,
+    callback: (event: Extract<ServerEvent, { _tag: T }>, serverId: string) => void
+  ): (() => void) =>
+    fleet.onEvent(({ serverId, value }) => {
+      if (value.event._tag === tag)
+        callback(value.event as Extract<ServerEvent, { _tag: T }>, serverId)
+    })
+  const both =
+    (a: () => void, b: () => void): (() => void) =>
+    () => {
+      a()
+      b()
+    }
+  // Files and workspace files (#243): the window sends whole tree state,
+  // while each server owns its watches, files, and trust decisions.
+  const namespace = crypto.randomUUID()
+  type Tree = { owner: string; root: string; dirs: string[] }
+  let tree: Tree | null = null
+  let treeGeneration = 0
+  const treeOwners = new Set<string>()
+  const treeChains = new Map<string, Promise<unknown>>()
+  const fsListeners = new Set<Parameters<ElectronAPI['onFsChanged']>[0]>()
+  let renewTree: ReturnType<typeof setInterval> | undefined
+  const sendTree = (owner: string): Promise<void> => {
+    treeOwners.add(owner)
+    const next = (treeChains.get(owner) ?? Promise.resolve())
+      .catch(noop)
+      .then(async () => {
+        const b = await backing(owner)
+        await b.api.files.syncWatch({
+          namespace,
+          generation: treeGeneration,
+          tree: tree?.owner === owner ? { root: tree.root, dirs: [...tree.dirs] } : null
+        })
+      })
+      .catch((error: unknown) => {
+        console.warn(
+          '[clave] folder watch not sent to the server',
+          error instanceof Error ? error.message : 'The server could not accept the folder watch.'
+        )
+      })
+    treeChains.set(owner, next)
+    return next
+  }
+  const changeTree = (next: Tree | null): Promise<void> => {
+    const previous = tree
+    tree = next
+    treeGeneration += 1
+    if (renewTree !== undefined) clearInterval(renewTree)
+    renewTree = undefined
+    const tasks: Promise<unknown>[] = []
+    if (previous && previous.owner !== LOCAL_SERVER_ID && previous.owner !== next?.owner)
+      tasks.push(sendTree(previous.owner))
+    if (next?.owner === LOCAL_SERVER_ID) tasks.push(local.watchDir(next.root, next.dirs))
+    else {
+      if (previous?.owner === LOCAL_SERVER_ID) tasks.push(local.unwatchDir())
+      if (next) {
+        tasks.push(sendTree(next.owner))
+        renewTree = setInterval(() => {
+          if (tree && tree.owner !== LOCAL_SERVER_ID) void sendTree(tree.owner).catch(noop)
+        }, 5 * 60_000)
+        renewTree.unref?.()
+      }
+    }
+    return Promise.all(tasks).then(() => undefined)
+  }
+  const claveWatches = new Map<string, Set<string>>()
+  const claveChains = new Map<string, Promise<unknown>>()
+  const claveQueue = (owner: string, run: (b: Backing) => Promise<void>): Promise<void> => {
+    const next = (claveChains.get(owner) ?? Promise.resolve())
+      .catch(noop)
+      .then(async () => run(await backing(owner)))
+    claveChains.set(owner, next)
+    return next
+  }
+  const relays = new Map<string, ReturnType<typeof createReviewRelay>>()
+  const reviewRelay = (owner: string): ReturnType<typeof createReviewRelay> => {
+    let relay = relays.get(owner)
+    if (!relay) {
+      relay = createReviewRelay({
+        showDialog: (review) =>
+          ports.invoke('clave:review-dialog', {
+            ...review,
+            server: connections.find((c) => c.id === owner)?.name ?? owner
+          }) as Promise<ReviewAnswer>,
+        answer: async (reviewId, answer) =>
+          (await backing(owner)).api.workspaceFiles.answerReview(reviewId, answer)
+      })
+      relays.set(owner, relay)
+    }
+    return relay
+  }
+  const pushOpenOrFail = (b: Backing): Promise<void> =>
+    new Promise((resolve, reject) => {
+      const timer = setTimeout(
+        () => reject(new Error('The server’s push channel did not open in time.')),
+        15_000
+      )
+      b.push.whenOpen().then(
+        () => {
+          clearTimeout(timer)
+          resolve()
+        },
+        (error) => {
+          clearTimeout(timer)
+          reject(error)
+        }
+      )
+    })
+  fleet.onEvent(({ serverId, value }) => {
+    relays.get(serverId)?.onEvent(value)
+    const event = value.event
+    if (
+      event._tag === 'files.dirs_changed' &&
+      event.namespace === namespace &&
+      tree?.owner === serverId &&
+      tree.root === event.root
+    )
+      for (const cb of fsListeners) cb(resourceKey('file', serverId, event.root), [...event.dirs])
+  })
+  fleet.onStatus((status) => {
+    if (status.state !== 'connected') return
+    const owner = status.serverId
+    if (treeOwners.has(owner)) {
+      void sendTree(owner).catch(noop)
+      if (tree?.owner === owner)
+        for (const cb of fsListeners) cb(resourceKey('file', owner, tree.root), ['.', ...tree.dirs])
+    }
+    for (const path of claveWatches.get(owner) ?? [])
+      void claveQueue(owner, (b) => b.api.workspaceFiles.watch(path, `fleet:${namespace}`)).catch(
+        noop
+      )
+  })
+  const claveLocation = (
+    path: string,
+    root?: string
+  ): { owner: string; path: string; root?: string } => {
+    const file = parseResourceKey('file', path)
+    const base = root === undefined ? undefined : parseResourceKey('file', root)
+    if (base && file.serverId !== base.serverId)
+      throw new Error('Workspace file and root have different server owners.')
+    return { owner: file.serverId, path: file.id, ...(base ? { root: base.id } : {}) }
+  }
+  const workspaceFiles: Pick<
+    ElectronAPI,
+    | 'readClaveFile'
+    | 'writeClaveFile'
+    | 'claveFileExists'
+    | 'discoverClaveFiles'
+    | 'discoverClaveFilesRecursive'
+    | 'readAutoDiscoverConfig'
+    | 'watchClaveFile'
+    | 'unwatchClaveFile'
+    | 'onClaveFileChanged'
+    | 'trustWorkspaceRoot'
+    | 'untrustWorkspaceRoot'
+    | 'listTrustedRoots'
+  > = {
+    readClaveFile: async (path, root) => {
+      const ref = claveLocation(path, root)
+      if (ref.owner === LOCAL_SERVER_ID) return local.readClaveFile(path, root)
+      const relay = reviewRelay(ref.owner)
+      const b = await backing(ref.owner)
+      await pushOpenOrFail(b)
+      const read = relay.begin()
+      try {
+        return (await b.api.workspaceFiles.read(ref.path, {
+          rootDir: ref.root,
+          requestId: read.requestId
+        })) as Awaited<ReturnType<ElectronAPI['readClaveFile']>>
+      } finally {
+        read.done()
+      }
+    },
+    writeClaveFile: async (path, data, root) => {
+      const ref = claveLocation(path, root)
+      if (ref.owner === LOCAL_SERVER_ID) return local.writeClaveFile(path, data, root)
+      return (await backing(ref.owner)).api.workspaceFiles.write(ref.path, data, ref.root)
+    },
+    claveFileExists: async (path) => {
+      const ref = claveLocation(path)
+      return ref.owner === LOCAL_SERVER_ID
+        ? local.claveFileExists(path)
+        : (await backing(ref.owner)).api.workspaceFiles.exists(ref.path)
+    },
+    discoverClaveFiles: async (path) => {
+      const ref = claveLocation(path)
+      if (ref.owner === LOCAL_SERVER_ID) return local.discoverClaveFiles(path)
+      return (await (await backing(ref.owner)).api.workspaceFiles.discover(ref.path)).map((f) => ({
+        ...f,
+        path: resourceKey('file', ref.owner, f.path),
+        rootDir: f.rootDir === null ? null : resourceKey('file', ref.owner, f.rootDir)
+      }))
+    },
+    discoverClaveFilesRecursive: async (path, config) => {
+      const ref = claveLocation(path)
+      if (ref.owner === LOCAL_SERVER_ID) return local.discoverClaveFilesRecursive(path, config)
+      return (
+        await (await backing(ref.owner)).api.workspaceFiles.discoverRecursive(ref.path, config)
+      ).map((f) => ({
+        ...f,
+        path: resourceKey('file', ref.owner, f.path),
+        rootDir: resourceKey('file', ref.owner, f.rootDir)
+      }))
+    },
+    readAutoDiscoverConfig: async (path) => {
+      const ref = claveLocation(path)
+      return (
+        ref.owner === LOCAL_SERVER_ID
+          ? await local.readAutoDiscoverConfig(path)
+          : await (await backing(ref.owner)).api.workspaceFiles.autoDiscover(ref.path)
+      ) as Awaited<ReturnType<ElectronAPI['readAutoDiscoverConfig']>>
+    },
+    watchClaveFile: (path) => {
+      const ref = claveLocation(path)
+      if (ref.owner === LOCAL_SERVER_ID) return local.watchClaveFile(path)
+      let paths = claveWatches.get(ref.owner)
+      if (!paths) claveWatches.set(ref.owner, (paths = new Set()))
+      paths.add(ref.path)
+      return claveQueue(ref.owner, (b) =>
+        b.api.workspaceFiles.watch(ref.path, `fleet:${namespace}`)
+      )
+    },
+    unwatchClaveFile: (path) => {
+      const ref = claveLocation(path)
+      if (ref.owner === LOCAL_SERVER_ID) return local.unwatchClaveFile(path)
+      claveWatches.get(ref.owner)?.delete(ref.path)
+      return claveQueue(ref.owner, (b) =>
+        b.api.workspaceFiles.unwatch(ref.path, `fleet:${namespace}`)
+      )
+    },
+    onClaveFileChanged: (cb) =>
+      both(
+        local.onClaveFileChanged(cb),
+        eventListener('workspace_files.changed', (event, owner) =>
+          cb(resourceKey('file', owner, event.path))
+        )
+      ),
+    trustWorkspaceRoot: async (path) => {
+      const ref = claveLocation(path)
+      return ref.owner === LOCAL_SERVER_ID
+        ? local.trustWorkspaceRoot(path)
+        : (await backing(ref.owner)).api.workspaceFiles.trustRoot(ref.path)
+    },
+    untrustWorkspaceRoot: async (path) => {
+      const ref = claveLocation(path)
+      return ref.owner === LOCAL_SERVER_ID
+        ? local.untrustWorkspaceRoot(path)
+        : (await backing(ref.owner)).api.workspaceFiles.untrustRoot(ref.path)
+    },
+    listTrustedRoots: async () => {
+      const roots = await local.listTrustedRoots()
+      const lists = await Promise.all(
+        fleet
+          .list()
+          .filter((s) => s.state === 'connected')
+          .map(async ({ serverId }) => {
+            try {
+              return (await (await backing(serverId)).api.workspaceFiles.trustedRoots()).map((p) =>
+                resourceKey('file', serverId, p)
+              )
+            } catch {
+              return []
+            }
+          })
+      )
+      return [...roots, ...lists.flat()]
+    }
+  }
+
+  const shared: FleetDesktopAPI = {
+    fleetList: sync,
+    fleetSave: async (input) => {
+      const saved = (await ports.invoke(FLEET_IPC.save, input)) as SavedServerConnection
+      if (input.id) {
+        invalidate(input.id)
+        watched.get(input.id)?.off()
+        watched.delete(input.id)
+        await fleet.disconnect(input.id)
+      }
+      await sync()
+      return saved
+    },
+    fleetConnect: async (id) => {
+      await ports.invoke(FLEET_IPC.connect, id)
+      await sync()
+      await fleet.connect(id)
+    },
+    fleetDisconnect: async (id) => {
+      invalidate(id)
+      await ports.invoke(FLEET_IPC.disconnect, id)
+      watched.get(id)?.off()
+      watched.delete(id)
+      await fleet.disconnect(id)
+      await sync()
+    },
+    fleetRemove: async (id) => {
+      invalidate(id)
+      lastSnapshots.delete(id)
+      await ports.invoke(FLEET_IPC.remove, id)
+      watched.get(id)?.off()
+      watched.delete(id)
+      await fleet.remove(id)
+      await sync()
+    },
+    fleetSnapshot: snapshot,
+    fleetStart: async (serverId, cwd, options) => {
+      if (serverId === LOCAL_SERVER_ID) return local.spawnSession(cwd, options)
+      const b = await backing(serverId)
+      const info = await b.api.sessions.start({
+        cwd,
+        options: await wireOptions(serverId, options)
+      })
+      refresh(serverId)
+      return { ...info, id: key(serverId, info.id) } as SessionInfo
+    },
+    fleetLaunchSettings: async (serverId) => {
+      const { api } = await backing(serverId)
+      const [profiles, claudeAccounts, codexAccounts] = await Promise.all([
+        api.settings.launchProfiles.list(),
+        api.settings.claudeAccounts.list(),
+        api.settings.codexAccounts.list()
+      ])
+      return {
+        profiles: profiles as LaunchSettings['profiles'],
+        claudeAccounts: [...claudeAccounts],
+        codexAccounts: [...codexAccounts]
+      }
+    },
+    fleetSaveLayout: async (serverId, layout, baseRevision) => {
+      const b = await backing(serverId)
+      const result = await b.api.sidebar.saveLayout({
+        windowKey: 'server',
+        baseRevision,
+        ...wireLayout(serverId, layout)
+      })
+      return ownedLayout(serverId, result)
+    },
+    fleetWorkspaces: loadWorkspaces,
+    fleetAddWorkspace: async (serverId, input) => {
+      const typed = input.rootDir.trim()
+      if (!typed.startsWith('/')) throw new Error('Choose an absolute folder on the server.')
+      const rootDir = normalFolder(typed)
+      const b = await backing(serverId)
+      const info = await b.api.files.stat({ root: '/', path: rootDir })
+      if (info.type !== 'directory') throw new Error('That path on the server is not a folder.')
+      return editRegistry(serverId, (current) => {
+        if (
+          current.some((ws) => {
+            const root = normalFolder(ws.rootDir)
+            return insideRoot(root, rootDir) || insideRoot(rootDir, root)
+          })
+        )
+          throw new Error('That folder overlaps a workspace already on this server.')
+        const base = rootDir.split('/').pop()?.replace(/^\.+/, '') ?? ''
+        const ws: Workspace = {
+          id: crypto.randomUUID(),
+          name:
+            input.name?.trim() || (base ? base.charAt(0).toUpperCase() + base.slice(1) : rootDir),
+          rootDir,
+          profileFile: input.profileFile ?? null,
+          createdAt: Date.now()
+        }
+        return { next: [...current, ws], result: scopeWorkspace(serverId, ws) }
+      })
+    },
+    fleetRemoveWorkspace: async (workspaceId) => {
+      const ref = parseResourceKey('workspace', workspaceId)
+      if (ref.serverId === LOCAL_SERVER_ID) throw new Error('Not a server workspace.')
+      await editRegistry(ref.serverId, (current) => ({
+        next: current.filter((ws) => ws.id !== ref.id),
+        result: undefined
+      }))
+    },
+    fleetReorderWorkspaces: async (serverId, workspaceIds) => {
+      const ids = workspaceIds.map((key) => {
+        const ref = parseResourceKey('workspace', key)
+        if (ref.serverId !== serverId) throw new Error('Not a workspace of this server.')
+        return ref.id
+      })
+      await editRegistry(serverId, (current) => ({
+        next: orderByIds(current, ids),
+        result: undefined
+      }))
+    },
+    fleetResolve: async (requestKey, response) => {
+      const ref = parseResourceKey('request', requestKey)
+      const b = await backing(ref.serverId)
+      return b.api.requests.resolve({ requestId: ref.id, response })
+    },
+    fleetDownload: (root, path, open = false) =>
+      fileRoute(
+        root,
+        path,
+        async () => {
+          throw new Error('Use local file actions for local files.')
+        },
+        async (b, location) => {
+          const file = await b.api.files.download(location)
+          await ports.invoke(open ? 'fs:open-download' : 'fs:save-download', file)
+        }
+      ),
+    fleetUpload: (root, path, sourcePath) =>
+      fileRoute(
+        root,
+        path,
+        async () => {
+          throw new Error('Use local file actions for local files.')
+        },
+        async (b, location) => {
+          const source = (await ports.invoke('sessions:files', {
+            type: 'upload-source',
+            source: { path: sourcePath }
+          })) as Extract<FileAttachmentSource, { kind: 'upload' }>
+          await b.api.files.upload({ ...location, base64: source.base64 })
+        }
+      ),
+    onFleetSnapshot: (callback) => {
+      snapshotListeners.add(callback)
+      return () => {
+        snapshotListeners.delete(callback)
+      }
+    },
+    onFleetRequests: (callback) => {
+      requestListeners.add(callback)
+      return () => {
+        requestListeners.delete(callback)
+      }
+    },
+    onFleetStatus: (callback) => {
+      statusListeners.add(callback)
+      for (const status of fleet.list()) callback(status)
+      return () => {
+        statusListeners.delete(callback)
+      }
+    },
+    onFleetConnectionsChanged: (callback) => {
+      connectionListeners.add(callback)
+      return () => {
+        connectionListeners.delete(callback)
+      }
+    },
+    onFleetWorkspaces: (callback) => {
+      workspaceListeners.add(callback)
+      return () => {
+        workspaceListeners.delete(callback)
+      }
+    },
+    // ── Issue #266: main reads the servers' versions, never this window ──
+    fleetServerVersions: async (refresh) =>
+      (await ports.invoke(FLEET_IPC.versions, refresh === true)) as ServerVersionStatus[],
+    fleetUpgradeServer: async (serverId) =>
+      (await ports.invoke(FLEET_IPC.upgradeNow, serverId)) as ServerVersionStatus,
+    onFleetServerVersions: (callback) => ports.versions?.(callback) ?? noop
+  }
+  type LaunchSettings = Awaited<ReturnType<FleetDesktopAPI['fleetLaunchSettings']>>
+  const api: ElectronAPI = {
+    ...local,
+    ...shared,
+    sessionsList: async () => {
+      const own = await local.sessionsList()
+      return [...own, ...connections.flatMap((c) => lastSnapshots.get(c.id)?.sessions ?? [])]
+    },
+    sessionsHistory: (id, before, limit) =>
+      route(
+        id,
+        (wireId) => local.sessionsHistory(wireId, before, limit),
+        async (b, wireId) => {
+          const page = await b.api.sessions.history(wireId, before, limit)
+          return {
+            ...page,
+            items: page.items.map((item) => ({
+              ...item,
+              event: scopeEvent(id, item.event as SessionEvent)
+            }))
+          }
+        }
+      ),
+    sessionsModels: (id) =>
+      route(id, local.sessionsModels, async (b, wireId) =>
+        (await b.api.sessions.models(wireId)).map((m) => ({
+          ...m,
+          efforts: m.efforts ? [...m.efforts] : undefined
+        }))
+      ),
+    sessionsCommands: (id) =>
+      route(
+        id,
+        local.sessionsCommands,
+        async (b, wireId) =>
+          [...(await b.api.sessions.commands(wireId))] as Awaited<
+            ReturnType<ElectronAPI['sessionsCommands']>
+          >
+      ),
+    sessionsCapabilities: (id) =>
+      route(id, local.sessionsCapabilities, (b, wireId) => b.api.sessions.capabilities(wireId)),
+    sessionsSetView: (id, viewId) =>
+      route(
+        id,
+        (wireId) => local.sessionsSetView(wireId, viewId),
+        async (b, wireId) => ({ ...(await b.api.sessions.setView(wireId, viewId)), id })
+      ),
+    sessionsWrite: (id, input) =>
+      route(
+        id,
+        (wireId) => local.sessionsWrite(wireId, input),
+        (b, wireId) =>
+          b.api.sessions.write(
+            wireId,
+            input instanceof Uint8Array ? { type: 'bytes', data: input } : (input as SessionWrite)
+          )
+      ),
+    killSession: (id) =>
+      route(id, local.killSession, async (b, wireId) => {
+        await b.api.sessions.stop(wireId)
+        refresh(parseSessionKey(id).serverId)
+      }),
+    restartSession: (id, overrides, requestId) =>
+      route(
+        id,
+        (wireId) => local.restartSession(wireId, overrides, requestId),
+        async (b, wireId) => {
+          const { resendRejected, ...account } = overrides
+          const result = await b.api.sessions.restart(wireId, account, resendRejected, requestId)
+          refresh(parseSessionKey(id).serverId)
+          return { ...result, id } as Awaited<ReturnType<ElectronAPI['restartSession']>>
+        }
+      ),
+    setSessionDisplayName: (id, name, renamed) =>
+      route(
+        id,
+        (wireId) => local.setSessionDisplayName(wireId, name, renamed),
+        (b, wireId) =>
+          b.api.sessions.keepOnRecord(wireId, { name: { displayName: name, userRenamed: renamed } })
+      ),
+    setSessionViewRecord: (id, view) =>
+      route(
+        id,
+        (wireId) => local.setSessionViewRecord(wireId, view),
+        (b, wireId) => b.api.sessions.keepOnRecord(wireId, { page: view })
+      ),
+    setSessionWorkspace: (id, workspaceId) =>
+      route(
+        id,
+        (wireId) => local.setSessionWorkspace(wireId, workspaceId),
+        (b, wireId) => {
+          const ref = workspaceId ? parseResourceKey('workspace', workspaceId) : null
+          if (ref && ref.serverId !== parseSessionKey(id).serverId)
+            throw new Error('Workspace belongs to another server.')
+          return b.api.sessions.keepOnRecord(wireId, { workspaceId: ref?.id ?? null })
+        }
+      ),
+    writeSession: (id, data) =>
+      terminal(
+        id,
+        () => local.writeSession(id, data),
+        (b, wireId) =>
+          b.api.sessions.write(wireId, { type: 'bytes', data: new TextEncoder().encode(data) })
+      ),
+    startSession: (id, cols, rows) =>
+      terminal(
+        id,
+        () => local.startSession(id, cols, rows),
+        (b, wireId) => b.api.sessions.resize(wireId, cols, rows)
+      ),
+    resizeSession: (id, cols, rows) =>
+      terminal(
+        id,
+        () => local.resizeSession(id, cols, rows),
+        (b, wireId) => b.api.sessions.resize(wireId, cols, rows)
+      ),
+    sessionsSubscribe: (id) =>
+      route(id, local.sessionsSubscribe, async (b, wireId) => {
+        let held = streamRefs.get(id)
+        if (!held) {
+          held = { refs: 0, release: b.push.subscribe(wireId, noop) }
+          streamRefs.set(id, held)
+        }
+        held.refs++
+        try {
+          return { ...(await b.push.subscribed(wireId)), id } as Awaited<
+            ReturnType<ElectronAPI['sessionsSubscribe']>
+          >
+        } catch (error) {
+          if (--held.refs === 0) {
+            held.release()
+            streamRefs.delete(id)
+          }
+          throw error
+        }
+      }),
+    sessionsUnsubscribe: async (id) => {
+      if (!remote(id)) return local.sessionsUnsubscribe(id)
+      const held = streamRefs.get(id)
+      if (held && --held.refs === 0) {
+        held.release()
+        streamRefs.delete(id)
+      }
+    },
+    onSessionStream: (id, cb) =>
+      listen(
+        id,
+        () => local.onSessionStream(id, cb),
+        (b, wireId, callback) =>
+          b.push.subscribe(wireId, (value) => {
+            const stream = value as SessionStream
+            callback(
+              stream.kind === 'event' ? { ...stream, event: scopeEvent(id, stream.event) } : stream
+            )
+          }),
+        cb
+      ),
+    onSessionStreamExit: (id, cb) =>
+      listen(
+        id,
+        () => local.onSessionStreamExit(id, cb),
+        (b, wireId, callback) => b.push.subscribe(wireId, noop, callback),
+        cb
+      ),
+    onSessionData: (id, cb) =>
+      listen(
+        id,
+        () => local.onSessionData(id, cb),
+        (b, wireId, callback) => {
+          const decoder = new TextDecoder()
+          // The daemon replays its retained terminal checkpoint on each subscription.
+          // Reset before welcome's resubscribe so that history replaces old paint.
+          const reset = (): void => callback('\x1bc')
+          const offStatus = b.push.onStatus((status) => {
+            if (status === 'open') reset()
+          })
+          reset()
+          const offStream = b.push.subscribe(wireId, (s) => {
+            const stream = s as SessionStream
+            if (stream.kind === 'pty') callback(decoder.decode(stream.data, { stream: true }))
+          })
+          return () => {
+            offStatus()
+            offStream()
+          }
+        },
+        cb
+      ),
+    onSessionExit: (id, cb) =>
+      listen(
+        id,
+        () => local.onSessionExit(id, cb),
+        (b, wireId, callback) => b.push.subscribe(wireId, noop, callback),
+        cb
+      ),
+    spawnSession: (cwd, options) => {
+      const target =
+        options?.link?.kind === 'group-terminal'
+          ? parseResourceKey('group', options.link.groupId).serverId
+          : options?.link?.kind === 'session-view'
+            ? parseSessionKey(options.link.ownerId).serverId
+            : LOCAL_SERVER_ID
+      return target === LOCAL_SERVER_ID
+        ? local.spawnSession(cwd, options)
+        : shared.fleetStart(target, cwd, options)
+    },
+    onSessionAutoTitle: (id, cb) =>
+      remote(id)
+        ? eventListener('session.title_changed', (event, owner) => {
+            if (key(owner, event.id) === id) cb(event.title)
+          })
+        : local.onSessionAutoTitle(id, cb),
+    onAgentState: (id, cb) =>
+      remote(id)
+        ? eventListener('session.state_changed', (event, owner) => {
+            if (key(owner, event.id) === id) cb(event.state)
+          })
+        : local.onAgentState(id, cb),
+    onPlanDetected: (id, cb) =>
+      remote(id)
+        ? eventListener('session.plan_detected', (event, owner) => {
+            if (key(owner, event.id) === id) cb(resourceKey('file', owner, event.path))
+          })
+        : local.onPlanDetected(id, cb),
+    onClearDetected: (id, cb) =>
+      remote(id)
+        ? eventListener('session.cleared', (event, owner) => {
+            if (key(owner, event.id) === id) cb(event.providerSessionId)
+          })
+        : local.onClearDetected(id, cb),
+    onSessionRenamed: (cb) =>
+      both(
+        local.onSessionRenamed(cb),
+        eventListener('session.renamed', (event, owner) =>
+          cb({ id: key(owner, event.id), name: event.name })
+        )
+      ),
+    onSessionTyped: (cb) =>
+      both(
+        local.onSessionTyped(cb),
+        eventListener('session.typed', (event, owner) =>
+          cb({ id: key(owner, event.id), from: event.from })
+        )
+      ),
+    onSessionRestarting: (cb) =>
+      both(
+        local.onSessionRestarting(cb),
+        eventListener('session.restarting', (event, owner) => cb({ id: key(owner, event.id) }))
+      ),
+    onSessionRestarted: (cb) =>
+      both(
+        local.onSessionRestarted(cb),
+        eventListener('session.restarted', (event, owner) =>
+          cb({ ...event, id: key(owner, event.id) })
+        )
+      ),
+    sessionsReportState: (id, state) =>
+      remote(id) ? Promise.resolve() : local.sessionsReportState(id, state),
+    openPath: async (path) => {
+      const ref = parseResourceKey('file', path)
+      if (ref.serverId === LOCAL_SERVER_ID) return local.openPath(path)
+      await shared.fleetDownload(resourceKey('file', ref.serverId, '/'), ref.id, true)
+      return ''
+    },
+    readImageAsDataUrl: (path) => {
+      const ref = parseResourceKey('file', path)
+      return ref.serverId === LOCAL_SERVER_ID
+        ? local.readImageAsDataUrl(path)
+        : backing(ref.serverId).then(
+            async (b) =>
+              (
+                await b.api.files.previewAttachment({
+                  sessionId: 'file-preview',
+                  root: '/',
+                  path: ref.id
+                })
+              ).image ?? null
+          )
+    },
+    sessionsFiles: {
+      ...local.sessionsFiles,
+      prepare: (id: string, source: AttachmentSource) =>
+        route(
+          id,
+          (wireId) => local.sessionsFiles.prepare(wireId, source),
+          async (b, wireId) => {
+            let upload: FileAttachmentSource
+            if (source.path?.startsWith('clave-owner:')) {
+              const file = parseResourceKey('file', source.path)
+              if (file.serverId !== parseSessionKey(id).serverId)
+                throw new Error('File belongs to another server.')
+              upload = { kind: 'file', root: '/', path: file.id }
+            } else
+              upload = (await ports.invoke('sessions:files', {
+                type: 'upload-source',
+                source
+              })) as FileAttachmentSource
+            const attachment = await b.api.files.prepareAttachment({
+              sessionId: wireId,
+              source: upload
+            })
+            return {
+              ...attachment,
+              path: resourceKey('file', parseSessionKey(id).serverId, attachment.path)
+            }
+          }
+        ),
+      preview: async (file: FileAttachment) => {
+        const ref = parseResourceKey('file', file.path)
+        if (ref.serverId === LOCAL_SERVER_ID) return local.sessionsFiles.preview(file)
+        const { api } = await backing(ref.serverId)
+        // Managed attachment paths include their server-local session directory.
+        const sessionId = attachmentSessions.get(file.path)
+        if (!sessionId) throw new Error('The attachment owner session is required.')
+        return api.files.previewAttachment({ sessionId, path: ref.id })
+      },
+      open: async (file) => {
+        const ref = parseResourceKey('file', file.path)
+        if (ref.serverId === LOCAL_SERVER_ID) return local.sessionsFiles.open(file)
+        const { api } = await backing(ref.serverId)
+        await ports.invoke(
+          'fs:open-download',
+          await api.files.download({ root: '/', path: ref.id })
+        )
+      }
+    },
+    listFiles: async (root) => {
+      const ref = parseResourceKey('file', root)
+      if (ref.serverId === LOCAL_SERVER_ID) return local.listFiles(root)
+      const b = await backing(ref.serverId)
+      const result = await b.api.files.listAll({ root: ref.id })
+      return { files: [...result.files], truncated: result.truncated }
+    },
+    pluginsViewLease: (pluginId, viewId, id) =>
+      remote(id)
+        ? Promise.reject(
+            new Error('Remote plugin surface views are unavailable. Use a native session view.')
+          )
+        : local.pluginsViewLease(pluginId, viewId, id),
+    // Focus can name a file tab as well as a session. No remote resource is
+    // a session hosted by the Mac's plugin runtime.
+    pluginsContext: (id) =>
+      id?.startsWith('clave-owner:') ? Promise.resolve() : local.pluginsContext(id),
+    readDir: (root, path) =>
+      fileRoute(
+        root,
+        path,
+        () => local.readDir(root, path),
+        async (b, location) => {
+          const { FILE_TREE_IGNORED } = await import('@clave/contract/files')
+          const ignored = new Set<string>(FILE_TREE_IGNORED)
+          return [...(await b.api.files.list(location)).entries].filter(
+            (e) => !ignored.has(e.name)
+          ) as Awaited<ReturnType<ElectronAPI['readDir']>>
+        }
+      ),
+    readFile: (root, path) =>
+      fileRoute(
+        root,
+        path,
+        () => local.readFile(root, path),
+        async (b, location) => ({ ...(await b.api.files.read(location)) })
+      ),
+    statFile: (root, path) =>
+      fileRoute(
+        root,
+        path,
+        () => local.statFile(root, path),
+        async (b, location) => ({ ...(await b.api.files.stat(location)) })
+      ),
+    writeFile: (root, path, content) =>
+      fileRoute(
+        root,
+        path,
+        () => local.writeFile(root, path, content),
+        (b, location) => b.api.files.write({ ...location, content })
+      ),
+    createFile: (root, path) =>
+      fileRoute(
+        root,
+        path,
+        () => local.createFile(root, path),
+        (b, location) => b.api.files.createFile(location)
+      ),
+    createDirectory: (root, path) =>
+      fileRoute(
+        root,
+        path,
+        () => local.createDirectory(root, path),
+        (b, location) => b.api.files.createDirectory(location)
+      ),
+    ...workspaceFiles,
+    watchDir: (root, dirs) => {
+      const ref = parseResourceKey('file', root)
+      return changeTree({ owner: ref.serverId, root: ref.id, dirs: [...(dirs ?? [])] })
+    },
+    unwatchDir: () => changeTree(null),
+    onFsChanged: (cb) => {
+      fsListeners.add(cb)
+      return both(local.onFsChanged(cb), () => {
+        fsListeners.delete(cb)
+      })
+    },
+    showItemInFolder: async (path) => {
+      if (parseResourceKey('file', path).serverId !== LOCAL_SERVER_ID)
+        throw new Error('Remote files cannot be revealed on this Mac.')
+      await local.showItemInFolder(path)
+    },
+    existsSync: (root, path) => {
+      if (parseResourceKey('file', root).serverId !== LOCAL_SERVER_ID) return false
+      return local.existsSync(root, path)
+    },
+    // ── Wave wcs1023, lane C: the git panel on a server's checkout (#242) ──
+    gitCheckIgnored: (cwd, paths) =>
+      gitRoute(
+        cwd,
+        () => local.gitCheckIgnored(cwd, paths),
+        async (b, path) => [...(await b.api.git.checkIgnored(path, paths))]
+      ),
+    getGitStatus: (cwd) =>
+      gitRoute(
+        cwd,
+        () => local.getGitStatus(cwd),
+        async (b, path, owner) => loose(ownedStatus(owner, await b.api.git.status(path)))
+      ),
+    getGitStatusBatch: (keys) =>
+      gitBatch(
+        keys,
+        () => local.getGitStatusBatch(keys),
+        async (b, paths, owner) =>
+          (await b.api.git.statusBatch(paths)).map((entry) => ({
+            path: ownedPath(owner, entry.path),
+            status: loose<Awaited<ReturnType<ElectronAPI['getGitStatus']>>>(
+              ownedStatus(owner, entry.status)
+            )
+          }))
+      ),
+    discoverGitRepos: (cwd, force) =>
+      gitRoute(
+        cwd,
+        () => local.discoverGitRepos(cwd, force),
+        async (b, path, owner) => {
+          const found = await b.api.git.discover(path, force)
+          return {
+            repos: found.repos.map((repo) => ({ ...repo, path: ownedPath(owner, repo.path) })),
+            truncated: found.truncated
+          }
+        }
+      ),
+    gitFetch: (cwd) =>
+      gitRoute(
+        cwd,
+        () => local.gitFetch(cwd),
+        (b, path) => b.api.git.fetch(path)
+      ),
+    gitFetchBatch: (keys) =>
+      gitBatch(
+        keys,
+        () => local.gitFetchBatch(keys),
+        (b, paths) => b.api.git.fetchBatch(paths)
+      ),
+    gitRefreshRemotes: (keys) =>
+      gitBatchOp(
+        keys,
+        () => local.gitRefreshRemotes(keys),
+        async (b, paths, owner, batchId) =>
+          (await b.api.git.refreshRemotes(paths, batchId)).map((r) => ({
+            ...r,
+            repoPath: ownedPath(owner, r.repoPath)
+          }))
+      ),
+    // A watch set may name the Mac's repos and several servers' at once: each
+    // owner gets its own share, and an owner that is not connected simply
+    // watches nothing, which the panel reads as "poll these yourself".
+    gitWatchRepos: async (subscriberId, keys) => {
+      const byOwner = new Map<string, string[]>()
+      for (const key of keys) {
+        const ref = gitRef(key)
+        const list = byOwner.get(ref.serverId) ?? []
+        list.push(ref.id)
+        byOwner.set(ref.serverId, list)
+      }
+      // The owners whose map this subscriber changes: where it now has paths,
+      // and where it had some before (its entry leaves that owner's map).
+      // EVERY map is edited now, before anything is awaited: a watch or an
+      // unwatch that runs meanwhile builds on this state, and every sync sent
+      // reads the map as it is then (verifier round 6).
+      const remoteOwners: string[] = []
+      for (const owner of new Set([
+        ...byOwner.keys(),
+        ...[...gitDesired].filter(([, map]) => map.has(subscriberId)).map(([owner]) => owner)
+      ])) {
+        if (owner === LOCAL_SERVER_ID) continue
+        const paths = byOwner.get(owner) ?? []
+        const map = gitDesired.get(owner) ?? new Map<string, string[]>()
+        if (paths.length > 0) map.set(subscriberId, paths)
+        else map.delete(subscriberId)
+        gitDesired.set(owner, map)
+        remoteOwners.push(owner)
+      }
+      const watched: string[] = []
+      const remote = new Map<string, ReadonlyArray<string>>()
+      await Promise.all([
+        // The Mac's own watcher takes the Mac's share as before the lane, the
+        // complete set each time, empty when the subscriber left the Mac.
+        local
+          .gitWatchRepos(subscriberId, byOwner.get(LOCAL_SERVER_ID) ?? [])
+          .then((ok) => watched.push(...ok)),
+        ...remoteOwners.map((owner) =>
+          gitSync(owner).then((answered) => {
+            const mine = answered?.find((s) => s.id === subscriberId)
+            if (mine) remote.set(owner, mine.paths)
+          })
+        )
+      ])
+      // An owner's answer is reported only if this call's entry there is still
+      // the current one when the whole call returns: a newer call for the same
+      // panel may have moved the entry while another owner was still answering.
+      for (const [owner, paths] of remote) {
+        const now = gitDesired.get(owner)?.get(subscriberId) ?? []
+        const asked = byOwner.get(owner) ?? []
+        if (JSON.stringify(now) !== JSON.stringify(asked)) continue
+        watched.push(...paths.map((path) => ownedPath(owner, path)))
+      }
+      return watched
+    },
+    gitUnwatchRepos: async (subscriberId) => {
+      // The maps first, synchronously (see gitWatchRepos), then the Mac and
+      // every owner that held the subscriber.
+      const owners: string[] = []
+      for (const [owner, map] of gitDesired) if (map.delete(subscriberId)) owners.push(owner)
+      await Promise.all([
+        local.gitUnwatchRepos(subscriberId),
+        ...owners.map((owner) => gitSync(owner))
+      ])
+    },
+    onGitReposChanged: (cb) =>
+      both(
+        local.onGitReposChanged(cb),
+        eventListener('git.repos_changed', (event, owner) =>
+          cb(event.repos.map((repo) => ownedPath(owner, repo)))
+        )
+      ),
+    gitStage: (cwd, files) =>
+      gitRoute(
+        cwd,
+        () => local.gitStage(cwd, files),
+        (b, path) => b.api.git.stage(path, files)
+      ),
+    gitUnstage: (cwd, files) =>
+      gitRoute(
+        cwd,
+        () => local.gitUnstage(cwd, files),
+        (b, path) => b.api.git.unstage(path, files)
+      ),
+    gitDiscard: (cwd, files) =>
+      gitRoute(
+        cwd,
+        () => local.gitDiscard(cwd, files),
+        (b, path) => b.api.git.discard(path, files)
+      ),
+    gitCommit: (cwd, message) =>
+      gitRoute(
+        cwd,
+        () => local.gitCommit(cwd, message),
+        (b, path) => b.api.git.commit(path, message)
+      ),
+    gitPush: (cwd) =>
+      gitRoute(
+        cwd,
+        () => local.gitPush(cwd),
+        (b, path) => b.api.git.push(path)
+      ),
+    gitPublishBranch: (cwd) =>
+      gitRoute(
+        cwd,
+        () => local.gitPublishBranch(cwd),
+        (b, path) => b.api.git.publishBranch(path)
+      ),
+    gitPull: (cwd, strategy) =>
+      gitRoute(
+        cwd,
+        () => local.gitPull(cwd, strategy),
+        (b, path) => b.api.git.pull(path, strategy)
+      ),
+    gitDiff: (cwd, filePath, staged, isUntracked) =>
+      gitRoute(
+        cwd,
+        () => local.gitDiff(cwd, filePath, staged, isUntracked),
+        (b, path) => b.api.git.diff(path, filePath, staged, isUntracked)
+      ),
+    gitLog: (cwd, maxCount) =>
+      gitRoute(
+        cwd,
+        () => local.gitLog(cwd, maxCount),
+        async (b, path) => loose(await b.api.git.log(path, maxCount))
+      ),
+    gitOutgoingCommits: (cwd) =>
+      gitRoute(
+        cwd,
+        () => local.gitOutgoingCommits(cwd),
+        async (b, path) => loose(await b.api.git.outgoing(path))
+      ),
+    gitIncomingCommits: (cwd) =>
+      gitRoute(
+        cwd,
+        () => local.gitIncomingCommits(cwd),
+        async (b, path) => loose(await b.api.git.incoming(path))
+      ),
+    gitRangeFiles: (cwd, direction) =>
+      gitRoute(
+        cwd,
+        () => local.gitRangeFiles(cwd, direction),
+        async (b, path) => loose(await b.api.git.rangeFiles(path, direction))
+      ),
+    gitRangeDiff: (cwd, direction, filePath) =>
+      gitRoute(
+        cwd,
+        () => local.gitRangeDiff(cwd, direction, filePath),
+        (b, path) => b.api.git.rangeDiff(path, direction, filePath)
+      ),
+    gitCommitFiles: (cwd, hash) =>
+      gitRoute(
+        cwd,
+        () => local.gitCommitFiles(cwd, hash),
+        async (b, path) => loose(await b.api.git.commitFiles(path, hash))
+      ),
+    gitCommitDiff: (cwd, hash, filePath) =>
+      gitRoute(
+        cwd,
+        () => local.gitCommitDiff(cwd, hash, filePath),
+        (b, path) => b.api.git.commitDiff(path, hash, filePath)
+      ),
+    gitJourney: (cwd, maxCount) =>
+      gitRoute(
+        cwd,
+        () => local.gitJourney(cwd, maxCount),
+        async (b, path) => loose(await b.api.git.journey(path, maxCount))
+      ),
+    // The message is written by the server's own `claude`, on its login.
+    gitGenerateCommitMessage: (cwd) =>
+      gitRoute(
+        cwd,
+        () => local.gitGenerateCommitMessage(cwd),
+        (b, path) => b.api.git.generateCommitMessage(path)
+      ),
+    gitSummarizePush: (cwd, commitMessages, diffStats) =>
+      gitRoute(
+        cwd,
+        () => local.gitSummarizePush(cwd, commitMessages, diffStats),
+        async (b, path) => ({ ...(await b.api.git.summarizePush(path, commitMessages, diffStats)) })
+      ),
+    gitMagicSync: (keys) =>
+      gitBatchOp(
+        keys,
+        () => local.gitMagicSync(keys),
+        async (b, paths, owner, batchId) =>
+          (await b.api.git.magicSync(paths, batchId)).map((r) => ({
+            ...r,
+            actions: [...r.actions],
+            repoPath: ownedPath(owner, r.repoPath)
+          }))
+      ),
+    gitMagicPull: (keys) =>
+      gitBatchOp(
+        keys,
+        () => local.gitMagicPull(keys),
+        async (b, paths, owner, batchId) =>
+          (await b.api.git.magicPull(paths, batchId)).map((r) => ({
+            ...r,
+            repoPath: ownedPath(owner, r.repoPath)
+          }))
+      ),
+    onGitBatchProgress: (cb) =>
+      both(
+        local.onGitBatchProgress(cb),
+        eventListener('git.batch_progress', (event, owner) => {
+          if (event.batchId === undefined || !runningBatches.has(event.batchId)) return
+          cb({
+            op: event.op,
+            phase: event.phase,
+            repoPath: ownedPath(owner, event.repoPath),
+            repoName: event.repoName,
+            done: event.done,
+            total: event.total
+          })
+        })
+      )
+  }
+  const prepare = api.sessionsFiles.prepare
+  api.sessionsFiles.prepare = async (id, source) => {
+    if (
+      source.path?.startsWith('clave-owner:') &&
+      parseResourceKey('file', source.path).serverId !== parseSessionKey(id).serverId
+    )
+      throw new Error('File belongs to another server.')
+    const file = await prepare(id, source)
+    if (remote(id)) attachmentSessions.set(file.path, parseSessionKey(id).sessionId)
+    return file
+  }
+  // Strip UI attachment identities at the send boundary, without altering message text.
+  const write = api.sessionsWrite
+  api.sessionsWrite = (id, input) => {
+    if (!(input instanceof Uint8Array) && input.type === 'user_message' && input.attachments) {
+      const owner = parseSessionKey(id).serverId
+      input = {
+        ...input,
+        attachments: input.attachments.map((file) => {
+          if (!isFileAttachment(file)) return file
+          const ref = parseResourceKey('file', file.path)
+          if (ref.serverId !== owner) throw new Error('Attachment belongs to a different server.')
+          return remote(id) ? { ...file, path: ref.id } : file
+        })
+      } as SessionInput
+    }
+    return write(id, input)
+  }
+  return api
+}

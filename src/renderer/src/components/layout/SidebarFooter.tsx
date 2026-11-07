@@ -1,3 +1,4 @@
+import { isRemoteKey } from '../../lib/fleet-identity'
 import { useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
@@ -262,7 +263,9 @@ export function SidebarFooter(): React.ReactElement {
   const provider = useSessionStore((s) =>
     s.focusedSessionId === null
       ? 'claude'
-      : usageProviderForSession(s.sessions.find((session) => session.id === s.focusedSessionId))
+      : isRemoteKey(s.focusedSessionId)
+        ? null
+        : usageProviderForSession(s.sessions.find((session) => session.id === s.focusedSessionId))
   )
   // The foot follows the focused tab's ACCOUNT, not just its provider: a tab
   // on the second subscription reads that subscription's headroom. With no
@@ -325,7 +328,12 @@ export function SidebarFooter(): React.ReactElement {
   // leaves only the feedback icon, the row still carries it.
   const quotaProvider = provider === 'claude' || provider === 'codex' ? provider : null
   const usage =
-    quotaProvider && quota.status !== 'error' ? tightestWindow(quota.data?.windows ?? []) : null
+    quotaProvider && quota.status !== 'error'
+      ? tightestWindow(
+          quota.data?.windows ?? [],
+          provider === 'claude' && focusedSession ? { model: focusedSession.model } : undefined
+        )
+      : null
   const piTotals = provider === 'pi' && pi.status !== 'error' ? pi.data : null
   const providerStatus = provider === 'pi' ? pi.status : quota.status
   const showProviderStatus = (quotaProvider !== null || provider === 'pi') && !usage && !piTotals

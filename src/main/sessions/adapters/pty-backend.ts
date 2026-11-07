@@ -15,12 +15,14 @@ import { readJson } from '../../ports/storage'
 import type { TerminalProcess } from '../../ports/terminal'
 import { workspaceManager } from '../../workspace-manager'
 import { launchProfileManager } from '../../launch-profile-manager'
-import { claudeAccountsManager } from '../../claude-accounts'
-import { codexAccountsManager } from '../../codex-accounts'
+import { claudeAccountsManager, DEFAULT_CLAUDE_ACCOUNT_ID } from '../../claude-accounts'
+import { codexAccountsManager, DEFAULT_CODEX_ACCOUNT_ID } from '../../codex-accounts'
 import { resolvePosixShellLaunch, shellSingleQuote } from '../../shell-launch'
 import { CODEX_TITLE_CONFIG } from '../../../shared/codex-state'
 import { isValidModelName } from '../../../shared/model-name'
 import { tmuxKillSessionArgs } from '../../tmux-args'
+import { lineageOf } from '../lineage'
+import { sanitizeWork, type WorkAssignment } from '@clave/contract/work-rules'
 import {
   buildAgentArgv,
   type AgentKind,
@@ -224,6 +226,15 @@ function detectTmux(): string | null {
     tmuxPathCache = null
     return null
   }
+  // Before the login shell has answered, the tmux the last launch found, so
+  // a launch's records listing (which asks tmux which sessions still run)
+  // does not wait two seconds on the person's profile or freeze on its
+  // synchronous read (PRDCT-3527). Not cached: the login PATH decides as soon
+  // as it is read.
+  if (loginShellEnv === null) {
+    const remembered = rememberedTmux()
+    if (remembered) return remembered
+  }
   const env = getLoginShellEnv()
   const pathDirs = (env.PATH || process.env.PATH || '').split(':')
   for (const dir of pathDirs) {
@@ -232,6 +243,7 @@ function detectTmux(): string | null {
     try {
       fs.accessSync(candidate, fs.constants.X_OK)
       tmuxPathCache = candidate
+      rememberTmux(candidate)
       return candidate
     } catch {
       // not here, keep looking
@@ -239,6 +251,41 @@ function detectTmux(): string | null {
   }
   tmuxPathCache = null
   return null
+}
+
+/** Where the last tmux found is remembered, as the storage port names it. */
+export const TMUX_PATH_DOCUMENT = 'tmux-path.json'
+
+function rememberedTmux(): string | null {
+  try {
+    const raw = lazyTerminalPorts.storage.read(TMUX_PATH_DOCUMENT)
+    const found = raw ? (JSON.parse(raw) as { path?: unknown }).path : null
+    if (typeof found !== 'string' || !path.isAbsolute(found)) return null
+    fs.accessSync(found, fs.constants.X_OK)
+    return found
+  } catch {
+    return null
+  }
+}
+
+function rememberTmux(found: string): void {
+  try {
+    const raw = lazyTerminalPorts.storage.read(TMUX_PATH_DOCUMENT)
+    if (raw && (JSON.parse(raw) as { path?: unknown }).path === found) return
+    lazyTerminalPorts.storage.write(TMUX_PATH_DOCUMENT, JSON.stringify({ path: found }))
+  } catch {
+    // Remembering is a shortcut for the next launch, never a failure of this one.
+  }
+}
+
+/** Resolves once `detectTmux` can answer without the synchronous login-shell
+ *  read: at once when tmux is already found, the login shell has answered, or
+ *  the last launch's tmux is remembered; else when the login shell answers
+ *  (PRDCT-3527). Main's handlers wait on this, never on the read itself. */
+export async function whenTmuxResolvable(): Promise<void> {
+  if (tmuxPathCache !== undefined || loginShellEnv !== null || isWindows) return
+  if (rememberedTmux()) return
+  await loginShellEnvAsync()
 }
 
 export function isTmuxAvailable(): boolean {
@@ -416,6 +463,9 @@ export type SessionLink =
   /** A toolbar button's persistent terminal — never a sidebar row at all;
    *  `key` is the `${pinId}:${terminalIndex}` of the toolbar registry. */
   | { kind: 'toolbar'; key: string }
+  /** A routine's run (ADR 0004): the hidden session the server started for
+   *  one occurrence; never a sidebar row, never adopted by a window at boot. */
+  | { kind: 'routine'; routineKey: string; runId: string }
 
 /** What the renderer needs to recreate + reattach a surviving session's tab.
  *
@@ -455,6 +505,8 @@ export interface SessionRecord {
    *  re-spawn after a reboot relaunches the CLI on the same model. */
   model?: string
   launchProfileId?: string
+  /** Keeps Resume on the carried command; absent when this server resolved its own list. */
+  launchProfile?: LaunchProfile
   piProvider?: string
   piThinking?: PiThinkingLevel
   /** Claude account/profile this session runs under, so the badge + config dir
@@ -504,6 +556,16 @@ export interface SessionRecord {
    *  session view's is deliberately not persisted, and the group's lives in
    *  the sidebar layout, which drops it with the group. */
   link?: SessionLink
+  /** The tab whose agent opened this one (#259): what folds the tab under
+   *  its parent in the sidebar and what `"parent"` resolves to in the agent
+   *  tools. The renderer's `spawnedBy` and main's lineage map are both
+   *  memory, gone at a quit; this is what brings the link back. Absent for a
+   *  tab the user opened. Carried forward across adoption like the name. */
+  spawnedBy?: string
+  /** Which wave or lane this session works on, its role and its standing
+   *  (PRDCT-4123): carried across adoption like spawnedBy, changed only
+   *  through the server's ChangeSessionWork. */
+  work?: WorkAssignment
   /** Populated only on the listAdoptableSessions() path (not persisted in
    *  the record). True when the backing tmux session is still running (app
    *  quit/reopen, no reboot) → reattach to the live process. False when the
@@ -590,7 +652,23 @@ function readSessionRecord(key: string): SessionRecord | null {
   if (!isValidRecordKey(key)) return null
   sessionRecordsDir()
   const raw = readJson(lazyTerminalPorts.storage, recordDocument(key))
-  return raw && typeof raw === 'object' ? migrateSessionAdapterRecord(raw as SessionRecord) : null
+  return raw && typeof raw === 'object'
+    ? withValidWork(migrateSessionAdapterRecord(raw as SessionRecord))
+    : null
+}
+
+/** A record as it is read back keeps its work assignment only when it is a
+ *  whole valid one (PRDCT-4123, `sanitizeWork`); a malformed one is dropped
+ *  alone and the record loads whole. Both readers of whole records go
+ *  through this, the read by key and the adoptable listing: the wire schema
+ *  refuses the WHOLE listing for one record it cannot decode, and the
+ *  restore would bring nothing back. */
+function withValidWork(meta: SessionRecord): SessionRecord {
+  if (!('work' in meta)) return meta
+  const work = sanitizeWork(meta.work)
+  if (work) meta.work = work
+  else delete meta.work
+  return meta
 }
 
 function deleteSessionRecord(key: string): void {
@@ -707,6 +785,9 @@ export interface PtySpawnOptions {
   claudeSessionId?: string
   piSessionId?: string
   launchProfileId?: string
+  /** The Mac's definition, sanitized by the manager, wins over this server's
+   * resolution. Server-resolved profiles are never put here. */
+  launchProfile?: LaunchProfile
   piProvider?: string
   piThinking?: PiThinkingLevel
   initialCommand?: string
@@ -720,6 +801,18 @@ export interface PtySpawnOptions {
    *  moved to (ADR 0002). Main's own — `pty:spawn` drops it, only a restart
    *  built in main carries one. */
   initialInput?: UserMessageInput
+  // ── ADR 0004: what a routine run declares beyond a tab's launch ──
+  /** Claude's reasoning effort to start on (`--effort`). A chat with none
+   *  starts on the effort last picked in a composer. */
+  effort?: string
+  /** The mode a Claude session without `dangerousMode` asks under
+   *  (`--permission-mode`); the skip flag wins when both are set. */
+  permissionMode?: 'default' | 'acceptEdits' | 'plan'
+  /** A Claude Code plugin folder loaded for this session alone (`--plugin-dir`):
+   *  the routine contract skill rides on it. */
+  pluginDir?: string
+  /** One paragraph appended to Claude's system prompt (`--append-system-prompt`). */
+  appendSystemPrompt?: string
   /** Opt-in: run this session inside a persistent tmux session. */
   tmuxMode?: boolean
   /** Reattach to this exact existing tmux session instead of deriving a new
@@ -734,6 +827,10 @@ export interface PtySpawnOptions {
   /** Profile metadata persisted for restore + the session-header badge. */
   claudeProfileId?: string
   claudeProfileLabel?: string
+  /** The account's token, decrypted by the caller that spawns (the secret
+   *  store answers asynchronously; the spawn itself is planned synchronously)
+   *  and held only until the process starts — never on the record. */
+  oauthToken?: string
   /** Codex account (ADR 0002): sets `CODEX_HOME` for a Codex session, and
    *  only for one; every other kind ignores it. */
   codexAccountId?: string
@@ -748,6 +845,13 @@ export interface PtySpawnOptions {
    *  the record so the next launch can put it back there. Omitted = a tab.
    *  Carried forward across adoption like the display name. */
   link?: SessionLink
+  /** The session id of the tab whose agent opened this one — persisted on
+   *  the record (SessionRecord.spawnedBy). Omitted = opened by the user. */
+  spawnedBy?: string
+  /** The assignment a restart carries: read from the record before the kill
+   *  (pty-manager `restartSpawn`), never from a client; a spawn without it
+   *  keeps the previous record's. */
+  work?: WorkAssignment
 }
 
 /** Validate a link crossing the IPC boundary. It is only ever compared to
@@ -771,6 +875,14 @@ function sanitizeSessionLink(link: unknown): SessionLink | undefined {
   if (l.kind === 'toolbar') {
     const key = str(l.key)
     return key ? { kind: 'toolbar', key } : undefined
+  }
+  if (l.kind === 'routine') {
+    const routineKey =
+      typeof l.routineKey === 'string' && l.routineKey.length > 0 && l.routineKey.length <= 1000
+        ? l.routineKey
+        : null
+    const runId = str(l.runId)
+    return routineKey && runId ? { kind: 'routine', routineKey, runId } : undefined
   }
   return undefined
 }
@@ -797,14 +909,27 @@ interface PendingSpawn {
  * mistake) must never inherit a subscription token into its environment.
  * Pure over the account store, so the boundary has a test of its own.
  */
-export function accountTokenForSpawn(
+export function accountTokenRequired(
   kind: AgentKind | null,
   accountId: string | undefined,
-  getToken: (id: string | undefined) => string | undefined = (id) =>
-    claudeAccountsManager.getToken(id)
+  token: string | undefined
 ): string | undefined {
   if (kind !== 'claude' && kind !== 'claude-agents') return undefined
-  return getToken(accountId)
+  if (accountId && accountId !== DEFAULT_CLAUDE_ACCOUNT_ID && !token)
+    throw new Error('The selected Claude account is no longer available.')
+  return token
+}
+
+/** The same boundary with the read: the token is decrypted for a Claude
+ *  session only, so another kind never even opens the store. */
+export async function accountTokenForSpawn(
+  kind: AgentKind | null,
+  accountId: string | undefined,
+  getToken: (id: string | undefined) => Promise<string | undefined> | string | undefined = (id) =>
+    claudeAccountsManager.getToken(id)
+): Promise<string | undefined> {
+  if (kind !== 'claude' && kind !== 'claude-agents') return undefined
+  return accountTokenRequired(kind, accountId, await getToken(accountId))
 }
 
 /**
@@ -812,7 +937,8 @@ export function accountTokenForSpawn(
  * session. The same boundary as the token above: a Claude tab handed a Codex
  * account id must not have its environment pointed at another home. The sync
  * runs here, at spawn, so the home carries every entry the default one has
- * today (ADR 0002).
+ * today (ADR 0002). An explicitly selected non-default account must still
+ * have a home: a removal racing renderer preflight must never use Default.
  */
 export function codexHomeForSpawn(
   kind: AgentKind | null,
@@ -821,7 +947,10 @@ export function codexHomeForSpawn(
     codexAccountsManager.syncHome(id, getLoginShellEnv())
 ): string | undefined {
   if (kind !== 'codex') return undefined
-  return syncHome(accountId)
+  const home = syncHome(accountId)
+  if (accountId && accountId !== DEFAULT_CODEX_ACCOUNT_ID && !home)
+    throw new Error('The selected Codex account is no longer available.')
+  return home
 }
 
 /**
@@ -917,15 +1046,21 @@ export class PtyBackend {
               ? 'claude'
               : null
     const launchProfile: LaunchProfile | undefined = kind
-      ? launchProfileManager.resolve(
+      ? (options?.launchProfile ??
+        launchProfileManager.resolve(
           kind === 'claude-agents' ? 'claude' : kind,
           options?.workspaceId,
           options?.launchProfileId
-        )
+        ))
       : undefined
     // The Codex account's home, synced now so the process starts on a home
     // that carries every entry of the machine's own (ADR 0002).
     const codexHome = codexHomeForSpawn(kind, options?.codexAccountId)
+    // Refuse a missing explicit token before writing any restore metadata.
+    // The renderer never receives the token; only a Claude process uses it.
+    // The caller decrypted it (PtyManager.spawn, asynchronously); here the
+    // plan is synchronous, so the check is all that is left.
+    const oauthToken = accountTokenRequired(kind, options?.claudeProfileId, options?.oauthToken)
     const model = options?.model ?? (usePiMode ? launchProfile?.pi?.model : undefined)
     const piProvider = usePiMode ? (options?.piProvider ?? launchProfile?.pi?.provider) : undefined
     const piThinking = usePiMode ? (options?.piThinking ?? launchProfile?.pi?.thinking) : undefined
@@ -1045,7 +1180,12 @@ export class PtyBackend {
           claudeSettings:
             kind === 'claude' ? (buildClaudeHookSettingsArg(id) ?? undefined) : undefined,
           mcpConfigPath: mcpConfigPath ?? undefined,
-          piStateExtensionPath: piExtensionPath
+          piStateExtensionPath: piExtensionPath,
+          // ── ADR 0004: a routine run's own flags (Claude only) ──
+          effort: options?.effort,
+          permissionMode: options?.permissionMode,
+          pluginDir: options?.pluginDir,
+          appendSystemPrompt: options?.appendSystemPrompt
         })
         const assignments = [`CLAVE_SESSION_ID=${shellSingleQuote(id)}`]
         if (kind === 'pi')
@@ -1102,6 +1242,7 @@ export class PtyBackend {
       dangerousMode: options?.dangerousMode === true,
       model,
       launchProfileId: launchProfile?.id,
+      launchProfile: options?.launchProfile,
       piProvider,
       piThinking,
       configDir: options?.configDir,
@@ -1123,7 +1264,13 @@ export class PtyBackend {
       // may hang the same terminal off a different group), else what the
       // record already said, so an adoption never erases the ownership that
       // keeps the session out of the sidebar.
-      link: sanitizeSessionLink(options?.link) ?? previous?.link
+      link: sanitizeSessionLink(options?.link) ?? previous?.link,
+      // Who opened it: the opening agent's tab, else what the record already
+      // said, so a reattach, a respawn or an account switch keeps the child.
+      spawnedBy: lineageOf(id, options?.spawnedBy, previous?.spawnedBy),
+      // Which work it does (PRDCT-4123), the same way: a restart's, read off
+      // the record before its kill, else what the record already said.
+      work: sanitizeWork(options?.work) ?? sanitizeWork(previous?.work)
     }
     let recordKey: string | null = null
 
@@ -1194,10 +1341,7 @@ export class PtyBackend {
         initialCommand: options?.initialCommand,
         autoExecute: options?.autoExecute,
         configDir: options?.configDir,
-        // The token is looked up here, by account id, and only for a Claude
-        // session: the renderer never holds it, and a terminal or another
-        // agent never inherits it.
-        oauthToken: accountTokenForSpawn(kind, options?.claudeProfileId),
+        oauthToken,
         codexHome
       }
     }
@@ -1427,6 +1571,39 @@ export class PtyBackend {
     writeSessionRecord({ ...meta, view: view ?? undefined })
   }
 
+  /** Every record's work assignment, by session id, read without touching
+   *  anything (PRDCT-4123): no tmux call, no pruning, no record discarded.
+   *  What the server's ChangeSessionWork reads to know a role's holder and
+   *  both ends of a handover, whichever of them runs. A file that does not
+   *  read as a record is skipped here; pruning it is the boot listing's job
+   *  (`listAdoptableSessions`), never a work change's. */
+  listWorkAssignments(): { id: string; work?: WorkAssignment }[] {
+    sessionRecordsDir()
+    const storage = lazyTerminalPorts.storage
+    const out: { id: string; work?: WorkAssignment }[] = []
+    for (const file of storage.list(SESSION_RECORDS_FOLDER).filter((f) => f.endsWith('.json'))) {
+      const raw = readJson(storage, `${SESSION_RECORDS_FOLDER}/${file}`)
+      if (!raw || typeof raw !== 'object') continue
+      const id = (raw as { id?: unknown }).id
+      if (typeof id !== 'string' || !id) continue
+      const work = sanitizeWork((raw as { work?: unknown }).work)
+      out.push(work ? { id, work } : { id })
+    }
+    return out
+  }
+
+  /** Persist (or clear, with null) which work the session does in its record
+   *  (PRDCT-4123): the one write behind the server's ChangeSessionWork.
+   *  Mirrors setSessionViewRecord, and answers whether a record was written:
+   *  false for a session that keeps none, whose work cannot be kept. */
+  setSessionWork(id: string, work: WorkAssignment | null): boolean {
+    const key = this.recordKeyForSession(id)
+    if (!key) return false
+    const meta = readSessionRecord(key)
+    if (!meta) return false
+    return writeSessionRecord({ ...meta, work: work ?? undefined })
+  }
+
   /**
    * Re-stamp a session's workspace in its persisted record (workspace removal
    * reassigns sessions; a future "move to workspace" uses the same primitive).
@@ -1518,12 +1695,27 @@ export class PtyBackend {
     for (const file of files) {
       const raw = readJson(storage, `${SESSION_RECORDS_FOLDER}/${file}`)
       const meta: SessionRecord | null =
-        raw && typeof raw === 'object' ? migrateSessionAdapterRecord(raw as SessionRecord) : null
+        raw && typeof raw === 'object'
+          ? withValidWork(migrateSessionAdapterRecord(raw as SessionRecord))
+          : null
       if (meta && meta.antigravityMode === undefined) {
         // Legacy records (written before the Antigravity switch) carry the old
         // `antigravityMode`'s predecessor key. Map it forward so a survivor of the
         // retired Gemini CLI re-spawns as Antigravity (`agy`) on adoption.
         meta.antigravityMode = (meta as { geminiMode?: boolean }).geminiMode ?? false
+      }
+      if (meta) {
+        // A record older than one of the modes says nothing of it, which
+        // means off. Spelled out here, where every listing passes, because a
+        // listing that crosses the wire (the server's, attached or separate)
+        // is refused whole by the contract for one record missing a mode:
+        // the restore then brought back nothing at all (PRDCT-3527, a
+        // pre-Pi record carried over by the migration).
+        meta.claudeMode ??= true // absent always meant Claude (`claudeMode !== false`)
+        meta.codexMode ??= false
+        meta.piMode ??= false
+        meta.claudeAgentsMode ??= false
+        meta.dangerousMode ??= false
       }
       // Malformed record → prune the file. Valid shapes: tmux-backed (valid
       // tmux name) or plain (no tmuxName, uuid session id).

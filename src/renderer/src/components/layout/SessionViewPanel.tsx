@@ -1,3 +1,4 @@
+import { isRemoteKey, canOpenRemotePage } from '../../lib/fleet-identity'
 import { useSessionStore, type Session } from '../../store/session-store'
 import { ensureSessionViewServer } from '../../lib/session-view'
 import { WebViewPane } from './WebViewPane'
@@ -22,6 +23,15 @@ export function SessionViewPanel({
   const setActiveSessionView = useSessionStore((s) => s.setActiveSessionView)
   const view = session.view
   if (!view) return null
+  if (isRemoteKey(session.id) && !canOpenRemotePage(view.url))
+    return (
+      <div className="p-4 text-sm text-text-secondary">
+        This preview uses a server-local address. Open a reachable preview supplied by Contremaitre.
+        <button className="btn-secondary" onClick={() => setActiveSessionView(null)}>
+          Back to sessions
+        </button>
+      </div>
+    )
 
   return (
     <WebViewPane

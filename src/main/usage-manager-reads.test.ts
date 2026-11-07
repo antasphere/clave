@@ -35,9 +35,9 @@ function response(status: number, headers: Record<string, string>, body = '{}'):
   return new Response(body, { status, headers })
 }
 
-beforeEach(() => {
+beforeEach(async () => {
   for (const account of claudeAccountsManager.list()) {
-    if (account.id !== 'default') claudeAccountsManager.remove(account.id)
+    if (account.id !== 'default') await claudeAccountsManager.remove(account.id)
   }
 })
 
@@ -73,7 +73,7 @@ describe('a forced read after a token paste', () => {
     // The settings page's read, before the token exists.
     const early = usageManager.getLimits(work.id)
     // The paste, one call later.
-    claudeAccountsManager.setToken(work.id, TOKEN)
+    await claudeAccountsManager.setToken(work.id, TOKEN)
     const forced = await usageManager.getLimits(work.id, { force: true })
     expect('error' in forced).toBe(false)
     expect((forced as { windows: { usedPercentage: number }[] }).windows[0].usedPercentage).toBe(10)
@@ -81,9 +81,13 @@ describe('a forced read after a token paste', () => {
     const earlyResult = await early
     expect('error' in earlyResult).toBe(true)
 
-    // The cache and the listeners saw the token's read alone.
+    // The cache holds the token's read, and it is the last word the listeners
+    // heard, once: the older read never overwrites it. (The token store answers
+    // asynchronously, so the early read may land its error before the paste
+    // completes; what the guarantee forbids is that error landing AFTER.)
     expect(usageManager.snapshot()[work.id]).toEqual(forced)
-    expect(updates).toEqual([`${work.id}:10`])
+    expect(updates.at(-1)).toBe(`${work.id}:10`)
+    expect(updates.filter((u) => u === `${work.id}:10`)).toHaveLength(1)
     expect(calls.some((c) => c.startsWith('POST') && c.includes(TOKEN))).toBe(true)
     off()
   })
@@ -98,7 +102,7 @@ describe('a forced read after a token paste', () => {
       })
     }) as typeof fetch
     const play = claudeAccountsManager.add({ label: 'Play' })
-    claudeAccountsManager.setToken(play.id, TOKEN)
+    await claudeAccountsManager.setToken(play.id, TOKEN)
     const first = await usageManager.getLimits(play.id)
     const again = await usageManager.getLimits(play.id)
     expect(again).toBe(first)
@@ -121,7 +125,7 @@ describe('a forced read after a token paste', () => {
       })
     }) as typeof fetch
     const fable = claudeAccountsManager.add({ label: 'Fable' })
-    claudeAccountsManager.setToken(fable.id, TOKEN)
+    await claudeAccountsManager.setToken(fable.id, TOKEN)
     const result = await usageManager.getLimits(fable.id, { force: true })
     expect(asked).toHaveLength(1)
     expect(asked[0].model).toBe('claude-fable-5-1')
@@ -147,7 +151,7 @@ describe('a forced read after a token paste', () => {
       })
     }) as typeof fetch
     const plain = claudeAccountsManager.add({ label: 'Plain' })
-    claudeAccountsManager.setToken(plain.id, TOKEN)
+    await claudeAccountsManager.setToken(plain.id, TOKEN)
     const result = await usageManager.getLimits(plain.id, { force: true })
     expect(asked).toEqual(['claude-fable-5-1', 'claude-haiku-4-5-20251001'])
     expect('error' in result).toBe(false)
@@ -164,7 +168,7 @@ describe('a forced read after a token paste', () => {
       })
     ) as typeof fetch
     const out = claudeAccountsManager.add({ label: 'Out' })
-    claudeAccountsManager.setToken(out.id, TOKEN)
+    await claudeAccountsManager.setToken(out.id, TOKEN)
     const result = await usageManager.getLimits(out.id, { force: true })
     expect('error' in result).toBe(false)
     const windows = (result as { windows: { usedPercentage: number; severity: string | null }[] })
@@ -175,7 +179,7 @@ describe('a forced read after a token paste', () => {
   it('names a refused token', async () => {
     globalThis.fetch = vi.fn(async () => response(401, {})) as typeof fetch
     const bad = claudeAccountsManager.add({ label: 'Bad' })
-    claudeAccountsManager.setToken(bad.id, TOKEN)
+    await claudeAccountsManager.setToken(bad.id, TOKEN)
     const result = await usageManager.getLimits(bad.id, { force: true })
     expect(result).toEqual({
       error: 'This token was refused. Sign in again to get a new one.',
@@ -200,11 +204,13 @@ describe('a forced read after a token paste', () => {
         })
     ) as typeof fetch
     const gone = claudeAccountsManager.add({ label: 'Forgotten' })
-    claudeAccountsManager.setToken(gone.id, TOKEN)
+    await claudeAccountsManager.setToken(gone.id, TOKEN)
     const updates: string[] = []
     const off = usageManager.onUpdate((id) => updates.push(id))
     const pending = usageManager.getLimits(gone.id, { force: true })
-    claudeAccountsManager.clearToken(gone.id)
+    // In flight means the request went out: the token is read asynchronously first.
+    await vi.waitFor(() => expect(release).not.toBeNull())
+    await claudeAccountsManager.clearToken(gone.id)
     usageManager.forget(gone.id)
     release!()
     await pending
@@ -227,7 +233,7 @@ describe('a forced read after a token paste', () => {
         })
       }) as typeof fetch
       const polled = claudeAccountsManager.add({ label: 'Polled' })
-      claudeAccountsManager.setToken(polled.id, TOKEN)
+      await claudeAccountsManager.setToken(polled.id, TOKEN)
       let open = false
       usageManager.startPolling(1_000, () => open)
       await vi.advanceTimersByTimeAsync(6_000)
@@ -253,4 +259,19 @@ describe('a forced read after a token paste', () => {
       error: 'This account no longer exists.'
     })
   })
+})
+
+it('cancels the deferred first usage read when stopped before startup settles', async () => {
+  vi.useFakeTimers()
+  const refresh = vi.spyOn(usageManager, 'refreshAll').mockResolvedValue()
+  try {
+    usageManager.startPolling()
+    usageManager.stopPolling()
+    await vi.advanceTimersByTimeAsync(600_000)
+    expect(refresh).not.toHaveBeenCalled()
+  } finally {
+    usageManager.stopPolling()
+    refresh.mockRestore()
+    vi.useRealTimers()
+  }
 })

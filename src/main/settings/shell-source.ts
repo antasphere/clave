@@ -6,13 +6,16 @@
  * truth and one stream of events.
  *
  * The Antasphere account (PRDCT-3259) is the server's: the shell holds the
- * manager only while the server runs in-process. Attached to a server
- * running elsewhere, the shell builds none, so no stored session under the
- * app's own user data is restored or offered as a login: the window asks
- * the server it is attached to, and the IPC route refuses. The launch mode
- * is read off the environment here, before main takes the two variables
- * out of it (`index.ts`, `takeServerLaunch`): this module is imported
- * first and the read is pure.
+ * manager only while the server runs in-process. With the server elsewhere,
+ * attached to one running under another process or started by the shell as
+ * its own separate child (the packaged default on macOS), the shell builds
+ * none, so no stored session under the app's own user data is restored or
+ * offered as a login: the window asks the server, and the IPC route refuses.
+ * Which it is follows the ONE launch decision main takes (`server-launch.ts`,
+ * from the environment, the command line, whether the app is packaged and
+ * the platform); this module decides nothing of its own. It used to resolve
+ * the mode from the environment alone, which left a separate server with a
+ * shell manager no login reached, refusing the server's handoff at the open.
  *
  * Under `--test-no-activate` the object is also reachable as
  * `globalThis.__claveE2E.settings` (the test hooks' namespace, lane A's name),
@@ -31,15 +34,20 @@ import { preferencesManager } from '../preferences-manager'
 import { workspaceManager } from '../workspace-manager'
 import { applyAppIcon } from '../app-icon'
 import { AntasphereAccountManager } from '../antasphere-account'
-import { resolveServerLaunch } from '../server-boot'
+import { shellOwnsAntasphereAccount } from '../server-boot'
+import { serverLaunch } from '../server-launch'
 import { TEST_NO_ACTIVATE } from '../test-mode'
 import { settingsSourceFromManagers } from './source'
 
 /** The Antasphere account manager, while this process is the server; null
- *  attached. `index.ts` shuts it down at quit; the IPC handler asks it
- *  which login generation a browser handoff may be opened for. */
-export const shellAntasphereAccount: AntasphereAccountManager | null =
-  resolveServerLaunch(process.env).mode === 'attached' ? null : new AntasphereAccountManager({})
+ *  when the server runs elsewhere (attached, or the shell's own separate
+ *  child). `index.ts` shuts it down at quit; the IPC handler asks it which
+ *  login generation a browser handoff may be opened for. */
+export const shellAntasphereAccount: AntasphereAccountManager | null = shellOwnsAntasphereAccount(
+  serverLaunch
+)
+  ? new AntasphereAccountManager({})
+  : null
 
 export const shellSettingsSource: SettingsSourceService = settingsSourceFromManagers({
   claudeAccounts: claudeAccountsManager,

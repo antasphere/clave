@@ -13,7 +13,7 @@ import { PUSH_PATH } from '@clave/contract/push'
 import { type Wrap, pathOf } from '../auth'
 import { isOwnPageOrigin } from '../cors'
 import { ServerEvents } from '../events'
-import { SessionHost } from '../ports'
+import { ServerInfoPort, SessionHost } from '../ports'
 import { PushHub } from './hub'
 
 export class PushHubService extends Context.Tag('@clave/server/PushHub')<
@@ -24,13 +24,22 @@ export class PushHubService extends Context.Tag('@clave/server/PushHub')<
     token: string
     serverId: string
     helloTimeoutMs?: number
-  }): Layer.Layer<PushHubService, never, ServerEvents | SessionHost> {
+  }): Layer.Layer<PushHubService, never, ServerEvents | SessionHost | ServerInfoPort> {
     return Layer.scoped(
       PushHubService,
       Effect.gen(function* () {
         const events = yield* ServerEvents
         const source = yield* SessionHost
-        const hub = new PushHub({ ...options, events, source })
+        // ── Issue #266: the welcome names the version, when the port knows one ──
+        const info = yield* ServerInfoPort
+        const version = (): string | undefined => {
+          try {
+            return info.info().version
+          } catch {
+            return undefined
+          }
+        }
+        const hub = new PushHub({ ...options, events, source, version })
         yield* Effect.addFinalizer(() => Effect.sync(() => hub.dispose()))
         return hub
       })

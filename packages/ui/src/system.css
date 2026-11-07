@@ -35,6 +35,18 @@ summary,
   cursor: pointer;
 }
 
+/* The app shell never scrolls: the window is one fixed frame of panes, each
+   with a scroller of its own. That frame is why every pane-level scroller
+   also declares `overscroll-behavior: contain` (`.chat-scroll`, the sidebar
+   viewport, the side panels, the lists in dialogs and popovers). A trackpad
+   gesture that reaches the end of a scroller latches to it only if the
+   scroller does not chain; a chaining one hands the gesture up to this root,
+   which has nothing to give back, and the native macOS rubber-band never
+   shows. Inner scrollers (a code block, a diff, a `pre` in a popover) stay
+   `auto` on the vertical axis so a wheel over them still reaches the pane.
+   The bounce itself is Chromium's own, switched on by the window's
+   `scrollBounce` (src/main/index.ts) and present for non-root scrollers from
+   Chromium 152 (Electron 44); nothing here imitates it. */
 html,
 body,
 #root {
@@ -163,6 +175,7 @@ body,
 .launcher-btn:focus-visible,
 .launcher-icon-btn:focus-visible,
 .launcher-caret:focus-visible,
+.work-card-open:focus-visible,
 .group-switcher-chip:focus-visible,
 .btn-icon:focus-visible,
 .btn-primary:focus-visible,
@@ -186,13 +199,82 @@ body,
   outline-offset: -1.5px;
 }
 
+/* The side panel (Files and Git tabs) follows Appearance → Text size. Its rows
+   are written with fixed Tailwind sizes (text-xs, text-[11px], ...), which the
+   chrome's --ui-text-offset never reached: every label in the app moved but
+   the trees. Here each size the panel uses takes the offset on top. The row
+   height follows Density through --panel-row-h. */
+/* The side panel's panes (PRDCT-4142). Every pane visited stays mounted: the
+   file tree, the git list and a plugin's pane each keep their content, their
+   open rows, their scroll and a typed draft across a tab switch, so a return
+   redraws nothing. The inactive ones are hidden in place with their layout box
+   kept, since a pane taken out of layout (display: none) drops its scroll
+   offset with the box. The hooks behind a hidden pane are told it is inactive
+   and read nothing. */
+.panel-panes {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 0%;
+  min-height: 0;
+}
+.panel-pane {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 0%;
+  min-height: 0;
+}
+.panel-pane:not([data-active]) {
+  position: absolute;
+  inset: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.side-panel :is(.text-xs) {
+  font-size: calc(0.75rem + var(--ui-text-offset));
+}
+.side-panel :is(.text-sm) {
+  font-size: calc(0.875rem + var(--ui-text-offset));
+}
+.side-panel .text-\[9px\] {
+  font-size: calc(9px + var(--ui-text-offset));
+}
+.side-panel .text-\[10px\] {
+  font-size: calc(10px + var(--ui-text-offset));
+}
+.side-panel .text-\[11px\] {
+  font-size: calc(11px + var(--ui-text-offset));
+}
+.side-panel .text-\[15px\] {
+  font-size: calc(15px + var(--ui-text-offset));
+}
+
+/* A folder of the Files tab whose contents are slow to arrive: its chevron,
+   already turned, pulses, from 400ms on so a fast read never shows it. */
+.tree-chevron[data-loading] {
+  animation: tree-chevron-wait 900ms ease-in-out 400ms infinite;
+}
+@keyframes tree-chevron-wait {
+  50% {
+    opacity: 0.35;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .tree-chevron[data-loading] {
+    animation: none;
+    opacity: 0.6;
+  }
+}
+
 /* ── Sidebar items ── */
 
 .sidebar-item {
   width: 100%;
   display: flex;
   align-items: center;
-  gap: 0.5rem; /* gap-2 */
+  --sidebar-item-gap: 0.5rem; /* gap-2; the close button cancels it while away */
+  gap: var(--sidebar-item-gap);
   height: var(--sidebar-row-h);
   padding: 0 var(--sidebar-row-px);
   border-radius: var(--control-radius);
@@ -210,12 +292,47 @@ body,
   color: var(--text-primary);
   background-color: var(--surface-100);
 }
-/* The row's close button sits as far from the row's right edge as from its
-   top and bottom: its box is pulled into the row's side padding by the
+/* The row's close button (SidebarTabItem). Away, it takes no room at all: no
+   width, and the row's gap cancelled by a negative margin, so the title has
+   the room the invisible box used to hold (PRDCT-4078). Hovering the row
+   slides it in from the right; keyboard focus on the row, or on a control
+   inside it (the button itself stays in the tab order while away), reveals
+   it the same way. Shown, it sits as far from the row's right edge as from
+   its top and bottom: its box is pulled into the row's side padding by the
    difference, so the glyph's inset is (row height - button) / 2 on all three
-   sides, at every density. */
-.sidebar-item-close {
+   sides, at every density. Two classes on purpose: `.btn-icon` and
+   `.btn-icon-xs` set the width further down this file and would win on one. */
+.sidebar-item .sidebar-item-close {
+  width: 0;
+  margin-left: calc(-1 * var(--sidebar-item-gap));
+  margin-right: 0;
+  opacity: 0;
+  transform: translateX(var(--sidebar-item-gap));
+  overflow: hidden;
+  pointer-events: none;
+  transition:
+    width 150ms var(--ease-out-expo),
+    margin 150ms var(--ease-out-expo),
+    transform 150ms var(--ease-out-expo),
+    opacity 150ms,
+    color 150ms,
+    background-color 150ms,
+    scale 120ms var(--ease-out-expo); /* the icon button's press dip keeps its easing */
+}
+/* Shown, it still cancels the row's gap: the 20px box already carries 3px of
+   air around its 14px glyph, and the status glyph before it its own, so with
+   the 8px gap on top the check and the cross stood ~16px apart, twice the
+   distance between any other two things on the row. Flush boxes put the two
+   glyphs ~8px apart, the row's own rhythm. */
+.sidebar-item:hover .sidebar-item-close,
+.sidebar-item:focus-visible .sidebar-item-close,
+.sidebar-item:has(:focus-visible) .sidebar-item-close {
+  width: var(--control-h-xs);
+  margin-left: calc(-1 * var(--sidebar-item-gap));
   margin-right: calc((var(--sidebar-row-h) - var(--control-h-xs)) / 2 - var(--sidebar-row-px));
+  opacity: 1;
+  transform: none;
+  pointer-events: auto;
 }
 
 /* The row an emptied group shows in place of its sessions ("No sessions").
@@ -252,10 +369,11 @@ body,
   height: var(--sidebar-tab-icon-size);
 }
 
-/* The tab's status, carried by its logo one signal at a time
-   (`lib/tab-status.ts`): motion means working, colour means "go look". No
-   dots, no pulses. The ring sits just outside the logo so the mark keeps its
-   size in every state. */
+/* A status carried by a glyph, one signal at a time (`lib/tab-status.ts`):
+   motion means working, colour means "go look". No dots, no pulses. Worn by
+   the subagent selector's attention glyph and the Appearance sample; a
+   session row's own status is `.sidebar-tab-status` below. The ring sits
+   just outside the glyph so the mark keeps its size in every state. */
 .tab-status {
   display: inline-flex;
   align-items: center;
@@ -282,61 +400,178 @@ body,
   border-top-color: currentColor;
   animation: tab-status-spin 0.9s linear infinite;
 }
-/* A logo that opens the row's attached view (SessionItem's SessionIcon): it
-   grows with a small overshoot on hover, so it reads as its own target. */
-.tab-status[data-view] {
-  cursor: pointer;
-  transition:
-    color 300ms,
-    opacity 300ms,
-    transform 420ms cubic-bezier(0.34, 1.9, 0.5, 1);
-}
-/* An invisible hit area the size the logo grows to, so the hover starts where
-   the grown logo WILL be rather than only on the resting mark. (::before is
-   the working ring.) */
-.tab-status[data-view]::after {
-  content: '';
-  position: absolute;
-  inset: -5px;
-  border-radius: 9999px;
-}
-.tab-status[data-view]:hover,
-.tab-status[data-view]:focus-visible {
-  transform: scale(1.3);
-  color: var(--text-primary);
-  outline: none;
-}
-.tab-status[data-view]:active {
-  transform: scale(1.15);
-  transition-duration: 120ms;
-}
 @keyframes tab-status-spin {
   to {
     transform: rotate(360deg);
   }
 }
+
+/* The session row's status, in a trailing column of its own
+   (`tabStatusPresentation` in `lib/tab-status.ts`, PRDCT-3933): one glyph in
+   a slot the size of a tab icon, last before the close button, so every
+   title starts at the row's gutter and the state reads on the right. The
+   slot is kept when there is nothing to say, so the badges before it keep
+   their column from row to row. Colour means "go look": amber for a question
+   waiting on the reader, blue for something new to read; grey otherwise,
+   dimmed once the process has ended. */
+.sidebar-tab-status {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: var(--sidebar-tab-icon-size);
+  height: var(--sidebar-tab-icon-size);
+  color: var(--sidebar-icon-color);
+  transition:
+    color 300ms,
+    opacity 300ms;
+}
+/* Nothing to say yet, in a pane header only: an empty grey ring the size of
+   the glyphs' own circle, so the place before the title is never blank. */
+.sidebar-tab-placeholder {
+  display: block;
+  flex-shrink: 0;
+  width: 87%;
+  height: 87%;
+  border-radius: 9999px;
+  border: 1.5px solid currentColor;
+  opacity: 0.45;
+}
+/* Subagents still at work: their count inside the spinner's ring. */
+.sidebar-tab-status:has(.sidebar-tab-agents) {
+  position: relative;
+}
+.sidebar-tab-agents {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 7px;
+  font-weight: 600;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+  color: var(--text-secondary);
+}
+/* The glyphs and the spinner meet in the middle. An outline check or ? draws
+   its circle on 18 of its 24 units, so at the slot's 15px it read ~11px
+   across while the spinner's ring filled all 15: the working row looked a
+   size bigger than the finished one. The glyph now draws at 115% (its circle
+   ~13px, overflowing the slot evenly, the slot itself unchanged so nothing
+   around it moves) and the spinner at 87% (~13px): one size for every state. */
+.sidebar-tab-status > svg {
+  flex-shrink: 0;
+  width: 115%;
+  height: 115%;
+}
+.sidebar-tab-status[data-tone='amber'] {
+  color: var(--color-status-waiting);
+}
+.sidebar-tab-status[data-tone='blue'] {
+  color: var(--color-status-working);
+}
+.sidebar-tab-status[data-tone='dim'] {
+  opacity: 0.45;
+}
+/* Working: eight fixed segments under an ink that fades around the ring,
+   turned one segment at a time, the way an activity indicator ticks. The
+   element turns in eighths, which leaves the segments where they are and
+   moves the fade alone. */
+.sidebar-tab-spinner {
+  display: block;
+  flex-shrink: 0;
+  width: 87%;
+  height: 87%;
+  border-radius: 9999px;
+  background: conic-gradient(
+    from 0deg,
+    color-mix(in srgb, currentColor 12%, transparent),
+    currentColor
+  );
+  mask:
+    radial-gradient(farthest-side, transparent calc(100% - 2.5px), #000 calc(100% - 2px)),
+    repeating-conic-gradient(from -11deg, #000 0 22deg, transparent 22deg 45deg);
+  mask-composite: intersect;
+  animation: sidebar-tab-spin 0.8s steps(8, end) infinite;
+}
+@keyframes sidebar-tab-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+/* The way to a page attached to the row (SessionItem's SessionViewButton),
+   beside the status: it grows with a small overshoot on hover, so it reads
+   as its own target, over an invisible hit area the size it grows to. */
+.sidebar-tab-view {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: var(--sidebar-tab-icon-size);
+  height: var(--sidebar-tab-icon-size);
+  color: var(--sidebar-icon-color);
+  cursor: pointer;
+  transition:
+    color 300ms,
+    transform 420ms cubic-bezier(0.34, 1.9, 0.5, 1);
+}
+.sidebar-tab-view > svg {
+  width: 100%;
+  height: 100%;
+}
+.sidebar-tab-view::after {
+  content: '';
+  position: absolute;
+  inset: -5px;
+  border-radius: 9999px;
+}
+.sidebar-tab-view:hover,
+.sidebar-tab-view:focus-visible {
+  transform: scale(1.3);
+  color: var(--text-primary);
+  outline: none;
+}
+.sidebar-tab-view:active {
+  transform: scale(1.15);
+  transition-duration: 120ms;
+}
+/* Appearance → Agent mark: the row's status slot is a mark pack's canvas
+   (the orbs pack draws `thinking-orbs`' 20px preset), fitted to the slot
+   here. Its own motion says working. Rest and work swap with a short fade;
+   the rest mark keeps its full ink — stillness is the signal, and a dimmed
+   15px globe was too faint to read (2026-10-15). */
+.sidebar-tab-status > canvas {
+  width: var(--sidebar-tab-icon-size) !important;
+  height: var(--sidebar-tab-icon-size) !important;
+}
+canvas[data-orb-state] {
+  transition: opacity 300ms;
+}
 @media (prefers-reduced-motion: reduce) {
-  .tab-status[data-status='working']::before {
+  .tab-status[data-status='working']::before,
+  .sidebar-tab-spinner {
     animation-duration: 2.4s;
   }
-  .tab-status[data-view] {
+  .sidebar-tab-view {
     transition-timing-function: ease-out;
+  }
+  /* The close button appears in place: no slide, and no width that grows. */
+  .sidebar-item .sidebar-item-close {
+    transform: none;
+    transition:
+      opacity 150ms,
+      color 150ms,
+      background-color 150ms,
+      scale 120ms var(--ease-out-expo);
   }
 }
 
-/* The row's right side, before the close button: what still runs in the
-   background, and a warning when the account is at its limit. */
-.tab-background-count {
-  flex-shrink: 0;
-  padding: 0 5px;
-  border-radius: 9999px;
-  background: var(--color-surface-100);
-  font-size: 10.5px;
-  line-height: 16px;
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-  color: var(--color-text-tertiary);
-}
+/* The row's right side, before the close button: a warning when the account
+   is at its limit. (Background work no longer has a counter here: subagents
+   keep the spinner turning with their count inside it, commands left running
+   are named in the status glyph's tooltip; tab-status.ts.) */
 .tab-limit-warning {
   display: inline-flex;
   flex-shrink: 0;
@@ -532,13 +767,24 @@ body,
   grid-template-rows: 0fr;
   opacity: 0;
 }
+/* One row that slides sideways rather than wrapping onto new lines: the panel
+   holds a single chip row however many groups run, so the list below never
+   moves when a group starts or stops. The scrollbar is hidden — a trackpad
+   swipe (or the wheel, mapped in GroupSwitcher.tsx) moves it. overflow-y stays
+   hidden so the grid track above can still clip the row on its way out. */
 .group-switcher-chips {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: center;
   gap: 2px;
   min-height: 0;
-  overflow: hidden;
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
+}
+.group-switcher-chips::-webkit-scrollbar {
+  display: none;
 }
 /* Only when there is a head row above them — the margin would otherwise open a
    gap at the top of the panel — and it goes with the row on the way out, so the
@@ -659,7 +905,7 @@ body,
   gap: var(--control-gap);
   flex-shrink: 0;
   min-width: 0;
-  max-width: 100%; /* a long group name wraps the row, never the panel */
+  max-width: 100%; /* a long group name truncates, never widens the panel */
   height: var(--control-h-md);
   padding: 0 var(--control-px); /* px-2 — see .launcher-btn */
   border-radius: var(--radius-control);
@@ -1039,6 +1285,13 @@ body,
 }
 .panel-icon-btn:disabled {
   opacity: 0.4;
+  cursor: not-allowed;
+}
+/* A disabled control does not wake up under the pointer (the field guide's
+   "no hover fill"); the hover rule above would otherwise still fill it. */
+.panel-icon-btn:disabled:hover {
+  color: var(--text-tertiary);
+  background-color: transparent;
 }
 
 /* The root chip at the head of the path bar: one letter for which root the
@@ -1697,6 +1950,48 @@ body,
   scale: 0.97;
 }
 
+/* Appearance → Agent mark: the nine orbs to pick from, each drawn live at the
+   avatar preset so the choice is made on the animation itself, not a still. */
+.orb-picker {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+  gap: calc(var(--spacing) * 2);
+  width: 100%;
+}
+.orb-swatch {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: calc(var(--spacing) * 1.5);
+  padding: calc(var(--spacing) * 3) calc(var(--spacing) * 2);
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border-color);
+  background-color: var(--surface-50);
+  color: var(--text-tertiary);
+  cursor: pointer;
+  transition:
+    border-color 150ms,
+    background-color 150ms,
+    color 150ms;
+}
+.orb-swatch:hover {
+  background-color: var(--surface-100);
+  color: var(--text-secondary);
+}
+.orb-swatch[data-selected='true'] {
+  border-color: var(--accent);
+  color: var(--text-primary);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+.orb-swatch-label {
+  font-size: 11px;
+  font-weight: var(--font-weight-medium);
+}
+.orb-swatch canvas {
+  width: 48px !important;
+  height: 48px !important;
+}
+
 /* Segmented control: compact inline mode switcher (e.g. Page/Preview/Source
    in file headers). Items mark their active state via data-active="true". */
 .segmented {
@@ -2028,6 +2323,7 @@ body,
 .settings-scroller {
   flex: 1 1 0%;
   overflow-y: auto;
+  overscroll-behavior: contain;
   scrollbar-gutter: stable;
   padding: 2rem;
 }
@@ -2397,6 +2693,7 @@ body,
   min-width: var(--radix-dropdown-menu-trigger-width);
   max-height: min(20rem, var(--radix-dropdown-menu-content-available-height));
   overflow-y: auto;
+  overscroll-behavior: contain;
 }
 .select-option {
   font-size: 12px;
@@ -2576,14 +2873,17 @@ button.extension-card:hover {
    right. The two headers share these classes so they cannot drift apart. The
    row is one control tall plus the 2px inset a box gives its contents. */
 .pane-header {
+  /* The status glyph's centre sits as far from the header's left edge as from
+     its top: half the header's height in from the left, less half the glyph. */
+  --pane-header-h: calc(var(--control-h-md) + var(--spacing));
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: calc(var(--spacing) * 2);
   flex-shrink: 0;
-  min-height: calc(var(--control-h-md) + var(--spacing));
+  min-height: var(--pane-header-h);
   padding: calc(var(--spacing) / 2) calc(var(--spacing) / 2) calc(var(--spacing) / 2)
-    calc(var(--spacing) * 3);
+    calc((var(--pane-header-h) - var(--sidebar-tab-icon-size)) / 2);
   background-color: var(--surface-0);
   border-bottom: thin solid var(--border-subtle-color);
 }
@@ -2640,6 +2940,22 @@ button.extension-card:hover {
   background-color: var(--color-status-working);
   animation: pulse-dot 5s cubic-bezier(0.4, 0, 0.6, 1) infinite;
 }
+/* The same slot with a mark pack's mark in it (Appearance → Agent mark). */
+.pane-status-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: calc(var(--spacing) * 4);
+  height: calc(var(--spacing) * 4);
+  flex-shrink: 0;
+}
+.pane-status-mark > canvas {
+  width: 100% !important;
+  height: 100% !important;
+}
+.pane-status-mark[data-status='inactive'] {
+  opacity: 0.45;
+}
 
 /* ── Conversation views ──────────────────────────────────────────────────
    The chat view: the host frames it (.chat-host, the pane header above), the
@@ -2690,6 +3006,91 @@ button.extension-card:hover {
   display: none;
 }
 
+/* Find in this session (PaneSearch): a compact field in the pane header,
+   right after the title, so it reads as searching this conversation. */
+.pane-search {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: 0 1 18rem;
+  min-width: 9rem;
+  height: var(--control-h-sm);
+  padding: 0 2px 0 var(--control-gap);
+  border-radius: var(--radius-control);
+  color: var(--text-tertiary);
+  background-color: var(--surface-100);
+  box-shadow: inset 0 0 0 1px var(--border-subtle-color);
+}
+.pane-search:focus-within {
+  box-shadow: inset 0 0 0 1px var(--color-accent);
+}
+.pane-search-icon {
+  width: 0.875rem;
+  height: 0.875rem;
+  flex-shrink: 0;
+}
+.pane-search input {
+  flex: 1 1 auto;
+  min-width: 3rem;
+  margin-left: 4px;
+  background: transparent;
+  border: none;
+  outline: none;
+  font-size: var(--text-xs);
+  color: var(--text-primary);
+}
+.pane-search input::placeholder {
+  color: var(--text-tertiary);
+}
+.pane-search-count {
+  flex-shrink: 0;
+  padding: 0 4px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  color: var(--text-tertiary);
+}
+/* While the query settles or older history is read in: a small ring where
+   the count goes, the sidebar's working spinner at the field's scale. */
+.pane-search-spinner {
+  flex-shrink: 0;
+  width: 0.75rem;
+  height: 0.75rem;
+  margin: 0 4px;
+  border-radius: 9999px;
+  border: 1.5px solid color-mix(in srgb, currentColor 20%, transparent);
+  border-top-color: currentColor;
+  animation: sidebar-tab-spin 0.7s linear infinite;
+}
+.pane-search-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 1.25rem;
+  height: 1.25rem;
+  border-radius: var(--radius-control);
+  color: var(--text-tertiary);
+}
+.pane-search-btn > svg {
+  width: 0.875rem;
+  height: 0.875rem;
+}
+.pane-search-btn:hover:not(:disabled) {
+  color: var(--text-primary);
+  background-color: var(--surface-200);
+}
+.pane-search-btn:disabled {
+  opacity: 0.4;
+}
+::highlight(pane-search) {
+  background-color: color-mix(in srgb, var(--color-status-waiting) 30%, transparent);
+}
+::highlight(pane-search-current) {
+  background-color: var(--color-status-waiting);
+  color: var(--surface-0);
+}
+
 /* The transcript */
 .chat-transcript {
   position: relative;
@@ -2703,6 +3104,28 @@ button.extension-card:hover {
   min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
+}
+/* The transcript runs right down to the composer and fades out over its
+   last stretch instead of stopping on a hard edge. A mask, not a gradient
+   laid over it, so it holds on any ground and under a selection. The column's
+   own foot padding is taller than the fade, so the last line sits clear of
+   it once the reader is at the end. */
+.chat-transcript > .chat-scroll {
+  --chat-fade: calc(var(--spacing) * 7);
+  /* A cosine ease over eight steps: no visible edge where the fade begins,
+     none where it ends, and no banding between. */
+  mask-image: linear-gradient(
+    to bottom,
+    black calc(100% - var(--chat-fade)),
+    color-mix(in srgb, black 96%, transparent) calc(100% - var(--chat-fade) * 0.875),
+    color-mix(in srgb, black 85%, transparent) calc(100% - var(--chat-fade) * 0.75),
+    color-mix(in srgb, black 69%, transparent) calc(100% - var(--chat-fade) * 0.625),
+    color-mix(in srgb, black 50%, transparent) calc(100% - var(--chat-fade) * 0.5),
+    color-mix(in srgb, black 31%, transparent) calc(100% - var(--chat-fade) * 0.375),
+    color-mix(in srgb, black 15%, transparent) calc(100% - var(--chat-fade) * 0.25),
+    color-mix(in srgb, black 4%, transparent) calc(100% - var(--chat-fade) * 0.125),
+    transparent
+  );
 }
 /* The way back down. The transcript follows the stream only while the reader
    is at its end (`useTranscriptEnd`); one who scrolled up to re-read is left
@@ -2786,6 +3209,23 @@ button.extension-card:hover {
     opacity: 0;
     translate: 0 calc(var(--spacing) * -2);
   }
+}
+/* The past of a resumed chat that a round of asking could not read
+   (PRDCT-3526): in the flow at the transcript's head, where the past would
+   be, quiet, with the one action that asks again. */
+.chat-past-failed {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: calc(var(--spacing) * 2);
+  padding: calc(var(--spacing) * 2) 0;
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
+.chat-past-failed > svg {
+  width: var(--chat-glyph);
+  height: var(--chat-glyph);
+  flex: none;
 }
 .chat-earlier svg {
   width: var(--chat-glyph);
@@ -2938,14 +3378,17 @@ button.chat-turn-from:focus-visible {
    it. It is the wrap's child, so hovering it keeps the wrap hovered. The
    column's gap is one row of meta plus the air above it, so the copy
    button's hover fill never touches the text it copies. */
+/* The line starts flush under the turn and keeps its air as padding, so the
+   pointer moving down from the message onto the copy button never crosses a
+   strip that belongs to neither and drops the hover on the way. */
 .chat-turn-meta {
   position: absolute;
-  top: calc(100% + var(--spacing));
+  top: 100%;
   display: flex;
   align-items: center;
   gap: var(--spacing);
-  height: calc(var(--spacing) * 4);
-  padding: 0 var(--spacing);
+  height: calc(var(--spacing) * 5);
+  padding: var(--spacing) var(--spacing) 0;
   font-size: var(--text-xs);
   color: var(--text-tertiary);
   opacity: 0;
@@ -2960,6 +3403,14 @@ button.chat-turn-from:focus-visible {
 .chat-turn-wrap:hover .chat-turn-meta,
 .chat-turn-meta:focus-within {
   opacity: 1;
+}
+/* Each row is its own layer (the list's positioned, contained items), painted
+   in order, and the hover line hangs into the next row's top gap: lift the row
+   whose line is shown above its neighbours, or the next row covers the copy
+   button and takes the pointer the moment it arrives. */
+.chat-rows > :has(.chat-turn-wrap:hover),
+.chat-rows > :has(.chat-turn-meta:focus-within) {
+  z-index: 1;
 }
 .chat-turn-copy {
   display: inline-flex;
@@ -3020,6 +3471,16 @@ button.chat-turn-from:focus-visible {
 }
 .chat-provider-mark[data-state='working'] {
   animation: chat-breathe 1.4s ease-in-out infinite;
+}
+/* A pack's mark moves on its own; breathing it too would double the signal.
+   The canvas is the library's 20px preset, shown as drawn. */
+.chat-provider-mark[data-mark='pack'] {
+  animation: none;
+  color: var(--text-primary);
+}
+.chat-provider-mark canvas {
+  width: calc(var(--spacing) * 5) !important;
+  height: calc(var(--spacing) * 5) !important;
 }
 @keyframes chat-breathe {
   0%,
@@ -3115,8 +3576,11 @@ button.chat-turn-from:focus-visible {
   border-radius: var(--radius-lg);
   border: thin solid var(--border-subtle-color);
   background-color: var(--surface-50);
-  overflow-x: auto;
-  white-space: pre;
+  /* Long lines wrap instead of scrolling sideways: an answer's code block is
+     mostly prose-like text (an email draft, a command, a path) that should be
+     readable at a glance, the way tool output already reads. */
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
   line-height: 1.5;
 }
 .chat-prose pre code {
@@ -3176,10 +3640,37 @@ button.chat-turn-from:focus-visible {
    declared on the open state, so it runs on every opening — a rule that
    stops matching ends it, one that matches again restarts it — and never on
    a row the reader has not touched. */
-details[open] > .chat-tool-items,
 details[open] > .chat-tool-item[data-lone],
 details[open] > .chat-tool-panel {
   animation: chat-reveal var(--default-transition-duration) var(--ease-out-expo);
+}
+/* A run's calls come in one after another rather than as one block: each
+   row fades and settles a beat after the one above it (chat-stagger-in,
+   below), so opening a run of twenty reads as a list arriving, not a slab
+   appearing. */
+details[open] > .chat-tool-items > .chat-tool-item,
+.term-tools[open] > .term-tools-body > .term-call {
+  animation: chat-stagger-in calc(var(--default-transition-duration) * 2) var(--ease-out-expo)
+    backwards;
+  animation-delay: var(--stagger-delay);
+}
+/* The stagger: a row's delay is its place in the list, a fifth of the open
+   transition per row (30ms at the default 150ms), capped at the tenth row so
+   a long run is whole within half a second; the height opens at the default
+   duration, so the first rows land while it is still opening and the rest
+   follow it down. `sibling-index()` reads the place, no markup needed. */
+:root {
+  --stagger-step: calc(var(--default-transition-duration) / 5);
+}
+details[open] > .chat-tool-items > .chat-tool-item,
+.term-tools[open] > .term-tools-body > .term-call {
+  --stagger-delay: calc(min(sibling-index() - 1, 10) * var(--stagger-step));
+}
+@keyframes chat-stagger-in {
+  from {
+    opacity: 0;
+    translate: 0 calc(var(--spacing) * -1);
+  }
 }
 @keyframes chat-reveal {
   from {
@@ -3247,6 +3738,24 @@ details[open] > .chat-tool-row .chat-tool-chevron,
 }
 .chat-tool-status[data-running='true'] {
   animation: chat-spin 1s linear infinite;
+}
+/* A mark pack's running call (Appearance → Agent mark): the pack's own motion,
+   not the spinner's, in the glyph's box. */
+.chat-tool-status[data-mark='pack'] {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  animation: none;
+}
+.chat-tool-status[data-mark='pack'] > canvas,
+.term-call-icon[data-mark='pack'] > canvas {
+  width: 100% !important;
+  height: 100% !important;
+}
+.term-call-icon[data-mark='pack'] {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 @keyframes chat-spin {
   to {
@@ -3650,6 +4159,7 @@ details[open] > .chat-tool-row .chat-tool-chevron,
   resize: none;
   field-sizing: content;
   overflow-y: auto;
+  overscroll-behavior: contain;
   overflow-wrap: anywhere;
   outline: none;
 }
@@ -3789,6 +4299,7 @@ details[open] > .chat-tool-row .chat-tool-chevron,
   flex-direction: column;
   max-height: calc(var(--spacing) * 72);
   overflow-y: auto;
+  overscroll-behavior: contain;
 }
 .chat-resume-option {
   display: flex;
@@ -3830,6 +4341,73 @@ details[open] > .chat-tool-row .chat-tool-chevron,
   margin-left: auto;
 }
 
+/* The /mcp and /plugin panels wear the same dock: one row per server or
+   plugin, its name over its state, the actions on the right ending in the
+   switch. A row being worked on dims until the CLI has answered. */
+.chat-control-row {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--spacing) * 3);
+  padding: calc(var(--spacing) * 1.5) calc(var(--spacing) * 2.5);
+  border-radius: var(--radius-lg);
+  transition: opacity var(--default-transition-duration);
+}
+.chat-control-row + .chat-control-row {
+  margin-top: var(--row-gap);
+}
+.chat-control-row:hover {
+  background-color: var(--surface-100);
+}
+.chat-control-row[data-busy='true'] {
+  opacity: 0.55;
+}
+.chat-control-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: calc(var(--spacing) * 0.5);
+  min-width: 0;
+}
+.chat-control-actions {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: calc(var(--spacing) * 2);
+}
+.chat-control-status {
+  color: var(--text-secondary);
+}
+.chat-control-status[data-status='connected'] {
+  color: var(--color-success);
+}
+.chat-control-status[data-status='needs-auth'],
+.chat-control-status[data-status='pending'] {
+  color: var(--color-warning);
+}
+.chat-control-status[data-status='failed'] {
+  color: var(--color-destructive);
+}
+.chat-control-error {
+  font-size: var(--text-xs);
+  color: var(--color-destructive);
+  overflow-wrap: anywhere;
+}
+.chat-control-foot {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: calc(var(--spacing) * 3);
+}
+.chat-control-note {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+}
+.chat-control-note[data-failed='true'] {
+  color: var(--color-destructive);
+}
+
 /* The transcript's record of a request: one muted row, like a tool call. */
 .chat-permission-row {
   display: flex;
@@ -3861,6 +4439,22 @@ details[open] > .chat-tool-row .chat-tool-chevron,
   color: var(--text-secondary);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+/* A run of approvals the reader allowed: one row, led by the shield and read
+   like a run of tools, that opens to one receipt per request, indented under
+   the glyph. */
+.chat-approval-run {
+  align-self: stretch;
+  min-width: 0;
+  font-size: var(--chat-code-size);
+}
+.chat-approval-items {
+  display: flex;
+  flex-direction: column;
+  padding-left: calc(var(--chat-glyph) + var(--spacing) * 2);
+}
+details[open] > .chat-approval-items {
+  animation: chat-reveal var(--default-transition-duration) var(--ease-out-expo);
 }
 
 /* Notices sit in the column's centre, small and grey; an error carries the
@@ -3937,7 +4531,7 @@ details[open] > .chat-tool-row .chat-tool-chevron,
   width: 100%;
   max-width: var(--chat-column);
   margin: 0 auto;
-  padding: var(--spacing) calc(var(--spacing) * 6) calc(var(--spacing) * 3);
+  padding: 0 calc(var(--spacing) * 6) calc(var(--spacing) * 3);
 }
 .chat-composer {
   display: flex;
@@ -4042,38 +4636,186 @@ details[open] > .chat-tool-row .chat-tool-chevron,
 .chat-view {
   position: relative;
 }
+/* The drop: a veil over the pane and one paper card on it, with a drawing in
+   the hand of the products' figures (DropDrawing.tsx) and the words under
+   it. It comes up as the drag comes in; it goes as the drag goes, at once. */
 .chat-drop-overlay {
   position: absolute;
-  inset: calc(var(--spacing) * 3);
+  inset: 0;
   z-index: 30;
   pointer-events: none;
   display: flex;
-  flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: calc(var(--spacing) * 2);
-  border: calc(var(--spacing) / 2) dashed var(--color-accent);
-  border-radius: var(--radius-2xl);
-  background-color: color-mix(in oklch, var(--surface-raised) 92%, var(--color-accent));
-  color: var(--text-primary);
-  font-size: var(--text-sm);
-  /* It comes up as the drag comes in; it goes as the drag goes, at once. */
-  transition:
-    opacity var(--default-transition-duration) var(--ease-out-expo),
-    scale var(--default-transition-duration) var(--ease-out-expo);
+  padding: calc(var(--spacing) * 6);
+  background-color: color-mix(in oklab, var(--surface-0) 72%, transparent);
+  backdrop-filter: blur(6px);
+  transition: opacity var(--default-transition-duration) var(--ease-out-expo);
   @starting-style {
     opacity: 0;
-    scale: 0.98;
   }
 }
-.chat-drop-overlay svg {
-  width: calc(var(--spacing) * 6);
-  height: calc(var(--spacing) * 6);
-  color: var(--color-accent);
+.chat-drop-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: calc(var(--spacing) * 1.5);
+  width: min(100%, calc(var(--spacing) * 96));
+  padding: calc(var(--spacing) * 6) calc(var(--spacing) * 7) calc(var(--spacing) * 6);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-2xl);
+  background-color: var(--surface-raised);
+  box-shadow: var(--overlay-shadow-lg);
+  text-align: center;
+  transition:
+    translate calc(var(--default-transition-duration) * 1.6) var(--ease-out-expo),
+    scale calc(var(--default-transition-duration) * 1.6) var(--ease-out-expo);
+  @starting-style {
+    translate: 0 calc(var(--spacing) * 2);
+    scale: 0.97;
+  }
 }
-.chat-drop-overlay span {
+.chat-drop-card .chat-drawing {
+  width: calc(var(--spacing) * 60);
+  max-width: 100%;
+  height: auto;
+  margin-bottom: calc(var(--spacing) * 2);
+}
+.chat-drop-eyebrow {
+  margin: 0;
+  color: var(--text-tertiary);
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+.chat-drop-card strong {
+  color: var(--text-primary);
+  font-size: var(--text-base);
+  font-weight: var(--font-weight-medium);
+}
+.chat-drop-card span {
+  max-width: 36ch;
   color: var(--text-secondary);
-  font-size: var(--text-xs);
+  font-size: var(--text-sm);
+  line-height: 1.45;
+}
+
+/* The drawing's hand: ink lines at 30–45%, boxes filled with a breath of the
+   ground, the box in front filled with paper so it hides what is behind it,
+   the ringed dot as the focal marker, and the accent on ONE path. The ink
+   is the app's text colour, so the dark set just works. */
+.chat-drawing {
+  --ink: var(--text-primary);
+  --paper: var(--surface-raised);
+  --ground: var(--surface-100);
+  display: block;
+  overflow: visible;
+}
+.chat-drawing :is(.ln, .bx, .ring, .head) {
+  vector-effect: non-scaling-stroke;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.chat-drawing .ln {
+  fill: none;
+  stroke: color-mix(in oklab, var(--ink) 45%, transparent);
+  stroke-width: 1.2;
+}
+.chat-drawing .ln--soft {
+  stroke: color-mix(in oklab, var(--ink) 34%, transparent);
+  stroke-dasharray: 4 5;
+}
+.chat-drawing .ln--thin {
+  stroke: color-mix(in oklab, var(--ink) 30%, transparent);
+  stroke-width: 1;
+}
+.chat-drawing .bx {
+  fill: color-mix(in oklab, var(--ground) 40%, transparent);
+  stroke: color-mix(in oklab, var(--ink) 40%, transparent);
+  stroke-width: 1;
+}
+.chat-drawing .bx--front {
+  fill: var(--paper);
+}
+.chat-drawing .dot {
+  fill: color-mix(in oklab, var(--ink) 78%, transparent);
+}
+.chat-drawing .dot--seat {
+  fill: color-mix(in oklab, var(--ink) 40%, transparent);
+}
+.chat-drawing .ring {
+  fill: none;
+  stroke: color-mix(in oklab, var(--ink) 42%, transparent);
+  stroke-width: 1;
+}
+.chat-drawing .head {
+  fill: none;
+  stroke: color-mix(in oklab, var(--ink) 55%, transparent);
+  stroke-width: 1.1;
+}
+/* the one place the accent goes */
+.chat-drawing .ln--c {
+  stroke: var(--color-accent);
+  stroke-width: 1.7;
+}
+.chat-drawing .head--c {
+  stroke: var(--color-accent);
+  stroke-width: 1.5;
+}
+.chat-drawing .dot--c {
+  fill: var(--color-accent);
+}
+.chat-drawing .fan {
+  transform-box: fill-box;
+  transform-origin: bottom center;
+}
+.chat-drawing .fan--back {
+  transform: rotate(7deg);
+}
+.chat-drawing .fan--front {
+  transform: rotate(-5deg);
+}
+.chat-drawing .ring--pulse {
+  opacity: 0;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+/* the accent line draws itself once as the card comes up, measured in its
+   own length (pathLength 1), and the landing pulses once when it arrives */
+.chat-drawing .travel {
+  stroke-dasharray: 1;
+  stroke-dashoffset: 0;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .chat-drawing .travel {
+    animation: chat-drawing-draw 900ms var(--ease-out-expo) 180ms 1 backwards;
+  }
+  .chat-drawing .ring--pulse {
+    animation: chat-drawing-pulse 1400ms var(--ease-out-expo) 900ms 1;
+  }
+  .chat-drawing .lift {
+    animation: chat-drawing-lift 700ms var(--ease-out-expo) 1 backwards;
+  }
+}
+@keyframes chat-drawing-draw {
+  from {
+    stroke-dashoffset: 1;
+  }
+}
+@keyframes chat-drawing-pulse {
+  from {
+    opacity: 0.7;
+    transform: scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: scale(1.7);
+  }
+}
+@keyframes chat-drawing-lift {
+  from {
+    transform: translate(-36px, 8px);
+  }
 }
 .chat-composer {
   flex-wrap: wrap;
@@ -4082,6 +4824,7 @@ details[open] > .chat-tool-row .chat-tool-chevron,
   flex-basis: 100%;
   max-height: 30vh;
   overflow-y: auto;
+  overscroll-behavior: contain;
   padding: var(--spacing) 0 calc(var(--spacing) * 1.5);
 }
 .chat-attachments {
@@ -4110,6 +4853,7 @@ details[open] > .chat-tool-row .chat-tool-chevron,
   margin-bottom: calc(var(--spacing) * 1.5);
 }
 .chat-attachment {
+  position: relative;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -4126,40 +4870,73 @@ details[open] > .chat-tool-row .chat-tool-chevron,
 .chat-attachment[data-issue='true'] {
   border-color: var(--color-accent);
 }
+/* The card is the thing to click: the preview button inside it paints
+   nothing of its own, the card takes the hover, and the remove button sits
+   in the card's top-right corner, the card keeping room for it. */
 .chat-attachment-open {
   display: flex;
   align-items: center;
-  gap: calc(var(--spacing) * 2);
+  gap: calc(var(--spacing) * 1.5);
   min-width: 0;
   text-align: left;
-  padding: var(--spacing);
-  border-radius: var(--radius-control);
-  transition: background-color var(--default-transition-duration);
+  padding: 0;
 }
-.chat-attachment-open:hover {
+.chat-attachment:has(> button.chat-attachment-open:hover) {
   background-color: var(--surface-200);
+}
+.chat-attachment:has(> .chat-attachment-remove) {
+  padding-right: calc(var(--spacing) * 6);
+}
+.chat-attachment-remove {
+  position: absolute;
+  top: calc(var(--spacing) * 0.75);
+  right: calc(var(--spacing) * 0.75);
 }
 .chat-attachment-thumb {
   flex-shrink: 0;
-  width: var(--control-h-lg);
-  height: var(--control-h-lg);
+  width: var(--control-h);
+  height: var(--control-h);
   object-fit: cover;
   border-radius: var(--radius-control);
 }
+/* A chip's glyph: a small drawing in the same hand as the drop card, one
+   per family (a page, a frame, a few bars of sound, a folder, a row out of
+   its column), on a tile the size of a thumbnail. */
 .chat-attachment-glyph {
   flex-shrink: 0;
-  width: var(--control-icon);
-  height: var(--control-icon);
+  width: var(--control-h);
+  height: var(--control-h);
+  padding: calc(var(--spacing) * 1.25);
+  border-radius: var(--radius-control);
+  background-color: color-mix(in oklab, var(--surface-200) 70%, transparent);
   color: var(--text-tertiary);
+}
+.chat-attachment-thumb {
+  border: 1px solid var(--border-subtle-color);
+}
+/* The label, as the text refers to the record: [Image #1] there, the tag here. */
+.chat-attachment-tag {
+  display: inline-block;
+  margin-right: calc(var(--spacing) * 1.5);
+  padding: 0 calc(var(--spacing) * 1.25);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  line-height: 1.6;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+  background-color: var(--surface-raised);
 }
 .chat-attachment-text {
   display: flex;
   flex-direction: column;
   min-width: 0;
-  padding: var(--spacing);
+  padding: calc(var(--spacing) * 0.5) var(--spacing);
 }
 .chat-attachment-name {
-  max-width: 28ch;
+  max-width: 20ch;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -4177,36 +4954,106 @@ details[open] > .chat-tool-row .chat-tool-chevron,
   padding: var(--spacing);
   color: var(--text-secondary);
 }
+/* The preview dialog: the modal card (its corner is the panels'), a head
+   with the record's tile and words, the path under it in a path's hand, the
+   preview in a framed inset on the inner corner, the actions at the foot. */
 .chat-attachment-dialog {
-  width: min(85vw, calc(var(--spacing) * 240));
-  padding: calc(var(--spacing) * 4);
+  width: min(85vw, calc(var(--spacing) * 180));
+  padding: 0;
 }
 .chat-attachment-dialog-head {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: var(--spacing);
+  gap: calc(var(--spacing) * 3);
+  padding: calc(var(--spacing) * 4) calc(var(--spacing) * 4) calc(var(--spacing) * 2);
+}
+.chat-attachment-dialog-tile {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: calc(var(--spacing) * 11);
+  height: calc(var(--spacing) * 11);
+  overflow: hidden;
+  border: 1px solid var(--border-subtle-color);
+  border-radius: var(--radius-lg);
+  background-color: color-mix(in oklab, var(--surface-200) 70%, transparent);
+}
+.chat-attachment-dialog-tile img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.chat-attachment-dialog-tile .chat-attachment-glyph {
+  width: 100%;
+  height: 100%;
+  padding: calc(var(--spacing) * 2.5);
+  border-radius: 0;
+  background: none;
+}
+.chat-attachment-dialog-titles {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--spacing) * 0.75);
+  min-width: 0;
+}
+.chat-attachment-dialog-titles > * {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chat-attachment-dialog-meta {
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
 }
 .chat-attachment-dialog-path {
+  margin: 0;
+  padding: 0 calc(var(--spacing) * 4) calc(var(--spacing) * 3);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-tertiary);
   overflow-wrap: anywhere;
 }
 .chat-attachment-dialog-body {
-  max-height: 65vh;
+  max-height: 60vh;
   overflow: auto;
-  margin: calc(var(--spacing) * 3) 0;
+  overscroll-behavior: contain;
+  margin: 0 calc(var(--spacing) * 4);
+  padding: calc(var(--spacing) * 3);
+  border: 1px solid var(--border-subtle-color);
+  border-radius: var(--radius-lg);
+  background-color: var(--surface-100);
   font-size: var(--text-xs);
+  color: var(--text-primary);
+}
+.chat-attachment-dialog-body[data-kind='image'] {
+  padding: calc(var(--spacing) * 2);
 }
 .chat-attachment-dialog-body img {
   display: block;
   max-width: 100%;
-  max-height: 60vh;
+  max-height: 56vh;
   margin: auto;
+  border-radius: var(--radius-md);
   object-fit: contain;
 }
 .chat-attachment-dialog-body pre {
+  margin: 0;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   font-family: var(--font-mono);
+  line-height: 1.5;
+}
+.chat-attachment-dialog-body p {
+  margin: 0;
+  color: var(--text-secondary);
+}
+.chat-attachment-dialog-body pre + p {
+  margin-top: calc(var(--spacing) * 2);
+}
+.chat-attachment-dialog-foot {
+  padding: calc(var(--spacing) * 3) calc(var(--spacing) * 4) calc(var(--spacing) * 4);
 }
 .chat-composer-hint {
   display: inline-flex;
@@ -4409,6 +5256,7 @@ details[open] > .chat-tool-row .chat-tool-chevron,
 .chat-slash-list {
   max-height: calc(var(--spacing) * 72);
   overflow-y: auto;
+  overscroll-behavior: contain;
 }
 .chat-slash-option {
   gap: calc(var(--spacing) * 3);
@@ -4442,9 +5290,13 @@ details[open] > .chat-tool-row .chat-tool-chevron,
    untouched. */
 .terminal-view {
   --chat-column: var(--container-6xl);
+  /* The view's ink: the primary text eased a fifth of the way towards the
+     secondary, so a long transcript reads soft rather than heavy. */
+  --term-ink: color-mix(in oklch, var(--text-primary) 80%, var(--text-secondary));
 }
 .terminal-view .chat-prose {
   font-size: calc(var(--text-sm) + var(--spacing) / 4);
+  color: var(--term-ink);
 }
 .terminal-view .chat-turn-wrap[data-side='end'] {
   align-items: stretch;
@@ -4470,7 +5322,7 @@ details[open] > .chat-tool-row .chat-tool-chevron,
   font-size: var(--text-sm);
   font-weight: 450;
   line-height: 1.5;
-  color: var(--text-primary);
+  color: var(--term-ink);
 }
 /* The caret sits on the message's first line: a box one line tall at the
    padding's edge, the glyph centred in it, whatever the fonts' metrics. */
@@ -4627,15 +5479,26 @@ details[open] > .chat-tool-row .chat-tool-chevron,
   block-size: 0;
   overflow: clip;
   opacity: 0;
+  /* Closing: it swells a touch before it folds (an ease-in-back), the
+     closing's bounce; a height cannot go below zero, so the give is taken at
+     the start rather than the end. */
   transition:
-    block-size var(--default-transition-duration) var(--ease-out-expo),
-    opacity var(--default-transition-duration) var(--ease-out-expo),
-    content-visibility var(--default-transition-duration) allow-discrete;
+    block-size calc(var(--default-transition-duration) * 1.75) cubic-bezier(0.36, 0, 0.66, -0.3),
+    opacity calc(var(--default-transition-duration) * 1.75) var(--ease-out-expo),
+    content-visibility calc(var(--default-transition-duration) * 1.75) allow-discrete;
 }
 .term-tools[open]::details-content,
 .term-call[open]::details-content {
   block-size: auto;
   opacity: 1;
+  /* Opening: a spring that runs a few percent past the height and settles
+     back, the small bounce. Declared on the open state, so it is the opening's
+     curve; the closed state above carries the closing's. */
+  transition:
+    block-size calc(var(--default-transition-duration) * 2.5)
+      linear(0, 0.21 7%, 0.57 16%, 0.86 27%, 1.03 38%, 1.07 46%, 1.05 55%, 1.01 67%, 0.995 80%, 1),
+    opacity var(--default-transition-duration) var(--ease-out-expo),
+    content-visibility calc(var(--default-transition-duration) * 2.5) allow-discrete;
 }
 .term-tools-row,
 .term-call-row {
@@ -4701,6 +5564,16 @@ details[open] > .chat-tool-row .chat-tool-chevron,
   margin: calc(var(--spacing) * 0.5) 0 calc(var(--spacing) * 1) calc(var(--chat-glyph) / 2 - 0.5px);
   padding-left: calc(var(--chat-glyph) / 2 + var(--spacing) * 2);
   border-left: thin solid var(--border-subtle-color);
+}
+/* The hairline fades in over the whole stagger rather than being uncovered
+   by the height as it opens, which read as a line drawing itself down. */
+.term-tools[open] > .term-tools-body {
+  animation: term-hairline-in calc(var(--default-transition-duration) * 3) var(--ease-out-expo);
+}
+@keyframes term-hairline-in {
+  from {
+    border-left-color: transparent;
+  }
 }
 .term-call-icon {
   flex-shrink: 0;
@@ -4811,7 +5684,9 @@ details[open] > .chat-tool-row .chat-tool-chevron,
   transition: border-color var(--default-transition-duration);
 }
 .term-prompt:focus-within {
-  border-color: var(--text-tertiary);
+  /* Focus darkens the two rules only a step: the field is focused nearly
+     all the time, and full tertiary ink made them the heaviest lines on screen. */
+  border-color: color-mix(in oklch, var(--text-tertiary) 35%, transparent);
 }
 .term-prompt[data-dragging='true'] {
   border-color: var(--color-accent);
@@ -4821,7 +5696,7 @@ details[open] > .chat-tool-row .chat-tool-chevron,
   padding-top: calc(var(--spacing) * 1.25);
   font-size: var(--text-sm);
   line-height: 1.5;
-  color: var(--text-primary);
+  color: var(--term-ink);
 }
 .term-prompt textarea {
   flex: 1;
@@ -4836,7 +5711,7 @@ details[open] > .chat-tool-row .chat-tool-chevron,
   font: inherit;
   font-size: var(--text-sm);
   line-height: 1.5;
-  color: var(--text-primary);
+  color: var(--term-ink);
   field-sizing: content;
   overflow-y: auto;
 }
@@ -4863,6 +5738,27 @@ details[open] > .chat-tool-row .chat-tool-chevron,
   color: var(--text-secondary);
   white-space: nowrap;
 }
+/* Every item keeps its width: one that could shrink let its text spill over
+   its neighbours (the account's "79% left" over the pin and attach buttons)
+   without the row ever counting as too wide, so useFitRow dropped nothing. */
+.term-status > *,
+.term-status > .term-fit > * {
+  flex-shrink: 0;
+}
+/* An item the row dropped for room (useFitRow in fit.ts). */
+.term-status [data-fit-hidden] {
+  display: none;
+}
+/* A wrapper the row can drop, with no box of its own. */
+.term-fit {
+  display: contents;
+}
+/* The effort and the mode follow the model as one run of chips: their own
+   padding already spaces them, so they give back the row's gap. With the gap
+   on top, the space before the mode read twice the space before the effort. */
+.term-status .term-chip-next {
+  margin-left: calc(var(--spacing) * -3);
+}
 .term-status .chat-composer-tool[data-active] {
   color: var(--color-accent);
 }
@@ -4871,6 +5767,9 @@ details[open] > .chat-tool-row .chat-tool-chevron,
   align-items: center;
   gap: var(--spacing);
   margin-left: auto;
+  /* Never squeezed: the row drops its other items to keep these two. Its
+     overflow: hidden would otherwise let it shrink to nothing first. */
+  flex-shrink: 0;
   overflow: hidden;
   text-overflow: ellipsis;
 }
@@ -5025,44 +5924,47 @@ details[open] > .chat-tool-row .chat-tool-chevron,
 /* The subagents, stacked under the status line while they run. Each row
    folds open as its agent starts and shut as it ends (a grid track going
    from 0fr to 1fr), and the stack's own rule and room go with its last row. */
-.term-agents {
+/* The work running now (WorkCards): one card per subagent and per command
+   left running, under the composer of both views. A card is its drawing
+   and two lines of text; the drawing breathes while the work goes on and
+   stills once an agent has been quiet a minute. A card folds open as its
+   work starts and folds shut as it ends, so the strip is held for the
+   length of the fold after a card has gone; the strip folds away with its
+   last card. Clicking a card opens the window onto its work. */
+.work-cards {
   display: grid;
   grid-template-rows: 1fr;
   margin-top: calc(var(--spacing) * 2);
-  padding-top: calc(var(--spacing) * 2);
-  border-top: thin dashed var(--border-subtle-color);
   font-size: var(--text-xs);
   transition:
     grid-template-rows calc(var(--default-transition-duration) * 2) var(--ease-out-expo),
     margin-top calc(var(--default-transition-duration) * 2) var(--ease-out-expo),
-    padding-top calc(var(--default-transition-duration) * 2) var(--ease-out-expo),
-    border-color calc(var(--default-transition-duration) * 2) var(--ease-out-expo),
     opacity calc(var(--default-transition-duration) * 2) var(--ease-out-expo);
   @starting-style {
     grid-template-rows: 0fr;
     margin-top: 0;
-    padding-top: 0;
-    border-color: transparent;
     opacity: 0;
   }
 }
-.term-agents[data-empty] {
+.work-cards[data-empty] {
   grid-template-rows: 0fr;
   margin-top: 0;
-  padding-top: 0;
-  border-color: transparent;
   opacity: 0;
 }
-.term-agents-list {
+.work-cards-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: calc(var(--spacing) * 2);
   min-height: 0;
   overflow: hidden;
   margin: 0;
-  padding: 0 calc(var(--spacing) * 2);
+  padding: 0;
   list-style: none;
 }
-.term-agent {
+.work-card {
   display: grid;
   grid-template-rows: 1fr;
+  inline-size: min(18rem, 100%);
   opacity: 1;
   transition:
     grid-template-rows calc(var(--default-transition-duration) * 2) var(--ease-out-expo),
@@ -5072,58 +5974,105 @@ details[open] > .chat-tool-row .chat-tool-chevron,
     opacity: 0;
   }
 }
-.term-agent[data-leaving] {
+.work-card[data-leaving] {
   grid-template-rows: 0fr;
   opacity: 0;
 }
-.term-agent-row {
+.work-card-row {
+  position: relative;
   display: flex;
-  align-items: baseline;
-  gap: calc(var(--spacing) * 2);
-  min-width: 0;
+  align-items: stretch;
   min-height: 0;
   overflow: hidden;
-  padding: calc(var(--spacing) / 4) 0;
-  white-space: nowrap;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background-color: var(--surface-0);
+  transition: border-color var(--default-transition-duration) var(--ease-out-expo);
 }
-.term-agent-dot {
-  position: relative;
-  flex-shrink: 0;
-  align-self: center;
-  inline-size: calc(var(--spacing) * 1.5);
-  block-size: calc(var(--spacing) * 1.5);
-  border-radius: var(--radius-full);
-  background-color: var(--color-status-working);
-  animation: pulse-dot calc(var(--default-transition-duration) * 10) ease-in-out infinite;
+.work-card-row:hover {
+  border-color: color-mix(in oklab, var(--text-primary) 24%, var(--color-border));
 }
-.term-agent[data-background] .term-agent-dot {
-  background-color: var(--color-term-mode);
+/* The card's face is the button that opens the window onto its work; an
+   agent's model chip beside it is its own. */
+/* The face carries the card's inner margin itself, so the whole card is the
+   target, not just its drawing and text; beside a model chip it leaves the
+   chip its end of the card. */
+.work-card-open {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: calc(var(--spacing) * 2);
+  min-width: 0;
+  padding: calc(var(--spacing) * 1.5) calc(var(--spacing) * 2) calc(var(--spacing) * 1.5)
+    calc(var(--spacing) * 1.5);
+  border: 0;
+  border-radius: inherit;
+  background: none;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
 }
-/* Each new step: a ring leaves the dot once. The element is remounted per
-   step, so the one-shot animation is the tick. */
-.term-agent-tick {
+/* The face's target spans the whole card, the margin around the chip too;
+   the chip sits above it and keeps its own menu. */
+.work-card-open::after {
+  content: '';
   position: absolute;
   inset: 0;
   border-radius: inherit;
-  background-color: inherit;
-  animation: term-agent-tick calc(var(--default-transition-duration) * 5) var(--ease-out-expo)
-    forwards;
 }
-@keyframes term-agent-tick {
-  from {
-    opacity: 0.8;
-    scale: 1;
-  }
-  to {
-    opacity: 0;
-    scale: 3;
-  }
+/* An agent's model sits at the end of the card's second line, so the title
+   has the card's whole width: laid over its room in that line
+   (.work-card-model-room), above the face's target, keeping its own menu. */
+.work-card-row > .term-agent-model {
+  position: absolute;
+  z-index: 1;
+  inset-inline-end: calc(var(--spacing) * 2);
+  bottom: calc(var(--spacing) * 1.5);
+  margin: 0;
+  line-height: 1.4;
 }
-/* A minute without a step: the dot stops breathing and dims, and the row
-   says for how long. */
-.term-agent[data-quiet] .term-agent-dot {
+.work-card-model-room {
+  flex-shrink: 0;
+  margin: 0 0 0 auto;
+  padding-inline-start: calc(var(--spacing) * 3);
+  visibility: hidden;
+}
+.work-card-meta > .work-card-model-room::before {
+  content: none;
+}
+.work-card-open:hover .term-agent-description,
+.work-card-open[data-state='open'] .term-agent-description {
+  text-decoration: underline dotted;
+  text-underline-offset: 0.2em;
+}
+.work-drawing {
+  flex-shrink: 0;
+  inline-size: calc(var(--spacing) * 9);
+  block-size: calc(var(--spacing) * 7.5);
+}
+/* The focal dot breathes while the work goes on; a quiet agent's rests. */
+.work-drawing .work-pulse {
+  transform-origin: center;
+  animation: pulse-dot calc(var(--default-transition-duration) * 10) ease-in-out infinite;
+}
+.work-drawing:not([data-working]) .work-pulse {
   animation: none;
-  opacity: 0.4;
+  opacity: 0.45;
+}
+.work-card-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+  line-height: 1.4;
+}
+.work-card-title {
+  display: flex;
+  gap: calc(var(--spacing) * 1.5);
+  min-width: 0;
+  white-space: nowrap;
 }
 .term-agent-type {
   flex-shrink: 0;
@@ -5135,7 +6084,72 @@ details[open] > .chat-tool-row .chat-tool-chevron,
   text-overflow: ellipsis;
   color: var(--text-primary);
 }
-.term-agent-meta {
+.work-card-meta {
+  display: flex;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.work-card-meta > * + *::before {
+  content: '·';
+  padding-inline: calc(var(--spacing) * 1.5);
+}
+.term-agent-quiet {
+  color: var(--color-warning);
+}
+@media (prefers-reduced-motion: reduce) {
+  .work-drawing .work-pulse {
+    animation: none;
+  }
+}
+/* The window onto a subagent: the transcript's own rows, in a box over the
+   stack, the agent's name and figures on a line at its head. The box is
+   the popover's material; the scroller inside takes the height. */
+.term-peek {
+  /* Portaled out of .chat-host: the transcript's measures come along, the
+     glyph size the tool rows' chevrons and icons read in particular. */
+  --chat-column: 100%;
+  --chat-code-size: calc(var(--text-sm) - var(--spacing) / 4);
+  --chat-glyph: calc(var(--spacing) * 3.5);
+  display: flex;
+  flex-direction: column;
+  inline-size: min(40rem, calc(100vw - 2rem));
+  max-block-size: min(60vh, 36rem);
+  padding: 0;
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  line-height: 1.6;
+  color: var(--text-primary);
+}
+.term-peek-frame {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.term-peek-head {
+  display: flex;
+  flex-shrink: 0;
+  align-items: baseline;
+  gap: calc(var(--spacing) * 2);
+  padding: calc(var(--spacing) * 2) calc(var(--spacing) * 3);
+  border-bottom: 1px solid var(--color-border);
+  font-size: var(--text-xs);
+  white-space: nowrap;
+}
+.term-peek-type {
+  flex-shrink: 0;
+  color: var(--color-term-model);
+}
+.term-peek-description {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-primary);
+}
+.term-peek-meta {
   display: inline-flex;
   flex-shrink: 0;
   align-items: baseline;
@@ -5143,12 +6157,41 @@ details[open] > .chat-tool-row .chat-tool-chevron,
   color: var(--text-tertiary);
   font-variant-numeric: tabular-nums;
 }
-.term-agent-meta > * + *::before {
+.term-peek-meta > * + *::before {
   content: '·';
   padding-inline: calc(var(--spacing) * 1.5);
 }
-.term-agent-quiet {
-  color: var(--color-warning);
+.term-peek-scroll {
+  min-height: 0;
+  padding: calc(var(--spacing) * 3);
+}
+.term-peek-empty {
+  margin: 0;
+  padding: calc(var(--spacing) * 2) 0;
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+}
+/* The command's full line under the shell window's head, and its output. */
+.term-peek-command {
+  display: block;
+  flex-shrink: 0;
+  overflow: hidden;
+  padding: calc(var(--spacing) * 1.5) calc(var(--spacing) * 3);
+  border-bottom: 1px solid var(--color-border);
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.term-shell-output {
+  margin: 0;
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 /* The model a subagent runs on: a chip opening the relaunch menu when the
    agent can be stopped on its own, plain words when it cannot. */
@@ -5197,14 +6240,19 @@ button.term-agent-model:focus-visible {
     }
   }
   .chat-jump-end,
-  details[open] > .chat-tool-items,
   details[open] > .chat-tool-item[data-lone],
   details[open] > .chat-tool-panel {
     animation-name: scrim-in;
   }
+  details[open] > .chat-tool-items > .chat-tool-item,
+  .term-tools[open] > .term-tools-body > .term-call,
+  .term-tools[open] > .term-tools-body {
+    animation: none;
+  }
   .chat-turn-copy[data-copied='true'] svg,
   .chat-send svg,
-  .term-agent-dot {
+  .term-agent-dot,
+  .term-agent-icon {
     animation: none;
     transition-property: opacity;
   }
@@ -5212,4 +6260,314 @@ button.term-agent-model:focus-visible {
   .chat-send[data-kind='stop'] svg[data-glyph='send'] {
     scale: none;
   }
+}
+
+/* ── Routines (ADR 0004) ──
+   A routine's toolbar button and its floating panel. The button is the
+   routine's own icon in its colour, and one signal at a time sits on its
+   corner, drawn with the sidebar's own status glyphs (`RunGlyph`, the same
+   set `SessionStatus` draws): the eight-segment spinner while a run is in
+   flight, then a check, a warning, a question or a cross while the last run
+   is unseen. Motion means working, colour means "go look"; nothing pulses
+   (Romain, 6 November 2026). */
+.routine-glyph[data-tone='running'] {
+  color: var(--color-status-working);
+}
+.routine-glyph[data-tone='ok'] {
+  color: var(--color-status-ready);
+}
+.routine-glyph[data-tone='waiting'],
+.routine-glyph[data-tone='attention'] {
+  color: var(--color-status-waiting);
+}
+.routine-glyph[data-tone='failed'],
+.routine-glyph[data-tone='invalid'] {
+  color: var(--color-destructive);
+}
+.routine-glyph[data-tone='seen'] {
+  opacity: 0.45;
+}
+/* The state view's centrepiece: the same glyph at a heading's size. */
+.routine-glyph[data-size='lg'] {
+  width: calc(var(--spacing) * 6);
+  height: calc(var(--spacing) * 6);
+}
+.routine-glyph[data-size='lg'] > .sidebar-tab-spinner {
+  width: 100%;
+  height: 100%;
+}
+/* On the toolbar icon's corner: a small glyph on a disc of the bar's ground,
+   so it reads over the icon's strokes. */
+.routine-glyph[data-size='badge'] {
+  position: absolute;
+  right: calc(var(--spacing) * 0.25);
+  bottom: calc(var(--spacing) * 0.25);
+  width: calc(var(--spacing) * 2.75);
+  height: calc(var(--spacing) * 2.75);
+  border-radius: 9999px;
+  background-color: var(--surface-0);
+  box-shadow: 0 0 0 1px var(--surface-0);
+}
+.routine-glyph[data-size='badge'] > svg {
+  width: 100%;
+  height: 100%;
+  stroke-width: 2.25;
+}
+.routine-glyph[data-size='badge'] > .sidebar-tab-spinner {
+  width: 100%;
+  height: 100%;
+}
+/* The panel's state view (a run in flight, a run waiting, no run yet): the
+   chat's empty-state shape, centred in the report area, with the drawing
+   above the words when there is one. */
+.routine-state {
+  margin: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: calc(var(--spacing) * 2);
+  padding: calc(var(--spacing) * 6) calc(var(--spacing) * 5);
+  text-align: center;
+}
+.routine-state .chat-drawing {
+  width: calc(var(--spacing) * 44);
+  max-width: 100%;
+  height: auto;
+  margin-bottom: calc(var(--spacing) * 1);
+}
+.routine-state strong {
+  color: var(--text-primary);
+  font-size: var(--text-sm);
+  font-weight: var(--font-weight-medium);
+}
+.routine-state > span:not(.routine-glyph, .routine-meta, .routine-trouble-title) {
+  max-width: 34ch;
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+  line-height: 1.45;
+}
+.routine-state[data-tone='waiting'] strong {
+  color: var(--color-status-waiting);
+}
+/* The placeholder under the deck's guest until its first paint: the panel's
+   ground and, after a wait, the spinner and the words. It sits UNDER the
+   guest (a guest paints above every DOM sibling anyway) and stays mounted,
+   hidden once the deck shows, so the layer tree never changes under the
+   guest; the guest's own opacity is what reveals the deck. */
+.routine-veil {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  background-color: var(--surface-0);
+}
+/* The veil's words wait: a deck that paints within 700 ms (the popover's
+   rise, the guest's mount, the viewer's answer) shows the panel's ground and
+   then the page, never a flash of "Opening the report"; only a slow viewer
+   earns the spinner and the words, which then fade in. */
+.routine-veil > * {
+  animation: scrim-in 200ms ease-out 700ms both;
+}
+/* The history: menu rows, the tone dot first, the headline, then the time,
+   the duration and the trigger in tabular figures so a column of runs lines
+   up. The same line heads the report card. */
+.routine-meta {
+  flex-shrink: 0;
+  color: var(--text-tertiary);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* The panel: a column the size the routine declares. */
+.routine-panel {
+  outline: none;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+/* The title, in the manner of a menu's head: the routine's icon on a soft
+   tile in its colour, the name, and one quiet line saying when it runs. */
+.routine-head {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--spacing) * 3);
+  padding: calc(var(--spacing) * 3.5) calc(var(--spacing) * 4) calc(var(--spacing) * 2.5);
+}
+.routine-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: calc(var(--control-h-md) + var(--spacing) * 2);
+  height: calc(var(--control-h-md) + var(--spacing) * 2);
+  border-radius: var(--radius-xl);
+  background-color: var(--surface-100);
+}
+.routine-mark > svg {
+  width: calc(var(--spacing) * 5);
+  height: calc(var(--spacing) * 5);
+}
+.routine-head-text {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--spacing) * 0.5);
+  min-width: 0;
+}
+.routine-head-title {
+  color: var(--text-primary);
+  font-size: var(--control-text);
+  font-weight: var(--font-weight-medium);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.routine-head-sub {
+  color: var(--text-tertiary);
+  font-size: var(--control-text-sm);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.routine-head-sub::first-letter {
+  text-transform: uppercase;
+}
+/* One row: the tabs on the left, Run now and the small menu on the right. */
+.routine-nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: calc(var(--spacing) * 2);
+  padding: 0 calc(var(--spacing) * 3) calc(var(--spacing) * 2.5) calc(var(--spacing) * 4);
+  border-bottom: thin solid var(--border-subtle-color);
+}
+.routine-nav-actions {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+/* The small menu under the More button, held inside the panel (a second
+   portal would read as a click outside the popover and close it). */
+.routine-menu {
+  position: absolute;
+  top: calc(100% + var(--spacing));
+  right: 0;
+  z-index: 20;
+  min-width: calc(var(--spacing) * 44);
+  padding: var(--surface-inset);
+}
+/* The stage the bodies cross-fade on: one box, each body filling it, so the
+   one leaving and the one arriving overlap. */
+.routine-stage {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+}
+.routine-body {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+}
+.routine-note {
+  margin: calc(var(--spacing) * 3) calc(var(--spacing) * 4) 0;
+  padding: calc(var(--spacing) * 2.5) calc(var(--spacing) * 3);
+  display: flex;
+  align-items: flex-start;
+  gap: calc(var(--spacing) * 2.5);
+  border-radius: var(--radius-lg);
+  background-color: var(--surface-50);
+  border: 1px solid var(--border-subtle-color);
+  font-size: var(--control-text-sm);
+}
+.routine-note > .routine-glyph {
+  margin-top: 1px;
+}
+.routine-note-text {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--spacing) * 0.5);
+}
+.routine-note-text strong {
+  color: var(--text-primary);
+  font-weight: var(--font-weight-medium);
+}
+.routine-note-text > span {
+  color: var(--text-secondary);
+  line-height: 1.45;
+}
+/* The trouble card: the state view with its drawing, the glyph beside the
+   title, and the raw words folded under Details. */
+.routine-trouble-title {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(var(--spacing) * 1.5);
+}
+/* The exact words the app or the agent gave, kept but quiet: a disclosure,
+   then a small monospace block on the panel's sunken ground, never red. */
+.routine-details {
+  align-self: stretch;
+  max-width: 100%;
+  text-align: left;
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+.routine-details > summary {
+  width: fit-content;
+  cursor: pointer;
+  user-select: none;
+  color: var(--text-tertiary);
+}
+.routine-details > summary:hover {
+  color: var(--text-secondary);
+}
+.routine-details > pre {
+  margin-top: calc(var(--spacing) * 1.5);
+  padding: calc(var(--spacing) * 2) calc(var(--spacing) * 2.5);
+  max-height: calc(var(--spacing) * 40);
+  overflow: auto;
+  border-radius: var(--radius-md);
+  background-color: var(--surface-inset);
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.routine-trouble .routine-details {
+  max-width: 44ch;
+}
+/* The Runs tab: the facts as a quiet two-column list, then the runs. */
+.routine-runs {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: auto;
+}
+.routine-facts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: calc(var(--spacing) * 3) calc(var(--spacing) * 4);
+  margin: 0;
+  padding: calc(var(--spacing) * 4);
+  border-bottom: thin solid var(--border-subtle-color);
+}
+.routine-facts dt {
+  color: var(--text-tertiary);
+  font-size: 11px;
+}
+.routine-facts dd {
+  margin: 2px 0 0;
+  color: var(--text-primary);
+  font-size: var(--control-text-sm);
+  font-variant-numeric: tabular-nums;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.routine-history {
+  margin: 0;
+  padding: calc(var(--spacing) * 2) calc(var(--spacing) * 2);
+  list-style: none;
 }

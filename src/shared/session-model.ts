@@ -30,7 +30,10 @@ export const UserMessageSchema = z.object({
   text: z.string(),
   /** The files the reader attached, as the transcript shows them: names,
    *  paths and how each was delivered — never their bytes. */
-  attachments: AttachmentsSchema.optional()
+  attachments: AttachmentsSchema.optional(),
+  /** A subagent's brief (the prompt its call gave it), named by that call:
+   *  the first line of the subagent's own transcript, never the reader's. */
+  parent: z.string().optional()
 })
 export type UserMessage = z.infer<typeof UserMessageSchema>
 /** What the provider is handed once main has prepared the attachments: the
@@ -102,6 +105,8 @@ export const PermissionModeOptionSchema = z.object({ id: z.string(), label: z.st
 export type PermissionModeOption = z.infer<typeof PermissionModeOptionSchema>
 /** One question an agent asks the reader mid-turn (Claude's AskUserQuestion). */
 export const AgentQuestionSchema = z.object({
+  /** Stable answer key; older providers without IDs use the question text. */
+  id: z.string().min(1).optional(),
   question: z.string(),
   header: z.string().optional(),
   options: z.array(z.object({ label: z.string(), description: z.string().optional() })),
@@ -149,24 +154,56 @@ export const CommandOptionSchema = z.object({
   insert: z.string()
 })
 export type CommandOption = z.infer<typeof CommandOptionSchema>
+/** One control request a view may send a live session's provider: read the
+ *  MCP servers, turn one on or off, reconnect it, start or clear its sign-in,
+ *  reload the plugins. The set is closed on purpose: the provider's control
+ *  channel also changes the permission mode and the like, and none of that
+ *  may pass here. The answer is the provider's own, as it gave it. */
+export const SessionControlSchema = z.discriminatedUnion('type', [
+  z.object({ type: z.literal('mcp_status') }),
+  z.object({ type: z.literal('mcp_toggle'), server: z.string().min(1), enabled: z.boolean() }),
+  z.object({ type: z.literal('mcp_reconnect'), server: z.string().min(1) }),
+  z.object({ type: z.literal('mcp_authenticate'), server: z.string().min(1) }),
+  z.object({ type: z.literal('mcp_clear_auth'), server: z.string().min(1) }),
+  z.object({ type: z.literal('reload_plugins') })
+])
+export type SessionControl = z.infer<typeof SessionControlSchema>
+export const SessionControlResultSchema = z.record(z.string(), z.unknown())
+export type SessionControlResult = z.infer<typeof SessionControlResultSchema>
 export type SessionInput = z.infer<typeof SessionInputSchema>
 /** One piece of work the agent left running past its turn: a background shell,
  *  a background subagent. The turn can be `done` while these still run. */
 export const BackgroundTaskSchema = z.object({
   id: z.string(),
   kind: z.enum(['shell', 'agent', 'other']),
+  /** What a row says: an agent's task, or a shell's title (the call's own
+   *  description, else the command shortened). */
   description: z.string(),
+  /** A shell's full command line, when known, for a tooltip. */
+  command: z.string().optional(),
   /** The tool call that started it, when the provider says. */
   toolUseId: z.string().optional(),
   /** When this host first heard of it (epoch ms), for the elapsed timer. */
   startedAt: z.number(),
   /** Where the provider writes its output, when it says. */
-  outputFile: z.string().optional()
+  outputFile: z.string().optional(),
+  /** The model a background agent runs on, when the provider names it at the
+   *  start (Codex resolves it then); held on the task so a view that binds
+   *  late still reads it off the snapshot. */
+  model: z.string().optional()
 })
 export type BackgroundTask = z.infer<typeof BackgroundTaskSchema>
 export const SessionEventSchema = z.discriminatedUnion('type', [
   UserMessageSchema,
-  z.object({ type: z.literal('assistant_text'), delta: z.string(), final: z.boolean() }),
+  /* `parent` on a message, a text, a call or a result names the call that
+     started the subagent speaking or acting: the event is that subagent's
+     own, for a view of it, and never the conversation's transcript. */
+  z.object({
+    type: z.literal('assistant_text'),
+    delta: z.string(),
+    final: z.boolean(),
+    parent: z.string().optional()
+  }),
   z.object({
     type: z.literal('tool_call'),
     id: z.string(),
@@ -183,7 +220,8 @@ export const SessionEventSchema = z.discriminatedUnion('type', [
     type: z.literal('tool_result'),
     id: z.string(),
     output: z.unknown(),
-    error: z.boolean().optional()
+    error: z.boolean().optional(),
+    parent: z.string().optional()
   }),
   z.object({
     type: z.literal('permission_request'),
@@ -214,6 +252,11 @@ export const SessionEventSchema = z.discriminatedUnion('type', [
      that it was cut short, never a failure. A view mutes the message that
      started it rather than raising an error card over it. */
   z.object({ type: z.literal('turn_interrupted') }),
+  /** The agent no longer waits on this request: the provider withdrew it
+   *  (Claude cancels a control request, Codex resolves a server request on
+   *  its own), or the turn it belonged to ended with it unanswered. A view
+   *  settles its card for good; an answer to it would only be refused. */
+  z.object({ type: z.literal('permission_withdrawn'), id: z.string() }),
   /** How full the conversation's context is (or, with `parent`, a subagent's):
    *  the tokens its last call read and wrote, and the model's window once the
    *  provider has named it. The

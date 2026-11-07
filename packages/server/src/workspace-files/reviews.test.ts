@@ -13,7 +13,8 @@ const request: ReviewRequest = {
   folder: '/w',
   autoCommands: [],
   prompts: ['P'],
-  dangerous: false
+  dangerous: false,
+  routines: []
 }
 const tick = (): Promise<void> => new Promise((r) => setTimeout(r, 0))
 

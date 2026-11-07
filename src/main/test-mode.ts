@@ -25,6 +25,11 @@
  */
 export const TEST_NO_ACTIVATE = process.argv.includes('--test-no-activate')
 
+/** Quota fixtures opt out of the machine login before the first window
+ * mounts. Token accounts still exercise their recording probe adapters. */
+export const TEST_NO_MACHINE_USAGE =
+  TEST_NO_ACTIVATE && process.argv.includes('--test-no-machine-usage')
+
 /** True when the instance runs on a profile of its own (`--user-data-dir`, see
  *  `user-data-override.ts`). The folders that are otherwise the machine's, the
  *  `~/.clave` plugins and skins, follow the profile too, so a dev instance

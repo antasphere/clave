@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import type { PiUsageTotals, UsageError, UsageLimits, UsageWindow } from '../../../preload/index.d'
 import type { Session } from './session-types'
+import { usageWindowsForModel } from '../../../shared/usage-summary'
 import { createUsageResource, type UsageResource } from './usage-resource'
 import { DEFAULT_CLAUDE_PROFILE_ID } from './claude-profile-store'
 import { DEFAULT_CODEX_ACCOUNT_ID } from './codex-account-store'
@@ -224,20 +225,33 @@ export function piTodaySummary(totals: PiUsageTotals): string {
   return `${formatPiTokens(totals.totalTokens)} tokens · $${totals.cost.toFixed(2)} today`
 }
 
-/**
- * The window that is actually going to stop you: the one with the least left,
- * the service's own severity taken first where it disagrees with the raw
- * percentage (it is plan-aware and we are not).
- *
- * This is the auto-detection. Which caps an account has is not ours to know —
- * a session block, a weekly all-models cap, one weekly cap per model, and
- * whatever the service adds next — so nothing here names a window. It reads
- * whatever came back and picks the tightest.
- */
-export function tightestWindow(windows: UsageWindow[]): UsageWindow | null {
+/** Session views use shared caps plus caps for the explicitly known model.
+ * Account-wide views omit the context to keep every reported cap. */
+export function claudeModelWindows(windows: UsageWindow[], model?: string): UsageWindow[] {
+  return usageWindowsForModel(windows, model)
+}
+
+export function claudeUsageForModel(
+  summary: AccountUsageSummary | undefined,
+  model?: string
+): AccountUsageSummary | undefined {
+  if (!summary || summary.status === 'error') return summary
+  const windows = claudeModelWindows(
+    summary.windows ?? (summary.tightest ? [summary.tightest] : []),
+    model
+  )
+  return { ...summary, windows, tightest: tightestWindow(windows) }
+}
+
+/** Select by service severity, then utilization. Without a session context,
+ * consider every reported window for the account overview. */
+export function tightestWindow(
+  windows: UsageWindow[],
+  context?: { model?: string }
+): UsageWindow | null {
   const rank = { normal: 0, warning: 1, critical: 2 }
   let best: UsageWindow | null = null
-  for (const w of windows) {
+  for (const w of context ? claudeModelWindows(windows, context.model) : windows) {
     if (!best) {
       best = w
       continue

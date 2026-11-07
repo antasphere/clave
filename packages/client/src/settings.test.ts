@@ -67,12 +67,31 @@ describe('the typed settings calls', () => {
       ok: false,
       reason: 'invalid-key'
     })
-    expect(await api.settings.workspaces.updateRegistry([], 'w1')).toEqual({ ok: true })
+    expect(await api.settings.workspaces.updateRegistry([], 'w1')).toEqual({
+      ok: true,
+      workspaces: [],
+      pins: [],
+      revision: 1,
+      instance: 'fake-settings'
+    })
     expect(last('workspaces.updateRegistry')).toEqual([[], 'w1'])
     await api.settings.workspaces.updateRegistry([])
     expect(last('workspaces.updateRegistry')).toEqual([[], undefined])
     expect(await api.settings.workspaces.setLastActive('ws1')).toBeUndefined()
     expect(fake.state.lastActiveWorkspaceId).toBe('ws1')
+  })
+
+  it('carries the base stamp of a registry write to the server, which refuses a stale one (#241)', async () => {
+    const { revision, instance } = await api.settings.workspaces.load()
+    expect(
+      await api.settings.workspaces.updateRegistry([], undefined, { revision, instance })
+    ).toMatchObject({ ok: true, revision: revision + 1 })
+    expect(last('workspaces.updateRegistry')).toEqual([[], undefined, { revision, instance }])
+    // The same base again: the registry has moved on since.
+    expect(
+      await api.settings.workspaces.updateRegistry([], undefined, { revision, instance })
+    ).toEqual({ ok: false, reason: 'stale' })
+    expect(fake.state.revision).toBe(revision + 1)
   })
 
   it('upserts a launch profile', async () => {

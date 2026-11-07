@@ -46,7 +46,10 @@ interface World {
   records: Record<string, SessionRecord>
   accounts: Record<'claude' | 'codex', ServedPoolAccount[]>
   selected: Record<'claude' | 'codex', string | undefined>
+  useRecommendedAccount: boolean
   switchMode: 'propose' | 'automatic'
+  /** The chat profile the launcher would open, by `<family>@<workspace>`. */
+  chatDefaults: Record<string, string | undefined>
   pins: PinnedBlueprint[]
   /** The windows that are live, by key. */
   windows: string[]
@@ -77,7 +80,9 @@ function setup(partial: Partial<World> = {}): Harness {
       codex: [{ id: 'default', label: 'Default', usable: true }]
     },
     selected: { claude: undefined, codex: undefined },
+    useRecommendedAccount: false,
     switchMode: 'propose',
+    chatDefaults: {},
     pins: [],
     windows: ['wA', 'wB'],
     parents: {},
@@ -168,9 +173,19 @@ function setup(partial: Partial<World> = {}): Harness {
     sleep: async () => undefined,
     accounts: (provider) => w.accounts[provider],
     selectedAccountId: (provider) => w.selected[provider],
+    useRecommendedAccount: () => w.useRecommendedAccount,
     switchMode: () => w.switchMode,
     launchProfiles: (family) =>
-      family === 'claude' ? [{ id: 'claude-chat', name: 'Claude chat' }] : [],
+      family === 'claude'
+        ? [{ id: 'claude-chat', name: 'Claude chat' }]
+        : family === 'codex'
+          ? [
+              { id: 'codex-chat', name: 'Codex chat' },
+              { id: 'chat:codex:yolo', name: 'yolo codex (chat)' },
+              { id: 'strict', name: 'strict codex' }
+            ]
+          : [],
+    chatDefault: (family, workspaceId) => w.chatDefaults[`${family}@${workspaceId ?? ''}`],
     pins: () => w.pins,
     parentOf: (id) => w.parents[id] ?? null,
     setParent: (child, parent) => {
@@ -349,6 +364,37 @@ describe('who may reach whom', () => {
       'clave_read_session must be called from inside a Clave agent tab — this request has no tab identity.'
     )
   })
+  it('reads its own group’s terminal, not another group’s; sending to it stays refused', async () => {
+    const terminal = (id: string, sessionId: string | null): SidebarGroup['terminals'][number] => ({
+      ...{ id, command: 'npm run dev', commandMode: 'auto' as const, color: 'green' },
+      sessionId
+    })
+    const h = setup({
+      ...world(),
+      layouts: [
+        layout('wA', [
+          group('g', {
+            sessionIds: ['caller'],
+            terminals: [terminal('t1', 'dev'), terminal('t2', null)]
+          }),
+          group('far', { sessionIds: ['stranger'], terminals: [terminal('t3', 'far-dev')] })
+        ])
+      ],
+      sessions: [...world().sessions!, session('dev'), session('far-dev')],
+      records: {
+        ...world().records,
+        dev: record('dev', { claudeMode: false }),
+        'far-dev': record('far-dev', { claudeMode: false })
+      }
+    })
+    expect((await run(h, 'readSession', { sessionId: 'dev' })) as object).toMatchObject({
+      sessionId: 'dev'
+    })
+    await expect(run(h, 'readSession', { sessionId: 'far-dev' })).rejects.toThrow('not related')
+    await expect(run(h, 'sendToSession', { sessionId: 'dev', message: 'hi' })).rejects.toThrow(
+      'Refusing to send to a plain terminal'
+    )
+  })
   it('a tab reaches itself even outside any group', async () => {
     const h = setup({ ...world(), layouts: [layout('wA', [])] })
     expect((await run(h, 'readSession', { sessionId: 'caller' })) as object).toMatchObject({
@@ -371,6 +417,33 @@ describe('who may reach whom', () => {
       'No session with id or name "nobody"'
     )
     h.w.parents = {}
+    await expect(run(h, 'readSession', { sessionId: 'parent' })).rejects.toThrow(
+      'This session has no live parent'
+    )
+  })
+  it('after a restart, reads "parent" and the reach from the records (#259)', async () => {
+    // Main's lineage is memory, empty after a restart; the records still say.
+    const h = setup({
+      ...world(),
+      layouts: [layout('wA', [])],
+      parents: {},
+      records: {
+        caller: record('caller', { spawnedBy: 'parent' }),
+        mate: record('mate'),
+        child: record('child', { spawnedBy: 'caller' }),
+        parent: record('parent'),
+        stranger: record('stranger', { displayName: 'Far away' })
+      }
+    })
+    expect((await run(h, 'readSession', { sessionId: 'parent' })) as object).toMatchObject({
+      sessionId: 'parent'
+    })
+    expect((await run(h, 'readSession', { sessionId: 'child' })) as object).toMatchObject({
+      sessionId: 'child'
+    })
+    await expect(run(h, 'readSession', { sessionId: 'stranger' })).rejects.toThrow('not related')
+    // A parent that is gone stays gone: the record names it, no session answers.
+    h.w.sessions = h.w.sessions.filter((s) => s.id !== 'parent')
     await expect(run(h, 'readSession', { sessionId: 'parent' })).rejects.toThrow(
       'This session has no live parent'
     )
@@ -521,6 +594,19 @@ describe('an account switch', () => {
     },
     windows: ['wA']
   })
+  it('ignores Fable-only exhaustion when an Opus tab switches to any account', async () => {
+    const h = setup({ ...world(), switchMode: 'automatic' })
+    h.w.records.far.model = 'claude-opus-5-5'
+    const windows = [
+      { kind: 'weekly_all', scope: null, usedPercentage: 25, severity: 'normal' },
+      { kind: 'weekly_scoped', scope: 'Fable', usedPercentage: 100, severity: 'critical' }
+    ]
+    h.w.accounts.claude[1] = { ...h.w.accounts.claude[1], usage: { tightest: windows[1], windows } }
+    expect(await run(h, 'switchAccount', { sessionId: 'far', account: 'any' })).toMatchObject({
+      account: { id: 'acc-2' },
+      switched: true
+    })
+  })
   it('refuses what is not an account tab, an unknown account, and a pool with no headroom', async () => {
     const h = setup(world())
     await expect(run(h, 'switchAccount', { sessionId: 't1', account: 'any' })).rejects.toThrow(
@@ -621,11 +707,70 @@ describe('opening a session', () => {
     records: { caller: record('caller', { workspaceId: 'ws1', displayName: 'Lane D' }) },
     selected: { claude: 'acc-2', codex: undefined }
   })
+  it('resolves a duplicated group name in the legacy caller workspace', async () => {
+    const h = setup({
+      records: { caller: record('caller', { cwd: '/two/project' }) },
+      layouts: [
+        layout('wA', [
+          group('a', { name: 'Build', workspaceId: 'ws1' }),
+          group('b', { name: 'Build', workspaceId: 'ws2' })
+        ])
+      ]
+    })
+    await run(h, 'openSession', { cwd: '/outside', mode: 'terminal', groupId: 'Build' })
+    expect(h.argsOf('sidebar.placeSession')[0]).toMatchObject({ groupId: 'b' })
+  })
+  it('keeps a legacy caller in its cwd workspace after its window switches', async () => {
+    const h = setup({ records: { caller: record('caller', { cwd: '/two/project' }) } })
+    await run(h, 'openSession', { cwd: '/outside', mode: 'terminal' })
+    expect(h.argsOf('sessions.start')[0]).toMatchObject({ options: { workspaceId: 'ws2' } })
+  })
+  it('refuses a group and explicit workspace that disagree before starting', async () => {
+    const h = setup({ layouts: [layout('wA', [group('g1', { workspaceId: 'ws1' })])] })
+    await expect(
+      run(h, 'openSession', {
+        cwd: '/project',
+        mode: 'terminal',
+        groupId: 'g1',
+        workspace: 'Two'
+      })
+    ).rejects.toThrow('workspace')
+    expect(h.argsOf('sessions.start')).toHaveLength(0)
+  })
+  it.each(['claude', 'codex'] as const)(
+    'applies the recommended default to implicit %s tool launches only',
+    async (provider) => {
+      const h = setup(world())
+      const summary = (at: number): ServedPoolAccount['usage'] => ({
+        tightest: { kind: 'weekly_all', usedPercentage: 30 },
+        windows: [{ kind: 'weekly_all', usedPercentage: 30, resetsAt: at }]
+      })
+      h.w.accounts[provider] = [
+        { id: 'default', label: 'Default', usable: true, usage: summary(5000) },
+        { id: 'acc-2', label: 'Second', usable: true, usage: summary(1000) }
+      ]
+      h.w.selected[provider] = 'default'
+      const chosen = (): string =>
+        (h.argsOf('sessions.start').at(-1) as { options: Record<string, string> }).options[
+          provider === 'claude' ? 'claudeProfileId' : 'codexAccountId'
+        ]
+      await run(h, 'openSession', { cwd: '/proj', mode: provider })
+      expect(chosen()).toBe('default')
+      h.w.useRecommendedAccount = true
+      await run(h, 'openSession', { cwd: '/proj', mode: provider })
+      expect(chosen()).toBe('acc-2')
+      await run(h, 'openSession', { cwd: '/proj', mode: provider, account: 'default' })
+      expect(chosen()).toBe('default')
+      await run(h, 'openSession', { cwd: '/proj', mode: provider, account: 'any' })
+      expect(chosen()).toBe('acc-2')
+    }
+  )
   it('starts on the pool’s account with the caller’s workspace, names it, places it, links it, records it', async () => {
     const h = setup(world())
     const out = await run(h, 'openSession', {
       cwd: '/proj',
       name: 'Worker',
+      attachToParent: true,
       prompt: 'do it',
       dangerous: true,
       model: 'opus',
@@ -648,7 +793,8 @@ describe('opening a session', () => {
           claudeProfileLabel: 'Second',
           autoExecute: false,
           initialPrompt: 'do it',
-          workspaceId: 'ws1'
+          workspaceId: 'ws1',
+          spawnedBy: 'caller'
         }
       }
     ])
@@ -667,6 +813,69 @@ describe('opening a session', () => {
     ])
     // A window is live: the pane starts the process at its real size.
     expect(h.argsOf('sessions.resize')).toEqual([])
+  })
+  it("opens a chat on the workspace's own chat profile, the one the launcher would", async () => {
+    // The caller sits in ws1, whose Codex chats run on the person's yolo
+    // profile; ws2 has no default of its own. An explicit profile still wins.
+    const h = setup({
+      ...world(),
+      chatDefaults: { 'codex@ws1': 'chat:codex:yolo', 'codex@ws2': 'codex-chat' }
+    })
+    const started = (): Record<string, unknown>[] =>
+      (h.argsOf('sessions.start') as { options: Record<string, unknown> }[]).map(
+        (call) => call.options
+      )
+    await run(h, 'openSession', { cwd: '/proj', mode: 'codex', chat: true })
+    expect(started()[0]).toMatchObject({
+      codexMode: true,
+      dangerousMode: false,
+      launchProfileId: 'chat:codex:yolo',
+      workspaceId: 'ws1'
+    })
+    await run(h, 'openSession', { cwd: '/proj', mode: 'codex', chat: true, workspace: 'ws2' })
+    expect(started()[1]).toMatchObject({ launchProfileId: 'codex-chat', workspaceId: 'ws2' })
+    await run(h, 'openSession', {
+      cwd: '/proj',
+      mode: 'codex',
+      chat: true,
+      profile: 'codex-chat',
+      dangerous: true
+    })
+    expect(started()[2]).toMatchObject({ launchProfileId: 'codex-chat', dangerousMode: true })
+    // A terminal profile beside chat is refused, as before.
+    await expect(
+      run(h, 'openSession', { cwd: '/proj', mode: 'codex', chat: true, profile: 'strict' })
+    ).rejects.toThrow(/drop profile/)
+    // Without chat, the named terminal profile is the one that starts.
+    await run(h, 'openSession', { cwd: '/proj', mode: 'codex', profile: 'strict' })
+    expect(started()[3]).toMatchObject({ launchProfileId: 'strict' })
+  })
+  it.each([undefined, false, true])(
+    'persists sidebar attachment only when attachToParent is true: %s',
+    async (attachToParent) => {
+      const h = setup(world())
+      await run(h, 'openSession', { cwd: '/proj', attachToParent })
+      const options = (h.argsOf('sessions.start')[0] as { options: Record<string, unknown> })
+        .options
+      if (attachToParent === true) expect(options.spawnedBy).toBe('caller')
+      else expect(options).not.toHaveProperty('spawnedBy')
+      // The opener remains reachable for messaging even for a separate sidebar tab.
+      expect(h.argsOf('setParent')).toEqual([['new-1', 'caller']])
+      expect(h.argsOf('captureTabSpawn')).toHaveLength(1)
+    }
+  )
+  it('does not attach a session opened without an authenticated caller', async () => {
+    const h = setup(world())
+    await run(
+      h,
+      'openSession',
+      { cwd: '/proj', attachToParent: true },
+      { callerSessionId: undefined }
+    )
+    expect((h.argsOf('sessions.start')[0] as { options: unknown }).options).not.toHaveProperty(
+      'spawnedBy'
+    )
+    expect(h.argsOf('setParent')).toEqual([])
   })
   it('a group in another window: the tab opens there, in that group’s workspace', async () => {
     const h = setup(world())
@@ -766,6 +975,14 @@ describe('launching a pinned group', () => {
     ],
     records: { caller: record('caller', { workspaceId: 'ws2' }) },
     sessions: [session('caller')]
+  })
+  it('uses a legacy caller cwd to choose between duplicate pinned names', async () => {
+    const h = setup({
+      ...world(),
+      records: { caller: record('caller', { cwd: '/two/project' }) },
+      windows: []
+    })
+    expect(await run(h, 'launchGroup', { group: 'Same' })).toMatchObject({ pinnedId: 'Twin2' })
   })
   it('resolves by id, by name in the caller’s workspace, and refuses what is unknown or ambiguous', async () => {
     const h = setup({ ...world(), windows: [] })

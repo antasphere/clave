@@ -15,9 +15,12 @@ import {
   agentAcceptsPrompt,
   agentSetupToModes,
   parseSetup,
+  getLastAgentSetup,
+  useLaunchPrefsStore,
   DEFAULT_AGENT_SETUP,
   type AgentKind
 } from './launch-prefs'
+import { useAccountPolicyStore } from './account-policy-store'
 
 const KINDS: AgentKind[] = ['claude', 'claude-agents', 'antigravity', 'codex']
 
@@ -104,5 +107,39 @@ describe('parseSetup — what a persisted preference file is allowed to say', ()
 
   it('ignores a non-string account id', () => {
     expect(parseSetup({ kind: 'claude', claudeProfileId: 7 })?.claudeProfileId).toBeUndefined()
+  })
+})
+
+describe('getLastAgentSetup and the recommended account', () => {
+  const remembered = {
+    kind: 'claude' as const,
+    dangerousMode: true,
+    claudeProfileId: 'work',
+    launchProfileId: 'chat'
+  }
+
+  it('replays the remembered account while the setting is off', () => {
+    useLaunchPrefsStore.setState({ byWorkspace: { ws: remembered } })
+    useAccountPolicyStore.setState({ useRecommendedAccount: false })
+    expect(getLastAgentSetup('ws')).toEqual(remembered)
+  })
+
+  it('drops only the account once the setting is on, so the pool picks the recommendation', () => {
+    useLaunchPrefsStore.setState({
+      byWorkspace: {
+        ws: remembered,
+        cx: { kind: 'codex', dangerousMode: false, codexAccountId: 'a' }
+      }
+    })
+    useAccountPolicyStore.setState({ useRecommendedAccount: true })
+    expect(getLastAgentSetup('ws')).toEqual({
+      kind: 'claude',
+      dangerousMode: true,
+      launchProfileId: 'chat'
+    })
+    expect(getLastAgentSetup('cx')).toEqual({ kind: 'codex', dangerousMode: false })
+    // The stored memory is untouched: turning the setting off brings it back.
+    expect(useLaunchPrefsStore.getState().byWorkspace.ws).toEqual(remembered)
+    useAccountPolicyStore.setState({ useRecommendedAccount: false })
   })
 })

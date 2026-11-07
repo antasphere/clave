@@ -50,6 +50,21 @@ describe('planBootAdoption — a record only becomes a tab when it IS one', () =
     expect(plan.toolbar).toEqual([])
   })
 
+  it("a routine's run (ADR 0004) is the server's: discarded live or dead, never a tab, never parked", () => {
+    const routine = (id: string, live: boolean): BootRecordLike => ({
+      id,
+      live,
+      transport: 'events',
+      link: { kind: 'routine', routineKey: '/w/default.clave::Health', runId: 'r1' }
+    })
+    const plan = planBootAdoption([routine('live-run', true), routine('dead-run', false)])
+    expect(plan.discard.map((r) => r.id)).toEqual(['live-run', 'dead-run'])
+    expect(plan.liveTabs).toEqual([])
+    expect(plan.deadTabs).toEqual([])
+    expect(plan.hidden).toEqual([])
+    expect(plan.toolbar).toEqual([])
+  })
+
   it('sorts a real mixed launch', () => {
     const plan = planBootAdoption([
       tab('agent'),
@@ -144,5 +159,14 @@ describe('resolveHiddenOwner — an ownerless hidden half is discarded, never su
 
   it('a toolbar link is never a sidebar owner here', () => {
     expect(resolveHiddenOwner({ kind: 'toolbar', key: 'pin:0' }, state)).toBe('discard')
+  })
+  it('brings a chat back without the prompt, live or not: restoring it starts no agent (PRDCT-3527)', () => {
+    const plan = planBootAdoption([
+      { id: 'chat', transport: 'events' as const },
+      { id: 'shell', transport: 'pty' as const },
+      { id: 'old' }
+    ])
+    expect(plan.liveTabs.map((r) => r.id)).toEqual(['chat'])
+    expect(plan.deadTabs.map((r) => r.id)).toEqual(['shell', 'old'])
   })
 })

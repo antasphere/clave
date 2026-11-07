@@ -1,3 +1,6 @@
+import { FleetRequestHost } from '../fleet/FleetControls'
+import { reportFleetError } from '../../store/fleet-store'
+import { ownerOf, isRemoteKey } from '../../lib/fleet-identity'
 import { emitTabClosed } from '../../lib/exchange-capture'
 import { requestGroupDissolve } from '../../lib/group-dissolve'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -8,13 +11,18 @@ import {
   inActiveWorkspace,
   type GroupTerminalColor
 } from '../../store/session-store'
+import { subagentPresentation } from '../../lib/subagent-presentation'
+import { entryTarget, workPresentation } from '../../lib/work-presentation'
 import { resolveGroupLaunchCwd } from '../../store/group-defaults'
 import { useWorkspaceStore, getWorkspaceById } from '../../store/workspace-store'
 import ColorPicker from '../ui/ColorPicker'
+import type { SessionMenuEvent } from '../session/SubagentMenu'
 import { SessionItem as BaseSessionItem } from '../session/SessionItem'
 import { FileTabItem } from '../session/FileTabItem'
 import { SessionGroupItem } from '../session/SessionGroupItem'
+import { WorkEntryItem } from '../session/WorkEntryItem'
 import { ContextMenu, type ContextMenuItem } from '../ui/ContextMenu'
+import { pluginActionMenuItems } from '../plugins/plugin-actions'
 import { ConfirmDialog } from '@clave/ui/components'
 import { GroupCommandDialog } from '../ui/GroupCommandDialog'
 import { ExportClaveDialog } from '../ui/ExportClaveDialog'
@@ -91,9 +99,10 @@ import {
   GlobeAltIcon
 } from '@heroicons/react/24/outline'
 
-// The height of a tab menu's account header with its usage chart, its
-// separator and the menu's padding (AccountMenuHeader with `chart`).
-const ACCOUNT_HEADER_LIFT = 200
+// The height of a tab menu's account header with its usage bars, its
+// separator and the menu's padding (AccountMenuHeader with `chart`): the
+// account line (~30px) plus one 16px bar row per cap (typically 3–4).
+const ACCOUNT_HEADER_LIFT = 110
 
 interface ContextMenuState {
   x: number
@@ -101,6 +110,8 @@ interface ContextMenuState {
   items: ContextMenuItem[]
   header?: React.ReactNode
   headerLift?: number
+  /** Surface classes: a menu opened from a dialog above z-50 must clear it. */
+  className?: string
 }
 
 function GroupColorPickerHeader({
@@ -298,6 +309,7 @@ export function Sidebar(): React.JSX.Element {
 
   // Handle drop on pinned zone
   const handlePinnedDrop = useCallback((groupId: string) => {
+    if (isRemoteKey(groupId)) return
     const existing = findPinnedByGroupId(groupId)
     if (!existing) {
       pinGroupFromCurrent(groupId)
@@ -600,8 +612,10 @@ export function Sidebar(): React.JSX.Element {
           const session = sessions.find((s) => s.id === item.sessionId)
           return !!session && inActiveWorkspace(session, activeWorkspaceId)
         }
-        // File tabs are lightweight viewers, deliberately global.
-        if (item.type === 'fileTab') return true
+        if (item.type === 'fileTab') {
+          const file = fileTabs.find((f) => f.id === item.fileTabId)
+          return !!file && inActiveWorkspace(file, activeWorkspaceId)
+        }
         if (item.type === 'group') {
           const group = groups.find((g) => g.id === item.groupId)
           // An empty group stays on screen (it draws a "No sessions" row):
@@ -636,13 +650,82 @@ export function Sidebar(): React.JSX.Element {
   // The switcher's filter, applied last so everything above it still sees the whole
   // list. Grouped sessions only: filtering to a group means the loose sessions
   // and the file tabs step aside too.
-  const visibleItems = useMemo(() => {
+  const scopedItems = useMemo(() => {
     if (!displayItems) return null
     if (!activeGroupFilter) return displayItems
     return displayItems.filter(
       (item) => item.type === 'group' && item.groupId === activeGroupFilter
     )
   }, [displayItems, activeGroupFilter])
+
+  const reachableRows = useMemo(() => {
+    const reachable = new Set<string>()
+    for (const item of scopedItems ?? []) {
+      if (item.type === 'session') reachable.add(item.sessionId)
+      if (item.type === 'group') {
+        const group = groups.find((g) => g.id === item.groupId)
+        if (group && !group.collapsed) {
+          for (const id of group.sessionIds) reachable.add(id)
+        }
+      }
+    }
+    for (const id of linkedHiddenIds) reachable.delete(id)
+    return reachable
+  }, [scopedItems, groups, linkedHiddenIds])
+  const workspaceSessions = useMemo(
+    () => sessions.filter((s) => inActiveWorkspace(s, activeWorkspaceId)),
+    [sessions, activeWorkspaceId]
+  )
+  const subagents = useMemo(
+    () => subagentPresentation(workspaceSessions, reachableRows, renamingId),
+    [workspaceSessions, reachableRows, renamingId]
+  )
+  // The wave and lane entries (PRDCT-4123): one row per unit of work, read
+  // from the sessions' own assignments, its members and their agents folded
+  // into it. Never a title, never a move: the search still lists every
+  // session as its own row.
+  const work = useMemo(
+    () => workPresentation(workspaceSessions, reachableRows, subagents.descendants, renamingId),
+    [workspaceSessions, reachableRows, subagents, renamingId]
+  )
+  const sessionsById = useMemo(
+    () => new Map<string, (typeof sessions)[number]>(sessions.map((s) => [s.id, s])),
+    [sessions]
+  )
+  const subagentRootsRef = useRef(subagents.rootById)
+  subagentRootsRef.current = subagents.rootById
+  // Every session an entry stands for (its members and their agents), to the
+  // id the entry is selected and counted by: its holder, else its anchor.
+  const workRepresented = useMemo(() => {
+    const map = new Map<string, string>()
+    for (const entry of work.entryByAnchor.values()) {
+      const target = entryTarget(entry)
+      for (const id of entry.members) map.set(id, target)
+      for (const agent of entry.agents) map.set(agent.id, target)
+    }
+    return map
+  }, [work])
+  const workRepresentedRef = useRef(workRepresented)
+  workRepresentedRef.current = workRepresented
+  const visibleItems = useMemo(
+    () =>
+      scopedItems?.filter(
+        (item) =>
+          item.type !== 'session' ||
+          !(subagents.rootById.has(item.sessionId) || work.folded.has(item.sessionId))
+      ) ?? null,
+    [scopedItems, subagents, work]
+  )
+  const representedSelection = (id: string): boolean => {
+    if (selectedSessionIds.includes(id)) return true
+    if (subagents.descendants.get(id)?.some((s) => selectedSessionIds.includes(s.id))) return true
+    const entry = work.entryByAnchor.get(id)
+    return (
+      !!entry &&
+      (entry.members.some((m) => selectedSessionIds.includes(m)) ||
+        entry.agents.some((a) => selectedSessionIds.includes(a.id)))
+    )
+  }
 
   // Flat ordered list of session/file tab IDs for range selection
   const flatSessionOrder = useMemo(() => {
@@ -651,16 +734,28 @@ export function Sidebar(): React.JSX.Element {
     const order: string[] = []
     for (const item of visibleItems) {
       if (item.type === 'session') {
-        order.push(item.sessionId)
+        const entry = work.entryByAnchor.get(item.sessionId)
+        order.push(entry ? entryTarget(entry) : item.sessionId)
       } else if (item.type === 'fileTab') {
         order.push(item.fileTabId)
       } else {
         const group = groups.find((g) => g.id === item.groupId)
-        if (group) order.push(...group.sessionIds)
+        if (group && !group.collapsed)
+          order.push(
+            ...group.sessionIds
+              .filter(
+                (id) =>
+                  !subagents.rootById.has(id) && !work.folded.has(id) && !linkedHiddenIds.has(id)
+              )
+              .map((id) => {
+                const entry = work.entryByAnchor.get(id)
+                return entry ? entryTarget(entry) : id
+              })
+          )
       }
     }
     return order
-  }, [filteredSessions, visibleItems, sessions, groups])
+  }, [filteredSessions, visibleItems, sessions, groups, subagents, work, linkedHiddenIds])
 
   // Live ref so row-facing handlers can read the current order without listing it
   // as a dependency. Keeping those handlers' identity stable lets the memoized row
@@ -676,6 +771,10 @@ export function Sidebar(): React.JSX.Element {
       try {
         await window.electronAPI.killSession(sessionId)
       } catch {
+        if (isRemoteKey(sessionId)) {
+          reportFleetError(new Error('close failed'))
+          return
+        }
         // session may already be dead
       }
       removeSession(sessionId)
@@ -766,7 +865,7 @@ export function Sidebar(): React.JSX.Element {
 
         const currentState = useSessionStore.getState()
         useSessionStore.setState({
-          sessions: [...currentState.sessions, newSession],
+          sessions: [...currentState.sessions.filter((s) => s.id !== newSession.id), newSession],
           selectedSessionIds: [sessionInfo.id],
           focusedSessionId: sessionInfo.id
         })
@@ -923,26 +1022,30 @@ export function Sidebar(): React.JSX.Element {
           const initialPrompt = session.claudeAgentsMode
             ? undefined
             : session.initialPrompt || undefined
-          const sessionInfo = await window.electronAPI.spawnSession(session.cwd, {
-            claudeMode: dupOtherProvider ? false : session.claudeMode,
-            antigravityMode: session.antigravityMode,
-            codexMode: session.codexMode,
-            piMode: session.piMode,
-            claudeAgentsMode: session.claudeAgentsMode,
-            dangerousMode: session.dangerousMode,
-            model: session.model,
-            launchProfileId: session.launchProfileId,
-            piProvider: session.piProvider,
-            piThinking: session.piThinking,
-            initialPrompt,
-            // The clone runs on its source's account: main reads the token by
-            // this id at spawn, so leaving it out would put the clone on the
-            // machine login while every readout still named the account.
-            ...(dupClaudeKind ? accountSpawnFields(session) : {}),
-            ...(session.codexMode ? codexAccountSessionFields(session) : {}),
-            // A duplicate belongs where its source lives, not to the active view.
-            workspaceId: session.workspaceId
-          })
+          const sessionInfo = await window.electronAPI.fleetStart(
+            ownerOf(session.id),
+            session.cwd,
+            {
+              claudeMode: dupOtherProvider ? false : session.claudeMode,
+              antigravityMode: session.antigravityMode,
+              codexMode: session.codexMode,
+              piMode: session.piMode,
+              claudeAgentsMode: session.claudeAgentsMode,
+              dangerousMode: session.dangerousMode,
+              model: session.model,
+              launchProfileId: session.launchProfileId,
+              piProvider: session.piProvider,
+              piThinking: session.piThinking,
+              initialPrompt,
+              // The clone runs on its source's account: main reads the token by
+              // this id at spawn, so leaving it out would put the clone on the
+              // machine login while every readout still named the account.
+              ...(dupClaudeKind ? accountSpawnFields(session) : {}),
+              ...(session.codexMode ? codexAccountSessionFields(session) : {}),
+              // A duplicate belongs where its source lives, not to the active view.
+              workspaceId: session.workspaceId
+            }
+          )
           addSession({
             id: sessionInfo.id,
             cwd: sessionInfo.cwd,
@@ -1001,7 +1104,7 @@ export function Sidebar(): React.JSX.Element {
         // launch profile still contributes the current command and extra args.
         const isAgents = !!session.claudeAgentsMode
         const isPi = !!session.piMode
-        const sessionInfo = await window.electronAPI.spawnSession(session.cwd, {
+        const sessionInfo = await window.electronAPI.fleetStart(ownerOf(session.id), session.cwd, {
           claudeMode: !isAgents && !isPi,
           claudeAgentsMode: isAgents,
           piMode: isPi,
@@ -1108,7 +1211,7 @@ export function Sidebar(): React.JSX.Element {
   }, [])
 
   const handleSessionContextMenu = useCallback(
-    (e: React.MouseEvent, sessionId: string) => {
+    (e: SessionMenuEvent, sessionId: string) => {
       e.preventDefault()
       const session = useSessionStore.getState().sessions.find((s) => s.id === sessionId)
 
@@ -1136,7 +1239,8 @@ export function Sidebar(): React.JSX.Element {
             onClick: () => {
               if (session.agentId) useAgentStore.getState().clearMessages(session.agentId)
             }
-          }
+          },
+          ...pluginActionMenuItems('session', sessionId)
         ]
         setContextMenu({ x: e.clientX, y: e.clientY, items })
         return
@@ -1200,7 +1304,12 @@ export function Sidebar(): React.JSX.Element {
               label: target.label,
               content: <AccountSwitchRow target={target} />,
               preview: <AccountUsagePreview target={target} />,
-              onClick: () => void switchSessionAccount(sessionId, target.id)
+              onClick: () =>
+                void switchSessionAccount(sessionId, target.id).then((result) => {
+                  // A refused move used to vanish here: the menu closed and
+                  // nothing said why the tab stayed where it was.
+                  if (!result.ok) console.error('Account switch failed:', result.error)
+                })
             }))
           })
         }
@@ -1253,6 +1362,10 @@ export function Sidebar(): React.JSX.Element {
           onClick: () => createGroup(state.selectedSessionIds)
         })
       }
+      // The plugins' entries are the menu's last section, above Delete; the window entries
+      // that arrive a beat later go before them, with the app's own.
+      const pluginItems = pluginActionMenuItems('session', sessionId)
+      items.push(...pluginItems)
       items.push({
         label: 'Delete',
         icon: <TrashIcon className="w-3.5 h-3.5" />,
@@ -1270,7 +1383,14 @@ export function Sidebar(): React.JSX.Element {
           if (extra.length === 0) return
           setContextMenu((current) =>
             current && current.x === x && current.y === y
-              ? { ...current, items: [...items.slice(0, -1), ...extra, items[items.length - 1]] }
+              ? {
+                  ...current,
+                  items: [
+                    ...items.slice(0, -1 - pluginItems.length),
+                    ...extra,
+                    ...items.slice(-1 - pluginItems.length)
+                  ]
+                }
               : current
           )
         })
@@ -1293,6 +1413,7 @@ export function Sidebar(): React.JSX.Element {
       const group = useSessionStore.getState().groups.find((g) => g.id === groupId)
       const currentColor = group?.color ?? null
       const existingPin = findPinnedByGroupId(groupId)
+      const pluginItems = pluginActionMenuItems('group', groupId)
       setContextMenu({
         x: e.clientX,
         y: e.clientY,
@@ -1306,11 +1427,13 @@ export function Sidebar(): React.JSX.Element {
                   onClick: () => resyncPinnedGroup(groupId)
                 }
               : null
-            : {
-                label: 'Pin group',
-                icon: <BookmarkIcon className="w-3.5 h-3.5" />,
-                onClick: () => pinGroupFromCurrent(groupId)
-              },
+            : isRemoteKey(groupId)
+              ? null
+              : {
+                  label: 'Pin group',
+                  icon: <BookmarkIcon className="w-3.5 h-3.5" />,
+                  onClick: () => pinGroupFromCurrent(groupId)
+                },
           {
             label: 'Rename',
             icon: <PencilSquareIcon className="w-3.5 h-3.5" />,
@@ -1346,6 +1469,7 @@ export function Sidebar(): React.JSX.Element {
             icon: <FolderMinusIcon className="w-3.5 h-3.5" />,
             onClick: () => handleUngroup(groupId)
           },
+          ...pluginItems,
           {
             label: 'Delete',
             icon: <TrashIcon className="w-3.5 h-3.5" />,
@@ -1362,9 +1486,9 @@ export function Sidebar(): React.JSX.Element {
             ? {
                 ...current,
                 items: [
-                  ...current.items.slice(0, -1),
+                  ...current.items.slice(0, -1 - pluginItems.length),
                   ...extra,
-                  current.items[current.items.length - 1]
+                  ...current.items.slice(-1 - pluginItems.length)
                 ]
               }
             : current
@@ -1431,7 +1555,12 @@ export function Sidebar(): React.JSX.Element {
 
       if (modifiers.shiftKey) {
         // Range select from anchor
-        const anchorId = selectionAnchorRef.current
+        const anchor = selectionAnchorRef.current
+        const anchorId = anchor
+          ? (workRepresentedRef.current.get(anchor) ??
+            subagentRootsRef.current.get(anchor) ??
+            anchor)
+          : null
         if (!anchorId) {
           selectSession(sessionId, false)
           selectionAnchorRef.current = sessionId
@@ -1548,6 +1677,7 @@ export function Sidebar(): React.JSX.Element {
           it lives in the toolbar now, behind the workspace name.) */}
       <div className="px-2 flex-shrink-0">
         <SessionLauncher onRemoteLaunch={setRemotePickerState} />
+        <FleetRequestHost />
       </div>
 
       {/* Group switcher — pinned under the launcher for the same reason: the way to
@@ -1588,7 +1718,9 @@ export function Sidebar(): React.JSX.Element {
                 gate closed, and the results it had already computed went with
                 it. The gate now hides only the pinned drop zone, which is the
                 one part that has nothing to say about a set of results. */}
-            <SectionHeading title={isSearchMode ? 'Results' : 'Sessions'} />
+            {/* No "Sessions" label over the list — the list is the sidebar's
+                body and needs no title; only a search names what it shows. */}
+            {isSearchMode && <SectionHeading title="Results" />}
             {!isSearchMode && (
               <PinnedSection
                 setContextMenu={setContextMenu}
@@ -1604,7 +1736,11 @@ export function Sidebar(): React.JSX.Element {
               {/* 6px between top-level items: room for the drop line to sit
                   between two cards with air on both sides of it. */}
               <div
-                className="px-2 space-y-1.5"
+                // pt-1.5: the same 6px above the first card as between two
+                // cards. The "Sessions" heading used to hold that room; without
+                // it the first card ran into the seam's hairline. A search
+                // keeps its "Results" heading, which brings its own.
+                className={cn('px-2 space-y-1.5', !isSearchMode && 'pt-1.5')}
                 style={{ '--drop-seam': '6px' } as React.CSSProperties}
               >
                 {filteredSessions ? (
@@ -1618,7 +1754,18 @@ export function Sidebar(): React.JSX.Element {
                         <SessionItem
                           key={session.id}
                           session={session}
-                          isSelected={selectedSessionIds.includes(session.id)}
+                          isSelected={representedSelection(session.id)}
+                          subagents={subagents.descendants.get(session.id)}
+                          onSubagentContextMenu={handleSessionContextMenu}
+                          selectedIds={
+                            subagents.descendants.has(session.id) ? selectedSessionIds : undefined
+                          }
+                          focusedId={
+                            subagents.descendants.has(session.id) ? focusedSessionId : undefined
+                          }
+                          onSelectSubagent={(id) =>
+                            handleSessionClick(id, { metaKey: false, shiftKey: false })
+                          }
                           onClick={(modifiers) => handleSessionClick(session.id, modifiers)}
                           onContextMenu={(e) => handleSessionContextMenu(e, session.id)}
                           forceEditing={renamingId === session.id}
@@ -1717,21 +1864,52 @@ export function Sidebar(): React.JSX.Element {
                       } else if (item.type === 'session') {
                         const session = sessions.find((s) => s.id === item.sessionId)
                         if (!session) return null
+                        const entry = work.entryByAnchor.get(session.id)
                         return (
                           <div key={session.id}>
                             <DropGap active={gapBefore} />
-                            <SessionItem
-                              session={session}
-                              isSelected={selectedSessionIds.includes(session.id)}
-                              dimmed={hasSelection && !selectedSessionIds.includes(session.id)}
-                              onClick={(modifiers) => handleSessionClick(session.id, modifiers)}
-                              onContextMenu={(e) => handleSessionContextMenu(e, session.id)}
-                              forceEditing={renamingId === session.id}
-                              onEditingDone={clearRenaming}
-                              onPointerDown={(e) => handlePointerDown(e, session.id, false)}
-                              isDragging={draggedIds.includes(session.id)}
-                              onDelete={() => setDeleteConfirmSessionId(session.id)}
-                            />
+                            {entry ? (
+                              <WorkEntryItem
+                                entry={entry}
+                                sessionsById={sessionsById}
+                                isSelected={representedSelection(session.id)}
+                                selectedIds={selectedSessionIds}
+                                focusedId={focusedSessionId}
+                                onActivate={(id, modifiers) => handleSessionClick(id, modifiers)}
+                                onSessionContextMenu={handleSessionContextMenu}
+                                dimmed={hasSelection && !representedSelection(session.id)}
+                                onPointerDown={(e) => handlePointerDown(e, session.id, false)}
+                                isDragging={draggedIds.includes(session.id)}
+                              />
+                            ) : (
+                              <SessionItem
+                                session={session}
+                                isSelected={representedSelection(session.id)}
+                                subagents={subagents.descendants.get(session.id)}
+                                onSubagentContextMenu={handleSessionContextMenu}
+                                selectedIds={
+                                  subagents.descendants.has(session.id)
+                                    ? selectedSessionIds
+                                    : undefined
+                                }
+                                focusedId={
+                                  subagents.descendants.has(session.id)
+                                    ? focusedSessionId
+                                    : undefined
+                                }
+                                onSelectSubagent={(id) =>
+                                  handleSessionClick(id, { metaKey: false, shiftKey: false })
+                                }
+                                dimmed={hasSelection && !representedSelection(session.id)}
+                                onClick={(modifiers) => handleSessionClick(session.id, modifiers)}
+                                onContextMenu={(e) => handleSessionContextMenu(e, session.id)}
+                                forceEditing={renamingId === session.id}
+                                onEditingDone={clearRenaming}
+                                onPointerDown={(e) => handlePointerDown(e, session.id, false)}
+                                isDragging={draggedIds.includes(session.id)}
+                                onDelete={() => setDeleteConfirmSessionId(session.id)}
+                              />
+                            )}
                             {isLastItem && (
                               <DropGap
                                 edge="after"
@@ -1751,7 +1929,10 @@ export function Sidebar(): React.JSX.Element {
                           group.sessionIds.length > 0 &&
                           group.sessionIds.every((id) => selectedSessionIds.includes(id))
                         const groupColorHex = resolveColorHex(group.color)
-                        const railEmpty = group.sessionIds.length === 0
+                        const rowIds = group.sessionIds.filter(
+                          (id) => !subagents.rootById.has(id) && !work.folded.has(id)
+                        )
+                        const railEmpty = rowIds.length === 0
                         return (
                           <div key={group.id}>
                             <DropGap active={gapBefore} />
@@ -1848,15 +2029,18 @@ export function Sidebar(): React.JSX.Element {
                                     // reads this to ignore them (use-sidebar-dnd).
                                     data-group-collapsed={group.collapsed ? 'true' : undefined}
                                   >
-                                    {group.sessionIds.map((sid, sIdx) => {
-                                      const prevSid = sIdx > 0 ? group.sessionIds[sIdx - 1] : null
-                                      const isLastInGroup = sIdx === group.sessionIds.length - 1
+                                    {rowIds.map((sid, sIdx) => {
+                                      const prevSid = sIdx > 0 ? rowIds[sIdx - 1] : null
+                                      const isLastInGroup = sIdx === rowIds.length - 1
                                       const childGapBefore =
                                         isDragging &&
                                         shouldShowGapBefore(dropIndicator, sid, prevSid)
 
                                       // Check if this is a file tab
-                                      const fileTab = fileTabs.find((f) => f.id === sid)
+                                      const fileTab = fileTabs.find(
+                                        (f) =>
+                                          f.id === sid && inActiveWorkspace(f, activeWorkspaceId)
+                                      )
                                       if (fileTab) {
                                         return (
                                           <div key={fileTab.id}>
@@ -1898,33 +2082,75 @@ export function Sidebar(): React.JSX.Element {
                                       }
                                       const session = sessions.find((s) => s.id === sid)
                                       if (!session) return null
+                                      const entry = work.entryByAnchor.get(session.id)
                                       return (
                                         <div key={session.id}>
                                           <DropGap active={childGapBefore} />
-                                          <SessionItem
-                                            session={session}
-                                            isSelected={selectedSessionIds.includes(session.id)}
-                                            dimmed={
-                                              hasSelection &&
-                                              !selectedSessionIds.includes(session.id)
-                                            }
-                                            onClick={(modifiers) =>
-                                              handleSessionClick(session.id, modifiers)
-                                            }
-                                            onContextMenu={(e) =>
-                                              handleSessionContextMenu(e, session.id)
-                                            }
-                                            grouped
-                                            groupSelected={allGroupSelected}
-                                            groupColorHex={groupColorHex}
-                                            forceEditing={renamingId === session.id}
-                                            onEditingDone={clearRenaming}
-                                            onPointerDown={(e) =>
-                                              handlePointerDown(e, session.id, false)
-                                            }
-                                            isDragging={draggedIds.includes(session.id)}
-                                            onDelete={() => setDeleteConfirmSessionId(session.id)}
-                                          />
+                                          {entry ? (
+                                            <WorkEntryItem
+                                              entry={entry}
+                                              sessionsById={sessionsById}
+                                              isSelected={representedSelection(session.id)}
+                                              selectedIds={selectedSessionIds}
+                                              focusedId={focusedSessionId}
+                                              onActivate={(id, modifiers) =>
+                                                handleSessionClick(id, modifiers)
+                                              }
+                                              onSessionContextMenu={handleSessionContextMenu}
+                                              dimmed={
+                                                hasSelection && !representedSelection(session.id)
+                                              }
+                                              grouped
+                                              groupSelected={allGroupSelected}
+                                              groupColorHex={groupColorHex}
+                                              onPointerDown={(e) =>
+                                                handlePointerDown(e, session.id, false)
+                                              }
+                                              isDragging={draggedIds.includes(session.id)}
+                                            />
+                                          ) : (
+                                            <SessionItem
+                                              session={session}
+                                              isSelected={representedSelection(session.id)}
+                                              subagents={subagents.descendants.get(session.id)}
+                                              onSubagentContextMenu={handleSessionContextMenu}
+                                              selectedIds={
+                                                subagents.descendants.has(session.id)
+                                                  ? selectedSessionIds
+                                                  : undefined
+                                              }
+                                              focusedId={
+                                                subagents.descendants.has(session.id)
+                                                  ? focusedSessionId
+                                                  : undefined
+                                              }
+                                              onSelectSubagent={(id) =>
+                                                handleSessionClick(id, {
+                                                  metaKey: false,
+                                                  shiftKey: false
+                                                })
+                                              }
+                                              dimmed={
+                                                hasSelection && !representedSelection(session.id)
+                                              }
+                                              onClick={(modifiers) =>
+                                                handleSessionClick(session.id, modifiers)
+                                              }
+                                              onContextMenu={(e) =>
+                                                handleSessionContextMenu(e, session.id)
+                                              }
+                                              grouped
+                                              groupSelected={allGroupSelected}
+                                              groupColorHex={groupColorHex}
+                                              forceEditing={renamingId === session.id}
+                                              onEditingDone={clearRenaming}
+                                              onPointerDown={(e) =>
+                                                handlePointerDown(e, session.id, false)
+                                              }
+                                              isDragging={draggedIds.includes(session.id)}
+                                              onDelete={() => setDeleteConfirmSessionId(session.id)}
+                                            />
+                                          )}
                                           {isLastInGroup && (
                                             <DropGap
                                               edge="after"
@@ -1951,7 +2177,11 @@ export function Sidebar(): React.JSX.Element {
                                         data-sidebar-drop-zone="group-end"
                                         data-group-id={group.id}
                                       >
-                                        No sessions
+                                        {group.sessionIds.length
+                                          ? group.sessionIds.some((id) => work.folded.has(id))
+                                            ? 'Shown with their wave or lane'
+                                            : 'Subagents shown with their parent'
+                                          : 'No sessions'}
                                       </div>
                                     )}
                                     {/* The foot of the rail: while dragging, the
@@ -2030,6 +2260,7 @@ export function Sidebar(): React.JSX.Element {
           onClose={() => setContextMenu(null)}
           header={contextMenu.header}
           headerLift={contextMenu.headerLift}
+          className={contextMenu.className}
         />
       )}
 
@@ -2198,6 +2429,8 @@ function PinnedSection({
       setContextMenu({
         x: e.clientX,
         y: e.clientY,
+        // Opened from the group picker (z-60): sit above it, or the menu is hidden.
+        className: 'z-[70]',
         items: [
           {
             label: 'Rename',

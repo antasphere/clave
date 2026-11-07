@@ -29,6 +29,7 @@ import {
 import { ChatCode } from './code'
 import { useDisclosure } from './disclosure'
 import { KIND_ICONS } from './tool-icons'
+import { useMarkPack } from '../../../src/renderer/src/components/plugins/native-marks'
 
 const stringify = (value: unknown): string => (typeof value === 'string' ? value : safeJson(value))
 
@@ -36,6 +37,15 @@ const stringify = (value: unknown): string => (typeof value === 'string' ? value
  *  still running (a spinner) or failed (the warning), which the reader needs
  *  more than the kind. It carries the status label either way. */
 function RowIcon({ kind, status }: { kind: ToolKind; status: GroupStatus }): React.JSX.Element {
+  // Appearance → Agent mark: a pack with a tool slot draws the running call
+  // (its kind's mark, moving) in place of the spinner.
+  const pack = useMarkPack()
+  if (status === 'running' && pack?.Tool)
+    return (
+      <span className="chat-tool-status" data-running="true" data-mark="pack">
+        <pack.Tool kind={kind} running />
+      </span>
+    )
   if (status === 'running')
     return <ArrowPathIcon className="chat-tool-status" data-running="true" aria-label="Running" />
   if (status === 'failed')

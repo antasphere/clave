@@ -38,7 +38,7 @@ function applyIgnored(nodes: TreeNode[], ignoredSet: Set<string>): TreeNode[] {
 async function resolveIgnored(rootCwd: string, nodes: TreeNode[]): Promise<Set<string>> {
   const paths = nodes.map((n) => n.path)
   if (paths.length === 0) return new Set()
-  const ignored = await window.electronAPI?.gitCheckIgnored(rootCwd, paths)
+  const ignored = await window.electronAPI?.gitCheckIgnored(rootCwd, paths).catch(() => [])
   return new Set(ignored ?? [])
 }
 
@@ -79,7 +79,7 @@ async function enrichWithIgnored(
   const paths = nodes.map((n) => n.path)
   if (paths.length === 0) return
 
-  const ignoredPaths = await window.electronAPI?.gitCheckIgnored(rootCwd, paths)
+  const ignoredPaths = await window.electronAPI?.gitCheckIgnored(rootCwd, paths).catch(() => [])
   if (!ignoredPaths || ignoredPaths.length === 0) return
 
   const ignoredSet = new Set(ignoredPaths)

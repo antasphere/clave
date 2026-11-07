@@ -2,16 +2,21 @@ import { describe, expect, it } from 'vitest'
 import { Either, Schema } from 'effect'
 import { z } from 'zod'
 import {
+  SessionControlSchema as ZodSessionControl,
   SessionSchema as ZodSession,
   SessionEventSchema as ZodSessionEvent,
   SessionInputSchema as ZodSessionInput
 } from '../../../src/shared/session-model'
 import {
   Attachments,
+  RestartSession,
+  RestartRequestId,
   GetSessionHistory,
   Session,
+  SessionControl,
   SessionEvent,
   SessionInfo,
+  SessionRecord,
   SessionInput,
   SessionStream,
   SessionWrite,
@@ -19,6 +24,21 @@ import {
 } from './sessions'
 import { CapabilityUnavailable } from './errors'
 import { ServerEvent } from './events'
+
+/** A whole valid work assignment (PRDCT-4123), as a record keeps it. */
+const work = {
+  unit: 'stable-wave/lane-a',
+  kind: 'lane',
+  label: 'Stable wave lanes',
+  wave: 'stable-wave',
+  waveLabel: 'Stable waves',
+  role: 'lead',
+  task: 'the plumbing',
+  standing: 'current',
+  joinedAt: 1,
+  since: 2,
+  from: '6f1c2c8e-1b9a-4d6e-9b1a-2f3c4d5e6f70'
+}
 
 const decode = <A, I>(schema: Schema.Schema<A, I>, input: unknown): Either.Either<A, string> =>
   Either.mapLeft(Schema.decodeUnknownEither(schema)(input), (e) => e.message)
@@ -53,6 +73,37 @@ const inputs: unknown[] = [
       }
     ]
   },
+  {
+    type: 'user_message',
+    text: 'list [Folder #1]',
+    attachments: [
+      {
+        id: 'f',
+        label: 'Folder #1',
+        path: '/work/src',
+        name: 'src',
+        mimeType: 'inode/directory',
+        size: 0,
+        entries: 12,
+        delivery: 'folder'
+      }
+    ]
+  },
+  {
+    type: 'user_message',
+    text: 'finish when [Session #1] is done',
+    attachments: [
+      {
+        id: 'b',
+        label: 'Session #1',
+        delivery: 'session',
+        sessionId: 'sess-1',
+        name: 'Lane A',
+        agent: 'Claude Code',
+        cwd: '/work/a'
+      }
+    ]
+  },
   { type: 'permission_response', id: 'p1', optionId: 'allow-once' },
   { type: 'permission_response', id: 'p1', optionId: 'answer', answers: { q: 'yes' } },
   { type: 'interrupt' },
@@ -84,6 +135,7 @@ const events: unknown[] = [
   { type: 'effort', effort: null },
   { type: 'error', message: 'boom', fatal: false },
   { type: 'turn_interrupted' },
+  { type: 'permission_withdrawn', id: 'p' },
   { type: 'context_usage', used: 10, window: 200, parent: 'p' },
   { type: 'subagent_model', parent: 'p', model: 'sonnet' },
   { type: 'permission_mode', mode: 'default', modes: [{ id: 'default', label: 'Default' }] },
@@ -125,6 +177,30 @@ describe('the ported session model agrees with the zod one', () => {
     )
     expect([...ours].sort()).toEqual([...zodTypes].sort())
   })
+  it.each(
+    [
+      { type: 'mcp_status' },
+      { type: 'mcp_toggle', server: 'github', enabled: false },
+      { type: 'mcp_reconnect', server: 'github' },
+      { type: 'mcp_authenticate', server: 'github' },
+      { type: 'mcp_clear_auth', server: 'github' },
+      { type: 'reload_plugins' }
+    ].map((request) => [JSON.stringify(request), request])
+  )('accepts control request %s', (_, request) => {
+    expect(ZodSessionControl.safeParse(request).success).toBe(true)
+    expect(decode(SessionControl, request)).toEqual(Either.right(request))
+  })
+  it.each(
+    [
+      { type: 'set_permission_mode', mode: 'x' },
+      { type: 'mcp_reconnect', server: '' },
+      { type: 'mcp_toggle', server: '', enabled: true },
+      { type: 'mcp_toggle', server: 'github' }
+    ].map((request) => [JSON.stringify(request), request])
+  )('refuses control request %s on both sides', (_, request) => {
+    expect(ZodSessionControl.safeParse(request).success).toBe(false)
+    expect(Either.isLeft(decode(SessionControl, request))).toBe(true)
+  })
   it('refuses more than ten attachments, as the renderer does', () => {
     const one = {
       id: 'a',
@@ -140,6 +216,25 @@ describe('the ported session model agrees with the zod one', () => {
 })
 
 describe('the session stream on the wire', () => {
+  it('preserves stable question IDs and identical display text through both event schemas', () => {
+    const event = {
+      type: 'permission_request',
+      id: 'native',
+      description: 'Two questions',
+      options: [{ id: 'answer', label: 'Submit' }],
+      questions: [
+        { id: 'first-id', question: 'Value?', header: 'Public', options: [] },
+        { id: 'second-id', question: 'Value?', header: 'Private', options: [] }
+      ]
+    }
+    expect(ZodSessionEvent.parse(event)).toEqual(event)
+    expect(Schema.decodeUnknownSync(SessionEvent)(event)).toEqual(event)
+    expect(
+      Schema.encodeSync(SessionStream)(
+        Schema.decodeUnknownSync(SessionStream)({ kind: 'event', event })
+      )
+    ).toEqual({ kind: 'event', event })
+  })
   it('carries terminal bytes as base64 and gives them back as bytes', () => {
     const bytes = new Uint8Array([0x1b, 0x5b, 0x48, 0xc3, 0xa9])
     const encoded = Schema.encodeSync(SessionStream)({ kind: 'pty', data: bytes })
@@ -182,6 +277,15 @@ describe('starting a session on the wire', () => {
     claudeSessionId: 'c1',
     piSessionId: 'p1',
     launchProfileId: 'lp1',
+    launchProfile: {
+      id: 'lp1',
+      name: 'Mac profile',
+      family: 'pi',
+      command: ['pi-wrapper', 'pi'],
+      additionalArgs: ['--color'],
+      sourceProfileId: 'lp1',
+      pi: { provider: 'anthropic', model: 'sonnet', thinking: 'high' }
+    },
     piProvider: 'anthropic',
     piThinking: 'high',
     initialCommand: 'ls',
@@ -215,6 +319,35 @@ describe('starting a session on the wire', () => {
   )
   it('refuses a link of a kind it does not know', () => {
     expect(Either.isLeft(decode(SpawnOptions, { link: { kind: 'sidebar', key: 'k' } }))).toBe(true)
+  })
+  it('refuses a carried launch profile with an unknown family', () => {
+    expect(
+      Either.isLeft(
+        decode(SpawnOptions, { launchProfile: { ...full.launchProfile, family: 'other' } })
+      )
+    ).toBe(true)
+  })
+  it('round-trips a stopped record with and without a carried launch profile, and with its work', () => {
+    const bare = {
+      id: 'stopped-1',
+      cwd: '/work/app',
+      folderName: 'app',
+      claudeMode: false,
+      antigravityMode: false,
+      codexMode: false,
+      piMode: true,
+      claudeAgentsMode: false,
+      dangerousMode: false
+    }
+    for (const record of [
+      bare,
+      { ...bare, launchProfile: full.launchProfile },
+      { ...bare, work }
+    ]) {
+      expect(decode(SessionRecord, record)).toEqual(Either.right(record))
+      const decoded = Schema.decodeUnknownSync(SessionRecord)(record)
+      expect(Schema.encodeSync(SessionRecord)(decoded)).toEqual(record)
+    }
   })
   it('round-trips the started session’s record, with and without its optional fields', () => {
     const bare = {
@@ -266,12 +399,36 @@ describe('the sessions’ server events', () => {
     { _tag: 'session.title_changed', id: 's1', title: 'Fix the build' },
     { _tag: 'session.plan_detected', id: 's1', path: '/plans/plan.md' },
     { _tag: 'session.cleared', id: 's1', providerSessionId: null },
-    { _tag: 'session.cleared', id: 's1', providerSessionId: 'c2' }
+    { _tag: 'session.cleared', id: 's1', providerSessionId: 'c2' },
+    { _tag: 'session.work_changed', id: 's1', work },
+    { _tag: 'session.work_changed', id: 's1', work: null }
   ]
   it.each(events.map((event) => [JSON.stringify(event), event]))('decodes %s', (_, event) => {
     expect(decode(ServerEvent, event)).toEqual(Either.right(event))
   })
   it('refuses a cleared session without its provider session id', () => {
     expect(Either.isLeft(decode(ServerEvent, { _tag: 'session.cleared', id: 's1' }))).toBe(true)
+  })
+})
+
+describe('restart correlation contract', () => {
+  it('accepts legacy and correlated requests, and bounds correlation identifiers', () => {
+    const payload = { id: 's1', account: {} }
+    expect(Schema.decodeUnknownSync(RestartSession.payload)(payload)).toEqual(payload)
+    expect(
+      Schema.decodeUnknownSync(RestartSession.payload)({ ...payload, requestId: 'request-123' })
+    ).toEqual({ ...payload, requestId: 'request-123' })
+    for (const invalid of ['', 'x'.repeat(129), 'with whitespace', '../path'])
+      expect(Either.isLeft(Schema.decodeUnknownEither(RestartRequestId)(invalid))).toBe(true)
+    for (const requestId of [undefined, 'request-123']) {
+      const event = {
+        _tag: 'session.restarted',
+        id: 's1',
+        resumed: true,
+        account: {},
+        ...(requestId && { requestId })
+      }
+      expect(Schema.decodeUnknownSync(ServerEvent)(event)).toEqual(event)
+    }
   })
 })

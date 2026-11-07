@@ -17,7 +17,7 @@
  * The check is the RESTART on one user-data dir, shaped like the report: two
  * workspaces, the Codex tabs in the one NOT shown. One tab talks once (the
  * stub writes the rollout a real app-server would), one never does. Quit,
- * relaunch, accept the restore prompt, and require both tabs back under
+ * relaunch (no prompt: chats come back without asking), and require both tabs back under
  * their own ids, in their own workspace, as Codex chats: the one that talked
  * resuming its thread, the silent one starting a fresh thread (Codex cannot
  * resume a thread with no rollout).
@@ -206,16 +206,20 @@ export async function run(t) {
       existsSync(recordPath(talked)) && existsSync(recordPath(silent))
     )
 
-    // ── Launch 2: accept the restore prompt ──
+    // ── Launch 2: the chat comes back without asking (PRDCT-3527) ──
     const beforeRestore = requests().length
     launched = await launchApp(DIR, { server: 'in-process', env, settleMs: 3000 })
     app = launched.app
     win = launched.win
-    const restore = win.getByRole('button', { name: 'Restore', exact: true })
-    const prompted = await until(() => restore.isVisible().catch(() => false))
-    t.check('launch 2: the restore prompt is offered', !!prompted)
-    if (!prompted) throw new Error('no restore prompt at launch 2')
-    await restore.click()
+    // Restoring a chat starts nothing (its agent starts when it is opened),
+    // so it comes back with the silent tabs, never behind the prompt.
+    t.check(
+      'launch 2: no restore prompt stands before the chat',
+      !(await win
+        .getByRole('button', { name: 'Restore', exact: true })
+        .isVisible()
+        .catch(() => false))
+    )
 
     const listed = async () =>
       (await callMcp(app, 'list', { workspace: 'all' })).sessions.filter((s) =>

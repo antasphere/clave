@@ -8,6 +8,8 @@ import {
   type LaunchProfilePreferences,
   type LauncherFamily
 } from '../shared/agent-launch'
+import { parseResourceKey } from '@clave/contract/fleet'
+import { isServerWorkspaceId } from '../shared/workspace-types'
 
 import { sessionManager } from './sessions/session-manager'
 import { pluginAdapterProfiles, unavailablePluginAdapter } from './sessions/plugin-adapters'
@@ -114,6 +116,21 @@ function offeredChatProfiles(customProfiles: LaunchProfile[] = []): EventsLaunch
 
 const echoEnabled = process.argv.includes('--dev-echo-adapter')
 
+/** A workspace a default can be kept for: a Mac workspace's own id, or a
+ *  server workspace's key (#241), since the profiles are the Mac's whichever
+ *  machine the workspace lives on. Canonical keys only, within the length
+ *  the preferences file keeps. */
+function validWorkspaceKey(workspaceId: string): boolean {
+  if (/^[A-Za-z0-9_-]{1,200}$/.test(workspaceId)) return true
+  if (!isServerWorkspaceId(workspaceId) || workspaceId.length > 200) return false
+  try {
+    parseResourceKey('workspace', workspaceId)
+    return true
+  } catch {
+    return false
+  }
+}
+
 export class LaunchProfileManager {
   private stored: LaunchProfilePreferences | null = null
 
@@ -208,7 +225,7 @@ export class LaunchProfileManager {
     family: LauncherFamily,
     profileId: string | null
   ): LaunchProfilePreferences {
-    if (!/^[A-Za-z0-9_-]{1,200}$/.test(workspaceId)) throw new Error('Invalid workspace id')
+    if (!validWorkspaceKey(workspaceId)) throw new Error('Invalid workspace id')
     const defaults = { ...(this.preferences.workspaceOverrides[workspaceId] ?? {}) }
     if (profileId) defaults[family] = this.assertProfile(family, profileId).id
     else delete defaults[family]

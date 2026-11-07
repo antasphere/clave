@@ -1,9 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import {
   assertMethodPermission,
+  createPluginAPI,
   isEngineCompatible,
   PluginPermissionError,
-  pluginManifestSchema
+  pluginManifestSchema,
+  type PluginTransport,
+  type RPCMessage
 } from '@clave/plugin-sdk'
 
 const input = {
@@ -29,6 +32,16 @@ const input = {
       }
     ],
     views: [{ id: 'view', renders: ['pty', 'events'] }],
+    marks: [{ id: 'pack', title: 'Pack', slots: ['agent', 'tool'] }],
+    actions: [
+      {
+        id: 'deck',
+        title: 'Make a deck',
+        icon: 'PresentationChartBarIcon',
+        targets: ['session', 'group'],
+        preview: true
+      }
+    ],
     adapters: [
       {
         id: 'adapter',
@@ -158,6 +171,28 @@ describe('plugin manifest v1', () => {
         }
       }).success
     ).toBe(false)
+  })
+  it('accepts an action without preview, and refuses bad targets and duplicate ids', () => {
+    const withActions = (actions: unknown[]): ReturnType<typeof pluginManifestSchema.safeParse> =>
+      pluginManifestSchema.safeParse({ ...input, contributes: { ...input.contributes, actions } })
+    const action = { id: 'deck', title: 'Deck', icon: 'SparklesIcon', targets: ['workspace'] }
+    const parsed = withActions([action])
+    expect(parsed.success).toBe(true)
+    expect(parsed.data?.contributes.actions[0]).toEqual(action)
+    expect(parsed.data?.contributes.actions[0].preview).toBeUndefined()
+    const paths = (actions: unknown[]): string[] =>
+      (withActions(actions).error?.issues ?? []).map((issue) => issue.path.join('.'))
+    expect(paths([{ ...action, targets: ['window'] }])).toContain('contributes.actions.0.targets.0')
+    expect(paths([{ ...action, icon: 'chart-bar' }])).toContain('contributes.actions.0.icon')
+    expect(paths([{ ...action, targets: [] }])).toContain('contributes.actions.0.targets')
+    const duplicate = withActions([{ ...action, targets: ['group', 'group'] }])
+    expect(duplicate.error?.issues).toEqual([
+      expect.objectContaining({
+        path: ['contributes', 'actions', 0, 'targets'],
+        message: 'Duplicate target'
+      })
+    ])
+    expect(paths([action, action])).toContain('contributes.actions.1.id')
   })
   it('rejects duplicate contribution IDs', () => {
     expect(
@@ -339,10 +374,81 @@ describe('plugin host permission boundary', () => {
     expect(() =>
       assertMethodPermission(manifest, ['sessions.read'], 'sessions.focused')
     ).not.toThrow()
+    // An action registration is guarded by the same exact-id rule, with no grant.
+    expect(() =>
+      assertMethodPermission(manifest, [], 'ui.registerAction', { id: 'deck' })
+    ).not.toThrow()
+    expect(() =>
+      assertMethodPermission(manifest, [], 'ui.registerAction', { id: 'command' })
+    ).toThrow('Undeclared contribution')
     expect(() => assertMethodPermission(manifest, [], 'notify')).not.toThrow()
     expect(() => assertMethodPermission(manifest, [], 'log')).not.toThrow()
     expect(() => assertMethodPermission(manifest, [], 'shell.exec')).toThrow(
       'Unknown plugin method'
     )
+  })
+})
+
+describe('plugin bridge actions', () => {
+  /** A transport the test reads (what the plugin posted) and drives (what the host sends). */
+  const fakeTransport = (): {
+    transport: PluginTransport
+    posted: RPCMessage[]
+    send(message: RPCMessage): void
+  } => {
+    const posted: RPCMessage[] = []
+    let listener: ((message: unknown) => void) | null = null
+    return {
+      posted,
+      transport: {
+        postMessage: (message) => {
+          posted.push(message)
+        },
+        subscribe: (next) => {
+          listener = next
+          return () => {
+            listener = null
+          }
+        }
+      },
+      send: (message) => listener?.(message)
+    }
+  }
+  const settle = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0))
+  const target = { kind: 'session', id: 's1', workspaceId: null } as const
+
+  it('registers an action, answers invoke with the handler’s result, preview with [] by default', async () => {
+    const wire = fakeTransport()
+    const { api, dispose } = createPluginAPI(wire.transport)
+    const seen: unknown[] = []
+    const registering = api.ui.registerAction('deck', {
+      invoke: (t) => {
+        seen.push(t)
+        return { page: { url: 'https://decks.example/1', title: 'Deck' } }
+      }
+    })
+    expect(wire.posted[0]).toEqual({
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'ui.registerAction',
+      params: { id: 'deck' }
+    })
+    wire.send({ jsonrpc: '2.0', id: 1, result: null })
+    await registering
+    wire.send({ jsonrpc: '2.0', id: 50, method: 'actions.invoke', params: { id: 'deck', target } })
+    wire.send({ jsonrpc: '2.0', id: 51, method: 'actions.preview', params: { id: 'deck', target } })
+    wire.send({ jsonrpc: '2.0', id: 52, method: 'actions.invoke', params: { id: 'nope', target } })
+    await settle()
+    expect(seen).toEqual([target])
+    expect(wire.posted.slice(1)).toEqual([
+      {
+        jsonrpc: '2.0',
+        id: 50,
+        result: { page: { url: 'https://decks.example/1', title: 'Deck' } }
+      },
+      { jsonrpc: '2.0', id: 51, result: [] },
+      { jsonrpc: '2.0', id: 52, error: { code: -32601, message: 'Action is not registered' } }
+    ])
+    dispose()
   })
 })

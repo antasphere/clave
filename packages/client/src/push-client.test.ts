@@ -336,6 +336,59 @@ describe('the push client with fake time and a fake socket', () => {
       vi.useRealTimers()
     }
   })
+
+  // Round 8 of #241's verification: a server's workspace list is taken from
+  // its live socket only, so a frame from a socket the client replaced (a
+  // process since restarted) must never reach a listener.
+  it('hands on no frame from a socket it replaced', async () => {
+    vi.useFakeTimers()
+    FakeSocket.instances = []
+    const client = new PushClient({
+      url: 'http://127.0.0.1:1',
+      token: 't',
+      WebSocket: FakeSocket as unknown as PushSocketConstructor,
+      backoff: { baseMs: 1, maxMs: 1 }
+    }).connect()
+    const heard: string[] = []
+    client.onEvent(({ event }) => {
+      if (event._tag === 'workspaces.state_changed') heard.push(event.instance)
+    })
+    const frame = (socket: FakeSocket, value: unknown): void =>
+      socket.onmessage?.({ data: JSON.stringify(value) })
+    const welcome = { _tag: 'welcome', serverId: 'owner', protocol: 1 }
+    const list = (instance: string): unknown => ({
+      _tag: 'event',
+      id: instance,
+      seq: 0,
+      at: 1,
+      event: {
+        _tag: 'workspaces.state_changed',
+        workspaces: [],
+        pins: [],
+        origin: null,
+        revision: 1,
+        instance
+      }
+    })
+    try {
+      const old = FakeSocket.instances[0]
+      old.onopen?.({})
+      frame(old, welcome)
+      frame(old, list('old'))
+      old.onclose?.({ code: 1006, reason: '' })
+      await vi.advanceTimersByTimeAsync(2)
+      const current = FakeSocket.instances[1]
+      current.onopen?.({})
+      frame(current, welcome)
+      frame(current, list('current'))
+      // A message the replaced socket still delivers, from the retired process.
+      frame(old, list('retired-late'))
+      expect(heard).toEqual(['old', 'current'])
+    } finally {
+      client.close()
+      vi.useRealTimers()
+    }
+  })
 })
 
 describe('the push client against a socket that drops without a close frame', () => {

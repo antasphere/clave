@@ -28,7 +28,8 @@ export interface TranscriptEnd {
  *  `scrollend` closes the glide whether it finished or a wheel cut it short. */
 export function useTranscriptEnd(
   entries: unknown,
-  slack: (el: HTMLElement) => number
+  slack: (el: HTMLElement) => number,
+  visible = true
 ): TranscriptEnd {
   const scroll = useRef<HTMLDivElement>(null)
   const stuck = useRef(true)
@@ -36,15 +37,17 @@ export function useTranscriptEnd(
   const held = useRef<number | null>(null)
   const [away, setAway] = useState(false)
   const lastTop = useRef(0)
+  const lastHeight = useRef(0)
   const measure = useCallback(() => {
     const el = scroll.current
-    if (!el) return
+    if (!visible || !el || el.clientHeight === 0) return
     // Only the reader going up leaves the end. The virtualised rows grow to
     // their measure after they mount, and the virtualiser moves the scroll to
     // keep what is on screen in place: neither is the reader leaving, so a
     // stuck transcript that finds itself short of its end goes back there.
     const rose = el.scrollTop < lastTop.current
     lastTop.current = el.scrollTop
+    lastHeight.current = el.scrollHeight
     const atEnd = el.scrollHeight - el.scrollTop - el.clientHeight < slack(el)
     if (stuck.current && !atEnd && !rose) {
       el.scrollTop = el.scrollHeight
@@ -54,23 +57,42 @@ export function useTranscriptEnd(
     if (next === stuck.current) return
     stuck.current = next
     setAway(!next)
-  }, [slack])
+  }, [slack, visible])
+  // Hiding gives the element a zero-sized box, not a new reading position.
+  // Restore the last visible offset before resize observers measure it again.
+  useLayoutEffect(() => {
+    if (!visible) {
+      gliding.current = false
+      return
+    }
+    const el = scroll.current
+    if (el && !stuck.current) el.scrollTop = lastTop.current
+  }, [visible])
   // A page put in front pushes everything down by its height: the distance
   // from the bottom is what the reader's text keeps, restored in the layout of
   // the same commit, so nothing moves on screen whatever the browser's own
   // scroll anchoring made of it (none at all at the very top).
   useLayoutEffect(() => {
     const el = scroll.current
+    if (!visible) return
     if (el && held.current !== null) el.scrollTop = el.scrollHeight - held.current
     held.current = null
-  }, [entries])
+  }, [entries, visible])
   useEffect(() => {
     const el = scroll.current
-    if (el && stuck.current) el.scrollTop = el.scrollHeight
-  }, [entries])
+    if (visible && el && stuck.current) el.scrollTop = el.scrollHeight
+  }, [entries, visible])
+  useEffect(() => {
+    if (!visible) return
+    // Chromium can restore a hidden scroller's DOM offset without a new
+    // scroll event. The virtualiser still holds its hidden offset of zero;
+    // let it read the restored position after the reveal has been laid out.
+    const frame = requestAnimationFrame(() => scroll.current?.dispatchEvent(new Event('scroll')))
+    return () => cancelAnimationFrame(frame)
+  }, [visible])
   useEffect(() => {
     const el = scroll.current
-    if (!el) return
+    if (!visible || !el) return
     const onScroll = (): void => {
       if (!gliding.current) measure()
     }
@@ -79,6 +101,7 @@ export function useTranscriptEnd(
       measure()
     }
     const observer = new ResizeObserver(() => {
+      if (el.clientHeight === 0) return
       if (stuck.current) el.scrollTop = el.scrollHeight
       measure()
     })
@@ -94,7 +117,7 @@ export function useTranscriptEnd(
       el.removeEventListener('scrollend', onScrollEnd)
       observer.disconnect()
     }
-  }, [measure])
+  }, [measure, visible])
   const stick = useCallback(() => {
     stuck.current = true
     setAway(false)
@@ -109,7 +132,9 @@ export function useTranscriptEnd(
   }, [stick])
   const hold = useCallback(() => {
     const el = scroll.current
-    if (el) held.current = el.scrollHeight - el.scrollTop
+    if (el)
+      held.current =
+        el.clientHeight > 0 ? el.scrollHeight - el.scrollTop : lastHeight.current - lastTop.current
   }, [])
   return { scroll, away, stick, jump, hold }
 }

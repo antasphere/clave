@@ -1,12 +1,62 @@
-import { ipcMain } from 'electron'
+import { BrowserWindow, ipcMain } from 'electron'
+import * as fs from 'fs'
 import log from 'electron-log/main'
 import { gitManager } from '../git-manager'
+import { GitRepoWatcher } from '../git-watch'
+import { GIT_WATCH_DEBOUNCE_MS, GIT_WATCH_MAX_WAIT_MS } from '../constants'
 import { logPullFailures } from '../pull-log'
 import { repoIndexManager } from '../repo-index'
 import type { GitBatchProgress } from '../git-manager'
 import type { GitRangeDirection } from '../../shared/git-range'
 
+/**
+ * One repo watcher for the app. A panel subscribes under its own id, keyed by
+ * its window, so two panels of one window and the same repo in two windows
+ * share one watch; a change goes to every window, and each panel keeps the
+ * repos it shows.
+ */
+const repoWatcher = new GitRepoWatcher({
+  watch: (dir, onEvent) => {
+    const watcher = fs.watch(dir, { recursive: true }, (_type, filename) =>
+      onEvent(filename ? filename.toString() : null)
+    )
+    // A watch that errors later (the folder deleted) is closed rather than
+    // left to throw; the panel's slow poll still covers that repo.
+    watcher.on('error', () => {
+      try {
+        watcher.close()
+      } catch {
+        /* already closed */
+      }
+    })
+    return watcher
+  },
+  resolve: (repo) => gitManager.repoDirs(repo),
+  onChange: (repos) => {
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (!win.isDestroyed()) win.webContents.send('git:repos-changed', repos)
+    }
+  },
+  debounceMs: GIT_WATCH_DEBOUNCE_MS,
+  maxWaitMs: GIT_WATCH_MAX_WAIT_MS
+})
+
 export function registerGitHandlers(): void {
+  const watchedSenders = new Set<number>()
+  ipcMain.handle('git:watch-repos', (event, subscriberId: string, repoPaths: string[]) => {
+    const wcId = event.sender.id
+    if (!watchedSenders.has(wcId)) {
+      watchedSenders.add(wcId)
+      event.sender.once('destroyed', () => {
+        watchedSenders.delete(wcId)
+        repoWatcher.dropPrefix(`${wcId}:`)
+      })
+    }
+    return repoWatcher.setRepos(`${wcId}:${subscriberId}`, repoPaths)
+  })
+  ipcMain.handle('git:unwatch-repos', (event, subscriberId: string) => {
+    repoWatcher.drop(`${event.sender.id}:${subscriberId}`)
+  })
   ipcMain.handle('git:check-ignored', (_event, cwd: string, paths: string[]) =>
     gitManager.checkIgnored(cwd, paths)
   )

@@ -1,16 +1,22 @@
 import { randomUUID } from 'node:crypto'
+import path from 'node:path'
+import { sanitizeCarriedLaunchProfile } from '../shared/agent-launch'
+import { findExecutable } from './shell-launch'
 import { accountOverrides } from './restart-overrides'
 import { dismissSessionOffers } from './copy-offer-manager'
 import { terminalJournal } from './terminal-journal'
 import { lastHookState } from './agent-state-manager'
 import {
   ptyBackend,
+  accountTokenForSpawn,
   buildSpawnEnv,
   codexHomeForSpawn,
   getLoginShellEnv,
   type PtySession,
   type PtySpawnOptions
 } from './sessions/adapters/pty-backend'
+import { lineageOf } from './sessions/lineage'
+import { sanitizeWork, type WorkAssignment } from '@clave/contract/work-rules'
 import { codexRoot, findCodexThreadForSession, hasCodexRollout } from './session-history/codex'
 import { ptyAdapter } from './sessions/adapters/pty-adapter'
 import { ClaudeAdapter, findTranscript } from './sessions/adapters/claude-adapter'
@@ -136,10 +142,29 @@ class PtyManager {
           : options?.claudeAgentsMode || options?.claudeMode !== false
             ? 'claude'
             : null
+    const carried =
+      family && options?.launchProfile
+        ? sanitizeCarriedLaunchProfile(options.launchProfile)
+        : undefined
+    if (options?.launchProfile && family && !carried)
+      throw new Error('The carried launch profile is not valid')
+    if (carried && carried.family !== family)
+      throw new Error(`Launch profile "${carried.name}" is for ${carried.family}, not ${family}`)
+    options = { ...options, launchProfile: carried ?? undefined }
     const profileId =
+      carried?.id ??
       options?.launchProfileId ??
       (family ? launchProfileManager.resolve(family, options?.workspaceId).id : undefined)
     const echo = isEchoLaunchProfile(profileId)
+    if (carried && !echo) {
+      const program = carried.command[0].includes('/')
+        ? path.resolve(cwd, carried.command[0])
+        : carried.command[0]
+      if (!findExecutable(program, getLoginShellEnv().PATH))
+        throw new Error(
+          `Program "${carried.command[0]}" was not found on this server (launch profile "${carried.name}")`
+        )
+    }
     if (profileId === 'dev-echo-adapter' && !echo) throw new Error('Echo adapter is disabled')
     const events = eventsProfile(profileId)
     if (events?.adapterId === 'claude-chat' && process.platform === 'win32')
@@ -162,7 +187,8 @@ class PtyManager {
     // The effort last picked goes with every chat, a restored one included:
     // the record does not keep the one a tab ran at, and the last pick is
     // what the reader would pick again.
-    const effort = isEvents ? rememberedChatEffort(adapter.id) : undefined
+    // A launch that names an effort (a routine, ADR 0004) gets exactly that.
+    const effort = isEvents ? (options?.effort ?? rememberedChatEffort(adapter.id)) : undefined
     const session: PtySession = isEvents
       ? {
           // A restored chat tab keeps its id, as a restored terminal does: the
@@ -178,7 +204,16 @@ class PtyManager {
           launchProfileId: profileId,
           model: options?.model
         }
-      : ptyAdapter.prepare(cwd, options)
+      : ptyAdapter.prepare(cwd, {
+          ...options,
+          // The account's token, decrypted here where the spawn is already
+          // asynchronous, for the synchronous plan below (and only for a
+          // Claude session: accountTokenForSpawn opens the store for no other).
+          oauthToken: await accountTokenForSpawn(
+            options?.claudeAgentsMode ? 'claude-agents' : family === 'claude' ? 'claude' : null,
+            options?.claudeProfileId
+          )
+        })
     // A live tmux session this process takes BACK (an app relaunch, a move
     // from another window) is born with the word its hooks last wrote, not
     // idle: the hook watch forwards a change only, so a tab adopted while its
@@ -242,7 +277,7 @@ class PtyManager {
       // session's prompt used to reach a Claude tab and never a Codex one.
       codexAdapter.configure(
         session.id,
-        launchProfileManager.resolve('codex', options?.workspaceId, profileId),
+        carried ?? launchProfileManager.resolve('codex', options?.workspaceId, profileId),
         buildSpawnEnv(getLoginShellEnv(), {
           codexHome: codexHomeForSpawn('codex', options?.codexAccountId)
         }),
@@ -262,7 +297,13 @@ class PtyManager {
                 : adapter.provider === 'claude'
                   ? 'bypassPermissions'
                   : undefined
-              : undefined,
+              : // ADR 0004: the mode a routine asks under when its permissions
+                // stay on; the CLI spells the ask-every-time mode `manual`.
+                adapter.provider === 'claude' && options?.permissionMode
+                ? options.permissionMode === 'default'
+                  ? 'manual'
+                  : options.permissionMode
+                : undefined,
             // What `--yolo` means to a Codex terminal: no approvals AND no
             // sandbox. The app-server takes the two separately, and without
             // this a dangerous chat ran in the config's sandbox.
@@ -336,13 +377,21 @@ class PtyManager {
       dangerousMode: options?.dangerousMode === true,
       model: options?.model,
       launchProfileId: profileId,
+      launchProfile: options?.launchProfile,
       configDir: codex ? undefined : options?.configDir,
       claudeProfileId: codex ? undefined : options?.claudeProfileId,
       claudeProfileLabel: codex ? undefined : options?.claudeProfileLabel,
       codexAccountId: codex ? options?.codexAccountId : undefined,
       codexAccountLabel: codex ? options?.codexAccountLabel : undefined,
       workspaceId: options?.workspaceId,
-      windowKey: options?.windowKey
+      windowKey: options?.windowKey,
+      // What this session is the hidden half of (a routine's run, ADR 0004):
+      // the PTY record carried it, the events record did not, and a chat run
+      // came back as a sidebar tab at the next boot (round 1, F2).
+      link: options?.link,
+      spawnedBy: lineageOf(session.id, options?.spawnedBy, previous?.spawnedBy),
+      // Which work it does (PRDCT-4123): a restart's, else the record's.
+      work: sanitizeWork(options?.work) ?? sanitizeWork(previous?.work)
     })
   }
 
@@ -480,6 +529,15 @@ class PtyManager {
       // The message the limit rejected, when the move is the limit's doing:
       // the reader asked once and gets the answer on the next account.
       initialInput: resendRejected ? this.rejected.get(id) : undefined,
+      // The parent, else the record's: the kill takes the record before the
+      // spawn could read it, and a spawn made without one (an older restore)
+      // would lose the child its parent (#259, V1-F1).
+      spawnedBy: previous.spawnedBy ?? ptyBackend.getSessionRecord(id)?.spawnedBy,
+      // Which work it does (PRDCT-4123): the record's, read now, for the same
+      // reason. Never the spawn's own options: a restart carried one into
+      // them, and a change of work since (a handover accepted, a lane left)
+      // wrote the record alone, so a second restart would bring the old back.
+      work: ptyBackend.getSessionRecord(id)?.work,
       ...account
     }
     return { cwd: spawn.cwd, options, resumed: conversationId !== null }
@@ -522,6 +580,15 @@ class PtyManager {
   setSessionWindowKey(id: string, windowKey: string): void {
     if (sessionManager.get(id)) sessionManager.update(id, { windowKey })
     ptyBackend.setSessionWindowKey(id, windowKey)
+  }
+  /** Which work the session does, on its record (PRDCT-4123); false when it
+   *  keeps no record. The host's `changeWork` is the only caller. */
+  setSessionWork(id: string, work: WorkAssignment | null): boolean {
+    return ptyBackend.setSessionWork(id, work)
+  }
+  /** Every record's work assignment, read without side effects (PRDCT-4123). */
+  listWorkAssignments(): ReturnType<typeof ptyBackend.listWorkAssignments> {
+    return ptyBackend.listWorkAssignments()
   }
   /** The persisted record of a live session, as it is now. */
   getSessionRecord = ptyBackend.getSessionRecord.bind(ptyBackend)

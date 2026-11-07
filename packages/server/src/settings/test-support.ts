@@ -53,7 +53,10 @@ export class FakeSettingsSource implements SettingsSourceService {
     lastActiveWorkspaceId: null,
     activeWorkspaceId: null,
     pins: [],
-    pinsMigrated: true
+    pinsMigrated: true,
+    // The stamp (PRDCT-3405): this fake is one instance, bumped per write.
+    revision: 0,
+    instance: 'fake-settings'
   }
   /** Every secret the source was handed, so a test can prove where it went and did not. */
   readonly secrets: string[] = []
@@ -323,28 +326,46 @@ export class FakeSettingsSource implements SettingsSourceService {
   }
   readonly workspaces: SettingsSourceService['workspaces'] = {
     load: () => this.state,
-    updateRegistry: (workspaces: ReadonlyArray<Workspace>, origin) => {
-      this.record('workspaces.updateRegistry', [...workspaces], origin)
-      this.state = { ...this.state, workspaces: [...workspaces] }
+    updateRegistry: (workspaces: ReadonlyArray<Workspace>, origin, base) => {
+      this.record('workspaces.updateRegistry', [...workspaces], origin, ...(base ? [base] : []))
+      if (base && (base.instance !== this.state.instance || base.revision !== this.state.revision))
+        return { ok: false as const, reason: 'stale' as const }
+      this.state = { ...this.state, workspaces: [...workspaces], revision: this.state.revision + 1 }
       this.emit({
         _tag: 'workspaces.state_changed',
         workspaces: this.state.workspaces,
         pins: this.state.pins,
-        origin: origin ?? null
+        origin: origin ?? null,
+        revision: this.state.revision,
+        instance: this.state.instance
       })
-      return { ok: true as const }
+      return {
+        ok: true as const,
+        workspaces: this.state.workspaces,
+        pins: this.state.pins,
+        revision: this.state.revision,
+        instance: this.state.instance
+      }
     },
     updatePins: (scope, pins, origin) => {
       this.record('workspaces.updatePins', scope, [...pins], origin)
       if (scope === 'bad') return { ok: false as const, reason: 'invalid-key' as const }
-      this.state = { ...this.state, pins: [...pins] }
+      this.state = { ...this.state, pins: [...pins], revision: this.state.revision + 1 }
       this.emit({
         _tag: 'workspaces.state_changed',
         workspaces: this.state.workspaces,
         pins: this.state.pins,
-        origin: origin ?? null
+        origin: origin ?? null,
+        revision: this.state.revision,
+        instance: this.state.instance
       })
-      return { ok: true as const }
+      return {
+        ok: true as const,
+        workspaces: this.state.workspaces,
+        pins: this.state.pins,
+        revision: this.state.revision,
+        instance: this.state.instance
+      }
     },
     setLastActive: (workspaceId) => {
       this.record('workspaces.setLastActive', workspaceId)

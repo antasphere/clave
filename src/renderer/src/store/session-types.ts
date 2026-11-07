@@ -1,3 +1,5 @@
+import type { WorkAssignment } from '@clave/contract/work-rules'
+
 /**
  * Every skin the app ships, as a runtime list — the union is derived from it
  * rather than written beside it. A theme is four things that live in four files
@@ -34,6 +36,26 @@ export type TreeRuleIntensity = (typeof TREE_RULE_INTENSITIES)[number]['id']
 /** The multiplier a level draws at; unknown ids fall back to the default. */
 export function treeRuleMultiplier(intensity: TreeRuleIntensity): number {
   return TREE_RULE_INTENSITIES.find((i) => i.id === intensity)?.multiplier ?? 1
+}
+
+/**
+ * How far each level of a side-panel tree steps in: the Files tab, the git
+ * panel's repository tree and the files inside a repository, all at once, so
+ * the two panels read as one list. Ids are stored, not numbers, like the rule
+ * weights above. Normal is the 12px the trees were drawn at.
+ */
+export const TREE_INDENTS = [
+  { id: 'tight', label: '8px', px: 8 },
+  { id: 'normal', label: '12px', px: 12 },
+  { id: 'roomy', label: '16px', px: 16 },
+  { id: 'wide', label: '20px', px: 20 }
+] as const
+
+export type TreeIndent = (typeof TREE_INDENTS)[number]['id']
+
+/** The px a level steps in; unknown ids fall back to Normal. */
+export function treeIndentPx(indent: TreeIndent | string | null | undefined): number {
+  return TREE_INDENTS.find((i) => i.id === indent)?.px ?? 12
 }
 
 /**
@@ -304,6 +326,10 @@ export interface Session {
   /** How many background shells/subagents a chat session left running past its
    *  turn, from the provider's own list. Runtime only; absent means none. */
   backgroundTasks?: number
+  /** How many of those are subagents (the rest are shells and other tasks).
+   *  A subagent is the agent still at work, so the tab reads working while
+   *  one runs; a shell is only something left running. Runtime only. */
+  backgroundAgents?: number
   promptWaiting: string | null
   claudeMode: boolean
   antigravityMode: boolean
@@ -318,10 +344,15 @@ export interface Session {
    *  can diverge from it afterwards without Clave knowing. */
   model?: string
   /** Session id of the tab whose agent opened this one via clave_open_session,
-   *  so the child can target "parent" in clave_send_to_session /
-   *  clave_read_session. Session-lifetime only: not persisted to the tmux
-   *  sidecar, so the link is gone after an app restart. */
+   *  set only when that agent asked `attachToParent`: what folds the tab under
+   *  its parent in the sidebar and what "parent" reaches in
+   *  clave_send_to_session / clave_read_session. Persisted on the session's
+   *  record since #259, so it comes back at a restore (`adopt-record.ts`). */
   spawnedBy?: string
+  /** Which wave or lane this tab works on, its role and its standing, as its
+   *  record keeps it (PRDCT-4123). Absent means an ordinary tab. Set by the
+   *  agent tools and the entry's menu through the server, never by a title. */
+  work?: WorkAssignment
   claudeSessionId: string | null
   piSessionId?: string | null
   launchProfileId?: string
@@ -339,6 +370,17 @@ export interface Session {
   /** Bumped by a restart on another account: the pane remounts on it, so
    *  the terminal reconnects to the new process under the same id. */
   restartEpoch?: number
+  /** Runtime: a chat brought back by the launch's restore whose agent has not
+   *  run since (PRDCT-3527). Its pane is not mounted until the tab is first
+   *  shown: a mounted chat view starts its agent, and a launch restoring a
+   *  hundred chats started a hundred agents and replayed a hundred
+   *  conversations before the last tab came back. Cleared the first time the
+   *  tab is selected, and the pane then stays mounted like any other. */
+  dormant?: boolean
+  /** Runtime: placed by the launch's restore from its record while its
+   *  process is still being reattached (PRDCT-3527). The row shows at once;
+   *  the pane mounts once the spawn has answered and this is cleared. */
+  restoring?: boolean
   /** Runtime: when this window first saw the tab's process (its add, its
    *  adoption, or its last restart), not when the process started: a tab
    *  moved between windows is stamped again, so it loses a restart hint it
@@ -457,6 +499,8 @@ export interface FileTabDiffInfo {
 }
 
 export interface FileTab {
+  /** The workspace that opened this viewer. */
+  workspaceId?: string
   id: string
   filePath: string
   name: string
@@ -470,6 +514,7 @@ export interface FileTab {
 export type ActiveView = 'terminals' | 'settings' | 'agents' | 'extensions'
 
 export type SettingsSection =
+  | 'servers'
   | 'plugins'
   | 'general'
   | 'accounts'
@@ -479,6 +524,7 @@ export type SettingsSection =
   | 'updates'
   | 'usage'
   | 'activity'
+  | 'audio'
 
 export type ExtensionsSection = 'marketplaces' | 'mcp'
 
@@ -524,6 +570,36 @@ export interface PinnedGroupTerminal {
   groupView?: boolean
 }
 
+/** A routine of a `.clave` group (ADR 0004): a prompt the server runs on a
+ *  cron schedule in a hidden session, reported in the toolbar. Mirrors
+ *  `ClaveRoutine` of the contract; the renderer carries it through the pin
+ *  round-trip and never schedules it (the server does). */
+export interface PinnedGroupRoutine {
+  name: string
+  schedule: string
+  prompt: string
+  params?: Record<string, string>
+  skill?: string
+  cwd?: string | null
+  agent?: string
+  form?: string
+  model?: string
+  effort?: string
+  thinking?: string
+  provider?: string
+  profile?: string
+  account?: string
+  dangerousMode?: boolean
+  permissionMode?: string
+  /** The terminals' enums, kept as written: an unknown icon falls back to the clock. */
+  icon?: string
+  color?: string
+  catchUp?: boolean
+  timeoutMinutes?: number
+  scope?: string
+  report?: { template: string; schema?: string; width?: number; height?: number }
+}
+
 export interface PinnedGroup {
   id: string
   name: string
@@ -539,6 +615,8 @@ export interface PinnedGroup {
   view?: string | null
   sessions: PinnedGroupSession[]
   terminals: PinnedGroupTerminal[]
+  /** The group's routines (ADR 0004), carried through the round-trip; the server schedules them. */
+  routines?: PinnedGroupRoutine[]
   createdAt: number
   filePath?: string | null
   rootDir?: string | null // Root dir for resolving paths (null = file's parent dir)

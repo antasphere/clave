@@ -7,6 +7,7 @@ import { WebSocket } from 'ws'
 import {
   type AccountOverride,
   type CommandOption,
+  type SessionControl,
   type DraftHandling,
   type HistoryPage,
   type ModelOption,
@@ -15,12 +16,20 @@ import {
   type Session,
   type SessionInfo,
   type SessionPage,
+  type SessionRecordFields,
   type SessionRecord,
   type SessionScreen,
   SessionScreenUnavailable,
   type SessionStream,
   type SessionWrite
 } from '@clave/contract/sessions'
+import {
+  applyWorkChange,
+  type WorkAssignment,
+  type WorkChange,
+  takeoverRenames,
+  type WorkChangeResult
+} from '@clave/contract/work-rules'
 import {
   type ServerFrame,
   decodeServerFrame,
@@ -67,10 +76,12 @@ export class FakeSource implements SessionHostService {
   readonly stops: string[] = []
   readonly views: Array<{ id: string; viewId: string | null }> = []
   readonly resizes: Array<{ id: string; cols: number; rows: number }> = []
-  /** What `models`, `commands` and `history` answer. */
+  readonly controls: Array<{ id: string; request: SessionControl }> = []
+  /** What `models`, `commands`, `control` and `history` answer. */
   modelsOf: ModelOption[] = [{ id: 'm1', label: 'Model one' }]
   commandsOf: CommandOption[] = [{ name: 'help', insert: '/help ' }]
   historyOf: HistoryPage = { items: [], before: null }
+  controlOf: Record<string, unknown> = { mcpServers: [] }
   /** Set to make the next write or start refuse. */
   refuse: Error | null = null
 
@@ -142,6 +153,12 @@ export class FakeSource implements SessionHostService {
   commands = async (id: string): Promise<CommandOption[]> => {
     if (!this.sessions.has(id)) throw new Error(`Unknown session: ${id}`)
     return this.commandsOf
+  }
+  control = async (id: string, request: SessionControl): Promise<Record<string, unknown>> => {
+    if (!this.sessions.has(id)) throw new Error(`Unknown session: ${id}`)
+    this.controls.push({ id, request })
+    if (this.refuse) throw this.refuse
+    return this.controlOf
   }
   capabilities = (id: string): { images: boolean } => {
     if (!this.sessions.has(id)) throw new Error(`Unknown session: ${id}`)
@@ -219,6 +236,39 @@ export class FakeSource implements SessionHostService {
   setPage = (id: string, page: SessionPage | null): void => {
     if (!this.sessions.has(id)) throw new Error(`Unknown session: ${id}`)
     this.pages.push({ id, page })
+  }
+  // ── Wave 6, lane A: what the window keeps on a record ──
+  readonly kept: Array<{ id: string; fields: SessionRecordFields }> = []
+  keepOnRecord = (id: string, fields: SessionRecordFields): void => {
+    this.kept.push({ id, fields })
+  }
+  // ── PRDCT-4123: which work a session does, kept by hand ──
+  /** Each live session's assignment, as its record would keep it; the rule
+   *  is the real one, applied over every session this host has. */
+  readonly works = new Map<string, WorkAssignment>()
+  changeWork = (id: string, change: WorkChange): WorkChangeResult => {
+    // As the app's host: a session it does not know is the rule's
+    // `WorkSessionUnknown`, answered by the server as its not-found.
+    const all = [...this.sessions.keys()].map((sid) => ({ id: sid, work: this.works.get(sid) }))
+    const updates = applyWorkChange(all, id, change, Date.now())
+    for (const u of updates) {
+      if (u.work) this.works.set(u.id, u.work)
+      else this.works.delete(u.id)
+    }
+    // The names an accepted handover gives, as the app's host writes them.
+    const renamed = takeoverRenames(
+      all,
+      updates,
+      id,
+      change,
+      (sid) => this.sessions.get(sid)?.title,
+      new Set([...this.sessions.values()].map((s) => s.title))
+    )
+    for (const r of renamed) {
+      const session = this.sessions.get(r.id)
+      if (session) this.sessions.set(r.id, { ...session, title: r.name })
+    }
+    return { changed: updates, renamed }
   }
   screen = async (id: string): Promise<SessionScreen> => {
     if (!this.sessions.has(id)) throw new Error(`Unknown session: ${id}`)

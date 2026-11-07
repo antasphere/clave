@@ -130,6 +130,22 @@ const drawnGroups = (win) =>
   )
 const rowDrawn = (win, id) =>
   win.evaluate((sid) => !!document.querySelector(`[data-sidebar-item-id="${sid}"]`), id)
+/** A tab an agent opened is drawn folded under the agent's row (#216, #259):
+ *  no row of its own, the opener's selector in its place. */
+const foldedUnder = (win, parentId, childId) =>
+  win.evaluate(
+    ([p, c]) =>
+      !document.querySelector(`[data-sidebar-item-id="${c}"]`) &&
+      !!document.querySelector(`[data-sidebar-item-id="${p}"] .subagent-trigger`),
+    [parentId, childId]
+  )
+/** The names the opener's selector lists, read by opening it. */
+const subagentNames = async (win, parentId) => {
+  await win.locator(`[data-sidebar-item-id="${parentId}"] .subagent-trigger`).click()
+  const names = await win.getByRole('menuitem').allInnerTexts()
+  await win.keyboard.press('Escape')
+  return names
+}
 /** The road the last call of this command took, as main recorded it. */
 const lastRoad = async (app, command) =>
   (await mcpRoads(app)).filter((r) => r.command === command).at(-1)?.road ?? null
@@ -390,9 +406,12 @@ export async function run(t) {
       t.check('clave_open_session answers a session', typeof worker?.sessionId === 'string', worker)
       t.equal('and took the server road', await lastRoad(app, 'openSession'), 'server')
       const workerDrawn = await until(async () =>
-        (await rowDrawn(win, worker.sessionId)) ? true : null
+        (await foldedUnder(win, agent.sessionId, worker.sessionId)) ? true : null
       )
-      t.check('the window draws the tab the server opened', workerDrawn === true)
+      t.check(
+        'the window draws the tab the server opened, folded under the agent that opened it',
+        workerDrawn === true
+      )
       const workerListed = await until(async () => {
         const l = await callMcp(app, 'list', {})
         const x = l?.sessions?.find((y) => y.id === worker.sessionId)
@@ -647,9 +666,12 @@ export async function run(t) {
       t.check('clave_open_session answers a session', typeof worker?.sessionId === 'string', worker)
       t.equal('on the server road, attached', await lastRoad(app, 'openSession'), 'server')
       const workerDrawn = await until(async () =>
-        (await rowDrawn(win, worker.sessionId)) ? true : null
+        (await foldedUnder(win, agentCfg.sessionId, worker.sessionId)) ? true : null
       )
-      t.check('the window draws the tab the server opened', workerDrawn === true)
+      t.check(
+        'the window draws the tab the server opened, folded under the agent that opened it',
+        workerDrawn === true
+      )
       const onServer = await sessionOn(disc, worker.sessionId)
       t.check('and the standalone runs it', onServer.status === 200, onServer)
 
@@ -661,10 +683,19 @@ export async function run(t) {
       })
       t.check('a tab’s rename answers', !toolErrored(renamed), renamed)
       t.equal('on the server road, attached', await lastRoad(app, 'rename'), 'server')
+      // Folded, the tab's name is in its opener's selector, not on a row.
       const shown = await until(async () =>
-        (await sidebarRows(win)).some((r) => r.includes('Renamed on the server')) ? true : null
+        (await subagentNames(win, agentCfg.sessionId)).some((n) =>
+          n.includes('Renamed on the server')
+        )
+          ? true
+          : null
       )
-      t.check('and the window shows the name', shown === true, await sidebarRows(win))
+      t.check(
+        'and the window shows the name',
+        shown === true,
+        await subagentNames(win, agentCfg.sessionId)
+      )
       const records = await fetch(`${disc.url}/sessions/records?ids=${worker.sessionId}`, {
         headers: { authorization: `Bearer ${disc.token}` }
       }).then((r) => r.json())

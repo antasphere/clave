@@ -37,6 +37,8 @@ export interface PushHubOptions {
   readonly source: SessionStreamSource
   readonly events: ServerEventsService
   readonly helloTimeoutMs?: number
+  /** The Clave version the welcome names (issue #266); none when unknown. */
+  readonly version?: () => string | undefined
 }
 
 interface Peer {
@@ -119,10 +121,12 @@ export class PushHub {
       peer.welcomed = true
       if (peer.helloTimer) clearTimeout(peer.helloTimer)
       peer.helloTimer = null
+      const version = this.options.version?.()
       this.send(peer, {
         _tag: 'welcome',
         serverId: this.options.serverId,
-        protocol: PUSH_PROTOCOL
+        protocol: PUSH_PROTOCOL,
+        ...(version !== undefined && { version })
       })
       for (const listener of [...this.welcomeListeners]) listener((frame) => this.send(peer, frame))
       return

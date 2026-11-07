@@ -18,10 +18,17 @@ import type { LayoutSnapshot } from '@clave/contract/sidebar'
 import type { AccountOverride, Session } from '@clave/contract/sessions'
 import { sanitizeForPaste } from '../../shared/paste-sanitize'
 import { buildCheckpointProvenance, buildProvenanceHeader } from '../../shared/exchange-provenance'
-import { pickAccount, type PoolAccount } from '../../shared/account-pool'
+import { pickAccount } from '../../shared/account-pool'
+import {
+  poolOf,
+  resolveAccountRef as resolveAccountRefFrom,
+  spawnFieldsOf,
+  usageOf
+} from './served-accounts'
 import { resolveProfileRef, resolveSpawnModes } from '../../shared/open-session-modes'
 import { substituteTokens } from '../../shared/prompt-tokens'
 import { resolveDeclaredGroupView } from '../../shared/group-view'
+import { shareAGroup } from '../../shared/group-reach'
 import type { PinnedBlueprint, PinnedBlueprintSession } from '../../shared/pinned-blueprint'
 import {
   type AccountProvider,
@@ -61,6 +68,12 @@ const modeOfSession = (ctx: Ctx, session: Session): string =>
 
 // ── Who may reach whom ──
 
+/** The tab that opened this one: main's own memory of the open, else the
+ *  session's record, which is what still says it after a restart (#259). */
+function parentOfSession(ctx: Ctx, sessionId: string): string | null {
+  return ctx.shell.parentOf(sessionId) ?? ctx.shell.record(sessionId)?.spawnedBy ?? null
+}
+
 /** The renderer's `resolveTargetSession`: "parent", an id, then an exact
  *  name, the routed window's tabs first. */
 async function resolveTarget(ctx: Ctx, key: string, ref: string): Promise<Session> {
@@ -68,11 +81,11 @@ async function resolveTarget(ctx: Ctx, key: string, ref: string): Promise<Sessio
     if (!ctx.callerSessionId) {
       throw new Error('Target "parent" requires the call to come from inside a Clave session')
     }
-    const parentId = ctx.shell.parentOf(ctx.callerSessionId)
+    const parentId = parentOfSession(ctx, ctx.callerSessionId)
     const parent = parentId ? await ctx.api.sessions.get(parentId).catch(() => null) : null
     if (!parent) {
       throw new Error(
-        'This session has no live parent — only tabs opened via clave_open_session know their opener, and the link does not survive an app restart. Use clave_list and target a session id or name instead.'
+        'This session has no live parent — only tabs opened via clave_open_session know their opener, and that tab is no longer open. Use clave_list and target a session id or name instead.'
       )
     }
     return parent
@@ -89,8 +102,30 @@ async function resolveTarget(ctx: Ctx, key: string, ref: string): Promise<Sessio
   return found
 }
 
+/** Whether two tabs are related for the agent tools' reach: the same tab, one
+ *  opened the other, or they share a group (its terminals included). The one
+ *  rule the messaging tools and the work tools (`served-work-tools.ts`) share. */
+export function isRelated(
+  ctx: Ctx,
+  layouts: readonly LayoutSnapshot[],
+  caller: string,
+  targetId: string
+): boolean {
+  return (
+    caller === targetId ||
+    parentOfSession(ctx, targetId) === caller ||
+    parentOfSession(ctx, caller) === targetId ||
+    shareAGroup(
+      layouts.flatMap((l) => l.groups),
+      caller,
+      targetId
+    )
+  )
+}
+
 /** The renderer's reach rule, over the server's facts: a tab reaches itself,
- *  the tab that opened it, a tab it opened, or a tab in the same group. */
+ *  the tab that opened it, a tab it opened, or a tab or terminal in the same
+ *  group. */
 function assertCanReach(
   ctx: Ctx,
   layouts: readonly LayoutSnapshot[],
@@ -103,14 +138,7 @@ function assertCanReach(
       `clave_${verb === 'message' ? 'send_to' : 'read'}_session must be called from inside a Clave agent tab — this request has no tab identity.`
     )
   }
-  if (caller === target.id) return
-  const related =
-    ctx.shell.parentOf(target.id) === caller ||
-    ctx.shell.parentOf(caller) === target.id ||
-    layouts
-      .flatMap((l) => l.groups)
-      .some((g) => g.sessionIds.includes(caller) && g.sessionIds.includes(target.id))
-  if (!related) {
+  if (!isRelated(ctx, layouts, caller, target.id)) {
     throw new Error(
       `Refusing to ${verb} tab "${nameOf(ctx, target)}": it is not related to yours. You can only reach the tab that opened yours ("parent"), tabs you opened, or tabs in the same group. Put both tabs in one group to allow this.`
     )
@@ -330,54 +358,13 @@ async function sendToSession(ctx: Ctx, key: string, p: Payload): Promise<unknown
   }
 }
 
-// ── Accounts ──
+// ── Accounts: the pool's rule, shared with the routines (`served-accounts.ts`) ──
 
-const poolOf = (accounts: ServedPoolAccount[]): PoolAccount[] =>
-  accounts.map((a) => ({ id: a.id, usable: a.usable, ...(a.fallback ? { fallback: true } : {}) }))
-const usageOf = (accounts: ServedPoolAccount[]): Record<string, ServedPoolAccount['usage']> =>
-  Object.fromEntries(accounts.map((a) => [a.id, a.usage]))
-
-/** The renderer's `accountForLaunch`: a named account is honoured; with none
- *  named, the selected one while it has headroom, else the next along. */
-function accountForLaunch(ctx: Ctx, provider: AccountProvider): ServedPoolAccount {
-  const accounts = ctx.shell.accounts(provider)
-  const selected = ctx.shell.selectedAccountId(provider) ?? 'default'
-  const id = pickAccount({
-    accounts: poolOf(accounts),
-    usage: usageOf(accounts),
-    preferredId: selected
-  })
-  return accounts.find((a) => a.id === id) ?? accounts[0] ?? { id, label: id, usable: true }
-}
-
-/** The renderer's `resolveAccountRef`: an id, a label, or "any" for the
- *  pool's pick; an unknown name errors with the names that exist. */
-function resolveAccountRef(
+const resolveAccountRef = (
   ctx: Ctx,
   provider: AccountProvider,
   ref: string | undefined
-): ServedPoolAccount {
-  if (!ref || ref === 'any') return accountForLaunch(ctx, provider)
-  const accounts = ctx.shell.accounts(provider)
-  const byId = accounts.find((a) => a.id === ref)
-  if (byId) return byId
-  const exact = accounts.filter((a) => a.label === ref)
-  if (exact.length === 1) return exact[0]
-  const loose = accounts.filter((a) => a.label.toLowerCase() === ref.toLowerCase())
-  if (loose.length === 1) return loose[0]
-  const names = accounts.map((a) => `"${a.label}" (${a.id})`).join(', ')
-  throw new Error(
-    `Unknown ${provider === 'codex' ? 'Codex' : 'Claude'} account "${ref}". Available: ${names}`
-  )
-}
-
-const spawnFieldsOf = (
-  provider: AccountProvider,
-  account: { id: string; label: string }
-): AccountOverride =>
-  provider === 'codex'
-    ? { codexAccountId: account.id, codexAccountLabel: account.label }
-    : { claudeProfileId: account.id, claudeProfileLabel: account.label }
+): ServedPoolAccount => resolveAccountRefFrom(ctx.shell, provider, ref)
 
 const providerOf = (ctx: Ctx, session: Session): AccountProvider | null => {
   const mode = modeOfSession(ctx, session)
@@ -402,7 +389,7 @@ async function switchAccount(ctx: Ctx, _key: string, p: Payload): Promise<unknow
     const accounts = ctx.shell.accounts(provider)
     const next = pickAccount({
       accounts: poolOf(accounts),
-      usage: usageOf(accounts),
+      usage: usageOf(accounts, provider === 'claude' ? { model: record?.model } : undefined),
       preferredId: current,
       leavingId: current,
       preferSessionHeadroom: true
@@ -481,6 +468,9 @@ async function openSession(ctx: Ctx, key: string, p: Payload): Promise<unknown> 
     ? resolveWorkspace(ctx, explicitWorkspace)
     : (target?.group.workspaceId ?? workspaceForSpawn(ctx, undefined))
 
+  if (explicitWorkspace && target?.group.workspaceId && workspaceId !== target.group.workspaceId)
+    throw new Error('The group and workspace arguments name different workspaces')
+
   const mode = (str(p.mode) as OpenMode | undefined) ?? 'claude'
   const { claudeMode, antigravityMode, codexMode, piMode, dangerousMode, model, family } =
     resolveSpawnModes({
@@ -488,11 +478,17 @@ async function openSession(ctx: Ctx, key: string, p: Payload): Promise<unknown> 
       ...(p.dangerous !== undefined ? { dangerous: p.dangerous === true } : {}),
       ...(str(p.model) !== undefined ? { model: str(p.model) } : {})
     })
-  const profileRef = resolveProfileRef({
-    mode,
-    ...(p.chat !== undefined ? { chat: p.chat === true } : {}),
-    ...(str(p.profile) !== undefined ? { profile: str(p.profile) } : {})
-  })
+  const profileRef = resolveProfileRef(
+    {
+      mode,
+      ...(p.chat !== undefined ? { chat: p.chat === true } : {}),
+      ...(str(p.profile) !== undefined ? { profile: str(p.profile) } : {})
+    },
+    // The chat the launcher would open in that workspace: the person's own
+    // chat profile when they set one. Until 3 November 2026 the built-in
+    // replaced it, and a wave's Codex chats asked before every command.
+    family ? ctx.shell.chatDefault(family, workspaceId) : undefined
+  )
   const launchProfileId =
     family && profileRef
       ? ctx.shell
@@ -536,7 +532,12 @@ async function openSession(ctx: Ctx, key: string, p: Payload): Promise<unknown> 
         ...(mode === 'terminal' && command ? { initialCommand: command } : {}),
         autoExecute: mode === 'terminal' && !!command && p.autoRun !== false,
         ...(mode !== 'terminal' && prompt ? { initialPrompt: prompt } : {}),
-        ...(workspaceId !== undefined ? { workspaceId } : {})
+        ...(workspaceId !== undefined ? { workspaceId } : {}),
+        // Persisted lineage folds the tab under its caller. Separate tabs
+        // keep the in-memory messaging link below without sidebar nesting.
+        ...(p.attachToParent === true && ctx.callerSessionId
+          ? { spawnedBy: ctx.callerSessionId }
+          : {})
       }
     })
   } catch (err) {
@@ -619,9 +620,7 @@ function resolvePin(ctx: Ctx, p: Payload): PinnedBlueprint {
       })()
   let pin = named.length === 1 ? named[0] : undefined
   if (!pin && named.length > 1) {
-    const callerWs = ctx.callerSessionId
-      ? ctx.shell.record(ctx.callerSessionId)?.workspaceId
-      : undefined
+    const callerWs = workspaceForSpawn(ctx, undefined)
     const inCallerWs = callerWs ? named.filter((x) => x.workspaceId === callerWs) : []
     if (inCallerWs.length === 1) pin = inCallerWs[0]
     if (!pin) {

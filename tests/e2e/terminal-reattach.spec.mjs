@@ -39,7 +39,8 @@ import {
   until,
   callMcp,
   tmuxSessionAlive,
-  writeJournal
+  writeJournal,
+  serverDataDirOf
 } from './harness.mjs'
 
 const DIR = userDataDir('terminal-reattach')
@@ -58,7 +59,8 @@ const liveIds = (win) =>
   win.evaluate(() => window.electronAPI.sessionsList().then((all) => all.map((s) => s.id)))
 
 /** The session records live where the terminal manager runs: under the
- *  app's data folder in-process, under the server's when attached. */
+ *  app's data folder in-process, under the server's when attached, under
+ *  the app's `server/` folder when the app started its own (wave 5). */
 let recordsRoot = DIR
 function recordOf(id) {
   const dir = path.join(recordsRoot, 'session-records')
@@ -106,7 +108,7 @@ export async function run(t) {
 
   let tmuxName = null
   const first = await launchApp(DIR)
-  recordsRoot = first.server?.dataDir ?? DIR
+  recordsRoot = serverDataDirOf(DIR)
   let id
   try {
     const { win } = first

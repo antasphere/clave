@@ -1,3 +1,8 @@
+// Pinned to the in-process server (wave 5, lane C, PRDCT-3433, when the chat
+// helper stopped pinning): the activity record is written by the shell from
+// the session events it sees, and attached the sessions live on the server;
+// measured on 13 October 2026 attached: the ledger held the app's start row
+// and no open row and no state row for the echo session. Not a known failure.
 // The activity record (PRDCT-3384, PRDCT-3385): a session's open, its run
 // states and its close reach the ledger under the app's data folder, and the
 // fold answers them as a lane with a burst on today's day. Built on the echo
@@ -16,7 +21,7 @@ const localDay = (ms) => {
 
 export async function run(t) {
   const suffix = 'activity-record'
-  const chat = await openChat(suffix)
+  const chat = await openChat(suffix, [], undefined, {}, null, { server: 'in-process' })
   const { win, record, fixture } = chat
   const dir = fixturePath(suffix)
   const file = path.join(dir, 'activity', 'activity.jsonl')

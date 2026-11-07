@@ -4,16 +4,20 @@
 // ONE place names the commands, for the dev script (scripts/dev-attached.mjs)
 // and the e2e harness (tests/e2e/harness.mjs) alike. Two processes:
 //
-// - The terminal process (wave 3): `node out/main/terminal-process.js`, the
-//   Node process that owns node-pty, built by electron-vite with the main
-//   process (it cannot run from its sources under plain Node). It is started
-//   FIRST, prints one JSON line `{"address","token"}` on stdout once it
-//   listens, and the server is told both.
 // - The server: `src/main/server-entry.ts` under Bun, which runs the
 //   TypeScript as it is: `@clave/server`, the same package the app runs
-//   in-process, its terminals over the wire to the process above. The
-//   contract that stays: the process binds 127.0.0.1, and prints ONE JSON line
-//   `{"url","token"}` on stdout once it listens.
+//   in-process. The contract that stays: the process binds 127.0.0.1, and
+//   prints ONE JSON line `{"url","token"}` on stdout once it listens.
+// - The terminal process (wave 3): `node out/main/terminal-process.js`, the
+//   Node process that owns node-pty, built by electron-vite with the main
+//   process (it cannot run from its sources under plain Node). Since wave 5
+//   (PRDCT-3434) the SERVER starts it, from the bundle named by
+//   `--terminal-process` under the Node named by `--node` (this script's
+//   own, since Bun cannot run node-pty), and starts it again when it dies;
+//   the server's `clave-server.json` says which pid it is. The packaged app
+//   starts the same entry the same way, under its own binary as Node
+//   (`src/main/server-child.ts`). `startTerminalProcess` below still starts
+//   one alone, for a test that drives the port over the wire itself.
 //
 // `terminals: 'none'` starts the server alone, on no terminals, for a caller
 // that has no bundle and needs none (the server's own unit tests). It is
@@ -28,7 +32,7 @@
 // is a WebSocket upgrade on that same port (lane A), and a second handler
 // there corrupts frames.
 import { spawn } from 'node:child_process'
-import { existsSync, mkdirSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 
@@ -70,17 +74,28 @@ export function terminalProcessCommand({ repo, port = 0, parent = process.pid })
 }
 
 /** The command line that starts the server on `dataDir`, port 0 = any free;
- *  `terminals` the address of the terminal process, or none; `args` extra
- *  flags the entry reads off its argv (the harness passes the app's own test
- *  flags, `--test-no-activate` and the echo adapter's). */
+ *  `terminalProcess` the bundle the server starts its terminal process from
+ *  (under `node`, this process's Node by default), or `terminals` the
+ *  address of one started elsewhere, or neither; `parent` the pid whose end
+ *  stops the server; `args` extra flags the entry reads off its argv (the
+ *  harness passes the app's own test flags, `--test-no-activate` and the
+ *  echo adapter's). Throws, naming the build, when the bundle named is not
+ *  there. */
 export function serverCommand({
   repo,
   dataDir,
   port = 0,
   env = process.env,
   terminals,
+  terminalProcess,
+  node = process.execPath,
+  parent,
   args = []
 }) {
+  if (terminalProcess && !existsSync(terminalProcess))
+    throw new Error(
+      `the terminal process bundle is missing (${terminalProcess}): run \`npx electron-vite build\` first`
+    )
   return {
     cmd: bunBinary(env, repo),
     args: [
@@ -89,9 +104,22 @@ export function serverCommand({
       dataDir,
       '--port',
       String(port),
+      ...(terminalProcess ? ['--terminal-process', terminalProcess, '--node', node] : []),
       ...(terminals ? ['--terminals', terminals] : []),
+      ...(parent !== undefined ? ['--parent', String(parent)] : []),
       ...args
     ]
+  }
+}
+
+/** What the server's own `clave-server.json` says, or null before it is
+ *  written: its url and token, and the terminal process it runs
+ *  (`terminalProcessPid`, `terminals`, both changing at a restart). */
+export function readServerDiscovery(dataDir) {
+  try {
+    return JSON.parse(readFileSync(path.join(dataDir, 'clave-server.json'), 'utf-8'))
+  } catch {
+    return null
   }
 }
 
@@ -228,13 +256,17 @@ export async function startTerminalProcess({
 }
 
 /**
- * Start the server, with its terminal process first unless `terminals` is
- * `'none'`, and resolve once the server announced itself. Rejects when
- * either exits first or stays silent past `timeoutMs`, with its stderr in
- * the message, and nothing of the pair left running. `stop()` ends the
- * server (SIGTERM, SIGKILL after `killAfterMs`), then the terminal process
- * the same way. `terminalProcess` carries the latter's `pid`, `stop` and
- * `exited` so a caller can watch it, or end it on purpose.
+ * Start the server, which starts its own terminal process from the built
+ * bundle unless `terminals` is `'none'`, and resolve once the server
+ * announced itself. Rejects when it exits first or stays silent past
+ * `timeoutMs`, with its stderr in the message (the terminal process's lines
+ * are in it, the server relays them), and nothing left running. `stop()`
+ * ends the server (SIGTERM, SIGKILL after `killAfterMs`), which ends its
+ * terminal process on its way out; the server is also told this process as
+ * its parent, so a runner that dies takes it along. `terminalProcess`
+ * answers the process the server runs NOW, read off the server's own
+ * discovery file: `pid()` and `address()` change when the server starts a
+ * new one, `null` while it is being started again.
  */
 export async function startServerProcess({
   repo,
@@ -250,36 +282,25 @@ export async function startServerProcess({
     throw new Error(`startServerProcess: terminals must be "sidecar" or "none", got ${terminals}`)
   mkdirSync(dataDir, { recursive: true })
 
-  const sidecar =
-    terminals === 'sidecar'
-      ? await startTerminalProcess({ repo, timeoutMs, killAfterMs, env })
-      : null
-
   const { cmd, args } = serverCommand({
     repo,
     dataDir,
     port,
     env,
-    terminals: sidecar?.address,
+    ...(terminals === 'sidecar' && { terminalProcess: terminalProcessBundle(repo) }),
+    parent: process.pid,
     args: extraArgs
   })
-  const serverEnv = sidecar ? { ...env, CLAVE_TERMINALS_TOKEN: sidecar.token } : env
   const { child, announced, stderr } = startAnnouncing({
     what: 'the server',
     cmd,
     args,
     cwd: repo,
-    env: serverEnv,
+    env,
     timeoutMs,
     fields: ['url', 'token']
   })
-  let settled
-  try {
-    settled = await announced
-  } catch (err) {
-    await sidecar?.stop()
-    throw err
-  }
+  const settled = await announced
 
   let exited = false
   child.once('exit', () => {
@@ -291,11 +312,16 @@ export async function startServerProcess({
     token: settled.token,
     pid: child.pid,
     dataDir,
-    stderr: () => stderr() + (sidecar ? `\n[terminal process]\n${sidecar.stderr()}` : ''),
-    terminalProcess: sidecar,
+    stderr,
+    terminalProcess:
+      terminals === 'sidecar'
+        ? {
+            pid: () => readServerDiscovery(dataDir)?.terminalProcessPid ?? null,
+            address: () => readServerDiscovery(dataDir)?.terminals ?? null
+          }
+        : null,
     stop: async () => {
       if (!exited) await stopChild(child, killAfterMs)
-      await sidecar?.stop()
     }
   }
 }

@@ -57,6 +57,33 @@ tells the view which request, so the cards it closed on the kernel's word come
 back rather than one of them staying unanswerable for the session's life. Transcripts currently live for the
 mounted view's lifetime; disabling the plugin releases its subscription.
 
+The WORK RUNNING NOW — the subagents, and the commands left running in the
+background — is a strip of cards under the composer of both views
+(`src/WorkCards.tsx`): one card each, with a drawing of what it is
+(`src/WorkDrawing.tsx`, in the hand of the drop card's drawings, breathing
+while the work goes on), the type and the task or the command's title, and
+the figures (steps, the agent's own context, how long it has run, or how long
+it has been quiet). The cards are the one place that says it: the pane
+header's "in background" chip and the Terminal view's status-line count are
+gone (6 November 2026). Clicking a card opens a window onto its work: an
+agent's (`src/SubAgentPeek.tsx`) shows what it was asked, what it says and
+what it does, as it happens, rendered with the transcript's own rows
+(`src/TerminalEntry.tsx`, the rows moved out of the view for that); a
+command's (`src/ShellPeek.tsx`) shows its full command line and what it has
+written so far, read again every second from the file Claude names for a
+background command (Codex names none; its output lands in the transcript at
+completion). Both are views only, with no field and no button that answers
+anything; the agent reports to the conversation when it is done. An agent's
+log is reduced off the same stream by `src/subagents.ts`: every
+message, text, call and result an adapter stamps with a `parent` (Claude the
+call that started the agent, Codex its thread) goes to that agent's own
+conversation, keyed as the row is (`SubAgent.id`), through the transcript's
+reducer; `reduceConversation` drops a parented event, so an agent's hundred
+calls no longer count into the run the conversation is on, as they did until
+6 November 2026. A page of the past folds in as it arrives; Claude's own
+transcript replay carries nothing of a subagent (sidechains are skipped), so a
+resumed session's finished agents have no log.
+
 A RUN of tool calls — everything between two messages — is one row saying what
 the agent did, counted by kind ("Read 3 files · Ran 1 command"), with a loader
 while any call is in flight and the failure count beside it. It opens to one item
@@ -112,16 +139,62 @@ mounted per session since PRDCT-2610, and an unscoped `.chat-view` killed the se
 half of the script for a whole wave without anyone noticing.
 Screenshot bytes are temporary and no baselines are committed.
 
-## Files on a message
+## Files and sessions on a message
+
+A drag over the pane brings up the drop card: a veil, one paper card, and a
+drawing in the hand of the products' figures (`src/DropDrawing.tsx`, the
+`.chat-drawing` rules in `system.css`: ink at low opacity, boxes filled with
+paper, the ringed dot where the thing lands, the accent on the ONE line it
+travels along, drawn once as the card comes up; words under the drawing, never
+in it). The chips' glyphs are in the same hand, and each chip wears its label
+as a tag. `tests/e2e/look/chat-attachments.spec.mjs` screenshots all of it in
+two themes, for eyes rather than as a check.
 
 A file dropped anywhere on the pane, pasted into the composer, or picked with
 the paperclip becomes a chip above the textarea (`src/Attachments.tsx`): it can
 be previewed, removed, or — when it is an image the adapter cannot take as image
-content — sent as a file reference instead, on the reader's say-so. Chips are
-attachment records from `sessions:files`; the bytes are read by main when the
-message is sent (`src/main/sessions/README.md`, "Attachments"). A sent turn
-shows the same chips as its record. The paths Clave's own file and git panels
-drag as text still land at the caret, since a dragged folder is a path to talk
-about, not a file to attach. `tests/e2e/chat-attachments.spec.mjs` drives all
-of it through the real write IPC and reads the provider's side off the echo
-adapter's reply.
+content — sent as a file reference instead, on the reader's say-so. An image in
+a format no provider takes (HEIC, SVG, AVIF) is a file reference from the
+start: the agent gets its path. Chips are attachment records from
+`sessions:files`; the bytes are read by main when the message is sent
+(`src/main/sessions/README.md`, "Attachments"). A sent turn shows the same
+chips as its record.
+
+A folder is a record of its own: main tells it from a file, and the chip
+names it with its top-level item count (`Folder · 12 items`), its path on
+hover, its listing in the preview, and the marker `[Folder #1]` in the text;
+the provider gets its path under that marker, to list. Every chip says what
+its record is, from the media type its name says (`@clave/contract/attachments`,
+the one table for the Mac, a server and the chips): Image, Video, Audio, PDF,
+Document, Sheet, Slides, Text, Code, Archive, Folder or File, each with a
+glyph in the drop card's hand, and the one figure that matters, its size or
+its item count. The label stays what the record IS to the agent (`Image`,
+`File`, `Folder`, `Session`): a video is a File, a path to read. The paths
+Clave's own file and git panels drag as text land at the caret, the way the
+TUI pastes them. A drop never fails: whatever main refuses that arrived as a
+path — a named pipe, a socket, a file it cannot read — lands in the text as
+that path with the reason reported beside it, and only bytes with no path (a
+pasted image too large) keep the error on their chip.
+
+A sidebar tab dragged onto the pane is a SESSION attachment: the tab's id, name,
+agent and folder, delivered to the agent as a line it can act on with
+`clave_read_session` and `clave_send_to_session` ("finish when these three
+lanes are done"). The sidebar's drag is pointer-based, so the pane does not
+listen for `drop`: it marks its root through `lib/session-drag.ts` and the drag
+hook (`hooks/use-sidebar-dnd.ts`) dispatches enter, leave and drop events on
+it; a group dropped hands over every session it holds.
+
+Every record is labelled as it arrives — `Image #1`, `File #2`, `Session #1`,
+numbered per kind by what the record IS to the agent (a HEIC is a File) — and
+written into the text at the caret as a marker, `[Image #1]`. The chip and the
+marker are one thing: removing the chip takes the marker out of the text, and
+editing the marker out of the text (`[Session #1]` to `[Session #1`) removes
+the chip. Main appends a legend keyed by the markers for the provider. The cap
+is ten attachments per message, files and sessions together. The composer's
+side of all this is `src/composer-attachments.ts`, shared by the chat and
+terminal views; the pure label and marker helpers are in
+`src/shared/attachments.ts`. `tests/e2e/chat-attachments.spec.mjs` drives all
+of it through the real write IPC, the desktop's own drop through the devtools
+protocol (`Input.dispatchDragEvent`, real File objects with their entries) and
+the sidebar's real pointer drag included, and
+reads the provider's side off the echo adapter's reply.

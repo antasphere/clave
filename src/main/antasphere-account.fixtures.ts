@@ -350,9 +350,9 @@ export const cleanupAntasphereFixtures = (
     const world = yield* AntasphereFixtureWorld
     const run = world.runs.get(runId)
     if (run) {
-      run.manager?.signOut()
-      run.manager?.shutdown()
       yield* Effect.promise(async () => {
+        await run.manager?.signOut()
+        run.manager?.shutdown()
         await run.server?.stop()
         await run.provider.close()
       })

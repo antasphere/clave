@@ -7,6 +7,7 @@
  * identity of a tab). No Electron here: the shell comes in through the
  * interface, so every tool is tested on fakes.
  */
+import { workspaceForPath } from '../../shared/workspace-types'
 import type { ClaveApiClient } from '@clave/client'
 import type { LayoutSnapshot, SidebarGroup } from '@clave/contract/sidebar'
 import type { Session } from '@clave/contract/sessions'
@@ -96,10 +97,15 @@ export interface ServedShell<W extends ToolWindow = ToolWindow> {
   accounts(provider: AccountProvider): ServedPoolAccount[]
   /** The account selected in settings for that provider, undefined when none is. */
   selectedAccountId(provider: AccountProvider): string | undefined
+  /** Opt in to the menu recommendation for implicit new-session accounts. */
+  useRecommendedAccount?(): boolean
   /** The switching mode a workspace runs under: its own, else the global one. */
   switchMode(workspaceId: string | null | undefined): AccountSwitchMode
   /** The launch profiles of a family, built-ins first. */
   launchProfiles(family: LauncherFamily): { id: string; name: string }[]
+  /** The chat profile the launcher would open that family's chat on in that
+   *  workspace (`chatDefaultFor`); undefined when its default has no chat form. */
+  chatDefault(family: LauncherFamily, workspaceId: string | undefined): string | undefined
   /** The pinned groups the workspace state persists, every workspace's. */
   pins(): PinnedBlueprint[]
   /** The tab that opened a tab, null when none did (`sessions/lineage.ts`). */
@@ -253,7 +259,10 @@ export function workspaceForSpawn(ctx: Ctx, explicit: string | undefined): strin
   if (explicit) return resolveWorkspace(ctx, explicit)
   const caller = ctx.callerSessionId ? ctx.shell.record(ctx.callerSessionId) : undefined
   return (
-    caller?.workspaceId ?? (ctx.win ? ctx.shell.workspaceOfWindow(ctx.win.id) : null) ?? undefined
+    caller?.workspaceId ??
+    workspaceForPath(ctx.shell.workspaces(), caller?.cwd) ??
+    (ctx.win ? ctx.shell.workspaceOfWindow(ctx.win.id) : null) ??
+    undefined
   )
 }
 
@@ -269,9 +278,7 @@ export async function allLayouts(ctx: Ctx, routedKey: string): Promise<LayoutSna
 export function groupOptions(ctx: Ctx): GroupRefOptions {
   return {
     callerSessionId: ctx.callerSessionId,
-    callerWorkspaceId: ctx.callerSessionId
-      ? ctx.shell.record(ctx.callerSessionId)?.workspaceId
-      : undefined,
+    callerWorkspaceId: workspaceForSpawn(ctx, undefined),
     windowWorkspaceId: ctx.win ? ctx.shell.workspaceOfWindow(ctx.win.id) : null,
     workspaceNameOf: (id) => workspaceNameOf(ctx, id)
   }

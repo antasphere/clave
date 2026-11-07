@@ -24,6 +24,16 @@ export interface PluginToolbarEntry {
   kind: 'action' | 'popover'
   items: { id: string; title: string }[]
 }
+/** The page an action answered, shown in the content column in place of the mosaic. */
+export interface PluginPage {
+  pluginId: string
+  /** The action that opened it, so its toolbar button alone lights up. */
+  actionId: string
+  pluginName: string
+  icon: string
+  title: string
+  url: string
+}
 
 /** Which plugin surface each host is showing. It lives here rather than in session-store
  *  because a plugin panel is not a session: the side panel's own `sidePanelTab` keeps
@@ -32,20 +42,26 @@ export interface PluginToolbarEntry {
 interface PluginUIState {
   sidePanel: { pluginId: string; panelId: string } | null
   mainPanel: { pluginId: string; panelId: string } | null
+  /** The page a plugin action opened. It shares the content column with `mainPanel`, so
+   *  opening one closes the other: one plugin thing there at a time. */
+  page: PluginPage | null
   /** The registry's records as of the host's last `plugins:changed`, so a
    *  decision made outside React — a link click asking whether the plugin
    *  that would take it is running — can be made without a round trip. */
   records: PluginRecord[]
   openSidePanel: (entry: { pluginId: string; panelId: string } | null) => void
   openMainPanel: (entry: { pluginId: string; panelId: string } | null) => void
+  openPage: (page: PluginPage | null) => void
 }
 
 export const usePluginUIStore = create<PluginUIState>((set) => ({
   sidePanel: null,
   mainPanel: null,
+  page: null,
   records: [],
   openSidePanel: (entry) => set({ sidePanel: entry }),
-  openMainPanel: (entry) => set({ mainPanel: entry })
+  openMainPanel: (entry) => set(entry ? { mainPanel: entry, page: null } : { mainPanel: null }),
+  openPage: (page) => set(page ? { page, mainPanel: null } : { page: null })
 }))
 
 let watching = false
@@ -69,6 +85,7 @@ export function initPluginUI(): void {
     const next: Partial<PluginUIState> = { records }
     if (dropped(state.sidePanel)) next.sidePanel = null
     if (dropped(state.mainPanel)) next.mainPanel = null
+    if (dropped(state.page)) next.page = null
     if (Object.keys(next).length) usePluginUIStore.setState(next)
   }
   const update = (): void => {
@@ -132,15 +149,22 @@ export function pluginPanels(
   )
 }
 
-/** Whether a main-placement plugin panel is currently showing, for the hosts that have to
- *  step aside for it. */
+/** Whether a plugin holds the content column (a main-placement panel or an action's page),
+ *  for the hosts that have to step aside for it. */
 export function usePluginMainPanelOpen(): boolean {
   const selection = usePluginUIStore((s) => s.mainPanel)
+  const page = usePluginUIStore((s) => s.page)
   const panels = pluginPanels(usePluginRecords(), 'main')
-  return panels.some(
-    (entry) => entry.pluginId === selection?.pluginId && entry.panelId === selection?.panelId
+  return (
+    page !== null ||
+    panels.some(
+      (entry) => entry.pluginId === selection?.pluginId && entry.panelId === selection?.panelId
+    )
   )
 }
+
+/** The page an action opened, if one is showing. */
+export const usePluginPage = (): PluginPage | null => usePluginUIStore((s) => s.page)
 
 /** Toolbar entries that are both declared and registered through `ui.registerToolbar`. */
 export function pluginToolbarEntries(records: PluginRecord[]): PluginToolbarEntry[] {

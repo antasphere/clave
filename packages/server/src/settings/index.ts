@@ -8,5 +8,5 @@ export {
   type Unsubscribe
 } from './port'
 export { settingsHandlers } from './handlers'
-export { SettingsEventsLive } from './events'
+export { SettingsEventsLive, WorkspacesWelcomeLive } from './events'
 export { SettingsLive } from './api'

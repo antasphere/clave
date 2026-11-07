@@ -6,6 +6,7 @@ import { installTerminalPorts, resetTerminalPorts } from '../../ports/terminals'
 import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest'
 import { CodexAdapter, CodexTranslator } from './codex-adapter'
 import { SessionEventSchema, type SessionEvent } from '../../../shared/session-model'
+import { requestGone } from '../../../shared/request-refusals'
 import type { SpawnSpec } from '../adapter'
 import type { LaunchProfile } from '../../../shared/agent-launch'
 import type { CodexCallbacks, CodexConnection } from './codex-app-server'
@@ -41,6 +42,84 @@ const spec: SpawnSpec = {
 const tick = (): Promise<void> => new Promise((resolve) => setImmediate(resolve))
 
 describe('Codex translation', () => {
+  it.each(['form', 'openai/form', 'openaiForm'])(
+    'offers an accept-once response for a %s empty MCP approval',
+    (mode) => {
+      const events: SessionEvent[] = []
+      const translator = new CodexTranslator((e) => events.push(e))
+      translator.turnId = 'turn-mcp'
+      translator.request({
+        id: 73,
+        method: 'mcpServer/elicitation/request',
+        params: {
+          mode,
+          threadId: 'thread',
+          turnId: 'turn-mcp',
+          serverName: 'clave_test',
+          message: 'Allow the clave_test MCP server to run tool "clave_list"?',
+          _meta: { tool_name: 'clave_list', tool_params: { workspace: 'all' } },
+          requestedSchema: { type: 'object', properties: {} }
+        }
+      })
+      const prompt = events.find((e) => e.type === 'permission_request')
+      expect(prompt?.options).toEqual([
+        { id: 'accept', label: 'accept' },
+        { id: 'decline', label: 'decline' },
+        { id: 'cancel', label: 'cancel' }
+      ])
+      expect(events.at(-1)).toEqual({ type: 'state_change', state: 'blocked' })
+      const connection = { respond: vi.fn() } as unknown as CodexConnection
+      translator.answer('73', 'accept', connection)
+      // Codex's message-only ApprovalAction sends no form content or persistence metadata.
+      expect(connection.respond).toHaveBeenCalledWith(73, {
+        action: 'accept',
+        content: null,
+        _meta: null
+      })
+      expect(events.at(-1)).toEqual({ type: 'state_change', state: 'working' })
+      expect(() => translator.answer('73', 'accept', connection)).toThrow(/expired/)
+      expect(connection.respond).toHaveBeenCalledTimes(1)
+    }
+  )
+  it.each([
+    { mode: 'form', requestedSchema: { type: 'object', properties: { name: { type: 'string' } } } },
+    { mode: 'form', requestedSchema: { type: 'object', properties: {}, required: ['name'] } },
+    { mode: 'form', requestedSchema: { type: 'object', properties: {}, minProperties: 1 } },
+    { mode: 'openai/form', requestedSchema: { type: 'object', properties: {}, not: {} } },
+    {
+      mode: 'openaiForm',
+      requestedSchema: { type: 'object', properties: {}, const: { name: 'x' } }
+    },
+    {
+      mode: 'url',
+      requestedSchema: { type: 'object', properties: {} },
+      url: 'https://example.test'
+    },
+    { mode: 'future', requestedSchema: { type: 'object', properties: {} } },
+    { mode: 'form', requestedSchema: null },
+    { mode: 'form', requestedSchema: { type: 'object', properties: [] } },
+    { mode: 'form', requestedSchema: { type: 'object' } }
+  ])('does not offer acceptance for an unfillable or unsupported elicitation: %j', (params) => {
+    const events: SessionEvent[] = []
+    const translator = new CodexTranslator((e) => events.push(e))
+    translator.request({ id: 'mcp', method: 'mcpServer/elicitation/request', params })
+    const prompt = events.find((e) => e.type === 'permission_request')
+    expect(prompt?.options.map((o) => o.id)).toEqual(['decline', 'cancel'])
+    const connection = { respond: vi.fn() } as unknown as CodexConnection
+    expect(() => translator.answer('"mcp"', 'accept', connection)).toThrow(/approval option/)
+    expect(connection.respond).not.toHaveBeenCalled()
+  })
+  it.each(['decline', 'cancel'])('preserves the %s reply to an MCP elicitation', (action) => {
+    const translator = new CodexTranslator(() => {})
+    translator.request({
+      id: 'mcp',
+      method: 'mcpServer/elicitation/request',
+      params: { mode: 'form', requestedSchema: { type: 'object', properties: {}, required: [] } }
+    })
+    const connection = { respond: vi.fn() } as unknown as CodexConnection
+    translator.answer('"mcp"', action, connection)
+    expect(connection.respond).toHaveBeenCalledWith('mcp', { action, content: null, _meta: null })
+  })
   it('translates every recorded notification in order without silently dropping any', () => {
     const events: SessionEvent[] = []
     const translator = new CodexTranslator((e) => events.push(SessionEventSchema.parse(e)))
@@ -413,14 +492,11 @@ describe('Codex adapter lifecycle', () => {
     expect(connect).not.toHaveBeenCalled()
     expect(() => adapter.write(handle, { type: 'user_message', text: 'hello' })).toThrow('Unknown')
   })
-  it('routes permission replies and rejects concurrent turns and unsupported requests', async () => {
+  it('routes permission replies and rejects unsupported requests', async () => {
     const { adapter, connection, callback } = fake()
     const handle = await adapter.spawn(spec)
     adapter.write(handle, { type: 'user_message', text: 'hello' })
     await tick()
-    expect(() => adapter.write(handle, { type: 'user_message', text: 'second' })).toThrow(
-      'active turn'
-    )
     callback().request({
       id: 'approval',
       method: 'item/fileChange/requestApproval',
@@ -510,6 +586,14 @@ describe('Codex races and failure boundaries', () => {
     translator.notification({ method: 'serverRequest/resolved', params: { requestId: '1' } })
     expect(() => translator.answer('"1"', 'accept', connection)).toThrow()
     expect(events.at(-1)).toEqual({ type: 'state_change', state: 'working' })
+    // The views settle the card on the adapter's own word, never on the raw
+    // frame, and the word comes before the state word that follows it.
+    const withdrawn = events.findIndex((e) => e.type === 'permission_withdrawn' && e.id === '"1"')
+    expect(withdrawn).toBeGreaterThan(-1)
+    expect(withdrawn).toBeLessThan(events.length - 1)
+    // A resolution naming no held request says nothing.
+    translator.notification({ method: 'serverRequest/resolved', params: { requestId: 'never' } })
+    expect(events.filter((e) => e.type === 'permission_withdrawn')).toHaveLength(1)
   })
   it('offers schema-valid scoped permission grants without granting null fields', () => {
     const events: SessionEvent[] = []
@@ -572,12 +656,41 @@ it('reports an interrupted turn as interrupted even when Codex attaches an error
   expect(events).toEqual([{ type: 'turn_interrupted' }, { type: 'state_change', state: 'done' }])
 })
 it('expires legacy approvals with the active turn even without a turnId field', () => {
-  const translator = new CodexTranslator(() => {})
+  const events: SessionEvent[] = []
+  const translator = new CodexTranslator((e) => events.push(e))
   translator.turnId = 'active'
   translator.request({ id: 1, method: 'execCommandApproval', params: {} })
   translator.notification({ method: 'turn/completed', params: { turn: { id: 'active' } } })
   const connection = { respond: vi.fn() } as unknown as CodexConnection
   expect(() => translator.answer('1', 'approved', connection)).toThrow('expired')
+  expect(connection.respond).not.toHaveBeenCalled()
+  // The turn's end says which approval it withdrew, before it says done.
+  const withdrawn = events.findIndex((e) => e.type === 'permission_withdrawn' && e.id === '1')
+  const done = events.findIndex((e) => e.type === 'state_change' && e.state === 'done')
+  expect(withdrawn).toBeGreaterThan(-1)
+  expect(withdrawn).toBeLessThan(done)
+})
+
+it('refuses an unknown option on a held approval in words that keep the card, a missing approval in words that retire it', () => {
+  const translator = new CodexTranslator(() => {})
+  translator.turnId = 'active'
+  translator.request({ id: 1, method: 'execCommandApproval', params: {} })
+  const connection = { respond: vi.fn() } as unknown as CodexConnection
+  const thrown = (answer: () => void): unknown => {
+    try {
+      answer()
+    } catch (error) {
+      return error
+    }
+    return undefined
+  }
+  const option = thrown(() => translator.answer('1', 'bogus-option', connection))
+  expect(option).toBeInstanceOf(Error)
+  expect((option as Error).message).toBe('Unknown Codex approval option')
+  expect(requestGone(option)).toBe(false)
+  const missing = thrown(() => translator.answer('9', 'approved', connection))
+  expect((missing as Error).message).toBe('Unknown or expired Codex approval option')
+  expect(requestGone(missing)).toBe(true)
   expect(connection.respond).not.toHaveBeenCalled()
 })
 
@@ -815,6 +928,73 @@ describe('Codex chat permissions', () => {
         profile('-s', 'read-only', '-a', 'untrusted')
       )
     ).toMatchObject({ sandbox: 'danger-full-access', approvalPolicy: 'never' })
+  })
+  /* The thread's binding to this tab's own Clave tool server, by its fresh
+     name. Codex asks before every tool of a server left on its default mode
+     (auto: any tool not annotated read-only, and Clave's carry no
+     annotations), and the fresh name let no answer be remembered: on 3
+     November 2026 every message a lane sent to another tab asked first. */
+  const claveBinding = (params: unknown): Record<string, unknown> | undefined => {
+    const config = (params as { config?: Record<string, unknown> })?.config ?? {}
+    const key = Object.keys(config).find((k) => /^mcp_servers\.clave_[a-f0-9]{12}$/.test(k))
+    return key ? (config[key] as Record<string, unknown>) : undefined
+  }
+  /* The tools kept on prompt: the ones that start or end a process on the
+     Mac outside the chat's own sandbox and approval policy. */
+  const prompted = {
+    clave_open_session: { approval_mode: 'prompt' },
+    clave_add_group_terminal: { approval_mode: 'prompt' },
+    clave_launch_group: { approval_mode: 'prompt' },
+    clave_set_session_view: { approval_mode: 'prompt' },
+    clave_close_session: { approval_mode: 'prompt' },
+    clave_side_panel: { approval_mode: 'prompt' }
+  }
+  it("tells Codex this tab's Clave tools need no approval, the process-starting ones excepted", async () => {
+    const binding = claveBinding(await threadParams({}, profile()))
+    expect(binding).toMatchObject({
+      url: 'http://127.0.0.1:12345/mcp',
+      bearer_token_env_var: 'CLAVE_CODEX_MCP_TOKEN',
+      enabled: true,
+      required: true,
+      default_tools_approval_mode: 'approve',
+      tools: prompted
+    })
+    expect(Object.keys(binding!.tools as Record<string, unknown>).sort()).toEqual(
+      Object.keys(prompted).sort()
+    )
+  })
+  it('says the same on a resumed thread, so a restart keeps it', async () => {
+    expect(
+      claveBinding(await threadParams({ resume: 'saved' }, profile('-s', 'workspace-write')))
+    ).toMatchObject({ default_tools_approval_mode: 'approve', tools: prompted })
+  })
+  it('prompts the side panel under every policy that asks, whatever the sandbox says', async () => {
+    // Its update writes an existing file wherever the agent nominated it,
+    // outside the thread's sandbox and its writable roots; the sandbox Codex's
+    // own config applies is not seen here, so no asking policy approves it.
+    for (const flags of [
+      [],
+      ['-s', 'read-only'],
+      ['-s', 'workspace-write'],
+      ['-s', 'danger-full-access']
+    ]) {
+      const binding = claveBinding(await threadParams({}, profile(...flags)))
+      expect(binding).toMatchObject({ tools: { clave_side_panel: { approval_mode: 'prompt' } } })
+    }
+    const launch = claveBinding(await threadParams({ sandbox: 'workspace-write' }, profile()))
+    expect(launch).toMatchObject({ tools: { clave_side_panel: { approval_mode: 'prompt' } } })
+  })
+  it('keeps no prompt under a policy that skips every approval: the person chose none', async () => {
+    const binding = claveBinding(await threadParams({}, profile('--yolo')))
+    expect(binding).toMatchObject({ default_tools_approval_mode: 'approve' })
+    expect(binding).not.toHaveProperty('tools')
+    // The launch's own choice says the same.
+    const launch = claveBinding(await threadParams({ permissionMode: 'never' }, profile()))
+    expect(launch).not.toHaveProperty('tools')
+  })
+  it('names its own server only: no other server table is written', async () => {
+    const params = (await threadParams({}, profile())) as { config: Record<string, unknown> }
+    expect(Object.keys(params.config).filter((k) => k.startsWith('mcp_servers.'))).toHaveLength(1)
   })
   it('refuses a sandbox Codex does not know', async () => {
     const { adapter } = fake()

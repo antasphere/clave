@@ -7,7 +7,7 @@
  */
 import { ipcMain, BrowserWindow } from 'electron'
 import { sessionManager } from './session-manager'
-import { SessionInputSchema } from '../../shared/session-model'
+import { SessionControlSchema, SessionInputSchema } from '../../shared/session-model'
 import type { SessionWrite } from '@clave/contract/sessions'
 import { windowRegistry } from '../window-registry'
 import { hasServerEventPublisher } from '../server/session-events'
@@ -129,5 +129,11 @@ export function registerSessionIpc(): void {
   ipcMain.handle('sessions:commands', (event, id: string) => {
     owning(event, id)
     return getSessionHost().commands(id)
+  })
+  // A control request to the session's provider: only the closed set the
+  // schema names passes, so a view cannot change the permission mode here.
+  ipcMain.handle('sessions:control', (event, id: string, request: unknown) => {
+    owning(event, id)
+    return getSessionHost().control(id, SessionControlSchema.parse(request))
   })
 }

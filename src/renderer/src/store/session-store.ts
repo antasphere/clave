@@ -1,16 +1,23 @@
+import { LOCAL_SERVER_ID, resourceKey } from '@clave/contract/fleet'
+import { ownerOf, isRemoteKey, partitionLayout } from '../lib/fleet-identity'
 import { linkedEditorBlocksClose } from './linked-document-store'
 import { adoptServerStartedTerminals, adoptServerStartedSessions } from '../lib/adopt-record'
 import { emitTabClosed } from '../lib/exchange-capture'
 import { clearSessionDraft } from '../views/draft-store'
+import { subagentPresentation } from '../lib/subagent-presentation'
+import { entryTarget, workPresentation } from '../lib/work-presentation'
 import { finishesTurn } from '../lib/tab-status'
 import { create } from 'zustand'
+import { usePluginUIStore } from '../components/plugins/plugin-ui-store'
 import type { GitRangeDirection } from '../../../shared/git-range'
+import type { WorkAssignment } from '@clave/contract/work-rules'
 import type {
   Theme,
   AppIcon,
   Density,
   TextSize,
   TreeRuleIntensity,
+  TreeIndent,
   PanelScope,
   ActivityStatus,
   GroupTerminalConfig,
@@ -36,6 +43,7 @@ import {
 import type { Agent, AgentStatus } from '../../../shared/remote-types'
 import { useWorkspaceStore } from './workspace-store'
 import { resolveUiFont, type UiFont } from '../lib/ui-font'
+import { LOGO_MARK } from '../lib/marks'
 import {
   mergeLayoutForKeys,
   pruneUnknownSessions,
@@ -66,6 +74,7 @@ export type {
   ExtensionsSection,
   SessionType,
   TreeRuleIntensity,
+  TreeIndent,
   Density,
   TextSize,
   PanelScope
@@ -75,6 +84,8 @@ export {
   GROUP_TERMINAL_ICONS,
   TERMINAL_COLOR_VALUES,
   TREE_RULE_INTENSITIES,
+  TREE_INDENTS,
+  treeIndentPx,
   PANEL_ROOTS,
   DENSITY_LEVELS,
   DEFAULT_DENSITY,
@@ -91,15 +102,34 @@ export {
 
 /** THE visibility predicate — single source of truth for workspace scoping.
  *  activeId null → no-workspace mode, everything visible (today's app).
- *  x.workspaceId null/undefined → unstamped safety net: nothing can ever
- *  disappear because it predates the workspace model. */
+ *
+ *  A SERVER workspace is a workspace whose id is a remote key
+ *  (`clave-owner:workspace:<serverId>:…`), so `activeId` can itself be remote.
+ *  A remote tab belongs to exactly one server workspace and shows ONLY there —
+ *  the inversion of the old rule, under which every remote tab appeared in
+ *  every workspace (PRDCT #241). A remote record's `workspaceId` is already
+ *  namespaced to its server (preload `scopeRecord`), so it matches `activeId`
+ *  when that server workspace is the one shown; a remote tab the daemon left
+ *  unstamped has no server workspace of its own, so it shows in any workspace
+ *  of the same server (never in a local one).
+ *
+ *  A LOCAL item keeps the unstamped safety net: a null `workspaceId` predates
+ *  the workspace model and must never disappear. */
 export function inActiveWorkspace(
-  x: { workspaceId?: string | null },
+  x: { id?: string; workspaceId?: string | null },
   activeId: string | null
 ): boolean {
   if (activeId === null) return true
-  if (x.workspaceId == null) return true
-  return x.workspaceId === activeId
+  // Stamped — the uniform rule for local and server workspaces alike: an item
+  // shows only in the workspace it carries. A remote record's workspaceId is
+  // namespaced to its server, so it matches its server workspace and nothing
+  // else (never a local one).
+  if (x.workspaceId != null) return x.workspaceId === activeId
+  // Unstamped. A local item keeps the safety net (it predates the model). A
+  // remote tab the daemon left without a server workspace shows in any
+  // workspace of its own server, so it is never lost and never leaks local.
+  if (isRemoteKey(x.id)) return ownerOf(x.id) === ownerOf(activeId)
+  return true
 }
 
 interface SessionState {
@@ -120,12 +150,17 @@ interface SessionState {
   appIcon: AppIcon
   /** How heavily every tree draws the hairlines between its rows. */
   treeRuleIntensity: TreeRuleIntensity
+  /** How far each level of a side-panel tree steps in (TREE_INDENTS). */
+  treeIndent: TreeIndent
   /** How tight the chrome is drawn — the preset written as `data-density`. */
   density: Density
   /** Px added to the chrome's labels on top of the preset (`--ui-text-offset`). */
   textSize: TextSize
   /** The face the chrome is set in (`data-ui-font`). */
   uiFont: UiFont
+  /** What stands for an agent in the chrome: `logo`, or a mark pack's `<pluginId>/<markId>`,
+   *  saved raw and resolved at use against the packs this build can draw (`lib/marks.ts`). */
+  agentMark: string
   /** Run new sessions inside persistent tmux sessions. On by default; falls
    *  back to a plain shell automatically when tmux isn't installed. */
   tmuxMode: boolean
@@ -304,9 +339,11 @@ interface SessionState {
   setTheme: (theme: Theme) => void
   setAppIcon: (icon: AppIcon) => void
   setTreeRuleIntensity: (intensity: TreeRuleIntensity) => void
+  setTreeIndent: (indent: TreeIndent) => void
   setDensity: (density: Density) => void
   setTextSize: (textSize: TextSize) => void
   setUiFont: (uiFont: UiFont) => void
+  setAgentMark: (agentMark: string) => void
   setTmuxMode: (enabled: boolean) => void
   setMessageTrailEnabled: (enabled: boolean) => void
   updateSessionAlive: (id: string, alive: boolean) => void
@@ -343,7 +380,7 @@ interface SessionState {
   setLimitReported: (id: string, reported: boolean) => void
   setSessionActivity: (id: string, status: ActivityStatus) => void
   setAgentState: (id: string, state: import('./session-types').AgentRunState) => void
-  setBackgroundTaskCount: (id: string, count: number) => void
+  setBackgroundTaskCount: (id: string, count: number, agents?: number) => void
   setSessionPromptWaiting: (id: string, promptType: string | null) => void
   setSessionDetectedUrl: (id: string, url: string | null) => void
   setSessionServerStatus: (id: string, status: import('./session-types').ServerStatus) => void
@@ -358,6 +395,10 @@ interface SessionState {
    *  clave_set_session_view): the record already holds it, nothing is
    *  written back; the serving session the view had before leaves the store. */
   applyServedPage: (id: string, view: SessionViewConfig | null) => void
+  /** PRDCT-4123: the server changed the tab's work assignment (null: it
+   *  belongs to no wave or lane any more). The record already holds it,
+   *  nothing is written back. */
+  applyServedWork: (id: string, work: WorkAssignment | null) => void
   renameSession: (id: string, name: string) => void
   autoRenameSession: (id: string, name: string) => void
   resetSessionName: (id: string) => void
@@ -433,7 +474,10 @@ interface SessionState {
  *  falls back to this window's active workspace (mirrors pty:spawn). */
 function normalizeSession(session: Session): Session {
   const workspaceId =
-    session.workspaceId ?? useWorkspaceStore.getState().activeWorkspaceId ?? undefined
+    session.workspaceId ??
+    (isRemoteKey(session.id)
+      ? undefined
+      : (useWorkspaceStore.getState().activeWorkspaceId ?? undefined))
   return {
     ...session,
     workspaceId,
@@ -488,8 +532,10 @@ type SaveItem = { data: { groups: SessionGroup[]; displayOrder: string[] }; json
  *  is out, a refusal applying the server's snapshot. */
 const savePipeline = createSavePipeline<SaveItem, SidebarLayoutSnapshot>({
   current: () => {
+    // Do not echo a displaced tab back while its process inventory is unresolved.
+    if (pendingLayout) return null
     const { groups, displayOrder } = useSessionStore.getState()
-    const data = { groups, displayOrder }
+    const data = partitionLayout({ groups, displayOrder }, LOCAL_SERVER_ID)
     const json = JSON.stringify(data)
     return json === lastPersistedJson ? null : { data, json }
   },
@@ -514,6 +560,7 @@ const savePipeline = createSavePipeline<SaveItem, SidebarLayoutSnapshot>({
  *  save read every server group the window lacked as the window's removal
  *  and wrote the layout back without them (verifier round 2, Major 1). */
 export function setSidebarBase(snapshot: SidebarLayoutSnapshot): void {
+  pendingLayout = null
   savePipeline.setRevision(snapshot.revision)
   lastPersistedJson = JSON.stringify({
     groups: snapshot.groups,
@@ -534,6 +581,9 @@ function persistSidebarLayout(state: { groups: SessionGroup[]; displayOrder: str
   if (groups === lastPersistedGroups && displayOrder === lastPersistedOrder) return
   lastPersistedGroups = groups
   lastPersistedOrder = displayOrder
+  // An ordinary edit retries a failed read once. Mark it in flight before
+  // dispatch so further edits coalesce; rejection itself never retries.
+  if (pendingLayout?.failed) readPendingLayout(pendingLayout)
   savePipeline.save()
 }
 
@@ -569,7 +619,154 @@ export function applyServerLayout(
  * again on the revision it now knows: the refs below are left as they were
  * so the store's subscription fires. The pipeline decides WHEN this runs.
  */
+type Layout = Pick<SidebarLayoutSnapshot, 'groups' | 'displayOrder'>
+type DisplacedSession = { identity: string; placement: string; keep: boolean }
+type PendingLayout = {
+  snapshot: SidebarLayoutSnapshot
+  sessions: Map<string, DisplacedSession>
+  failed: boolean
+}
+let pendingLayout: PendingLayout | null = null
+
+function placementOf(layout: Layout, id: string): string {
+  return JSON.stringify([
+    layout.displayOrder.includes(id),
+    layout.groups
+      .flatMap((g) => [
+        ...(g.sessionIds.includes(id) ? [`member:${g.id}`] : []),
+        ...g.terminals.filter((t) => t.sessionId === id).map((t) => `terminal:${g.id}:${t.id}`)
+      ])
+      .sort()
+  ])
+}
+
+function layoutPlaces(layout: Layout, id: string): boolean {
+  return (
+    layout.displayOrder.includes(id) ||
+    layout.groups.some(
+      (g) => g.sessionIds.includes(id) || g.terminals.some((t) => t.sessionId === id)
+    )
+  )
+}
+
+function sessionIdentity(session: Session): string {
+  return JSON.stringify([
+    session.cwd,
+    session.sessionType,
+    session.spawnedAt,
+    session.restartEpoch,
+    session.claudeSessionId,
+    session.launchProfileId,
+    session.view
+  ])
+}
+
+// Lifecycle actions invalidate reads taken before a restart, including a
+// true/false cycle that ends before the inventory promise settles.
+function preservePendingSession(id: string): void {
+  const candidate = pendingLayout?.sessions.get(id)
+  if (candidate) candidate.keep = true
+}
+
+function settlePendingLayout(
+  pending: PendingLayout,
+  inventory: Awaited<ReturnType<typeof window.electronAPI.sessionsList>> | null
+): void {
+  if (pendingLayout !== pending) return
+  const state = useSessionStore.getState()
+  const closed = new Set<string>()
+  const retained = new Set<string>()
+  for (const [id, candidate] of pending.sessions) {
+    const session = state.sessions.find((s) => s.id === id)
+    if (!session) continue
+    if (
+      candidate.keep ||
+      sessionIdentity(session) !== candidate.identity ||
+      placementOf(state, id) !== candidate.placement ||
+      session.restarting ||
+      linkedEditorBlocksClose(id)
+    ) {
+      retained.add(id)
+    } else if (
+      !session.alive ||
+      (inventory && !inventory.some((s) => s.id === id && s.state !== 'ended'))
+    ) {
+      closed.add(id)
+    } else if (inventory) {
+      retained.add(id)
+    } else {
+      // A failed read is not an empty inventory. Keep the working copy and
+      // suspend saves until an edit retries, a newer layout, or a lifecycle event.
+      return
+    }
+  }
+  pendingLayout = null
+  applyResolvedServerLayout(pending.snapshot, closed, retained)
+}
+
 function applyServerLayoutToStore(snapshot: SidebarLayoutSnapshot): void {
+  pendingLayout = null // A newer snapshot supersedes every older inventory read.
+  const state = useSessionStore.getState()
+  const base: Layout = lastPersistedJson
+    ? JSON.parse(lastPersistedJson)
+    : { groups: [], displayOrder: [] }
+  const sessions = new Map<string, DisplacedSession>()
+  for (const session of state.sessions) {
+    if (
+      isRemoteKey(session.id) ||
+      !session.alive ||
+      session.restarting ||
+      linkedEditorBlocksClose(session.id) ||
+      !layoutPlaces(base, session.id) ||
+      layoutPlaces(snapshot, session.id)
+    )
+      continue
+    const placement = placementOf(state, session.id)
+    sessions.set(session.id, {
+      identity: sessionIdentity(session),
+      placement,
+      keep: placement !== placementOf(base, session.id)
+    })
+  }
+  if (sessions.size === 0) {
+    applyResolvedServerLayout(snapshot)
+    return
+  }
+  const pending: PendingLayout = { snapshot, sessions, failed: false }
+  pendingLayout = pending
+  // Hold the incoming layout, rather than appending a potentially closed tab
+  // and saving that provisional placement. Merge current local edits only
+  // after the existing public inventory has resolved the displaced tabs.
+  readPendingLayout(pending)
+}
+
+function readPendingLayout(pending: PendingLayout): void {
+  if (pendingLayout !== pending) return
+  pending.failed = false
+  void Promise.resolve()
+    .then(() => window.electronAPI.sessionsList())
+    .then(
+      (inventory) => settlePendingLayout(pending, inventory),
+      () => {
+        if (pendingLayout !== pending) return
+        pending.failed = true
+        void window.electronAPI
+          ?.showNotification?.({
+            title: 'Sidebar changes are waiting',
+            body: 'Could not check displaced sessions. Your changes remain in this window; the next sidebar edit will try again.',
+            sessionId: ''
+          })
+          .catch(() => {})
+        settlePendingLayout(pending, null)
+      }
+    )
+}
+
+function applyResolvedServerLayout(
+  snapshot: SidebarLayoutSnapshot,
+  confirmedClosed = new Set<string>(),
+  retained = new Set<string>()
+): void {
   let dropped: { id: string; name: string }[] = []
   const closed = new Set<string>()
   const unknownTerminals: string[] = []
@@ -586,7 +783,15 @@ function applyServerLayoutToStore(snapshot: SidebarLayoutSnapshot): void {
   // Only an agent's own placement selects the tab, or the terminal, as the
   // window's launch would (PRDCT-3428 closed the terminal's road).
   const focusTakenIn = cause === 'command'
-  useSessionStore.setState((state) => {
+  useSessionStore.setState((allState) => {
+    const state = {
+      ...partitionLayout(allState, LOCAL_SERVER_ID),
+      sessions: allState.sessions.filter((s) => !isRemoteKey(s.id)),
+      fileTabs: allState.fileTabs.filter((f) => !isRemoteKey(f.id))
+    }
+    const remoteGroups = allState.groups.filter((g) => isRemoteKey(g.id))
+    const remoteOrder = allState.displayOrder.filter((id) => isRemoteKey(id))
+    const remoteSessions = allState.sessions.filter((s) => isRemoteKey(s.id))
     const server = {
       groups: cloneGroupsForSnapshot(snapshot.groups),
       displayOrder: [...snapshot.displayOrder]
@@ -617,7 +822,12 @@ function applyServerLayoutToStore(snapshot: SidebarLayoutSnapshot): void {
     // unsaved edits keeps its tab, as a close made from this window would.
     for (const s of state.sessions) {
       if (nested.has(s.id) || placed.has(s.id)) continue
-      if (!s.alive && !linkedEditorBlocksClose(s.id)) {
+      if (
+        !retained.has(s.id) &&
+        !s.restarting &&
+        (confirmedClosed.has(s.id) || !s.alive) &&
+        !linkedEditorBlocksClose(s.id)
+      ) {
         closed.add(s.id)
         if (s.view?.serverSessionId) closed.add(s.view.serverSessionId)
         continue
@@ -665,11 +875,15 @@ function applyServerLayoutToStore(snapshot: SidebarLayoutSnapshot): void {
       lastPersistedGroups = groups
       lastPersistedOrder = displayOrder
     }
-    if (closed.size === 0) return { groups, displayOrder }
+    if (closed.size === 0)
+      return {
+        groups: [...groups, ...remoteGroups],
+        displayOrder: [...displayOrder, ...remoteOrder]
+      }
     return {
-      groups,
-      displayOrder,
-      sessions: state.sessions.filter((s) => !closed.has(s.id)),
+      groups: [...groups, ...remoteGroups],
+      displayOrder: [...displayOrder, ...remoteOrder],
+      sessions: [...state.sessions.filter((s) => !closed.has(s.id)), ...remoteSessions],
       selectedSessionIds: state.selectedSessionIds.filter((sid) => !closed.has(sid)),
       focusedSessionId:
         state.focusedSessionId && closed.has(state.focusedSessionId) ? null : state.focusedSessionId
@@ -798,11 +1012,8 @@ function pushSidebarSnapshot(stack: SidebarSnapshot[], snap: SidebarSnapshot): S
   return next
 }
 
-/** Flattened, workspace-filtered session id order — the one list behind
- *  Cmd+1..9 and Cmd+Shift+]/[ session cycling. Groups expand to their member
- *  sessions; anything outside the active workspace is skipped; file tabs are
- *  not sessions and never cycle. */
-export function getVisibleFlatOrder(
+/** Session cycling retains every real session, including folded descendants. */
+export function getSessionCycleOrder(
   state: { sessions: Session[]; groups: SessionGroup[]; displayOrder: string[] },
   activeId: string | null
 ): string[] {
@@ -818,6 +1029,46 @@ export function getVisibleFlatOrder(
     if (session && inActiveWorkspace(session, activeId)) flatIds.push(id)
   }
   return flatIds
+}
+
+/** Digit shortcuts count represented rows. A mounted sidebar supplies its
+ * temporary search/filter order; a closed sidebar derives the default view. */
+export function getVisibleFlatOrder(
+  state: { sessions: Session[]; groups: SessionGroup[]; displayOrder: string[] },
+  activeId: string | null,
+  sidebarRowIds?: readonly string[]
+): string[] {
+  const hiddenIds = new Set<string>()
+  for (const group of state.groups) {
+    for (const terminal of group.terminals)
+      if (terminal.sessionId) hiddenIds.add(terminal.sessionId)
+  }
+  for (const session of state.sessions) {
+    if (session.view?.serverSessionId) hiddenIds.add(session.view.serverSessionId)
+  }
+  const sessions = state.sessions.filter(
+    (s) => inActiveWorkspace(s, activeId) && !hiddenIds.has(s.id)
+  )
+  const ids = new Set(sessions.map((s) => s.id))
+  const order = (
+    sidebarRowIds ??
+    getSessionCycleOrder(state, activeId).filter(
+      (id) => !state.groups.some((g) => g.collapsed && g.sessionIds.includes(id))
+    )
+  ).filter((id) => ids.has(id))
+  // Rendered search results are already presented, including direct child rows.
+  if (sidebarRowIds) return order
+  const reachable = new Set(order)
+  const presentation = subagentPresentation(sessions, reachable)
+  // A wave or lane entry is one row (PRDCT-4123), counted where its anchor
+  // sits and answering with the session that holds it.
+  const work = workPresentation(sessions, reachable, presentation.descendants)
+  return order
+    .filter((id) => !presentation.rootById.has(id) && !work.folded.has(id))
+    .map((id) => {
+      const entry = work.entryByAnchor.get(id)
+      return entry ? entryTarget(entry) : id
+    })
 }
 
 export function getDisplayOrder(state: {
@@ -843,7 +1094,7 @@ export function getDisplayOrder(state: {
 }
 
 export function isFileTabId(id: string): boolean {
-  return id.startsWith('file-')
+  return id.startsWith('file-') || (id.startsWith('clave-owner:file:') && isRemoteKey(id))
 }
 
 export function fileTabDedupKey(tab: FileTab): string {
@@ -855,6 +1106,12 @@ export function fileTabDedupKey(tab: FileTab): string {
     return `diff:${tab.diff.cwd}:${tab.diff.file}:${suffix}`
   }
   return `file:${tab.filePath}`
+}
+
+/** Close a plugin's page in the content column, if one is open (see selectSession). */
+function closePluginPage(): void {
+  const plugins = usePluginUIStore.getState()
+  if (plugins.page) plugins.openPage(null)
 }
 
 export const useSessionStore = create<SessionState>((set) => ({
@@ -872,12 +1129,14 @@ export const useSessionStore = create<SessionState>((set) => ({
   appIcon: (localStorage.getItem('clave-app-icon') as AppIcon) || 'dark',
   treeRuleIntensity:
     (localStorage.getItem('clave-tree-rule-intensity') as TreeRuleIntensity) || 'normal',
+  treeIndent: (localStorage.getItem('clave-tree-indent') as TreeIndent) || 'normal',
   density: resolveDensity(
     localStorage.getItem(DENSITY_STORAGE_KEY),
     localStorage.getItem(LEGACY_DENSITY_STORAGE_KEY)
   ),
   textSize: resolveTextSize(localStorage.getItem('clave-text-size')),
   uiFont: resolveUiFont(localStorage.getItem('clave-ui-font')),
+  agentMark: localStorage.getItem('clave-agent-mark') ?? LOGO_MARK,
   tmuxMode: localStorage.getItem('clave-tmux-mode') !== 'false',
   messageTrailEnabled: localStorage.getItem('clave-message-trail') !== 'false',
   searchQuery: '',
@@ -997,7 +1256,9 @@ export const useSessionStore = create<SessionState>((set) => ({
             activeView: 'terminals' as const
           }
         : {}
-      const target = groupId ? state.groups.find((g) => g.id === groupId) : undefined
+      const target = groupId
+        ? state.groups.find((g) => g.id === groupId && ownerOf(g.id) === ownerOf(session.id))
+        : undefined
       // Top of wherever it lands — the group's first row, or the sidebar's,
       // the same rule addSession follows. A drag DROP onto a group still
       // appends (moveLayoutItems, position 'inside'): a hand aiming at a
@@ -1052,25 +1313,53 @@ export const useSessionStore = create<SessionState>((set) => ({
   resetSessions: async () => {
     const { sessions, groups } = useSessionStore.getState()
 
-    // The one app-initiated close: every tab goes, recorded as such. (An app
-    // QUIT is not a close — sessions survive in tmux and are re-adopted.)
+    const results = await Promise.allSettled(
+      sessions.map((s) => window.electronAPI?.killSession(s.id))
+    )
+    const refused = new Set<string>(
+      sessions
+        .filter((s, i) => isRemoteKey(s.id) && results[i].status === 'rejected')
+        .map((s) => s.id)
+    )
+    const attempted = new Set(sessions.map((s) => s.id))
+    // An offline server still owns its tabs. Only accepted remote closes
+    // remove drafts and placement; the existing local reset stays unchanged.
     for (const s of sessions) {
+      if (refused.has(s.id)) continue
       emitTabClosed(s, groups, 'app', null)
       clearSessionDraft(s.id)
     }
 
-    // Kill all PTYs
-    await Promise.allSettled(
-      sessions.map((s) => window.electronAPI?.killSession(s.id).catch(() => {}))
-    )
-
-    set({
-      sessions: [],
-      groups: [],
-      displayOrder: [],
-      focusedSessionId: null,
-      selectedSessionIds: [],
-      searchQuery: ''
+    set((state) => {
+      const survivingSessions = state.sessions.filter(
+        (s) => !attempted.has(s.id) || refused.has(s.id)
+      )
+      const surviving = new Set(survivingSessions.map((s) => s.id))
+      const owners = new Set(
+        survivingSessions.filter((s) => isRemoteKey(s.id)).map((s) => ownerOf(s.id))
+      )
+      const retained = state.groups
+        .filter((g) => owners.has(ownerOf(g.id)))
+        .map((g) => ({
+          ...g,
+          sessionIds: g.sessionIds.filter((id) => surviving.has(id)),
+          terminals: g.terminals.map((t) => ({
+            ...t,
+            sessionId: t.sessionId && surviving.has(t.sessionId) ? t.sessionId : null
+          }))
+        }))
+      const ids = new Set([...surviving, ...retained.map((g) => g.id)])
+      return {
+        sessions: survivingSessions,
+        groups: retained,
+        displayOrder: state.displayOrder.filter((id) => ids.has(id)),
+        focusedSessionId:
+          state.focusedSessionId && surviving.has(state.focusedSessionId)
+            ? state.focusedSessionId
+            : null,
+        selectedSessionIds: state.selectedSessionIds.filter((id) => surviving.has(id)),
+        searchQuery: ''
+      }
     })
   },
 
@@ -1205,7 +1494,13 @@ export const useSessionStore = create<SessionState>((set) => ({
       return { sessions, selectedSessionIds, focusedSessionId, groups, displayOrder, ...viewPatch }
     }),
 
-  selectSession: (id, addToSelection) =>
+  // Picking a tab or a group is leaving whatever page a plugin opened in the
+  // content column (the Analytics home, a tab's analytics): the page stood in
+  // for the session you were on, and choosing a session, even the same one,
+  // puts that session back. Before, the page stayed over the mosaic and only
+  // its own back or close button removed it.
+  selectSession: (id, addToSelection) => {
+    closePluginPage()
     set((state) => {
       const session = state.sessions.find((s) => s.id === id)
       const targetView: ActiveView = session?.sessionType === 'agent' ? 'agents' : 'terminals'
@@ -1239,16 +1534,19 @@ export const useSessionStore = create<SessionState>((set) => ({
         activeGroupViewId: null,
         activeSessionViewId: null
       }
-    }),
+    })
+  },
 
-  selectSessions: (ids) =>
+  selectSessions: (ids) => {
+    closePluginPage()
     set(() => ({
       selectedSessionIds: ids,
       focusedSessionId: ids[0] ?? null,
       activeView: 'terminals' as ActiveView,
       activeGroupViewId: null,
       activeSessionViewId: null
-    })),
+    }))
+  },
 
   setFocusedSession: (id) => set(() => ({ focusedSessionId: id })),
 
@@ -1258,19 +1556,21 @@ export const useSessionStore = create<SessionState>((set) => ({
       groupCounter++
       const groupName = name || `Group ${groupCounter}`
       const firstSession = state.sessions.find((s) => sessionIds.includes(s.id))
+      if (sessionIds.some((id) => ownerOf(id) !== ownerOf(firstSession?.id))) return {}
       const newGroup: SessionGroup = {
-        id: `group-${Date.now()}-${groupCounter}`,
+        id: resourceKey('group', ownerOf(firstSession?.id), `group-${Date.now()}-${groupCounter}`),
         name: groupName,
         sessionIds: [...sessionIds],
         collapsed: false,
         cwd: firstSession?.cwd ?? null,
         terminals: [],
         // Explicit stamp > first member's home > the active workspace.
-        workspaceId:
-          workspaceId ??
-          firstSession?.workspaceId ??
-          useWorkspaceStore.getState().activeWorkspaceId ??
-          undefined
+        workspaceId: isRemoteKey(firstSession?.id)
+          ? firstSession?.workspaceId
+          : (workspaceId ??
+            firstSession?.workspaceId ??
+            useWorkspaceStore.getState().activeWorkspaceId ??
+            undefined)
       }
       // Remove these sessions from any existing groups
       const groups = state.groups.map((g) => ({
@@ -1510,6 +1810,9 @@ export const useSessionStore = create<SessionState>((set) => ({
 
   moveItems: (itemIds, targetId, position) =>
     set((state) => {
+      const owner = ownerOf(itemIds[0])
+      if (itemIds.some((id) => ownerOf(id) !== owner) || (targetId && ownerOf(targetId) !== owner))
+        return {}
       // The structural rules live in moveLayoutItems (pure, unit-tested):
       // one place per id, no group inside a group, only a group emptied by
       // this move is dropped. A no-op drop records no undo step.
@@ -1574,6 +1877,11 @@ export const useSessionStore = create<SessionState>((set) => ({
     set({ treeRuleIntensity })
   },
 
+  setTreeIndent: (treeIndent) => {
+    localStorage.setItem('clave-tree-indent', treeIndent)
+    set({ treeIndent })
+  },
+
   setDensity: (density) => {
     localStorage.setItem(DENSITY_STORAGE_KEY, density)
     set({ density })
@@ -1587,6 +1895,11 @@ export const useSessionStore = create<SessionState>((set) => ({
   setUiFont: (uiFont) => {
     localStorage.setItem('clave-ui-font', uiFont)
     set({ uiFont })
+  },
+
+  setAgentMark: (agentMark) => {
+    localStorage.setItem('clave-agent-mark', agentMark)
+    set({ agentMark })
   },
 
   setAppIcon: (appIcon) => {
@@ -1607,19 +1920,28 @@ export const useSessionStore = create<SessionState>((set) => ({
     set({ messageTrailEnabled })
   },
 
-  updateSessionAlive: (id, alive) =>
+  updateSessionAlive: (id, alive) => {
+    if (alive) preservePendingSession(id)
     set((state) => ({
       sessions: state.sessions.map((s) =>
         s.id === id ? { ...s, alive, ...(!alive && { activityStatus: 'ended' as const }) } : s
       )
-    })),
+    }))
 
-  setSessionRestarting: (id, restarting) =>
+    if (pendingLayout?.failed) settlePendingLayout(pendingLayout, null)
+  },
+
+  setSessionRestarting: (id, restarting) => {
+    if (restarting) preservePendingSession(id)
     set((state) => ({
       sessions: state.sessions.map((s) => (s.id === id ? { ...s, restarting } : s))
-    })),
+    }))
 
-  applySessionRestart: (id, patch) =>
+    if (pendingLayout?.failed) settlePendingLayout(pendingLayout, null)
+  },
+
+  applySessionRestart: (id, patch) => {
+    preservePendingSession(id)
     set((state) => ({
       sessions: state.sessions.map((s) =>
         s.id === id
@@ -1636,7 +1958,10 @@ export const useSessionStore = create<SessionState>((set) => ({
             }
           : s
       )
-    })),
+    }))
+
+    if (pendingLayout?.failed) settlePendingLayout(pendingLayout, null)
+  },
 
   setAccountPinned: (id, pinned) =>
     set((state) => ({
@@ -1708,13 +2033,19 @@ export const useSessionStore = create<SessionState>((set) => ({
       }
     }),
 
-  setBackgroundTaskCount: (id, count) =>
+  setBackgroundTaskCount: (id, count, agents = 0) =>
     set((state) => {
       const session = state.sessions.find((s) => s.id === id)
-      if (!session || (session.backgroundTasks ?? 0) === count) return state
+      if (
+        !session ||
+        ((session.backgroundTasks ?? 0) === count && (session.backgroundAgents ?? 0) === agents)
+      )
+        return state
       return {
         sessions: state.sessions.map((s) =>
-          s.id === id ? { ...s, backgroundTasks: count || undefined } : s
+          s.id === id
+            ? { ...s, backgroundTasks: count || undefined, backgroundAgents: agents || undefined }
+            : s
         )
       }
     }),
@@ -1801,6 +2132,14 @@ export const useSessionStore = create<SessionState>((set) => ({
           .filter((s) => s.id !== gone)
           .map((s) => (s.id === id ? { ...s, view } : s)),
         ...(view === null && state.activeSessionViewId === id ? { activeSessionViewId: null } : {})
+      }
+    }),
+
+  applyServedWork: (id, work) =>
+    set((state) => {
+      if (!state.sessions.some((s) => s.id === id)) return state
+      return {
+        sessions: state.sessions.map((s) => (s.id === id ? { ...s, work: work ?? undefined } : s))
       }
     }),
 
@@ -1986,8 +2325,26 @@ export const useSessionStore = create<SessionState>((set) => ({
 
   addFileTab: (tab) =>
     set((state) => {
+      const activeWorkspaceId = useWorkspaceStore.getState().activeWorkspaceId
+      tab = {
+        ...tab,
+        workspaceId: tab.workspaceId ?? activeWorkspaceId ?? undefined
+      }
       const key = fileTabDedupKey(tab)
-      const existing = state.fileTabs.find((f) => fileTabDedupKey(f) === key)
+      const existing = state.fileTabs.find(
+        (f) => f.workspaceId === tab.workspaceId && fileTabDedupKey(f) === key
+      )
+      // A background caller may create or retarget its own viewer without
+      // taking the selection away from the workspace the person is using.
+      const selection = inActiveWorkspace(tab, activeWorkspaceId)
+        ? {
+            selectedSessionIds: [existing?.id ?? tab.id],
+            focusedSessionId: existing?.id ?? tab.id,
+            activeView: 'terminals' as ActiveView,
+            activeGroupViewId: null,
+            activeSessionViewId: null
+          }
+        : {}
       if (existing) {
         return {
           // A re-open with an explicit view mode retargets the existing tab.
@@ -1998,21 +2355,13 @@ export const useSessionStore = create<SessionState>((set) => ({
                 )
               }
             : {}),
-          selectedSessionIds: [existing.id],
-          focusedSessionId: existing.id,
-          activeView: 'terminals' as ActiveView,
-          activeGroupViewId: null,
-          activeSessionViewId: null
+          ...selection
         }
       }
       return {
         fileTabs: [...state.fileTabs, tab],
         displayOrder: [...getDisplayOrder(state), tab.id],
-        selectedSessionIds: [tab.id],
-        focusedSessionId: tab.id,
-        activeView: 'terminals' as ActiveView,
-        activeGroupViewId: null,
-        activeSessionViewId: null
+        ...selection
       }
     }),
 
@@ -2159,6 +2508,17 @@ export const useSessionStore = create<SessionState>((set) => ({
 // re-adopted sessions. Disabled until `enableSidebarPersistence()` runs so the
 // empty initial state can't clobber the saved file before it's loaded.
 useSessionStore.subscribe((state) => {
+  if (pendingLayout) {
+    for (const [id, candidate] of pendingLayout.sessions) {
+      const session = state.sessions.find((s) => s.id === id)
+      if (
+        session &&
+        (sessionIdentity(session) !== candidate.identity ||
+          placementOf(state, id) !== candidate.placement)
+      )
+        candidate.keep = true
+    }
+  }
   if (!sidebarPersistEnabled) return
   if (state.groups !== lastPersistedGroups || state.displayOrder !== lastPersistedOrder) {
     persistSidebarLayout(state)

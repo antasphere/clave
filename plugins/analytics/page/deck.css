@@ -1,0 +1,776 @@
+/* The analytics pages. Every colour, radius and size is a token of packages/ui/src/tokens.css
+   (prepended to this file by scripts/build-plugins.mjs); the 12 and 11 px type sizes are the
+   one exception the app's field guide itself makes. */
+
+/* system.css (shipped into this sheet) sizes html and body to the window and
+   hides their overflow for the app's shell; a page scrolls. */
+html,
+body {
+  height: auto;
+  margin: 0;
+  overflow: auto;
+  background: var(--surface-0);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  font-size: var(--control-text);
+  -webkit-font-smoothing: antialiased;
+}
+
+.deck {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--control-px) * 3.5);
+  padding: calc(var(--control-px) * 3) calc(var(--control-px) * 3) calc(var(--control-px) * 5);
+  max-width: calc(var(--control-h) * 44);
+  margin: 0 auto;
+  box-sizing: border-box;
+}
+
+/* ── The hero ────────────────────────────────────────────────────────────
+   The page's name, its one quiet line, the range, and the page's drawing in
+   the corner: the shape the design-deck skill gives every deck Clave shows
+   (plugin/skills/design-deck). A card on the raised surface with a faint
+   wash of the accent at the top. */
+
+.deck-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-rows: auto auto;
+  column-gap: calc(var(--control-px) * 3);
+  row-gap: calc(var(--control-px) * 1.5);
+  align-items: center;
+  padding: calc(var(--control-px) * 2.25) calc(var(--control-px) * 2.5);
+  /* over .floating-card's ground: a faint wash of the accent at the top */
+  background: linear-gradient(
+    180deg,
+    color-mix(in oklab, var(--color-accent) 6%, var(--surface-0)),
+    var(--surface-0)
+  );
+}
+.deck-head > div:first-child {
+  grid-area: 1 / 1;
+  min-width: 0;
+}
+.deck-head > .ranges {
+  grid-area: 2 / 1;
+}
+.deck-head > .ranges:empty {
+  display: none;
+}
+.deck-mark {
+  grid-area: 1 / 2 / 3 / 3;
+  align-self: center;
+  width: calc(var(--control-h) * 5.5);
+  height: auto;
+  pointer-events: none;
+}
+@media (max-width: 36em) {
+  .deck-mark {
+    display: none;
+  }
+}
+
+/* A section's label: small, tracked, tertiary. */
+.section-label,
+.figure-title {
+  margin: 0;
+  color: var(--text-tertiary);
+  font-size: 11px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.section-label {
+  margin-bottom: calc(var(--control-px) * -2);
+  padding: 0 var(--surface-inset);
+}
+
+.deck-title-row {
+  display: flex;
+  align-items: center;
+  gap: var(--control-gap);
+}
+
+.deck-title {
+  margin: 0;
+  font-size: calc(var(--control-text) * 1.5);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  line-height: 1.25;
+  text-wrap: balance;
+  overflow-wrap: anywhere;
+}
+
+.deck-meta {
+  margin-top: var(--surface-inset);
+  color: var(--text-tertiary);
+  font-size: 12px;
+  display: flex;
+  gap: var(--control-gap);
+  flex-wrap: wrap;
+}
+
+.deck-meta span + span::before {
+  content: '·';
+  margin-right: var(--control-gap);
+  color: var(--text-tertiary);
+}
+
+/* ── State dots ─────────────────────────────────────────────────────────── */
+
+.dot {
+  display: inline-block;
+  flex: none;
+  width: calc(var(--control-px) * 0.875);
+  height: calc(var(--control-px) * 0.875);
+  border-radius: var(--radius-full);
+  background: var(--text-tertiary);
+}
+.dot[hidden] {
+  display: none;
+}
+.dot.state-working {
+  background: var(--color-accent);
+}
+.dot.state-blocked {
+  background: var(--color-warning);
+}
+.dot.state-idle,
+.dot.state-done {
+  background: var(--text-tertiary);
+}
+.dot.state-ended {
+  background: var(--color-border-subtle);
+  box-shadow: inset 0 0 0 var(--frame-border) var(--color-border);
+}
+
+/* ── Range: the side panel's tab frame (`.panel-tabs` / `.panel-tab`) ────── */
+
+.ranges {
+  justify-self: start;
+}
+.ranges .chip {
+  text-decoration: none;
+}
+
+/* ── KPI tiles ──────────────────────────────────────────────────────────── */
+
+.kpis {
+  display: grid;
+  grid-template-columns: 1.6fr repeat(4, 1fr);
+  gap: calc(var(--control-px) * 1.5);
+}
+
+/* The count tiles of the skill: the figure large, the word under it, on the
+   wash, no border; the first (the cost) is the one the eye lands on. */
+.tile {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  gap: calc(var(--surface-inset) * 0.75);
+  padding: calc(var(--control-px) * 1.5) calc(var(--control-px) * 1.75);
+  border-radius: var(--radius-xl);
+  background: var(--surface-100);
+  min-width: 0;
+}
+
+.tile-label {
+  order: 2;
+  color: var(--text-tertiary);
+  font-size: 11px;
+}
+
+.tile-value {
+  order: 1;
+  font-size: calc(var(--control-h) * 0.72);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  line-height: 1.1;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.tile.hero .tile-value {
+  font-size: calc(var(--control-h) * 1.5);
+  letter-spacing: -0.02em;
+  line-height: 1;
+}
+
+.tile-note {
+  order: 3;
+}
+
+.tile-note {
+  color: var(--text-tertiary);
+  font-size: 11px;
+  /* A note wraps rather than being cut: the tile's width is a fifth of the pane's. */
+  overflow-wrap: anywhere;
+}
+
+/* ── Table ──────────────────────────────────────────────────────────────── */
+
+.table-frame {
+  border: var(--frame-border) solid var(--color-border);
+  border-radius: var(--radius-xl);
+  overflow: hidden;
+  background: var(--surface-0);
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+}
+
+th,
+td {
+  height: var(--control-h);
+  padding: 0 calc(var(--control-px) * 1.5);
+  text-align: right;
+  white-space: nowrap;
+  border-bottom: var(--frame-border) solid var(--rule-color);
+}
+
+th {
+  color: var(--text-tertiary);
+  font-size: 11px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  background: var(--surface-50);
+  border-bottom-color: var(--color-border);
+}
+
+th:first-child,
+td:first-child,
+th.left,
+td.left {
+  text-align: left;
+}
+
+tbody tr:hover {
+  background: var(--surface-100);
+}
+
+td.name {
+  max-width: calc(var(--control-h) * 14);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.name-cell {
+  display: flex;
+  align-items: center;
+  gap: var(--control-gap);
+  min-width: 0;
+}
+
+.name-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.name-detail {
+  color: var(--text-tertiary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+td.muted {
+  color: var(--text-secondary);
+}
+
+tr.sub td {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+tr.sub .name-cell {
+  padding-left: calc(var(--control-px) * 2.5);
+}
+
+.fold {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: var(--control-h-xs);
+  height: var(--control-h-xs);
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+}
+.fold:hover {
+  color: var(--text-primary);
+  background: var(--surface-200);
+}
+.fold svg {
+  width: calc(var(--control-px) * 1.5);
+  height: calc(var(--control-px) * 1.5);
+}
+.fold.open svg {
+  transform: rotate(90deg);
+}
+.fold-spacer {
+  display: inline-block;
+  flex: none;
+  width: var(--control-h-xs);
+}
+
+tfoot td {
+  border-bottom: 0;
+  border-top: var(--frame-border) solid var(--color-border);
+  font-weight: 500;
+  background: var(--surface-50);
+}
+
+/* ── Cards ──────────────────────────────────────────────────────────────── */
+
+.cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(calc(var(--control-h) * 9), 1fr));
+  gap: calc(var(--control-px) * 1.5);
+}
+
+.card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--control-px);
+  padding: calc(var(--control-px) * 1.75) calc(var(--control-px) * 2) calc(var(--control-px) * 1.75)
+    calc(var(--control-px) * 2.25);
+  color: inherit;
+  text-decoration: none;
+}
+/* The skill's tone bar on the card's edge: the group's state, working first. */
+.card::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: calc(var(--control-px) * 1.25);
+  bottom: calc(var(--control-px) * 1.25);
+  width: 3px;
+  border-radius: 0 3px 3px 0;
+  background: var(--color-border);
+}
+.card[data-state='working']::before {
+  background: var(--color-accent);
+}
+.card[data-state='blocked']::before {
+  background: var(--color-warning);
+}
+a.card:hover {
+  background: var(--surface-100);
+}
+
+.card-name {
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.card-states {
+  display: flex;
+  gap: var(--surface-inset);
+  flex-wrap: wrap;
+}
+
+.state-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--surface-inset);
+  height: var(--control-h-xs);
+  padding: 0 var(--control-gap);
+  border-radius: var(--radius-full);
+  background: var(--surface-200);
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.card-figures {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--control-px);
+}
+
+.card-cost {
+  font-size: calc(var(--control-h) * 0.8);
+  font-weight: 500;
+  letter-spacing: -0.01em;
+}
+
+.card-active {
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.empty {
+  padding: calc(var(--control-px) * 3);
+  color: var(--text-tertiary);
+  text-align: center;
+  border: var(--frame-border) dashed var(--color-border);
+  border-radius: var(--radius-xl);
+}
+
+/* ── Footer ─────────────────────────────────────────────────────────────── */
+
+.deck-foot {
+  color: var(--text-tertiary);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+@media (max-width: 48em) {
+  .kpis {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .tile.hero {
+    grid-column: 1 / -1;
+  }
+}
+
+/* ── The drawings ───────────────────────────────────────────────────────── */
+
+.deck-figure:empty {
+  display: none;
+}
+
+figure.timeline,
+figure.swimlane,
+figure.live-figure {
+  position: relative;
+  margin: 0;
+  padding: calc(var(--control-px) * 2);
+  overflow: visible;
+}
+
+.figure-title {
+  margin-bottom: calc(var(--control-px) * 1.5);
+}
+
+.figure-empty {
+  color: var(--text-tertiary);
+  font-size: 12px;
+  padding: var(--control-px) 0;
+}
+
+.plot {
+  min-width: 0;
+}
+
+.chart {
+  display: block;
+  overflow: visible;
+}
+
+/* The marks: thin, one hue, rounded ends; the wait between two blocks a hairline. */
+.chart .block {
+  fill: var(--color-accent);
+  transition: fill 150ms var(--ease-out-expo);
+}
+.chart .block.lit {
+  fill: var(--color-accent-hover);
+}
+.chart .wait {
+  stroke: var(--color-border);
+  stroke-width: var(--frame-border);
+  transition: stroke 150ms var(--ease-out-expo);
+}
+.chart .wait.lit {
+  stroke: var(--text-tertiary);
+}
+.chart .axis,
+.chart .rule {
+  stroke: var(--color-border);
+  stroke-width: var(--frame-border);
+}
+.chart .rule {
+  stroke: var(--rule-color);
+}
+.chart .tick-label {
+  fill: var(--text-tertiary);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.chart .tick-label.day {
+  fill: var(--text-secondary);
+}
+.chart .hit {
+  cursor: default;
+  outline: none;
+}
+.chart .hit:focus-visible {
+  stroke: var(--color-accent);
+  stroke-width: 1.5px;
+}
+
+/* The hover card: a small menu surface placed by the pointer. */
+.tip {
+  position: absolute;
+  z-index: 1;
+  pointer-events: none;
+  padding: var(--control-gap) var(--control-px);
+  border: var(--frame-border) solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--surface-0);
+  box-shadow: var(--overlay-shadow);
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.tip-head {
+  color: var(--text-primary);
+}
+
+/* The swimlane: the names on the left, one row each, the plot beside them. */
+.lanes {
+  display: grid;
+  grid-template-columns: calc(var(--control-h) * 6) minmax(0, 1fr);
+  gap: calc(var(--control-px) * 1.5);
+  align-items: start;
+}
+.lane-label {
+  display: flex;
+  align-items: center;
+  gap: var(--control-gap);
+  height: var(--control-h);
+  min-width: 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+.lane-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The workspace's animation on the brand field. */
+.live-host {
+  min-height: calc(var(--control-h) * 3);
+}
+.live {
+  position: relative;
+  display: grid;
+  grid-template-columns: calc(var(--control-h) * 6) minmax(0, 1fr);
+  grid-template-rows: auto auto;
+  gap: 0 calc(var(--control-px) * 1.5);
+  overflow: hidden;
+  border-radius: var(--radius-lg);
+  isolation: isolate;
+}
+.live-ground {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 0;
+}
+.live-head {
+  grid-column: 2;
+  grid-row: 1;
+  z-index: 1;
+  display: flex;
+  padding: var(--control-px) 0 var(--surface-inset);
+}
+.live-head[hidden] {
+  display: none;
+}
+.live-col {
+  flex: 1 1 0;
+  text-align: center;
+  color: var(--text-tertiary);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.live-labels {
+  grid-column: 1;
+  grid-row: 2;
+  z-index: 1;
+  padding-left: var(--control-px);
+}
+.live-lane-label {
+  display: block;
+  height: calc(var(--control-h) * 1.5);
+  line-height: calc(var(--control-h) * 1.5);
+  color: var(--text-secondary);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.live-plot {
+  grid-column: 2;
+  grid-row: 2;
+  z-index: 1;
+  display: block;
+  width: 100%;
+  overflow: visible;
+}
+.live-rule {
+  stroke: var(--color-border);
+  stroke-width: var(--frame-border);
+}
+.live-dot {
+  stroke: var(--surface-0);
+  stroke-width: calc(var(--frame-border) * 2);
+  fill: var(--text-tertiary);
+}
+.live-dot.state-working {
+  fill: var(--color-accent);
+}
+.live-dot.state-blocked {
+  fill: var(--color-warning);
+}
+/* A plain terminal is no agent: hollow whatever its state, so the lane does not read as
+   idle agents; the rule sits after the state rules so it wins at equal specificity. */
+.live-dot.kind-terminal {
+  fill: var(--surface-0);
+  stroke: var(--text-tertiary);
+  stroke-width: var(--frame-border);
+}
+.live-empty {
+  grid-column: 1 / -1;
+  grid-row: 2;
+  z-index: 1;
+  padding: calc(var(--control-px) * 3) calc(var(--control-px) * 2);
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+.live-empty[hidden] {
+  display: none;
+}
+
+/* ── The footer ─────────────────────────────────────────────────────────── */
+
+.deck-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: calc(var(--control-px) * 2);
+  flex-wrap: wrap;
+}
+.foot-text {
+  flex: 1 1 calc(var(--control-h) * 12);
+}
+.foot-note {
+  display: block;
+  margin-top: var(--control-gap);
+}
+.foot-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--control-px);
+}
+.gear {
+  text-decoration: none;
+}
+.gear .icon {
+  width: var(--control-icon, 16px);
+  height: var(--control-icon, 16px);
+}
+
+/* ── The drawing hand ──────────────────────────────────────────────────────
+   `.chat-drawing` of packages/ui/src/system.css, on the same tokens, for the
+   page's drawings (plugin/skills/design-deck, Part 1). */
+.drawing {
+  --ink: var(--text-primary);
+  --paper: var(--surface-raised);
+  --ground: var(--surface-100);
+  display: block;
+  overflow: visible;
+}
+.drawing :is(.ln, .bx, .ring, .head) {
+  vector-effect: non-scaling-stroke;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.drawing .ln {
+  fill: none;
+  stroke: color-mix(in oklab, var(--ink) 45%, transparent);
+  stroke-width: 1.2;
+}
+.drawing .ln--soft {
+  stroke: color-mix(in oklab, var(--ink) 34%, transparent);
+  stroke-dasharray: 4 5;
+}
+.drawing .ln--thin {
+  stroke: color-mix(in oklab, var(--ink) 30%, transparent);
+  stroke-width: 1;
+}
+.drawing .bx {
+  fill: color-mix(in oklab, var(--ground) 40%, transparent);
+  stroke: color-mix(in oklab, var(--ink) 40%, transparent);
+  stroke-width: 1;
+}
+.drawing .bx--front {
+  fill: var(--paper);
+}
+.drawing .dot {
+  fill: color-mix(in oklab, var(--ink) 78%, transparent);
+}
+.drawing .dot--seat {
+  fill: color-mix(in oklab, var(--ink) 40%, transparent);
+}
+.drawing .ring {
+  fill: none;
+  stroke: color-mix(in oklab, var(--ink) 42%, transparent);
+  stroke-width: 1;
+}
+.drawing .head {
+  fill: none;
+  stroke: color-mix(in oklab, var(--ink) 55%, transparent);
+  stroke-width: 1.1;
+}
+.drawing .ln--c {
+  stroke: var(--color-accent);
+  stroke-width: 1.7;
+}
+.drawing .head--c {
+  stroke: var(--color-accent);
+  stroke-width: 1.5;
+}
+.drawing .dot--c {
+  fill: var(--color-accent);
+}
+.drawing .ring--pulse {
+  opacity: 0;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+.drawing .travel {
+  stroke-dasharray: 1;
+  stroke-dashoffset: 0;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .drawing .travel {
+    animation: drawing-draw 900ms var(--ease-out-expo) 180ms 1 backwards;
+  }
+  .drawing .ring--pulse {
+    animation: drawing-pulse 1400ms var(--ease-out-expo) 900ms 1;
+  }
+}
+@keyframes drawing-draw {
+  from {
+    stroke-dashoffset: 1;
+  }
+}
+@keyframes drawing-pulse {
+  from {
+    opacity: 0.7;
+    transform: scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: scale(2.2);
+  }
+}

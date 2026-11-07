@@ -1,9 +1,14 @@
 import { constants } from 'node:fs'
-import { app, BrowserWindow, dialog, ipcMain, nativeImage, shell } from 'electron'
-import { open } from 'node:fs/promises'
+import { app, BrowserWindow, ipcMain, nativeImage, shell } from 'electron'
+import { openDialogs } from '../dialog-paths'
+import { open, readdir } from 'node:fs/promises'
 import { isAbsolute, join } from 'node:path'
 import { z } from 'zod'
-import { AttachmentSchema, MAX_IMAGE_BYTES, type AttachmentPreview } from '../../shared/attachments'
+import {
+  FileAttachmentSchema,
+  MAX_IMAGE_BYTES,
+  type AttachmentPreview
+} from '../../shared/attachments'
 import { prepareAttachment, readBounded } from '../sessions/attachments'
 
 /* The composer's file operations, one channel: prepare a file for a session's
@@ -22,13 +27,13 @@ const sourceSchema = z.union([
 ])
 const requestSchema = z
   .object({
-    type: z.enum(['prepare', 'pick', 'preview', 'open']),
+    type: z.enum(['prepare', 'pick', 'preview', 'open', 'upload-source']),
     sessionId: z
       .string()
       .regex(/^[a-zA-Z0-9_-]{1,128}$/)
       .optional(),
     source: sourceSchema.optional(),
-    file: AttachmentSchema.optional()
+    file: FileAttachmentSchema.optional()
   })
   .strict()
 
@@ -45,11 +50,16 @@ export function registerAttachmentHandlers(): void {
     if (!win) throw new Error('Files require an application window.')
     const value = requestSchema.parse(input)
     if (value.type === 'pick') {
-      const result = await dialog.showOpenDialog(win, {
+      const result = await openDialogs.open('attachment', win, {
         title: 'Add files to the message',
         properties: ['openFile', 'multiSelections']
       })
       return result.canceled ? [] : result.filePaths
+    }
+    if (value.type === 'upload-source') {
+      if (!value.source) throw new Error('Missing attachment source.')
+      const { localAttachmentUpload } = await import('../server/file-transfers')
+      return localAttachmentUpload(value.source)
     }
     if (value.type === 'prepare') {
       if (!value.sessionId || !value.source) throw new Error('Missing attachment source.')
@@ -63,6 +73,20 @@ export function registerAttachmentHandlers(): void {
       return
     }
     const result: AttachmentPreview = {}
+    // A folder previews as its listing: the first items, folders marked.
+    if (file.delivery === 'folder') {
+      const items = (await readdir(file.path, { withFileTypes: true })).sort((a, b) =>
+        a.name.localeCompare(b.name)
+      )
+      const shown = items.slice(0, 80)
+      result.text = shown
+        .map((item) => (item.isDirectory() ? `${item.name}/` : item.name))
+        .join('\n')
+      if (!items.length) result.notice = 'An empty folder.'
+      else if (items.length > shown.length)
+        result.notice = `Showing the first ${shown.length} of ${items.length} items.`
+      return result
+    }
     if (file.mimeType.startsWith('image/') && file.mimeType !== 'image/svg+xml') {
       const bytes = await readBounded(file.path, MAX_IMAGE_BYTES)
       const image = nativeImage.createFromBuffer(bytes)

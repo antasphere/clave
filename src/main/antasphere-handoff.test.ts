@@ -32,7 +32,8 @@ describe('what the shell opens a browser on', () => {
     ).toBeNull()
     expect(acceptedHandoff({ ...issued, url: 'not a url' }, env, null)).toBeNull()
     expect(acceptedHandoff(issued, { CLAVE_ANTASPHERE_ISSUER: 'ftp://x' }, null)).toBeNull()
-    // Attached, the shell holds no manager: the origin check is its own, the
+    // With the server elsewhere (attached, or the shell's own separate child)
+    // the shell holds no manager: the origin check is its own, the
     // generation's binding was the server's, asked right before.
     expect(acceptedHandoff(issued, env, null)?.toString()).toBe(issued.url)
   })

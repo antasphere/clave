@@ -1,0 +1,52 @@
+/* Clave's drawing hand, for a self-contained page (a Slideless deck, a
+   standalone .svg). Inside the app, the same classes are `.chat-drawing` in
+   packages/ui/src/system.css and read the app's tokens; here they read the
+   six variables below, set per scheme. Paste this block into the page's
+   style element, or into the drawing's own style element for a standalone
+   file. (No angle brackets in this comment: an SVG inlined into HTML is
+   parsed as HTML, and a tag name inside a comment would open an element.) */
+.drawing {
+  --ink: #1b1b18;
+  --paper: #ffffff;
+  --ground: #eeedeb;
+  --accent: #1f5fcf;
+  display: block;
+  overflow: visible;
+}
+@media (prefers-color-scheme: dark) {
+  .drawing {
+    --ink: #f2f2f0;
+    --paper: #161513;
+    --ground: #1d1c19;
+    --accent: #5aa2f7;
+  }
+}
+.drawing :is(.ln, .bx, .ring, .head) {
+  vector-effect: non-scaling-stroke;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.drawing .ln { fill: none; stroke: color-mix(in oklab, var(--ink) 45%, transparent); stroke-width: 1.2; }
+.drawing .ln--soft { stroke: color-mix(in oklab, var(--ink) 34%, transparent); stroke-dasharray: 4 5; }
+.drawing .ln--thin { stroke: color-mix(in oklab, var(--ink) 30%, transparent); stroke-width: 1; }
+.drawing .bx { fill: color-mix(in oklab, var(--ground) 40%, transparent); stroke: color-mix(in oklab, var(--ink) 40%, transparent); stroke-width: 1; }
+.drawing .bx--front { fill: var(--paper); }
+.drawing .dot { fill: color-mix(in oklab, var(--ink) 78%, transparent); }
+.drawing .dot--seat { fill: color-mix(in oklab, var(--ink) 40%, transparent); }
+.drawing .ring { fill: none; stroke: color-mix(in oklab, var(--ink) 42%, transparent); stroke-width: 1; }
+.drawing .head { fill: none; stroke: color-mix(in oklab, var(--ink) 55%, transparent); stroke-width: 1.1; }
+/* the one place the accent goes */
+.drawing .ln--c { stroke: var(--accent); stroke-width: 1.7; }
+.drawing .head--c { stroke: var(--accent); stroke-width: 1.5; }
+.drawing .dot--c { fill: var(--accent); }
+.drawing .ring--pulse { opacity: 0; transform-box: fill-box; transform-origin: center; }
+.drawing .travel { stroke-dasharray: 1; stroke-dashoffset: 0; }
+@media (prefers-reduced-motion: no-preference) {
+  .drawing .travel { animation: drawing-draw 900ms cubic-bezier(0.2, 0, 0, 1) 180ms 1 backwards; }
+  .drawing .ring--pulse { animation: drawing-pulse 1400ms cubic-bezier(0.2, 0, 0, 1) 900ms 1; }
+}
+@keyframes drawing-draw { from { stroke-dashoffset: 1; } }
+@keyframes drawing-pulse {
+  from { opacity: 0.7; transform: scale(1); }
+  to { opacity: 0; transform: scale(2.2); }
+}

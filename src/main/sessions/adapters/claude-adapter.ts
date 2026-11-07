@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto'
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
+import { REQUEST_GONE } from '../../../shared/request-refusals'
 import { z } from 'zod'
 import {
   SessionInputSchema,
@@ -17,7 +18,8 @@ import {
   type HistoryItem,
   type ModelOption,
   type CommandOption,
-  type PermissionModeOption
+  type PermissionModeOption,
+  type SessionControl
 } from '../../../shared/session-model'
 import { buildAgentArgv, claudeProfilePermissions } from '../../../shared/agent-launch'
 import { isValidModelName } from '../../../shared/model-name'
@@ -49,6 +51,7 @@ import {
   type PtySpawnOptions
 } from './pty-backend'
 import { NdjsonLines } from './ndjson'
+import { commandTitle } from '../../../shared/command-title'
 
 const object = z.record(z.string(), z.unknown())
 const envelope = object.and(z.object({ type: z.string() }))
@@ -101,13 +104,45 @@ const toCommands = (names: string[]): CommandOption[] =>
 type InitializeRequest = {
   resolve: (response: Record<string, unknown>) => void
   reject: (error: Error) => void
+  /** The control request asked: `initialize`, or the type of one a view sent,
+   *  whose answer may be a bare success and whose refusal is its own. */
+  what: string
 }
 /** How long a menu waits on the CLI's initialize answer before calling it unavailable. */
 const INITIALIZE_TIMEOUT_MS = 20_000
+/** The CLI's control request body for one a view may send; the switch is
+ *  exhaustive, so a request added to the union and not mapped here fails the
+ *  typecheck rather than reaching the CLI as something else. */
+function controlBody(request: SessionControl): Record<string, unknown> {
+  switch (request.type) {
+    case 'mcp_status':
+      return { subtype: 'mcp_status' }
+    case 'mcp_toggle':
+      return { subtype: 'mcp_toggle', serverName: request.server, enabled: request.enabled }
+    case 'mcp_reconnect':
+      return { subtype: 'mcp_reconnect', serverName: request.server }
+    case 'mcp_authenticate':
+      return { subtype: 'mcp_authenticate', serverName: request.server }
+    case 'mcp_clear_auth':
+      return { subtype: 'mcp_clear_auth', serverName: request.server }
+    case 'reload_plugins':
+      return { subtype: 'reload_plugins' }
+    default: {
+      const never: never = request
+      throw new Error(`Unknown control request: ${JSON.stringify(never)}`)
+    }
+  }
+}
+/** How long a view waits on a control request: a reconnect or the start of a
+ *  sign-in can take far longer than the initialize answer. */
+const CONTROL_TIMEOUT_MS = 60_000
 /** The host's own commands, offered before the CLI's: the chat view acts on
- *  them itself rather than sending them to the agent. */
+ *  them itself rather than sending them to the agent. Each is a menu in the
+ *  TUI that headless Claude answers with a line of text, or not at all. */
 export const HOST_COMMANDS: CommandOption[] = [
-  { name: 'resume', description: 'Resume a past conversation from this folder', insert: '/resume' }
+  { name: 'resume', description: 'Resume a past conversation from this folder', insert: '/resume' },
+  { name: 'mcp', description: 'Manage MCP servers', insert: '/mcp' },
+  { name: 'plugin', description: 'Manage plugins', insert: '/plugin' }
 ]
 /** What a transcript's human line says, the way the reader typed it: a slash
  *  command as "/name args", the CLI's own wrappers (command output, caveats,
@@ -179,7 +214,7 @@ export class ClaudeStreamTranslator {
     if (this.contextUsed === null) return
     this.emit({ type: 'context_usage', used: this.contextUsed, window: this.contextWindow })
   }
-  /** request_id → the caller waiting on an initialize control request's answer. */
+  /** request_id → the caller waiting on one of our control requests' answer. */
   readonly listRequests = new Map<string, InitializeRequest>()
   private streamed = false
   private finished = false
@@ -193,13 +228,48 @@ export class ClaudeStreamTranslator {
   private readonly background = new Map<string, BackgroundTask>()
   /** tool_use_id → the output file its "running in background" result named. */
   private readonly outputFiles = new Map<string, string>()
-  constructor(private readonly emit: (event: SessionEvent) => void) {}
+  /** tool_use_id → a Bash call's command and the title the model gave it,
+   *  so a background shell reads by that title rather than by the command
+   *  the CLI echoes. Bounded: only the recent calls can still be promoted. */
+  private readonly bashCalls = new Map<string, { command: string; title?: string }>()
+  /** A list held back because it named a task its call is not known for. */
+  private heldList = false
+  /** task_id → the call of a task the turn waits on (a foreground
+   *  task_started names both). Never listed; kept so that a list naming the
+   *  task later (the command moved to the background) links it to its call.
+   *  Forgotten at the task's end, at the turn's end and at the CLI's exit. */
+  private readonly foregroundCalls = new Map<string, string>()
+  constructor(private readonly send: (event: SessionEvent) => void) {}
+  /** Every event a view reads goes out after a held list, so holding one
+   *  never changes what came first. The raw frame does not wait. */
+  private emit(event: SessionEvent): void {
+    if (this.heldList && event.type !== 'provider_event' && event.type !== 'background_tasks')
+      this.publishBackground()
+    this.send(event)
+  }
   /** Publish the background list whole; a snapshot replaces the last. */
   private publishBackground(): void {
-    this.emit({ type: 'background_tasks', tasks: [...this.background.values()] })
+    this.heldList = false
+    this.send({ type: 'background_tasks', tasks: [...this.background.values()] })
+  }
+  /** The CLI names a new background task in its list before the
+   *  task_started that names its call, in the same write (Claude Code,
+   *  claude-stream/background-bash.ndjson). Published at once, the task has
+   *  no call yet and a view shows it twice for a moment, beside the call's
+   *  own card. So such a list waits for the end of the read it came in: the
+   *  task_started that links it, any event a view reads, or the read's end
+   *  publishes it, linked or not. */
+  private holdList(): void {
+    if (this.heldList) return
+    this.heldList = true
+    queueMicrotask(() => {
+      if (this.heldList) this.publishBackground()
+    })
   }
   /** Nothing outlives the CLI: its exit empties the list, once. */
   clearBackground(): void {
+    this.heldList = false
+    this.foregroundCalls.clear()
     if (!this.background.size) return
     this.background.clear()
     this.publishBackground()
@@ -224,13 +294,25 @@ export class ClaudeStreamTranslator {
             : 'other'
     const track = (id: string, type: unknown, description: unknown, toolUseId?: string): void => {
       const known = this.background.get(id)
-      const tool = toolUseId ?? known?.toolUseId
+      const tool = toolUseId ?? known?.toolUseId ?? this.foregroundCalls.get(id)
+      this.foregroundCalls.delete(id)
       const outputFile = known?.outputFile ?? (tool ? this.outputFiles.get(tool) : undefined)
+      const kind = known?.kind ?? kindOf(type)
+      const said = typeof description === 'string' && description ? description : undefined
+      // A shell reads by the title its call gave it, else by the name the CLI
+      // lists it under (its own prose, or the command shortened). The whole
+      // command rides along for a tooltip.
+      const call = kind === 'shell' && tool ? this.bashCalls.get(tool) : undefined
+      const command = kind === 'shell' ? (call?.command ?? known?.command ?? said) : undefined
       this.background.set(id, {
         id,
-        kind: known?.kind ?? kindOf(type),
+        kind,
         description:
-          typeof description === 'string' && description ? description : (known?.description ?? id),
+          call?.title ||
+          (kind === 'shell' && said ? commandTitle(said) : said) ||
+          known?.description ||
+          (call ? commandTitle(call.command) : id),
+        ...(command ? { command } : {}),
         startedAt: known?.startedAt ?? Date.now(),
         ...(tool ? { toolUseId: tool } : {}),
         ...(outputFile ? { outputFile } : {})
@@ -243,11 +325,21 @@ export class ClaudeStreamTranslator {
         .parse(p.tasks)
       const live = new Set(tasks.map((t) => t.task_id))
       for (const id of this.background.keys()) if (!live.has(id)) this.background.delete(id)
+      const unlinked = tasks.some((t) => !this.background.get(t.task_id)?.toolUseId)
       for (const t of tasks) track(t.task_id, t.task_type, t.description)
+      if (unlinked && [...this.background.values()].some((t) => !t.toolUseId)) {
+        this.holdList()
+        return true
+      }
     } else if (p.subtype === 'task_started') {
-      // A foreground task (a subagent the turn waits on) is the turn's own
-      // work, already on screen as its tool call.
-      if (p.is_backgrounded === false || typeof p.task_id !== 'string') return true
+      // A foreground task (a subagent or a command the turn waits on) is the
+      // turn's own work, already on screen as its tool call: not listed, its
+      // call remembered in case the CLI lists it later.
+      if (typeof p.task_id !== 'string') return true
+      if (p.is_backgrounded === false) {
+        if (typeof p.tool_use_id === 'string') this.foregroundCalls.set(p.task_id, p.tool_use_id)
+        return true
+      }
       track(
         p.task_id,
         p.task_type,
@@ -258,14 +350,21 @@ export class ClaudeStreamTranslator {
       const status = z.object({ status: z.string() }).safeParse(p.patch)
       if (!status.success || status.data.status === 'running' || typeof p.task_id !== 'string')
         return true
+      this.foregroundCalls.delete(p.task_id)
       if (!this.background.delete(p.task_id)) return true
     } else if (p.subtype === 'task_notification') {
-      if (typeof p.task_id !== 'string' || !this.background.delete(p.task_id)) return true
+      if (typeof p.task_id !== 'string') return true
+      this.foregroundCalls.delete(p.task_id)
+      if (!this.background.delete(p.task_id)) return true
     } else return false
+    // A held list waits while a task it named is still unlinked; the read's
+    // end publishes it either way.
+    if (this.heldList && [...this.background.values()].some((t) => !t.toolUseId)) return true
     this.publishBackground()
     return true
   }
-  /** A control_response answering one of our initialize requests; false for any other. */
+  /** A control_response answering one of our own control requests (initialize,
+   *  or one a view sent); false for any other. */
   private listRequest(p: Record<string, unknown>): boolean {
     const response = z
       .object({
@@ -281,7 +380,17 @@ export class ClaudeStreamTranslator {
     this.listRequests.delete(response.data.request_id)
     if (response.data.subtype === 'success' && response.data.response)
       request.resolve(response.data.response)
-    else request.reject(new Error(response.data.error ?? 'Claude did not answer initialize'))
+    else if (response.data.subtype === 'success' && request.what !== 'initialize')
+      request.resolve({})
+    else
+      request.reject(
+        new Error(
+          response.data.error ??
+            (request.what === 'initialize'
+              ? 'Claude did not answer initialize'
+              : 'Claude refused the request')
+        )
+      )
     return true
   }
   /** Tell the reader the mode the CLI is in now. */
@@ -559,7 +668,17 @@ export class ClaudeStreamTranslator {
       // own context, never the conversation's.
       const parent = typeof p.parent_tool_use_id === 'string' ? p.parent_tool_use_id : undefined
       for (const block of message.content) {
-        if (block.type === 'text' && p.type === 'user' && isInterruptNotice(block.text)) {
+        // A subagent's own words: its brief (the user text its call gave it)
+        // and what it says, whole, since the CLI streams nothing of a
+        // subagent (claude-stream/README.md). Each carries its parent, so a
+        // view of that agent reads them and the transcript never does; the
+        // conversation's own streaming state is not theirs to touch.
+        if (parent && block.type === 'text' && typeof block.text === 'string') {
+          if (p.type === 'user' && block.text.trim())
+            this.emit({ type: 'user_message', text: block.text, parent })
+          else if (p.type === 'assistant' && block.text.trim())
+            this.emit({ type: 'assistant_text', delta: block.text, final: true, parent })
+        } else if (block.type === 'text' && p.type === 'user' && isInterruptNotice(block.text)) {
           this.interrupted = true
         } else if (block.type === 'text' && p.type === 'assistant' && !this.streamed) {
           this.emit({ type: 'assistant_text', delta: z.string().parse(block.text), final: false })
@@ -569,6 +688,7 @@ export class ClaudeStreamTranslator {
             .parse(block)
           if (!this.tools.has(tool.id)) {
             this.tools.add(tool.id)
+            if (tool.name === 'Bash' && !parent) this.noteBashCall(tool.id, tool.input)
             this.emit({ type: 'tool_call', ...tool, ...(parent ? { parent } : {}) })
           }
         } else if (block.type === 'tool_result') {
@@ -580,7 +700,8 @@ export class ClaudeStreamTranslator {
             type: 'tool_result',
             id: z.string().parse(block.tool_use_id),
             output: block.content,
-            error: z.boolean().optional().catch(undefined).parse(block.is_error)
+            error: z.boolean().optional().catch(undefined).parse(block.is_error),
+            ...(parent ? { parent } : {})
           })
         }
       }
@@ -691,15 +812,25 @@ export class ClaudeStreamTranslator {
       })
       this.emit({ type: 'state_change', state: 'blocked' })
     } else if (p.type === 'control_cancel_request') {
-      this.permissions.delete(z.string().parse(p.request_id))
-      this.questionRequests.delete(z.string().parse(p.request_id))
+      const id = z.string().parse(p.request_id)
+      const held = this.permissions.delete(id)
+      this.questionRequests.delete(id)
       fallback()
+      // The views settle the card on this word: the raw frame never reaches
+      // a window (`host.ts`, isRawWireFrame), and the card it left behind came
+      // back ahead of the next request (PRDCT-4032).
+      if (held) this.emit({ type: 'permission_withdrawn', id })
       if (!this.permissions.size) this.emit({ type: 'state_change', state: 'working' })
     } else if (p.type === 'result') {
       this.finish()
+      // Nothing the turn waited on outlives it: a request still open is
+      // withdrawn before the turn is said to be done.
+      for (const id of this.permissions.keys()) this.emit({ type: 'permission_withdrawn', id })
       this.permissions.clear()
       this.questionRequests.clear()
       this.tools.clear()
+      // Nothing the turn waited on outlives it.
+      this.foregroundCalls.clear()
       if (p.is_error && this.interrupted) this.emit({ type: 'turn_interrupted' })
       else if (p.is_error)
         this.emit({
@@ -724,6 +855,15 @@ export class ClaudeStreamTranslator {
       this.streamed = false
       this.finished = false
     } else fallback()
+  }
+  private noteBashCall(id: string, input: unknown): void {
+    const call = z
+      .object({ command: z.string(), description: z.string().optional() })
+      .safeParse(input)
+    if (!call.success) return
+    const title = call.data.description?.trim()
+    this.bashCalls.set(id, { command: call.data.command, ...(title ? { title } : {}) })
+    if (this.bashCalls.size > 200) this.bashCalls.delete(this.bashCalls.keys().next().value!)
   }
   /** A background call's result names the file its output goes to; keep it
    *  for the task that call started, whichever of the two frames came first. */
@@ -750,7 +890,7 @@ export class ClaudeStreamTranslator {
   }
   response(id: string, optionId: string, answers?: Record<string, string>): unknown {
     const pending = this.permissions.get(id)
-    if (!pending) throw new Error(`Unknown Claude permission request: ${id}`)
+    if (!pending) throw new Error(`${REQUEST_GONE.claude}: ${id}`)
     const question = this.questionRequests.has(id)
     if (
       question
@@ -924,15 +1064,16 @@ export class ClaudeAdapter implements SessionAdapter {
     const sessionId = options.resume ?? context.claudeSessionId ?? randomUUID()
     if (!isValidClaudeSessionId(sessionId)) throw new Error('Invalid Claude session id')
     if (options.model && !isValidModelName(options.model)) throw new Error('Invalid model name')
-    const profile = launchProfileManager.resolve(
-      'claude',
-      context.workspaceId,
-      context.launchProfileId
-    )
+    const profile =
+      context.launchProfile ??
+      launchProfileManager.resolve('claude', context.workspaceId, context.launchProfileId)
     // Clave's own launch mode wins (the CLI takes the last --permission-mode);
     // else the profile's, which the CLI obeys all the same.
     const profilePermissions = claudeProfilePermissions(profile)
     const launchMode = options.permissionMode ?? profilePermissions.mode
+    // The account's token, read now (the store answers asynchronously) and
+    // held in this closure until the process starts, never on the record.
+    const oauthToken = await accountTokenForSpawn('claude', context.claudeProfileId)
     const emitter = new EventEmitter()
     const emit = (event: SessionEvent): void => {
       if (event.type === 'permission_mode') live.permissionMode = event.mode
@@ -1026,10 +1167,15 @@ export class ClaudeAdapter implements SessionAdapter {
         if (options.permissionMode) argv.push('--permission-mode', options.permissionMode)
         // A model that takes no effort (Haiku) runs at none whatever this says.
         if (options.effort) argv.push('--effort', options.effort)
+        // ADR 0004: a routine run's contract skill and its one-line system
+        // prompt, from the spawn's own context; a tab's launch carries none.
+        if (context.pluginDir) argv.push('--plugin-dir', context.pluginDir)
+        if (context.appendSystemPrompt)
+          argv.push('--append-system-prompt', context.appendSystemPrompt)
         const env: Record<string, string> = {
           ...buildSpawnEnv(getLoginShellEnv(), {
             configDir: context.configDir,
-            oauthToken: accountTokenForSpawn('claude', context.claudeProfileId)
+            oauthToken
           }),
           CLAVE_SESSION_ID: spec.id
         }
@@ -1301,6 +1447,22 @@ export class ClaudeAdapter implements SessionAdapter {
    *  session's own process, started if the session has not spoken yet. No turn
    *  is sent and no token spent; the CLI answers it any number of times. */
   private initialize(live: Live): Promise<Record<string, unknown>> {
+    return this.request(live, { subtype: 'initialize' }, INITIALIZE_TIMEOUT_MS, 'initialize')
+  }
+  /** Send the session's provider one control request from the closed set a
+   *  view may ask (the MCP servers, the plugins) and answer the CLI's own
+   *  response. Started like initialize if the session has not spoken yet. */
+  async control(handle: SessionHandle, request: SessionControl): Promise<Record<string, unknown>> {
+    return this.request(this.live(handle), controlBody(request), CONTROL_TIMEOUT_MS, request.type)
+  }
+  /** One control request to the session's own process, its answer matched by
+   *  request id; `what` names it in the errors. */
+  private request(
+    live: Live,
+    body: Record<string, unknown>,
+    timeoutMs: number,
+    what: string
+  ): Promise<Record<string, unknown>> {
     if (live.ended) return Promise.reject(new Error('Claude session has ended'))
     live.process ??= live.start()
     const requestId = randomUUID()
@@ -1308,18 +1470,22 @@ export class ClaudeAdapter implements SessionAdapter {
     const answer = new Promise<Record<string, unknown>>((resolve, reject) => {
       const timer = setTimeout(() => {
         translator.listRequests.delete(requestId)
-        reject(new Error('Claude did not answer initialize in time'))
-      }, INITIALIZE_TIMEOUT_MS)
+        reject(new Error(`Claude did not answer ${what} in time`))
+      }, timeoutMs)
       const settle =
         <T>(done: (value: T) => void) =>
         (value: T): void => {
           clearTimeout(timer)
           done(value)
         }
-      translator.listRequests.set(requestId, { resolve: settle(resolve), reject: settle(reject) })
+      translator.listRequests.set(requestId, {
+        resolve: settle(resolve),
+        reject: settle(reject),
+        what
+      })
     })
     live.process.stdin.write(
-      `${JSON.stringify({ type: 'control_request', request_id: requestId, request: { subtype: 'initialize' } })}\n`
+      `${JSON.stringify({ type: 'control_request', request_id: requestId, request: body })}\n`
     )
     return answer
   }

@@ -27,6 +27,22 @@ export function forgetLineage(id: string): void {
   parents.delete(id)
 }
 
+const SESSION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+/**
+ * The parent a session's RECORD carries (#259), which is what survives the
+ * restart this map does not: the spawn's, else the previous record's. It
+ * crosses the IPC boundary and lands in a file re-read at boot, so only a
+ * session id is kept, anything else dropped, never coerced; a session is
+ * never its own parent.
+ */
+export function lineageOf(id: string, requested: unknown, previous: unknown): string | undefined {
+  const valid = (v: unknown): string | undefined =>
+    typeof v === 'string' && SESSION_ID.test(v) ? v : undefined
+  const parent = valid(requested) ?? valid(previous)
+  return parent === id ? undefined : parent
+}
+
 /** Tests only. */
 export function resetLineageForTests(): void {
   parents.clear()

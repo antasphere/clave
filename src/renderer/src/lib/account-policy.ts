@@ -1,3 +1,4 @@
+import { isRemoteKey } from './fleet-identity'
 import { useSessionStore, type Session } from '../store/session-store'
 import { useClaudeAccountsUsage, useCodexAccountsUsage } from '../store/usage-store'
 import { useClaudeProfileStore, getClaudeProfile } from '../store/claude-profile-store'
@@ -44,6 +45,7 @@ const switching = new Set<string>()
 export function runAccountPolicy(): void {
   const store = useSessionStore.getState()
   for (const session of store.sessions) {
+    if (isRemoteKey(session.id)) continue
     const provider = accountProviderOf(session)
     if (!provider) continue
     const reported = session.limitReported === true

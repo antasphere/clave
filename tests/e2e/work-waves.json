@@ -1,0 +1,612 @@
+{
+  "why": "The two large-wave shapes of PRDCT-4123, as a lane of the mobile beta wave (37 sessions in one group, four titles saying PRIMARY and seven saying handed over) and of Casier (22) left Valentin's sidebar on 6 November 2026. Synthetic: no real session, account or path. Read by packages/contract/src/work-rules.fixtures.test.ts (through the rule's own transitions), src/renderer/src/lib/work-presentation.test.ts (the sidebar's entries) and tests/e2e/work-lanes.spec.mjs (the built app, through the agent tools). The titles are written to mislead on purpose: a PRIMARY on a superseded lead, a handed over on the current coordinator. A run passes only if no title is read. `steps` are the changes in order: `as` is the session that makes the call (its own tab; `human` for the person, through the entry's menu), `target` the session the change applies to when it is not `as` (an assign to a tab in the same group, or the person's action), and an offer's `to` the successor. `then` are the phases after the shape is built, each with what must be true after it.",
+  "waves": [
+    {
+      "name": "mobile-beta",
+      "group": "Mobile beta wave",
+      "sessions": [
+        { "key": "s01", "title": "Wave · Mobile beta · coordinator PRIMARY" },
+        { "key": "s02", "title": "Wave · Mobile beta · coordinator (handed over)" },
+        { "key": "s03", "title": "Lane A · lead PRIMARY" },
+        { "key": "s04", "title": "Lane A · lead · handed over" },
+        { "key": "s05", "title": "Lane A · lead" },
+        { "key": "s06", "title": "Lane A · verifier" },
+        { "key": "s07", "title": "Lane A · spec" },
+        { "key": "s08", "title": "Lane B · lead" },
+        { "key": "s09", "title": "Lane B · lead (successor)" },
+        { "key": "s10", "title": "Lane B · verifier round 1" },
+        { "key": "s11", "title": "Lane B · verifier round 2 · handed over" },
+        { "key": "s12", "title": "Lane B · explorer" },
+        { "key": "s13", "title": "Lane C · lead" },
+        { "key": "s14", "title": "Lane C · verifier" },
+        { "key": "s15", "title": "Lane C · relay worker" },
+        { "key": "s16", "title": "Lane D · lead PRIMARY" },
+        { "key": "s17", "title": "Lane D · lead · handed over" },
+        { "key": "s18", "title": "Lane D · verifier" },
+        { "key": "s19", "title": "Lane E · lead PRIMARY" },
+        { "key": "s20", "title": "Lane E · lead" },
+        { "key": "s21", "title": "Lane E · verifier" },
+        { "key": "s22", "title": "Lane F · lead · handed over" },
+        { "key": "s23", "title": "Lane F · verifier" },
+        { "key": "s24", "title": "Explorer", "spawnedBy": "s03" },
+        { "key": "s25", "title": "Test runner", "spawnedBy": "s05" },
+        { "key": "s26", "title": "Codex worker", "spawnedBy": "s09" },
+        { "key": "s27", "title": "dev server logs" },
+        { "key": "s28", "title": "Scratch" },
+        { "key": "s29", "title": "Lane C · first attempt · handed over" },
+        { "key": "s30", "title": "Lane D · spec" },
+        { "key": "s31", "title": "Lane E · explorer" },
+        { "key": "s32", "title": "Wave · demo environment" },
+        { "key": "s33", "title": "Wave · verifier" },
+        { "key": "s34", "title": "Lane F · worker" },
+        { "key": "s35", "title": "Test writer", "spawnedBy": "s05" },
+        { "key": "s36", "title": "Notes" },
+        { "key": "s37", "title": "Lane B · first lead · handed over" }
+      ],
+      "steps": [
+        {
+          "as": "s01",
+          "change": {
+            "type": "assign",
+            "work": {
+              "unit": "fixture-mobile-beta",
+              "kind": "wave",
+              "label": "Mobile beta",
+              "role": "coordinator"
+            }
+          }
+        },
+        {
+          "as": "s01",
+          "target": "s32",
+          "change": {
+            "type": "assign",
+            "work": { "unit": "fixture-mobile-beta", "role": "worker", "task": "Demo environment" }
+          }
+        },
+        {
+          "as": "s01",
+          "target": "s33",
+          "change": {
+            "type": "assign",
+            "work": { "unit": "fixture-mobile-beta", "role": "verifier" }
+          }
+        },
+        { "as": "s01", "change": { "type": "offer", "to": "s02" } },
+        { "as": "s02", "change": { "type": "accept" } },
+
+        {
+          "as": "s02",
+          "target": "s03",
+          "change": {
+            "type": "assign",
+            "work": {
+              "unit": "fixture-mobile-a",
+              "kind": "lane",
+              "label": "Pair the phone",
+              "wave": "fixture-mobile-beta",
+              "waveLabel": "Mobile beta",
+              "role": "lead"
+            }
+          }
+        },
+        {
+          "as": "s02",
+          "target": "s06",
+          "change": { "type": "assign", "work": { "unit": "fixture-mobile-a", "role": "verifier" } }
+        },
+        {
+          "as": "s02",
+          "target": "s07",
+          "change": {
+            "type": "assign",
+            "work": { "unit": "fixture-mobile-a", "role": "worker", "task": "Spec" }
+          }
+        },
+        { "as": "s07", "change": { "type": "complete" } },
+        { "as": "s03", "change": { "type": "offer", "to": "s04" } },
+        { "as": "s04", "change": { "type": "accept" } },
+        { "as": "s04", "change": { "type": "offer", "to": "s05" } },
+        { "as": "s05", "change": { "type": "accept" } },
+
+        {
+          "as": "s02",
+          "target": "s37",
+          "change": {
+            "type": "assign",
+            "work": {
+              "unit": "fixture-mobile-b",
+              "kind": "lane",
+              "label": "Ordered chat history",
+              "wave": "fixture-mobile-beta",
+              "waveLabel": "Mobile beta",
+              "role": "lead"
+            }
+          }
+        },
+        {
+          "as": "s02",
+          "target": "s10",
+          "change": { "type": "assign", "work": { "unit": "fixture-mobile-b", "role": "verifier" } }
+        },
+        {
+          "as": "s02",
+          "target": "s12",
+          "change": {
+            "type": "assign",
+            "work": { "unit": "fixture-mobile-b", "role": "worker", "task": "Trace the history" }
+          }
+        },
+        { "as": "s37", "change": { "type": "offer", "to": "s08" } },
+        { "as": "s08", "change": { "type": "accept" } },
+        { "as": "s08", "change": { "type": "offer", "to": "s09" } },
+        { "as": "s09", "change": { "type": "accept" } },
+        {
+          "as": "s02",
+          "target": "s11",
+          "change": {
+            "type": "assign",
+            "work": { "unit": "fixture-mobile-b", "role": "verifier" },
+            "replace": true
+          }
+        },
+
+        {
+          "as": "s02",
+          "target": "s13",
+          "change": {
+            "type": "assign",
+            "work": {
+              "unit": "fixture-mobile-c",
+              "kind": "lane",
+              "label": "Push notifications",
+              "wave": "fixture-mobile-beta",
+              "waveLabel": "Mobile beta",
+              "role": "lead"
+            }
+          }
+        },
+        {
+          "as": "s02",
+          "target": "s14",
+          "change": { "type": "assign", "work": { "unit": "fixture-mobile-c", "role": "verifier" } }
+        },
+        {
+          "as": "s02",
+          "target": "s29",
+          "change": {
+            "type": "assign",
+            "work": { "unit": "fixture-mobile-c", "role": "worker", "task": "Relay" }
+          }
+        },
+        { "as": "s29", "change": { "type": "offer", "to": "s15" } },
+        { "as": "s15", "change": { "type": "accept" } },
+
+        {
+          "as": "s02",
+          "target": "s16",
+          "change": {
+            "type": "assign",
+            "work": {
+              "unit": "fixture-mobile-d",
+              "kind": "lane",
+              "label": "Relay transport",
+              "wave": "fixture-mobile-beta",
+              "waveLabel": "Mobile beta",
+              "role": "lead"
+            }
+          }
+        },
+        {
+          "as": "s02",
+          "target": "s18",
+          "change": { "type": "assign", "work": { "unit": "fixture-mobile-d", "role": "verifier" } }
+        },
+        {
+          "as": "s02",
+          "target": "s30",
+          "change": {
+            "type": "assign",
+            "work": { "unit": "fixture-mobile-d", "role": "worker", "task": "Spec" }
+          }
+        },
+        { "as": "s30", "change": { "type": "complete" } },
+        { "as": "s16", "change": { "type": "offer", "to": "s17" } },
+
+        {
+          "as": "s02",
+          "target": "s19",
+          "change": {
+            "type": "assign",
+            "work": {
+              "unit": "fixture-mobile-e",
+              "kind": "lane",
+              "label": "Machine discovery",
+              "wave": "fixture-mobile-beta",
+              "waveLabel": "Mobile beta",
+              "role": "lead"
+            }
+          }
+        },
+        {
+          "as": "s02",
+          "target": "s21",
+          "change": { "type": "assign", "work": { "unit": "fixture-mobile-e", "role": "verifier" } }
+        },
+        {
+          "as": "s02",
+          "target": "s31",
+          "change": {
+            "type": "assign",
+            "work": { "unit": "fixture-mobile-e", "role": "worker", "task": "Explore" }
+          }
+        },
+        { "as": "s19", "change": { "type": "offer", "to": "s20" } },
+        { "as": "s20", "change": { "type": "accept" } },
+        { "as": "s20", "change": { "type": "leave" } },
+
+        {
+          "as": "s02",
+          "target": "s22",
+          "change": {
+            "type": "assign",
+            "work": {
+              "unit": "fixture-mobile-f",
+              "kind": "lane",
+              "label": "Analytics events",
+              "wave": "fixture-mobile-beta",
+              "waveLabel": "Mobile beta",
+              "role": "lead"
+            }
+          }
+        },
+        {
+          "as": "s02",
+          "target": "s23",
+          "change": { "type": "assign", "work": { "unit": "fixture-mobile-f", "role": "verifier" } }
+        },
+        {
+          "as": "s02",
+          "target": "s34",
+          "change": {
+            "type": "assign",
+            "work": { "unit": "fixture-mobile-f", "role": "worker", "task": "Events" }
+          }
+        },
+        { "as": "s34", "change": { "type": "complete" } },
+        { "as": "s23", "change": { "type": "complete" } },
+        { "as": "s22", "change": { "type": "complete" } }
+      ],
+      "expect": {
+        "ordinary": ["s20", "s27", "s28", "s36"],
+        "agents": {
+          "s24": "fixture-mobile-a",
+          "s25": "fixture-mobile-a",
+          "s35": "fixture-mobile-a",
+          "s26": "fixture-mobile-b"
+        },
+        "units": [
+          {
+            "unit": "fixture-mobile-beta",
+            "kind": "wave",
+            "label": "Mobile beta",
+            "owner": { "state": "held", "id": "s02" },
+            "reviewer": { "state": "held", "id": "s33" },
+            "workers": ["s32"],
+            "pending": [],
+            "history": ["s01"]
+          },
+          {
+            "unit": "fixture-mobile-a",
+            "kind": "lane",
+            "label": "Pair the phone",
+            "owner": { "state": "held", "id": "s05" },
+            "reviewer": { "state": "held", "id": "s06" },
+            "workers": [],
+            "pending": [],
+            "history": ["s03", "s04", "s07"]
+          },
+          {
+            "unit": "fixture-mobile-b",
+            "kind": "lane",
+            "label": "Ordered chat history",
+            "owner": { "state": "held", "id": "s09" },
+            "reviewer": { "state": "held", "id": "s11" },
+            "workers": ["s12"],
+            "pending": [],
+            "history": ["s08", "s10", "s37"]
+          },
+          {
+            "unit": "fixture-mobile-c",
+            "kind": "lane",
+            "label": "Push notifications",
+            "owner": { "state": "held", "id": "s13" },
+            "reviewer": { "state": "held", "id": "s14" },
+            "workers": ["s15"],
+            "pending": [],
+            "history": ["s29"]
+          },
+          {
+            "unit": "fixture-mobile-d",
+            "kind": "lane",
+            "label": "Relay transport",
+            "owner": { "state": "held", "id": "s16" },
+            "reviewer": { "state": "held", "id": "s18" },
+            "workers": [],
+            "pending": ["s17"],
+            "history": ["s30"]
+          },
+          {
+            "unit": "fixture-mobile-e",
+            "kind": "lane",
+            "label": "Machine discovery",
+            "owner": { "state": "unresolved", "reason": "no-current", "candidates": ["s19"] },
+            "reviewer": { "state": "held", "id": "s21" },
+            "workers": ["s31"],
+            "pending": [],
+            "history": ["s19"]
+          },
+          {
+            "unit": "fixture-mobile-f",
+            "kind": "lane",
+            "label": "Analytics events",
+            "owner": { "state": "completed", "id": "s22" },
+            "reviewer": { "state": "completed", "id": "s23" },
+            "workers": [],
+            "pending": [],
+            "history": ["s22", "s23", "s34"]
+          }
+        ]
+      },
+      "then": [
+        {
+          "name": "one more handoff on lane C",
+          "open": [{ "key": "s38", "title": "Lane C · lead PRIMARY" }],
+          "steps": [
+            { "as": "s13", "change": { "type": "offer", "to": "s38" } },
+            { "as": "s38", "change": { "type": "accept" } }
+          ],
+          "expect": {
+            "fixture-mobile-c": {
+              "owner": { "state": "held", "id": "s38" },
+              "history": ["s13", "s29"]
+            }
+          }
+        },
+        {
+          "name": "the predecessor of a handover nobody accepted closes",
+          "close": ["s16"],
+          "expect": {
+            "fixture-mobile-d": {
+              "owner": { "state": "unresolved", "reason": "not-accepted", "candidates": ["s17"] },
+              "pending": ["s17"]
+            }
+          }
+        },
+        {
+          "name": "the human completes the handover",
+          "steps": [{ "as": "human", "target": "s17", "change": { "type": "accept" } }],
+          "expect": {
+            "fixture-mobile-d": { "owner": { "state": "held", "id": "s17" }, "pending": [] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "casier",
+      "group": "Casier wave",
+      "sessions": [
+        { "key": "c01", "title": "Casier · coordinator" },
+        { "key": "c02", "title": "Lane G · import PRIMARY" },
+        { "key": "c03", "title": "Lane G · import" },
+        { "key": "c04", "title": "Lane G · verifier" },
+        { "key": "c05", "title": "Lane G · worker" },
+        { "key": "c06", "title": "Lane H · search" },
+        { "key": "c07", "title": "Lane H · verifier" },
+        { "key": "c08", "title": "Lane H · verifier (handed over)" },
+        { "key": "c09", "title": "Lane I · export" },
+        { "key": "c10", "title": "Lane I · export · handed over" },
+        { "key": "c11", "title": "Lane I · export (handed over)" },
+        { "key": "c12", "title": "Lane I · verifier" },
+        { "key": "c13", "title": "Lane I · spec" },
+        { "key": "c14", "title": "Lane J · permissions PRIMARY" },
+        { "key": "c15", "title": "Lane J · permissions" },
+        { "key": "c16", "title": "Lane J · verifier" },
+        { "key": "c17", "title": "Test runner", "spawnedBy": "c11" },
+        { "key": "c18", "title": "Importer worker", "spawnedBy": "c02" },
+        { "key": "c19", "title": "dev server" },
+        { "key": "c20", "title": "Notes" },
+        { "key": "c21", "title": "Scratch" },
+        { "key": "c22", "title": "Database console" }
+      ],
+      "steps": [
+        {
+          "as": "c01",
+          "change": {
+            "type": "assign",
+            "work": {
+              "unit": "fixture-casier",
+              "kind": "wave",
+              "label": "Casier",
+              "role": "coordinator"
+            }
+          }
+        },
+
+        {
+          "as": "c01",
+          "target": "c02",
+          "change": {
+            "type": "assign",
+            "work": {
+              "unit": "fixture-casier-g",
+              "kind": "lane",
+              "label": "Import the archive",
+              "wave": "fixture-casier",
+              "waveLabel": "Casier",
+              "role": "lead"
+            }
+          }
+        },
+        {
+          "as": "c01",
+          "target": "c04",
+          "change": { "type": "assign", "work": { "unit": "fixture-casier-g", "role": "verifier" } }
+        },
+        {
+          "as": "c01",
+          "target": "c05",
+          "change": {
+            "type": "assign",
+            "work": { "unit": "fixture-casier-g", "role": "worker", "task": "Parse" }
+          }
+        },
+        { "as": "c02", "change": { "type": "offer", "to": "c03" } },
+        { "as": "c03", "change": { "type": "accept" } },
+
+        {
+          "as": "c01",
+          "target": "c06",
+          "change": {
+            "type": "assign",
+            "work": {
+              "unit": "fixture-casier-h",
+              "kind": "lane",
+              "label": "Search by owner",
+              "wave": "fixture-casier",
+              "waveLabel": "Casier",
+              "role": "lead"
+            }
+          }
+        },
+        {
+          "as": "c01",
+          "target": "c07",
+          "change": { "type": "assign", "work": { "unit": "fixture-casier-h", "role": "verifier" } }
+        },
+        {
+          "as": "c01",
+          "target": "c08",
+          "change": {
+            "type": "assign",
+            "work": { "unit": "fixture-casier-h", "role": "verifier" },
+            "replace": true
+          }
+        },
+
+        {
+          "as": "c01",
+          "target": "c09",
+          "change": {
+            "type": "assign",
+            "work": {
+              "unit": "fixture-casier-i",
+              "kind": "lane",
+              "label": "Export to PDF",
+              "wave": "fixture-casier",
+              "waveLabel": "Casier",
+              "role": "lead"
+            }
+          }
+        },
+        {
+          "as": "c01",
+          "target": "c12",
+          "change": { "type": "assign", "work": { "unit": "fixture-casier-i", "role": "verifier" } }
+        },
+        {
+          "as": "c01",
+          "target": "c13",
+          "change": {
+            "type": "assign",
+            "work": { "unit": "fixture-casier-i", "role": "worker", "task": "Spec" }
+          }
+        },
+        { "as": "c13", "change": { "type": "complete" } },
+        { "as": "c09", "change": { "type": "offer", "to": "c10" } },
+        { "as": "c10", "change": { "type": "accept" } },
+        { "as": "c10", "change": { "type": "offer", "to": "c11" } },
+        { "as": "c11", "change": { "type": "accept" } },
+
+        {
+          "as": "c01",
+          "target": "c14",
+          "change": {
+            "type": "assign",
+            "work": {
+              "unit": "fixture-casier-j",
+              "kind": "lane",
+              "label": "Permissions",
+              "wave": "fixture-casier",
+              "waveLabel": "Casier",
+              "role": "lead"
+            }
+          }
+        },
+        {
+          "as": "c01",
+          "target": "c16",
+          "change": { "type": "assign", "work": { "unit": "fixture-casier-j", "role": "verifier" } }
+        },
+        { "as": "c14", "change": { "type": "offer", "to": "c15" } }
+      ],
+      "expect": {
+        "ordinary": ["c19", "c20", "c21", "c22"],
+        "agents": { "c17": "fixture-casier-i", "c18": "fixture-casier-g" },
+        "units": [
+          {
+            "unit": "fixture-casier",
+            "kind": "wave",
+            "label": "Casier",
+            "owner": { "state": "held", "id": "c01" },
+            "reviewer": { "state": "vacant" },
+            "workers": [],
+            "pending": [],
+            "history": []
+          },
+          {
+            "unit": "fixture-casier-g",
+            "kind": "lane",
+            "label": "Import the archive",
+            "owner": { "state": "held", "id": "c03" },
+            "reviewer": { "state": "held", "id": "c04" },
+            "workers": ["c05"],
+            "pending": [],
+            "history": ["c02"]
+          },
+          {
+            "unit": "fixture-casier-h",
+            "kind": "lane",
+            "label": "Search by owner",
+            "owner": { "state": "held", "id": "c06" },
+            "reviewer": { "state": "held", "id": "c08" },
+            "workers": [],
+            "pending": [],
+            "history": ["c07"]
+          },
+          {
+            "unit": "fixture-casier-i",
+            "kind": "lane",
+            "label": "Export to PDF",
+            "owner": { "state": "held", "id": "c11" },
+            "reviewer": { "state": "held", "id": "c12" },
+            "workers": [],
+            "pending": [],
+            "history": ["c09", "c10", "c13"]
+          },
+          {
+            "unit": "fixture-casier-j",
+            "kind": "lane",
+            "label": "Permissions",
+            "owner": { "state": "held", "id": "c14" },
+            "reviewer": { "state": "held", "id": "c16" },
+            "workers": [],
+            "pending": ["c15"],
+            "history": []
+          }
+        ]
+      },
+      "then": []
+    }
+  ]
+}

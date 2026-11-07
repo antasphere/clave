@@ -22,6 +22,29 @@ afterEach(async () => {
 })
 
 describe('the typed request client', () => {
+  it('round-trips optional restart correlation without changing legacy requests', async () => {
+    expect(await api.sessions.restart('s1', {}, false, 'request-123')).toMatchObject({
+      requestId: 'request-123',
+      resumed: true
+    })
+    expect(await api.sessions.restart('s1', {})).not.toHaveProperty('requestId')
+    expect(source.restarts).toEqual([
+      { id: 's1', account: {}, resendRejected: false },
+      { id: 's1', account: {}, resendRejected: false }
+    ])
+  })
+
+  it('reads a page of the past under its own deadline, not the ordinary one (PRDCT-3526)', async () => {
+    // One millisecond is no deadline at all for a request over loopback: an
+    // ordinary call misses it, the history call has a minute.
+    const hurried = createApiClient({ url: server.url, token: server.token, timeoutMs: 1 })
+    try {
+      await expect(hurried.sessions.get('s1')).rejects.toThrow()
+      expect(await hurried.sessions.history('s1')).toMatchObject({ items: expect.any(Array) })
+    } finally {
+      await hurried.dispose()
+    }
+  })
   it('round-trips a query and a command, typed end to end', async () => {
     expect((await api.sessions.list()).map((s) => s.id).sort()).toEqual(['s1', 's2'])
     expect((await api.sessions.list('w2')).map((s) => s.id)).toEqual(['s2'])
@@ -37,6 +60,25 @@ describe('the typed request client', () => {
     await api.clients.unregister(client.id)
     expect(await api.clients.list()).toEqual([])
     expect(await api.health.live()).toBe(true)
+  })
+  it('owns invisible reservations and idempotent release through typed public commands', async () => {
+    const reserved = await api.clients.reserveRegistration({
+      kind: 'shell',
+      name: 'v1 shell',
+      pid: 9
+    })
+    expect(reserved.protocol).toBe(1)
+    expect(await api.clients.list()).toEqual([])
+    const first = await api.clients.confirmRegistration(reserved.reservationId)
+    expect(await api.clients.confirmRegistration(reserved.reservationId)).toEqual(first)
+    expect(await api.clients.list()).toEqual([first])
+    await api.clients.releaseRegistration(reserved.reservationId)
+    await api.clients.releaseRegistration(reserved.reservationId)
+    await expect(api.clients.confirmRegistration(reserved.reservationId)).rejects.toMatchObject({
+      _tag: 'ClientRegistrationUnavailable'
+    })
+    expect(await api.clients.list()).toEqual([])
+    expect((await api.sessions.list()).map((session) => session.id).sort()).toEqual(['s1', 's2'])
   })
   it('throws the declared failure as the tagged error it is', async () => {
     const error = await api.sessions.get('ghost').catch((e) => e)

@@ -16,7 +16,8 @@ import {
   useCodexAccountsUsage,
   headroomWindow,
   capLevel,
-  capName
+  capName,
+  claudeUsageForModel
 } from '../../../src/renderer/src/store/usage-store'
 import { isExhausted } from '../../../src/renderer/src/lib/account-pool'
 import {
@@ -59,7 +60,8 @@ export function AccountChip({ sessionId }: { sessionId: string }): React.JSX.Ele
   const clearFrame = useRef<number | null>(null)
   if (!host || !provider || !own) return null
 
-  const summary = provider === 'codex' ? codexSummary : claudeSummary
+  const summary =
+    provider === 'codex' ? codexSummary : claudeUsageForModel(claudeSummary, host.model)
   const w = headroomWindow(summary)
   const exhausted = isExhausted(summary) || host.limitReported === true
   const level = exhausted ? 'critical' : w ? capLevel(w) : 'unknown'

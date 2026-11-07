@@ -8,6 +8,7 @@ import {
   capLevel,
   formatResetAt,
   formatResetIn,
+  claudeUsageForModel,
   type AccountUsageSummary
 } from '../../store/usage-store'
 import { isExhausted, soonestWeeklyReset } from '../../lib/account-pool'
@@ -29,7 +30,8 @@ import { UsageColumn } from '../usage/UsageColumn'
 function useTargetSummary(target: SwitchTarget): AccountUsageSummary | undefined {
   const claude = useClaudeAccountsUsage((s) => s.byAccount[target.id])
   const codex = useCodexAccountsUsage((s) => s.byAccount[target.id])
-  return (target.provider === 'codex' ? codex : claude) ?? target.summary
+  if (target.provider === 'codex') return codex ?? target.summary
+  return claude ? claudeUsageForModel(claude, target.model) : target.summary
 }
 
 export function AccountSwitchRow({ target }: { target: SwitchTarget }): ReactElement {
@@ -124,6 +126,67 @@ export function AccountUsagePlot({
       {session.map((w) => (
         <UsageColumn key={w.key} window={w} now={now} tooltip={false} />
       ))}
+    </div>
+  )
+}
+
+/** Every cap of an account as one thin horizontal bar each — name, bar, %
+ *  used, time to reset on a single line — the weekly caps first, then the
+ *  5-hour block. The tab menu's header draws this rather than the columns:
+ *  the columns stood ~8rem tall over a menu whose rows are 1.75rem, and the
+ *  header outweighed the menu it sat on. Same data, same urgency colours. */
+export function AccountUsageBars({
+  summary,
+  now
+}: {
+  summary: AccountUsageSummary | undefined
+  now: number
+}): ReactElement {
+  const windows = summary?.status === 'error' ? [] : (summary?.windows ?? [])
+  if (windows.length === 0)
+    return (
+      <div className="account-usage-bars-empty">
+        {summary?.status === 'error'
+          ? 'Usage could not be read'
+          : summary?.status === 'ready'
+            ? (summary.message ?? 'No limits reported')
+            : 'Reading usage…'}
+      </div>
+    )
+  const ordered = [
+    ...windows.filter((w) => w.kind !== 'session'),
+    ...windows.filter((w) => w.kind === 'session')
+  ]
+  return (
+    <div className="account-usage-bars" data-usage-chart="bars">
+      {ordered.map((w) => {
+        const pct = Math.round(w.usedPercentage)
+        const level = capLevel(w)
+        const reset = formatResetIn(w.resetsAt, now)
+        return (
+          <div
+            key={w.key}
+            className="account-usage-bar"
+            data-usage-window={w.key}
+            data-level={level}
+            title={`${w.label} · ${pct}% used${reset ? ` · resets ${reset}` : ''}`}
+          >
+            <span className="account-usage-bar-name">{capName(w)}</span>
+            <span className="account-usage-bar-track">
+              <span
+                className={`account-usage-bar-fill usage-meter-fill--${level}`}
+                style={{
+                  width: `${Math.min(100, Math.max(w.usedPercentage, pct === 0 ? 0 : 3))}%`
+                }}
+              />
+            </span>
+            <span className="account-usage-bar-pct" aria-label={`${pct}% used`}>
+              {pct}%
+            </span>
+            <span className="account-usage-bar-reset">{reset ?? ''}</span>
+          </div>
+        )
+      })}
     </div>
   )
 }
