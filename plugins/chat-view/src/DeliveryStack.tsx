@@ -61,6 +61,7 @@ export function DeliveryStack({
       className="chat-delivery-stack exchange-timeline"
       data-messages={count}
       data-digest={digest.state}
+      data-digest-fresh={(digest.state === 'done' && digest.fresh) || undefined}
       data-needs-you={done?.needsYou || undefined}
       aria-label={`${count} ${count === 1 ? 'message' : 'messages'} from ${names.join(', ')}`}
     >

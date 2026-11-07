@@ -5399,10 +5399,56 @@ details[open] > .chat-approval-items {
 .exchange[data-needs-you] .exchange-gist {
   color: var(--text-primary);
 }
-/* While the digest is read, the message keeps travelling along the arc. */
-.exchange-timeline[data-digest='reading'] .exchange-drawing .exchange-arc {
-  stroke-dasharray: 0.3 0.7;
-  animation: exchange-travel calc(var(--default-transition-duration) * 10) linear infinite;
+/* The drawing says where the digest stands, in its one accent. Working
+   (waiting for the messages to hold still, then reading): blue, the message
+   travelling the arc and the landing dot breathing, so it never reads as
+   stuck. Done: green, drawn whole, with a small pop when it turns. No digest
+   to be had: the plain ink of the other lines, still. */
+.exchange-drawing .exchange-arc {
+  transition: stroke calc(var(--default-transition-duration) * 2) var(--ease-out-expo);
+}
+.exchange-drawing .exchange-land {
+  transform-box: fill-box;
+  transform-origin: center;
+  transition: fill calc(var(--default-transition-duration) * 2) var(--ease-out-expo);
+}
+/* Doubled class: these win over the arrival's one-off draw, which a timeline
+   that has just arrived is also under. Motion only for a reader who allows it. */
+@media (prefers-reduced-motion: no-preference) {
+  .exchange-timeline.chat-delivery-stack:is([data-digest='waiting'], [data-digest='reading'])
+    .exchange-drawing
+    .exchange-arc {
+    stroke-dasharray: 0.35 0.65;
+    animation: exchange-travel calc(var(--default-transition-duration) * 8) linear infinite;
+  }
+  .exchange-timeline.chat-delivery-stack:is([data-digest='waiting'], [data-digest='reading'])
+    .exchange-drawing
+    .exchange-land {
+    animation: exchange-breathe calc(var(--default-transition-duration) * 8) ease-in-out infinite;
+  }
+  .exchange-timeline.chat-delivery-stack[data-digest-fresh] .exchange-drawing .exchange-land {
+    animation: exchange-land calc(var(--default-transition-duration) * 3) var(--ease-out-settle)
+      both;
+  }
+}
+.exchange-timeline[data-digest='done'] .exchange-drawing .exchange-arc {
+  stroke: var(--color-success);
+}
+.exchange-timeline[data-digest='done'] .exchange-drawing .exchange-land {
+  fill: var(--color-success);
+}
+.exchange-timeline[data-digest='failed'] .exchange-drawing .exchange-arc {
+  stroke: color-mix(in oklab, var(--ink) 45%, transparent);
+  stroke-width: 1.2;
+}
+.exchange-timeline[data-digest='failed'] .exchange-drawing .exchange-land {
+  fill: color-mix(in oklab, var(--ink) 60%, transparent);
+}
+@keyframes exchange-breathe {
+  50% {
+    scale: 1.6;
+    opacity: 0.55;
+  }
 }
 @keyframes exchange-travel {
   from {
@@ -5649,8 +5695,6 @@ button.exchange-part-who:hover {
   animation: exchange-arc calc(var(--default-transition-duration) * 5) var(--ease-out-expo) both;
 }
 .chat-row[data-arrive] .exchange-drawing .exchange-land {
-  transform-box: fill-box;
-  transform-origin: center;
   animation: exchange-land calc(var(--default-transition-duration) * 3) var(--ease-out-settle)
     calc(var(--default-transition-duration) * 3) both;
 }

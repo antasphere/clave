@@ -48,7 +48,8 @@ export function digestKey(messages: readonly DigestMessage[]): string {
 export type DigestState =
   | { state: 'waiting' }
   | { state: 'reading' }
-  | { state: 'done'; result: Done }
+  /** `fresh`: read during this mount, rather than found already read. */
+  | { state: 'done'; result: Done; fresh?: boolean }
   | { state: 'failed' }
 
 /**
@@ -91,7 +92,7 @@ export function useDigest(messages: readonly DigestMessage[], launch: DigestLaun
         })
       }
       void ask.then((result) => {
-        if (live) setState(result.ok ? { state: 'done', result } : { state: 'failed' })
+        if (live) setState(result.ok ? { state: 'done', result, fresh: true } : { state: 'failed' })
       })
     }, DIGEST_SETTLE_MS)
     return () => {
