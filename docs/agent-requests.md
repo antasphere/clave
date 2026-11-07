@@ -98,17 +98,26 @@ in place.
 
 ### What the person sees
 
-The card sits in the transcript under the agent's turn, with the column's
-width, in the paper of the composer (`InputPrompt.tsx`, `InlineQuestion` in
-`PromptDock.tsx`): who asks, the agent's words, the fields, Skip and Send.
-Enter moves to the next field and sends on the last; ⌘↩ sends; Esc skips. Once
-answered, the card collapses into one muted row with each question and what was
-said. The dock above the composer keeps what it always held best: a tool to
-allow.
+The card sits in the agent's own column, under its words, with no box around
+it (`InputPrompt.tsx`, placed by `InlineQuestion` in `PromptDock.tsx`): a
+drawing in the chat's hand at its head beside the agent's sentence, then the
+fields down a rail, one seat per field, the accent running down the rail as far
+as the field the person is on and all the way once every answer fits, then Skip
+and Send. The fields are the paper's controls; their height, the buttons'
+height, the air between fields and the inset come from four density tokens
+(`--ask-field-h`, `--ask-btn-h`, `--ask-gap`, `--ask-pad`) that every Density
+preset restates, so the card reads as the chrome around it. Enter moves to the
+next field and sends on the last; ⌘↩ sends; Esc skips. Once answered, the card
+gives way to one muted row with each question and what was said. A person
+scrolled up the transcript when a question arrives is told above the composer
+and brought to it. The dock above the composer keeps what it always held best:
+a tool to allow.
 
-A provider's own question is drawn inline the same way since this change; the
-dock's motion (one question per page, the review, a note on an option) is
-unchanged for it.
+A provider's own question is drawn inline the same way since this change; its
+motion (one question per page, the review, a note on an option) is unchanged.
+One card is drawn per request still waiting, on its latest entry and, for a
+server's session, only for the server's own records of that session: a replayed
+duplicate or a dead process's question stays a muted row.
 
 ## A provider's own question, and when to use which
 
