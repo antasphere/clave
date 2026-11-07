@@ -38,7 +38,7 @@ export function DeliveryStack({
 }): React.JSX.Element {
   const names = [...new Set(group.messages.map(senderName))]
   const count = group.messages.length
-  const { index, launch } = useExchanges()
+  const { index, launch, recent } = useExchanges()
   // What the digest reads: each message with what this session asked before
   // it and answered after it (`indexExchanges`).
   const read = useMemo(
@@ -54,7 +54,7 @@ export function DeliveryStack({
       }),
     [group.messages, index]
   )
-  const digest = useDigest(read, launch)
+  const digest = useDigest(read, launch, recent.has(id))
   const done = digest.state === 'done' ? digest.result : null
   const flagged = done?.needsYou ? done.message : null
   return (

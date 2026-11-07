@@ -51,7 +51,9 @@ interface Job {
 }
 
 const queue: Job[] = []
-let running = false
+/** Two at a time: a session with several fresh timelines is read in step. */
+const MAX_RUNNING = 2
+let running = 0
 const children = new Set<ChildProcess>()
 let closed = false
 
@@ -87,16 +89,26 @@ export function requestDigest(request: DigestRequest): Promise<DigestResult> {
 }
 
 async function next(): Promise<void> {
-  if (running) return
+  if (running >= MAX_RUNNING) return
   const job = queue.shift()
   if (!job) return
-  running = true
+  running++
+  // Room for another beside this one: start it now, not once this one ends.
+  void next()
+  const started = Date.now()
+  console.log(
+    `[exchange-digest] reading ${job.request.messages.length} message(s), ${queue.length} waiting`
+  )
   try {
-    job.resolve(await run(job.request))
+    const result = await run(job.request)
+    console.log(
+      `[exchange-digest] ${result.ok ? (result.needsYou ? 'needs you' : 'nothing for you') : `failed: ${result.error.slice(0, 120)}`} in ${Date.now() - started}ms`
+    )
+    job.resolve(result)
   } catch (error) {
     job.resolve({ ok: false, error: error instanceof Error ? error.message : String(error) })
   } finally {
-    running = false
+    running--
     void next()
   }
 }

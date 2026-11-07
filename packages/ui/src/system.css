@@ -5399,50 +5399,46 @@ details[open] > .chat-approval-items {
 .exchange[data-needs-you] .exchange-gist {
   color: var(--text-primary);
 }
-/* The drawing says where the digest stands, in its one accent. Working
-   (waiting for the messages to hold still, then reading): blue, the message
-   travelling the arc and the landing dot breathing, so it never reads as
-   stuck. Done: green, drawn whole, with a small pop when it turns. No digest
-   to be had: the plain ink of the other lines, still. */
+/* The drawing's accent means one of two things, and only those: a digest
+   being read right now (blue, the message travelling the arc, the landing dot
+   breathing) or something here that needs the reader (the landing dot in
+   blue). Otherwise it rests in the plain ink of its other lines: a timeline
+   is not a task with a done state, and a colour that stayed on whatever the
+   digest found read as a state of the conversation. */
 .exchange-drawing .exchange-arc {
-  transition: stroke calc(var(--default-transition-duration) * 2) var(--ease-out-expo);
+  stroke: color-mix(in oklab, var(--ink) 45%, transparent);
+  stroke-width: 1.2;
+  transition:
+    stroke calc(var(--default-transition-duration) * 2) var(--ease-out-expo),
+    stroke-width calc(var(--default-transition-duration) * 2) var(--ease-out-expo);
 }
 .exchange-drawing .exchange-land {
+  fill: color-mix(in oklab, var(--ink) 60%, transparent);
   transform-box: fill-box;
   transform-origin: center;
   transition: fill calc(var(--default-transition-duration) * 2) var(--ease-out-expo);
 }
+.exchange-timeline[data-digest='reading'] .exchange-drawing .exchange-arc {
+  stroke: var(--color-accent);
+  stroke-width: 1.7;
+}
+.exchange-timeline:is([data-digest='reading'], [data-needs-you]) .exchange-drawing .exchange-land {
+  fill: var(--color-accent);
+}
 /* Doubled class: these win over the arrival's one-off draw, which a timeline
    that has just arrived is also under. Motion only for a reader who allows it. */
 @media (prefers-reduced-motion: no-preference) {
-  .exchange-timeline.chat-delivery-stack:is([data-digest='waiting'], [data-digest='reading'])
-    .exchange-drawing
-    .exchange-arc {
+  .exchange-timeline.chat-delivery-stack[data-digest='reading'] .exchange-drawing .exchange-arc {
     stroke-dasharray: 0.35 0.65;
     animation: exchange-travel calc(var(--default-transition-duration) * 8) linear infinite;
   }
-  .exchange-timeline.chat-delivery-stack:is([data-digest='waiting'], [data-digest='reading'])
-    .exchange-drawing
-    .exchange-land {
+  .exchange-timeline.chat-delivery-stack[data-digest='reading'] .exchange-drawing .exchange-land {
     animation: exchange-breathe calc(var(--default-transition-duration) * 8) ease-in-out infinite;
   }
   .exchange-timeline.chat-delivery-stack[data-digest-fresh] .exchange-drawing .exchange-land {
     animation: exchange-land calc(var(--default-transition-duration) * 3) var(--ease-out-settle)
       both;
   }
-}
-.exchange-timeline[data-digest='done'] .exchange-drawing .exchange-arc {
-  stroke: var(--color-success);
-}
-.exchange-timeline[data-digest='done'] .exchange-drawing .exchange-land {
-  fill: var(--color-success);
-}
-.exchange-timeline[data-digest='failed'] .exchange-drawing .exchange-arc {
-  stroke: color-mix(in oklab, var(--ink) 45%, transparent);
-  stroke-width: 1.2;
-}
-.exchange-timeline[data-digest='failed'] .exchange-drawing .exchange-land {
-  fill: color-mix(in oklab, var(--ink) 60%, transparent);
 }
 @keyframes exchange-breathe {
   50% {

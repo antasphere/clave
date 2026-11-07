@@ -50,7 +50,7 @@ import {
 } from './tools'
 import { ToolGroup } from './ToolGroup'
 import { ToolDisclosure } from './disclosure'
-import { ExchangeContext, indexExchanges } from './exchanges'
+import { ExchangeContext, indexExchanges, recentTimelines } from './exchanges'
 import { useExchangeJump } from './jump'
 import { useSessionStore } from '../../../src/renderer/src/store/session-store'
 import { ApprovalRun, PermissionRow, PromptDock } from './PromptDock'
@@ -863,9 +863,10 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
   const exchanges = useMemo(
     () => ({
       index: indexExchanges(presentation.entries),
-      launch: { workspaceId, launchProfileId, claudeProfileId, configDir }
+      launch: { workspaceId, launchProfileId, claudeProfileId, configDir },
+      recent: recentTimelines(blocks)
     }),
-    [presentation.entries, workspaceId, launchProfileId, claudeProfileId, configDir]
+    [presentation.entries, blocks, workspaceId, launchProfileId, claudeProfileId, configDir]
   )
   // The mark is the agent at work, nothing else: it leaves with the state.
   const head = pastHead(past, conversation.entries.length, state === 'ended')

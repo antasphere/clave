@@ -45,7 +45,12 @@ export function digestKey(messages: readonly DigestMessage[]): string {
   return `${messages.length}-${(hash >>> 0).toString(36)}`
 }
 
+/** How long a digest may be read before the timeline stops saying so. */
+export const DIGEST_GIVE_UP_MS = 90_000
+
 export type DigestState =
+  /** Not read, and not to be: an older timeline (`Exchanges.recent`). */
+  | { state: 'off' }
   | { state: 'waiting' }
   | { state: 'reading' }
   /** `fresh`: read during this mount, rather than found already read. */
@@ -59,11 +64,20 @@ export type DigestState =
  * message starts the wait again; a timeline that unmounts before the wait is
  * over asks for nothing.
  */
-export function useDigest(messages: readonly DigestMessage[], launch: DigestLaunch): DigestState {
+export function useDigest(
+  messages: readonly DigestMessage[],
+  launch: DigestLaunch,
+  /** Whether to ask for a digest not read yet; one already read shows anyway. */
+  enabled: boolean
+): DigestState {
   const key = digestKey(messages)
   const [state, setState] = useState<DigestState>(() => {
     const known = cache.get(key)
-    return known ? { state: 'done', result: known } : { state: 'waiting' }
+    return known
+      ? { state: 'done', result: known }
+      : enabled
+        ? { state: 'waiting' }
+        : { state: 'off' }
   })
   useEffect(() => {
     const known = cache.get(key)
@@ -71,8 +85,13 @@ export function useDigest(messages: readonly DigestMessage[], launch: DigestLaun
       setState({ state: 'done', result: known })
       return
     }
+    if (!enabled) {
+      setState({ state: 'off' })
+      return
+    }
     setState({ state: 'waiting' })
     let live = true
+    let giveUp: ReturnType<typeof setTimeout> | undefined
     const timer = window.setTimeout(() => {
       const api = window.electronAPI?.exchangeDigest
       if (!api) {
@@ -80,6 +99,11 @@ export function useDigest(messages: readonly DigestMessage[], launch: DigestLaun
         return
       }
       setState({ state: 'reading' })
+      // Never a drawing that moves forever: past this, the timeline stops
+      // saying it reads (the answer, if it comes, is still kept).
+      giveUp = setTimeout(() => {
+        if (live) setState({ state: 'failed' })
+      }, DIGEST_GIVE_UP_MS)
       let ask = inflight.get(key)
       if (!ask) {
         ask = api({ launch, messages: [...messages] }).catch(
@@ -92,15 +116,17 @@ export function useDigest(messages: readonly DigestMessage[], launch: DigestLaun
         })
       }
       void ask.then((result) => {
+        clearTimeout(giveUp)
         if (live) setState(result.ok ? { state: 'done', result, fresh: true } : { state: 'failed' })
       })
     }, DIGEST_SETTLE_MS)
     return () => {
       live = false
       window.clearTimeout(timer)
+      clearTimeout(giveUp)
     }
     // The key stands for the messages; the launch only says how to ask.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [key])
+  }, [key, enabled])
   return state
 }

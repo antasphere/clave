@@ -82,9 +82,27 @@ export function indexExchanges(entries: readonly Entry[]): ExchangeIndex {
 export interface Exchanges {
   index: ExchangeIndex
   launch: DigestLaunch
+  /** The timelines whose digest is read on its own: the conversation's latest
+   *  few (RECENT_DIGESTS). An older one shows a digest only if one was read. */
+  recent: ReadonlySet<string>
 }
 
-export const ExchangeContext = createContext<Exchanges>({ index: new Map(), launch: {} })
+export const ExchangeContext = createContext<Exchanges>({
+  index: new Map(),
+  launch: {},
+  recent: new Set()
+})
+
+/** How many of a conversation's latest timelines are read without asking. */
+export const RECENT_DIGESTS = 3
+
+/** The keys of the latest RECENT_DIGESTS timelines among a view's rows. */
+export function recentTimelines(
+  rows: readonly { key: string; block: { kind: string } }[]
+): Set<string> {
+  const keys = rows.filter((row) => row.block.kind === 'delivery-group').map((row) => row.key)
+  return new Set(keys.slice(-RECENT_DIGESTS))
+}
 
 export function useExchange(entry: DeliveryEntry): Exchange {
   return useContext(ExchangeContext).index.get(entry) ?? {}
