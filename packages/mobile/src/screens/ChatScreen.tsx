@@ -329,7 +329,7 @@ export function ChatScreen({ navigation, route }: Props): ReactNode {
   const title = session?.title || route.params.title || 'Chat'
 
   return (
-    <Screen>
+    <Screen testID={`chat-screen-${sessionId}`}>
       <PaneHeader
         title={title}
         meta={session ? `${AGENT_NAMES[session.provider] ?? session.provider}` : undefined}
