@@ -220,7 +220,7 @@ describe('the gates that run the check', () => {
     }
   })
 
-  it('the macOS CI job packages the app and checks it, unconditionally', () => {
+  it('the macOS gate partition packages the app and cannot hide a failed check', () => {
     const yml = readFileSync(path.join(repo, '.github', 'workflows', 'checks.yml'), 'utf8')
     const lines = yml.split('\n')
     const start = lines.findIndex((l) =>
@@ -230,10 +230,18 @@ describe('the gates that run the check', () => {
     let end = start + 1
     while (end < lines.length && !/^ {6}- /.test(lines[end]) && !/^ {2}\S/.test(lines[end])) end++
     const step = lines.slice(start, end)
-    // Nothing may turn the step off or let it fail quietly: no if,
-    // continue-on-error or shell override on the step, quoted keys included...
+    // Only scheduling into the gate partition is conditional. Neither the
+    // package check nor its aggregate may turn a failed command into success.
     const key = (k) => new RegExp(`^\\s+['"]?(${k})['"]?\\s*:`)
-    expect(step.filter((l) => key('if|continue-on-error|shell').test(l))).toEqual([])
+    expect(step.filter((l) => key('continue-on-error|shell').test(l))).toEqual([])
+    expect(step.filter((l) => key('if').test(l))).toEqual([
+      "        if: ${{ !cancelled() && steps.build.outcome == 'success' && (matrix.task == '1' || matrix.task == 'baseline') }}"
+    ])
+    expect(yml).toContain('fromJSON(\'["1","2","3","4"]\')')
+    expect(yml).toContain('fromJSON(\'["baseline"]\')')
+    expect(yml).toContain('    needs: e2e-run')
+    expect(yml).toContain('          RESULT: ${{ needs.e2e-run.result }}')
+    expect(yml).toContain('        run: test "$RESULT" = success')
     expect(step.some((l) => /^ {10}npx electron-builder --dir --mac --arm64/.test(l))).toBe(true)
     expect(
       step.some((l) =>
@@ -242,7 +250,7 @@ describe('the gates that run the check', () => {
     ).toBe(true)
     // ...and it sits in the macOS job, which nothing turns off either.
     const jobStart = lines.slice(0, start).findLastIndex((l) => /^ {2}\S+:$/.test(l))
-    expect(lines[jobStart]).toBe('  e2e:')
+    expect(lines[jobStart]).toBe('  e2e-run:')
     const jobKeys = lines.slice(jobStart + 1, start).filter((l) => /^ {4}\S/.test(l))
     expect(jobKeys.filter((l) => key('if|continue-on-error').test(l))).toEqual([])
   })
