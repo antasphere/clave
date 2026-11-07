@@ -13,11 +13,11 @@ const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 export async function chooseResourceView(win, id, kind) {
   const host = win.locator(`.chat-host[data-session-id="${id}"]`)
   const picker = host.getByRole('button', { name: 'Change view', exact: true })
-  if ((await picker.getAttribute('title')) !== `View: ${kind === 'chat' ? 'Chat' : 'Terminal'}`) {
+  if ((await picker.getAttribute('title')) !== `View: ${kind === 'chat' ? 'Chat' : 'Enclave'}`) {
     await picker.click()
     const menu = win.locator('[role="menu"][aria-label="Views"]')
     await menu
-      .getByRole('menuitem', { name: kind === 'chat' ? 'Chat' : 'Terminal', exact: true })
+      .getByRole('menuitem', { name: kind === 'chat' ? 'Chat' : 'Enclave', exact: true })
       .click()
     await menu.waitFor({ state: 'detached' })
   }

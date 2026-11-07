@@ -421,7 +421,7 @@ export async function adoptServerStartedTerminals(
     store.addHiddenSession(session)
     if (options.focus !== true) continue
     const group = store.groups.find((g) => g.terminals.some((t) => t.sessionId === record.id))
-    if (group && inActiveWorkspace({ workspaceId: group.workspaceId }, activeWorkspaceId)) {
+    if (group && inActiveWorkspace(group, activeWorkspaceId)) {
       useSessionStore.setState({ selectedSessionIds: [record.id], focusedSessionId: record.id })
     }
   }

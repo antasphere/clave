@@ -46,6 +46,7 @@ export interface SessionIPCEvents {
 }
 
 import type { FleetDesktopAPI } from './fleet-types'
+import type { ServerPairingChange, ServerPairings } from '@clave/contract/fleet'
 import type { LinkedDocumentsAPI } from '../shared/linked-documents'
 import type { ExtensionsInventory, MutationResult, MutationScope } from '../shared/extensions-types'
 import type {
@@ -639,6 +640,13 @@ export type {
 import type { GitBatchProgress } from '../shared/git-batch'
 import type { MicAccessState } from '../shared/mic'
 import type { TriagePrepareResult, TriageSnapshot } from '../shared/triage'
+import type { DigestDone, DigestRequest, DigestResult } from '../shared/exchange-digest'
+import type {
+  ServerInstallProgress,
+  ServerInstallResult,
+  ServerInstallStatus,
+  TailnetScan
+} from '../shared/server-setup-types'
 
 export interface MagicSyncResult {
   repoPath: string
@@ -977,6 +985,11 @@ export interface ElectronAPI extends FleetDesktopAPI {
     extras?: { sessionType?: string | null; locationId?: string | null }
   ) => Promise<{ success: boolean; error?: string }>
   openExternal: (url: string) => Promise<void>
+  /** The exchange timeline's digest: what the reader needs from a run of
+   *  messages other tabs sent. A failure is a result, never a rejection. */
+  exchangeDigest: (request: DigestRequest) => Promise<DigestResult>
+  /** Every digest already read for a tab, by the key of its messages. */
+  exchangeDigestsOf: (sessionId: string) => Promise<Record<string, DigestDone>>
   /** The GitHub pull request panel's reads and writes, through the user's own
    *  `gh`. A failure is a result, never a rejection: the panel names the kind. */
   githubPull: (ref: PullRef) => Promise<GithubResult<PullRequestView>>
@@ -988,6 +1001,17 @@ export interface ElectronAPI extends FleetDesktopAPI {
   /** HTTP liveness probe (any HTTP response = true). Stricter than checkPort:
    *  proves a server answers, not just that something bound the port. */
   probeServerUrl: (url: string, timeoutMs?: number) => Promise<boolean>
+  // ── Lane B (server wave): a Mac as a server, the tailnet scan ──
+  /** The tailnet's machines and which of them answer as a Clave server. */
+  serverSetupScan: () => Promise<TailnetScan>
+  /** What this Mac has installed as a server, and whether it runs. */
+  serverSetupInstallStatus: () => Promise<ServerInstallStatus>
+  /** Installs (or updates) this Mac's server and saves it as a connection;
+   *  a second call while one runs answers the same run. */
+  serverSetupInstall: () => Promise<ServerInstallResult>
+  /** Puts this Mac's server token on the clipboard; the token never crosses to the window. */
+  serverSetupCopyToken: () => Promise<void>
+  onServerSetupProgress: (callback: (progress: ServerInstallProgress) => void) => () => void
   openPath: (filePath: string) => Promise<string>
   /** Register an HTML file with the clave-preview protocol; returns the URL an
    *  in-app preview iframe loads it from (assets scoped to the file's directory). */
@@ -1057,6 +1081,10 @@ export interface ElectronAPI extends FleetDesktopAPI {
   // The state and every write result carry the state's stamp (wave 5,
   // lane A, PRDCT-3405): the window drops a fold that is not newer than the
   // last stamp it loaded, wrote or took in.
+  // ── Paired workspaces (PRDCT-4151) ──
+  serverPairingsLoad: () => Promise<ServerPairings>
+  serverPairingsChange: (change: ServerPairingChange) => Promise<ServerPairings>
+  onServerPairingsChanged: (callback: (state: ServerPairings) => void) => () => void
   workspaceLoad: () => Promise<WorkspaceState>
   workspaceUpdateRegistry: (
     workspaces: Workspace[]
@@ -1142,6 +1170,9 @@ export interface ElectronAPI extends FleetDesktopAPI {
   getPiUsage: (range: PiUsageTotals['range']) => Promise<PiUsageTotals>
   gitCheckIgnored: (cwd: string, paths: string[]) => Promise<string[]>
   getGitStatus: (cwd: string) => Promise<GitStatusResult>
+  /** The `origin` remote of a checkout, as git keeps it, null without one;
+   *  a server's checkout answers through its own git (PRDCT-4151). */
+  gitRemoteUrl: (cwd: string) => Promise<string | null>
   getGitStatusBatch: (paths: string[]) => Promise<Array<{ path: string; status: GitStatusResult }>>
   gitFetch: (cwd: string) => Promise<void>
   gitFetchBatch: (paths: string[]) => Promise<void>

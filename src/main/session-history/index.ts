@@ -1,4 +1,5 @@
 import type { LedgerRow } from './ledger'
+import { DIGEST_HELPER_MARKER } from '../../shared/exchange-digest'
 
 /**
  * The fold: ledger rows (and, as a one-time seed, the exchange-capture
@@ -159,7 +160,10 @@ export const TITLE_HELPER_MARKER =
 /** Is a store-only transcript one of Clave's own title-helper calls? Judged
  *  by the prompt the helper itself sent, read back off the tail. */
 export function isTitleHelperConversation(lastPrompt: string | null): boolean {
-  return lastPrompt !== null && lastPrompt.trimStart().startsWith(TITLE_HELPER_MARKER)
+  if (lastPrompt === null) return false
+  const prompt = lastPrompt.trimStart()
+  // The exchange digest's one-shots too (src/main/exchange-digest.ts).
+  return prompt.startsWith(TITLE_HELPER_MARKER) || prompt.startsWith(DIGEST_HELPER_MARKER)
 }
 
 /** The transcripts the ledger does not know: every stem in the store's index

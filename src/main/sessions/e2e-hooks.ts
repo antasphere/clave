@@ -47,6 +47,10 @@ export interface E2eHooks {
   /** ADR 0004: the routines service the server answers from, for the specs
    *  that drive a tick by hand instead of waiting on the clock. */
   routines: RoutinesService & { tick(): Promise<boolean>; refresh(): Promise<void> }
+  // ── Lane B (server wave): the token "Copy token" would have put on the
+  // clipboard. A hidden test instance must never write the person's
+  // clipboard, so under test mode it lands here instead. ──
+  serverSetup: { copiedToken: string | null }
   // ── later lanes add theirs here ──
 }
 

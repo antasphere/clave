@@ -29,10 +29,11 @@ import { TroubleNote } from '../../../../../plugins/routine-report/src/RoutineTr
 import { invalidTrouble, storeTrouble } from '../../../../../plugins/routine-report/src/trouble'
 import { claudeModelName } from '../../../../shared/claude-models'
 import { useRoutinesStore } from '../../store/routines-store'
+import { rememberTab, rememberedTab, type PanelTab } from './panel-tab'
 import { adoptServerStartedSessions } from '../../lib/adopt-record'
 import { describeCron } from '../../../../main/routines/cron'
 
-type Tab = 'report' | 'discussion' | 'runs'
+type Tab = PanelTab
 
 /**
  * The floating panel of a routine (ADR 0004). Three things a reader asks of
@@ -66,7 +67,13 @@ export function RoutinePanel({
   const dismiss = useRoutinesStore((s) => s.dismiss)
   const openDiscussion = useRoutinesStore((s) => s.openDiscussion)
   const [selectedId, setSelectedId] = useState<string | null>(null)
-  const [tab, setTab] = useState<Tab>('report')
+  // The tab the panel was left on, per routine: a message just sent in
+  // Discussion is where the panel reopens, not back on Report.
+  const [tab, setTabState] = useState<Tab>(() => rememberedTab(view.routine.key))
+  const setTab = (next: Tab): void => {
+    setTabState(next)
+    rememberTab(view.routine.key, next)
+  }
   const [discussion, setDiscussion] = useState<Session | null>(null)
   const [opening, setOpening] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
@@ -122,6 +129,23 @@ export function RoutinePanel({
       setOpening(false)
     }
   }
+
+  // Reopened on Discussion (the tab it was left on): bring the conversation
+  // back at once, as a click on the tab would, once per run so a failed open
+  // shows its note instead of being asked again in a loop. Without a run there
+  // is nothing to discuss, and the panel shows Report.
+  const autoOpened = useRef<string | null>(null)
+  useEffect(() => {
+    if (tab !== 'discussion' || discussion || opening) return
+    if (!run) {
+      setTabState('report')
+      return
+    }
+    if (autoOpened.current === run.id) return
+    autoOpened.current = run.id
+    void showDiscussion()
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- showDiscussion reads the same state
+  }, [tab, run?.id, discussion, opening])
 
   const openAsTab = async (): Promise<void> => {
     setMenuOpen(false)

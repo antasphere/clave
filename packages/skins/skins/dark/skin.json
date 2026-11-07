@@ -48,6 +48,7 @@
   "--color-status-ready": "#22c55e",
   "--color-status-waiting": "#f59e0b",
   "--color-status-inactive": "#6b7280",
+  "--ease-out-settle": "cubic-bezier(0.32, 1.18, 0.6, 1)",
   "--terminal-foreground": "rgba(255, 255, 255, 0.9)",
   "--terminal-accent": "rgba(255, 255, 255, 0.8)",
   "--terminal-cursor": "var(--terminal-accent)",

@@ -85,7 +85,7 @@ export async function run(t) {
     await picker.click()
     assert.deepEqual(await win.getByRole('menuitem').allInnerTexts(), [
       'Chat',
-      'Terminal',
+      'Enclave',
       'Fixture log'
     ])
     await win.keyboard.press('Escape')

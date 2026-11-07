@@ -83,7 +83,7 @@ export async function run(t) {
         })
       }, text)
   const choose = async (kind) => {
-    const title = kind === 'terminal' ? 'Terminal' : 'Chat'
+    const title = kind === 'terminal' ? 'Enclave' : 'Chat'
     const picker = host.getByRole('button', { name: 'Change view', exact: true })
     await picker.click()
     const menu = win.locator('[role="menu"][aria-label="Views"]')

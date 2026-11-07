@@ -60,6 +60,7 @@
   "--danger-toggle-bg",
   "--danger-toggle-glow",
   "--danger-toggle-icon",
+  "--ease-out-settle",
   "--git-worktree",
   "--heatmap-0",
   "--heatmap-1",

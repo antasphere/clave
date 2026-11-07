@@ -113,7 +113,14 @@ interface LiveRun {
   /** The report taken so far: its status, applied when the run ends. */
   report: { status: RoutineStatus } | null
   ended: boolean
+  /** The turn was interrupted (the app quitting or restarting stops its chats that way, as does a stop). */
+  interrupted?: boolean
 }
+
+/** Why a run that was interrupted before its report ended (7 November 2026: a run cut by
+ *  the update to beta.15 read as "ended without a report", which said the agent failed). */
+export const INTERRUPTED_REASON =
+  'interrupted before its report: Clave quit or restarted, or the run was stopped'
 
 export interface RoutineService extends RoutinesService {
   /** The listing, answered at once: this implementation needs no await. */
@@ -271,6 +278,37 @@ export function createRoutineService(options: RoutineServiceOptions): RoutineSer
     emit()
   }
 
+  /** A discussion continues the run's conversation, and a resumed chat may
+   *  carry it on under a new provider id: the run's `providerSessionId` follows
+   *  the discussion's latest one, so the next resume (the panel reopened after
+   *  its session stopped, a relaunch, Open as a tab) picks the conversation up
+   *  after the person's own messages, not back at the run's last word (seen on
+   *  6 November 2026: messages sent in Discussion were gone on reopening). */
+  function followConversation(runId: string, sessionId: string): void {
+    const offs: Array<() => void> = []
+    const stop = (): void => {
+      for (const off of offs.splice(0)) off()
+    }
+    try {
+      offs.push(
+        options.sessions.subscribe(sessionId, (frame: SessionStream) => {
+          if (frame.kind !== 'event') return
+          const event = frame.event
+          if (event.type === 'session_meta' && event.providerSessionId) {
+            if (store.run(runId)?.providerSessionId !== event.providerSessionId) {
+              store.updateRun(runId, { providerSessionId: event.providerSessionId })
+            }
+          } else if (event.type === 'state_change' && event.state === 'ended') {
+            stop()
+          }
+        })
+      )
+      offs.push(options.sessions.subscribeExit(sessionId, () => stop()))
+    } catch {
+      /* no stream: the resume falls back to the run's own id */
+    }
+  }
+
   function watch(entry: LiveRun, sessionId: string): void {
     const { sessions } = options
     const onStream = (frame: SessionStream): void => {
@@ -279,6 +317,7 @@ export function createRoutineService(options: RoutineServiceOptions): RoutineSer
       if (event.type === 'session_meta' && event.providerSessionId) {
         store.updateRun(entry.run.id, { providerSessionId: event.providerSessionId })
       }
+      if (event.type === 'turn_interrupted') entry.interrupted = true
       if (event.type === 'state_change') {
         if (event.state === 'blocked') {
           store.updateRun(entry.run.id, { state: 'waiting' })
@@ -290,7 +329,9 @@ export function createRoutineService(options: RoutineServiceOptions): RoutineSer
             emit()
           }
         } else if (event.state === 'done' || event.state === 'ended') {
-          finish(entry, { reason: 'ended without a report' })
+          finish(entry, {
+            reason: entry.interrupted ? INTERRUPTED_REASON : 'ended without a report'
+          })
         }
       }
     }
@@ -299,7 +340,11 @@ export function createRoutineService(options: RoutineServiceOptions): RoutineSer
       entry.offs.push(sessions.subscribe(sessionId, onStream))
       entry.offs.push(
         sessions.subscribeExit(sessionId, (code) =>
-          finish(entry, { reason: `the process exited with code ${code} without a report` })
+          finish(entry, {
+            reason: entry.interrupted
+              ? INTERRUPTED_REASON
+              : `the process exited with code ${code} without a report`
+          })
         )
       )
     } catch (error) {
@@ -675,6 +720,7 @@ export function createRoutineService(options: RoutineServiceOptions): RoutineSer
       } catch {
         /* default view */
       }
+      followConversation(run.id, info.id)
       if (mode === 'panel') {
         store.updateRun(run.id, { discussionSessionId: info.id })
         emit()

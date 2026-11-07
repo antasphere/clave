@@ -171,3 +171,53 @@ export function parseSessionKey(key: string): SessionRef {
   const ref = parseResourceKey('session', key)
   return { serverId: ref.serverId, sessionId: ref.id }
 }
+
+// ── Paired workspaces (PRDCT-4151) ──
+/**
+ * One server's pairing settings, kept on this Mac alone: whether the server's
+ * tabs show inside the Mac workspaces paired with its own, the colour its
+ * badges wear here, which of its workspaces (by the server's own id) is paired
+ * with which Mac workspace, and which proposals the person declined.
+ * `combine` is undefined until the person answers: a confirmed pairing turns
+ * it on, and a switch turned off stays off, proposing nothing, until it is
+ * turned on again. Off, a server's tabs show only in its own workspaces, as
+ * they did before any pairing existed.
+ */
+export interface ServerPairing {
+  readonly combine?: boolean
+  readonly color: string
+  readonly pairs: Readonly<Record<string, string>>
+  readonly declined: ReadonlyArray<string>
+}
+export interface ServerPairings {
+  readonly version: 1
+  readonly servers: Readonly<Record<ServerId, ServerPairing>>
+}
+export type ServerPairingChange =
+  | {
+      readonly kind: 'confirm'
+      readonly serverId: ServerId
+      readonly serverWorkspaceId: string
+      readonly localWorkspaceId: string
+    }
+  | { readonly kind: 'decline'; readonly serverId: ServerId; readonly serverWorkspaceId: string }
+  | { readonly kind: 'forget'; readonly serverId: ServerId; readonly serverWorkspaceId: string }
+  /** Take a declined server workspace off the declined list, so it is proposed again. */
+  | { readonly kind: 'ask-again'; readonly serverId: ServerId; readonly serverWorkspaceId: string }
+  /** The switch; turned on, every decline is forgotten too. */
+  | { readonly kind: 'combine'; readonly serverId: ServerId; readonly on: boolean }
+export const PAIRING_IPC = {
+  load: 'server:pairings:load',
+  change: 'server:pairings:change',
+  changed: 'server:pairings:changed'
+} as const
+/** The badge colours a server may wear on this Mac, given out in this order. */
+export const SERVER_PAIRING_COLORS: ReadonlyArray<string> = [
+  '#5e6ad2',
+  '#4cb782',
+  '#db8b4e',
+  '#53b7c5',
+  '#d45461',
+  '#e8b931',
+  '#8b95a8'
+]

@@ -6,7 +6,12 @@ import type { SessionHostService, StartInput } from '@clave/server'
 import type { Session, SessionInfo, SessionStream } from '@clave/contract/sessions'
 import { WorkspaceFiles, memoryWorkspaceFilesStorage } from '@clave/server/workspace-files'
 import type { LaunchFacts } from './launch'
-import { RoutineReportRefusal, createRoutineService, type RoutineService } from './service'
+import {
+  RoutineReportRefusal,
+  createRoutineService,
+  type RoutineService,
+  INTERRUPTED_REASON
+} from './service'
 import { RoutinesStore, STORE_FILE } from './store'
 
 /**
@@ -351,6 +356,64 @@ describe('the conversation id the discussion resumes on', () => {
     expect(host.starts[1].windowKey).toBe('w1')
     expect(host.starts[1].options?.link).toBeUndefined()
     expect(sessionId).toBe('s2')
+  })
+})
+
+describe('a run cut short from outside (7 November 2026)', () => {
+  it('says it was interrupted, not that the agent ended without a report', async () => {
+    const host = fakeHost()
+    const file = workspace([routine('Health')])
+    const service = await build(file, host, memory(), { providerSessionIdOf: () => null })
+    await service.runNow(key(file, 'Health'))
+    // the app quitting stops the chat: the CLI acknowledges the interrupt, the turn ends
+    host.emit('s1', { kind: 'event', event: { type: 'turn_interrupted' } })
+    host.emit('s1', { kind: 'event', event: { type: 'state_change', state: 'done' } })
+    const run = service.list().routines[0].runs[0]
+    expect(run.state).toBe('failed')
+    expect(run.reason).toBe(INTERRUPTED_REASON)
+  })
+  it('a run that simply ends without its report still says so', async () => {
+    const host = fakeHost()
+    const file = workspace([routine('Health')])
+    const service = await build(file, host, memory(), { providerSessionIdOf: () => null })
+    await service.runNow(key(file, 'Health'))
+    host.emit('s1', { kind: 'event', event: { type: 'state_change', state: 'done' } })
+    expect(service.list().routines[0].runs[0].reason).toBe('ended without a report')
+  })
+})
+
+describe('a discussion carried on and reopened (6 November 2026)', () => {
+  it('resumes after the messages sent in Discussion, not back at the run', async () => {
+    const host = fakeHost()
+    const file = workspace([routine('Health')])
+    const service = await build(file, host, memory(), { providerSessionIdOf: () => null })
+    const run = await service.runNow(key(file, 'Health'))
+    host.emit('s1', {
+      kind: 'event',
+      event: { type: 'session_meta', model: 'm', providerSessionId: 'conv-run' }
+    })
+    await service.report({
+      sessionId: 's1',
+      status: 'ok',
+      headline: 'h',
+      summary: 's',
+      data: { n: 1 }
+    })
+    host.emit('s1', { kind: 'event', event: { type: 'state_change', state: 'done' } })
+    // The panel opens the discussion on the run's conversation...
+    await service.openDiscussion(run.id, 'w1', 'panel')
+    expect(host.starts[1].options?.resumeSessionId).toBe('conv-run')
+    // ...the person writes, and the resumed chat carries on under a new id.
+    host.emit('s2', {
+      kind: 'event',
+      event: { type: 'session_meta', model: 'm', providerSessionId: 'conv-talk' }
+    })
+    // While it lives, reopening the panel gets the very same session back.
+    expect((await service.openDiscussion(run.id, 'w1', 'panel')).sessionId).toBe('s2')
+    // Once it has stopped, the next discussion resumes where the talk left off.
+    await host.stop('s2')
+    await service.openDiscussion(run.id, 'w1', 'panel')
+    expect(host.starts[2].options?.resumeSessionId).toBe('conv-talk')
   })
 })
 

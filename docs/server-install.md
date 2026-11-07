@@ -47,13 +47,31 @@ The agents get that PATH through a login shell, which reads `~/.profile` (or `~/
 
 `auto` is decided once and saved as what it found (`tailscale` or `loopback`). A later run on a machine whose Tailscale is down then fails, rather than moving the server to loopback without telling you.
 
+### From the Mac itself
+
+On a Mac that runs the Clave app, Settings → **Servers** → **This Mac as a server** → **Run Clave as a server on this Mac** runs this script for you. It listens on the Mac's Tailscale address when Tailscale is up (read from the Tailscale app's own binary, so the `tailscale` command need not be on your PATH), on `127.0.0.1` otherwise; the page follows the script's phases, adds the server to that Mac's own list, offers its token with **Copy token** (never shown on screen), and then says the address and whether the service runs. Running it again updates the server. The script needs `node`, `git` and `npm` on your login shell's PATH, as above.
+
 ## Connect your Mac
 
 1. On the server, print the token: `node -p 'require(process.env.HOME + "/.local/share/clave-server/daemon/identity.json").token'`. Treat it like a password: paste it into Clave and nowhere else (not a chat, a ticket or a commit).
-2. In Clave on your Mac, open Settings → **Servers** (the Clave group of the settings sidebar) and add the server: a name, the address the script printed (for example `http://100.101.102.103:43127`, or `http://127.0.0.1:43127` through the SSH tunnel), and the token.
+2. In Clave on your Mac, open Settings → **Servers** (the Clave group of the settings sidebar) and add the server: a name, the address the script printed (for example `http://100.101.102.103:43127`, or `http://127.0.0.1:43127` through the SSH tunnel), and the token. With Tailscale on the Mac, **Scan Tailscale** under Add a server lists your tailnet's machines, marks the ones answering as a Clave server on port 43127, and fills the name and the address when you pick one; the token is still pasted by hand.
 3. When you open a session, choose that server. The folder picker then browses the server's disk, and the server's sessions show its name in the sidebar.
 
-The Servers page shows each server's version next to its state. When the app updates, its servers follow it: see below.
+The Servers page shows each server's version next to its state, and under it what the server is about: its workspaces, the accounts its agents run on, its launch profiles, its usage and its activity, each opening the full page with that server picked. When the app updates, its servers follow it: see below.
+
+## The server's accounts and agents
+
+The Agents group of the settings sidebar (Agents, Accounts, Usage, Activity) shows one machine at a time: **This Mac**, or a saved server, picked at the top of the group. With a server picked, Agents shows and edits its launch profiles, Usage reads its accounts' limits on the server, and Activity says that a server running on its own keeps no activity record. The Preferences stay the Mac's.
+
+Accounts are read-only from a Mac: an account is signed in where its login runs. On the server, from the installed release, `node ~/.local/lib/clave-server/current/scripts/server-accounts.mjs` sets them, the secret always on its input and never in an argument:
+
+```sh
+claude setup-token | node ~/.local/lib/clave-server/current/scripts/server-accounts.mjs claude add "Studio login"
+node ~/.local/lib/clave-server/current/scripts/server-accounts.mjs claude list
+node ~/.local/lib/clave-server/current/scripts/server-accounts.mjs codex add-key "Billing key" < key.txt
+```
+
+`claude set-token <account-id>` stores a new token on an existing account, `codex list` lists the Codex accounts, and `--data-dir` names a server installed elsewhere than the default. The Mac's pages follow the server as it changes.
 
 ## Update
 

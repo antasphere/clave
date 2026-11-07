@@ -23,6 +23,7 @@ import { Sidebar } from './Sidebar'
 import { ServerNotice } from './ServerNotice'
 import { LaunchNotice } from './LaunchNotice'
 import { ServerFolderPickerHost } from '../fleet/ServerFolderPickerHost'
+import { WorkspacePairingNotice } from '../fleet/WorkspacePairingNotice'
 import { useTrafficLights } from '../../hooks/use-traffic-lights'
 import { launchSession } from '../../lib/launch-session'
 import { loadLaunchPrefs } from '../../store/launch-prefs'
@@ -1018,6 +1019,7 @@ export function AppShell(): React.JSX.Element {
         <div className="relative flex-1 min-h-0 flex">
           <ServerNotice />
           <LaunchNotice />
+          <WorkspacePairingNotice />
           <ServerFolderPickerHost />
           {/* Terminal grid — each terminal is its own floating card */}
           <div

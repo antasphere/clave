@@ -23,7 +23,13 @@ import { BUILT_IN_LAUNCH_PROFILES } from '../shared/agent-launch'
 import type { Workspace } from '../shared/workspace-types'
 import { orderByIds } from '../shared/workspace-order'
 import type { ElectronAPI, SessionRecord, SessionInfo } from './index.d'
-import type { FleetDesktopAPI, FleetSnapshot, FleetRequests, FleetWorkspaces } from './fleet-types'
+import type {
+  FleetDesktopAPI,
+  FleetSettingsEvent,
+  FleetSnapshot,
+  FleetRequests,
+  FleetWorkspaces
+} from './fleet-types'
 
 interface FleetPorts {
   invoke(channel: string, ...args: unknown[]): Promise<unknown>
@@ -86,6 +92,7 @@ export function wireLayout(serverId: string, layout: WindowLayout): WindowLayout
 export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): ElectronAPI {
   const snapshotListeners = new Set<(snapshot: FleetSnapshot) => void>()
   const requestListeners = new Set<(snapshot: FleetRequests) => void>()
+  const settingsListeners = new Set<(event: FleetSettingsEvent) => void>()
   const statusListeners = new Set<(status: ServerConnectionStatus) => void>()
   const connectionListeners = new Set<(connections: SavedServerConnection[]) => void>()
   const workspaceListeners = new Set<(update: FleetWorkspaces) => void>()
@@ -148,6 +155,30 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
       noop
     )
     watched.set(serverId, { backing: b, off })
+  }
+  const toSettingsEvent = (serverId: string, event: ServerEvent): FleetSettingsEvent | null => {
+    switch (event._tag) {
+      case 'accounts.claude_changed':
+        return { serverId, kind: 'claude-accounts', accounts: [...event.accounts] }
+      case 'accounts.codex_changed':
+        return { serverId, kind: 'codex-accounts', accounts: [...event.accounts] }
+      case 'usage.claude_read':
+        return {
+          serverId,
+          kind: 'claude-usage',
+          accountId: event.accountId,
+          result: event.result as UsageAnswer
+        }
+      case 'usage.codex_read':
+        return {
+          serverId,
+          kind: 'codex-usage',
+          accountId: event.accountId,
+          result: event.result as UsageAnswer
+        }
+      default:
+        return null
+    }
   }
   const snapshot = (serverId: string): Promise<FleetSnapshot> => {
     const running = pendingSnapshots.get(serverId)
@@ -281,6 +312,13 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
       refresh(status.serverId)
       versionChanged(status.serverId)
     }
+  })
+  // A server's settings as they change: the fleet client's one subscription
+  // per backing, which it drops itself when the backing is disconnected,
+  // removed or replaced, so no settings listener outlives its connection.
+  fleet.onEvent(({ serverId, value }) => {
+    const event = toSettingsEvent(serverId, value.event)
+    if (event) for (const listener of settingsListeners) listener(event)
   })
   fleet.onEvent(({ serverId, value }) => {
     const tag = value.event._tag
@@ -940,6 +978,47 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
         codexAccounts: [...codexAccounts]
       }
     },
+    fleetAccounts: async (serverId) => {
+      const { api } = await backing(serverId)
+      const [claude, migrated, codex] = await Promise.all([
+        api.settings.claudeAccounts.list(),
+        api.settings.claudeAccounts.migrated(),
+        api.settings.codexAccounts.list()
+      ])
+      return { claude: [...claude], codex: [...codex], migrated: [...migrated] }
+    },
+    fleetUsage: async (serverId, provider, accountId, force) => {
+      const { api } = await backing(serverId)
+      const options = force === undefined ? undefined : { force }
+      const read =
+        provider === 'codex'
+          ? await api.settings.usage.readCodex(accountId, options)
+          : await api.settings.usage.readClaude(accountId, options)
+      return read as UsageAnswer
+    },
+    fleetUsageSnapshot: async (serverId, provider) => {
+      const { api } = await backing(serverId)
+      const snapshot =
+        provider === 'codex'
+          ? await api.settings.usage.codexSnapshot()
+          : await api.settings.usage.claudeSnapshot()
+      return snapshot as Record<string, UsageAnswer>
+    },
+    fleetLaunchProfileUpsert: async (serverId, profile) => {
+      const { api } = await backing(serverId)
+      return (await api.settings.launchProfiles.upsert(profile)) as LaunchSettings['profiles']
+    },
+    fleetLaunchProfileDelete: async (serverId, profileId) => {
+      const { api } = await backing(serverId)
+      return (await api.settings.launchProfiles.delete(profileId)) as LaunchSettings['profiles']
+    },
+    fleetLaunchProfileSetGlobal: async (serverId, family, profileId) => {
+      const { api } = await backing(serverId)
+      return (await api.settings.launchProfiles.setGlobal(
+        family,
+        profileId
+      )) as LaunchSettings['profiles']
+    },
     fleetSaveLayout: async (serverId, layout, baseRevision) => {
       const b = await backing(serverId)
       const result = await b.api.sidebar.saveLayout({
@@ -1034,6 +1113,12 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
         snapshotListeners.delete(callback)
       }
     },
+    onFleetSettingsEvent: (callback) => {
+      settingsListeners.add(callback)
+      return () => {
+        settingsListeners.delete(callback)
+      }
+    },
     onFleetRequests: (callback) => {
       requestListeners.add(callback)
       return () => {
@@ -1067,6 +1152,7 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
     onFleetServerVersions: (callback) => ports.versions?.(callback) ?? noop
   }
   type LaunchSettings = Awaited<ReturnType<FleetDesktopAPI['fleetLaunchSettings']>>
+  type UsageAnswer = Awaited<ReturnType<FleetDesktopAPI['fleetUsage']>>
   const api: ElectronAPI = {
     ...local,
     ...shared,
@@ -1490,6 +1576,12 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
         cwd,
         () => local.getGitStatus(cwd),
         async (b, path, owner) => loose(ownedStatus(owner, await b.api.git.status(path)))
+      ),
+    gitRemoteUrl: (cwd) =>
+      gitRoute(
+        cwd,
+        () => local.gitRemoteUrl(cwd),
+        async (b, path) => (await b.api.git.remote(path)).url
       ),
     getGitStatusBatch: (keys) =>
       gitBatch(

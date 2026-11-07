@@ -15,6 +15,7 @@ import {
 import { useUpdaterStore } from '../../store/updater-store'
 import { useSessionStore, type SettingsSection } from '../../store/session-store'
 import { WordmarkStrip } from '../layout/Wordmark'
+import { MachinePicker } from './MachinePicker'
 
 type Row = {
   id: SettingsSection
@@ -99,6 +100,10 @@ export function SettingsSidebar(): React.JSX.Element {
         {GROUPS.map((group) => (
           <div key={group.label}>
             <div className="settings-nav-label">{group.label}</div>
+            {/* The Agents pages show one machine at a time: this Mac, or a
+                saved server. The picker sits with the pages it governs; the
+                Preferences above stay this Mac's whatever is picked. */}
+            {group.label === 'Agents' && <MachinePicker />}
             <div className="space-y-0.5">
               {group.rows.map(({ id, label, icon: Icon }) => (
                 <button

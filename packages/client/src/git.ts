@@ -30,6 +30,7 @@ export const gitClient = (call: Call, patientCall: Call = call): GitClient => ({
       c.git.discover({ payload: { cwd, ...(force !== undefined && { force: flag(force) }) } })
     ),
   checkIgnored: (cwd, paths) => call((c) => c.git.checkIgnored({ payload: { cwd, paths } })),
+  remote: (cwd) => call((c) => c.git.remote({ payload: { cwd } })),
   fetch: (cwd) => patientCall((c) => c.git.fetch({ payload: { cwd } })).then(() => undefined),
   fetchBatch: (paths) =>
     patientCall((c) => c.git.fetchBatch({ payload: { paths } })).then(() => undefined),

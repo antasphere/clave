@@ -23,6 +23,7 @@ import {
   GitDiscard,
   GitFetch,
   GitFetchBatch,
+  GetGitRemote,
   GitGenerateCommitMessage,
   GitIncomingCommits,
   GitJourney,
@@ -83,6 +84,7 @@ export const gitHandlers = [
   QueryHandler.make(DiscoverGitRepos, (p) => call((g) => g.discover(p.cwd, p.force))),
   CommandHandler.make(GitCheckIgnored, (p) => call((g) => g.checkIgnored(p.cwd, p.paths))),
   // The remotes
+  QueryHandler.make(GetGitRemote, (p) => call((g) => g.remote(p.cwd))),
   CommandHandler.make(GitFetch, (p) => call((g) => g.fetch(p.cwd))),
   CommandHandler.make(GitFetchBatch, (p) => call((g) => g.fetchBatch(p.paths))),
   CommandHandler.make(GitRefreshRemotes, (p) => call((g) => g.refreshRemotes(p.paths, p.batchId))),

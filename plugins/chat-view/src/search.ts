@@ -153,12 +153,20 @@ export function useTranscriptSearch({
     if (!m) return
     setCurrent({ key: m.key, k: m.k })
     scrollToWords.current = true
-    setReveal((r) => ({ index: m.row, nonce: (r?.nonce ?? 0) + 1, align: 'center' }))
+    setReveal((r) => ({
+      index: m.row,
+      nonce: Math.max(Date.now(), (r?.nonce ?? 0) + 1),
+      align: 'center'
+    }))
   }
   const readPast = (from: { key: string; k: number } | null): void => {
     anchor.current = from
     setPaging(true)
-    setReveal((r) => ({ index: 0, nonce: (r?.nonce ?? 0) + 1, align: 'start' }))
+    setReveal((r) => ({
+      index: 0,
+      nonce: Math.max(Date.now(), (r?.nonce ?? 0) + 1),
+      align: 'start'
+    }))
     clearTimeout(pageTimer.current)
     pageTimer.current = setTimeout(() => {
       anchor.current = undefined
@@ -223,7 +231,11 @@ export function useTranscriptSearch({
       return
     }
     // Nothing new above yet: keep reading the past.
-    setReveal((r) => ({ index: 0, nonce: (r?.nonce ?? 0) + 1, align: 'start' }))
+    setReveal((r) => ({
+      index: 0,
+      nonce: Math.max(Date.now(), (r?.nonce ?? 0) + 1),
+      align: 'start'
+    }))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rows, more])
 
