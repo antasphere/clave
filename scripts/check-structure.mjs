@@ -47,6 +47,16 @@ function* files(dir) {
   }
 }
 
+// Workspace names and the renderer alias resolve to app source too.
+const { workspaces } = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8'))
+assert(Array.isArray(workspaces), 'Expected the root workspace directory list')
+const appImports = workspaces
+  .filter((directory) => directory.startsWith('apps/'))
+  .map(
+    (directory) => JSON.parse(readFileSync(path.join(root, directory, 'package.json'), 'utf8')).name
+  )
+appImports.push('@renderer')
+
 for (const file of files(path.join(root, 'packages'))) {
   const relative = path.relative(root, file)
   if (path.basename(file) === 'package.json') {
@@ -67,6 +77,10 @@ for (const file of files(path.join(root, 'packages'))) {
   const source = readFileSync(file, 'utf8')
   const imports = /(?:\bfrom\s*|\bimport\s*\(|\brequire\s*\(|\bimport\s*)['"]([^'"]+)['"]/g
   for (const match of source.matchAll(imports)) {
+    assert(
+      !appImports.some((name) => match[1] === name || match[1].startsWith(`${name}/`)),
+      `Shared code imports an app: ${relative} -> ${match[1]}`
+    )
     if (!match[1].startsWith('.')) continue
     const target = path.resolve(path.dirname(file), match[1])
     assert(
