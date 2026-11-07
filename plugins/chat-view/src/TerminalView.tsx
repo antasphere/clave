@@ -51,7 +51,9 @@ import { AccountChip } from './AccountChip'
 import { useQuestionHeight } from './question-height'
 import { blockKey, groupEntries, visibleEntries, type Block } from './tools'
 import { ToolDisclosure } from './disclosure'
-import { ExchangeContext, indexExchanges, recentTimelines } from './exchanges'
+import { ExchangeContext, digestMessages, indexExchanges, recentTimelines } from './exchanges'
+import { useTimelineDigests } from './digest'
+import { digestKey } from '../../../src/shared/exchange-digest'
 import { useExchangeJump } from './jump'
 import { useSessionStore } from '../../../src/renderer/src/store/session-store'
 import { ApprovalRun, PromptDock } from './PromptDock'
@@ -723,12 +725,33 @@ export function TerminalView({
   )
   const exchanges = useMemo(
     () => ({
+      sessionId: session.id,
       index: indexExchanges(presentation.entries),
       launch: { workspaceId, launchProfileId, claudeProfileId, configDir },
       recent: recentTimelines(blocks)
     }),
-    [presentation.entries, blocks, workspaceId, launchProfileId, claudeProfileId, configDir]
+    [
+      session.id,
+      presentation.entries,
+      blocks,
+      workspaceId,
+      launchProfileId,
+      claudeProfileId,
+      configDir
+    ]
   )
+  // The digests of the conversation's latest timelines, asked for by the view
+  // whether or not their cards are on screen, and filed by tab (digest.ts).
+  const digestTimelines = useMemo(
+    () =>
+      blocks.flatMap(({ block, key }) => {
+        if (block.kind !== 'delivery-group' || !exchanges.recent.has(key)) return []
+        const messages = digestMessages(block, exchanges.index)
+        return [{ key: digestKey(messages), messages }]
+      }),
+    [blocks, exchanges]
+  )
+  useTimelineDigests(session.id, digestTimelines, exchanges.launch)
   const [pinQuestions, setPinQuestions] = useState(() => localStorage.getItem(PIN_KEY) !== 'off')
   const togglePin = (): void =>
     setPinQuestions((value) => {

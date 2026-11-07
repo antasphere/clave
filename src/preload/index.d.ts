@@ -639,7 +639,7 @@ export type {
 import type { GitBatchProgress } from '../shared/git-batch'
 import type { MicAccessState } from '../shared/mic'
 import type { TriagePrepareResult, TriageSnapshot } from '../shared/triage'
-import type { DigestRequest, DigestResult } from '../shared/exchange-digest'
+import type { DigestDone, DigestRequest, DigestResult } from '../shared/exchange-digest'
 
 export interface MagicSyncResult {
   repoPath: string
@@ -981,6 +981,8 @@ export interface ElectronAPI extends FleetDesktopAPI {
   /** The exchange timeline's digest: what the reader needs from a run of
    *  messages other tabs sent. A failure is a result, never a rejection. */
   exchangeDigest: (request: DigestRequest) => Promise<DigestResult>
+  /** Every digest already read for a tab, by the key of its messages. */
+  exchangeDigestsOf: (sessionId: string) => Promise<Record<string, DigestDone>>
   /** The GitHub pull request panel's reads and writes, through the user's own
    *  `gh`. A failure is a result, never a rejection: the panel names the kind. */
   githubPull: (ref: PullRef) => Promise<GithubResult<PullRequestView>>

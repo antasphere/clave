@@ -1,4 +1,7 @@
 import { execFile, type ChildProcess } from 'child_process'
+import { join } from 'path'
+import { app } from 'electron'
+import { DigestStore } from './exchange-digest-store'
 import {
   accountTokenForSpawn,
   getLoginShellEnv,
@@ -10,6 +13,7 @@ import { buildOneShotLaunch } from './claude-one-shot'
 import {
   digestPrompt,
   parseDigestReply,
+  type DigestDone,
   type DigestRequest,
   type DigestResult
 } from '../shared/exchange-digest'
@@ -60,9 +64,40 @@ let closed = false
 const clip = (text: string | undefined): string | undefined =>
   text === undefined ? undefined : text.length > MAX_CHARS ? `${text.slice(0, MAX_CHARS)}…` : text
 
+/** The digests read so far, filed by session (exchange-digest-store.ts). */
+let store: DigestStore | null = null
+const digests = (): DigestStore =>
+  (store ??= new DigestStore(join(app.getPath('userData'), 'exchange-digests.json')))
+
+/** The same messages asked for twice at once (both views of a tab, a remount)
+ *  share one call. */
+const inflight = new Map<string, Promise<DigestResult>>()
+
+/** Every digest read for a tab: what its timelines show on opening. */
+export function digestsOf(sessionId: string): Record<string, DigestDone> {
+  return digests().of(sessionId)
+}
+
+/** A timeline's digest: the one filed for these messages, or a call read now
+ *  and filed when it answers. */
 export function requestDigest(request: DigestRequest): Promise<DigestResult> {
   if (closed) return Promise.resolve({ ok: false, error: 'Clave is quitting' })
   if (!request.messages.length) return Promise.resolve({ ok: false, error: 'No messages' })
+  const filed = digests().get(request.sessionId, request.key)
+  if (filed) return Promise.resolve(filed)
+  const id = `${request.sessionId}|${request.key}`
+  const running = inflight.get(id)
+  if (running) return running
+  const ask = read(request).then((result) => {
+    inflight.delete(id)
+    if (result.ok) digests().put(request.sessionId, request.key, result)
+    return result
+  })
+  inflight.set(id, ask)
+  return ask
+}
+
+function read(request: DigestRequest): Promise<DigestResult> {
   // Under the end-to-end harness no model is called: a spec that wants a
   // digest hands the model's reply in CLAVE_E2E_DIGEST_REPLY, read the way a
   // real one is, after a beat so the reading state shows.
@@ -166,6 +201,7 @@ async function run(request: DigestRequest): Promise<DigestResult> {
  *  the titles' (`pty-manager.ts` killAll); `quit` also shuts the door. */
 export function cancelAll(quit = false): void {
   if (quit) closed = true
+  store?.flush()
   for (const job of queue.splice(0)) job.resolve({ ok: false, error: 'Cancelled' })
   for (const child of [...children]) {
     try {

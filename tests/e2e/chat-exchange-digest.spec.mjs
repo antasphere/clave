@@ -7,6 +7,8 @@ import { until } from './harness.mjs'
    reply (CLAVE_E2E_DIGEST_REPLY). What this spec holds, in both views:
    - the timeline says it is reading, then shows the digest under its senders;
    - the card the digest came from is marked, the others are not;
+   - the digest is filed under the tab's session id, and a timeline scrolled
+     out of view is read and filed all the same;
    - with no digest to be had, the timeline shows its messages and nothing
      else: no error, no empty line. */
 
@@ -63,6 +65,36 @@ export async function run(t) {
           shown.needs === 'true' &&
           JSON.stringify(shown.flagged) === '[false,true]',
         shown
+      )
+      // Filed by the tab's id in Clave's data folder, so a remount or a
+      // restart finds it.
+      const filed = () =>
+        chat.app.evaluate(({ app }, id) => {
+          const fs = process.getBuiltinModule('fs')
+          const path = process.getBuiltinModule('path')
+          const file = path.join(app.getPath('userData'), 'exchange-digests.json')
+          if (!fs.existsSync(file)) return []
+          return Object.keys(JSON.parse(fs.readFileSync(file, 'utf-8'))[id] ?? {})
+        }, record.id)
+      const saved = await until(async () => ((await filed()).length === 1 ? true : null), 8000)
+      t.check(`${mode}: the digest is filed under the tab's session id`, saved === true, {
+        filed: await filed()
+      })
+      // A new timeline scrolled far out of view at once is still read and
+      // filed: the view asks, not the card on screen.
+      await inject(fixture, record.id, [
+        { type: 'user_message', text: header('Deploy bot', 'd1') + 'Staging is green.' },
+        ...Array.from({ length: 40 }, (_, i) =>
+          i % 2 === 0
+            ? { type: 'user_message', text: `Filler ${i}` }
+            : { type: 'assistant_text', delta: 'A long answer. '.repeat(80), final: true }
+        )
+      ])
+      const offscreen = await until(async () => ((await filed()).length === 2 ? true : null), 15000)
+      t.check(
+        `${mode}: a timeline scrolled out of view is read and filed all the same`,
+        offscreen === true,
+        { filed: await filed() }
       )
     } finally {
       await chat.close()

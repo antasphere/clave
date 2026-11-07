@@ -1,8 +1,8 @@
 import { createContext, useContext } from 'react'
 import { parseDelivery } from '../../../src/shared/exchange-provenance'
-import type { DigestLaunch } from '../../../src/shared/exchange-digest'
+import type { DigestLaunch, DigestMessage } from '../../../src/shared/exchange-digest'
 import type { Entry } from './reducer'
-import type { DeliveryEntry } from './tools'
+import type { DeliveryEntry, DeliveryGroup } from './tools'
 
 /** One side of an exchange this session wrote: what it sent to the other tab
  *  through clave_send_to_session, and when. */
@@ -80,6 +80,8 @@ export function indexExchanges(entries: readonly Entry[]): ExchangeIndex {
 /** What the exchange timelines of a view share: the pairs, and how to ask
  *  for a digest the way the session runs its agent. */
 export interface Exchanges {
+  /** The tab the view shows: its digests are filed under it. */
+  sessionId: string
   index: ExchangeIndex
   launch: DigestLaunch
   /** The timelines whose digest is read on its own: the conversation's latest
@@ -88,6 +90,7 @@ export interface Exchanges {
 }
 
 export const ExchangeContext = createContext<Exchanges>({
+  sessionId: '',
   index: new Map(),
   launch: {},
   recent: new Set()
@@ -120,4 +123,20 @@ export function gist(body: string): string {
     if (text) return text
   }
   return ''
+}
+
+/** What a timeline's digest reads: each message, its sender, and what this
+ *  session asked before it and answered after it (`indexExchanges`). The
+ *  view and the timeline compute it alike, so they agree on its key. */
+export function digestMessages(group: DeliveryGroup, index: ExchangeIndex): DigestMessage[] {
+  return group.messages.map((message) => {
+    const delivery = parseDelivery(message.text)
+    const exchange = index.get(message) ?? {}
+    return {
+      from: delivery?.sender?.name ?? 'Another agent',
+      text: (delivery?.body ?? message.text).trim(),
+      ...(exchange.request && { request: exchange.request.text }),
+      ...(exchange.reply && { reply: exchange.reply.text })
+    }
+  })
 }

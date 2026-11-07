@@ -1705,6 +1705,7 @@ const electronAPI = {
   // What the reader needs from a run of messages other tabs sent: a one-shot
   // model call in main (src/main/exchange-digest.ts), answered as a result.
   exchangeDigest: (request: DigestRequest) => ipcRenderer.invoke('exchanges:digest', request),
+  exchangeDigestsOf: (sessionId: string) => ipcRenderer.invoke('exchanges:digests-of', sessionId),
   // The GitHub pull request panel (plugins/github). Main runs the user's own
   // `gh`; every call answers with a GithubResult rather than throwing, so the
   // panel can tell "gh is missing" from "not signed in" from "gh said no".

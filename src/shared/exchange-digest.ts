@@ -27,6 +27,10 @@ export interface DigestLaunch {
 }
 
 export interface DigestRequest {
+  /** The tab the timeline is in: the digests are filed under it. */
+  sessionId: string
+  /** The key of these messages (`digestKey`): a digest is read once per key. */
+  key: string
   launch: DigestLaunch
   messages: DigestMessage[]
 }
@@ -42,6 +46,21 @@ export type DigestResult =
       message: number | null
     }
   | { ok: false; error: string }
+
+/** A digest that was read. */
+export type DigestDone = Extract<DigestResult, { ok: true }>
+
+/** A short stable key for a run of messages (FNV-1a over what the digest
+ *  reads): the same messages, the same key, in any process. */
+export function digestKey(messages: readonly DigestMessage[]): string {
+  const text = JSON.stringify(messages)
+  let hash = 0x811c9dc5
+  for (let i = 0; i < text.length; i++) {
+    hash ^= text.charCodeAt(i)
+    hash = Math.imul(hash, 0x01000193)
+  }
+  return `${messages.length}-${(hash >>> 0).toString(36)}`
+}
 
 /** The opening line of the digest prompt: the session history reads it to
  *  keep these one-shots out of the reader's past conversations. */
@@ -71,10 +90,7 @@ ${blocks.join('\n\n')}`
 /** The model's reply read back: the JSON object on its own line, tolerant of a
  *  code fence or a sentence around it. Null when there is no such object, or
  *  its fields are not the asked shape. `count` bounds the message number. */
-export function parseDigestReply(
-  stdout: string,
-  count: number
-): Extract<DigestResult, { ok: true }> | null {
+export function parseDigestReply(stdout: string, count: number): DigestDone | null {
   const match = /\{[\s\S]*\}/.exec(stdout)
   if (!match) return null
   let value: unknown

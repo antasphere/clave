@@ -50,7 +50,9 @@ import {
 } from './tools'
 import { ToolGroup } from './ToolGroup'
 import { ToolDisclosure } from './disclosure'
-import { ExchangeContext, indexExchanges, recentTimelines } from './exchanges'
+import { ExchangeContext, digestMessages, indexExchanges, recentTimelines } from './exchanges'
+import { useTimelineDigests } from './digest'
+import { digestKey } from '../../../src/shared/exchange-digest'
 import { useExchangeJump } from './jump'
 import { useSessionStore } from '../../../src/renderer/src/store/session-store'
 import { ApprovalRun, PermissionRow, PromptDock } from './PromptDock'
@@ -862,12 +864,33 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
   )
   const exchanges = useMemo(
     () => ({
+      sessionId: session.id,
       index: indexExchanges(presentation.entries),
       launch: { workspaceId, launchProfileId, claudeProfileId, configDir },
       recent: recentTimelines(blocks)
     }),
-    [presentation.entries, blocks, workspaceId, launchProfileId, claudeProfileId, configDir]
+    [
+      session.id,
+      presentation.entries,
+      blocks,
+      workspaceId,
+      launchProfileId,
+      claudeProfileId,
+      configDir
+    ]
   )
+  // The digests of the conversation's latest timelines, asked for by the view
+  // whether or not their cards are on screen, and filed by tab (digest.ts).
+  const digestTimelines = useMemo(
+    () =>
+      blocks.flatMap(({ block, key }) => {
+        if (block.kind !== 'delivery-group' || !exchanges.recent.has(key)) return []
+        const messages = digestMessages(block, exchanges.index)
+        return [{ key: digestKey(messages), messages }]
+      }),
+    [blocks, exchanges]
+  )
+  useTimelineDigests(session.id, digestTimelines, exchanges.launch)
   // The mark is the agent at work, nothing else: it leaves with the state.
   const head = pastHead(past, conversation.entries.length, state === 'ended')
   const showMark = state === 'working'

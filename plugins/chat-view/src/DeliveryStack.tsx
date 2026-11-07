@@ -4,8 +4,9 @@ import { requestJump } from './jump'
 import { parseDelivery } from '../../../src/shared/exchange-provenance'
 import { useSessionStore } from '../../../src/renderer/src/store/session-store'
 import { useDisclosure } from './disclosure'
-import { gist, useExchange, useExchanges, type ExchangeSide } from './exchanges'
-import { useDigest } from './digest'
+import { digestMessages, gist, useExchange, useExchanges, type ExchangeSide } from './exchanges'
+import { digestKey } from '../../../src/shared/exchange-digest'
+import { useDigestState } from './digest'
 import { ExchangeDrawing } from './ExchangeDrawing'
 import type { DeliveryEntry, DeliveryGroup } from './tools'
 
@@ -23,7 +24,7 @@ const clock = (at: number): string =>
  * session answered, when. It opens smoothly onto the exchange whole: what this
  * session had asked that tab, the message, and what it answered
  * (`indexExchanges`, by the tabs' ids). At its head, the digest: what the
- * reader needs from these messages, read once they hold still (`useDigest`),
+ * reader needs from these messages, read once they hold still and filed by tab (`useTimelineDigests`),
  * the card it came from marked in accent. The timeline holds the messages ALONE:
  * what the agent says to the reader stays in the transcript beside it (the
  * deck of 5 November 2026 that captured the agent's replies hid a question
@@ -38,23 +39,11 @@ export function DeliveryStack({
 }): React.JSX.Element {
   const names = [...new Set(group.messages.map(senderName))]
   const count = group.messages.length
-  const { index, launch, recent } = useExchanges()
-  // What the digest reads: each message with what this session asked before
-  // it and answered after it (`indexExchanges`).
-  const read = useMemo(
-    () =>
-      group.messages.map((message) => {
-        const exchange = index.get(message) ?? {}
-        return {
-          from: senderName(message),
-          text: (parseDelivery(message.text)?.body ?? message.text).trim(),
-          ...(exchange.request && { request: exchange.request.text }),
-          ...(exchange.reply && { reply: exchange.reply.text })
-        }
-      }),
-    [group.messages, index]
-  )
-  const digest = useDigest(read, launch, recent.has(id))
+  const { sessionId, index, recent } = useExchanges()
+  // What the digest reads, and so its key; the view asks for it
+  // (`useTimelineDigests`), this only shows where it stands.
+  const key = useMemo(() => digestKey(digestMessages(group, index)), [group, index])
+  const digest = useDigestState(sessionId, key, recent.has(id))
   const done = digest.state === 'done' ? digest.result : null
   const flagged = done?.needsYou ? done.message : null
   return (
