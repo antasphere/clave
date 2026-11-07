@@ -10,8 +10,7 @@ import {
   CpuChipIcon,
   UserCircleIcon,
   MicrophoneIcon,
-  ServerIcon,
-  DevicePhoneMobileIcon
+  ServerIcon
 } from '@heroicons/react/24/outline'
 import { useUpdaterStore } from '../../store/updater-store'
 import { useSessionStore, type SettingsSection } from '../../store/session-store'
@@ -48,7 +47,6 @@ const GROUPS: { label: string; rows: Row[] }[] = [
     label: 'Clave',
     rows: [
       { id: 'servers', label: 'Servers', icon: ServerIcon },
-      { id: 'mobile', label: 'Mobile', icon: DevicePhoneMobileIcon },
       { id: 'plugins', label: 'Plugins', icon: PuzzlePieceIcon },
       { id: 'updates', label: 'Software Update', icon: ArrowDownTrayIcon }
     ]

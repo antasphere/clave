@@ -76,8 +76,6 @@ import { keychainSecrets } from './ports/secrets'
 import { KEYCHAIN_SERVICE, keychainFileFromEnv } from './ports/standalone'
 import { QUIT_CEILING_MS, QUIT_HAMMER_MS, runQuitCleanup } from './quit-cleanup'
 import { startClaveServer, stopClaveServer } from './server/clave-server'
-// ── The mobile wave, lane B ──
-import { stopNotifyObservation } from './server/session-events'
 import { quitActivityRecord } from './activity/service'
 import { markClaveServerBootSettled } from './server/endpoint'
 import { setClaveServerEndpoint, setServerExternal, isServerExternal } from './server/endpoint'
@@ -191,9 +189,7 @@ async function bootServer(): Promise<void> {
           // ── Lane C of wave 3: the end-to-end fixture route, test mode only ──
           testFixtures: TEST_NO_ACTIVATE,
           // ── Issue #266: the version it reports, the one its child gets too ──
-          appVersion: app.getVersion(),
-          // ── The mobile wave, lane B: the push credentials under the user data ──
-          dataDir: app.getPath('userData')
+          appVersion: app.getVersion()
         })
         // The scheduler reads its routines and arms its tick once the
         // server is up and the agent tools listen: a run it starts reaches
@@ -711,8 +707,6 @@ app.on('before-quit', (event) => {
   // The activity record's quit row, before the shutdown forgets the sessions:
   // written now, nothing that follows reads as a close (activity/service.ts).
   quitActivityRecord()
-  // ── The mobile wave, lane B: what a quit ends is never pushed as a failure ──
-  stopNotifyObservation()
   usageManager.stopPolling()
   codexUsageManager.stopPolling()
   accountLoginManager.cancelAll()

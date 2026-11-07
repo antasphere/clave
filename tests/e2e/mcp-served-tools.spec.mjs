@@ -398,7 +398,6 @@ export async function run(t) {
       const worker = toolPayload(
         await client.call('clave_open_session', {
           cwd: ROOT,
-          attachToParent: true,
           mode: 'claude',
           profile: 'builtin-claude',
           name: 'Worker'
@@ -659,7 +658,6 @@ export async function run(t) {
       const worker = toolPayload(
         await agent.call('clave_open_session', {
           cwd: ROOT,
-          attachToParent: true,
           mode: 'claude',
           profile: 'builtin-claude',
           name: 'Worker'

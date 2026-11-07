@@ -454,37 +454,23 @@ export async function waitForBoot(
  *  `app.close()`; in separate mode the app starts and stops its own and the
  *  harness only passes the flag; in every mode a stray `CLAVE_SERVER_URL` in
  *  the caller's shell is dropped, so the app never attaches by accident. */
-export async function launchApp(dir, options = {}) {
-  const {
+export async function launchApp(
+  dir,
+  {
     settleMs = 0,
     env = {},
+    args = [],
+    server = serverMode(),
     bootTimeoutMs = BOOT_TIMEOUT_MS,
-    // A delayed-server spec asks for its window before the server decides.
+    // A spec that makes the server come up late (CLAVE_E2E_SERVER_BOOT_DELAY_MS)
+    // wants the window before the server: it is not waited for then.
     waitForServer = !(Number(env.CLAVE_E2E_SERVER_BOOT_DELAY_MS) > 0),
+    // Run on the first window as soon as its page has loaded, before the boot
+    // is waited for: a spec that times the boot from inside the page installs
+    // its watch here (restore-timing.spec.mjs, PRDCT-3527).
     beforeBoot = null
-  } = options
-  const owned = await launchAppProcess(dir, options)
-  const { app } = owned
-  try {
-    const win = await app.firstWindow()
-    await win.waitForLoadState('domcontentloaded')
-    if (beforeBoot) await beforeBoot(win)
-    await waitForBoot(win, {
-      timeoutMs: bootTimeoutMs,
-      dir: waitForServer ? dir : null,
-      pid: app.process().pid
-    })
-    if (settleMs > 0) await win.waitForTimeout(settleMs)
-    return { app, win, server: owned.server, fixture: owned.fixture }
-  } catch (error) {
-    await app.close().catch(() => {})
-    throw error
-  }
-}
-
-/** Own a test app process without waiting for its renderer. Lifecycle specs
- *  use their protocol barrier for readiness and drive Electron main alone. */
-export async function launchAppProcess(dir, { env = {}, args = [], server = serverMode() } = {}) {
+  } = {}
+) {
   const base = { ...process.env }
   delete base.CLAVE_SERVER_URL
   delete base.CLAVE_SERVER_TOKEN
@@ -552,6 +538,13 @@ export async function launchAppProcess(dir, { env = {}, args = [], server = serv
       await started?.stop()
     }
   }
+  const win = await app.firstWindow()
+  await win.waitForLoadState('domcontentloaded')
+  if (beforeBoot) await beforeBoot(win)
+  // The boot, not a clock (waitForBoot above); a settleMs a spec still
+  // passes is waited after it.
+  await waitForBoot(win, { timeoutMs: bootTimeoutMs, dir: waitForServer ? dir : null, pid })
+  if (settleMs > 0) await win.waitForTimeout(settleMs)
   // The fixture: the one way into the process hosting the sessions, in
   // both modes (`serverFixture` below). Attached, the server this call
   // started; in-process, the app's own, read off its discovery file.
@@ -560,7 +553,7 @@ export async function launchAppProcess(dir, { env = {}, args = [], server = serv
     : server && typeof server === 'object'
       ? serverFixture(server.url, server.token ?? '')
       : appServerFixture(dir)
-  return { app, server: started, fixture }
+  return { app, win, server: started, fixture }
 }
 
 // ── The fixture route (PRDCT-3293, lane C of wave 3) ─────────────────────────

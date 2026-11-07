@@ -44,13 +44,8 @@ export async function run(t) {
     )
     t.equal(
       'and the panel holds the app’s own tabs and the bundled GitHub panel’s',
-      await win.locator('[data-panel-bar="tabs"] .panel-tab').evaluateAll((tabs) =>
-        JSON.stringify([
-          tabs.map((tab) => tab.getAttribute('aria-label')).join(','),
-          tabs.map((tab) => tab.querySelector(':scope > span')?.textContent).join(',')
-        ])
-      ),
-      JSON.stringify(['Files,Git,GitHub', 'Files,Git,GitHub'])
+      (await win.locator('[data-panel-bar="tabs"] .panel-tab').allInnerTexts()).join(','),
+      'Files,Git,GitHub'
     )
     t.equal(
       'and nothing plugin-contributed is in the toolbar',
@@ -171,13 +166,8 @@ export async function run(t) {
     )
     t.equal(
       'the panel contributes a tab, titled and iconed from the manifest',
-      await win.locator('[data-plugin-tab="hello"]').evaluate((tab) =>
-        JSON.stringify([
-          tab.getAttribute('aria-label'),
-          tab.querySelector(':scope > span')?.textContent
-        ])
-      ),
-      JSON.stringify(['Hello panel', 'Hello panel'])
+      await win.locator('[data-plugin-tab="hello"]').innerText(),
+      'Hello panel'
     )
     await win.click('[data-plugin-tab="hello"]')
     await win.waitForSelector('[data-plugin-side-panel="hello"] webview')

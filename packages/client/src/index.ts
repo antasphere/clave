@@ -91,5 +91,3 @@ export { gitClient, type GitClient } from './git'
 export { serverInfoClient, type ServerInfoClient, ServerInfoMissing } from './server-info'
 // ── ADR 0004: the routines ──
 export { routinesClient, type RoutinesClient } from './routines'
-// ── Mobile wave, lane A: the devices, a phone paired with a server ──
-export { devicesClient, type DevicesClient, type PairingRequestInput } from './devices'

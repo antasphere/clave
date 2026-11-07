@@ -34,12 +34,7 @@
     "./release-version": "./src/release-version.ts",
     "./upgrade-failure": "./src/upgrade-failure.ts",
     "./routines": "./src/routines/index.ts",
-    "./routines/model": "./src/routines/model.ts",
-    "./devices": "./src/devices.ts",
-    "./notify": "./src/notify.ts",
-    "./timeline": "./src/timeline.ts",
-    "./relay": "./src/relay.ts",
-    "./session-write-error": "./src/session-write-error.ts"
+    "./routines/model": "./src/routines/model.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"

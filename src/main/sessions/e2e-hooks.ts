@@ -12,7 +12,6 @@
 import type {
   PluginsService,
   RoutinesService,
-  NotifyE2eHooks,
   SessionHostService,
   SettingsSourceService
 } from '@clave/server'
@@ -48,10 +47,6 @@ export interface E2eHooks {
   /** ADR 0004: the routines service the server answers from, for the specs
    *  that drive a tick by hand instead of waiting on the clock. */
   routines: RoutinesService & { tick(): Promise<boolean>; refresh(): Promise<void> }
-  // ── The mobile wave, lane B: the recording push transport and the fake
-  // phones under `--push-fake` (`packages/server/src/notify/credentials.ts`),
-  // installed by whichever entry runs the server ──
-  notify: NotifyE2eHooks
   // ── later lanes add theirs here ──
 }
 

@@ -10,7 +10,6 @@
  * module and nothing else, added to `ClaveApi` as one line. A lane adds its
  * group and its line; nobody edits another lane's group.
  */
-import { GetSessionTimeline } from './timeline'
 import { Api, ApiGroup, Health, HttpCqrs, annotate } from '@structure-ai/http'
 import { Schema } from 'effect'
 import {
@@ -46,9 +45,7 @@ import {
   SetSessionPage,
   TypeIntoSession,
   // ── PRDCT-4123: which work a session does ──
-  ChangeSessionWork,
-  // ── The mobile wave, lane B: whether a client's message landed ──
-  GetSessionWriteStatus
+  ChangeSessionWork
 } from './sessions'
 import { agentToolsGroup } from './agent-tools'
 import { settingsGroup } from './settings/api'
@@ -64,10 +61,6 @@ import { gitGroup } from './git'
 import { serverInfoGroup } from './server-info'
 // ── ADR 0004: the routines (`routines.ts`) ──
 import { routinesGroup } from './routines/api'
-// ── Mobile wave, lane A: the devices, a phone paired with this server (`devices.ts`) ──
-import { devicesGroup } from './devices'
-// ── The mobile wave, lane B: the push notifications (`notify.ts`) ──
-import { notifyGroup } from './notify'
 
 // ── Sessions (lane A) ──
 export const sessionsGroup = ApiGroup.make('sessions')
@@ -104,10 +97,6 @@ export const sessionsGroup = ApiGroup.make('sessions')
   .add(HttpCqrs.commandEndpoint('restart', '/sessions/restart', RestartSession))
   // ── PRDCT-4123: which work a session does ──
   .add(HttpCqrs.commandEndpoint('changeWork', '/sessions/work', ChangeSessionWork))
-  // ── The mobile wave, lane B: whether a message a client minted an id for landed ──
-  .add(HttpCqrs.queryEndpoint('writeStatus', '/sessions/writes', GetSessionWriteStatus))
-  // Mobile history ordering: the legacy history route keeps its semantics.
-  .add(HttpCqrs.queryEndpoint('timeline', '/sessions/timeline', GetSessionTimeline))
 
 // ── Clients (lane A, for the shell) ──
 export const clientsGroup = ApiGroup.make('clients')
@@ -159,11 +148,6 @@ export { serverInfoGroup }
 // ── ADR 0004: the routines ──
 export { routinesGroup }
 
-// ── Mobile wave, lane A: the devices (`devices.ts`) ──
-export { devicesGroup }
-// ── The mobile wave, lane B: the notify domain (`notify.ts`) ──
-export { notifyGroup }
-
 // ── Lane B: terminals ──
 
 export const ClaveApi = Api.make('clave')
@@ -186,10 +170,6 @@ export const ClaveApi = Api.make('clave')
   .add(serverInfoGroup)
   // ── ADR 0004: the routines ──
   .add(routinesGroup)
-  // ── Mobile wave, lane A: the devices ──
-  .add(devicesGroup)
-  // ── The mobile wave, lane B: the notify domain ──
-  .add(notifyGroup)
   .add(Health.group)
   .pipe(annotate({ title: 'Clave', version: '1', description: "Clave's server API" }))
 export type ClaveApi = typeof ClaveApi

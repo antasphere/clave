@@ -22,8 +22,6 @@ import { GitEvent } from './git'
 import { ServerUpgradeEvent } from './server-info'
 // ── ADR 0004: the routines ──
 import { RoutinesChanged } from './routines/model'
-// ── Mobile wave, lane A: the devices (a phone paired, asking, or revoked) ──
-import { DevicePairingRequested, DevicesChanged } from './devices'
 
 export const ServerEvent = Schema.Union(
   FilesDirsChanged,
@@ -104,10 +102,7 @@ export const ServerEvent = Schema.Union(
   // ── Issue #266: the server's self-upgrade changed state ──
   ServerUpgradeEvent,
   // ── ADR 0004: the routines (the routines or their runs changed) ──
-  RoutinesChanged,
-  // ── Mobile wave, lane A: the paired phones or the pending pairings changed; a phone asked ──
-  DevicesChanged,
-  DevicePairingRequested
+  RoutinesChanged
   // ── Lane B: terminals ──
 )
 export type ServerEvent = typeof ServerEvent.Type

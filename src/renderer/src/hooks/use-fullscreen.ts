@@ -17,15 +17,10 @@ export function useFullScreen(): boolean {
 
   useEffect(() => {
     let alive = true
-    let receivedEvent = false
-    const off = window.electronAPI?.onWindowFullScreenChanged?.((value) => {
-      receivedEvent = true
-      setFullScreen(value)
-    })
-    // The initial reply can arrive after a newer fullscreen event.
     window.electronAPI?.windowIsFullScreen?.().then((value) => {
-      if (alive && !receivedEvent) setFullScreen(value)
+      if (alive) setFullScreen(value)
     })
+    const off = window.electronAPI?.onWindowFullScreenChanged?.(setFullScreen)
     return () => {
       alive = false
       off?.()

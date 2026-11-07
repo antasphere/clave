@@ -153,8 +153,7 @@
     "packages/skins",
     "packages/contract",
     "packages/server",
-    "packages/client",
-    "packages/mobile"
+    "packages/client"
   ],
   "overrides": {
     "@effect/cli": "0.77.0"
