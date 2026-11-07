@@ -7,6 +7,7 @@ import { EntryRow, ToolRow } from './TerminalEntry'
 import { ToolDisclosure } from './disclosure'
 import { useTranscriptEnd } from './transcript'
 import { compactTokens, type SubAgent } from './terminal-status'
+import { AgentModel } from './AgentModel'
 
 /** How close to the end still counts as there, for the follow. */
 const SLACK = 48
@@ -22,11 +23,14 @@ const SLACK = 48
 export function SubAgentPeek({
   agent,
   log,
+  onRelaunch,
   children
 }: {
   agent: SubAgent
   /** The agent's own conversation, when anything of it has reached this view. */
   log: Conversation | undefined
+  /** Relaunch the agent on another model, when it can be (asks first). */
+  onRelaunch?: (alias: string) => void
   /** The row, which is the trigger. */
   children: ReactNode
 }): React.JSX.Element {
@@ -45,7 +49,7 @@ export function SubAgentPeek({
         // from the composer when it opens.
         onOpenAutoFocus={(event) => event.preventDefault()}
       >
-        {open && <PeekBody agent={agent} log={log} />}
+        {open && <PeekBody agent={agent} log={log} onRelaunch={onRelaunch} />}
       </PopoverContent>
     </Popover>
   )
@@ -53,10 +57,12 @@ export function SubAgentPeek({
 
 function PeekBody({
   agent,
-  log
+  log,
+  onRelaunch
 }: {
   agent: SubAgent
   log: Conversation | undefined
+  onRelaunch?: (alias: string) => void
 }): React.JSX.Element {
   const entries = log?.entries
   const blocks = useMemo(() => (entries ? groupEntries(visibleEntries(entries)) : []), [entries])
@@ -76,7 +82,7 @@ function PeekBody({
           {agent.description}
         </span>
         <span className="term-peek-meta">
-          {model && <span title="Runs on">{model}</span>}
+          {model && <AgentModel agent={agent} onPick={onRelaunch} />}
           {agent.toolCount > 0 && (
             <span>{`${agent.toolCount} step${agent.toolCount === 1 ? '' : 's'}`}</span>
           )}

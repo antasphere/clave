@@ -10,8 +10,9 @@ import { until } from './harness.mjs'
    - a subagent row names the model its agent runs on and counts its steps;
      it carries neither the word "background" nor its last command, which is
      in the row's tooltip;
-   - picking another model on a row asks first, then stops that one task and
-     asks the conversation to launch it again on the model picked;
+   - the row says its model without offering it; picking another model in
+     the agent's window asks first, then stops that one task and asks the
+     conversation to launch it again on the model picked;
    - a background shell joins the same stack behind the terminal glyph, with
      no model and no relaunch, and leaves with the list;
    - the status line counts the agents and the commands apart ("1 agent",
@@ -170,13 +171,21 @@ export async function run(t) {
     await until(async () => ((await win.locator('.term-peek').count()) === 0 ? true : null))
     t.check('Escape closes the window', (await win.locator('.term-peek').count()) === 0)
 
-    /* 4. Relaunch on Haiku: asked first, then the task stopped, then the ask. */
-    await row.locator('button.term-agent-model').click()
+    /* 4. Relaunch on Haiku, from the agent's window (the card only says its
+       model): asked first, then the task stopped, then the ask. */
+    t.check(
+      'the card says the model and offers no menu',
+      (await row.locator('button.term-agent-model').count()) === 0 &&
+        (await row.locator('.term-agent-model').innerText()) === 'Sonnet 5.5'
+    )
+    await row.locator('button.work-card-open').click()
+    await win.locator('.term-peek').waitFor()
+    await win.locator('.term-peek button.term-agent-model').click()
     const menu = win.locator('.chat-model-menu[aria-label="Relaunch on"]')
     await menu.waitFor()
     const items = await menu.locator('.chat-model-option').allInnerTexts()
     await menu.locator('.chat-model-option', { hasText: 'Haiku 4.5' }).click()
-    const dialog = win.getByRole('dialog')
+    const dialog = win.getByRole('dialog', { name: /Relaunch on/ })
     await dialog.waitFor()
     const nothingYet = (await writes()).filter((w) => w?.type === 'stop_task').length === 0
     await dialog.getByRole('button', { name: 'Relaunch' }).click()
@@ -198,7 +207,7 @@ export async function run(t) {
     )
 
     /* 5. A background shell beside the agent: the same stack, the terminal
-       glyph for its dot, no model and no relaunch; the agent keeps its menu. */
+       glyph for its dot, no model and no relaunch; the agent keeps its model. */
     await inject(fixture, record.id, [
       {
         type: 'tool_call',
@@ -240,11 +249,11 @@ export async function run(t) {
       }))
     )
     t.check(
-      'a background shell is a card after the agent, with the terminal drawing and no model; the agent keeps its relaunch',
+      'a background shell is a card after the agent, with the terminal drawing and no model; the agent keeps its model',
       stack.length === 2 &&
         stack[0].kind === 'agent' &&
         stack[0].drawing === 'agent' &&
-        stack[0].relaunch &&
+        stack[0].model === 'Sonnet 5.5' &&
         stack[1].kind === 'shell' &&
         stack[1].description === 'npm run dev' &&
         stack[1].drawing === 'shell' &&

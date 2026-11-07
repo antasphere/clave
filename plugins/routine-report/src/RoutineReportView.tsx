@@ -6,7 +6,7 @@ import { RoutineReport } from './RoutineReport'
 /**
  * The session view of a routine run (ADR 0004): given the run's session, it
  * finds the run in the routines store and renders its report, so a run
- * opened as a tab reads as "Routine report" beside "Chat" and "Terminal" in
+ * opened as a tab reads as "Routine report" beside "Chat" and "Enclave" in
  * the pane's picker. The host owns the pane; this view owns only the report.
  */
 export function RoutineReportView({ session, onState }: ChatViewProps): React.JSX.Element {

@@ -207,7 +207,7 @@ export async function warmResource({ win, fixture, records, cycle, controller })
     if ((await host.getByLabel('Change view', { exact: true }).getAttribute('title')) !== wanted) {
       await host.getByLabel('Change view', { exact: true }).click()
       await win
-        .getByRole('menuitem', { name: kind === 'chat' ? 'Chat' : 'Terminal', exact: true })
+        .getByRole('menuitem', { name: kind === 'chat' ? 'Chat' : 'Enclave', exact: true })
         .click()
       await win.getByRole('menu').waitFor({ state: 'hidden' })
     }
