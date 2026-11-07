@@ -21,6 +21,16 @@ describe('routine trouble', () => {
     expect(t.tone).toBe('invalid')
     expect(t.detail).toBe('schedule: not a cron expression')
   })
+  it('names a run cut short by a quit or a restart, calmly, not as a failure of the agent', () => {
+    const t = failedRunTrouble(
+      'interrupted before its report: Clave quit or restarted, or the run was stopped'
+    )
+    expect(t.title).toBe('The run was interrupted')
+    expect(t.tone).toBe('attention')
+    expect(failedRunTrouble('the server stopped during the run').title).toBe(
+      'The run was interrupted'
+    )
+  })
   it("says a failed run in words, the agent's headline first when it gave one", () => {
     expect(failedRunTrouble('timeout after 30 min').text).toMatch(/stopped before/)
     expect(failedRunTrouble('x', 'Doctor could not reach Steward').text).toBe(
