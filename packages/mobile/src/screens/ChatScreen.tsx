@@ -324,6 +324,7 @@ export function ChatScreen({ navigation, route }: Props): ReactNode {
   const loaded = !!state && state.cursor.loaded
   const attachBlocked = sending || attaching || attachments.length >= 10 || !services.beta
   const hasDraft = draft.trim() !== '' || attachments.length > 0
+  const [contentHeight, setContentHeight] = useState(0)
   const sendDisabled = !hasDraft || sending || attaching || !!delivery || ended || !draftLoaded
   const title = session?.title || route.params.title || 'Chat'
 
@@ -342,7 +343,10 @@ export function ChatScreen({ navigation, route }: Props): ReactNode {
           </View>
         }
       />
-      <View style={styles.fill}>
+      <View
+        style={styles.fill}
+        onLayout={(event) => setContentHeight(event.nativeEvent.layout.height)}
+      >
         {state?.error ? (
           <Notice tone="error" style={{ marginTop: space(2) }} testID="chat-error">
             {state.error}
@@ -452,6 +456,7 @@ export function ChatScreen({ navigation, route }: Props): ReactNode {
           ) : null}
           {sending ? <Notice testID="sending">Sending…</Notice> : null}
           <PromptDock
+            maxHeight={Math.max(100, contentHeight * 0.6)}
             requests={waitingOn}
             agent={AGENT_NAMES[session?.provider ?? ''] ?? 'the agent'}
             busy={(id) => !loaded || ended || pendingAnswers.includes(id)}
@@ -484,7 +489,7 @@ export function ChatScreen({ navigation, route }: Props): ReactNode {
                 testID="composer-input"
                 accessibilityLabel="Message"
               />
-              {working ? (
+              {working && !hasDraft ? (
                 <Pressable
                   onPress={() => void store.getState().interrupt(machineId, sessionId)}
                   style={({ pressed }) => [

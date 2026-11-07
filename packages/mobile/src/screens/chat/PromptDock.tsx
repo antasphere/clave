@@ -8,13 +8,14 @@
  * approvals the reader allowed into one run (`ApprovalRun`).
  */
 import { useState, type ReactNode } from 'react'
-import { Pressable, StyleSheet, Text, View } from 'react-native'
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native'
 import type { Entry, Permission } from '../../chat/reducer'
 import {
   approvalRunSummary,
   decisionWord,
   describeApproval,
-  isQuestion
+  isQuestion,
+  refused
 } from '../../chat/approvals'
 import { safeJson, type ApprovalGroup } from '../../chat/tools'
 import { describeRequest } from './describe-request'
@@ -34,16 +35,19 @@ const isDeny = (id: string): boolean => /deny|decline|cancel|reject|abort/i.test
 /** `.chat-prompt`: the raised card the dock and a pending request share. */
 export function PromptCard({
   children,
-  testID
+  testID,
+  maxHeight
 }: {
   children: ReactNode
   testID?: string
+  maxHeight?: number
 }): ReactNode {
   const t = useTheme()
   return (
     <View
       style={[
         styles.card,
+        { maxHeight, flexShrink: 1 },
         t.raised,
         { borderColor: t.colors.borderSubtle, backgroundColor: t.colors.surfaceRaised }
       ]}
@@ -70,39 +74,49 @@ function PermissionPrompt({
   const { title, target, code } = describeRequest(request, agent)
   // Deny sits on the left, everything that allows on the right with the first
   // option, the provider's own default, last, where the eye ends.
-  const denies = request.options.filter((o) => isDeny(o.id))
-  const allows = request.options.filter((o) => !isDeny(o.id))
+  const denies = request.options.filter((o) => refused(request, o.id))
+  const allows = request.options.filter((o) => !refused(request, o.id))
   const primary = allows[0]
   return (
-    <View style={styles.body}>
-      <Text style={[type(text.control, 500, 1.5), { color: t.colors.textPrimary }]}>{title}</Text>
-      {target ? (
-        <Text style={[type(text.xs, 400, 1.5), { color: t.colors.textTertiary }]}>{target}</Text>
-      ) : null}
-      {request.detail ? (
-        <Text style={[type(codeSize, 400, 1.5), { color: t.colors.textSecondary }]}>
-          {request.detail}
-        </Text>
-      ) : null}
-      {code ? <CodeBlock code={code.text} prompt={code.language === 'bash'} /> : null}
-      {!code && request.input !== undefined ? (
-        <View style={{ gap: space(1) }}>
-          <Pressable
-            onPress={() => setInputShown(!inputShown)}
-            style={styles.disclosure}
-            accessibilityRole="button"
-          >
-            <Icon
-              name="chevron-right"
-              size={chatGlyph}
-              color={t.colors.textTertiary}
-              style={{ transform: [{ rotate: inputShown ? '90deg' : '0deg' }] }}
-            />
-            <Text style={[type(text.xs), { color: t.colors.textTertiary }]}>Input</Text>
-          </Pressable>
-          {inputShown ? <CodeBlock code={stringify(request.input)} style="panel" /> : null}
-        </View>
-      ) : null}
+    <View style={styles.prompt}>
+      <ScrollView
+        style={styles.scroll}
+        contentContainerStyle={styles.body}
+        keyboardShouldPersistTaps="handled"
+      >
+        <Text style={[type(text.control, 500, 1.5), { color: t.colors.textPrimary }]}>{title}</Text>
+        {target ? (
+          <Text style={[type(text.xs, 400, 1.5), { color: t.colors.textTertiary }]}>{target}</Text>
+        ) : null}
+        {request.detail ? (
+          <Text style={[type(codeSize, 400, 1.5), { color: t.colors.textSecondary }]}>
+            {request.detail}
+          </Text>
+        ) : null}
+        {code ? (
+          <CodeBlock code={code.text} language={code.language} prompt={code.language === 'bash'} />
+        ) : null}
+        {!code && request.input !== undefined ? (
+          <View style={{ gap: space(1) }}>
+            <Pressable
+              onPress={() => setInputShown(!inputShown)}
+              style={styles.disclosure}
+              accessibilityRole="button"
+            >
+              <Icon
+                name="chevron-right"
+                size={chatGlyph}
+                color={t.colors.textTertiary}
+                style={{ transform: [{ rotate: inputShown ? '90deg' : '0deg' }] }}
+              />
+              <Text style={[type(text.xs), { color: t.colors.textTertiary }]}>Input</Text>
+            </Pressable>
+            {inputShown ? (
+              <CodeBlock code={stringify(request.input)} language="json" style="panel" />
+            ) : null}
+          </View>
+        ) : null}
+      </ScrollView>
       <View style={styles.actions}>
         {denies.map((option) => (
           <PromptButton
@@ -145,7 +159,7 @@ function QuestionPrompt({
   const [replies, setReplies] = useState<Record<string, QuestionReply>>({})
   const [problem, setProblem] = useState<string | null>(null)
   const structured = request.questions
-  const skip = request.options.find((o) => isDeny(o.id))
+  const skip = request.options.find((o) => refused(request, o.id))
   const submit = (): void => {
     setProblem(null)
     if (structured?.length) {
@@ -156,29 +170,35 @@ function QuestionPrompt({
     }
   }
   return (
-    <View style={styles.body}>
-      {structured?.length ? (
-        <QuestionForm
-          questions={structured}
-          replies={replies}
-          onChange={(key, reply) => setReplies({ ...replies, [key]: reply })}
-          disabled={busy}
-        />
-      ) : (
-        <>
-          <Text style={[type(text.control, 500, 1.5), { color: t.colors.textPrimary }]}>
-            {request.description}
-          </Text>
-          {request.detail ? (
-            <Text style={[type(codeSize, 400, 1.5), { color: t.colors.textSecondary }]}>
-              {request.detail}
+    <View style={styles.prompt}>
+      <ScrollView
+        style={styles.scroll}
+        contentContainerStyle={styles.body}
+        keyboardShouldPersistTaps="handled"
+      >
+        {structured?.length ? (
+          <QuestionForm
+            questions={structured}
+            replies={replies}
+            onChange={(key, reply) => setReplies({ ...replies, [key]: reply })}
+            disabled={busy}
+          />
+        ) : (
+          <>
+            <Text style={[type(text.control, 500, 1.5), { color: t.colors.textPrimary }]}>
+              {request.description}
             </Text>
-          ) : null}
-        </>
-      )}
-      {problem ? (
-        <Text style={[type(text.xs, 400, 1.5), { color: t.colors.destructive }]}>{problem}</Text>
-      ) : null}
+            {request.detail ? (
+              <Text style={[type(codeSize, 400, 1.5), { color: t.colors.textSecondary }]}>
+                {request.detail}
+              </Text>
+            ) : null}
+          </>
+        )}
+        {problem ? (
+          <Text style={[type(text.xs, 400, 1.5), { color: t.colors.destructive }]}>{problem}</Text>
+        ) : null}
+      </ScrollView>
       <View style={styles.actions}>
         {skip ? (
           <PromptButton
@@ -199,7 +219,7 @@ function QuestionPrompt({
           />
         ) : (
           request.options
-            .filter((o) => !isDeny(o.id))
+            .filter((o) => !refused(request, o.id))
             .map((option, i, all) => (
               <PromptButton
                 key={option.id}
@@ -221,19 +241,21 @@ export function PromptDock({
   requests,
   agent,
   busy,
-  onAnswer
+  onAnswer,
+  maxHeight
 }: {
   requests: readonly Permission[]
   agent: string
   busy: (id: string) => boolean
   onAnswer: Answer
+  maxHeight: number
 }): ReactNode {
   const t = useTheme()
   const request = requests[0]
   if (!request) return null
   const question = isQuestion(request)
   return (
-    <PromptCard testID="prompt-dock">
+    <PromptCard testID="prompt-dock" maxHeight={maxHeight}>
       {requests.length > 1 ? (
         <Text style={[type(text.xs), { color: t.colors.textTertiary }]}>
           1 of {requests.length} waiting
@@ -358,6 +380,8 @@ const styles = StyleSheet.create({
     borderRadius: radius.xxl
   },
   body: { gap: space(2) },
+  prompt: { flexShrink: 1, gap: space(2) },
+  scroll: { flexShrink: 1 },
   disclosure: { flexDirection: 'row', alignItems: 'center', gap: space(1) },
   actions: {
     flexDirection: 'row',

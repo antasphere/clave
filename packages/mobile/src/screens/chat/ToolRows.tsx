@@ -107,6 +107,7 @@ function RowSummary({
 /** A preview shows the first lines; the rest is one tap away, per section. */
 function Preview({
   section,
+  language,
   prompt
 }: {
   section: Section
@@ -118,7 +119,12 @@ function Preview({
   const preview = toolPreview(section.text)
   return (
     <View style={styles.section}>
-      <CodeBlock code={full ? section.text : preview.text} prompt={prompt} style="panel" />
+      <CodeBlock
+        code={full ? section.text : preview.text}
+        language={language}
+        prompt={prompt}
+        style="panel"
+      />
       {preview.truncated ? (
         <Pressable
           onPress={() => setFull(!full)}
@@ -185,10 +191,12 @@ export function ToolPanel({ tool }: { tool: ToolEntry }): ReactNode {
           <Text style={[type(text.xs), { color: t.colors.textTertiary }]}>Input</Text>
           <CodeBlock
             code={tool.input === undefined ? 'No input recorded.' : stringify(tool.input)}
+            language={typeof tool.input === 'object' ? 'json' : undefined}
             style="panel"
           />
           <Text style={[type(text.xs), { color: t.colors.textTertiary }]}>Output</Text>
           <CodeBlock
+            language={typeof tool.output === 'object' ? 'json' : undefined}
             code={
               !tool.complete
                 ? 'Not finished.'

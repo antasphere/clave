@@ -46,6 +46,15 @@ describe('approvals', () => {
     expect(decisionWord(entry.request, 'allow')).toBe('Allow')
     expect(refused(entry.request, 'deny')).toBe(true)
     expect(refused(entry.request, 'allow')).toBe(false)
+    expect(
+      refused(
+        {
+          ...entry.request,
+          options: [{ id: '{"permissions":{}}', label: 'Deny extra permissions' }]
+        },
+        '{"permissions":{}}'
+      )
+    ).toBe(true)
   })
 
   it('folds only an allowed, answered, tool-named approval into a run', () => {

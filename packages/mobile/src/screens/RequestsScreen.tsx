@@ -34,13 +34,12 @@ import {
 } from '../ui/components'
 import { codeSize, gutter, radius, space, text, type, useTheme } from '../ui/theme'
 import { QuestionForm } from './QuestionForm'
+import { isRefusalOption } from '../chat/approvals'
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Requests'>
 
 // A stable default: a selector must not answer a new array every render.
 const NO_SESSIONS: readonly Session[] = []
-
-const isDeny = (id: string): boolean => /deny|decline|cancel|reject|abort/i.test(id)
 
 export function RequestsScreen({ route, navigation }: Props): ReactNode {
   const { machineId, requestId } = route.params
@@ -196,8 +195,8 @@ function RequestCard({
     setSecret('')
   }
   const options = request.options ?? []
-  const denies = options.filter((o) => isDeny(o.id))
-  const allows = options.filter((o) => !isDeny(o.id))
+  const denies = options.filter(isRefusalOption)
+  const allows = options.filter((o) => !isRefusalOption(o))
 
   return (
     <PromptCard

@@ -7,9 +7,10 @@
  * accent. The tree comes from `chat/markdown.ts` (the desktop's parser).
  */
 import type { Content, PhrasingContent, Root, RootContent, Table } from 'mdast'
-import { Fragment, useMemo, type ReactNode } from 'react'
-import { Linking, StyleSheet, Text, View, type TextStyle } from 'react-native'
+import { Fragment, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { Image, Linking, ScrollView, StyleSheet, Text, View, type TextStyle } from 'react-native'
 import { parseMarkdown } from '../../chat/markdown'
+import { highlightCode } from '../../chat/highlight'
 import { Icon } from '../../ui/Icon'
 import { codeSize, mono, radius, space, text, type, useTheme, type Theme } from '../../ui/theme'
 
@@ -101,15 +102,36 @@ function Inline({
 /** `.chat-prose pre`: a fence, and the same box a tool's section uses. */
 export function CodeBlock({
   code,
+  language,
   prompt,
   style
 }: {
   code: string
+  language?: string | null
   prompt?: boolean
   style?: 'prose' | 'panel'
 }): ReactNode {
   const t = useTheme()
   const panel = style === 'panel'
+  const [highlight, setHighlight] = useState<{
+    code: string
+    language: typeof language
+    theme: string
+    tokens: Awaited<ReturnType<typeof highlightCode>>
+  } | null>(null)
+  useEffect(() => {
+    let live = true
+    void highlightCode(code, language, t.name).then((tokens) => {
+      if (live) setHighlight({ code, language, theme: t.name, tokens })
+    })
+    return () => {
+      live = false
+    }
+  }, [code, language, t.name])
+  const tokens =
+    highlight?.code === code && highlight.language === language && highlight.theme === t.name
+      ? highlight.tokens
+      : null
   return (
     <View
       style={[
@@ -132,48 +154,135 @@ export function CodeBlock({
         selectable
       >
         {prompt ? <Text style={{ color: t.colors.textTertiary }}>{'$ '}</Text> : null}
-        {code}
+        {tokens
+          ? tokens.map((line, i) => (
+              <Fragment key={i}>
+                {line.map((token, j) => (
+                  <Text key={j} style={{ color: token.color }}>
+                    {token.content}
+                  </Text>
+                ))}
+                {i < tokens.length - 1 ? '\n' : ''}
+              </Fragment>
+            ))
+          : code}
       </Text>
     </View>
   )
 }
 
 function TableBlock({ node, t }: { node: Table; t: Theme }): ReactNode {
+  const cellText = (node: Content | undefined): string =>
+    !node
+      ? ''
+      : 'value' in node
+        ? String(node.value)
+        : 'children' in node
+          ? node.children.map((child) => cellText(child as Content)).join('')
+          : ''
+  const widths = node.children[0]!.children.map((_cell, column) =>
+    Math.min(
+      240,
+      Math.max(
+        100,
+        ...node.children.map(
+          (row) => cellText(row.children[column]!).length * codeSize * 0.55 + space(5)
+        )
+      )
+    )
+  )
   return (
-    <View style={[styles.table, { borderColor: t.colors.borderSubtle }]}>
-      {node.children.map((row, r) => (
-        <View
-          key={r}
-          style={[
-            styles.tableRow,
-            r > 0 ? { borderTopColor: t.colors.borderSubtle, borderTopWidth: 1 } : null
-          ]}
-        >
-          {row.children.map((cell, c) => (
-            <View
-              key={c}
-              style={[
-                styles.tableCell,
-                c > 0 ? { borderLeftColor: t.colors.borderSubtle, borderLeftWidth: 1 } : null
-              ]}
-            >
-              <Text
+    <ScrollView horizontal showsHorizontalScrollIndicator testID="markdown-table">
+      <View style={[styles.table, { borderColor: t.colors.borderSubtle }]}>
+        {node.children.map((row, r) => (
+          <View
+            key={r}
+            style={[
+              styles.tableRow,
+              r > 0 ? { borderTopColor: t.colors.borderSubtle, borderTopWidth: 1 } : null
+            ]}
+          >
+            {widths.map((_width, c) => (
+              <View
+                key={c}
                 style={[
-                  type(codeSize, 400, 1.5),
-                  styles.tabular,
-                  {
-                    color: r === 0 ? t.colors.textSecondary : t.colors.textPrimary,
-                    textAlign: node.align?.[c] ?? 'left'
-                  }
+                  styles.tableCell,
+                  { width: widths[c] },
+                  c > 0 ? { borderLeftColor: t.colors.borderSubtle, borderLeftWidth: 1 } : null
                 ]}
               >
-                <Inline nodes={cell.children} t={t} inherit={type(codeSize, 400, 1.5)} />
-              </Text>
-            </View>
-          ))}
-        </View>
-      ))}
+                <Text
+                  style={[
+                    type(codeSize, 400, 1.5),
+                    styles.tabular,
+                    {
+                      color: r === 0 ? t.colors.textSecondary : t.colors.textPrimary,
+                      textAlign: node.align?.[c] ?? 'left'
+                    }
+                  ]}
+                >
+                  <Inline
+                    nodes={row.children[c]?.children ?? []}
+                    t={t}
+                    inherit={type(codeSize, 400, 1.5)}
+                  />
+                </Text>
+              </View>
+            ))}
+          </View>
+        ))}
+      </View>
+    </ScrollView>
+  )
+}
+
+function MarkdownImage({ url, alt, t }: { url: string; alt?: string | null; t: Theme }): ReactNode {
+  const [failed, setFailed] = useState(false)
+  const [width, setWidth] = useState(300)
+  const [ratio, setRatio] = useState(1.6)
+  if (failed || !/^https?:\/\//i.test(url))
+    return <Text style={[type(text.sm), { color: t.colors.textSecondary }]}>{alt || url}</Text>
+  return (
+    <View onLayout={(e) => setWidth(e.nativeEvent.layout.width)}>
+      <Image
+        source={{ uri: url }}
+        resizeMode="contain"
+        style={{ width: '100%', height: Math.max(48, Math.min(320, width / ratio)) }}
+        accessibilityLabel={alt || 'Image'}
+        testID="markdown-image"
+        onLoad={(e) => {
+          const { width, height } = e.nativeEvent.source
+          if (width > 0 && height > 0) setRatio(width / height)
+        }}
+        onError={() => setFailed(true)}
+      />
     </View>
+  )
+}
+
+function Paragraph({ nodes, t }: { nodes: PhrasingContent[]; t: Theme }): ReactNode {
+  const groups: (PhrasingContent[] | Extract<PhrasingContent, { type: 'image' }>)[] = []
+  for (const node of nodes) {
+    if (node.type === 'image') groups.push(node)
+    else {
+      const last = groups[groups.length - 1]
+      if (Array.isArray(last)) last.push(node)
+      else groups.push([node])
+    }
+  }
+  const body = type(text.sm, 400, 1.5)
+  return (
+    <>
+      {groups.map((group, i) =>
+        Array.isArray(group) ? (
+          <Text key={i} style={[body, { color: t.colors.textPrimary }]} selectable>
+            <Inline nodes={group} t={t} inherit={body} />
+          </Text>
+        ) : (
+          <MarkdownImage key={group.url} url={group.url} alt={group.alt} t={t} />
+        )
+      )}
+    </>
   )
 }
 
@@ -189,11 +298,7 @@ function Block({
   const body = type(text.sm, 400, 1.5)
   switch (node.type) {
     case 'paragraph':
-      return (
-        <Text style={[body, { color: t.colors.textPrimary }]} selectable>
-          <Inline nodes={node.children} t={t} inherit={body} />
-        </Text>
-      )
+      return <Paragraph nodes={node.children} t={t} />
     case 'heading': {
       const size = node.depth === 1 ? text.lg : node.depth === 2 ? text.base : text.sm
       const heading = type(size, 600, 1.35)
@@ -204,7 +309,7 @@ function Block({
       )
     }
     case 'code':
-      return <CodeBlock code={node.value} />
+      return <CodeBlock code={node.value} language={node.lang} />
     case 'list':
       return (
         <View style={styles.list}>
@@ -281,9 +386,9 @@ const styles = StyleSheet.create({
   italic: { fontStyle: 'italic' },
   strike: { textDecorationLine: 'line-through' },
   pre: { paddingVertical: space(3), paddingHorizontal: space(3.5) },
-  table: { borderWidth: 1, borderRadius: radius.sm, alignSelf: 'flex-start', maxWidth: '100%' },
+  table: { borderWidth: 1, borderRadius: radius.sm, alignSelf: 'flex-start' },
   tableRow: { flexDirection: 'row' },
-  tableCell: { paddingVertical: space(1), paddingHorizontal: space(2.5), flexShrink: 1 },
+  tableCell: { paddingVertical: space(1), paddingHorizontal: space(2.5) },
   tabular: { fontVariant: ['tabular-nums'] },
   list: { gap: space(1), paddingLeft: space(1) },
   listItem: { flexDirection: 'row', gap: space(2), alignItems: 'flex-start' },

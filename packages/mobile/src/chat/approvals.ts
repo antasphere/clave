@@ -46,9 +46,11 @@ const DECISION_WORDS: Record<string, string> = {
  *  carry JSON ids and "Deny extra permissions" as the label. */
 const REFUSAL_ID = /deny|decline|cancel|reject|abort/i
 const REFUSAL_LABEL = /^(deny|decline|cancel|reject|abort|skip)\b/i
+export const isRefusalOption = (option: { id: string; label: string }): boolean =>
+  REFUSAL_ID.test(option.id) || REFUSAL_LABEL.test(option.label)
 export function refused(request: Permission, answer: string): boolean {
   const option = request.options.find((o) => o.id === answer)
-  return REFUSAL_ID.test(answer) || (!!option && REFUSAL_LABEL.test(option.label))
+  return option ? isRefusalOption(option) : REFUSAL_ID.test(answer)
 }
 /** What the reader said, as the row shows it: the provider's own label when
  *  it has one, the words of a raw id otherwise. */

@@ -51,4 +51,21 @@ describe('parseMarkdown', () => {
     const tree = parseMarkdown('Here:\n\n```bash\nnpm test')
     expect(tree.children.map((n) => n.type)).toEqual(['paragraph', 'code'])
   })
+
+  it('resolves case-insensitive reference links and images, retaining the first definition', () => {
+    const tree = parseMarkdown(
+      '[Docs][GUIDE]\n\n![Chart][diagram]\n\n[guide]: https://example.com/docs\n[guide]: https://example.com/other\n[diagram]: https://example.com/chart.png'
+    )
+    const link = tree.children[0]!
+    expect(link.type === 'paragraph' && link.children[0]).toMatchObject({
+      type: 'link',
+      url: 'https://example.com/docs'
+    })
+    const image = tree.children[1]!
+    expect(image.type === 'paragraph' && image.children[0]).toMatchObject({
+      type: 'image',
+      alt: 'Chart',
+      url: 'https://example.com/chart.png'
+    })
+  })
 })
