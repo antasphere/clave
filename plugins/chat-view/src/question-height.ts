@@ -3,13 +3,13 @@ import { useEffect, type RefObject } from 'react'
 /** A message in the Enclave view never scrolls inside its own box. A long
  *  one cannot be pinned whole, though: stuck under the top edge it would
  *  cover the answer under it. So a message taller than PIN_SHARE of the
- *  view's height carries `data-tall` on its row, and the stylesheet pins it
- *  as its first lines instead (TermQuestion opens it whole on a click).
+ *  view's height carries `data-tall` on its row, and is pinned only once
+ *  read past, as a preview of its first lines (TermQuestion); the row's
+ *  `--question-pin-offset` is how far its top rises above the edge first.
  *  The share is of the whole view, composer and cards included, not of the
  *  transcript: a growing draft or a card arriving under the composer must
  *  not flip a message between pinned whole and pinned short. It is still a
- *  share, so it means the same in a split pane and a full one. Measured on
- *  the message's whole text, folded or not. */
+ *  share, so it means the same in a split pane and a full one. */
 export const PIN_SHARE = 0.3
 
 /** Whether a message this tall is too tall to pin in a pane this tall. */
@@ -27,12 +27,30 @@ export function useQuestionHeight(scroll: RefObject<HTMLElement | null>): void {
       for (const message of root.querySelectorAll<HTMLElement>('.term-question > .chat-turn')) {
         const row = message.closest<HTMLElement>('.chat-turn-wrap')
         if (!row) continue
-        const text = message.querySelector<HTMLElement>('.term-question-text')
-        const whole = text
-          ? message.offsetHeight - text.clientHeight + text.scrollHeight
-          : message.offsetHeight
-        if (tooTallToPin(whole, pane)) row.dataset.tall = 'true'
-        else delete row.dataset.tall
+        if (tooTallToPin(message.offsetHeight, pane)) {
+          row.dataset.tall = 'true'
+          // How far the row's top rises above the edge before the preview
+          // pins: everything but the preview's own height at its foot.
+          const pin = row.querySelector<HTMLElement>(':scope > .term-question-pin')
+          const offset = row.offsetHeight - (pin?.offsetHeight ?? 0)
+          row.style.setProperty('--question-pin-offset', `${offset}px`)
+        } else {
+          delete row.dataset.tall
+          delete row.dataset.stuck
+          row.style.removeProperty('--question-pin-offset')
+        }
+      }
+    }
+    // A long message's row is stuck once its sticky top holds it: its box
+    // sits at that top, the rest of it risen above the edge. Marked on the
+    // row, which is what swaps its foot for the preview.
+    const stuck = (): void => {
+      const edge = root.getBoundingClientRect().top
+      for (const row of root.querySelectorAll<HTMLElement>('.chat-turn-wrap[data-tall]')) {
+        const at = row.getBoundingClientRect().top - edge
+        const top = parseFloat(getComputedStyle(row).top)
+        if (Number.isFinite(top) && at <= top + 0.5) row.dataset.stuck = 'true'
+        else delete row.dataset.stuck
       }
     }
     let frame = 0
@@ -41,8 +59,18 @@ export function useQuestionHeight(scroll: RefObject<HTMLElement | null>): void {
         frame = requestAnimationFrame(() => {
           frame = 0
           measure()
+          stuck()
         })
     }
+    let scrolled = 0
+    const onScroll = (): void => {
+      if (!scrolled)
+        scrolled = requestAnimationFrame(() => {
+          scrolled = 0
+          stuck()
+        })
+    }
+    root.addEventListener('scroll', onScroll, { passive: true })
     const resize = new ResizeObserver(schedule)
     resize.observe(view)
     // New exchanges, pages of the past arriving in front, and rows the
@@ -51,8 +79,11 @@ export function useQuestionHeight(scroll: RefObject<HTMLElement | null>): void {
     const box = root.querySelector('.chat-rows') ?? root.firstElementChild
     if (box) mutations.observe(box, { childList: true })
     measure()
+    stuck()
     return () => {
       cancelAnimationFrame(frame)
+      cancelAnimationFrame(scrolled)
+      root.removeEventListener('scroll', onScroll)
       resize.disconnect()
       mutations.disconnect()
     }

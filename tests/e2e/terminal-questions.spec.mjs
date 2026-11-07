@@ -5,9 +5,9 @@ import { until } from './harness.mjs'
    holds in the real app:
    - a pinned question is plain sticky: whole, never clipped, on a backdrop,
      moved by the scroll in the same frame and pushed out by the next one;
-   - a message never scrolls inside its box: a long one stays pinned as its
-     first lines; a click opens it whole, unpinned, scrolling away with its
-     exchange, and a click on the open one folds it back to the pinned lines;
+   - a message never scrolls inside its box: a long one stands whole while
+     read, then pins as a preview of its first lines once read past; a click
+     on the preview glides back to it, a click on it glides to the preview;
    - the "Other" answer wraps as it is typed, and its record in the transcript
      wraps too and says Answered, even when the agent's state moved on before
      the answer's write came back. */
@@ -118,8 +118,11 @@ export async function run(t) {
           messageHeight: m.height,
           pinnedAt: r.top - root.getBoundingClientRect().top,
           tall: row.dataset.tall ?? null,
-          open: !!row.querySelector('.term-question[data-open]'),
-          position: getComputedStyle(row).position,
+          stuck: row.dataset.stuck === 'true',
+          pinVisible: getComputedStyle(row.querySelector('.term-question-pin')).visibility === 'visible',
+          pinTop: row.querySelector('.term-question-pin').getBoundingClientRect().top - root.getBoundingClientRect().top,
+          pinHeight: row.querySelector('.term-question-pin').offsetHeight,
+          offset: parseFloat(row.style.getPropertyValue('--question-pin-offset')) || 0,
           messageClient: message.clientHeight,
           messageScroll: message.scrollHeight,
           pane: root.clientHeight
@@ -157,7 +160,7 @@ export async function run(t) {
       { interrupted, note }
     )
 
-    /* 3. A message taller than the pane: pinned folded, opened whole on a click. */
+    /* 3. A message taller than the pane: whole while read, a preview once past. */
     const long = Array.from({ length: 120 }, (_, i) => `line ${i + 1} of a very long message`).join(
       '\n'
     )
@@ -178,45 +181,44 @@ export async function run(t) {
     ])
     await reveal(Q3)
     await scrollInto(QL, 40)
-    const folded = await until(async () => {
+    // The preview fades out over a transition when a scroll passed it on
+    // the way here: wait for it to have gone.
+    const reading = await until(async () => {
       const s = await rowState(QL)
-      return s.tall && s.pinnedAt >= 0 && s.pinnedAt < 20 ? s : null
+      return s.tall && !s.pinVisible ? s : null
     })
     t.check(
-      'a message too tall to pin whole stays pinned as its first lines, never scrolling inside',
-      folded &&
-        folded.messageHeight < folded.pane * 0.3 &&
-        folded.messageScroll <= folded.messageClient + 1,
-      folded
+      'a message too tall to pin whole stands whole while it is read, unpinned, never scrolling inside',
+      reading &&
+        !reading.stuck &&
+        !reading.pinVisible &&
+        reading.messageHeight > reading.pane &&
+        Math.abs(reading.pinnedAt + 40) <= 2 &&
+        reading.messageScroll <= reading.messageClient + 1,
+      reading
     )
+    await scrollInto(QL, reading.offset + 200)
+    const pinned = await until(async () => {
+      const s = await rowState(QL)
+      return s.stuck && s.pinVisible ? s : null
+    })
+    t.check(
+      'read past, it pins as a preview of its first lines under the top edge, its own text hidden',
+      pinned && Math.abs(pinned.pinTop - 8) <= 2 && pinned.pinHeight < pinned.pane * 0.3,
+      pinned
+    )
+    await rowOf(QL).locator('.term-question-pin').click()
+    const back = await until(async () => {
+      const s = await rowState(QL)
+      return !s.stuck && Math.abs(s.pinnedAt - 8) <= 2 ? s : null
+    })
+    t.check('a click on the preview glides back to the whole message', !!back, back)
     await rowOf(QL).locator('.term-question').click()
-    const opened = await until(async () => {
+    const down = await until(async () => {
       const s = await rowState(QL)
-      return s.open && s.messageHeight > s.pane ? s : null
+      return s.stuck && s.pinVisible ? s : null
     })
-    t.check(
-      'a click opens it whole at the top, unpinned, never scrolling inside',
-      opened &&
-        opened.position === 'relative' &&
-        Math.abs(opened.pinnedAt - 8) <= 2 &&
-        opened.messageScroll <= opened.messageClient + 1,
-      opened
-    )
-    await scrollInto(QL, 400)
-    const away = await rowState(QL)
-    t.check('opened, it scrolls away with its exchange', away.pinnedAt < -20, away)
-    await scrollInto(QL, -10)
-    await rowOf(QL).locator('.term-question').click()
-    await scrollInto(QL, 40)
-    const refolded = await until(async () => {
-      const s = await rowState(QL)
-      return !s.open && s.pinnedAt >= 0 && s.pinnedAt < 20 ? s : null
-    })
-    t.check(
-      'a click on the open one folds it back to its pinned first lines',
-      refolded && refolded.messageHeight < refolded.pane * 0.3,
-      refolded
-    )
+    t.check('a click on the whole message glides down to its pinned preview', !!down, down)
     t.check('a short message is not marked too tall to pin', single && single.tall === null, single)
 
     /* 3b. Pinned on its backdrop, pushed by the scroll, gone over the top edge. */

@@ -153,12 +153,14 @@ export const ToolRow = memo(
     a.group.tools.every((tool, i) => tool === b.group.tools[i])
 )
 
-/** The reader's message. A short one stands whole and stays pinned over its
- *  answer. A long one (question-height.ts marks its row `data-tall`) is
- *  pinned as its first lines, fading out; a click opens it whole, in the
- *  flow and no longer pinned, scrolled to its top, and a click on the open
- *  one folds it back. A click that ends a text selection is a selection,
- *  not a toggle. */
+/** The reader's message, always whole in the flow. A short one stays pinned
+ *  over its answer as it is. A long one (question-height.ts marks its row
+ *  `data-tall`) is pinned only once it has been read past, and then as its
+ *  first lines, fading out: the preview below, drawn from `data-text` by
+ *  the stylesheet so its words are not in the document twice (find in page,
+ *  copy). A click on the preview glides back up to the whole message; a click
+ *  on the whole message glides down to where it pins. A click that ends a
+ *  text selection is a selection, not a jump. */
 function TermQuestion({
   text,
   sender,
@@ -170,39 +172,63 @@ function TermQuestion({
   fromTab: boolean
   interrupted: boolean
 }): React.JSX.Element {
-  const [open, setOpen] = useState(false)
   return (
-    <div
-      className="term-question"
-      data-open={open || undefined}
-      onClick={(event) => {
-        const row = event.currentTarget.closest<HTMLElement>('.chat-turn-wrap')
-        if (!row?.hasAttribute('data-tall')) return
-        if (window.getSelection()?.toString()) return
-        const opening = !open
-        setOpen(opening)
-        if (!opening) return
-        // Unpinned, the row goes back to its place in the flow, likely above
-        // the view: bring its top to where it was stuck.
-        requestAnimationFrame(() => {
-          const scroller = row.closest<HTMLElement>('.chat-scroll')
-          if (!scroller) return
-          // Its sticky offset, resolved: the pin gap it was stuck at.
-          const gap = parseFloat(getComputedStyle(row).top) || 0
-          scroller.scrollTop +=
-            row.getBoundingClientRect().top - scroller.getBoundingClientRect().top - gap
-        })
-      }}
-    >
-      <article
-        className="chat-turn"
-        data-role="user"
-        data-from={fromTab ? 'tab' : undefined}
-        data-interrupted={interrupted ? 'true' : undefined}
+    <>
+      <div
+        className="term-question"
+        onClick={(event) => {
+          const row = tallRow(event.currentTarget)
+          if (!row) return
+          // Down to where the preview takes over: the row's sticky offset.
+          glide(row, row.getBoundingClientRect().top - parseFloat(getComputedStyle(row).top))
+        }}
       >
-        {sender}
-        <span className="term-question-text">{text}</span>
-      </article>
-    </div>
+        <article
+          className="chat-turn"
+          data-role="user"
+          data-from={fromTab ? 'tab' : undefined}
+          data-interrupted={interrupted ? 'true' : undefined}
+        >
+          {sender}
+          {text}
+        </article>
+      </div>
+      <div
+        className="term-question-pin"
+        data-from={fromTab ? 'tab' : undefined}
+        data-text={text}
+        aria-hidden="true"
+        onClick={(event) => {
+          const row = tallRow(event.currentTarget)
+          const section = row?.parentElement
+          if (!row || !section) return
+          // Up to the message's own place, the pin gap under the top edge.
+          glide(row, section.getBoundingClientRect().top - pinGap(row))
+        }}
+      />
+    </>
   )
+}
+
+/** The long message's row a click landed in, unless the click made a
+ *  selection or the message is not a long one. */
+function tallRow(target: HTMLElement): HTMLElement | null {
+  if (window.getSelection()?.toString()) return null
+  const row = target.closest<HTMLElement>('.chat-turn-wrap')
+  return row?.hasAttribute('data-tall') ? row : null
+}
+
+/** The pin gap, resolved: the row's sticky top plus the offset that lifts a
+ *  long message's top above the edge (question-height.ts). */
+function pinGap(row: HTMLElement): number {
+  const top = parseFloat(getComputedStyle(row).top) || 0
+  return top + (parseFloat(row.style.getPropertyValue('--question-pin-offset')) || 0)
+}
+
+/** Scroll the transcript so a point now `to` px below the top of the viewport
+ *  (in the document's frame) lands at its top, smoothly. */
+function glide(row: HTMLElement, to: number): void {
+  const scroller = row.closest<HTMLElement>('.chat-scroll')
+  if (!scroller) return
+  scroller.scrollBy({ top: to - scroller.getBoundingClientRect().top, behavior: 'smooth' })
 }

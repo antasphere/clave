@@ -5311,7 +5311,8 @@ details[open] > .chat-approval-items {
   right: 0;
   left: auto;
 }
-.terminal-view .chat-turn[data-role='user'] {
+.terminal-view .chat-turn[data-role='user'],
+.terminal-view .term-question-pin {
   position: relative;
   max-width: none;
   padding: calc(var(--spacing) * 2.5) calc(var(--spacing) * 3.5) calc(var(--spacing) * 2.5)
@@ -5326,7 +5327,8 @@ details[open] > .chat-approval-items {
 }
 /* The caret sits on the message's first line: a box one line tall at the
    padding's edge, the glyph centred in it, whatever the fonts' metrics. */
-.terminal-view .chat-turn[data-role='user']::before {
+.terminal-view .chat-turn[data-role='user']::before,
+.terminal-view .term-question-pin::before {
   content: '❯';
   position: absolute;
   left: calc(var(--spacing) * 3);
@@ -5433,46 +5435,90 @@ details[open] > .chat-approval-items {
 .terminal-view .term-composer-wrap {
   padding-top: 0;
 }
-.terminal-view .chat-turn-wrap[data-side='end'] .chat-turn[data-role='user'] {
+.terminal-view .chat-turn-wrap[data-side='end'] .chat-turn[data-role='user'],
+.terminal-view .term-question-pin {
   /* Opaque, since the answer scrolls under it: the tint over the ground. */
   background-color: var(--surface-0);
   background-image: linear-gradient(var(--surface-100), var(--surface-100));
 }
-.terminal-view .chat-turn-wrap[data-side='end'] .chat-turn[data-role='user'][data-from='tab'] {
+.terminal-view .chat-turn-wrap[data-side='end'] .chat-turn[data-role='user'][data-from='tab'],
+.terminal-view .term-question-pin[data-from='tab'] {
   --from-tint: color-mix(in oklch, var(--color-term-model) 10%, var(--surface-100));
   background-image: linear-gradient(var(--from-tint), var(--from-tint));
 }
-.terminal-view .chat-turn[data-role='user'][data-from='tab']::before {
+.terminal-view .chat-turn[data-role='user'][data-from='tab']::before,
+.terminal-view .term-question-pin[data-from='tab']::before {
   color: var(--color-term-model);
 }
 .terminal-view .chat-turn-wrap[data-side='end'] .chat-attachments {
   order: 1;
   margin: calc(var(--spacing) * 1.5) 0 0;
 }
-/* A message never scrolls inside its own box. One taller than a share of
-   the view (question-height.ts sets data-tall) cannot be pinned whole: it
-   would cover the answer. It is pinned as its first lines instead, fading
-   out, and a click opens it whole, back in the flow and no longer pinned
-   (TermQuestion sets data-open); a click on the open one folds it back. */
+/* A message never scrolls inside its own box, and stands whole in the flow.
+   One taller than a share of the view (question-height.ts sets data-tall)
+   cannot be pinned whole: it would cover the answer. Its row is pinned with
+   its top risen above the edge by --question-pin-offset, so it sticks only
+   once read past, its foot under the edge; and stuck (question-height.ts
+   sets data-stuck), it shows the preview
+   laid over that foot (.term-question-pin: its first lines, fading out)
+   instead of its own last lines. Nothing changes size, so nothing in the
+   flow moves when it pins. A click on either glides to the other
+   (TermQuestion). */
 .term-question {
   display: flex;
   flex-direction: column;
 }
-.term-question-text {
-  display: block;
+.term-question-pin {
+  display: none;
+}
+.terminal-view[data-pin] .term-turn > .chat-turn-wrap[data-side='end'][data-tall] {
+  top: calc(var(--pin-gap) - var(--question-pin-offset, var(--pin-gap)));
 }
 .terminal-view .chat-turn-wrap[data-tall] .term-question {
   cursor: pointer;
 }
-.terminal-view .chat-turn-wrap[data-tall] .term-question:not([data-open]) .term-question-text {
+.terminal-view[data-pin] .chat-turn-wrap[data-tall] > .term-question-pin {
+  display: block;
+  position: absolute;
+  z-index: 1;
+  inset-inline: 0;
+  bottom: 0;
+  cursor: pointer;
+  visibility: hidden;
+  opacity: 0;
+  translate: 0 var(--spacing);
+  transition:
+    opacity calc(var(--default-transition-duration) * 1.5) var(--ease-out-expo),
+    translate calc(var(--default-transition-duration) * 3) var(--ease-out-settle),
+    visibility calc(var(--default-transition-duration) * 1.5);
+}
+.term-question-pin::after {
+  content: attr(data-text);
+  display: block;
   max-height: calc(3 * 1lh);
   overflow: hidden;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
   mask-image: linear-gradient(to bottom, black calc(100% - 1lh), transparent);
 }
-.terminal-view[data-pin]
-  .term-turn
-  > .chat-turn-wrap[data-side='end'][data-tall]:has(> .term-question[data-open]) {
-  position: relative;
+.terminal-view[data-pin] .chat-turn-wrap[data-tall] > :not(.term-question-pin) {
+  transition:
+    opacity calc(var(--default-transition-duration) * 1.5) var(--ease-out-expo),
+    visibility calc(var(--default-transition-duration) * 1.5);
+}
+.terminal-view[data-pin] .chat-turn-wrap[data-tall][data-stuck] > .term-question-pin {
+  visibility: visible;
+  opacity: 1;
+  translate: 0 0;
+}
+.terminal-view[data-pin] .chat-turn-wrap[data-tall][data-stuck] > :not(.term-question-pin) {
+  visibility: hidden;
+  opacity: 0;
+}
+@media (prefers-reduced-motion: reduce) {
+  .terminal-view[data-pin] .chat-turn-wrap[data-tall] > * {
+    transition: none;
+  }
 }
 /* Tool runs in the Terminal view (TerminalTools.tsx): a title that counts
    what was done, opening onto one row per call. The title has no kind icon,
