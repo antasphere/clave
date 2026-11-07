@@ -1,8 +1,9 @@
 # Chat view
 
-Two bundled first-party native views for the public `events` transport, chosen
-per session from the pane header: `chat` (this file's subject) and `terminal`
-(`src/TerminalView.tsx`, started as a copy of chat and diverging on purpose). Each
+Three bundled first-party native views for the public `events` transport, chosen
+per session from the pane header: `chat` (this file's subject), `terminal`
+(`src/TerminalView.tsx`, started as a copy of chat and diverging on purpose) and
+`lab`, the experimental one ("Folio", below). Each
 keeps its own reducer and subscription. A third view, `compact` (one line per
 turn), was removed in 2.2: nobody used it. A session that still names it falls
 back to the first view the plugin contributes, which is chat.
@@ -198,3 +199,29 @@ of it through the real write IPC, the desktop's own drop through the devtools
 protocol (`Input.dispatchDragEvent`, real File objects with their entries) and
 the sidebar's real pointer drag included, and
 reads the provider's side off the echo adapter's reply.
+
+## Folio, the experimental view (`lab`)
+
+`clave.chat-view/lab`, titled Folio (`src/lab/`, its name and one-line pitch in
+`src/lab/meta.ts`, which the first-run onboarding reads). The conversation is a
+book of pages, one per question: the reader's message is the page's title (its
+first sentence, `headline`), the agent's answer is written on the page as a
+document, and what the agent did on the way (calls, approvals) sits in the
+margin beside the paragraph it led to; a call in the margin opens to the
+transcript's own `ToolPanel`. A message sent before any answer joins the
+question it follows. The spine at the top has one tick per page, its height the
+length of the answer; the arrows (or Option and the arrows from an empty
+composer), the ticks and the contents turn pages, and the page being written is
+followed until the reader turns away, with a way back while they are elsewhere.
+A finished page can be read aloud through the system voice (Web Speech
+synthesis, `speech.ts` takes the markdown out and cuts the utterances), and the
+speaker toggle in the composer's footer reads each new answer as it finishes.
+
+It keeps the same reducer, subscription order and composer as the Chat view
+(`src/lab/use-conversation.ts` mirrors its effect; the dock, attachments,
+menus and work cards are the shared components) and renders only the page on
+screen, so the copy mounted hidden behind another view costs a reducer and no
+rows. Its stylesheet is its own (`src/lab/folio.css`, imported by the view).
+Pages and speech are pure and tested (`src/lab/*.test.ts`). Not yet: the slash
+menu and the host's /resume, /mcp and /plugin panels (a typed command goes to
+the agent as text), and the pane's Find, which searches no page here.
