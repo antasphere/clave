@@ -13,8 +13,8 @@
   align-items: center;
   justify-content: center;
   padding: calc(var(--spacing) * 8);
-  background-color: color-mix(in oklab, var(--surface-0) 78%, transparent);
-  backdrop-filter: blur(10px);
+  background-color: color-mix(in oklab, var(--surface-0) 60%, transparent);
+  backdrop-filter: blur(8px);
   -webkit-app-region: drag;
   transition: opacity 300ms var(--ease-out-expo);
   @starting-style {
@@ -822,4 +822,13 @@
   stroke: color-mix(in oklab, var(--paper) 55%, transparent);
   stroke-width: 1;
   stroke-linecap: round;
+}
+/* the look card's check sits on its name's row, never over the preview */
+.onb-look .onb-choice-check {
+  position: static;
+  margin-left: auto;
+}
+.onb-look-hint {
+  margin-top: -2px;
+  color: var(--color-accent);
 }

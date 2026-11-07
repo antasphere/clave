@@ -395,10 +395,13 @@ export function Onboarding(): React.JSX.Element | null {
             </span>
             <span className="onb-choice-title">
               {skin.name}
-              {skin.id === deviceSkin && <span className="onb-tag">Your Mac</span>}
+
               <span className="onb-choice-check">
                 <CheckIcon className="w-3 h-3" />
               </span>
+            </span>
+            <span className="onb-choice-hint onb-look-hint">
+              {skin.id === deviceSkin ? 'Your Mac' : '\u00a0'}
             </span>
           </button>
         ))}
