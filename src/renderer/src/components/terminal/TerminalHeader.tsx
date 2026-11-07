@@ -23,6 +23,7 @@ import { AgentUpdateHint } from './AgentUpdateHint'
 import { LinkedDocumentReopen } from '../files/LinkedDocumentReopen'
 import { SessionStatus } from '../session/SessionItem'
 import { WorkBreadcrumb } from '../session/WorkEntryItem'
+import { FleetBadge } from '../fleet/FleetControls'
 
 interface TerminalHeaderProps {
   sessionId: string
@@ -86,6 +87,7 @@ export function TerminalHeader({ sessionId }: TerminalHeaderProps): ReactElement
           {/* The sidebar row's own status glyph, as in a chat pane's header. */}
           <SessionStatus session={session} placeholder />
           <span className="pane-header-title">{session.name}</span>
+          <FleetBadge sessionId={sessionId} />
           <WorkBreadcrumb session={session} />
           {multiProfile &&
             session.claudeProfileLabel &&

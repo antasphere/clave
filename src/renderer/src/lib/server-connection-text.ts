@@ -4,6 +4,11 @@ import type {
   ServerVersionStatus
 } from '@clave/contract/fleet'
 import type { ServerUpgradeFailureCode, ServerUpgradePhase } from '@clave/contract/upgrade-failure'
+import type {
+  ServerInstallPhase,
+  ServerInstallResult,
+  TailnetScan
+} from '../../../shared/server-setup-types'
 
 type StatusTone = 'connected' | 'connecting' | 'error' | 'idle'
 
@@ -223,4 +228,54 @@ export function describeServerVersion(
         : line(why, 'idle')
     }
   }
+}
+
+// ── Lane B (server wave): this Mac as a server, the tailnet scan ──
+
+/** What "Run Clave as a server on this Mac" asks the person to accept first. */
+export const INSTALL_WARNING =
+  'This installs the standalone Clave server as a background service of your user: it downloads and builds the latest release (a few minutes, about 1.5 GB), starts it, and keeps it running after you quit Clave. Running it again later updates it.'
+
+/** Each phase of the install, as the progress line says it. */
+export const INSTALL_PHASE_WORDS: Record<ServerInstallPhase, string> = {
+  starting: 'Starting the install script',
+  resolve: 'Looking up the latest release',
+  clone: 'Downloading the release',
+  dependencies: 'Installing dependencies',
+  build: 'Building',
+  service: 'Setting up the service',
+  restart: 'Starting the server',
+  health: 'Waiting for the server to answer',
+  rollback: 'Going back to the previous release',
+  done: 'Done',
+  failed: 'Failed'
+}
+
+/** A failed install in plain words: the fixed sentence of the script's code
+ *  (the release it installs is the latest), then its exit and the log on
+ *  this Mac, on a line of their own. */
+export function describeInstallFailure(
+  result: Extract<ServerInstallResult, { ok: false }>
+): string {
+  const code = result.code ?? 'unknown'
+  const sentence =
+    code === 'unknown' && result.phase
+      ? `The install failed while ${UPGRADE_PHASE_WORDS[result.phase]}.`
+      : UPGRADE_FAILURE_SENTENCES[code]('the latest release')
+  const meta = [
+    result.exitCode !== undefined && `Exit ${result.exitCode}.`,
+    result.logPath && `Full log: ${result.logPath}`
+  ].filter(Boolean)
+  return meta.length ? `${sentence}\n${meta.join(' ')}` : sentence
+}
+
+/** Why the tailnet could not be scanned, in one sentence. */
+export const SCAN_UNAVAILABLE: Record<
+  Extract<TailnetScan, { available: false }>['reason'],
+  string
+> = {
+  'no-tailscale':
+    'Tailscale is not installed on this Mac. Install the Tailscale app, or type the address.',
+  'not-running': 'Tailscale is not running on this Mac. Start it, or type the address.',
+  failed: 'The Tailscale status could not be read. Type the address.'
 }

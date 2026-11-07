@@ -9,7 +9,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import { SessionHost } from '@clave/server'
-import type { Session } from '@clave/contract/sessions'
+import type { Session, SessionRecord } from '@clave/contract/sessions'
 import { SERVER_LAYOUT_KEY } from '@clave/contract/sidebar'
 import { SidebarLayouts, memorySidebarStorage, noWindowsHost } from '@clave/server/sidebar-layouts'
 import { PendingRequests } from '../../../packages/server/src/requests/service'
@@ -217,6 +217,10 @@ async function sessionFixture(
   hooks: {
     duringStart?: (sidebar: SidebarLayouts) => void
     renameFails?: (id: string) => boolean
+    /** The records this host keeps (PRDCT-4150: the caller's workspace is
+     *  read from its record). Absent, the host keeps none and refuses the
+     *  listing, as `SessionHost.none` does. */
+    records?: SessionRecord[]
     /** Options laid over the fixture's own `startStandaloneMcp` call. */
     options?: Partial<Parameters<typeof startStandaloneMcp>[0]>
   } = {}
@@ -257,6 +261,12 @@ async function sessionFixture(
   let next = 0
   const host: SessionHostService = {
     ...SessionHost.none,
+    ...(hooks.records
+      ? {
+          listAdoptableRecords: (ids?: ReadonlyArray<string>) =>
+            hooks.records!.filter((r) => !ids || ids.includes(r.id))
+        }
+      : {}),
     get: (id) => sessions.get(id),
     list: () => [...sessions.values()],
     start: async (input) => {
@@ -387,6 +397,65 @@ describe('standalone MCP session tools', () => {
       const listed = payload(await client.callTool({ name: 'clave_list', arguments: {} }))
         .sessions as Array<Record<string, unknown>>
       expect(listed.find((s) => s.id === opened.sessionId)?.parentId).toBe('caller')
+    },
+    15_000
+  )
+
+  /** The caller's record, as the daemon keeps it, with or without a workspace. */
+  const callerRecord = (workspaceId?: string): SessionRecord => ({
+    id: 'caller',
+    cwd: '/srv/repo',
+    folderName: 'repo',
+    claudeMode: true,
+    antigravityMode: false,
+    codexMode: false,
+    piMode: false,
+    claudeAgentsMode: false,
+    dangerousMode: false,
+    ...(workspaceId !== undefined ? { workspaceId } : {})
+  })
+
+  it("stamps the new tab with its caller's workspace, read from the caller's record (PRDCT-4150)", async () => {
+    const { client, started, directory } = await sessionFixture({
+      records: [callerRecord('ws-studio')]
+    })
+    payload(
+      await client.callTool({
+        name: 'clave_open_session',
+        arguments: { cwd: directory, mode: 'codex', name: 'Verifier' }
+      })
+    )
+    expect(started).toHaveLength(1)
+    expect(started[0].options?.workspaceId).toBe('ws-studio')
+    // The agent inherits, it never picks: the desktop's argument stays refused.
+    expect(
+      errorText(
+        await client.callTool({
+          name: 'clave_open_session',
+          arguments: { cwd: directory, workspace: 'ws-other' }
+        })
+      )
+    ).toContain('workspace')
+    expect(started).toHaveLength(1)
+  }, 15_000)
+
+  it.each([
+    ['a caller whose record carries no workspace', [callerRecord()]],
+    ['a host that keeps no records', undefined]
+  ])(
+    'leaves the new tab unstamped for %s',
+    async (_case, records) => {
+      const { client, started, directory } = await sessionFixture({
+        ...(records ? { records } : {})
+      })
+      payload(
+        await client.callTool({
+          name: 'clave_open_session',
+          arguments: { cwd: directory, mode: 'codex' }
+        })
+      )
+      expect(started).toHaveLength(1)
+      expect(started[0].options).not.toHaveProperty('workspaceId')
     },
     15_000
   )

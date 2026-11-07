@@ -11,7 +11,8 @@ import {
 } from '@heroicons/react/24/outline'
 import { Popover, PopoverTrigger, PopoverContent } from '@clave/ui/components'
 import { allWorkspaces, useWorkspaceStore, workspaceServer } from '../../store/workspace-store'
-import { useSessionStore } from '../../store/session-store'
+import { combinedWith, useSessionStore } from '../../store/session-store'
+import { usePairingStore } from '../../store/pairing-store'
 import { useFleetStore } from '../../store/fleet-store'
 import { pickServerFolder } from '../../store/server-folder-store'
 import {
@@ -84,14 +85,37 @@ export function ToolbarWorkspacePopover(): React.JSX.Element {
   // away never means missing an agent that needs attention.
   const attention = useMemo(() => {
     const ids = new Set<string>()
+    // A paired server workspace's tabs are on screen here already (PRDCT-4151):
+    // their activity is not something the person is missing.
+    const shownHere = combinedWith(activeWorkspaceId)
     for (const session of sessions) {
       if (!session.hasUnseenActivity && !session.promptWaiting) continue
-      if (session.workspaceId && session.workspaceId !== activeWorkspaceId) {
+      if (
+        session.workspaceId &&
+        session.workspaceId !== activeWorkspaceId &&
+        !shownHere?.has(session.workspaceId)
+      ) {
         ids.add(session.workspaceId)
       }
     }
     return ids
   }, [sessions, activeWorkspaceId])
+  // Which servers show their tabs inside each Mac workspace, for the row's
+  // second line (PRDCT-4151).
+  const pairings = usePairingStore((s) => s.servers)
+  const combinedServers = useMemo(() => {
+    const names = new Map<string, string[]>()
+    for (const [serverId, pairing] of Object.entries(pairings)) {
+      if (pairing.combine !== true) continue
+      for (const localId of Object.values(pairing.pairs)) {
+        const list = names.get(localId) ?? []
+        if (!list.includes(serverName(serverId))) list.push(serverName(serverId))
+        names.set(localId, list)
+      }
+    }
+    return names
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- serverName reads `connections`
+  }, [pairings, connections])
 
   const needsAttention = useMemo(
     () => workspaces.some((w) => attention.has(w.id)),
@@ -276,7 +300,9 @@ export function ToolbarWorkspacePopover(): React.JSX.Element {
                         <span className="block text-[11px] leading-tight text-text-tertiary truncate mt-0.5">
                           {server
                             ? `${serverName(server)}${offline ? ' · offline' : ''} · ${ws.rootDir}`
-                            : shortenPath(ws.rootDir)}
+                            : combinedServers.has(ws.id)
+                              ? `${shortenPath(ws.rootDir)} · with ${combinedServers.get(ws.id)!.join(', ')}`
+                              : shortenPath(ws.rootDir)}
                         </span>
                       </span>
                       {attention.has(ws.id) && (

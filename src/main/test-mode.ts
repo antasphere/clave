@@ -52,3 +52,45 @@ export const TEST_VERSION: string | null = TEST_NO_ACTIVATE
   ? (process.argv.find((a) => a.startsWith('--test-version='))?.slice('--test-version='.length) ??
     null)
   : null
+
+/** The value of `--<flag>=<value>` under test mode, else null. */
+function testFlag(flag: string): string | null {
+  if (!TEST_NO_ACTIVATE) return null
+  const prefix = `--${flag}=`
+  return process.argv.find((a) => a.startsWith(prefix))?.slice(prefix.length) ?? null
+}
+
+/**
+ * `--test-install-script=<path>`: the script Setup's "Make this Mac a server"
+ * runs instead of the bundled `install-server.sh`, so a spec drives the whole
+ * install with a stand-in that writes its phases and an install.env and never
+ * builds or starts a real service. Test mode only.
+ */
+export const TEST_INSTALL_SCRIPT: string | null = testFlag('test-install-script')
+
+/**
+ * `--test-install-config=<dir>`: the config directory that holds
+ * `<name>/install.env`, read instead of `~/.config` and handed to the script
+ * as `XDG_CONFIG_HOME`, so a spec never reads or writes the machine's own
+ * server install. Test mode only.
+ */
+export const TEST_INSTALL_CONFIG: string | null = testFlag('test-install-config')
+
+/**
+ * `--test-tailscale-status=<file>`: a `tailscale status --json` document read
+ * instead of running the CLI, so a spec sees an invented tailnet rather than
+ * the machine's. Test mode only.
+ */
+export const TEST_TAILSCALE_STATUS: string | null = testFlag('test-tailscale-status')
+
+/**
+ * `--test-scan-port=<port>`: the port the tailnet scan probes instead of the
+ * server's default, so a spec's local stand-in server answers. Null when
+ * absent or not a port. Test mode only.
+ */
+export const TEST_SCAN_PORT: number | null = ((): number | null => {
+  const value = testFlag('test-scan-port')
+  if (value === null || !/^\d+$/.test(value)) return null
+  const port = Number(value)
+  return port >= 1 && port <= 65535 ? port : null
+})()

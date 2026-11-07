@@ -5,6 +5,8 @@ import { ServerIcon, ArrowPathIcon } from '@heroicons/react/24/outline'
 import { ModalScrim, ModalPositioner } from '@clave/ui/components'
 import { useFleetStore, reportFleetError } from '../../store/fleet-store'
 import { useSessionStore } from '../../store/session-store'
+import { useWorkspaceStore } from '../../store/workspace-store'
+import { usePairingStore } from '../../store/pairing-store'
 import { ownerOf, isRemoteKey } from '../../lib/fleet-identity'
 import { useDockPaneIds } from '../../views/pane-kind'
 import type {
@@ -200,12 +202,42 @@ function FleetRequestForm({
     </FleetDialog>
   )
 }
-export function FleetBadge({ sessionId }: { sessionId: string }): React.JSX.Element | null {
-  const owner = ownerOf(sessionId)
+/** Which machine a row runs on, when it is not this Mac. In a server's own
+ *  workspace every tab is the server's, so the icon alone says it. In a Mac
+ *  workspace a server tab is there because its workspace is paired with this
+ *  one (PRDCT-4151), and the badge says where it runs: the server's name, in
+ *  the colour that server wears on this Mac. */
+function MachineBadge({
+  ownerKey,
+  kind
+}: {
+  ownerKey: string
+  kind: 'session' | 'group'
+}): React.JSX.Element | null {
+  const owner = ownerOf(ownerKey)
   const connection = useFleetStore((s) => s.connections.find((c) => c.id === owner))
   const status = useFleetStore((s) => s.statuses[owner]?.state)
-  if (!isRemoteKey(sessionId)) return null
-  const label = `${connection?.name ?? 'Server'}${status && status !== 'connected' ? ` (${status})` : ''}`
+  const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId)
+  const color = usePairingStore((s) => s.servers[owner]?.color)
+  if (!isRemoteKey(ownerKey)) return null
+  const name = connection?.name ?? 'Server'
+  const label = `${name}${status && status !== 'connected' ? ` (${status})` : ''}`
+  const named = activeWorkspaceId !== null && !isRemoteKey(activeWorkspaceId)
+  if (named)
+    return (
+      <span
+        className="badge flex-shrink-0 max-w-[110px]"
+        style={color ? { backgroundColor: `${color}26`, color } : undefined}
+        title={`Runs on ${label}`}
+        aria-label={`Runs on ${label}`}
+        data-fleet-owner={owner}
+        data-fleet-state={status}
+        data-fleet-badge={kind}
+      >
+        <ServerIcon className="w-3 h-3 flex-shrink-0" />
+        <span className="truncate">{name}</span>
+      </span>
+    )
   return (
     <span
       className="flex-shrink-0 text-text-tertiary"
@@ -215,6 +247,33 @@ export function FleetBadge({ sessionId }: { sessionId: string }): React.JSX.Elem
       data-fleet-state={status}
     >
       <ServerIcon className="w-3.5 h-3.5" />
+    </span>
+  )
+}
+export function FleetBadge({ sessionId }: { sessionId: string }): React.JSX.Element | null {
+  return <MachineBadge ownerKey={sessionId} kind="session" />
+}
+/** A server group's header, in a Mac workspace it is paired into: the same
+ *  badge as its tabs, so the group reads as the server's at a glance. */
+export function FleetGroupBadge({ groupId }: { groupId: string }): React.JSX.Element | null {
+  return <MachineBadge ownerKey={groupId} kind="group" />
+}
+/** The side panel's machine, when the folder it shows is a server's: the
+ *  server's name in its colour, before the path. Nothing for this Mac. */
+export function MachineChip({ serverId }: { serverId: string }): React.JSX.Element | null {
+  const connection = useFleetStore((s) => s.connections.find((c) => c.id === serverId))
+  const color = usePairingStore((s) => s.servers[serverId]?.color)
+  if (serverId === 'local') return null
+  const name = connection?.name ?? 'Server'
+  return (
+    <span
+      className="badge flex-shrink-0 max-w-[120px] mr-1"
+      style={color ? { backgroundColor: `${color}26`, color } : undefined}
+      title={`Files and git of ${name}`}
+      data-panel-machine={serverId}
+    >
+      <ServerIcon className="w-3 h-3 flex-shrink-0" />
+      <span className="truncate">{name}</span>
     </span>
   )
 }

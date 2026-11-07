@@ -5,7 +5,8 @@ import { build } from 'esbuild'
 import { openChat, inject } from './chat-view.spec.mjs'
 import { until, fixturePath, REPO } from './harness.mjs'
 
-/* Messages from other tabs fold into decks; the agent's own words never do.
+/* Messages from other tabs gather in exchange timelines (one card per
+   message); the agent's own words never do.
    On 5 November 2026 a collapsed deck hid an explanation, three numbered
    choices and "So I'm waiting on one answer from you: option 1, 2 or 3.",
    because the deck captured every reply and every tool run after a message
@@ -54,11 +55,12 @@ export async function run(t) {
     /** How many messages from other tabs the decks hold between them. */
     const stacked = () =>
       stacks.evaluateAll((els) => els.reduce((n, el) => n + Number(el.dataset.messages), 0))
-    const allClosed = () => stacks.evaluateAll((els) => els.every((el) => !el.open))
+    const allClosed = () =>
+      view.locator('.exchange-card').evaluateAll((els) => els.every((el) => !el.open))
     /** The deck whose cover previews `text`: a handle that survives the
      *  virtualiser unmounting the decks above it, which a position does not. */
     const deckOf = (text) =>
-      stacks.filter({ has: win.locator('.chat-delivery-preview', { hasText: text }) })
+      stacks.filter({ has: win.locator('.exchange-gist', { hasText: text }) })
     /** The transcript's order as mounted (the virtualiser keeps the end of the
      *  conversation in the DOM): decks by their size, turns by their first words. */
     const order = () =>
@@ -126,52 +128,55 @@ export async function run(t) {
         shape
       )
 
-      // The deck itself: its cover, its layered cards, its keyboard expansion.
+      // The timeline itself: one card per message, its senders named, each
+      // card opening on its message whole from the keyboard.
       const deck = view.locator('.chat-delivery-stack[data-messages="3"]')
-      assert.equal(await deck.evaluate((el) => el.open), false)
+      const cards = deck.locator('.exchange-card')
+      assert.equal(await cards.count(), 3)
       assert.equal(
-        await view.locator('[data-from="tab"]').count(),
+        await deck.locator('.exchange-part').count(),
         0,
-        'closed message bodies stay unmounted'
+        'closed exchanges stay unmounted'
       )
       assert.match(
-        await deck.locator('> summary').innerText(),
-        /Agent conversation.*3 messages.*Lane verifier.*Another agent.*Wave coordinator/s
+        await deck.locator('.exchange-names').innerText(),
+        /Lane verifier.*Another agent.*Wave coordinator/s
       )
-      const geometry = await deck.evaluate((el) => {
-        const cover = el.querySelector('.chat-delivery-cover').getBoundingClientRect()
-        return [...el.querySelectorAll('.chat-delivery-peek')].map((peek) => {
-          const box = peek.getBoundingClientRect()
-          return { inset: box.left - cover.left, below: box.bottom - cover.bottom }
-        })
-      })
-      assert.equal(geometry.length, 2)
-      assert.ok(geometry[0].inset > 0 && geometry[0].below > 0)
-      assert.ok(geometry[1].inset > geometry[0].inset && geometry[1].below > geometry[0].below)
+      const faces = await deck.locator('.exchange-summary').allInnerTexts()
+      assert.match(faces[0], /Lane verifier.*Second payload/s)
+      assert.match(faces[1], /Another agent.*Third anonymous payload/s)
+      assert.match(faces[2], /Wave coordinator.*Fourth payload/s)
       t.check(
-        `${mode}: a closed deck counts its messages, names its senders and shows inset layered cards`,
+        `${mode}: a timeline names its senders, one card per message, each face its sender and first line`,
         true
       )
 
-      await deck.locator('> summary').focus()
-      await deck.locator('> summary').press('Enter')
-      await deck.locator('.chat-delivery-items').waitFor()
-      const texts = await deck.locator('[data-from="tab"]').allTextContents()
+      await cards.first().locator('> summary').focus()
+      await cards.first().locator('> summary').press('Enter')
+      await cards.first().locator('.exchange-part').first().waitFor()
+      for (const index of [1, 2]) {
+        await cards.nth(index).locator('> summary').click()
+        await cards.nth(index).locator('.exchange-part').first().waitFor()
+      }
+      const texts = await deck
+        .locator('.exchange-part[data-theirs] .exchange-part-text')
+        .allTextContents()
       assert.equal(texts.length, 3)
       assert.match(texts[0], /Second payload, no omitted words/)
       assert.match(texts[1], /Third anonymous payload/)
       assert.match(texts[2], /Fourth payload, the merge is pre-authorised/)
       assert.ok(texts.every((s) => !s.includes('[Message from')))
-      assert.equal(await deck.locator('.chat-exchange-card').count(), 3)
       assert.equal(
         await deck.locator('.chat-turn[data-role="assistant"]').count(),
         0,
-        'the deck holds no words of the agent'
+        'the timeline holds no words of the agent'
       )
-      await deck.locator('> summary').press('Space')
-      assert.equal(await deck.evaluate((el) => el.open), false)
+      await cards.first().locator('> summary').press('Space')
+      assert.equal(await cards.first().evaluate((el) => el.open), false)
+      for (const index of [1, 2]) await cards.nth(index).locator('> summary').click()
+      assert.ok(await until(allClosed), 'every card closes again')
       t.check(
-        `${mode}: Enter opens the deck on its full messages, senders and order, with none of the agent's words; Space closes it`,
+        `${mode}: Enter opens a card on its full message, senders and order kept, with none of the agent's words; Space closes it`,
         true
       )
 
@@ -182,15 +187,16 @@ export async function run(t) {
       await third.waitFor()
       const fresh = await third.getAttribute('data-messages')
       await third.scrollIntoViewIfNeeded()
-      await third.locator('> summary').click()
-      // The toggle event that mounts the bodies follows the click in its own
-      // task: wait for the first body before the deck is grown.
-      await third.locator('[data-from="tab"]').first().waitFor()
+      const thirdFirst = third.locator('.exchange-card').first()
+      await thirdFirst.locator('> summary').click()
+      // The toggle event that mounts the exchange follows the click in its own
+      // task: wait for it before the timeline is grown.
+      await thirdFirst.locator('.exchange-part').first().waitFor()
       await inject(fixture, record.id, [deliveredMessage('Lane verifier', 'Sixth payload.')])
       const state = () =>
         third.evaluate((el) => ({
-          open: el.open,
-          bodies: el.querySelectorAll('[data-from="tab"]').length,
+          open: el.querySelector('.exchange-card').open,
+          bodies: el.querySelectorAll('.exchange').length,
           messages: el.dataset.messages
         }))
       await until(async () => {
@@ -199,15 +205,21 @@ export async function run(t) {
       })
       const grown = { ...(await state()), fresh }
       t.check(
-        `${mode}: a message arriving after the agent spoke starts a new deck, and a deck the reader opened stays open as it grows`,
+        `${mode}: a message arriving after the agent spoke starts a new timeline, and a card the reader opened stays open as it grows`,
         fresh === '1' && grown.open && grown.bodies === 2 && grown.messages === '2',
         grown
       )
-      await third.locator('> summary').click()
+      await thirdFirst.locator('> summary').click()
       assert.ok(
-        await until(async () => !(await third.evaluate((el) => el.open))),
-        'the grown deck closes again'
+        await until(async () => !(await thirdFirst.evaluate((el) => el.open))),
+        'the opened card closes again'
       )
+      // Reaching the card may have scrolled the reader off the end, where the
+      // transcript no longer follows what arrives: back to the end, as a
+      // reader would, before the next frames.
+      await view.locator('.chat-scroll').evaluate((el) => {
+        el.scrollTop = el.scrollHeight
+      })
 
       // Human turns and decks keep their order, and every answer is on screen.
       await inject(fixture, record.id, [
@@ -267,6 +279,9 @@ export async function run(t) {
         // eighth deck crashed the spec instead).
         { type: 'assistant_text', delta: 'Noted the eighth message.', final: true }
       ])
+      await view.locator('.chat-scroll').evaluate((el) => {
+        el.scrollTop = el.scrollHeight
+      })
       assert.ok(await visible(said('Noted the eighth message.')), 'the frames arrived')
       const between = (
         await view
@@ -312,9 +327,12 @@ export async function run(t) {
         surfaces.add(surface)
         await win.setViewportSize({ width: 850, height: 700 })
         await deck.scrollIntoViewIfNeeded()
-        assert.ok(await deck.locator('> summary').isVisible())
+        assert.ok(await deck.locator('.exchange-summary').first().isVisible())
         assert.ok(
-          await deck.locator('> summary').evaluate((el) => el.scrollWidth <= el.clientWidth)
+          await deck
+            .locator('.exchange-summary')
+            .first()
+            .evaluate((el) => el.scrollWidth <= el.clientWidth)
         )
       }
       assert.equal(surfaces.size, 4, 'four different active palettes were exercised')
@@ -322,18 +340,22 @@ export async function run(t) {
 
       await win.emulateMedia({ reducedMotion: 'reduce' })
       assert.deepEqual(
-        await deck.evaluate((el) => [
-          getComputedStyle(el).transitionDuration,
-          getComputedStyle(el, '::details-content').transitionDuration,
-          getComputedStyle(el.querySelector('.chat-delivery-peek')).transitionDuration
-        ]),
+        await deck.evaluate((el) => {
+          const card = el.querySelector('.exchange-card')
+          return [
+            getComputedStyle(card).transitionDuration,
+            getComputedStyle(card, '::details-content').transitionDuration,
+            getComputedStyle(card.querySelector('.exchange-body')).transitionDuration
+          ]
+        }),
         ['0s', '0s', '0s']
       )
       await win.emulateMedia({ reducedMotion: 'no-preference' })
 
       // The expansion survives a virtualised remount.
-      await deck.locator('> summary').click()
-      assert.equal(await deck.evaluate((el) => el.open), true)
+      const card = deck.locator('.exchange-card').first()
+      await card.locator('> summary').click()
+      assert.equal(await card.evaluate((el) => el.open), true)
       await inject(
         fixture,
         record.id,
@@ -355,14 +377,14 @@ export async function run(t) {
       })
       await deck.waitFor()
       const remounted = {
-        open: await deck.evaluate((el) => el.open),
-        bodies: await deck.locator('[data-from="tab"]').count()
+        open: await card.evaluate((el) => el.open),
+        bodies: await deck.locator('.exchange-part[data-theirs]').count()
       }
-      await deck.locator('> summary').press('Space')
-      remounted.closedAgain = !(await deck.evaluate((el) => el.open))
+      await card.locator('> summary').press('Space')
+      remounted.closedAgain = !(await card.evaluate((el) => el.open))
       t.check(
         `${mode}: the expansion survives a virtualised remount, and Space collapses it`,
-        remounted.open && remounted.bodies === 3 && remounted.closedAgain,
+        remounted.open && remounted.bodies === 1 && remounted.closedAgain,
         remounted
       )
     } finally {

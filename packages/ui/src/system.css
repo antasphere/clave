@@ -3106,25 +3106,36 @@ button.extension-card:hover {
   overscroll-behavior: contain;
 }
 /* The transcript runs right down to the composer and fades out over its
-   last stretch instead of stopping on a hard edge. A mask, not a gradient
-   laid over it, so it holds on any ground and under a selection. The column's
-   own foot padding is taller than the fade, so the last line sits clear of
-   it once the reader is at the end. */
-.chat-transcript > .chat-scroll {
+   last stretch instead of stopping on a hard edge: the ground's own colour
+   laid over the foot of the transcript, from clear to whole. A gradient over
+   it, NOT a mask on the scroller: a masked scroller is repainted on every
+   frame of a scroll, and the scroll stuttered with one (7 November 2026).
+   Above the rows, under the jump-to-end control; it takes no pointer. The
+   column's own foot padding is taller than the fade, so the last line sits
+   clear of it once the reader is at the end. */
+.chat-transcript::after {
   --chat-fade: calc(var(--spacing) * 7);
+  content: '';
+  position: absolute;
+  z-index: 5;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: var(--chat-fade);
+  pointer-events: none;
   /* A cosine ease over eight steps: no visible edge where the fade begins,
      none where it ends, and no banding between. */
-  mask-image: linear-gradient(
+  background-image: linear-gradient(
     to bottom,
-    black calc(100% - var(--chat-fade)),
-    color-mix(in srgb, black 96%, transparent) calc(100% - var(--chat-fade) * 0.875),
-    color-mix(in srgb, black 85%, transparent) calc(100% - var(--chat-fade) * 0.75),
-    color-mix(in srgb, black 69%, transparent) calc(100% - var(--chat-fade) * 0.625),
-    color-mix(in srgb, black 50%, transparent) calc(100% - var(--chat-fade) * 0.5),
-    color-mix(in srgb, black 31%, transparent) calc(100% - var(--chat-fade) * 0.375),
-    color-mix(in srgb, black 15%, transparent) calc(100% - var(--chat-fade) * 0.25),
-    color-mix(in srgb, black 4%, transparent) calc(100% - var(--chat-fade) * 0.125),
-    transparent
+    transparent,
+    color-mix(in srgb, var(--surface-0) 4%, transparent) 12.5%,
+    color-mix(in srgb, var(--surface-0) 15%, transparent) 25%,
+    color-mix(in srgb, var(--surface-0) 31%, transparent) 37.5%,
+    color-mix(in srgb, var(--surface-0) 50%, transparent) 50%,
+    color-mix(in srgb, var(--surface-0) 69%, transparent) 62.5%,
+    color-mix(in srgb, var(--surface-0) 85%, transparent) 75%,
+    color-mix(in srgb, var(--surface-0) 96%, transparent) 87.5%,
+    var(--surface-0)
   );
 }
 /* The way back down. The transcript follows the stream only while the reader
@@ -5277,6 +5288,536 @@ details[open] > .chat-approval-items {
   color: var(--text-tertiary);
 }
 
+/* The exchange timeline (DeliveryStack.tsx): the messages other tabs sent,
+   one compact card per exchange under a drawing (ExchangeDrawing.tsx), joined
+   by a line down the left that starts at the drawing. A card's closed face is
+   a line at the transcript's own size; it opens smoothly onto the exchange
+   whole. The ink is the drawings' (low-opacity text, a breath of paper); the
+   accent stays in the drawing, on the line that carries the meaning. A block
+   the column gains arrives animated (data-arrive), a row mounted again by the
+   virtualiser does not. */
+.exchange-timeline {
+  --exchange-rail: calc(var(--spacing) * 4.5);
+  --exchange-node: calc(var(--spacing) * 2.5);
+  --exchange-ink: color-mix(in oklab, var(--text-primary) 16%, transparent);
+  display: flex;
+  flex-direction: column;
+  align-self: stretch;
+  min-width: 0;
+}
+.terminal-view .exchange-timeline {
+  font-size: calc(var(--text-sm) + var(--spacing) / 4);
+}
+.exchange-head {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: calc(var(--spacing) * 2);
+  padding-bottom: calc(var(--spacing) * 1.5);
+}
+/* The line leaves the drawing's foot and runs into the first card's node. */
+.exchange-head::after {
+  content: '';
+  position: absolute;
+  left: var(--exchange-rail);
+  top: calc(var(--spacing) * 7.5);
+  bottom: 0;
+  border-left: thin solid var(--exchange-ink);
+}
+.exchange-drawing {
+  flex-shrink: 0;
+  inline-size: calc(var(--spacing) * 9);
+  block-size: calc(var(--spacing) * 7.5);
+}
+.exchange-title {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  line-height: 1.35;
+}
+.exchange-eyebrow {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+}
+.exchange-names {
+  color: var(--text-secondary);
+}
+/* The digest, under the senders: room opens for it smoothly once it is
+   being read, and the words settle in when they arrive. */
+.exchange-digest {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows calc(var(--default-transition-duration) * 2) var(--ease-out-expo);
+}
+.exchange-timeline:is([data-digest='reading'], [data-digest='done']) .exchange-digest {
+  grid-template-rows: 1fr;
+}
+.exchange-digest-inner {
+  min-height: 0;
+  overflow: hidden;
+}
+.exchange-digest-reading {
+  display: inline-block;
+  font-size: var(--text-xs);
+  background-image: linear-gradient(
+    90deg,
+    var(--text-tertiary) 0 40%,
+    color-mix(in oklch, var(--text-tertiary) 20%, transparent) 50%,
+    var(--text-tertiary) 60% 100%
+  );
+  background-size: 250% 100%;
+  background-clip: text;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+  animation: term-shimmer calc(var(--default-transition-duration) * 12) linear infinite;
+}
+.exchange-digest-text {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  margin-top: calc(var(--spacing) / 2);
+  font-size: var(--text-sm);
+  line-height: 1.45;
+  color: var(--text-tertiary);
+  transition:
+    opacity calc(var(--default-transition-duration) * 2) var(--ease-out-expo),
+    translate calc(var(--default-transition-duration) * 3) var(--ease-out-settle),
+    background-color var(--default-transition-duration);
+  @starting-style {
+    opacity: 0;
+    translate: 0 calc(var(--spacing) * 1.5);
+  }
+}
+/* Something needs the reader: the ringed marker in its own column, centred
+   on the first line, the words in full ink beside it, on a breath of accent
+   that deepens under the pointer when it opens the message it came from. */
+.exchange-digest-text[data-needs-you] {
+  grid-template-columns: auto minmax(0, 1fr);
+  column-gap: calc(var(--spacing) * 2);
+  align-items: start;
+  width: fit-content;
+  max-width: 100%;
+  padding: calc(var(--spacing) * 1.5) calc(var(--spacing) * 3) calc(var(--spacing) * 1.5)
+    calc(var(--spacing) * 2.5);
+  border: 0;
+  border-radius: var(--radius-lg);
+  background-color: color-mix(in oklab, var(--color-accent) 7%, transparent);
+  font: inherit;
+  font-size: var(--text-sm);
+  line-height: 1.45;
+  text-align: left;
+  color: var(--term-ink, var(--text-primary));
+}
+button.exchange-digest-text {
+  cursor: pointer;
+}
+button.exchange-digest-text:hover {
+  background-color: color-mix(in oklab, var(--color-accent) 12%, transparent);
+}
+button.exchange-digest-text:focus-visible {
+  outline: thin solid var(--color-accent);
+  outline-offset: calc(var(--spacing) / 2);
+}
+.exchange-digest-mark {
+  --size: calc(var(--spacing) * 3.5);
+  inline-size: var(--size);
+  block-size: var(--size);
+  margin-top: calc((1lh - var(--size)) / 2);
+}
+.exchange-digest-words {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.exchange[data-needs-you] .exchange-node {
+  border-color: var(--color-accent);
+  background: radial-gradient(circle, var(--color-accent) 0 32%, transparent 36%), var(--surface-0);
+}
+.exchange[data-needs-you] .exchange-gist {
+  color: var(--text-primary);
+}
+/* The drawing's accent means one of two things, and only those: a digest
+   being read right now (blue, the message travelling the arc, the landing dot
+   breathing) or something here that needs the reader (the landing dot in
+   blue). Otherwise it rests in the plain ink of its other lines: a timeline
+   is not a task with a done state, and a colour that stayed on whatever the
+   digest found read as a state of the conversation. */
+.exchange-drawing .exchange-arc {
+  stroke: color-mix(in oklab, var(--ink) 45%, transparent);
+  stroke-width: 1.2;
+  transition:
+    stroke calc(var(--default-transition-duration) * 2) var(--ease-out-expo),
+    stroke-width calc(var(--default-transition-duration) * 2) var(--ease-out-expo);
+}
+.exchange-drawing .exchange-land {
+  fill: color-mix(in oklab, var(--ink) 60%, transparent);
+  transform-box: fill-box;
+  transform-origin: center;
+  transition: fill calc(var(--default-transition-duration) * 2) var(--ease-out-expo);
+}
+.exchange-timeline[data-digest='reading'] .exchange-drawing .exchange-arc {
+  stroke: var(--color-accent);
+  stroke-width: 1.7;
+}
+.exchange-timeline:is([data-digest='reading'], [data-needs-you]) .exchange-drawing .exchange-land {
+  fill: var(--color-accent);
+}
+/* Doubled class: these win over the arrival's one-off draw, which a timeline
+   that has just arrived is also under. Motion only for a reader who allows it. */
+@media (prefers-reduced-motion: no-preference) {
+  .exchange-timeline.chat-delivery-stack[data-digest='reading'] .exchange-drawing .exchange-arc {
+    stroke-dasharray: 0.35 0.65;
+    animation: exchange-travel calc(var(--default-transition-duration) * 8) linear infinite;
+  }
+  .exchange-timeline.chat-delivery-stack[data-digest='reading'] .exchange-drawing .exchange-land {
+    animation: exchange-breathe calc(var(--default-transition-duration) * 8) ease-in-out infinite;
+  }
+  .exchange-timeline.chat-delivery-stack[data-digest-fresh] .exchange-drawing .exchange-land {
+    animation: exchange-land calc(var(--default-transition-duration) * 3) var(--ease-out-settle)
+      both;
+  }
+}
+@keyframes exchange-breathe {
+  50% {
+    scale: 1.6;
+    opacity: 0.55;
+  }
+}
+@keyframes exchange-travel {
+  from {
+    stroke-dashoffset: 1;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+.exchange-list {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.exchange {
+  position: relative;
+  display: grid;
+  grid-template-columns: calc(var(--exchange-rail) * 2) minmax(0, 1fr);
+  padding-bottom: var(--spacing);
+}
+/* The rail, one segment per card, so it ends at the last card's node. */
+.exchange::before {
+  content: '';
+  position: absolute;
+  left: var(--exchange-rail);
+  top: 0;
+  bottom: 0;
+  border-left: thin solid var(--exchange-ink);
+  transform-origin: top;
+}
+.exchange:last-child::before {
+  bottom: auto;
+  height: calc(var(--spacing) * 2 + 0.5lh);
+}
+/* The node: the drawings' ringed dot, on the ground so the rail runs under it. */
+.exchange-node {
+  position: relative;
+  z-index: 1;
+  justify-self: center;
+  inline-size: var(--exchange-node);
+  block-size: var(--exchange-node);
+  margin-top: calc(var(--spacing) * 2 + 0.5lh - var(--exchange-node) / 2);
+  border: thin solid color-mix(in oklab, var(--text-primary) 42%, transparent);
+  border-radius: var(--radius-full);
+  background:
+    radial-gradient(
+      circle,
+      color-mix(in oklab, var(--text-primary) 70%, transparent) 0 32%,
+      transparent 36%
+    ),
+    var(--surface-0);
+  transition:
+    border-color var(--default-transition-duration),
+    scale calc(var(--default-transition-duration) * 3) var(--ease-out-settle);
+}
+.exchange:hover .exchange-node,
+.exchange:has(.exchange-card[open]) .exchange-node {
+  border-color: color-mix(in oklab, var(--text-primary) 70%, transparent);
+  scale: 1.15;
+}
+.exchange-card {
+  min-width: 0;
+  border: thin solid transparent;
+  border-radius: var(--radius-lg);
+  interpolate-size: allow-keywords;
+  transition:
+    background-color var(--default-transition-duration),
+    border-color var(--default-transition-duration),
+    box-shadow calc(var(--default-transition-duration) * 2) var(--ease-out-expo);
+}
+.exchange-card:hover {
+  background-color: color-mix(in oklab, var(--surface-100) 70%, transparent);
+}
+.exchange-card[open] {
+  border-color: var(--border-subtle-color);
+  background-color: var(--surface-100);
+  box-shadow: var(--raised-shadow);
+}
+.exchange-summary {
+  display: flex;
+  align-items: baseline;
+  gap: calc(var(--spacing) * 2);
+  padding: calc(var(--spacing) * 2) calc(var(--spacing) * 3);
+  list-style: none;
+  cursor: pointer;
+  border-radius: inherit;
+  outline: none;
+}
+.exchange-summary::-webkit-details-marker {
+  display: none;
+}
+.exchange-summary:focus-visible {
+  outline: thin solid var(--color-accent);
+  outline-offset: calc(var(--spacing) / -2);
+}
+.exchange-from {
+  flex-shrink: 0;
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--color-term-model);
+}
+.exchange-gist {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--term-ink, var(--text-primary));
+}
+/* Open, the message is right below in full: its first line steps back. */
+.exchange-gist {
+  transition: opacity calc(var(--default-transition-duration) * 2) var(--ease-out-expo);
+}
+.exchange-card[open] .exchange-gist {
+  opacity: 0;
+}
+.exchange-status,
+.exchange-time {
+  flex-shrink: 0;
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+.exchange-chevron {
+  flex-shrink: 0;
+  align-self: center;
+  inline-size: var(--chat-glyph);
+  block-size: var(--chat-glyph);
+  color: var(--text-tertiary);
+  transition: rotate calc(var(--default-transition-duration) * 2) var(--ease-out-expo);
+}
+.exchange-card[open] .exchange-chevron {
+  rotate: 180deg;
+}
+/* Opening: the height glides, the exchange settles in under its face. */
+.exchange-card::details-content {
+  block-size: 0;
+  overflow: clip;
+  transition:
+    block-size calc(var(--default-transition-duration) * 2) var(--ease-out-expo),
+    content-visibility calc(var(--default-transition-duration) * 2) allow-discrete;
+}
+.exchange-card[open]::details-content {
+  block-size: auto;
+}
+.exchange-body {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--spacing) * 3);
+  padding: var(--spacing) calc(var(--spacing) * 3) calc(var(--spacing) * 3);
+  opacity: 0;
+  translate: 0 calc(var(--spacing) * -1.5);
+  transition:
+    opacity calc(var(--default-transition-duration) * 2) var(--ease-out-expo),
+    translate calc(var(--default-transition-duration) * 3) var(--ease-out-settle);
+}
+.exchange-card[open] .exchange-body {
+  opacity: 1;
+  translate: 0 0;
+}
+.exchange-part {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing);
+  padding-left: calc(var(--spacing) * 3);
+  border-left: thin solid var(--exchange-ink);
+}
+.exchange-part[data-theirs] {
+  border-left-color: color-mix(in oklab, var(--color-term-model) 55%, transparent);
+}
+.exchange-part-head {
+  display: flex;
+  align-items: baseline;
+  gap: calc(var(--spacing) * 2);
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+}
+.exchange-part-who {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: var(--text-secondary);
+}
+.exchange-part[data-theirs] .exchange-part-who {
+  color: var(--color-term-model);
+}
+button.exchange-part-who {
+  cursor: pointer;
+}
+button.exchange-part-who:hover {
+  text-decoration: underline dotted;
+  text-underline-offset: 0.2em;
+}
+.exchange-part-time {
+  font-variant-numeric: tabular-nums;
+}
+.exchange-part-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--text-secondary);
+}
+.exchange-part[data-theirs] .exchange-part-text {
+  color: var(--term-ink, var(--text-primary));
+}
+.exchange-open {
+  display: inline-flex;
+  align-self: flex-start;
+  align-items: center;
+  gap: var(--spacing);
+  margin-left: calc(var(--spacing) * 3);
+  padding: calc(var(--spacing) / 2) calc(var(--spacing) * 2);
+  border: thin solid var(--border-subtle-color);
+  border-radius: var(--radius-full);
+  background: var(--surface-0);
+  font: inherit;
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition:
+    color var(--default-transition-duration),
+    border-color var(--default-transition-duration),
+    translate calc(var(--default-transition-duration) * 2) var(--ease-out-settle);
+}
+.exchange-open:hover {
+  color: var(--text-primary);
+  border-color: var(--color-border);
+  translate: 0 calc(var(--spacing) / -4);
+}
+.exchange-open svg {
+  inline-size: calc(var(--spacing) * 3);
+  block-size: calc(var(--spacing) * 3);
+}
+/* The row another tab opened this one at: a breath of accent that fades, so
+   the eye lands on it (jump.ts). */
+[data-row-index][data-jump-flash] > .chat-row {
+  border-radius: var(--radius-lg);
+  animation: jump-flash calc(var(--default-transition-duration) * 16) var(--ease-out-expo);
+}
+@keyframes jump-flash {
+  0%,
+  25% {
+    background-color: color-mix(in oklab, var(--color-accent) 12%, transparent);
+    box-shadow: 0 0 0 calc(var(--spacing) * 2)
+      color-mix(in oklab, var(--color-accent) 12%, transparent);
+  }
+  100% {
+    background-color: transparent;
+    box-shadow: 0 0 0 calc(var(--spacing) * 2) transparent;
+  }
+}
+.chat-jump-pill[data-tone='missing'] svg {
+  animation: none;
+}
+.exchange-note {
+  margin: 0;
+  padding-left: calc(var(--spacing) * 3);
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+}
+/* Arrival, only for what the column gained: the cards rise in one after the
+   other, each node lands with the slightest overshoot, the rail draws down,
+   and the drawing's arc draws itself and lands on its dot. */
+.chat-row[data-arrive] .exchange {
+  transition:
+    opacity calc(var(--default-transition-duration) * 2) var(--ease-out-expo),
+    translate calc(var(--default-transition-duration) * 3) var(--ease-out-settle);
+  transition-delay: calc(var(--default-transition-duration) * 0.4 * var(--exchange-i, 0));
+  @starting-style {
+    opacity: 0;
+    translate: 0 var(--spacing);
+  }
+}
+.chat-row[data-arrive] .exchange-node {
+  @starting-style {
+    scale: 0.4;
+  }
+}
+.chat-row[data-arrive] .exchange::before {
+  transition: scale calc(var(--default-transition-duration) * 3) var(--ease-out-expo);
+  @starting-style {
+    scale: 1 0;
+  }
+}
+.exchange-drawing .exchange-arc {
+  stroke-dasharray: 1;
+  stroke-dashoffset: 0;
+}
+.chat-row[data-arrive] .exchange-drawing .exchange-arc {
+  animation: exchange-arc calc(var(--default-transition-duration) * 5) var(--ease-out-expo) both;
+}
+.chat-row[data-arrive] .exchange-drawing .exchange-land {
+  animation: exchange-land calc(var(--default-transition-duration) * 3) var(--ease-out-settle)
+    calc(var(--default-transition-duration) * 3) both;
+}
+@keyframes exchange-arc {
+  from {
+    stroke-dashoffset: 1;
+  }
+}
+@keyframes exchange-land {
+  from {
+    scale: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .exchange,
+  .exchange::before,
+  .exchange-node,
+  .exchange-card,
+  .exchange-card::details-content,
+  .exchange-body,
+  .exchange-chevron {
+    transition: none;
+  }
+  .exchange-drawing .exchange-arc,
+  .exchange-drawing .exchange-land,
+  .exchange-digest-reading {
+    animation: none;
+  }
+  .exchange-digest,
+  .exchange-digest-text,
+  .exchange-open {
+    transition: none;
+  }
+  [data-row-index][data-jump-flash] > .chat-row {
+    animation: none;
+    outline: thin solid var(--color-accent);
+  }
+}
+
 /* ── Terminal view ────────────────────────────────────────────────────────
    The chat view's third reading, after Claude Code's TUI: a wider column, the
    prompt between two rules with the send button kept at its right end, the
@@ -5311,7 +5852,8 @@ details[open] > .chat-approval-items {
   right: 0;
   left: auto;
 }
-.terminal-view .chat-turn[data-role='user'] {
+.terminal-view .chat-turn[data-role='user'],
+.terminal-view .term-question-pin {
   position: relative;
   max-width: none;
   padding: calc(var(--spacing) * 2.5) calc(var(--spacing) * 3.5) calc(var(--spacing) * 2.5)
@@ -5326,7 +5868,8 @@ details[open] > .chat-approval-items {
 }
 /* The caret sits on the message's first line: a box one line tall at the
    padding's edge, the glyph centred in it, whatever the fonts' metrics. */
-.terminal-view .chat-turn[data-role='user']::before {
+.terminal-view .chat-turn[data-role='user']::before,
+.terminal-view .term-question-pin::before {
   content: '❯';
   position: absolute;
   left: calc(var(--spacing) * 3);
@@ -5433,32 +5976,90 @@ details[open] > .chat-approval-items {
 .terminal-view .term-composer-wrap {
   padding-top: 0;
 }
-.terminal-view .chat-turn-wrap[data-side='end'] .chat-turn[data-role='user'] {
+.terminal-view .chat-turn-wrap[data-side='end'] .chat-turn[data-role='user'],
+.terminal-view .term-question-pin {
   /* Opaque, since the answer scrolls under it: the tint over the ground. */
   background-color: var(--surface-0);
   background-image: linear-gradient(var(--surface-100), var(--surface-100));
 }
-.terminal-view .chat-turn-wrap[data-side='end'] .chat-turn[data-role='user'][data-from='tab'] {
+.terminal-view .chat-turn-wrap[data-side='end'] .chat-turn[data-role='user'][data-from='tab'],
+.terminal-view .term-question-pin[data-from='tab'] {
   --from-tint: color-mix(in oklch, var(--color-term-model) 10%, var(--surface-100));
   background-image: linear-gradient(var(--from-tint), var(--from-tint));
 }
-.terminal-view .chat-turn[data-role='user'][data-from='tab']::before {
+.terminal-view .chat-turn[data-role='user'][data-from='tab']::before,
+.terminal-view .term-question-pin[data-from='tab']::before {
   color: var(--color-term-model);
 }
 .terminal-view .chat-turn-wrap[data-side='end'] .chat-attachments {
   order: 1;
   margin: calc(var(--spacing) * 1.5) 0 0;
 }
-/* A message always stands whole, never scrolling inside its own box. One
-   taller than a share of the pane (question-height.ts sets data-tall) is not
-   pinned: stuck under the top edge it would cover the answer, and its part
-   below the pane could never be read. It scrolls away with its exchange. */
+/* A message never scrolls inside its own box, and stands whole in the flow.
+   One taller than a share of the view (question-height.ts sets data-tall)
+   cannot be pinned whole: it would cover the answer. Its row is pinned with
+   its top risen above the edge by --question-pin-offset, so it sticks only
+   once read past, its foot under the edge; and stuck (question-height.ts
+   sets data-stuck), it shows the preview
+   laid over that foot (.term-question-pin: its first lines, fading out)
+   instead of its own last lines. Nothing changes size, so nothing in the
+   flow moves when it pins. A click on either glides to the other
+   (TermQuestion). */
 .term-question {
   display: flex;
   flex-direction: column;
 }
+.term-question-pin {
+  display: none;
+}
 .terminal-view[data-pin] .term-turn > .chat-turn-wrap[data-side='end'][data-tall] {
-  position: relative;
+  top: calc(var(--pin-gap) - var(--question-pin-offset, var(--pin-gap)));
+}
+.terminal-view .chat-turn-wrap[data-tall] .term-question {
+  cursor: pointer;
+}
+.terminal-view[data-pin] .chat-turn-wrap[data-tall] > .term-question-pin {
+  display: block;
+  position: absolute;
+  z-index: 1;
+  inset-inline: 0;
+  bottom: 0;
+  cursor: pointer;
+  visibility: hidden;
+  opacity: 0;
+  translate: 0 var(--spacing);
+  transition:
+    opacity calc(var(--default-transition-duration) * 1.5) var(--ease-out-expo),
+    translate calc(var(--default-transition-duration) * 3) var(--ease-out-settle),
+    visibility calc(var(--default-transition-duration) * 1.5);
+}
+.term-question-pin::after {
+  content: attr(data-text);
+  display: block;
+  max-height: calc(3 * 1lh);
+  overflow: hidden;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  mask-image: linear-gradient(to bottom, black calc(100% - 1lh), transparent);
+}
+.terminal-view[data-pin] .chat-turn-wrap[data-tall] > :not(.term-question-pin) {
+  transition:
+    opacity calc(var(--default-transition-duration) * 1.5) var(--ease-out-expo),
+    visibility calc(var(--default-transition-duration) * 1.5);
+}
+.terminal-view[data-pin] .chat-turn-wrap[data-tall][data-stuck] > .term-question-pin {
+  visibility: visible;
+  opacity: 1;
+  translate: 0 0;
+}
+.terminal-view[data-pin] .chat-turn-wrap[data-tall][data-stuck] > :not(.term-question-pin) {
+  visibility: hidden;
+  opacity: 0;
+}
+@media (prefers-reduced-motion: reduce) {
+  .terminal-view[data-pin] .chat-turn-wrap[data-tall] > * {
+    transition: none;
+  }
 }
 /* Tool runs in the Terminal view (TerminalTools.tsx): a title that counts
    what was done, opening onto one row per call. The title has no kind icon,

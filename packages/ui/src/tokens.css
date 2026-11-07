@@ -279,6 +279,9 @@
   --font-weight-medium: 400;
 
   --ease-out-expo: cubic-bezier(0.2, 0, 0, 1);
+  /* A soft settle: runs a hair past its end and eases back, for a box that
+     opens or folds, never for something that only fades. */
+  --ease-out-settle: cubic-bezier(0.32, 1.18, 0.6, 1);
 
   --animate-fade-in: fade-in 150ms var(--ease-out-expo);
 }

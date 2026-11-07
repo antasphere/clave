@@ -106,6 +106,26 @@ describe('the daemon’s git port over a real checkout', () => {
     expect((await port.statusBatch([repo]))[0]).toMatchObject({ path: repo })
   })
 
+  it('reads the origin remote as the checkout keeps it, null without one (PRDCT-4151)', async () => {
+    // Its own folder, so the discovery test beside it still finds one repository.
+    const elsewhere = mkdtempSync(path.join(SCRATCH, 'remote-'))
+    try {
+      const clone = path.join(elsewhere, 'clone')
+      git(elsewhere, 'clone', '-q', repo, clone)
+      expect(await port.remote(clone)).toEqual({ url: repo })
+      git(clone, 'remote', 'set-url', 'origin', 'git@example.test:acme/repo.git')
+      expect(await port.remote(clone)).toEqual({ url: 'git@example.test:acme/repo.git' })
+      git(clone, 'remote', 'set-url', 'origin', 'https://me:s3cret@example.test/acme/repo.git')
+      expect(await port.remote(clone)).toEqual({ url: 'https://example.test/acme/repo.git' })
+      git(clone, 'remote', 'set-url', 'origin', 'https://me:p@ss@example.test/acme/repo.git')
+      expect(await port.remote(clone)).toEqual({ url: 'https://example.test/acme/repo.git' })
+      expect(await port.remote(repo)).toEqual({ url: null })
+      expect(await port.remote(elsewhere)).toEqual({ url: null })
+    } finally {
+      rmSync(elsewhere, { recursive: true, force: true })
+    }
+  })
+
   it('finds the repository under its parent folder', async () => {
     const found = await port.discover(root, true)
     expect(found.repos.map((r) => r.path)).toEqual([repo])

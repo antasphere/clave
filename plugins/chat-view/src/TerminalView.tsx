@@ -51,6 +51,11 @@ import { AccountChip } from './AccountChip'
 import { useQuestionHeight } from './question-height'
 import { blockKey, groupEntries, visibleEntries, type Block } from './tools'
 import { ToolDisclosure } from './disclosure'
+import { ExchangeContext, digestMessages, indexExchanges, recentTimelines } from './exchanges'
+import { useTimelineDigests } from './digest'
+import { digestKey } from '../../../src/shared/exchange-digest'
+import { useExchangeJump } from './jump'
+import { useSessionStore } from '../../../src/renderer/src/store/session-store'
 import { ApprovalRun, PromptDock } from './PromptDock'
 import { refusedAnswer } from './refused-answer'
 import { serverDock, withServerPending } from './server-requests'
@@ -75,7 +80,7 @@ import { JumpToEnd } from './JumpToEnd'
 import { useEarlier, type EarlierPage } from './earlier'
 import { useTranscriptSearch } from './search'
 import { useFitRow } from './fit'
-import { EarlierLoading } from './EarlierLoading'
+import { EarlierLoading, JumpPill } from './EarlierLoading'
 import {
   attachmentIssue,
   MAX_TOTAL_IMAGE_BYTES,
@@ -274,12 +279,7 @@ function TerminalTurn({
       <section className="term-turn">
         {rows.map(({ block, key }) =>
           block.kind === 'delivery-group' ? (
-            <DeliveryStack
-              key={key}
-              group={block}
-              id={key}
-              renderEntry={(entry) => <EntryRow entry={entry} onError={onError} />}
-            />
+            <DeliveryStack key={key} group={block} id={key} />
           ) : block.kind === 'tool-group' ? (
             <ToolRow key={key} group={block} live={key === liveRun} />
           ) : block.kind === 'approval-group' ? (
@@ -707,13 +707,58 @@ export function TerminalView({
   }, [blocks])
   // The reader's open tool rows, kept across the rows' unmounts (`ToolDisclosure`).
   const [disclosure] = useState(() => new Map<string, boolean>())
+  // Each message from another tab with what this session sent that tab
+  // around it, for the exchange timeline's cards (`indexExchanges`).
+  // The digest runs the agent the tab runs, on its account: the store's
+  // record of the tab carries what the view's session does not.
+  const workspaceId = useSessionStore(
+    (s) => s.sessions.find((x) => x.id === session.id)?.workspaceId
+  )
+  const launchProfileId = useSessionStore(
+    (s) => s.sessions.find((x) => x.id === session.id)?.launchProfileId
+  )
+  const claudeProfileId = useSessionStore(
+    (s) => s.sessions.find((x) => x.id === session.id)?.claudeProfileId
+  )
+  const configDir = useSessionStore(
+    (s) => s.sessions.find((x) => x.id === session.id)?.claudeConfigDir
+  )
+  const exchanges = useMemo(
+    () => ({
+      sessionId: session.id,
+      index: indexExchanges(presentation.entries),
+      launch: { workspaceId, launchProfileId, claudeProfileId, configDir },
+      recent: recentTimelines(blocks)
+    }),
+    [
+      session.id,
+      presentation.entries,
+      blocks,
+      workspaceId,
+      launchProfileId,
+      claudeProfileId,
+      configDir
+    ]
+  )
+  // The digests of the conversation's latest timelines, asked for by the view
+  // whether or not their cards are on screen, and filed by tab (digest.ts).
+  const digestTimelines = useMemo(
+    () =>
+      blocks.flatMap(({ block, key }) => {
+        if (block.kind !== 'delivery-group' || !exchanges.recent.has(key)) return []
+        const messages = digestMessages(block, exchanges.index)
+        return [{ key: digestKey(messages), messages }]
+      }),
+    [blocks, exchanges]
+  )
+  useTimelineDigests(session.id, digestTimelines, exchanges.launch)
   const [pinQuestions, setPinQuestions] = useState(() => localStorage.getItem(PIN_KEY) !== 'off')
   const togglePin = (): void =>
     setPinQuestions((value) => {
       localStorage.setItem(PIN_KEY, value ? 'off' : 'on')
       return !value
     })
-  useQuestionHeight(transcript.scroll)
+  useQuestionHeight(transcript.scroll, pinQuestions)
   // The mark is the agent at work, nothing else: it leaves with the state.
   const showMark = state === 'working'
   // The run in flight: the last one, while the turn it belongs to still runs
@@ -734,6 +779,18 @@ export function TerminalView({
     scroll: transcript.scroll,
     more: before !== null
   })
+  // Another tab's card opened this one at an exchange (jump.ts).
+  const jump = useExchangeJump({
+    sessionId: session.id,
+    rows: turns,
+    active: visible,
+    more: before !== null,
+    scroll: transcript.scroll
+  })
+  const reveal =
+    jump.reveal && (!searchReveal || jump.reveal.nonce > searchReveal.nonce)
+      ? jump.reveal
+      : searchReveal
   return (
     <div
       ref={pane}
@@ -818,24 +875,26 @@ export function TerminalView({
             {/* Mounted from the start, empty or not: what it gains is told apart
                 from what it opened on by the rows it rendered before. */}
             <ToolDisclosure.Provider value={disclosure}>
-              <TranscriptRows
-                rows={turns}
-                settled={pastRead}
-                scroll={transcript.scroll}
-                reveal={searchReveal}
-                holdAbove={pinQuestions}
-              >
-                {(turn, index, arriving) => (
-                  <TerminalTurn
-                    key={turn.key}
-                    rows={turn.rows}
-                    first={index === 0}
-                    arriving={arriving}
-                    liveRun={liveRun}
-                    onError={report}
-                  />
-                )}
-              </TranscriptRows>
+              <ExchangeContext.Provider value={exchanges}>
+                <TranscriptRows
+                  rows={turns}
+                  settled={pastRead}
+                  scroll={transcript.scroll}
+                  reveal={reveal}
+                  holdAbove={pinQuestions}
+                >
+                  {(turn, index, arriving) => (
+                    <TerminalTurn
+                      key={turn.key}
+                      rows={turn.rows}
+                      first={index === 0}
+                      arriving={arriving}
+                      liveRun={liveRun}
+                      onError={report}
+                    />
+                  )}
+                </TranscriptRows>
+              </ExchangeContext.Provider>
             </ToolDisclosure.Provider>
             {showMark && <ProviderMark provider={session.provider} />}
             {state === 'ended' && (
@@ -843,7 +902,7 @@ export function TerminalView({
             )}
           </div>
         </div>
-        {earlier.loading && <EarlierLoading />}
+        {jump.status ? <JumpPill status={jump.status} /> : earlier.loading && <EarlierLoading />}
         {transcript.away && <JumpToEnd onClick={transcript.jump} />}
       </div>
       <div className="chat-composer-wrap term-composer-wrap">

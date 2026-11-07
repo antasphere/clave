@@ -11,6 +11,7 @@ import { registerFeedbackHandlers } from './feedback-handlers'
 import { registerFsHandlers } from './fs-handlers'
 import { registerPtyHandlers } from './pty-handlers'
 import { registerShellHandlers } from './shell-handlers'
+import { registerExchangeDigestHandlers } from './exchange-digest-handlers'
 import { registerLocationHandlers } from './location-handlers'
 import { registerSshHandlers } from './ssh-handlers'
 import { registerAgentHandlers } from './agent-handlers'
@@ -36,6 +37,9 @@ import { registerAntasphereAccountHandlers } from './antasphere-account-handlers
 import { registerGithubHandlers } from './github-handlers'
 // ── Lane A: the server ──
 import { registerServerHandlers } from './server-handlers'
+import { registerServerPairingHandlers } from './server-pairing-handlers'
+// ── Lane B (server wave): a Mac as a server, the tailnet scan ──
+import { registerServerSetupHandlers } from './server-setup-handlers'
 import { registerActivityHandlers } from './activity-handlers'
 // ── Lane C: settings behind ports ──
 // ── Lane F: the shell ──
@@ -60,6 +64,7 @@ export function registerIpcHandlers(deps: KeymapHandlerDeps = {}): void {
   registerFsHandlers()
   registerPtyHandlers()
   registerShellHandlers()
+  registerExchangeDigestHandlers()
   registerLocationHandlers()
   registerSshHandlers()
   registerAgentHandlers()
@@ -83,6 +88,9 @@ export function registerIpcHandlers(deps: KeymapHandlerDeps = {}): void {
   registerGithubHandlers()
   // ── Lane A: the server ──
   registerServerHandlers()
+  registerServerPairingHandlers()
+  // ── Lane B (server wave): a Mac as a server, the tailnet scan ──
+  registerServerSetupHandlers()
   // ── Lane C: settings behind ports ──
   // ── Lane F: the shell ──
   registerMicHandlers()

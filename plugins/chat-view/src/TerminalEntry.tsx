@@ -3,7 +3,7 @@
    transcript would: the same markdown, the same tool runs, the same copy
    under a turn. Moved out of TerminalView.tsx on 6 November 2026; nothing
    here changed in the move. */
-import { memo, useMemo, useState } from 'react'
+import { memo, useMemo, useState, type ReactNode } from 'react'
 import ReactMarkdown, { type Components } from 'react-markdown'
 import { CheckIcon, ClipboardDocumentIcon } from '@heroicons/react/24/outline'
 import { createEntryMarkdownPlugins } from './markdown-append'
@@ -109,19 +109,12 @@ export const EntryRow = memo(function EntryRow({
       >
         <Attachments files={entry.attachments ?? []} />
         {text.trim() !== '' && (
-          // The message stands whole; one too tall to pin scrolls away with
-          // its exchange instead (question-height.ts).
-          <div className="term-question">
-            <article
-              className="chat-turn"
-              data-role="user"
-              data-from={delivery ? 'tab' : undefined}
-              data-interrupted={entry.interrupted ? 'true' : undefined}
-            >
-              {delivery && <SenderChip sender={delivery.sender} />}
-              {text.replace(/\s+$/, '')}
-            </article>
-          </div>
+          <TermQuestion
+            text={text.replace(/\s+$/, '')}
+            sender={delivery ? <SenderChip sender={delivery.sender} /> : null}
+            fromTab={!!delivery}
+            interrupted={!!entry.interrupted}
+          />
         )}
         {entry.interrupted && <span className="chat-turn-note">Interrupted</span>}
         <TurnMeta at={entry.at} text={text} />
@@ -159,3 +152,83 @@ export const ToolRow = memo(
     a.group.tools.length === b.group.tools.length &&
     a.group.tools.every((tool, i) => tool === b.group.tools[i])
 )
+
+/** The reader's message, always whole in the flow. A short one stays pinned
+ *  over its answer as it is. A long one (question-height.ts marks its row
+ *  `data-tall`) is pinned only once it has been read past, and then as its
+ *  first lines, fading out: the preview below, drawn from `data-text` by
+ *  the stylesheet so its words are not in the document twice (find in page,
+ *  copy). A click on the preview glides back up to the whole message; a click
+ *  on the whole message glides down to where it pins. A click that ends a
+ *  text selection is a selection, not a jump. */
+function TermQuestion({
+  text,
+  sender,
+  fromTab,
+  interrupted
+}: {
+  text: string
+  sender: ReactNode
+  fromTab: boolean
+  interrupted: boolean
+}): React.JSX.Element {
+  return (
+    <>
+      <div
+        className="term-question"
+        onClick={(event) => {
+          const row = tallRow(event.currentTarget)
+          if (!row) return
+          // Down to where the preview takes over: the row's sticky offset.
+          glide(row, row.getBoundingClientRect().top - parseFloat(getComputedStyle(row).top))
+        }}
+      >
+        <article
+          className="chat-turn"
+          data-role="user"
+          data-from={fromTab ? 'tab' : undefined}
+          data-interrupted={interrupted ? 'true' : undefined}
+        >
+          {sender}
+          {text}
+        </article>
+      </div>
+      <div
+        className="term-question-pin"
+        data-from={fromTab ? 'tab' : undefined}
+        data-text={text}
+        aria-hidden="true"
+        onClick={(event) => {
+          const row = tallRow(event.currentTarget)
+          const section = row?.parentElement
+          if (!row || !section) return
+          // Up to the message's own place, the pin gap under the top edge.
+          glide(row, section.getBoundingClientRect().top - pinGap(row))
+        }}
+      />
+    </>
+  )
+}
+
+/** The long message's row a click landed in, unless the click made a
+ *  selection or the message is not a long one. */
+function tallRow(target: HTMLElement): HTMLElement | null {
+  if (window.getSelection()?.toString()) return null
+  const row = target.closest<HTMLElement>('.chat-turn-wrap')
+  return row?.hasAttribute('data-tall') ? row : null
+}
+
+/** The pin gap, resolved: the row's sticky top plus the offset that lifts a
+ *  long message's top above the edge (question-height.ts). */
+function pinGap(row: HTMLElement): number {
+  const top = parseFloat(getComputedStyle(row).top) || 0
+  return top + (parseFloat(row.style.getPropertyValue('--question-pin-offset')) || 0)
+}
+
+/** Scroll the transcript so a point now `to` px below the top of the viewport
+ *  (in the document's frame) lands at its top, smoothly. */
+function glide(row: HTMLElement, to: number): void {
+  const scroller = row.closest<HTMLElement>('.chat-scroll')
+  if (!scroller) return
+  scroller.scrollBy({ top: to - scroller.getBoundingClientRect().top, behavior: 'smooth' })
+}

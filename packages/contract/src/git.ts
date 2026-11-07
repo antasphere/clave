@@ -224,6 +224,16 @@ export const GitCheckIgnored = Command.define('GitCheckIgnored', {
   failure: Failure
 })
 // ── The remotes ──
+/** The checkout's `origin` remote as git keeps it, null for a folder that
+ *  is no repository or names no `origin` (PRDCT-4151: the key that pairs a
+ *  workspace on a server with the same tree on a Mac). */
+export const GitRemoteResult = Schema.Struct({ url: Schema.NullOr(Schema.String) })
+export type GitRemoteResult = typeof GitRemoteResult.Type
+export const GetGitRemote = Query.define('GetGitRemote', {
+  payload: Cwd,
+  success: GitRemoteResult,
+  failure: Failure
+})
 export const GitFetch = Command.define('GitFetch', {
   payload: Cwd,
   success: Schema.Void,
@@ -389,6 +399,7 @@ export const gitGroup = ApiGroup.make('git')
   .add(HttpCqrs.commandEndpoint('statusBatch', '/git/status-batch', GetGitStatusBatch))
   .add(HttpCqrs.queryEndpoint('discover', '/git/discover', DiscoverGitRepos))
   .add(HttpCqrs.commandEndpoint('checkIgnored', '/git/check-ignored', GitCheckIgnored))
+  .add(HttpCqrs.queryEndpoint('remote', '/git/remote', GetGitRemote))
   .add(HttpCqrs.commandEndpoint('fetch', '/git/fetch', GitFetch))
   .add(HttpCqrs.commandEndpoint('fetchBatch', '/git/fetch-batch', GitFetchBatch))
   .add(HttpCqrs.commandEndpoint('refreshRemotes', '/git/refresh-remotes', GitRefreshRemotes))
@@ -429,6 +440,7 @@ export interface GitOperations {
     cwd: string,
     paths: ReadonlyArray<string>
   ) => Promise<ReadonlyArray<string>>
+  readonly remote: (cwd: string) => Promise<GitRemoteResult>
   readonly fetch: (cwd: string) => Promise<void>
   readonly fetchBatch: (paths: ReadonlyArray<string>) => Promise<void>
   readonly refreshRemotes: (
