@@ -115,6 +115,7 @@ export function useExchangeJump({
     const index = rows.findIndex((row) => rowCarries(row, words))
     if (index >= 0) {
       done(sessionId, jump.nonce)
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- answers a request from the jump store (outside React) by scrolling the virtualiser, in the same step that marks the request done
       setStatus(null)
       setReveal({ index, nonce: Date.now(), align: 'center' })
       flash(scroll, index, words)
