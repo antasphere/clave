@@ -7,10 +7,20 @@
  * the empty state, the ring spinner. Nothing here carries a literal colour:
  * every value reads the theme (`useTheme`) or the spec (`theme.ts`).
  */
-import { Children, Fragment, useEffect, useState, type ReactNode } from 'react'
+import {
+  Children,
+  Fragment,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type ComponentRef,
+  type ReactNode
+} from 'react'
 import {
   Animated,
   Easing,
+  KeyboardAvoidingView,
   Pressable,
   StyleSheet,
   Text,
@@ -49,9 +59,27 @@ export function Screen({
   testID?: string
 }): ReactNode {
   const t = useTheme()
+  const frame = useRef<ComponentRef<typeof View>>(null)
+  const [windowTop, setWindowTop] = useState(0)
+  const measureFrame = useCallback((): void => {
+    // Keyboard coordinates use the window; notices can move the screen below its origin.
+    frame.current?.measureInWindow((_x, y) => setWindowTop(y))
+  }, [])
   return (
-    <View style={[styles.screen, { backgroundColor: t.colors.surface0 }, style]} testID={testID}>
-      {children}
+    <View
+      ref={frame}
+      collapsable={false}
+      onLayout={measureFrame}
+      style={[styles.screen, { backgroundColor: t.colors.surface0 }, style]}
+      testID={testID}
+    >
+      <KeyboardAvoidingView
+        style={styles.screen}
+        behavior="padding"
+        keyboardVerticalOffset={windowTop}
+      >
+        {children}
+      </KeyboardAvoidingView>
     </View>
   )
 }

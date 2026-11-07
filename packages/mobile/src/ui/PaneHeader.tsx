@@ -3,12 +3,11 @@
  * alike on the desktop, and of every screen here: the status dot, the
  * name, a quiet meta line, the pane's icon buttons on the right. It stands
  * where the native stack's header stood, one control tall plus the box's
- * inset, under the status bar's inset, so the phone's chrome is the
+ * inset. The app root owns the status bar's safe area, so the phone's chrome is the
  * desktop's rather than the platform's.
  */
 import type { ReactNode } from 'react'
 import { StyleSheet, Text, View } from 'react-native'
-import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { IconButton, StatusDot, type DotStatus } from './components'
 import { control, space, text, type, useTheme } from './theme'
 
@@ -28,13 +27,11 @@ export function PaneHeader({
   testID?: string
 }): ReactNode {
   const t = useTheme()
-  const insets = useSafeAreaInsets()
   return (
     <View
       style={[
         styles.header,
         {
-          paddingTop: insets.top + space(1),
           backgroundColor: t.colors.surface0,
           borderBottomColor: t.colors.borderSubtle
         }
@@ -77,6 +74,7 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     gap: space(2),
     minHeight: control.h + space(2),
+    paddingTop: space(1),
     paddingBottom: space(1),
     paddingHorizontal: space(2),
     borderBottomWidth: StyleSheet.hairlineWidth

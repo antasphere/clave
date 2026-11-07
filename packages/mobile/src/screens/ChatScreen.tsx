@@ -12,16 +12,7 @@
  */
 import type { NativeStackScreenProps } from '@react-navigation/native-stack'
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import {
-  Alert,
-  FlatList,
-  KeyboardAvoidingView,
-  Pressable,
-  StyleSheet,
-  Text,
-  TextInput,
-  View
-} from 'react-native'
+import { Alert, FlatList, Pressable, StyleSheet, Text, TextInput, View } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import type { Entry, Permission } from '../chat/reducer'
 import { parseDelivery } from '../chat/delivery'
@@ -351,7 +342,7 @@ export function ChatScreen({ navigation, route }: Props): ReactNode {
           </View>
         }
       />
-      <KeyboardAvoidingView style={styles.fill} behavior="padding" keyboardVerticalOffset={0}>
+      <View style={styles.fill}>
         {state?.error ? (
           <Notice tone="error" style={{ marginTop: space(2) }} testID="chat-error">
             {state.error}
@@ -558,7 +549,7 @@ export function ChatScreen({ navigation, route }: Props): ReactNode {
             ) : null}
           </View>
         </View>
-      </KeyboardAvoidingView>
+      </View>
     </Screen>
   )
 }
