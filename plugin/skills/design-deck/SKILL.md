@@ -204,6 +204,8 @@ pulses, nothing rises in.
 
 - Self-contained: one `index.html`, no request to the network, the data in the
   `slideless-data` block, read once at load.
+- Fill the `slideless-data` block with a replacer FUNCTION, never a replacement
+  string: `$&`, `$'` and `` $` `` in the data would be read as patterns.
 - Escape every value the agent wrote before it goes into the page.
 - Every word earns its place: no label that repeats the panel, no meta line nobody reads.
 - Look at it rendered, in the panel, light and dark, with real data, a long headline and
