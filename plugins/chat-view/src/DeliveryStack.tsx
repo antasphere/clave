@@ -1,9 +1,10 @@
-import { useState, type CSSProperties } from 'react'
+import { useMemo, useState, type CSSProperties } from 'react'
 import { ChevronDownIcon } from '@heroicons/react/24/outline'
 import { parseDelivery } from '../../../src/shared/exchange-provenance'
 import { useSessionStore } from '../../../src/renderer/src/store/session-store'
 import { useDisclosure } from './disclosure'
-import { gist, useExchange, type ExchangeSide } from './exchanges'
+import { gist, useExchange, useExchanges, type ExchangeSide } from './exchanges'
+import { useDigest } from './digest'
 import { ExchangeDrawing } from './ExchangeDrawing'
 import type { DeliveryEntry, DeliveryGroup } from './tools'
 
@@ -20,7 +21,9 @@ const clock = (at: number): string =>
  * transcript's own size — who wrote, the message's first line, whether this
  * session answered, when. It opens smoothly onto the exchange whole: what this
  * session had asked that tab, the message, and what it answered
- * (`indexExchanges`, by the tabs' ids). The timeline holds the messages ALONE:
+ * (`indexExchanges`, by the tabs' ids). At its head, the digest: what the
+ * reader needs from these messages, read once they hold still (`useDigest`),
+ * the card it came from marked in accent. The timeline holds the messages ALONE:
  * what the agent says to the reader stays in the transcript beside it (the
  * deck of 5 November 2026 that captured the agent's replies hid a question
  * meant for the reader).
@@ -34,24 +37,64 @@ export function DeliveryStack({
 }): React.JSX.Element {
   const names = [...new Set(group.messages.map(senderName))]
   const count = group.messages.length
+  const { index, launch } = useExchanges()
+  // What the digest reads: each message with what this session asked before
+  // it and answered after it (`indexExchanges`).
+  const read = useMemo(
+    () =>
+      group.messages.map((message) => {
+        const exchange = index.get(message) ?? {}
+        return {
+          from: senderName(message),
+          text: (parseDelivery(message.text)?.body ?? message.text).trim(),
+          ...(exchange.request && { request: exchange.request.text }),
+          ...(exchange.reply && { reply: exchange.reply.text })
+        }
+      }),
+    [group.messages, index]
+  )
+  const digest = useDigest(read, launch)
+  const done = digest.state === 'done' ? digest.result : null
+  const flagged = done?.needsYou ? done.message : null
   return (
     <section
       className="chat-delivery-stack exchange-timeline"
       data-messages={count}
+      data-digest={digest.state}
+      data-needs-you={done?.needsYou || undefined}
       aria-label={`${count} ${count === 1 ? 'message' : 'messages'} from ${names.join(', ')}`}
     >
       <header className="exchange-head">
         <ExchangeDrawing />
         <span className="exchange-title">
-          <span className="exchange-eyebrow">From other tabs</span>
-          <span className="exchange-names" title={names.join(', ')}>
-            {names.join(', ')}
+          <span className="exchange-eyebrow">
+            From <span className="exchange-names">{names.join(', ')}</span>
+          </span>
+          <span className="exchange-digest" aria-live="polite">
+            <span className="exchange-digest-inner">
+              {digest.state === 'reading' ? (
+                <span className="exchange-digest-reading">Reading what matters for you…</span>
+              ) : done ? (
+                <span
+                  className="exchange-digest-text"
+                  title="Read by Haiku from the messages below"
+                >
+                  {done.summary}
+                </span>
+              ) : null}
+            </span>
           </span>
         </span>
       </header>
       <ol className="exchange-list">
-        {group.messages.map((message, index) => (
-          <ExchangeCard key={index} message={message} id={`${id}-${index}`} order={index} />
+        {group.messages.map((message, order) => (
+          <ExchangeCard
+            key={order}
+            message={message}
+            id={`${id}-${order}`}
+            order={order}
+            needsYou={flagged === order}
+          />
         ))}
       </ol>
     </section>
@@ -61,12 +104,15 @@ export function DeliveryStack({
 function ExchangeCard({
   message,
   id,
-  order
+  order,
+  needsYou
 }: {
   message: DeliveryEntry
   id: string
   /** Its place in the timeline, for the arrival's stagger. */
   order: number
+  /** The digest found what the reader needs in this message. */
+  needsYou: boolean
 }): React.JSX.Element {
   const disclosure = useDisclosure(id)
   const [built, setBuilt] = useState(disclosure.initial)
@@ -78,6 +124,7 @@ function ExchangeCard({
     <li
       className="exchange"
       data-replied={reply ? 'true' : undefined}
+      data-needs-you={needsYou || undefined}
       style={{ '--exchange-i': Math.min(order, 6) } as CSSProperties}
     >
       <span className="exchange-node" aria-hidden="true" />

@@ -52,6 +52,7 @@ import { useQuestionHeight } from './question-height'
 import { blockKey, groupEntries, visibleEntries, type Block } from './tools'
 import { ToolDisclosure } from './disclosure'
 import { ExchangeContext, indexExchanges } from './exchanges'
+import { useSessionStore } from '../../../src/renderer/src/store/session-store'
 import { ApprovalRun, PromptDock } from './PromptDock'
 import { refusedAnswer } from './refused-answer'
 import { serverDock, withServerPending } from './server-requests'
@@ -275,11 +276,7 @@ function TerminalTurn({
       <section className="term-turn">
         {rows.map(({ block, key }) =>
           block.kind === 'delivery-group' ? (
-            <DeliveryStack
-              key={key}
-              group={block}
-              id={key}
-            />
+            <DeliveryStack key={key} group={block} id={key} />
           ) : block.kind === 'tool-group' ? (
             <ToolRow key={key} group={block} live={key === liveRun} />
           ) : block.kind === 'approval-group' ? (
@@ -709,7 +706,27 @@ export function TerminalView({
   const [disclosure] = useState(() => new Map<string, boolean>())
   // Each message from another tab with what this session sent that tab
   // around it, for the exchange timeline's cards (`indexExchanges`).
-  const exchanges = useMemo(() => indexExchanges(presentation.entries), [presentation.entries])
+  // The digest runs the agent the tab runs, on its account: the store's
+  // record of the tab carries what the view's session does not.
+  const workspaceId = useSessionStore(
+    (s) => s.sessions.find((x) => x.id === session.id)?.workspaceId
+  )
+  const launchProfileId = useSessionStore(
+    (s) => s.sessions.find((x) => x.id === session.id)?.launchProfileId
+  )
+  const claudeProfileId = useSessionStore(
+    (s) => s.sessions.find((x) => x.id === session.id)?.claudeProfileId
+  )
+  const configDir = useSessionStore(
+    (s) => s.sessions.find((x) => x.id === session.id)?.claudeConfigDir
+  )
+  const exchanges = useMemo(
+    () => ({
+      index: indexExchanges(presentation.entries),
+      launch: { workspaceId, launchProfileId, claudeProfileId, configDir }
+    }),
+    [presentation.entries, workspaceId, launchProfileId, claudeProfileId, configDir]
+  )
   const [pinQuestions, setPinQuestions] = useState(() => localStorage.getItem(PIN_KEY) !== 'off')
   const togglePin = (): void =>
     setPinQuestions((value) => {
@@ -822,24 +839,24 @@ export function TerminalView({
                 from what it opened on by the rows it rendered before. */}
             <ToolDisclosure.Provider value={disclosure}>
               <ExchangeContext.Provider value={exchanges}>
-              <TranscriptRows
-                rows={turns}
-                settled={pastRead}
-                scroll={transcript.scroll}
-                reveal={searchReveal}
-                holdAbove={pinQuestions}
-              >
-                {(turn, index, arriving) => (
-                  <TerminalTurn
-                    key={turn.key}
-                    rows={turn.rows}
-                    first={index === 0}
-                    arriving={arriving}
-                    liveRun={liveRun}
-                    onError={report}
-                  />
-                )}
-              </TranscriptRows>
+                <TranscriptRows
+                  rows={turns}
+                  settled={pastRead}
+                  scroll={transcript.scroll}
+                  reveal={searchReveal}
+                  holdAbove={pinQuestions}
+                >
+                  {(turn, index, arriving) => (
+                    <TerminalTurn
+                      key={turn.key}
+                      rows={turn.rows}
+                      first={index === 0}
+                      arriving={arriving}
+                      liveRun={liveRun}
+                      onError={report}
+                    />
+                  )}
+                </TranscriptRows>
               </ExchangeContext.Provider>
             </ToolDisclosure.Provider>
             {showMark && <ProviderMark provider={session.provider} />}

@@ -1,5 +1,6 @@
 import { createContext, useContext } from 'react'
 import { parseDelivery } from '../../../src/shared/exchange-provenance'
+import type { DigestLaunch } from '../../../src/shared/exchange-digest'
 import type { Entry } from './reducer'
 import type { DeliveryEntry } from './tools'
 
@@ -76,10 +77,21 @@ export function indexExchanges(entries: readonly Entry[]): ExchangeIndex {
   return index
 }
 
-export const ExchangeContext = createContext<ExchangeIndex>(new Map())
+/** What the exchange timelines of a view share: the pairs, and how to ask
+ *  for a digest the way the session runs its agent. */
+export interface Exchanges {
+  index: ExchangeIndex
+  launch: DigestLaunch
+}
+
+export const ExchangeContext = createContext<Exchanges>({ index: new Map(), launch: {} })
 
 export function useExchange(entry: DeliveryEntry): Exchange {
-  return useContext(ExchangeContext).get(entry) ?? {}
+  return useContext(ExchangeContext).index.get(entry) ?? {}
+}
+
+export function useExchanges(): Exchanges {
+  return useContext(ExchangeContext)
 }
 
 /** A message's first line worth reading, for the card's closed face: the

@@ -11,6 +11,7 @@ import { registerFeedbackHandlers } from './feedback-handlers'
 import { registerFsHandlers } from './fs-handlers'
 import { registerPtyHandlers } from './pty-handlers'
 import { registerShellHandlers } from './shell-handlers'
+import { registerExchangeDigestHandlers } from './exchange-digest-handlers'
 import { registerLocationHandlers } from './location-handlers'
 import { registerSshHandlers } from './ssh-handlers'
 import { registerAgentHandlers } from './agent-handlers'
@@ -60,6 +61,7 @@ export function registerIpcHandlers(deps: KeymapHandlerDeps = {}): void {
   registerFsHandlers()
   registerPtyHandlers()
   registerShellHandlers()
+  registerExchangeDigestHandlers()
   registerLocationHandlers()
   registerSshHandlers()
   registerAgentHandlers()
