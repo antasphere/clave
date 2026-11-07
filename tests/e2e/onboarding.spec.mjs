@@ -71,6 +71,45 @@ export async function run(t) {
       await shot(win, '1-welcome')
 
       await win.getByRole('button', { name: 'Get started' }).click()
+
+      // The look: the walk starts on the skin matching the Mac (Charcoal for
+      // dark, Light for light), and a pick switches the skin at once.
+      await win.locator('[data-onboarding-skin]').first().waitFor()
+      assert.equal(await title(win), 'Pick a look')
+      const device = await win.evaluate(() =>
+        window.matchMedia('(prefers-color-scheme: dark)').matches ? 'charcoal' : 'light'
+      )
+      t.check(
+        'the walk starts on the skin matching the Mac',
+        Boolean(
+          await until(
+            async () =>
+              (await win
+                .locator(`[data-onboarding-skin="${device}"]`)
+                .getAttribute('aria-checked')) === 'true'
+          )
+        )
+      )
+      t.check(
+        'all four skins are offered',
+        (await win.locator('[data-onboarding-skin]').count()) === 4
+      )
+      await win.locator('[data-onboarding-skin="coffee"]').click()
+      t.check(
+        'a pick switches the skin at once',
+        Boolean(
+          await until(
+            async () =>
+              (await win
+                .locator('[data-onboarding-skin="coffee"]')
+                .getAttribute('aria-checked')) === 'true'
+          )
+        )
+      )
+      await win.waitForTimeout(900)
+      await shot(win, '1b-look')
+      await win.getByRole('button', { name: 'Continue' }).click()
+
       await win.locator('[data-onboarding-provider="claude"]').waitFor({ timeout: 20_000 })
       assert.equal(await title(win), 'Connect your assistant')
       t.check(
@@ -123,6 +162,7 @@ export async function run(t) {
       const prefs = JSON.parse(readFileSync(path.join(dir, 'preferences.json'), 'utf-8'))
       t.check('the chosen style is the default view', prefs.chatView === 'clave.chat-view/lab')
       t.check('the walk is recorded as done', prefs.onboarding === 'done')
+      t.check('the picked skin is kept', prefs.activeSkinId === 'coffee')
       await win.waitForTimeout(600)
       await shot(win, '6-after')
     } finally {

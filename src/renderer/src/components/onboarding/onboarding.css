@@ -430,6 +430,7 @@
   line-height: 1.45;
 }
 .onb-tag {
+  white-space: nowrap;
   padding: 1px 6px;
   border-radius: 999px;
   background: color-mix(in oklab, var(--color-accent) 14%, transparent);
@@ -786,4 +787,39 @@
   .onb-choices {
     grid-template-columns: minmax(0, 1fr);
   }
+}
+
+/* step 2: the look. Each card is painted in its own skin (Settings' own
+   swatch preview, `data-theme`), so the reader sees it before choosing; the
+   choice applies at once, the walk itself repainting with it. */
+.onb-looks {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: calc(var(--spacing) * 2.5);
+}
+.onb-look {
+  padding: calc(var(--spacing) * 2.5);
+}
+.onb-look-preview {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  margin-bottom: calc(var(--spacing) * 1);
+}
+@media (max-width: 760px) {
+  .onb-looks {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+/* the look scene's dark page: the ink's own colour as its paper, so it is the
+   dark one in a light skin and the light one in a dark skin */
+.onb-drawing .onb-scene-dark {
+  fill: color-mix(in oklab, var(--ink) 82%, var(--paper));
+  stroke: color-mix(in oklab, var(--ink) 40%, transparent);
+  stroke-width: 1;
+}
+.onb-drawing .onb-scene-dark-ink {
+  stroke: color-mix(in oklab, var(--paper) 55%, transparent);
+  stroke-width: 1;
+  stroke-linecap: round;
 }

@@ -8,7 +8,8 @@
    accent is one fixed circle revealed by its dash offset, measured in the
    ring's real length, so each step advances it by exactly one division and
    it always stops on a seat; a seat lights when the accent arrives. In the
-   middle, a small scene per step: the window (what Clave is), two ends
+   middle, a small scene per step: the window (what Clave is), a light page
+   and a dark one (the look), two ends
    joined (connecting an agent), a conversation (the chat you prefer), the
    folder with a session open on it (your workspace). When the ring
    closes, the space gathers itself and lets go, a wash of the accent behind
@@ -47,7 +48,23 @@ function WindowScene(): React.JSX.Element {
   )
 }
 
-/** Step 2: two ends, the app and the agent, joined. */
+/** Step 2: the look — a light page and a dark one, half over each other. */
+function LookScene(): React.JSX.Element {
+  return (
+    <g className="onb-scene">
+      <rect className="bx bx--front" x="90" y="104" width="40" height="34" rx="6" />
+      <line className="ln ln--thin" x1="97" y1="114" x2="117" y2="114" />
+      <line className="ln ln--thin" x1="97" y1="121" x2="111" y2="121" />
+      <g className="onb-scene-row" style={{ animationDelay: '160ms' }}>
+        <rect className="onb-scene-dark" x="110" y="114" width="40" height="34" rx="6" />
+        <line className="onb-scene-dark-ink" x1="117" y1="124" x2="137" y2="124" />
+        <line className="onb-scene-dark-ink" x1="117" y1="131" x2="131" y2="131" />
+      </g>
+    </g>
+  )
+}
+
+/** Step 3: two ends, the app and the agent, joined. */
 function ConnectScene(): React.JSX.Element {
   return (
     <g className="onb-scene">
@@ -60,7 +77,7 @@ function ConnectScene(): React.JSX.Element {
   )
 }
 
-/** Step 3: a conversation, two turns, the second one being written. */
+/** Step 4: a conversation, two turns, the second one being written. */
 function ChatScene(): React.JSX.Element {
   return (
     <g className="onb-scene">
@@ -78,7 +95,7 @@ function ChatScene(): React.JSX.Element {
   )
 }
 
-/** Step 4: the folder the workspace lives in, a session already open on it. */
+/** Step 5: the folder the workspace lives in, a session already open on it. */
 function FolderScene(): React.JSX.Element {
   return (
     <g className="onb-scene">
@@ -156,9 +173,10 @@ export function OnboardingDrawing({
         {/* the centre: one scene per step, the next one coming in as the last goes */}
         <circle className="bx bx--front" cx={C.x} cy={C.y} r="40" />
         {reached === 0 && <WindowScene key="window" />}
-        {reached === 1 && <ConnectScene key="connect" />}
-        {reached === 2 && <ChatScene key="chat" />}
-        {reached >= 3 && <FolderScene key="folder" />}
+        {reached === 1 && <LookScene key="look" />}
+        {reached === 2 && <ConnectScene key="connect" />}
+        {reached === 3 && <ChatScene key="chat" />}
+        {reached >= 4 && <FolderScene key="folder" />}
       </g>
     </svg>
   )

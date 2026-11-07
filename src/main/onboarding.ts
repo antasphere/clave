@@ -108,7 +108,8 @@ export function getOnboardingState(windowId: number | null = null): OnboardingSt
   return {
     show: pending && walkWindow === windowId,
     home: homedir(),
-    chatView: typeof chatView === 'string' ? chatView : null
+    chatView: typeof chatView === 'string' ? chatView : null,
+    skin: preferencesManager.get('activeSkinId')
   }
 }
 

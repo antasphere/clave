@@ -20,6 +20,7 @@ import { setPendingChatView } from '../../lib/pending-chat-view'
 import { selectedChatProfile } from '../../store/launch-profile-store'
 import { CHAT_PROFILE_IDS } from '../../../../shared/open-session-modes'
 import { useWorkspaceStore } from '../../store/workspace-store'
+import { skinAction, useSkinStore } from '../../lib/skin'
 import './onboarding.css'
 
 /**
@@ -45,14 +46,15 @@ import './onboarding.css'
  * again from Help → Welcome to Clave…; skipping counts as done.
  */
 
-type Step = 1 | 2 | 3 | 4 | 'done'
-const STEPS = 4
+type Step = 1 | 2 | 3 | 4 | 5 | 'done'
+const STEPS = 5
 
 const CAPTIONS: Record<Step, string> = {
   1: 'Your assistants, side by side',
-  2: 'One account is all it takes',
-  3: 'Change it any time, per tab',
-  4: 'A home for your work',
+  2: 'Like the rest of your Mac',
+  3: 'One account is all it takes',
+  4: 'Change it any time, per tab',
+  5: 'A home for your work',
   done: 'Ready'
 }
 
@@ -116,6 +118,14 @@ function ChatPreview({
   )
 }
 
+/** Charcoal on a dark Mac, Light on a light one. */
+function deviceSkinId(): string {
+  return typeof window !== 'undefined' &&
+    window.matchMedia?.('(prefers-color-scheme: dark)').matches
+    ? 'charcoal'
+    : 'light'
+}
+
 export function Onboarding(): React.JSX.Element | null {
   const [open, setOpen] = useState(false)
   const [state, setState] = useState<OnboardingState | null>(null)
@@ -138,7 +148,21 @@ export function Onboarding(): React.JSX.Element | null {
   const primary = useRef<HTMLButtonElement>(null)
   const connections = useConnections()
 
+  const skins = useSkinStore((s) => s.skins)
+  const activeSkinId = useSkinStore((s) => s.activeId)
+  // The skin matching the Mac's own appearance: Charcoal for dark, Light for light.
+  const deviceSkin = deviceSkinId()
+  const pickSkin = (id: string): void => {
+    void skinAction(() => window.electronAPI.skinsActivate(id))
+  }
+
   const begin = useCallback((next: OnboardingState) => {
+    // Nobody chose a skin yet: start on the Mac's own appearance, so the
+    // walk is already drawn the way the reader's screen looks.
+    if (next.skin === null) {
+      const id = deviceSkinId()
+      void skinAction(() => window.electronAPI.skinsActivate(id))
+    }
     setState(next)
     setStep(1)
     setDirection(1)
@@ -180,7 +204,7 @@ export function Onboarding(): React.JSX.Element | null {
   const agent = talkTo && available.includes(talkTo) ? talkTo : (available[0] ?? null)
 
   const go = (next: Step): void => {
-    const order = (s: Step): number => (s === 'done' ? 5 : s)
+    const order = (s: Step): number => (s === 'done' ? 6 : s)
     setDirection(order(next) >= order(step) ? 1 : -1)
     setError(null)
     setStep(next)
@@ -343,6 +367,54 @@ export function Onboarding(): React.JSX.Element | null {
       </button>
     )
   } else if (step === 2) {
+    title = 'Pick a look'
+    description =
+      'Clave starts the way your Mac looks, dark or light. Pick another if you like; it changes right away, and Settings can change it later.'
+    body = (
+      <div className="onb-looks" role="radiogroup" aria-label="Appearance" data-stagger>
+        {skins.map((skin) => (
+          <button
+            key={skin.id}
+            type="button"
+            role="radio"
+            aria-checked={activeSkinId === skin.id}
+            className={
+              activeSkinId === skin.id ? 'onb-choice onb-look is-on' : 'onb-choice onb-look'
+            }
+            onClick={() => pickSkin(skin.id)}
+            data-onboarding-skin={skin.id}
+            data-stagger-item
+          >
+            <span className="theme-swatch-preview onb-look-preview" data-theme={skin.skin.base}>
+              <span className="theme-swatch-line w-10 mb-2" style={{ opacity: 0.7 }} />
+              <span className="flex gap-1">
+                <span className="theme-swatch-tile" />
+                <span className="theme-swatch-tile" />
+              </span>
+              <span className="theme-swatch-line w-14 mt-2" style={{ opacity: 0.4 }} />
+            </span>
+            <span className="onb-choice-title">
+              {skin.name}
+              {skin.id === deviceSkin && <span className="onb-tag">Your Mac</span>}
+              <span className="onb-choice-check">
+                <CheckIcon className="w-3 h-3" />
+              </span>
+            </span>
+          </button>
+        ))}
+      </div>
+    )
+    footer = (
+      <>
+        <button type="button" className="btn-secondary" onClick={() => go(1)}>
+          Back
+        </button>
+        <button ref={primary} type="button" className="btn-primary" onClick={() => go(3)}>
+          Continue
+        </button>
+      </>
+    )
+  } else if (step === 3) {
     title = 'Connect your assistant'
     description =
       'Clave works with the subscription you already have. Pick one; your browser opens to sign in, and you come right back.'
@@ -359,20 +431,20 @@ export function Onboarding(): React.JSX.Element | null {
     )
     footer = (
       <>
-        <button type="button" className="btn-secondary" onClick={() => go(1)}>
+        <button type="button" className="btn-secondary" onClick={() => go(2)}>
           Back
         </button>
         <button
           ref={primary}
           type="button"
           className={anyConnected ? 'btn-primary' : 'btn-secondary'}
-          onClick={() => go(3)}
+          onClick={() => go(4)}
         >
           {anyConnected ? 'Continue' : 'Skip for now'}
         </button>
       </>
     )
-  } else if (step === 3) {
+  } else if (step === 4) {
     title = 'What kind of chat do you prefer?'
     description = 'Every new conversation opens this way. Each tab can switch from its header.'
     body = (
@@ -403,7 +475,7 @@ export function Onboarding(): React.JSX.Element | null {
     )
     footer = (
       <>
-        <button type="button" className="btn-secondary" onClick={() => go(2)}>
+        <button type="button" className="btn-secondary" onClick={() => go(3)}>
           Back
         </button>
         <button
@@ -413,14 +485,14 @@ export function Onboarding(): React.JSX.Element | null {
           onClick={() => {
             void window.electronAPI.onboardingSetChatView(chatView)
             setPendingChatView(chatView)
-            go(4)
+            go(5)
           }}
         >
           Continue
         </button>
       </>
     )
-  } else if (step === 4) {
+  } else if (step === 5) {
     title = 'Make your first workspace'
     description = anyConnected
       ? 'A folder for your work. It opens with a conversation already started, so you can ask what comes next.'
@@ -517,7 +589,7 @@ export function Onboarding(): React.JSX.Element | null {
     )
     footer = (
       <>
-        <button type="button" className="btn-secondary" onClick={() => go(3)} disabled={busy}>
+        <button type="button" className="btn-secondary" onClick={() => go(4)} disabled={busy}>
           Back
         </button>
         <button
@@ -596,7 +668,7 @@ export function Onboarding(): React.JSX.Element | null {
                 <p className="onb-description">{description}</p>
                 {step !== 'done' && (
                   <ol className="onb-steps" aria-hidden="true">
-                    {[1, 2, 3, 4].map((n) => (
+                    {[1, 2, 3, 4, 5].map((n) => (
                       <li
                         key={n}
                         className={n === step ? 'on' : n < (step as number) ? 'past' : ''}

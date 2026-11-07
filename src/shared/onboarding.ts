@@ -9,6 +9,9 @@ export interface OnboardingState {
   home: string
   /** The view new chats open in (`<pluginId>/<viewId>`), when one was picked. */
   chatView: string | null
+  /** The skin chosen so far, or null when none ever was (the walk then
+   *  starts on the one matching the Mac's own appearance). */
+  skin: string | null
 }
 
 export interface OnboardingAgent {
