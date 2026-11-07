@@ -1348,7 +1348,7 @@ describe('fixed source/artifact inheritance precondition before any app/worker',
         root,
         sourceFiles: {
           ...sourceFiles,
-          'src/main/sessions/session-manager.ts':
+          'packages/host/src/sessions/session-manager.ts':
             '28b58e07486d01f8a79a01eeaad2092bf31c33e8b7dbcd80b071eb4d1b2d5f02'
         }
       }

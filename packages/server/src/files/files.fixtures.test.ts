@@ -12,7 +12,7 @@ import { createServerFiles } from './service'
 import { fileHandlers } from './handlers'
 import { startEmbedded } from '../embedded'
 import { createApiClient } from '../../../client/src/api'
-import { preparePrompt } from '../../../../src/main/sessions/attachments'
+import { preparePrompt } from '../../../host/src/sessions/attachments'
 import type { FileAttachment } from '@clave/contract/files'
 
 test('loads remote-files/owned-content through commands and verifies the retained data over HTTP', async () => {

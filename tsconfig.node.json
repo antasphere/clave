@@ -1,8 +1,23 @@
 {
   "extends": "@electron-toolkit/tsconfig/tsconfig.node.json",
-  "include": ["electron.vite.config.*", "src/main/**/*", "src/preload/**/*", "src/shared/**/*", "packages/contract/src/**/*", "packages/server/src/**/*", "packages/client/src/**/*"],
+  "include": [
+    "electron.vite.config.*",
+    "apps/desktop/src/main/**/*",
+    "apps/desktop/src/preload/**/*",
+    "apps/server/src/**/*",
+    "apps/terminals/src/**/*",
+    "apps/plugin-runner/src/**/*",
+    "apps/relay/src/**/*",
+    "packages/host/src/**/*",
+    "packages/shared/src/**/*",
+    "packages/contract/src/**/*",
+    "packages/server/src/**/*",
+    "packages/client/src/**/*"
+  ],
   "compilerOptions": {
     "composite": true,
-    "types": ["electron-vite/node"]
+    "types": [
+      "electron-vite/node"
+    ]
   }
 }

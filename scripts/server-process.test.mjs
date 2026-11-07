@@ -419,7 +419,7 @@ describe.skipIf(!built)('the terminal process beside the server (from the built 
   }, 20_000)
 
   // Wave 5, lane C (PRDCT-3433): the plugins are the server's. The entry
-  // builds its service over the checkout's plugins/ and forks each plugin's
+  // builds its service over the checkout's apps/plugins/ and forks each plugin's
   // main under Node IPC; this is the one unit check of that wiring (the
   // port handed to the server, the runner path, the runner's first message),
   // which the suite otherwise only reached through the app.
@@ -604,7 +604,7 @@ describe.skipIf(!built)('the terminal process beside the server (from the built 
         execFile(
           bunBinary(process.env, REPO),
           [
-            path.join(REPO, 'src', 'main', 'terminal-process', 'probe.ts'),
+            path.join(REPO, 'apps', 'terminals', 'src', 'probe.ts'),
             '--address',
             started.address,
             '--token',

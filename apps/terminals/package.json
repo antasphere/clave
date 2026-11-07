@@ -1,0 +1,9 @@
+{
+  "name": "@clave/terminals-app",
+  "version": "0.1.0",
+  "private": true,
+  "license": "MIT",
+  "scripts": {
+    "start": "node ../../out/main/terminal-process.js"
+  }
+}

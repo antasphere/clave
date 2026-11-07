@@ -45,7 +45,7 @@ summary,
    shows. Inner scrollers (a code block, a diff, a `pre` in a popover) stay
    `auto` on the vertical axis so a wheel over them still reaches the pane.
    The bounce itself is Chromium's own, switched on by the window's
-   `scrollBounce` (src/main/index.ts) and present for non-root scrollers from
+   `scrollBounce` (apps/desktop/src/main/index.ts) and present for non-root scrollers from
    Chromium 152 (Electron 44); nothing here imitates it. */
 html,
 body,
@@ -1695,7 +1695,7 @@ canvas[data-orb-state] {
    air to its predecessor here, so a stack of them is spaced by construction
    and a call site cannot forget. Rows wrapped one level deep (the sidebar's
    drop-gap and badge wrappers) count through :has(). Adding a fill-row family
-   means adding it to this selector — src/renderer/src/lib/row-rhythm.test.ts
+   means adding it to this selector — apps/desktop/src/renderer/src/lib/row-rhythm.test.ts
    finds every full-width class with a hover fill and fails on one left out. */
 :is(.sidebar-item, :has(> .sidebar-item)) + :is(.sidebar-item, :has(> .sidebar-item)),
 .chat-prompt-option + .chat-prompt-option,

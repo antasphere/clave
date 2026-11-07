@@ -1,12 +1,12 @@
 /**
- * The window's copies of the device read models (`src/shared/mobile-types.ts`)
+ * The window's copies of the device read models (`packages/shared/src/mobile-types.ts`)
  * are held to the contract here: each shape must be assignable both ways, so
  * a field added or renamed on one side fails this file's typecheck, the way
  * `sessions.test.ts` holds the session model's two copies together.
  */
 import { describe, expect, it } from 'vitest'
 import { Schema } from 'effect'
-import type * as Shared from '../../../src/shared/mobile-types'
+import type * as Shared from '../../shared/src/mobile-types'
 import {
   DEVICE_PAIR_PATH,
   DevicePlatform,

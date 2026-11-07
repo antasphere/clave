@@ -20,7 +20,7 @@ import {
 import type { PairingRefusal } from '@clave/contract/devices'
 
 /** The hub, when the environment names no other issuer. The same default
- *  and the same rule as `src/main/antasphere-account.ts`. */
+ *  and the same rule as `packages/host/src/antasphere-account.ts`. */
 export const DEFAULT_ANTASPHERE_ISSUER = 'https://account.antasphere.com'
 /** The environment variable that points a process at a loopback test provider. */
 export const ANTASPHERE_ISSUER_ENV = 'CLAVE_ANTASPHERE_ISSUER'

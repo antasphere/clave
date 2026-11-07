@@ -8,7 +8,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const require = createRequire(import.meta.url)
-const { applyRnEagerMetadataFix } = require('../packages/mobile/plugins/with-rn-eager-metadata')
+const { applyRnEagerMetadataFix } = require('../apps/mobile/plugins/with-rn-eager-metadata')
 
 function run(env = process.env) {
   const result = spawnSync(
@@ -34,7 +34,7 @@ function run(env = process.env) {
 it('checks the actual-codegen suite with original and post-prebuild owned metadata', () => {
   run()
   const root = mkdtempSync(path.join(tmpdir(), 'clave-rn-eager-loader-'))
-  const app = path.join(root, 'packages/mobile')
+  const app = path.join(root, 'apps/mobile')
   const pkg = path.join(root, 'node_modules/react-native/package.json')
   try {
     mkdirSync(app, { recursive: true })

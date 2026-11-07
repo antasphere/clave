@@ -2,26 +2,26 @@
   "checkpoint": "5151c41e9e1fc746def610f4cd45db60ed6186f1",
   "files": [
     {
-      "original": "plugins/chat-view/src/MarkdownMessage.tsx",
+      "original": "apps/plugins/chat-view/src/MarkdownMessage.tsx",
       "archive": "tests/diagnostics/prefix-cache/plugins/chat-view/src/MarkdownMessage.tsx",
       "original_sha256": "c2e3e4e32607530042abed310cccd67cb30ee28155bccbeaec2b86b0d01c78bb",
       "archive_sha256": "c2e3e4e32607530042abed310cccd67cb30ee28155bccbeaec2b86b0d01c78bb",
       "reverse_sha256": "c2e3e4e32607530042abed310cccd67cb30ee28155bccbeaec2b86b0d01c78bb",
       "exact_reversible": true,
       "aliases": [
-        "plugins/chat-view/src/MarkdownMessage.tsx",
+        "apps/plugins/chat-view/src/MarkdownMessage.tsx",
         "tests/diagnostics/prefix-cache/plugins/chat-view/src/MarkdownMessage.tsx"
       ]
     },
     {
-      "original": "plugins/chat-view/src/markdown-parser-reuse.ts",
+      "original": "apps/plugins/chat-view/src/markdown-parser-reuse.ts",
       "archive": "tests/diagnostics/prefix-cache/plugins/chat-view/src/markdown-parser-reuse.ts",
       "original_sha256": "244fad8ce7ea8e9ef7dfec0da6fb6b02f1783764d93645b8d9408905981acbd3",
       "archive_sha256": "244fad8ce7ea8e9ef7dfec0da6fb6b02f1783764d93645b8d9408905981acbd3",
       "reverse_sha256": "244fad8ce7ea8e9ef7dfec0da6fb6b02f1783764d93645b8d9408905981acbd3",
       "exact_reversible": true,
       "aliases": [
-        "plugins/chat-view/src/markdown-parser-reuse.ts",
+        "apps/plugins/chat-view/src/markdown-parser-reuse.ts",
         "tests/diagnostics/prefix-cache/plugins/chat-view/src/markdown-parser-reuse.ts"
       ]
     },
@@ -80,17 +80,17 @@
   ],
   "mechanical_substitutions": [
     {
-      "file": "src/renderer/src/views/markdown-parser-reuse-correctness.test.ts",
+      "file": "apps/desktop/src/renderer/src/views/markdown-parser-reuse-correctness.test.ts",
       "from": "../../../../plugins/chat-view/src/markdown-parser-reuse",
       "to": "../../../../tests/diagnostics/prefix-cache/plugins/chat-view/src/markdown-parser-reuse"
     },
     {
-      "file": "src/renderer/src/views/markdown-parser-deep-test-support.ts",
+      "file": "apps/desktop/src/renderer/src/views/markdown-parser-deep-test-support.ts",
       "from": "../../../../plugins/chat-view/src/markdown-parser-reuse",
       "to": "../../../../tests/diagnostics/prefix-cache/plugins/chat-view/src/markdown-parser-reuse"
     },
     {
-      "file": "src/renderer/src/views/markdown-parser-reuse.test.ts",
+      "file": "apps/desktop/src/renderer/src/views/markdown-parser-reuse.test.ts",
       "from": "../../../../plugins/chat-view/src/markdown-parser-reuse",
       "to": "../../../../tests/diagnostics/prefix-cache/plugins/chat-view/src/markdown-parser-reuse"
     },

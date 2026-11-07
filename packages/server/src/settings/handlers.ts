@@ -60,7 +60,7 @@ import { SettingsSource, type SettingsSourceService } from './port'
 
 /** A refusal the source threw: the contract's class, or any error carrying
  *  its tag and fields (a source loaded by a process that must not load Effect
- *  at boot throws a plain error shaped like it, `src/main/settings/source.ts`). */
+ *  at boot throws a plain error shaped like it, `packages/host/src/settings/source.ts`). */
 const asUnavailable = (error: unknown): CapabilityUnavailable | null => {
   if (error instanceof CapabilityUnavailable) return error
   if (
@@ -77,7 +77,7 @@ const asUnavailable = (error: unknown): CapabilityUnavailable | null => {
 }
 
 /** A manager's refusal: the managers say no with a plain `Error` carrying
- *  the sentence for the person (`src/main/claude-accounts.ts`,
+ *  the sentence for the person (`packages/host/src/claude-accounts.ts`,
  *  `launch-profile-manager.ts`, `account-login.ts`). A subclass (a TypeError,
  *  a system error) is a defect, not a refusal. */
 const asRefused = (error: unknown): SettingsRefused | null =>

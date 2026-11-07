@@ -312,7 +312,7 @@ export async function run(t) {
     // asking never enters the wrapper, the ask is never seen, and the page
     // opens before the cancel: two lines below go red. What this part pins
     // is the ask and its order; that the preload HONOURS a no is pinned by
-    // its unit test (`src/preload/antasphere-bridge.test.ts`), because the
+    // its unit test (`apps/desktop/src/preload/antasphere-bridge.test.ts`), because the
     // cancel's status, heard before the release, already bumps the
     // preload's own order guard (round 2 of the verifier, mutation M11).
     // The wrapper is undone in a finally, so a failed step leaves the child

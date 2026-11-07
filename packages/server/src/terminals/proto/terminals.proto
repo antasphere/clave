@@ -1,7 +1,7 @@
 // The wire contract between Clave's server and its terminal process (ADR
 // 0003, wave 3): the Terminals port of `packages/server/src/terminals/port.ts`
 // as gRPC, served by the Node process that owns node-pty
-// (`src/main/terminal-process/`) and called by the Bun server's adapter
+// (`packages/host/src/terminal-process/`) and called by the Bun server's adapter
 // (`../grpc.ts`). Field numbers are stable: add, never renumber; reserve a
 // deleted number and its name.
 //

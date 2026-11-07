@@ -5,15 +5,15 @@ app waits on it, and every provider account, session and the local daemon work w
 it. For now the login signs the user into Clave and nothing else: the hub's own APIs are
 never called.
 
-Code: `src/main/antasphere-account.ts` (the flow, Electron-free), owned by the server's
-settings source (`src/main/settings/source.ts`: the shell's `shell-source.ts` while the
+Code: `packages/host/src/antasphere-account.ts` (the flow, Electron-free), owned by the server's
+settings source (`packages/host/src/settings/source.ts`: the shell's `shell-source.ts` while the
 server runs in-process, the standalone's `standalone-source.ts` under Bun), served as one
 settings domain of the wire contract (`packages/contract/src/settings/antasphere.ts`, the
 server's handlers in `packages/server/src/settings/`, the typed client in
 `packages/client/src/settings.ts`), the IPC route and the browser in
-`src/main/ipc-handlers/antasphere-account-handlers.ts`, the preload's routes in
-`src/preload/index.ts`, the read model in `src/shared/antasphere-account-types.ts`, the
-window's store and section in `src/renderer/src/store/antasphere-account-store.ts` and
+`packages/host/src/ipc-handlers/antasphere-account-handlers.ts`, the preload's routes in
+`apps/desktop/src/preload/index.ts`, the read model in `packages/shared/src/antasphere-account-types.ts`, the
+window's store and section in `apps/desktop/src/renderer/src/store/antasphere-account-store.ts` and
 `components/settings/AntasphereAccountSection.tsx`.
 
 ## Who owns what (ADR 0003)
@@ -26,7 +26,7 @@ same manager; with the server in another process, attached to a standalone serve
 the packaged default on macOS), the shell builds **no** manager at all: nothing under the
 app's user data is restored or offered as a login, the window asks the server, and main's
 IPC route refuses (`CapabilityUnavailable`, `antasphereAccount`). Whether the shell builds
-one follows the one launch decision main takes at boot (`src/main/server-launch.ts`,
+one follows the one launch decision main takes at boot (`packages/host/src/server-launch.ts`,
 `shellOwnsAntasphereAccount` in `server-boot.ts`), never a second read of the environment:
 until 2 November 2026 the shell decided from the environment alone, so the installed app,
 whose server is separate, kept a manager no login ever reached and refused the handoff the
@@ -212,14 +212,14 @@ Clave.
 
 ## Verification
 
-- `npx vitest run src/main/antasphere-account.test.ts`: the flow against a local signed
+- `npx vitest run packages/host/src/antasphere-account.test.ts`: the flow against a local signed
   OIDC provider (`tests/e2e/fixtures/oidc-provider.mjs`): discovery, registration and
   its reuse, the code flow, every invalid token, the callback's checks, restore and
   renewal, corrupt and unreadable records, cancel, sign-out and quit against answers in
   flight, the handoff's confirmation, and a Unicode identity on the Keychain adapter
   (sealed ASCII, restored whole, the item rotated and cleaned). Nothing reaches
   `account.antasphere.com`.
-- `npx vitest run packages/contract packages/server/src/settings packages/client src/main/settings src/preload src/main/antasphere-handoff.test.ts src/renderer/src/store/antasphere-account-store.test.ts`:
+- `npx vitest run packages/contract packages/server/src/settings packages/client packages/host/src/settings apps/desktop/src/preload packages/host/src/antasphere-handoff.test.ts apps/desktop/src/renderer/src/store/antasphere-account-store.test.ts`:
   the contract (the handoff in the sign-in's answer and in no event or query), the
   server's routes and refusals, the typed client, the source's ownership and refusals,
   the preload's guard against a late `true` on both arms, the shell's check of what it
@@ -238,7 +238,7 @@ Clave.
   sealed under `<user data>/server` and the run's keychain file, a cancelled login's link
   lands on nothing, and the login is restored at the next launch. That spec is red on the
   code before 2 November 2026.
-- `npx vitest run src/main/antasphere-account.fixtures.test.ts`, or on Bun
+- `npx vitest run packages/host/src/antasphere-account.fixtures.test.ts`, or on Bun
   `CLAVE_FIXTURES=1 bun scripts/antasphere-account-fixtures.ts fixtures load antasphere-account/signed-in`:
   the `@structure-ai/fixtures` scenario, one isolated run against a provider it starts
   and a Clave server of the run's own: the sign-in goes through the server's commands and

@@ -6,7 +6,7 @@
 /**
  * The side panel's two tabs share one set of open folders, and both start shut.
  *
- * Two complaints, one mechanism (src/renderer/src/lib/panel-expansion.ts, and
+ * Two complaints, one mechanism (apps/desktop/src/renderer/src/lib/panel-expansion.ts, and
  * `panelExpandedDirs` in the session store):
  *
  * 1. The trees were not linked. You browsed the git tab down to a folder,

@@ -6,7 +6,7 @@ import { afterEach, expect, test, vi } from 'vitest'
 import { createServerFiles } from './service'
 import { startEmbedded } from '../embedded'
 import { createApiClient } from '../../../client/src/api'
-import { preparePrompt } from '../../../../src/main/sessions/attachments'
+import { preparePrompt } from '../../../host/src/sessions/attachments'
 
 const state = vi.hoisted(() => ({
   hook: undefined as undefined | ((path: string) => Promise<void>)

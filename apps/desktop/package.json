@@ -1,0 +1,11 @@
+{
+  "name": "@clave/desktop-app",
+  "version": "0.1.0",
+  "private": true,
+  "license": "MIT",
+  "scripts": {
+    "dev": "npm --prefix ../.. run dev",
+    "build": "npm --prefix ../.. run build",
+    "start": "npm --prefix ../.. start"
+  }
+}

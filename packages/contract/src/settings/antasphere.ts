@@ -3,7 +3,7 @@
  * of Clave itself with an Antasphere account. The server owns the login:
  * its flow, its token exchange and validation, the sealed session, its
  * renewal and its sign-out run beside the settings managers
- * (`src/main/antasphere-account.ts`), in the app's process while the server
+ * (`packages/host/src/antasphere-account.ts`), in the app's process while the server
  * runs there and in the standalone server's when it runs alone.
  *
  * What a client reads is the status, a read model with nothing in it that
@@ -18,7 +18,7 @@ import { Command, Query } from '@structure-ai/cqrs'
 import { Schema } from 'effect'
 import { RefusedOrUnavailable } from './failures'
 
-/** Why the last login did not land (`src/shared/antasphere-account-types.ts`). */
+/** Why the last login did not land (`packages/shared/src/antasphere-account-types.ts`). */
 export const AntasphereLoginFailure = Schema.Literal(
   'cancelled',
   'timeout',

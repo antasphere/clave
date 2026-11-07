@@ -6,7 +6,7 @@ import {
   mobileFixtureCatalog,
   verifyMobileFixtures,
   cleanupMobileFixtures
-} from '../src/main/mobile-pairing.fixtures'
+} from '../packages/host/src/mobile-pairing.fixtures'
 
 const root = withSubcommands(
   defineCommand({ name: 'clave-mobile-fixtures', handler: () => Effect.void }),

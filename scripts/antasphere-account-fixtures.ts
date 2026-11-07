@@ -22,7 +22,7 @@ import {
   antasphereFixtureCatalog,
   cleanupAntasphereFixtures,
   verifyAntasphereFixtures
-} from '../src/main/antasphere-account.fixtures'
+} from '../packages/host/src/antasphere-account.fixtures'
 
 const root = withSubcommands(
   defineCommand({ name: 'clave-fixtures', handler: () => Effect.void }),

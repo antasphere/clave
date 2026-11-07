@@ -51,9 +51,9 @@ vi.mock('ws', async () => {
     }
   }
 })
-import { proveNativeSource } from '../packages/mobile/scripts/native-provenance.mjs'
+import { proveNativeSource } from '../apps/mobile/scripts/native-provenance.mjs'
 
-const pkg = fileURLToPath(new URL('../packages/mobile', import.meta.url))
+const pkg = fileURLToPath(new URL('../apps/mobile', import.meta.url))
 const files = [
   'src/App.tsx',
   'src/screens/MachinesScreen.tsx',
@@ -293,7 +293,7 @@ for (const variant of ['matching', 'wrong candidate', 'wrong worktree']) {
     const cleanHead = vi.fn()
     const pending = callConsumer(
       async (file) => {
-        assert.equal(file, 'packages/mobile/scripts/native-provenance.mjs')
+        assert.equal(file, 'apps/mobile/scripts/native-provenance.mjs')
         return { proveNativeSource }
       },
       receipt,

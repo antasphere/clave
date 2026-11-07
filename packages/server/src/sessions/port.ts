@@ -1,7 +1,7 @@
 /**
  * The sessions port: what the server needs from whoever runs the sessions.
  * Inside the app the shell implements it over the session manager and the
- * PTY manager it already has (`src/main/server/session-host.ts`); a
+ * PTY manager it already has (`packages/host/src/server/session-host.ts`); a
  * standalone server without a terminal process runs on `SessionHost.none`,
  * which lists nothing and answers every start with `CapabilityUnavailable`,
  * so a client is told rather than left waiting.

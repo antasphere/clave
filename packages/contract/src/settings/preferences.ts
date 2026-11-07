@@ -1,6 +1,6 @@
 /**
  * Settings domain: preferences. Main's own typed preferences, `preferences.json`
- * (`src/main/preferences-manager.ts`): the app icon, the telemetry ids, the
+ * (`packages/host/src/preferences-manager.ts`): the app icon, the telemetry ids, the
  * pre-release toggle, the chat defaults. Every key is written by the feature
  * that owns it (the icon through `SetAppIcon` here, the pre-release toggle
  * through the updater, the chat defaults through the sessions), never through
@@ -10,8 +10,8 @@
  * and not part of this module.
  *
  * Mirrors the preload's app-icon method as of this change
- * (`src/preload/index.ts`). The `Preferences` interface in
- * `src/main/preferences-manager.ts` is the original until the renderer reads
+ * (`apps/desktop/src/preload/index.ts`). The `Preferences` interface in
+ * `packages/host/src/preferences-manager.ts` is the original until the renderer reads
  * this contract instead; then this module becomes the original.
  */
 import { Command } from '@structure-ai/cqrs'

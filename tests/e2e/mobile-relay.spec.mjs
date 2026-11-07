@@ -55,7 +55,7 @@ async function startRelay(issuer) {
   const child = spawn(
     bunBinary(process.env, REPO),
     [
-      path.join(REPO, 'packages/server/src/relay/main.ts'),
+      path.join(REPO, 'apps/relay/src/main.ts'),
       '--port',
       String(port),
       '--data-dir',

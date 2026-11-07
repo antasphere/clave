@@ -5,7 +5,7 @@ const path = require('node:path')
 const { tmpdir } = require('node:os')
 const { createHash } = require('node:crypto')
 const { test } = require('node:test')
-const withRnEagerMetadata = require('../packages/mobile/plugins/with-rn-eager-metadata')
+const withRnEagerMetadata = require('../apps/mobile/plugins/with-rn-eager-metadata')
 const { applyRnEagerMetadataFix: apply } = withRnEagerMetadata
 const sha = (source) => createHash('sha256').update(source).digest('hex')
 
@@ -73,7 +73,7 @@ const apiFiles = [
 
 async function fixture(run, source = original) {
   const root = fs.mkdtempSync(path.join(tmpdir(), 'clave-rn-eager-'))
-  const app = path.join(root, 'packages/mobile')
+  const app = path.join(root, 'apps/mobile')
   const module = path.join(root, 'node_modules/react-native')
   const file = path.join(module, 'package.json')
   fs.mkdirSync(app, { recursive: true })
@@ -200,7 +200,7 @@ test('atomic replacement preserves mode and outside hardlink bytes, leaving no t
 })
 
 test('app declares the plugin exactly once and the actual Expo iOS mod applies it', async () => {
-  const config = require('../packages/mobile/app.json').expo
+  const config = require('../apps/mobile/app.json').expo
   assert.equal(
     config.plugins.filter((plugin) => plugin === './plugins/with-rn-eager-metadata').length,
     1

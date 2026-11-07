@@ -1,6 +1,6 @@
 /**
  * The `.clave` TRUST BOUNDARY (place 2 of the six-place mirror rule in the
- * app's CLAUDE.md; it lived in `src/main/ipc-handlers/clave-trust.ts` until
+ * app's CLAUDE.md; it lived in `packages/host/src/ipc-handlers/clave-trust.ts` until
  * the workspace files moved to the server, wave 3).
  *
  * A `.clave` file can act the moment it is opened: run commands without

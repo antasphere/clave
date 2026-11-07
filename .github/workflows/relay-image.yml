@@ -9,7 +9,7 @@ on:
       - 'package.json'
       - 'package-lock.json'
       - 'packages/contract/**'
-      - 'packages/server/relay*'
+      - 'apps/relay/**'
       - 'packages/server/src/relay/**'
       - 'scripts/relay-image-ci*'
 

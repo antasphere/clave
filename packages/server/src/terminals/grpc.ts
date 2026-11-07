@@ -1,7 +1,7 @@
 /**
  * The Terminals port over the wire: what a server running on its own gives
  * `ports.terminals` (ADR 0003, wave 3). Each spawn becomes a terminal in the
- * terminal process (`src/main/terminal-process/`), reached as gRPC over the
+ * terminal process (`packages/host/src/terminal-process/`), reached as gRPC over the
  * loopback with the framework's client and the process's token.
  *
  * The port's `spawn` is synchronous and the wire is not, so a spawn returns
@@ -51,7 +51,7 @@ export interface GrpcTerminalsOptions {
   readonly log?: (line: string) => void
   /** Called once, when the process is found gone (the first UNAVAILABLE, or
    *  a refused token): the cue for whoever owns the process to start another
-   *  (`src/main/terminal-process/supervisor.ts`, wave 5). This port itself
+   *  (`packages/host/src/terminal-process/supervisor.ts`, wave 5). This port itself
    *  stays down for good; the supervisor swaps it for a new one. */
   readonly onDown?: (why: string) => void
 }

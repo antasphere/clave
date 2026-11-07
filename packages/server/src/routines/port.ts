@@ -1,7 +1,7 @@
 /**
  * The routines port (ADR 0004, PRDCT-4102): what the server needs from
  * whoever runs the scheduler. The implementation is one object built in
- * whichever process runs the server (`src/main/routines/service.ts`: inside
+ * whichever process runs the server (`packages/host/src/routines/service.ts`: inside
  * Electron main, as the app's separate child, or as a daemon); a server with
  * nothing behind it runs on `Routines.none`, which lists no routines and
  * refuses every act as unavailable rather than pretend to schedule.

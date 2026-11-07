@@ -8,7 +8,7 @@ import { launchApp, openWindow, seedWorkspaces, userDataDir, fixturePath } from 
 /** The shipped master key, read out of the source rather than hardcoded here, so
  *  this spec cannot pass against a chord the app no longer uses. Read as text: a
  *  spec that imports TypeScript would depend on the runner's type stripping. */
-const MASTER = readFileSync(new URL('../../src/shared/keymaps.ts', import.meta.url), 'utf-8').match(
+const MASTER = readFileSync(new URL('../../packages/shared/src/keymaps.ts', import.meta.url), 'utf-8').match(
   /DEFAULT_MASTER_KEY = '([^']+)'/
 )?.[1]
 if (!MASTER) throw new Error('keymaps.ts no longer declares DEFAULT_MASTER_KEY')

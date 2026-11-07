@@ -1,0 +1,3488 @@
+@import "tailwindcss";
+@import "@mdxeditor/editor/style.css";
+@import "@clave/ui/styles.css";
+@source "../../../../../../packages/ui/src";
+
+/* Messages from other tabs form a deck: inset faces remain visible beneath
+   its cover, then unfold into the messages, one card each. The agent's own
+   words never join the deck; they stay in the transcript beside it. */
+.chat-delivery-stack {
+  --delivery-step: calc(var(--spacing) * 5);
+  position: relative;
+  align-self: stretch;
+  min-width: 0;
+  margin-bottom: calc(var(--delivery-layers) * var(--delivery-step));
+  interpolate-size: allow-keywords;
+  transition: margin-bottom var(--default-transition-duration) var(--ease-out-expo);
+}
+.chat-delivery-summary {
+  position: relative;
+  display: block;
+  list-style: none;
+  cursor: pointer;
+  outline: none;
+  -webkit-tap-highlight-color: transparent;
+}
+/* Keep the deck's spacing transition beside the transcript's arrival fade. */
+.chat-view .chat-row .chat-delivery-stack {
+  transition: margin-bottom var(--default-transition-duration) var(--ease-out-expo),
+    opacity var(--default-transition-duration) var(--ease-out-expo),
+    translate var(--default-transition-duration) var(--ease-out-expo);
+}
+.chat-delivery-summary::-webkit-details-marker { display: none; }
+.chat-delivery-summary:focus-visible .chat-delivery-cover {
+  outline: thin solid var(--color-accent);
+  outline-offset: var(--spacing);
+}
+.chat-delivery-cover, .chat-delivery-peek, .chat-exchange-card {
+  border: thin solid var(--border-subtle-color);
+  border-radius: var(--radius-2xl);
+}
+.chat-delivery-cover {
+  position: relative;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--spacing) * 2);
+  padding: calc(var(--spacing) * 4) calc(var(--spacing) * 5);
+  background: var(--surface-100);
+  box-shadow: var(--raised-shadow);
+  transition: background var(--default-transition-duration), box-shadow var(--default-transition-duration);
+}
+.chat-delivery-summary:hover .chat-delivery-cover {
+  background: color-mix(in oklch, var(--surface-100) 75%, var(--surface-0));
+}
+.chat-delivery-heading {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--spacing) * 3);
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+}
+.chat-delivery-eyebrow { display: inline-flex; align-items: center; gap: var(--spacing); min-width: 0; }
+.chat-delivery-eyebrow svg { width: var(--chat-glyph); height: var(--chat-glyph); flex-shrink: 0; }
+.chat-delivery-count { margin-left: auto; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.chat-delivery-chevron {
+  width: var(--chat-glyph);
+  height: var(--chat-glyph);
+  flex-shrink: 0;
+  transition: rotate var(--default-transition-duration) var(--ease-out-expo);
+}
+.chat-delivery-senders {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-primary);
+  font-size: var(--text-base);
+  font-weight: 500;
+}
+.chat-delivery-preview {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+}
+.chat-delivery-peek {
+  position: absolute;
+  z-index: calc(3 - var(--delivery-layer));
+  inset: 0 calc(var(--delivery-layer) * var(--spacing) * 3);
+  display: flex;
+  align-items: flex-end;
+  padding: 0 calc(var(--spacing) * 5) calc(var(--spacing) * 0.5);
+  background: color-mix(in oklch, var(--surface-200) calc(40% + var(--delivery-layer) * 20%), var(--surface-100));
+  transform: translateY(calc(var(--delivery-layer) * var(--delivery-step)));
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+  transition: transform var(--default-transition-duration) var(--ease-out-expo), opacity var(--default-transition-duration);
+}
+.chat-delivery-peek > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-delivery-stack[open] { margin-bottom: 0; }
+.chat-delivery-stack[open] .chat-delivery-peek { transform: translateY(0); opacity: 0; }
+.chat-delivery-stack[open] .chat-delivery-chevron { rotate: 180deg; }
+.chat-delivery-stack[open] .chat-delivery-preview { display: none; }
+.chat-delivery-stack::details-content {
+  block-size: 0;
+  overflow: clip;
+  opacity: 0;
+  transition: block-size var(--default-transition-duration) var(--ease-out-expo),
+    opacity var(--default-transition-duration),
+    content-visibility var(--default-transition-duration) allow-discrete;
+}
+.chat-delivery-stack[open]::details-content { block-size: auto; opacity: 1; }
+.chat-delivery-items { display: flex; flex-direction: column; gap: calc(var(--spacing) * 3); padding-top: calc(var(--spacing) * 3); }
+.chat-exchange-card { min-width: 0; background: var(--surface-0); overflow: hidden; }
+.chat-exchange-message { padding: calc(var(--spacing) * 4) calc(var(--spacing) * 5); background: color-mix(in oklch, var(--color-term-model) 5%, var(--surface-0)); }
+.chat-exchange-card .chat-turn-wrap[data-side='end'] { align-items: stretch; }
+.chat-exchange-card .chat-turn[data-role='user'][data-from='tab'] {
+  padding: 0;
+  max-width: none;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  font-size: var(--text-sm);
+  font-weight: 400;
+}
+.chat-exchange-card .chat-turn[data-role='user']::before { display: none; }
+.terminal-view .chat-exchange-card .chat-turn-wrap[data-side='end'] .chat-turn[data-role='user'][data-from='tab'] { background: transparent; }
+.chat-exchange-card .term-question { position: static; }
+.chat-exchange-card .chat-turn-meta { position: static; height: auto; justify-content: flex-end; padding-top: var(--spacing); }
+@media (prefers-reduced-motion: reduce) {
+  .chat-view .chat-row .chat-delivery-stack,
+  .chat-delivery-stack, .chat-delivery-stack::details-content,
+  .chat-delivery-chevron, .chat-delivery-peek, .chat-delivery-cover { transition: none; }
+}
+
+/* Appearance → Font: Synonym, with the website's corrections (size-adjust is on
+   the face, see lib/ui-font.ts). Only the sans stack changes; monospace text
+   and the terminal keep their own face. */
+html[data-ui-font='synonym'] {
+  --font-sans: 'Synonym', 'Geist Sans', ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-weight-medium: 450;
+  font-weight: 450;
+  letter-spacing: -0.008em;
+}
+
+/* Feature-owned CodeMirror themes. The selection is each theme's accent blue
+   restated as a literal, not a var(--accent) mix: lib/skin.ts snapshots these
+   --cm-* values while the previous skin's tokens are still on the root, so a
+   reference would freeze the selection in the theme being left. */
+[data-theme="dark"],
+:root {
+  /* CodeMirror syntax tokens — driven by CSS vars so the editor recolors on theme switch */
+  --cm-selection: rgba(90, 162, 247, 0.3);
+  --cm-active-line: rgba(255, 255, 255, 0.04);
+  --cm-keyword: #ff7b72;
+  --cm-comment: #8b949e;
+  --cm-string: #a5d6ff;
+  --cm-number: #79c0ff;
+  --cm-constant: #79c0ff;
+  --cm-function: #d2a8ff;
+  --cm-variable: #e6edf3;
+  --cm-type: #ffa657;
+  --cm-property: #79c0ff;
+  --cm-tag: #7ee787;
+  --cm-operator: #8b949e;
+  --cm-punctuation: #8b949e;
+}
+
+[data-theme="light"] {
+  /* CodeMirror syntax tokens — GitHub-light-inspired, tuned for the warm light surface */
+  --cm-selection: rgba(31, 95, 207, 0.18);
+  --cm-active-line: rgba(0, 0, 0, 0.03);
+  --cm-keyword: #cf222e;
+  --cm-comment: #6e7781;
+  --cm-string: #0a3069;
+  --cm-number: #0550ae;
+  --cm-constant: #0550ae;
+  --cm-function: #8250df;
+  --cm-variable: #1b1b18;
+  --cm-type: #953800;
+  --cm-property: #0550ae;
+  --cm-tag: #116329;
+  --cm-operator: #57606a;
+  --cm-punctuation: #57606a;
+}
+
+[data-theme="coffee"] {
+  /* CodeMirror syntax tokens — warm palette tuned for the cream surface */
+  --cm-selection: rgba(31, 91, 196, 0.18);
+  --cm-active-line: rgba(120, 100, 80, 0.05);
+  --cm-keyword: #b02a37;
+  --cm-comment: #9b8d7a;
+  --cm-string: #3a6b35;
+  --cm-number: #9a5b00;
+  --cm-constant: #1f5fa8;
+  --cm-function: #7a4fbf;
+  --cm-variable: #1b1610;
+  --cm-type: #9a5b00;
+  --cm-property: #1f5fa8;
+  --cm-tag: #3a6b35;
+  --cm-operator: #756e66;
+  --cm-punctuation: #756e66;
+}
+
+[data-theme="charcoal"] {
+  /* CodeMirror syntax tokens — dark's github-dark family, desaturated a notch
+     for the lifted ground and with the two greys (comment, punctuation) taken
+     off their cool #8b949e onto the theme's own warm axis. */
+  --cm-selection: rgba(120, 176, 245, 0.32);
+  --cm-active-line: rgba(255, 243, 232, 0.052);
+  --cm-keyword: #ff8b7e;
+  --cm-comment: #8a8279;
+  --cm-string: #a8d4f5;
+  --cm-number: #8fc6ff;
+  --cm-constant: #8fc6ff;
+  --cm-function: #d8b0ff;
+  --cm-variable: #efece9;
+  --cm-type: #f0a86a;
+  --cm-property: #8fc6ff;
+  --cm-tag: #8ce89a;
+  --cm-operator: #8a8279;
+  --cm-punctuation: #8a8279;
+}
+
+/* xterm.js overrides */
+.xterm {
+  /* Left inset only: the scroll area reaches the panel edges on every other
+     side. The right edge needs no padding because the viewport is absolutely
+     positioned at right:0 and always reserves a 6px scrollbar gutter
+     (overflow-y: scroll), so text keeps its breathing room there anyway. The
+     gap above the first line is written into the buffer instead (see
+     use-terminal.ts), so it scrolls away with the content. */
+  padding: 0 0 0 12px;
+  background-color: var(--surface-0);
+}
+
+.xterm .xterm-viewport {
+  background-color: var(--surface-0) !important;
+}
+
+.xterm-viewport::-webkit-scrollbar {
+  width: 6px;
+}
+
+.xterm-viewport::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.xterm-viewport::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border-radius: 3px;
+}
+
+/* ── The wordmark ── */
+
+/* "Clave", beside the traffic lights. An SVG of outlined glyphs, not text in a
+   face — see components/layout/Wordmark.tsx for why (the licence forbids
+   shipping the font file, and the string never changes). Nothing here may
+   reintroduce a font-family: there is no second face in this app.
+
+   Sized by height, width following the viewBox ratio, because the height is
+   what has to land on the traffic lights' centre line. Sits at the app's
+   quietest ink — it is a mark on the window, not a heading, and it must not
+   compete with the launcher panel two rows below it. */
+/* The container is the STRIP, not the lockup inside it: an inline-size
+   container takes its width from the outside, so a shrink-to-fit box that
+   declares it collapses to nothing. The strip is full width by construction,
+   and its content box already has the traffic-light clearance taken out of it,
+   so the query answers the one question worth asking — is there room left for
+   the second word. */
+.wordmark-strip {
+  /* Clave's INK height. Where it lands is the strip's business (Sidebar.tsx
+     pads the lockup down off the geometric middle, which reads high once the
+     shared frame's descender room is counted); this is only how tall the mark
+     is. Declared HERE, on the strip, rather than on .wordmark: the gap between the
+     two words is derived from it too, and a custom property set on the SVGs
+     themselves is invisible to the flex container holding them apart. */
+  --wordmark-h: 14px;
+  container: wordmark / inline-size;
+}
+
+.wordmark-lockup {
+  display: flex;
+  align-items: flex-end;
+  gap: calc(var(--wordmark-h) * 0.42);
+}
+
+.wordmark {
+  /* The BOX is taller than the ink --wordmark-h names: both words share one
+     frame 875 units deep against Clave's 761 of ink, the difference being the
+     descender room the attribution's y and p need. Multiplying here is what
+     puts the two words on one baseline, since equal box heights on a shared
+     frame IS the alignment. See Wordmark.tsx. */
+  height: calc(var(--wordmark-h) * 1.1892);
+  width: auto;
+  display: block;
+  flex-shrink: 0;
+  color: var(--text-secondary);
+  user-select: none;
+  transition: color 200ms;
+}
+
+/* The attribution sits a step back from the name — same ink, less of it, the
+   way it is a step smaller and a weight lighter. It is two boxes, "by" and the
+   company name, held apart by the word space the phrase itself sets (160 of the
+   frame's units, 0.2102 of Clave's ink): each box is cropped to its own ink, so
+   the space between them is not in either drawing. See Wordmark.tsx. */
+.wordmark-by {
+  display: flex;
+  align-items: flex-end;
+  gap: calc(var(--wordmark-h) * 0.2102);
+  color: var(--text-tertiary);
+}
+.wordmark-by .wordmark {
+  color: inherit;
+}
+
+/* The company name is the way out to the house's own site. The strip it sits in
+   is a window drag region under a `pointer-events: none` mark, so the link has
+   to opt out of BOTH: without the first a click drags the window instead, and
+   without the second it never reaches the button at all. */
+.wordmark-link {
+  display: block;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  cursor: pointer;
+  pointer-events: auto;
+  -webkit-app-region: no-drag;
+  transition: color 150ms;
+}
+.wordmark-link:hover,
+.wordmark-link:focus-visible {
+  color: var(--text-secondary);
+}
+
+/* 130px is the lockup at the default size (Clave 46 + gap 6 + the attribution
+   78). Below it the second word would be clipped mid-letter, which is worse
+   than not being there. */
+@container wordmark (max-width: 134px) {
+  .wordmark-by {
+    display: none;
+  }
+}
+
+/* ── Groups ── */
+
+/* A group is a tinted card, and every state it has is drawn from the colour it
+   publishes as CSS variables (see the Sidebar's group container). Two things
+   this buys that inline styles could not:
+
+   1. Hovering the HEADER lights the whole card, not just the header row. A group
+      is one object; pointing at its name should show you the object. The old
+      version tinted the card from a mouseenter on the card itself, so hovering
+      any child lit it too and the header hover was invisible.
+   2. The controls inside — the terminal icons, the `+`, the session rows — draw
+      their hover and selected fills from the same colour instead of the app's
+      grey. An opaque grey chip on a blue field reads as a foreign object stuck
+      on the card, which is exactly what it was.
+
+   A colourless group publishes nothing and every var falls back to the greys, so
+   nothing outside a coloured group changes. */
+.group-scope {
+  background-color: var(--group-bg, color-mix(in srgb, var(--surface-100) 30%, transparent));
+  border-color: var(--group-border, var(--color-border-subtle));
+}
+.group-scope:has(.group-header:hover) {
+  background-color: var(--group-bg-hover, color-mix(in srgb, var(--surface-100) 60%, transparent));
+}
+.group-scope[data-selected="true"] {
+  background-color: var(--group-bg-selected, color-mix(in srgb, var(--surface-200) 60%, transparent));
+  border-color: var(--group-border-selected, var(--color-border));
+  box-shadow: 0 0 0.5px var(--selected-ring);
+}
+/* Selected AND hovered still moves — a card that stops responding once selected
+   reads as disabled. */
+.group-scope[data-selected="true"]:has(.group-header:hover) {
+  background-color: var(--group-active-bg, color-mix(in srgb, var(--surface-200) 80%, transparent));
+}
+
+/* Controls inside the card, drawn from the group's colour. */
+.group-scope .btn-icon:hover {
+  background-color: var(--group-hover-bg, var(--surface-200));
+}
+.group-scope .sidebar-item:hover {
+  background-color: var(--group-hover-bg, var(--surface-100));
+}
+.group-scope .sidebar-item[data-selected="true"] {
+  background-color: var(--group-active-bg, var(--surface-200));
+}
+
+/* A terminal icon carries its OWN colour inline, so currentColor is that
+   terminal's colour and its hover and running-and-focused fills come from the
+   terminal rather than from the group around it. More specific than the
+   .group-scope .btn-icon rule above, which is the point: the `+` beside them
+   has no colour of its own and keeps the group's. */
+.group-scope .terminal-icon:hover {
+  background-color: color-mix(in srgb, currentColor 16%, transparent);
+}
+.terminal-icon--focused,
+.group-scope .terminal-icon--focused {
+  background-color: color-mix(in srgb, currentColor 22%, transparent);
+}
+
+/* The sidebar's drop line: drawn over the 2px seam between rows, centred on
+   it, never in the flow (see DropGap). Rounded ends and a soft halo so a 3px
+   bar reads as a marker rather than a border. */
+.sidebar-drop-line {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  /* Centred in the seam ABOVE the wrapper (--drop-seam: 2px in a rail, 6px
+     between the cards at the top level, set by the containers). */
+  top: calc(var(--drop-seam, 2px) / -2 - 1.5px);
+  height: 3px;
+  border-radius: 9999px;
+  background-color: var(--color-accent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--color-accent) 25%, transparent);
+  pointer-events: none;
+  z-index: 5;
+  animation: overlay-in 100ms var(--ease-out-expo);
+}
+/* The "after the last item" line hangs BELOW its wrapper, in the seam under it
+   — never inside the card it follows. */
+.sidebar-drop-gap--after .sidebar-drop-line {
+  top: auto;
+  bottom: calc(var(--drop-seam, 2px) / -2 - 1.5px);
+}
+/* A row of a list that drags to reorder (use-list-reorder, #257: the workspace
+   switcher and Settings → Workspaces). The drop line is the sidebar's, drawn
+   just inside the edge of the row it lands beside, so a scrolling list never
+   clips it; the dragged row fades in place. */
+.reorder-row {
+  position: relative;
+}
+.reorder-row[data-dragging] {
+  opacity: 0.45;
+}
+.reorder-row[data-drop]::after {
+  content: '';
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  height: 3px;
+  border-radius: 9999px;
+  background-color: var(--color-accent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--color-accent) 25%, transparent);
+  pointer-events: none;
+  z-index: 5;
+  animation: overlay-in 100ms var(--ease-out-expo);
+}
+.reorder-row[data-drop='before']::after {
+  top: 0;
+}
+.reorder-row[data-drop='after']::after {
+  bottom: 0;
+}
+body.reorder-dragging,
+body.reorder-dragging * {
+  cursor: grabbing !important;
+  user-select: none;
+}
+/* The group header's two controls (PRDCT-1670). The terminals button carries
+   the whole terminal story in one glyph: its colour is the first RUNNING
+   terminal's (set inline) and the count beside it is how many are attached;
+   with nothing running it sits in the group's muted tone. The panel it opens
+   on hover lists them (GroupTerminalsPanel). */
+/* Compound selector on purpose: .btn-icon-xs sits further down this file and
+   would otherwise win the fixed square back. This is the one icon button whose
+   content is not a lone glyph, so the size class gives it a HEIGHT and a floor
+   on the width, and the count is allowed to widen it. A fixed 20px box put the
+   count and a 16px glyph in room for one of them and the glyph was the one that
+   shrank. */
+.group-terminals-btn.btn-icon-xs {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  width: auto;
+  min-width: var(--control-h-xs);
+  transition: color 150ms, background-color 150ms;
+}
+/* Air on both edges, and only once there IS a count: the count reads as part of
+   the button rather than pinned to its border, while a group with no terminals
+   keeps the plain square that centres its glyph. */
+.group-terminals-btn.btn-icon-xs:has(.group-terminals-count) {
+  padding-inline: 4px;
+}
+.group-terminals-btn > svg {
+  flex-shrink: 0;
+}
+.group-terminals-btn[data-running='true'] {
+  /* Colour comes inline from the running terminal; keep it on hover too. */
+  color: inherit;
+}
+.group-scope .group-terminals-btn:hover,
+.group-scope .group-terminals-btn--open {
+  background-color: color-mix(in srgb, currentColor 16%, transparent);
+}
+.group-scope .group-terminals-btn--focused {
+  background-color: color-mix(in srgb, currentColor 22%, transparent);
+}
+/* No min-width and no padding of its own: the count leads the icon now, and a
+   box wide enough for two digits left a single one sitting a visible gap off
+   the button's edge. It takes the width of what it says; a second digit widens
+   the button rather than filling in dead space. */
+.group-terminals-count {
+  font-size: 10px;
+  font-weight: var(--font-weight-medium);
+  line-height: 1;
+}
+/* Running/stopped dot at the end of a terminal row in the panel: a filled dot
+   in the terminal's colour when running (set inline), a hollow ring otherwise. */
+.terminal-row-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 9999px;
+  border: 1px solid var(--text-tertiary);
+  opacity: 0.7;
+}
+.terminal-row-dot[data-running='true'] {
+  border-color: transparent;
+  opacity: 1;
+}
+
+/* A group the search matched that is not running. Shown as a group card the way
+   the list shows a live one — same border, same tint, same colour on hover — but
+   closed, with no sessions under it and a button to start it. It carries the
+   group's row height rather than a group's full stack, so it reads as one shut
+   drawer among open ones. */
+.idle-group-card {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  height: var(--sidebar-row-h);
+  padding: 0 var(--sidebar-row-px);
+  color: var(--sidebar-icon-color);
+  transition: background-color 150ms;
+}
+.idle-group-card:hover {
+  background-color: var(--group-bg-hover, color-mix(in srgb, var(--surface-100) 60%, transparent));
+}
+
+.idle-group-label {
+  padding: 0 var(--sidebar-row-px) 0.25rem;
+  font-size: 11px;
+  font-weight: var(--font-weight-medium);
+  color: var(--text-tertiary);
+}
+
+/* The start button. Takes the group's own colour so it reads as belonging to the
+   card rather than to the sidebar, and only fills in on hover — at rest the card
+   is an answer to a search, not a call to action. */
+.idle-group-start {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  flex-shrink: 0;
+  height: var(--control-h-sm);
+  padding: 0 0.4375rem;
+  border-radius: var(--radius-lg);
+  font-size: 11px;
+  font-weight: var(--font-weight-medium);
+  color: var(--text-tertiary);
+  background-color: transparent;
+  transition: color 150ms, background-color 150ms, scale 120ms var(--ease-out-expo);
+}
+.idle-group-start:hover {
+  color: var(--text-primary);
+  background-color: var(--group-hover-bg, var(--surface-200));
+}
+
+/* The session list of a group card. Once "the group's colour as a rail down
+   its session list": a 2px bar 2px inside the card's own coloured border,
+   ending on the corner's curve, so it read as a second line rather than as a
+   boundary — the card's tint and border already say where the group ends
+   (2026-09-20). The class stays as the container the drop logic, the tests and
+   the seam token address; there is nothing to clear on the left any more, so
+   the rows sit at the card's own inset on both sides. */
+.group-rail {
+  position: relative;
+  /* Every seam in a rail is the 2px between two rows — the header counts as the
+     row above the first one. Stated here because the list container outside sets
+     6px inline and that inherits all the way down. */
+  --drop-seam: 2px;
+}
+
+/* ── Group picker ── */
+
+/* The full-screen group picker: one card per group you can add, laid out big
+   enough to scan, with a search field. It REPLACES the old narrow template
+   popover — one surface for one action. */
+.group-picker-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 3rem 2rem;
+  background-color: var(--scrim-color);
+  backdrop-filter: blur(4px);
+  animation: scrim-in 140ms ease-out;
+}
+.group-picker-panel {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-width: 62rem;
+  max-height: 100%;
+  border-radius: var(--radius-xl);
+  border: 1px solid var(--color-border);
+  background-color: var(--surface-0);
+  box-shadow: var(--overlay-shadow-lg);
+  overflow: hidden;
+  animation: surface-in 160ms var(--ease-out-expo);
+}
+@media (prefers-reduced-motion: reduce) {
+  .group-picker-backdrop,
+  .group-picker-panel {
+    animation: none;
+  }
+}
+
+.group-picker-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr));
+  gap: 0.75rem;
+}
+/* One group, as an "app" tile: big enough to carry its name, what it holds,
+   and whether it starts its sessions on a prompt. */
+.group-picker-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.5rem;
+  min-width: 0;
+  padding: 0.875rem;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border-subtle-color);
+  background-color: var(--surface-100);
+  text-align: left;
+  transition: border-color 150ms, background-color 150ms, transform 150ms;
+}
+.group-picker-card:hover {
+  border-color: var(--color-border);
+  background-color: var(--surface-200);
+  transform: translateY(-1px);
+}
+.group-picker-card[data-flashing='true'] {
+  border-color: var(--color-accent);
+}
+
+/* ── Session history ── */
+
+/* The history dialog rides the picker's surface, narrower and fixed in
+   height: a list you scan top to bottom, not a grid you sweep. */
+.group-picker-panel--history {
+  max-width: 46rem;
+  height: min(44rem, 100%);
+}
+.history-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  padding: 0.5rem 0.75rem 0.375rem;
+}
+.history-controls-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+/* The row's state dot, the sidebar's own words: blue pulsing while the
+   agent works, amber while it waits on the human, green for an open idle
+   tab, a hollow grey ring for a closed conversation. */
+.history-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 9999px;
+}
+.history-dot[data-state='closed'] {
+  border: 1px solid var(--text-tertiary);
+  opacity: 0.7;
+}
+.history-dot[data-state='open'] {
+  background-color: var(--color-status-ready);
+}
+.history-dot[data-state='working'] {
+  background-color: var(--color-status-working);
+  animation: pulse-dot 2.5s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+.history-dot[data-state='blocked'] {
+  background-color: var(--color-status-waiting);
+}
+
+/* A search hit under its row: the excerpt around the match, in the tone of
+   the prompt line, indented the same. */
+.history-hit {
+  display: block;
+  padding-left: 0.875rem;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.history-hit mark {
+  color: var(--text-primary);
+  background-color: color-mix(in srgb, var(--color-accent) 22%, transparent);
+  border-radius: 2px;
+}
+.history-chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+}
+/* The search's scope toggles, right-aligned and quieter than the group
+   chips: a whispered label, then Human / Agent / Tools as on/off switches. */
+.history-chips--toggles {
+  flex-shrink: 0;
+  flex-wrap: nowrap;
+  margin-left: auto;
+}
+.history-toggles-label {
+  margin-right: 0.25rem;
+  font-size: 10px;
+  color: var(--text-tertiary);
+  white-space: nowrap;
+}
+/* One conversation: title line (dot, title, group, time), then what the
+   human last said. Inset and rounded like a menu row, never full-bleed. */
+.history-row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  padding: 0.5rem 0.625rem;
+  border-radius: var(--radius-lg);
+  text-align: left;
+  transition: background-color 150ms;
+}
+.history-row:hover,
+.history-row:focus-visible {
+  background-color: var(--surface-100);
+  outline: none;
+}
+.history-row[data-missing='true'] {
+  opacity: 0.5;
+}
+.history-row-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 13px;
+  font-weight: var(--font-weight-medium);
+  color: var(--text-primary);
+}
+.history-row-group {
+  flex: 0 1 auto;
+  max-width: 10rem;
+  padding: 0 0.375rem;
+  border-radius: var(--radius-md);
+  font-size: 10px;
+  line-height: 16px;
+  color: var(--text-tertiary);
+  background-color: var(--surface-200);
+}
+.history-row-time {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+.history-row-prompt {
+  padding-left: 0.875rem; /* under the title, past the dot */
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.history-row-prompt--none {
+  color: var(--text-tertiary);
+}
+
+/* The message trail: the floating box over a tab's terminal that shows where
+   the conversation is (MessageTrail.tsx). Same material as the popovers
+   (.menu-surface); positioning is here so the box centers without a
+   transform — framer-motion owns the surface's transform. */
+.message-trail {
+  position: absolute;
+  top: 8px;
+  left: 0;
+  right: 0;
+  margin-inline: auto;
+  width: min(560px, calc(100% - 24px));
+  z-index: 30;
+}
+.message-trail-surface {
+  transition: box-shadow 150ms;
+}
+.message-trail--miss {
+  animation: trail-miss 300ms ease-out;
+}
+@keyframes trail-miss {
+  25% { transform: translateX(-4px); }
+  55% { transform: translateX(4px); }
+  80% { transform: translateX(-2px); }
+}
+/* The one-message face (collapsed): the whole line is the scroll-to button.
+   Min-height and centering keep a single-line message level with the 28px
+   controls beside it, while a two-line or unclamped one grows from the top. */
+.message-trail-line {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  width: 100%;
+  min-width: 0;
+  min-height: var(--control-h-md);
+  padding: 0.125rem 0.5rem;
+  border-radius: var(--radius-lg);
+  text-align: left;
+  cursor: pointer;
+}
+/* The panel toggle: a small chevron floating over the title's right end,
+   revealed by hovering the box. Off-center on purpose: the message line is
+   one click target and a centered overlay would sit exactly on it. */
+.message-trail-peek {
+  position: absolute;
+  top: 50%;
+  translate: 0 -50%;
+  right: 0.25rem;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.25rem;
+  height: 1.25rem;
+  border-radius: var(--radius-control);
+  color: var(--text-tertiary);
+  background-color: color-mix(in srgb, var(--surface-0) 90%, transparent);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms, color 150ms, background-color 150ms;
+}
+.message-trail:hover .message-trail-peek {
+  opacity: 1;
+  pointer-events: auto;
+}
+.message-trail-peek:hover {
+  color: var(--text-primary);
+  background-color: var(--surface-100);
+}
+.message-trail-line:hover {
+  background-color: var(--surface-100);
+}
+/* A row of the expanded window. Same two fill steps as .menu-item. */
+.message-trail-row {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  padding: 0.25rem 0.5rem;
+  border-radius: var(--radius-lg);
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 150ms;
+}
+.message-trail-row:hover {
+  background-color: var(--surface-100);
+}
+.message-trail-row[data-selected='true'] {
+  background-color: var(--surface-200);
+}
+/* The collapsed face is a TITLE: one line, panel-row size, ellipsis. The
+   whole message is read in the expanded panel, where the current turn
+   unclamps (--full below). */
+.message-trail-text {
+  font-size: 13px;
+  line-height: 1.35;
+  font-weight: var(--font-weight-medium);
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* The current turn in the expanded panel: unclamped so a big prompt reads
+   whole — capped, scrolling inside. */
+.message-trail-text--full {
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  text-overflow: clip;
+  max-height: min(40vh, 320px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.message-trail-reply {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* The position counter reads at a glance — sized to the two-line message
+   block beside it, quiet in color so the size doesn't shout. */
+.message-trail-count {
+  flex-shrink: 0;
+  padding-inline: 0.375rem;
+  font-size: 14px;
+  line-height: 1;
+  font-weight: var(--font-weight-medium);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary);
+}
+/* The list view keeps the small label size — there the counter is a header
+   caption, not the box's focal state. */
+.message-trail-count--compact {
+  font-size: 11px;
+}
+.message-trail-time {
+  flex-shrink: 0;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-tertiary);
+}
+
+/* A row in the git panel's repo tree: a directory, or a repo header. Fixed
+   height so the tree never jumps when a trailing badge appears or disappears
+   — expanding a folder hides its roll-up, and that used to resize the row. */
+/* The status beside a file name in the git panel: a dot in the status tone,
+   the word on the element (data-status, title, aria-label). It replaced git's
+   own letters (M, A, D, ?), which meant nothing to anyone who is not already a
+   git user, in a product that wants non-developers reading this panel
+   (2026-09-21). Same slot width as the letter had, so nothing else moves. */
+.git-status-dot {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 0.75rem;
+  flex-shrink: 0;
+}
+.git-status-dot::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: var(--radius-full);
+  background-color: currentColor;
+}
+
+.git-tree-row {
+  position: relative;
+  height: var(--git-tree-row-h);
+  flex-shrink: 0;
+  /* With a floor under the name (below) a row can, in the edge of a long
+     name behind five badges at the panel's narrowest, want more than it has:
+     it clips its last badge rather than hand the panel a horizontal
+     scrollbar. */
+  overflow: hidden;
+}
+/* The repo list is the container the narrow-row rules read (below): the
+   LIST, not the row, so every row flips together at one panel width. On the
+   row, a row's content box shrank by one indent per tree depth and the rows
+   inside a folder crossed the threshold while the rows at the root did not,
+   two spellings of the same badge on one screen. */
+.git-repo-list {
+  container-type: inline-size;
+}
+/* The repo's name is the one thing a row must never lose: a floor, so the
+   badges take their room from the branch name first and the name is cut with
+   an ellipsis rather than to a letter (verifier round 1, finding 1). Five
+   characters (40px at the row's type): with the narrow-row rules below, a
+   worktree row with four badges still fits the 216px of content a row has at
+   the panel's default width. The narrow-row rule for the badges sits with
+   the badge family below, after the rules it must beat. */
+.git-tree-row-name {
+  min-width: 5ch;
+  /* A button centres its text: were the box ever wider than the name, the
+     slack would split around it. The row keeps a short name at its own width
+     (see the component), and this keeps any slack after the name. */
+  text-align: left;
+}
+
+/* ── Worktree rows in the repo tree (PRDCT-2356) ── */
+/* A worktree sits under the repo it was cut from, behind a guide rather than
+   an icon: a hairline dropping from the repo's glyph and a dot at the row's
+   centre, so the row reads as "of this repo" without being a folder of it.
+   The stem under the glyph is drawn only while the repo row is folded:
+   unfolded, the repo's own file lists sit between the two rows and the line
+   would cut through their labels. The guide spans the repo row's chevron and
+   glyph columns (chevron, gap, glyph: 30px), the line on the glyph's centre,
+   and the worktree's own chevron follows it, so the name lands one step
+   deeper than the repo's and the unfolded content one indent deeper than the
+   repo's content. The ink is the tree's, not a status tone: this is
+   structure, not news. */
+.git-worktree-stem {
+  position: absolute;
+  top: calc(var(--git-tree-row-h) / 2 + 9px);
+  bottom: 0;
+  width: 1px;
+  background-color: var(--tree-guide-color);
+  pointer-events: none;
+}
+.git-worktree-guide {
+  position: relative;
+  align-self: stretch;
+  width: 30px;
+  flex-shrink: 0;
+}
+/* The line of a worktree block runs beside the whole block, the row and
+   what it unfolds, on the same column as the stem above it (the glyph's
+   centre, 23px in from the row's chevron); the block's content sits two
+   indents further in, so the line runs clear of its labels. The last
+   worktree's line stops at its dot. */
+.git-worktree-line {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background-color: var(--tree-guide-color);
+  pointer-events: none;
+  /* Above the row it runs beside, whose hover fill would otherwise paint
+     over it: the row is positioned too, and later in the tree. */
+  z-index: 1;
+}
+/* The last worktree's line stops at its dot; the height is set by the row,
+   which knows whether a hairline sits above it. */
+.git-worktree-line--last {
+  bottom: auto;
+}
+/* A merged worktree fades its name (its dot's colour is with the dot rule
+   below, after the rule it must beat). */
+.git-tree-row-name--merged {
+  color: var(--text-tertiary);
+}
+/* The count of a merged worktree: still true, no longer news. */
+.git-sync-badge-muted {
+  opacity: 0.45;
+}
+/* The dot's popover (PRDCT-2360): the worktree's minimal metadata on the
+   menu surface, in the shape of the toolbar's workspace popover: a menu
+   label, then rows cut like menu items (the same padding and radius, no
+   hover, since nothing here is a choice), each a 13px line over an 11px
+   tertiary one. */
+.git-worktree-card {
+  width: 16rem;
+}
+.git-worktree-card-row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+  padding: 0.25rem 0.5rem;
+  border-radius: var(--radius-lg);
+}
+.git-worktree-card-primary {
+  font-size: 13px;
+  line-height: 1.25;
+  font-weight: var(--font-weight-medium);
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+}
+.git-worktree-card-secondary {
+  font-size: 11px;
+  line-height: 1.25;
+  color: var(--text-tertiary);
+  overflow-wrap: anywhere;
+}
+/* The dot, centred on that column. */
+.git-worktree-guide::after {
+  content: '';
+  position: absolute;
+  left: 21px;
+  top: 50%;
+  width: 5px;
+  height: 5px;
+  margin-top: -2.5px;
+  border-radius: 50%;
+  background-color: var(--text-tertiary);
+}
+/* A merged worktree (its work in the base, by merge or by squash) turns its
+   dot dark green: the row's news is that it is done, said quietly (Romain,
+   on the app: the dot, no check in it). Declared AFTER the dot rule at the
+   same specificity, which it must beat. */
+.git-worktree-guide--merged::after {
+  background-color: color-mix(in srgb, var(--color-success) 85%, black);
+}
+
+/* The label above a block of rows inside a repo — STAGED / MODIFIED /
+   UNTRACKED / INCOMING / OUTGOING. Sized like the rows it introduces, with a
+   gap above so consecutive blocks read as blocks instead of as one
+   uninterrupted list. The first one sits flush: the gap belongs between
+   sections, not at the top of the panel. */
+.git-section-header {
+  height: var(--panel-row-h);
+  flex-shrink: 0;
+  margin-top: 0.375rem;
+}
+.git-section-header:first-child {
+  margin-top: 0;
+}
+
+/* The hairline that closes one block of the repo tree and opens the next — a
+   repo and everything it unfolded, or a directory and its whole subtree. Drawn
+   ABOVE a row rather than below it, because only the row that starts a new
+   block knows the depth the rule belongs at: a folder's rule sits at the
+   folder's own indentation, not at that of the last repo three levels down that
+   happened to end the block. The caller insets it to that depth — a full-bleed
+   line cuts across the indentation and costs the reader the sense of the tree.
+
+   On --rule-color rather than --border-subtle: see the token. */
+.tree-rule {
+  height: 1px;
+  flex-shrink: 0;
+  background-color: var(--rule-color);
+}
+
+/* ── Git sync badges ── */
+/* The counters on a git repo row and in the git toolbar: ↓ incoming,
+   ↑ outgoing, + local changes. One shape, three tints — each is a toggle that
+   unfolds its section, so the pressed state has to read at a glance. Border
+   and fill derive from the text color, so a new tint is one text-color
+   utility away and never a re-implementation of the shape. */
+.git-sync-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+  padding: 1px 5px;
+  border-radius: var(--radius-md);
+  border: 1px solid color-mix(in srgb, currentColor 30%, transparent);
+  font-size: 10px;
+  font-weight: var(--font-weight-medium);
+  line-height: 14px;
+  cursor: pointer;
+  transition:
+    background-color 150ms,
+    border-color 150ms;
+}
+.git-sync-badge:hover {
+  background-color: color-mix(in srgb, currentColor 15%, transparent);
+  border-color: color-mix(in srgb, currentColor 60%, transparent);
+}
+.git-sync-badge-on {
+  background-color: color-mix(in srgb, currentColor 15%, transparent);
+  border-color: color-mix(in srgb, currentColor 60%, transparent);
+}
+/* The base badge with no drift (PRDCT-2356) is a label: the shape of its
+   siblings, none of their hover, since there is nothing to open. Declared
+   AFTER the badge's own hover, which it must beat at equal specificity. */
+.git-sync-badge-static {
+  cursor: default;
+}
+.git-sync-badge-static:hover {
+  background-color: transparent;
+  border-color: color-mix(in srgb, currentColor 30%, transparent);
+}
+/* A narrow panel has no room for four badges beside a name: the base badge
+   keeps its drift and folds its name away, its title still naming the base;
+   a base with no drift has nothing left to show and goes entirely. The
+   container is the repo list (.git-repo-list), and a container's inline size
+   is its CONTENT box, which for the list is its width: the panel opens at
+   240px, and 300 is the width from which the badges spell out. A container
+   query adds no specificity, so this block stands AFTER .git-sync-badge,
+   whose display it must beat (verifier round 2, finding 10). */
+@container (max-width: 299px) {
+  .git-base-badge-name {
+    display: none;
+  }
+  .git-sync-badge-static {
+    display: none;
+  }
+  /* A worktree row also gives up its branch name here, which the badges had
+     already squeezed to nothing while its gap still cost 6px; the branch
+     stays on the repo rows, which carry fewer badges. */
+  [data-tree-kind='worktree'] .git-tree-row-branch {
+    display: none;
+  }
+}
+
+/* The sync action inside an Incoming/Outgoing header — Pull / Push. Same
+   family as the badge, one step louder because it actually performs the
+   operation rather than revealing it. */
+.git-sync-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  flex-shrink: 0;
+  padding: 1px 6px;
+  border-radius: var(--radius-md);
+  border: 1px solid color-mix(in srgb, currentColor 45%, transparent);
+  background-color: color-mix(in srgb, currentColor 10%, transparent);
+  font-size: 10px;
+  font-weight: var(--font-weight-medium);
+  line-height: 14px;
+  white-space: nowrap;
+  transition:
+    background-color 150ms,
+    border-color 150ms;
+}
+.git-sync-action:hover:not(:disabled) {
+  background-color: color-mix(in srgb, currentColor 22%, transparent);
+  border-color: color-mix(in srgb, currentColor 75%, transparent);
+}
+.git-sync-action:disabled {
+  opacity: 0.4;
+}
+
+/* ── The git panel's footnote ── */
+
+/* Why the panel is not auto-refreshing, at the foot of it. Quiet on purpose:
+   this is a fact about the folder, not a fault, and it used to be a warning
+   strip across the top of the list you came to read. Tertiary text, a hairline
+   above it, and the panel's own surface — it should be findable, not loud. */
+.git-footnote {
+  flex-shrink: 0;
+  border-top: 1px solid var(--rule-color);
+  background-color: color-mix(in oklab, var(--surface-100) 40%, transparent);
+}
+
+.git-footnote-line {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0 0.5rem;
+  height: var(--control-h-md);
+}
+
+/* The whole collapsed line is the disclosure — a 12px chevron is not a target. */
+.git-footnote-summary {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 100%;
+  padding: 0 0.25rem;
+  border-radius: var(--radius-md);
+  font-size: 10px;
+  color: var(--text-tertiary);
+  transition: color 150ms;
+}
+.git-footnote-summary:hover {
+  color: var(--text-secondary);
+}
+
+.git-footnote-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  flex-shrink: 0;
+  padding: 2px 6px;
+  border-radius: var(--radius-md);
+  font-size: 10px;
+  color: var(--text-tertiary);
+  transition: color 150ms, background-color 150ms;
+}
+.git-footnote-action:hover:not(:disabled) {
+  color: var(--text-primary);
+  background-color: var(--surface-200);
+}
+.git-footnote-action:disabled {
+  opacity: 0.6;
+}
+
+.git-footnote-body {
+  padding: 0 0.75rem 0.625rem;
+  font-size: 10px;
+  line-height: 1.5;
+  color: var(--text-tertiary);
+  animation: fade-in 150ms var(--ease-out-expo);
+}
+
+.git-footnote-buttons {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+
+.git-footnote-link {
+  font-size: 10px;
+  color: var(--text-tertiary);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  transition: color 150ms;
+}
+.git-footnote-link:hover {
+  color: var(--text-primary);
+}
+
+/* The field the git panel shows in place of a file list when there is nothing
+   to list — "Working tree clean". A contained surface instead of loose text
+   floating in the panel; the caller indents it to the section depth so it
+   lines up with the rows it stands in for. */
+.git-empty-box {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px dashed var(--border-color);
+  border-radius: var(--radius-lg);
+  background-color: color-mix(in oklab, var(--surface-100) 40%, transparent);
+}
+
+/* ── Settings ── */
+
+/* Command-mode readout. It sits above every app panel but below native chrome,
+   and uses the same material as menus because it is equally transient. */
+.keymap-command-hud {
+  position: fixed;
+  z-index: 80;
+  top: 1rem;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 0.375rem 0.625rem;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary);
+  pointer-events: none;
+}
+.keymap-command-hud[data-state="matched"] {
+  color: var(--color-status-ready);
+}
+.keymap-command-hud[data-state="cancelled"] {
+  color: var(--text-tertiary);
+}
+
+.keymap-row {
+  min-height: var(--control-h-lg);
+}
+.keymap-bindings {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+}
+.keymap-binding {
+  min-width: 4.5rem;
+  height: var(--control-h-md);
+  padding: 0 0.5rem;
+  border: 1px solid var(--border-subtle-color);
+  border-radius: var(--radius-lg);
+  background-color: var(--surface-100);
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  transition: color 150ms, border-color 150ms, background-color 150ms;
+}
+.keymap-binding:hover,
+.keymap-binding:focus-visible {
+  color: var(--text-primary);
+  border-color: var(--color-accent);
+  outline: none;
+}
+.keymap-json {
+  min-height: 28rem;
+  resize: vertical;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+}
+/* The avatar picker's cells: an icon or a field, 24px, selected by the accent. */
+.avatar-cell {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.5rem;
+  height: 1.5rem;
+  overflow: hidden;
+  border-radius: var(--radius-lg);
+  background-color: var(--surface-200);
+  color: var(--text-secondary);
+  transition: background-color 150ms, color 150ms, box-shadow 150ms, scale 120ms var(--ease-out-expo);
+}
+.avatar-cell:hover {
+  background-color: var(--surface-300);
+  color: var(--text-primary);
+}
+.avatar-cell[data-selected="true"] {
+  color: var(--color-accent);
+  background-color: color-mix(in srgb, var(--color-accent) 15%, transparent);
+  box-shadow: 0 0 0 1px var(--color-accent);
+}
+.avatar-cell:active {
+  scale: 0.97;
+}
+/* The system's one focus ring (the "── Keyboard focus ──" block), restated
+   here because the cell is an app-only class. */
+.avatar-cell:focus-visible {
+  outline: 1.5px solid var(--color-accent);
+  outline-offset: -1.5px;
+}
+
+/* A usage window's bar on the Usage page: the foot's meter, at page width. */
+.usage-bar {
+  position: relative;
+  width: 100%;
+  height: 0.375rem;
+  border-radius: 999px;
+  overflow: hidden;
+  background-color: var(--surface-200);
+}
+
+/* ── The Usage page's charts ──
+   Every cap is a column on the same 0–100% scale: the track is the whole cap,
+   the fill is what is used, anchored to the track's floor with a rounded top.
+   An account is a group of columns with its name under them; the groups sit
+   side by side, so a glance across the row compares every account. The fill
+   wears the foot meter's urgency colours (`usage-meter-fill--*`). */
+.usage-chart {
+  padding: 1rem 1rem 0.875rem;
+  overflow-x: auto;
+}
+.usage-chart-plot {
+  display: flex;
+  align-items: flex-start;
+  gap: 1.5rem;
+  min-width: min-content;
+}
+.usage-chart-group {
+  display: flex;
+  flex: 1 1 0;
+  min-width: 8.5rem;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.625rem;
+}
+.usage-chart-group + .usage-chart-group {
+  padding-left: 1.5rem;
+  margin-left: -0.75rem;
+  border-left: 1px solid var(--color-border-subtle, var(--color-border));
+}
+.usage-chart-columns {
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 0.25rem;
+  min-height: calc(var(--usage-track-h, 8rem) + 4rem);
+}
+[data-usage-chart='session'] {
+  --usage-track-h: 3.5rem;
+}
+.usage-column {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.25rem;
+  width: 4rem;
+  border-radius: var(--radius-md);
+  outline: none;
+}
+.usage-column:focus-visible {
+  outline: 1.5px solid var(--color-accent);
+  outline-offset: 2px;
+}
+.usage-column-value {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2rem;
+  font-size: var(--control-text);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+}
+.usage-column-value > svg {
+  width: 0.75rem;
+  height: 0.75rem;
+  color: var(--color-wellbeing-strong);
+}
+.usage-column-track {
+  position: relative;
+  display: flex;
+  align-items: flex-end;
+  width: 1.75rem;
+  height: var(--usage-track-h, 8rem);
+  border-radius: 4px;
+  overflow: hidden;
+  background-color: var(--surface-200);
+}
+.usage-column-fill {
+  display: block;
+  width: 100%;
+  border-radius: 4px 4px 0 0;
+  transition:
+    height 300ms var(--ease-out-expo),
+    background-color 200ms;
+}
+.usage-column-label {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.6875rem;
+  font-weight: var(--font-weight-medium);
+  color: var(--text-secondary);
+}
+.usage-column-reset {
+  font-size: 0.6875rem;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  color: var(--text-tertiary);
+}
+.usage-column-placeholder {
+  width: 1.75rem;
+  height: var(--usage-track-h, 8rem);
+  border-radius: 4px;
+  background-color: var(--surface-200);
+}
+.usage-chart-empty {
+  align-self: center;
+  font-size: 0.75rem;
+  color: var(--text-tertiary);
+  text-align: center;
+}
+.usage-chart-caption {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.125rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid var(--color-border);
+  text-align: center;
+  min-width: 0;
+}
+.usage-chart-account {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--control-text);
+  font-weight: var(--font-weight-medium);
+  color: var(--text-primary);
+}
+.usage-chart-meta {
+  font-size: 0.6875rem;
+  color: var(--text-tertiary);
+  white-space: nowrap;
+}
+
+/* The Switch account submenu (a tab's context menu): one two-line row per
+   account — a dot in the urgency colours, the name and a Suggested badge,
+   when its week renews, and what is left on the right. The card beside the
+   highlighted row is the Usage page's chart for that one account, smaller. */
+.menu-item:has(> .account-switch-row) {
+  min-height: 2.5rem;
+  padding-top: 0.3125rem;
+  padding-bottom: 0.3125rem;
+}
+.account-switch-row {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+  width: 100%;
+  min-width: 15.5rem;
+}
+.account-switch-dot {
+  flex-shrink: 0;
+  width: 0.4375rem;
+  height: 0.4375rem;
+  border-radius: 9999px;
+  background-color: var(--color-accent);
+}
+.account-switch-row[data-level='unknown'] .account-switch-dot {
+  background-color: var(--surface-300, var(--text-tertiary));
+}
+.account-switch-row[data-level='warning'] .account-switch-dot {
+  background-color: var(--color-wellbeing-gentle);
+}
+.account-switch-row[data-level='critical'] .account-switch-dot {
+  background-color: var(--color-wellbeing-strong);
+}
+.account-switch-main {
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  flex-direction: column;
+  gap: 0.0625rem;
+}
+.account-switch-name {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  min-width: 0;
+}
+.account-switch-suggested {
+  flex-shrink: 0;
+  background-color: color-mix(in oklch, var(--color-accent) 16%, transparent);
+  color: var(--color-accent);
+}
+.account-switch-suggested > svg {
+  width: 0.625rem;
+  height: 0.625rem;
+}
+.account-switch-detail,
+.account-switch-cap {
+  font-size: 0.6875rem;
+  font-weight: var(--font-weight-normal, 400);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-tertiary);
+  white-space: nowrap;
+}
+.account-switch-headroom {
+  display: flex;
+  flex-shrink: 0;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.0625rem;
+}
+.account-switch-left {
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+.account-switch-row[data-level='warning'] .account-switch-left {
+  color: var(--color-wellbeing-gentle);
+}
+.account-switch-row[data-level='critical'] .account-switch-left {
+  color: var(--color-wellbeing-strong);
+}
+/* An account at its limit stays pickable but reads as the last resort. */
+.account-switch-row[data-exhausted] .account-switch-main {
+  opacity: 0.6;
+}
+
+.menu-preview {
+  position: fixed;
+  pointer-events: none;
+  padding: 0.75rem 0.875rem 0.625rem;
+}
+.account-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 0.625rem;
+  min-width: 11rem;
+}
+.account-preview-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+.account-preview-name {
+  font-size: var(--control-text);
+  font-weight: var(--font-weight-medium);
+  color: var(--text-primary);
+}
+.account-preview-meta,
+.account-preview-foot,
+.account-preview-empty {
+  font-size: 0.6875rem;
+  color: var(--text-tertiary);
+  white-space: nowrap;
+}
+.account-preview-plot {
+  --usage-track-h: 4.5rem;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 0.25rem;
+}
+.account-preview-plot .usage-column {
+  width: 3.5rem;
+}
+.account-preview-plot .usage-column-track {
+  width: 1.5rem;
+}
+.account-preview-plot--even {
+  justify-content: space-evenly;
+  gap: 0;
+}
+/* The tab menu header's caps: one line per cap — name, a 4px bar, % used,
+   time to reset. */
+.account-usage-bars {
+  /* One grid for the whole stack (the rows are display: contents), so the
+     name and reset columns size to their longest entry and every bar still
+     starts and ends at the same x. */
+  display: grid;
+  grid-template-columns: max-content minmax(2.5rem, 1fr) max-content max-content;
+  grid-auto-rows: 1rem;
+  align-items: center;
+  column-gap: 0.5rem;
+  min-width: 0;
+  font-size: 0.6875rem;
+  line-height: 1;
+}
+.account-usage-bar {
+  display: contents;
+}
+.account-usage-bar-name {
+  max-width: 5rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: var(--font-weight-medium);
+  color: var(--text-secondary);
+}
+.account-usage-bar-track {
+  display: block;
+  height: 4px;
+  border-radius: 2px;
+  overflow: hidden;
+  background-color: var(--surface-200);
+}
+.account-usage-bar-fill {
+  display: block;
+  height: 100%;
+  border-radius: 2px;
+  transition:
+    width 300ms var(--ease-out-expo),
+    background-color 200ms;
+}
+.account-usage-bar-pct {
+  text-align: right;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+}
+.account-usage-bar-reset {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  color: var(--text-tertiary);
+}
+.account-usage-bars-empty {
+  font-size: 0.6875rem;
+  color: var(--text-tertiary);
+}
+.account-preview-divider {
+  align-self: stretch;
+  width: 1px;
+  margin: 0 0.375rem;
+  background-color: var(--color-border-subtle, var(--color-border));
+}
+.account-preview-empty {
+  padding: 1rem 0;
+  text-align: center;
+}
+.account-preview-foot {
+  padding-top: 0.5rem;
+  border-top: 1px solid var(--color-border);
+}
+
+/* The two headline tiles over the charts: the question, the answer, whose. */
+.usage-tiles > .settings-card + .settings-card {
+  margin-top: 0;
+}
+.usage-tiles {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+.usage-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  padding: 0.875rem 1rem;
+  min-width: 0;
+}
+.usage-tile-label {
+  font-size: 0.75rem;
+  color: var(--text-tertiary);
+}
+.usage-tile-value {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  font-size: calc(var(--control-text) + 0.375rem);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+  color: var(--text-primary);
+}
+.usage-tile-value > svg {
+  width: 1rem;
+  height: 1rem;
+  color: var(--color-wellbeing-strong);
+}
+.usage-tile-detail {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+}
+
+/* ── The Activity page ──
+   Settings → Activity (components/activity/). The headline tiles reuse the
+   Usage page's; the day is a tape (how many sessions worked, minute by
+   minute) over one lane per session, both on the same time column so a
+   burst in a lane sits under its bump in the tape. Working wears the status
+   blue, waiting on you the status amber, the year the heatmap ramp. */
+.activity-tiles {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+.activity-tiles .usage-tile-detail {
+  white-space: normal;
+}
+.activity-tiles > .settings-card[title] {
+  cursor: help;
+}
+/* The range in one sentence, under the tiles. */
+.activity-summary {
+  margin-top: 0.75rem;
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+/* The page root takes the focus only so its keys land somewhere (← → T Esc);
+   it is a container, not a control, and draws no ring of its own. */
+.activity-page:focus {
+  outline: none;
+}
+@media (max-width: 720px) {
+  .activity-tiles {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+/* The charts' tips float over the card's edge, so these cards do not clip. */
+.settings-card.activity-card {
+  overflow: visible;
+}
+
+.activity-day-head {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.5rem 0.75rem;
+}
+.activity-day-title {
+  padding: 0 0.25rem;
+  font-size: var(--control-text);
+  font-weight: var(--font-weight-medium);
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+.activity-day-suffix {
+  font-size: 0.75rem;
+  color: var(--text-tertiary);
+}
+.activity-day-sum {
+  margin-left: auto;
+  font-size: 0.75rem;
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.activity-day-body {
+  --activity-label-w: 10rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 0.75rem 1rem 0.875rem;
+  transition: opacity 120ms ease-out;
+}
+.activity-day-body[data-refreshing='true'] {
+  opacity: 0.6;
+}
+.activity-day-row {
+  display: grid;
+  grid-template-columns: var(--activity-label-w) minmax(0, 1fr);
+  column-gap: 0.75rem;
+}
+.activity-day-measure {
+  height: 0;
+}
+.activity-day-row[aria-hidden] {
+  margin-bottom: -0.75rem;
+}
+
+.activity-tape-scale {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  align-items: flex-end;
+  height: 6rem;
+  font-size: 0.6875rem;
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+.activity-tape {
+  position: relative;
+  min-width: 0;
+}
+.activity-tape-plot {
+  position: relative;
+  height: 6rem;
+  cursor: crosshair;
+}
+.activity-tape-svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+.activity-tape-closed {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background-image: repeating-linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--text-tertiary) 25%, transparent) 0 1px,
+    transparent 1px 0.375rem
+  );
+}
+.activity-tape-working {
+  fill: color-mix(in srgb, var(--color-status-working) 55%, transparent);
+}
+.activity-tape-working-edge {
+  fill: none;
+  stroke: var(--color-status-working);
+  stroke-width: 1.5px;
+  stroke-linejoin: round;
+}
+.activity-tape-blocked {
+  fill: color-mix(in srgb, var(--color-status-waiting) 65%, transparent);
+}
+.activity-grid {
+  stroke: var(--border-subtle-color);
+  stroke-width: 1px;
+}
+.activity-baseline {
+  stroke: var(--color-border);
+  stroke-width: 1px;
+}
+.activity-hairline {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background-color: var(--text-secondary);
+  pointer-events: none;
+}
+/* The minute held by a click, and the pointer's lighter one beside it. */
+.activity-hairline[data-pinned='true'] {
+  background-color: var(--text-primary);
+}
+.activity-hairline[data-light='true'] {
+  opacity: 0.45;
+}
+/* A lane's bursts over the tape: its own share on the baseline, and a faint
+   band over the tape's height so the bump it belongs to reads at a glance. */
+.activity-tape-focus {
+  fill: color-mix(in srgb, var(--color-accent) 70%, transparent);
+}
+.activity-tape-focus-band {
+  fill: color-mix(in srgb, var(--color-accent) 10%, transparent);
+}
+/* One line under the tape, reserved, so holding a minute never moves the
+   lanes: the hint while nothing is held, the readout once a minute is. */
+.activity-readout-row {
+  display: flex;
+  align-items: center;
+  height: 1.5rem;
+  margin-top: 0.25rem;
+  min-width: 0;
+}
+.activity-readout-hint {
+  font-size: 0.6875rem;
+  color: var(--text-tertiary);
+}
+.activity-readout {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+.activity-readout-lead {
+  flex-shrink: 0;
+  margin-right: 0.25rem;
+  color: var(--text-primary);
+}
+.activity-readout-chip {
+  flex-shrink: 1;
+  min-width: 0;
+  max-width: 12rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    color 150ms,
+    background-color 150ms;
+}
+.activity-readout-chip:hover,
+.activity-readout-chip[data-selected='true'] {
+  color: var(--text-primary);
+  background-color: var(--surface-300);
+}
+.activity-readout-more {
+  flex-shrink: 0;
+  font-size: 0.6875rem;
+  color: var(--text-tertiary);
+}
+.activity-tape-axis {
+  position: relative;
+  height: 1rem;
+  margin-top: 0.25rem;
+}
+.activity-tape-axis > span {
+  position: absolute;
+  top: 0;
+  transform: translateX(-50%);
+  font-size: 0.6875rem;
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+.activity-tape-axis > span[data-edge='start'] {
+  transform: none;
+}
+.activity-tape-axis > span[data-edge='end'] {
+  transform: translateX(-100%);
+}
+
+.activity-lanes {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+.activity-lane {
+  display: grid;
+  grid-template-columns: var(--activity-label-w) minmax(0, 1fr);
+  column-gap: 0.75rem;
+  align-items: center;
+  height: 1.75rem;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition:
+    opacity 150ms,
+    background-color 150ms;
+}
+.activity-lane:hover {
+  background-color: var(--surface-100);
+}
+.activity-lane[data-selected='true'] {
+  background-color: var(--surface-200);
+}
+/* Another lane hovered or followed: this one steps back. */
+.activity-lane[data-dim='true'] {
+  opacity: 0.55;
+}
+.activity-lane-label {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  min-width: 0;
+  padding-left: 0.25rem;
+}
+.activity-lane-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.activity-lane-sub {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.6875rem;
+  line-height: 0.8125rem;
+  color: var(--text-tertiary);
+}
+.activity-lane-dot {
+  flex-shrink: 0;
+  width: 0.375rem;
+  height: 0.375rem;
+  border-radius: 9999px;
+  background-color: var(--color-status-working);
+}
+.activity-lane[data-tracked='false'] .activity-lane-dot {
+  background-color: var(--color-status-inactive);
+}
+.activity-lane-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--control-text);
+  line-height: 0.9375rem;
+  color: var(--text-primary);
+}
+.activity-lane-track {
+  display: block;
+  width: 100%;
+  height: 1.75rem;
+}
+.activity-lane-open {
+  fill: var(--surface-300);
+}
+.activity-lane[data-tracked='false'] .activity-lane-open {
+  fill: color-mix(in srgb, var(--color-status-inactive) 35%, transparent);
+}
+.activity-lane-burst {
+  fill: var(--color-status-working);
+}
+.activity-lane-wait {
+  fill: var(--color-status-waiting);
+}
+.activity-lane-live {
+  fill: color-mix(in srgb, var(--color-status-working) 45%, transparent);
+}
+.activity-lane-details {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.125rem 0.5rem;
+  padding: 0.25rem 0.25rem 0;
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+.activity-lane-details > span + span::before {
+  content: '·';
+  margin-right: 0.5rem;
+  color: var(--text-tertiary);
+}
+.activity-lane-details-lead {
+  color: var(--text-primary);
+}
+.activity-lanes-more {
+  padding: 0.25rem 0 0 calc(var(--activity-label-w) + 0.75rem);
+  font-size: 0.75rem;
+  color: var(--text-tertiary);
+}
+
+.activity-year {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 0.875rem 1rem;
+}
+.activity-heatmap {
+  position: relative;
+}
+.activity-heatmap > svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+.activity-cell {
+  fill: var(--heatmap-0);
+  cursor: pointer;
+}
+.activity-cell[data-level='1'] {
+  fill: var(--heatmap-1);
+}
+.activity-cell[data-level='2'] {
+  fill: var(--heatmap-2);
+}
+.activity-cell[data-level='3'] {
+  fill: var(--heatmap-3);
+}
+.activity-cell[data-level='4'] {
+  fill: var(--heatmap-4);
+}
+.activity-cell[data-in-range='false'] {
+  fill: var(--heatmap-0);
+  opacity: 0.4;
+  cursor: default;
+}
+.activity-cell[data-selected='true'] {
+  stroke: var(--color-accent);
+  stroke-width: 1.5px;
+}
+.activity-axis-text {
+  font-size: 0.625rem;
+  fill: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+.activity-captions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 1.25rem;
+  font-size: 0.75rem;
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+.activity-bars {
+  position: relative;
+  padding: 0.875rem 1rem 0.5rem;
+  min-height: 7.25rem;
+}
+.activity-bars > svg {
+  display: block;
+  overflow: visible;
+}
+.activity-bar {
+  fill: color-mix(in srgb, var(--color-status-working) 70%, transparent);
+  pointer-events: none;
+}
+[data-activity-trend] .activity-bar {
+  fill: color-mix(in srgb, var(--color-status-working) 55%, transparent);
+}
+.activity-dot {
+  fill: var(--text-primary);
+  stroke: var(--surface-0);
+  stroke-width: 1px;
+  pointer-events: none;
+}
+.activity-hit {
+  fill: transparent;
+  cursor: pointer;
+}
+.activity-hit:hover,
+.activity-hit[data-hover='true'],
+.activity-hit[data-selected='true'] {
+  fill: var(--surface-100);
+}
+[data-activity-hours] .activity-hit {
+  cursor: default;
+}
+.activity-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 1rem;
+  padding: 0.75rem 1rem 0;
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+}
+.settings-card > .activity-legend + .activity-bars {
+  border-top: 0;
+}
+.activity-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+}
+.activity-legend-bar {
+  width: 0.5rem;
+  height: 0.625rem;
+  border-radius: 2px 2px 0 0;
+  background-color: color-mix(in srgb, var(--color-status-working) 55%, transparent);
+}
+.activity-legend-dot {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 9999px;
+  background-color: var(--text-primary);
+}
+
+.activity-breakdown {
+  container-type: inline-size;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+.activity-breakdown > .settings-card + .settings-card {
+  margin-top: 0;
+}
+@container (max-width: 640px) {
+  .activity-breakdown > * {
+    grid-column: 1 / -1;
+  }
+}
+.activity-share {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 0.875rem 1rem;
+  min-width: 0;
+}
+.activity-share-title {
+  font-size: 0.75rem;
+  color: var(--text-tertiary);
+}
+.activity-share-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.375rem;
+}
+.activity-share-row {
+  display: grid;
+  grid-template-columns: minmax(0, 7.5rem) minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.625rem;
+  font-size: 0.75rem;
+}
+.activity-share-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-secondary);
+}
+.activity-share-track {
+  display: block;
+  height: 0.5rem;
+}
+.activity-share-bar {
+  display: block;
+  height: 100%;
+  min-width: 2px;
+  border-radius: 0 4px 4px 0;
+  background-color: color-mix(in srgb, var(--color-status-working) 55%, transparent);
+}
+.activity-share-value {
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.activity-share-value[data-quiet='true'] {
+  color: var(--text-tertiary);
+}
+
+/* Placed and clamped inside its host by TipBox (ActivityPanel.tsx). */
+.activity-tip {
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+  max-width: 22rem;
+  padding: 0.375rem 0.625rem;
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  pointer-events: none;
+  z-index: 10;
+}
+.activity-tip-lead {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-primary);
+}
+.activity-tip-line {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-secondary);
+}
+
+.activity-empty {
+  padding: 1.5rem 0;
+  text-align: center;
+  font-size: 0.75rem;
+  color: var(--text-tertiary);
+}
+.activity-skeleton {
+  padding: 0.875rem 1rem;
+}
+.activity-skeleton-block {
+  height: 6rem;
+  border-radius: var(--radius-md);
+  background-color: var(--surface-200);
+}
+.activity-foot {
+  font-size: 0.75rem;
+  color: var(--text-tertiary);
+}
+
+/* Markdown page editor: the Notion-style editable document surface
+   (components/files/MarkdownPageEditor.tsx). Element styles mirror the `page`
+   variant in MarkdownRenderer so the editable page and the read-only page
+   render identically. The --base* vars remap MDXEditor's internal palette
+   (code-block chrome, popups) onto the app's theme tokens. */
+.markdown-page-editor {
+  font-size: 15px;
+  line-height: 1.75rem;
+  color: var(--text-primary);
+}
+.markdown-page-editor .mdxeditor,
+.mdxeditor-popup-container {
+  --basePageBg: transparent;
+  --baseBase: var(--surface-100);
+  --baseBgSubtle: var(--surface-100);
+  --baseBg: var(--surface-200);
+  --baseBgHover: var(--surface-300);
+  --baseBgActive: var(--surface-300);
+  --baseLine: var(--border-subtle-color);
+  --baseBorder: var(--border-color);
+  --baseBorderHover: var(--border-color);
+  --baseSolid: var(--text-tertiary);
+  --baseSolidHover: var(--text-secondary);
+  --baseText: var(--text-secondary);
+  --baseTextContrast: var(--text-primary);
+  --accentText: var(--color-accent);
+  font-family: inherit;
+  background: transparent;
+}
+.markdown-page-editor .markdown-page-content {
+  padding: 0;
+  outline: none;
+  font-family: inherit;
+}
+/* MDXEditor's popups (the link dialog, the row/column menus behind a table's
+   "···" triggers) portal into this container, which it appends to <body> at
+   z-index 2 — under every pane, so a menu opened and nobody saw it. It takes
+   the menu material and sits above the panes. */
+.mdxeditor-popup-container {
+  z-index: 100;
+  --basePageBg: var(--surface-0);
+  --baseBg: var(--color-border);
+}
+.mdxeditor-popup-container [class*='PopoverContent'] {
+  border-radius: var(--radius-lg);
+  box-shadow: var(--overlay-shadow);
+  filter: none;
+}
+.markdown-page-editor h1 {
+  font-size: 1.9rem;
+  line-height: 1.25;
+  letter-spacing: -0.025em;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 2.5rem 0 1rem;
+}
+.markdown-page-editor h2 {
+  font-size: 1.35rem;
+  letter-spacing: -0.025em;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 2rem 0 0.75rem;
+}
+.markdown-page-editor h3 {
+  font-size: 1.125rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 1.5rem 0 0.5rem;
+}
+.markdown-page-editor h4 {
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 1.25rem 0 0.5rem;
+}
+.markdown-page-editor h1:first-child,
+.markdown-page-editor h2:first-child,
+.markdown-page-editor h3:first-child,
+.markdown-page-editor h4:first-child {
+  margin-top: 0;
+}
+.markdown-page-editor p {
+  margin: 0 0 1rem;
+}
+.markdown-page-editor ul,
+.markdown-page-editor ol {
+  margin: 0 0 1rem;
+  padding-left: 1.5rem;
+}
+.markdown-page-editor ul {
+  list-style: disc;
+}
+.markdown-page-editor ol {
+  list-style: decimal;
+}
+/* MDXEditor gives every list item chunky vertical margins — reset to the
+   page rhythm (matches space-y-1.5 in the read-only page). */
+.markdown-page-editor .markdown-page-content li {
+  margin: 0;
+}
+.markdown-page-editor .markdown-page-content li + li {
+  margin-top: 0.375rem;
+}
+.markdown-page-editor li > ul,
+.markdown-page-editor li > ol {
+  margin-bottom: 0;
+  margin-top: 0.375rem;
+}
+.markdown-page-editor blockquote {
+  border-left: 3px solid color-mix(in srgb, var(--color-accent) 40%, transparent);
+  padding-left: 1rem;
+  margin: 1rem 0;
+  color: var(--text-secondary);
+  font-style: italic;
+}
+.markdown-page-editor a {
+  color: var(--color-accent);
+}
+.markdown-page-editor a:hover {
+  text-decoration: underline;
+}
+.markdown-page-editor code {
+  background: color-mix(in srgb, var(--surface-200) 60%, transparent);
+  padding: 2px 6px;
+  border-radius: var(--radius-md);
+  font-size: 0.85em;
+}
+.markdown-page-editor hr {
+  margin: 2rem 0;
+  border-color: var(--border-subtle-color);
+}
+.markdown-page-editor img {
+  max-width: 100%;
+  border-radius: var(--radius-lg);
+  margin: 1rem 0;
+}
+/* Tables. MDXEditor wraps every table in a frame of tool cells — a 2rem
+   column of row "···" triggers on the left, a column of "···" triggers above,
+   add-row / add-column / delete buttons on the far edges. Two things made
+   that frame read as a broken table: the element rules below dressed the
+   tool cells as data cells (borders, padding — a padded 2rem cell crops a
+   2rem button into a half-visible "··", which is the "cropped column that
+   will not scroll"), and `table-layout: fixed` split the width evenly so a
+   long column wrapped while a short one sat empty. The tool columns hang in
+   the page's side gutters so the data columns line up with the text; sizing
+   follows the content. */
+.markdown-page-editor table {
+  width: 100%;
+  font-size: 0.875rem;
+  border-collapse: collapse;
+  margin-bottom: 1rem;
+}
+.markdown-page-editor .markdown-page-content table {
+  table-layout: auto;
+  width: calc(100% + 4rem);
+  margin-left: -2rem;
+}
+.markdown-page-editor th {
+  text-align: left;
+  padding: 0.375rem 0.75rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  border-bottom: 1px solid var(--border-color);
+}
+.markdown-page-editor td {
+  padding: 0.375rem 0.75rem;
+  border-bottom: 1px solid var(--border-subtle-color);
+}
+.markdown-page-editor .markdown-page-content table [data-tool-cell],
+.markdown-page-editor .markdown-page-content table thead th,
+.markdown-page-editor .markdown-page-content table tfoot th {
+  padding: 0;
+  border: 0;
+  vertical-align: middle;
+  text-align: center;
+}
+/* Only the two edge columns are 2rem. The column "···" cells in thead carry
+   data-tool-cell too — sizing every [data-tool-cell] would pin each data
+   column to 2rem and hand the surplus out evenly, the even split all over
+   again. */
+.markdown-page-editor .markdown-page-content table tbody [data-tool-cell],
+.markdown-page-editor .markdown-page-content table thead th:first-child,
+.markdown-page-editor .markdown-page-content table thead th:last-child,
+.markdown-page-editor .markdown-page-content table col:first-child,
+.markdown-page-editor .markdown-page-content table col:last-child {
+  width: 2rem;
+}
+.markdown-page-editor strong {
+  font-weight: 600;
+}
+.markdown-page-editor del,
+.markdown-page-editor s {
+  color: var(--text-tertiary);
+}
+/* Code blocks: CodeMirror surface matching the read-only page's code cards */
+.markdown-page-editor .mdxeditor .cm-editor {
+  background: color-mix(in srgb, var(--surface-200) 50%, transparent);
+  border-radius: var(--radius-lg);
+  font-size: 13px;
+}
+
+/* ── Linked document: a card inset in the session's frame ──
+   The pane is ONE floating-card (.linked-document-frame, set by TerminalGrid)
+   holding the session on the left and the document on the right, the way an
+   artifact sits inside a conversation: not a second window beside the tab.
+   The slot is inset by the gutter on three sides; its fourth, the left, is the
+   gap to the session, and that gap is the resize handle. The card takes a
+   surface one step up from the frame's, so border and ground together say
+   "on top of", without the drop shadow panels deliberately do not carry. */
+.linked-document-slot {
+  --linked-inset: var(--space-2, 0.5rem);
+  position: absolute;
+  top: var(--linked-inset);
+  bottom: var(--linked-inset);
+  right: var(--linked-inset);
+  padding-left: var(--linked-inset);
+  z-index: 1;
+}
+.linked-document-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-width: 0;
+  overflow: hidden;
+  border-radius: var(--radius-lg);
+  border: var(--frame-border) solid var(--color-border);
+  background-color: var(--surface-50);
+  animation: linked-document-in 150ms ease-out;
+}
+@keyframes linked-document-in {
+  from { opacity: 0; translate: 8px 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .linked-document-panel { animation: none; }
+}
+/* One row, like an artifact's: kind and title on the left, then save state,
+   the view toggle and hide. The title gives way first; the controls never wrap. */
+.linked-document-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-height: calc(var(--frame-h) + 1rem);
+  padding: 0 0.5rem 0 0.875rem;
+  border-bottom: 1px solid var(--border-subtle-color);
+  flex-shrink: 0;
+}
+.linked-document-header > :not(:first-child) { flex-shrink: 0; }
+.linked-document-header > [role="status"] { max-width: 12rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex-shrink: 1; }
+.linked-document-content { flex: 1; overflow: auto; overscroll-behavior: contain; min-height: 0; }
+.linked-document-notice { padding: 0.5rem; font-size: 0.75rem; color: var(--text-secondary); background: var(--surface-100); }
+.linked-email-composer { display: flex; flex-direction: column; min-height: 100%; }
+
+/* The header fields are ONE block, not five controls. A boxed .input-field per
+   line reads as a form to fill in; a mail header is a block you scan, so the
+   rows carry the list hairline and the input itself has no chrome until the row
+   is focused — then an accent bar on the leading edge says which line you are
+   typing into, the same signal a selected row uses elsewhere. */
+.linked-email-fields { display: flex; flex-direction: column; flex-shrink: 0; }
+.linked-email-field {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  height: var(--control-h-lg);
+  padding: 0 1rem;
+  border-bottom: 1px solid var(--rule-color);
+  box-shadow: inset 2px 0 0 transparent;
+  transition: box-shadow 150ms;
+}
+.linked-email-field:last-child { border-bottom: 0; }
+.linked-email-field:focus-within { box-shadow: inset 2px 0 0 var(--color-accent); }
+.linked-email-field > span { width: 3.5rem; flex-shrink: 0; font-size: 12px; color: var(--text-tertiary); }
+.linked-email-field > input {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  border: 0;
+  background: transparent;
+  font-size: 13px;
+  color: var(--text-primary);
+  outline: none;
+}
+.linked-email-field > input::placeholder { color: var(--text-tertiary); }
+/* The subject closes the header block, so it takes the structural seam the
+   repeating row hairline is deliberately too soft to carry. */
+.linked-email-field--subject { border-top: 1px solid var(--border-subtle-color); }
+
+/* The body is a document, not a hole in the panel: the light ground belongs to
+   the email, so it is framed as a sheet inside the panel rather than bled to
+   its edges. Height follows the content — a composer that stays 12rem tall
+   while the message grows makes you scroll inside a box inside a scroll. */
+.linked-email-sheet {
+  margin: 0.75rem;
+  border-radius: var(--radius-xl);
+  border: 1px solid var(--color-border);
+  overflow: hidden;
+  transition: border-color 150ms;
+  flex-shrink: 0;
+}
+.linked-email-sheet:focus-within { border-color: var(--color-accent); }
+.linked-email-body { display: block; width: 100%; border: 0; background: white; color-scheme: light; }
+
+/* Section headers for signature and attachments. The panel titlebar class used
+   to draw these, which put a section label at the weight of the document title. */
+.linked-email-section {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  padding: 0.25rem 0.75rem 0.25rem 0.5rem;
+  border-top: 1px solid var(--border-subtle-color);
+  flex-shrink: 0;
+}
+.linked-email-section > span {
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+}
+/* The signature choice: a native select wearing the panel chip's box, so the
+   one control the app cannot portal still reads as part of the family. */
+.linked-email-select {
+  flex-shrink: 0;
+  height: var(--control-h-md);
+  padding: 0 0.375rem;
+  border: 0;
+  border-radius: var(--radius-control);
+  background: var(--surface-100);
+  font-size: 12px;
+  color: var(--text-secondary);
+  outline: none;
+  transition: color 150ms, background-color 150ms;
+}
+.linked-email-select:hover { color: var(--text-primary); background: var(--surface-200); }
+.linked-email-select:focus-visible { box-shadow: 0 0 0 1px var(--color-accent); }
+.linked-email-section-toggle { color: var(--text-tertiary); }
+.linked-email-section-toggle svg { transition: rotate 150ms; }
+.linked-email-section-toggle[data-state="closed"] svg { rotate: -90deg; }
+.linked-email-signature {
+  margin: 0 0.75rem 0.75rem;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border-subtle-color);
+  overflow: hidden;
+}
+.linked-signature-preview { display: block; width: 100%; min-height: 0; border: 0; background: white; color-scheme: light; }
+
+/* One chip per attachment, so a draft's files read as a set at a glance
+   instead of as one full-width row each. */
+.linked-email-attachments { display: flex; flex-wrap: wrap; gap: 0.375rem; padding: 0 0.75rem 0.75rem; }
+.linked-email-attachment {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4375rem;
+  max-width: 100%;
+  height: var(--control-h-md);
+  padding: 0 0.25rem 0 0.4375rem;
+  border-radius: var(--radius-control);
+  border: 1px solid var(--border-subtle-color);
+  background: var(--surface-100);
+  font-size: 12px;
+  color: var(--text-tertiary);
+  transition: background-color 150ms;
+}
+.linked-email-attachment:hover { background: var(--surface-200); }
+.linked-email-attachment > button { min-width: 0; color: var(--text-primary); }
+.linked-email-attachment > button:hover { text-decoration: underline; }
+.linked-email-attachment > span { font-variant-numeric: tabular-nums; flex-shrink: 0; }
+/* The remove control matters only on approach — the same 20px hover-revealed
+   affordance the git rows use, so a chip is not two buttons at rest. */
+.linked-email-attachment-remove {
+  width: var(--control-h-xs);
+  height: var(--control-h-xs);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  border-radius: var(--radius-md);
+  color: var(--text-tertiary);
+  opacity: 0;
+  transition: opacity 150ms, color 150ms, background-color 150ms;
+}
+.linked-email-attachment:hover .linked-email-attachment-remove,
+.linked-email-attachment-remove:focus-visible { opacity: 1; }
+.linked-email-attachment-remove:hover { color: var(--text-primary); background: var(--surface-300); }
+
+/* The save state of an email lives in one bar at the foot, under its
+   attachments, instead of in the titlebar; the alert surface stays for trouble. */
+.linked-email-foot {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: auto;
+  padding: 0 0.75rem;
+  min-height: var(--control-h-lg);
+  border-top: 1px solid var(--border-subtle-color);
+  background: var(--surface-50);
+  font-size: 11px;
+  color: var(--text-tertiary);
+  flex-shrink: 0;
+}
+.linked-email-foot > span { min-width: 0; }
+.linked-email-foot-dot { width: 6px; height: 6px; border-radius: 999px; flex-shrink: 0; background: var(--color-accent); }
+.linked-email-foot-dot[data-state="saving"] { background: var(--text-tertiary); }
+.linked-email-foot-dot[data-state="error"] { background: var(--danger-toggle-icon); }
+/* The gap between session and card is the handle: invisible at rest, a
+   hairline on approach, the accent while focused — the file tree's handle. */
+.linked-document-divider { position: absolute; left: 0; top: 0; bottom: 0; width: var(--linked-inset); cursor: col-resize; outline: none; }
+.linked-document-divider::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 0.75rem;
+  bottom: 0.75rem;
+  width: 1px;
+  translate: -50% 0;
+  border-radius: 1px;
+  background: transparent;
+  transition: background-color 150ms;
+}
+.linked-document-divider:hover::after { background: color-mix(in srgb, var(--color-accent) 50%, transparent); }
+.linked-document-divider:focus-visible::after,
+.linked-document-divider:active::after { background: var(--color-accent); }
+
+/* A hidden document stays one click away: a chip naming it in the session's
+   header (LinkedDocumentReopen), like an artifact chip in its conversation. */
+.linked-document-reopen { max-width: 12rem; }
+
+/* ── Release notes, HTML branch ────────────────────────────────────────────
+   GitHub's releases feed serves each body already rendered to HTML, so the
+   update card cannot run every note through its Markdown component map. This
+   is that map's twin for the HTML branch (`ReleaseBody` in
+   components/help/ReleaseNotes.tsx): same type scale, same section labels,
+   same list rhythm. The two must be changed together — the whole point is
+   that a reader cannot tell which branch rendered the note they are reading.
+   Only the sanitised allowlist in `normalizeReleaseBody` can land here. */
+.release-note-html > *:first-child {
+  margin-top: 0;
+}
+.release-note-html > *:last-child {
+  margin-bottom: 0;
+}
+/* ### Added / ### Fixed — section labels, not headings, at this size: 11px
+   type cannot make a heading differ from its body by weight alone. */
+.release-note-html h1,
+.release-note-html h2,
+.release-note-html h3,
+.release-note-html h4,
+.release-note-html h5,
+.release-note-html h6 {
+  font-size: 10px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.025em;
+  color: var(--text-tertiary);
+  margin: 0.5rem 0 0.25rem;
+}
+.release-note-html p {
+  margin: 0 0 0.375rem;
+}
+.release-note-html ul,
+.release-note-html ol {
+  margin: 0 0 0.375rem;
+  padding-left: 0.875rem;
+}
+.release-note-html ul {
+  list-style: disc;
+}
+.release-note-html ol {
+  list-style: decimal;
+}
+.release-note-html li {
+  color: var(--text-secondary);
+}
+.release-note-html li + li {
+  margin-top: 0.25rem;
+}
+.release-note-html li > ul,
+.release-note-html li > ol {
+  margin-top: 0.25rem;
+  margin-bottom: 0;
+}
+/* The lead-in of a release bullet ("**Codex usage panel** — …"): the scannable
+   half of the line, so it takes the primary colour rather than more weight. */
+.release-note-html strong,
+.release-note-html b {
+  font-weight: 500;
+  color: var(--text-primary);
+}
+.release-note-html del,
+.release-note-html s {
+  color: var(--text-tertiary);
+}
+.release-note-html code {
+  background: color-mix(in srgb, var(--surface-200) 60%, transparent);
+  color: var(--text-primary);
+  padding: 1px 4px;
+  border-radius: var(--radius-md);
+  font-size: 0.9em;
+  font-family: var(--font-mono, ui-monospace, monospace);
+}
+/* A fenced block would blow the card's width open; scroll it rather than
+   wrap it. */
+.release-note-html pre {
+  margin: 0 0 0.375rem;
+  padding: 0.375rem;
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--surface-200) 50%, transparent);
+  overflow-x: auto;
+}
+.release-note-html pre code {
+  background: transparent;
+  padding: 0;
+}
+.release-note-html blockquote {
+  margin: 0.375rem 0;
+  padding-left: 0.5rem;
+  border-left: 2px solid color-mix(in srgb, var(--color-accent) 40%, transparent);
+  color: var(--text-tertiary);
+}
+.release-note-html hr {
+  margin: 0.5rem 0;
+  border-color: var(--border-subtle-color);
+}
+.release-note-html a {
+  color: var(--color-accent);
+}
+.release-note-html a:hover {
+  text-decoration: underline;
+}
+
+/* ── View notice ──
+   What a web view shows when it has no page to show: the server is being
+   checked, is starting, is down, or the page is still loading. The ground is
+   the user's own Antasphere field (the material of the sidebar's foot), held
+   far off the surface so it reads as a quiet, grained wash rather than a
+   picture, and seeded from the page's address so every board has a field of
+   its own. The card over it is the popover material (.menu-surface), the
+   same box the workspace switcher opens in, entering with the same pop. */
+.view-notice {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  background-color: var(--surface-0);
+}
+.view-notice-field {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+.view-notice-card {
+  position: relative;
+  width: 360px;
+  max-width: calc(100% - 2rem);
+  padding: 14px 14px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+/* The status row: the dot, the page's name, its address. */
+.view-notice-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.view-notice-dot {
+  flex-shrink: 0;
+  width: 8px;
+  height: 8px;
+  border-radius: 9999px;
+  background-color: var(--text-tertiary);
+  transition: background-color 150ms;
+}
+.view-notice-dot[data-state='up'] {
+  background-color: var(--color-success);
+}
+.view-notice-dot[data-state='starting'],
+.view-notice-dot[data-state='loading'],
+.view-notice-dot[data-state='checking'] {
+  background-color: var(--color-warning);
+}
+.view-notice-dot[data-state='down'] {
+  background-color: var(--color-destructive);
+}
+/* A dot with somewhere to be: the starting and loading states breathe. */
+.view-notice-dot[data-state='starting'],
+.view-notice-dot[data-state='loading'] {
+  animation: view-notice-breathe 1.6s ease-in-out infinite;
+}
+@keyframes view-notice-breathe {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+.view-notice-title {
+  font-size: 13px;
+  font-weight: var(--font-weight-medium);
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.view-notice-url {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 11px;
+  color: var(--text-tertiary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* What is happening, and for how long (tabular so the clock does not jitter). */
+.view-notice-line {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.view-notice-elapsed {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+/* The serving command, as a chip: what will run, or what is running. */
+.view-notice-command {
+  display: block;
+  padding: 5px 8px;
+  border-radius: var(--radius-control);
+  background-color: var(--surface-100);
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.view-notice-error {
+  font-size: 11px;
+  color: var(--color-destructive);
+}
+.view-notice-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-top: 2px;
+}
+.view-notice-actions .btn-primary,
+.view-notice-actions .btn-secondary {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── GitHub pull request panel (apps/plugins/github) ──
+   A side-panel tab, on the panel's own material: the bar is a .panel-bar, the
+   rows are the git panel's height, the composer is the design system's
+   textarea and buttons. Every colour is a token; the three tones a pull
+   request speaks in (passing, failing, waiting) are the status tokens. */
+.pr-panel {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+.pr-panel .panel-bar {
+  flex-shrink: 0;
+}
+.pr-ref {
+  padding: 0 var(--control-px);
+  font-size: var(--control-text);
+  color: var(--text-secondary);
+}
+.pr-ref-number {
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+.pr-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: calc(var(--spacing) * 2) calc(var(--spacing) * 3) calc(var(--spacing) * 3);
+}
+.pr-loading,
+.pr-empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: calc(var(--spacing) * 2);
+  padding: calc(var(--spacing) * 4);
+  text-align: center;
+}
+.pr-empty-glyph {
+  width: 24px;
+  height: 24px;
+  color: var(--text-tertiary);
+}
+.pr-empty-title {
+  font-size: var(--control-text);
+  color: var(--text-primary);
+}
+.pr-empty-text,
+.pr-empty-refused {
+  font-size: 12px;
+  color: var(--text-tertiary);
+}
+.pr-empty-refused {
+  color: var(--color-destructive);
+}
+.pr-empty-form {
+  width: 100%;
+}
+.pr-empty-form .input-compact {
+  width: 100%;
+}
+.pr-empty-form .input-compact[aria-invalid='true'] {
+  border-color: var(--color-destructive);
+}
+.pr-recent {
+  width: 100%;
+  margin-top: calc(var(--spacing) * 2);
+  text-align: left;
+}
+.pr-recent .menu-item {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+}
+.pr-recent-ref {
+  font-size: 12px;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+.pr-recent-title {
+  max-width: 100%;
+  font-size: 12px;
+  color: var(--text-tertiary);
+}
+
+/* A failure that stands in for the record: gh missing, not signed in, refused. */
+.pr-failure {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: calc(var(--spacing) * 2);
+  margin: calc(var(--spacing) * 3);
+  padding: calc(var(--spacing) * 3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-xl);
+  background-color: var(--surface-50);
+}
+.pr-failure-message {
+  font-size: 12px;
+  color: var(--color-destructive);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.pr-failure-hint,
+.pr-none {
+  font-size: 12px;
+  color: var(--text-tertiary);
+}
+.pr-stale {
+  margin-bottom: calc(var(--spacing) * 2);
+  font-size: 11px;
+  color: var(--color-warning);
+}
+
+.pr-head {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--spacing) * 2);
+  padding: 0 var(--spacing) calc(var(--spacing) * 3);
+  border-bottom: 1px solid var(--color-border-subtle);
+}
+.pr-title {
+  font-size: 15px;
+  line-height: 1.35;
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+}
+.pr-meta {
+  display: flex;
+  align-items: flex-start;
+  gap: calc(var(--spacing) * 2);
+}
+.pr-meta-text {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+.pr-meta-text strong {
+  color: var(--text-primary);
+  font-weight: var(--font-weight-medium);
+}
+.pr-branch {
+  padding: 1px 4px;
+  border-radius: var(--radius-md);
+  background-color: var(--surface-100);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-primary);
+}
+.pr-state {
+  flex-shrink: 0;
+  margin-top: 1px;
+  background-color: var(--surface-200);
+  color: var(--text-secondary);
+}
+.pr-state[data-state='open'] {
+  background-color: color-mix(in srgb, var(--color-success) 18%, transparent);
+  color: var(--color-success);
+}
+/* Merged is GitHub's violet, borrowed from the git panel's own per-theme
+   violet. It rode the accent while the accent was indigo; once the accent
+   became the "on" blue, a merged pull request read as a selected one. */
+.pr-state[data-state='merged'] {
+  background-color: color-mix(in srgb, var(--color-git-worktree) 18%, transparent);
+  color: var(--color-git-worktree);
+}
+.pr-state[data-state='closed'] {
+  background-color: color-mix(in srgb, var(--color-destructive) 18%, transparent);
+  color: var(--color-destructive);
+}
+.pr-stats {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: calc(var(--spacing) * 2);
+  font-size: 11px;
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+.pr-stat-add {
+  color: var(--color-success);
+}
+.pr-stat-del {
+  color: var(--color-destructive);
+}
+.pr-signals {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing);
+}
+.pr-signal {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--spacing) * 1.5);
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.pr-check-icon {
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
+  color: var(--text-tertiary);
+}
+.pr-signal[data-tone='success'] .pr-check-icon,
+.pr-check[data-status='success'] .pr-check-icon {
+  color: var(--color-success);
+}
+.pr-signal[data-tone='failure'] .pr-check-icon,
+.pr-check[data-status='failure'] .pr-check-icon,
+.pr-check[data-status='cancelled'] .pr-check-icon {
+  color: var(--color-destructive);
+}
+.pr-signal[data-tone='pending'] .pr-check-icon,
+.pr-check[data-status='pending'] .pr-check-icon {
+  color: var(--color-warning);
+}
+
+/* Sections: a disclosure row the height of a git tree row, its content under it. */
+.pr-section {
+  border-bottom: 1px solid var(--color-border-subtle);
+}
+.pr-section-head {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing);
+  min-height: var(--git-tree-row-h);
+  padding: 0 var(--spacing);
+  font-size: var(--control-text);
+  color: var(--text-primary);
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+}
+.pr-section-head::-webkit-details-marker {
+  display: none;
+}
+.pr-section-head::before {
+  content: '';
+  width: 5px;
+  height: 5px;
+  margin-right: var(--spacing);
+  border-right: 1.5px solid var(--text-tertiary);
+  border-bottom: 1.5px solid var(--text-tertiary);
+  transform: rotate(-45deg);
+  transition: transform 150ms;
+}
+.pr-section[open] > .pr-section-head::before {
+  transform: rotate(45deg);
+}
+.pr-section-count {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+.pr-section-body {
+  padding: 0 var(--spacing) calc(var(--spacing) * 3);
+}
+.pr-markdown {
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+}
+
+.pr-check {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--spacing) * 1.5);
+  min-height: var(--panel-row-h);
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.pr-check-name {
+  flex: 1;
+  min-width: 0;
+  color: var(--text-primary);
+}
+.pr-check-workflow {
+  color: var(--text-tertiary);
+}
+
+.pr-file {
+  border-top: 1px solid var(--rule-color);
+}
+.pr-file:first-of-type {
+  border-top: none;
+}
+.pr-file-head {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--spacing) * 2);
+  min-height: var(--panel-row-h);
+  font-size: 12px;
+  cursor: pointer;
+  list-style: none;
+}
+.pr-file-head::-webkit-details-marker {
+  display: none;
+}
+.pr-file-path {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-primary);
+}
+.pr-file[data-change='added'] .pr-file-path {
+  color: var(--color-success);
+}
+.pr-file[data-change='deleted'] .pr-file-path {
+  color: var(--color-destructive);
+}
+.pr-file-stats {
+  display: flex;
+  gap: var(--spacing);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.pr-file-diff {
+  max-height: 320px;
+  margin-bottom: calc(var(--spacing) * 2);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-lg);
+}
+
+.pr-comment {
+  padding: calc(var(--spacing) * 2) 0;
+  border-top: 1px solid var(--rule-color);
+}
+.pr-comment:first-of-type {
+  border-top: none;
+}
+.pr-comment-head {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--spacing) * 2);
+  margin-bottom: var(--spacing);
+  font-size: 12px;
+  color: var(--text-primary);
+}
+.pr-comment-head strong {
+  font-weight: var(--font-weight-medium);
+}
+.pr-comment-when {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+.pr-review-state {
+  background-color: var(--surface-200);
+  color: var(--text-secondary);
+}
+.pr-review-state[data-state='approved'] {
+  color: var(--color-success);
+}
+.pr-review-state[data-state='changes_requested'] {
+  color: var(--color-destructive);
+}
+
+/* The composer: the design system's textarea and the actions under it. */
+.pr-composer {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--spacing) * 2);
+  flex-shrink: 0;
+  padding: calc(var(--spacing) * 2) calc(var(--spacing) * 3) calc(var(--spacing) * 3);
+  border-top: 1px solid var(--color-border-subtle);
+}
+.pr-composer-input {
+  width: 100%;
+  min-height: 56px;
+  resize: vertical;
+}
+.pr-composer-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--control-gap);
+}
+.pr-composer-actions .btn-primary {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--control-gap);
+}
+
+/* Audio settings: the default input's segmented level meter. */
+.mic-level-meter {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--control-h) / 14);
+}
+.mic-level-segment {
+  width: calc(var(--control-h) / 7);
+  height: calc(var(--control-h) / 2);
+  border-radius: var(--radius-sm);
+  background: var(--surface-300);
+}
+.mic-level-segment[data-state='lit'] { background: var(--color-accent); }
+.mic-level-segment[data-state='peak'] {
+  background: color-mix(in srgb, var(--color-accent) 40%, transparent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pane-status-dot[data-status='background'],
+  .sidebar-tab-icon[data-background] { animation: none !important; }
+}
+
+/* A live subagent selector shares the model picker's chip and menu material.
+   Its button is a sibling of the parent row's button for keyboard access. */
+.subagent-session-row {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing);
+}
+.subagent-session-row > .sidebar-item {
+  flex: 1;
+  min-width: 0;
+}
+.subagent-trigger,
+.work-trigger {
+  --chat-glyph: var(--framed-control-icon);
+  flex-shrink: 0;
+  max-width: 45%;
+  cursor: pointer;
+}
+.subagent-trigger .tab-status,
+.work-trigger .tab-status {
+  flex-shrink: 0;
+}
+.subagent-trigger[data-active='true'],
+.work-trigger[data-active='true'] {
+  color: var(--text-primary);
+  background-color: var(--surface-200);
+}
+.subagent-menu {
+  max-height: var(--radix-dropdown-menu-content-available-height);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+/* A wave or lane entry (PRDCT-4123): one row for a unit of work, its chips
+   before the status slot. The chips are short words, never a count of work
+   done; amber is the one tone that asks the person to look. */
+.work-chip {
+  flex-shrink: 0;
+  color: var(--text-tertiary);
+  background-color: var(--surface-100);
+}
+.work-chip[data-tone='amber'] {
+  color: var(--color-status-waiting);
+}
+.work-menu-breadcrumb {
+  color: var(--text-secondary);
+}
+.work-menu-action {
+  color: var(--text-secondary);
+  padding-inline-start: 22px;
+}
+.work-breadcrumb {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

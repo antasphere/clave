@@ -7,7 +7,7 @@
 // antasphere/clave is public: the file lives in the (private) website repo and
 // is copied into a git-ignored folder at build time. Where the workspace is not
 // there — a fork, a contributor's clone, CI — this is a no-op, the glob in
-// src/renderer/src/lib/ui-font.ts finds nothing, and Appearance → Font only
+// apps/desktop/src/renderer/src/lib/ui-font.ts finds nothing, and Appearance → Font only
 // offers Geist.
 import { copyFileSync, existsSync, mkdirSync } from 'node:fs'
 import path from 'node:path'
@@ -16,7 +16,7 @@ import { fileURLToPath } from 'node:url'
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 // clave-app sits at <workspace>/labs/products/clave/clave-app.
 const WORKSPACE = path.resolve(REPO, '..', '..', '..', '..')
-const DEST = path.join(REPO, 'src/renderer/src/assets/fonts/private')
+const DEST = path.join(REPO, 'apps/desktop/src/renderer/src/assets/fonts/private')
 
 const FONTS = ['company/website/apps/website/src/assets/fonts/synonym/Synonym-Variable.woff2']
 

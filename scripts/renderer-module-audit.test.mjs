@@ -13,10 +13,10 @@ import {
 describe('actual chunk module audit', () => {
   const fixture = () => {
     const ids = [
-      'src/renderer/src/main.tsx',
-      'src/renderer/src/views/native-views.ts',
-      'plugins/chat-view/src/ChatView.tsx',
-      'plugins/chat-view/src/TerminalView.tsx',
+      'apps/desktop/src/renderer/src/main.tsx',
+      'apps/desktop/src/renderer/src/views/native-views.ts',
+      'apps/plugins/chat-view/src/ChatView.tsx',
+      'apps/plugins/chat-view/src/TerminalView.tsx',
       'node_modules/react-markdown/lib/index.js',
       'node_modules/remark-gfm/lib/index.js',
       'node_modules/remark-parse/lib/index.js'
@@ -71,7 +71,7 @@ describe('actual chunk module audit', () => {
   })
   it('rejects actual wrapper or archived cache contributions', () => {
     for (const id of [
-      'plugins/chat-view/src/MarkdownMessage.tsx',
+      'apps/plugins/chat-view/src/MarkdownMessage.tsx',
       'tests/diagnostics/prefix-cache/plugins/chat-view/src/markdown-parser-reuse.ts'
     ]) {
       const a = fixture()
@@ -85,7 +85,7 @@ describe('actual chunk module audit', () => {
     audit.chunks.push({
       file: 'assets/cache.js',
       sha256: digest('cache output'),
-      modules: [{ id: 'plugins/chat-view/src/MarkdownMessage.tsx', renderedLength: 10 }]
+      modules: [{ id: 'apps/plugins/chat-view/src/MarkdownMessage.tsx', renderedLength: 10 }]
     })
     const output = (id) => (id === 'assets/cache.js' ? 'cache output' : 'actual output')
     expect(() => validateRendererAudit(audit, (id) => id, output, actual)).toThrow('prefix-cache')
@@ -123,7 +123,7 @@ describe('actual chunk module audit', () => {
     expect(() => check(audit)).toThrow('inventory')
   })
   it('requires source identities for every physical module, including wrapped CommonJS', () => {
-    for (const id of ['src/renderer/src/other.ts', '\0node_modules/other/index.js']) {
+    for (const id of ['apps/desktop/src/renderer/src/other.ts', '\0node_modules/other/index.js']) {
       const audit = fixture()
       audit.chunks[0].modules.push({ id, renderedLength: 1 })
       expect(() => check(audit)).toThrow('physical module source identity')

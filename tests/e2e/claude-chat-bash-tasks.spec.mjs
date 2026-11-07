@@ -12,7 +12,7 @@ import {
 } from './harness.mjs'
 
 /* A Claude chat's Bash commands in the Terminal view, from a real Claude
-   Code capture (src/main/sessions/fixtures/claude-stream/background-bash.ndjson)
+   Code capture (packages/host/src/sessions/fixtures/claude-stream/background-bash.ndjson)
    replayed through the real Claude adapter: one Bash call run in the
    background, one waited on. The stub pauses the replay at gates so the spec
    can look between frames. What this spec holds in the real app:
@@ -41,7 +41,7 @@ const BIN = `${ROOT}/bin`
 const WORK = `${ROOT}/work`
 const GATES = `${ROOT}/gates`
 const gate = (name) => writeFileSync(`${GATES}/${name}`, '')
-const FIXTURE = path.join(REPO, 'src/main/sessions/fixtures/claude-stream/background-bash.ndjson')
+const FIXTURE = path.join(REPO, 'packages/host/src/sessions/fixtures/claude-stream/background-bash.ndjson')
 const PROSE = 'Sleep 10 seconds then echo a marker in the background'
 
 function writeFixtures() {

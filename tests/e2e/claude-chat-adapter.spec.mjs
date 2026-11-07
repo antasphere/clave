@@ -48,7 +48,7 @@ const fs = require('node:fs'); const readline = require('node:readline');
 // no session id. It answers with a title and touches none of the files
 // below, which describe the chat process.
 if (!process.argv.includes('--session-id')) { process.stdin.resume(); process.stdin.on('end', () => { process.stdout.write('fixture chat title\\n'); process.exit(0); }); return; }
-const frames = fs.readFileSync(${JSON.stringify(path.join(REPO, 'src/main/sessions/fixtures/claude-stream/permission-turn.ndjson'))}, 'utf8').trim().split('\\n').map(JSON.parse);
+const frames = fs.readFileSync(${JSON.stringify(path.join(REPO, 'packages/host/src/sessions/fixtures/claude-stream/permission-turn.ndjson'))}, 'utf8').trim().split('\\n').map(JSON.parse);
 process.on('SIGTERM',()=>{});
 const grandchild = require('node:child_process').spawn(process.execPath, ['-e', 'setInterval(()=>{},1000)'], {detached:true, stdio:['ignore',process.stdout,process.stderr]});
 grandchild.unref();

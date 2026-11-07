@@ -20,6 +20,16 @@ Provider-agnostic: run Claude Code, Antigravity CLI, Codex CLI, and Pi sessions 
 
 ---
 
+## Source organization
+
+Runnable apps and process entrypoints live under `apps/`. Reusable code lives
+under `packages/`. Desktop and mobile have separate app folders; their common
+host services, models, API and UI code have named packages.
+
+See [the repository map and commands](docs/repository-layout.md) for the full
+layout. Install from the root with `npm ci`, and run `npm run check:structure`
+to check placement and package dependency direction.
+
 ## Download
 
 [**Download the latest version**](https://github.com/antasphere/clave/releases/latest) (macOS Universal — Apple Silicon & Intel) · [All releases](https://github.com/antasphere/clave/releases)
@@ -95,7 +105,7 @@ POST https://ping.clave.work/api/ping
 { "id": "<random uuid>", "appVersion": "1.52.0", "platform": "darwin-arm64" }
 ```
 
-That is the entire payload — three fields, nothing else, ever. The `id` is a random UUID generated on your machine; it carries no email, no username, and no hardware fingerprint, and the server stores only a keyed hash of it, never the raw ID. You can turn the ping off in **Settings → General → Privacy** (the first launch shows a notice with a one-click "Turn off"). The whole client is ~100 lines you can read at [`src/main/telemetry.ts`](src/main/telemetry.ts) — it fails silently, never retries within a check, and can never affect app behavior.
+That is the entire payload — three fields, nothing else, ever. The `id` is a random UUID generated on your machine; it carries no email, no username, and no hardware fingerprint, and the server stores only a keyed hash of it, never the raw ID. You can turn the ping off in **Settings → General → Privacy** (the first launch shows a notice with a one-click "Turn off"). The whole client is ~100 lines you can read at [`packages/host/src/telemetry.ts`](packages/host/src/telemetry.ts) — it fails silently, never retries within a check, and can never affect app behavior.
 
 The only other network requests Clave makes are:
 

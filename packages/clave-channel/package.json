@@ -1,12 +1,9 @@
 {
-  "name": "@codika-io/clave-channel",
+  "name": "@clave/channel",
   "version": "0.1.0",
   "description": "OpenClaw channel plugin for Clave remote agent management",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
-  "bin": {
-    "clave-channel": "./bin/clave-channel.js"
-  },
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch"
@@ -19,8 +16,8 @@
     "typescript": "^5.9.3"
   },
   "files": [
-    "dist",
-    "bin"
+    "dist"
   ],
-  "license": "MIT"
+  "license": "MIT",
+  "private": true
 }

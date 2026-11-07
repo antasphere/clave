@@ -98,7 +98,7 @@ export function verifyFrozenSide(frozen, side) {
       sha,
       'product differs from its frozen committed source'
     )
-  const inventory = git(root, 'ls-files', 'src', 'plugins', 'packages')
+  const inventory = git(root, 'ls-files', 'apps', 'packages')
     .split('\n')
     .filter(
       (p) => /\.(?:ts|tsx|mjs|js|css|json)$/.test(p) && !/\.test\.|\/fixtures\/|\/scripts\//.test(p)
@@ -203,22 +203,23 @@ export function validateOwnershipRunner(realUid, effectiveUid, fixtureBound) {
 
 // Exact reviewed fixture/spawn sources: these paths must enter the NEW freeze.
 // Source inheritance is conditional on this fixed echo fixture, never child EUID proof.
+// Pins refreshed for the apps/packages source relocation; historical captures stay unchanged.
 export const OWNERSHIP_FIXTURE_SOURCES = Object.freeze({
-  'tests/e2e/harness.mjs': '5e78f11a6f3169f54e09dd206d919817d12d47363698395b868ff22fb25a8b4d',
+  'tests/e2e/harness.mjs': '97f57e554bdd5811da6b11f8435a5c858dab8c7ae72c787b19c4b55aa5bed92a',
   'tests/e2e/renderer-resource-workload.mjs':
     '21c4a6817652fe4b8f3e90a6ba71fcf4deb5d883fd48f005d02fcd00d89ce9ff',
   'tests/e2e/renderer-resource-fixture.mjs':
     '7afa9ed987c9fbae0e4dca5083ddfa24d33893bf804c83cf7ccf7fcf2d908614',
-  'src/main/sessions/adapters/echo-adapter.ts':
-    '98f5fde28f2169de6e51b35a17849f24930be150a27629ba0f75853313d231df',
-  'src/main/sessions/session-manager.ts':
-    '3b2e9422dbcfcffbdc99140efbb280ccead5b2bcbc81a7ac02fd35558e0a8949',
-  'src/main/server-child.ts': 'a52bcbe2fbac42a3a145b6eb7481eade568346dd71b8bbf3f4628f7de1f5a246',
-  'src/main/server-entry.ts': 'fbabefc592059eed93c4d19b75cf61ad8543757d74941b568c20d9f4324721a2',
-  'src/main/terminal-process/supervisor.ts':
+  'packages/host/src/sessions/adapters/echo-adapter.ts':
+    '2ba49605f052813a6fdc201bd0462a997a6d5b3d72320c710ee2bf38435e8c5f',
+  'packages/host/src/sessions/session-manager.ts':
+    'f99d02dd8dd19d3074acfec0d4a3f8c536e855727a76e6f1c059235387047618',
+  'packages/host/src/server-child.ts': 'a52bcbe2fbac42a3a145b6eb7481eade568346dd71b8bbf3f4628f7de1f5a246',
+  'apps/server/src/main.ts': '18ca8cbe647f4d167ad1c9b61f20360809d7d50aeee0115eafda9b82a6900dd8',
+  'packages/host/src/terminal-process/supervisor.ts':
     '91638099f61e11cee25ffcc4da233574cb96f4af85b3ce1d21b30fe7c0880ed7',
-  'src/main/terminal-process/announcing.ts':
-    '95fbd39229f836c9ff17c0b31d9314cfc1ab6194af74fd0f83c87d67e84ff938'
+  'packages/host/src/terminal-process/announcing.ts':
+    '5dd1bb1ebeb65729a2c3d873eb22d66611fe18d4922dca808a49071c4bf98770'
 })
 export function verifyOwnershipFixture(
   frozen,

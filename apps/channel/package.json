@@ -1,0 +1,25 @@
+{
+  "name": "@codika-io/clave-channel",
+  "version": "0.1.0",
+  "description": "OpenClaw channel plugin for Clave remote agent management",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "clave-channel": "./bin/clave-channel.js"
+  },
+  "scripts": {
+    "build": "npm run build --workspace @clave/channel && node ../../scripts/build-channel.mjs"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/ws": "^8.5.13",
+    "typescript": "^5.9.3"
+  },
+  "files": [
+    "dist",
+    "bin"
+  ],
+  "license": "MIT"
+}

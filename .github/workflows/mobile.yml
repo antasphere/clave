@@ -1,6 +1,6 @@
 name: Mobile
 
-# The gates of packages/mobile (Clave on the phone): typecheck, lint, the
+# The gates of apps/mobile (Clave on the phone): typecheck, lint, the
 # unit tests, the JavaScript export for both platforms and the check that the
 # release bundle carries no developer connection. Linux is enough: nothing
 # here builds a native app (the simulator check, scripts/simulator-check.mjs,
@@ -9,13 +9,13 @@ on:
   push:
     branches: [dev]
     paths:
-      - 'packages/mobile/**'
+      - 'apps/mobile/**'
       - 'package.json'
       - 'package-lock.json'
       - '.github/workflows/mobile.yml'
   pull_request:
     paths:
-      - 'packages/mobile/**'
+      - 'apps/mobile/**'
       - 'package.json'
       - 'package-lock.json'
       - '.github/workflows/mobile.yml'
@@ -34,7 +34,7 @@ jobs:
     timeout-minutes: 30
     defaults:
       run:
-        working-directory: packages/mobile
+        working-directory: apps/mobile
     steps:
       - uses: actions/checkout@v4
 
@@ -60,7 +60,7 @@ jobs:
       # The root ESLint config applies to the package (flat config, one tree).
       - name: Lint
         working-directory: .
-        run: npx eslint packages/mobile
+        run: npx eslint apps/mobile
 
       - name: Unit tests
         run: npm test

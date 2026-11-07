@@ -1,0 +1,10 @@
+{
+  "name": "@clave/server-app",
+  "version": "0.1.0",
+  "private": true,
+  "license": "MIT",
+  "scripts": {
+    "start": "bun src/main.ts",
+    "dev": "npm --prefix ../.. run dev:server"
+  }
+}

@@ -47,8 +47,14 @@ resources/native/haptic-helper
 resources/native/secure-files-helper
 
 # Fonts Clave may use but not redistribute — copied in by scripts/copy-private-fonts.mjs
-src/renderer/src/assets/fonts/private/
+apps/desktop/src/renderer/src/assets/fonts/private/
 
 # Built bundled plugins (scripts/build-plugins.mjs)
-plugins/analytics/main.mjs
-plugins/analytics/dist/
+apps/plugins/analytics/main.mjs
+apps/plugins/analytics/dist/
+
+# Pi extension copied from apps/pi-state during the build
+resources/pi-clave-state.js
+
+# Python tooling bytecode
+__pycache__/

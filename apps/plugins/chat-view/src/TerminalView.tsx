@@ -1,0 +1,1193 @@
+import { publicQuestionAnswers } from '../../../desktop/src/renderer/src/lib/question-identity'
+import { useFleetStore } from '../../../desktop/src/renderer/src/store/fleet-store'
+import {
+  isRemoteKey,
+  ownerOf,
+  canOpenRemotePage
+} from '../../../desktop/src/renderer/src/lib/fleet-identity'
+import { parseResourceKey } from '@clave/contract/fleet'
+import { bindFleetCatchup } from './fleet-sync'
+/** The Terminal view: a third reading of a session, started as a copy of
+ *  `ChatView` and diverging from it on purpose. Shares its props with Chat. */
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react'
+import {
+  ArrowUpIcon,
+  ChatBubbleLeftRightIcon,
+  MapPinIcon,
+  PaperClipIcon,
+  StopIcon,
+  XMarkIcon
+} from '@heroicons/react/24/outline'
+import type {
+  HistoryItem,
+  PermissionModeOption,
+  SessionEvent,
+  SessionInput,
+  CommandOption
+} from '../../../../packages/shared/src/session-model'
+import {
+  answeredSince,
+  emptyConversation,
+  openRequests,
+  reduceConversation,
+  type Entry
+} from './reducer'
+import { PermissionModeMenu } from './PermissionModeMenu'
+import { ModelMenu } from './ModelMenu'
+import { EffortMenu } from './EffortMenu'
+import { DeliveryStack } from './DeliveryStack'
+import { claudeContextWindow } from '../../../../packages/shared/src/claude-models'
+import { nextPermissionMode } from './permission-mode'
+import {
+  emptyStatus,
+  reduceStatus,
+  relaunchRequest,
+  shownWork,
+  type TerminalStatus
+} from './terminal-status'
+import { ContextMeter } from './TerminalStatus'
+import { WorkCards } from './WorkCards'
+import { AccountChip } from './AccountChip'
+import { useQuestionHeight } from './question-height'
+import { blockKey, groupEntries, visibleEntries, type Block } from './tools'
+import { ToolDisclosure } from './disclosure'
+import { ApprovalRun, PromptDock } from './PromptDock'
+import { refusedAnswer } from './refused-answer'
+import { serverDock, withServerPending } from './server-requests'
+import { continueList } from './lists'
+import { ResumePicker } from './ResumePicker'
+import { McpPanel } from './McpPanel'
+import { PluginPanel } from './PluginPanel'
+import { hostPanelFor, hostPanelOf, type HostPanel } from './control-panels'
+import { resumeHistoryEntry } from '../../../desktop/src/renderer/src/lib/session-history'
+import { emitTabClosed } from '../../../desktop/src/renderer/src/lib/exchange-capture'
+import { useViewSessionStore } from '../../../desktop/src/renderer/src/views/session-store'
+import { endIsCurrent } from '../../../desktop/src/renderer/src/views/session-end'
+import { acceptAccountProposal } from '../../../desktop/src/renderer/src/lib/account-policy'
+import type { HistoryListEntry } from '../../../desktop/src/preload/index.d'
+import { Attachments } from './Attachments'
+import { useComposerFocus } from './focus'
+import { useMessageHistory } from './history'
+import { useTranscriptEnd } from './transcript'
+import { usePresentation } from './presentation'
+import { TranscriptRows } from './rows'
+import { JumpToEnd } from './JumpToEnd'
+import { useEarlier, type EarlierPage } from './earlier'
+import { useTranscriptSearch } from './search'
+import { useFitRow } from './fit'
+import { EarlierLoading } from './EarlierLoading'
+import {
+  attachmentIssue,
+  MAX_TOTAL_IMAGE_BYTES,
+  type Attachment
+} from '../../../../packages/shared/src/attachments'
+import { useComposerAttachments } from './composer-attachments'
+import { DropDrawing } from './DropDrawing'
+import {
+  failureText,
+  pathForMessage,
+  pathsFromDataTransfer
+} from '../../../desktop/src/renderer/src/lib/dropped-paths'
+import { ClaudeLogo, CodexLogo, PiLogo } from '../../../desktop/src/renderer/src/components/icons/cli-logos'
+import { useMarkPack } from '../../../desktop/src/renderer/src/components/plugins/native-marks'
+import type { ChatViewProps } from './ChatView'
+import { EntryRow, ToolRow } from './TerminalEntry'
+import { foldSubagents, noSubagents, reduceSubagents, type SubagentLogs } from './subagents'
+
+/** What a drag carries: files from a file manager or another app, or the
+ *  paths Clave's own file and git panels write as text. */
+const filesDrag = (dt: DataTransfer): boolean =>
+  dt.types.includes('Files') ||
+  dt.types.includes('text/uri-list') ||
+  dt.types.includes('application/x-clave-files')
+const pathsDrag = (dt: DataTransfer): boolean => dt.types.includes('text/plain')
+/** The provider's mark at the end of the transcript, breathing while the
+ *  agent works — from the moment it starts, before any text — and gone the
+ *  moment it stops. A finished answer stands on its own; a logo resting under
+ *  every reply read as the transcript's own decoration rather than a sign. */
+function ProviderMark({ provider }: { provider: string }): React.JSX.Element {
+  // Appearance → Agent mark: the chosen pack's mark, moving, in place of the
+  // breathing logo. Same slot, same arrival and departure.
+  const pack = useMarkPack()
+  const Logo =
+    provider === 'claude'
+      ? ClaudeLogo
+      : provider === 'codex'
+        ? CodexLogo
+        : provider === 'pi'
+          ? PiLogo
+          : null
+  return (
+    <div
+      className="chat-provider-mark"
+      data-provider={provider}
+      data-state="working"
+      data-mark={pack ? 'pack' : undefined}
+      role="status"
+      aria-label={`${provider} is working`}
+    >
+      {pack ? (
+        <pack.Agent working status="working" slot="transcript" />
+      ) : Logo ? (
+        <Logo />
+      ) : (
+        <span className="chat-provider-mark-dot" />
+      )}
+    </div>
+  )
+}
+/** The "/" the composer opens on: the draft is a single line starting with a
+ *  slash and no space yet — the moment a command is being named. */
+const slashQuery = (draft: string): string | null => {
+  const m = /^\/([\w:-]*)$/.exec(draft)
+  return m ? m[1] : null
+}
+/** The commands a session offers, listed above the composer while a "/" is
+ *  being typed; filtered by what follows the slash, walked with the arrows,
+ *  taken with Tab or Enter. */
+function SlashMenu({
+  sessionId,
+  query,
+  onPick,
+  onClose,
+  bind
+}: {
+  sessionId: string
+  query: string
+  onPick: (command: CommandOption) => void
+  onClose: () => void
+  bind: (handler: ((event: React.KeyboardEvent) => boolean) | null) => void
+}): React.JSX.Element {
+  const [commands, setCommands] = useState<CommandOption[] | null>(null)
+  const [failure, setFailure] = useState<string | null>(null)
+  const [active, setActive] = useState(0)
+  useEffect(() => {
+    let live = true
+    Promise.resolve()
+      .then(() => window.electronAPI.sessionsCommands(sessionId))
+      .then((list) => {
+        if (live) setCommands(list)
+      })
+      .catch((error) => {
+        if (live) setFailure(String(error))
+      })
+    return () => {
+      live = false
+    }
+  }, [sessionId])
+  const q = query.toLowerCase()
+  const shown = (commands ?? []).filter((c) => c.name.toLowerCase().includes(q))
+  const index = Math.min(active, Math.max(shown.length - 1, 0))
+  // The composer's textarea keeps the focus; it hands its arrow, Tab, Enter
+  // and Escape keys here while the menu is open.
+  useEffect(() => {
+    bind((event) => {
+      // A modified key is the composer's (Shift+Enter is a newline), never the menu's.
+      if (event.shiftKey || event.metaKey || event.ctrlKey || event.altKey) return false
+      if (event.key === 'ArrowDown') setActive((i) => (i + 1) % Math.max(shown.length, 1))
+      else if (event.key === 'ArrowUp')
+        setActive((i) => (i - 1 + Math.max(shown.length, 1)) % Math.max(shown.length, 1))
+      else if ((event.key === 'Enter' || event.key === 'Tab') && shown[index]) onPick(shown[index])
+      else if (event.key === 'Escape') onClose()
+      else return false
+      return true
+    })
+    return () => bind(null)
+  }, [bind, shown, index, onPick, onClose])
+  return (
+    <div
+      className="menu-surface menu-pop-mount chat-slash-menu"
+      role="listbox"
+      aria-label="Commands"
+    >
+      <div className="menu-label">Commands</div>
+      {commands === null && !failure && <div className="chat-model-empty">Loading…</div>}
+      {failure && <div className="chat-model-empty">Commands unavailable</div>}
+      {commands?.length === 0 && (
+        <div className="chat-model-empty">This session offers no commands</div>
+      )}
+      {commands && commands.length > 0 && shown.length === 0 && (
+        <div className="chat-model-empty">No command matches “/{query}”</div>
+      )}
+      <div className="chat-slash-list">
+        {shown.map((command, i) => (
+          <button
+            key={command.name}
+            type="button"
+            role="option"
+            aria-selected={i === index}
+            className="menu-item chat-slash-option"
+            data-selected={i === index ? 'true' : undefined}
+            onMouseEnter={() => setActive(i)}
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={() => onPick(command)}
+          >
+            <span className="chat-slash-name">/{command.name}</span>
+            {command.description && <span className="chat-slash-hint">{command.description}</span>}
+          </button>
+        ))}
+      </div>
+    </div>
+  )
+}
+// Only keep the transcript pinned to its end while the reader is already
+// there; a reader who scrolled up to re-read is never yanked back down
+// (`useTranscriptEnd`).
+const STICK_THRESHOLD = 80
+const stickSlack = (): number => STICK_THRESHOLD
+const AGENT_NAMES: Record<string, string> = { claude: 'Claude', codex: 'Codex', pi: 'Pi' }
+/** The Terminal view's names for the permission modes where they differ
+ *  from the provider's: bypass is YOLO here, short and unmistakable. */
+const terminalModeLabel = (option: PermissionModeOption): string =>
+  option.id === 'bypassPermissions' ? 'YOLO' : option.label
+/** Where the reader's choice to pin questions is kept, across sessions. */
+const PIN_KEY = 'clave-terminal-pin-questions'
+/** What a click lands on when it means something other than "type here". */
+const INTERACTIVE =
+  'a, button, input, textarea, select, summary, label, [role="button"], [role="menuitem"], [role="menu"], [role="dialog"], [role="separator"], [contenteditable="true"]'
+type TurnRows = { key: string; block: Block }[]
+/** One exchange as the virtualiser mounts it: the section stays whole inside
+ *  its row, so the pinned question stays sticky within its own exchange. An
+ *  exchange the column gained at its end arrives (`TranscriptRows`), and so
+ *  does every block that joins it while it stays mounted. */
+function TerminalTurn({
+  rows,
+  first,
+  arriving,
+  liveRun,
+  onError
+}: {
+  rows: TurnRows
+  first: boolean
+  arriving: boolean
+  /** The key of the run in flight, if it is in this exchange (`TerminalTools`). */
+  liveRun: string | undefined
+  onError: (error: unknown) => void
+}): React.JSX.Element {
+  const [arrive] = useState(arriving)
+  return (
+    <div
+      className="chat-row"
+      data-first={first ? 'true' : undefined}
+      data-arrive={arrive ? 'true' : undefined}
+    >
+      <section className="term-turn">
+        {rows.map(({ block, key }) =>
+          block.kind === 'delivery-group' ? (
+            <DeliveryStack
+              key={key}
+              group={block}
+              id={key}
+              renderEntry={(entry) => <EntryRow entry={entry} onError={onError} />}
+            />
+          ) : block.kind === 'tool-group' ? (
+            <ToolRow key={key} group={block} live={key === liveRun} />
+          ) : block.kind === 'approval-group' ? (
+            <ApprovalRun key={key} id={key} group={block} />
+          ) : (
+            <EntryRow key={key} entry={block} onError={onError} />
+          )
+        )}
+      </section>
+    </div>
+  )
+}
+export function TerminalView({
+  session,
+  onState,
+  visible = true
+}: ChatViewProps): React.JSX.Element {
+  const [conversation, dispatch] = useReducer(reduceConversation, {
+    ...emptyConversation,
+    state: session.state
+  })
+  const presentation = usePresentation(conversation, visible)
+  // The status line's own reading of the same stream: context and subagents.
+  const [status, dispatchStatus] = useReducer(
+    (current: TerminalStatus, event: SessionEvent) => reduceStatus(current, event),
+    emptyStatus
+  )
+  // Each subagent's own conversation, off the same stream, for the window
+  // onto it that its row opens (`SubAgentPeek`). A page of the past folds
+  // in as it arrives; a fleet catch-up starts it over with the transcript.
+  const [subagents, dispatchSubagents] = useReducer(
+    (
+      logs: SubagentLogs,
+      action: { event: SessionEvent } | { items: HistoryItem[] } | { sync: HistoryItem[] }
+    ): SubagentLogs =>
+      'event' in action
+        ? reduceSubagents(logs, action.event)
+        : 'sync' in action
+          ? foldSubagents(noSubagents, action.sync)
+          : foldSubagents(logs, action.items),
+    noSubagents
+  )
+  // Held by identity: the stack folds a row away when its list changes.
+  const work = useMemo(() => shownWork(status.agents), [status.agents])
+  const [ready, setReady] = useState(false)
+  // A resumed conversation's past lives in main and arrives a page at a time,
+  // the newest first: `before` is what to ask for next, null once nothing is
+  // older; `pastRead` holds the empty state back until the first answer, so a
+  // long conversation never flashes "Start a conversation" on its way in.
+  const [before, setBefore] = useState<number | null>(null)
+  const [pastRead, setPastRead] = useState(false)
+  // The draft is the host's, per session, so it survives this view being
+  // unmounted and mounted again (PRDCT-2620); the attachments stay here.
+  const { draft, setDraft, recall } = useMessageHistory(session.id, conversation.entries)
+  const [imagesSupported, setImagesSupported] = useState(false)
+  const [sending, setSending] = useState(false)
+  // A files drag over the pane, for the overlay; a paths drag over the composer.
+  const [dragging, setDragging] = useState<'files' | 'paths' | null>(null)
+  const dragDepth = useRef(0)
+  const [pending, setPending] = useState<string[]>([])
+  // The host's own panel, open in the dock above the composer: the /resume
+  // picker, or the /mcp and /plugin panels headless Claude has no menu for.
+  const [panel, setPanel] = useState<HostPanel | null>(null)
+  const textarea = useRef<HTMLTextAreaElement>(null)
+  // The last message sent, so Escape can hand it back to the composer.
+  const lastSent = useRef<{ text: string; attachments: Attachment[] } | null>(null)
+  // The slash menu's key handler while it is open; the textarea defers to it.
+  const slashKeys = useRef<((event: React.KeyboardEvent) => boolean) | null>(null)
+  const bindSlashKeys = useCallback(
+    (handler: ((event: React.KeyboardEvent) => boolean) | null): void => {
+      slashKeys.current = handler
+    },
+    []
+  )
+  const [slashDismissed, setSlashDismissed] = useState<string | null>(null)
+  useEffect(() => {
+    let live = true
+    const catchup = bindFleetCatchup(session.id, (page) => {
+      if (!live) return
+      dispatch({ sync: page.items })
+      dispatchSubagents({ sync: page.items })
+      setBefore(page.before)
+      setReady(true)
+    })
+    // An end is taken only once the record confirms it: after a move to
+    // another account the old process's end can arrive after this pane has
+    // remounted on the new one, and closed it over a live agent.
+    const confirmed = (then: () => void): void =>
+      void endIsCurrent(session.id)
+        .then((current) => {
+          if (current && live) then()
+        })
+        .catch(console.error)
+    const stop = window.electronAPI.onSessionStream(session.id, (value) => {
+      catchup.changed()
+      if (value.kind !== 'event') return
+      const event = value.event
+      const take = (): void => {
+        dispatch({ event })
+        dispatchStatus(event)
+        dispatchSubagents({ event })
+      }
+      if (event.type === 'state_change' && event.state === 'ended') confirmed(take)
+      else take()
+    })
+    const stopExit = window.electronAPI.onSessionStreamExit(session.id, (code) =>
+      confirmed(() => dispatch({ exit: code }))
+    )
+    void window.electronAPI
+      .sessionsSubscribe(session.id)
+      .then(() => {
+        if (live) setReady(true)
+        // Asked once subscribed, when the adapter has read the transcript;
+        // whatever streamed meanwhile is newer and stays after it. A host
+        // without the call rejects inside the chain and shows no past.
+        return Promise.resolve()
+          .then(() => window.electronAPI.sessionsHistory(session.id))
+          .then((page) => {
+            if (!live) return
+            dispatch({ prepend: page.items })
+            dispatchSubagents({ items: page.items })
+            setBefore(page.before)
+            // The newest page holds the context as the conversation left it.
+            const usage = page.items.findLast((item) => item.event.type === 'context_usage')
+            if (usage) dispatchStatus(usage.event)
+          })
+          .catch(() => {})
+          .finally(() => {
+            if (live) setPastRead(true)
+          })
+      })
+      .catch((error) => dispatch({ event: { type: 'error', message: String(error), fatal: true } }))
+    // Whether an attached image can go as image content is the adapter's
+    // word; until it arrives the composer assumes not, which only ever asks
+    // the reader one more question, never sends a byte the adapter refuses.
+    void window.electronAPI
+      .sessionsCapabilities(session.id)
+      .then((capabilities) => {
+        if (live) setImagesSupported(capabilities.images)
+      })
+      .catch(() => {})
+    return () => {
+      live = false
+      catchup.close()
+      stop()
+      stopExit()
+      void window.electronAPI.sessionsUnsubscribe(session.id)
+    }
+  }, [session.id])
+  /* The pane's state is the kernel's record, the same one the sidebar follows:
+     the reducer holds the last state_change the session stream carried, and a
+     permission_request puts it on blocked exactly as the adapter does. The view
+     never re-derives it from its own answers — a request the adapter abandoned,
+     or one another consumer of this window answered, would leave this pane
+     blocked with live buttons the adapter would refuse (PRDCT-2549). */
+  const state = conversation.state
+  const closed = !ready || state === 'ended'
+  useComposerFocus(session.id, visible && !closed, textarea)
+  useEffect(() => onState(state, conversation.model), [state, conversation.model, onState])
+  const transcript = useTranscriptEnd(presentation.entries, stickSlack, visible)
+  const statusRow = useRef<HTMLDivElement>(null)
+  useFitRow(statusRow)
+  const fetchEarlier = useCallback<EarlierPage>(async () => {
+    if (before === null) return null
+    const page = await window.electronAPI.sessionsHistory(session.id, before)
+    return () => {
+      dispatch({ prepend: page.items })
+      dispatchSubagents({ items: page.items })
+      setBefore(page.before)
+    }
+  }, [session.id, before])
+  const earlier = useEarlier(
+    transcript,
+    visible && before !== null,
+    fetchEarlier,
+    presentation.entries
+  )
+  const write = async (input: SessionInput): Promise<void> => {
+    await window.electronAPI.sessionsWrite(session.id, input)
+  }
+  const report = useCallback(
+    (error: unknown): void =>
+      dispatch({ event: { type: 'error', message: String(error), fatal: false } }),
+    []
+  )
+  // /resume, /mcp and /plugin are the local host's. Remote commands stay
+  // with their owning agent; the native panels use this desktop's APIs.
+  const hostPanels = session.provider === 'claude' && !isRemoteKey(session.id)
+  const openPanel = (which: HostPanel): void => {
+    setDraft('')
+    setPanel(which)
+  }
+  // The pane's root, where a sidebar tab is dropped (`lib/session-drag.ts`).
+  const pane = useRef<HTMLDivElement>(null)
+  const {
+    attachments,
+    preparations,
+    sessionsOver,
+    addFiles,
+    insertAtCaret,
+    withdraw,
+    changeAttachments,
+    onDraftChange,
+    clearSent,
+    restore
+  } = useComposerAttachments({ sessionId: session.id, closed, setDraft, textarea, pane, report })
+  // A message can go while files are still being prepared or one still
+  // needs the reader's call on how to send it: neither, until they are settled.
+  const filesBlocked =
+    preparations.length > 0 || attachments.some((file) => attachmentIssue(file, imagesSupported))
+  const hasDraft = !!draft.trim() || attachments.length > 0
+  const showInterrupt = state === 'working' && !(session.provider === 'codex' && hasDraft)
+  const send = async (): Promise<void> => {
+    if (!ready || sending || state === 'ended' || !hasDraft || filesBlocked) return
+    const typedPanel = hostPanels ? hostPanelFor(draft) : null
+    if (typedPanel) return openPanel(typedPanel)
+    const imageBytes = attachments.reduce(
+      (sum, file) => sum + (file.delivery === 'image' ? file.size : 0),
+      0
+    )
+    if (imageBytes > MAX_TOTAL_IMAGE_BYTES)
+      return report('Images in one message must total 20 MiB or less.')
+    const text = draft
+    const files = attachments
+    setSending(true)
+    transcript.stick()
+    try {
+      await write({
+        type: 'user_message',
+        text,
+        ...(files.length ? { attachments: files } : {})
+      })
+      lastSent.current = { text, attachments: files }
+      setDraft((current) => (current === text ? '' : current))
+      clearSent(files)
+    } catch (error) {
+      report(error)
+    } finally {
+      setSending(false)
+      textarea.current?.focus()
+    }
+  }
+  // A server's session reads what is open off the server (server-requests.ts).
+  const remotePending = useFleetStore((s) => s.requests[ownerOf(session.id)])
+  const answer = async (
+    id: string,
+    optionId: string,
+    answers?: Record<string, string>
+  ): Promise<void> => {
+    setPending((current) => [...current, id])
+    try {
+      if (isRemoteKey(session.id)) {
+        // The dock's id is the server's request key: the answer settles that
+        // one record, and one already settled (on another Mac, or dropped by
+        // the provider) is refused rather than recorded.
+        const request = remotePending?.find((r) => r.id === id)
+        if (!request?.providerRequestId) throw new Error('This request is no longer waiting.')
+        const { accepted } = await window.electronAPI.fleetResolve(id, {
+          type: 'permission',
+          optionId,
+          ...(answers ? { answers } : {})
+        })
+        if (!accepted) throw new Error('This request was already answered.')
+        dispatch({
+          answer: request.providerRequestId,
+          optionId,
+          answers: publicQuestionAnswers(request.questions, request.input, answers)
+        })
+        textarea.current?.focus()
+        return
+      }
+      await write({ type: 'permission_response', id, optionId, ...(answers ? { answers } : {}) })
+      const permission = conversation.entries.find(
+        (entry) => entry.kind === 'permission' && entry.request.id === id
+      )
+      const shown =
+        permission?.kind === 'permission'
+          ? publicQuestionAnswers(permission.request.questions, permission.request.input, answers)
+          : undefined
+      dispatch({ answer: id, optionId, answers: shown })
+      textarea.current?.focus()
+    } catch (error) {
+      // A server session's refusals are its own (above). A local one that says
+      // the request is gone retires the card: nothing ran, and the live
+      // request behind it takes the dock (PRDCT-4032).
+      report(isRemoteKey(session.id) ? error : refusedAnswer(error, id, dispatch))
+    } finally {
+      setPending((current) => current.filter((value) => value !== id))
+    }
+  }
+  // Escape while the agent works is the TUI's gesture: stop the turn and hand
+  // the message back to the composer to edit and resend, unless something
+  // new is already being typed there.
+  /* Escape while the agent works stops it. Before it has answered anything,
+     the message is taken back: out of the transcript and into the composer,
+     to edit and send again. Once an answer has begun, the message is part of
+     the conversation: it stays, marked Interrupted, and the composer is left
+     as it is. */
+  const takeBack = (): void => {
+    void write({ type: 'interrupt' }).catch(report)
+    const last = lastSent.current
+    if (!answeredSince(conversation.entries)) {
+      dispatch({ withdraw: true })
+      if (last && !draft.trim() && !attachments.length) {
+        setDraft(last.text)
+        restore(last.attachments)
+      }
+    }
+    textarea.current?.focus()
+  }
+  /* A drop on the pane. Files and folders become attachments (main tells
+     them apart, and what is neither lands as its path, the reason beside
+     it); the paths Clave's own file and git panels drag as text land at the
+     caret, the way the TUI pastes them (quoted only when needed, a space
+     after). */
+  const drop = (dt: DataTransfer): void => {
+    if (filesDrag(dt)) {
+      const files = Array.from(dt.files)
+      void addFiles(files.length ? files : pathsFromDataTransfer(dt))
+    } else if (pathsDrag(dt)) void dropPaths(pathsFromDataTransfer(dt))
+  }
+  /* Paths dragged as text. Each is made stable first — a transient source
+     copied, a local file carried to a server's session — and one that cannot
+     be (a folder under a temp root, a file the server refuses) lands as the
+     path it was dropped with, the reason reported beside it. */
+  const dropPaths = async (paths: string[]): Promise<void> => {
+    if (!paths.length) return
+    const stable = await Promise.all(
+      paths.map((p) =>
+        stablePath(p).catch((failure: unknown) => {
+          const path = isRemoteKey(p) ? parseResourceKey('file', p).id : p
+          const name = path.split(/[\\/]/).pop() || path
+          report(`${failureText(failure)} ${name} is in the message as a path.`)
+          return path
+        })
+      )
+    )
+    insertAtCaret(stable.map(pathForMessage).join(' ') + ' ')
+  }
+  const stablePath = async (p: string): Promise<string> => {
+    if (!isRemoteKey(session.id)) {
+      if (isRemoteKey(p)) throw new Error('This file belongs to another server.')
+      return (await window.electronAPI.persistDroppedFile(p)) ?? p
+    }
+    if (isRemoteKey(p)) {
+      const file = parseResourceKey('file', p)
+      if (file.serverId !== ownerOf(session.id))
+        throw new Error('This file belongs to another server.')
+      return file.id
+    }
+    const file = await window.electronAPI.sessionsFiles.prepare(session.id, { path: p })
+    return parseResourceKey('file', file.path).id
+  }
+  // What the agent waits on, oldest first: the dock shows the head of it. A
+  // server's session reads it off the server's own records (server-requests.ts).
+  const waitingOn = isRemoteKey(session.id)
+    ? serverDock(remotePending, session.id)
+    : openRequests(conversation.entries)
+  const query = closed ? null : slashQuery(draft)
+  const slashOpen = query !== null && slashDismissed !== draft
+  const pickCommand = useCallback(
+    (command: CommandOption): void => {
+      const picked = hostPanels ? hostPanelOf(command.name) : null
+      if (picked) {
+        setSlashDismissed('')
+        setDraft('')
+        setPanel(picked)
+        return
+      }
+      setDraft(command.insert)
+      setSlashDismissed(command.insert)
+      textarea.current?.focus()
+    },
+    [hostPanels, setDraft]
+  )
+  /* A picked conversation opens as a chat tab of its own, on this tab's launch
+     profile and beside it; a tab that has said nothing yet gives its place to
+     it (closed the way the header's Close does), so a /resume in a fresh tab
+     reads as resuming right here. */
+  const resumeConversation = async (entry: HistoryListEntry): Promise<void> => {
+    const store = useViewSessionStore.getState()
+    const me = store.sessions.find((s) => s.id === session.id)
+    const group = store.groups.find((g) => g.sessionIds.includes(session.id))
+    const opened = await resumeHistoryEntry(entry, {
+      groupId: group?.id ?? null,
+      dangerousMode: me?.dangerousMode ?? false,
+      launchProfileId: me?.launchProfileId
+    })
+    setPanel(null)
+    if (!opened) return report('Could not resume that conversation')
+    if (opened === session.id || conversation.entries.length > 0) return
+    const current = useViewSessionStore.getState()
+    const closing = current.sessions.find((s) => s.id === session.id)
+    if (closing) emitTabClosed(closing, current.groups, 'user', null)
+    await window.electronAPI.killSession(session.id).catch(() => {})
+    useViewSessionStore.getState().removeSession(session.id)
+  }
+  const closeSlash = useCallback((): void => setSlashDismissed(draft), [draft])
+  // Empty assistant turns (a closing frame that opened nothing) do not render;
+  // consecutive tool calls fold into one row. Both views filter and group
+  // through the same two functions, so a run breaks in the same place in each.
+  // Keyed by each entry's ordinal (`Conversation.first`), never by position:
+  // a page of the past arriving in front must not shift a key, or every turn
+  // below it would render as another and the column's arrival would replay on
+  // the ones at the end. Memoised, so a keystroke rebuilds none of it.
+  const blocks = useMemo(() => {
+    const entries = withServerPending(presentation.entries, remotePending, session.id)
+    const ordinal = new Map<Entry, number>()
+    entries.forEach((entry, i) => ordinal.set(entry, presentation.first + i))
+    return groupEntries(visibleEntries(entries)).map((block) => ({
+      block,
+      key: blockKey(block, (entry) => ordinal.get(entry))
+    }))
+  }, [presentation.entries, presentation.first, remotePending, session.id])
+  // One section per exchange: the reader's message and everything answering
+  // it, so a pinned question is carried off by its own section's end.
+  const turns = useMemo(() => {
+    const out: { key: string; rows: typeof blocks }[] = []
+    for (const row of blocks) {
+      if (row.block.kind === 'user' || row.block.kind === 'delivery-group' || !out.length)
+        out.push({ key: row.key, rows: [] })
+      out[out.length - 1].rows.push(row)
+    }
+    return out
+  }, [blocks])
+  // The reader's open tool rows, kept across the rows' unmounts (`ToolDisclosure`).
+  const [disclosure] = useState(() => new Map<string, boolean>())
+  const [pinQuestions, setPinQuestions] = useState(() => localStorage.getItem(PIN_KEY) !== 'off')
+  const togglePin = (): void =>
+    setPinQuestions((value) => {
+      localStorage.setItem(PIN_KEY, value ? 'off' : 'on')
+      return !value
+    })
+  useQuestionHeight(transcript.scroll)
+  // The mark is the agent at work, nothing else: it leaves with the state.
+  const showMark = state === 'working'
+  // The run in flight: the last one, while the turn it belongs to still runs
+  // (a permission it waits on included). Every other run is finished, result
+  // or not.
+  const liveRun =
+    state === 'working' || state === 'blocked'
+      ? blocks.findLast(
+          ({ block }) =>
+            block.kind === 'tool-group' || block.kind === 'user' || block.kind === 'delivery-group'
+        )?.key
+      : undefined
+  // Find in this conversation, for the field in the pane header (search.ts).
+  const searchReveal = useTranscriptSearch({
+    sessionId: session.id,
+    rows: turns,
+    active: visible,
+    scroll: transcript.scroll,
+    more: before !== null
+  })
+  return (
+    <div
+      ref={pane}
+      className="chat-view terminal-view"
+      data-testid="terminal-view"
+      onClickCapture={(event) => {
+        const href = (event.target as Element).closest('a')?.getAttribute('href')
+        if (isRemoteKey(session.id) && href && /^https?:/i.test(href) && !canOpenRemotePage(href)) {
+          event.preventDefault()
+          event.stopPropagation()
+        }
+      }}
+      data-pin={pinQuestions || undefined}
+      onClick={(event) => {
+        // A click on nothing in particular goes to the prompt; one on anything
+        // that does something, or one that ends a text selection, does not.
+        if (closed || window.getSelection()?.toString()) return
+        // Nor one in the question dock: its keys (1-9, Enter, Esc) are the
+        // dock's while it is up, and a click on its words must not hand them
+        // to the prompt.
+        if ((event.target as Element).closest(`${INTERACTIVE}, .chat-prompt`)) return
+        textarea.current?.focus()
+      }}
+      onKeyDown={(event) => {
+        if (event.key === 'Escape' && state === 'working') {
+          event.preventDefault()
+          takeBack()
+        }
+      }}
+      onDragEnter={(event) => {
+        if (closed || !(filesDrag(event.dataTransfer) || pathsDrag(event.dataTransfer))) return
+        event.preventDefault()
+        dragDepth.current += 1
+        setDragging(filesDrag(event.dataTransfer) ? 'files' : 'paths')
+      }}
+      onDragOver={(event) => {
+        if (!(filesDrag(event.dataTransfer) || pathsDrag(event.dataTransfer))) return
+        event.preventDefault()
+        event.dataTransfer.dropEffect = closed ? 'none' : 'copy'
+      }}
+      onDragLeave={() => {
+        dragDepth.current = Math.max(0, dragDepth.current - 1)
+        if (!dragDepth.current) setDragging(null)
+      }}
+      onDrop={(event) => {
+        event.preventDefault()
+        dragDepth.current = 0
+        setDragging(null)
+        if (!closed) drop(event.dataTransfer)
+      }}
+    >
+      {(dragging === 'files' || sessionsOver) && (
+        <div className="chat-drop-overlay" role="status">
+          <div className="chat-drop-card">
+            <DropDrawing kind={sessionsOver ? 'sessions' : 'files'} />
+            <p className="chat-drop-eyebrow">{sessionsOver ? 'Session' : 'Files'}</p>
+            <strong>
+              {sessionsOver ? 'Add the session to the message' : 'Add files to the message'}
+            </strong>
+            <span>
+              {sessionsOver
+                ? 'The agent gets its id, to read it or message it.'
+                : 'Files and folders, reviewed in the composer before they go.'}
+            </span>
+          </div>
+        </div>
+      )}
+      <div className="chat-transcript">
+        <div ref={transcript.scroll} className="chat-scroll">
+          <div className="chat-column" role="log" aria-label="Conversation">
+            {pastRead && conversation.entries.length === 0 && state !== 'ended' && (
+              <div className="chat-empty">
+                <div className="chat-empty-icon">
+                  <ChatBubbleLeftRightIcon />
+                </div>
+                <div>
+                  <h2>Start a conversation</h2>
+                  <p>Ask a question or describe what you want to build.</p>
+                </div>
+              </div>
+            )}
+            {/* Mounted from the start, empty or not: what it gains is told apart
+                from what it opened on by the rows it rendered before. */}
+            <ToolDisclosure.Provider value={disclosure}>
+              <TranscriptRows
+                rows={turns}
+                settled={pastRead}
+                scroll={transcript.scroll}
+                reveal={searchReveal}
+                holdAbove={pinQuestions}
+              >
+                {(turn, index, arriving) => (
+                  <TerminalTurn
+                    key={turn.key}
+                    rows={turn.rows}
+                    first={index === 0}
+                    arriving={arriving}
+                    liveRun={liveRun}
+                    onError={report}
+                  />
+                )}
+              </TranscriptRows>
+            </ToolDisclosure.Provider>
+            {showMark && <ProviderMark provider={session.provider} />}
+            {state === 'ended' && (
+              <EndedNotice sessionId={session.id} exitCode={conversation.exitCode} />
+            )}
+          </div>
+        </div>
+        {earlier.loading && <EarlierLoading />}
+        {transcript.away && <JumpToEnd onClick={transcript.jump} />}
+      </div>
+      <div className="chat-composer-wrap term-composer-wrap">
+        {panel === 'resume' && (
+          <ResumePicker
+            cwd={session.cwd}
+            exclude={
+              useViewSessionStore.getState().sessions.find((s) => s.id === session.id)
+                ?.claudeSessionId ?? null
+            }
+            onPick={(entry) => void resumeConversation(entry)}
+            onClose={() => {
+              setPanel(null)
+              textarea.current?.focus()
+            }}
+          />
+        )}
+        {panel === 'mcp' && (
+          <McpPanel
+            sessionId={session.id}
+            onClose={() => {
+              setPanel(null)
+              textarea.current?.focus()
+            }}
+          />
+        )}
+        {panel === 'plugin' && (
+          <PluginPanel
+            sessionId={session.id}
+            onClose={() => {
+              setPanel(null)
+              textarea.current?.focus()
+            }}
+          />
+        )}
+        <PromptDock
+          // Only /resume hides the dock; MCP and plugin panels keep pending
+          // prompts in sight. A server's session answers in this same dock, by
+          // the server's own request key (server-requests.ts).
+          requests={panel === 'resume' ? [] : waitingOn}
+          agent={AGENT_NAMES[session.provider] ?? 'the agent'}
+          busy={(id) => !ready || state === 'ended' || pending.includes(id)}
+          onAnswer={(id, optionId, answers) => void answer(id, optionId, answers)}
+        />
+        {slashOpen && (
+          <div className="chat-slash-anchor">
+            <SlashMenu
+              sessionId={session.id}
+              query={query}
+              onPick={pickCommand}
+              onClose={closeSlash}
+              bind={bindSlashKeys}
+            />
+          </div>
+        )}
+        {(attachments.length > 0 || preparations.length > 0) && (
+          <div className="chat-composer-files term-files">
+            <Attachments
+              files={attachments}
+              imagesSupported={imagesSupported}
+              onChange={changeAttachments}
+            />
+            {preparations.length > 0 && (
+              <ul className="chat-attachments" aria-label="Preparing files">
+                {preparations.map((item) => (
+                  <li
+                    key={item.id}
+                    className="chat-attachment"
+                    data-issue={item.error ? 'true' : undefined}
+                  >
+                    <span className="chat-attachment-text" role={item.error ? 'alert' : 'status'}>
+                      <span className="chat-attachment-name">{item.name}</span>
+                      <span className="chat-attachment-hint">{item.error ?? 'Preparing…'}</span>
+                    </span>
+                    <button
+                      type="button"
+                      className="chat-turn-copy chat-attachment-remove"
+                      aria-label={`Remove ${item.name}`}
+                      title="Remove"
+                      onClick={() => withdraw(item.id)}
+                    >
+                      <XMarkIcon />
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        )}
+        <form
+          className="term-prompt"
+          data-dragging={dragging === 'paths' ? 'true' : undefined}
+          onSubmit={(event) => {
+            event.preventDefault()
+            void send()
+          }}
+        >
+          <span className="term-caret" aria-hidden="true">
+            ❯
+          </span>
+          <textarea
+            ref={textarea}
+            rows={1}
+            aria-label="Message"
+            placeholder={
+              state === 'ended' ? 'This session has ended' : 'Try "fix typecheck errors"'
+            }
+            value={draft}
+            disabled={closed}
+            onChange={(event) => onDraftChange(event.target.value)}
+            onPaste={(event) => {
+              // A pasted screenshot is a file on the clipboard; text pastes as text.
+              const files = Array.from(event.clipboardData.files)
+              if (!files.length) return
+              event.preventDefault()
+              void addFiles(files)
+            }}
+            onKeyDown={(event) => {
+              if (slashOpen && slashKeys.current?.(event)) {
+                event.preventDefault()
+                event.stopPropagation()
+                return
+              }
+              const recalled = recall(event)
+              if (recalled !== null) {
+                setSlashDismissed(recalled)
+                return
+              }
+              // Shift+Tab cycles the permission mode, as it does in the TUI.
+              if (event.key === 'Tab' && event.shiftKey && conversation.permissionMode) {
+                event.preventDefault()
+                const next = nextPermissionMode(
+                  conversation.permissionMode.mode,
+                  conversation.permissionMode.modes
+                )
+                if (next) void write({ type: 'set_permission_mode', mode: next }).catch(report)
+                return
+              }
+              if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
+                event.preventDefault()
+                void send()
+              } else if (
+                event.key === 'Enter' &&
+                event.shiftKey &&
+                !event.nativeEvent.isComposing
+              ) {
+                // A new line inside a list item carries the list on.
+                const el = event.currentTarget
+                const next = continueList(el.value, el.selectionStart, el.selectionEnd)
+                if (!next) return
+                event.preventDefault()
+                // The DOM first, caret included, so the next keystroke lands
+                // in the right place even before React has re-rendered; the
+                // draft then matches the field and React leaves it alone.
+                el.value = next.text
+                el.setSelectionRange(next.caret, next.caret)
+                setDraft(next.text)
+              }
+            }}
+          />
+          {/* One button that turns from send to stop and back, never two
+              swapped: the same element keeps its place and its transitions,
+              so the change of kind is a crossfade, not a pop. Both glyphs are
+              in it; the stylesheet shows the one the kind calls for. */}
+          <button
+            type={showInterrupt ? 'button' : 'submit'}
+            className="chat-send"
+            data-kind={showInterrupt ? 'stop' : 'send'}
+            aria-label={showInterrupt ? 'Interrupt' : 'Send message'}
+            title={showInterrupt ? 'Interrupt' : 'Send (Enter)'}
+            disabled={!showInterrupt && (closed || sending || !hasDraft || filesBlocked)}
+            onClick={
+              showInterrupt ? () => void write({ type: 'interrupt' }).catch(report) : undefined
+            }
+          >
+            <ArrowUpIcon data-glyph="send" />
+            <StopIcon data-glyph="stop" />
+          </button>
+        </form>
+        {/* One line that never runs past its edge: when it is too narrow the
+            items go in this order (useFitRow, the highest data-fit-drop
+            first): the permission mode and the effort, rarely changed; then
+            the folder (the pane header says it too) and the running count;
+            then the account; then the context. The model stays, and so do the
+            pin and attach buttons at the end. */}
+        <div className="term-status" ref={statusRow}>
+          <span className="term-cwd" title={session.cwd} data-fit-drop="5">
+            {session.cwd.split('/').filter(Boolean).pop() ?? session.cwd}
+          </span>
+          <span className="term-model">
+            <ModelMenu
+              sessionId={session.id}
+              model={conversation.model}
+              disabled={closed}
+              onSelect={(id) => void write({ type: 'set_model', model: id }).catch(report)}
+            />
+          </span>
+          <span className="term-model term-chip-next" data-fit-drop="6">
+            <EffortMenu
+              sessionId={session.id}
+              model={conversation.model}
+              effort={conversation.effort}
+              disabled={closed}
+              onSelect={(id) => void write({ type: 'set_effort', effort: id }).catch(report)}
+            />
+          </span>
+          {conversation.permissionMode && (
+            <span
+              className="term-mode term-chip-next"
+              data-mode={conversation.permissionMode.mode}
+              data-fit-drop="7"
+            >
+              <PermissionModeMenu
+                mode={conversation.permissionMode.mode}
+                modes={conversation.permissionMode.modes}
+                disabled={closed}
+                label={terminalModeLabel}
+                onSelect={(id) =>
+                  void write({ type: 'set_permission_mode', mode: id }).catch(report)
+                }
+              />
+            </span>
+          )}
+          <span className="term-fit" data-fit-drop="2">
+            <ContextMeter
+              used={status.contextUsed}
+              window={
+                status.contextWindow ??
+                // The window is named by a turn's result; until one has come,
+                // the model says it (a resumed conversation's replay never does).
+                claudeContextWindow(conversation.model)
+              }
+            />
+          </span>
+          <span className="term-fit" data-fit-drop="3">
+            <AccountChip sessionId={session.id} />
+          </span>
+          <span className="term-status-end">
+            <button
+              type="button"
+              className="chat-composer-tool"
+              aria-label="Pin the question while its answer scrolls"
+              aria-pressed={pinQuestions}
+              title={pinQuestions ? 'Questions pinned while their answer scrolls' : 'Pin questions'}
+              data-active={pinQuestions || undefined}
+              onClick={() => togglePin()}
+            >
+              <MapPinIcon />
+            </button>
+            <button
+              type="button"
+              className="chat-composer-tool"
+              aria-label="Add files"
+              title="Add files"
+              disabled={closed}
+              onClick={() =>
+                void window.electronAPI.sessionsFiles
+                  .pick()
+                  .then((paths) => addFiles(paths))
+                  .catch(report)
+              }
+            >
+              <PaperClipIcon />
+            </button>
+          </span>
+        </div>
+        <WorkCards
+          agents={work}
+          logs={subagents}
+          // A relaunch asks for Claude's Agent tool on a Claude model: only an
+          // agent that tool started (a pane remounted since never saw the call,
+          // hence the session's provider) can be launched again that way.
+          canRelaunch={(agent) => agent.fromAgentTool || session.provider === 'claude'}
+          onRelaunch={(agent, alias) => {
+            if (!agent.taskId) return
+            // Stopped first, then asked for again: the conversation made the
+            // agent, and it alone holds the prompt it was given.
+            void write({ type: 'stop_task', taskId: agent.taskId })
+              .then(() =>
+                write({
+                  type: 'user_message',
+                  text: relaunchRequest(agent, alias)
+                })
+              )
+              .catch(report)
+          }}
+        />
+      </div>
+    </div>
+  )
+}
+
+/**
+ * Why the conversation stopped, and the way on. The CLI ends its process
+ * right after an "out of credits" reply (ADR 0002): that end is the account's,
+ * not the session's, so the notice names the account and the move — made
+ * already in automatic mode, one click away in propose mode, or nowhere to
+ * go — and never reads as a crash. Any other end is the plain exit.
+ */
+function EndedNotice({
+  sessionId,
+  exitCode
+}: {
+  sessionId: string
+  exitCode?: number
+}): React.JSX.Element {
+  const host = useViewSessionStore((s) => s.sessions.find((x) => x.id === sessionId))
+  const limit = host?.limitReported === true
+  const proposal = host?.accountProposal ?? null
+  const account = host?.claudeProfileLabel ?? host?.codexAccountLabel ?? 'This account'
+  if (host?.restarting) {
+    return (
+      <div className="chat-notice" role="status" data-chat-ended="moving">
+        {proposal ? `Moving to ${proposal.label}…` : 'Moving to another account…'}
+      </div>
+    )
+  }
+  if (limit && proposal) {
+    return (
+      <div className="chat-notice" role="status" data-chat-ended="limit">
+        {account} is out of usage credits.{' '}
+        <button
+          type="button"
+          className="chat-notice-action"
+          onClick={() => void acceptAccountProposal(sessionId)}
+          data-chat-continue-on={proposal.accountId}
+        >
+          Continue on {proposal.label}
+        </button>
+      </div>
+    )
+  }
+  if (limit) {
+    return (
+      <div className="chat-notice" role="status" data-chat-ended="limit">
+        {account} is out of usage credits, and no other account has headroom. Add one in Settings →
+        Accounts to continue.
+      </div>
+    )
+  }
+  return (
+    <div className="chat-notice" role="status" data-chat-ended="exit">
+      Session ended
+      {exitCode !== undefined ? ` (exit ${exitCode})` : ''}
+    </div>
+  )
+}

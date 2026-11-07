@@ -4,7 +4,7 @@
  * desktop routes a call to the owner of the repository and keeps every path
  * the server answers under that owner's key, so a folder that exists on two
  * machines is two repositories to the panel. The DTOs mirror the Mac's own
- * implementation (`src/main/git-manager.ts`) field by field: local and
+ * implementation (`packages/host/src/git-manager.ts`) field by field: local and
  * server behave the same because the same code runs behind both.
  */
 import { Schema } from 'effect'
@@ -165,7 +165,7 @@ export type GitBatchPhase = typeof GitBatchPhase.Type
  *  may run the same op on the same repositories at once. */
 export const GitBatchId = Schema.String.pipe(Schema.minLength(1), Schema.maxLength(128))
 export type GitBatchId = typeof GitBatchId.Type
-/** One progress event of a batch (`src/shared/git-batch.ts`), published to
+/** One progress event of a batch (`packages/shared/src/git-batch.ts`), published to
  *  every attached client; a client draws only the batch it started. */
 export const GitBatchProgress = Schema.Struct({
   op: GitBatchOp,

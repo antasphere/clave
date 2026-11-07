@@ -12,7 +12,7 @@ import {
 } from './harness.mjs'
 
 /* A Codex chat's running work in the Terminal view, from real Codex
-   captures (src/main/sessions/fixtures/codex-app-server/): agent-tasks.ndjson,
+   captures (packages/host/src/sessions/fixtures/codex-app-server/): agent-tasks.ndjson,
    one subagent that outlives the turn, one command left running and one the
    turn waits on; then agent-tasks-followup.ndjson, a finished subagent given
    more work. The stub pauses the replay at gates so the spec can look
@@ -36,7 +36,7 @@ const BIN = `${ROOT}/bin`
 const WORK = `${ROOT}/work`
 const GATES = `${ROOT}/gates`
 const gate = (name) => writeFileSync(`${GATES}/${name}`, '')
-const FIXTURES = path.join(REPO, 'src/main/sessions/fixtures/codex-app-server')
+const FIXTURES = path.join(REPO, 'packages/host/src/sessions/fixtures/codex-app-server')
 
 function writeFixtures() {
   rmSync(ROOT, { recursive: true, force: true })

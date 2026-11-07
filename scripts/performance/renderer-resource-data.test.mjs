@@ -1,8 +1,8 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type -- plain JavaScript verification tooling */
 import { randomUUID } from 'node:crypto'
 import { describe, it, expect, vi } from 'vitest'
-import { EchoAdapter } from '../../src/main/sessions/adapters/echo-adapter'
-import { SessionManager } from '../../src/main/sessions/session-manager'
+import { EchoAdapter } from '../../packages/host/src/sessions/adapters/echo-adapter'
+import { SessionManager } from '../../packages/host/src/sessions/session-manager'
 import {
   RESOURCE_CONFIG,
   MILESTONES,

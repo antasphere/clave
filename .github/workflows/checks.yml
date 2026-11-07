@@ -57,7 +57,7 @@ jobs:
         run: npm run native:build
 
       - name: Lint
-        run: npm run lint
+        run: npm run check:structure && npm run lint
 
       - name: Typecheck
         run: npm run typecheck
@@ -144,7 +144,7 @@ jobs:
       # here and not in the Linux job): a terminal spawned through it streams
       # its bytes, a killed process is reported by the server.
       - name: Gate, the terminal process from the built bundle
-        run: npx vitest run scripts/server-process.test.mjs src/main/terminal-process
+        run: npx vitest run scripts/server-process.test.mjs packages/host/src/terminal-process
 
       - name: Gate, the server spec with the server in-process
         run: node tests/e2e/run.mjs server-boot
