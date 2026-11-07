@@ -126,10 +126,9 @@ function claimFixtureProfile() {
   return { dir, lockPath, fd, token }
 }
 
-function releaseFixtureProfile(claim, app) {
+function releaseFixtureProfile(claim, child) {
   const errors = []
   try {
-    const child = app?.process()
     if (child && child.exitCode === null && child.signalCode === null) {
       throw new Error('The test app is still running; its profile claim is retained.')
     }
@@ -253,6 +252,7 @@ async function restoreVersionFixture(app, claim, installed) {
 export async function run(t) {
   const errors = []
   let app
+  let child
   let win
   let claim
   let installed = false
@@ -283,6 +283,7 @@ export async function run(t) {
 
     const launched = await launchApp(DIR)
     app = launched.app
+    child = app.process()
     win = launched.win
     await installVersionFixture(app, win, claim)
     installed = true
@@ -456,7 +457,7 @@ export async function run(t) {
       } finally {
         if (claim) {
           try {
-            releaseFixtureProfile(claim, app)
+            releaseFixtureProfile(claim, child)
           } catch (error) {
             errors.push(error)
           }
