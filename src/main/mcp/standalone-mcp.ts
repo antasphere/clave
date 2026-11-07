@@ -111,6 +111,16 @@ function buildServer(
       .get(SERVER_LAYOUT_KEY)
       .groups.some((g) => g.id === groupId && g.sessionIds.includes(id))
   const message = (err: unknown): string => (err instanceof Error ? err.message : String(err))
+  /** The workspace the calling tab belongs to, from its record; undefined
+   *  when it has none or this host keeps no records. */
+  const callerWorkspace = (id: string): string | undefined => {
+    try {
+      const record = sessions.listAdoptableRecords([id]).find((r) => r.id === id)
+      return record?.workspaceId || undefined
+    } catch {
+      return undefined
+    }
+  }
   const server = new McpServer(
     { name: 'clave-server', version: '1' },
     {
@@ -284,6 +294,11 @@ function buildServer(
           throw new Error(`Launch profile "${launchProfileId}" belongs to ${owner}, not ${family}`)
       }
       const terminal = mode === 'terminal'
+      // The new tab lands beside its caller (PRDCT-4150): the caller's
+      // workspace, read from its record (the live session on the wire
+      // carries none), goes on the start. A caller with no workspace leaves
+      // the tab as the host stamps it today; the agent never picks one.
+      const workspaceId = callerWorkspace(sessionId)
       const info = await sessions.start({
         cwd: args.cwd,
         options: {
@@ -297,7 +312,8 @@ function buildServer(
           ...(terminal && args.command ? { initialCommand: args.command } : {}),
           autoExecute: terminal && !!args.command,
           ...(!terminal && args.prompt ? { initialPrompt: args.prompt } : {}),
-          ...(args.attachToParent ? { spawnedBy: sessionId } : {})
+          ...(args.attachToParent ? { spawnedBy: sessionId } : {}),
+          ...(workspaceId !== undefined ? { workspaceId } : {})
         }
       })
       parents.set(info.id, sessionId)
