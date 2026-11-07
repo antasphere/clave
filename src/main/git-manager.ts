@@ -1601,7 +1601,7 @@ No quotes, no markdown, no extra formatting. Just two lines of plain text.`
       const url = (await readOnlyGit(cwd).raw(['config', '--get', 'remote.origin.url'])).trim()
       // A credential embedded in the URL stays in the checkout's config: the
       // pairing needs the host and the path, nothing a person could reuse.
-      return url ? url.replace(/^([a-z][a-z0-9+.-]*:\/\/)[^/@]*@/i, '$1') : null
+      return url ? url.replace(/^([a-z][a-z0-9+.-]*:\/\/)[^/]*@/i, '$1') : null
     } catch {
       return null
     }

@@ -43,6 +43,13 @@ export function proposePairings(input: {
   return proposals
 }
 
+// A pairing change (a confirmation, a decline, Ask again, Forget, the
+// switch) recomputes the proposals in every window that hears it: what a
+// decline took away, Ask again brings back without a reload (round 2).
+usePairingStore.subscribe((state, previous) => {
+  if (state.servers !== previous.servers) void refreshPairingProposals()
+})
+
 // The remotes read so far, by root key: a Mac root for the window's life, a
 // server's roots until that server connects again (its disk may have changed).
 // A root with no remote is not remembered: it may become a clone, and the

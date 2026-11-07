@@ -81,6 +81,24 @@ describe('the paired workspaces of this Mac (PRDCT-4151)', () => {
     expect(forgotten.servers.studio.pairs).toEqual({ 'ws-2': 'mac-2' })
   })
 
+  it('undoes a decline on Ask again, and forgets every decline when the switch is turned on', () => {
+    registry.change({ kind: 'decline', serverId: 'studio', serverWorkspaceId: 'ws-3' })
+    registry.change({ kind: 'decline', serverId: 'studio', serverWorkspaceId: 'ws-4' })
+    const asked = registry.change({
+      kind: 'ask-again',
+      serverId: 'studio',
+      serverWorkspaceId: 'ws-3'
+    })
+    expect(asked.servers.studio.declined).toEqual(['ws-4'])
+    const off = registry.change({ kind: 'combine', serverId: 'studio', on: false })
+    expect(off.servers.studio.declined).toEqual(['ws-4'])
+    const on = registry.change({ kind: 'combine', serverId: 'studio', on: true })
+    expect(on.servers.studio).toMatchObject({ combine: true, declined: [] })
+    expect(() =>
+      registry.change({ kind: 'ask-again', serverId: 'studio', serverWorkspaceId: '' })
+    ).toThrow(/workspace/)
+  })
+
   it('refuses a nameless change and reads a damaged file field by field', () => {
     expect(() =>
       registry.change({

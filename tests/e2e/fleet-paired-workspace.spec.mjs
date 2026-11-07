@@ -316,7 +316,22 @@ export async function run(t) {
       )
       await win.getByRole('button', { name: 'Back to sessions', exact: true }).click()
       await row(win, owned('session', owner, first.id)).waitFor()
+      // Forget the pairing: the proposal comes back at once, with no reload
+      // (verifier, round 2), and confirming it again shows the tab again.
+      await win.click('.sidebar-footer-btn[aria-label="Settings"]')
+      await win.click('[data-settings-nav-row="servers"]')
+      await clickReady(combine.getByRole('button', { name: /^Forget the pairing/ }))
+      await combine.locator(`[data-server-pair="${raw}"]`).waitFor({ state: 'detached' })
+      await win.getByRole('button', { name: 'Back to sessions', exact: true }).click()
+      await notice.waitFor()
+      await eventually(
+        async () => (await row(win, owned('session', owner, first.id)).count()) === 0,
+        'the forgotten pairing takes the server tab out'
+      )
+      await clickReady(notice.getByRole('button', { name: 'Combine', exact: true }))
+      await row(win, owned('session', owner, first.id)).waitFor()
     })
+    t.check('a forgotten pairing is proposed again at once, and confirmed again', true)
     t.check(
       'the per-server switch hides the server’s tabs from the Mac workspace, and shows them again',
       true

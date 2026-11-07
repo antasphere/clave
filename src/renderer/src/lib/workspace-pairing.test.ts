@@ -4,6 +4,8 @@ import type { Workspace } from '../../../shared/workspace-types'
 
 // The module reaches the stores, which read the bridge at import time.
 let proposePairings: typeof import('./workspace-pairing').proposePairings
+let pairingStore: typeof import('../store/pairing-store')
+const remoteReads: string[] = []
 beforeAll(async () => {
   const memory = new Map<string, string>()
   vi.stubGlobal('localStorage', {
@@ -12,8 +14,28 @@ beforeAll(async () => {
     removeItem: (key: string) => memory.delete(key)
   })
   vi.stubGlobal('window', globalThis)
-  vi.stubGlobal('electronAPI', {})
+  vi.stubGlobal('electronAPI', {
+    gitRemoteUrl: async (key: string) => {
+      remoteReads.push(key)
+      return null
+    }
+  })
   ;({ proposePairings } = await import('./workspace-pairing'))
+  pairingStore = await import('../store/pairing-store')
+})
+
+describe('a pairing change recomputes the proposals (round 2)', () => {
+  it('reads the roots again when main answers a change, without a reload', async () => {
+    const { useWorkspaceStore } = await import('../store/workspace-store')
+    useWorkspaceStore.setState({ workspaces: [ws('mac-a', '/Users/me/.antasphere')] })
+    remoteReads.length = 0
+    pairingStore.applyServerPairings({
+      version: 1,
+      servers: { studio: { combine: true, color: '#5e6ad2', pairs: {}, declined: [] } }
+    })
+    await new Promise((r) => setTimeout(r, 0))
+    expect(remoteReads).toEqual(['/Users/me/.antasphere'])
+  })
 })
 
 const ws = (id: string, rootDir: string): Workspace => ({
