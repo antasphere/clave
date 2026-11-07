@@ -201,7 +201,7 @@ export async function run(t) {
       if (mode === 'terminal') {
         // The pane's view picker is the reader's road to the other presentation.
         await host.getByRole('button', { name: 'Change view', exact: true }).click()
-        await win.getByRole('menuitem', { name: /terminal/i }).click()
+        await win.getByRole('menuitem', { name: /enclave/i }).click()
       }
       const view = host.locator(`[data-testid="${mode}-view"]`)
       const shown = await until(() => view.locator('textarea:not(:disabled)').isVisible(), {
@@ -215,12 +215,14 @@ export async function run(t) {
       assert.ok(await visible(said(QUESTION)), `${mode}: the restored conversation shows its end`)
       const restored = {
         decks: await stacks.evaluateAll((els) => els.map((el) => el.dataset.messages)),
-        closed: await stacks.evaluateAll((els) => els.every((el) => !el.open)),
+        closed: await view
+          .locator('.exchange-card')
+          .evaluateAll((els) => els.every((el) => !el.open)),
         explanation: await visible(said('Here is where things stand.')),
         choices: [],
         reply: await visible(said('Reply to the coordinator.')),
         toolRows: await toolRows.count(),
-        bodies: await view.locator('[data-from="tab"]').count()
+        bodies: await view.locator('.exchange-part').count()
       }
       for (const choice of CHOICES) restored.choices.push(await visible(said(choice)))
       t.check(
@@ -235,24 +237,31 @@ export async function run(t) {
         restored
       )
       const deck = view.locator('.chat-delivery-stack[data-messages="2"]')
-      await deck.locator('> summary').click()
-      await deck.locator('.chat-delivery-items').waitFor()
+      const cards = deck.locator('.exchange-card')
+      for (const index of [0, 1]) {
+        await cards.nth(index).locator('> summary').click()
+        await cards.nth(index).locator('.exchange-part').first().waitFor()
+      }
       const opened = {
-        bodies: await deck.locator('[data-from="tab"]').allTextContents(),
-        chips: await deck.locator('.chat-turn-from').allTextContents(),
+        bodies: await deck
+          .locator('.exchange-part[data-theirs] .exchange-part-text')
+          .allTextContents(),
+        names: await deck
+          .locator('.exchange-part[data-theirs] .exchange-part-who')
+          .allTextContents(),
         agentWords: await deck.locator('.chat-turn[data-role="assistant"]').count()
       }
       t.check(
-        `${mode}: the opened deck holds the two messages whole, with their senders and none of the agent's words`,
+        `${mode}: the opened cards hold the two messages whole, with their senders and none of the agent's words`,
         opened.bodies.length === 2 &&
           /Second payload, no omitted words/.test(opened.bodies[0]) &&
           /Third anonymous payload/.test(opened.bodies[1]) &&
           opened.bodies.every((s) => !s.includes('[Message from')) &&
-          opened.chips.some((s) => s.includes('Lane verifier')) &&
+          opened.names.some((s) => s.includes('Lane verifier')) &&
           opened.agentWords === 0,
         opened
       )
-      await deck.locator('> summary').click()
+      for (const index of [0, 1]) await cards.nth(index).locator('> summary').click()
     }
   } finally {
     if (app) await app.close()

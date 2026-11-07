@@ -51,6 +51,7 @@ import { AccountChip } from './AccountChip'
 import { useQuestionHeight } from './question-height'
 import { blockKey, groupEntries, visibleEntries, type Block } from './tools'
 import { ToolDisclosure } from './disclosure'
+import { ExchangeContext, indexExchanges } from './exchanges'
 import { ApprovalRun, PromptDock } from './PromptDock'
 import { refusedAnswer } from './refused-answer'
 import { serverDock, withServerPending } from './server-requests'
@@ -278,7 +279,6 @@ function TerminalTurn({
               key={key}
               group={block}
               id={key}
-              renderEntry={(entry) => <EntryRow entry={entry} onError={onError} />}
             />
           ) : block.kind === 'tool-group' ? (
             <ToolRow key={key} group={block} live={key === liveRun} />
@@ -707,6 +707,9 @@ export function TerminalView({
   }, [blocks])
   // The reader's open tool rows, kept across the rows' unmounts (`ToolDisclosure`).
   const [disclosure] = useState(() => new Map<string, boolean>())
+  // Each message from another tab with what this session sent that tab
+  // around it, for the exchange timeline's cards (`indexExchanges`).
+  const exchanges = useMemo(() => indexExchanges(presentation.entries), [presentation.entries])
   const [pinQuestions, setPinQuestions] = useState(() => localStorage.getItem(PIN_KEY) !== 'off')
   const togglePin = (): void =>
     setPinQuestions((value) => {
@@ -818,6 +821,7 @@ export function TerminalView({
             {/* Mounted from the start, empty or not: what it gains is told apart
                 from what it opened on by the rows it rendered before. */}
             <ToolDisclosure.Provider value={disclosure}>
+              <ExchangeContext.Provider value={exchanges}>
               <TranscriptRows
                 rows={turns}
                 settled={pastRead}
@@ -836,6 +840,7 @@ export function TerminalView({
                   />
                 )}
               </TranscriptRows>
+              </ExchangeContext.Provider>
             </ToolDisclosure.Provider>
             {showMark && <ProviderMark provider={session.provider} />}
             {state === 'ended' && (
