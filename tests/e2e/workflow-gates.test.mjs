@@ -95,6 +95,7 @@ describe('the required CI check cannot silently lose execution', () => {
   })
   it('runs the complete suite without a hidden filename filter', () => {
     const suite = jobs['e2e-run'].steps.find((s) => s.name === 'Report, hosted suite shard')
+    expect(suite['continue-on-error']).toBe(true)
     expect(suite.run).toBe(
       'node tests/e2e/run.mjs --shard "$SHARD" --report "e2e-reports/shard-$INDEX.json"'
     )
@@ -106,6 +107,7 @@ describe('the required CI check cannot silently lose execution', () => {
     const steps = jobs['e2e-run'].steps
     expect(steps.indexOf(suite)).toBeLessThan(steps.findIndex((s) => s.name?.startsWith('Gate,')))
     const baseline = steps.find((s) => s.name === 'Report, sequential baseline suite')
+    expect(baseline['continue-on-error']).toBe(true)
     expect(baseline.if).toBe(
       "${{ !cancelled() && steps.build.outcome == 'success' && matrix.task == 'baseline' }}"
     )
