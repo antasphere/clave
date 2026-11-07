@@ -1,0 +1,63 @@
+[
+  {
+    "command": {
+      "tapOnElement": {
+        "selector": {
+          "idRegex": "developer-connect",
+          "optional": false
+        },
+        "retryIfNoChange": false,
+        "waitUntilVisible": false,
+        "longPress": false,
+        "label": "SYNTHETIC_PRIVATE_LABEL",
+        "optional": false
+      }
+    },
+    "metadata": {
+      "status": "FAILED",
+      "error": {
+        "message": "SYNTHETIC_PRIVATE_ERROR"
+      },
+      "sequenceNumber": 0,
+      "depth": 0
+    }
+  },
+  {
+    "command": {
+      "assertConditionCommand": {
+        "condition": {
+          "visible": {
+            "idRegex": "developer-connection",
+            "optional": false
+          }
+        },
+        "timeout": "1000",
+        "optional": false
+      }
+    },
+    "metadata": {
+      "status": "FAILED",
+      "error": {
+        "message": "SYNTHETIC_PRIVATE_ERROR"
+      },
+      "sequenceNumber": 1,
+      "depth": 0
+    }
+  },
+  {
+    "command": {
+      "inputTextCommand": {
+        "text": "SYNTHETIC_PRIVATE_TOKEN",
+        "optional": false
+      }
+    },
+    "metadata": {
+      "status": "FAILED",
+      "error": {
+        "message": "SYNTHETIC_PRIVATE_ERROR"
+      },
+      "sequenceNumber": 2,
+      "depth": 0
+    }
+  }
+]

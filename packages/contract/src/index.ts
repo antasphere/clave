@@ -39,5 +39,11 @@ export * as ServerInfo from './server-info'
 export * as Work from './work'
 // ── ADR 0004: the routines ──
 export * as Routines from './routines'
+// ── Mobile wave, lane A: the devices, a phone paired with this server ──
+export * as Devices from './devices'
+// ── The mobile wave, lane B: the push notifications ──
+export * as Notify from './notify'
 
 // ── Lane B: terminals · Lane D: settings served ──
+// ── Lane E (mobile wave, 2026-10-29): the relay, the directory of a person's machines and the road to them ──
+export * as Relay from './relay'

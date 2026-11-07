@@ -515,6 +515,7 @@ export type ActiveView = 'terminals' | 'settings' | 'agents' | 'extensions'
 
 export type SettingsSection =
   | 'servers'
+  | 'mobile'
   | 'plugins'
   | 'general'
   | 'accounts'

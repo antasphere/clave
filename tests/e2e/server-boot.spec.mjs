@@ -58,6 +58,7 @@
  */
 import {
   launchApp as launchHarnessApp,
+  launchAppProcess as launchHarnessAppProcess,
   seedWorkspaces,
   seedTrustedRoots,
   userDataDir,
@@ -120,8 +121,7 @@ const startE2eServer = async (name, options) => {
   console.log('STANDALONE_USAGE_ISOLATION', JSON.stringify({ name, ...isolation }))
   return server
 }
-const launchApp = async (dir, options) => {
-  const launched = await launchHarnessApp(dir, isolatedOptions(options))
+const checkUsageIsolation = async (launched) => {
   const optedOut = await launched.app.evaluate(
     () =>
       process.argv.includes('--test-no-activate') &&
@@ -133,6 +133,10 @@ const launchApp = async (dir, options) => {
   }
   return launched
 }
+const launchApp = async (dir, options) =>
+  checkUsageIsolation(await launchHarnessApp(dir, isolatedOptions(options)))
+const launchAppProcess = async (dir, options) =>
+  checkUsageIsolation(await launchHarnessAppProcess(dir, isolatedOptions(options)))
 
 const MODE = serverMode()
 const ROOT = fixturePath('root-server-boot')
@@ -397,10 +401,70 @@ function delayingProxy(
   })
 }
 
+// Verify the renderer control separately, outside the registration-to-quit
+// critical path. DevTools can inspect the document even with page JS disabled.
+export async function runRendererReadinessControl(t) {
+  mkdirSync(ROOT, { recursive: true })
+  for (const ready of [true, false]) {
+    const dir = userDataDir(`server-boot-renderer-control-${ready}`)
+    seed(dir)
+    const launched = await (ready ? launchApp : launchAppProcess)(dir, {
+      server: 'in-process',
+      args: ready ? [] : ['--blink-settings=scriptEnabled=false']
+    })
+    try {
+      const page = await launched.app.firstWindow()
+      await page.waitForLoadState('domcontentloaded')
+      const renderer = await page.evaluate(() => ({
+        url: location.href,
+        entry: [...document.scripts].some(
+          (script) => script.type === 'module' && script.src.includes('/assets/')
+        ),
+        rootChildren: document.getElementById('root')?.childElementCount,
+        boot: document.documentElement.dataset.boot ?? null,
+        preload: typeof window.electronAPI === 'object'
+      }))
+      t.check(
+        `renderer control (${ready}): the real app document and preload loaded`,
+        renderer.url.startsWith('file:') && renderer.entry && renderer.preload,
+        renderer
+      )
+      t.check(
+        `renderer control (${ready}): application scripts ${ready ? 'ran' : 'were withheld'}`,
+        ready
+          ? renderer.rootChildren > 0 && ['complete', 'restore-prompt'].includes(renderer.boot)
+          : renderer.rootChildren === 0 && renderer.boot === null,
+        renderer
+      )
+      t.equal(
+        `renderer control (${ready}): main registered independently`,
+        (await decided(dir))?.ok,
+        true
+      )
+      const runtime = await launched.app.evaluate(() => ({
+        pid: process.pid,
+        versions: process.versions
+      }))
+      const receipt = { scriptsEnabled: ready, renderer, runtime }
+      writeFileSync(
+        fixturePath(`server-boot-renderer-control-${ready}-receipt.json`),
+        JSON.stringify(receipt, null, 2)
+      )
+      console.log(`RENDERER_READINESS_CONTROL ${JSON.stringify(receipt)}`)
+    } finally {
+      await launched.app.close()
+    }
+  }
+}
+
 // Also exported for a focused causal run through the same assertion runner.
 // Each named scenario controls request or response delivery around the shell's
 // bounded registration call, using the actual public reservation protocol.
-export async function runDelayedRegistrationAfterQuit(t, { scenario = 'reserve-after-exit' } = {}) {
+export async function runDelayedRegistrationAfterQuit(
+  t,
+  { scenario = 'reserve-after-exit', withholdRenderer = false } = {}
+) {
+  const scenarioName = scenario + (withholdRenderer ? '-renderer-not-ready' : '')
   const modulePath = fixturePath('shell-client-lifecycle-fixture.mjs')
   await build({
     entryPoints: [path.join(REPO, 'tests/e2e/fixtures/shell-client-lifecycle.mjs')],
@@ -418,7 +482,7 @@ export async function runDelayedRegistrationAfterQuit(t, { scenario = 'reserve-a
   let app
   let client
   let removeOutputListeners = () => {}
-  const receipt = { scenario: `shell-client/${scenario}`, events: [] }
+  const receipt = { scenario: `shell-client/${scenarioName}`, events: [] }
   const record = (phase, detail = {}) => receipt.events.push({ at: Date.now(), phase, ...detail })
   try {
     const fixture = await loadShellClientLifecycle(
@@ -441,10 +505,11 @@ export async function runDelayedRegistrationAfterQuit(t, { scenario = 'reserve-a
             '/clients/registrations/v1/' + (scenario.startsWith('reserve-') ? 'reserve' : 'confirm')
         })
         client = serverClient(own.url, own.token)
-        const launched = await launchApp(dir, {
+        const launched = await launchAppProcess(dir, {
           server: { url: proxy.url, token: own.token },
-          settleMs: 300,
-          waitForServer: false
+          // Withhold renderer readiness in this process while Electron main
+          // still runs the real registration and quit paths.
+          args: withholdRenderer ? ['--blink-settings=scriptEnabled=false'] : []
         })
         app = launched.app
         const keepLifecycleLines = (chunk) => {
@@ -470,7 +535,7 @@ export async function runDelayedRegistrationAfterQuit(t, { scenario = 'reserve-a
         })
         if (!held) throw new Error('The isolated proxy never received the registration')
       },
-      { delivery: scenario }
+      { delivery: scenarioName }
     )
     const { dir } = fixture.values.shell
     receipt.fixtureIds = fixture.ids
@@ -573,7 +638,7 @@ export async function runDelayedRegistrationAfterQuit(t, { scenario = 'reserve-a
     }
     if (proxy) receipt.proxy = proxy.receipts()
     writeFileSync(
-      fixturePath(`shell-client-lifecycle-${scenario}-receipt.json`),
+      fixturePath(`shell-client-lifecycle-${scenarioName}-receipt.json`),
       JSON.stringify(receipt, null, 2)
     )
     console.log(`LIFECYCLE_RECEIPT ${JSON.stringify(receipt)}`)
@@ -866,6 +931,7 @@ export async function run(t) {
     }
   }
 
+  await runRendererReadinessControl(t)
   for (const scenario of [
     'reserve-after-exit',
     'reserve-lost-response',
@@ -875,6 +941,7 @@ export async function run(t) {
   ]) {
     await runDelayedRegistrationAfterQuit(t, { scenario })
   }
+  await runDelayedRegistrationAfterQuit(t, { scenario: 'during-quit', withholdRenderer: true })
 
   // ── 5. The app's own separate server, whatever the suite runs (wave 5) ──
   {

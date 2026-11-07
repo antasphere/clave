@@ -1,0 +1,78 @@
+name: Mobile
+
+# The gates of packages/mobile (Clave on the phone): typecheck, lint, the
+# unit tests, the JavaScript export for both platforms and the check that the
+# release bundle carries no developer connection. Linux is enough: nothing
+# here builds a native app (the simulator check, scripts/simulator-check.mjs,
+# runs on a Mac with Xcode and Maestro; docs/mobile.md says how).
+on:
+  push:
+    branches: [dev]
+    paths:
+      - 'packages/mobile/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/mobile.yml'
+  pull_request:
+    paths:
+      - 'packages/mobile/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/mobile.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mobile-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  mobile:
+    name: Typecheck, lint, unit tests, export
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: packages/mobile
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      # The repository's one install, from the root (the workspaces share one
+      # lockfile); its postinstall rebuilds node-pty for the desktop, as
+      # checks.yml does, and the Bun the server tests want is the repository's own.
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.4.1'
+
+      - name: Install dependencies
+        working-directory: .
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      # The root ESLint config applies to the package (flat config, one tree).
+      - name: Lint
+        working-directory: .
+        run: npx eslint packages/mobile
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Export the JavaScript for iOS and Android
+        env:
+          CI: '1'
+        run: npx expo export --platform ios --platform android --output-dir dist --no-bytecode
+
+      # The developer connection must be absent from a release bundle; the
+      # check exports twice (development and release) and greps both.
+      - name: Release bundle carries no developer connection
+        env:
+          CI: '1'
+        run: node scripts/check-release-bundle.mjs --platform ios

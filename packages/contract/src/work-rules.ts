@@ -381,7 +381,7 @@ function assign(
       )
     for (const h of holders)
       updates.push({ id: h.id, work: { ...h.work, standing: 'superseded', since: now } })
-    if (holders.length === 1) from = holders[0].id
+    if (holders.length === 1) from = holders[0]!.id
   }
   const keepsStanding = sameUnit && self!.role === role && self!.standing === 'current'
   const task =
@@ -607,7 +607,7 @@ function holdingOf(
 ): WorkHolding {
   const withRole = members.filter((m) => m.work.role === role)
   const current = withRole.filter((m) => m.work.standing === 'current')
-  if (current.length === 1) return { state: 'held', id: current[0].id }
+  if (current.length === 1) return { state: 'held', id: current[0]!.id }
   if (current.length > 1)
     return { state: 'unresolved', reason: 'several', candidates: current.map((m) => m.id) }
   const pending = withRole.filter((m) => m.work.standing === 'pending')
@@ -619,7 +619,7 @@ function holdingOf(
   const completed = withRole
     .filter((m) => m.work.standing === 'completed')
     .sort((a, b) => b.work.since - a.work.since)
-  if (completed.length) return { state: 'completed', id: completed[0].id }
+  if (completed.length) return { state: 'completed', id: completed[0]!.id }
   const superseded = withRole.filter((m) => m.work.standing === 'superseded')
   // A lane whose current lead left it with only superseded leads behind has
   // no owner, which a person must settle; a superseded verifier leaves the
@@ -652,7 +652,7 @@ export function deriveWorkUnits(sessions: ReadonlyArray<WorkRecord>): WorkUnitVi
   const views: WorkUnitView[] = []
   for (const [unit, unsorted] of groups) {
     const members = [...unsorted].sort(byJoin)
-    const first = members[0].work
+    const first = members[0]!.work
     const ownerRole = ownerRoleOf(first.kind)
     // Members of one unit agree on its facts; if records disagree, the
     // earliest-joined member's facts are shown, never the newest.

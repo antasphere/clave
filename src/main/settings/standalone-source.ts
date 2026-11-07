@@ -36,6 +36,9 @@ export interface StandaloneSettings {
   settings: SettingsSourceService
   /** The server is stopping: nothing of the login stays listening or fires later. */
   shutdown: () => void
+  /** The Antasphere account manager this server owns (lane E of the mobile
+   *  wave reads the owner and the access token off it for the relay client). */
+  antasphere: AntasphereAccountManager
 }
 
 export function standaloneSettingsSource(
@@ -90,6 +93,7 @@ export function standaloneSettingsSource(
       usageManager.stopPolling()
       codexUsageManager.stopPolling()
       antasphere.shutdown()
-    }
+    },
+    antasphere
   }
 }
