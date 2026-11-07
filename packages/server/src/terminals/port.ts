@@ -1,7 +1,7 @@
 /**
  * The terminals port: how a session's process is obtained, by whoever runs
  * the server. Inside the app the shell gives it node-pty in its own process
- * (`src/main/ports/terminal.ts`); the standalone Bun server, which cannot
+ * (`packages/host/src/ports/terminal.ts`); the standalone Bun server, which cannot
  * run node-pty, runs on `Terminals.none` until its Node terminal process
  * exists (wave 3), and a spawn then says what is missing with the declared
  * `CapabilityUnavailable`. No handler reads it in this wave: the sessions

@@ -3,8 +3,8 @@
  * every workspace, and the workspace the first window of a run opens on.
  *
  * Mirrors the preload's workspace methods as of this change
- * (`src/preload/index.ts`). The types in `src/shared/workspace-types.ts` and
- * `src/preload/index.d.ts` are the originals until the renderer reads this
+ * (`apps/desktop/src/preload/index.ts`). The types in `packages/shared/src/workspace-types.ts` and
+ * `apps/desktop/src/preload/index.d.ts` are the originals until the renderer reads this
  * contract instead; then this module becomes the original.
  */
 import { Command, Query } from '@structure-ai/cqrs'

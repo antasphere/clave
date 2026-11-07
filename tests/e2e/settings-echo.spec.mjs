@@ -3,7 +3,7 @@
 // in-process server, both on the push channel: window A writes its pins and
 // hears nothing; window B hears the change exactly once. This pins the
 // preload's use of the echo drop (`workspaceStatePick` in
-// `src/preload/dual-listener.ts`) at the wiring, which the unit test cannot
+// `apps/desktop/src/preload/dual-listener.ts`) at the wiring, which the unit test cannot
 // see: round 3's verifier replaced the preload's call with an inline pick
 // and every gate stayed green.
 //

@@ -8,7 +8,7 @@
  * scheduler driven by its clock: the store is seeded with a routine last
  * considered ten minutes ago, so the FIRST tick finds ten missed occurrences
  * and runs ONE catch-up. The scheduler's own rules have unit tests
- * (`src/main/routines/*.test.ts`); this spec proves the path through the app:
+ * (`packages/host/src/routines/*.test.ts`); this spec proves the path through the app:
  *
  *  1. the catch-up fires once as declared (model, permissions off, the
  *     contract plugin, the first message), the fixture reports through the

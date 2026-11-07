@@ -6,9 +6,9 @@ import { PushClient, type PushSocketConstructor } from '../../../client/src/push
 import { PendingRequests } from './service'
 import { SessionHost } from '../sessions/port'
 import type { Session, SessionStream } from '../../../contract/src/sessions'
-import { requestAwareSessionHost } from '../../../../src/main/sessions/request-aware-host'
-import { CodexTranslator } from '../../../../src/main/sessions/adapters/codex-adapter'
-import type { CodexConnection } from '../../../../src/main/sessions/adapters/codex-app-server'
+import { requestAwareSessionHost } from '../../../host/src/sessions/request-aware-host'
+import { CodexTranslator } from '../../../host/src/sessions/adapters/codex-adapter'
+import type { CodexConnection } from '../../../host/src/sessions/adapters/codex-app-server'
 
 const closes: Array<() => Promise<unknown> | void> = []
 afterEach(async () => {

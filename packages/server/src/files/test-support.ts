@@ -7,7 +7,7 @@ import { randomUUID } from 'node:crypto'
 
 export function ensureFileHelper(): void {
   const root = resolve(__dirname, '../../../..')
-  const source = join(root, 'native/secure-files/main.c')
+  const source = join(root, 'apps/native/secure-files/main.c')
   const target = join(root, 'resources/native/secure-files-helper')
   if (existsSync(target) && statSync(target).mtimeMs >= statSync(source).mtimeMs) return
   mkdirSync(join(root, 'resources/native'), { recursive: true })

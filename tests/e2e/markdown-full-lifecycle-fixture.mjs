@@ -4,8 +4,8 @@ import { createRoot } from 'react-dom/client'
 import { flushSync } from 'react-dom'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { usePresentation } from '../../plugins/chat-view/src/presentation'
-import { emptyConversation, reduceConversation } from '../../plugins/chat-view/src/reducer'
+import { usePresentation } from '../../apps/plugins/chat-view/src/presentation'
+import { emptyConversation, reduceConversation } from '../../apps/plugins/chat-view/src/reducer'
 
 // This isolated real React fixture observes browser timers, not fake hooks or
 // a substitute schedule. It is functional evidence, never a heap workload.

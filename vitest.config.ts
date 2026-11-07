@@ -17,11 +17,13 @@ import { defineConfig } from 'vitest/config'
 export default defineConfig({
   test: {
     include: [
-      'src/**/*.test.{ts,tsx}',
+      'apps/desktop/src/**/*.test.{ts,tsx}',
+      'packages/{host,shared}/src/**/*.test.{ts,tsx}',
       'scripts/**/*.test.mjs',
       'tests/e2e/**/*.test.mjs',
       'packages/{contract,server,client}/src/**/*.test.ts',
-      'plugins/*/src/**/*.test.ts'
+      'packages/analytics/src/**/*.test.ts',
+      'apps/plugins/*/src/**/*.test.ts'
     ],
     environment: 'node',
     // The framework ships TypeScript source, not compiled output, so Node

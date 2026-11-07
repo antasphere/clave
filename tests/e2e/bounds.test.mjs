@@ -7,7 +7,7 @@ import {
   withDeadline
 } from './bounds.mjs'
 import { CLOSE_TIMEOUT_MS } from './harness.mjs'
-import { QUIT_CEILING_MS, QUIT_HAMMER_MS } from '../../src/main/quit-cleanup'
+import { QUIT_CEILING_MS, QUIT_HAMMER_MS } from '../../packages/host/src/quit-cleanup'
 
 const never = new Promise(() => {})
 

@@ -13,7 +13,7 @@ import {
   createSelfUpgrade,
   type RunResult,
   type UpgradeRunner
-} from '../../../../src/main/server/self-upgrade'
+} from '../../../host/src/server/self-upgrade'
 
 it('loads server-upgrade/requested-when-idle through the command, with a recording runner, and verifies it over HTTP', async () => {
   // A clock moved by hand, and a runner that records and installs nothing.

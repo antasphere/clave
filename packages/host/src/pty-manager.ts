@@ -1,0 +1,601 @@
+import { randomUUID } from 'node:crypto'
+import path from 'node:path'
+import { sanitizeCarriedLaunchProfile } from '../../shared/src/agent-launch'
+import { findExecutable } from './shell-launch'
+import { accountOverrides } from './restart-overrides'
+import { dismissSessionOffers } from './copy-offer-manager'
+import { terminalJournal } from './terminal-journal'
+import { lastHookState } from './agent-state-manager'
+import {
+  ptyBackend,
+  accountTokenForSpawn,
+  buildSpawnEnv,
+  codexHomeForSpawn,
+  getLoginShellEnv,
+  type PtySession,
+  type PtySpawnOptions
+} from './sessions/adapters/pty-backend'
+import { lineageOf } from './sessions/lineage'
+import { sanitizeWork, type WorkAssignment } from '@clave/contract/work-rules'
+import { codexRoot, findCodexThreadForSession, hasCodexRollout } from './session-history/codex'
+import { ptyAdapter } from './sessions/adapters/pty-adapter'
+import { ClaudeAdapter, findTranscript } from './sessions/adapters/claude-adapter'
+import { CodexAdapter } from './sessions/adapters/codex-adapter'
+import { EchoAdapter } from './sessions/adapters/echo-adapter'
+import { installE2eHooks } from './sessions/e2e-hooks'
+import { noteSize } from './sessions/terminal-screen'
+import { sessionManager } from './sessions/session-manager'
+import * as titleGenerator from './title-generator'
+import { rememberedChatEffort, rememberedChatModel } from './sessions/chat-model-default'
+import { initialChatView } from './sessions/chat-view-default'
+import {
+  defaultViewFor,
+  eventsProfile,
+  isEchoLaunchProfile,
+  launchProfileManager
+} from './launch-profile-manager'
+import type { Session, UserMessageInput } from '../../shared/src/session-model'
+
+// Keep all existing helper/type imports stable while the process engine lives
+// behind the adapter. No renderer PTY channel or spawn result changes.
+export * from './sessions/adapters/pty-backend'
+const echoAdapter = new EchoAdapter()
+// The suite's way to inject a frame into an echo session, in test mode only
+// (`sessions/e2e-hooks.ts`); outside test mode nothing is installed.
+installE2eHooks({ echo: { inject: (id, stream) => echoAdapter.inject(id, stream) } })
+const claudeAdapter = new ClaudeAdapter()
+sessionManager.registerAdapter(ptyAdapter)
+sessionManager.registerAdapter(echoAdapter)
+sessionManager.registerAdapter(claudeAdapter)
+const codexAdapter = new CodexAdapter()
+sessionManager.registerAdapter(codexAdapter)
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+/** The notices the CLI writes itself, in the model's place, when the account
+ *  cannot take the turn: out of credits, the cap of the org or the seat, the
+ *  usage limit of the plan. Read on a `<synthetic>` reply only. */
+const CLAUDE_LIMIT_NOTICE =
+  /out of usage credits|out of usage\b|usage credit cap|usage limit|hit your limit|limit reached/i
+
+/**
+ * Whether a provider's own frame says the account is out (ADR 0002): Claude's
+ * `rate_limit_event` with a rejected status or the synthetic reply it writes
+ * in the model's place ("You're out of usage credits…") — the CLI in `-p`
+ * mode ends its process right after that reply, and the reply is the only
+ * word some limits get; Codex's `account/rateLimits/updated` at the cap or
+ * with a reached type. Pure, for the tests; every other frame is nothing.
+ */
+export function providerEventReportsLimit(provider: string, payload: unknown): boolean {
+  if (!payload || typeof payload !== 'object') return false
+  const p = payload as Record<string, unknown>
+  if (provider === 'claude') {
+    if (p.type === 'assistant') {
+      const message = p.message as Record<string, unknown> | undefined
+      if (message?.model !== '<synthetic>' || !Array.isArray(message.content)) return false
+      return message.content.some(
+        (block) =>
+          !!block &&
+          typeof block === 'object' &&
+          (block as Record<string, unknown>).type === 'text' &&
+          CLAUDE_LIMIT_NOTICE.test(String((block as Record<string, unknown>).text ?? ''))
+      )
+    }
+    if (p.type !== 'rate_limit_event') return false
+    const info = p.rate_limit_info as Record<string, unknown> | undefined
+    return info?.status === 'rejected'
+  }
+  if (provider === 'codex') {
+    if (p.method !== 'account/rateLimits/updated') return false
+    const params = p.params as Record<string, unknown> | undefined
+    const limits = params?.rateLimits as Record<string, unknown> | undefined
+    if (!limits) return false
+    if (limits.rateLimitReachedType) return true
+    for (const slot of ['primary', 'secondary']) {
+      const w = limits[slot] as Record<string, unknown> | undefined
+      if (w && typeof w.usedPercent === 'number' && w.usedPercent >= 95) return true
+    }
+  }
+  return false
+}
+
+/** What a restart on another account changes: the account fields, and
+ *  whether the message the limit rejected goes again on the new account. */
+export interface RestartOverrides {
+  claudeProfileId?: string
+  claudeProfileLabel?: string
+  codexAccountId?: string
+  codexAccountLabel?: string
+  resendRejected?: boolean
+}
+
+class PtyManager {
+  private eventSessions = new Map<string, PtySession>()
+  private listeners = new Map<string, () => void>()
+  /** What each live session was spawned with, so a restart on another
+   *  account (ADR 0002) rebuilds the same spawn with the account changed. */
+  private spawns = new Map<string, { cwd: string; options?: PtySpawnOptions }>()
+  /** A Codex chat session's thread, from the app-server's own meta. */
+  private codexThreads = new Map<string, string>()
+  private limitListeners = new Set<(sessionId: string) => void>()
+  /** The message a chat session's account rejected, kept from the CLI's own
+   *  report to the restart that resends it on the next account. */
+  private rejected = new Map<string, UserMessageInput>()
+
+  /** A chat session's CLI reported its account's limit (ADR 0002). */
+  onLimitReported(listener: (sessionId: string) => void): () => void {
+    this.limitListeners.add(listener)
+    return () => this.limitListeners.delete(listener)
+  }
+
+  async spawn(cwd: string, options?: PtySpawnOptions): Promise<PtySession> {
+    // The journal (test mode only) sees every spawn here, below IPC and the
+    // server alike, before anything can refuse it: the specs that assert a
+    // launch read it where they used to tap `pty:spawn` inside main.
+    terminalJournal()?.spawn(cwd, options)
+    const family = options?.piMode
+      ? 'pi'
+      : options?.antigravityMode
+        ? 'antigravity'
+        : options?.codexMode
+          ? 'codex'
+          : options?.claudeAgentsMode || options?.claudeMode !== false
+            ? 'claude'
+            : null
+    const carried =
+      family && options?.launchProfile
+        ? sanitizeCarriedLaunchProfile(options.launchProfile)
+        : undefined
+    if (options?.launchProfile && family && !carried)
+      throw new Error('The carried launch profile is not valid')
+    if (carried && carried.family !== family)
+      throw new Error(`Launch profile "${carried.name}" is for ${carried.family}, not ${family}`)
+    options = { ...options, launchProfile: carried ?? undefined }
+    const profileId =
+      carried?.id ??
+      options?.launchProfileId ??
+      (family ? launchProfileManager.resolve(family, options?.workspaceId).id : undefined)
+    const echo = isEchoLaunchProfile(profileId)
+    if (carried && !echo) {
+      const program = carried.command[0].includes('/')
+        ? path.resolve(cwd, carried.command[0])
+        : carried.command[0]
+      if (!findExecutable(program, getLoginShellEnv().PATH))
+        throw new Error(
+          `Program "${carried.command[0]}" was not found on this server (launch profile "${carried.name}")`
+        )
+    }
+    if (profileId === 'dev-echo-adapter' && !echo) throw new Error('Echo adapter is disabled')
+    const events = eventsProfile(profileId)
+    if (events?.adapterId === 'claude-chat' && process.platform === 'win32')
+      throw new Error('Claude chat sessions are not supported on Windows')
+    const adapter = events
+      ? sessionManager.getAdapter(events.adapterId)
+      : echo
+        ? echoAdapter
+        : ptyAdapter
+    if (!adapter) throw new Error(`Adapter unavailable: ${events?.adapterId}`)
+    const isEvents = !!events || echo
+    // A fresh chat that names no model starts on the one last picked in a
+    // chat composer. A restored or resumed tab keeps its own, and a launch
+    // that names a model (MCP, a .clave file) gets exactly that.
+    const remembered =
+      events && !options?.model && !options?.adoptSessionId && !options?.resumeSessionId
+        ? rememberedChatModel(adapter.id)
+        : undefined
+    if (remembered) options = { ...options, model: remembered }
+    // The effort last picked goes with every chat, a restored one included:
+    // the record does not keep the one a tab ran at, and the last pick is
+    // what the reader would pick again.
+    // A launch that names an effort (a routine, ADR 0004) gets exactly that.
+    const effort = isEvents ? (options?.effort ?? rememberedChatEffort(adapter.id)) : undefined
+    const session: PtySession = isEvents
+      ? {
+          // A restored chat tab keeps its id, as a restored terminal does: the
+          // sidebar layout, MCP addressing and capture all key on it.
+          id:
+            options?.adoptSessionId && UUID_RE.test(options.adoptSessionId)
+              ? options.adoptSessionId
+              : randomUUID(),
+          cwd,
+          folderName: cwd.split('/').pop() || cwd,
+          alive: true,
+          ptyProcess: null,
+          launchProfileId: profileId,
+          model: options?.model
+        }
+      : ptyAdapter.prepare(cwd, {
+          ...options,
+          // The account's token, decrypted here where the spawn is already
+          // asynchronous, for the synchronous plan below (and only for a
+          // Claude session: accountTokenForSpawn opens the store for no other).
+          oauthToken: await accountTokenForSpawn(
+            options?.claudeAgentsMode ? 'claude-agents' : family === 'claude' ? 'claude' : null,
+            options?.claudeProfileId
+          )
+        })
+    // A live tmux session this process takes BACK (an app relaunch, a move
+    // from another window) is born with the word its hooks last wrote, not
+    // idle: the hook watch forwards a change only, so a tab adopted while its
+    // agent works read idle until the agent's next word (PRDCT-3289). A dead
+    // record relaunched fresh, and a chat, start idle as before.
+    const reattached =
+      !isEvents &&
+      options?.tmuxMode === true &&
+      !!options?.adoptTmuxName &&
+      !!options?.adoptSessionId
+    const record: Session = {
+      id: session.id,
+      cwd,
+      provider: isEvents
+        ? adapter.provider
+        : options?.piMode
+          ? 'pi'
+          : options?.codexMode
+            ? 'codex'
+            : options?.antigravityMode
+              ? 'antigravity'
+              : options?.claudeAgentsMode
+                ? 'claude-agents'
+                : options?.claudeMode === false
+                  ? 'terminal'
+                  : 'claude',
+      transport: isEvents ? 'events' : 'pty',
+      adapterId: adapter.id,
+      windowKey: options?.windowKey ?? '',
+      state: reattached ? (lastHookState(session.id) ?? 'idle') : 'idle',
+      createdAt: Date.now(),
+      title: session.folderName,
+      groupId: options?.link?.kind === 'group-terminal' ? options.link.groupId : undefined,
+      // The view the reader last picked, else the profile's default when it
+      // names one; the pane's picker overwrites it on the record from there on.
+      viewId: isEvents ? initialChatView(defaultViewFor(profileId)) : defaultViewFor(profileId)
+    }
+    // A restored chat tab that never got a message has an id but no
+    // transcript (Claude) or rollout (Codex), and resuming it fails: it
+    // relaunches fresh under the same id instead.
+    const resume =
+      options?.resumeSessionId &&
+      ((adapter.id === 'claude-chat' &&
+        !findTranscript(options.resumeSessionId, cwd, options.configDir)) ||
+        (adapter.id === 'codex-chat' &&
+          !hasCodexRollout(options.resumeSessionId, codexRoot(getLoginShellEnv()))))
+        ? undefined
+        : options?.resumeSessionId
+    if (isEvents && adapter.id === 'claude-chat') {
+      session.claudeSessionId = options?.resumeSessionId ?? options?.claudeSessionId ?? randomUUID()
+      claudeAdapter.configure(session.id, {
+        ...options,
+        launchProfileId: profileId,
+        claudeSessionId: session.claudeSessionId
+      })
+    }
+    if (isEvents && adapter.id === 'codex-chat') {
+      // The account's home reaches the app-server the way it reaches a
+      // Codex terminal: synced now, set on the process (ADR 0002). The
+      // launch's prompt rides along as it does for Claude chat: a workspace
+      // session's prompt used to reach a Claude tab and never a Codex one.
+      codexAdapter.configure(
+        session.id,
+        carried ?? launchProfileManager.resolve('codex', options?.workspaceId, profileId),
+        buildSpawnEnv(getLoginShellEnv(), {
+          codexHome: codexHomeForSpawn('codex', options?.codexAccountId)
+        }),
+        options?.initialPrompt
+      )
+    }
+    const handle = isEvents
+      ? await adapter.spawn({
+          ...record,
+          options: {
+            resume,
+            model: options?.model,
+            effort,
+            permissionMode: options?.dangerousMode
+              ? adapter.provider === 'codex'
+                ? 'never'
+                : adapter.provider === 'claude'
+                  ? 'bypassPermissions'
+                  : undefined
+              : // ADR 0004: the mode a routine asks under when its permissions
+                // stay on; the CLI spells the ask-every-time mode `manual`.
+                adapter.provider === 'claude' && options?.permissionMode
+                ? options.permissionMode === 'default'
+                  ? 'manual'
+                  : options.permissionMode
+                : undefined,
+            // What `--yolo` means to a Codex terminal: no approvals AND no
+            // sandbox. The app-server takes the two separately, and without
+            // this a dangerous chat ran in the config's sandbox.
+            sandbox:
+              options?.dangerousMode && adapter.provider === 'codex'
+                ? 'danger-full-access'
+                : undefined
+          }
+        })
+      : session
+    try {
+      sessionManager.adopt(record, handle, adapter, { model: options?.model ?? null })
+    } catch (error) {
+      await adapter.kill(handle)
+      throw error
+    }
+    if (isEvents) this.eventSessions.set(session.id, session)
+    if (isEvents) session.startedAt = Date.now()
+    this.spawns.set(session.id, { cwd, options })
+    if (isEvents && (adapter.id === 'claude-chat' || adapter.id === 'codex-chat'))
+      this.writeChatRecord(adapter.id, session, profileId, options, resume)
+    // A fresh conversation is named by its first message (the terminal path
+    // reads it off the transcript; a chat tab's crosses `sessions:write`). A
+    // resumed one keeps the name it was saved under. The title runs the agent
+    // the tab runs when that agent is Claude, on the tab's account; the title
+    // generator's resolver names Claude for another agent's tab (Codex, a
+    // plugin), never that agent's own command.
+    if (isEvents && !resume)
+      titleGenerator.scheduleChatTitle(session.id, {
+        workspaceId: options?.workspaceId,
+        launchProfileId: profileId,
+        claudeProfileId: options?.claudeProfileId,
+        configDir: options?.configDir
+      })
+    return session
+  }
+
+  /** A chat tab's session record: what brings it back after a quit, an
+   *  update or a crash. Claude's resumes its `claudeSessionId`; Codex's resumes
+   *  the thread the app-server opened, which is known only once the thread is
+   *  up — a resumed tab carries it from the start, a fresh one gets it from
+   *  its first `session_meta` (attachListeners). Without a record the tab is
+   *  simply gone at the next launch, which is what every Codex chat tab was. */
+  private writeChatRecord(
+    adapterId: 'claude-chat' | 'codex-chat',
+    session: PtySession,
+    profileId: string | undefined,
+    options: PtySpawnOptions | undefined,
+    resume: string | undefined
+  ): void {
+    const codex = adapterId === 'codex-chat'
+    // A restored tab rewrites the record it was restored from: the name lives
+    // only there, so it must be carried over or the tab survives one restart
+    // with its name and comes back as its folder at the next.
+    const previous = options?.adoptSessionId ? ptyBackend.getSessionRecord(session.id) : null
+    ptyBackend.writeEventSessionRecord({
+      adapterId,
+      transport: 'events',
+      id: session.id,
+      claudeSessionId: codex ? undefined : session.claudeSessionId,
+      codexThreadId: codex ? resume : undefined,
+      cwd: session.cwd,
+      folderName: session.folderName,
+      displayName: previous?.displayName,
+      userRenamed: previous?.userRenamed,
+      claudeMode: !codex,
+      antigravityMode: false,
+      codexMode: codex,
+      piMode: false,
+      claudeAgentsMode: false,
+      dangerousMode: options?.dangerousMode === true,
+      model: options?.model,
+      launchProfileId: profileId,
+      launchProfile: options?.launchProfile,
+      configDir: codex ? undefined : options?.configDir,
+      claudeProfileId: codex ? undefined : options?.claudeProfileId,
+      claudeProfileLabel: codex ? undefined : options?.claudeProfileLabel,
+      codexAccountId: codex ? options?.codexAccountId : undefined,
+      codexAccountLabel: codex ? options?.codexAccountLabel : undefined,
+      workspaceId: options?.workspaceId,
+      windowKey: options?.windowKey,
+      // What this session is the hidden half of (a routine's run, ADR 0004):
+      // the PTY record carried it, the events record did not, and a chat run
+      // came back as a sidebar tab at the next boot (round 1, F2).
+      link: options?.link,
+      spawnedBy: lineageOf(session.id, options?.spawnedBy, previous?.spawnedBy),
+      // Which work it does (PRDCT-4123): a restart's, else the record's.
+      work: sanitizeWork(options?.work) ?? sanitizeWork(previous?.work)
+    })
+  }
+
+  attachListeners(
+    id: string,
+    onData: (data: string) => void,
+    onExit: (code: number) => void
+  ): void {
+    this.listeners.get(id)?.()
+    if (!sessionManager.get(id)) return
+    const decoder = new TextDecoder()
+    const stopStream = sessionManager.subscribe(id, (stream) => {
+      if (stream.kind === 'event' && stream.event.type === 'session_meta') {
+        // A meta naming no model means "the provider's default": it refines
+        // nothing, so it never erases a model already known here.
+        const session = this.eventSessions.get(id)
+        if (session && stream.event.model) session.model = stream.event.model
+        // The thread the app-server opened: what a restart resumes.
+        if (sessionManager.get(id)?.adapterId === 'codex-chat' && stream.event.providerSessionId) {
+          this.codexThreads.set(id, stream.event.providerSessionId)
+          ptyBackend.setSessionCodexThreadId(id, stream.event.providerSessionId)
+        }
+      }
+      if (
+        stream.kind === 'event' &&
+        stream.event.type === 'provider_event' &&
+        providerEventReportsLimit(stream.event.provider, stream.event.payload)
+      ) {
+        const last = claudeAdapter.lastUserMessage(id)
+        if (last) this.rejected.set(id, last)
+        for (const listener of this.limitListeners) listener(id)
+      }
+      if (stream.kind === 'pty') onData(decoder.decode(stream.data, { stream: true }))
+    })
+    const stopExit = sessionManager.subscribeExit(id, (code) => {
+      const session = this.getSession(id)
+      if (session) session.alive = false
+      onExit(code)
+    })
+    this.listeners.set(id, () => {
+      stopStream()
+      stopExit()
+    })
+  }
+
+  start(id: string, cols: number, rows: number): void {
+    if (!sessionManager.get(id)) return
+    // The size the pane gave is what a screen read renders at (wave 4).
+    noteSize(id, cols, rows)
+    sessionManager.resize(id, cols, rows)
+  }
+  resize(id: string, cols: number, rows: number): void {
+    if (!sessionManager.get(id)) return
+    noteSize(id, cols, rows)
+    sessionManager.resize(id, cols, rows)
+  }
+  write(id: string, data: string): void {
+    terminalJournal()?.write(id, data)
+    if (sessionManager.get(id)?.transport === 'pty')
+      sessionManager.write(id, new TextEncoder().encode(data))
+  }
+  async kill(id: string, killTmuxSession = true): Promise<void> {
+    if (!sessionManager.get(id)) return
+    // A chat tab closed for good takes its record with it, first, so a kill
+    // that throws cannot leave a closed tab to be offered back at the next
+    // launch. On quit (killTmuxSession false) the record stays for the restore.
+    if (killTmuxSession && this.eventSessions.has(id)) ptyBackend.discardSessionRecord(id)
+    if (!killTmuxSession && !this.eventSessions.has(id)) ptyAdapter.detach({ id })
+    else await sessionManager.kill(id)
+    this.listeners.get(id)?.()
+    this.listeners.delete(id)
+    if (this.eventSessions.has(id)) titleGenerator.cleanup(id)
+    this.eventSessions.delete(id)
+    if (killTmuxSession) {
+      this.spawns.delete(id)
+      this.codexThreads.delete(id)
+      this.rejected.delete(id)
+      // Copy offers are surfaced in the tab's own header: once the tab is
+      // gone they are unreachable, so their values leave memory with it.
+      dismissSessionOffers(id)
+    }
+    sessionManager.forget(id)
+  }
+
+  /** The conversation a session would resume: Claude's session id, a Codex
+   *  chat's thread, or the rollout a Codex terminal wrote (found by its cwd
+   *  and start). Null when the session has nothing to resume. */
+  conversationIdOf(id: string): string | null {
+    const session = this.getSession(id)
+    if (!session) return null
+    if (session.claudeSessionId) return session.claudeSessionId
+    const chatThread = this.codexThreads.get(id)
+    if (chatThread) return chatThread
+    const spawn = this.spawns.get(id)
+    if (spawn?.options?.codexMode && session.startedAt) {
+      return findCodexThreadForSession(
+        session.cwd,
+        session.startedAt,
+        codexRoot(getLoginShellEnv())
+      )
+    }
+    return null
+  }
+
+  /**
+   * The spawn that brings a session back on another account (ADR 0002): the
+   * same cwd, agent and profile, the conversation resumed, the tab's id kept
+   * so the sidebar, the MCP addressing and the capture stay on it. Read
+   * BEFORE the kill: the kill forgets the spawn. Null for a session this
+   * process did not spawn (nothing to rebuild from).
+   */
+  restartSpawn(
+    id: string,
+    overrides: RestartOverrides
+  ): { cwd: string; options: PtySpawnOptions; resumed: boolean } | null {
+    const spawn = this.spawns.get(id)
+    if (!spawn) return null
+    const conversationId = this.conversationIdOf(id)
+    const previous = spawn.options ?? {}
+    const { resendRejected, ...requested } = overrides
+    const account = accountOverrides(requested)
+    const options: PtySpawnOptions = {
+      ...previous,
+      adoptSessionId: id,
+      // A fresh tmux name: the old session may still be dying (see
+      // killAndWait) and `-A` on its name would reattach the old process.
+      adoptTmuxName: undefined,
+      resumeSessionId: conversationId ?? undefined,
+      claudeSessionId: undefined,
+      piSessionId: undefined,
+      // The prompt and the command ran once already.
+      initialPrompt: undefined,
+      initialCommand: undefined,
+      autoExecute: undefined,
+      // The message the limit rejected, when the move is the limit's doing:
+      // the reader asked once and gets the answer on the next account.
+      initialInput: resendRejected ? this.rejected.get(id) : undefined,
+      // The parent, else the record's: the kill takes the record before the
+      // spawn could read it, and a spawn made without one (an older restore)
+      // would lose the child its parent (#259, V1-F1).
+      spawnedBy: previous.spawnedBy ?? ptyBackend.getSessionRecord(id)?.spawnedBy,
+      // Which work it does (PRDCT-4123): the record's, read now, for the same
+      // reason. Never the spawn's own options: a restart carried one into
+      // them, and a change of work since (a handover accepted, a lane left)
+      // wrote the record alone, so a second restart would bring the old back.
+      work: ptyBackend.getSessionRecord(id)?.work,
+      ...account
+    }
+    return { cwd: spawn.cwd, options, resumed: conversationId !== null }
+  }
+
+  /** `kill`, resolved once a tmux-backed process is really gone. */
+  async killAndWait(id: string): Promise<void> {
+    const tmuxName = ptyBackend.tmuxNameOf(id)
+    await this.kill(id, true)
+    if (tmuxName) await ptyBackend.waitForTmuxSessionGone(tmuxName)
+  }
+  /** Every session detached or stopped, the way the quit and the last
+   *  window's close want it. The one-shot title jobs go with the sessions
+   *  (PRDCT-3375): a `claude -p` still running would otherwise outlive the
+   *  app's quit and the standalone server's stop, both of which end here.
+   *  `quit: true` also shuts the title door (no job starts from then on);
+   *  the last window's close on macOS is not a quit, and the tabs reopened
+   *  from the Dock must still be named (round 2 of the lane's verifier). */
+  async killAll({ quit = false }: { quit?: boolean } = {}): Promise<void> {
+    if (quit) titleGenerator.shutdown()
+    else titleGenerator.cancelAll()
+    await Promise.all(sessionManager.list().map((session) => this.kill(session.id, false)))
+  }
+  getSession(id: string): PtySession | undefined {
+    return this.eventSessions.get(id) ?? ptyBackend.getSession(id)
+  }
+  getAllSessions(): { id: string; cwd: string; folderName: string; alive: boolean }[] {
+    return [...ptyBackend.getAllSessions(), ...this.eventSessions.values()].map(
+      ({ id, cwd, folderName, alive }) => ({ id, cwd, folderName, alive })
+    )
+  }
+  tmuxNameOf(id: string): string | null {
+    return ptyBackend.tmuxNameOf(id)
+  }
+  setSessionDisplayName(id: string, name: string | null, userRenamed: boolean): void {
+    const session = this.getSession(id)
+    if (session) sessionManager.update(id, { title: name?.trim() || session.folderName })
+    ptyBackend.setSessionDisplayName(id, name, userRenamed)
+  }
+  setSessionWindowKey(id: string, windowKey: string): void {
+    if (sessionManager.get(id)) sessionManager.update(id, { windowKey })
+    ptyBackend.setSessionWindowKey(id, windowKey)
+  }
+  /** Which work the session does, on its record (PRDCT-4123); false when it
+   *  keeps no record. The host's `changeWork` is the only caller. */
+  setSessionWork(id: string, work: WorkAssignment | null): boolean {
+    return ptyBackend.setSessionWork(id, work)
+  }
+  /** Every record's work assignment, read without side effects (PRDCT-4123). */
+  listWorkAssignments(): ReturnType<typeof ptyBackend.listWorkAssignments> {
+    return ptyBackend.listWorkAssignments()
+  }
+  /** The persisted record of a live session, as it is now. */
+  getSessionRecord = ptyBackend.getSessionRecord.bind(ptyBackend)
+  setSessionViewRecord = ptyBackend.setSessionViewRecord.bind(ptyBackend)
+  setSessionWorkspace = ptyBackend.setSessionWorkspace.bind(ptyBackend)
+  setSessionClaudeSessionId = ptyBackend.setSessionClaudeSessionId.bind(ptyBackend)
+  listAdoptableSessions = ptyBackend.listAdoptableSessions.bind(ptyBackend)
+  discardSessionRecord = ptyBackend.discardSessionRecord.bind(ptyBackend)
+}
+export const ptyManager = new PtyManager()

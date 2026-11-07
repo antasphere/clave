@@ -6,11 +6,11 @@ import {
   prepareRelayDependencies,
   projectRelayLock,
   verifyRelayDependencies
-} from '../packages/server/relay-dependencies.mjs'
+} from '../apps/relay/dependencies.mjs'
 
 const root = new URL('../', import.meta.url)
 const lock = JSON.parse(readFileSync(new URL('package-lock.json', root)))
-const manifest = JSON.parse(readFileSync(new URL('packages/server/relay.package.json', root)))
+const manifest = JSON.parse(readFileSync(new URL('apps/relay/package.json', root)))
 const scratch = []
 afterEach(() => {
   for (const directory of scratch.splice(0)) rmSync(directory, { recursive: true, force: true })
@@ -71,7 +71,7 @@ describe('relay packaging', () => {
     scratch.push(directory)
     const provenance = prepareRelayDependencies(
       new URL('package-lock.json', root),
-      new URL('packages/server/relay.package.json', root),
+      new URL('apps/relay/package.json', root),
       directory
     )
     expect(provenance.packages).toHaveLength(5)
@@ -79,7 +79,7 @@ describe('relay packaging', () => {
     expect(() =>
       prepareRelayDependencies(
         new URL('package-lock.json', root),
-        new URL('packages/server/relay.package.json', root),
+        new URL('apps/relay/package.json', root),
         directory
       )
     ).toThrow('Refusing to overwrite')
@@ -90,13 +90,13 @@ describe('relay packaging', () => {
   })
 
   it('pins the base, passes the actual lock to the build and verifies its frozen consumer', () => {
-    const recipe = readFileSync(new URL('packages/server/relay.Dockerfile', root), 'utf8')
+    const recipe = readFileSync(new URL('apps/relay/Dockerfile', root), 'utf8')
     expect(recipe).toMatch(/FROM oven\/bun:1\.4\.1-slim@sha256:[a-f0-9]{64}/)
     expect(recipe).toContain('COPY package-lock.json')
     expect(recipe).toContain('bun install --production --frozen-lockfile --ignore-scripts')
-    expect(recipe).toContain('relay-dependencies.mjs --verify /app')
+    expect(recipe).toContain('dependencies.mjs --verify /app')
     const context = readFileSync(new URL('.dockerignore', root), 'utf8')
     expect(context.split('\n')).toContain('!package-lock.json')
-    expect(context.split('\n')).toContain('!packages/server/relay-dependencies.mjs')
+    expect(context.split('\n')).toContain('!apps/relay/dependencies.mjs')
   })
 })

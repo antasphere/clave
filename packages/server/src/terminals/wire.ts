@@ -3,7 +3,7 @@
  * messages, the two declared failures as the framework's business failures
  * (a typed error crosses the wire as protobuf bytes, nothing else of an
  * error does), and the token both sides present and check. The terminal
- * process (`src/main/terminal-process/`) imports this file and nothing else
+ * process (`packages/host/src/terminal-process/`) imports this file and nothing else
  * of the server, so its bundle carries no HTTP server and no event store.
  */
 import { createHash, timingSafeEqual } from 'node:crypto'

@@ -9,7 +9,7 @@
 // into a wrong one (another key, another issuer, another audience, a stale
 // nonce, an expired token), which is how the tests prove a validation exists.
 //
-// Both the vitest suite (src/main/antasphere-account.test.ts) and the Electron
+// Both the vitest suite (packages/host/src/antasphere-account.test.ts) and the Electron
 // spec (tests/e2e/antasphere-account.spec.mjs) start one of these on
 // 127.0.0.1 and nothing else: no test ever reaches account.antasphere.com.
 import { createServer } from 'node:http'

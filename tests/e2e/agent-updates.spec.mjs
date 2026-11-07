@@ -8,7 +8,7 @@
 // each one, and the app never waits on it.
 //
 // The machine's own agents are never touched. Two test-only seams (honoured
-// under --test-no-activate only, `src/main/agent-updates/index.ts`) point the
+// under --test-no-activate only, `packages/host/src/agent-updates/index.ts`) point the
 // updater at a fixture PATH and at a local registry: `pi` is a fake bun global
 // whose fake `bun` sleeps like a real install, then moves the version; `codex`
 // sits outside any installer Clave knows, far behind its registry's latest,

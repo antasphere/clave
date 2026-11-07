@@ -4,7 +4,7 @@ import path from 'node:path'
 import { launchApp, seedWorkspaces, seedTrustedRoots, until, fixturePath } from './harness.mjs'
 
 /**
- * The bundled `plugins/echo-provider` drives a real session end to end: the
+ * The bundled `apps/plugins/echo-provider` drives a real session end to end: the
  * launcher offers it only once enabled, its answers reach the chat view, the
  * events it is not allowed to send are dropped, and a second plugin sees the
  * session it created through the host's `sessions` service.

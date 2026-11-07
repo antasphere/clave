@@ -119,8 +119,8 @@ def source():
         'attempt': os.environ['GITHUB_RUN_ATTEMPT'], 'platform': 'linux/amd64',
         'rootLockBlob': run(['git', 'rev-parse', 'HEAD:package-lock.json']),
         'rootLockSha256': digest(Path('package-lock.json')),
-        'dockerfileBlob': run(['git', 'rev-parse', 'HEAD:packages/server/relay.Dockerfile']),
-        'dockerfileSha256': digest(Path('packages/server/relay.Dockerfile')),
+        'dockerfileBlob': run(['git', 'rev-parse', 'HEAD:apps/relay/Dockerfile']),
+        'dockerfileSha256': digest(Path('apps/relay/Dockerfile')),
         'runnerImageOS': os.environ.get('ImageOS'), 'runnerImageVersion': os.environ.get('ImageVersion')
     }
     write(out / 'source.json', value)
@@ -128,8 +128,8 @@ def source():
     run(['git', 'archive', '--format=tar', '--output=' + str(out / 'context.tar'), checked_out], 30)
     value['contextSha256'] = digest(out / 'context.tar')
     write(out / 'source.json', value)
-    run(['node', 'packages/server/relay-dependencies.mjs', 'package-lock.json',
-         'packages/server/relay.package.json', str(out / 'expected-dependencies')], 15)
+    run(['node', 'apps/relay/dependencies.mjs', 'package-lock.json',
+         'apps/relay/package.json', str(out / 'expected-dependencies')], 15)
 
 
 def build():
@@ -143,7 +143,7 @@ def build():
             '--metadata-file', str(out / 'build-metadata.json'),
             '--iidfile', str(out / 'image-id'),
             '--label', 'org.opencontainers.image.revision=' + src['checkoutSha'],
-            '--tag', 'clave-relay-ci:' + owner(), '--file', 'packages/server/relay.Dockerfile', '-']
+            '--tag', 'clave-relay-ci:' + owner(), '--file', 'apps/relay/Dockerfile', '-']
     write(out / 'build-command.json', argv)
     with (out / 'context.tar').open('rb') as archive, (out / 'build.log').open('wb') as log:
         subprocess.run(argv, stdin=archive, stdout=log, stderr=subprocess.STDOUT,

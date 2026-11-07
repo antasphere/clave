@@ -4,7 +4,7 @@
  * per workspace.
  *
  * Mirrors the preload's launch profile methods as of this change
- * (`src/preload/index.ts`). The types in `src/shared/agent-launch.ts` are the
+ * (`apps/desktop/src/preload/index.ts`). The types in `packages/shared/src/agent-launch.ts` are the
  * originals until the renderer reads this contract instead; then this module
  * becomes the original.
  */

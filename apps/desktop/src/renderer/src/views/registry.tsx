@@ -1,0 +1,380 @@
+import { isRemoteKey } from '../lib/fleet-identity'
+import { reportFleetError } from '../store/fleet-store'
+import { FleetResume } from '../components/fleet/FleetControls'
+import { memo, useEffect, useMemo, useRef, useState } from 'react'
+import { useRegistry } from './store'
+import { implemented, nativeViews } from './native-views'
+import { paneIsTerminal } from './pane-kind'
+import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
+import {
+  CheckIcon,
+  CommandLineIcon,
+  MagnifyingGlassIcon,
+  Squares2X2Icon,
+  XMarkIcon
+} from '@heroicons/react/24/outline'
+import type { AgentState } from '../../../../../../packages/shared/src/session-model'
+import { claudeModelName } from '../../../../../../packages/shared/src/claude-models'
+import { TerminalPanel } from '../components/terminal/TerminalPanel'
+import { useViewSessionStore } from './session-store'
+import { bindKernelState } from './kernel-state'
+import { useSessionLog } from './conversation-store'
+import { clearSessionDraft } from './draft-store'
+import { PluginViewSurface } from './PluginViewSurface'
+import { availableViews, resolveView, type AvailableView } from './resolution'
+import { emitTabClosed } from '../lib/exchange-capture'
+import { ConfirmDialog } from '@clave/ui/components'
+import { LinkedDocumentReopen } from '../components/files/LinkedDocumentReopen'
+import { AccountProposal } from '../components/terminal/AccountProposal'
+import { SessionStatus } from '../components/session/SessionItem'
+import { WorkBreadcrumb } from '../components/session/WorkEntryItem'
+import { PaneSearch } from './PaneSearch'
+import { usePaneSearchStore } from './pane-search'
+import { useBackgroundTasks } from './background-tasks'
+
+/** The pane's view picker: every view that renders this session, the current
+ *  one checked. Hidden when a session has only one view to be read in — a menu
+ *  with a single item is chrome with nothing to decide. */
+function ViewPicker({
+  sessionId,
+  views,
+  active
+}: {
+  sessionId: string
+  views: AvailableView[]
+  active: string | undefined
+}): React.JSX.Element | null {
+  const [failure, setFailure] = useState('')
+  if (views.length < 2) return null
+  const current = views.find((view) => view.id === active)
+  const choose = async (id: string): Promise<void> => {
+    try {
+      const updated = await window.electronAPI.sessionsSetView(sessionId, id)
+      // The record in main is the truth; reflect it without waiting for a
+      // round trip through the plugin-change refresh.
+      useRegistry.setState((state) => ({
+        sessions: state.sessions.map((s) => (s.id === updated.id ? updated : s))
+      }))
+      setFailure('')
+    } catch (error) {
+      setFailure(String(error))
+    }
+  }
+  return (
+    <DropdownMenu.Root modal={false}>
+      <DropdownMenu.Trigger asChild>
+        <button
+          type="button"
+          className="panel-icon-btn"
+          aria-label="Change view"
+          title={failure || `View: ${current?.title ?? 'default'}`}
+          data-failed={failure ? 'true' : undefined}
+        >
+          <Squares2X2Icon className="w-4 h-4" />
+        </button>
+      </DropdownMenu.Trigger>
+      <DropdownMenu.Portal>
+        <DropdownMenu.Content
+          side="bottom"
+          align="end"
+          sideOffset={6}
+          className="menu-surface menu-pop z-50 min-w-[200px] p-1"
+          aria-label="Views"
+        >
+          <DropdownMenu.Label className="menu-label">Read this session as</DropdownMenu.Label>
+          {views.map((view) => (
+            <DropdownMenu.Item
+              key={view.id}
+              className="menu-item"
+              data-selected={view.id === active ? 'true' : undefined}
+              onSelect={() => void choose(view.id)}
+            >
+              <span className="truncate">{view.title}</span>
+              {view.id === active && <CheckIcon className="select-option-check" />}
+            </DropdownMenu.Item>
+          ))}
+        </DropdownMenu.Content>
+      </DropdownMenu.Portal>
+    </DropdownMenu.Root>
+  )
+}
+function RegisteredSessionView({
+  sessionId,
+  terminalSessionId,
+  visible = true
+}: {
+  sessionId: string
+  terminalSessionId?: string
+  visible?: boolean
+}): React.JSX.Element {
+  const registry = useRegistry()
+  const session = registry.sessions.find((s) => s.id === sessionId)
+  const views = availableViews(session, registry.plugins, implemented)
+  const viewId = resolveView(session, registry.plugins, implemented)
+  // The host keeps the session's event log while a view is mounted on it, so a
+  // view that reads the log renders the whole conversation however late it is
+  // opened. It is held on `viewId`, not on the transport: with no view resolved
+  // the pane falls back to the terminal, and a claim kept there would never
+  // reach zero — main would go on streaming into a log nobody reads.
+  useSessionLog(session?.transport === 'events' && viewId ? sessionId : '')
+  const backgroundTasks = useBackgroundTasks(sessionId)
+  // Background shells and subagents outlive the turn that started them; the
+  // header and the sidebar say so, or a finished-looking chat hides live work.
+  const backgroundAgents = backgroundTasks.filter((task) => task.kind === 'agent').length
+  useEffect(() => {
+    useViewSessionStore
+      .getState()
+      .setBackgroundTaskCount(sessionId, backgroundTasks.length, backgroundAgents)
+  }, [sessionId, backgroundTasks.length, backgroundAgents])
+  // The pane is the only writer of that count, so it takes it with it: a pane
+  // gone while tasks ran used to leave the tab counting them for good. A new
+  // pane reads the live list from main on subscribing.
+  useEffect(
+    () => () => useViewSessionStore.getState().setBackgroundTaskCount(sessionId, 0),
+    [sessionId]
+  )
+  // Every view this session can be read in is mounted for the pane's lifetime
+  // and all but one are hidden. Switching therefore finds a view exactly as it
+  // was left — including the state a view keeps privately rather than reading
+  // from the host's log, which is what a transcript is today.
+  const mounted = views.map((view) => view.id)
+  const mountedKey = mounted.join('|')
+  const [showConfirm, setShowConfirm] = useState(false)
+  // Each mounted view reports its own state; the header reads the one on screen.
+  // A hidden view can therefore keep reporting without ever overwriting what the
+  // reader sees, and switching shows that view's own last word immediately.
+  const [metaByView, setMetaByView] = useState<
+    Record<string, { state: string; model: string | null }>
+  >({})
+  const meta = (viewId ? metaByView[viewId] : undefined) ?? {
+    state: session?.state ?? 'idle',
+    model: null
+  }
+  // Views may report presentation metadata, but only the kernel owns sidebar
+  // state. One reporter per mounted view, stable for as long as the set of
+  // mounted views is, so a view's own effect is not re-fired by a re-render.
+  const reporters = useMemo(() => {
+    const map = new Map<string, (state: AgentState, model: string | null) => void>()
+    for (const id of mounted)
+      map.set(id, (state: AgentState, model: string | null): void =>
+        setMetaByView((current) =>
+          current[id]?.state === state && current[id]?.model === model
+            ? current
+            : { ...current, [id]: { state, model } }
+        )
+      )
+    return map
+    // The identities must survive a re-render; only a change in WHICH views are
+    // mounted may replace them.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mountedKey])
+  const transport = session?.transport
+  useEffect(() => {
+    if (transport !== 'events') return
+    const stopKernel = bindKernelState(
+      sessionId,
+      {
+        onAgentState: (id, callback) => window.electronAPI.onAgentState(id, callback),
+        sessionsList: () => window.electronAPI.sessionsList()
+      },
+      {
+        isAlive: (id) => useViewSessionStore.getState().sessions.find((s) => s.id === id)?.alive,
+        setAlive: (id, alive) => useViewSessionStore.getState().updateSessionAlive(id, alive),
+        setState: (id, state) => useViewSessionStore.getState().setAgentState(id, state)
+      }
+    )
+    // A chat tab is named by its first message: main asks for the title when
+    // the message crosses `sessions:write` and answers on the channel a
+    // terminal tab's title arrives on. The pane stays mounted, hidden, while
+    // another tab is active, so this listener lives as long as the tab does.
+    const stopTitle = window.electronAPI.onSessionAutoTitle(sessionId, (title) =>
+      useViewSessionStore.getState().autoRenameSession(sessionId, title)
+    )
+    return () => {
+      stopKernel()
+      stopTitle()
+    }
+  }, [sessionId, transport])
+  const close = async (): Promise<void> => {
+    const current = useViewSessionStore.getState()
+    const closing = current.sessions.find((s) => s.id === sessionId)
+    if (closing) emitTabClosed(closing, current.groups, 'user', null)
+    try {
+      await window.electronAPI.killSession(sessionId)
+    } catch {
+      if (isRemoteKey(sessionId)) {
+        reportFleetError(new Error('close failed'))
+        return
+      }
+      // The provider may already have exited, as in the terminal header.
+    }
+    useViewSessionStore.getState().removeSession(sessionId)
+    clearSessionDraft(sessionId)
+    setShowConfirm(false)
+  }
+  // v1 describes exactly one transport. A future dual-transport record can pass
+  // its PTY session id here without changing the view plugin's bridge.
+  const terminal = registry.terminal.has(sessionId)
+  const record = useViewSessionStore((s) => s.sessions.find((r) => r.id === sessionId))
+  const name = record?.name
+  // Find in this session: opened by Cmd+F while this pane is focused (the
+  // request comes through usePaneSearchStore) or by the header's magnifier.
+  const [searching, setSearching] = useState(false)
+  const searchInput = useRef<HTMLInputElement | null>(null)
+  const searchAsk = usePaneSearchStore((s) => (s.sessionId === sessionId ? s.nonce : 0))
+  useEffect(() => {
+    if (!searchAsk) return
+    setSearching(true)
+    // The view answers a search only while its entry exists (pane-search.ts).
+    if (!usePaneSearchStore.getState().finds[sessionId])
+      usePaneSearchStore.getState().setQuery(sessionId, '')
+  }, [searchAsk, sessionId])
+  // Focus once the field is in the page: after the render that mounted it,
+  // and again on a repeated Cmd+F while it is open.
+  useEffect(() => {
+    if (!searching) return
+    searchInput.current?.focus()
+    searchInput.current?.select()
+  }, [searching, searchAsk])
+  const closeSearch = (): void => {
+    setSearching(false)
+    usePaneSearchStore.getState().clear(sessionId)
+    // Back to where the reader types, as a browser's find gives the page back:
+    // the visible view's composer (every view of the session stays mounted).
+    const composers = document.querySelectorAll<HTMLTextAreaElement>(
+      `.chat-host[data-session-id="${CSS.escape(sessionId)}"] textarea`
+    )
+    ;[...composers].find((el) => el.offsetParent !== null)?.focus()
+  }
+  // The terminal is the fallback when nothing resolves — not when the resolved
+  // view happens to be a surface one, which has no entry in the native map.
+  if (paneIsTerminal(registry, sessionId) || !session || !viewId)
+    return <TerminalPanel sessionId={sessionId} />
+  return (
+    <section
+      className="chat-host"
+      // Which session this pane is showing, so a test can tell two panes apart
+      // without counting them.
+      data-session-id={sessionId}
+      onPointerDown={() => useViewSessionStore.getState().setFocusedSession(sessionId)}
+    >
+      <header className="pane-header chat-header">
+        <div className="pane-header-lead">
+          {/* The sidebar row's own status glyph, the same component: spinner
+              while working, check when finished, ? when it waits on you. */}
+          {record && <SessionStatus session={record} placeholder />}
+          <span className="pane-header-title" title={session.cwd}>
+            {name ?? session.title}
+          </span>
+          {record && <WorkBreadcrumb session={record} />}
+          {meta.model && (
+            <span className="pane-header-meta" title={meta.model}>
+              {claudeModelName(meta.model)}
+            </span>
+          )}
+          <AccountProposal sessionId={sessionId} />
+          {/* Beside the title on purpose: what it searches is this session. */}
+          <PaneSearch
+            sessionId={sessionId}
+            open={searching}
+            onClose={closeSearch}
+            inputRef={searchInput}
+          />
+        </div>
+        <div className="pane-header-actions">
+          <FleetResume sessionId={sessionId} />
+          <LinkedDocumentReopen sessionId={sessionId} />
+          {/* The state in words, for assistive tech and the specs only: the
+              status glyph before the title says it on screen. */}
+          <span className="chat-state sr-only" data-state={meta.state}>
+            {meta.state}
+          </span>
+          {!searching && (
+            <button
+              className="panel-icon-btn"
+              aria-label="Search this session"
+              title="Search this session (⌘F)"
+              onClick={() => usePaneSearchStore.getState().open(sessionId)}
+            >
+              <MagnifyingGlassIcon className="w-4 h-4" />
+            </button>
+          )}
+          <ViewPicker sessionId={sessionId} views={views} active={viewId} />
+          <span
+            title={
+              terminalSessionId
+                ? terminal
+                  ? 'Show chat'
+                  : 'Show terminal'
+                : 'This events session has no PTY terminal'
+            }
+          >
+            <button
+              className="panel-icon-btn"
+              aria-label={terminal ? 'Show chat' : 'Show terminal'}
+              disabled={!terminalSessionId}
+              data-active={terminal}
+              onClick={() =>
+                useRegistry.setState({
+                  terminal: new Set(
+                    terminal
+                      ? [...registry.terminal].filter((id) => id !== sessionId)
+                      : [...registry.terminal, sessionId]
+                  )
+                })
+              }
+            >
+              <CommandLineIcon className="w-4 h-4" />
+            </button>
+          </span>
+          <button
+            className="panel-icon-btn"
+            aria-label="Close session"
+            title="Close session"
+            onClick={() => setShowConfirm(true)}
+          >
+            <XMarkIcon className="w-4 h-4" />
+          </button>
+        </div>
+      </header>
+      {views.map((view) => {
+        const Mounted = nativeViews[view.id]
+        const hidden = view.id !== viewId || (terminal && !!terminalSessionId)
+        // A surface view is the plugin's own page and costs a lease and a
+        // process, so it mounts only while it is the view on screen; a native
+        // view is cheap and stays mounted to keep what it holds privately.
+        if (view.kind === 'surface' && hidden) return null
+        return (
+          <div key={view.id} className="chat-content-slot" data-view-id={view.id} hidden={hidden}>
+            {view.kind === 'surface' ? (
+              <PluginViewSurface
+                key={`${view.id}:${session.id}`}
+                pluginId={view.id.slice(0, view.id.lastIndexOf('/'))}
+                viewId={view.id.slice(view.id.lastIndexOf('/') + 1)}
+                session={session}
+                onState={reporters.get(view.id)!}
+              />
+            ) : Mounted ? (
+              <Mounted
+                session={session}
+                onState={reporters.get(view.id)!}
+                visible={visible && !hidden}
+              />
+            ) : null}
+          </div>
+        )
+      })}
+      {terminal && terminalSessionId && <TerminalPanel sessionId={terminalSessionId} />}
+      <ConfirmDialog
+        isOpen={showConfirm}
+        title="Delete session"
+        message="Are you sure you want to delete this session? This will terminate the process. The conversation is not saved."
+        onConfirm={() => void close()}
+        onCancel={() => setShowConfirm(false)}
+      />
+    </section>
+  )
+}
+
+const MemoizedRegisteredSessionView = memo(RegisteredSessionView)
+export { MemoizedRegisteredSessionView as RegisteredSessionView }

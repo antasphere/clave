@@ -70,7 +70,7 @@ require('node:readline').createInterface({input:process.stdin}).on('line', line 
   if (${JSON.stringify(family)} === 'claude') {
     if (f.type !== 'user') return;
     const id = argv[argv.indexOf('--session-id') + 1];
-    const frames = fs.readFileSync(${JSON.stringify(path.join(REPO, 'src/main/sessions/fixtures/claude-stream/real-turn.ndjson'))}, 'utf8').trim().split('\\n').map(JSON.parse);
+    const frames = fs.readFileSync(${JSON.stringify(path.join(REPO, 'packages/host/src/sessions/fixtures/claude-stream/real-turn.ndjson'))}, 'utf8').trim().split('\\n').map(JSON.parse);
     for (const frame of frames) { if (frame.session_id) frame.session_id = id; send(frame); }
   } else {
     if (f.method === 'initialize') send({id:f.id,result:{}});

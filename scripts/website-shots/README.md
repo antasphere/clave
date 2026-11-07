@@ -42,7 +42,7 @@ app shows whenever a chat is scrolled up, is hidden for that one shot.
 - `project/public/index.html` + `project/server.mjs`: the checkout page the dev server serves (a free
   port) and the group view shows.
 - `chat-script.cjs`: what the chat says. One entry per user message, as stream-json frames shaped like
-  `src/main/sessions/fixtures/claude-stream/` (turn 1 is the finished answer, turn 2 stops on a
+  `packages/host/src/sessions/fixtures/claude-stream/` (turn 1 is the finished answer, turn 2 stops on a
   permission request). `fake-claude.cjs` plays it.
 - `project/test-watch.mjs`: what the "tests" tab prints, a finished `npm test -- --watch` run.
 - `fake-codex.py`: the Verifier tab's review text. It sets the terminal title that puts the tab in

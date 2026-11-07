@@ -6,7 +6,7 @@ Status: accepted, 2026-09-25 (implemented in the same change); amended 2026-09-2
 
 A user works on several subscriptions at once: a personal plan, a company plan, and seats on teams that pay for their own. Today a Claude session can run on one of several accounts, chosen by hand at launch, and a Codex session always runs on whatever `~/.codex/auth.json` holds. When a subscription nears its cap the only way out is to pick another agent profile by hand and start over.
 
-The current Claude account model (`src/main/claude-accounts.ts`) has three shapes: a pasted `claude setup-token` token held encrypted by `safeStorage`, a `CLAUDE_CONFIG_DIR` of its own, and the machine login. Codex has no account model at all; the usage read opens a short-lived `codex app-server` and asks it which account it is signed into.
+The current Claude account model (`packages/host/src/claude-accounts.ts`) has three shapes: a pasted `claude setup-token` token held encrypted by `safeStorage`, a `CLAUDE_CONFIG_DIR` of its own, and the machine login. Codex has no account model at all; the usage read opens a short-lived `codex app-server` and asks it which account it is signed into.
 
 ## Decision
 

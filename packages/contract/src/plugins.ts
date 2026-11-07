@@ -50,7 +50,7 @@ export type PluginNotification = typeof PluginNotification.Type
 
 /**
  * One installed plugin and its running state. Mirrors `PluginRecord` of
- * `src/main/plugins/plugin-store.ts` field by field. `manifest` is the
+ * `packages/host/src/plugins/plugin-store.ts` field by field. `manifest` is the
  * plugin SDK's parsed manifest, opaque on the wire: the renderer types it
  * through the SDK.
  */

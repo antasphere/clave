@@ -7,7 +7,7 @@
  * the server. What the server's events do not carry, the frames of a
  * session's stream and a process's exit, reach it through `NotifySignals`,
  * which the entries feed from where the sessions live
- * (`src/main/server/session-events.ts`).
+ * (`packages/host/src/server/session-events.ts`).
  */
 import { Context, Effect, Layer } from 'effect'
 import { hostname } from 'node:os'

@@ -15,7 +15,7 @@
     "lint": "eslint --cache .",
     "typecheck:node": "tsc --noEmit -p tsconfig.node.json --composite false",
     "typecheck:web": "tsc --noEmit -p tsconfig.web.json --composite false",
-    "typecheck:plugins": "tsc --noEmit -p plugins/analytics/tsconfig.json",
+    "typecheck:plugins": "tsc --noEmit -p apps/plugins/analytics/tsconfig.json",
     "typecheck": "npm run typecheck:node && npm run typecheck:web && npm run typecheck:plugins",
     "plugins:build": "node scripts/build-plugins.mjs",
     "start": "electron-vite preview",
@@ -31,10 +31,11 @@
     "build:mac:test": "bash scripts/build-mac-local-test.sh",
     "build:linux": "npm run native:build -- --linux && electron-vite build && electron-builder --linux",
     "release": "bash scripts/release.sh",
-    "test": "node packages/ui/scripts/check-tokens.mjs && vitest run",
+    "test": "npm run check:structure && node packages/ui/scripts/check-tokens.mjs && vitest run",
     "test:e2e": "node tests/e2e/run.mjs",
     "check:packaged": "node scripts/check-packaged-requires.mjs",
-    "proto:gen": "buf generate"
+    "proto:gen": "buf generate",
+    "check:structure": "node scripts/check-structure.mjs"
   },
   "dependencies": {
     "@bufbuild/protobuf": "^2.16.0",
@@ -154,7 +155,16 @@
     "packages/contract",
     "packages/server",
     "packages/client",
-    "packages/mobile"
+    "apps/mobile",
+    "apps/desktop",
+    "apps/server",
+    "apps/terminals",
+    "apps/plugin-runner",
+    "apps/channel",
+    "packages/host",
+    "packages/shared",
+    "packages/analytics",
+    "packages/clave-channel"
   ],
   "overrides": {
     "@effect/cli": "0.77.0"

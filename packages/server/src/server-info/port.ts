@@ -6,7 +6,7 @@
  * - `ServerInfoPort.appRun(version)`: the server the desktop app runs, in its
  *   own process or as its child. It reports the app's version and never
  *   upgrades itself: it updates with the app.
- * - the daemon's own implementation (`src/main/server/self-upgrade.ts`), which
+ * - the daemon's own implementation (`packages/host/src/server/self-upgrade.ts`), which
  *   runs the install script it was installed with, once no agent works.
  * - `ServerInfoPort.none`: a server with nothing behind it, which answers
  *   `CapabilityUnavailable` to both calls.

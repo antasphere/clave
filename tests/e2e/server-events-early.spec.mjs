@@ -11,7 +11,7 @@
 // the server through its HTTP API and counts what the window heard.
 //
 // The login-progress and Antasphere families are pinned by the preload's
-// unit test (`src/main/sessions/preload-server-events.test.ts`): a
+// unit test (`packages/host/src/sessions/preload-server-events.test.ts`): a
 // standalone server runs no login job, and a sign-in needs the OIDC fixture.
 import { mkdirSync, rmSync } from 'node:fs'
 import {
@@ -191,7 +191,7 @@ export async function run(t) {
     // Each change heard once. Attached, main's IPC fan-out carries main's own
     // managers and never the server's change, so a double delivery cannot
     // show here: the drop of the IPC listener at the welcome is proven by
-    // the unit tests (`src/preload/dual-listener.test.ts`); what this proves
+    // the unit tests (`apps/desktop/src/preload/dual-listener.test.ts`); what this proves
     // is that the push side delivers each change exactly once.
     await win.waitForTimeout(1500)
     const all = await heard()

@@ -4,7 +4,7 @@ import type {
   GroupTerminalConfig,
   GroupViewConfig,
   SessionGroup
-} from '../../../../src/renderer/src/store/session-types'
+} from '../../../../apps/desktop/src/renderer/src/store/session-types'
 import {
   type GroupTerminal,
   type GroupView,

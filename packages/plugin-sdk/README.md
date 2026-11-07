@@ -72,7 +72,7 @@ highlighted and draws the rows it answers, at most six `{ label, value }` pairs 
 characters each, in the menu's preview card: the live figures of what the pointer is on, without
 opening anything. An invoke that takes more than 15 seconds, or a preview more than 3, is dropped.
 The target is an id and nothing more: what the plugin may read of that session is what its grants
-allow, as for every other call. `plugins/analytics` is the first plugin to contribute actions.
+allow, as for every other call. `apps/plugins/analytics` is the first plugin to contribute actions.
 
 A `marks` entry is a mark pack: what stands for an agent (its sidebar tab, the chat
 pane's status, the mark at the end of a transcript while it works) and, with the `tool`
@@ -81,7 +81,7 @@ kind's glyph. The user picks one pack in Appearance → Agent mark; a pack may c
 settings block there. Packs are native: the components are compiled into the renderer and
 mapped by `<pluginId>/<markId>` (`components/plugins/native-marks.tsx`), so only a bundled
 plugin can draw one — a linked plugin declaring `marks` is valid and listed, and never
-drawn. `plugins/orbs` is the first.
+drawn. `apps/plugins/orbs` is the first.
 
 The host checks both requested and granted permissions for every API request.
 Session reads and subscriptions require `sessions.read`; sending text requires

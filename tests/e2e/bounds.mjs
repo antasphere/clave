@@ -43,7 +43,7 @@ export function withDeadline(promise, ms) {
  * Close an app within `timeoutMs`: `close` is the harness's `app.close`, `pid`
  * the Electron main process. Past the timeout the pid is killed (SIGKILL,
  * exact pid, never a pattern), the close is given a moment to notice the exit,
- * and the caller is told. The app's own quit ceiling (src/main/quit-cleanup.ts)
+ * and the caller is told. The app's own quit ceiling (packages/host/src/quit-cleanup.ts)
  * is well under this timeout, so a stalled quit names its wait in the app's log
  * before this ever acts.
  */

@@ -4,7 +4,7 @@
 // ONE place names the commands, for the dev script (scripts/dev-attached.mjs)
 // and the e2e harness (tests/e2e/harness.mjs) alike. Two processes:
 //
-// - The server: `src/main/server-entry.ts` under Bun, which runs the
+// - The server: `apps/server/src/main.ts` under Bun, which runs the
 //   TypeScript as it is: `@clave/server`, the same package the app runs
 //   in-process. The contract that stays: the process binds 127.0.0.1, and
 //   prints ONE JSON line `{"url","token"}` on stdout once it listens.
@@ -16,7 +16,7 @@
 //   own, since Bun cannot run node-pty), and starts it again when it dies;
 //   the server's `clave-server.json` says which pid it is. The packaged app
 //   starts the same entry the same way, under its own binary as Node
-//   (`src/main/server-child.ts`). `startTerminalProcess` below still starts
+//   (`packages/host/src/server-child.ts`). `startTerminalProcess` below still starts
 //   one alone, for a test that drives the port over the wire itself.
 //
 // `terminals: 'none'` starts the server alone, on no terminals, for a caller
@@ -99,7 +99,7 @@ export function serverCommand({
   return {
     cmd: bunBinary(env, repo),
     args: [
-      path.join(repo, 'src', 'main', 'server-entry.ts'),
+      path.join(repo, 'apps', 'server', 'src', 'main.ts'),
       '--data-dir',
       dataDir,
       '--port',

@@ -13,10 +13,10 @@ pairings, the scope, the service, the handlers, the events, lane B's seam
 `push-targets.ts`); the token check in `packages/server/src/auth.ts` and the
 push handshake in `packages/server/src/push/`; the typed client in
 `packages/client/src/devices.ts`; the entries' wiring in
-`src/main/server/devices-port.ts` (both entries), `devices-shell.ts` and
+`packages/host/src/server/devices-port.ts` (both entries), `devices-shell.ts` and
 `devices-notify.ts` (the Mac); the page in
-`src/renderer/src/components/settings/MobileSection.tsx` over
-`src/renderer/src/store/mobile-store.ts`.
+`apps/desktop/src/renderer/src/components/settings/MobileSection.tsx` over
+`apps/desktop/src/renderer/src/store/mobile-store.ts`.
 
 ## The flow
 
@@ -169,7 +169,7 @@ server alone (no IPC arm: the devices are the server's).
   its listeners. The receipt contains identifiers, never credentials.
   `fixtures cleanup <run-id>` on the same script removes only that run.
   The CLI refuses mutation without `CLAVE_FIXTURES=1` and accepts no remote target.
-  `npx vitest run src/main/mobile-pairing.fixtures.test.ts` loads and cleans the
+  `npx vitest run packages/host/src/mobile-pairing.fixtures.test.ts` loads and cleans the
   same scenario in an automated check.
 - `npx vitest run packages/server/src/push/device-replay.test.ts` checks that
   reconnecting phones never receive pending desktop view requests or private

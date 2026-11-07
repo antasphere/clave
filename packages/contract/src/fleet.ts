@@ -61,7 +61,7 @@ export interface Sourced<T> {
 
 /**
  * How a saved server's version stands against this app's (issue #266), as
- * main's version sync decided it (`src/main/server-connections/version-sync.ts`):
+ * main's version sync decided it (`packages/host/src/server-connections/version-sync.ts`):
  * - `match`: same version; `server-newer`: never downgraded;
  * - `upgrade`: older, installed from a release tag, able to upgrade itself;
  *   `upgrading`: waiting for its agents to be idle, or running the upgrade;

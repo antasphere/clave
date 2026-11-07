@@ -3,9 +3,9 @@
  * jobs that sign an account in, and the usage reads of both providers and Pi.
  *
  * Mirrors the preload's account, login and usage methods as of this change
- * (`src/preload/index.ts`). The types in `src/preload/index.d.ts`,
- * `src/main/claude-accounts.ts`, `src/main/codex-accounts.ts` and
- * `src/main/pi-usage.ts` are the originals until the renderer reads this
+ * (`apps/desktop/src/preload/index.ts`). The types in `apps/desktop/src/preload/index.d.ts`,
+ * `packages/host/src/claude-accounts.ts`, `packages/host/src/codex-accounts.ts` and
+ * `packages/host/src/pi-usage.ts` are the originals until the renderer reads this
  * contract instead; then this module becomes the original.
  *
  * NO SCHEMA HERE MAY CARRY A SECRET. A token or an API key travels in one

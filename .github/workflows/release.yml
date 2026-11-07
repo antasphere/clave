@@ -96,9 +96,9 @@ jobs:
             echo "::warning::SYNONYM_WOFF2_B64 is not set: this build offers Geist only"
             exit 0
           fi
-          mkdir -p src/renderer/src/assets/fonts/private
-          printf '%s' "$SYNONYM_WOFF2_B64" | base64 --decode > src/renderer/src/assets/fonts/private/Synonym-Variable.woff2
-          ls -l src/renderer/src/assets/fonts/private
+          mkdir -p apps/desktop/src/renderer/src/assets/fonts/private
+          printf '%s' "$SYNONYM_WOFF2_B64" | base64 --decode > apps/desktop/src/renderer/src/assets/fonts/private/Synonym-Variable.woff2
+          ls -l apps/desktop/src/renderer/src/assets/fonts/private
 
       # prod is protected by the "prod is release-only" ruleset (repo admins +
       # deploy key bypass). GITHUB_TOKEN cannot push there, so the version-bump

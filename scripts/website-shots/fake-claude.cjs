@@ -3,7 +3,7 @@
 // chat view renders a real-looking turn without ever calling a model.
 //
 // The shape of every frame follows the recorded turns in
-// src/main/sessions/fixtures/claude-stream/ (real-turn.ndjson for a finished
+// packages/host/src/sessions/fixtures/claude-stream/ (real-turn.ndjson for a finished
 // turn, permission-turn.ndjson for a pending tool permission). The script of
 // the conversation is in chat-script.cjs beside this file: each user message
 // plays the next scripted turn. A turn may stop on a permission request; it

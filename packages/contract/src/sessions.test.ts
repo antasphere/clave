@@ -6,7 +6,7 @@ import {
   SessionSchema as ZodSession,
   SessionEventSchema as ZodSessionEvent,
   SessionInputSchema as ZodSessionInput
-} from '../../../src/shared/session-model'
+} from '../../shared/src/session-model'
 import {
   Attachments,
   RestartSession,
@@ -459,7 +459,7 @@ describe('restart correlation contract', () => {
 
 // ── The mobile wave, lane B: the write-status query and the event the id rides on ──
 import { GetSessionWriteStatus, ClientMessageId } from './sessions'
-import { userMessageEvent } from '../../../src/shared/session-model'
+import { userMessageEvent } from '../../shared/src/session-model'
 
 describe('a message the client minted an id for (decision 10 of the mobile spec)', () => {
   it('takes an id of 8 to 64 of the allowed characters, and refuses the rest', () => {

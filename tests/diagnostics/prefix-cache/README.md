@@ -9,7 +9,7 @@ their original plain-JavaScript lint policy. The E2E runner discovers top-level
 *.spec.mjs only. They describe the retired cache-bearing native source, not
 the new shipping full renderer. No old finding is passed or waived here.
 
-The original locations were plugins/chat-view/src/MarkdownMessage.tsx and
+The original locations were apps/plugins/chat-view/src/MarkdownMessage.tsx and
 markdown-parser-reuse.ts, plus tests/e2e/native-parser-{path.spec,checks}.mjs
 and markdown-parser-lifecycle{.spec,-fixture}.mjs. The P4 archive-manifest.json
 records original hashes and reversible path substitutions. Original assertions

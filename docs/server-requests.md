@@ -66,7 +66,7 @@ as a group deleted while the tab was starting, comes back in `warnings` with
 `groupId: null` instead of being claimed. The reproducible
 `agent-sessions/delegation-group` fixture creates a run-scoped group and tab
 through `CreateGroup` and `StartSession`; `npx vitest run
-src/main/mcp/standalone-mcp.test.ts` loads it, has an agent move, rename and
+packages/host/src/mcp/standalone-mcp.test.ts` loads it, has an agent move, rename and
 delegate both an attached verifier and a separate lane lead into it, verifies
 the spawn options and messaging links, writes a receipt beside its run data and closes its tabs.
 

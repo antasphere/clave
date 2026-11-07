@@ -2,7 +2,7 @@
  * The settings port: what the server needs from whoever holds the accounts,
  * the launch profiles, the preferences and the workspaces. The shell
  * implements it over its managers while the server runs inside the app
- * (`src/main/settings/source.ts`); the standalone entry implements it over
+ * (`packages/host/src/settings/source.ts`); the standalone entry implements it over
  * the same managers on the standalone ports, and says `CapabilityUnavailable`
  * for what it cannot carry. The handlers (`handlers.ts`) are the same either
  * way, which is the point of the port.

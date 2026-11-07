@@ -765,7 +765,7 @@ export async function run(t) {
     // you wait. That is a fact about the test window, not about the chrome, and
     // a fixed sleep turned it into six failures claiming the mark never moved.
     // The fallback pushes the exact message main sends from 'enter-full-screen'
-    // (src/main/index.ts), so every assertion below still runs and still fails
+    // (apps/desktop/src/main/index.ts), so every assertion below still runs and still fails
     // if the renderer's half of the chain is broken.
     // Once the window manager has declined, it declines both directions — so
     // the fallback has to stay on for the rest of the block, or leaving

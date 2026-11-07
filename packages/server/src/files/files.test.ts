@@ -18,8 +18,8 @@ import { startEmbedded, type EmbeddedServer } from '../embedded'
 import { createApiClient, type ClaveApiClient } from '../../../client/src/api'
 import { createServerFiles } from './service'
 import { MAX_FILE_ENTRIES, MAX_TEXT_BYTES, MAX_TRANSFER_BYTES } from '@clave/contract/files'
-import { localAttachmentUpload } from '../../../../src/main/server/file-transfers'
-import { preparePrompt } from '../../../../src/main/sessions/attachments'
+import { localAttachmentUpload } from '../../../host/src/server/file-transfers'
+import { preparePrompt } from '../../../host/src/sessions/attachments'
 
 let root: string
 let other: string

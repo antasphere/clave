@@ -1,5 +1,5 @@
 import { createServer } from 'node:http'
-import { SessionInputSchema } from '../../../../src/shared/session-model'
+import { SessionInputSchema } from '../../../shared/src/session-model'
 import { mkdir, mkdtemp, writeFile } from 'node:fs/promises'
 import { basename, join } from 'node:path'
 import { Effect, Layer, Schema } from 'effect'
@@ -16,8 +16,8 @@ import { sessionHandlers } from './handlers'
 import { timelineFixtureCatalog } from './timeline.fixtures'
 import { TimelinePage } from '@clave/contract/timeline'
 import type { SessionStream } from '@clave/contract/sessions'
-import { SessionManager } from '../../../../src/main/sessions/session-manager'
-import { EchoAdapter } from '../../../../src/main/sessions/adapters/echo-adapter'
+import { SessionManager } from '../../../host/src/sessions/session-manager'
+import { EchoAdapter } from '../../../host/src/sessions/adapters/echo-adapter'
 import { PushClient } from '../../../client/src/push-client'
 
 it('loads sessions/timeline-repeated-messages and verifies HTTP/push snapshot ordering and reopen catch-up', async () => {

@@ -1,6 +1,6 @@
 // The conversation the fake `claude` plays in the "Lane · checkout" chat tab.
 // One entry per user message. Frames are stream-json, shaped like the recorded
-// turns in src/main/sessions/fixtures/claude-stream/. `{ pause: true }` stops
+// turns in packages/host/src/sessions/fixtures/claude-stream/. `{ pause: true }` stops
 // the turn until the host answers a permission (control_response).
 //
 // Edit the words here to change what the chat shots show.

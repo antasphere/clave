@@ -102,7 +102,7 @@ const sid = at('--resume') || at('--session-id');
 const root = process.env.CLAVE_TRANSCRIPTS_ROOT;
 const cwd = ${JSON.stringify(ROOT)};
 const transcript = path.join(root, cwd.replace(/[^a-zA-Z0-9]/g, '-'), sid + '.jsonl');
-const frames = fs.readFileSync(${JSON.stringify(path.join(REPO, 'src/main/sessions/fixtures/claude-stream/real-turn.ndjson'))}, 'utf8').trim().split('\\n').map(JSON.parse);
+const frames = fs.readFileSync(${JSON.stringify(path.join(REPO, 'packages/host/src/sessions/fixtures/claude-stream/real-turn.ndjson'))}, 'utf8').trim().split('\\n').map(JSON.parse);
 for (const frame of frames) if (frame.session_id) frame.session_id = sid;
 const emit = (f) => process.stdout.write(JSON.stringify(f) + '\\n');
 readline.createInterface({ input: process.stdin }).on('line', (line) => {

@@ -5,7 +5,7 @@ import { readFileSync } from 'node:fs'
 import { renderNativeFlow, nativeFailureDiagnostic } from './mobile-beta-native.mjs'
 import { proveSavedProfile, proveCodexProcess } from './mobile-provider-proof.mjs'
 const template = readFileSync(
-  new URL('../packages/mobile/e2e/beta-provider.yaml', import.meta.url),
+  new URL('../apps/mobile/e2e/beta-provider.yaml', import.meta.url),
   'utf8'
 )
 const values = {

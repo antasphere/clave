@@ -10,9 +10,9 @@ through it. The relay keeps connection state and nothing else.
 Code: the relay in `packages/server/src/relay/` (`relay.ts` the process, `auth.ts` the hub
 bearer check, `registry.ts` the machines file, `main.ts` the entry, `client.ts` the
 server's end), the wire contract in `packages/contract/src/relay.ts`, the wiring into a
-Clave server in `src/main/server/relay-wiring.ts` (the in-process server through
+Clave server in `packages/host/src/server/relay-wiring.ts` (the in-process server through
 `server/clave-server.ts`, the standalone entry through `server-entry.ts`), the image in
-`packages/server/relay.Dockerfile`.
+`apps/relay/Dockerfile`.
 
 ## What the relay does
 
@@ -125,7 +125,7 @@ listener's cross-origin rule is for browser pages.
 In development, from a checkout, with the repository's own Bun:
 
 ```sh
-node_modules/.bin/bun packages/server/src/relay/main.ts \
+node_modules/.bin/bun apps/relay/src/main.ts \
   --port 8787 --data-dir /tmp/clave-relay --issuer https://account.antasphere.com
 ```
 
@@ -138,7 +138,7 @@ entry; a test provider stands in for the hub with `--issuer http://127.0.0.1:<po
 
 ## Deploying it
 
-The image is `packages/server/relay.Dockerfile`, built from the repository root on
+The image is `apps/relay/Dockerfile`, built from the repository root on
 the digest-pinned `oven/bun:1.4.1-slim` (the Bun the repository pins). The contract is
 copied in as a module. `relay-dependencies.mjs` projects the relay's `effect` and `ws`
 runtime closure from the committed root `package-lock.json`, preserving every selected
@@ -179,7 +179,7 @@ authorize a build, container start, volume creation or deployment:
 ```sh
 : "${RELAY_PLATFORM:?Set the owner-confirmed target platform}"
 RELAY_SOURCE_SHA=$(git rev-parse HEAD)
-docker build --platform "$RELAY_PLATFORM" -f packages/server/relay.Dockerfile \
+docker build --platform "$RELAY_PLATFORM" -f apps/relay/Dockerfile \
   --label org.opencontainers.image.revision="$RELAY_SOURCE_SHA" \
   --iidfile /tmp/clave-relay-image-id -t "clave-relay:$RELAY_SOURCE_SHA" .
 # Retain image ID/RepoDigests, platform, source revision and /app/relay-dependencies.json
@@ -245,7 +245,7 @@ distinct manifest identity. Raw inspection is retained before validation, includ
   relay and a local listener: the claim and its storage, no address and no login, a
   refused claim, the requests answered with `Origin` dropped, a streamed answer, a
   tunnel piped, the reconnect, a relay that lost its store, the stop.
-- `npx vitest run src/main/antasphere-account.test.ts -t "the access token"`: the token
+- `npx vitest run packages/host/src/antasphere-account.test.ts -t "the access token"`: the token
   answered, kept out of every status and log, renewed through the one renewal, obtained
   once for a record sealed before it was kept.
 - `node tests/e2e/run.mjs mobile-relay` (after `npx electron-vite build`): the real app
