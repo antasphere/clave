@@ -578,10 +578,12 @@
   gap: calc(var(--spacing) * 1);
   height: var(--control-h-sm);
   padding: 0 calc(var(--spacing) * 2) 0 calc(var(--spacing) * 3);
-  border: 1px solid var(--color-border);
   border-radius: var(--radius-full);
   background-color: var(--surface-raised);
-  box-shadow: var(--raised-shadow);
+  /* Paper (tokens.css): the hairline in the shadow, not a 1px border. */
+  box-shadow:
+    0 0 0 0.5px var(--edge-color),
+    var(--raised-shadow);
   color: var(--text-secondary);
   font-size: var(--text-xs);
   transition:
