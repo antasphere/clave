@@ -12,7 +12,10 @@ import { PageGuest, type PageGuestHandle, type PageTrail } from './PageGuest'
 import { ViewNotice } from './ViewNotice'
 import { usePreviewUrl } from '../../hooks/use-preview-url'
 import { useFileChanged } from '../../hooks/use-file-changed'
-import { isAtHome, PREVIEW_PROTOCOL } from '../../../../../../../packages/shared/src/view-navigation'
+import {
+  isAtHome,
+  PREVIEW_PROTOCOL
+} from '../../../../../../../packages/shared/src/view-navigation'
 
 const PROBE_TIMEOUT_MS = 500
 const PROBE_INTERVAL_MS = 10_000

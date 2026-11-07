@@ -1,5 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
-import type { AgentState, Session, SessionEvent } from '../../../../../../packages/shared/src/session-model'
+import type {
+  AgentState,
+  Session,
+  SessionEvent
+} from '../../../../../../packages/shared/src/session-model'
 
 /** What a guest page may send up, and what the host sends down. The wire is
  *  deliberately tiny: a guest asks, the host answers, and events arrive. */

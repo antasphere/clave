@@ -88,7 +88,11 @@ import {
   pathForMessage,
   pathsFromDataTransfer
 } from '../../../desktop/src/renderer/src/lib/dropped-paths'
-import { ClaudeLogo, CodexLogo, PiLogo } from '../../../desktop/src/renderer/src/components/icons/cli-logos'
+import {
+  ClaudeLogo,
+  CodexLogo,
+  PiLogo
+} from '../../../desktop/src/renderer/src/components/icons/cli-logos'
 import { useMarkPack } from '../../../desktop/src/renderer/src/components/plugins/native-marks'
 import type { ChatViewProps } from './ChatView'
 import { EntryRow, ToolRow } from './TerminalEntry'

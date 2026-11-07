@@ -14,7 +14,10 @@
  * cycle and the helpers stay testable on plain data.
  */
 
-import { mapAgentState, sessionStateTransition } from '../../../../../../packages/shared/src/session-state'
+import {
+  mapAgentState,
+  sessionStateTransition
+} from '../../../../../../packages/shared/src/session-state'
 import type { AgentRunStateWord } from '../../../../../../packages/shared/src/session-state'
 import type { Session, SessionGroup } from '../store/session-types'
 import { AGENT_CAPABILITIES } from '../../../../../../packages/shared/src/agent-launch'

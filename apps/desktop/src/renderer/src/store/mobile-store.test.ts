@@ -1,5 +1,9 @@
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { DeviceView, DevicesView, PendingPairingView } from '../../../../../../packages/shared/src/mobile-types'
+import type {
+  DeviceView,
+  DevicesView,
+  PendingPairingView
+} from '../../../../../../packages/shared/src/mobile-types'
 
 /**
  * The store half of Settings → Mobile (mobile wave, lane A): what the page

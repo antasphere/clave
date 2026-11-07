@@ -38,7 +38,10 @@ import { newCursor } from './reader'
 import type { Range, Scope } from './scope'
 
 const fixture = readFileSync(join(__dirname, 'fixtures', 'session.jsonl'), 'utf8')
-const template = readFileSync(join(__dirname, '../../../apps/plugins/analytics', 'page', 'index.html'), 'utf8')
+const template = readFileSync(
+  join(__dirname, '../../../apps/plugins/analytics', 'page', 'index.html'),
+  'utf8'
+)
 const prices = loadPrices(join(__dirname, '../../../apps/plugins/analytics', 'prices.json'), null)
 const NOW = new Date('2026-11-04T15:00:00.000Z')
 const BASE = 'http://127.0.0.1:4242/0123456789abcdef0123456789abcdef/'

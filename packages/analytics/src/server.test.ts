@@ -24,9 +24,18 @@ import type { Range } from './scope'
 import { Store } from './store'
 
 const fixture = readFileSync(join(__dirname, 'fixtures', 'session.jsonl'), 'utf8')
-const template = readFileSync(join(__dirname, '../../../apps/plugins/analytics', 'page', 'index.html'), 'utf8')
-const settingsTemplate = readFileSync(join(__dirname, '../../../apps/plugins/analytics', 'page', 'settings.html'), 'utf8')
-const shippedPrices = loadPrices(join(__dirname, '../../../apps/plugins/analytics', 'prices.json'), null)
+const template = readFileSync(
+  join(__dirname, '../../../apps/plugins/analytics', 'page', 'index.html'),
+  'utf8'
+)
+const settingsTemplate = readFileSync(
+  join(__dirname, '../../../apps/plugins/analytics', 'page', 'settings.html'),
+  'utf8'
+)
+const shippedPrices = loadPrices(
+  join(__dirname, '../../../apps/plugins/analytics', 'prices.json'),
+  null
+)
 
 class FakeCollector extends EventEmitter {
   constructor(readonly ledger: Ledger) {

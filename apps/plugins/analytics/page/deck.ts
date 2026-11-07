@@ -1,4 +1,10 @@
-import type { Block, Figures, GroupCard, ScopeView, ViewRow } from '../../../../packages/analytics/src/ledger'
+import type {
+  Block,
+  Figures,
+  GroupCard,
+  ScopeView,
+  ViewRow
+} from '../../../../packages/analytics/src/ledger'
 import { scopePath, type Range, type Scope } from '../../../../packages/analytics/src/scope'
 import {
   activeNote,

@@ -1,5 +1,8 @@
 import { create } from 'zustand'
-import type { DeviceView, PendingPairingView } from '../../../../../../packages/shared/src/mobile-types'
+import type {
+  DeviceView,
+  PendingPairingView
+} from '../../../../../../packages/shared/src/mobile-types'
 
 /**
  * Settings → Mobile as this window sees it (mobile wave, lane A): the phones

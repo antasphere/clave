@@ -15,10 +15,16 @@ import { SessionManager } from '../../../host/src/sessions/session-manager'
 import { serverOwnedSessionHost } from '../../../host/src/sessions/server-owned-host'
 import { standaloneSidebar } from '../../../host/src/server/standalone-sidebar'
 import { Drafts, MemoryKeyValueStore } from '../../../../apps/mobile/src/chat/drafts'
-import { MemorySecureStore, SecureCredentialStore } from '../../../../apps/mobile/src/machines/credentials'
+import {
+  MemorySecureStore,
+  SecureCredentialStore
+} from '../../../../apps/mobile/src/machines/credentials'
 import type { Machine } from '../../../../apps/mobile/src/machines/types'
 import type { PushSocketConstructor } from '../../../../apps/mobile/src/api/push'
-import type { ClaveServerClient, ClaveServerClientOptions } from '../../../../apps/mobile/src/api/client'
+import type {
+  ClaveServerClient,
+  ClaveServerClientOptions
+} from '../../../../apps/mobile/src/api/client'
 
 // Metadata reads use the real manager, producer, contract, router and device auth.
 // The unused process ports refuse to reach a desktop or a provider.

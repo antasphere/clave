@@ -1,4 +1,7 @@
-import type { AgentInstall, AgentUpdateStatus } from '../../../../../../packages/shared/src/agent-updates'
+import type {
+  AgentInstall,
+  AgentUpdateStatus
+} from '../../../../../../packages/shared/src/agent-updates'
 
 /** The install, as a quiet badge beside the name. */
 export function installLabel(install: AgentInstall | null): string | null {

@@ -90,7 +90,10 @@ describe('describeAddError', () => {
 
   it('keeps the safe sentence allow-list in sync with every registry error sentence', () => {
     const registry = readFileSync(
-      new URL('../../../../../../packages/host/src/server-connections/registry.ts', import.meta.url),
+      new URL(
+        '../../../../../../packages/host/src/server-connections/registry.ts',
+        import.meta.url
+      ),
       'utf8'
     )
     const sentences = new Set(

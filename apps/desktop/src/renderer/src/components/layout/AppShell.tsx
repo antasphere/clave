@@ -782,7 +782,10 @@ export function AppShell(): React.JSX.Element {
   // Does NOT auto-add agents — only the picker adds agents to the sidebar.
   // Only updates sessions array when status actually changed to avoid unnecessary re-renders.
   const syncAgentStatus = useCallback(
-    (locationId: string, typedAgents: import('../../../../../../../packages/shared/src/remote-types').Agent[]) => {
+    (
+      locationId: string,
+      typedAgents: import('../../../../../../../packages/shared/src/remote-types').Agent[]
+    ) => {
       useSessionStore.setState((state) => {
         const currentAgentSessions = state.sessions.filter(
           (s) => s.sessionType === 'agent' && s.locationId === locationId
@@ -845,7 +848,8 @@ export function AppShell(): React.JSX.Element {
   useEffect(() => {
     if (!window.electronAPI?.onAgentsUpdated) return
     return window.electronAPI.onAgentsUpdated((locationId, agents) => {
-      const typedAgents = agents as import('../../../../../../../packages/shared/src/remote-types').Agent[]
+      const typedAgents =
+        agents as import('../../../../../../../packages/shared/src/remote-types').Agent[]
       useAgentStore.getState().setAgents(locationId, typedAgents)
       // Load conversation history for newly discovered agents
       const agentIds = typedAgents.map((a) => a.id)
@@ -861,7 +865,10 @@ export function AppShell(): React.JSX.Element {
   useEffect(() => {
     const agentState = useAgentStore.getState()
     if (agentState.agents.length > 0) {
-      const byLocation = new Map<string, import('../../../../../../../packages/shared/src/remote-types').Agent[]>()
+      const byLocation = new Map<
+        string,
+        import('../../../../../../../packages/shared/src/remote-types').Agent[]
+      >()
       for (const agent of agentState.agents) {
         const list = byLocation.get(agent.locationId) || []
         list.push(agent)

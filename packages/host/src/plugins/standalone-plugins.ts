@@ -27,11 +27,11 @@ export interface StandalonePluginsOptions {
   readonly records?: () => ReadonlyArray<SessionRecord>
 }
 
-/** The runner beside this module: the built bundle when the server runs
- *  from `out/main`, the source when Bun runs the checkout. */
+/** Use the sibling bundle in out/main, or the app's TypeScript bootstrap
+ *  when Bun runs the checkout directly. */
 export function standaloneRunnerPath(dir = __dirname): string {
   const built = join(dir, 'plugin-runner.js')
-  return existsSync(built) ? built : join(dir, '../../../../out/main/plugin-runner.js')
+  return existsSync(built) ? built : join(dir, '../../../../apps/plugin-runner/src/main.ts')
 }
 
 export function standalonePlugins(options: StandalonePluginsOptions): PluginService {

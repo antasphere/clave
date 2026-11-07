@@ -42,7 +42,7 @@ export interface PluginNotice {
 }
 
 export interface PluginServiceOptions {
-  /** Where the installed plugins live (`installed.json`, `apps/plugins/`). */
+  /** Where the installed plugins live (`installed.json`, `plugins/`). */
   readonly root: string
   /** The folder of the plugins the app ships. */
   readonly bundled: string

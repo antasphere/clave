@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 /**
  * The IPC arms of the plugins domain (PRDCT-3433): what stays the shell's
  * around a service that may live in this process or on an attached server.
- * The service itself is `apps/plugins/plugin-service.test.ts`'s subject; here it
+ * The service itself is `packages/host/src/plugins/plugin-service.test.ts`'s subject; here it
  * is a fake, and the arms are proven on what they add: the page's URL
  * minted by the preview protocol and released when nothing shows the page
  * any more (a revoked lease, a reload, a plugin no longer active), the lease

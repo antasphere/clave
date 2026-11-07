@@ -6,7 +6,10 @@ import { fileURLToPath } from 'node:url'
 const dir = path.dirname(fileURLToPath(import.meta.url))
 const read = (relative) => readFileSync(new URL(relative, import.meta.url), 'utf8')
 const css = read('../src/tokens.css').replace(/\/\*[\s\S]*?\*\//g, '')
-const app = read('../../../apps/desktop/src/renderer/src/assets/main.css').replace(/\/\*[\s\S]*?\*\//g, '')
+const app = read('../../../apps/desktop/src/renderer/src/assets/main.css').replace(
+  /\/\*[\s\S]*?\*\//g,
+  ''
+)
 const overrides = JSON.parse(read('./expected-theme-overrides.json'))
 const expected = JSON.parse(read('./expected-tokens.json'))
 const declarations = (body) => new Set([...body.matchAll(/(--[\w-]+)\s*:/g)].map((m) => m[1]))

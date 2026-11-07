@@ -100,7 +100,11 @@ import {
   pathsFromDataTransfer
 } from '../../../desktop/src/renderer/src/lib/dropped-paths'
 import { openLink, wantsExternal } from '../../../desktop/src/renderer/src/lib/open-link'
-import { ClaudeLogo, CodexLogo, PiLogo } from '../../../desktop/src/renderer/src/components/icons/cli-logos'
+import {
+  ClaudeLogo,
+  CodexLogo,
+  PiLogo
+} from '../../../desktop/src/renderer/src/components/icons/cli-logos'
 import { useMarkPack } from '../../../desktop/src/renderer/src/components/plugins/native-marks'
 
 export interface ChatViewProps {

@@ -1,5 +1,8 @@
 import type { SessionRecord } from '../../../preload/index.d'
-import { savedLayoutSessionIds, type SavedLayoutLike } from '../../../../../../packages/shared/src/adoption-scope'
+import {
+  savedLayoutSessionIds,
+  type SavedLayoutLike
+} from '../../../../../../packages/shared/src/adoption-scope'
 
 /**
  * What the launch does with each surviving session record — the rule that

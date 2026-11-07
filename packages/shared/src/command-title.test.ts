@@ -24,9 +24,9 @@ describe('commandTitle', () => {
   })
 
   it('stops at the first flag or path', () => {
-    expect(commandTitle('npx vitest run apps/desktop/src/renderer/src/views/foo.test.ts --reporter dot')).toBe(
-      'npx vitest run'
-    )
+    expect(
+      commandTitle('npx vitest run apps/desktop/src/renderer/src/views/foo.test.ts --reporter dot')
+    ).toBe('npx vitest run')
     expect(commandTitle('/usr/local/bin/node server.js --port 4000 --host 0.0.0.0 --verbose')).toBe(
       'node server.js'
     )

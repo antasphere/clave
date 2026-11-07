@@ -36,7 +36,7 @@ export interface E2eHooks {
   echo: { inject: (sessionId: string, stream: SessionStream) => void }
   // ── Lane D (wave 3): which road each agent tool took (`packages/host/src/mcp/roads.ts`) ──
   mcpRoads: { command: string; road: 'server' | 'window' }[]
-  // ── Wave 5, lane C: the plugin service the server answers from (`apps/plugins/plugin-service.ts`),
+  // ── Wave 5, lane C: the plugin service the server answers from (`packages/host/src/plugins/plugin-service.ts`),
   // wrapped by the specs that watch a view's lease, in whichever process hosts it ──
   plugins: PluginsService
   /** Recording-provider fixture access. Never installed outside hidden test mode. */

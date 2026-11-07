@@ -1,6 +1,9 @@
 import { ArrowDownTrayIcon, ArrowPathIcon } from '@heroicons/react/24/outline'
 import { useAgentUpdatesStore } from '../../store/agent-updates-store'
-import type { AgentUpdateId, AgentUpdateStatus } from '../../../../../../../packages/shared/src/agent-updates'
+import type {
+  AgentUpdateId,
+  AgentUpdateStatus
+} from '../../../../../../../packages/shared/src/agent-updates'
 import { agentStatusLine, installLabel, timeOf } from '../../lib/agent-update-status'
 import { ClaudeLogo, AntigravityLogo, CodexLogo, PiLogo } from '../icons/cli-logos'
 import {

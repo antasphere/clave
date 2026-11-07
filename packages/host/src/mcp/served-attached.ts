@@ -15,7 +15,10 @@
 import type { ClaveApiClient } from '@clave/client'
 import type { SessionRecord as WireRecord } from '@clave/contract/sessions'
 import type { SessionRecord } from '../sessions/adapters/pty-backend'
-import { BUILT_IN_LAUNCH_PROFILES, type LaunchProfilePreferences } from '../../../shared/src/agent-launch'
+import {
+  BUILT_IN_LAUNCH_PROFILES,
+  type LaunchProfilePreferences
+} from '../../../shared/src/agent-launch'
 import { chatDefaultFor } from '../../../shared/src/open-session-modes'
 import type { PinnedBlueprint } from '../../../shared/src/pinned-blueprint'
 import { usageSummaryOf } from '../../../shared/src/usage-summary'

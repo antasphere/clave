@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type -- Repository tooling. */
 import assert from 'node:assert/strict'
-import { existsSync, readdirSync, readFileSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -28,22 +28,52 @@ const required = [
 ]
 for (const file of required)
   assert(existsSync(path.join(root, file)), `Missing app/package home: ${file}`)
-for (const file of [
+// An existing checkout can retain ignored build output after tracked source moves.
+const legacyGenerated = [
+  'src/renderer/src/assets/fonts/private',
+  'plugins/analytics/main.mjs',
+  'plugins/analytics/dist',
+  'packages/mobile/ios',
+  'packages/mobile/android',
+  'packages/mobile/.expo',
+  'packages/mobile/expo-env.d.ts',
+  'packages/mobile/e2e/.output'
+].map((file) => path.join(root, file))
+
+function* files(dir) {
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    if (['node_modules', 'dist', 'out', '.git', '.DS_Store', 'Thumbs.db'].includes(entry.name))
+      continue
+    const file = path.join(dir, entry.name)
+    if (
+      legacyGenerated.some(
+        (generated) => file === generated || file.startsWith(generated + path.sep)
+      )
+    )
+      continue
+    if (entry.isDirectory()) yield* files(file)
+    else if (entry.isFile()) yield file
+  }
+}
+
+for (const home of [
   'src',
   'native',
   'plugins',
   'packages/mobile',
   'packages/server/src/relay/main.ts',
   'packages/clave-channel/bin'
-])
-  assert(!existsSync(path.join(root, file)), `Obsolete source home: ${file}`)
-
-function* files(dir) {
-  for (const entry of readdirSync(dir, { withFileTypes: true })) {
-    if (['node_modules', 'dist', 'out', '.git'].includes(entry.name)) continue
-    const file = path.join(dir, entry.name)
-    if (entry.isDirectory()) yield* files(file)
-    else if (entry.isFile()) yield file
+]) {
+  const directory = path.join(root, home)
+  if (!existsSync(directory)) continue
+  const entries = statSync(directory).isDirectory() ? files(directory) : [directory]
+  for (const file of entries) {
+    assert(
+      legacyGenerated.some(
+        (generated) => file === generated || file.startsWith(generated + path.sep)
+      ),
+      `Obsolete source home: ${path.relative(root, file)}`
+    )
   }
 }
 
@@ -75,6 +105,7 @@ for (const file of files(path.join(root, 'packages'))) {
   )
     continue
   const source = readFileSync(file, 'utf8')
+  assert(!source.startsWith('#!'), `Executable source belongs under apps/: ${relative}`)
   const imports = /(?:\bfrom\s*|\bimport\s*\(|\brequire\s*\(|\bimport\s*)['"]([^'"]+)['"]/g
   for (const match of source.matchAll(imports)) {
     assert(

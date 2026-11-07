@@ -1,4 +1,8 @@
-import { AgentStateSchema, type AgentState, type Session } from '../../../../../../packages/shared/src/session-model'
+import {
+  AgentStateSchema,
+  type AgentState,
+  type Session
+} from '../../../../../../packages/shared/src/session-model'
 import { endIsCurrent } from './session-end'
 
 /* The kernel record is the one source of an events session's state: the main

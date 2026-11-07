@@ -1,7 +1,11 @@
 import { registerLinkedFlusher } from '../../store/linked-document-store'
 import { useEffect, useRef, useState } from 'react'
 import { DocumentTextIcon, EnvelopeIcon, XMarkIcon } from '@heroicons/react/24/outline'
-import type { LinkedDocument, LinkedEmail, LinkedUpdate } from '../../../../../../../packages/shared/src/linked-documents'
+import type {
+  LinkedDocument,
+  LinkedEmail,
+  LinkedUpdate
+} from '../../../../../../../packages/shared/src/linked-documents'
 import { MarkdownPageEditor } from './MarkdownPageEditor'
 import { HtmlPreviewFrame } from './HtmlPreviewFrame'
 import { ViewModeToggle } from './ViewModeToggle'

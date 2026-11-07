@@ -17,8 +17,16 @@ import type { SessionWrite } from '@clave/contract/sessions'
 import type { AttachmentSource as FileAttachmentSource } from '@clave/contract/files'
 import type { GitStatusResult as WireGitStatus, GitWatchSubscription } from '@clave/contract/git'
 import type { ServerEvent } from '@clave/contract/events'
-import type { SessionEvent, SessionStream, SessionInput } from '../../../../packages/shared/src/session-model'
-import { isFileAttachment, type AttachmentSource, type FileAttachment } from '../../../../packages/shared/src/attachments'
+import type {
+  SessionEvent,
+  SessionStream,
+  SessionInput
+} from '../../../../packages/shared/src/session-model'
+import {
+  isFileAttachment,
+  type AttachmentSource,
+  type FileAttachment
+} from '../../../../packages/shared/src/attachments'
 import { BUILT_IN_LAUNCH_PROFILES } from '../../../../packages/shared/src/agent-launch'
 import type { Workspace } from '../../../../packages/shared/src/workspace-types'
 import { orderByIds } from '../../../../packages/shared/src/workspace-order'

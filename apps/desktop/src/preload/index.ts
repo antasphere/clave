@@ -11,10 +11,17 @@ import type {
   SessionControl,
   HistoryPage
 } from '../../../../packages/shared/src/session-model'
-import type { AttachmentPreview, AttachmentSource, FileAttachment } from '../../../../packages/shared/src/attachments'
+import type {
+  AttachmentPreview,
+  AttachmentSource,
+  FileAttachment
+} from '../../../../packages/shared/src/attachments'
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import type { UpdaterState } from '../../../../packages/shared/src/updater-types'
-import type { AgentUpdateId, AgentUpdatesState } from '../../../../packages/shared/src/agent-updates'
+import type {
+  AgentUpdateId,
+  AgentUpdatesState
+} from '../../../../packages/shared/src/agent-updates'
 import type {
   LaunchProfile,
   LaunchProfilePreferences,
@@ -23,7 +30,11 @@ import type {
 import type { GitBatchProgress } from '../../../../packages/shared/src/git-batch'
 import type { GitRangeDirection } from '../../../../packages/shared/src/git-range'
 import type { MergeMethod, PullRef, ReviewEvent } from '../../../../packages/shared/src/github-pull'
-import type { WindowIdentity, Workspace, WorkspaceState } from '../../../../packages/shared/src/workspace-types'
+import type {
+  WindowIdentity,
+  Workspace,
+  WorkspaceState
+} from '../../../../packages/shared/src/workspace-types'
 import type { PluginSecretPrompt, SessionInfo } from './index.d'
 import { createMethodRouter, type Endpoint } from '@clave/client/router'
 import { dualListener, workspaceStatePick, type WorkspaceStateFold } from './dual-listener'
@@ -37,7 +48,10 @@ import {
 import type { ServerEvent } from '@clave/contract/events'
 import type { SessionWrite } from '@clave/contract/sessions'
 import type { SidebarGroup } from '@clave/contract/sidebar'
-import { selectAdoptableRecords, type AdoptionScope } from '../../../../packages/shared/src/adoption-scope'
+import {
+  selectAdoptableRecords,
+  type AdoptionScope
+} from '../../../../packages/shared/src/adoption-scope'
 import type { SessionRecord as WireSessionRecord } from '@clave/contract/sessions'
 import type { WorkAssignment, WorkChange, WorkChangeResult } from '@clave/contract/work-rules'
 import {
@@ -47,7 +61,11 @@ import {
   MIC_OPEN_SOUND_SETTINGS_CHANNEL,
   type MicAccessState
 } from '../../../../packages/shared/src/mic'
-import { TRIAGE_IPC, type TriagePrepareResult, type TriageSnapshot } from '../../../../packages/shared/src/triage'
+import {
+  TRIAGE_IPC,
+  type TriagePrepareResult,
+  type TriageSnapshot
+} from '../../../../packages/shared/src/triage'
 
 /** Creates a typed IPC event listener with cleanup function. */
 function createIpcListener<T extends unknown[]>(
@@ -1052,7 +1070,10 @@ const electronAPI = {
   // is on: the lease fixes the session and this file remembers which, so
   // nothing per-lease crosses from main. "Link folder…" keeps its IPC road
   // because the folder dialog is the shell's.
-  pluginsList: viaServer<[], import('../../../../packages/host/src/plugins/plugin-store').PluginRecord[]>({
+  pluginsList: viaServer<
+    [],
+    import('../../../../packages/host/src/plugins/plugin-store').PluginRecord[]
+  >({
     ipc: () => ipcRenderer.invoke('plugins:list'),
     server: async ({ api }) =>
       [
@@ -2508,7 +2529,7 @@ const electronAPI = {
     server: async ({ api }) => [...(await api.workspaceFiles.trustedRoots())]
   }),
 
-  // ── Extensions (inventory of installed apps/plugins/skills/MCP + management) ──
+  // ── Extensions (inventory of installed plugins/skills/MCP + management) ──
   extensionsGetInventory: (configDir?: string) =>
     ipcRenderer.invoke('extensions:get-inventory', configDir),
   extensionsInstallPlugin: (pluginId: string, scope: string, configDir?: string) =>

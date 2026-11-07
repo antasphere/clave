@@ -1,6 +1,9 @@
 import { create, type StoreApi, type UseBoundStore } from 'zustand'
 import type { LaunchProfile } from '../../../../../../packages/shared/src/agent-launch'
-import type { TriagePrepareResult, TriageSnapshot } from '../../../../../../packages/shared/src/triage'
+import type {
+  TriagePrepareResult,
+  TriageSnapshot
+} from '../../../../../../packages/shared/src/triage'
 import type { LaunchSelectionError, LaunchRequest } from './launch-session'
 
 export type TriageProvider = 'claude' | 'codex'

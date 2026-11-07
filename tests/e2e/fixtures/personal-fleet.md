@@ -7,7 +7,7 @@ npm run build
 SHELL=/bin/sh CLAVE_E2E_NS=clave-vps-f-impl node tests/e2e/run.mjs fleet-
 ```
 
-The six `fleet-*.spec.mjs` files cover fixture capability/isolation, stable daemon restart endpoints, two desktop clients, files and images, recovery, and apps/native/MCP pending requests. Every failed assertion makes the runner exit nonzero. Run one spec with its filename filter, such as `fleet-recovery`.
+The six `fleet-*.spec.mjs` files cover fixture capability/isolation, stable daemon restart endpoints, two desktop clients, files and images, recovery, and native/MCP pending requests. Every failed assertion makes the runner exit nonzero. Run one spec with its filename filter, such as `fleet-recovery`.
 
 `fleet-world.mjs` starts two standalone loopback owners on OS-assigned ports and hidden Electron clients with distinct user-data directories. The daemon helper is independent of client close and registered for exact-process deadline cleanup. Restart reuses that owner's address and private data. The harness never shows the test windows or changes the installed Clave app. All data lives under the chosen `/tmp/<namespace>`.
 

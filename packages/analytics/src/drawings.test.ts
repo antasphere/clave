@@ -11,7 +11,10 @@ describe('the analytics drawings', () => {
     ['group', 'group'],
     ['session', 'session']
   ] as const)('%s is the markup of %s.svg', (kind, file) => {
-    const svg = readFileSync(join(__dirname, '../../../apps/plugins/analytics', 'page', 'drawings', `${file}.svg`), 'utf8')
+    const svg = readFileSync(
+      join(__dirname, '../../../apps/plugins/analytics', 'page', 'drawings', `${file}.svg`),
+      'utf8'
+    )
     const stripped = svg.replace(/\s*<style>[\s\S]*?<\/style>/, '')
     const inner = stripped
       .slice(stripped.indexOf('>', stripped.indexOf('<svg')) + 1, stripped.lastIndexOf('</svg>'))

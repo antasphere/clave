@@ -7,7 +7,16 @@ import { fileURLToPath } from 'node:url'
 import { renderTokensModule, tokensFromCss } from './tokens-from-css.mjs'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
-export const TOKENS_CSS = path.resolve(here, '..', '..', '..', 'packages', 'ui', 'src', 'tokens.css')
+export const TOKENS_CSS = path.resolve(
+  here,
+  '..',
+  '..',
+  '..',
+  'packages',
+  'ui',
+  'src',
+  'tokens.css'
+)
 export const GENERATED = path.resolve(here, '..', 'src', 'ui', 'tokens.generated.ts')
 
 const source = renderTokensModule(tokensFromCss(readFileSync(TOKENS_CSS, 'utf8')))

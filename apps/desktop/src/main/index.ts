@@ -46,9 +46,15 @@ import {
   isAttachedServer,
   sessionIdsInWindow
 } from '../../../../packages/host/src/sidebar-layouts'
-import { serverClient, preloadServerClientModules } from '../../../../packages/host/src/mcp/server-client'
+import {
+  serverClient,
+  preloadServerClientModules
+} from '../../../../packages/host/src/mcp/server-client'
 import { sessionWorkspaceResolver } from '../../../../packages/host/src/session-records-index'
-import { isServerWorkspaceId, type PersistedWindow } from '../../../../packages/shared/src/workspace-types'
+import {
+  isServerWorkspaceId,
+  type PersistedWindow
+} from '../../../../packages/shared/src/workspace-types'
 import {
   initMissionControl,
   cleanupMissionControl,
@@ -65,31 +71,62 @@ import { usageManager } from '../../../../packages/host/src/usage-manager'
 import { codexUsageManager } from '../../../../packages/host/src/codex-usage'
 import { accountLoginManager } from '../../../../packages/host/src/account-login'
 import { sweepSessionMcpConfigs } from '../../../../packages/host/src/mcp/mcp-runtime'
-import { registerPreviewScheme, installPreviewProtocol } from '../../../../packages/host/src/preview-protocol'
+import {
+  registerPreviewScheme,
+  installPreviewProtocol
+} from '../../../../packages/host/src/preview-protocol'
 import { hardenViewHost, installViewGuestPolicy } from '../../../../packages/host/src/view-guests'
-import { startServer, markServerGone, ServerBootError, type ServerHandle } from '../../../../packages/host/src/server-boot'
+import {
+  startServer,
+  markServerGone,
+  ServerBootError,
+  type ServerHandle
+} from '../../../../packages/host/src/server-boot'
 import { serverLaunch } from '../../../../packages/host/src/server-launch'
-import { flagsForServerChild, startSeparateServer } from '../../../../packages/host/src/server-child'
+import {
+  flagsForServerChild,
+  startSeparateServer
+} from '../../../../packages/host/src/server-child'
 import { migrateAppDataToServer } from '../../../../packages/host/src/server-migration'
 import { safeStorageSecrets } from '../../../../packages/host/src/ports/electron'
 import { keychainSecrets } from '../../../../packages/host/src/ports/secrets'
-import { KEYCHAIN_SERVICE, keychainFileFromEnv } from '../../../../packages/host/src/ports/standalone'
-import { QUIT_CEILING_MS, QUIT_HAMMER_MS, runQuitCleanup } from '../../../../packages/host/src/quit-cleanup'
-import { startClaveServer, stopClaveServer } from '../../../../packages/host/src/server/clave-server'
+import {
+  KEYCHAIN_SERVICE,
+  keychainFileFromEnv
+} from '../../../../packages/host/src/ports/standalone'
+import {
+  QUIT_CEILING_MS,
+  QUIT_HAMMER_MS,
+  runQuitCleanup
+} from '../../../../packages/host/src/quit-cleanup'
+import {
+  startClaveServer,
+  stopClaveServer
+} from '../../../../packages/host/src/server/clave-server'
 // ── The mobile wave, lane B ──
 import { stopNotifyObservation } from '../../../../packages/host/src/server/session-events'
 import { quitActivityRecord } from '../../../../packages/host/src/activity/service'
 import { markClaveServerBootSettled } from '../../../../packages/host/src/server/endpoint'
-import { setClaveServerEndpoint, setServerExternal, isServerExternal } from '../../../../packages/host/src/server/endpoint'
+import {
+  setClaveServerEndpoint,
+  setServerExternal,
+  isServerExternal
+} from '../../../../packages/host/src/server/endpoint'
 import { getSessionHost } from '../../../../packages/host/src/sessions/host'
 import { installE2eHooks } from '../../../../packages/host/src/sessions/e2e-hooks'
-import { shellSettingsSource, shellAntasphereAccount } from '../../../../packages/host/src/settings/shell-source'
+import {
+  shellSettingsSource,
+  shellAntasphereAccount
+} from '../../../../packages/host/src/settings/shell-source'
 import { terminalPorts } from '../../../../packages/host/src/ports/terminals'
 import { workspaceFiles } from '../../../../packages/host/src/workspace-files'
-// ── Wave 5, lane C: the plugins, the shell's own service (apps/plugins/shell-plugins.ts) ──
+// ── Wave 5, lane C: the plugins, the shell's own service (packages/host/src/plugins/shell-plugins.ts) ──
 import { shellPlugins } from '../../../../packages/host/src/plugins/shell-plugins'
 // ── ADR 0004: the routines, the shell's own service in-process (routines/shell-routines.ts) ──
-import { installRoutinesIpc, shellRoutines } from '../../../../packages/host/src/routines/shell-routines'
+import {
+  installRoutinesIpc,
+  shellRoutines
+} from '../../../../packages/host/src/routines/shell-routines'
 import { waitForMcpRuntime } from '../../../../packages/host/src/mcp/mcp-runtime'
 
 // The server to attach to, if any: ONE decision for the whole shell, taken
@@ -183,7 +220,7 @@ async function bootServer(): Promise<void> {
             sidebar: sidebarLayouts(),
             // ── Wave 3, lane A: the workspace files, the shell's own instance (workspace-files.ts) ──
             workspaceFiles: workspaceFiles(),
-            // ── Wave 5, lane C: the plugins, the shell's own service (apps/plugins/shell-plugins.ts) ──
+            // ── Wave 5, lane C: the plugins, the shell's own service (packages/host/src/plugins/shell-plugins.ts) ──
             plugins: shellPlugins(),
             // ── ADR 0004: the routines, the shell's own scheduler (routines/shell-routines.ts) ──
             routines: shellRoutines()

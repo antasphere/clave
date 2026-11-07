@@ -23,7 +23,12 @@ import { execFile } from 'child_process'
 import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
-import type { TriageApp, TriageOrigin, TriageProcess, TriageWindow } from '../../../shared/src/triage'
+import type {
+  TriageApp,
+  TriageOrigin,
+  TriageProcess,
+  TriageWindow
+} from '../../../shared/src/triage'
 import { windowRegistry } from '../window-registry'
 import { workspaceManager } from '../workspace-manager'
 import { getClaveServerEndpoint } from '../server/endpoint'

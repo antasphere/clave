@@ -123,6 +123,6 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
   else if (args.length === 3) prepareRelayDependencies(...args)
   else
     throw new Error(
-      'Usage: relay-dependencies.mjs <workspace-lock> <relay-manifest> <output> | --verify <output>'
+      'Usage: node apps/relay/dependencies.mjs <workspace-lock> <relay-manifest> <output> | --verify <output>'
     )
 }

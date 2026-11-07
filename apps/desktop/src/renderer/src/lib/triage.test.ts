@@ -5,7 +5,10 @@ import {
   type TriageSelection,
   type TriageDependencies
 } from './triage'
-import type { TriagePrepareResult, TriageSnapshot } from '../../../../../../packages/shared/src/triage'
+import type {
+  TriagePrepareResult,
+  TriageSnapshot
+} from '../../../../../../packages/shared/src/triage'
 import type { LaunchRequest } from './launch-session'
 
 const origin = { instanceId: 'instance-one', shellPid: 42, windowId: 2, windowKey: 'second' }

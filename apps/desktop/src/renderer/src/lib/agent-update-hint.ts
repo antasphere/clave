@@ -1,4 +1,7 @@
-import { agentUpdateIdOf, type AgentUpdateStatus } from '../../../../../../packages/shared/src/agent-updates'
+import {
+  agentUpdateIdOf,
+  type AgentUpdateStatus
+} from '../../../../../../packages/shared/src/agent-updates'
 
 export interface StaleAgentRelease {
   agent: AgentUpdateStatus

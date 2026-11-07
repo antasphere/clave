@@ -1,6 +1,9 @@
 import { useEffect } from 'react'
 import { create } from 'zustand'
-import type { BackgroundTask, SessionEvent } from '../../../../../../packages/shared/src/session-model'
+import type {
+  BackgroundTask,
+  SessionEvent
+} from '../../../../../../packages/shared/src/session-model'
 import { endIsCurrent } from './session-end'
 
 /** One event as it arrived, with the moment it did: a view that groups turns by

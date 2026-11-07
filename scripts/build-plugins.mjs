@@ -74,7 +74,10 @@ function tokensForBrowser() {
 }
 
 export async function buildPlugins() {
-  copyFileSync(path.join(root, 'apps/pi-state/index.js'), path.join(root, 'resources/pi-clave-state.js'))
+  copyFileSync(
+    path.join(root, 'apps/pi-state/index.js'),
+    path.join(root, 'resources/pi-clave-state.js')
+  )
   mkdirSync(dist, { recursive: true })
   await bundle(path.join(plugin, 'src', 'main.ts'), path.join(plugin, 'main.mjs'), {
     format: 'esm',

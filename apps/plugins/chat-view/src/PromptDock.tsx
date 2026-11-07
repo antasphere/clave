@@ -1,4 +1,7 @@
-import { questionKey, questionIsPrivate } from '../../../desktop/src/renderer/src/lib/question-identity'
+import {
+  questionKey,
+  questionIsPrivate
+} from '../../../desktop/src/renderer/src/lib/question-identity'
 import { useEffect, useRef, useState } from 'react'
 import {
   CheckIcon,

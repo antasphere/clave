@@ -16,7 +16,10 @@ import { FONT_WEIGHT_MEDIUM, SHARED_COLORS, THEME_COLORS, THEME_NAMES } from './
    `npm run tokens` on the phone fails here, named. */
 
 const here = path.dirname(new URL(import.meta.url).pathname)
-const css = readFileSync(path.resolve(here, '..', '..', '..', '..', 'packages', 'ui', 'src', 'tokens.css'), 'utf8')
+const css = readFileSync(
+  path.resolve(here, '..', '..', '..', '..', 'packages', 'ui', 'src', 'tokens.css'),
+  'utf8'
+)
 const committed = readFileSync(path.resolve(here, 'tokens.generated.ts'), 'utf8')
 
 describe('tokens.generated.ts', () => {

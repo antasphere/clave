@@ -140,7 +140,7 @@ entry; a test provider stands in for the hub with `--issuer http://127.0.0.1:<po
 
 The image is `apps/relay/Dockerfile`, built from the repository root on
 the digest-pinned `oven/bun:1.4.1-slim` (the Bun the repository pins). The contract is
-copied in as a module. `relay-dependencies.mjs` projects the relay's `effect` and `ws`
+copied in as a module. `apps/relay/dependencies.mjs` projects the relay's `effect` and `ws`
 runtime closure from the committed root `package-lock.json`, preserving every selected
 version, tarball URL and SHA-512 integrity. It refuses missing entries, an unpinned or
 disagreeing relay manifest, and unsupported dependency kinds rather than resolving them.

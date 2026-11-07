@@ -41,7 +41,10 @@ const BIN = `${ROOT}/bin`
 const WORK = `${ROOT}/work`
 const GATES = `${ROOT}/gates`
 const gate = (name) => writeFileSync(`${GATES}/${name}`, '')
-const FIXTURE = path.join(REPO, 'packages/host/src/sessions/fixtures/claude-stream/background-bash.ndjson')
+const FIXTURE = path.join(
+  REPO,
+  'packages/host/src/sessions/fixtures/claude-stream/background-bash.ndjson'
+)
 const PROSE = 'Sleep 10 seconds then echo a marker in the background'
 
 function writeFixtures() {

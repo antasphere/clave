@@ -4,7 +4,10 @@ import {
   type Workspace,
   type WorkspaceStamp
 } from '../../../../../../packages/shared/src/workspace-types'
-import { moveInList, type DropPosition } from '../../../../../../packages/shared/src/workspace-order'
+import {
+  moveInList,
+  type DropPosition
+} from '../../../../../../packages/shared/src/workspace-order'
 import {
   allWorkspaces,
   findWorkspace,

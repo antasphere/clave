@@ -1,6 +1,10 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { ChevronDownIcon, PaperClipIcon, XMarkIcon } from '@heroicons/react/24/outline'
-import type { LinkedDocument, LinkedEmail, LinkedUpdate } from '../../../../../../../packages/shared/src/linked-documents'
+import type {
+  LinkedDocument,
+  LinkedEmail,
+  LinkedUpdate
+} from '../../../../../../../packages/shared/src/linked-documents'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@clave/ui/components'
 import { FileIcon } from './file-icons'
 

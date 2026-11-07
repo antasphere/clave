@@ -14,7 +14,10 @@ const ENTRY = path.join(REPO, `out/main/.codex-e2e-${process.pid}.cjs`)
 // checked-in live capture. No installed CLI or real auth is reachable here.
 function seedStub() {
   mkdirSync(BIN, { recursive: true })
-  const fixture = path.join(REPO, 'packages/host/src/sessions/fixtures/codex-app-server/live.ndjson')
+  const fixture = path.join(
+    REPO,
+    'packages/host/src/sessions/fixtures/codex-app-server/live.ndjson'
+  )
   writeFileSync(
     `${BIN}/codex`,
     `#!${process.execPath}

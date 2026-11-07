@@ -98,10 +98,7 @@ function stagingFixture(run) {
   const root = mkdtempSync(path.join(tmpdir(), 'clave-jsi-stage-'))
   const sdk = path.join(root, 'node_modules/expo-modules-jsi')
   const apple = path.join(sdk, 'apple')
-  const core = path.join(
-    root,
-    'apps/mobile/ios/Pods/ExpoModulesCore/ExpoModulesCore.xcframework'
-  )
+  const core = path.join(root, 'apps/mobile/ios/Pods/ExpoModulesCore/ExpoModulesCore.xcframework')
   const records =
     'node_modules/expo-notifications/ios/ExpoNotifications/Notifications/TriggerRecords.swift'
   const suite = 'apps/mobile/native-checks/ClaveSchedulerAffinityTests.swift'

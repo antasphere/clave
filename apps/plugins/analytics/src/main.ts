@@ -4,11 +4,25 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { Collector } from '../../../../packages/analytics/src/collector'
 import { DeckWriter } from '../../../../packages/analytics/src/decks'
-import { formatCount, formatMinutes, formatTokens, formatUsd } from '../../../../packages/analytics/src/format'
-import type { HostApi, PluginActionPreviewRow, PluginActionTarget } from '../../../../packages/analytics/src/host'
+import {
+  formatCount,
+  formatMinutes,
+  formatTokens,
+  formatUsd
+} from '../../../../packages/analytics/src/format'
+import type {
+  HostApi,
+  PluginActionPreviewRow,
+  PluginActionTarget
+} from '../../../../packages/analytics/src/host'
 import { settingsPort } from '../../../../packages/analytics/src/ports'
 import { loadPrices, type PriceTable } from '../../../../packages/analytics/src/prices'
-import { scopeView, startServer, type AnalyticsServer, type Scope } from '../../../../packages/analytics/src/server'
+import {
+  scopeView,
+  startServer,
+  type AnalyticsServer,
+  type Scope
+} from '../../../../packages/analytics/src/server'
 import { Store } from '../../../../packages/analytics/src/store'
 import { VIEWER_NOTE, Viewer } from '../../../../packages/analytics/src/viewer'
 

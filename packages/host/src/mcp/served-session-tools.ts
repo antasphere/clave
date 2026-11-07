@@ -17,7 +17,10 @@
 import type { LayoutSnapshot } from '@clave/contract/sidebar'
 import type { AccountOverride, Session } from '@clave/contract/sessions'
 import { sanitizeForPaste } from '../../../shared/src/paste-sanitize'
-import { buildCheckpointProvenance, buildProvenanceHeader } from '../../../shared/src/exchange-provenance'
+import {
+  buildCheckpointProvenance,
+  buildProvenanceHeader
+} from '../../../shared/src/exchange-provenance'
 import { pickAccount } from '../../../shared/src/account-pool'
 import {
   poolOf,

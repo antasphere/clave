@@ -10,7 +10,10 @@ import {
 } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { ChevronLeftIcon, ChevronRightIcon } from '@heroicons/react/24/outline'
-import type { DayActivity, DaySession } from '../../../../../../../packages/shared/src/activity-fold'
+import type {
+  DayActivity,
+  DaySession
+} from '../../../../../../../packages/shared/src/activity-fold'
 import { SettingsCallout, SettingsSection } from '../settings/primitives'
 import { StatTile } from '../usage/UsagePanel'
 import { useActivity } from './use-activity'

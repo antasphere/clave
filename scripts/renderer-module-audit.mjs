@@ -139,7 +139,7 @@ export function validateRendererAudit(audit, readSource, readOutput, actualOutpu
   for (const id of required) {
     assert.ok(
       modules.some((entry) => entry.id === id && entry.renderedLength > 0),
-      'missing positive apps/native/public module: ' + id
+      'missing positive native/public module: ' + id
     )
     assert.ok(audit.sources[id], 'missing positive module source identity: ' + id)
   }

@@ -120,7 +120,7 @@ import {
   getLoginShellEnv
 } from '../../../packages/host/src/pty-manager'
 import { TEST_NO_ACTIVATE } from '../../../packages/host/src/test-mode'
-// ── Wave 5, lane C: the plugins, this server's own service (apps/plugins/standalone-plugins.ts) ──
+// ── Wave 5, lane C: the plugins, this server's own service (packages/host/src/plugins/standalone-plugins.ts) ──
 import { standalonePlugins } from '../../../packages/host/src/plugins/standalone-plugins'
 // ── Wave wcs1023, lane C: the git panel on this server's checkouts (server/git-port.ts) ──
 import { serverGitPort } from '../../../packages/host/src/server/git-port'

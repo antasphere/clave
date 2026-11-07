@@ -19,7 +19,10 @@ const globals = vi.hoisted(() => {
   return { window }
 })
 import { useLaunchProfileStore } from '../store/launch-profile-store'
-import type { LaunchProfile, LaunchProfilePreferences } from '../../../../../../packages/shared/src/agent-launch'
+import type {
+  LaunchProfile,
+  LaunchProfilePreferences
+} from '../../../../../../packages/shared/src/agent-launch'
 
 /* The window road of clave_open_session: the renderer's own executor, the one
    a Mac with a saved server connection runs every open through (and the only

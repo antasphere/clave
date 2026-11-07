@@ -1,4 +1,4 @@
-import { defineConfig } from 'vitest/config'
+import { configDefaults, defineConfig } from 'vitest/config'
 
 /**
  * The unit tests: pure logic only. Nothing here boots Electron or renders a
@@ -9,22 +9,20 @@ import { defineConfig } from 'vitest/config'
  * since an untrusted file whose prompt is neither disclosed nor stripped looks
  * exactly like one that is.
  *
- * `include` covers `src/` broadly rather than listing directories (and the
- * release scripts' own tests under `scripts/`), so a new test runs by existing — `.tsx` included, or a component test would be skipped in
- * silence, which is the same failure this suite was written to stop. `environment: 'node'` is the default; a test that genuinely
- * needs a DOM declares `// @vitest-environment jsdom` in its own file.
+ * Every app folder is included, including workers and CLI entrypoints. The
+ * mobile app keeps its separate suite and platform-specific configuration.
+ * A new .test.ts or .test.tsx runs by existing. Tests needing a DOM declare
+ * `// @vitest-environment jsdom` in their own file.
  */
 export default defineConfig({
   test: {
     include: [
-      'apps/desktop/src/**/*.test.{ts,tsx}',
-      'packages/{host,shared}/src/**/*.test.{ts,tsx}',
+      'apps/**/*.test.{ts,tsx,mjs}',
+      'packages/**/*.test.{ts,tsx,mjs}',
       'scripts/**/*.test.mjs',
-      'tests/e2e/**/*.test.mjs',
-      'packages/{contract,server,client}/src/**/*.test.ts',
-      'packages/analytics/src/**/*.test.ts',
-      'apps/plugins/*/src/**/*.test.ts'
+      'tests/e2e/**/*.test.mjs'
     ],
+    exclude: [...configDefaults.exclude, 'apps/mobile/**'],
     environment: 'node',
     // The framework ships TypeScript source, not compiled output, so Node
     // cannot load it from node_modules on its own: vite transforms it instead.

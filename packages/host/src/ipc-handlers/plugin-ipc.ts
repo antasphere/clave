@@ -2,8 +2,8 @@
  * The IPC arms of the plugins domain (PRDCT-3433), and what stays the shell's
  * whichever process runs the plugins. The store, the host, the view leases and
  * the secret requests live in the plugin service beside the server's sessions
- * (`apps/plugins/plugin-service.ts`): inside the app it is the shell's own instance
- * (`apps/plugins/shell-plugins.ts`, also the server's `ports.plugins`); attached to
+ * (`packages/host/src/plugins/plugin-service.ts`): inside the app it is the shell's own instance
+ * (`packages/host/src/plugins/shell-plugins.ts`, also the server's `ports.plugins`); attached to
  * a server running apart, it is that server's, reached through the typed
  * client. Every arm below answers from whichever the boot named
  * (`pluginsFacade`), so a window that calls over IPC before the preload has

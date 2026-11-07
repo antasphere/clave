@@ -43,7 +43,7 @@ npm run check:release-bundle      # two Metro exports: the developer screen pres
 The native projects are generated, never edited (`ios/` and `android/` are git-ignored):
 
 ```sh
-npx expo prebuild --platform ios --clean      # the iOS project; applies apps/plugins/with-jsi-xcode26.js
+npx expo prebuild --platform ios --clean      # the iOS project; applies apps/mobile/plugins/with-jsi-xcode26.js
 (cd ios && LANG=en_US.UTF-8 pod install)
 npx expo run:ios --device 26A905C4-1DFF-453C-8846-C9904410448E     # builds, installs and opens the app on the simulator, with Metro
 npx expo prebuild --platform android --clean
@@ -81,7 +81,7 @@ The first `expo run:ios` attempt failed: expo-modules-jsi 58.0.21 does not compi
 26.0.1 (Swift 6.2.0), `JavaScriptObject.swift:946: sending 'slot' risks causing data races`
 (expo/expo#52462, open on that day). The module's own fix for the same error elsewhere
 (expo/expo#51040, released in 58.0.9) wraps the captured pointer in its `UncheckedSendable`
-struct; `apps/plugins/with-jsi-xcode26.js` applies that one change at prebuild time, idempotently,
+struct; `apps/mobile/plugins/with-jsi-xcode26.js` applies that one change at prebuild time, idempotently,
 and fails loudly the day the module's code is neither the known original nor the patched form.
 Delete the plugin when expo-modules-jsi ships the fix or when the team's Xcode moves to a Swift
 that accepts the original.

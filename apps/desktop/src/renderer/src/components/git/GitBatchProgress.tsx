@@ -1,7 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { XMarkIcon } from '@heroicons/react/24/outline'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@clave/ui/components'
-import type { GitBatchOp, GitBatchProgress } from '../../../../../../../packages/shared/src/git-batch'
+import type {
+  GitBatchOp,
+  GitBatchProgress
+} from '../../../../../../../packages/shared/src/git-batch'
 import { GIT_BATCH_PHASE_LABELS } from '../../../../../../../packages/shared/src/git-batch'
 import { GitBatchContext, IDLE, RESULT_HOLD_MS, useGitBatch } from './git-batch-context'
 import type { BatchState } from './git-batch-context'

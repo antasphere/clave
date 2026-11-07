@@ -9,7 +9,11 @@ import type {
   HistoryPage
 } from '../../../../packages/shared/src/session-model'
 import type { DayActivity } from '../../../../packages/shared/src/activity-fold'
-import type { AttachmentPreview, AttachmentSource, FileAttachment } from '../../../../packages/shared/src/attachments'
+import type {
+  AttachmentPreview,
+  AttachmentSource,
+  FileAttachment
+} from '../../../../packages/shared/src/attachments'
 import type { AntasphereAccountStatus } from '../../../../packages/shared/src/antasphere-account-types'
 // ── Mobile wave, lane A: the phones paired with this server (the window's read models) ──
 import type { DeviceView, DevicesView } from '../../../../packages/shared/src/mobile-types'
@@ -49,15 +53,26 @@ export interface SessionIPCEvents {
 
 import type { FleetDesktopAPI } from './fleet-types'
 import type { LinkedDocumentsAPI } from '../../../../packages/shared/src/linked-documents'
-import type { ExtensionsInventory, MutationResult, MutationScope } from '../../../../packages/shared/src/extensions-types'
+import type {
+  ExtensionsInventory,
+  MutationResult,
+  MutationScope
+} from '../../../../packages/shared/src/extensions-types'
 import type {
   WindowIdentity,
   Workspace,
   WorkspaceStamp,
   WorkspaceState
 } from '../../../../packages/shared/src/workspace-types'
-import type { DownloadProgress, ReleaseNote, UpdaterState } from '../../../../packages/shared/src/updater-types'
-import type { AgentUpdateId, AgentUpdatesState } from '../../../../packages/shared/src/agent-updates'
+import type {
+  DownloadProgress,
+  ReleaseNote,
+  UpdaterState
+} from '../../../../packages/shared/src/updater-types'
+import type {
+  AgentUpdateId,
+  AgentUpdatesState
+} from '../../../../packages/shared/src/agent-updates'
 import type { GitRangeDirection } from '../../../../packages/shared/src/git-range'
 import type {
   LaunchProfile,
@@ -699,7 +714,9 @@ export interface ElectronAPI extends FleetDesktopAPI {
   onSessionStream: (id: string, callback: (stream: SessionStream) => void) => () => void
   onSessionStreamExit: (id: string, callback: (code: number) => void) => () => void
 
-  pluginsList: () => Promise<import('../../../../packages/host/src/plugins/plugin-store').PluginRecord[]>
+  pluginsList: () => Promise<
+    import('../../../../packages/host/src/plugins/plugin-store').PluginRecord[]
+  >
   /** Open a plugin's surface view on one session. The returned lease is the
    *  only name a later call gives; the session id never travels again. */
   pluginsViewLease: (
@@ -1251,7 +1268,9 @@ export interface ElectronAPI extends FleetDesktopAPI {
   ) => Promise<{ isDirectory: boolean; isFile: boolean; size: number; mtime: number }>
 
   // Agents
-  agentList: (locationId: string) => Promise<import('../../../../packages/shared/src/remote-types').Agent[]>
+  agentList: (
+    locationId: string
+  ) => Promise<import('../../../../packages/shared/src/remote-types').Agent[]>
   agentConnect: (locationId: string) => Promise<void>
   agentDisconnect: (locationId: string) => Promise<void>
   agentSessions: (locationId: string) => Promise<unknown>

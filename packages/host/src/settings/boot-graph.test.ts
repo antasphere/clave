@@ -66,9 +66,13 @@ const staticallyReached = async (
 
 describe('the settings source loads nothing of Effect at boot', () => {
   it('the shell source reaches no Effect or framework module', async () => {
-    const { reached, externals } = await staticallyReached('packages/host/src/settings/shell-source.ts')
+    const { reached, externals } = await staticallyReached(
+      'packages/host/src/settings/shell-source.ts'
+    )
     expect(reached.filter((file) => HEAVY.test(file))).toEqual([])
-    expect(reached.some((file) => /packages\/host\/src\/settings\/source\.ts$/.test(file))).toBe(true)
+    expect(reached.some((file) => /packages\/host\/src\/settings\/source\.ts$/.test(file))).toBe(
+      true
+    )
     // The guard sees externals: the shell source does reach Electron (the Dock).
     expect(externals).toContain('electron')
   })

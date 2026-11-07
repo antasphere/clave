@@ -9,7 +9,7 @@
 # The proxy terminates TLS and forwards to 8787, WebSocket upgrades included
 # (`docs/mobile-relay.md`). Bun runs the TypeScript as it is: the contract
 # package is copied in as a module and only what the relay imports is
-# installed (`relay.package.json`), so the image carries neither Electron
+# installed (`apps/relay/package.json`), so the image carries neither Electron
 # nor the server's other dependencies.
 FROM oven/bun:1.4.1-slim@sha256:887d0f37f674c69984be4e397fef29ca0d74df1e75155431abbe857258bffde5
 WORKDIR /app

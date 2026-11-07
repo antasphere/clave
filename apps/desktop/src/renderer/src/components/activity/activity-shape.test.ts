@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import type { DayActivity, DaySession } from '../../../../../../../packages/shared/src/activity-fold'
+import type {
+  DayActivity,
+  DaySession
+} from '../../../../../../../packages/shared/src/activity-fold'
 import {
   HEATMAP_WEEKS,
   OTHER_PROJECTS,

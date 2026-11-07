@@ -1,5 +1,8 @@
 import { create } from 'zustand'
-import type { AgentUpdateId, AgentUpdatesState } from '../../../../../../packages/shared/src/agent-updates'
+import type {
+  AgentUpdateId,
+  AgentUpdatesState
+} from '../../../../../../packages/shared/src/agent-updates'
 
 /**
  * The renderer's mirror of the agent updater (`packages/host/src/agent-updates/`).

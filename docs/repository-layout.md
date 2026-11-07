@@ -39,6 +39,8 @@ app needs it. Production package imports must not point into `apps/`. Tests
 may import app entrypoints to verify integration. `npm run check:structure`
 checks these rules and the required program locations.
 
+The plugin worker starts through its parent IPC channel; it has no standalone start command.
+
 The root owns the single npm lockfile and dependency installation, shared
 tool configuration, release tooling, integration tests and documentation.
 `scripts/` contains repository maintenance commands. `build/`, `assets/` and
@@ -49,7 +51,10 @@ extension are copied into `resources/` during builds. The agent skills in
 ## Commands
 
 Install once from the repository root with `npm ci`. There is no install step
-inside an app. Existing root commands remain available.
+inside an app. For desktop development and Electron checks, install the pinned
+Electron binary with `node node_modules/electron/install.js` after a fresh
+install. Recent npm versions can skip that dependency install script. CI also
+installs the binary explicitly. Existing root commands remain available.
 
 | Command from the root | Result |
 | --- | --- |
@@ -71,3 +76,19 @@ processes together. Its output remains `out/main/`, `out/preload/` and
 runtime paths are independent of the source layout. Signing, release
 promotion, relay deployment and mobile native builds still use their
 existing documented procedures.
+
+## Existing checkouts
+
+Ignored build output can remain at the old paths after switching branches.
+The legacy private-font, Analytics output and generated mobile-project paths
+remain ignored and are accepted by the structure guard. Rebuild from the new
+paths before removing those old generated files. The guard still rejects
+source code in the old homes; it never deletes files.
+
+The guard checks relative and app-workspace imports, the renderer alias,
+manifest entrypoints and JavaScript/TypeScript shebang programs. It is a static
+layout check; new language-specific entrypoints also need review.
+
+The existing root `npm test` wrapper currently stops in the style-token audit
+on `--delivery-layers`. CI's complete unit command is `npx vitest run`; the
+mobile suite has its own command above. This refactor keeps styles unchanged.

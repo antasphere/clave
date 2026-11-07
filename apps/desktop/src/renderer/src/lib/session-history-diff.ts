@@ -1,7 +1,10 @@
 import type { Session, SessionGroup } from '../store/session-types'
 import { sessionMode, groupOfSession } from './exchange-capture'
 import type { HistoryLedgerRow } from '../../../preload/index.d'
-import { entryInGroup, type GroupRef } from '../../../../../../packages/shared/src/history-group-match'
+import {
+  entryInGroup,
+  type GroupRef
+} from '../../../../../../packages/shared/src/history-group-match'
 import { encodeProjectDir } from '../../../../../../packages/shared/src/project-dir'
 
 /**

@@ -1,6 +1,10 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { EMPTY_RECORD, useGithubPanelStore } from './store'
-import { pullRefKey, type PullRef, type PullRequestView } from '../../../../packages/shared/src/github-pull'
+import {
+  pullRefKey,
+  type PullRef,
+  type PullRequestView
+} from '../../../../packages/shared/src/github-pull'
 
 const a: PullRef = { owner: 'acme', repo: 'widgets', number: 42 }
 const b: PullRef = { owner: 'acme', repo: 'widgets', number: 43 }
