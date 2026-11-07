@@ -354,6 +354,41 @@ describe('the conversation id the discussion resumes on', () => {
   })
 })
 
+describe('a discussion carried on and reopened (6 November 2026)', () => {
+  it('resumes after the messages sent in Discussion, not back at the run', async () => {
+    const host = fakeHost()
+    const file = workspace([routine('Health')])
+    const service = await build(file, host, memory(), { providerSessionIdOf: () => null })
+    const run = await service.runNow(key(file, 'Health'))
+    host.emit('s1', {
+      kind: 'event',
+      event: { type: 'session_meta', model: 'm', providerSessionId: 'conv-run' }
+    })
+    await service.report({
+      sessionId: 's1',
+      status: 'ok',
+      headline: 'h',
+      summary: 's',
+      data: { n: 1 }
+    })
+    host.emit('s1', { kind: 'event', event: { type: 'state_change', state: 'done' } })
+    // The panel opens the discussion on the run's conversation...
+    await service.openDiscussion(run.id, 'w1', 'panel')
+    expect(host.starts[1].options?.resumeSessionId).toBe('conv-run')
+    // ...the person writes, and the resumed chat carries on under a new id.
+    host.emit('s2', {
+      kind: 'event',
+      event: { type: 'session_meta', model: 'm', providerSessionId: 'conv-talk' }
+    })
+    // While it lives, reopening the panel gets the very same session back.
+    expect((await service.openDiscussion(run.id, 'w1', 'panel')).sessionId).toBe('s2')
+    // Once it has stopped, the next discussion resumes where the talk left off.
+    await host.stop('s2')
+    await service.openDiscussion(run.id, 'w1', 'panel')
+    expect(host.starts[2].options?.resumeSessionId).toBe('conv-talk')
+  })
+})
+
 describe('what the record says of a run that never started (round 2, N1 and F12)', () => {
   it('records the run before the agent-tools wait, so a stop during it is recoverable', async () => {
     const file = workspace([routine('Health')])

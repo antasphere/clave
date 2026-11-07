@@ -271,6 +271,37 @@ export function createRoutineService(options: RoutineServiceOptions): RoutineSer
     emit()
   }
 
+  /** A discussion continues the run's conversation, and a resumed chat may
+   *  carry it on under a new provider id: the run's `providerSessionId` follows
+   *  the discussion's latest one, so the next resume (the panel reopened after
+   *  its session stopped, a relaunch, Open as a tab) picks the conversation up
+   *  after the person's own messages, not back at the run's last word (seen on
+   *  6 November 2026: messages sent in Discussion were gone on reopening). */
+  function followConversation(runId: string, sessionId: string): void {
+    const offs: Array<() => void> = []
+    const stop = (): void => {
+      for (const off of offs.splice(0)) off()
+    }
+    try {
+      offs.push(
+        options.sessions.subscribe(sessionId, (frame: SessionStream) => {
+          if (frame.kind !== 'event') return
+          const event = frame.event
+          if (event.type === 'session_meta' && event.providerSessionId) {
+            if (store.run(runId)?.providerSessionId !== event.providerSessionId) {
+              store.updateRun(runId, { providerSessionId: event.providerSessionId })
+            }
+          } else if (event.type === 'state_change' && event.state === 'ended') {
+            stop()
+          }
+        })
+      )
+      offs.push(options.sessions.subscribeExit(sessionId, () => stop()))
+    } catch {
+      /* no stream: the resume falls back to the run's own id */
+    }
+  }
+
   function watch(entry: LiveRun, sessionId: string): void {
     const { sessions } = options
     const onStream = (frame: SessionStream): void => {
@@ -675,6 +706,7 @@ export function createRoutineService(options: RoutineServiceOptions): RoutineSer
       } catch {
         /* default view */
       }
+      followConversation(run.id, info.id)
       if (mode === 'panel') {
         store.updateRun(run.id, { discussionSessionId: info.id })
         emit()
