@@ -64,6 +64,17 @@ import { AgentsSettings } from './AgentsSettings'
 import { AudioSettings } from './AudioSettings'
 import { ServersSettings } from './ServersSettings'
 import { AddWorkspaceAction, ServerWorkspaceRows } from './ServerWorkspaces'
+import {
+  startSettingsMachineGuard,
+  useSettingsMachineStore
+} from '../../store/settings-machine-store'
+import { startServerSettingsEvents } from '../../store/server-settings-store'
+import {
+  ServerAccountsSettings,
+  ServerActivitySettings,
+  ServerAgentsSettings,
+  ServerUsageSettings
+} from './ServerPages'
 
 /** One seed for every swatch in the field picker: the row is a comparison of
  *  palettes, and twelve different draws would compare the draws instead. */
@@ -204,20 +215,33 @@ function ProfileSection(): React.JSX.Element {
 
 export function SettingsPanel(): React.JSX.Element {
   const settingsSection = useSessionStore((s) => s.settingsSection)
+  // The Agents group follows the machine picker of the settings sidebar:
+  // this Mac's pages, or the same four pages on a saved server. The
+  // Preferences and the Clave group are this Mac's whatever is picked.
+  const machine = useSettingsMachineStore((s) => s.machine)
+  const server = machine === LOCAL_SERVER_ID ? null : machine
+  useEffect(() => {
+    startSettingsMachineGuard()
+    startServerSettingsEvents()
+  }, [])
 
   return (
     <div className="settings-scroller">
       <div className="max-w-3xl mx-auto w-full">
         {settingsSection === 'general' && <GeneralSettings />}
-        {settingsSection === 'agents' && <AgentsSettings />}
+        {settingsSection === 'agents' &&
+          (server ? <ServerAgentsSettings serverId={server} /> : <AgentsSettings />)}
         {settingsSection === 'appearance' && <AppearanceSettings />}
         {settingsSection === 'audio' && <AudioSettings />}
         {settingsSection === 'keymaps' && <KeymapSettings />}
         {settingsSection === 'updates' && <UpdatesTab />}
         {settingsSection === 'plugins' && <PluginsTab />}
-        {settingsSection === 'usage' && <UsageSettings />}
-        {settingsSection === 'activity' && <ActivitySettings />}
-        {settingsSection === 'accounts' && <AccountsSettings />}
+        {settingsSection === 'usage' &&
+          (server ? <ServerUsageSettings serverId={server} /> : <UsageSettings />)}
+        {settingsSection === 'activity' &&
+          (server ? <ServerActivitySettings serverId={server} /> : <ActivitySettings />)}
+        {settingsSection === 'accounts' &&
+          (server ? <ServerAccountsSettings serverId={server} /> : <AccountsSettings />)}
         {settingsSection === 'servers' && <ServersSettings />}
       </div>
     </div>

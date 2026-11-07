@@ -7,7 +7,16 @@ import type {
 import type { LayoutSnapshot, WindowLayout } from '@clave/contract/sidebar/layout'
 import type { Session } from '../shared/session-model'
 import type { Workspace } from '../shared/workspace-types'
-import type { SessionRecord, SessionInfo, LaunchProfilePreferences } from './index.d'
+import type {
+  SessionRecord,
+  SessionInfo,
+  LaunchProfilePreferences,
+  ClaudeAccount,
+  CodexAccount,
+  UsageLimits,
+  UsageError
+} from './index.d'
+import type { LaunchProfile, LauncherFamily } from '../shared/agent-launch'
 
 export interface FleetSnapshot {
   serverId: string
@@ -25,6 +34,13 @@ export interface FleetWorkspaces {
   serverId: string
   workspaces: Workspace[]
 }
+/** One change of a server's settings, as its push socket announced it. */
+export type FleetSettingsEvent = { serverId: string } & (
+  | { kind: 'claude-accounts'; accounts: ClaudeAccount[] }
+  | { kind: 'codex-accounts'; accounts: CodexAccount[] }
+  | { kind: 'claude-usage'; accountId: string; result: UsageLimits | UsageError }
+  | { kind: 'codex-usage'; accountId: string; result: UsageLimits | UsageError }
+)
 export interface FleetDesktopAPI {
   fleetList(): Promise<SavedServerConnection[]>
   fleetSave(input: SaveServerConnection): Promise<SavedServerConnection>
@@ -78,6 +94,32 @@ export interface FleetDesktopAPI {
   fleetUpgradeServer(serverId: string): Promise<ServerVersionStatus>
   /** Every decision main publishes, for all enabled servers at once. */
   onFleetServerVersions(callback: (statuses: ServerVersionStatus[]) => void): () => void
+  // ── Lane B (server wave): a server's accounts, usage and profiles, read and followed from the Mac ──
+  fleetAccounts(
+    serverId: string
+  ): Promise<{ claude: ClaudeAccount[]; codex: CodexAccount[]; migrated: string[] }>
+  fleetUsage(
+    serverId: string,
+    provider: 'claude' | 'codex',
+    accountId?: string,
+    force?: boolean
+  ): Promise<UsageLimits | UsageError>
+  fleetUsageSnapshot(
+    serverId: string,
+    provider: 'claude' | 'codex'
+  ): Promise<Record<string, UsageLimits | UsageError>>
+  fleetLaunchProfileUpsert(
+    serverId: string,
+    profile: LaunchProfile
+  ): Promise<LaunchProfilePreferences>
+  fleetLaunchProfileDelete(serverId: string, profileId: string): Promise<LaunchProfilePreferences>
+  fleetLaunchProfileSetGlobal(
+    serverId: string,
+    family: LauncherFamily,
+    profileId: string | null
+  ): Promise<LaunchProfilePreferences>
+  /** A server's settings as they change, from its live push socket: delivered while the connection is open; a page reads the lists again when the server (re)connects. */
+  onFleetSettingsEvent(callback: (event: FleetSettingsEvent) => void): () => void
 }
 
 /** Secret-free request projection for contextBridge; no server runtime dependencies. */

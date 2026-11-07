@@ -1,9 +1,10 @@
 /**
  * The standalone server's settings source: the same managers, on the
  * standalone ports (JSON documents under the server's data directory, the
- * macOS Keychain or Linux encrypted files for secrets), with no login jobs
- * and no Dock. A login or an icon asked of this server answers `CapabilityUnavailable` with the
- * reason; wave 3's Node process beside the server is what takes them on.
+ * macOS Keychain or Linux encrypted files for secrets), with one login job
+ * (a Codex API key, `daemon-logins.ts`, set from the server's own shell by
+ * `scripts/server-accounts.mjs`) and no Dock. A browser login or an icon
+ * asked of this server answers `CapabilityUnavailable` with the reason.
  *
  * The Antasphere account (PRDCT-3259) it does own: the same manager as the
  * shell's, on these ports, its issuer read off this process's environment,
@@ -68,6 +69,10 @@ export function standaloneSettingsSource(
     launchProfiles: launchProfileManager,
     preferences: preferencesManager,
     workspaces: workspaceManager,
+    // Loaded on first use, as the shell's: the daemon's login reaches the
+    // login shell's environment through the terminal backend, which the
+    // source's own import graph must not reach (`boot-graph.test.ts`).
+    logins: () => import('./daemon-logins').then((m) => m.daemonLogins()),
     antasphere
   })
   // The accounts and their usage events belong to this process. Main's

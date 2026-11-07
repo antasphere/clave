@@ -29,7 +29,7 @@ import { SettingsCallout, SettingsRow, SettingsSection } from '../settings/primi
 import { UsageColumn } from './UsageColumn'
 import { useNow } from '../../lib/use-now'
 
-type Tool = 'claude' | 'codex' | 'antigravity' | 'pi'
+export type Tool = 'claude' | 'codex' | 'antigravity' | 'pi'
 
 const TOOLS: { key: Tool; label: string; Logo: (p: { className?: string }) => ReactElement }[] = [
   { key: 'claude', label: 'Claude Code', Logo: ClaudeLogo },
@@ -38,12 +38,23 @@ const TOOLS: { key: Tool; label: string; Logo: (p: { className?: string }) => Re
   { key: 'pi', label: 'Pi', Logo: PiLogo }
 ]
 
-/** The provider switch: the side panel's tab bar, at page width. */
-function ToolToggle({ tool, onChange }: { tool: Tool; onChange: (t: Tool) => void }): ReactElement {
+/** The provider switch: the side panel's tab bar, at page width. `tools`
+ *  narrows it to the providers a machine can answer for (a server reads
+ *  Claude and Codex only). */
+export function ToolToggle({
+  tool,
+  onChange,
+  tools
+}: {
+  tool: Tool
+  onChange: (t: Tool) => void
+  tools?: readonly Tool[]
+}): ReactElement {
+  const shown = tools ? TOOLS.filter((t) => tools.includes(t.key)) : TOOLS
   return (
     <div className="launcher-panel">
       <div className="launcher-row">
-        {TOOLS.map(({ key, label, Logo }, index) => {
+        {shown.map(({ key, label, Logo }, index) => {
           const active = key === tool
           return (
             <div key={key} className="contents">
@@ -73,7 +84,7 @@ function ToolToggle({ tool, onChange }: { tool: Tool; onChange: (t: Tool) => voi
 // and the 5-hour session block (a second, smaller chart). The accounts sit in
 // the same order in both charts: the soonest weekly reset first.
 
-type QuotaProvider = 'claude' | 'codex'
+export type QuotaProvider = 'claude' | 'codex'
 
 /** One account as the overview needs it: who it is and what its read says. */
 interface AccountRead {
@@ -296,29 +307,30 @@ function QuotaHeadlines({ accounts, now }: { accounts: AccountRead[]; now: numbe
 }
 
 /** A provider's whole overview: the headlines, the weekly chart, the session
- *  chart, then whatever could not be read, each with its reason. */
-function QuotaOverview({
+ *  chart, then whatever could not be read, each with its reason. The reads
+ *  come from the caller (`byAccount`, `load`): this Mac's per-account stores
+ *  on the Usage page, a server's settings when the machine picker names one. */
+export function QuotaOverview({
   provider,
   accounts: listed,
+  byAccount,
+  load,
   onRetry
 }: {
   provider: QuotaProvider
   accounts: { id: string; label: string; auth: string }[]
+  byAccount: Record<string, AccountUsageSummary>
+  /** Ask for an account's read once (the cache when fresh, never forced). */
+  load: (accountId: string) => void
   onRetry: () => void
 }): ReactElement {
-  const byAccount = (provider === 'claude' ? useClaudeAccountsUsage : useCodexAccountsUsage)(
-    (s) => s.byAccount
-  )
   const now = useNow()
 
-  // Every account's store exists and has been asked once: the cache when it
-  // is fresh, a read when it is not. Never forced — that is the Refresh.
+  // Every account's read has been asked once: the cache when it is fresh, a
+  // read when it is not. Never forced — that is the Refresh.
   const ids = listed.map((a) => a.id).join('|')
   useEffect(() => {
-    for (const { id } of listed) {
-      const store = provider === 'claude' ? claudeUsageStore(id) : codexUsageStore(id)
-      void store.getState().load()
-    }
+    for (const { id } of listed) load(id)
     // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on the id list
   }, [provider, ids])
 
@@ -539,6 +551,8 @@ export function UsagePanel(): ReactElement {
   const setTool = useUsageNavigation((s) => s.select)
   const claude = useClaudeAccountList()
   const codex = useCodexAccountList()
+  const claudeByAccount = useClaudeAccountsUsage((s) => s.byAccount)
+  const codexByAccount = useCodexAccountsUsage((s) => s.byAccount)
   const retry = (provider: QuotaProvider): void => {
     void refreshAllUsage(
       provider === 'claude' ? claude.map((a) => a.id) : [],
@@ -550,9 +564,21 @@ export function UsagePanel(): ReactElement {
     <div className="space-y-6" data-usage-provider={tool}>
       <ToolToggle tool={tool} onChange={setTool} />
       {tool === 'claude' ? (
-        <QuotaOverview provider="claude" accounts={claude} onRetry={() => retry('claude')} />
+        <QuotaOverview
+          provider="claude"
+          accounts={claude}
+          byAccount={claudeByAccount}
+          load={(id) => void claudeUsageStore(id).getState().load()}
+          onRetry={() => retry('claude')}
+        />
       ) : tool === 'codex' ? (
-        <QuotaOverview provider="codex" accounts={codex} onRetry={() => retry('codex')} />
+        <QuotaOverview
+          provider="codex"
+          accounts={codex}
+          byAccount={codexByAccount}
+          load={(id) => void codexUsageStore(id).getState().load()}
+          onRetry={() => retry('codex')}
+        />
       ) : (
         <div className="settings-card">
           {tool === 'pi' ? (

@@ -641,6 +641,12 @@ import type { GitBatchProgress } from '../shared/git-batch'
 import type { MicAccessState } from '../shared/mic'
 import type { TriagePrepareResult, TriageSnapshot } from '../shared/triage'
 import type { DigestDone, DigestRequest, DigestResult } from '../shared/exchange-digest'
+import type {
+  ServerInstallProgress,
+  ServerInstallResult,
+  ServerInstallStatus,
+  TailnetScan
+} from '../shared/server-setup-types'
 
 export interface MagicSyncResult {
   repoPath: string
@@ -995,6 +1001,17 @@ export interface ElectronAPI extends FleetDesktopAPI {
   /** HTTP liveness probe (any HTTP response = true). Stricter than checkPort:
    *  proves a server answers, not just that something bound the port. */
   probeServerUrl: (url: string, timeoutMs?: number) => Promise<boolean>
+  // ── Lane B (server wave): a Mac as a server, the tailnet scan ──
+  /** The tailnet's machines and which of them answer as a Clave server. */
+  serverSetupScan: () => Promise<TailnetScan>
+  /** What this Mac has installed as a server, and whether it runs. */
+  serverSetupInstallStatus: () => Promise<ServerInstallStatus>
+  /** Installs (or updates) this Mac's server and saves it as a connection;
+   *  a second call while one runs answers the same run. */
+  serverSetupInstall: () => Promise<ServerInstallResult>
+  /** Puts this Mac's server token on the clipboard; the token never crosses to the window. */
+  serverSetupCopyToken: () => Promise<void>
+  onServerSetupProgress: (callback: (progress: ServerInstallProgress) => void) => () => void
   openPath: (filePath: string) => Promise<string>
   /** Register an HTML file with the clave-preview protocol; returns the URL an
    *  in-app preview iframe loads it from (assets scoped to the file's directory). */
