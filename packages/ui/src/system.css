@@ -5364,33 +5364,60 @@ details[open] > .chat-approval-items {
   animation: term-shimmer calc(var(--default-transition-duration) * 12) linear infinite;
 }
 .exchange-digest-text {
-  display: block;
-  padding-top: calc(var(--spacing) / 2);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  margin-top: calc(var(--spacing) / 2);
   font-size: var(--text-sm);
   line-height: 1.45;
   color: var(--text-tertiary);
   transition:
     opacity calc(var(--default-transition-duration) * 2) var(--ease-out-expo),
-    translate calc(var(--default-transition-duration) * 3) var(--ease-out-settle);
+    translate calc(var(--default-transition-duration) * 3) var(--ease-out-settle),
+    background-color var(--default-transition-duration);
   @starting-style {
     opacity: 0;
     translate: 0 calc(var(--spacing) * 1.5);
   }
 }
-/* Something needs the reader: the digest in full ink behind the accent dot,
-   and the card it came from marked with the accent on its node. */
-.exchange-timeline[data-needs-you] .exchange-digest-text {
+/* Something needs the reader: the ringed marker in its own column, centred
+   on the first line, the words in full ink beside it, on a breath of accent
+   that deepens under the pointer when it opens the message it came from. */
+.exchange-digest-text[data-needs-you] {
+  grid-template-columns: auto minmax(0, 1fr);
+  column-gap: calc(var(--spacing) * 2);
+  align-items: start;
+  width: fit-content;
+  max-width: 100%;
+  padding: calc(var(--spacing) * 1.5) calc(var(--spacing) * 3) calc(var(--spacing) * 1.5)
+    calc(var(--spacing) * 2.5);
+  border: 0;
+  border-radius: var(--radius-lg);
+  background-color: color-mix(in oklab, var(--color-accent) 7%, transparent);
+  font: inherit;
+  font-size: var(--text-sm);
+  line-height: 1.45;
+  text-align: left;
   color: var(--term-ink, var(--text-primary));
 }
-.exchange-timeline[data-needs-you] .exchange-digest-text::before {
-  content: '';
-  display: inline-block;
-  inline-size: calc(var(--spacing) * 1.5);
-  block-size: calc(var(--spacing) * 1.5);
-  margin-right: calc(var(--spacing) * 1.5);
-  border-radius: var(--radius-full);
-  background: var(--color-accent);
-  vertical-align: 0.1em;
+button.exchange-digest-text {
+  cursor: pointer;
+}
+button.exchange-digest-text:hover {
+  background-color: color-mix(in oklab, var(--color-accent) 12%, transparent);
+}
+button.exchange-digest-text:focus-visible {
+  outline: thin solid var(--color-accent);
+  outline-offset: calc(var(--spacing) / 2);
+}
+.exchange-digest-mark {
+  --size: calc(var(--spacing) * 3.5);
+  inline-size: var(--size);
+  block-size: var(--size);
+  margin-top: calc((1lh - var(--size)) / 2);
+}
+.exchange-digest-words {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 .exchange[data-needs-you] .exchange-node {
   border-color: var(--color-accent);

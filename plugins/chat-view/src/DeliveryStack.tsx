@@ -66,12 +66,13 @@ export function DeliveryStack({
               {digest.state === 'reading' ? (
                 <span className="exchange-digest-reading">Reading what matters for you…</span>
               ) : done ? (
-                <span
-                  className="exchange-digest-text"
-                  title="Read by Haiku from the messages below"
-                >
-                  {done.summary}
-                </span>
+                <DigestLine
+                  summary={done.summary}
+                  needsYou={done.needsYou}
+                  onOpen={
+                    flagged === null ? undefined : (event) => openCard(event.currentTarget, flagged)
+                  }
+                />
               ) : null}
             </span>
           </span>
@@ -90,6 +91,61 @@ export function DeliveryStack({
       </ol>
     </section>
   )
+}
+
+/** The digest under the senders. Something for the reader: the drawings'
+ *  ringed marker beside the words (a column of its own, so a second line
+ *  stands under the first, not under the marker), on a breath of accent, and
+ *  a click opens the card it came from. Nothing: a quiet line. */
+function DigestLine({
+  summary,
+  needsYou,
+  onOpen
+}: {
+  summary: string
+  needsYou: boolean
+  onOpen?: (event: React.MouseEvent<HTMLElement>) => void
+}): React.JSX.Element {
+  const words = <span className="exchange-digest-words">{summary}</span>
+  if (!needsYou)
+    return (
+      <span className="exchange-digest-text" title="Read by Haiku from the messages below">
+        {words}
+      </span>
+    )
+  const mark = (
+    <svg className="chat-drawing exchange-digest-mark" viewBox="0 0 14 14" aria-hidden="true">
+      <circle className="ring" cx="7" cy="7" r="5.6" />
+      <circle className="dot dot--c" cx="7" cy="7" r="2.4" />
+    </svg>
+  )
+  return onOpen ? (
+    <button
+      type="button"
+      className="exchange-digest-text"
+      data-needs-you=""
+      title="Open the message this comes from"
+      onClick={onOpen}
+    >
+      {mark}
+      {words}
+    </button>
+  ) : (
+    <span className="exchange-digest-text" data-needs-you="">
+      {mark}
+      {words}
+    </span>
+  )
+}
+
+/** Open the timeline's card at `index` and bring it into view, smoothly. */
+function openCard(from: HTMLElement, index: number): void {
+  const card = from
+    .closest('.exchange-timeline')
+    ?.querySelectorAll<HTMLDetailsElement>('details.exchange-card')[index]
+  if (!card) return
+  card.open = true
+  card.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
 }
 
 function ExchangeCard({
