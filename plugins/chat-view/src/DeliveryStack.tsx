@@ -1,5 +1,6 @@
 import { useMemo, useState, type CSSProperties } from 'react'
-import { ChevronDownIcon } from '@heroicons/react/24/outline'
+import { ArrowUpRightIcon, ChevronDownIcon } from '@heroicons/react/24/outline'
+import { requestJump } from './jump'
 import { parseDelivery } from '../../../src/shared/exchange-provenance'
 import { useSessionStore } from '../../../src/renderer/src/store/session-store'
 import { useDisclosure } from './disclosure'
@@ -160,6 +161,9 @@ function ExchangeCard({
               ) : (
                 <p className="exchange-note">No answer sent to {name} after this message.</p>
               )}
+              {delivery?.sender?.id && (
+                <OpenThere id={delivery.sender.id} name={name} text={body} />
+              )}
             </>
           )}
         </div>
@@ -168,9 +172,37 @@ function ExchangeCard({
   )
 }
 
+/** Opens the other tab at this exchange: it finds the words there (jump.ts)
+ *  once it is on screen, reading its older history if it must. */
+function openAt(sessionId: string, text: string): void {
+  requestJump(sessionId, text)
+  useSessionStore.getState().selectSession(sessionId, false)
+}
+
+/** The opened card's way to the other side of the exchange, when that tab is
+ *  in this window. */
+function OpenThere({
+  id,
+  name,
+  text
+}: {
+  id: string
+  name: string
+  text: string
+}): React.JSX.Element | null {
+  const here = useSessionStore((state) => state.sessions.some((s) => s.id === id))
+  if (!here) return null
+  return (
+    <button type="button" className="exchange-open" onClick={() => openAt(id, text)}>
+      Open in {name}
+      <ArrowUpRightIcon aria-hidden="true" />
+    </button>
+  )
+}
+
 /** One piece of writing in an opened exchange: who wrote it and when, then the
- *  words, in the transcript's own type. The other tab's name opens it when it
- *  is in this window. */
+ *  words, in the transcript's own type. The other tab's name opens it at this
+ *  exchange when it is in this window. */
 function ExchangePart({
   who,
   side,
@@ -190,8 +222,8 @@ function ExchangePart({
           <button
             type="button"
             className="exchange-part-who"
-            title={`Open the tab “${who}”`}
-            onClick={() => useSessionStore.getState().selectSession(from, false)}
+            title={`Open “${who}” at this exchange`}
+            onClick={() => openAt(from, side.text)}
           >
             {who}
           </button>

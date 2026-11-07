@@ -5495,7 +5495,8 @@ details[open] > .chat-approval-items {
   margin-top: calc(var(--spacing) * 2 + 0.5lh - var(--exchange-node) / 2);
   border: thin solid color-mix(in oklab, var(--text-primary) 42%, transparent);
   border-radius: var(--radius-full);
-  background: radial-gradient(
+  background:
+    radial-gradient(
       circle,
       color-mix(in oklab, var(--text-primary) 70%, transparent) 0 32%,
       transparent 36%
@@ -5657,6 +5658,55 @@ button.exchange-part-who:hover {
 .exchange-part[data-theirs] .exchange-part-text {
   color: var(--term-ink, var(--text-primary));
 }
+.exchange-open {
+  display: inline-flex;
+  align-self: flex-start;
+  align-items: center;
+  gap: var(--spacing);
+  margin-left: calc(var(--spacing) * 3);
+  padding: calc(var(--spacing) / 2) calc(var(--spacing) * 2);
+  border: thin solid var(--border-subtle-color);
+  border-radius: var(--radius-full);
+  background: var(--surface-0);
+  font: inherit;
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition:
+    color var(--default-transition-duration),
+    border-color var(--default-transition-duration),
+    translate calc(var(--default-transition-duration) * 2) var(--ease-out-settle);
+}
+.exchange-open:hover {
+  color: var(--text-primary);
+  border-color: var(--color-border);
+  translate: 0 calc(var(--spacing) / -4);
+}
+.exchange-open svg {
+  inline-size: calc(var(--spacing) * 3);
+  block-size: calc(var(--spacing) * 3);
+}
+/* The row another tab opened this one at: a breath of accent that fades, so
+   the eye lands on it (jump.ts). */
+[data-row-index][data-jump-flash] > .chat-row {
+  border-radius: var(--radius-lg);
+  animation: jump-flash calc(var(--default-transition-duration) * 16) var(--ease-out-expo);
+}
+@keyframes jump-flash {
+  0%,
+  25% {
+    background-color: color-mix(in oklab, var(--color-accent) 12%, transparent);
+    box-shadow: 0 0 0 calc(var(--spacing) * 2)
+      color-mix(in oklab, var(--color-accent) 12%, transparent);
+  }
+  100% {
+    background-color: transparent;
+    box-shadow: 0 0 0 calc(var(--spacing) * 2) transparent;
+  }
+}
+.chat-jump-pill[data-tone='missing'] svg {
+  animation: none;
+}
 .exchange-note {
   margin: 0;
   padding-left: calc(var(--spacing) * 3);
@@ -5724,8 +5774,13 @@ button.exchange-part-who:hover {
     animation: none;
   }
   .exchange-digest,
-  .exchange-digest-text {
+  .exchange-digest-text,
+  .exchange-open {
     transition: none;
+  }
+  [data-row-index][data-jump-flash] > .chat-row {
+    animation: none;
+    outline: thin solid var(--color-accent);
   }
 }
 

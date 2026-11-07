@@ -51,6 +51,7 @@ import {
 import { ToolGroup } from './ToolGroup'
 import { ToolDisclosure } from './disclosure'
 import { ExchangeContext, indexExchanges } from './exchanges'
+import { useExchangeJump } from './jump'
 import { useSessionStore } from '../../../src/renderer/src/store/session-store'
 import { ApprovalRun, PermissionRow, PromptDock } from './PromptDock'
 import { refusedAnswer } from './refused-answer'
@@ -87,7 +88,7 @@ import { TranscriptRows } from './rows'
 import { JumpToEnd } from './JumpToEnd'
 import { useEarlier, type EarlierPage } from './earlier'
 import { useTranscriptSearch } from './search'
-import { EarlierLoading, PastFailed } from './EarlierLoading'
+import { EarlierLoading, JumpPill, PastFailed } from './EarlierLoading'
 import { pastHead, pastStep, readPast, type PastReader, type PastState } from './past'
 import {
   attachmentIssue,
@@ -877,6 +878,18 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
     scroll: transcript.scroll,
     more: before !== null
   })
+  // Another tab's card opened this one at an exchange (jump.ts).
+  const jump = useExchangeJump({
+    sessionId: session.id,
+    rows: blocks,
+    active: visible,
+    more: before !== null,
+    scroll: transcript.scroll
+  })
+  const reveal =
+    jump.reveal && (!searchReveal || jump.reveal.nonce > searchReveal.nonce)
+      ? jump.reveal
+      : searchReveal
   return (
     <div
       ref={pane}
@@ -965,7 +978,7 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
                   rows={blocks}
                   settled={pastRead}
                   scroll={transcript.scroll}
-                  reveal={searchReveal}
+                  reveal={reveal}
                 >
                   {({ block, key }, index, arriving) => (
                     <TranscriptRow
@@ -986,7 +999,7 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
             )}
           </div>
         </div>
-        {earlier.loading && <EarlierLoading />}
+        {jump.status ? <JumpPill status={jump.status} /> : earlier.loading && <EarlierLoading />}
         {transcript.away && <JumpToEnd onClick={transcript.jump} />}
       </div>
       <div className="chat-composer-wrap">
