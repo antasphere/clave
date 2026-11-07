@@ -14,9 +14,22 @@ results; use the sequential runner for attached or separate server modes.
 
 For independent CI runners, use `node tests/e2e/run.mjs --shard 1/8 --report
 e2e-reports/shard-1.json`, changing the index for each runner. Selection sorts the
-matching spec names and distributes them round-robin. Filters apply before
-sharding. `--list` prints the selected filenames without importing specs.
+matching spec names, reserves the clipboard group in shard 1, then assigns the
+longest estimated specs to the least-loaded shard. Ties follow the original
+order, then the shard index. Each shard runs its specs in the original order;
+`1/1` retains the sequential schedule. Filters apply before sharding.
+`--list` prints the selected filenames without importing specs.
 Empty shards are valid, but an empty selection before sharding is an error.
+
+`shard-durations.json` contains placement hints from the three complete runs
+linked in that file. Each hint is the median per-spec duration, rounded to
+seconds with a minimum of 1. New or renamed specs use the explicit 14-second
+fallback, the median of those hints. Removed specs' hints add no work. Missing
+or malformed hint data and nonpositive or nonnumeric values fail explicitly.
+Update hints from complete comparable runs; do not use the current run's
+reports or host data. The runner and aggregate read the same checked-in file
+on macOS and Linux. Hints never define the inventory or change assertions,
+timeouts, classifications or report validation.
 
 Every shard adds its index to the fixture namespace. The local parallel command
 also creates a unique run namespace, so simultaneous runs from the same
@@ -51,9 +64,10 @@ the sequential runner.
 
 To compare schedules on identical code, manually run the Checks workflow twice
 on the same ref. Set its `baseline` input to true for the original sequential
-schedule and false for the sharded schedule. Compare the first job's start to
-the last job's completion, and the full-suite step durations separately.
-Report queue time separately and retain both run URLs. Exclude the added
+schedule and false for the sharded schedule. Measure workflow creation to the
+last required job's completion, including queue time. Measure the suite window
+from the earliest shard report's start to the latest report's end separately.
+Report job queue and setup time, and retain both run URLs. Exclude the added
 aggregate job from the original-schedule baseline, while including it in the
 optimized result. Use a baseline where all required gates passed, since the
 hardened conditions continue after an earlier gate fails. A cancelled or timed-out

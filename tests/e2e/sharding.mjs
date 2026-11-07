@@ -1,3 +1,29 @@
+import { readFileSync } from 'node:fs'
+
+function checkDurationHints(hints) {
+  const positive = (value) => typeof value === 'number' && Number.isFinite(value) && value > 0
+  if (
+    !positive(hints?.defaultSeconds) ||
+    !hints.seconds ||
+    typeof hints.seconds !== 'object' ||
+    Array.isArray(hints.seconds)
+  )
+    throw new Error(
+      'Invalid E2E shard duration hints: expected positive defaultSeconds and seconds map'
+    )
+  for (const [name, seconds] of Object.entries(hints.seconds)) {
+    if (!name.endsWith('.spec.mjs') || !positive(seconds))
+      throw new Error(`Invalid E2E shard duration hint: ${name}`)
+  }
+  return hints
+}
+
+// Both the runner and the aggregate read the same checkout-static hints. Never
+// learn placement from this run's reports, environment or host characteristics.
+const durationHints = checkDurationHints(
+  JSON.parse(readFileSync(new URL('./shard-durations.json', import.meta.url), 'utf8'))
+)
+
 // Keep selection independent of Electron, so coverage can be checked on any host.
 export function parseRunArgs(args) {
   const options = { filters: [], shard: { index: 1, total: 1 }, report: null, list: false }
@@ -40,8 +66,31 @@ export const CLIPBOARD_SPECS = new Set([
   'copy-session-id.spec.mjs',
   'triage-ui.spec.mjs'
 ])
-export function selectShard(specs, { index, total }) {
-  return specs.filter((name, i) => (CLIPBOARD_SPECS.has(name) ? 0 : i % total) === index - 1)
+export function selectShard(specs, { index, total }, hints = durationHints) {
+  checkDurationHints(hints)
+  // A large requested shard count must not allocate more bins than specs.
+  const loads = Array(Math.min(total, specs.length)).fill(0)
+  const placement = new Map()
+  const pending = []
+  for (const [order, name] of specs.entries()) {
+    const seconds = Object.hasOwn(hints.seconds, name) ? hints.seconds[name] : hints.defaultSeconds
+    if (CLIPBOARD_SPECS.has(name)) {
+      placement.set(name, 0)
+      loads[0] += seconds
+    } else pending.push({ name, seconds, order })
+  }
+  pending.sort((a, b) => b.seconds - a.seconds || a.order - b.order)
+  for (const { name, seconds } of pending) {
+    let target = 0
+    for (let i = 1; i < loads.length; i++) {
+      if (loads[i] < loads[target]) target = i
+    }
+    placement.set(name, target)
+    loads[target] += seconds
+  }
+  // Hints choose placement only. Preserve the runner's original order within
+  // each shard, including the unchanged sequential 1/1 invocation.
+  return specs.filter((name) => placement.get(name) === index - 1)
 }
 
 // A normal assertion failure is still a report in CI. Missing execution is not.

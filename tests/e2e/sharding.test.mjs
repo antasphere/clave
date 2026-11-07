@@ -1,6 +1,17 @@
 import { describe, it, expect } from 'vitest'
 import { parseRunArgs, selectShard, validateReports, CLIPBOARD_SPECS } from './sharding.mjs'
-import { readdirSync, readFileSync } from 'node:fs'
+import {
+  copyFileSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync
+} from 'node:fs'
+import { spawnSync } from 'node:child_process'
+import { tmpdir } from 'node:os'
+import path from 'node:path'
+import { pathToFileURL } from 'node:url'
 
 describe('E2E shard coverage', () => {
   const specs = Array.from({ length: 192 }, (_, i) => `${i}.spec.mjs`)
@@ -11,6 +22,108 @@ describe('E2E shard coverage', () => {
     expect(shards.flat().sort()).toEqual([...specs].sort())
     expect(new Set(shards.flat()).size).toBe(specs.length)
     expect(shards.every((s) => s.length === 24)).toBe(true)
+  })
+  it('separates expensive specs instead of balancing only their count', () => {
+    const inventory = ['slow-a', 'a', 'b', 'c', 'slow-b', 'd', 'e', 'f'].map(
+      (name) => `${name}.spec.mjs`
+    )
+    const seconds = Object.fromEntries(inventory.map((name) => [name, 1]))
+    seconds['slow-a.spec.mjs'] = seconds['slow-b.spec.mjs'] = 100
+    const hints = { defaultSeconds: 1, seconds }
+    const partitions = Array.from({ length: 4 }, (_, i) =>
+      selectShard(inventory, { index: i + 1, total: 4 }, hints)
+    )
+    expect(partitions.flat().sort()).toEqual([...inventory].sort())
+    expect(
+      Math.max(...partitions.map((p) => p.reduce((sum, name) => sum + seconds[name], 0)))
+    ).toBeLessThanOrEqual(103)
+  })
+  it('counts the clipboard group before assigning other work', () => {
+    const inventory = ['chat-view.spec.mjs', 'a.spec.mjs', 'b.spec.mjs']
+    const hints = {
+      defaultSeconds: 1,
+      seconds: { 'chat-view.spec.mjs': 100, 'a.spec.mjs': 20, 'b.spec.mjs': 20 }
+    }
+    expect(selectShard(inventory, { index: 1, total: 2 }, hints)).toEqual([inventory[0]])
+    expect(selectShard(inventory, { index: 2, total: 2 }, hints)).toEqual(inventory.slice(1))
+  })
+  it('preserves order and exact coverage with unknown, renamed and removed hints', () => {
+    const inventory = ['z', 'new', 'renamed', 'a', 'chat-view'].map((name) => `${name}.spec.mjs`)
+    const hints = {
+      defaultSeconds: 7,
+      seconds: { 'z.spec.mjs': 30, 'a.spec.mjs': 10, 'removed.spec.mjs': 500 }
+    }
+    for (const total of [1, 2, 4, 6]) {
+      const partitions = Array.from({ length: total }, (_, i) => {
+        const shard = { index: i + 1, total }
+        const selected = selectShard(inventory, shard, hints)
+        expect(selected).toEqual(inventory.filter((name) => selected.includes(name)))
+        expect(selectShard(inventory, shard, structuredClone(hints))).toEqual(selected)
+        return selected
+      })
+      expect(partitions.flat().sort()).toEqual([...inventory].sort())
+      expect(new Set(partitions.flat()).size).toBe(inventory.length)
+      if (total === 1) expect(partitions[0]).toEqual(inventory)
+    }
+    expect(
+      selectShard(
+        inventory,
+        { index: Number.MAX_SAFE_INTEGER, total: Number.MAX_SAFE_INTEGER },
+        hints
+      )
+    ).toEqual([])
+    // An absent hint receives the explicit fallback, rather than zero weight.
+    expect(selectShard(['new.spec.mjs', 'a.spec.mjs'], { index: 1, total: 2 }, hints)).toEqual([
+      'a.spec.mjs'
+    ])
+  })
+  it('refuses invalid hints instead of silently using the unknown-spec fallback', () => {
+    const inventory = ['a.spec.mjs']
+    for (const value of [undefined, null, 0, -1, NaN, Infinity, '2']) {
+      expect(() =>
+        selectShard(
+          inventory,
+          { index: 1, total: 1 },
+          {
+            defaultSeconds: 1,
+            seconds: { 'a.spec.mjs': value }
+          }
+        )
+      ).toThrow('Invalid E2E shard duration hint')
+      expect(() =>
+        selectShard(
+          inventory,
+          { index: 1, total: 1 },
+          {
+            defaultSeconds: value,
+            seconds: {}
+          }
+        )
+      ).toThrow('Invalid E2E shard duration hints')
+    }
+    for (const seconds of [undefined, null, [], 'bad'])
+      expect(() =>
+        selectShard(inventory, { index: 1, total: 1 }, { defaultSeconds: 1, seconds })
+      ).toThrow('Invalid E2E shard duration hints')
+  })
+  it('fails explicitly when the checked-in hint file is missing or malformed', () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'clave-shard-hints-'))
+    try {
+      const module = path.join(dir, 'sharding.mjs')
+      copyFileSync(new URL('./sharding.mjs', import.meta.url), module)
+      for (const contents of [null, '{', '{}', '{"defaultSeconds":1,"seconds":{"a.spec.mjs":0}}']) {
+        if (contents !== null) writeFileSync(path.join(dir, 'shard-durations.json'), contents)
+        const result = spawnSync(
+          process.execPath,
+          ['--input-type=module', '-e', `import ${JSON.stringify(pathToFileURL(module).href)}`],
+          { encoding: 'utf8', timeout: 10_000 }
+        )
+        expect(result.status).not.toBe(0)
+        expect(result.stderr).toMatch(/shard-durations.json|SyntaxError|Invalid E2E shard duration/)
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
   it('serializes every spec that reads or writes the system clipboard', () => {
     // This one writes through a rendered Copy button rather than a direct
