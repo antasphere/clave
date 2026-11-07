@@ -3105,6 +3105,15 @@ button.extension-card:hover {
   overflow-y: auto;
   overscroll-behavior: contain;
 }
+/* The transcript runs right down to the composer and fades out over its
+   last stretch instead of stopping on a hard edge. A mask, not a gradient
+   laid over it, so it holds on any ground and under a selection. The column's
+   own foot padding is taller than the fade, so the last line sits clear of
+   it once the reader is at the end. */
+.chat-transcript > .chat-scroll {
+  --chat-fade: calc(var(--spacing) * 8);
+  mask-image: linear-gradient(to bottom, black calc(100% - var(--chat-fade)), transparent);
+}
 /* The way back down. The transcript follows the stream only while the reader
    is at its end (`useTranscriptEnd`); one who scrolled up to re-read is left
    there, and this control sits over the transcript's foot for as long as the
@@ -4509,7 +4518,7 @@ details[open] > .chat-approval-items {
   width: 100%;
   max-width: var(--chat-column);
   margin: 0 auto;
-  padding: var(--spacing) calc(var(--spacing) * 6) calc(var(--spacing) * 3);
+  padding: 0 calc(var(--spacing) * 6) calc(var(--spacing) * 3);
 }
 .chat-composer {
   display: flex;
