@@ -5966,13 +5966,11 @@ details[open] > .chat-approval-items {
   opacity: 0;
 }
 .work-card-row {
+  position: relative;
   display: flex;
-  align-items: center;
-  gap: var(--spacing);
+  align-items: stretch;
   min-height: 0;
   overflow: hidden;
-  padding: calc(var(--spacing) * 1.5) calc(var(--spacing) * 2) calc(var(--spacing) * 1.5)
-    calc(var(--spacing) * 1.5);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
   background-color: var(--surface-0);
@@ -5983,20 +5981,41 @@ details[open] > .chat-approval-items {
 }
 /* The card's face is the button that opens the window onto its work; an
    agent's model chip beside it is its own. */
+/* The face carries the card's inner margin itself, so the whole card is the
+   target, not just its drawing and text; beside a model chip it leaves the
+   chip its end of the card. */
 .work-card-open {
   display: flex;
   flex: 1;
   align-items: center;
   gap: calc(var(--spacing) * 2);
   min-width: 0;
-  padding: 0;
+  padding: calc(var(--spacing) * 1.5) calc(var(--spacing) * 2) calc(var(--spacing) * 1.5)
+    calc(var(--spacing) * 1.5);
   border: 0;
-  border-radius: var(--radius-sm);
+  border-radius: inherit;
   background: none;
   font: inherit;
   color: inherit;
   text-align: left;
   cursor: pointer;
+}
+.work-card-open:has(+ .term-agent-model) {
+  padding-inline-end: var(--spacing);
+}
+/* The face's target spans the whole card, the margin around the chip too;
+   the chip sits above it and keeps its own menu. */
+.work-card-open::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+}
+.work-card-row > .term-agent-model {
+  position: relative;
+  z-index: 1;
+  align-self: center;
+  margin-inline: 0 calc(var(--spacing) * 2);
 }
 .work-card-open:hover .term-agent-description,
 .work-card-open[data-state='open'] .term-agent-description {
