@@ -13,6 +13,9 @@ describe('E2E shard coverage', () => {
     expect(shards.every((s) => s.length === 24)).toBe(true)
   })
   it('serializes every spec that reads or writes the system clipboard', () => {
+    // This one writes through a rendered Copy button rather than a direct
+    // Electron or navigator API call in the spec's own source.
+    expect(CLIPBOARD_SPECS.has('chat-turn-copy.spec.mjs')).toBe(true)
     const dir = new URL('./', import.meta.url)
     const inventory = readdirSync(dir)
       .filter((f) => f.endsWith('.spec.mjs'))

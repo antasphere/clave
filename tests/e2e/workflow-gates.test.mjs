@@ -7,9 +7,7 @@ const workflow = parse(
 )
 const jobs = workflow.jobs
 const matrix =
-  '${{ inputs.baseline && fromJSON(\'["baseline"]\') || fromJSON(\'["1","2","3","4","gates"]\') }}'
-const gateCondition =
-  "${{ !cancelled() && steps.build.outcome == 'success' && (matrix.task == 'gates' || matrix.task == 'baseline') }}"
+  '${{ inputs.baseline && fromJSON(\'["baseline"]\') || fromJSON(\'["1","2","3","4"]\') }}'
 const expectedGates = new Map([
   ['Gate, actual renderer and native view module audit', 'node scripts/renderer-module-audit.mjs'],
   ['Gate, the packaged app loads what its bundles require', null],
@@ -34,6 +32,18 @@ const expectedGates = new Map([
   ],
   ['Gate, MCP sessions on connected servers', 'node tests/e2e/run.mjs mcp-fleet-sessions']
 ])
+const gatePartitions = new Map([
+  ['Gate, actual renderer and native view module audit', '1'],
+  ['Gate, the packaged app loads what its bundles require', '1'],
+  ['Gate, the terminal process from the built bundle', '1'],
+  ['Gate, the server spec with the server in-process', '2'],
+  ['Gate, the server spec with the server attached', '2'],
+  ['Gate, the server spec with the server separate', '3'],
+  ['Gate, the Antasphere sign-in on the three servers', '3'],
+  ["Gate, connected servers follow the app's version", '1'],
+  ['Gate, full Markdown client, native lifecycle and responsiveness', '4'],
+  ['Gate, MCP sessions on connected servers', '4']
+])
 
 describe('the required CI check cannot silently lose execution', () => {
   it('schedules every existing gate exactly once in the normal matrix', () => {
@@ -45,11 +55,17 @@ describe('the required CI check cannot silently lose execution', () => {
     expect(Object.keys(job.strategy.matrix)).toEqual(['task'])
     expect(job.strategy.matrix.task).toBe(matrix)
     const partitions = JSON.parse([...matrix.matchAll(/fromJSON\('([^']+)'\)/g)][1][1])
-    expect(partitions.filter((p) => p === 'gates')).toHaveLength(1)
     const gates = job.steps.filter((s) => s.name?.startsWith('Gate,'))
     expect(gates.map((s) => s.name)).toEqual([...expectedGates.keys()])
     for (const gate of gates) {
-      expect(gate.if, gate.name).toBe(gateCondition)
+      const task = gatePartitions.get(gate.name)
+      expect(
+        partitions.filter((p) => p === task),
+        gate.name
+      ).toHaveLength(1)
+      expect(gate.if, gate.name).toBe(
+        `\${{ !cancelled() && steps.build.outcome == 'success' && (matrix.task == '${task}' || matrix.task == 'baseline') }}`
+      )
       expect(gate['continue-on-error'], gate.name).toBeUndefined()
       if (expectedGates.get(gate.name)) expect(gate.run).toBe(expectedGates.get(gate.name))
     }
@@ -78,15 +94,28 @@ describe('the required CI check cannot silently lose execution', () => {
     ])
   })
   it('runs the complete suite without a hidden filename filter', () => {
-    const suite = jobs['e2e-run'].steps.find(
-      (s) => s.name === 'Report, the whole suite with isolated workers'
-    )
+    const suite = jobs['e2e-run'].steps.find((s) => s.name === 'Report, hosted suite shard')
     expect(suite.run).toBe(
       'node tests/e2e/run.mjs --shard "$SHARD" --report "e2e-reports/shard-$INDEX.json"'
     )
-    expect(suite.env.SHARD).toBe(
-      "${{ matrix.task == 'baseline' && '1/1' || format('{0}/4', matrix.task) }}"
+    expect(suite.env.SHARD).toBe("${{ format('{0}/4', matrix.task) }}")
+    expect(suite.env.INDEX).toBe('${{ matrix.task }}')
+    expect(suite.if).toBe(
+      "${{ !cancelled() && steps.build.outcome == 'success' && matrix.task != 'baseline' }}"
     )
-    expect(suite.env.INDEX).toBe("${{ matrix.task == 'baseline' && '1' || matrix.task }}")
+    const steps = jobs['e2e-run'].steps
+    expect(steps.indexOf(suite)).toBeLessThan(steps.findIndex((s) => s.name?.startsWith('Gate,')))
+    const baseline = steps.find((s) => s.name === 'Report, sequential baseline suite')
+    expect(baseline.if).toBe(
+      "${{ !cancelled() && steps.build.outcome == 'success' && matrix.task == 'baseline' }}"
+    )
+    expect(baseline.run).toBe('node tests/e2e/run.mjs --report e2e-reports/shard-1.json')
+    expect(steps.indexOf(baseline)).toBeGreaterThan(
+      steps.findLastIndex((s) => s.name?.startsWith('Gate,'))
+    )
+    const upload = steps.find((s) => s.name === 'Preserve shard results')
+    expect(upload.if).toBe('${{ always() }}')
+    expect(upload['continue-on-error']).toBeUndefined()
+    expect(upload.with['if-no-files-found']).toBe('error')
   })
 })

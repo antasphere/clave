@@ -3,7 +3,7 @@ import { readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { validateReports } from './sharding.mjs'
-import { loadKnown, summarize } from './known-failures.mjs'
+import { classify, loadKnown, summarize } from './known-failures.mjs'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 
@@ -16,7 +16,9 @@ export function mergeReports(reports, specs, total) {
   }
   const results = Object.assign({}, ...reports.map((r) => r.results))
   const failedChecks = Object.entries(results).flatMap(([spec, checks]) =>
-    checks.filter((c) => !c.ok).map((c) => ({ spec, name: c.name }))
+    checks
+      .filter((c) => !c.ok)
+      .map((c) => ({ spec, name: c.name, kind: classify(spec, c.name, false, known).kind }))
   )
   return { ...summarize(results, known), specs: Object.keys(results).length, failedChecks }
 }
@@ -33,13 +35,14 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
   const { totals } = result
   const text = `${result.specs} specs; ${totals.passed} passed, ${totals.failed} failed, ${totals.known} known failures, ${totals.unstable} unstable`
   console.log(text)
-  for (const failed of result.failedChecks) console.log(`  FAIL ${failed.spec}: ${failed.name}`)
+  for (const failed of result.failedChecks)
+    console.log(`  ${failed.kind.toUpperCase()} ${failed.spec}: ${failed.name}`)
   if (output)
     writeFileSync(
       output,
       `## Full Electron suite\n\n${text}\n\nAll ${count} shards completed. Assertion failures remain a report, as before. Missing or incomplete shards fail the aggregate check.\n\n` +
         result.failedChecks
-          .map((c) => `- ${c.spec}: ${c.name.replace(/[\n\r]/g, ' ')}`)
+          .map((c) => `- ${c.kind.toUpperCase()} ${c.spec}: ${c.name.replace(/[\n\r]/g, ' ')}`)
           .join('\n') +
         '\n'
     )

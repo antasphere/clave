@@ -48,6 +48,38 @@ function cli(dir, output = null) {
 }
 
 describe('the required-check report CLI', () => {
+  it('keeps KNOWN and UNSTABLE labels on non-gating failures', () =>
+    withReports(all, (dir) => {
+      const known = JSON.parse(readFileSync(path.join(HERE, 'known-failures.json'), 'utf8'))
+      const listed = Object.entries(known.specs).find(
+        ([file, checks]) => all.includes(file) && checks.length
+      )
+      const unstable = known.unstable.find((file) => all.includes(file))
+      expect(listed).toBeDefined()
+      expect(unstable).toBeDefined()
+      const failures = [
+        [listed[0], listed[1][0], 'KNOWN'],
+        [unstable, 'synthetic unstable assertion', 'UNSTABLE']
+      ]
+      for (const [spec, name] of failures) {
+        for (let index = 1; index <= 4; index++) {
+          const file = path.join(dir, `shard-${index}.json`)
+          const report = JSON.parse(readFileSync(file, 'utf8'))
+          if (report.selected.includes(spec)) {
+            report.results[spec] = [{ name, ok: false }]
+            writeFileSync(file, JSON.stringify(report))
+          }
+        }
+      }
+      const summary = path.join(dir, 'summary.md')
+      const result = cli(dir, summary)
+      expect(result.status, result.stderr).toBe(0)
+      for (const [spec, name, kind] of failures) {
+        expect(result.stdout).toContain(`${kind} ${spec}: ${name}`)
+        expect(result.stdout).not.toContain(`FAIL ${spec}: ${name}`)
+        expect(readFileSync(summary, 'utf8')).toContain(`${kind} ${spec}: ${name}`)
+      }
+    }))
   it('names failed checks in stdout and the summary while retaining report policy', () =>
     withReports(all, (dir) => {
       const file = path.join(dir, 'shard-1.json')
