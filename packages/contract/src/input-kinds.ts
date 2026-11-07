@@ -158,6 +158,14 @@ export function questionShapeProblem(
   const has = q.options.length > 0
   if (kind === 'choice' && q.options.length < 2)
     return `"${q.id}": a choice needs two options or more.`
+  if (kind === 'choice') {
+    // A label is what the answer carries back, trimmed: a label with spaces
+    // at its ends could never be answered, two alike could not be told apart.
+    const labels = q.options.map((o) => o.label)
+    if (labels.some((label) => label !== label.trim() || label === ''))
+      return `"${q.id}": an option label has no spaces at its ends.`
+    if (new Set(labels).size !== labels.length) return `"${q.id}": two options share a label.`
+  }
   if (kind !== 'choice' && (has || q.multiSelect))
     return `"${q.id}": options belong to a choice; use kind "choice".`
   if (kind === 'link') {

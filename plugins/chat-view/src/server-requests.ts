@@ -82,12 +82,30 @@ export function liveQuestionCards(
   const seen = new Set<string>()
   for (let i = entries.length - 1; i >= 0; i--) {
     const entry = entries[i]
-    if (entry.kind !== 'permission' || entry.answer || entry.answeredElsewhere) continue
+    if (entry.kind !== 'permission') continue
     const id = entry.request.id
+    // The latest entry under an id speaks for it, answered or not: an older
+    // one never comes back to life once the latest is settled.
     if (seen.has(id)) continue
     seen.add(id)
+    if (entry.answer || entry.answeredElsewhere) continue
     if (server && !server.has(id)) continue
     live.add(entry)
   }
   return live
+}
+
+/** The server's record a card of `sessionId` answers: by the server's own
+ *  key (the dock) or by the provider's id the stream carried (a card inline),
+ *  and always that session's. A provider's id names no one request across
+ *  sessions (Codex numbers from zero per process), so a lookup without the
+ *  session could settle another session's request with this person's answer. */
+export function remoteRequestFor(
+  pending: readonly FleetPendingRequest[] | undefined,
+  sessionId: string,
+  id: string
+): FleetPendingRequest | undefined {
+  return pending?.find(
+    (r) => r.sessionId === sessionId && (r.id === id || r.providerRequestId === id)
+  )
 }

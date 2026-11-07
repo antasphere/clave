@@ -109,6 +109,8 @@ describe("a hosted question's shape", () => {
     [{ kind: 'text' }, null],
     [{ kind: 'choice', options: [{ label: 'a' }, { label: 'b' }] }, null],
     [{ kind: 'choice', options: [{ label: 'a' }] }, 'two options or more'],
+    [{ kind: 'choice', options: [{ label: ' a' }, { label: 'b' }] }, 'no spaces at its ends'],
+    [{ kind: 'choice', options: [{ label: 'a' }, { label: 'a' }] }, 'share a label'],
     [{ kind: 'text', options: [{ label: 'a' }, { label: 'b' }] }, 'options belong to a choice'],
     [{ kind: 'text', multiSelect: true }, 'options belong to a choice'],
     [{ kind: 'link', url: 'https://github.com/login' }, null],

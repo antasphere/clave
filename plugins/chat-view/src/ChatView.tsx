@@ -61,7 +61,12 @@ import { isQuestion } from './approvals'
 import { QuestionContext } from './question-context'
 import type { Values } from './input-request'
 import { refusedAnswer } from './refused-answer'
-import { liveQuestionCards, serverDock, withServerPending } from './server-requests'
+import {
+  liveQuestionCards,
+  remoteRequestFor,
+  serverDock,
+  withServerPending
+} from './server-requests'
 import { continueList } from './lists'
 import { ResumePicker } from './ResumePicker'
 import { McpPanel } from './McpPanel'
@@ -699,9 +704,7 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
         // the provider) is refused rather than recorded.
         // The dock names the server's key; a card inline names the provider's
         // id the stream carried. Either settles the one record.
-        const request = remotePending?.find(
-          (r) => r.sessionId === session.id && (r.id === id || r.providerRequestId === id)
-        )
+        const request = remoteRequestFor(remotePending, session.id, id)
         if (!request?.providerRequestId) throw new Error('This request is no longer waiting.')
         const { accepted } = await window.electronAPI.fleetResolve(request.id, {
           type: 'permission',

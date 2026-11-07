@@ -3,6 +3,7 @@ import { resourceKey } from '@clave/contract/fleet'
 import { emptyConversation, reduceConversation } from '../../../../plugins/chat-view/src/reducer'
 import {
   liveQuestionCards,
+  remoteRequestFor,
   serverDock,
   withServerPending
 } from '../../../../plugins/chat-view/src/server-requests'
@@ -125,5 +126,25 @@ describe('one card per request still waiting (PRDCT-4157)', () => {
     expect(liveQuestionCards(answered, undefined, 'local').size).toBe(0)
     const elsewhere = [{ ...entries[0], answeredElsewhere: true }] as typeof entries
     expect(liveQuestionCards(elsewhere, undefined, 'local').size).toBe(0)
+  })
+  it('an older entry under an answered id never comes back to life', () => {
+    // The reducer keeps one entry per id; a new process re-using "0" is read
+    // from the past as a second entry, built here by hand.
+    const entries = entriesOf(ask('0'), { type: 'user_message', text: 'again' })
+    const list = [entries[0], entries[1], { ...entries[0], answer: 'answer' }] as typeof entries
+    expect(liveQuestionCards(list, undefined, 'local').size).toBe(0)
+    const open = [{ ...entries[0], answer: 'answer' }, entries[1], entries[0]] as typeof entries
+    expect(liveQuestionCards(open, undefined, 'local').has(open[2])).toBe(true)
+  })
+  it("a card answers its own session's record, by the server's key or the provider's id", () => {
+    const pending = [
+      record('a1', 1, { providerRequestId: '0' }),
+      record('b1', 2, { providerRequestId: '0', sessionId: other })
+    ]
+    expect(remoteRequestFor(pending, other, '0')?.id).toBe(pending[1].id)
+    expect(remoteRequestFor(pending, session, '0')?.id).toBe(pending[0].id)
+    expect(remoteRequestFor(pending, session, pending[1].id)).toBeUndefined()
+    expect(remoteRequestFor(pending, 'nobody', '0')).toBeUndefined()
+    expect(remoteRequestFor(undefined, session, '0')).toBeUndefined()
   })
 })
