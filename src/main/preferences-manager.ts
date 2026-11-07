@@ -42,8 +42,8 @@ export interface Preferences {
   chatView: string | null
   /**
    * The first-run walk (`onboarding.ts`): `pending` until it is finished or
-   * skipped, then `done`. Decided once, on the first read, and kept in the
-   * cache so any later write records it: a machine where Clave has already
+   * skipped, then `done`. Decided once, on the first read, and written at
+   * once when it is a first run: a machine where Clave has already
    * left its files was installed before the walk existed, so it is `done`
    * and an upgrade never shows the walk; only a data directory with none of
    * them is a first install.
@@ -89,6 +89,10 @@ export class PreferencesManager {
     if (stored?.onboarding !== 'pending' && stored?.onboarding !== 'done') {
       const firstRun = !stored && EARLIER_RUN_FILES.every((name) => storage.read(name) === null)
       this.cache.onboarding = firstRun ? 'pending' : 'done'
+      // Written at once: a first run quit before anything else saved would
+      // otherwise leave only the other managers' files behind, and the next
+      // launch would read them as an earlier install and skip the walk.
+      if (firstRun) this.save()
     }
     return this.cache
   }

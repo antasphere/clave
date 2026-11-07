@@ -137,7 +137,6 @@
   width: min(calc(100% - var(--spacing) * 12), calc(var(--spacing) * 110));
   max-height: min(60vh, calc(var(--spacing) * 120));
   overflow-y: auto;
-  padding: calc(var(--spacing) * 1);
   transition:
     opacity var(--default-transition-duration) var(--ease-out-expo),
     translate var(--default-transition-duration) var(--ease-out-expo);

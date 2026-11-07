@@ -9,12 +9,12 @@ import type {
 import { OnboardingDrawing } from './OnboardingDrawing'
 import { ConnectStep } from './ConnectStep'
 import { useConnections } from './connections'
-import { CHAT_VIEWS, FIRST_MESSAGE, SETUP_LINE_HINT, folderPreview } from './content'
+import { CHAT_VIEWS, FIRST_MESSAGE, SETUP_LINE_HINT, folderPreview, folderTarget } from './content'
 import { ClaudeLogo, CodexLogo } from '../icons/cli-logos'
 import { loadAccountLogins } from '../../store/account-login-store'
 import { loadClaudeProfiles, useClaudeProfileStore } from '../../store/claude-profile-store'
 import { loadCodexAccounts, useCodexAccountStore } from '../../store/codex-account-store'
-import { addWorkspace, setActiveWorkspace } from '../../lib/workspace-actions'
+import { addWorkspace, isUnderRoot, setActiveWorkspace } from '../../lib/workspace-actions'
 import { launchSession } from '../../lib/launch-session'
 import { useWorkspaceStore } from '../../store/workspace-store'
 import './onboarding.css'
@@ -128,6 +128,7 @@ export function Onboarding(): React.JSX.Element | null {
   const [talkTo, setTalkTo] = useState<OnboardingAgentId | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [made, setMade] = useState<{ id: string; name: string; root: string } | null>(null)
   const [opened, setOpened] = useState<{ name: string; agent: OnboardingAgentId | null } | null>(
     null
   )
@@ -140,6 +141,7 @@ export function Onboarding(): React.JSX.Element | null {
     setDirection(1)
     setError(null)
     setOpened(null)
+    setMade(null)
     setParent((p) => p ?? next.home)
     setOpen(true)
     void loadAccountLogins()
@@ -218,27 +220,53 @@ export function Onboarding(): React.JSX.Element | null {
     setBusy(true)
     setError(null)
     try {
-      const root =
-        existing ?? (await window.electronAPI.onboardingCreateFolder(parent ?? state.home, name))
-      const ws = await addWorkspace(root, null, name)
+      // A workspace made by an earlier try whose session failed is taken up
+      // again, never made twice: only the session is retried.
+      let ws = made
       if (!ws) {
-        setError('That folder is inside a workspace you already have, or holds one. Pick another.')
-        return
+        const root = existing ?? folderTarget(parent ?? state.home, name)
+        if (!root) {
+          setError('Give the workspace a name.')
+          return
+        }
+        // Refused before anything is made on disk.
+        const clash = useWorkspaceStore
+          .getState()
+          .workspaces.find((w) => isUnderRoot(w.rootDir, root) || isUnderRoot(root, w.rootDir))
+        if (clash) {
+          setError(`That folder is inside ${clash.name}, or holds it. Pick another place.`)
+          return
+        }
+        const folder =
+          existing ?? (await window.electronAPI.onboardingCreateFolder(parent ?? state.home, name))
+        const added = await addWorkspace(folder, null, name)
+        if (!added) {
+          setError(
+            'That folder is inside a workspace you already have, or holds one. Pick another.'
+          )
+          return
+        }
+        ws = { id: added.id, name: added.name, root: added.rootDir }
+        setMade(ws)
       }
       if (useWorkspaceStore.getState().activeWorkspaceId !== ws.id) await setActiveWorkspace(ws.id)
       if (agent) {
         const accountId = connections[agent]!
-        await launchSession({
+        const id = await launchSession({
           setup:
             agent === 'claude'
               ? { kind: 'claude', dangerousMode: false, claudeProfileId: accountId }
               : { kind: 'codex', dangerousMode: false, codexAccountId: accountId },
-          cwd: { kind: 'path', path: root },
+          cwd: { kind: 'path', path: ws.root },
           workspaceId: ws.id,
           initialPrompt: setupLine.trim() || FIRST_MESSAGE,
           remember: true,
           throwOnError: true
         })
+        // The chosen style, on the session itself: this is also how the
+        // process that opens sessions (the separate server, on a packaged
+        // Mac) learns it as the default for every chat after this one.
+        if (id) await window.electronAPI.sessionsSetView(id, chatView).catch(() => undefined)
       }
       setOpened({ name: ws.name, agent })
       go('done')

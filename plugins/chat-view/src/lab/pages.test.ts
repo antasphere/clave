@@ -167,6 +167,27 @@ describe('buildPages', () => {
     expect(after.at(-1)!.number).toBe(2)
   })
 
+  it('keeps the reader on a page with no question when its question arrives in front', () => {
+    // History is cut mid-answer: the oldest loaded page has no question yet.
+    const tail = reduce([
+      { type: 'assistant_text', delta: 'the end of an old answer', final: true },
+      { type: 'user_message', text: 'New question' },
+      { type: 'assistant_text', delta: 'new answer', final: true }
+    ])
+    const at = (list: typeof tail, base: number) => (e: (typeof tail)[number]) =>
+      list.includes(e) ? base + list.indexOf(e) : undefined
+    const before = buildPages(tail, at(tail, 2), 'idle')
+    const held = before[0].key
+    expect(currentPage(before, held)?.title).toBe('Before the first question')
+
+    const head = reduce([{ type: 'user_message', text: 'Old question' }])
+    const all = [...head, ...tail]
+    const after = buildPages(all, (e) => (head.includes(e) ? 1 : at(tail, 2)(e)), 'idle')
+    expect(after[0].key).not.toBe(held)
+    expect(currentPage(after, held)?.title).toBe('Old question')
+    expect(turnPage(after, held, 1)?.title).toBe('New question')
+  })
+
   it('names a message from another tab by its sender', () => {
     const [page] = pagesOf([
       {

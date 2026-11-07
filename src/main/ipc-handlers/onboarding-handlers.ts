@@ -12,7 +12,7 @@ import { ONBOARDING_IPC, type OnboardingAgentId } from '../../shared/onboarding'
 const IDS = new Set<string>(['claude', 'codex'])
 
 export function registerOnboardingHandlers(): void {
-  ipcMain.handle(ONBOARDING_IPC.getState, () => getOnboardingState())
+  ipcMain.handle(ONBOARDING_IPC.getState, (event) => getOnboardingState(event.sender.id))
   ipcMain.handle(ONBOARDING_IPC.agents, (_event, fresh: unknown) => describeAgents(fresh === true))
   ipcMain.handle(ONBOARDING_IPC.install, (_event, id: unknown) => {
     if (typeof id !== 'string' || !IDS.has(id)) throw new Error('Unknown agent')

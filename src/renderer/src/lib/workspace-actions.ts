@@ -637,7 +637,7 @@ async function claimWorkspace(id: string | null): Promise<boolean> {
 
 /** Renderer-side path prefix test (no node path module here). Roots are
  *  normalized absolute paths; candidate paths come from pin blueprints. */
-function isUnderRoot(rootDir: string, p: string): boolean {
+export function isUnderRoot(rootDir: string, p: string): boolean {
   return p === rootDir || p.startsWith(rootDir.endsWith('/') ? rootDir : rootDir + '/')
 }
 

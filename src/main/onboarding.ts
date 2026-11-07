@@ -1,13 +1,9 @@
-import { execFile } from 'node:child_process'
+import { spawn } from 'node:child_process'
 import { accessSync, constants, mkdirSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { isAbsolute, join } from 'node:path'
 import { preferencesManager } from './preferences-manager'
-import {
-  getUserShell,
-  loginShellEnvAsync,
-  refreshLoginShellEnv
-} from './sessions/adapters/pty-backend'
+import { loginShellEnvAsync, refreshLoginShellEnv } from './sessions/adapters/pty-backend'
 import { agentUpdateManager } from './agent-updates'
 import { TEST_NO_ACTIVATE, TEST_ONBOARDING } from './test-mode'
 import { rememberChatView } from './sessions/chat-view-default'
@@ -36,7 +32,6 @@ import type {
  */
 
 const CLAUDE_INSTALL = 'curl -fsSL https://claude.ai/install.sh | bash'
-const CLAUDE_DIR = join(homedir(), '.local', 'bin')
 const CODEX_HELP = 'https://developers.openai.com/codex/cli'
 /** An install that has not finished by then is not going to. */
 const INSTALL_TIMEOUT_MS = 10 * 60_000
@@ -71,42 +66,42 @@ export function codexInstallCommand(pathValue: string | undefined): string | nul
   return null
 }
 
-/** Append a folder to the cached login PATH (the object Clave's spawns read). */
-function ensureOnPath(env: Record<string, string>, dir: string): void {
-  const dirs = (env.PATH || '').split(':').filter(Boolean)
-  if (!dirs.includes(dir)) env.PATH = [...dirs, dir].join(':')
-}
-
-let installing: OnboardingAgentId | null = null
+/** The agents whose installer is running, claimed before the first await so
+ *  two clicks can never start the same install twice. */
+const installing = new Set<OnboardingAgentId>()
 
 /** The two agents as the walk shows them. `fresh` reads the login shell
- *  again (after an install, or on "Check again"); otherwise the cached copy. */
+ *  again (after an install, or on "Check again"); otherwise the cached copy.
+ *  The login PATH always ends with the native installer's folder
+ *  (`withNativeAgentDirs`), so a Claude installed there is found either way. */
 export async function describeAgents(fresh = false): Promise<OnboardingAgent[]> {
-  // The Claude binary in its native folder counts even when the PATH does not
-  // name that folder yet: the cached PATH is told about it, and Clave's own
-  // spawns find it.
-  const nativeClaude = executable(join(CLAUDE_DIR, 'claude'))
   const env = fresh ? await refreshLoginShellEnv() : await loginShellEnvAsync()
-  if (nativeClaude) ensureOnPath(env, CLAUDE_DIR)
   const codexCommand = codexInstallCommand(env.PATH)
   return (['claude', 'codex'] as const).map((id) => {
     const found = findOnPath(COMMANDS[id], env.PATH)
     return {
       id,
       installed: found !== null,
-      installing: installing === id,
+      installing: installing.has(id),
       installCommand: id === 'claude' ? CLAUDE_INSTALL : codexCommand,
       helpUrl: id === 'codex' && !codexCommand ? CODEX_HELP : null
     }
   })
 }
 
-/** Cheap: read at every window's start, so it runs no shell. */
-export function getOnboardingState(): OnboardingState {
-  const pending = preferencesManager.get('onboarding') === 'pending'
+/** The window the walk was handed to in this run: only that one shows it,
+ *  so a second window opened meanwhile never starts a second walk. */
+let walkWindow: number | null = null
+
+/** Cheap: read at every window's start, so it runs no shell. `windowId` is
+ *  the asking window's web contents. */
+export function getOnboardingState(windowId: number | null = null): OnboardingState {
+  const pending =
+    preferencesManager.get('onboarding') === 'pending' && (!TEST_NO_ACTIVATE || TEST_ONBOARDING)
+  if (pending && walkWindow === null) walkWindow = windowId
   const chatView = preferencesManager.get('chatView')
   return {
-    show: pending && (!TEST_NO_ACTIVATE || TEST_ONBOARDING),
+    show: pending && walkWindow === windowId,
     home: homedir(),
     chatView: typeof chatView === 'string' ? chatView : null
   }
@@ -122,49 +117,82 @@ export function completeOnboarding(): void {
   preferencesManager.set('onboarding', 'done')
 }
 
-/** Run the agent's installer in the login shell, then look again. */
+/**
+ * Run a constant installer command: under bash with pipefail, so a download
+ * that fails fails the pipe (`curl … | bash` exits 0 otherwise); in a process
+ * group of its own, so the timeout ends every child (curl, the installer,
+ * npm, brew) and not only the shell.
+ */
+export function runInstaller(
+  command: string,
+  env: Record<string, string>,
+  timeoutMs: number = INSTALL_TIMEOUT_MS
+): Promise<{ ok: boolean; output: string }> {
+  return new Promise((resolve) => {
+    let output = ''
+    let settled = false
+    const child = spawn('/bin/bash', ['-c', `set -o pipefail; ${command}`], {
+      env: { ...env, NONINTERACTIVE: '1', HOMEBREW_NO_AUTO_UPDATE: '1' },
+      cwd: homedir(),
+      detached: true,
+      stdio: ['ignore', 'pipe', 'pipe']
+    })
+    const keep = (chunk: Buffer): void => {
+      output = (output + chunk.toString()).slice(-64 * 1024)
+    }
+    child.stdout?.on('data', keep)
+    child.stderr?.on('data', keep)
+    const finish = (ok: boolean, extra = ''): void => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      resolve({ ok, output: output + extra })
+    }
+    const timer = setTimeout(() => {
+      try {
+        if (child.pid) process.kill(-child.pid, 'SIGKILL')
+      } catch {
+        // Already gone.
+      }
+      finish(false, '\nThe install took too long and was stopped.')
+    }, timeoutMs)
+    child.on('error', (error) => finish(false, `\n${error.message}`))
+    child.on('close', (code) => finish(code === 0))
+  })
+}
+
+/** Run the agent's installer, then look again. */
 export async function installAgent(id: OnboardingAgentId): Promise<OnboardingInstallResult> {
-  if (installing) {
-    return { ok: false, message: 'Another install is running.', agents: await describeAgents() }
+  if (installing.has(id)) {
+    return { ok: false, message: 'Already installing.', agents: await describeAgents() }
   }
-  const env = await refreshLoginShellEnv()
-  const command = id === 'claude' ? CLAUDE_INSTALL : codexInstallCommand(env.PATH)
-  if (!command) {
+  installing.add(id)
+  try {
+    const env = await refreshLoginShellEnv()
+    const command = id === 'claude' ? CLAUDE_INSTALL : codexInstallCommand(env.PATH)
+    if (!command) {
+      return {
+        ok: false,
+        message: 'Codex needs npm or Homebrew to install from here.',
+        agents: await describeAgents()
+      }
+    }
+    const outcome = await runInstaller(command, env)
+    installing.delete(id)
+    const agents = await describeAgents(true)
+    // The agent updater's view (Settings → Agents) catches up in the background.
+    void agentUpdateManager.checkAll().catch(() => undefined)
+    if (agents.find((a) => a.id === id)?.installed) return { ok: true, message: null, agents }
+    const tail = outcome.output.trim().slice(-OUTPUT_TAIL)
     return {
       ok: false,
-      message: 'Codex needs npm or Homebrew to install from here.',
-      agents: await describeAgents()
+      message: outcome.ok
+        ? 'The installer finished, but the command is still not found.'
+        : tail || 'The install failed.',
+      agents
     }
-  }
-  installing = id
-  const outcome = await new Promise<{ ok: boolean; output: string }>((resolve) => {
-    execFile(
-      getUserShell(),
-      ['-lc', command],
-      {
-        env: { ...env, NONINTERACTIVE: '1', HOMEBREW_NO_AUTO_UPDATE: '1' },
-        cwd: homedir(),
-        timeout: INSTALL_TIMEOUT_MS,
-        maxBuffer: 10 * 1024 * 1024
-      },
-      (error, stdout, stderr) => {
-        resolve({ ok: !error, output: `${stdout ?? ''}${stderr ?? ''}` })
-      }
-    )
-  })
-  installing = null
-  const agents = await describeAgents(true)
-  // The agent updater's view (Settings → Agents) catches up in the background.
-  void agentUpdateManager.checkAll().catch(() => undefined)
-  const installed = agents.find((a) => a.id === id)?.installed === true
-  if (installed) return { ok: true, message: null, agents }
-  const tail = outcome.output.trim().slice(-OUTPUT_TAIL)
-  return {
-    ok: false,
-    message: outcome.ok
-      ? 'The installer finished, but the command is still not found.'
-      : tail || 'The install failed.',
-    agents
+  } finally {
+    installing.delete(id)
   }
 }
 

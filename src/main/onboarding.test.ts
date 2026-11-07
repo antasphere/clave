@@ -3,16 +3,31 @@ import fs from 'fs'
 import os from 'os'
 import path from 'path'
 
-vi.mock('./agent-updates', () => ({ agentUpdateManager: { checkAll: vi.fn() } }))
+vi.mock('./agent-updates', () => ({
+  agentUpdateManager: { checkAll: vi.fn(() => Promise.resolve()) }
+}))
 vi.mock('./test-mode', () => ({ TEST_NO_ACTIVATE: false, TEST_ONBOARDING: false }))
 vi.mock('./preferences-manager', () => ({ preferencesManager: { get: vi.fn(), set: vi.fn() } }))
+// The login environment the walk reads: a PATH a test sets, behind a delay
+// like the real login shell's, so two clicks can land inside it.
+const login = vi.hoisted(() => ({ env: {} as Record<string, string> }))
 vi.mock('./sessions/adapters/pty-backend', () => ({
-  getUserShell: () => '/bin/zsh',
-  loginShellEnvAsync: async () => ({}),
-  refreshLoginShellEnv: async () => ({})
+  loginShellEnvAsync: async () => login.env,
+  refreshLoginShellEnv: async () => {
+    await new Promise((r) => setTimeout(r, 40))
+    return login.env
+  }
 }))
+vi.mock('./sessions/chat-view-default', () => ({ rememberChatView: vi.fn() }))
 
-import { codexInstallCommand, createWorkspaceFolder, findOnPath, folderNameOf } from './onboarding'
+import {
+  codexInstallCommand,
+  createWorkspaceFolder,
+  findOnPath,
+  folderNameOf,
+  installAgent,
+  runInstaller
+} from './onboarding'
 
 /**
  * The first-run walk's rules in main: an agent is found the way a login shell
@@ -81,5 +96,43 @@ describe('the first workspace folder', () => {
     expect(() => createWorkspaceFolder('relative', 'x')).toThrow(/where/)
     expect(() => createWorkspaceFolder(parent, '  ')).toThrow(/name/)
     expect(() => createWorkspaceFolder(parent, 'taken')).toThrow(/file/)
+  })
+})
+
+describe('the one-click install', () => {
+  const env = { PATH: '/usr/bin:/bin' }
+
+  it('fails when the download in the pipe fails, not only the last command', async () => {
+    expect((await runInstaller('false | cat', env)).ok).toBe(false)
+    expect((await runInstaller('echo hi | cat', env)).ok).toBe(true)
+  })
+
+  it('ends every child of the installer when it takes too long', async () => {
+    const marker = path.join(binDir(), 'still-running')
+    const started = Date.now()
+    const result = await runInstaller(`(sleep 2; touch ${JSON.stringify(marker)}) & wait`, env, 200)
+    expect(result.ok).toBe(false)
+    expect(result.output).toMatch(/too long/)
+    expect(Date.now() - started).toBeLessThan(1500)
+    await new Promise((r) => setTimeout(r, 2300))
+    expect(fs.existsSync(marker)).toBe(false)
+  }, 6000)
+
+  it('runs one install when Install is clicked twice', async () => {
+    // A fake npm that counts its runs and puts a `codex` on the PATH.
+    const bin = binDir()
+    const count = path.join(bin, 'runs')
+    fs.writeFileSync(
+      path.join(bin, 'npm'),
+      `#!/bin/sh\necho x >> ${JSON.stringify(count)}\nsleep 0.2\nprintf '#!/bin/sh\\n' > ${JSON.stringify(path.join(bin, 'codex'))}\nchmod +x ${JSON.stringify(path.join(bin, 'codex'))}\n`
+    )
+    fs.chmodSync(path.join(bin, 'npm'), 0o755)
+    login.env = { PATH: `${bin}:/usr/bin:/bin` }
+    const [first, second] = await Promise.all([installAgent('codex'), installAgent('codex')])
+    expect(fs.readFileSync(count, 'utf-8').trim().split('\n')).toHaveLength(1)
+    expect([first.ok, second.ok].sort()).toEqual([false, true])
+    expect(first.agents.concat(second.agents).some((a) => a.id === 'codex' && a.installed)).toBe(
+      true
+    )
   })
 })

@@ -45,3 +45,20 @@ export function folderPreview(home: string, parent: string, name: string): strin
     parent === home ? '~' : parent.startsWith(home + '/') ? '~' + parent.slice(home.length) : parent
   return `${where}/${clean || '…'}`
 }
+
+/** The folder name the walk makes, as main makes it (`folderNameOf` in
+ *  `src/main/onboarding.ts`): one visible segment, or null when empty. */
+export function folderName(name: string): string | null {
+  const clean = name
+    .replace(/[/:\\]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/^\.+/, '')
+  return clean.length > 0 && clean.length <= 120 ? clean : null
+}
+
+/** The absolute path the walk will make, for the clash check before it does. */
+export function folderTarget(parent: string, name: string): string | null {
+  const folder = folderName(name)
+  return folder ? `${parent.replace(/\/+$/, '')}/${folder}` : null
+}

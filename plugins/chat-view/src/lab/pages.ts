@@ -30,6 +30,11 @@ export interface Page {
   /** The ordinal of the page's first entry: a page of the past arriving in
    *  front shifts no key, so the page the reader is on stays the one shown. */
   key: string
+  /** The key every entry on the page would have had as a page's first: when
+   *  the past arrives in front, a page that had no question is merged into
+   *  the question before it and its key changes, so the page a reader holds
+   *  is found again by any of these (`currentPage`). */
+  holds: string[]
   /** 1-based, by position: the number a reader says ("page 3"). */
   number: number
   /** The messages that asked: one, or several sent before any answer. Empty
@@ -110,6 +115,7 @@ export function buildPages(
   const entries = visibleEntries(all)
   interface Draft {
     key: string
+    holds: string[]
     question: UserEntry[]
     rows: PageRow[]
     at: number
@@ -123,15 +129,23 @@ export function buildPages(
       // question it follows: the reader was still asking.
       if (page && page.question.length > 0 && !answered(page.rows)) page.question.push(entry)
       else {
-        page = { key: `p${keyOf(entry, index)}`, question: [entry], rows: [], at: entry.at }
+        page = {
+          key: `p${keyOf(entry, index)}`,
+          holds: [],
+          question: [entry],
+          rows: [],
+          at: entry.at
+        }
         drafts.push(page)
       }
+      page.holds.push(`p${keyOf(entry, index)}`)
       return
     }
     if (!page) {
-      page = { key: `p${keyOf(entry, index)}`, question: [], rows: [], at: entry.at }
+      page = { key: `p${keyOf(entry, index)}`, holds: [], question: [], rows: [], at: entry.at }
       drafts.push(page)
     }
+    page.holds.push(`p${keyOf(entry, index)}`)
     const last = page.rows.at(-1)
     const row = (): PageRow => {
       const fresh: PageRow = { key: `r${keyOf(entry, index)}`, notes: [], prose: null, error: null }
@@ -169,6 +183,7 @@ export function buildPages(
       .join('\n\n')
     return {
       key: draft.key,
+      holds: draft.holds,
       number: i + 1,
       question: draft.question,
       from: parsed[0]?.from,
@@ -200,17 +215,21 @@ function statusOf(question: UserEntry[], rows: PageRow[], state: AgentState): Pa
 /** The page shown: the one the reader holds, while it exists, else the last
  *  (the page being written). Null on an empty book. */
 export function currentPage(pages: Page[], held: string | null): Page | null {
-  if (held) {
-    const found = pages.find((p) => p.key === held)
-    if (found) return found
-  }
-  return pages.at(-1) ?? null
+  const at = indexOfHeld(pages, held)
+  return at >= 0 ? pages[at] : (pages.at(-1) ?? null)
+}
+
+/** Where the held page is: by its key, else by the page that took it in. */
+function indexOfHeld(pages: Page[], held: string | null): number {
+  if (!held) return -1
+  const exact = pages.findIndex((p) => p.key === held)
+  return exact >= 0 ? exact : pages.findIndex((p) => p.holds.includes(held))
 }
 
 /** The page `step` pages away from `key`, clamped to the book. */
 export function turnPage(pages: Page[], key: string | null, step: number): Page | null {
   if (!pages.length) return null
-  const at = key ? pages.findIndex((p) => p.key === key) : pages.length - 1
+  const at = key ? indexOfHeld(pages, key) : pages.length - 1
   const from = at < 0 ? pages.length - 1 : at
   return pages[Math.max(0, Math.min(pages.length - 1, from + step))]
 }

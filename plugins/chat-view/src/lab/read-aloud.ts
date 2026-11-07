@@ -31,6 +31,11 @@ export function useAutoRead(): [boolean, (on: boolean) => void] {
   return [on, set]
 }
 
+/** Whose reading the one system voice is speaking: a pane's own token, so a
+ *  pane cancels the voice only while the reading is its own, never another
+ *  pane's that took the voice over. */
+let voiceOwner: symbol | null = null
+
 /** The page read aloud through the system's own voice (the Web Speech API's
  *  synthesis, offline on macOS). One reading at a time across the app: a
  *  new one cancels whatever was being read, ours or another pane's. */
@@ -46,12 +51,14 @@ export function useReadAloud(): {
   // The generation of the reading in flight: an utterance of a cancelled one
   // still fires its end, and must not move the new one along.
   const generation = useRef(0)
-  // Whether the voice is ours right now, so leaving cancels only our reading.
-  const speaking = useRef(false)
+  // This pane's token: the voice is ours while `voiceOwner` is it.
+  const me = useRef<symbol>(Symbol('folio-voice'))
   const stop = useCallback((): void => {
     generation.current += 1
-    if (speaking.current) synth?.cancel()
-    speaking.current = false
+    if (voiceOwner === me.current) {
+      synth?.cancel()
+      voiceOwner = null
+    }
     setReading(null)
   }, [synth])
   const read = useCallback(
@@ -61,7 +68,7 @@ export function useReadAloud(): {
       const mine = ++generation.current
       const chunks = speechChunks(speakable(markdown))
       if (!chunks.length) return setReading(null)
-      speaking.current = true
+      voiceOwner = me.current
       setReading({ key, at: 0, of: chunks.length })
       chunks.forEach((chunk, at) => {
         const utterance = new SpeechSynthesisUtterance(chunk)
@@ -72,7 +79,7 @@ export function useReadAloud(): {
         }
         const end = (): void => {
           if (generation.current !== mine || at !== chunks.length - 1) return
-          speaking.current = false
+          if (voiceOwner === me.current) voiceOwner = null
           setReading(null)
         }
         utterance.onend = end
@@ -82,12 +89,15 @@ export function useReadAloud(): {
     },
     [synth, supported]
   )
-  // A view gone takes its voice with it.
-  useEffect(
-    () => () => {
-      if (speaking.current) synth?.cancel()
-    },
-    [synth]
-  )
+  // A view gone takes its voice with it, and only its own.
+  useEffect(() => {
+    const token = me.current
+    return () => {
+      if (voiceOwner === token) {
+        synth?.cancel()
+        voiceOwner = null
+      }
+    }
+  }, [synth])
   return { supported, reading, read, stop }
 }

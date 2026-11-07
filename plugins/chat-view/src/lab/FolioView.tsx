@@ -486,7 +486,7 @@ function Spine({
       {contents && (
         <div
           ref={list}
-          className="menu-surface folio-contents"
+          className="menu-surface folio-contents p-1"
           role="menu"
           aria-label="Contents"
           onKeyDown={(event) => {
@@ -494,6 +494,9 @@ function Spine({
               event.stopPropagation()
               setContents(false)
             }
+            // The arrows move in the list; they never reach the pane, which
+            // would turn the page under the open menu.
+            if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') event.stopPropagation()
           }}
         >
           <div className="menu-label">Contents</div>
@@ -643,6 +646,12 @@ export function FolioView({ session, onState, visible = true }: ChatViewProps): 
   // answer as it is finished while this pane is on screen.
   const voice = useReadAloud()
   const [autoRead, setAutoRead] = useAutoRead()
+  // Switched to another view, the pane stops reading: a voice nobody can see
+  // the source of, or stop, is not a reading.
+  const stopVoice = voice.stop
+  useEffect(() => {
+    if (!visible) stopVoice()
+  }, [visible, stopVoice])
   const latest = pages.at(-1)
   const writing = useRef<string | null>(null)
   const { read } = voice

@@ -55,13 +55,25 @@ describe.each(eachTestPorts())('PreferencesManager on %s', (_name, makePorts) =>
 
     // An install from before the walk: its preferences file has no key.
     const upgraded = makePorts()
-    fs.writeFileSync(path.join(upgraded.dir, 'preferences.json'), JSON.stringify({ appIcon: 'light' }))
+    fs.writeFileSync(
+      path.join(upgraded.dir, 'preferences.json'),
+      JSON.stringify({ appIcon: 'light' })
+    )
     expect(new PreferencesManager(upgraded).get('onboarding')).toBe('done')
 
     // An install that never wrote preferences.json, but left other files.
     const older = makePorts()
     fs.writeFileSync(path.join(older.dir, 'claude-accounts.json'), '[]')
     expect(new PreferencesManager(older).get('onboarding')).toBe('done')
+  })
+
+  it('keeps a first run pending when the app quits before anything else saved', () => {
+    const ports = makePorts()
+    expect(new PreferencesManager(ports).get('onboarding')).toBe('pending')
+    // Other managers leave their files during the run; nothing else touched preferences.
+    fs.writeFileSync(path.join(ports.dir, 'claude-accounts.json'), '[]')
+    fs.writeFileSync(path.join(ports.dir, 'clave-server.json'), '{}')
+    expect(new PreferencesManager(ports).get('onboarding')).toBe('pending')
   })
 
   it('keeps a first run pending across launches until the walk ends', () => {

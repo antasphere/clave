@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { CHAT_VIEWS, FIRST_MESSAGE, SETUP_LINE_HINT, folderPreview } from './content'
+import { CHAT_VIEWS, FIRST_MESSAGE, SETUP_LINE_HINT, folderPreview, folderTarget } from './content'
 
 /**
  * The walk's words. Clave is public: nothing in them names a team, a server
@@ -28,5 +28,13 @@ describe('the first-run walk', () => {
     expect(folderPreview('/Users/a', '/Users/a', 'My workspace')).toBe('~/My workspace')
     expect(folderPreview('/Users/a', '/Users/a/Code', 'x/y')).toBe('~/Code/x y')
     expect(folderPreview('/Users/a', '/Volumes/Work', '')).toBe('/Volumes/Work/…')
+  })
+})
+
+describe('the folder the walk makes', () => {
+  it('is the path main will create, so a clash is found before anything is made', () => {
+    expect(folderTarget('/Users/a', 'My workspace')).toBe('/Users/a/My workspace')
+    expect(folderTarget('/Users/a/', 'x/y:z')).toBe('/Users/a/x y z')
+    expect(folderTarget('/Users/a', '  ')).toBeNull()
   })
 })
