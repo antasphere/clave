@@ -1,7 +1,6 @@
 import { execFile, type ChildProcess } from 'child_process'
-import { join } from 'path'
-import { app } from 'electron'
 import { DigestStore } from './exchange-digest-store'
+import { settingsPorts } from './ports'
 import {
   accountTokenForSpawn,
   getLoginShellEnv,
@@ -64,10 +63,15 @@ let closed = false
 const clip = (text: string | undefined): string | undefined =>
   text === undefined ? undefined : text.length > MAX_CHARS ? `${text.slice(0, MAX_CHARS)}…` : text
 
-/** The digests read so far, filed by session (exchange-digest-store.ts). */
+/** The digests read so far, filed by session (exchange-digest-store.ts),
+ *  in Clave's data folder through the storage port rather than Electron's
+ *  `app`: this module is loaded by the session manager, which the standalone
+ *  server runs under Bun, where an import of Electron ends the process before
+ *  it announces itself. Inside the app the port is Electron's own data folder,
+ *  so the file is where it was. */
 let store: DigestStore | null = null
 const digests = (): DigestStore =>
-  (store ??= new DigestStore(join(app.getPath('userData'), 'exchange-digests.json')))
+  (store ??= new DigestStore(settingsPorts().storage.pathOf('exchange-digests.json')))
 
 /** The same messages asked for twice at once (both views of a tab, a remount)
  *  share one call. */

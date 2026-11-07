@@ -3,8 +3,9 @@ import os from 'os'
 import path from 'path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { DigestStore } from './exchange-digest-store'
+import type { DigestDone } from '../shared/exchange-digest'
 
-const digest = (summary: string) => ({
+const digest = (summary: string): DigestDone => ({
   ok: true as const,
   needsYou: false,
   summary,

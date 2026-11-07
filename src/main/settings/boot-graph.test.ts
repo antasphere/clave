@@ -87,4 +87,12 @@ describe('the settings source loads nothing of Effect at boot', () => {
     // behind its runtime test; a second one is a new edge to Electron.
     expect(requires).toBe(1)
   })
+  it('the standalone server entry imports Electron nowhere, through any module it loads', async () => {
+    // The entry runs under Bun, where a static import of Electron ends the
+    // process before it announces itself (`Export named 'app' not found`):
+    // the exchange digests' store once took its folder from Electron's
+    // `app`, reached through the session manager, and no server could start.
+    const { externals } = await staticallyReached('src/main/server-entry.ts')
+    expect(externals.filter((spec) => spec === 'electron')).toEqual([])
+  })
 })
