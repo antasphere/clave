@@ -240,7 +240,7 @@ function MarkdownImage({ url, alt, t }: { url: string; alt?: string | null; t: T
   const [failed, setFailed] = useState(false)
   const [width, setWidth] = useState(300)
   const [ratio, setRatio] = useState(1.6)
-  if (failed || !/^https?:\/\//i.test(url))
+  if (failed || !/^(https?:\/\/|data:image\/(?:png|jpe?g|gif|webp);base64,)/i.test(url))
     return <Text style={[type(text.sm), { color: t.colors.textSecondary }]}>{alt || url}</Text>
   return (
     <View onLayout={(e) => setWidth(e.nativeEvent.layout.width)}>
