@@ -17,8 +17,16 @@ const option = (name) => {
   return index < 0 ? undefined : process.argv[index + 1]
 }
 const sha = (s) => createHash('sha256').update(s).digest('hex')
-// Only transport metadata comments differ between Hermes bytecode and JS requests.
-const normalize = (s) => s.replace(/^\/\/[#@] source(?:Mapping)?URL=.*$/gm, '').trimEnd()
+// Metro repeats the bytecode transport choice in its lazy grammar URLs.
+// Keep the grammar path and every other query byte, just as we keep all source.
+export const normalizeBundleTransport = (s) =>
+  s
+    .replace(/^\/\/[#@] source(?:Mapping)?URL=.*$/gm, '')
+    .replace(
+      /(\/node_modules\/@shikijs\/langs\/dist\/[\w.-]+\.bundle\?[^"\s]*[&?]transform\.bytecode=)[01](?=&|"|$)/g,
+      '$1<transport>'
+    )
+    .trimEnd()
 
 export async function proveNativeSource({ port, deviceName, output, bundleHost = '127.0.0.1' }) {
   execFileSync('git', ['diff', 'HEAD', '--exit-code', '--quiet'], { cwd: pkg, stdio: 'pipe' })
@@ -93,8 +101,8 @@ export async function proveNativeSource({ port, deviceName, output, bundleHost =
     servedUrl.searchParams.set('transform.bytecode', '0')
     const served = await (await fetch(servedUrl)).text()
     assert.equal(
-      sha(normalize(scriptSource)),
-      sha(normalize(served)),
+      sha(normalizeBundleTransport(scriptSource)),
+      sha(normalizeBundleTransport(served)),
       'Loaded Hermes source differs from the current Metro bundle'
     )
     const mapUrl = new URL(toNormalUrl(bundle.sourceMapURL))
@@ -133,7 +141,7 @@ export async function proveNativeSource({ port, deviceName, output, bundleHost =
       deviceName: own[0].deviceName,
       port,
       bundleHost,
-      bundleSha256: sha(normalize(scriptSource)),
+      bundleSha256: sha(normalizeBundleTransport(scriptSource)),
       checked
     }
     if (output) writeFileSync(output, `${JSON.stringify(proof, null, 2)}\n`)
