@@ -113,7 +113,14 @@ interface LiveRun {
   /** The report taken so far: its status, applied when the run ends. */
   report: { status: RoutineStatus } | null
   ended: boolean
+  /** The turn was interrupted (the app quitting or restarting stops its chats that way, as does a stop). */
+  interrupted?: boolean
 }
+
+/** Why a run that was interrupted before its report ended (7 November 2026: a run cut by
+ *  the update to beta.15 read as "ended without a report", which said the agent failed). */
+export const INTERRUPTED_REASON =
+  'interrupted before its report: Clave quit or restarted, or the run was stopped'
 
 export interface RoutineService extends RoutinesService {
   /** The listing, answered at once: this implementation needs no await. */
@@ -310,6 +317,7 @@ export function createRoutineService(options: RoutineServiceOptions): RoutineSer
       if (event.type === 'session_meta' && event.providerSessionId) {
         store.updateRun(entry.run.id, { providerSessionId: event.providerSessionId })
       }
+      if (event.type === 'turn_interrupted') entry.interrupted = true
       if (event.type === 'state_change') {
         if (event.state === 'blocked') {
           store.updateRun(entry.run.id, { state: 'waiting' })
@@ -321,7 +329,9 @@ export function createRoutineService(options: RoutineServiceOptions): RoutineSer
             emit()
           }
         } else if (event.state === 'done' || event.state === 'ended') {
-          finish(entry, { reason: 'ended without a report' })
+          finish(entry, {
+            reason: entry.interrupted ? INTERRUPTED_REASON : 'ended without a report'
+          })
         }
       }
     }
@@ -330,7 +340,11 @@ export function createRoutineService(options: RoutineServiceOptions): RoutineSer
       entry.offs.push(sessions.subscribe(sessionId, onStream))
       entry.offs.push(
         sessions.subscribeExit(sessionId, (code) =>
-          finish(entry, { reason: `the process exited with code ${code} without a report` })
+          finish(entry, {
+            reason: entry.interrupted
+              ? INTERRUPTED_REASON
+              : `the process exited with code ${code} without a report`
+          })
         )
       )
     } catch (error) {

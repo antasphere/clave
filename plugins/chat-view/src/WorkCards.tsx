@@ -214,6 +214,15 @@ export function WorkCards({
                   ) : (
                     <span>{elapsed(agent.startedAt, now)}</span>
                   )}
+                  {/* The model chip's room at the end of this line: the chip
+                      is its own button, so it cannot sit in this one, and is
+                      laid over this invisible copy of itself instead. */}
+                  {!shell && (
+                    <span className="term-agent-model work-card-model-room" aria-hidden="true">
+                      {claudeModelName(agent.model) ?? agent.model ?? '…'}
+                      {agent.taskId && canRelaunch(agent) && <ChevronDownIcon />}
+                    </span>
+                  )}
                 </span>
               </span>
             </button>

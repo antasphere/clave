@@ -44,10 +44,21 @@ export function invalidTrouble(reason: string): Trouble {
   }
 }
 
+/** A run cut short from outside (the app quitting or restarting, a stop, the
+ *  server going down), which is not the agent failing. */
+const CUT_SHORT = /^interrupted before its report|the server stopped during the run/i
+
 export function failedRunTrouble(
   reason: string | null | undefined,
   headline?: string | null
 ): Trouble {
+  if (reason && CUT_SHORT.test(reason))
+    return {
+      title: 'The run was interrupted',
+      text: 'Clave quit or restarted while it ran (an update does that). Run now runs it again.',
+      detail: reason,
+      tone: 'attention'
+    }
   return {
     title: 'The run did not finish',
     text:

@@ -6,7 +6,12 @@ import type { SessionHostService, StartInput } from '@clave/server'
 import type { Session, SessionInfo, SessionStream } from '@clave/contract/sessions'
 import { WorkspaceFiles, memoryWorkspaceFilesStorage } from '@clave/server/workspace-files'
 import type { LaunchFacts } from './launch'
-import { RoutineReportRefusal, createRoutineService, type RoutineService } from './service'
+import {
+  RoutineReportRefusal,
+  createRoutineService,
+  type RoutineService,
+  INTERRUPTED_REASON
+} from './service'
 import { RoutinesStore, STORE_FILE } from './store'
 
 /**
@@ -351,6 +356,29 @@ describe('the conversation id the discussion resumes on', () => {
     expect(host.starts[1].windowKey).toBe('w1')
     expect(host.starts[1].options?.link).toBeUndefined()
     expect(sessionId).toBe('s2')
+  })
+})
+
+describe('a run cut short from outside (7 November 2026)', () => {
+  it('says it was interrupted, not that the agent ended without a report', async () => {
+    const host = fakeHost()
+    const file = workspace([routine('Health')])
+    const service = await build(file, host, memory(), { providerSessionIdOf: () => null })
+    await service.runNow(key(file, 'Health'))
+    // the app quitting stops the chat: the CLI acknowledges the interrupt, the turn ends
+    host.emit('s1', { kind: 'event', event: { type: 'turn_interrupted' } })
+    host.emit('s1', { kind: 'event', event: { type: 'state_change', state: 'done' } })
+    const run = service.list().routines[0].runs[0]
+    expect(run.state).toBe('failed')
+    expect(run.reason).toBe(INTERRUPTED_REASON)
+  })
+  it('a run that simply ends without its report still says so', async () => {
+    const host = fakeHost()
+    const file = workspace([routine('Health')])
+    const service = await build(file, host, memory(), { providerSessionIdOf: () => null })
+    await service.runNow(key(file, 'Health'))
+    host.emit('s1', { kind: 'event', event: { type: 'state_change', state: 'done' } })
+    expect(service.list().routines[0].runs[0].reason).toBe('ended without a report')
   })
 })
 
