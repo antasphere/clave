@@ -100,7 +100,7 @@ export async function run(t) {
     const choose = async (kind) => {
       await host.getByLabel('Change view', { exact: true }).click()
       await win
-        .getByRole('menuitem', { name: kind === 'chat' ? 'Chat' : 'Terminal', exact: true })
+        .getByRole('menuitem', { name: kind === 'chat' ? 'Chat' : 'Enclave', exact: true })
         .click()
       await win.getByRole('menu').waitFor({ state: 'hidden' })
       await view(kind).getByRole('textbox', { name: 'Message', exact: true }).waitFor()
@@ -372,7 +372,7 @@ export async function run(t) {
         .getByLabel('Change view', { exact: true })
         .click()
       await win
-        .getByRole('menuitem', { name: kind === 'chat' ? 'Chat' : 'Terminal', exact: true })
+        .getByRole('menuitem', { name: kind === 'chat' ? 'Chat' : 'Enclave', exact: true })
         .click()
       await win.getByRole('menu').waitFor({ state: 'hidden' })
       await win

@@ -210,7 +210,7 @@ require('node:readline').createInterface({input:process.stdin}).on('line', line 
           name: 'Terminal follow-up'
         })
         assert.ok(opened?.sessionId)
-        await chooseView(opened.sessionId, 'Terminal')
+        await chooseView(opened.sessionId, 'Enclave')
         const terminal = win.locator(
           `section.chat-host[data-session-id="${opened.sessionId}"] [data-testid="terminal-view"]`
         )
@@ -285,7 +285,7 @@ require('node:readline').createInterface({input:process.stdin}).on('line', line 
             name: `Claude ${variant} preservation`
           })
           assert.ok(opened?.sessionId)
-          await chooseView(opened.sessionId, variant === 'chat' ? 'Chat' : 'Terminal')
+          await chooseView(opened.sessionId, variant === 'chat' ? 'Chat' : 'Enclave')
           const claude = win.locator(
             `section.chat-host[data-session-id="${opened.sessionId}"] [data-testid="${variant === 'chat' ? 'chat-view' : 'terminal-view'}"]`
           )
