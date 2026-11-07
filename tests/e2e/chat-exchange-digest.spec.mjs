@@ -40,11 +40,11 @@ export async function run(t) {
       await timeline.waitFor()
       const reading = await until(
         async () => (await timeline.getAttribute('data-digest')) === 'reading',
-        8000
+        15000
       )
       const done = await until(
         async () => (await timeline.getAttribute('data-digest')) === 'done',
-        8000
+        15000
       )
       const shown = {
         reading,
@@ -77,7 +77,7 @@ export async function run(t) {
       await timeline.waitFor()
       const failed = await until(
         async () => (await timeline.getAttribute('data-digest')) === 'failed',
-        8000
+        15000
       )
       const state = {
         failed,

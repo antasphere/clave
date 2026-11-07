@@ -279,6 +279,9 @@ export async function run(t) {
         // eighth deck crashed the spec instead).
         { type: 'assistant_text', delta: 'Noted the eighth message.', final: true }
       ])
+      await view.locator('.chat-scroll').evaluate((el) => {
+        el.scrollTop = el.scrollHeight
+      })
       assert.ok(await visible(said('Noted the eighth message.')), 'the frames arrived')
       const between = (
         await view
