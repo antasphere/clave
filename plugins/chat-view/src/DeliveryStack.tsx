@@ -1,10 +1,12 @@
 import { useMemo, useState, type CSSProperties } from 'react'
-import { ChevronDownIcon } from '@heroicons/react/24/outline'
+import { ArrowUpRightIcon, ChevronDownIcon } from '@heroicons/react/24/outline'
+import { requestJump } from './jump'
 import { parseDelivery } from '../../../src/shared/exchange-provenance'
 import { useSessionStore } from '../../../src/renderer/src/store/session-store'
 import { useDisclosure } from './disclosure'
-import { gist, useExchange, useExchanges, type ExchangeSide } from './exchanges'
-import { useDigest } from './digest'
+import { digestMessages, gist, useExchange, useExchanges, type ExchangeSide } from './exchanges'
+import { digestKey } from '../../../src/shared/exchange-digest'
+import { useDigestState } from './digest'
 import { ExchangeDrawing } from './ExchangeDrawing'
 import type { DeliveryEntry, DeliveryGroup } from './tools'
 
@@ -22,7 +24,7 @@ const clock = (at: number): string =>
  * session answered, when. It opens smoothly onto the exchange whole: what this
  * session had asked that tab, the message, and what it answered
  * (`indexExchanges`, by the tabs' ids). At its head, the digest: what the
- * reader needs from these messages, read once they hold still (`useDigest`),
+ * reader needs from these messages, read once they hold still and filed by tab (`useTimelineDigests`),
  * the card it came from marked in accent. The timeline holds the messages ALONE:
  * what the agent says to the reader stays in the transcript beside it (the
  * deck of 5 November 2026 that captured the agent's replies hid a question
@@ -37,23 +39,11 @@ export function DeliveryStack({
 }): React.JSX.Element {
   const names = [...new Set(group.messages.map(senderName))]
   const count = group.messages.length
-  const { index, launch } = useExchanges()
-  // What the digest reads: each message with what this session asked before
-  // it and answered after it (`indexExchanges`).
-  const read = useMemo(
-    () =>
-      group.messages.map((message) => {
-        const exchange = index.get(message) ?? {}
-        return {
-          from: senderName(message),
-          text: (parseDelivery(message.text)?.body ?? message.text).trim(),
-          ...(exchange.request && { request: exchange.request.text }),
-          ...(exchange.reply && { reply: exchange.reply.text })
-        }
-      }),
-    [group.messages, index]
-  )
-  const digest = useDigest(read, launch)
+  const { sessionId, index, recent } = useExchanges()
+  // What the digest reads, and so its key; the view asks for it
+  // (`useTimelineDigests`), this only shows where it stands.
+  const key = useMemo(() => digestKey(digestMessages(group, index)), [group, index])
+  const digest = useDigestState(sessionId, key, recent.has(id))
   const done = digest.state === 'done' ? digest.result : null
   const flagged = done?.needsYou ? done.message : null
   return (
@@ -61,6 +51,7 @@ export function DeliveryStack({
       className="chat-delivery-stack exchange-timeline"
       data-messages={count}
       data-digest={digest.state}
+      data-digest-fresh={(digest.state === 'done' && digest.fresh) || undefined}
       data-needs-you={done?.needsYou || undefined}
       aria-label={`${count} ${count === 1 ? 'message' : 'messages'} from ${names.join(', ')}`}
     >
@@ -75,12 +66,13 @@ export function DeliveryStack({
               {digest.state === 'reading' ? (
                 <span className="exchange-digest-reading">Reading what matters for you…</span>
               ) : done ? (
-                <span
-                  className="exchange-digest-text"
-                  title="Read by Haiku from the messages below"
-                >
-                  {done.summary}
-                </span>
+                <DigestLine
+                  summary={done.summary}
+                  needsYou={done.needsYou}
+                  onOpen={
+                    flagged === null ? undefined : (event) => openCard(event.currentTarget, flagged)
+                  }
+                />
               ) : null}
             </span>
           </span>
@@ -99,6 +91,61 @@ export function DeliveryStack({
       </ol>
     </section>
   )
+}
+
+/** The digest under the senders. Something for the reader: the drawings'
+ *  ringed marker beside the words (a column of its own, so a second line
+ *  stands under the first, not under the marker), on a breath of accent, and
+ *  a click opens the card it came from. Nothing: a quiet line. */
+function DigestLine({
+  summary,
+  needsYou,
+  onOpen
+}: {
+  summary: string
+  needsYou: boolean
+  onOpen?: (event: React.MouseEvent<HTMLElement>) => void
+}): React.JSX.Element {
+  const words = <span className="exchange-digest-words">{summary}</span>
+  if (!needsYou)
+    return (
+      <span className="exchange-digest-text" title="Read by Haiku from the messages below">
+        {words}
+      </span>
+    )
+  const mark = (
+    <svg className="chat-drawing exchange-digest-mark" viewBox="0 0 14 14" aria-hidden="true">
+      <circle className="ring" cx="7" cy="7" r="5.6" />
+      <circle className="dot dot--c" cx="7" cy="7" r="2.4" />
+    </svg>
+  )
+  return onOpen ? (
+    <button
+      type="button"
+      className="exchange-digest-text"
+      data-needs-you=""
+      title="Open the message this comes from"
+      onClick={onOpen}
+    >
+      {mark}
+      {words}
+    </button>
+  ) : (
+    <span className="exchange-digest-text" data-needs-you="">
+      {mark}
+      {words}
+    </span>
+  )
+}
+
+/** Open the timeline's card at `index` and bring it into view, smoothly. */
+function openCard(from: HTMLElement, index: number): void {
+  const card = from
+    .closest('.exchange-timeline')
+    ?.querySelectorAll<HTMLDetailsElement>('details.exchange-card')[index]
+  if (!card) return
+  card.open = true
+  card.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
 }
 
 function ExchangeCard({
@@ -159,6 +206,9 @@ function ExchangeCard({
               ) : (
                 <p className="exchange-note">No answer sent to {name} after this message.</p>
               )}
+              {delivery?.sender?.id && (
+                <OpenThere id={delivery.sender.id} name={name} text={body} />
+              )}
             </>
           )}
         </div>
@@ -167,9 +217,37 @@ function ExchangeCard({
   )
 }
 
+/** Opens the other tab at this exchange: it finds the words there (jump.ts)
+ *  once it is on screen, reading its older history if it must. */
+function openAt(sessionId: string, text: string): void {
+  requestJump(sessionId, text)
+  useSessionStore.getState().selectSession(sessionId, false)
+}
+
+/** The opened card's way to the other side of the exchange, when that tab is
+ *  in this window. */
+function OpenThere({
+  id,
+  name,
+  text
+}: {
+  id: string
+  name: string
+  text: string
+}): React.JSX.Element | null {
+  const here = useSessionStore((state) => state.sessions.some((s) => s.id === id))
+  if (!here) return null
+  return (
+    <button type="button" className="exchange-open" onClick={() => openAt(id, text)}>
+      Open in {name}
+      <ArrowUpRightIcon aria-hidden="true" />
+    </button>
+  )
+}
+
 /** One piece of writing in an opened exchange: who wrote it and when, then the
- *  words, in the transcript's own type. The other tab's name opens it when it
- *  is in this window. */
+ *  words, in the transcript's own type. The other tab's name opens it at this
+ *  exchange when it is in this window. */
 function ExchangePart({
   who,
   side,
@@ -189,8 +267,8 @@ function ExchangePart({
           <button
             type="button"
             className="exchange-part-who"
-            title={`Open the tab “${who}”`}
-            onClick={() => useSessionStore.getState().selectSession(from, false)}
+            title={`Open “${who}” at this exchange`}
+            onClick={() => openAt(from, side.text)}
           >
             {who}
           </button>

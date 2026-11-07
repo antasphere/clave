@@ -40,6 +40,7 @@ export class GitPort extends Context.Tag('@clave/server/Git')<GitPort, GitServic
     statusBatch: refuse,
     discover: refuse,
     checkIgnored: refuse,
+    remote: refuse,
     fetch: refuse,
     fetchBatch: refuse,
     refreshRemotes: refuse,

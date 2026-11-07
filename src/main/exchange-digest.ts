@@ -1,4 +1,6 @@
 import { execFile, type ChildProcess } from 'child_process'
+import { DigestStore } from './exchange-digest-store'
+import { settingsPorts } from './ports'
 import {
   accountTokenForSpawn,
   getLoginShellEnv,
@@ -10,6 +12,7 @@ import { buildOneShotLaunch } from './claude-one-shot'
 import {
   digestPrompt,
   parseDigestReply,
+  type DigestDone,
   type DigestRequest,
   type DigestResult
 } from '../shared/exchange-digest'
@@ -51,16 +54,54 @@ interface Job {
 }
 
 const queue: Job[] = []
-let running = false
+/** Two at a time: a session with several fresh timelines is read in step. */
+const MAX_RUNNING = 2
+let running = 0
 const children = new Set<ChildProcess>()
 let closed = false
 
 const clip = (text: string | undefined): string | undefined =>
   text === undefined ? undefined : text.length > MAX_CHARS ? `${text.slice(0, MAX_CHARS)}…` : text
 
+/** The digests read so far, filed by session (exchange-digest-store.ts),
+ *  in Clave's data folder through the storage port rather than Electron's
+ *  `app`: this module is loaded by the session manager, which the standalone
+ *  server runs under Bun, where an import of Electron ends the process before
+ *  it announces itself. Inside the app the port is Electron's own data folder,
+ *  so the file is where it was. */
+let store: DigestStore | null = null
+const digests = (): DigestStore =>
+  (store ??= new DigestStore(settingsPorts().storage.pathOf('exchange-digests.json')))
+
+/** The same messages asked for twice at once (both views of a tab, a remount)
+ *  share one call. */
+const inflight = new Map<string, Promise<DigestResult>>()
+
+/** Every digest read for a tab: what its timelines show on opening. */
+export function digestsOf(sessionId: string): Record<string, DigestDone> {
+  return digests().of(sessionId)
+}
+
+/** A timeline's digest: the one filed for these messages, or a call read now
+ *  and filed when it answers. */
 export function requestDigest(request: DigestRequest): Promise<DigestResult> {
   if (closed) return Promise.resolve({ ok: false, error: 'Clave is quitting' })
   if (!request.messages.length) return Promise.resolve({ ok: false, error: 'No messages' })
+  const filed = digests().get(request.sessionId, request.key)
+  if (filed) return Promise.resolve(filed)
+  const id = `${request.sessionId}|${request.key}`
+  const running = inflight.get(id)
+  if (running) return running
+  const ask = read(request).then((result) => {
+    inflight.delete(id)
+    if (result.ok) digests().put(request.sessionId, request.key, result)
+    return result
+  })
+  inflight.set(id, ask)
+  return ask
+}
+
+function read(request: DigestRequest): Promise<DigestResult> {
   // Under the end-to-end harness no model is called: a spec that wants a
   // digest hands the model's reply in CLAVE_E2E_DIGEST_REPLY, read the way a
   // real one is, after a beat so the reading state shows.
@@ -87,16 +128,26 @@ export function requestDigest(request: DigestRequest): Promise<DigestResult> {
 }
 
 async function next(): Promise<void> {
-  if (running) return
+  if (running >= MAX_RUNNING) return
   const job = queue.shift()
   if (!job) return
-  running = true
+  running++
+  // Room for another beside this one: start it now, not once this one ends.
+  void next()
+  const started = Date.now()
+  console.log(
+    `[exchange-digest] reading ${job.request.messages.length} message(s), ${queue.length} waiting`
+  )
   try {
-    job.resolve(await run(job.request))
+    const result = await run(job.request)
+    console.log(
+      `[exchange-digest] ${result.ok ? (result.needsYou ? 'needs you' : 'nothing for you') : `failed: ${result.error.slice(0, 120)}`} in ${Date.now() - started}ms`
+    )
+    job.resolve(result)
   } catch (error) {
     job.resolve({ ok: false, error: error instanceof Error ? error.message : String(error) })
   } finally {
-    running = false
+    running--
     void next()
   }
 }
@@ -154,6 +205,7 @@ async function run(request: DigestRequest): Promise<DigestResult> {
  *  the titles' (`pty-manager.ts` killAll); `quit` also shuts the door. */
 export function cancelAll(quit = false): void {
   if (quit) closed = true
+  store?.flush()
   for (const job of queue.splice(0)) job.resolve({ ok: false, error: 'Cancelled' })
   for (const child of [...children]) {
     try {

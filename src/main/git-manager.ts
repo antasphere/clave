@@ -1588,6 +1588,25 @@ No quotes, no markdown, no extra formatting. Just two lines of plain text.`
     return this.queue.run(`status:${cwd}`, 'status', () => this.readStatus(cwd))
   }
 
+  /** The `origin` remote's URL as the checkout keeps it, null when the folder
+   *  is no repository or names no `origin` (PRDCT-4151: what pairs a
+   *  workspace on a server with the same tree on a Mac). A read, never a
+   *  fetch: nothing reaches the network. */
+  async remoteUrl(cwd: string): Promise<string | null> {
+    try {
+      // Straight to git, not through the repo-info cache: a folder that was
+      // no repository a minute ago may be a clone now, and the pairing asks
+      // again exactly then. `--get` on an unset key exits 1, which simple-git
+      // throws, as does a folder outside any repository: no origin.
+      const url = (await readOnlyGit(cwd).raw(['config', '--get', 'remote.origin.url'])).trim()
+      // A credential embedded in the URL stays in the checkout's config: the
+      // pairing needs the host and the path, nothing a person could reuse.
+      return url ? url.replace(/^([a-z][a-z0-9+.-]*:\/\/)[^/]*@/i, '$1') : null
+    } catch {
+      return null
+    }
+  }
+
   /** A repo's top level and git directories, for the repo watcher; null when
    *  the folder is not a repo. */
   async repoDirs(cwd: string): Promise<{ root: string; gitDir: string; commonDir: string } | null> {

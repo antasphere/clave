@@ -28,3 +28,20 @@ export function PastFailed({ onRetry }: { onRetry: () => void }): React.JSX.Elem
     </div>
   )
 }
+
+/** Over the transcript's head while another tab's card is being found here
+ *  (`useExchangeJump`): reading older history for it, or saying it is not in
+ *  this conversation. The same pill as the past on its way, out of the flow. */
+export function JumpPill({ status }: { status: 'finding' | 'missing' }): React.JSX.Element {
+  return status === 'finding' ? (
+    <div className="chat-earlier chat-jump-pill" role="status">
+      <ArrowPathIcon />
+      Finding the exchange…
+    </div>
+  ) : (
+    <div className="chat-earlier chat-jump-pill" data-tone="missing" role="status">
+      <ExclamationCircleIcon />
+      That exchange is not in this conversation
+    </div>
+  )
+}

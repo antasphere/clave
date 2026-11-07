@@ -17,11 +17,18 @@ export function tooTallToPin(messageHeight: number, paneHeight: number): boolean
   return messageHeight > paneHeight * PIN_SHARE
 }
 
-export function useQuestionHeight(scroll: RefObject<HTMLElement | null>): void {
+export function useQuestionHeight(
+  scroll: RefObject<HTMLElement | null>,
+  /** Questions are pinned (the view's toggle): off, nothing is measured and
+   *  nothing runs on scroll. */
+  enabled: boolean
+): void {
   useEffect(() => {
     const root = scroll.current
-    if (!root) return
+    if (!root || !enabled) return
     const view = root.closest<HTMLElement>('.chat-view') ?? root
+    /** Each long row's sticky top in pixels, resolved once per measure. */
+    const tops = new WeakMap<HTMLElement, number>()
     const measure = (): void => {
       const pane = view.clientHeight
       for (const message of root.querySelectorAll<HTMLElement>('.term-question > .chat-turn')) {
@@ -34,6 +41,7 @@ export function useQuestionHeight(scroll: RefObject<HTMLElement | null>): void {
           const pin = row.querySelector<HTMLElement>(':scope > .term-question-pin')
           const offset = row.offsetHeight - (pin?.offsetHeight ?? 0)
           row.style.setProperty('--question-pin-offset', `${offset}px`)
+          tops.delete(row)
         } else {
           delete row.dataset.tall
           delete row.dataset.stuck
@@ -44,13 +52,22 @@ export function useQuestionHeight(scroll: RefObject<HTMLElement | null>): void {
     // A long message's row is stuck once its sticky top holds it: its box
     // sits at that top, the rest of it risen above the edge. Marked on the
     // row, which is what swaps its foot for the preview.
+    // Run on every frame of a scroll, so it reads only positions: each row's
+    // sticky top is resolved once, when it is measured (`tops`), never by a
+    // style read per frame, and the mark is written only when it changes.
     const stuck = (): void => {
       const edge = root.getBoundingClientRect().top
       for (const row of root.querySelectorAll<HTMLElement>('.chat-turn-wrap[data-tall]')) {
-        const at = row.getBoundingClientRect().top - edge
-        const top = parseFloat(getComputedStyle(row).top)
-        if (Number.isFinite(top) && at <= top + 0.5) row.dataset.stuck = 'true'
-        else delete row.dataset.stuck
+        let top = tops.get(row)
+        if (top === undefined) {
+          top = parseFloat(getComputedStyle(row).top)
+          tops.set(row, top)
+        }
+        const now = Number.isFinite(top) && row.getBoundingClientRect().top - edge <= top + 0.5
+        if (now !== (row.dataset.stuck === 'true')) {
+          if (now) row.dataset.stuck = 'true'
+          else delete row.dataset.stuck
+        }
       }
     }
     let frame = 0
@@ -87,5 +104,5 @@ export function useQuestionHeight(scroll: RefObject<HTMLElement | null>): void {
       resize.disconnect()
       mutations.disconnect()
     }
-  }, [scroll])
+  }, [scroll, enabled])
 }

@@ -38,6 +38,9 @@ import { registerAntasphereAccountHandlers } from './antasphere-account-handlers
 import { registerGithubHandlers } from './github-handlers'
 // ── Lane A: the server ──
 import { registerServerHandlers } from './server-handlers'
+import { registerServerPairingHandlers } from './server-pairing-handlers'
+// ── Lane B (server wave): a Mac as a server, the tailnet scan ──
+import { registerServerSetupHandlers } from './server-setup-handlers'
 import { registerActivityHandlers } from './activity-handlers'
 // ── Lane C: settings behind ports ──
 // ── Lane F: the shell ──
@@ -87,6 +90,9 @@ export function registerIpcHandlers(deps: KeymapHandlerDeps = {}): void {
   registerGithubHandlers()
   // ── Lane A: the server ──
   registerServerHandlers()
+  registerServerPairingHandlers()
+  // ── Lane B (server wave): a Mac as a server, the tailnet scan ──
+  registerServerSetupHandlers()
   // ── Lane C: settings behind ports ──
   // ── Lane F: the shell ──
   registerMicHandlers()

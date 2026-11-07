@@ -49,7 +49,10 @@ import {
 } from './tools'
 import { ToolGroup } from './ToolGroup'
 import { ToolDisclosure } from './disclosure'
-import { ExchangeContext, indexExchanges } from './exchanges'
+import { ExchangeContext, digestMessages, indexExchanges, recentTimelines } from './exchanges'
+import { useTimelineDigests } from './digest'
+import { digestKey } from '../../../src/shared/exchange-digest'
+import { useExchangeJump } from './jump'
 import { useSessionStore } from '../../../src/renderer/src/store/session-store'
 import { ApprovalRun, PermissionRow, PromptDock } from './PromptDock'
 import { refusedAnswer } from './refused-answer'
@@ -86,7 +89,7 @@ import { TranscriptRows } from './rows'
 import { JumpToEnd } from './JumpToEnd'
 import { useEarlier, type EarlierPage } from './earlier'
 import { useTranscriptSearch } from './search'
-import { EarlierLoading, PastFailed } from './EarlierLoading'
+import { EarlierLoading, JumpPill, PastFailed } from './EarlierLoading'
 import { pastHead, pastStep, readPast, type PastReader, type PastState } from './past'
 import {
   attachmentIssue,
@@ -861,11 +864,33 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
   )
   const exchanges = useMemo(
     () => ({
+      sessionId: session.id,
       index: indexExchanges(presentation.entries),
-      launch: { workspaceId, launchProfileId, claudeProfileId, configDir }
+      launch: { workspaceId, launchProfileId, claudeProfileId, configDir },
+      recent: recentTimelines(blocks)
     }),
-    [presentation.entries, workspaceId, launchProfileId, claudeProfileId, configDir]
+    [
+      session.id,
+      presentation.entries,
+      blocks,
+      workspaceId,
+      launchProfileId,
+      claudeProfileId,
+      configDir
+    ]
   )
+  // The digests of the conversation's latest timelines, asked for by the view
+  // whether or not their cards are on screen, and filed by tab (digest.ts).
+  const digestTimelines = useMemo(
+    () =>
+      blocks.flatMap(({ block, key }) => {
+        if (block.kind !== 'delivery-group' || !exchanges.recent.has(key)) return []
+        const messages = digestMessages(block, exchanges.index)
+        return [{ key: digestKey(messages), messages }]
+      }),
+    [blocks, exchanges]
+  )
+  useTimelineDigests(session.id, digestTimelines, exchanges.launch)
   // The mark is the agent at work, nothing else: it leaves with the state.
   const head = pastHead(past, conversation.entries.length, state === 'ended')
   const showMark = state === 'working'
@@ -877,6 +902,18 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
     scroll: transcript.scroll,
     more: before !== null
   })
+  // Another tab's card opened this one at an exchange (jump.ts).
+  const jump = useExchangeJump({
+    sessionId: session.id,
+    rows: blocks,
+    active: visible,
+    more: before !== null,
+    scroll: transcript.scroll
+  })
+  const reveal =
+    jump.reveal && (!searchReveal || jump.reveal.nonce > searchReveal.nonce)
+      ? jump.reveal
+      : searchReveal
   return (
     <div
       ref={pane}
@@ -962,7 +999,7 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
                   rows={blocks}
                   settled={pastRead}
                   scroll={transcript.scroll}
-                  reveal={searchReveal}
+                  reveal={reveal}
                 >
                   {({ block, key }, index, arriving) => (
                     <TranscriptRow
@@ -983,7 +1020,7 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
             )}
           </div>
         </div>
-        {earlier.loading && <EarlierLoading />}
+        {jump.status ? <JumpPill status={jump.status} /> : earlier.loading && <EarlierLoading />}
         {transcript.away && <JumpToEnd onClick={transcript.jump} />}
       </div>
       <div className="chat-composer-wrap">

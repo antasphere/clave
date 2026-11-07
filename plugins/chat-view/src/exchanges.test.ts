@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { buildProvenanceHeader } from '../../../src/shared/exchange-provenance'
-import { gist, indexExchanges } from './exchanges'
+import { gist, indexExchanges, recentTimelines } from './exchanges'
 import type { Entry } from './reducer'
 import type { DeliveryEntry } from './tools'
 
@@ -98,5 +98,19 @@ describe('gist', () => {
     expect(gist('\n\n## Report\nbody')).toBe('Report')
     expect(gist('- first item\n- second')).toBe('first item')
     expect(gist('   ')).toBe('')
+  })
+})
+
+describe('recentTimelines', () => {
+  it('is the latest three timelines of the rows, nothing else', () => {
+    const rows = [
+      { key: 'd1', block: { kind: 'delivery-group' } },
+      { key: 't1', block: { kind: 'tool-group' } },
+      { key: 'd2', block: { kind: 'delivery-group' } },
+      { key: 'd3', block: { kind: 'delivery-group' } },
+      { key: 'a1', block: { kind: 'assistant' } },
+      { key: 'd4', block: { kind: 'delivery-group' } }
+    ]
+    expect([...recentTimelines(rows)]).toEqual(['d2', 'd3', 'd4'])
   })
 })

@@ -731,10 +731,7 @@ async function handleAddGroupTerminal(payload: {
     ],
     // Focus only when the group's workspace is the visible one — a terminal
     // added to a hidden workspace's group must not steal the user's view.
-    ...(inActiveWorkspace(
-      { workspaceId: group.workspaceId },
-      useWorkspaceStore.getState().activeWorkspaceId
-    )
+    ...(inActiveWorkspace(group, useWorkspaceStore.getState().activeWorkspaceId)
       ? { selectedSessionIds: [info.id], focusedSessionId: info.id }
       : {})
   })

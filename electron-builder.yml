@@ -17,6 +17,8 @@ files:
 extraResources:
   - from: plugins
     to: plugins
+  - from: scripts/install-server.sh
+    to: scripts/install-server.sh
 beforePack: scripts/prepare-resvg.cjs
 asarUnpack:
   - resources/**
