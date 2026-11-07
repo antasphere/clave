@@ -2479,8 +2479,11 @@ canvas[data-orb-state] {
   align-items: center;
   justify-content: space-between;
   gap: 1rem;
-  min-height: 3.25rem;
-  padding: 0.875rem 1rem;
+  /* 48px: a one-line row is the chrome's 28px control with 10px of air
+     above and below; it used to be 52px with 14px, which on a page of a
+     dozen rows read as loose rather than calm (round 2). */
+  min-height: 3rem;
+  padding: 0.75rem 1rem;
 }
 .settings-row-title {
   font-size: var(--control-text);
@@ -2596,9 +2599,11 @@ canvas[data-orb-state] {
 }
 .settings-callout--inset[data-tone='danger'] {
   background-color: color-mix(in srgb, var(--color-destructive) 6%, transparent);
+  box-shadow: none;
 }
 .settings-callout--inset[data-tone='accent'] {
   background-color: color-mix(in srgb, var(--color-accent) 6%, transparent);
+  box-shadow: none;
 }
 
 /* The control slot at the end of a row: the switch, a select, the row's icon
