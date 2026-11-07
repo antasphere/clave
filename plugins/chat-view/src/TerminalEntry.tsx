@@ -3,7 +3,7 @@
    transcript would: the same markdown, the same tool runs, the same copy
    under a turn. Moved out of TerminalView.tsx on 6 November 2026; nothing
    here changed in the move. */
-import { memo, useMemo, useState } from 'react'
+import { memo, useMemo, useState, type ReactNode } from 'react'
 import ReactMarkdown, { type Components } from 'react-markdown'
 import { CheckIcon, ClipboardDocumentIcon } from '@heroicons/react/24/outline'
 import { createEntryMarkdownPlugins } from './markdown-append'
@@ -109,19 +109,12 @@ export const EntryRow = memo(function EntryRow({
       >
         <Attachments files={entry.attachments ?? []} />
         {text.trim() !== '' && (
-          // The message stands whole; one too tall to pin scrolls away with
-          // its exchange instead (question-height.ts).
-          <div className="term-question">
-            <article
-              className="chat-turn"
-              data-role="user"
-              data-from={delivery ? 'tab' : undefined}
-              data-interrupted={entry.interrupted ? 'true' : undefined}
-            >
-              {delivery && <SenderChip sender={delivery.sender} />}
-              {text.replace(/\s+$/, '')}
-            </article>
-          </div>
+          <TermQuestion
+            text={text.replace(/\s+$/, '')}
+            sender={delivery ? <SenderChip sender={delivery.sender} /> : null}
+            fromTab={!!delivery}
+            interrupted={!!entry.interrupted}
+          />
         )}
         {entry.interrupted && <span className="chat-turn-note">Interrupted</span>}
         <TurnMeta at={entry.at} text={text} />
@@ -159,3 +152,57 @@ export const ToolRow = memo(
     a.group.tools.length === b.group.tools.length &&
     a.group.tools.every((tool, i) => tool === b.group.tools[i])
 )
+
+/** The reader's message. A short one stands whole and stays pinned over its
+ *  answer. A long one (question-height.ts marks its row `data-tall`) is
+ *  pinned as its first lines, fading out; a click opens it whole, in the
+ *  flow and no longer pinned, scrolled to its top, and a click on the open
+ *  one folds it back. A click that ends a text selection is a selection,
+ *  not a toggle. */
+function TermQuestion({
+  text,
+  sender,
+  fromTab,
+  interrupted
+}: {
+  text: string
+  sender: ReactNode
+  fromTab: boolean
+  interrupted: boolean
+}): React.JSX.Element {
+  const [open, setOpen] = useState(false)
+  return (
+    <div
+      className="term-question"
+      data-open={open || undefined}
+      onClick={(event) => {
+        const row = event.currentTarget.closest<HTMLElement>('.chat-turn-wrap')
+        if (!row?.hasAttribute('data-tall')) return
+        if (window.getSelection()?.toString()) return
+        const opening = !open
+        setOpen(opening)
+        if (!opening) return
+        // Unpinned, the row goes back to its place in the flow, likely above
+        // the view: bring its top to where it was stuck.
+        requestAnimationFrame(() => {
+          const scroller = row.closest<HTMLElement>('.chat-scroll')
+          if (!scroller) return
+          // Its sticky offset, resolved: the pin gap it was stuck at.
+          const gap = parseFloat(getComputedStyle(row).top) || 0
+          scroller.scrollTop +=
+            row.getBoundingClientRect().top - scroller.getBoundingClientRect().top - gap
+        })
+      }}
+    >
+      <article
+        className="chat-turn"
+        data-role="user"
+        data-from={fromTab ? 'tab' : undefined}
+        data-interrupted={interrupted ? 'true' : undefined}
+      >
+        {sender}
+        <span className="term-question-text">{text}</span>
+      </article>
+    </div>
+  )
+}

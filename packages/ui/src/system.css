@@ -5449,15 +5449,29 @@ details[open] > .chat-approval-items {
   order: 1;
   margin: calc(var(--spacing) * 1.5) 0 0;
 }
-/* A message always stands whole, never scrolling inside its own box. One
-   taller than a share of the pane (question-height.ts sets data-tall) is not
-   pinned: stuck under the top edge it would cover the answer, and its part
-   below the pane could never be read. It scrolls away with its exchange. */
+/* A message never scrolls inside its own box. One taller than a share of
+   the view (question-height.ts sets data-tall) cannot be pinned whole: it
+   would cover the answer. It is pinned as its first lines instead, fading
+   out, and a click opens it whole, back in the flow and no longer pinned
+   (TermQuestion sets data-open); a click on the open one folds it back. */
 .term-question {
   display: flex;
   flex-direction: column;
 }
-.terminal-view[data-pin] .term-turn > .chat-turn-wrap[data-side='end'][data-tall] {
+.term-question-text {
+  display: block;
+}
+.terminal-view .chat-turn-wrap[data-tall] .term-question {
+  cursor: pointer;
+}
+.terminal-view .chat-turn-wrap[data-tall] .term-question:not([data-open]) .term-question-text {
+  max-height: calc(3 * 1lh);
+  overflow: hidden;
+  mask-image: linear-gradient(to bottom, black calc(100% - 1lh), transparent);
+}
+.terminal-view[data-pin]
+  .term-turn
+  > .chat-turn-wrap[data-side='end'][data-tall]:has(> .term-question[data-open]) {
   position: relative;
 }
 /* Tool runs in the Terminal view (TerminalTools.tsx): a title that counts
