@@ -30,6 +30,11 @@ export const TEST_NO_ACTIVATE = process.argv.includes('--test-no-activate')
 export const TEST_NO_MACHINE_USAGE =
   TEST_NO_ACTIVATE && process.argv.includes('--test-no-machine-usage')
 
+/** `--test-onboarding`: a test instance shows the first-run walk. Without it
+ *  it never does, so the many specs that start on an empty data folder (a
+ *  first install, to the walk) open straight on the app as they always have. */
+export const TEST_ONBOARDING = TEST_NO_ACTIVATE && process.argv.includes('--test-onboarding')
+
 /** True when the instance runs on a profile of its own (`--user-data-dir`, see
  *  `user-data-override.ts`). The folders that are otherwise the machine's, the
  *  `~/.clave` plugins and skins, follow the profile too, so a dev instance

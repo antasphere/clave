@@ -171,6 +171,27 @@ export function loginShellEnvAsync(): Promise<Record<string, string>> {
   return loginShellEnvPending
 }
 
+/**
+ * Read the login shell environment again, after something changed what the
+ * profile exports: an agent CLI installed from the first-run walk
+ * (`onboarding.ts`) adds its folder to the PATH in the person's profile, and
+ * the cached copy predates it. The old copy keeps serving until the new one
+ * is read, so nothing falls back to the blocking read meanwhile.
+ */
+export async function refreshLoginShellEnv(): Promise<Record<string, string>> {
+  if (isWindows) return loginShellEnvAsync()
+  const env = await new Promise<Record<string, string> | null>((resolve) => {
+    execFile(
+      getUserShell(),
+      ['-lic', 'env -0'],
+      { encoding: 'utf-8', maxBuffer: 10 * 1024 * 1024 },
+      (err, stdout) => resolve(err ? null : parseEnvOutput(stdout))
+    )
+  })
+  if (env && Object.keys(env).length > 0) loginShellEnv = env
+  return loginShellEnvAsync()
+}
+
 export function getLoginShellEnv(): Record<string, string> {
   if (loginShellEnv !== null) return loginShellEnv
 

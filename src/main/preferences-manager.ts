@@ -40,6 +40,15 @@ export interface Preferences {
    * A fresh chat opens in it (`sessions/chat-view-default.ts`).
    */
   chatView: string | null
+  /**
+   * The first-run walk (`onboarding.ts`): `pending` until it is finished or
+   * skipped, then `done`. Decided once, on the first read, and kept in the
+   * cache so any later write records it: a machine where Clave has already
+   * left its files was installed before the walk existed, so it is `done`
+   * and an upgrade never shows the walk; only a data directory with none of
+   * them is a first install.
+   */
+  onboarding: 'pending' | 'done'
 }
 
 const PREFERENCES_FILE = 'preferences.json'
@@ -57,8 +66,13 @@ const DEFAULTS: Preferences = {
   agentAutoUpdate: true,
   chatModels: {},
   chatEfforts: {},
-  chatView: null
+  chatView: null,
+  onboarding: 'pending'
 }
+
+/** The files an install of Clave leaves behind once it has run: any of them
+ *  means this is not a first launch. */
+const EARLIER_RUN_FILES = ['clave-preferences.json', 'claude-accounts.json', 'clave-server.json']
 
 export class PreferencesManager {
   private cache: Preferences | null = null
@@ -67,11 +81,15 @@ export class PreferencesManager {
 
   private load(): Preferences {
     if (this.cache) return this.cache
-    const raw = readJson(this.ports.storage, PREFERENCES_FILE)
-    this.cache =
-      raw && typeof raw === 'object' && !Array.isArray(raw)
-        ? { ...DEFAULTS, ...(raw as Partial<Preferences>) }
-        : { ...DEFAULTS }
+    const storage = this.ports.storage
+    const raw = readJson(storage, PREFERENCES_FILE)
+    const stored =
+      raw && typeof raw === 'object' && !Array.isArray(raw) ? (raw as Partial<Preferences>) : null
+    this.cache = { ...DEFAULTS, ...(stored ?? {}) }
+    if (stored?.onboarding !== 'pending' && stored?.onboarding !== 'done') {
+      const firstRun = !stored && EARLIER_RUN_FILES.every((name) => storage.read(name) === null)
+      this.cache.onboarding = firstRun ? 'pending' : 'done'
+    }
     return this.cache
   }
 

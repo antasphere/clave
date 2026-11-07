@@ -49,6 +49,32 @@ describe.each(eachTestPorts())('PreferencesManager on %s', (_name, makePorts) =>
     ).toMatchObject({ appIcon: 'light', telemetryEnabled: false, somethingNewer: { a: 1 } })
   })
 
+  it('shows the first-run walk on an empty data directory only', () => {
+    const fresh = makePorts()
+    expect(new PreferencesManager(fresh).get('onboarding')).toBe('pending')
+
+    // An install from before the walk: its preferences file has no key.
+    const upgraded = makePorts()
+    fs.writeFileSync(path.join(upgraded.dir, 'preferences.json'), JSON.stringify({ appIcon: 'light' }))
+    expect(new PreferencesManager(upgraded).get('onboarding')).toBe('done')
+
+    // An install that never wrote preferences.json, but left other files.
+    const older = makePorts()
+    fs.writeFileSync(path.join(older.dir, 'claude-accounts.json'), '[]')
+    expect(new PreferencesManager(older).get('onboarding')).toBe('done')
+  })
+
+  it('keeps a first run pending across launches until the walk ends', () => {
+    const ports = makePorts()
+    const first = new PreferencesManager(ports)
+    expect(first.get('onboarding')).toBe('pending')
+    // Something else writes the file during the first run: the walk is still owed.
+    first.set('appIcon', 'light')
+    expect(new PreferencesManager(ports).get('onboarding')).toBe('pending')
+    new PreferencesManager(ports).set('onboarding', 'done')
+    expect(new PreferencesManager(ports).get('onboarding')).toBe('done')
+  })
+
   it('touches nothing until the first read', () => {
     const ports = makePorts()
     const manager = new PreferencesManager({
