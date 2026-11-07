@@ -58,7 +58,11 @@ export class EchoAdapter implements SessionAdapter {
     // `--mcp-config` with a per-tab token, so a spec can call the Clave tools
     // AS this tab (clave_request_input and its card, PRDCT-4157). Nothing
     // reads the file here; the token's owner is this session.
-    lazyTerminalPorts.mcpConfig.write(spec.id)
+    try {
+      lazyTerminalPorts.mcpConfig.write(spec.id)
+    } catch {
+      // A manager with no terminal ports installed (a unit test): no tools, as before.
+    }
     return handle
   }
 
@@ -137,7 +141,11 @@ export class EchoAdapter implements SessionAdapter {
     const emitter = this.handles.get(handle.id)
     if (!emitter) return
     this.handles.delete(handle.id)
-    lazyTerminalPorts.mcpConfig.remove(handle.id)
+    try {
+      lazyTerminalPorts.mcpConfig.remove(handle.id)
+    } catch {
+      /* no ports installed */
+    }
     emitter.emit('exit', 0)
     emitter.removeAllListeners()
   }
