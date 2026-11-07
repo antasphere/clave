@@ -2903,9 +2903,6 @@ body.reorder-dragging * {
 .pr-empty-form .input-compact {
   width: 100%;
 }
-.pr-empty-form .input-compact[aria-invalid='true'] {
-  border-color: var(--color-destructive);
-}
 .pr-recent {
   width: 100%;
   margin-top: calc(var(--spacing) * 2);

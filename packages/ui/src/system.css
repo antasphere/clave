@@ -1544,18 +1544,18 @@ canvas[data-orb-state] {
 }
 
 /* ── Overlays: menus, popovers, modals ──
-   One language for every surface that floats above the panels, cut from the
-   same cloth as the launcher/toolbar panels: --radius-xl corners, a 1px
-   --color-border, the panels' own --surface-0 ground, and — because these
-   float rather than sit in the layout — an --overlay-shadow. Rows inside are
-   inset and rounded like .sidebar-item, never full-bleed: the surface holds
-   the rows, the rows do not become the surface.
+   One language for every surface that floats above the panels: the card
+   tier of paper (tokens.css, "Paper") — --radius-xl corners, --card-surface,
+   a 0.5px --edge-color hairline drawn in the shadow instead of a 1px border,
+   and, because these float rather than sit in the layout, an
+   --overlay-shadow. Rows inside are inset and rounded like .sidebar-item,
+   never full-bleed: the surface holds the rows, the rows do not become the
+   surface.
 
-   The ground is the same token the toolbar, the terminal cards and the
-   sidebar's boxes are painted with, so a popover reads as one of those boxes
-   lifted off the page rather than as a different material. It used to sit on
+   It is the settings card's paper, so a menu reads as one of those cards
+   lifted off the page rather than as a different material. It never sits on
    --surface-100, which is the hover fill of the rows inside it: a whole menu
-   the colour of a hovered row, and a shade off every box it opened from.
+   the colour of a hovered row.
 
    Motion: enter/exit run off Radix's data-state with the app's own curve.
    These replaced tailwindcss-animate classes (animate-in/fade-in-0/…) that
@@ -1595,9 +1595,11 @@ canvas[data-orb-state] {
    driven popovers reuse the look but bring their own motion). */
 .menu-surface {
   border-radius: var(--radius-xl);
-  border: 1px solid var(--color-border);
-  background-color: var(--surface-0);
-  box-shadow: var(--overlay-shadow);
+  background-color: var(--card-surface);
+  /* Paper (tokens.css): the hairline edge in the shadow, not a 1px border. */
+  box-shadow:
+    0 0 0 0.5px var(--edge-color),
+    var(--overlay-shadow);
   overflow: hidden;
   /* Grow from the trigger's edge: Radix's popper publishes the origin. */
   transform-origin: var(--radix-popper-transform-origin, 50% 0%);
@@ -1607,7 +1609,9 @@ canvas[data-orb-state] {
    without a scrim. Same material, the modal's heavier shadow: at that size the
    menu shadow reads as a card lying on the page rather than held above it. */
 .menu-surface--sheet {
-  box-shadow: var(--overlay-shadow-lg);
+  box-shadow:
+    0 0 0 0.5px var(--edge-color),
+    var(--overlay-shadow-lg);
 }
 .menu-pop[data-state='open'] {
   animation: overlay-in 140ms var(--ease-out-expo);
@@ -1741,13 +1745,14 @@ canvas[data-orb-state] {
   animation: scrim-out 100ms ease-out forwards;
 }
 
-/* The modal card surface — same corners and border as the panels, lifted by
-   the large overlay shadow. */
+/* The modal card surface — the menus' paper, lifted by the large overlay
+   shadow. */
 .modal-card {
   border-radius: var(--radius-xl);
-  border: 1px solid var(--color-border);
-  background-color: var(--surface-0);
-  box-shadow: var(--overlay-shadow-lg);
+  background-color: var(--card-surface);
+  box-shadow:
+    0 0 0 0.5px var(--edge-color),
+    var(--overlay-shadow-lg);
   overflow: hidden;
 }
 /* Safe under the translate-utility centering: Tailwind v4 centers via the
@@ -1822,8 +1827,8 @@ canvas[data-orb-state] {
 }
 
 /* Secondary: a neutral raised control, the quieter partner beside a primary.
-   It keeps a body of its own (the raised surface, a hairline edge and a soft
-   drop, all one box-shadow so it takes no layout) because a bare word next to
+   It keeps a body of its own (the control tier of paper, a hairline edge and a
+   soft drop, all one box-shadow so it takes no layout) because a bare word next to
    an ink-filled button reads as a label rather than as the other choice. It
    draws its own edge, so a border utility beside it doubles the line. A
    control that stands among icons and links in a bar is not this: it takes
@@ -1840,15 +1845,20 @@ canvas[data-orb-state] {
   font-size: var(--control-text-sm);
   font-weight: var(--font-weight-medium);
   color: var(--text-primary);
-  background-color: var(--surface-raised);
+  background-color: var(--control-surface);
   box-shadow: var(--raised-control-shadow);
   transition:
     color 150ms,
     background-color 150ms,
     scale 120ms var(--ease-out-expo);
 }
-.btn-secondary:hover {
-  background-color: var(--surface-100);
+/* Hover darkens (or, on the dark grounds, lightens) the paper itself by a
+   breath of the ink, rather than swapping it for the grey hover fill of a
+   list row: a raised key stays a raised key under the pointer. */
+.btn-secondary:hover,
+.select-trigger:hover,
+.select-trigger[data-state='open'] {
+  background-color: color-mix(in oklab, var(--control-surface), var(--text-primary) 5%);
 }
 .btn-secondary:disabled {
   opacity: 0.4;
@@ -1965,23 +1975,24 @@ canvas[data-orb-state] {
   gap: calc(var(--spacing) * 1.5);
   padding: calc(var(--spacing) * 3) calc(var(--spacing) * 2);
   border-radius: var(--radius-lg);
-  border: 1px solid var(--border-color);
-  background-color: var(--surface-50);
+  background-color: var(--control-surface);
+  box-shadow: var(--raised-control-shadow);
   color: var(--text-tertiary);
   cursor: pointer;
   transition:
-    border-color 150ms,
+    box-shadow 150ms,
     background-color 150ms,
     color 150ms;
 }
 .orb-swatch:hover {
-  background-color: var(--surface-100);
+  background-color: color-mix(in oklab, var(--control-surface), var(--text-primary) 5%);
   color: var(--text-secondary);
 }
 .orb-swatch[data-selected='true'] {
-  border-color: var(--accent);
   color: var(--text-primary);
-  box-shadow: 0 0 0 1px var(--accent);
+  box-shadow:
+    0 0 0 1.5px var(--color-accent),
+    0 1px 2px rgb(0 0 0 / 0.12);
 }
 .orb-swatch-label {
   font-size: 11px;
@@ -1993,14 +2004,17 @@ canvas[data-orb-state] {
 }
 
 /* Segmented control: compact inline mode switcher (e.g. Page/Preview/Source
-   in file headers). Items mark their active state via data-active="true". */
+   in file headers). Items mark their active state via data-active="true".
+   The track is a shallow well, half the hover grey; the chosen segment is a
+   paper key lifted out of it (the control tier, tokens.css "Paper"), so the
+   choice reads by elevation rather than by a second, darker grey. */
 .segmented {
   display: inline-flex;
   align-items: center;
   gap: 2px;
   padding: 2px;
   border-radius: var(--radius-lg);
-  background-color: var(--surface-100);
+  background-color: color-mix(in srgb, var(--surface-100) 70%, transparent);
 }
 .segmented-item {
   display: inline-flex;
@@ -2020,7 +2034,8 @@ canvas[data-orb-state] {
   color: var(--text-secondary);
 }
 .segmented-item[data-active='true'] {
-  background-color: var(--surface-200);
+  background-color: var(--control-surface);
+  box-shadow: var(--raised-control-shadow);
   color: var(--text-primary);
 }
 
@@ -2182,7 +2197,10 @@ canvas[data-orb-state] {
   color: var(--text-primary);
 }
 
-/* Dashed "add" button — full-width row for adding workspaces, locations, etc. */
+/* "Add" button — full-width row for adding workspaces, locations, etc. Not a
+   dashed box any more: an empty slot drawn as an outline was the one dashed
+   line in the app, and it read as clutter beside the paper cards. A ghost row
+   in tertiary ink, with the list row's hover fill, says the same thing. */
 .btn-add {
   width: 100%;
   display: inline-flex;
@@ -2191,86 +2209,84 @@ canvas[data-orb-state] {
   gap: 0.5rem; /* gap-2 */
   height: var(--control-h-lg);
   border-radius: var(--radius-lg);
-  border: 1px dashed var(--border-subtle-color);
   font-size: 0.75rem; /* text-xs */
   font-weight: var(--font-weight-medium);
   color: var(--text-tertiary);
   background-color: transparent;
   transition:
     color 150ms,
-    border-color 150ms,
     background-color 150ms,
     scale 120ms var(--ease-out-expo);
 }
 .btn-add:hover {
   color: var(--text-secondary);
-  border-color: var(--color-border);
   background-color: var(--surface-100);
 }
 
-/* ── Form inputs ── */
+/* ── Form inputs ──
+   A field is the control tier of paper (tokens.css "Paper"): --control-surface
+   edged by the --field-shadow hairline, no border and no grey well. It drops
+   the button's soft drop on purpose: a field is a place you type into, not a
+   key you press, and the two would otherwise read as one control. Focus is
+   --focus-ring, a 1px accent edge with a soft halo, in the box-shadow so it
+   costs no layout and follows the corner. A field marked aria-invalid takes
+   the same ring in the destructive ink. */
+
+.input-field,
+.textarea-field,
+.input-compact {
+  width: 100%;
+  border: 0;
+  background-color: var(--control-surface);
+  box-shadow: var(--field-shadow);
+  color: var(--text-primary);
+  outline: none;
+  transition:
+    box-shadow 150ms,
+    background-color 150ms;
+}
+.input-field::placeholder,
+.textarea-field::placeholder,
+.input-compact::placeholder {
+  color: var(--text-tertiary);
+}
+.input-field:focus,
+.textarea-field:focus,
+.input-compact:focus {
+  box-shadow: var(--focus-ring);
+}
+:is(.input-field, .textarea-field, .input-compact)[aria-invalid='true'] {
+  box-shadow:
+    0 0 0 1px var(--color-destructive),
+    0 0 0 4px color-mix(in srgb, var(--color-destructive) 18%, transparent);
+}
+:is(.input-field, .textarea-field, .input-compact):disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
 
 .input-field {
-  width: 100%;
   height: var(--control-h-lg);
   padding: 0 0.75rem; /* px-3 */
   border-radius: var(--radius-lg);
-  background-color: var(--surface-100);
-  border: 1px solid var(--border-subtle-color);
   font-size: 0.875rem; /* text-sm */
-  color: var(--text-primary);
-  outline: none;
-  transition: border-color 150ms;
-}
-.input-field::placeholder {
-  color: var(--text-tertiary);
-}
-.input-field:focus {
-  border-color: var(--color-accent);
 }
 
 /* Multi-line variant of .input-field — height follows the `rows` attribute */
 .textarea-field {
-  width: 100%;
   padding: 0.5rem 0.75rem; /* py-2 px-3 */
   border-radius: var(--radius-lg);
-  background-color: var(--surface-100);
-  border: 1px solid var(--border-subtle-color);
   font-size: 0.875rem; /* text-sm */
   line-height: 1.625;
-  color: var(--text-primary);
-  outline: none;
   resize: none;
-  transition: border-color 150ms;
-}
-.textarea-field::placeholder {
-  color: var(--text-tertiary);
-}
-.textarea-field:focus {
-  border-color: var(--color-accent);
 }
 
 /* Compact input (inline rename, search) */
 .input-compact {
-  width: 100%;
   height: var(--control-h-md);
   padding: 0 calc(var(--control-px) * 1.5);
   border-radius: var(--control-radius);
-  background-color: var(--surface-100);
-  border: 1px solid var(--border-subtle-color);
   font-size: var(--control-text-sm);
-  color: var(--text-primary);
-  outline: none;
-  transition:
-    border-color 150ms,
-    box-shadow 150ms;
-}
-.input-compact::placeholder {
-  color: var(--text-tertiary);
-}
-.input-compact:focus {
-  border-color: var(--color-accent);
-  box-shadow: 0 0 0 1px var(--color-accent);
 }
 /* A compact input carrying an affordance on its trailing edge — a search
    glass, a reveal toggle. The inset has to live here: the design system is
@@ -2301,15 +2317,15 @@ canvas[data-orb-state] {
    an account signs in). One class instead of the same two colour utilities
    repeated at every call site. */
 .badge-muted {
-  background-color: var(--surface-200);
-  color: var(--text-tertiary);
+  background-color: color-mix(in srgb, var(--text-primary) 7%, transparent);
+  color: var(--text-secondary);
 }
 
 /* ── Settings ──
-   The settings pages, on the same material as the sidebars and the side
-   panel: the panel border (--color-border, not the subtle one), the 10px
-   radius, 28px controls at --radius-lg (a settings control has no panel
-   corner to answer to, BRAND.md), one width and one header shape per page. */
+   The settings pages, in paper (tokens.css "Paper"): each group a card-tier
+   sheet at --radius-xl, 28px controls on the control tier at --radius-lg (a
+   settings control has no panel corner to answer to, BRAND.md), one width
+   and one header shape per page. */
 
 /* The pane every settings page scrolls in. The gutter is RESERVED rather than
    taken when a page happens to overflow: the 6px scrollbar is carved out of the
@@ -2422,12 +2438,16 @@ canvas[data-orb-state] {
   margin-bottom: 0.625rem;
 }
 
-/* Grouped settings sit on the page ground. The outline and quiet row seams
-   establish the group without giving it the sidebar's contrasting fill. */
+/* Grouped settings are a sheet of paper on the page (the card tier,
+   tokens.css "Paper"): a step off the ground, edged by the 0.5px hairline and
+   a soft drop, the way the composer and the sidebar's foot sit. It used to be
+   a 1px outline on the bare ground, which with the grey fields inside it read
+   as a form kit rather than as Clave. The rows inside keep their quiet
+   seams. */
 .settings-card {
   border-radius: var(--radius-xl);
-  border: 1px solid var(--color-border);
-  background-color: transparent;
+  background-color: var(--card-surface);
+  box-shadow: var(--card-shadow);
   overflow: hidden;
 }
 .settings-card > * + *,
@@ -2497,19 +2517,26 @@ canvas[data-orb-state] {
   box-shadow: var(--shadow-md);
 }
 
-/* A callout under a card: a confirmation, a picker, an error. Same material,
-   the tone on the border only. */
+/* A callout under a card: a confirmation, a picker, an error. Same paper as
+   the card; a tone tints the hairline and washes the sheet a breath, so it
+   holds on every theme without a box line. */
 .settings-callout {
   padding: 0.75rem 0.875rem;
   border-radius: var(--radius-xl);
-  border: 1px solid var(--color-border);
-  background-color: var(--surface-50);
+  background-color: var(--card-surface);
+  box-shadow: var(--card-shadow);
 }
 .settings-callout[data-tone='danger'] {
-  border-color: color-mix(in srgb, var(--color-destructive) 45%, transparent);
+  background-color: color-mix(in srgb, var(--color-destructive) 5%, var(--card-surface));
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--color-destructive) 35%, transparent),
+    var(--card-shadow);
 }
 .settings-callout[data-tone='accent'] {
-  border-color: color-mix(in srgb, var(--color-accent) 45%, transparent);
+  background-color: color-mix(in srgb, var(--color-accent) 5%, var(--card-surface));
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--color-accent) 35%, transparent),
+    var(--card-shadow);
 }
 .settings-callout-title {
   font-size: var(--control-text);
@@ -2549,6 +2576,7 @@ canvas[data-orb-state] {
 .settings-callout--inset {
   border: 0;
   border-radius: 0;
+  box-shadow: none;
   padding: 0.75rem 0.875rem;
   background-color: color-mix(in srgb, var(--surface-100) 55%, transparent);
 }
@@ -2595,32 +2623,37 @@ canvas[data-orb-state] {
 }
 
 /* The radio: one of a set (the default Claude account, the profile file to
-   adopt). A 14px ring on the field fill, the accent on the ring and a dot
-   inside when chosen; state is data-checked like the switch. */
+   adopt). Off, a 14px paper key (the control tier, its hairline and drop);
+   chosen, it fills with the accent and holds the switch's white knob as its
+   dot — the two "on" controls of the system say it the same way. State is
+   data-checked like the switch. */
 .radio {
   position: relative;
   flex-shrink: 0;
   width: 0.875rem;
   height: 0.875rem;
   border-radius: 999px;
-  border: 1px solid var(--color-border);
-  background-color: var(--surface-100);
+  background-color: var(--control-surface);
+  box-shadow: var(--raised-control-shadow);
   transition:
-    border-color 150ms,
+    box-shadow 150ms,
     background-color 150ms;
 }
 .radio:hover {
-  border-color: var(--text-tertiary);
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--text-tertiary) 60%, transparent),
+    0 1px 2px rgb(0 0 0 / 0.12);
 }
 .radio[data-checked='true'] {
-  border-color: var(--color-accent);
+  background-color: var(--color-accent);
+  box-shadow: none;
 }
 .radio[data-checked='true']::after {
   content: '';
   position: absolute;
-  inset: 3px;
+  inset: 4px;
   border-radius: 999px;
-  background-color: var(--color-accent);
+  background-color: var(--color-switch-knob);
 }
 
 /* A status said in words at the end of a row (a location's connection). */
@@ -2639,9 +2672,12 @@ canvas[data-orb-state] {
   color: var(--color-destructive);
 }
 
-/* The select: a trigger cut like .input-compact with the caret held off the
-   edge, and the app's own menu surface for the options (the native popover
-   drew the browser's chevron against the border and its own list). */
+/* The select: a key that opens a menu, so it is cut like .btn-secondary (the
+   control tier of paper, its hairline and drop; hover with it, above) with the
+   caret held off the edge, and the app's own menu surface for the options
+   (the native popover drew the browser's chevron against the border and its
+   own list). Open, it stays pressed-in like a hover rather than ringing in
+   the accent: the menu under it already says where you are. */
 .select-trigger {
   display: inline-flex;
   align-items: center;
@@ -2650,23 +2686,15 @@ canvas[data-orb-state] {
   max-width: 100%;
   padding: 0 0.375rem 0 0.625rem;
   border-radius: var(--radius-lg);
-  border: 1px solid var(--border-subtle-color);
-  background-color: var(--surface-100);
+  background-color: var(--control-surface);
+  box-shadow: var(--raised-control-shadow);
   font-size: 12px;
   font-weight: var(--font-weight-medium);
   color: var(--text-primary);
   transition:
     color 150ms,
-    border-color 150ms,
     background-color 150ms,
     scale 120ms var(--ease-out-expo);
-}
-.select-trigger:hover {
-  border-color: var(--color-border);
-  background-color: var(--surface-200);
-}
-.select-trigger[data-state='open'] {
-  border-color: var(--color-accent);
 }
 .select-trigger:disabled {
   opacity: 0.4;
@@ -2709,13 +2737,15 @@ canvas[data-orb-state] {
 
 /* The switch: a 28×16 pill, the knob on the token above. State is
    data-checked, like every toggle in the system. */
+/* Off, the track is a well of the ink at low strength rather than the solid
+   surface-300 grey: it sits IN the paper card, the knob sits on it. */
 .switch {
   position: relative;
   flex-shrink: 0;
   width: 1.75rem;
   height: 1rem;
   border-radius: 999px;
-  background-color: var(--surface-300);
+  background-color: color-mix(in srgb, var(--text-primary) 16%, transparent);
   transition: background-color 150ms;
 }
 .switch[data-checked='true'] {
@@ -2733,7 +2763,9 @@ canvas[data-orb-state] {
   height: 0.75rem;
   border-radius: 999px;
   background-color: var(--color-switch-knob);
-  box-shadow: 0 1px 2px rgb(0 0 0 / 0.3);
+  box-shadow:
+    0 0 0 0.5px rgb(0 0 0 / 0.06),
+    0 1px 2px rgb(0 0 0 / 0.25);
   transition: translate 150ms var(--ease-out-expo);
 }
 .switch[data-checked='true'] .switch-knob {
@@ -2754,6 +2786,24 @@ canvas[data-orb-state] {
   translate: 0.875rem 0;
 }
 
+/* Keyboard focus on the paper keys. The keys the paper rules above lift off
+   the page — the two buttons, the select, the switch, the radio, a segment —
+   take the fields' --focus-ring (a 1px accent edge and a soft halo) OUTSIDE
+   their edge, instead of the 1.5px outline the flat rows draw inside theirs:
+   inside a white key that line read as a second border, and on the ink
+   button as a blue stripe in the label's way. Declared after every rule that
+   sets their box-shadow, so a checked radio or a chosen segment still shows
+   where the keyboard is. */
+.btn-primary:focus-visible,
+.btn-secondary:focus-visible,
+.select-trigger:focus-visible,
+.switch:focus-visible,
+.radio:focus-visible,
+.segmented-item:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
 /* A theme's swatch on the Appearance page. The preview inside carries
    data-theme, so it is painted with that theme's own tokens. */
 .theme-swatch {
@@ -2761,18 +2811,21 @@ canvas[data-orb-state] {
   min-width: 0;
   padding: 0.25rem;
   border-radius: var(--radius-xl);
-  border: 1px solid var(--color-border);
-  background-color: var(--surface-100);
+  background-color: var(--control-surface);
+  box-shadow: var(--raised-control-shadow);
   transition:
-    border-color 150ms,
+    background-color 150ms,
     box-shadow 150ms;
 }
 .theme-swatch:hover {
-  border-color: var(--text-tertiary);
+  background-color: color-mix(in oklab, var(--control-surface), var(--text-primary) 5%);
 }
+/* Chosen: the accent edge drawn twice as firm as a focus ring, and no halo —
+   a selection is a state that stays, a focus ring is a place that moves. */
 .theme-swatch[data-selected='true'] {
-  border-color: var(--color-accent);
-  box-shadow: 0 0 0 1px var(--color-accent);
+  box-shadow:
+    0 0 0 1.5px var(--color-accent),
+    0 1px 2px rgb(0 0 0 / 0.12);
 }
 .theme-swatch-preview {
   padding: 0.75rem;
@@ -2808,7 +2861,7 @@ canvas[data-orb-state] {
 
 /* ── Extension cards ── */
 /* Grid of clickable cards used in the Extensions browser (marketplaces, plugins,
-   MCP servers). Cards share the recessed look of .settings-card but stand as
+   MCP servers). Cards share the paper of .settings-card but stand as
    independent tiles with a hover affordance when interactive. */
 .extension-grid {
   display: grid;
@@ -2821,19 +2874,18 @@ canvas[data-orb-state] {
   gap: 0.375rem;
   text-align: left;
   border-radius: var(--radius-xl);
-  border: 1px solid var(--border-subtle-color);
-  background-color: color-mix(in oklab, var(--surface-100) 55%, transparent);
+  background-color: var(--card-surface);
+  box-shadow: var(--card-shadow);
   padding: 0.875rem; /* p-3.5 */
   transition:
-    border-color 150ms,
+    box-shadow 150ms,
     background-color 150ms;
 }
 button.extension-card {
   cursor: pointer;
 }
 button.extension-card:hover {
-  border-color: color-mix(in oklab, var(--color-accent) 40%, transparent);
-  background-color: var(--surface-100);
+  background-color: color-mix(in oklab, var(--card-surface), var(--text-primary) 4%);
 }
 .extension-card-muted {
   opacity: 0.55;
@@ -4539,17 +4591,26 @@ details[open] > .chat-approval-items {
   gap: calc(var(--spacing) * 2);
   padding: calc(var(--spacing) * 1.5) calc(var(--spacing) * 1.5) calc(var(--spacing) * 1.5)
     calc(var(--spacing) * 3.5);
-  border: thin solid var(--border-subtle-color);
   border-radius: var(--radius-2xl);
   background-color: var(--surface-raised);
-  box-shadow: var(--raised-shadow);
-  transition: border-color var(--default-transition-duration);
+  /* The paper hairline in the shadow rather than a border (tokens.css
+     "Paper"); with the caret in it the edge firms to the full border ink, the
+     same quiet step the composer always took, and a file dragged over it
+     rings it in the accent. */
+  box-shadow:
+    0 0 0 0.5px var(--edge-color),
+    var(--raised-shadow);
+  transition: box-shadow var(--default-transition-duration);
 }
 .chat-composer:focus-within {
-  border-color: var(--color-border);
+  box-shadow:
+    0 0 0 1px var(--color-border),
+    var(--raised-shadow);
 }
 .chat-composer[data-dragging='true'] {
-  border-color: var(--color-accent);
+  box-shadow:
+    0 0 0 1px var(--color-accent),
+    var(--raised-shadow);
 }
 .chat-composer textarea {
   flex: 1;
