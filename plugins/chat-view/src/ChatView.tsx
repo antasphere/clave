@@ -1219,7 +1219,7 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
  * already in automatic mode, one click away in propose mode, or nowhere to
  * go — and never reads as a crash. Any other end is the plain exit.
  */
-function EndedNotice({
+export function EndedNotice({
   sessionId,
   exitCode
 }: {

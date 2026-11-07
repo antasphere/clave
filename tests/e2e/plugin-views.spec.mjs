@@ -56,7 +56,7 @@ export async function run(t) {
     await picker.waitFor()
     await picker.click()
     const items = win.getByRole('menuitem')
-    assert.deepEqual(await items.allInnerTexts(), ['Chat', 'Enclave'])
+    assert.deepEqual(await items.allInnerTexts(), ['Chat', 'Enclave', 'Folio'])
     t.check('the pane picker lists both views the plugin contributes', true)
 
     await win.keyboard.press('Escape')
