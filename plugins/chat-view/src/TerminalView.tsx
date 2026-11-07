@@ -12,7 +12,6 @@ import { bindFleetCatchup } from './fleet-sync'
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react'
 import {
   ArrowUpIcon,
-  ChatBubbleLeftRightIcon,
   MapPinIcon,
   PaperClipIcon,
   StopIcon,
@@ -85,6 +84,7 @@ import {
 } from '../../../src/shared/attachments'
 import { useComposerAttachments } from './composer-attachments'
 import { DropDrawing } from './DropDrawing'
+import { ViewEmpty } from './EmptyDrawing'
 import {
   failureText,
   pathForMessage,
@@ -825,15 +825,12 @@ export function TerminalView({
         <div ref={transcript.scroll} className="chat-scroll">
           <div className="chat-column" role="log" aria-label="Conversation">
             {pastRead && conversation.entries.length === 0 && state !== 'ended' && (
-              <div className="chat-empty">
-                <div className="chat-empty-icon">
-                  <ChatBubbleLeftRightIcon />
-                </div>
-                <div>
-                  <h2>Start a conversation</h2>
-                  <p>Ask a question or describe what you want to build.</p>
-                </div>
-              </div>
+              <ViewEmpty
+                kind="enclave"
+                eyebrow="Enclave"
+                title="A quiet column"
+                text="Ask in plain words. Every step the agent takes is laid out here, in order, as it works."
+              />
             )}
             {/* Mounted from the start, empty or not: what it gains is told apart
                 from what it opened on by the rows it rendered before. */}

@@ -1,0 +1,38 @@
+/* The empty conversation in Chat and Enclave (EmptyDrawing.tsx), laid out
+   like Folio's empty page: the drawing, the view's name as an eyebrow, one
+   line in the primary ink, one sentence under it. `.chat-empty` keeps its
+   place in the column (margin: auto); these rules lay out what is in it. */
+.view-empty {
+  gap: calc(var(--spacing) * 1.5);
+  min-height: calc(100% - var(--spacing) * 10);
+  padding: calc(var(--spacing) * 10) calc(var(--spacing) * 6);
+  justify-content: center;
+}
+.view-empty .view-empty-drawing {
+  width: calc(var(--spacing) * 64);
+  max-width: 100%;
+  height: auto;
+  margin-bottom: calc(var(--spacing) * 3);
+}
+.view-empty strong {
+  color: var(--text-primary);
+  font-size: var(--text-base);
+  font-weight: var(--font-weight-medium);
+}
+.view-empty span {
+  max-width: 44ch;
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .view-empty-step {
+    animation: view-empty-step-in 460ms cubic-bezier(0.22, 1, 0.36, 1) backwards;
+  }
+}
+@keyframes view-empty-step-in {
+  from {
+    opacity: 0;
+    translate: -4px 0;
+  }
+}

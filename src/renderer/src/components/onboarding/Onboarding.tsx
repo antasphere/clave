@@ -17,6 +17,8 @@ import { loadCodexAccounts, useCodexAccountStore } from '../../store/codex-accou
 import { addWorkspace, isUnderRoot, setActiveWorkspace } from '../../lib/workspace-actions'
 import { launchSession } from '../../lib/launch-session'
 import { setPendingChatView } from '../../lib/pending-chat-view'
+import { selectedChatProfile } from '../../store/launch-profile-store'
+import { CHAT_PROFILE_IDS } from '../../../../shared/open-session-modes'
 import { useWorkspaceStore } from '../../store/workspace-store'
 import './onboarding.css'
 
@@ -254,10 +256,23 @@ export function Onboarding(): React.JSX.Element | null {
       if (agent) {
         const accountId = connections[agent]!
         await launchSession({
+          // A chat, not a terminal: the chat launch profile the launcher
+          // would open in this workspace (the built-in one by default), so
+          // the session opens in the chat style just picked.
           setup:
             agent === 'claude'
-              ? { kind: 'claude', dangerousMode: false, claudeProfileId: accountId }
-              : { kind: 'codex', dangerousMode: false, codexAccountId: accountId },
+              ? {
+                  kind: 'claude',
+                  dangerousMode: false,
+                  claudeProfileId: accountId,
+                  launchProfileId: selectedChatProfile('claude', ws.id) ?? CHAT_PROFILE_IDS.claude
+                }
+              : {
+                  kind: 'codex',
+                  dangerousMode: false,
+                  codexAccountId: accountId,
+                  launchProfileId: selectedChatProfile('codex', ws.id) ?? CHAT_PROFILE_IDS.codex
+                },
           cwd: { kind: 'path', path: ws.root },
           workspaceId: ws.id,
           initialPrompt: setupLine.trim() || FIRST_MESSAGE,
