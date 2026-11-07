@@ -13,8 +13,8 @@
   align-items: center;
   justify-content: center;
   padding: calc(var(--spacing) * 8);
-  background-color: color-mix(in oklab, var(--surface-0) 60%, transparent);
-  backdrop-filter: blur(8px);
+  background-color: color-mix(in oklab, var(--surface-0) 48%, transparent);
+  backdrop-filter: blur(7px);
   -webkit-app-region: drag;
   transition: opacity 300ms var(--ease-out-expo);
   @starting-style {
