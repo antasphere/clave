@@ -79,16 +79,17 @@ describe('E2E shard coverage', () => {
   })
   it('refuses invalid hints instead of silently using the unknown-spec fallback', () => {
     const inventory = ['a.spec.mjs']
-    expect(() =>
-      selectShard(
-        inventory,
-        { index: 1, total: 1 },
-        {
-          defaultSeconds: 1,
-          seconds: { 'boot-ready': 50 }
-        }
-      )
-    ).toThrow('Invalid E2E shard duration hint: boot-ready')
+    for (const name of ['boot-ready', 'boot-ready.mjs', 'boot-ready.spec.mjs.bak'])
+      expect(() =>
+        selectShard(
+          inventory,
+          { index: 1, total: 1 },
+          {
+            defaultSeconds: 1,
+            seconds: { [name]: 50 }
+          }
+        )
+      ).toThrow(`Invalid E2E shard duration hint: ${name}`)
     for (const value of [undefined, null, 0, -1, NaN, Infinity, '2']) {
       expect(() =>
         selectShard(
