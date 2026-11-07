@@ -100,11 +100,13 @@ export async function run(t) {
         () => server.fixture.evaluate(() => globalThis.__historyServed === true),
         'the past holding the old question is read'
       )
-      // The live approval comes first, then the live question: never the old one.
-      const dock = pane.locator('.chat-prompt:visible')
-      await dock.getByText(approval.description, { exact: true }).waitFor()
+      // The live approval, docked above the composer; the live question, drawn
+      // inline in the transcript (PRDCT-4157): never the old one as a card.
+      const approvalDock = pane.locator('.chat-prompt[data-kind="permission"]:visible')
+      const dock = pane.locator('.chat-prompt[data-kind="question"]:visible')
+      await approvalDock.getByText(approval.description, { exact: true }).waitFor()
       const accept = approval.options.find((o) => o.id === 'accept')
-      await clickReady(dock.getByRole('button', { name: accept.label, exact: true }))
+      await clickReady(approvalDock.getByRole('button', { name: accept.label, exact: true }))
       await eventually(
         async () => (await dock.innerText()).includes('Fleet public answer'),
         'the live question follows the approval'

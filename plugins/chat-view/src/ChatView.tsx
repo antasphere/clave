@@ -61,7 +61,7 @@ import { isQuestion } from './approvals'
 import { QuestionContext } from './question-context'
 import type { Values } from './input-request'
 import { refusedAnswer } from './refused-answer'
-import { serverDock, withServerPending } from './server-requests'
+import { liveQuestionCards, serverDock, withServerPending } from './server-requests'
 import { continueList } from './lists'
 import { ResumePicker } from './ResumePicker'
 import { McpPanel } from './McpPanel'
@@ -699,7 +699,9 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
         // the provider) is refused rather than recorded.
         // The dock names the server's key; a card inline names the provider's
         // id the stream carried. Either settles the one record.
-        const request = remotePending?.find((r) => r.id === id || r.providerRequestId === id)
+        const request = remotePending?.find(
+          (r) => r.sessionId === session.id && (r.id === id || r.providerRequestId === id)
+        )
         if (!request?.providerRequestId) throw new Error('This request is no longer waiting.')
         const { accepted } = await window.electronAPI.fleetResolve(request.id, {
           type: 'permission',
@@ -847,14 +849,17 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
   // a page of the past arriving in front must not shift a key, or every turn
   // below it would render as another and the column's arrival would replay on
   // the ones at the end. Memoised, so a keystroke rebuilds none of it.
-  const blocks = useMemo(() => {
+  const { blocks, liveCards } = useMemo(() => {
     const entries = withServerPending(presentation.entries, remotePending, session.id)
     const ordinal = new Map<Entry, number>()
     entries.forEach((entry, i) => ordinal.set(entry, presentation.first + i))
-    return groupEntries(visibleEntries(entries)).map((block) => ({
-      block,
-      key: blockKey(block, (entry) => ordinal.get(entry))
-    }))
+    return {
+      blocks: groupEntries(visibleEntries(entries)).map((block) => ({
+        block,
+        key: blockKey(block, (entry) => ordinal.get(entry))
+      })),
+      liveCards: liveQuestionCards(entries, remotePending, session.id)
+    }
   }, [presentation.entries, presentation.first, remotePending, session.id])
   // The reader's open tool rows, kept across the rows' unmounts (`ToolDisclosure`).
   const [disclosure] = useState(() => new Map<string, boolean>())
@@ -1017,6 +1022,7 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
                   busy: (id) => !ready || state === 'ended' || pending.includes(id),
                   agent: AGENT_NAMES[session.provider] ?? 'the agent',
                   remote: isRemoteKey(session.id),
+                  live: (entry) => liveCards.has(entry),
                   drafts: questionDrafts
                 }}
               >

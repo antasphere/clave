@@ -1,5 +1,6 @@
 import { createContext, useContext } from 'react'
 import type { InputAnswer } from '@clave/contract/input-kinds'
+import type { Entry } from './reducer'
 
 /** How a question card drawn inline in the transcript answers (PRDCT-4157):
  *  the view's own answer path (a local write, or the server's resolution for
@@ -19,6 +20,9 @@ export interface QuestionHost {
   busy: (id: string) => boolean
   agent: string
   remote: boolean
+  /** Whether this entry is the one card drawn for a request still waiting
+   *  (`liveQuestionCards`); any other unanswered entry stays a muted row. */
+  live: (entry: Entry) => boolean
   drafts: Map<string, Record<string, InputAnswer>>
 }
 

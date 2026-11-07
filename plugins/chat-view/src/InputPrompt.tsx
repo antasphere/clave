@@ -1,10 +1,9 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import {
   ArrowTopRightOnSquareIcon,
   CheckIcon,
   DocumentIcon,
   FolderOpenIcon,
-  QuestionMarkCircleIcon,
   XMarkIcon
 } from '@heroicons/react/24/outline'
 import {
@@ -21,7 +20,8 @@ import type { Permission } from './reducer'
 import type { Answer } from './question-context'
 import { Key } from './prompt-bits'
 import { answersOf, initialValues, isDeny, type Values } from './input-request'
-import { LinkDrawing } from './AskDrawing'
+import { own } from '@clave/contract/input-kinds'
+import { AskDrawing, LinkDrawing } from './AskDrawing'
 
 /* The card an agent asks the person with through clave_request_input
    (PRDCT-4157): what it asks, in its own words, then one field per question
@@ -363,7 +363,7 @@ export function InputPrompt({
   const skip = request.options.find((o) => isDeny(o.id))
   const problemsOf = (vals: Values): Record<string, string | null> =>
     Object.fromEntries(
-      questions.map((q) => [questionKey(q), answerProblem(q, vals[questionKey(q)])])
+      questions.map((q) => [questionKey(q), answerProblem(q, own(vals, questionKey(q)))])
     ) as Record<string, string | null>
   const problems = problemsOf(values)
   const valid = Object.values(problems).every((p) => p === null)
@@ -436,6 +436,36 @@ export function InputPrompt({
     drafts?.delete(request.id)
     onAnswer(request.id, skip.id)
   }
+  /** Where each field stands on the rail: done once its answer fits, the
+   *  first one not done is where the reader is (active), a field whose
+   *  answer does not fit says so (problem), the rest wait (open). */
+  const stateOf = (key: string, index: number): 'done' | 'active' | 'problem' | 'open' => {
+    const value = own(values, key)
+    const filled = !(
+      value === undefined || (typeof value === 'string' ? value.trim() === '' : value.length === 0)
+    )
+    if (shownProblem(key) !== null) return 'problem'
+    if (filled && problems[key] === null) return 'done'
+    const firstOpen = shown.findIndex((q) => {
+      const k = questionKey(q)
+      const v = own(values, k)
+      const f = !(v === undefined || (typeof v === 'string' ? v.trim() === '' : v.length === 0))
+      return !(f && problems[k] === null)
+    })
+    return firstOpen === index ? 'active' : 'open'
+  }
+  // The accent runs down the rail as far as the field the reader is on, and
+  // all the way once every field is answered: measured, since fields differ
+  // in height, and written as a length the stylesheet draws.
+  const list = useRef<HTMLOListElement>(null)
+  useLayoutEffect(() => {
+    const el = list.current
+    if (!el) return
+    const active =
+      el.querySelector<HTMLElement>('[data-state="active"]') ??
+      el.querySelector<HTMLElement>('[data-state="problem"]')
+    el.style.setProperty('--ask-progress', `${active ? active.offsetTop + 12 : el.offsetHeight}px`)
+  })
   return (
     <div
       ref={body}
@@ -470,7 +500,7 @@ export function InputPrompt({
           const key = questionKey(current)
           const label = current.options[n - 1].label
           if (current.multiSelect) {
-            const picked = [...((values[key] as readonly string[] | undefined) ?? [])]
+            const picked = [...((own(values, key) as readonly string[] | undefined) ?? [])]
             set(
               key,
               picked.includes(label) ? picked.filter((l) => l !== label) : [...picked, label]
@@ -486,82 +516,100 @@ export function InputPrompt({
         }
       }}
     >
-      <div className="chat-prompt-head">
-        <span className="chat-prompt-eyebrow">
-          <QuestionMarkCircleIcon />
-          {agent} asks
-        </span>
-        {steps && (
-          <span className="chat-prompt-step">
-            {step + 1}/{questions.length}
-          </span>
-        )}
-        <span className="chat-prompt-spacer" />
-        {skip && (
-          <button
-            type="button"
-            className="chat-turn-copy"
-            aria-label="Skip the question"
-            title="Skip (Esc)"
-            disabled={busy}
-            onClick={doSkip}
-          >
-            <XMarkIcon />
-          </button>
-        )}
+      <div className="chat-ask-head">
+        <AskDrawing />
+        <div className="chat-ask-words">
+          <div className="chat-prompt-head">
+            <span className="chat-prompt-eyebrow">{agent} asks</span>
+            {steps && (
+              <span className="chat-prompt-step">
+                {step + 1}/{questions.length}
+              </span>
+            )}
+            <span className="chat-prompt-spacer" />
+            {skip && (
+              <button
+                type="button"
+                className="chat-turn-copy"
+                aria-label="Skip the question"
+                title="Skip (Esc)"
+                disabled={busy}
+                onClick={doSkip}
+              >
+                <XMarkIcon />
+              </button>
+            )}
+          </div>
+          <p className="chat-prompt-ask">{request.description}</p>
+        </div>
       </div>
-      <p className="chat-prompt-ask">{request.description}</p>
-      <div
+      <ol
         key={steps ? step : 'form'}
-        className="chat-prompt-page chat-fields"
+        ref={list}
+        className="chat-prompt-page chat-ask-fields"
         data-direction={direction}
       >
         {shown.map((question, index) => {
           const key = questionKey(question)
           const at = steps ? step : index
+          const state = stateOf(key, index)
           return (
-            <Field
+            <li
               key={key}
-              question={question}
-              value={values[key]}
-              problem={shownProblem(key)}
-              busy={busy}
-              remote={remote}
-              autoFocus={takeFocus && index === 0}
-              onChange={(value) => set(key, value)}
-              onTouch={() => touch(key)}
-              onEnter={() => advance(at)}
-              onPick={
-                steps && !question.multiSelect
-                  ? (value) => advance(at, { ...values, [key]: value })
-                  : undefined
-              }
-            />
+              className="chat-ask-field"
+              data-state={state}
+              style={{ '--i': index } as React.CSSProperties}
+            >
+              <span className="chat-ask-seat" aria-hidden="true">
+                {state === 'done' && <CheckIcon />}
+              </span>
+              <Field
+                question={question}
+                value={own(values, key)}
+                problem={shownProblem(key)}
+                busy={busy}
+                remote={remote}
+                autoFocus={takeFocus && index === 0}
+                onChange={(value) => set(key, value)}
+                onTouch={() => touch(key)}
+                onEnter={() => advance(at)}
+                onPick={
+                  steps && !question.multiSelect
+                    ? (value) => advance(at, { ...values, [key]: value })
+                    : undefined
+                }
+              />
+            </li>
           )
         })}
-      </div>
-      <div className="chat-prompt-actions">
-        <span className="chat-prompt-spacer" />
+      </ol>
+      <div className="chat-ask-actions">
         {steps && step > 0 && (
-          <button type="button" className="chat-prompt-btn" disabled={busy} onClick={back}>
+          <button type="button" className="chat-ask-btn" disabled={busy} onClick={back}>
             Back
           </button>
         )}
+        <span className="chat-prompt-spacer" />
         {skip && (
-          <button type="button" className="chat-prompt-btn" disabled={busy} onClick={doSkip}>
+          <button
+            type="button"
+            className="chat-ask-btn"
+            title="Skip (Esc)"
+            disabled={busy}
+            onClick={doSkip}
+          >
             Skip
-            <Key>Esc</Key>
           </button>
         )}
         <button
           type="button"
-          className="chat-prompt-btn"
+          className="chat-ask-btn"
           data-primary="true"
+          title={steps && !last ? 'Next (Enter)' : 'Send (⌘ Enter)'}
           disabled={busy || (attempted && !valid)}
           onClick={() => (steps ? advance(step) : send())}
         >
           {steps && !last ? 'Next' : 'Send'}
-          <Key>{steps && !last ? '↩' : '⌘↩'}</Key>
         </button>
       </div>
     </div>

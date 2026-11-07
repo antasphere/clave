@@ -14,8 +14,18 @@ import {
 import {
   INPUT_REQUEST_OPTIONS,
   INPUT_REQUEST_TOOL,
-  answerProblem
+  answerProblem,
+  own,
+  questionsShapeProblem
 } from '../../../contract/src/input-kinds'
+
+const trimAnswers = (answers: Answers): Answers =>
+  Object.fromEntries(
+    Object.entries(answers).map(([key, value]) => [
+      key,
+      typeof value === 'string' ? value.trim() : value.map((v) => v.trim())
+    ])
+  )
 
 export type RequestInput = Omit<PendingRequest, 'id' | 'createdAt'>
 /** The prefix of the id a hosted request carries as its provider id. */
@@ -113,6 +123,11 @@ export class PendingRequests {
    * skip) and kept for the tool's poll rather than written to a provider.
    */
   createHosted(input: HostedRequestInput): PendingRequest {
+    // The shape rules of the contract, the same the tool applies: the server
+    // never holds a question the card could not answer (a choice with no
+    // option, a link that is not http(s), an id that is not a key).
+    const shape = questionsShapeProblem(input.questions)
+    if (shape) throw new RequestRejected({ code: 'invalid', message: shape })
     const request = this.create({
       sessionId: input.sessionId,
       kind: 'clarification',
@@ -252,6 +267,10 @@ export class PendingRequests {
     } catch {
       throw invalid()
     }
+    // A hosted request's answers are trimmed here, whichever client sent
+    // them: the tool reads what the person meant, never their stray spaces.
+    if (entry.hosted && response.type === 'permission' && response.answers)
+      response = { ...response, answers: trimAnswers(response.answers) }
     this.validate(entry.request, response)
     // Reserve synchronously before the first await. A concurrent answer never
     // invokes the provider/action again, including when the callback fails.
@@ -303,12 +322,12 @@ export class PendingRequests {
     if (!answers) throw invalid()
     const keys = new Set(questions.map((q) => q.id ?? q.question))
     if (Object.keys(answers).some((key) => !keys.has(key))) throw invalid()
-    if (this.entries.get(request.id)?.hosted || request.toolName === INPUT_REQUEST_TOOL) {
+    if (this.entries.get(request.id)?.hosted) {
       // A hosted request's answers are judged by each question's kind, the
       // same rule the card applied as they were typed; an optional question
       // may be left out.
       for (const q of questions) {
-        const value = answers[q.id ?? q.question]
+        const value = own(answers, q.id ?? q.question)
         if (answerProblem(q, value) !== null) throw invalid()
       }
       return

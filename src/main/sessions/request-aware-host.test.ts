@@ -479,4 +479,27 @@ describe('hosted requests on the native road', () => {
     expect(f.published).toHaveLength(0)
     f.requests.close()
   })
+
+  it('a native request settling publishes nothing on the hosted road and leaves the state alone', () => {
+    const f = hostedFixture()
+    f.emit(permission)
+    expect(f.requests.snapshot().pending).toHaveLength(1)
+    f.requests.cancelNative(session.id, permission.id)
+    expect(f.published).toHaveLength(0)
+    expect(f.states).toEqual([])
+    f.requests.close()
+  })
+
+  it('a hosted request settled while a native one still waits keeps the session waiting', async () => {
+    const f = hostedFixture()
+    const request = f.createHosted(onboarding)
+    f.emit(permission)
+    await f.host.write(session.id, {
+      type: 'permission_response',
+      id: request.providerRequestId!,
+      optionId: 'deny'
+    })
+    expect(f.states).toEqual(['blocked'])
+    f.requests.close()
+  })
 })

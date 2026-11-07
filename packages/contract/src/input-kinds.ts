@@ -138,6 +138,66 @@ export function answerProblem(
   return null
 }
 
+/** The key a hosted question's answer comes back under: lowercase, digits,
+ *  - and _, and never a name the Object prototype already has (`constructor`,
+ *  `toString`): a lookup on a plain object would read the prototype's. */
+const HOSTED_ID = /^[a-z][a-z0-9_-]{0,63}$/
+export const isHostedQuestionId = (id: unknown): id is string =>
+  typeof id === 'string' && HOSTED_ID.test(id) && !Object.hasOwn(Object.prototype, id)
+
+/** Why a hosted question's shape does not fit its kind, in the agent's words;
+ *  `null` when it fits. The one rule for the tool that takes the question and
+ *  the server that stores it, so the server never holds what the tool
+ *  refuses: a choice needs its options and nothing else may carry them, a
+ *  link needs an http(s) address, bounds belong to a number. */
+export function questionShapeProblem(
+  q: InputQuestion & { url?: string; confirm?: string }
+): string | null {
+  if (!isHostedQuestionId(q.id)) return 'a question needs an id: lowercase, digits, - and _'
+  const kind = q.kind ?? 'text'
+  const has = q.options.length > 0
+  if (kind === 'choice' && q.options.length < 2)
+    return `"${q.id}": a choice needs two options or more.`
+  if (kind !== 'choice' && (has || q.multiSelect))
+    return `"${q.id}": options belong to a choice; use kind "choice".`
+  if (kind === 'link') {
+    if (!q.url) return `"${q.id}": a link needs its url.`
+    try {
+      const url = new URL(q.url)
+      if (url.protocol !== 'http:' && url.protocol !== 'https:')
+        return `"${q.id}": a link opens an http(s) address.`
+    } catch {
+      return `"${q.id}": a link opens an http(s) address.`
+    }
+  } else if (q.url !== undefined || q.confirm !== undefined)
+    return `"${q.id}": url and confirm belong to a link.`
+  if (kind !== 'number' && (q.min !== undefined || q.max !== undefined))
+    return `"${q.id}": min and max belong to a number.`
+  if (kind === 'number' && q.min !== undefined && q.max !== undefined && q.min > q.max)
+    return `"${q.id}": min is above max.`
+  return null
+}
+
+/** The first problem among a hosted request's questions, duplicates included. */
+export function questionsShapeProblem(
+  questions: readonly (InputQuestion & { url?: string; confirm?: string })[]
+): string | null {
+  if (questions.length === 0) return 'a request needs at least one question'
+  const seen = new Set<string>()
+  for (const q of questions) {
+    const problem = questionShapeProblem(q)
+    if (problem) return problem
+    if (seen.has(q.id!)) return `Two questions share the id "${q.id}".`
+    seen.add(q.id!)
+  }
+  return null
+}
+
+/** A plain object read without its prototype: a key named like a prototype
+ *  member answers undefined, never the member. */
+export const own = <V>(record: Readonly<Record<string, V>>, key: string): V | undefined =>
+  Object.hasOwn(record, key) ? record[key] : undefined
+
 /** The kinds whose field is one line of text the person types. */
 export const isTypedKind = (kind: InputKind | undefined): boolean =>
   kind === 'text' ||

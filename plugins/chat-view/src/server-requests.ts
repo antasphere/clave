@@ -58,3 +58,36 @@ export function withServerPending(
       : entry
   )
 }
+
+/** The entries a question card is drawn for (PRDCT-4157): one per request
+ *  still waiting, on its LATEST entry. A provider's request id names no one
+ *  request across processes (Codex numbers from zero again), so an earlier
+ *  entry under the same id, a dead process's question or a replayed duplicate,
+ *  stays a muted row, never a second live card. A server session's live
+ *  requests are the server's own records for that session, nothing the view
+ *  read off its stream; a local session's are its unanswered entries. */
+export function liveQuestionCards(
+  entries: readonly Entry[],
+  pending: readonly FleetPendingRequest[] | undefined,
+  sessionId: string
+): Set<Entry> {
+  const server = pending
+    ? new Set(
+        pending
+          .filter((r) => r.sessionId === sessionId && r.providerRequestId !== undefined)
+          .map((r) => r.providerRequestId as string)
+      )
+    : null
+  const live = new Set<Entry>()
+  const seen = new Set<string>()
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const entry = entries[i]
+    if (entry.kind !== 'permission' || entry.answer || entry.answeredElsewhere) continue
+    const id = entry.request.id
+    if (seen.has(id)) continue
+    seen.add(id)
+    if (server && !server.has(id)) continue
+    live.add(entry)
+  }
+  return live
+}

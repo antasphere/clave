@@ -5,7 +5,8 @@ import {
   SessionControlSchema as ZodSessionControl,
   SessionSchema as ZodSession,
   SessionEventSchema as ZodSessionEvent,
-  SessionInputSchema as ZodSessionInput
+  SessionInputSchema as ZodSessionInput,
+  flattenAnswers
 } from '../../../src/shared/session-model'
 import {
   Attachments,
@@ -490,5 +491,10 @@ describe('restart correlation contract', () => {
       }
       expect(Schema.decodeUnknownSync(ServerEvent)(event)).toEqual(event)
     }
+  })
+
+  it("flattens a hosted multi-select for a provider's wire, one string per question", () => {
+    expect(flattenAnswers({ a: 'x', b: ['y', 'z'], c: [] })).toEqual({ a: 'x', b: 'y, z', c: '' })
+    expect(flattenAnswers(undefined)).toBeUndefined()
   })
 })

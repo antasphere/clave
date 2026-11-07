@@ -247,6 +247,14 @@
      the "reading wants more air" argument) was the one row family that did not
      match the rest of the app (2026-09-20). */
   --sidebar-row-h: var(--control-h-md); /* 28px at Compact, 32px at Comfortable */
+  /* The question card an agent asks the person with, PRDCT-4157, inline in
+     the chat: its field height, its button height, the air between its fields
+     and its inset follow the Density preset, which density.css restates, so
+     the card reads as the chrome around it does and never as compact alone. */
+  --ask-field-h: 34px;
+  --ask-btn-h: 30px;
+  --ask-gap: 14px;
+  --ask-pad: 12px;
 
   /* Sidebar tab icon size — single source of truth for the leading icon on
      session/file/group tabs in the sidebar. Change here to resize all of them. */

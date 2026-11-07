@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest'
-import { INPUT_REQUEST_TOOL, answerProblem, inputRequestMeta } from './input-kinds'
+import {
+  INPUT_REQUEST_TOOL,
+  answerProblem,
+  inputRequestMeta,
+  isHostedQuestionId,
+  own,
+  questionShapeProblem,
+  questionsShapeProblem
+} from './input-kinds'
 
 /* The one rule for whether an answer fits its question (PRDCT-4157), read by
    the card as the reader types and by the server as it is handed the answer.
@@ -29,6 +37,7 @@ describe('answers judged by their kind', () => {
     ['number', 'forty', 'This is not a number'],
     ['date', '2026-11-07', null],
     ['date', '2026-13-07', 'This is not a date'],
+    ['date', '2026-02-30', 'This is not a date'],
     ['date', '7/11/2026', 'A date, as YYYY-MM-DD'],
     ['file', '/Users/romain/file.txt', null],
     ['folder', '~/.antasphere', null],
@@ -90,5 +99,46 @@ describe('the hosted request meta', () => {
     expect(inputRequestMeta({ questions: [{ question: 'Which?' }] })).toBeNull()
     expect(inputRequestMeta(undefined)).toBeNull()
     expect(inputRequestMeta('AskUserQuestion')).toBeNull()
+  })
+})
+
+describe("a hosted question's shape", () => {
+  const q = (more: Record<string, unknown>): never =>
+    ({ id: 'q', question: 'Q?', options: [], ...more }) as never
+  it.each([
+    [{ kind: 'text' }, null],
+    [{ kind: 'choice', options: [{ label: 'a' }, { label: 'b' }] }, null],
+    [{ kind: 'choice', options: [{ label: 'a' }] }, 'two options or more'],
+    [{ kind: 'text', options: [{ label: 'a' }, { label: 'b' }] }, 'options belong to a choice'],
+    [{ kind: 'text', multiSelect: true }, 'options belong to a choice'],
+    [{ kind: 'link', url: 'https://github.com/login' }, null],
+    [{ kind: 'link' }, 'a link needs its url'],
+    [{ kind: 'link', url: 'javascript:alert(1)' }, 'http(s) address'],
+    [{ kind: 'link', url: 'not a url' }, 'http(s) address'],
+    [{ kind: 'text', url: 'https://x.y' }, 'url and confirm belong to a link'],
+    [{ kind: 'number', min: 1, max: 5 }, null],
+    [{ kind: 'number', min: 5, max: 1 }, 'min is above max'],
+    [{ kind: 'text', min: 1 }, 'min and max belong to a number'],
+    [{ id: 'Bad Id!' }, 'needs an id'],
+    [{ id: 'constructor' }, 'needs an id'],
+    [{ id: undefined }, 'needs an id']
+  ])('%j → %j', (more, words) => {
+    const problem = questionShapeProblem(q(more))
+    if (words === null) expect(problem).toBeNull()
+    else expect(problem).toContain(words)
+  })
+  it('refuses two questions under one id, and an empty request', () => {
+    expect(questionsShapeProblem([q({}), q({})])).toContain('share the id')
+    expect(questionsShapeProblem([])).toContain('at least one question')
+    expect(questionsShapeProblem([q({}), q({ id: 'r' })])).toBeNull()
+  })
+  it('an id is a key of its own, never the prototype\u2019s', () => {
+    expect(isHostedQuestionId('email')).toBe(true)
+    expect(isHostedQuestionId('github-login_2')).toBe(true)
+    expect(isHostedQuestionId('constructor')).toBe(false)
+    expect(isHostedQuestionId('toString')).toBe(false)
+    expect(isHostedQuestionId('Email')).toBe(false)
+    expect(own({ a: 1 }, 'a')).toBe(1)
+    expect(own({ a: 1 }, 'constructor')).toBeUndefined()
   })
 })

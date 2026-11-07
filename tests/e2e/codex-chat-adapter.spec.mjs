@@ -190,9 +190,11 @@ export async function run(t) {
       )
     )
     t.check('protocol approval blocks the session observed through renderer IPC', true)
+    // The request service refuses an option the record does not list before
+    // the adapter would (PRDCT-4157 runs it in-process as on the daemon).
     await assert.rejects(
       () => write({ type: 'permission_response', id: approval.id, optionId: 'forged' }),
-      /approval option/
+      /approval option|does not answer this pending request/
     )
     await write({ type: 'permission_response', id: approval.id, optionId: 'cancel' })
     assert.ok(

@@ -1,4 +1,4 @@
-import { inputRequestMeta, type InputAnswer } from '@clave/contract/input-kinds'
+import { inputRequestMeta, own, type InputAnswer } from '@clave/contract/input-kinds'
 import type { AgentQuestion } from '../../../src/shared/session-model'
 import { questionKey } from '../../../src/renderer/src/lib/question-identity'
 import type { Permission } from './reducer'
@@ -20,7 +20,7 @@ export function answersOf(
 ): Record<string, string | string[]> {
   return Object.fromEntries(
     questions.flatMap((q) => {
-      const value = values[questionKey(q)]
+      const value = own(values, questionKey(q))
       if (empty(value)) return []
       return [
         [

@@ -182,4 +182,79 @@ describe('hosted requests', () => {
     expect(requests.isHosted(native.id)).toBe(false)
     requests.close()
   })
+
+  it.each([
+    [
+      'a link that is not http(s)',
+      [{ id: 'go', question: 'Go', kind: 'link', url: 'javascript:alert(1)', options: [] }]
+    ],
+    ['a choice with no options', [{ id: 'pick', question: 'Pick', kind: 'choice', options: [] }]],
+    ['an id that is not a key', [{ id: 'Bad Id!', question: 'Q', kind: 'text', options: [] }]],
+    ['an id the prototype owns', [{ id: 'constructor', question: 'Q', kind: 'text', options: [] }]],
+    [
+      'two questions under one id',
+      [
+        { id: 'a', question: 'A', options: [] },
+        { id: 'a', question: 'B', options: [] }
+      ]
+    ],
+    [
+      'options on a text question',
+      [{ id: 'a', question: 'A', kind: 'text', options: [{ label: 'x' }, { label: 'y' }] }]
+    ]
+  ])('refuses to store a question the card could not answer: %s', (_label, questions) => {
+    const requests = new PendingRequests()
+    expect(() =>
+      requests.createHosted({ sessionId: 's1', description: 'D', questions: questions as never })
+    ).toThrow()
+    expect(requests.snapshot().pending).toHaveLength(0)
+    requests.close()
+  })
+
+  it('trims what any client sends, so the tool reads what the person meant', async () => {
+    const requests = new PendingRequests()
+    const request = requests.createHosted(onboarding)
+    await requests.resolve({
+      requestId: request.id,
+      response: {
+        type: 'permission',
+        optionId: 'answer',
+        answers: { email: '  luca@antasphere.com ', login: ' luca-a', projects: [' reb '] }
+      }
+    })
+    expect((await requests.resultAfter(request.id, 's1')).answers).toEqual({
+      email: 'luca@antasphere.com',
+      login: 'luca-a',
+      projects: ['reb']
+    })
+    requests.close()
+  })
+
+  it("a native request carrying the tool's name is still judged by the native rule", async () => {
+    const requests = new PendingRequests()
+    const native = requests.create({
+      sessionId: 's1',
+      kind: 'clarification',
+      providerRequestId: 'native-2',
+      description: 'Which?',
+      toolName: INPUT_REQUEST_TOOL,
+      options: [{ id: 'answer', label: 'Submit' }],
+      questions: [
+        {
+          id: 'q',
+          question: 'Which?',
+          kind: 'choice',
+          multiSelect: true,
+          options: [{ label: 'A' }]
+        }
+      ]
+    })
+    await expect(
+      requests.resolve({
+        requestId: native.id,
+        response: { type: 'permission', optionId: 'answer', answers: { q: ['A'] } }
+      })
+    ).rejects.toMatchObject({ code: 'invalid' })
+    requests.close()
+  })
 })

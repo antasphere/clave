@@ -537,33 +537,33 @@ function QuestionPrompt({
           </div>
         </div>
       )}
-      <div className="chat-prompt-actions">
-        <span className="chat-prompt-spacer" />
+      <div className="chat-ask-actions">
         {step > 0 && (
-          <button type="button" className="chat-prompt-btn" disabled={busy} onClick={back}>
+          <button type="button" className="chat-ask-btn" disabled={busy} onClick={back}>
             Back
           </button>
         )}
+        <span className="chat-prompt-spacer" />
         {skip && (
           <button
             type="button"
-            className="chat-prompt-btn"
+            className="chat-ask-btn"
+            title="Skip (Esc)"
             disabled={busy}
             onClick={() => onAnswer(request.id, skip.id)}
           >
             Skip
-            <Key>Esc</Key>
           </button>
         )}
         <button
           type="button"
-          className="chat-prompt-btn"
+          className="chat-ask-btn"
           data-primary="true"
+          title="Enter"
           disabled={busy || (!reviewing && !answered)}
           onClick={submit}
         >
           {reviewing ? 'Send' : !last ? 'Next' : structured ? 'Review' : 'Submit'}
-          <Key>↩</Key>
         </button>
       </div>
     </div>
@@ -636,7 +636,7 @@ export function PromptDock({
 export function InlineQuestion({ entry }: { entry: PermissionEntry }): React.JSX.Element {
   const host = useQuestionHost()
   const { request } = entry
-  if (!host || entry.answer || entry.answeredElsewhere || !isQuestion(request))
+  if (!host || entry.answer || entry.answeredElsewhere || !isQuestion(request) || !host.live(entry))
     return <PermissionRow entry={entry} />
   const busy = host.busy(request.id)
   return (

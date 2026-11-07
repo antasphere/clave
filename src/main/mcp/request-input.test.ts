@@ -84,7 +84,7 @@ describe('clave_request_input arguments', () => {
   })
 
   it.each([
-    [{ id: 'a', label: 'A', kind: 'choice' }, 'a choice needs options'],
+    [{ id: 'a', label: 'A', kind: 'choice' }, 'two options or more'],
     [
       { id: 'a', label: 'A', options: [{ label: 'x' }, { label: 'y' }] },
       'options belong to a choice'

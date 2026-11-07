@@ -15,7 +15,7 @@
 import { z } from 'zod'
 import type { AgentQuestion } from '@clave/contract/sessions'
 import type { HostedRequestInput, RequestResultView } from '@clave/contract/requests'
-import { INPUT_KINDS, type InputKind } from '@clave/contract/input-kinds'
+import { INPUT_KINDS, questionsShapeProblem } from '@clave/contract/input-kinds'
 
 /** The longest one result poll holds the wire: under the client's deadline
  *  (`VIEW_REQUEST_MAX_TIMEOUT_MS`), and under a host's MCP tool timeout. */
@@ -115,37 +115,26 @@ export const INPUT_RESULT_DESCRIPTION =
 /** The one place a question's shape is judged beyond its types: a choice
  *  needs its options and nothing else does, a link needs its address. */
 export function toHostedInput(args: RequestInputArgs, sessionId: string): HostedRequestInput {
-  const seen = new Set<string>()
-  const questions: AgentQuestion[] = args.questions.map((q) => {
-    if (seen.has(q.id)) throw new Error(`Two questions share the id "${q.id}".`)
-    seen.add(q.id)
-    const kind: InputKind = q.kind
-    if (kind === 'choice' && !q.options) throw new Error(`"${q.id}": a choice needs options.`)
-    if (kind !== 'choice' && (q.options || q.multiSelect))
-      throw new Error(`"${q.id}": options belong to a choice; use kind "choice".`)
-    if (kind === 'link' && !q.url) throw new Error(`"${q.id}": a link needs its url.`)
-    if (kind === 'link' && !/^https?:\/\//.test(q.url ?? ''))
-      throw new Error(`"${q.id}": a link opens an http(s) address.`)
-    if (kind !== 'link' && (q.url || q.confirm))
-      throw new Error(`"${q.id}": url and confirm belong to a link.`)
-    if (kind !== 'number' && (q.min !== undefined || q.max !== undefined))
-      throw new Error(`"${q.id}": min and max belong to a number.`)
-    return {
-      id: q.id,
-      question: q.label,
-      kind,
-      options: (q.options ?? []).map((o) => ({ ...o })),
-      ...(q.multiSelect !== undefined && { multiSelect: q.multiSelect }),
-      ...(q.hint !== undefined && { hint: q.hint }),
-      ...(q.placeholder !== undefined && { placeholder: q.placeholder }),
-      ...(q.default !== undefined && { default: q.default }),
-      ...(q.optional !== undefined && { optional: q.optional }),
-      ...(q.url !== undefined && { url: q.url }),
-      ...(q.confirm !== undefined && { confirm: q.confirm }),
-      ...(q.min !== undefined && { min: q.min }),
-      ...(q.max !== undefined && { max: q.max })
-    }
-  })
+  const questions: AgentQuestion[] = args.questions.map((q) => ({
+    id: q.id,
+    question: q.label,
+    kind: q.kind,
+    options: (q.options ?? []).map((o) => ({ ...o })),
+    ...(q.multiSelect !== undefined && { multiSelect: q.multiSelect }),
+    ...(q.hint !== undefined && { hint: q.hint }),
+    ...(q.placeholder !== undefined && { placeholder: q.placeholder }),
+    ...(q.default !== undefined && { default: q.default }),
+    ...(q.optional !== undefined && { optional: q.optional }),
+    ...(q.url !== undefined && { url: q.url }),
+    ...(q.confirm !== undefined && { confirm: q.confirm }),
+    ...(q.min !== undefined && { min: q.min }),
+    ...(q.max !== undefined && { max: q.max })
+  }))
+  // The shape rules are the contract's (`questionsShapeProblem`), the same
+  // the server applies when it stores the request: judged here first so the
+  // agent reads the reason as the tool's own error.
+  const problem = questionsShapeProblem(questions)
+  if (problem) throw new Error(problem)
   return { sessionId, description: args.description, questions, layout: args.layout }
 }
 

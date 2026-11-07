@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import { resourceKey } from '@clave/contract/fleet'
 import { emptyConversation, reduceConversation } from '../../../../plugins/chat-view/src/reducer'
-import { serverDock, withServerPending } from '../../../../plugins/chat-view/src/server-requests'
+import {
+  liveQuestionCards,
+  serverDock,
+  withServerPending
+} from '../../../../plugins/chat-view/src/server-requests'
 import type { FleetPendingRequest } from '../../../preload/fleet-types'
 import type { SessionEvent } from '../../../shared/session-model'
 
@@ -77,5 +81,49 @@ describe('a server session’s rows read the server’s list', () => {
   })
   it('leaves a local session’s own reading untouched', () => {
     expect(withServerPending(entries, undefined, session)).toBe(entries)
+  })
+})
+
+describe('one card per request still waiting (PRDCT-4157)', () => {
+  const ask = (id: string): SessionEvent => ({
+    type: 'permission_request',
+    id,
+    description: `Question ${id}`,
+    options: [{ id: 'answer', label: 'Answer' }],
+    questions: [{ id: 'value', question: 'Value?', options: [] }]
+  })
+  const entriesOf = (...events: SessionEvent[]): typeof emptyConversation.entries =>
+    events.reduce((state, event) => reduceConversation(state, { event, at: 1 }), emptyConversation)
+      .entries
+  it('draws the latest entry of a provider id, never an earlier one under the same id', () => {
+    // Codex numbers its requests from zero in every process: a dead
+    // process's first question and the live one share "0".
+    const entries = entriesOf(ask('0'), { type: 'user_message', text: 'again' }, ask('1'))
+    const stale = {
+      ...entries[0],
+      request: { ...(entries[0] as never as { request: object }).request }
+    }
+    const list = [stale as never, ...entries.slice(1), { ...entries[0] }] as typeof entries
+    const live = liveQuestionCards(list, undefined, 'local')
+    expect(live.has(list[3])).toBe(true)
+    expect(live.has(list[0])).toBe(false)
+    expect(live.has(list[2])).toBe(true)
+  })
+  it("a server session's cards are the server's records for that session alone", () => {
+    const entries = entriesOf(ask('0'), ask('7'))
+    const pending = [
+      record('a1', 1, { providerRequestId: '0' }),
+      record('b1', 2, { providerRequestId: '7', sessionId: other })
+    ]
+    const live = liveQuestionCards(entries, pending, session)
+    expect(live.has(entries[0])).toBe(true)
+    expect(live.has(entries[1])).toBe(false)
+  })
+  it('an answered or settled entry is never a card', () => {
+    const entries = entriesOf(ask('0'))
+    const answered = [{ ...entries[0], answer: 'answer' }] as typeof entries
+    expect(liveQuestionCards(answered, undefined, 'local').size).toBe(0)
+    const elsewhere = [{ ...entries[0], answeredElsewhere: true }] as typeof entries
+    expect(liveQuestionCards(elsewhere, undefined, 'local').size).toBe(0)
   })
 })
