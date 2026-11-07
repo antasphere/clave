@@ -5979,7 +5979,6 @@ details[open] > .chat-approval-items {
   opacity: 0;
 }
 .work-card-row {
-  position: relative;
   display: flex;
   align-items: stretch;
   min-height: 0;
@@ -5992,11 +5991,9 @@ details[open] > .chat-approval-items {
 .work-card-row:hover {
   border-color: color-mix(in oklab, var(--text-primary) 24%, var(--color-border));
 }
-/* The card's face is the button that opens the window onto its work; an
-   agent's model chip beside it is its own. */
-/* The face carries the card's inner margin itself, so the whole card is the
-   target, not just its drawing and text; beside a model chip it leaves the
-   chip its end of the card. */
+/* The card's face is the button that opens the window onto its work. It
+   carries the card's inner margin itself, so the whole card is the target,
+   not just its drawing and text. */
 .work-card-open {
   display: flex;
   flex: 1;
@@ -6012,34 +6009,6 @@ details[open] > .chat-approval-items {
   color: inherit;
   text-align: left;
   cursor: pointer;
-}
-/* The face's target spans the whole card, the margin around the chip too;
-   the chip sits above it and keeps its own menu. */
-.work-card-open::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-}
-/* An agent's model sits at the end of the card's second line, so the title
-   has the card's whole width: laid over its room in that line
-   (.work-card-model-room), above the face's target, keeping its own menu. */
-.work-card-row > .term-agent-model {
-  position: absolute;
-  z-index: 1;
-  inset-inline-end: calc(var(--spacing) * 2);
-  bottom: calc(var(--spacing) * 1.5);
-  margin: 0;
-  line-height: 1.4;
-}
-.work-card-model-room {
-  flex-shrink: 0;
-  margin: 0 0 0 auto;
-  padding-inline-start: calc(var(--spacing) * 3);
-  visibility: hidden;
-}
-.work-card-meta > .work-card-model-room::before {
-  content: none;
 }
 .work-card-open:hover .term-agent-description,
 .work-card-open[data-state='open'] .term-agent-description {
@@ -6096,6 +6065,17 @@ details[open] > .chat-approval-items {
 .work-card-meta > * + *::before {
   content: '·';
   padding-inline: calc(var(--spacing) * 1.5);
+}
+/* An agent's model at the end of the second line, clear of the figures, so
+   the title has the card's whole width. Said, not offered: the window the
+   card opens is where it can be changed. */
+.work-card-meta > .work-card-model {
+  flex-shrink: 0;
+  margin: 0 0 0 auto;
+  padding: 0 0 0 calc(var(--spacing) * 4);
+}
+.work-card-meta > .work-card-model::before {
+  content: none;
 }
 .term-agent-quiet {
   color: var(--color-warning);

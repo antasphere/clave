@@ -1,8 +1,6 @@
 import { useEffect, useState } from 'react'
-import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
-import { CheckIcon, ChevronDownIcon } from '@heroicons/react/24/outline'
 import { ConfirmDialog } from '@clave/ui/components'
-import { claudeModelName, findClaudeModel } from '../../../src/shared/claude-models'
+import { claudeModelName } from '../../../src/shared/claude-models'
 import { compactTokens, type SubAgent } from './terminal-status'
 import { SubAgentPeek } from './SubAgentPeek'
 import { ShellPeek } from './ShellPeek'
@@ -26,77 +24,6 @@ const LEAVE_MS = 340
  *  card only says how long, and the reader judges. */
 const QUIET_MS = 60_000
 
-/** The families a subagent can be relaunched on: the Agent tool takes an
- *  alias, never a version, so each is named by the version it stands for. */
-const AGENT_MODELS = (['opus', 'fable', 'sonnet', 'haiku'] as const).map((alias) => ({
-  alias,
-  name: claudeModelName(alias) ?? alias
-}))
-
-/** The model chip on a subagent's card and the menu that relaunches the agent
- *  on another. Only a background agent can be stopped on its own, and only
- *  where the conversation can relaunch it (`onPick`); any other shows its
- *  model, by the provider's own name when it is not a Claude one, and offers
- *  no menu. */
-function AgentModel({
-  agent,
-  onPick
-}: {
-  agent: SubAgent
-  onPick?: (alias: string) => void
-}): React.JSX.Element {
-  const name = claudeModelName(agent.model) ?? agent.model
-  const label = name ?? '…'
-  const title = name ? `Runs on ${name}` : 'Its model is named at its first answer'
-  if (!agent.taskId || !onPick)
-    return (
-      <span className="term-agent-model" title={title}>
-        {label}
-      </span>
-    )
-  const current = findClaudeModel(agent.model)?.alias
-  return (
-    <DropdownMenu.Root modal={false}>
-      <DropdownMenu.Trigger asChild>
-        <button
-          type="button"
-          className="term-agent-model"
-          aria-label={`Model of ${agent.description || agent.type}`}
-          title={`${title} — relaunch it on another model`}
-        >
-          {label}
-          <ChevronDownIcon />
-        </button>
-      </DropdownMenu.Trigger>
-      <DropdownMenu.Portal>
-        <DropdownMenu.Content
-          side="top"
-          align="end"
-          sideOffset={6}
-          className="menu-surface menu-pop chat-model-menu z-50"
-          aria-label="Relaunch on"
-        >
-          <DropdownMenu.Label className="menu-label">Relaunch on</DropdownMenu.Label>
-          {AGENT_MODELS.map((model) => (
-            <DropdownMenu.Item
-              key={model.alias}
-              className="menu-item chat-model-option"
-              data-selected={model.alias === current ? 'true' : undefined}
-              disabled={model.alias === current}
-              onSelect={() => onPick(model.alias)}
-            >
-              <span className="chat-model-option-text">
-                <span className="truncate">{model.name}</span>
-              </span>
-              {model.alias === current && <CheckIcon className="select-option-check" />}
-            </DropdownMenu.Item>
-          ))}
-        </DropdownMenu.Content>
-      </DropdownMenu.Portal>
-    </DropdownMenu.Root>
-  )
-}
-
 /** The work running now, as cards under the composer of both views: one per
  *  subagent and one per command left running (background work only,
  *  `shownWork`). A card is a drawing of what it is and two lines: the type
@@ -104,8 +31,9 @@ function AgentModel({
  *  steps an agent took, how full its own context is, how long it has run,
  *  or how long it has been quiet once no step has come for a minute. The
  *  drawing breathes while the work goes on. Clicking a card opens the
- *  window onto its work (`SubAgentPeek`, `ShellPeek`); an agent's model chip
- *  beside it opens the relaunch menu. A card folds open as its work starts
+ *  window onto its work (`SubAgentPeek`, `ShellPeek`); an agent's card says
+ *  the model it was launched on, and its window is where it can be relaunched
+ *  on another, since that stops it and starts it over. A card folds open as its work starts
  *  and folds shut as it ends, so the strip is held for the length of the
  *  fold after a card has gone; the strip itself folds away with its last
  *  card. */
@@ -214,13 +142,18 @@ export function WorkCards({
                   ) : (
                     <span>{elapsed(agent.startedAt, now)}</span>
                   )}
-                  {/* The model chip's room at the end of this line: the chip
-                      is its own button, so it cannot sit in this one, and is
-                      laid over this invisible copy of itself instead. */}
+                  {/* The model it was launched on, said and not offered: a
+                      relaunch is in the window the card opens. */}
                   {!shell && (
-                    <span className="term-agent-model work-card-model-room" aria-hidden="true">
+                    <span
+                      className="term-agent-model work-card-model"
+                      title={
+                        claudeModelName(agent.model) || agent.model
+                          ? `Launched on ${claudeModelName(agent.model) ?? agent.model}`
+                          : 'Its model is named at its first answer'
+                      }
+                    >
                       {claudeModelName(agent.model) ?? agent.model ?? '…'}
-                      {agent.taskId && canRelaunch(agent) && <ChevronDownIcon />}
                     </span>
                   )}
                 </span>
@@ -242,15 +175,13 @@ export function WorkCards({
                 ) : shell ? (
                   <ShellPeek agent={agent}>{card}</ShellPeek>
                 ) : (
-                  <SubAgentPeek agent={agent} log={logs?.[agent.id]}>
+                  <SubAgentPeek
+                    agent={agent}
+                    log={logs?.[agent.id]}
+                    onRelaunch={canRelaunch(agent) ? (alias) => setAsked({ agent, alias }) : undefined}
+                  >
                     {card}
                   </SubAgentPeek>
-                )}
-                {!shell && (
-                  <AgentModel
-                    agent={agent}
-                    onPick={canRelaunch(agent) ? (alias) => setAsked({ agent, alias }) : undefined}
-                  />
                 )}
               </div>
             </li>
