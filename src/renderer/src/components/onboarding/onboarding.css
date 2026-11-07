@@ -225,17 +225,15 @@
   gap: calc(var(--spacing) * 3.5);
   padding: calc(var(--spacing) * 3.5) calc(var(--spacing) * 4);
   border-radius: var(--radius-xl, 12px);
-  background-color: var(--control-surface);
-  box-shadow: var(--raised-control-shadow);
+  background-color: var(--card-surface);
+  box-shadow: var(--card-shadow);
   transition:
     box-shadow 300ms var(--ease-out-expo),
     background-color 300ms var(--ease-out-expo);
 }
 .onb-provider.is-connected {
-  background-color: color-mix(in oklab, var(--color-accent) 5%, var(--control-surface));
-  box-shadow:
-    0 0 0 1px color-mix(in oklab, var(--color-accent) 45%, transparent),
-    0 1px 2px rgb(0 0 0 / 0.06);
+  background-color: color-mix(in oklab, var(--color-accent) 6%, var(--card-surface));
+  box-shadow: 0 0 0 0.5px color-mix(in oklab, var(--color-accent) 45%, transparent);
 }
 .onb-provider-logo {
   display: grid;
@@ -370,8 +368,8 @@
   gap: calc(var(--spacing) * 1.5);
   padding: calc(var(--spacing) * 3);
   border-radius: var(--radius-xl, 12px);
-  background: var(--control-surface);
-  box-shadow: var(--raised-control-shadow);
+  background: var(--card-surface);
+  box-shadow: var(--card-shadow);
   text-align: left;
   transition:
     box-shadow 200ms var(--ease-out-expo),
@@ -482,30 +480,6 @@
   resize: vertical;
   font-family: var(--font-mono, ui-monospace, monospace);
   font-size: 12px;
-}
-.onb-segmented {
-  display: inline-flex;
-  width: fit-content;
-  padding: 2px;
-  border-radius: 9px;
-  background: var(--surface-100);
-}
-.onb-segmented button {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 4px 12px;
-  border-radius: 7px;
-  color: var(--text-secondary);
-  font-size: 12.5px;
-  transition:
-    background-color 200ms,
-    color 200ms;
-}
-.onb-segmented button.is-on {
-  background: var(--surface-raised);
-  color: var(--text-primary);
-  box-shadow: 0 1px 2px rgb(0 0 0 / 0.08);
 }
 .onb-error {
   margin: 0;

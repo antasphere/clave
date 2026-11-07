@@ -548,14 +548,15 @@ export function Onboarding(): React.JSX.Element | null {
         {available.length > 1 && (
           <div className="onb-field" data-stagger-item>
             <span className="onb-label">Talk to</span>
-            <div className="onb-segmented" role="radiogroup" aria-label="Assistant">
+            <div className="segmented" role="radiogroup" aria-label="Assistant">
               {available.map((id) => (
                 <button
                   key={id}
                   type="button"
                   role="radio"
                   aria-checked={agent === id}
-                  className={agent === id ? 'is-on' : ''}
+                  className="segmented-item"
+                  data-active={agent === id ? 'true' : undefined}
                   onClick={() => setTalkTo(id)}
                 >
                   {id === 'claude' ? (
