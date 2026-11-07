@@ -347,7 +347,12 @@ function Block({
       return (
         <View style={[styles.quote, { borderLeftColor: t.colors.border }]}>
           {node.children.map((child, i) => (
-            <Block key={i} node={child} t={t} depth={depth + 1} />
+            <Block
+              key={i}
+              node={child}
+              t={{ ...t, colors: { ...t.colors, textPrimary: t.colors.textSecondary } }}
+              depth={depth + 1}
+            />
           ))}
         </View>
       )
