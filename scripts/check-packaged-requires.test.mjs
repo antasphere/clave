@@ -237,7 +237,7 @@ describe('the gates that run the check', () => {
     expect(step.filter((l) => key('if').test(l))).toEqual([
       "        if: ${{ !cancelled() && steps.build.outcome == 'success' && (matrix.task == 'gates' || matrix.task == 'baseline') }}"
     ])
-    expect(yml).toContain('fromJSON(\'[1,2,3,4,5,6,7,8,"servers","gates"]\')')
+    expect(yml).toContain('fromJSON(\'["suite","gates"]\')')
     expect(yml).toContain('fromJSON(\'["baseline"]\')')
     expect(yml).toContain('    needs: e2e-run')
     expect(yml).toContain('          RESULT: ${{ needs.e2e-run.result }}')

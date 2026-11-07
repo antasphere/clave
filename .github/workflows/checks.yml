@@ -25,7 +25,7 @@ permissions:
 
 # A newer push to the same branch or pull request supersedes the running check.
 concurrency:
-  group: checks-${{ github.ref }}
+  group: checks-${{ github.ref }}-${{ inputs.baseline && 'baseline' || 'normal' }}
   cancel-in-progress: true
 
 jobs:
@@ -99,9 +99,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        task: ${{ inputs.baseline && fromJSON('["baseline"]') || fromJSON('[1,2,3,4,5,6,7,8,"servers","gates"]') }}
+        task: ${{ inputs.baseline && fromJSON('["baseline"]') || fromJSON('["suite","gates"]') }}
     runs-on: macos-latest
-    timeout-minutes: ${{ inputs.baseline && 90 || 30 }}
+    timeout-minutes: ${{ inputs.baseline && 90 || 35 }}
     steps:
       - uses: actions/checkout@v4
 
@@ -160,11 +160,11 @@ jobs:
         run: npx vitest run scripts/server-process.test.mjs src/main/terminal-process
 
       - name: Gate, the server spec with the server in-process
-        if: ${{ !cancelled() && steps.build.outcome == 'success' && (matrix.task == 'servers' || matrix.task == 'baseline') }}
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && (matrix.task == 'gates' || matrix.task == 'baseline') }}
         run: node tests/e2e/run.mjs server-boot
 
       - name: Gate, the server spec with the server attached
-        if: ${{ !cancelled() && steps.build.outcome == 'success' && (matrix.task == 'servers' || matrix.task == 'baseline') }}
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && (matrix.task == 'gates' || matrix.task == 'baseline') }}
         run: node tests/e2e/run.mjs server-boot
         env:
           CLAVE_E2E_SERVER: attached
@@ -174,7 +174,7 @@ jobs:
       # starts, a killed terminal process is started again, the quit stops
       # both.
       - name: Gate, the server spec with the server separate
-        if: ${{ !cancelled() && steps.build.outcome == 'success' && (matrix.task == 'servers' || matrix.task == 'baseline') }}
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && (matrix.task == 'gates' || matrix.task == 'baseline') }}
         run: node tests/e2e/run.mjs server-boot
         env:
           CLAVE_E2E_SERVER: separate
@@ -206,20 +206,24 @@ jobs:
         if: ${{ !cancelled() && steps.build.outcome == 'success' && (matrix.task == 'gates' || matrix.task == 'baseline') }}
         run: node tests/e2e/run.mjs mcp-fleet-sessions
 
-      - name: Report, one shard of the whole suite with the server in-process
-        if: ${{ !cancelled() && steps.build.outcome == 'success' && matrix.task != 'servers' && matrix.task != 'gates' }}
+      - name: Report, the whole suite with isolated workers
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && matrix.task != 'gates' }}
         continue-on-error: true
         env:
-          SHARD: ${{ matrix.task == 'baseline' && '1/1' || format('{0}/8', matrix.task) }}
-          INDEX: ${{ matrix.task == 'baseline' && '1' || matrix.task }}
-        run: node tests/e2e/run.mjs --shard "$SHARD" --report "e2e-reports/shard-$INDEX.json"
+          BASELINE: ${{ inputs.baseline && 'true' || 'false' }}
+        run: |
+          if [ "$BASELINE" = true ]; then
+            node tests/e2e/run.mjs --report e2e-reports/shard-1.json
+          else
+            node tests/e2e/parallel.mjs --workers=4 --report-dir=e2e-reports
+          fi
 
       - name: Preserve shard results
-        if: ${{ always() && matrix.task != 'servers' && matrix.task != 'gates' }}
+        if: ${{ always() && matrix.task != 'gates' }}
         uses: actions/upload-artifact@v4
         with:
-          name: e2e-report-${{ matrix.task == 'baseline' && '1' || matrix.task }}
-          path: e2e-reports/shard-${{ matrix.task == 'baseline' && '1' || matrix.task }}.json
+          name: e2e-reports
+          path: e2e-reports/
           if-no-files-found: error
           retention-days: 14
 
@@ -238,12 +242,12 @@ jobs:
           node-version: '22'
       - uses: actions/download-artifact@v4
         with:
-          pattern: e2e-report-*
+          name: e2e-reports
           path: e2e-reports
           merge-multiple: true
       - name: Every spec completed exactly once
         env:
-          SHARDS: ${{ inputs.baseline && '1' || '8' }}
+          SHARDS: ${{ inputs.baseline && '1' || '4' }}
         run: |
           node tests/e2e/merge-reports.mjs e2e-reports "$SHARDS" e2e-summary.md
           cat e2e-summary.md >> "$GITHUB_STEP_SUMMARY"

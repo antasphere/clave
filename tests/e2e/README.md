@@ -24,11 +24,16 @@ checkout do not sweep each other's files or tmux sessions. Run only one suite
 per namespace. SIGINT and SIGTERM ask workers to clean up their own apps,
 servers and tmux sessions. Failed runs retain fixtures for diagnosis.
 
-CI runs eight full-suite shards alongside two gate jobs. The server job keeps
-all three server modes. The other gate job keeps the package, renderer,
-terminal-process, sign-in, server-upgrade and fleet checks. Each job installs
-and builds its own checkout. This reduces elapsed time by using more runners;
-it increases setup work and runner minutes. All specs still run.
+CI uses two macOS jobs. One runs four full-suite workers in isolated Node
+processes. The other keeps all existing gates, including all three server modes,
+package, renderer, terminal-process, sign-in, server-upgrade and fleet checks.
+Each job installs and builds its own checkout. Two macOS runners avoid a long
+queue when the account's runner capacity is busy. All specs still run.
+
+`--report-dir=e2e-reports` writes local parallel logs and JSON reports to an
+explicit empty directory, for example for CI artifact upload. The run still
+gets a unique fixture namespace. A nonempty directory is refused to prevent
+stale reports from passing a later run.
 
 The aggregate retains the existing `End-to-end (the real app, macOS)` check
 name. It checks every shard and the complete spec inventory. Missing reports,
@@ -44,3 +49,7 @@ the last job's completion, and the full-suite step durations separately.
 Report queue time separately and retain both run URLs. A cancelled or timed-out
 baseline cannot substantiate a speedup. Local runs on a busy machine are useful
 for checking behavior, but do not establish the CI ratio.
+
+Baseline and normal runs use different concurrency groups, so they can run
+together without cancelling one another. A newer run of the same kind on the
+same ref cancels its predecessor. Keep the ref unchanged during the comparison.

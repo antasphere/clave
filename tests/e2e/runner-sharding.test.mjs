@@ -104,4 +104,20 @@ describe('the real runner process shards without hiding failures', () => {
     expect(() => mergeReports([report], ['a.spec.mjs'], 1)).toThrow('exit code disagrees')
     expect(mergeReports([{ ...report, exitCode: 1 }], ['a.spec.mjs'], 1).totals.failed).toBe(1)
   })
+  it('writes CI reports to an explicit directory and refuses stale results', async () => {
+    const dir = fixture({ 'a.spec.mjs': passing })
+    const reports = path.join(dir, 'reports')
+    try {
+      const result = await invoke('parallel.mjs', ['--workers=1', `--report-dir=${reports}`], dir)
+      expect(result.code, result.output).toBe(0)
+      expect(JSON.parse(readFileSync(path.join(reports, 'shard-1.json'), 'utf8')).completed).toBe(
+        true
+      )
+      const stale = await invoke('parallel.mjs', ['--workers=1', `--report-dir=${reports}`], dir)
+      expect(stale.code).not.toBe(0)
+      expect(stale.output).toContain('Report directory must be empty')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  }, 30_000)
 })
