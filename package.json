@@ -33,6 +33,7 @@
     "release": "bash scripts/release.sh",
     "test": "node packages/ui/scripts/check-tokens.mjs && vitest run",
     "test:e2e": "node tests/e2e/run.mjs",
+    "test:e2e:parallel": "node tests/e2e/parallel.mjs",
     "check:packaged": "node scripts/check-packaged-requires.mjs",
     "proto:gen": "buf generate"
   },
