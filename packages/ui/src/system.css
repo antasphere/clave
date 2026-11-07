@@ -5277,6 +5277,414 @@ details[open] > .chat-approval-items {
   color: var(--text-tertiary);
 }
 
+/* The exchange timeline (DeliveryStack.tsx): the messages other tabs sent,
+   one compact card per exchange under a drawing (ExchangeDrawing.tsx), joined
+   by a line down the left that starts at the drawing. A card's closed face is
+   a line at the transcript's own size; it opens smoothly onto the exchange
+   whole. The ink is the drawings' (low-opacity text, a breath of paper); the
+   accent stays in the drawing, on the line that carries the meaning. A block
+   the column gains arrives animated (data-arrive), a row mounted again by the
+   virtualiser does not. */
+.exchange-timeline {
+  --exchange-rail: calc(var(--spacing) * 4.5);
+  --exchange-node: calc(var(--spacing) * 2.5);
+  --exchange-ink: color-mix(in oklab, var(--text-primary) 16%, transparent);
+  display: flex;
+  flex-direction: column;
+  align-self: stretch;
+  min-width: 0;
+}
+.terminal-view .exchange-timeline {
+  font-size: calc(var(--text-sm) + var(--spacing) / 4);
+}
+.exchange-head {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: calc(var(--spacing) * 2);
+  padding-bottom: calc(var(--spacing) * 1.5);
+}
+/* The line leaves the drawing's foot and runs into the first card's node. */
+.exchange-head::after {
+  content: '';
+  position: absolute;
+  left: var(--exchange-rail);
+  top: calc(var(--spacing) * 7.5);
+  bottom: 0;
+  border-left: thin solid var(--exchange-ink);
+}
+.exchange-drawing {
+  flex-shrink: 0;
+  inline-size: calc(var(--spacing) * 9);
+  block-size: calc(var(--spacing) * 7.5);
+}
+.exchange-title {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  line-height: 1.35;
+}
+.exchange-eyebrow {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+}
+.exchange-names {
+  color: var(--text-secondary);
+}
+/* The digest, under the senders: room opens for it smoothly once it is
+   being read, and the words settle in when they arrive. */
+.exchange-digest {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows calc(var(--default-transition-duration) * 2) var(--ease-out-expo);
+}
+.exchange-timeline:is([data-digest='reading'], [data-digest='done']) .exchange-digest {
+  grid-template-rows: 1fr;
+}
+.exchange-digest-inner {
+  min-height: 0;
+  overflow: hidden;
+}
+.exchange-digest-reading {
+  display: inline-block;
+  font-size: var(--text-xs);
+  background-image: linear-gradient(
+    90deg,
+    var(--text-tertiary) 0 40%,
+    color-mix(in oklch, var(--text-tertiary) 20%, transparent) 50%,
+    var(--text-tertiary) 60% 100%
+  );
+  background-size: 250% 100%;
+  background-clip: text;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+  animation: term-shimmer calc(var(--default-transition-duration) * 12) linear infinite;
+}
+.exchange-digest-text {
+  display: block;
+  padding-top: calc(var(--spacing) / 2);
+  font-size: var(--text-sm);
+  line-height: 1.45;
+  color: var(--text-tertiary);
+  transition:
+    opacity calc(var(--default-transition-duration) * 2) var(--ease-out-expo),
+    translate calc(var(--default-transition-duration) * 3) var(--ease-out-settle);
+  @starting-style {
+    opacity: 0;
+    translate: 0 calc(var(--spacing) * 1.5);
+  }
+}
+/* Something needs the reader: the digest in full ink behind the accent dot,
+   and the card it came from marked with the accent on its node. */
+.exchange-timeline[data-needs-you] .exchange-digest-text {
+  color: var(--term-ink, var(--text-primary));
+}
+.exchange-timeline[data-needs-you] .exchange-digest-text::before {
+  content: '';
+  display: inline-block;
+  inline-size: calc(var(--spacing) * 1.5);
+  block-size: calc(var(--spacing) * 1.5);
+  margin-right: calc(var(--spacing) * 1.5);
+  border-radius: var(--radius-full);
+  background: var(--color-accent);
+  vertical-align: 0.1em;
+}
+.exchange[data-needs-you] .exchange-node {
+  border-color: var(--color-accent);
+  background: radial-gradient(circle, var(--color-accent) 0 32%, transparent 36%), var(--surface-0);
+}
+.exchange[data-needs-you] .exchange-gist {
+  color: var(--text-primary);
+}
+/* While the digest is read, the message keeps travelling along the arc. */
+.exchange-timeline[data-digest='reading'] .exchange-drawing .exchange-arc {
+  stroke-dasharray: 0.3 0.7;
+  animation: exchange-travel calc(var(--default-transition-duration) * 10) linear infinite;
+}
+@keyframes exchange-travel {
+  from {
+    stroke-dashoffset: 1;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+.exchange-list {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.exchange {
+  position: relative;
+  display: grid;
+  grid-template-columns: calc(var(--exchange-rail) * 2) minmax(0, 1fr);
+  padding-bottom: var(--spacing);
+}
+/* The rail, one segment per card, so it ends at the last card's node. */
+.exchange::before {
+  content: '';
+  position: absolute;
+  left: var(--exchange-rail);
+  top: 0;
+  bottom: 0;
+  border-left: thin solid var(--exchange-ink);
+  transform-origin: top;
+}
+.exchange:last-child::before {
+  bottom: auto;
+  height: calc(var(--spacing) * 2 + 0.5lh);
+}
+/* The node: the drawings' ringed dot, on the ground so the rail runs under it. */
+.exchange-node {
+  position: relative;
+  z-index: 1;
+  justify-self: center;
+  inline-size: var(--exchange-node);
+  block-size: var(--exchange-node);
+  margin-top: calc(var(--spacing) * 2 + 0.5lh - var(--exchange-node) / 2);
+  border: thin solid color-mix(in oklab, var(--text-primary) 42%, transparent);
+  border-radius: var(--radius-full);
+  background: radial-gradient(
+      circle,
+      color-mix(in oklab, var(--text-primary) 70%, transparent) 0 32%,
+      transparent 36%
+    ),
+    var(--surface-0);
+  transition:
+    border-color var(--default-transition-duration),
+    scale calc(var(--default-transition-duration) * 3) var(--ease-out-settle);
+}
+.exchange:hover .exchange-node,
+.exchange:has(.exchange-card[open]) .exchange-node {
+  border-color: color-mix(in oklab, var(--text-primary) 70%, transparent);
+  scale: 1.15;
+}
+.exchange-card {
+  min-width: 0;
+  border: thin solid transparent;
+  border-radius: var(--radius-lg);
+  interpolate-size: allow-keywords;
+  transition:
+    background-color var(--default-transition-duration),
+    border-color var(--default-transition-duration),
+    box-shadow calc(var(--default-transition-duration) * 2) var(--ease-out-expo);
+}
+.exchange-card:hover {
+  background-color: color-mix(in oklab, var(--surface-100) 70%, transparent);
+}
+.exchange-card[open] {
+  border-color: var(--border-subtle-color);
+  background-color: var(--surface-100);
+  box-shadow: var(--raised-shadow);
+}
+.exchange-summary {
+  display: flex;
+  align-items: baseline;
+  gap: calc(var(--spacing) * 2);
+  padding: calc(var(--spacing) * 2) calc(var(--spacing) * 3);
+  list-style: none;
+  cursor: pointer;
+  border-radius: inherit;
+  outline: none;
+}
+.exchange-summary::-webkit-details-marker {
+  display: none;
+}
+.exchange-summary:focus-visible {
+  outline: thin solid var(--color-accent);
+  outline-offset: calc(var(--spacing) / -2);
+}
+.exchange-from {
+  flex-shrink: 0;
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--color-term-model);
+}
+.exchange-gist {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--term-ink, var(--text-primary));
+}
+/* Open, the message is right below in full: its first line steps back. */
+.exchange-gist {
+  transition: opacity calc(var(--default-transition-duration) * 2) var(--ease-out-expo);
+}
+.exchange-card[open] .exchange-gist {
+  opacity: 0;
+}
+.exchange-status,
+.exchange-time {
+  flex-shrink: 0;
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+.exchange-chevron {
+  flex-shrink: 0;
+  align-self: center;
+  inline-size: var(--chat-glyph);
+  block-size: var(--chat-glyph);
+  color: var(--text-tertiary);
+  transition: rotate calc(var(--default-transition-duration) * 2) var(--ease-out-expo);
+}
+.exchange-card[open] .exchange-chevron {
+  rotate: 180deg;
+}
+/* Opening: the height glides, the exchange settles in under its face. */
+.exchange-card::details-content {
+  block-size: 0;
+  overflow: clip;
+  transition:
+    block-size calc(var(--default-transition-duration) * 2) var(--ease-out-expo),
+    content-visibility calc(var(--default-transition-duration) * 2) allow-discrete;
+}
+.exchange-card[open]::details-content {
+  block-size: auto;
+}
+.exchange-body {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--spacing) * 3);
+  padding: var(--spacing) calc(var(--spacing) * 3) calc(var(--spacing) * 3);
+  opacity: 0;
+  translate: 0 calc(var(--spacing) * -1.5);
+  transition:
+    opacity calc(var(--default-transition-duration) * 2) var(--ease-out-expo),
+    translate calc(var(--default-transition-duration) * 3) var(--ease-out-settle);
+}
+.exchange-card[open] .exchange-body {
+  opacity: 1;
+  translate: 0 0;
+}
+.exchange-part {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing);
+  padding-left: calc(var(--spacing) * 3);
+  border-left: thin solid var(--exchange-ink);
+}
+.exchange-part[data-theirs] {
+  border-left-color: color-mix(in oklab, var(--color-term-model) 55%, transparent);
+}
+.exchange-part-head {
+  display: flex;
+  align-items: baseline;
+  gap: calc(var(--spacing) * 2);
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+}
+.exchange-part-who {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: var(--text-secondary);
+}
+.exchange-part[data-theirs] .exchange-part-who {
+  color: var(--color-term-model);
+}
+button.exchange-part-who {
+  cursor: pointer;
+}
+button.exchange-part-who:hover {
+  text-decoration: underline dotted;
+  text-underline-offset: 0.2em;
+}
+.exchange-part-time {
+  font-variant-numeric: tabular-nums;
+}
+.exchange-part-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--text-secondary);
+}
+.exchange-part[data-theirs] .exchange-part-text {
+  color: var(--term-ink, var(--text-primary));
+}
+.exchange-note {
+  margin: 0;
+  padding-left: calc(var(--spacing) * 3);
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+}
+/* Arrival, only for what the column gained: the cards rise in one after the
+   other, each node lands with the slightest overshoot, the rail draws down,
+   and the drawing's arc draws itself and lands on its dot. */
+.chat-row[data-arrive] .exchange {
+  transition:
+    opacity calc(var(--default-transition-duration) * 2) var(--ease-out-expo),
+    translate calc(var(--default-transition-duration) * 3) var(--ease-out-settle);
+  transition-delay: calc(var(--default-transition-duration) * 0.4 * var(--exchange-i, 0));
+  @starting-style {
+    opacity: 0;
+    translate: 0 var(--spacing);
+  }
+}
+.chat-row[data-arrive] .exchange-node {
+  @starting-style {
+    scale: 0.4;
+  }
+}
+.chat-row[data-arrive] .exchange::before {
+  transition: scale calc(var(--default-transition-duration) * 3) var(--ease-out-expo);
+  @starting-style {
+    scale: 1 0;
+  }
+}
+.exchange-drawing .exchange-arc {
+  stroke-dasharray: 1;
+  stroke-dashoffset: 0;
+}
+.chat-row[data-arrive] .exchange-drawing .exchange-arc {
+  animation: exchange-arc calc(var(--default-transition-duration) * 5) var(--ease-out-expo) both;
+}
+.chat-row[data-arrive] .exchange-drawing .exchange-land {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: exchange-land calc(var(--default-transition-duration) * 3) var(--ease-out-settle)
+    calc(var(--default-transition-duration) * 3) both;
+}
+@keyframes exchange-arc {
+  from {
+    stroke-dashoffset: 1;
+  }
+}
+@keyframes exchange-land {
+  from {
+    scale: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .exchange,
+  .exchange::before,
+  .exchange-node,
+  .exchange-card,
+  .exchange-card::details-content,
+  .exchange-body,
+  .exchange-chevron {
+    transition: none;
+  }
+  .exchange-drawing .exchange-arc,
+  .exchange-drawing .exchange-land,
+  .exchange-digest-reading {
+    animation: none;
+  }
+  .exchange-digest,
+  .exchange-digest-text {
+    transition: none;
+  }
+}
+
 /* ── Terminal view ────────────────────────────────────────────────────────
    The chat view's third reading, after Claude Code's TUI: a wider column, the
    prompt between two rules with the send button kept at its right end, the

@@ -645,6 +645,7 @@ import type {
   OnboardingInstallResult,
   OnboardingState
 } from '../shared/onboarding'
+import type { DigestRequest, DigestResult } from '../shared/exchange-digest'
 
 export interface MagicSyncResult {
   repoPath: string
@@ -983,6 +984,9 @@ export interface ElectronAPI extends FleetDesktopAPI {
     extras?: { sessionType?: string | null; locationId?: string | null }
   ) => Promise<{ success: boolean; error?: string }>
   openExternal: (url: string) => Promise<void>
+  /** The exchange timeline's digest: what the reader needs from a run of
+   *  messages other tabs sent. A failure is a result, never a rejection. */
+  exchangeDigest: (request: DigestRequest) => Promise<DigestResult>
   /** The GitHub pull request panel's reads and writes, through the user's own
    *  `gh`. A failure is a result, never a rejection: the panel names the kind. */
   githubPull: (ref: PullRef) => Promise<GithubResult<PullRequestView>>

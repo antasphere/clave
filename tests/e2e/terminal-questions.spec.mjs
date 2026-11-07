@@ -119,8 +119,11 @@ export async function run(t) {
           pinnedAt: r.top - root.getBoundingClientRect().top,
           tall: row.dataset.tall ?? null,
           stuck: row.dataset.stuck === 'true',
-          pinVisible: getComputedStyle(row.querySelector('.term-question-pin')).visibility === 'visible',
-          pinTop: row.querySelector('.term-question-pin').getBoundingClientRect().top - root.getBoundingClientRect().top,
+          pinVisible:
+            getComputedStyle(row.querySelector('.term-question-pin')).visibility === 'visible',
+          pinTop:
+            row.querySelector('.term-question-pin').getBoundingClientRect().top -
+            root.getBoundingClientRect().top,
           pinHeight: row.querySelector('.term-question-pin').offsetHeight,
           offset: parseFloat(row.style.getPropertyValue('--question-pin-offset')) || 0,
           messageClient: message.clientHeight,

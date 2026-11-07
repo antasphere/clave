@@ -26,6 +26,7 @@ import { installE2eHooks } from './sessions/e2e-hooks'
 import { noteSize } from './sessions/terminal-screen'
 import { sessionManager } from './sessions/session-manager'
 import * as titleGenerator from './title-generator'
+import * as exchangeDigest from './exchange-digest'
 import { rememberedChatEffort, rememberedChatModel } from './sessions/chat-model-default'
 import { initialChatView } from './sessions/chat-view-default'
 import {
@@ -559,6 +560,7 @@ class PtyManager {
   async killAll({ quit = false }: { quit?: boolean } = {}): Promise<void> {
     if (quit) titleGenerator.shutdown()
     else titleGenerator.cancelAll()
+    exchangeDigest.cancelAll(quit)
     await Promise.all(sessionManager.list().map((session) => this.kill(session.id, false)))
   }
   getSession(id: string): PtySession | undefined {

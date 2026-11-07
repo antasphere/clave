@@ -50,6 +50,8 @@ import {
 } from './tools'
 import { ToolGroup } from './ToolGroup'
 import { ToolDisclosure } from './disclosure'
+import { ExchangeContext, indexExchanges } from './exchanges'
+import { useSessionStore } from '../../../src/renderer/src/store/session-store'
 import { ApprovalRun, PermissionRow, PromptDock } from './PromptDock'
 import { refusedAnswer } from './refused-answer'
 import { serverDock, withServerPending } from './server-requests'
@@ -411,11 +413,7 @@ function TranscriptRow({
       data-arrive={arrive ? 'true' : undefined}
     >
       {block.kind === 'delivery-group' ? (
-        <DeliveryStack
-          group={block}
-          id={rowKey}
-          renderEntry={(entry) => <EntryRow entry={entry} onError={onError} />}
-        />
+        <DeliveryStack group={block} id={rowKey} />
       ) : block.kind === 'tool-group' ? (
         <ToolRow group={block} />
       ) : block.kind === 'approval-group' ? (
@@ -845,6 +843,29 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
   }, [presentation.entries, presentation.first, remotePending, session.id])
   // The reader's open tool rows, kept across the rows' unmounts (`ToolDisclosure`).
   const [disclosure] = useState(() => new Map<string, boolean>())
+  // Each message from another tab with what this session sent that tab
+  // around it, for the exchange timeline's cards (`indexExchanges`).
+  // The digest runs the agent the tab runs, on its account: the store's
+  // record of the tab carries what the view's session does not.
+  const workspaceId = useSessionStore(
+    (s) => s.sessions.find((x) => x.id === session.id)?.workspaceId
+  )
+  const launchProfileId = useSessionStore(
+    (s) => s.sessions.find((x) => x.id === session.id)?.launchProfileId
+  )
+  const claudeProfileId = useSessionStore(
+    (s) => s.sessions.find((x) => x.id === session.id)?.claudeProfileId
+  )
+  const configDir = useSessionStore(
+    (s) => s.sessions.find((x) => x.id === session.id)?.claudeConfigDir
+  )
+  const exchanges = useMemo(
+    () => ({
+      index: indexExchanges(presentation.entries),
+      launch: { workspaceId, launchProfileId, claudeProfileId, configDir }
+    }),
+    [presentation.entries, workspaceId, launchProfileId, claudeProfileId, configDir]
+  )
   // The mark is the agent at work, nothing else: it leaves with the state.
   const head = pastHead(past, conversation.entries.length, state === 'ended')
   const showMark = state === 'working'
@@ -939,23 +960,25 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
             {/* Mounted from the start, empty or not: what it gains is told apart
                 from what it opened on by the rows it rendered before. */}
             <ToolDisclosure.Provider value={disclosure}>
-              <TranscriptRows
-                rows={blocks}
-                settled={pastRead}
-                scroll={transcript.scroll}
-                reveal={searchReveal}
-              >
-                {({ block, key }, index, arriving) => (
-                  <TranscriptRow
-                    rowKey={key}
-                    key={key}
-                    block={block}
-                    first={index === 0}
-                    arriving={arriving}
-                    onError={report}
-                  />
-                )}
-              </TranscriptRows>
+              <ExchangeContext.Provider value={exchanges}>
+                <TranscriptRows
+                  rows={blocks}
+                  settled={pastRead}
+                  scroll={transcript.scroll}
+                  reveal={searchReveal}
+                >
+                  {({ block, key }, index, arriving) => (
+                    <TranscriptRow
+                      rowKey={key}
+                      key={key}
+                      block={block}
+                      first={index === 0}
+                      arriving={arriving}
+                      onError={report}
+                    />
+                  )}
+                </TranscriptRows>
+              </ExchangeContext.Provider>
             </ToolDisclosure.Provider>
             {showMark && <ProviderMark provider={session.provider} />}
             {state === 'ended' && (
