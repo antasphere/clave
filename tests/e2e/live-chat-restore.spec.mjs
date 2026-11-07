@@ -54,7 +54,13 @@ const DIR = userDataDir('live-chat-restore')
 const ROOT = fixturePath('live-chat-restore-root')
 const BIN = `${ROOT}/bin`
 const STARTS = `${ROOT}/agent-starts.jsonl`
-const WS = { id: 'live-chat-restore-ws', name: 'Live chats', rootDir: ROOT }
+const WS = {
+  id: 'live-chat-restore-ws',
+  name: 'Live chats',
+  rootDir: ROOT,
+  profileFile: null,
+  createdAt: 1
+}
 const KEY = 'live-chat-restore-window'
 /** The line the renderer logs for a record it failed to adopt. */
 const ADOPT_FAILED = 'Failed to adopt session record'

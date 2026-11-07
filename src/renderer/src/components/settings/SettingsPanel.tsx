@@ -63,6 +63,8 @@ import { KeymapSettings } from './KeymapSettings'
 import { AgentsSettings } from './AgentsSettings'
 import { AudioSettings } from './AudioSettings'
 import { ServersSettings } from './ServersSettings'
+// ── Mobile wave, lane A: the phones paired with this Mac ──
+import { MobileSection } from './MobileSection'
 import { AddWorkspaceAction, ServerWorkspaceRows } from './ServerWorkspaces'
 
 /** One seed for every swatch in the field picker: the row is a comparison of
@@ -219,6 +221,7 @@ export function SettingsPanel(): React.JSX.Element {
         {settingsSection === 'activity' && <ActivitySettings />}
         {settingsSection === 'accounts' && <AccountsSettings />}
         {settingsSection === 'servers' && <ServersSettings />}
+        {settingsSection === 'mobile' && <MobileSection />}
       </div>
     </div>
   )

@@ -14,6 +14,7 @@
  * session windows port (`sessions/windows.ts`): nothing here imports Electron.
  */
 import type { ServerEvent } from '@clave/contract/events'
+import type { NotifySignals } from '@clave/server'
 import type { SessionManager } from '../sessions/session-manager'
 import { sessionWindows } from '../sessions/windows'
 
@@ -80,4 +81,107 @@ export function sessionCleared(
   publishOrSend({ _tag: 'session.cleared', id, providerSessionId }, () =>
     send(windowKey, `session:clear-detected:${id}`, providerSessionId)
   )
+}
+
+// ── The mobile wave, lane B: what the notifier learns from where the sessions live ──
+
+let initializeWrites: ((id: string) => void) | null = null
+
+/** Establish an empty complete ledger only for a newly generated session id. */
+export function initializeSessionWrites(id: string): void {
+  initializeWrites?.(id)
+}
+
+let notifySignals: NotifySignals | null = null
+/** The observation in force, so a quit can end it before the sessions go. */
+let stopObservation: (() => void) | null = null
+/** The sessions whose next exit a stop or a restart asked for: never a failure. */
+const deliberateExits = new Set<string>()
+
+/** End the observation: the app's quit calls it before it shuts its
+ *  sessions down, so what a quit ends is never pushed as a failure. */
+export function stopNotifyObservation(): void {
+  stopObservation?.()
+  stopObservation = null
+}
+
+/** The session's process is about to be ended on purpose (`lifecycle.ts`):
+ *  its exit code, whatever it is, is not a failure to push. */
+export function markDeliberateExit(id: string): void {
+  deliberateExits.add(id)
+}
+
+/** A permission_response reached the session (`host.ts`): a push about that
+ *  request that has not left yet is not sent. */
+export function notifyRequestAnswered(sessionId: string, providerRequestId: string): void {
+  notifySignals?.requestAnswered(sessionId, providerRequestId)
+}
+
+/**
+ * Feed the notifier (`@clave/server`, the notify domain) what the server's
+ * own events do not carry: every frame of every session's stream (a
+ * permission_request where the server has no requests service, a fatal
+ * error, the end of a turn) and every process exit with its code, said
+ * deliberate when `markDeliberateExit` was called for it. Both entries wire
+ * it once their server starts, beside `publishSessionStates`, and stop it
+ * before their sessions are shut down, so a quit's exits push nothing.
+ * Returns the way to stop.
+ */
+export function observeSessionsForNotify(
+  manager: SessionManager,
+  signals: NotifySignals,
+  /** The server's own history of writes: a `user_message` carrying a client
+   *  message id is recorded as it passes, the durable evidence that the
+   *  provider took it (`packages/server/src/sessions/writes.ts`). */
+  evidence?: (sessionId: string, clientMessageId: string, at: number) => void,
+  initialize?: (sessionId: string) => void
+): () => void {
+  stopObservation?.()
+  notifySignals = signals
+  initializeWrites = initialize ?? null
+  let stopped = false
+  const offAll = manager.subscribeAll((id, stream) => {
+    if (stopped || stream.kind !== 'event') return
+    if (stream.event.type === 'user_message' && stream.event.clientMessageId !== undefined)
+      evidence?.(id, stream.event.clientMessageId, Date.now())
+    signals.streamEvent(id, stream.event)
+  })
+  const exits = new Map<string, () => void>()
+  const watch = (id: string): void => {
+    if (exits.has(id)) return
+    try {
+      exits.set(
+        id,
+        manager.subscribeExit(id, (code) => {
+          const deliberate = deliberateExits.delete(id)
+          exits.delete(id)
+          if (!stopped) signals.exited(id, code, deliberate)
+        })
+      )
+    } catch {
+      // The session is gone already: nothing to watch.
+    }
+  }
+  for (const session of manager.list()) watch(session.id)
+  const offAdded = manager.subscribeAdded((session) => watch(session.id))
+  const offRemoved = manager.subscribeRemoved((id) => {
+    exits.get(id)?.()
+    exits.delete(id)
+    deliberateExits.delete(id)
+  })
+  const stop = (): void => {
+    stopped = true
+    if (notifySignals === signals) {
+      notifySignals = null
+      initializeWrites = null
+    }
+    if (stopObservation === stop) stopObservation = null
+    offAll()
+    offAdded()
+    offRemoved()
+    for (const off of exits.values()) off()
+    exits.clear()
+  }
+  stopObservation = stop
+  return stop
 }

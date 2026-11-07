@@ -31,6 +31,8 @@ import { gitClient, type GitClient } from './git'
 import { serverInfoClient, type ServerInfoClient } from './server-info'
 // ── ADR 0004: the routines ──
 import { routinesClient, type RoutinesClient } from './routines'
+// ── Mobile wave, lane A: the devices (`./devices.ts`) ──
+import { devicesClient, type DevicesClient } from './devices'
 
 export interface ApiClientOptions {
   readonly url: string
@@ -85,6 +87,8 @@ export interface ClaveApiClient {
   readonly server: ServerInfoClient
   // ── ADR 0004: the routines (`./routines.ts`) ──
   readonly routines: RoutinesClient
+  // ── Mobile wave, lane A: the devices (`./devices.ts`) ──
+  readonly devices: DevicesClient
   // ── Lane B: terminals ──
   readonly health: {
     readonly live: () => Promise<boolean>
@@ -167,6 +171,8 @@ export function createApiClient(options: ApiClientOptions): ClaveApiClient {
     server: serverInfoClient(call, options.url),
     // ── ADR 0004: the routines ──
     routines: routinesClient(call),
+    // ── Mobile wave, lane A: the devices ──
+    devices: devicesClient(call),
     health: {
       live: () => call((c) => c.health.live()).then((answer) => answer.status === 'live')
     },

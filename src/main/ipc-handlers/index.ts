@@ -42,6 +42,8 @@ import { registerActivityHandlers } from './activity-handlers'
 import { registerMicHandlers } from './mic-handlers'
 // ── Issue #227: Debug Clave… ──
 import { registerTriageHandlers } from './triage-handlers'
+// ── Mobile wave, lane A: the notice a phone's pairing request raises (server/devices-notify.ts) ──
+import { registerDevicesNotificationHandlers } from '../server/devices-notify'
 
 export function registerIpcHandlers(deps: KeymapHandlerDeps = {}): void {
   registerAppHandlers()
@@ -51,6 +53,8 @@ export function registerIpcHandlers(deps: KeymapHandlerDeps = {}): void {
   registerCodexAccountHandlers()
   registerAccountLoginHandlers()
   registerAntasphereAccountHandlers()
+  // ── Mobile wave, lane A ──
+  registerDevicesNotificationHandlers()
   registerUsageHandlers()
   registerGitHandlers()
   registerUpdaterHandlers()

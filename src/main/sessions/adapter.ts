@@ -33,7 +33,8 @@ export interface SessionAdapter {
   attach(sessionId: string): Promise<SessionHandle>
   /** Called after consumer listeners are bound; completed once, retried if it throws. */
   ready?(handle: SessionHandle): void
-  write(handle: SessionHandle, input: Uint8Array | SessionInput): void
+  /** Identified messages resolve only once provider input is acknowledged. */
+  write(handle: SessionHandle, input: Uint8Array | SessionInput): void | Promise<void>
   /** The models this session may switch to; absent when the provider has none to offer. */
   models?(handle: SessionHandle): Promise<ModelOption[]>
   /** A resumed conversation's past, oldest first, which the manager hands to a

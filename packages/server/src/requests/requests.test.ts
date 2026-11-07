@@ -120,7 +120,8 @@ describe('shared requests over authenticated HTTP and push', () => {
           headers: { authorization: `Bearer ${server.token}`, 'content-type': 'application/json' },
           body: JSON.stringify(body)
         })
-        expect(result.status).toBe(route === '/sessions/write' ? 204 : 200)
+        // A write answers its status since the mobile wave (lane B): 200, not 204.
+        expect(result.status).toBe(200)
         expect(requests.snapshot().pending).toEqual([])
         expect(respond).toHaveBeenLastCalledWith(i, {
           answers: Object.fromEntries([[key, { answers: ['value'] }]])

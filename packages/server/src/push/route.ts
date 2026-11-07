@@ -11,9 +11,11 @@ import * as HttpServerRequest from '@effect/platform/HttpServerRequest'
 import * as HttpServerResponse from '@effect/platform/HttpServerResponse'
 import { PUSH_PATH } from '@clave/contract/push'
 import { type Wrap, pathOf } from '../auth'
-import { isOwnPageOrigin } from '../cors'
+import { isListenerOrigin, isOwnPageOrigin } from '../cors'
 import { ServerEvents } from '../events'
 import { ServerInfoPort, SessionHost } from '../ports'
+// ── Mobile wave, lane A: a phone's session in the hello frame ──
+import { DeviceSessions } from '../devices/service'
 import { PushHub } from './hub'
 
 export class PushHubService extends Context.Tag('@clave/server/PushHub')<
@@ -24,12 +26,18 @@ export class PushHubService extends Context.Tag('@clave/server/PushHub')<
     token: string
     serverId: string
     helloTimeoutMs?: number
-  }): Layer.Layer<PushHubService, never, ServerEvents | SessionHost | ServerInfoPort> {
+  }): Layer.Layer<
+    PushHubService,
+    never,
+    ServerEvents | SessionHost | ServerInfoPort | DeviceSessions
+  > {
     return Layer.scoped(
       PushHubService,
       Effect.gen(function* () {
         const events = yield* ServerEvents
         const source = yield* SessionHost
+        // ── Mobile wave, lane A: a phone says hello with its device session ──
+        const devices = yield* DeviceSessions
         // ── Issue #266: the welcome names the version, when the port knows one ──
         const info = yield* ServerInfoPort
         const version = (): string | undefined => {
@@ -39,7 +47,17 @@ export class PushHubService extends Context.Tag('@clave/server/PushHub')<
             return undefined
           }
         }
-        const hub = new PushHub({ ...options, events, source, version })
+        const hub = new PushHub({
+          ...options,
+          events,
+          source,
+          version,
+          devices: {
+            authenticate: devices.authenticate,
+            touch: devices.touch,
+            onRevoked: devices.onRevoked
+          }
+        })
         yield* Effect.addFinalizer(() => Effect.sync(() => hub.dispose()))
         return hub
       })
@@ -60,9 +78,15 @@ export const pushRoute =
       // is refused here, and so is a local `file://` page. The dev renderer's
       // page is a loopback one; the packaged renderer's socket leaves through
       // the preload's Node side with no Origin, and a client with no Origin
-      // still proves itself with the hello token, as every peer does.
+      // still proves itself with the hello token, as every peer does. A
+      // phone's WebSocket sends the server's own address as its Origin
+      // (mobile wave, lane A): admitted, since no page is ever served from it.
       const origin = request.headers['origin']
-      if (origin !== undefined && !isOwnPageOrigin(origin))
+      if (
+        origin !== undefined &&
+        !isOwnPageOrigin(origin) &&
+        !isListenerOrigin(origin, request.headers['host'])
+      )
         return HttpServerResponse.text('The push channel takes no page from off this machine.', {
           status: 403
         })

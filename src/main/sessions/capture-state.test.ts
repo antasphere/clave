@@ -209,6 +209,7 @@ it('hook watcher drives the manager and a synchronous capture line for Claude; P
     expect(sessionManager.get(id)?.state).toBe('working')
     expect(observed).toHaveBeenCalledWith({
       kind: 'event',
+      position: { generation: expect.any(String), sequence: expect.any(Number) },
       event: { type: 'state_change', state: 'working' }
     })
     if (provider === 'claude')
