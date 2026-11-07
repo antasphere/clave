@@ -63,6 +63,8 @@ class FakeGit implements GitService {
     )
   checkIgnored: GitOperations['checkIgnored'] = (cwd, paths) =>
     this.record('checkIgnored', [paths[0] ?? ''], cwd, paths)
+  remote: GitOperations['remote'] = (cwd) =>
+    this.record('remote', { url: `git@example.test:${cwd.slice(1)}.git` }, cwd)
   fetch: GitOperations['fetch'] = (cwd) => this.record('fetch', undefined, cwd)
   fetchBatch: GitOperations['fetchBatch'] = (paths) => this.record('fetchBatch', undefined, paths)
   refreshRemotes: GitOperations['refreshRemotes'] = (paths, batchId) =>
@@ -186,6 +188,13 @@ describe('the git group of the HTTP API', () => {
     expect(response.status).toBe(200)
     expect(await response.json()).toEqual(aStatus('/srv/repo'))
     expect(fake.calls).toEqual([{ method: 'status', args: ['/srv/repo'] }])
+  })
+
+  it('reads the origin remote of the folder asked, as the port answers it (PRDCT-4151)', async () => {
+    const response = await get('/git/remote?cwd=%2Fsrv%2Frepo')
+    expect(response.status).toBe(200)
+    expect(await response.json()).toEqual({ url: 'git@example.test:srv/repo.git' })
+    expect(fake.calls).toEqual([{ method: 'remote', args: ['/srv/repo'] }])
   })
 
   it('reads a batch of statuses from a POST body, one entry per path', async () => {

@@ -8,6 +8,7 @@ import {
   UPGRADE_NOW_WARNING
 } from '../../lib/server-connection-text'
 import { reportFleetError, useFleetStore } from '../../store/fleet-store'
+import { ServerCombineRow } from '../fleet/ServerCombineRow'
 import {
   SettingsPage,
   SettingsSection,
@@ -202,6 +203,7 @@ function ServerRow({
           id={connection.id}
           connected={connected}
         />
+        <ServerCombineRow id={connection.id} />
       </div>
     </div>
   )

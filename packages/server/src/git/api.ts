@@ -13,6 +13,7 @@ import {
   GitDiscard,
   GitFetch,
   GitFetchBatch,
+  GetGitRemote,
   GitGenerateCommitMessage,
   GitIncomingCommits,
   GitJourney,
@@ -38,6 +39,7 @@ export const GitLive = HttpApiBuilder.group(ClaveApi, 'git', (handlers) =>
     .handle('statusBatch', HttpCqrs.command(GetGitStatusBatch))
     .handle('discover', HttpCqrs.query(DiscoverGitRepos))
     .handle('checkIgnored', HttpCqrs.command(GitCheckIgnored))
+    .handle('remote', HttpCqrs.query(GetGitRemote))
     .handle('fetch', HttpCqrs.command(GitFetch))
     .handle('fetchBatch', HttpCqrs.command(GitFetchBatch))
     .handle('refreshRemotes', HttpCqrs.command(GitRefreshRemotes))

@@ -46,6 +46,7 @@ export interface SessionIPCEvents {
 }
 
 import type { FleetDesktopAPI } from './fleet-types'
+import type { ServerPairingChange, ServerPairings } from '@clave/contract/fleet'
 import type { LinkedDocumentsAPI } from '../shared/linked-documents'
 import type { ExtensionsInventory, MutationResult, MutationScope } from '../shared/extensions-types'
 import type {
@@ -1063,6 +1064,10 @@ export interface ElectronAPI extends FleetDesktopAPI {
   // The state and every write result carry the state's stamp (wave 5,
   // lane A, PRDCT-3405): the window drops a fold that is not newer than the
   // last stamp it loaded, wrote or took in.
+  // ── Paired workspaces (PRDCT-4151) ──
+  serverPairingsLoad: () => Promise<ServerPairings>
+  serverPairingsChange: (change: ServerPairingChange) => Promise<ServerPairings>
+  onServerPairingsChanged: (callback: (state: ServerPairings) => void) => () => void
   workspaceLoad: () => Promise<WorkspaceState>
   workspaceUpdateRegistry: (
     workspaces: Workspace[]
@@ -1148,6 +1153,9 @@ export interface ElectronAPI extends FleetDesktopAPI {
   getPiUsage: (range: PiUsageTotals['range']) => Promise<PiUsageTotals>
   gitCheckIgnored: (cwd: string, paths: string[]) => Promise<string[]>
   getGitStatus: (cwd: string) => Promise<GitStatusResult>
+  /** The `origin` remote of a checkout, as git keeps it, null without one;
+   *  a server's checkout answers through its own git (PRDCT-4151). */
+  gitRemoteUrl: (cwd: string) => Promise<string | null>
   getGitStatusBatch: (paths: string[]) => Promise<Array<{ path: string; status: GitStatusResult }>>
   gitFetch: (cwd: string) => Promise<void>
   gitFetchBatch: (paths: string[]) => Promise<void>

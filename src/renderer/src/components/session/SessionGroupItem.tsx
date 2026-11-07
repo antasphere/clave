@@ -5,6 +5,7 @@ import { FolderIcon, FolderOpenIcon, CommandLineIcon, PlusIcon } from '@heroicon
 import { Popover, PopoverAnchor, PopoverContent } from '@clave/ui/components'
 import { GroupTerminalsPanel } from './GroupTerminalsPanel'
 import { useInlineEdit } from '../../hooks/use-inline-edit'
+import { FleetGroupBadge } from '../fleet/FleetControls'
 
 /** Hover-to-open timing for the terminals panel: a short wait so a cursor
  *  passing over the icon does not pop it, and a longer grace on leave so the
@@ -201,6 +202,8 @@ function SessionGroupItemImpl({
             {group.name}
           </span>
         )}
+        {/* Which machine the group's tabs run on, when it is not this Mac (PRDCT-4151). */}
+        <FleetGroupBadge groupId={group.id} />
 
         {/* Two controls, always the same two, whatever the terminal count: the
             `+` for a new session, then the terminals button (count + icon, lit

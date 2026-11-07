@@ -148,6 +148,7 @@ export function serverGitPort(options: ServerGitPortOptions = {}): ServerGitPort
     statusBatch: (paths) => gitManager.getStatusBatch([...paths]),
     discover: (cwd, force) => repoIndexManager.discover(cwd, force),
     checkIgnored: (cwd, paths) => gitManager.checkIgnored(cwd, [...paths]),
+    remote: async (cwd) => ({ url: await gitManager.remoteUrl(cwd) }),
     fetch: (cwd) => gitManager.fetch(cwd),
     fetchBatch: (paths) => gitManager.fetchBatch([...paths]),
     refreshRemotes: (paths, batchId) => gitManager.refreshRemotes([...paths], progress(batchId)),

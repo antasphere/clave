@@ -100,6 +100,26 @@ export {
   panelRootLadder
 } from './session-types'
 
+/** The server workspaces shown inside each local workspace (PRDCT-4151): a
+ *  local workspace id → the remote keys of the server workspaces paired with
+ *  it on a server whose switch is on. Set by the pairing store, read by
+ *  `inActiveWorkspace` below so its thirty callers need no new argument.
+ *  Empty until a pairing is confirmed, which is exactly the rule of #241. */
+let combinedWorkspaces: ReadonlyMap<string, ReadonlySet<string>> = new Map()
+
+/** Replace the pairing map. The sessions' identity is renewed on purpose:
+ *  every list that memoised on them (the sidebar, the grid, the switcher)
+ *  redraws against the new rule, with no store write of its own. */
+export function setCombinedWorkspaces(next: ReadonlyMap<string, ReadonlySet<string>>): void {
+  combinedWorkspaces = next
+  useSessionStore.setState((state) => ({ sessions: [...state.sessions] }))
+}
+
+/** The server workspaces a local workspace shows beside its own, if any. */
+export function combinedWith(localWorkspaceId: string | null): ReadonlySet<string> | undefined {
+  return localWorkspaceId === null ? undefined : combinedWorkspaces.get(localWorkspaceId)
+}
+
 /** THE visibility predicate — single source of truth for workspace scoping.
  *  activeId null → no-workspace mode, everything visible (today's app).
  *
@@ -123,8 +143,13 @@ export function inActiveWorkspace(
   // Stamped — the uniform rule for local and server workspaces alike: an item
   // shows only in the workspace it carries. A remote record's workspaceId is
   // namespaced to its server, so it matches its server workspace and nothing
-  // else (never a local one).
-  if (x.workspaceId != null) return x.workspaceId === activeId
+  // else, with one exception the person confirmed (PRDCT-4151): a server
+  // workspace paired with a LOCAL one shows its items there too. Never the
+  // other way round: a server workspace shows only its own.
+  if (x.workspaceId != null) {
+    if (x.workspaceId === activeId) return true
+    return !isRemoteKey(activeId) && (combinedWorkspaces.get(activeId)?.has(x.workspaceId) ?? false)
+  }
   // Unstamped. A local item keeps the safety net (it predates the model). A
   // remote tab the daemon left without a server workspace shows in any
   // workspace of its own server, so it is never lost and never leaks local.
