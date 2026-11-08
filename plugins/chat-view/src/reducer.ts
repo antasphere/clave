@@ -78,6 +78,9 @@ export type Entry =
        *  it stood while it was open: this is the entry it left behind, kept
        *  for the rows' keys and never drawn. */
       relocated?: boolean
+      /** The settled form, where it was moved to: the reader's own doing,
+       *  never the agent's answer to what the reader last wrote. */
+      moved?: boolean
       at: number
     }
   | { kind: 'error'; message: string; at: number }
@@ -143,7 +146,12 @@ export function answeredSince(entries: Entry[]): boolean {
   const last = entries.findLastIndex((e) => e.kind === 'user')
   return entries
     .slice(last + 1)
-    .some((e) => e.kind !== 'user' && (e.kind !== 'assistant' || e.text.trim() !== ''))
+    .some(
+      (e) =>
+        e.kind !== 'user' &&
+        (e.kind !== 'assistant' || e.text.trim() !== '') &&
+        !(e.kind === 'permission' && e.moved)
+    )
 }
 /** What the reader can still answer, in the order asked: the dock shows the
  *  head of it and the rest queue behind. A card answered here, settled
@@ -163,24 +171,39 @@ function settle(entries: Entry[], matches: (request: Permission) => boolean): En
     ? entries.map((e) => (touches(e) ? { ...e, answeredElsewhere: true, abandoned: true } : e))
     : entries
 }
+const isSettled = (e: Extract<Entry, { kind: 'permission' }>): boolean =>
+  e.answer !== undefined || e.answeredElsewhere === true
 /** A form the agent asked floats at the end of the conversation while it is
- *  open (the view draws it after the rows), and stays where it closed: its
- *  settled entry is appended at the end and the one it left behind is kept
- *  for the rows' keys, undrawn. Any other entry is left in place. */
-function relocateSettled(entries: Entry[], at: number): Entry[] {
+ *  open (the view draws it after the rows), and stays where it closed: the
+ *  moment the form of `id` leaves live, its settled entry is appended at the
+ *  end and the one it left behind is kept for the rows' keys, undrawn. Once,
+ *  for that id: a later correction, or a second word that it settled, moves
+ *  nothing, and no other form is touched. */
+function relocateSettled(entries: Entry[], id: string, wasLive: boolean, at: number): Entry[] {
+  if (!wasLive) return entries
   const index = entries.findLastIndex(
-    (e) =>
-      e.kind === 'permission' &&
-      !e.relocated &&
-      (e.answer !== undefined || e.answeredElsewhere === true) &&
-      inputRequestMeta(e.request.input) !== null
+    (e) => e.kind === 'permission' && e.request.id === id && !e.relocated
   )
-  if (index < 0 || index === entries.length - 1) return entries
-  const entry = entries[index] as Extract<Entry, { kind: 'permission' }>
+  const entry = entries[index]
+  if (
+    entry?.kind !== 'permission' ||
+    !isSettled(entry) ||
+    inputRequestMeta(entry.request.input) === null ||
+    index === entries.length - 1
+  )
+    return entries
   const next = [...entries]
   next[index] = { ...entry, relocated: true }
-  next.push({ ...entry, at })
+  next.push({ ...entry, moved: true, at })
   return next
+}
+/** Whether the form of `id` is still live in `entries`: its latest entry
+ *  not settled. What `relocateSettled` is told before an event lands. */
+function liveBefore(entries: Entry[], id: string): boolean {
+  const entry = entries.findLast(
+    (e) => e.kind === 'permission' && e.request.id === id && !e.relocated
+  )
+  return entry?.kind === 'permission' && !isSettled(entry)
 }
 export function reduceConversation(state: Conversation, action: Action): Conversation {
   if ('exit' in action) return { ...state, state: 'ended', exitCode: action.exit }
@@ -211,10 +234,11 @@ export function reduceConversation(state: Conversation, action: Action): Convers
     // card leaves the dock with no answer recorded, since nothing ran. The
     // kernel's word stays the state; its next state_change says what is
     // awaited.
+    const wasLive = liveBefore(state.entries, action.retire)
     const entries = settle(state.entries, (request) => request.id === action.retire)
     return entries === state.entries
       ? state
-      : { ...state, entries: relocateSettled(entries, Date.now()) }
+      : { ...state, entries: relocateSettled(entries, action.retire, wasLive, Date.now()) }
   }
   if ('withdraw' in action) {
     if (answeredSince(state.entries)) return state
@@ -244,6 +268,7 @@ export function reduceConversation(state: Conversation, action: Action): Convers
     // adapter leaves blocked as soon as it has the reply, and that
     // state_change can land before the write resolves here and mark the card
     // closed from outside (PermissionRow read "No longer awaiting an answer").
+    const wasLive = liveBefore(state.entries, action.answer)
     const entries = state.entries.map((e) =>
       e.kind === 'permission' && e.request.id === action.answer
         ? {
@@ -258,7 +283,7 @@ export function reduceConversation(state: Conversation, action: Action): Convers
     const waiting = openRequests(entries).length > 0
     return {
       ...state,
-      entries: relocateSettled(entries, Date.now()),
+      entries: relocateSettled(entries, action.answer, wasLive, Date.now()),
       state: state.state === 'blocked' && !waiting ? 'working' : state.state
     }
   }
@@ -317,8 +342,11 @@ export function reduceConversation(state: Conversation, action: Action): Convers
     // The adapter no longer waits on it: the card is settled for good, as the
     // server's request store settles its record on the same word, and no
     // later blocked reopens it. The kernel's own state_change follows.
+    const wasLive = liveBefore(state.entries, event.id)
     const entries = settle(state.entries, (request) => request.id === event.id)
-    return entries === state.entries ? state : { ...state, entries: relocateSettled(entries, at) }
+    return entries === state.entries
+      ? state
+      : { ...state, entries: relocateSettled(entries, event.id, wasLive, at) }
   }
   if (event.type === 'permission_updated') {
     // A form's answers changed under its card (PRDCT-4157): the agent set
@@ -344,6 +372,7 @@ export function reduceConversation(state: Conversation, action: Action): Convers
         Object.entries(event.answers).some(
           (pair) => JSON.stringify(entry.answers?.[pair[0]]) !== JSON.stringify(pair[1])
         )
+      const wasLive = !isSettled(entry)
       entries[index] = {
         ...entry,
         answer: entry.answer ?? 'answer',
@@ -352,7 +381,7 @@ export function reduceConversation(state: Conversation, action: Action): Convers
         abandoned: undefined,
         ...(changed && { revised: true })
       }
-      return { ...state, entries: relocateSettled(entries, at) }
+      return { ...state, entries: relocateSettled(entries, event.id, wasLive, at) }
     }
     // A note stands under its field until the field changes.
     const notes = { ...entry.notes, ...event.notes }

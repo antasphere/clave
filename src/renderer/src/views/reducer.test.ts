@@ -565,6 +565,70 @@ describe('taking a message back', () => {
     // A form that is already the last entry stays where it is.
     const alone = reduceConversation(run([form]), { answer: id, optionId: 'deny' })
     expect(alone.entries).toHaveLength(1)
+    // A correction after the conversation moved on leaves the closed form
+    // where it closed; so does a second word that it settled.
+    const movedOn = [
+      { type: 'user_message', text: 'later' },
+      { type: 'assistant_text', delta: 'Reply.', final: true }
+    ].reduce((s, event) => reduceConversation(s, { event: event as ChatEvent, at: 5 }), approved)
+    const shape = (s: Conversation): string[] =>
+      visibleEntries(s.entries).map((e) =>
+        e.kind === 'permission' ? `form:${e.request.id.slice(0, 7)}` : e.kind
+      )
+    expect(shape(movedOn)).toEqual(['user', 'assistant', 'form:clave:3', 'user', 'assistant'])
+    const corrected = reduceConversation(movedOn, {
+      event: { type: 'permission_updated', id, answers: { login: 'luca-b' }, sent: true },
+      at: 6
+    })
+    expect(shape(corrected)).toEqual(shape(movedOn))
+    expect(visibleEntries(corrected.entries)[2]).toMatchObject({
+      revised: true,
+      answers: { login: 'luca-b' }
+    })
+    const withdrawnAgain = reduceConversation(corrected, {
+      event: { type: 'permission_withdrawn', id },
+      at: 7
+    })
+    expect(shape(withdrawnAgain)).toEqual(shape(movedOn))
+    // The approve is the reader's own doing: a message typed while the form
+    // was open, not yet answered by the agent, can still be taken back.
+    const typed = run([form, { type: 'user_message', text: 'hello' }])
+    const typedThenApproved = reduceConversation(typed, {
+      answer: id,
+      optionId: 'answer',
+      answers: { login: 'luca-a' }
+    })
+    expect(answeredSince(typedThenApproved.entries)).toBe(false)
+  })
+
+  it('two forms open at once each settle where they stood', () => {
+    const idA = 'clave:aaaaaaaa-85f6-4dc0-9b19-366bf927d351'
+    const idB = 'clave:bbbbbbbb-85f6-4dc0-9b19-366bf927d351'
+    const ask = (id: string): ChatEvent => ({
+      type: 'permission_request',
+      id,
+      description: `Form ${id.slice(6, 7)}.`,
+      toolName: 'clave_request_input',
+      input: { tool: 'clave_request_input', layout: 'form' },
+      options: [
+        { id: 'answer', label: 'Approve' },
+        { id: 'deny', label: 'Skip' }
+      ],
+      questions: [{ id: 'x', question: 'X?', kind: 'text', options: [] }]
+    })
+    const open = run([
+      { type: 'assistant_text', delta: 'asked A', final: true },
+      ask(idA),
+      { type: 'assistant_text', delta: 'asked B', final: true },
+      ask(idB)
+    ])
+    const a = reduceConversation(open, { answer: idA, optionId: 'answer', answers: { x: '1' } })
+    const b = reduceConversation(a, { answer: idB, optionId: 'answer', answers: { x: '2' } })
+    const shape = visibleEntries(b.entries).map((e) =>
+      e.kind === 'permission' ? `form:${e.request.id.slice(6, 7)}` : e.kind
+    )
+    expect(shape).toEqual(['assistant', 'assistant', 'form:a', 'form:b'])
+    expect(openRequests(b.entries)).toEqual([])
   })
 
   it('never touches an earlier, answered message', () => {

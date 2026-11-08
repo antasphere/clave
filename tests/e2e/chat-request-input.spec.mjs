@@ -88,8 +88,18 @@ export async function run(t) {
       first
     )
 
-    /* 2. A typed answer that does not fit is said where it is typed. */
+    /* 2. A typed answer that does not fit is said where it is typed; a field
+          left empty is not judged for leaving it (the person may answer in
+          the chat). */
     const email = card.locator('input[inputmode="email"]')
+    await email.focus()
+    await view.locator('textarea').focus()
+    await win.waitForTimeout(150)
+    assert.equal(
+      await card.locator('.chat-field-problem').count(),
+      0,
+      'an empty field is not judged when the person leaves it for the composer'
+    )
     await email.fill('luca@antasphere')
     await card.getByRole('button', { name: /^Approve/ }).click()
     await card.locator('.chat-field-problem').first().waitFor()
