@@ -5,7 +5,13 @@ import type {
   RoutineView,
   RoutinesListing
 } from '@clave/contract/routines/model'
-import { mergeRoutineSurfaces, relId, type RoutineSurfacesInput } from './routine-servers'
+import {
+  dedupeByIdentity,
+  mergeRoutineSurfaces,
+  relId,
+  type RoutineSurface,
+  type RoutineSurfacesInput
+} from './routine-servers'
 
 const decl = (over: Partial<RoutineDeclaration> & { rootDir: string }): RoutineDeclaration => ({
   key: `${over.rootDir}/.clave/workspaces/default.clave::${over.name ?? 'Digest'}`,
@@ -244,5 +250,69 @@ describe('mergeRoutineSurfaces', () => {
       ['aa', 'A own'],
       ['zz', 'B own']
     ])
+  })
+})
+
+describe('one server, two saved connections (round 1)', () => {
+  it('two listings answering to one name: the connected one is the pinned routine’s surface (Gap 5)', () => {
+    const mine = decl({ rootDir: MAC, workspaceId: 'mac-ws', server: 'studio', runsHere: false })
+    const twinA = view(decl({ rootDir: BOX, server: 'studio' }))
+    const twinB = view(decl({ rootDir: `${BOX}-b`, server: 'studio' }))
+    const remote = {
+      a: listing('srv-a', 'studio', [twinA]),
+      b: listing('srv-b', 'studio', [twinB])
+    }
+    // The pinned routine's surface is the one under the Mac workspace; the
+    // other listing's own view may surface beside it, it is not the subject.
+    const pinned = (connected: string[]): RoutineSurface[] =>
+      mergeRoutineSurfaces(
+        input({
+          local: listing('l', 'Mac', [view(mine)]),
+          remote,
+          connected: new Set(connected)
+        })
+      ).filter((s) => s.workspaceId === 'mac-ws')
+
+    const viaA = pinned(['a'])
+    expect(viaA).toHaveLength(1)
+    expect(viaA[0]).toMatchObject({ serverId: 'a', reachable: true, view: twinA })
+
+    // Only the second connected: the surface follows it, though `a` sorts first.
+    const viaB = pinned(['b'])
+    expect(viaB).toHaveLength(1)
+    expect(viaB[0]).toMatchObject({ serverId: 'b', reachable: true, view: twinB })
+  })
+
+  it('one server saved twice surfaces its routine once, through the connected connection (Note 1)', () => {
+    const own = decl({ rootDir: BOX, name: 'Nightly' })
+    const remote = {
+      lan: listing('srv-1', 'Studio', [view(own)]),
+      tailnet: listing('srv-1', 'Studio', [view(own)])
+    }
+    const surfaces = (connected: string[]): RoutineSurface[] =>
+      mergeRoutineSurfaces(input({ remote, connected: new Set(connected) })).filter(
+        (s) => s.view.routine.name === 'Nightly'
+      )
+
+    const up = surfaces(['tailnet'])
+    expect(up).toHaveLength(1)
+    expect(up[0]).toMatchObject({ serverId: 'tailnet', reachable: true })
+
+    // Neither up: still once, through the first in sorted order.
+    const down = surfaces([])
+    expect(down).toHaveLength(1)
+    expect(down[0]).toMatchObject({ serverId: 'lan', reachable: false })
+  })
+
+  it('dedupeByIdentity keeps a listing without an identity (an older server) beside the others', () => {
+    const older: RoutinesListing = { routines: [], viewer: { url: null, note: '' } }
+    const remote = {
+      a: listing('srv-1', 'Studio', []),
+      b: listing('srv-1', 'Studio', []),
+      c: older,
+      d: older
+    }
+    expect(dedupeByIdentity(remote, new Set(['b']))).toEqual(['b', 'c', 'd'])
+    expect(dedupeByIdentity(remote, new Set())).toEqual(['a', 'c', 'd'])
   })
 })

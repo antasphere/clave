@@ -32,6 +32,8 @@ interface Fixture {
   emit: (owner: string, event: ServerEvent) => void
   invoke: Mock<(channel: string, ...args: unknown[]) => Promise<unknown>>
   holds: Map<string, Promise<void>>
+  /** Servers whose reads wait for the test: each read parks its resolver here, in call order. */
+  deferred: Map<string, Array<(listing: RoutinesListing) => void>>
 }
 function fixture(): Fixture {
   const calls: Array<{ owner: string; method: string; args: unknown[] }> = []
@@ -39,6 +41,7 @@ function fixture(): Fixture {
   const failing = new Set<string>()
   const reads = new Map<string, number>()
   const holds = new Map<string, Promise<void>>()
+  const deferred = new Map<string, Array<(listing: RoutinesListing) => void>>()
   const invoke = vi.fn(async (channel: string, ...args: unknown[]) => {
     if (channel === 'server:fleet:list')
       return ['x', 'y'].map((id) => ({
@@ -77,6 +80,8 @@ function fixture(): Fixture {
           routines: {
             list: async () => {
               calls.push({ owner, method: 'list', args: [] })
+              const parked = deferred.get(owner)
+              if (parked) return new Promise<RoutinesListing>((resolve) => parked.push(resolve))
               await holds.get(owner)
               if (failing.has(owner)) throw new Error('CapabilityUnavailable')
               const n = (reads.get(owner) ?? 0) + 1
@@ -108,7 +113,7 @@ function fixture(): Fixture {
   api.onFleetRoutines((update) => heard.push(update))
   const emit = (owner: string, event: ServerEvent): void =>
     events.get(owner)!({ id: 'test', seq: 1, at: 1, event })
-  return { api, calls, heard, failing, emit, invoke, holds }
+  return { api, calls, heard, failing, emit, invoke, holds, deferred }
 }
 
 let h: Fixture
@@ -126,7 +131,7 @@ describe('a connected server’s routines', () => {
   it('reads and publishes each server’s listing at connect', async () => {
     await h.api.fleetList()
     await flush()
-    const byServer = Object.fromEntries(h.heard.map((u) => [u.serverId, u.listing.server.name]))
+    const byServer = Object.fromEntries(h.heard.map((u) => [u.serverId, u.listing.server?.name]))
     expect(byServer).toEqual({ x: 'x', y: 'y' })
   })
 
@@ -157,7 +162,7 @@ describe('a connected server’s routines', () => {
     await flush()
     h.heard.length = 0
     const listing = await h.api.fleetRoutines('x')
-    expect(listing.server.name).toBe('x')
+    expect(listing.server?.name).toBe('x')
     expect(h.heard).toEqual([{ serverId: 'x', listing }])
   })
 
@@ -178,6 +183,32 @@ describe('a connected server’s routines', () => {
     release()
     await read
     expect(h.heard.filter((u) => u.serverId === 'x')).toEqual([])
+  })
+
+  it('two reads crossing on the wire: the newest read wins, the older answer is dropped (Gap 2)', async () => {
+    const parked: Array<(listing: RoutinesListing) => void> = []
+    h.deferred.set('x', parked)
+    const named = (name: string): RoutinesListing => ({
+      routines: [],
+      viewer: { url: null, note: '' },
+      server: { id: 'x-id', name }
+    })
+    // Read A: the one the connect issues.
+    await h.api.fleetList()
+    await flush()
+    expect(parked).toHaveLength(1)
+    // Read B: the one a routines.changed issues while A is still on the wire.
+    h.emit('x', { _tag: 'routines.changed' } as ServerEvent)
+    await flush()
+    expect(parked).toHaveLength(2)
+    const [answerA, answerB] = parked
+    // B answers first, then A, issued earlier, answers last with stale data.
+    answerB(named('read-b'))
+    await flush()
+    answerA(named('read-a'))
+    await flush()
+    const forX = h.heard.filter((u) => u.serverId === 'x').map((u) => u.listing.server?.name)
+    expect(forX).toEqual(['read-b'])
   })
 
   it('routes run now, dismiss and the deck to the server named', async () => {

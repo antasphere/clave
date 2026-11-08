@@ -297,6 +297,16 @@ export function createRoutineService(options: RoutineServiceOptions): RoutineSer
     // The process stops with the run: the transcript stays, the discussion resumes it.
     if (entry.run.sessionId) void options.sessions.stop(entry.run.sessionId).catch(() => undefined)
     emit()
+    // The deck goes to Slideless once the run has ended, not at each report
+    // (round 1, Minor 2): a run may correct its report, and one run is one
+    // version, the last deck it wrote.
+    const final = store.run(entry.run.id)
+    if (entry.report && entry.declaration.report.publish && final?.deck)
+      void publishRun(
+        entry.declaration,
+        entry.run.id,
+        path.dirname(path.resolve(decksRoot, final.deck))
+      )
   }
 
   /** A discussion continues the run's conversation, and a resumed chat may
@@ -560,7 +570,7 @@ export function createRoutineService(options: RoutineServiceOptions): RoutineSer
       for (const d of declarations) {
         // Pinned to another server (PRDCT-4149): listed, its next occurrence
         // shown, and never considered here, so the server it names runs it alone.
-        if (!d.runsHere) continue
+        if (d.runsHere === false) continue
         const state = store.seen(d.key)
         const decision = decideTick({
           schedule: d.schedule,
@@ -692,7 +702,7 @@ export function createRoutineService(options: RoutineServiceOptions): RoutineSer
       const d = declaration(key)
       if (!d) throw new Error(`No routine "${key}" is declared on this server`)
       if (d.invalid) throw new Error(`"${d.name}" cannot run: ${d.invalid}`)
-      if (!d.runsHere)
+      if (d.runsHere === false)
         throw new Error(
           `"${d.name}" runs on ${d.server ?? 'another server'}, not on ${options.identity().name}: ask that server to run it`
         )
@@ -754,17 +764,14 @@ export function createRoutineService(options: RoutineServiceOptions): RoutineSer
         data: input.data
       }
       let deck: string
-      let folder: string
       try {
-        const written = writeDeck({
+        deck = writeDeck({
           decksRoot,
           routineKey: d.key,
           runId: run.id,
           template: d.report.template,
           envelope
-        })
-        deck = written.relative
-        folder = written.folder
+        }).relative
       } catch (error) {
         throw new RoutineReportRefusal(
           `the deck could not be written: ${error instanceof Error ? error.message : String(error)}`
@@ -778,7 +785,6 @@ export function createRoutineService(options: RoutineServiceOptions): RoutineSer
         seen: false
       })
       emit()
-      if (d.report.publish) void publishRun(d, run.id, folder)
       return { runId: run.id, deck }
     },
     async openDiscussion(runId, windowKey, mode) {

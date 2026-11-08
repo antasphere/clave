@@ -197,10 +197,26 @@ export class SlidelessPublisher implements RoutinePublisher {
   }
 
   async publish(input: PublishInput): Promise<PublishOutcome> {
-    const pushed = await this.run(
+    let pushed = await this.run(
       pushArgs(input.folder, input.title, input.state?.deckId ?? null),
       input.folder
     )
+    // A kept deck the instance no longer has (deleted on Slideless): the push
+    // under its id is refused, and the routine would fail on every run after
+    // (round 1, Note 2). One new deck is made instead, and the state follows
+    // it; a CLI missing or silent is not that case and stays a failure.
+    if (
+      pushed.code !== 0 &&
+      input.state?.deckId &&
+      pushed.errorCode !== 'ENOENT' &&
+      pushed.code !== null
+    ) {
+      this.log(
+        'warn',
+        `publish: the push to the kept deck was refused (${firstLine(pushed.stderr) || `exit code ${pushed.code}`}); making a new deck`
+      )
+      pushed = await this.run(pushArgs(input.folder, input.title, null), input.folder)
+    }
     if (pushed.code !== 0) throw this.failure('pushed', pushed)
     const parsed = parsePush(pushed.stdout)
     if (!parsed)

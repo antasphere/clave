@@ -634,7 +634,8 @@ and the only one built: one run per machine; `team`, one run for the whole team,
 with "not built yet" until a shared claim exists), `server` (the Clave server that runs the
 routine, by the server's own name or its id; the name is the first label of the machine's hostname
 unless the install gave it one with `--server-name`; every other machine that loads
-the file lists the routine and never runs it; absent, whichever machine reads the file runs
+the file lists the routine and never runs it, provided its Clave knows the field, so keep every
+machine current; a server one pins to deserves an explicit `--server-name`; absent, whichever machine reads the file runs
 it, once per machine), `report.publish` (`true`: the server that runs the routine pushes every
 run's deck to the workspace's Slideless, as a new version of one deck per routine, and mints
 one named share link for it, forms and downloads off; it needs the Slideless CLI signed in as

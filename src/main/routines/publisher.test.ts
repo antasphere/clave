@@ -48,9 +48,22 @@ const shared = (url: string, id = 'tok-1'): ExecResult => ok({ url, shareToken: 
 
 const ENV = { PATH: '/opt/slideless/bin', HOME: '/Users/server' }
 
-function publisher(answers: ExecResult[]): { publisher: SlidelessPublisher; calls: Call[] } {
+function publisher(answers: ExecResult[]): {
+  publisher: SlidelessPublisher
+  calls: Call[]
+  logs: Array<{ level: 'info' | 'warn'; message: string }>
+} {
   const { exec, calls } = fakeExec(answers)
-  return { publisher: new SlidelessPublisher({ env: async () => ENV, exec }), calls }
+  const logs: Array<{ level: 'info' | 'warn'; message: string }> = []
+  return {
+    publisher: new SlidelessPublisher({
+      env: async () => ENV,
+      exec,
+      log: (level, message) => logs.push({ level, message })
+    }),
+    calls,
+    logs
+  }
 }
 
 const input = {
@@ -221,5 +234,59 @@ describe('SlidelessPublisher.publish', () => {
       expect(call.options.env).toEqual(ENV)
       expect(call.options.cwd).toBe(input.folder)
     }
+  })
+})
+
+describe('a kept deck Slideless no longer has (round 1, Note 2)', () => {
+  const state = { deckId: 'old', share: { tokenId: 'tok-old', url: 'https://s.example/old' } }
+
+  it('replaces a kept deck the push is refused under by a new one, with a new link', async () => {
+    const {
+      publisher: p,
+      calls,
+      logs
+    } = publisher([
+      { code: 1, stdout: '', stderr: 'not found' },
+      pushed('new-1', 1),
+      shared('https://s.example/new', 'tok-new')
+    ])
+    const outcome = await p.publish({ ...input, state })
+    // The refused push under the old id, the push that makes a deck, the link for it.
+    expect(calls).toHaveLength(3)
+    expect(
+      calls[0].args.slice(calls[0].args.indexOf('--id'), calls[0].args.indexOf('--id') + 2)
+    ).toEqual(['--id', 'old'])
+    expect(calls[1].args).toContain('--new')
+    expect(calls[1].args).not.toContain('--id')
+    expect(calls[2].args.slice(0, 2)).toEqual(['share', 'new-1'])
+    expect(outcome).toEqual({
+      deckId: 'new-1',
+      version: 1,
+      url: 'https://s.example/new',
+      state: { deckId: 'new-1', share: { tokenId: 'tok-new', url: 'https://s.example/new' } },
+      shareError: null
+    })
+    // The person can see why the routine changed decks.
+    const warnings = logs.filter((l) => l.level === 'warn')
+    expect(warnings).toHaveLength(1)
+    expect(warnings[0].message).toContain('not found')
+  })
+
+  it('does not retry when the CLI is missing or did not answer: one call, then the failure', async () => {
+    const missing = publisher([{ code: 1, stdout: '', stderr: '', errorCode: 'ENOENT' }])
+    await expect(missing.publisher.publish({ ...input, state })).rejects.toThrow(INSTALL_HINT)
+    expect(missing.calls).toHaveLength(1)
+
+    const silent = publisher([{ code: null, stdout: '', stderr: '' }])
+    await expect(silent.publisher.publish({ ...input, state })).rejects.toThrow(
+      /did not answer in time/
+    )
+    expect(silent.calls).toHaveLength(1)
+  })
+
+  it('does not retry a first push (no kept deck) that fails', async () => {
+    const { publisher: p, calls } = publisher([{ code: 2, stdout: '', stderr: 'quota reached' }])
+    await expect(p.publish({ ...input, state: null })).rejects.toThrow(/quota reached/)
+    expect(calls).toHaveLength(1)
   })
 })

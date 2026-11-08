@@ -57,8 +57,10 @@ export const RoutineReportSpec = Schema.Struct({
   schema: Schema.String,
   width: Schema.Number,
   height: Schema.Number,
-  /** Every run's deck pushed to Slideless by the server that runs it (PRDCT-4149). */
-  publish: Schema.Boolean
+  /** Every run's deck pushed to Slideless by the server that runs it
+   *  (PRDCT-4149). Optional on the wire: a server older than the field
+   *  sends none, and its listing must still decode on a newer Mac. */
+  publish: Schema.optional(Schema.Boolean)
 })
 export type RoutineReportSpec = typeof RoutineReportSpec.Type
 
@@ -87,11 +89,13 @@ export const RoutineDeclaration = Schema.Struct({
   scope: RoutineScope,
   /** The server that runs this routine, as the file names it (its own name
    *  or its id), null when whichever server reads the file runs it. */
-  server: Schema.NullOr(Schema.String),
+  server: Schema.optional(Schema.NullOr(Schema.String)),
   /** Whether THIS server runs it: true with no `server` named or when the
    *  name or id is this server's; false for a routine pinned elsewhere,
-   *  which is listed, its next occurrence shown, and never run here. */
-  runsHere: Schema.Boolean,
+   *  which is listed, its next occurrence shown, and never run here.
+   *  Both optional on the wire (an older server sends neither): a reader
+   *  takes a missing `runsHere` as true, what such a server did. */
+  runsHere: Schema.optional(Schema.Boolean),
   report: RoutineReportSpec,
   /** Why this routine can never run as declared (an unknown scope, a
    *  schedule that does not parse, a template outside the file's folder):
@@ -174,7 +178,7 @@ export const RoutinesListing = Schema.Struct({
   viewer: Schema.Struct({ url: Schema.NullOr(Schema.String), note: Schema.String }),
   /** This server, as a routine's `server` field names it (PRDCT-4149): its
    *  id and its own name (the machine's hostname unless the server was given one). */
-  server: Schema.Struct({ id: Schema.String, name: Schema.String })
+  server: Schema.optional(Schema.Struct({ id: Schema.String, name: Schema.String }))
 })
 export type RoutinesListing = typeof RoutinesListing.Type
 

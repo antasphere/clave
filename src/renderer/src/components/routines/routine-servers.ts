@@ -63,6 +63,28 @@ const listingName = (
   names: Record<string, string>
 ): string => listing.server?.name ?? names[serverId] ?? serverId
 
+/** The server ids to read, one per listing identity (`listing.server.id`):
+ *  of two connections to one server, the connected one, else the first in
+ *  order; a listing without an identity (an older server) stands on its own. */
+export function dedupeByIdentity(
+  remote: Record<string, RoutinesListing>,
+  connected: ReadonlySet<string>
+): string[] {
+  const ids = Object.keys(remote).sort()
+  const chosen = new Map<string, string>()
+  const standalone: string[] = []
+  for (const id of ids) {
+    const identity = remote[id].server?.id
+    if (!identity) {
+      standalone.push(id)
+      continue
+    }
+    const current = chosen.get(identity)
+    if (!current || (!connected.has(current) && connected.has(id))) chosen.set(identity, id)
+  }
+  return ids.filter((id) => standalone.includes(id) || chosen.get(remote[id].server!.id) === id)
+}
+
 export function mergeRoutineSurfaces(input: RoutineSurfacesInput): RoutineSurface[] {
   const { local, remote, connected, connectionNames, pairings } = input
   const surfaces: RoutineSurface[] = []
@@ -73,7 +95,10 @@ export function mergeRoutineSurfaces(input: RoutineSurfacesInput): RoutineSurfac
     placed.add(id)
     surfaces.push(surface)
   }
-  const serverIds = Object.keys(remote).sort()
+  // One server saved twice on this Mac (a LAN and a tailnet address, round 1,
+  // Note 1) answers with one identity: its routines surface once, through
+  // the connection that is up, else the first saved.
+  const serverIds = dedupeByIdentity(remote, connected)
   // The remote views a pinned local routine took over: surfaced once, under
   // the local workspace, and never again as a remote routine of their own.
   const consumed = new Set<string>()
@@ -100,7 +125,7 @@ export function mergeRoutineSurfaces(input: RoutineSurfacesInput): RoutineSurfac
         runsOn: 'here',
         reachable: true,
         workspaceId: decl.workspaceId,
-        pinnedTo: decl.server
+        pinnedTo: decl.server ?? null
       })
       continue
     }
@@ -121,7 +146,7 @@ export function mergeRoutineSurfaces(input: RoutineSurfacesInput): RoutineSurfac
         runsOn: 'server',
         reachable: true,
         workspaceId: decl.workspaceId,
-        pinnedTo: decl.server
+        pinnedTo: decl.server ?? null
       })
       continue
     }
@@ -136,7 +161,7 @@ export function mergeRoutineSurfaces(input: RoutineSurfacesInput): RoutineSurfac
       runsOn: 'server',
       reachable: false,
       workspaceId: decl.workspaceId,
-      pinnedTo: decl.server
+      pinnedTo: decl.server ?? null
     })
   }
 

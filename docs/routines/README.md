@@ -50,7 +50,8 @@ changes `params.extra` or the account without touching the shared one.
 
 To run it on the Mac Studio rather than on whichever Mac reads the file, add
 `"server": "MacStudio"` beside `scope` (the Mac Studio server's own name: the first label of its hostname, or the name its install gave it with `--server-name`). The Mac Studio's
-server then runs it alone; every other Mac lists it and never runs it, and a Mac connected
+server then runs it alone; every other Mac on a Clave that knows the field lists it and never
+runs it, and a Mac connected
 to the Mac Studio shows that server's runs on the same toolbar button, with the report
 read over the connection and Run now asked of the Mac Studio. Add `"publish": true` inside
 `report` to also push every run's deck to the workspace's Slideless, behind one share link

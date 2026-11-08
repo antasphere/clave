@@ -45,5 +45,42 @@ export function cacheRemoteDeck(
   const tmp = `${file}.tmp`
   fs.writeFileSync(tmp, html, 'utf8')
   fs.renameSync(tmp, file)
+  pruneServerDecks(path.dirname(dir), KEEP_REMOTE_DECKS)
   return file
+}
+
+/** How many runs' pages a server keeps here: twice the runs a server keeps
+ *  (`KEEP_RUNS`), so the pages of every run a panel can still select are
+ *  there and the folder never grows without end (round 1, Note 4). */
+export const KEEP_REMOTE_DECKS = 40
+
+/** Keep the newest `keep` run folders of one server, by the page's modification
+ *  time, and remove the rest; a folder that cannot be removed is left. */
+export function pruneServerDecks(serverDir: string, keep: number): void {
+  let entries: fs.Dirent[]
+  try {
+    entries = fs.readdirSync(serverDir, { withFileTypes: true })
+  } catch {
+    return
+  }
+  const runs = entries
+    .filter((e) => e.isDirectory())
+    .map((e) => {
+      const page = path.join(serverDir, e.name, 'index.html')
+      let mtime = 0
+      try {
+        mtime = fs.statSync(page).mtimeMs
+      } catch {
+        /* a folder without its page: the oldest */
+      }
+      return { name: e.name, mtime }
+    })
+    .sort((a, b) => b.mtime - a.mtime)
+  for (const run of runs.slice(keep)) {
+    try {
+      fs.rmSync(path.join(serverDir, run.name), { recursive: true, force: true })
+    } catch {
+      /* left for the next prune */
+    }
+  }
 }
