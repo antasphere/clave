@@ -63,7 +63,7 @@ jobs:
           selected = json.loads(subprocess.check_output(
               ["node", "tests/e2e/run.mjs", "--list", "--shard", "1/5"], text=True))
           assert len(specs) == 196 and len(selected) == 42
-          assert all([n for n in specs if name in n] == [name] for name in selected)
+          assert all(name in specs for name in selected)
           VALIDATE = """import {mergeReports} from './tests/e2e/merge-reports.mjs';
           import {readFileSync} from 'node:fs'; const d=JSON.parse(readFileSync(0,'utf8'));
           mergeReports([{...d.report,shard:{index:1,total:1}}],d.expected,1);"""
@@ -167,6 +167,10 @@ jobs:
                           env["TMUX_TMPDIR"] = str(socket)
                       try:
                           target = private / f"spec-{index}.json"
+                          inventory = private / f"inventory-{index}"
+                          inventory.mkdir()
+                          (inventory / name).symlink_to(Path("tests/e2e", name).resolve())
+                          env["CLAVE_E2E_SPECS_DIR"] = str(inventory)
                           report = invoke(["node", "tests/e2e/run.mjs", name, "--report", str(target)],
                                           [name], target, env, f"spec-{index}")
                           results.update(report["results"])
