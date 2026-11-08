@@ -657,18 +657,26 @@ export async function run(t) {
     // the fallback has to stay on for the rest of the block, or leaving
     // fullscreen would find the OS already reporting `false` and push nothing,
     // leaving the chrome stuck at the fullscreen value it was handed.
+    // What "granted" means is the transition's own event, not the flag: on a
+    // hidden window AppKit sometimes flips `isFullScreen()` without any
+    // transition (no `enter-full-screen`, no resize to the screen), and which
+    // of the two it does depends on timing a few kilobytes of main-process
+    // code can tip (lane A of the server follow-ups, 8 November 2026: six
+    // red checks on a branch that touched nothing of the chrome). The event
+    // is what main relays to the renderer, so it is the one thing to wait for.
     let simulating = false
     const setFullScreen = async (value) => {
       if (!simulating) {
-        await app.evaluate(
-          ({ BrowserWindow }, v) => BrowserWindow.getAllWindows()[0].setFullScreen(v),
-          value
-        )
+        await app.evaluate(({ BrowserWindow }, v) => {
+          const w = BrowserWindow.getAllWindows()[0]
+          globalThis.__e2eFullScreenEvent = false
+          w.once(v ? 'enter-full-screen' : 'leave-full-screen', () => {
+            globalThis.__e2eFullScreenEvent = true
+          })
+          w.setFullScreen(v)
+        }, value)
         const granted = await until(
-          async () =>
-            (await app.evaluate(({ BrowserWindow }) =>
-              BrowserWindow.getAllWindows()[0].isFullScreen()
-            )) === value || null,
+          async () => (await app.evaluate(() => globalThis.__e2eFullScreenEvent === true)) || null,
           { tries: 12, gapMs: 250 }
         )
         if (granted) {
@@ -677,7 +685,7 @@ export async function run(t) {
         }
         simulating = true
         console.log(
-          "        (window manager declined fullscreen for the hidden test window — driving main's own event instead)"
+          "        (window manager declined fullscreen for the hidden test window, or flipped its flag without a transition — driving main's own event instead)"
         )
       }
       await app.evaluate(
