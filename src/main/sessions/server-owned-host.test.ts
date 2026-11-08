@@ -655,3 +655,43 @@ describe('a chat whose CLI exited on its own resumes (round 5, major 1)', () => 
     f.close()
   })
 })
+
+describe('a Resume of a chat the host still holds binds and readies the new process (round 6)', () => {
+  it('rebinds the subscribers and makes the new process ready, as the record road does', async () => {
+    const f = fixture(directory(), {
+      currentState: (id) =>
+        f.live.has(id) ? { type: 'state_change', state: 'idle', run: 2 } : undefined
+    })
+    const started = await f.host.start({ cwd: '/repo' })
+    const received: WireStream[] = []
+    f.host.subscribe(started.id, (value) => received.push(value))
+    f.live.set(started.id, { ...f.live.get(started.id)!, state: 'ended' })
+    const restart = vi.fn(async () => {
+      // The new process: a new entry under the same id.
+      f.live.set(started.id, { ...session, id: started.id, state: 'idle' })
+      return {
+        id: started.id,
+        cwd: '/repo',
+        folderName: 'repo',
+        alive: true,
+        claudeSessionId: null,
+        piSessionId: null,
+        resumed: true
+      }
+    })
+    ;(f.base as unknown as { restart: typeof restart }).restart = restart
+    const readyBefore = f.ready.mock.calls.length
+    const subscribesBefore = (f.base.subscribe as ReturnType<typeof vi.fn>).mock.calls.length
+    await f.host.restart(started.id, {}, false, true)
+    expect(f.ready.mock.calls.length).toBe(readyBefore + 1)
+    expect((f.base.subscribe as ReturnType<typeof vi.fn>).mock.calls.length).toBe(
+      subscribesBefore + 1
+    )
+    // The already-bound subscriber hears the new process's state.
+    expect(received.at(-1)).toEqual({
+      kind: 'event',
+      event: { type: 'state_change', state: 'idle', run: 2 }
+    })
+    f.close()
+  })
+})

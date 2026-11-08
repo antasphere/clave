@@ -276,3 +276,14 @@ describe('a Resume of a running session (PRDCT-4193, round 5)', () => {
     peer.ws.close()
   })
 })
+
+describe('a Resume of a stopped session goes through (PRDCT-4193, round 6, P04)', () => {
+  it('passes the host a session the host holds as ended', async () => {
+    const held = source.sessions.get('s2')
+    if (!held) throw new Error('fixture has no s2')
+    source.sessions.set('s2', { ...held, state: 'ended' })
+    const answer = await post('/sessions/restart', { id: 's2', account: {}, onlyIfStopped: true })
+    expect(answer.status).toBe(200)
+    expect(source.restarts).toEqual([{ id: 's2', account: {}, resendRejected: false }])
+  })
+})

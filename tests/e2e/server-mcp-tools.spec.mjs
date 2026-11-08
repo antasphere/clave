@@ -218,18 +218,28 @@ export async function run(t) {
     t.check('and the daemon runs it again', true)
     // The chat's CLI exits on its own (a crash, /exit): the daemon holds the
     // chat in state ended, and a Resume brings it back (round 5, major 1).
-    const chatProcess = () =>
-      processes().find((p) =>
-        p.argv.includes(path.join(server.dataDir, 'mcp-configs', `${chat.sessionId}.json`))
-      )
-    await eventually(() => !!chatProcess(), 'the resumed chat’s CLI runs')
+    const chatConfigArg = path.join(server.dataDir, 'mcp-configs', `${chat.sessionId}.json`)
+    const chatProcesses = () => processes().filter((p) => p.argv.includes(chatConfigArg))
+    // The chat's processes so far include the one the daemon restart killed:
+    // the live one is found by probing, newest first.
+    const alive = (pid) => {
+      try {
+        process.kill(pid, 0)
+        return true
+      } catch {
+        return false
+      }
+    }
+    let victim
+    await eventually(() => {
+      victim = chatProcesses()
+        .map((p) => p.pid)
+        .reverse()
+        .find(alive)
+      return !!victim
+    }, 'the resumed chat’s CLI runs')
     const launchesBefore = processes().length
-    process.kill(
-      processes()
-        .filter((p) => p.argv.includes(`${chat.sessionId}.json`))
-        .at(-1).pid,
-      'SIGTERM'
-    )
+    process.kill(victim, 'SIGTERM')
     await eventually(
       async () => (await state(chat.sessionId)) === 'ended',
       'the daemon holds the chat as ended once its CLI exited'

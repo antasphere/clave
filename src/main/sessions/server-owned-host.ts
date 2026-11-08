@@ -288,7 +288,18 @@ export function serverOwnedSessionHost(options: ServerOwnedHostOptions): {
       if (onlyIfStopped && live && live.state !== 'ended')
         return Promise.reject(new Error('This session is running; there is nothing to resume.'))
       const resume = async (): Promise<RestartedSession> => {
-        if (base.get(id)) return base.restart(id, account, resendRejected)
+        if (base.get(id)) {
+          // A session the host still holds, running (a move to another
+          // account) or ended on its own (a Resume): the new process is a
+          // new entry, so the subscribers are bound to it again and it is
+          // made ready here, as the stopped-record road below does. Until
+          // round 6 nothing started a resumed chat whose CLI had exited
+          // until a pane happened to bind (PRDCT-4191).
+          const result = await base.restart(id, account, resendRejected)
+          bind(id)
+          if (base.get(id)?.transport === 'events') options.ready(id)
+          return result
+        }
         const record = recordOf(id)
         if (!record) throw new Error(`Unknown session: ${id}`)
         const spawn = resumeOptions(record)
