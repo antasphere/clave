@@ -298,3 +298,17 @@ describe('server native requests without clients', () => {
     expect(f.requests.snapshot().pending).toEqual([])
   })
 })
+
+describe('a refused Resume keeps the session’s prompts (PRDCT-4193, rounds 4 and 5)', () => {
+  it('cancels nothing for a Resume of a running session, and cancels for a move', async () => {
+    const f = fixture()
+    f.emit(permission)
+    expect(f.requests.snapshot().pending).toHaveLength(1)
+    // The base host runs no sessions: it refuses either call; what matters is
+    // whether the prompts were taken before the refusal.
+    await expect(f.host.restart(session.id, {}, false, true)).rejects.toThrow()
+    expect(f.requests.snapshot().pending).toHaveLength(1)
+    await expect(f.host.restart(session.id, {}, false)).rejects.toThrow()
+    expect(f.requests.snapshot().pending).toHaveLength(0)
+  })
+})

@@ -623,3 +623,35 @@ describe('a Resume of a running session is refused on the server (round 3, C2)',
     f.close()
   })
 })
+
+describe('a chat whose CLI exited on its own resumes (round 5, major 1)', () => {
+  it('is held by the manager in state ended, and a Resume with onlyIfStopped goes through', async () => {
+    const f = fixture()
+    const started = await f.host.start({ cwd: '/repo' })
+    // The process ended by itself: the entry stays, in state ended.
+    f.live.set(started.id, { ...f.live.get(started.id)!, state: 'ended' })
+    const restart = vi.fn(async () => ({
+      id: started.id,
+      cwd: '/repo',
+      folderName: 'repo',
+      alive: true,
+      claudeSessionId: null,
+      piSessionId: null,
+      resumed: true
+    }))
+    ;(f.base as unknown as { restart: typeof restart }).restart = restart
+    await expect(f.host.restart(started.id, {}, false, true)).resolves.toMatchObject({
+      id: started.id
+    })
+    expect(restart).toHaveBeenCalledTimes(1)
+    f.close()
+  })
+  it('joins a Resume already in flight instead of refusing it', async () => {
+    const f = fixture()
+    const first = f.host.restart(record.id, {}, false, true)
+    const second = f.host.restart(record.id, {}, false, true)
+    expect(second).toBe(first)
+    await first
+    f.close()
+  })
+})

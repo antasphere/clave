@@ -45,10 +45,14 @@ function ServerEndedDrawing(): React.JSX.Element {
  *  the server can resume it; a failure is said here, in the pane. */
 export function ServerEnded({
   sessionId,
-  exitCode
+  exitCode,
+  moving = false
 }: {
   sessionId: string
   exitCode?: number
+  /** The shell's word that a restart is in flight (this pane's Resume, or a
+   *  move made elsewhere): Resume is not offered twice meanwhile. */
+  moving?: boolean
 }): React.JSX.Element {
   const owner = ownerOf(sessionId)
   const name = useFleetStore((s) => s.connections.find((c) => c.id === owner)?.name)
@@ -80,18 +84,22 @@ export function ServerEnded({
       <span>
         The server stopped this conversation, on a restart or on its own.{' '}
         {status === 'connected' ? (
-          <>
-            <button
-              type="button"
-              className="chat-notice-action"
-              disabled={busy}
-              onClick={resume}
-              data-chat-resume
-            >
-              Resume
-            </button>{' '}
-            brings it back where {server} left it, in the mode and on the model it was running.
-          </>
+          busy || moving ? (
+            <span data-chat-resuming>Resuming…</span>
+          ) : (
+            <>
+              <button
+                type="button"
+                className="chat-notice-action"
+                disabled={busy}
+                onClick={resume}
+                data-chat-resume
+              >
+                Resume
+              </button>{' '}
+              brings it back where {server} left it, in the mode and on the model it was running.
+            </>
+          )
         ) : (
           `Resume is offered once ${server} is connected again.`
         )}

@@ -60,3 +60,16 @@ describe('an end heard for a tab on a Clave server (PRDCT-4191, round 3 C1)', ()
     expect(list).not.toHaveBeenCalled()
   })
 })
+
+describe('a server tab the server no longer lists (round 5, N02b)', () => {
+  it('is ended for good', async () => {
+    const key = 'clave-owner:session:srv:gone'
+    expect(
+      await endIsCurrent(
+        key,
+        async () => [{ id: key, state: 'working' }] as never,
+        async () => []
+      )
+    ).toBe(true)
+  })
+})

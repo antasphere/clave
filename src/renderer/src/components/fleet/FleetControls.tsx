@@ -282,10 +282,16 @@ export function FleetResume({
   drawnInPane = false
 }: {
   sessionId: string
-  /** The pane draws the ended state with Resume in it: the header shows none. */
+  /** The pane's view draws the ended state with Resume in it: the header
+   *  shows none WHILE that drawing is up (not while the pane says the tab is
+   *  moving to another account, or out of credits, which draw no Resume). */
   drawnInPane?: boolean
 }): React.JSX.Element | null {
   const alive = useSessionStore((s) => s.sessions.find((v) => v.id === sessionId)?.alive)
+  const drawing = useSessionStore((s) => {
+    const session = s.sessions.find((v) => v.id === sessionId)
+    return session?.restarting !== true && session?.limitReported !== true
+  })
   const status = useFleetStore((s) => s.statuses[ownerOf(sessionId)]?.state)
   const [busy, setBusy] = useState(false)
   // Why the last Resume failed, said in the tab (PRDCT-4191): until now the
@@ -304,8 +310,9 @@ export function FleetResume({
   if (status !== 'connected')
     return <span className="text-xs text-text-secondary">{status ?? 'Connecting'}</span>
   if (alive) return null
-  // The connection's word stays in the header; the button is the pane's.
-  if (drawnInPane) return null
+  // The connection's word stays in the header; the button is the pane's,
+  // while the pane draws it (round 5).
+  if (drawnInPane && drawing) return null
   return (
     <>
       {failure ? (

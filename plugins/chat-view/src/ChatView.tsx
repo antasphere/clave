@@ -1306,6 +1306,13 @@ export function EndedNotice({
   const limit = host?.limitReported === true
   const proposal = host?.accountProposal ?? null
   const account = host?.claudeProfileLabel ?? host?.codexAccountLabel ?? 'This account'
+  // A chat on a Clave server draws its own state, Resume included, and keeps
+  // drawing it while its own Resume runs (so its failure, if any, is kept);
+  // the credit states below stay the shell's words (PRDCT-4191, round 5).
+  if (isRemoteKey(sessionId) && !limit)
+    return (
+      <ServerEnded sessionId={sessionId} exitCode={exitCode} moving={host?.restarting === true} />
+    )
   if (host?.restarting) {
     return (
       <div className="chat-notice" role="status" data-chat-ended="moving">
@@ -1336,9 +1343,6 @@ export function EndedNotice({
       </div>
     )
   }
-  // A chat on a Clave server: its own drawn state, the server named and
-  // Resume as the way on (PRDCT-4191), where a plain notice said "ended".
-  if (isRemoteKey(sessionId)) return <ServerEnded sessionId={sessionId} exitCode={exitCode} />
   return (
     <div className="chat-notice" role="status" data-chat-ended="exit">
       Session ended

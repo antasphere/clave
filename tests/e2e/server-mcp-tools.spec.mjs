@@ -216,6 +216,37 @@ export async function run(t) {
       return s !== undefined && s !== 'ended'
     }, 'the daemon runs the chat again')
     t.check('and the daemon runs it again', true)
+    // The chat's CLI exits on its own (a crash, /exit): the daemon holds the
+    // chat in state ended, and a Resume brings it back (round 5, major 1).
+    const chatProcess = () =>
+      processes().find((p) =>
+        p.argv.includes(path.join(server.dataDir, 'mcp-configs', `${chat.sessionId}.json`))
+      )
+    await eventually(() => !!chatProcess(), 'the resumed chat’s CLI runs')
+    const launchesBefore = processes().length
+    process.kill(
+      processes()
+        .filter((p) => p.argv.includes(`${chat.sessionId}.json`))
+        .at(-1).pid,
+      'SIGTERM'
+    )
+    await eventually(
+      async () => (await state(chat.sessionId)) === 'ended',
+      'the daemon holds the chat as ended once its CLI exited'
+    )
+    const resumedAgain = await mcp.call('clave_resume_session', { sessionId: chat.sessionId })
+    t.check(
+      'a chat whose CLI exited by itself is resumed by clave_resume_session',
+      !toolErrored(resumedAgain) && toolPayload(resumedAgain)?.resumed === true,
+      resumedAgain
+    )
+    await eventually(async () => {
+      const s = await state(chat.sessionId)
+      return s !== undefined && s !== 'ended'
+    }, 'the daemon runs the chat again after its own exit')
+    await eventually(() => processes().length > launchesBefore, 'a new CLI was launched for it')
+    t.check('and the daemon runs it again', true)
+
     t.equal(
       'the caller’s first process was never typed the checkpoint',
       userFrames(launch.pid).filter((f) => JSON.stringify(f).includes('checkpoint-only note'))

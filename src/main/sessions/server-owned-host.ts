@@ -275,14 +275,18 @@ export function serverOwnedSessionHost(options: ServerOwnedHostOptions): {
     release: () => ({ released: [], refused: [] }),
     restart: (id, account, resendRejected, onlyIfStopped) => {
       if (closing.has(id)) return Promise.reject(new Error('This session is closing'))
-      // A Resume asked of a running session is refused here, on the server's
-      // own word: a Mac reading a stale view (a connection blip) must never
-      // cut a live turn (PRDCT-4193, round 3 C2). A move to another account
-      // (no `onlyIfStopped`) restarts a running session as before.
-      if (onlyIfStopped && base.get(id))
-        return Promise.reject(new Error('This session is running; there is nothing to resume.'))
+      // A Resume already in flight is joined, whoever asks second (round 5).
       const existing = pending.get(id)
       if (existing) return existing
+      // A Resume asked of a RUNNING session is refused here, on the server's
+      // own word: a Mac reading a stale view (a connection blip) must never
+      // cut a live turn (PRDCT-4193, round 3 C2). Running is a live process:
+      // a chat whose CLI exited on its own is still held by the manager, in
+      // state ended, and is exactly what a Resume is for (round 5). A move
+      // to another account (no `onlyIfStopped`) restarts a running session.
+      const live = base.get(id)
+      if (onlyIfStopped && live && live.state !== 'ended')
+        return Promise.reject(new Error('This session is running; there is nothing to resume.'))
       const resume = async (): Promise<RestartedSession> => {
         if (base.get(id)) return base.restart(id, account, resendRejected)
         const record = recordOf(id)
