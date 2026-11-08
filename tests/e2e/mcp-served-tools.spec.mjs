@@ -141,7 +141,13 @@ const foldedUnder = (win, parentId, childId) =>
   )
 /** The names the opener's selector lists, read by opening it. */
 const subagentNames = async (win, parentId) => {
-  await win.locator(`[data-sidebar-item-id="${parentId}"] .subagent-trigger`).click()
+  const trigger = win.locator(`[data-sidebar-item-id="${parentId}"] .subagent-trigger`)
+  // No selector on the opener's row: the tab is not folded (the check that
+  // says so is red), so there is nothing to open and no names. Answer that
+  // rather than wait on a click that never lands and take every later check
+  // down with it.
+  if ((await trigger.count()) === 0) return []
+  await trigger.click()
   const names = await win.getByRole('menuitem').allInnerTexts()
   await win.keyboard.press('Escape')
   return names
