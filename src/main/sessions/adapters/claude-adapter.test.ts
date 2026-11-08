@@ -2246,3 +2246,50 @@ describe('a waited-on Bash task the CLI lists later', () => {
     ).toEqual(['-', '-'])
   })
 })
+
+it('keeps bypass reachable to a chat resumed in another mode when its launch had it (PRDCT-4191, round 3 C5)', async () => {
+  const child = Object.assign(new EventEmitter(), {
+    stdin: new PassThrough(),
+    stdout: new PassThrough(),
+    stderr: new PassThrough(),
+    kill: vi.fn()
+  })
+  mock.spawn.mockReturnValue(child)
+  const adapter = new ClaudeAdapter()
+  const events: SessionEvent[] = []
+  const handle = await adapter.spawn({
+    ...spec,
+    options: { resume: 'resume-id', permissionMode: 'plan', allowDangerous: true }
+  })
+  adapter.on(handle, 'stream', (s) => {
+    if (s.kind === 'event') events.push(s.event)
+  })
+  adapter.ready(handle)
+  const command = mock.spawn.mock.calls[0][1][2]
+  expect(command).toContain("'--permission-mode' 'plan'")
+  expect(command).toContain("'--allow-dangerously-skip-permissions'")
+  expect(command).not.toContain('--dangerously-skip-permissions ')
+  const offered = events.find((e) => e.type === 'permission_mode')
+  expect(offered?.type).toBe('permission_mode')
+  if (offered?.type === 'permission_mode') {
+    expect(offered.mode).toBe('plan')
+    expect(offered.modes.map((m) => m.id)).toContain('bypassPermissions')
+  }
+  // Without the allowance, the flag is not passed and bypass is not offered.
+  mock.spawn.mockClear()
+  const plain = new ClaudeAdapter()
+  const plainEvents: SessionEvent[] = []
+  const plainHandle = await plain.spawn({
+    ...spec,
+    id: `${spec.id}-plain`,
+    options: { permissionMode: 'plan' }
+  })
+  plain.on(plainHandle, 'stream', (s) => {
+    if (s.kind === 'event') plainEvents.push(s.event)
+  })
+  plain.ready(plainHandle)
+  expect(mock.spawn.mock.calls[0][1][2]).not.toContain('--allow-dangerously-skip-permissions')
+  const plainOffer = plainEvents.find((e) => e.type === 'permission_mode')
+  if (plainOffer?.type === 'permission_mode')
+    expect(plainOffer.modes.map((m) => m.id)).not.toContain('bypassPermissions')
+})

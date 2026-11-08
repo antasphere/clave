@@ -16,6 +16,7 @@ const mocks = vi.hoisted(() => {
       setSessionWorkspace: vi.fn(),
       setSessionClaudeSessionId: vi.fn(),
       setSessionCodexThreadId: vi.fn(),
+      setSessionRuntime: vi.fn(),
       getSessionRecord: vi.fn(() => null),
       tmuxNameOf: vi.fn(() => null),
       waitForTmuxSessionGone: vi.fn(async () => undefined),
@@ -589,5 +590,116 @@ describe('a chat starts on the effort last picked in a composer', () => {
   it('starts on the CLI default when nothing was picked', async () => {
     await ptyManager.spawn('/project', { launchProfileId: 'claude-chat' })
     expect(launched()).toBeUndefined()
+  })
+})
+
+// PRDCT-4191: a chat moved to another mode, model or effort came back from a
+// Resume in the ones it was launched with. The provider's acknowledgements
+// are written back to the record, and a restart reads them from there.
+describe('a chat tab keeps what it was running on, for the spawn that brings it back', () => {
+  const listening = async (): Promise<{ id: string; emit: (event: unknown) => void }> => {
+    const session = await ptyManager.spawn('/project', { launchProfileId: 'claude-chat' })
+    ptyManager.attachListeners(
+      session.id,
+      () => undefined,
+      () => undefined
+    )
+    return {
+      id: session.id,
+      emit: (event) => mocks.streams.get(session.id)?.({ kind: 'event', event })
+    }
+  }
+
+  it('writes the mode the provider reports to the record', async () => {
+    const { id, emit } = await listening()
+    emit({ type: 'permission_mode', mode: 'plan', modes: [] })
+    expect(mocks.backend.setSessionRuntime).toHaveBeenCalledExactlyOnceWith(id, {
+      permissionMode: 'plan'
+    })
+  })
+
+  it('writes the effort the provider reports, null included', async () => {
+    const { id, emit } = await listening()
+    emit({ type: 'effort', effort: 'high' })
+    emit({ type: 'effort', effort: null })
+    expect(mocks.backend.setSessionRuntime.mock.calls).toEqual([
+      [id, { effort: 'high' }],
+      [id, { effort: null }]
+    ])
+  })
+
+  it("writes a meta's model, and nothing for a meta naming none", async () => {
+    const { id, emit } = await listening()
+    // "The provider's default" refines nothing, so it never erases the model.
+    emit({ type: 'session_meta', model: null, providerSessionId: null })
+    expect(mocks.backend.setSessionRuntime).not.toHaveBeenCalled()
+    emit({ type: 'session_meta', model: 'sonnet', providerSessionId: null })
+    expect(mocks.backend.setSessionRuntime).toHaveBeenCalledExactlyOnceWith(id, {
+      model: 'sonnet'
+    })
+  })
+
+  it('a restart carries the opener of the spawn, else the record', async () => {
+    const opener = '77777777-7777-4777-8777-777777777777'
+    const opened = await ptyManager.spawn('/project', {
+      launchProfileId: 'claude-chat',
+      openedBy: opener
+    })
+    expect(ptyManager.restartSpawn(opened.id, {})?.options.openedBy).toBe(opener)
+    // A spawn made without it (an older restore): the record still knows.
+    const restored = await ptyManager.spawn('/project', { launchProfileId: 'claude-chat' })
+    mocks.backend.getSessionRecord.mockImplementation(((id: string) =>
+      id === restored.id ? { id, openedBy: opener } : null) as never)
+    expect(ptyManager.restartSpawn(restored.id, {})?.options.openedBy).toBe(opener)
+  })
+
+  it("a restart runs in the record's reported mode, not the launch's", async () => {
+    const session = await ptyManager.spawn('/project', {
+      launchProfileId: 'claude-chat',
+      model: 'opus',
+      dangerousMode: false
+    })
+    let record: Record<string, unknown> = { permissionMode: 'bypassPermissions', model: 'sonnet' }
+    mocks.backend.getSessionRecord.mockImplementation(((id: string) =>
+      id === session.id ? { id, ...record } : null) as never)
+    expect(ptyManager.restartSpawn(session.id, {})?.options).toMatchObject({
+      dangerousMode: true,
+      model: 'sonnet'
+    })
+    expect(ptyManager.restartSpawn(session.id, {})?.options.permissionMode).toBeUndefined()
+    record = { dangerousMode: true, permissionMode: 'plan', effort: 'low' }
+    expect(ptyManager.restartSpawn(session.id, {})?.options).toMatchObject({
+      dangerousMode: false,
+      permissionMode: 'plan',
+      effort: 'low'
+    })
+  })
+})
+
+describe('bypass kept reachable on the spawn and the record (PRDCT-4191, round 3 C5)', () => {
+  it('passes allowDangerous to a Claude chat and records bypass as available', async () => {
+    await ptyManager.spawn('/project', {
+      launchProfileId: 'claude-chat',
+      permissionMode: 'plan',
+      allowDangerous: true
+    })
+    expect(mocks.claude.spawn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        options: expect.objectContaining({ permissionMode: 'plan', allowDangerous: true })
+      })
+    )
+    expect(mocks.backend.writeEventSessionRecord).toHaveBeenLastCalledWith(
+      expect.objectContaining({ dangerousMode: true, permissionMode: 'plan' })
+    )
+  })
+  it('passes nothing of it to a chat launched without it', async () => {
+    await ptyManager.spawn('/project', { launchProfileId: 'claude-chat', permissionMode: 'plan' })
+    const options = (
+      mocks.claude.spawn.mock.calls.at(-1)![0] as unknown as { options: Record<string, unknown> }
+    ).options
+    expect(options.allowDangerous).toBeUndefined()
+    expect(mocks.backend.writeEventSessionRecord).toHaveBeenLastCalledWith(
+      expect.objectContaining({ dangerousMode: false })
+    )
   })
 })

@@ -84,7 +84,8 @@ export interface SessionsClient {
     id: string,
     account: AccountOverride,
     resendRejected?: boolean,
-    requestId?: string
+    requestId?: string,
+    onlyIfStopped?: boolean
   ) => Promise<RestartedSession>
   // ── PRDCT-4123: which work a session does ──
   /** One change to the session's work assignment, answered with every record
@@ -184,14 +185,15 @@ export const sessionsClient = (call: Call, historyCall: Call = call): SessionsCl
     ),
   type: (id, text, from) =>
     call((c) => c.sessions.type({ payload: { id, text, ...(from !== undefined && { from }) } })),
-  restart: (id, account, resendRejected, requestId) =>
+  restart: (id, account, resendRejected, requestId, onlyIfStopped) =>
     call((c) =>
       c.sessions.restart({
         payload: {
           id,
           account,
           ...(resendRejected !== undefined && { resendRejected }),
-          ...(requestId !== undefined && { requestId })
+          ...(requestId !== undefined && { requestId }),
+          ...(onlyIfStopped !== undefined && { onlyIfStopped })
         }
       })
     ),

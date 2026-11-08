@@ -37,6 +37,16 @@ import {
   toHostedInput,
   type RequestInputArgs
 } from './request-input'
+import type { Session, SessionRecord } from '@clave/contract/sessions'
+import { historyLines } from '../../shared/history-text'
+import {
+  type TargetHost,
+  readAnswer,
+  resolveTarget,
+  assertCanReach,
+  resumeTarget,
+  sendToTarget
+} from './session-targets'
 
 export interface StandaloneMcpOptions {
   readonly sessions: SessionHostService
@@ -67,8 +77,8 @@ export const builtInProfileFamily = (id: string): LauncherFamily | undefined =>
     | LauncherFamily
     | undefined)
 /** Who opened which tab through `clave_open_session`, kept as long as this
- *  listener lives: the desktop's parent link does not survive a restart
- *  either. */
+ *  listener lives. The record's `openedBy` (PRDCT-4192) is what survives a
+ *  restart of this server; this map is the word before the record is read. */
 type Parents = Map<string, string>
 /** The size a session with no pane starts at, as the desktop's hidden spawns. */
 const HIDDEN_COLS = 120
@@ -133,21 +143,60 @@ function buildServer(
       .get(SERVER_LAYOUT_KEY)
       .groups.some((g) => g.id === groupId && g.sessionIds.includes(id))
   const message = (err: unknown): string => (err instanceof Error ? err.message : String(err))
-  /** The workspace the calling tab belongs to, from its record; undefined
-   *  when it has none or this host keeps no records. */
-  const callerWorkspace = (id: string): string | undefined => {
+  /** A tab's record, as this host keeps it; undefined when it keeps none. */
+  const recordOf = (id: string): SessionRecord | undefined => {
     try {
-      const record = sessions.listAdoptableRecords([id]).find((r) => r.id === id)
-      return record?.workspaceId || undefined
+      return sessions.listAdoptableRecords([id]).find((r) => r.id === id)
     } catch {
       return undefined
     }
+  }
+  /** The workspace the calling tab belongs to, from its record; undefined
+   *  when it has none or this host keeps no records. */
+  const callerWorkspace = (id: string): string | undefined => recordOf(id)?.workspaceId || undefined
+  /** The tab that opened this one: this listener's memory of the open, else
+   *  the record, which is what still says it after this server restarted
+   *  (PRDCT-4192): the opener nested or not, else the nesting parent. */
+  const parentOf = (id: string): string | null => {
+    const record = recordOf(id)
+    return parents.get(id) ?? record?.openedBy ?? record?.spawnedBy ?? null
+  }
+  const nameOf = (session: Session): string => {
+    const record = recordOf(session.id)
+    return record?.displayName || record?.folderName || session.title
+  }
+  /** The tab's mode as the desktop spells it, from the record's flags when
+   *  this host keeps one, else from the provider's id. */
+  const modeOf = (session: Session): string => {
+    const record = recordOf(session.id)
+    if (record) {
+      if (record.antigravityMode) return 'antigravity'
+      if (record.codexMode) return 'codex'
+      if (record.piMode) return 'pi'
+      if (record.claudeAgentsMode) return 'claude-agents'
+      if (record.claudeMode) return 'claude'
+      return 'terminal'
+    }
+    return ['claude', 'codex', 'antigravity', 'pi', 'claude-agents'].includes(session.provider)
+      ? session.provider
+      : 'terminal'
+  }
+  /** This server, as the shared resolver reads it (`session-targets.ts`):
+   *  the same rule the desktop's tools apply, over this host's facts. */
+  const targetHost: TargetHost = {
+    caller: sessionId,
+    get: async (id) => sessions.get(id) ?? null,
+    list: async () => sessions.list(),
+    nameOf,
+    modeOf,
+    parentOf,
+    groups: async () => (sidebar ? sidebar.get(SERVER_LAYOUT_KEY).groups : [])
   }
   const server = new McpServer(
     { name: 'clave-server', version: '1' },
     {
       instructions:
-        'Your Clave tools run on this server without a desktop. Ask the person for a plain value, a choice, a file, a link to open or a small form with clave_request_input (a form in their chat that lives across your turns; fill it from what they say with clave_input_set; clave_input_result reads it), for approval with clave_request_approval, for a secret with clave_request_secret. Calls return a requestId. Poll clave_request_result or clave_secret_result while pending; clients can answer later. Secret values and action output are never returned. Delegate work to a new tab with clave_open_session, then message it with clave_send_to_session and close it with clave_close_session; clave_create_group, clave_move_session and clave_rename organize the tabs. Sessions and paths are server-local.'
+        'Your Clave tools run on this server without a desktop. Ask the person for a plain value, a choice, a file, a link to open or a small form with clave_request_input (a form in their chat that lives across your turns; fill it from what they say with clave_input_set; clave_input_result reads it), for approval with clave_request_approval, for a secret with clave_request_secret. Calls return a requestId. Poll clave_request_result or clave_secret_result while pending; clients can answer later. Secret values and action output are never returned. Delegate work to a new tab with clave_open_session, then message it with clave_send_to_session (target "parent" to report back to the tab that opened yours; "mine" logs a checkpoint, typed nowhere), read it with clave_read_session, resume a stopped one with clave_resume_session and close it with clave_close_session; clave_create_group, clave_move_session and clave_rename organize the tabs. Sessions and paths are server-local.'
     }
   )
   server.registerTool(
@@ -283,7 +332,7 @@ function buildServer(
     async () =>
       text({
         sessions: sessions.list().map((s) => {
-          const parentId = parents.get(s.id)
+          const parentId = parentOf(s.id)
           return parentId ? { ...s, parentId } : s
         })
       })
@@ -383,6 +432,9 @@ function buildServer(
           autoExecute: terminal && !!args.command,
           ...(!terminal && args.prompt ? { initialPrompt: args.prompt } : {}),
           ...(args.attachToParent ? { spawnedBy: sessionId } : {}),
+          // The opener, nested or not, on the record (PRDCT-4192): what
+          // "parent" and the reach rule read once this server restarted.
+          openedBy: sessionId,
           ...(workspaceId !== undefined ? { workspaceId } : {})
         }
       })
@@ -418,6 +470,8 @@ function buildServer(
       return text({
         sessionId: info.id,
         groupId: placed,
+        // Where the tab landed (PRDCT-4193): the caller's workspace, or none.
+        workspaceId: workspaceId ?? null,
         ...(warnings.length > 0 ? { warnings } : {})
       })
     }
@@ -490,32 +544,81 @@ function buildServer(
   server.registerTool(
     'clave_read_session',
     {
-      description: 'Read the recent output/history of a server session.',
+      description:
+        'Read the recent output of a tab on this server without interrupting it: the last lines of a terminal, the recent history of a chat. Target by session id, exact tab name, "parent" (the tab whose agent opened yours) or "mine". Only a tab you can reach: the one that opened yours, a tab you opened, or a tab in your group.',
       inputSchema: {
         sessionId: z.string().default('mine'),
         lines: z.number().int().min(1).max(500).default(100)
       }
     },
     async (args) => {
-      const id = args.sessionId === 'mine' ? sessionId : args.sessionId
-      const session = sessions.get(id)
-      if (!session) throw new Error('Unknown session.')
-      return text(
-        session.transport === 'pty'
-          ? await sessions.screen(id, args.lines)
-          : sessions.history(id, undefined, args.lines)
+      const target = await resolveTarget(
+        targetHost,
+        args.sessionId === 'mine' ? sessionId : args.sessionId
       )
+      await assertCanReach(targetHost, target, 'read')
+      if (target.transport === 'pty') {
+        const screen = await sessions.screen(target.id, args.lines)
+        return text(readAnswer(targetHost, target, screen.lines))
+      }
+      // A chat has no screen: its recent history, one line per thing said
+      // or done, under the same envelope (PRDCT-4199).
+      const page = sessions.history(target.id, undefined, args.lines)
+      return text({
+        ...(readAnswer(targetHost, target, historyLines(page.items)) as Record<string, unknown>),
+        history: page.items
+      })
     }
   )
   server.registerTool(
     'clave_send_to_session',
     {
-      description: 'Send a message to an existing server session.',
-      inputSchema: { sessionId: z.string(), message: boundedText }
+      description:
+        'Send a message to another agent tab on this server: the text is typed into that tab\'s input under a provenance header naming your tab, then submitted. Target by session id, exact tab name or "parent" (the tab whose agent opened yours). Addressed to your OWN tab ("mine", your own id or name) it is a CHECKPOINT: nothing is typed anywhere, the note is only taken for the record. Refused for plain terminals (typed text would run as a shell command) and for tabs you cannot reach (the one that opened yours, tabs you opened, tabs in your group). A tab that has ended is refused unless resume is true, which resumes it first (clave_resume_session) and then delivers.',
+      inputSchema: {
+        sessionId: z.string(),
+        message: boundedText,
+        resume: z
+          .boolean()
+          .optional()
+          .describe('When the target has ended, resume it first and then deliver (default false)')
+      }
     },
     async (args) =>
       text(
-        await sessions.type(args.sessionId === 'mine' ? sessionId : args.sessionId, args.message)
+        await sendToTarget(
+          targetHost,
+          { ref: args.sessionId, message: args.message, resume: args.resume === true },
+          {
+            // This server keeps no exchange record: the checkpoint is taken
+            // and typed nowhere, and the answer says it was not logged.
+            checkpoint: () => false,
+            type: async (target, text) => {
+              const outcome = await sessions.type(target.id, text)
+              return { submitted: outcome.submitted, draftHandling: outcome.draftHandling }
+            },
+            resume: async (target) => {
+              await sessions.restart(target.id, {}, false, true)
+            }
+          }
+        )
+      )
+  )
+  server.registerTool(
+    'clave_resume_session',
+    {
+      description:
+        'Resume a stopped tab on this server ("resume the tab", "bring the lane back"): the same tab, its agent started again under the same id with its conversation resumed where the provider can, on the model and in the permission mode it was last running. Only a tab you can reach; a running tab is refused.',
+      inputSchema: {
+        sessionId: z.string().describe('Target: a session id, an exact tab name, or "parent"')
+      }
+    },
+    async (args) =>
+      text(
+        await resumeTarget(targetHost, args.sessionId, async (target) => {
+          const result = await sessions.restart(target.id, {}, false, true)
+          return { resumed: result.resumed }
+        })
       )
   )
   server.registerTool(

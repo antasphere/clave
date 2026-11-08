@@ -10,6 +10,7 @@ import type {
 import type { SessionManager } from './session-manager'
 import { pageHistory } from './history'
 import { serverHistory } from './server-history'
+import { runtimeChoices } from './runtime-choices'
 
 export interface ServerOwnedHostOptions {
   host: SessionHostService
@@ -17,6 +18,11 @@ export interface ServerOwnedHostOptions {
   dataDir: string
   subscribeAll: SessionManager['subscribeAll']
   ready: (id: string) => void
+  /** The live session's current state as a `state_change` frame, with its
+   *  run (`SessionManager.currentState`): told to every subscriber the
+   *  moment it binds and again when a Resume binds it to the new process
+   *  (PRDCT-4191). Absent, nothing is told, as before. */
+  currentState?: SessionManager['currentState']
 }
 
 /** Recover a tab's identity, never its process. Only restart is Resume. */
@@ -44,6 +50,10 @@ export function stoppedSession(record: SessionRecord): Session {
 
 /** An allowlist deliberately excludes initial commands, prompts and tmux adoption. */
 export function resumeOptions(record: SessionRecord): SpawnOptions {
+  // The mode, the model and the effort the chat was RUNNING on, not the ones
+  // it was launched with (PRDCT-4191): "Lane · Company AI keys" came back in
+  // Manual on opus after running with permissions skipped on another model.
+  const runtime = runtimeChoices(record)
   return {
     adoptSessionId: record.id,
     resumeSessionId: record.codexThreadId ?? record.claudeSessionId,
@@ -54,8 +64,11 @@ export function resumeOptions(record: SessionRecord): SpawnOptions {
     antigravityMode: record.antigravityMode,
     piMode: record.piMode,
     claudeAgentsMode: record.claudeAgentsMode,
-    dangerousMode: record.dangerousMode,
-    model: record.model,
+    dangerousMode: runtime.dangerousMode,
+    model: runtime.model,
+    ...(runtime.permissionMode !== undefined ? { permissionMode: runtime.permissionMode } : {}),
+    ...(runtime.allowDangerous ? { allowDangerous: true } : {}),
+    ...(runtime.effort !== undefined ? { effort: runtime.effort } : {}),
     launchProfileId: record.launchProfileId,
     launchProfile: record.launchProfile,
     piProvider: record.piProvider,
@@ -67,7 +80,8 @@ export function resumeOptions(record: SessionRecord): SpawnOptions {
     codexAccountLabel: record.codexAccountLabel,
     workspaceId: record.workspaceId,
     link: record.link,
-    spawnedBy: record.spawnedBy
+    spawnedBy: record.spawnedBy,
+    openedBy: record.openedBy
   }
 }
 
@@ -188,7 +202,28 @@ export function serverOwnedSessionHost(options: ServerOwnedHostOptions): {
       if (!get(id)) throw new Error(`Unknown session: ${id}`)
       const saved = history.read(id)
       if (saved.terminal) listener({ kind: 'pty', data: Buffer.from(saved.terminal, 'base64') })
-      return follow(id, () => base.subscribe(id, listener))
+      // A subscriber is told the state it binds to (PRDCT-4191): the pane
+      // seeds itself from the list it read at mount, a copy a restart leaves
+      // stale, and a resumed chat starts idle, a state nothing publishes when
+      // it is already the record's. So the word comes here: at the bind made
+      // by this subscribe, and again at the bind a Resume makes on the new
+      // process (`bind(id)` below), with the run the state belongs to; a
+      // stopped record is told `ended`, with no run, since nothing runs.
+      const told = (): void => {
+        const live = base.get(id)
+        const frame = live ? options.currentState?.(id) : undefined
+        if (frame) listener({ kind: 'event', event: frame })
+        else if (!live) listener({ kind: 'event', event: { type: 'state_change', state: 'ended' } })
+      }
+      const unsubscribe = follow(id, () => {
+        const off = base.subscribe(id, listener)
+        told()
+        return off
+      })
+      // A record with no process yet (a stopped tab) binds nothing above, so
+      // its `ended` is said here, once, for the subscriber that just arrived.
+      if (!base.get(id)) told()
+      return unsubscribe
     },
     subscribeExit: (id, listener) => follow(id, () => base.subscribeExit(id, listener)),
     resize: (id, cols, rows) => {
@@ -238,12 +273,33 @@ export function serverOwnedSessionHost(options: ServerOwnedHostOptions): {
     changeWork: (id, change) => base.changeWork(id, change),
     // Releasing a client window is not a server lifecycle operation.
     release: () => ({ released: [], refused: [] }),
-    restart: (id, account, resendRejected) => {
+    restart: (id, account, resendRejected, onlyIfStopped) => {
       if (closing.has(id)) return Promise.reject(new Error('This session is closing'))
+      // A Resume already in flight is joined, whoever asks second (round 5).
       const existing = pending.get(id)
       if (existing) return existing
+      // A Resume asked of a RUNNING session is refused here, on the server's
+      // own word: a Mac reading a stale view (a connection blip) must never
+      // cut a live turn (PRDCT-4193, round 3 C2). Running is a live process:
+      // a chat whose CLI exited on its own is still held by the manager, in
+      // state ended, and is exactly what a Resume is for (round 5). A move
+      // to another account (no `onlyIfStopped`) restarts a running session.
+      const live = base.get(id)
+      if (onlyIfStopped && live && live.state !== 'ended')
+        return Promise.reject(new Error('This session is running; there is nothing to resume.'))
       const resume = async (): Promise<RestartedSession> => {
-        if (base.get(id)) return base.restart(id, account, resendRejected)
+        if (base.get(id)) {
+          // A session the host still holds, running (a move to another
+          // account) or ended on its own (a Resume): the new process is a
+          // new entry, so the subscribers are bound to it again and it is
+          // made ready here, as the stopped-record road below does. Until
+          // round 6 nothing started a resumed chat whose CLI had exited
+          // until a pane happened to bind (PRDCT-4191).
+          const result = await base.restart(id, account, resendRejected)
+          bind(id)
+          if (base.get(id)?.transport === 'events') options.ready(id)
+          return result
+        }
         const record = recordOf(id)
         if (!record) throw new Error(`Unknown session: ${id}`)
         const spawn = resumeOptions(record)

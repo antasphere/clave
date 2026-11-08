@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import {
   LOCAL_SERVER_ID,
+  resourceKey,
   type SavedServerConnection,
   type ServerConnectionStatus,
   type ServerVersionStatus
@@ -174,6 +175,13 @@ export function applyFleetSnapshot(snapshot: FleetSnapshot): void {
         piProvider: record?.piProvider,
         piThinking: record?.piThinking,
         workspaceId: record?.workspaceId,
+        // Who opened it on its server, as this window names that server's
+        // tabs (PRDCT-4193): the reach rule compares keys, so a raw id of
+        // the server's record is wrapped in its owner's key here.
+        spawnedBy: record?.spawnedBy
+          ? resourceKey('session', serverId, record.spawnedBy)
+          : undefined,
+        openedBy: record?.openedBy ? resourceKey('session', serverId, record.openedBy) : undefined,
         userRenamed: record?.userRenamed ?? false,
         planFilePath: old?.planFilePath ?? null,
         // A remote localhost page cannot be interpreted as a Mac-local preview.

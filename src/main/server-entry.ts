@@ -276,7 +276,8 @@ async function main(): Promise<void> {
         sidebar,
         dataDir,
         subscribeAll: (listener) => sessionManager.subscribeAll(listener),
-        ready: (id) => sessionManager.ready(id)
+        ready: (id) => sessionManager.ready(id),
+        currentState: (id) => sessionManager.currentState(id)
       })
     : undefined
   const requests = new PendingRequests()

@@ -7,6 +7,7 @@ import {
 } from '../../../src/renderer/src/lib/fleet-identity'
 import { parseResourceKey } from '@clave/contract/fleet'
 import { bindFleetCatchup } from './fleet-sync'
+import { bindReconnectReset } from './reconnect'
 /** The Terminal view: a third reading of a session, started as a copy of
  *  `ChatView` and diverging from it on purpose. Shares its props with Chat. */
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react'
@@ -370,6 +371,10 @@ export function TerminalView({
   const [slashDismissed, setSlashDismissed] = useState<string | null>(null)
   useEffect(() => {
     let live = true
+    // A server's connection coming back may be to a server that counts its
+    // runs from 1 again: the run heard so far is forgotten first, bound
+    // ahead of every frame (PRDCT-4191, `reconnect.ts`).
+    const stopReconnect = bindReconnectReset(session.id, () => dispatch({ reconnected: true }))
     const catchup = bindFleetCatchup(session.id, (page) => {
       if (!live) return
       dispatch({ sync: page.items })
@@ -403,8 +408,17 @@ export function TerminalView({
     )
     void window.electronAPI
       .sessionsSubscribe(session.id)
-      .then(() => {
-        if (live) setReady(true)
+      .then((current) => {
+        if (!live) return
+        // The host's own word on the session, over the seed read at mount
+        // (PRDCT-4191), as the chat view takes it.
+        const word = {
+          state: current.state,
+          ...(current.run !== undefined ? { run: current.run } : {})
+        }
+        if (word.state === 'ended') confirmed(() => dispatch({ session: word }))
+        else dispatch({ session: word })
+        setReady(true)
         // Asked once subscribed, when the adapter has read the transcript;
         // whatever streamed meanwhile is newer and stays after it. A host
         // without the call rejects inside the chain and shows no past.
@@ -436,6 +450,7 @@ export function TerminalView({
       .catch(() => {})
     return () => {
       live = false
+      stopReconnect()
       catchup.close()
       stop()
       stopExit()

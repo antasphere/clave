@@ -1,5 +1,6 @@
 import { publicQuestionAnswers } from '../../../src/renderer/src/lib/question-identity'
 import { bindFleetCatchup } from './fleet-sync'
+import { bindReconnectReset } from './reconnect'
 import { useFleetStore } from '../../../src/renderer/src/store/fleet-store'
 import { parseResourceKey } from '@clave/contract/fleet'
 import {
@@ -111,6 +112,7 @@ import {
 import { useComposerAttachments } from './composer-attachments'
 import { DropDrawing } from './DropDrawing'
 import { ViewEmpty } from './EmptyDrawing'
+import { ServerEnded } from './ServerEnded'
 import {
   failureText,
   pathForMessage,
@@ -508,6 +510,10 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
   const [slashDismissed, setSlashDismissed] = useState<string | null>(null)
   useEffect(() => {
     let live = true
+    // A server's connection coming back may be to a server that counts its
+    // runs from 1 again: the run heard so far is forgotten first, bound
+    // ahead of every frame (PRDCT-4191, `reconnect.ts`).
+    const stopReconnect = bindReconnectReset(session.id, () => dispatch({ reconnected: true }))
     const catchup = bindFleetCatchup(session.id, (page) => {
       if (!live) return
       dispatch({ sync: page.items })
@@ -542,8 +548,20 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
     let stopConnected: () => void = () => {}
     void window.electronAPI
       .sessionsSubscribe(session.id)
-      .then(() => {
+      .then((current) => {
         if (!live) return
+        // The host's own word on the session, now (PRDCT-4191): the seed
+        // above is the list the pane read at mount, a copy a server restart
+        // and a Resume leave stale (a remounted pane read `ended` while the
+        // server had the chat back, and the composer refused to type). A
+        // live word is taken as it is; an end is taken once the record
+        // confirms it, as an end heard on the stream is.
+        const word = {
+          state: current.state,
+          ...(current.run !== undefined ? { run: current.run } : {})
+        }
+        if (word.state === 'ended') confirmed(() => dispatch({ session: word }))
+        else dispatch({ session: word })
         setReady(true)
         // Asked once subscribed, when the adapter has read the transcript;
         // whatever streamed meanwhile is newer and stays after it. A read
@@ -591,6 +609,7 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
       .catch(() => {})
     return () => {
       live = false
+      stopReconnect()
       catchup.close()
       pastReader.current?.stop()
       pastReader.current = null
@@ -1365,6 +1384,13 @@ export function EndedNotice({
   const limit = host?.limitReported === true
   const proposal = host?.accountProposal ?? null
   const account = host?.claudeProfileLabel ?? host?.codexAccountLabel ?? 'This account'
+  // A chat on a Clave server draws its own state, Resume included, and keeps
+  // drawing it while its own Resume runs (so its failure, if any, is kept);
+  // the credit states below stay the shell's words (PRDCT-4191, round 5).
+  if (isRemoteKey(sessionId) && !limit)
+    return (
+      <ServerEnded sessionId={sessionId} exitCode={exitCode} moving={host?.restarting === true} />
+    )
   if (host?.restarting) {
     return (
       <div className="chat-notice" role="status" data-chat-ended="moving">

@@ -23,7 +23,7 @@ import { launchProfileManager } from '../launch-profile-manager'
 import { BUILT_IN_LAUNCH_PROFILES } from '../../shared/agent-launch'
 import { chatDefaultFor } from '../../shared/open-session-modes'
 import { getPreference } from '../ipc-handlers/clave-file-handlers'
-import { parentOf, setParent } from '../sessions/lineage'
+import { initLineage, parentOf, setParent } from '../sessions/lineage'
 import { publishOrSend } from '../server/session-events'
 import { sessionWindows } from '../sessions/windows'
 import { shellSidebarClient } from './shell-sidebar'
@@ -212,6 +212,7 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 const SUBJECT_SESSION_COMMANDS = new Set([
   'sendToSession',
   'readSession',
+  'resumeSession',
   'closeSession',
   'focus',
   'rename',
@@ -1128,10 +1129,24 @@ function buildServer(callerSessionId: string | undefined): McpServer {
   )
 
   server.registerTool(
+    'clave_resume_session',
+    {
+      description:
+        'Resume a stopped tab ("resume the tab", "bring the lane back", "restart the stopped session"): the same tab, its agent started again under the same id with its conversation resumed where the provider can resume it, on the model and in the permission mode it was last running. Works for a tab of this Mac and for a tab on a connected Clave server (the key clave_list shows), after a server restart for instance. Only a tab you can reach: the one that opened yours ("parent"), a tab you opened, or a tab in your group. A running tab is refused: there is nothing to resume. To resume and deliver a message in one call, pass resume: true to clave_send_to_session instead.',
+      inputSchema: {
+        sessionId: z
+          .string()
+          .describe('Target: a session id or key, an exact tab name, or "parent"')
+      }
+    },
+    (args) => run('resumeSession', { ...args, callerSessionId })
+  )
+
+  server.registerTool(
     'clave_send_to_session',
     {
       description:
-        'Send a message to another agent tab (claude, antigravity, or codex): the text is typed into that tab\'s input under a provenance header naming your tab, then submitted. If the target agent is mid-task, the message queues as its next turn. Use it to report results back to the tab that opened yours (target "parent"), or to coordinate with a sibling. Addressed to your OWN tab ("mine", your own id, or your own name), it becomes a CHECKPOINT instead: nothing is delivered or typed anywhere — the message is only logged into the transport record as an internal note (exos workstream capture lands it), so a solo lane leaves a narrative. Write checkpoints headline-first with the exos lane vocabulary (ASSIGNMENT, EXPLORATION DONE, GATES GREEN, VERDICT, MERGED, LANE DONE…) so exos workstream stats derives the lane phases. Refused for plain terminals (typed text would run as a shell command).',
+        'Send a message to another agent tab (claude, antigravity, or codex): the text is typed into that tab\'s input under a provenance header naming your tab, then submitted. If the target agent is mid-task, the message queues as its next turn. Use it to report results back to the tab that opened yours (target "parent"), or to coordinate with a sibling. Addressed to your OWN tab ("mine", your own id, or your own name), it becomes a CHECKPOINT instead: nothing is delivered or typed anywhere — the message is only logged into the transport record as an internal note (exos workstream capture lands it), so a solo lane leaves a narrative. Write checkpoints headline-first with the exos lane vocabulary (ASSIGNMENT, EXPLORATION DONE, GATES GREEN, VERDICT, MERGED, LANE DONE…) so exos workstream stats derives the lane phases. Refused for plain terminals (typed text would run as a shell command). A tab that has ended is refused unless resume is true, which resumes it first (clave_resume_session) and then delivers.',
       inputSchema: {
         sessionId: z
           .string()
@@ -1142,7 +1157,13 @@ function buildServer(callerSessionId: string | undefined): McpServer {
           .string()
           .min(1)
           .max(8000)
-          .describe('The message, delivered verbatim under the provenance header')
+          .describe('The message, delivered verbatim under the provenance header'),
+        resume: z
+          .boolean()
+          .optional()
+          .describe(
+            'When the target has ended, resume it first and then deliver (default false: a stopped tab is refused, with the way back)'
+          )
       }
     },
     (args) => run('sendToSession', { ...args, callerSessionId })
@@ -1637,6 +1658,9 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
 export async function startMcpServer(): Promise<void> {
   const { port, token } = loadOrCreateServerState()
   serverToken = token
+  // Which tab opened which, kept across this app's restarts (PRDCT-4193):
+  // a tab this Mac opened on a Clave server is known here alone.
+  initLineage(path.join(app.getPath('userData'), 'lineage.json'))
 
   const server = http.createServer((req, res) => {
     handleRequest(req, res).catch((err) => {

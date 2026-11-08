@@ -578,3 +578,171 @@ describe('taking a message back', () => {
     expect(shown(state)).toEqual(['first'])
   })
 })
+
+describe('the run a state belongs to (PRDCT-4191)', () => {
+  // A chat tab stayed "Session ended" after its server resumed it: the old
+  // process's word arrived after the new one's. The run is what tells them
+  // apart, and the subscribe's answer is the host's current word.
+  const at = (
+    state: Conversation['state'],
+    run: number | null,
+    exitCode?: number
+  ): Conversation => ({
+    ...emptyConversation,
+    state,
+    run,
+    exitCode
+  })
+  it('takes the subscribe’s state and run over the seed', () => {
+    const next = reduceConversation(emptyConversation, { session: { state: 'working', run: 2 } })
+    expect(next).toMatchObject({ state: 'working', run: 2 })
+    // A word without a run keeps the run already heard.
+    expect(reduceConversation(next, { session: { state: 'idle' } })).toMatchObject({
+      state: 'idle',
+      run: 2
+    })
+  })
+  it('ignores a subscribe answer of an older run than the one already heard', () => {
+    const current = at('idle', 3)
+    expect(reduceConversation(current, { session: { state: 'ended', run: 2 } })).toBe(current)
+  })
+  it('clears the dead run’s exit code on a live word, and keeps it on an ended one', () => {
+    const dead = at('ended', 1, 7)
+    const live = reduceConversation(dead, { session: { state: 'idle', run: 2 } })
+    expect(live).toMatchObject({ state: 'idle', run: 2 })
+    expect(live.exitCode).toBeUndefined()
+    expect(reduceConversation(dead, { session: { state: 'ended' } }).exitCode).toBe(7)
+  })
+  it('leaves the state alone on a state_change of an older run, and moves to a newer run', () => {
+    const current = at('idle', 2)
+    expect(
+      reduceConversation(current, {
+        event: { type: 'state_change', state: 'ended', run: 1 },
+        at: 1
+      })
+    ).toBe(current)
+    expect(
+      reduceConversation(current, {
+        event: { type: 'state_change', state: 'working', run: 3 },
+        at: 1
+      })
+    ).toMatchObject({ state: 'working', run: 3 })
+    // A frame that names no run is taken, and keeps the run already known.
+    expect(
+      reduceConversation(current, { event: { type: 'state_change', state: 'done' }, at: 1 })
+    ).toMatchObject({ state: 'done', run: 2 })
+  })
+  it('keeps the state, the run and the exit code through a sync, rebuilding the entries only', () => {
+    const current = { ...at('idle', 4), entries: [] }
+    const next = reduceConversation(current, {
+      sync: [
+        { event: { type: 'user_message', text: 'before the restart' }, at: 1 },
+        {
+          event: {
+            type: 'permission_request',
+            id: 'old',
+            description: 'Allow?',
+            toolName: 'Write',
+            input: {},
+            options: [{ id: 'yes', label: 'Allow' }]
+          },
+          at: 2
+        },
+        { event: { type: 'error', message: 'old process died', fatal: true }, at: 3 },
+        { event: { type: 'state_change', state: 'ended', run: 5 }, at: 4 }
+      ]
+    })
+    expect(next.entries.map((e) => e.kind)).toEqual(['user', 'permission', 'error'])
+    expect(next).toMatchObject({ state: 'idle', run: 4 })
+    expect(next.exitCode).toBeUndefined()
+    const ended = at('ended', 1, 9)
+    expect(
+      reduceConversation(ended, {
+        sync: [{ event: { type: 'state_change', state: 'working', run: 2 }, at: 1 }]
+      })
+    ).toMatchObject({ state: 'ended', run: 1, exitCode: 9 })
+  })
+})
+
+describe('a host that runs nothing under the id resets the run (PRDCT-4191)', () => {
+  // After the server restarted, the daemon counts its runs from 1 again, and
+  // the chat it brings back on Resume is run 1 while the pane may have heard
+  // run 3 from the old daemon. The stopped record's `ended` carries no run,
+  // which is the host's word that nothing runs: the pane forgets the old
+  // numbering there, so the resumed process's word is taken.
+  const heard = (run: number): Conversation => ({ ...emptyConversation, state: 'working', run })
+  it('an ended word with no run, from the subscribe answer, forgets the run', () => {
+    const stopped = reduceConversation(heard(3), { session: { state: 'ended' } })
+    expect(stopped).toMatchObject({ state: 'ended', run: null })
+    expect(reduceConversation(stopped, { session: { state: 'idle', run: 1 } })).toMatchObject({
+      state: 'idle',
+      run: 1
+    })
+  })
+  it('an ended state_change with no run forgets it too; one with a run keeps the guard', () => {
+    const stopped = reduceConversation(heard(3), {
+      event: { type: 'state_change', state: 'ended' }
+    })
+    expect(stopped).toMatchObject({ state: 'ended', run: null })
+    expect(
+      reduceConversation(stopped, { event: { type: 'state_change', state: 'idle', run: 1 } })
+    ).toMatchObject({ state: 'idle', run: 1 })
+    // The same host's old process ending after the new one spoke: ignored.
+    expect(
+      reduceConversation(heard(3), { event: { type: 'state_change', state: 'ended', run: 2 } })
+    ).toMatchObject({ state: 'working', run: 3 })
+  })
+})
+
+describe('the run is ordered within one connection to the host (round 1, C2 and C3)', () => {
+  const heard = (state: Conversation['state'], run: number | null): Conversation => ({
+    ...emptyConversation,
+    state,
+    run
+  })
+  it('a subscribe answer of the very run the stream already spoke for changes nothing', () => {
+    // An invoke reply is not ordered against the frames sent meanwhile: a
+    // `working` heard first must not fall back to the reply's older `idle`.
+    const working = heard('working', 2)
+    expect(reduceConversation(working, { session: { state: 'idle', run: 2 } })).toBe(working)
+    expect(reduceConversation(working, { session: { state: 'idle', run: 1 } })).toBe(working)
+    expect(reduceConversation(working, { session: { state: 'idle', run: 3 } })).toMatchObject({
+      state: 'idle',
+      run: 3
+    })
+  })
+  it('a reconnect forgets the run, so a host counting from 1 again is heard', () => {
+    // The pane heard run 2 of the old daemon life; the daemon restarted and
+    // another Mac resumed the chat before this one reconnected, so the first
+    // word of the new connection is `idle run 1`, with no `ended` before it.
+    const stale = heard('ended', 2)
+    expect(
+      reduceConversation(stale, { event: { type: 'state_change', state: 'idle', run: 1 } })
+    ).toBe(stale)
+    const reconnected = reduceConversation(stale, { reconnected: true })
+    expect(reconnected.run).toBeNull()
+    expect(
+      reduceConversation(reconnected, { event: { type: 'state_change', state: 'idle', run: 1 } })
+    ).toMatchObject({ state: 'idle', run: 1 })
+    expect(
+      reduceConversation(reconnected, { session: { state: 'working', run: 1 } })
+    ).toMatchObject({
+      state: 'working',
+      run: 1
+    })
+    // A reconnect with nothing heard yet is the same object.
+    expect(reduceConversation(reconnected, { reconnected: true })).toBe(reconnected)
+  })
+  it('a live state_change of a newer run clears the exit code a dead run left (round 1, C5)', () => {
+    const dead: Conversation = { ...emptyConversation, state: 'ended', run: 1, exitCode: 7 }
+    const alive = reduceConversation(dead, {
+      event: { type: 'state_change', state: 'idle', run: 2 }
+    })
+    expect(alive).toMatchObject({ state: 'idle', run: 2 })
+    expect(alive.exitCode).toBeUndefined()
+    // An ended frame keeps the code the exit gave.
+    expect(
+      reduceConversation(dead, { event: { type: 'state_change', state: 'ended', run: 1 } }).exitCode
+    ).toBe(7)
+  })
+})
