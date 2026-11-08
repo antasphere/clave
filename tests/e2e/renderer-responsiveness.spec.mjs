@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { captureRevealMarkerOnClick } from './fixtures/reveal-marker.mjs'
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { launchApp, seedWorkspaces, fixturePath, until, callMcp } from './harness.mjs'
@@ -121,12 +122,12 @@ export async function run(t) {
     for (const kind of ['chat', 'terminal']) {
       if (kind === 'terminal') await choose(kind)
       await hideZeroBox(kind)
-      const marker = await fixture.evaluate(
-        () => globalThis.__responsivenessBehavior.chunks.at(-1)?.match(/^chunk\d{6}/)[0]
-      )
-      assert.ok(marker)
+      // The stream keeps advancing while automation schedules the click.
+      await win.evaluate(captureRevealMarkerOnClick, id)
       await win.locator(`[data-sidebar-item-id="${id}"] > button`).click()
       await frames(win)
+      const marker = await win.evaluate(() => window.__responsivenessRevealMarker)
+      assert.ok(marker)
       assert.ok(
         await until(() =>
           view(kind)
