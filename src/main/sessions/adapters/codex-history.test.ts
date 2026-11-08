@@ -6,6 +6,7 @@ import { createAgentTokenStore } from '../agent-tokens'
 import { installTerminalPorts, resetTerminalPorts } from '../../ports/terminals'
 import { CodexAdapter } from './codex-adapter'
 import { replayCodexHistory } from './codex-history'
+import { formMessage } from '../../../shared/form-message'
 import { SessionManager } from '../session-manager'
 import { SessionEventSchema, type SessionStream } from '../../../shared/session-model'
 
@@ -70,6 +71,34 @@ async function setup(
 }
 
 describe('Codex resumed chat history', () => {
+  it("keeps a form message's marker, so a reloaded tab folds it into the form's record (PRDCT-4157)", () => {
+    const response = (payload: unknown): string => line('response_item', payload)
+    const msg = (role: string, text: string): string =>
+      response({ type: 'message', role, content: [{ type: 'input_text', text }] })
+    const text = formMessage({
+      id: 'r1',
+      form: 'clave:35e6218e-85f6-4dc0-9b19-366bf927d351',
+      description: 'Two things before we start.\nFirst your login.',
+      questions: [{ id: 'login', question: 'Your GitHub login' }],
+      answers: { login: 'luca-a' }
+    })
+    const history = replayCodexHistory([msg('user', text), msg('user', 'a word of my own')]).map(
+      ({ event }) => event
+    )
+    expect(history).toEqual([
+      { type: 'user_message', text, form: 'clave:35e6218e-85f6-4dc0-9b19-366bf927d351' },
+      { type: 'user_message', text: 'a word of my own' }
+    ])
+    // The same on the rows a current rollout writes.
+    const modern = replayCodexHistory([
+      message('UserMessage', 'u1', text),
+      message('UserMessage', 'u2', 'a word of my own')
+    ]).map(({ event }) => event)
+    expect(modern).toEqual([
+      { type: 'user_message', text, form: 'clave:35e6218e-85f6-4dc0-9b19-366bf927d351' },
+      { type: 'user_message', text: 'a word of my own' }
+    ])
+  })
   it('reads older response-item turns, filters injected context, and closes unanswered calls', () => {
     const response = (payload: unknown): string => line('response_item', payload)
     const msg = (role: string, text: string): string =>

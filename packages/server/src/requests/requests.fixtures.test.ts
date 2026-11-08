@@ -39,7 +39,7 @@ it('loads duplicate-label native questions through the command fixture and verif
             input.id,
             input.optionId,
             { respond } as unknown as CodexConnection,
-            input.answers
+            input.answers as Record<string, string> | undefined
           )
       }
     },

@@ -257,3 +257,33 @@ describe('what the window keeps on a tab’s record (wave 6, lane A, PRDCT-3526)
     expect(source.kept).toEqual([])
   })
 })
+
+describe('a Resume of a running session (PRDCT-4193, round 5)', () => {
+  it('is refused before anything is announced, and a move still goes through', async () => {
+    const peer = await welcomed()
+    const refused = await post('/sessions/restart', { id: 's1', account: {}, onlyIfStopped: true })
+    expect(refused.status).toBe(422)
+    expect(await refused.json()).toMatchObject({
+      _tag: 'SessionStartFailed',
+      message: 'This session is running; there is nothing to resume.'
+    })
+    expect(source.restarts).toEqual([])
+    // The next thing any peer hears is the MOVE's restarting, never the refusal's.
+    const moved = await post('/sessions/restart', { id: 's1', account: {} })
+    expect(moved.status).toBe(200)
+    expect(await eventOf(peer)).toEqual({ _tag: 'session.restarting', id: 's1' })
+    expect(source.restarts).toEqual([{ id: 's1', account: {}, resendRejected: false }])
+    peer.ws.close()
+  })
+})
+
+describe('a Resume of a stopped session goes through (PRDCT-4193, round 6, P04)', () => {
+  it('passes the host a session the host holds as ended', async () => {
+    const held = source.sessions.get('s2')
+    if (!held) throw new Error('fixture has no s2')
+    source.sessions.set('s2', { ...held, state: 'ended' })
+    const answer = await post('/sessions/restart', { id: 's2', account: {}, onlyIfStopped: true })
+    expect(answer.status).toBe(200)
+    expect(source.restarts).toEqual([{ id: 's2', account: {}, resendRejected: false }])
+  })
+})

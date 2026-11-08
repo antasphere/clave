@@ -131,7 +131,12 @@ export async function run(t) {
     await until(async () => (await view.locator('.chat-tool-run').count()) === 2)
     const run2 = view.locator('.chat-tool-run').nth(1)
     assert.equal(await run2.getAttribute('data-tools'), '2')
-    assert.equal(await view.locator('.chat-permission-row').count(), 1)
+    // An unanswered request with no tool name is a question, drawn inline as
+    // its card (PRDCT-4157) until answered; answered, it is the muted row.
+    assert.equal(
+      await view.locator('.chat-permission-row, .chat-prompt[data-inline="true"]').count(),
+      1
+    )
     t.check('a message breaks the run into two rows; a permission card inside one does not', true)
 
     // A failure is counted, shown, and NEVER opens the row by itself.

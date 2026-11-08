@@ -16,6 +16,33 @@ import {
   type PtySpawnOptions
 } from './sessions/adapters/pty-backend'
 import { lineageOf } from './sessions/lineage'
+import { runtimeChoices } from './sessions/runtime-choices'
+
+/** The runtime choices a restart carries (PRDCT-4191): the record's, which
+ *  the provider's acknowledgements keep current, over the launch's. A record
+ *  that never heard the provider changes nothing of the spawn's own. */
+function restartRuntime(
+  record: {
+    model?: string
+    dangerousMode?: boolean
+    permissionMode?: string
+    effort?: string
+  } | null,
+  previous: { model?: string; dangerousMode?: boolean; permissionMode?: string; effort?: string }
+): Pick<
+  PtySpawnOptions,
+  'model' | 'dangerousMode' | 'permissionMode' | 'effort' | 'allowDangerous'
+> {
+  if (!record) return {}
+  const runtime = runtimeChoices({ ...previous, ...record })
+  return {
+    ...(runtime.model !== undefined ? { model: runtime.model } : {}),
+    dangerousMode: runtime.dangerousMode,
+    ...(runtime.permissionMode !== undefined ? { permissionMode: runtime.permissionMode } : {}),
+    ...(runtime.allowDangerous ? { allowDangerous: true } : {}),
+    ...(runtime.effort !== undefined ? { effort: runtime.effort } : {})
+  }
+}
 import { sanitizeWork, type WorkAssignment } from '@clave/contract/work-rules'
 import { codexRoot, findCodexThreadForSession, hasCodexRollout } from './session-history/codex'
 import { ptyAdapter } from './sessions/adapters/pty-adapter'
@@ -108,6 +135,8 @@ export interface RestartOverrides {
   codexAccountId?: string
   codexAccountLabel?: string
   resendRejected?: boolean
+  /** A Resume: refused while the session runs (PRDCT-4193). */
+  onlyIfStopped?: boolean
 }
 
 class PtyManager {
@@ -305,6 +334,10 @@ class PtyManager {
                   ? 'manual'
                   : options.permissionMode
                 : undefined,
+            // Bypass kept reachable to a Claude chat resumed in another mode
+            // when its launch had it (PRDCT-4191).
+            allowDangerous:
+              adapter.provider === 'claude' && options?.allowDangerous === true ? true : undefined,
             // What `--yolo` means to a Codex terminal: no approvals AND no
             // sandbox. The app-server takes the two separately, and without
             // this a dangerous chat ran in the config's sandbox.
@@ -375,7 +408,9 @@ class PtyManager {
       codexMode: codex,
       piMode: false,
       claudeAgentsMode: false,
-      dangerousMode: options?.dangerousMode === true,
+      // Whether bypass is available to the chat: launched skipping the
+      // permissions, or resumed in another mode with bypass kept reachable.
+      dangerousMode: options?.dangerousMode === true || options?.allowDangerous === true,
       model: options?.model,
       launchProfileId: profileId,
       launchProfile: options?.launchProfile,
@@ -391,6 +426,13 @@ class PtyManager {
       // came back as a sidebar tab at the next boot (round 1, F2).
       link: options?.link,
       spawnedBy: lineageOf(session.id, options?.spawnedBy, previous?.spawnedBy),
+      // The opener, nested or not (PRDCT-4192), the same way.
+      openedBy: lineageOf(session.id, options?.openedBy, previous?.openedBy),
+      // What the chat starts running on (PRDCT-4191): the launch's mode and
+      // effort when the spawn names them; the provider's own word overwrites
+      // them as it comes (`setSessionRuntime`, attachListeners).
+      ...(options?.permissionMode !== undefined ? { permissionMode: options.permissionMode } : {}),
+      ...(options?.effort !== undefined ? { effort: options.effort } : {}),
       // Which work it does (PRDCT-4123): a restart's, else the record's.
       work: sanitizeWork(options?.work) ?? sanitizeWork(previous?.work)
     })
@@ -409,12 +451,24 @@ class PtyManager {
         // A meta naming no model means "the provider's default": it refines
         // nothing, so it never erases a model already known here.
         const session = this.eventSessions.get(id)
-        if (session && stream.event.model) session.model = stream.event.model
+        if (session && stream.event.model) {
+          session.model = stream.event.model
+          // On the record too (PRDCT-4191): a Resume relaunches on it.
+          ptyBackend.setSessionRuntime(id, { model: stream.event.model })
+        }
         // The thread the app-server opened: what a restart resumes.
         if (sessionManager.get(id)?.adapterId === 'codex-chat' && stream.event.providerSessionId) {
           this.codexThreads.set(id, stream.event.providerSessionId)
           ptyBackend.setSessionCodexThreadId(id, stream.event.providerSessionId)
         }
+      }
+      // The mode and the effort the chat runs at, as the provider says them
+      // (PRDCT-4191): kept on the record, so the tab comes back in them.
+      if (stream.kind === 'event' && this.eventSessions.has(id)) {
+        if (stream.event.type === 'permission_mode')
+          ptyBackend.setSessionRuntime(id, { permissionMode: stream.event.mode })
+        else if (stream.event.type === 'effort')
+          ptyBackend.setSessionRuntime(id, { effort: stream.event.effort })
       }
       if (
         stream.kind === 'event' &&
@@ -512,7 +566,9 @@ class PtyManager {
     if (!spawn) return null
     const conversationId = this.conversationIdOf(id)
     const previous = spawn.options ?? {}
-    const { resendRejected, ...requested } = overrides
+    // `onlyIfStopped` is the lifecycle's precondition, never a spawn option.
+    const { resendRejected, onlyIfStopped: _onlyIfStopped, ...requested } = overrides
+    void _onlyIfStopped
     const account = accountOverrides(requested)
     const options: PtySpawnOptions = {
       ...previous,
@@ -534,11 +590,16 @@ class PtyManager {
       // spawn could read it, and a spawn made without one (an older restore)
       // would lose the child its parent (#259, V1-F1).
       spawnedBy: previous.spawnedBy ?? ptyBackend.getSessionRecord(id)?.spawnedBy,
+      openedBy: previous.openedBy ?? ptyBackend.getSessionRecord(id)?.openedBy,
       // Which work it does (PRDCT-4123): the record's, read now, for the same
       // reason. Never the spawn's own options: a restart carried one into
       // them, and a change of work since (a handover accepted, a lane left)
       // wrote the record alone, so a second restart would bring the old back.
       work: ptyBackend.getSessionRecord(id)?.work,
+      // The mode, the model and the effort the chat was RUNNING on
+      // (PRDCT-4191), from the record the provider's words were written to,
+      // for the same reason: the spawn's options are the launch's.
+      ...restartRuntime(ptyBackend.getSessionRecord(id), previous),
       ...account
     }
     return { cwd: spawn.cwd, options, resumed: conversationId !== null }

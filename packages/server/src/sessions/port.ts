@@ -126,7 +126,9 @@ export interface SessionHostService extends SessionStreamSource {
   readonly restart: (
     id: string,
     account: AccountOverride,
-    resendRejected: boolean
+    resendRejected: boolean,
+    /** A Resume: refused while the session runs (PRDCT-4193). */
+    onlyIfStopped?: boolean
   ) => Promise<RestartedSession>
 }
 

@@ -258,6 +258,8 @@ export async function restartSessionProcess(
   options: {
     overrides?: Record<string, string | undefined>
     resendRejected?: boolean
+    /** A Resume, not a move: the host refuses it while the session runs. */
+    onlyIfStopped?: boolean
     patch?: Partial<
       Pick<
         Session,
@@ -284,7 +286,8 @@ export async function restartSessionProcess(
       sessionId,
       {
         ...options.overrides,
-        resendRejected: options.resendRejected === true
+        resendRejected: options.resendRejected === true,
+        ...(options.onlyIfStopped ? { onlyIfStopped: true } : {})
       },
       requestId
     )

@@ -17,10 +17,10 @@ const TERMINAL = 'clave.chat-view/terminal'
  *  highlight has settled before the next read — pressing faster than the menu
  *  updates overshoots and lands on a neighbour. */
 export async function choose(win, picker, label) {
-  const items = win.getByRole('menuitem')
+  const items = win.getByRole('menuitemradio')
   await picker.click()
   await items.first().waitFor()
-  const highlighted = win.locator('[role="menuitem"][data-highlighted]')
+  const highlighted = win.locator('[role="menuitemradio"][data-highlighted]')
   const landed = await until(
     async () => {
       const current = await highlighted.innerText().catch(() => '')
@@ -52,10 +52,10 @@ export async function run(t) {
   )
   const { win, record, fixture } = chat
   try {
-    const picker = win.getByLabel('Change view', { exact: true })
+    const picker = win.getByLabel('Session menu', { exact: true })
     await picker.waitFor()
     await picker.click()
-    const items = win.getByRole('menuitem')
+    const items = win.getByRole('menuitemradio')
     assert.deepEqual(await items.allInnerTexts(), ['Chat', 'Enclave', 'Folio'])
     t.check('the pane picker lists both views the plugin contributes', true)
 

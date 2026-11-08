@@ -55,6 +55,7 @@ import {
   HOST_COMMANDS,
   claudeModelOptions
 } from './claude-adapter'
+import { formMessage } from '../../../shared/form-message'
 
 /** What the adapter wrote to the CLI since the last read, without the
  *  get_settings reads it makes at ready and after every confirmed switch to
@@ -1236,6 +1237,27 @@ it('dates each replayed event by its transcript line, and closes a dead call at 
     { event: { type: 'user_message', text: 'second' } }
   ])
 })
+it("replays a form's outcome with its marker, in either shape the transcript keeps a user message (PRDCT-4157)", () => {
+  const text = formMessage({
+    id: 'r1',
+    form: 'clave:35e6218e-85f6-4dc0-9b19-366bf927d351',
+    description: 'Four things before this machine is set up.',
+    questions: [{ id: 'login', question: 'Your GitHub login' }],
+    answers: { login: 'luca-a' }
+  })
+  const items = translator.replay(
+    [
+      { type: 'user', message: { role: 'user', content: text } },
+      { type: 'user', message: { role: 'user', content: [{ type: 'text', text }] } },
+      { type: 'user', message: { role: 'user', content: 'and a word of my own' } }
+    ].map((line) => JSON.stringify(line))
+  )
+  expect(items.map((item) => item.event)).toEqual([
+    { type: 'user_message', text, form: 'clave:35e6218e-85f6-4dc0-9b19-366bf927d351' },
+    { type: 'user_message', text, form: 'clave:35e6218e-85f6-4dc0-9b19-366bf927d351' },
+    { type: 'user_message', text: 'and a word of my own' }
+  ])
+})
 it('keeps a resumed past in main for the view to page, and streams none of it', async () => {
   const root = mkdtempSync(join(tmpdir(), 'clave-history-'))
   vi.stubEnv('CLAVE_TRANSCRIPTS_ROOT', root)
@@ -2223,4 +2245,51 @@ describe('a waited-on Bash task the CLI lists later', () => {
         ?.map((t) => t.toolUseId ?? '-')
     ).toEqual(['-', '-'])
   })
+})
+
+it('keeps bypass reachable to a chat resumed in another mode when its launch had it (PRDCT-4191, round 3 C5)', async () => {
+  const child = Object.assign(new EventEmitter(), {
+    stdin: new PassThrough(),
+    stdout: new PassThrough(),
+    stderr: new PassThrough(),
+    kill: vi.fn()
+  })
+  mock.spawn.mockReturnValue(child)
+  const adapter = new ClaudeAdapter()
+  const events: SessionEvent[] = []
+  const handle = await adapter.spawn({
+    ...spec,
+    options: { resume: 'resume-id', permissionMode: 'plan', allowDangerous: true }
+  })
+  adapter.on(handle, 'stream', (s) => {
+    if (s.kind === 'event') events.push(s.event)
+  })
+  adapter.ready(handle)
+  const command = mock.spawn.mock.calls[0][1][2]
+  expect(command).toContain("'--permission-mode' 'plan'")
+  expect(command).toContain("'--allow-dangerously-skip-permissions'")
+  expect(command).not.toContain('--dangerously-skip-permissions ')
+  const offered = events.find((e) => e.type === 'permission_mode')
+  expect(offered?.type).toBe('permission_mode')
+  if (offered?.type === 'permission_mode') {
+    expect(offered.mode).toBe('plan')
+    expect(offered.modes.map((m) => m.id)).toContain('bypassPermissions')
+  }
+  // Without the allowance, the flag is not passed and bypass is not offered.
+  mock.spawn.mockClear()
+  const plain = new ClaudeAdapter()
+  const plainEvents: SessionEvent[] = []
+  const plainHandle = await plain.spawn({
+    ...spec,
+    id: `${spec.id}-plain`,
+    options: { permissionMode: 'plan' }
+  })
+  plain.on(plainHandle, 'stream', (s) => {
+    if (s.kind === 'event') plainEvents.push(s.event)
+  })
+  plain.ready(plainHandle)
+  expect(mock.spawn.mock.calls[0][1][2]).not.toContain('--allow-dangerously-skip-permissions')
+  const plainOffer = plainEvents.find((e) => e.type === 'permission_mode')
+  if (plainOffer?.type === 'permission_mode')
+    expect(plainOffer.modes.map((m) => m.id)).not.toContain('bypassPermissions')
 })

@@ -75,8 +75,9 @@ it('fans out through production IPC and detaches the consumer when its WebConten
     send: vi.fn()
   })
   const event = { sender }
-  expect(mocks.handlers.get('sessions:list')(event)).toContainEqual(session)
-  expect(mocks.handlers.get('sessions:subscribe')(event, id)).toEqual(session)
+  // The manager stamps the first process under an id as run 1 (PRDCT-4191).
+  expect(mocks.handlers.get('sessions:list')(event)).toContainEqual({ ...session, run: 1 })
+  expect(mocks.handlers.get('sessions:subscribe')(event, id)).toEqual({ ...session, run: 1 })
   const local = vi.fn()
   sessionManager.subscribe(id, local)
   mocks.handlers.get('sessions:write')(event, id, { type: 'user_message', text: 'hello' })
@@ -198,7 +199,7 @@ it('keeps subscriptions after ready errors and retries until one successful call
     send: vi.fn()
   })
   const subscribe = (): unknown => mocks.handlers.get('sessions:subscribe')({ sender }, id)
-  expect(subscribe()).toEqual(record)
+  expect(subscribe()).toEqual({ ...record, run: 1 })
   expect(sender.send).toHaveBeenCalledWith(`sessions:stream:${id}`, {
     kind: 'event',
     event: {

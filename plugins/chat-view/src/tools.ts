@@ -51,7 +51,10 @@ export type Block = Exclude<Entry, { kind: 'tool' }> | ToolGroup | ApprovalGroup
  *  a run in one view and not the other. */
 export function visibleEntries(entries: Entry[]): Entry[] {
   return entries.filter(
-    (e) => (e.kind !== 'assistant' || e.text.trim() !== '') && !(e.kind === 'user' && e.withdrawn)
+    (e) =>
+      (e.kind !== 'assistant' || e.text.trim() !== '') &&
+      !(e.kind === 'user' && e.withdrawn) &&
+      !(e.kind === 'permission' && e.relocated)
   )
 }
 

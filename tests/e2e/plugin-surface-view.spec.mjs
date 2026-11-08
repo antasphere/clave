@@ -22,10 +22,10 @@ const VIEW = `${PLUGIN}/log`
  *  highlight has settled before the next read — pressing faster than the menu
  *  updates overshoots and lands on a neighbour. */
 async function choose(win, picker, label) {
-  const items = win.getByRole('menuitem')
+  const items = win.getByRole('menuitemradio')
   await picker.click()
   await items.first().waitFor()
-  const highlighted = win.locator('[role="menuitem"][data-highlighted]')
+  const highlighted = win.locator('[role="menuitemradio"][data-highlighted]')
   const landed = await until(
     async () => {
       const current = await highlighted.innerText().catch(() => '')
@@ -80,17 +80,17 @@ export async function run(t) {
     // later, with a picker of its own.
     const picker = win
       .locator(`.chat-host[data-session-id="${record.id}"]`)
-      .getByLabel('Change view', { exact: true })
+      .getByLabel('Session menu', { exact: true })
     await picker.waitFor()
     await picker.click()
-    assert.deepEqual(await win.getByRole('menuitem').allInnerTexts(), [
+    assert.deepEqual(await win.getByRole('menuitemradio').allInnerTexts(), [
       'Chat',
       'Enclave',
       'Folio',
       'Fixture log'
     ])
     await win.keyboard.press('Escape')
-    await win.getByRole('menuitem').first().waitFor({ state: 'detached' })
+    await win.getByRole('menuitemradio').first().waitFor({ state: 'detached' })
     t.check('a linked plugin contributes a view the picker offers beside the bundled ones', true)
 
     await choose(win, picker, 'Fixture log')
@@ -179,7 +179,7 @@ export async function run(t) {
     // lease is the host checking that the message came from ITS OWN frame.
     const secondPicker = win
       .locator(`.chat-host[data-session-id="${second.id}"]`)
-      .getByLabel('Change view', { exact: true })
+      .getByLabel('Session menu', { exact: true })
     await secondPicker.waitFor()
     await choose(win, secondPicker, 'Fixture log')
     await until(async () => guestFrames(win).length === 2)

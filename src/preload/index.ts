@@ -957,6 +957,9 @@ const electronAPI = {
       off()
     }
   },
+  // Which tab opened which, as main keeps it (PRDCT-4193): main's own, never
+  // the server's, since it holds the opens this Mac made on other servers.
+  lineageParents: (): Promise<Record<string, string>> => ipcRenderer.invoke('lineage:parents'),
   // ── Sessions (lane A): every call goes to the server once main names it ──
   sessionsList: viaServer<[], Session[]>({
     ipc: () => ipcRenderer.invoke('sessions:list'),
@@ -1715,6 +1718,9 @@ const electronAPI = {
     extras?: { sessionType?: string | null; locationId?: string | null }
   ) => ipcRenderer.invoke('session:save-plan', cwd, claudeSessionId, sessionName, extras),
 
+  saveTranscript: (markdown: string, fileName: string) =>
+    ipcRenderer.invoke('session:save-transcript', markdown, fileName),
+
   openExternal: (url: string) => ipcRenderer.invoke('shell:openExternal', url),
   // What the reader needs from a run of messages other tabs sent: a one-shot
   // model call in main (src/main/exchange-digest.ts), answered as a result.
@@ -1750,6 +1756,7 @@ const electronAPI = {
     ipcRenderer.invoke('preview:register', filePath) as Promise<{ url: string }>,
 
   openFolderDialog: (defaultPath?: string) => ipcRenderer.invoke('dialog:openFolder', defaultPath),
+  openFileDialog: (defaultPath?: string) => ipcRenderer.invoke('dialog:openFile', defaultPath),
 
   onUpdateAvailable: (callback: (version: string) => void) =>
     createIpcListener<[string]>('updater:update-available', callback),
@@ -2253,22 +2260,31 @@ const electronAPI = {
         codexAccountLabel?: string
         /** Send the message the limit rejected again on the new account. */
         resendRejected?: boolean
+        /** A Resume: refused while the session runs (PRDCT-4193). */
+        onlyIfStopped?: boolean
       },
       string | undefined
     ],
     (SessionInfo & { resumed: boolean; requestId?: string }) | { error: string }
   >({
     ipc: (id, overrides) => ipcRenderer.invoke('pty:restart', id, overrides),
-    server: ({ api }, id, { resendRejected, ...account }, requestId) =>
-      api.sessions
-        .restart(
-          id,
-          // The wire's account carries a field only when it is set.
-          Object.fromEntries(Object.entries(account).filter(([, v]) => typeof v === 'string')),
-          resendRejected === true,
-          requestId
-        )
-        .then(loose<SessionInfo & { resumed: boolean; requestId?: string }>)
+    server: ({ api }, id, { resendRejected, onlyIfStopped, ...account }, requestId) =>
+      (onlyIfStopped === true
+        ? api.sessions.restart(
+            id,
+            // The wire's account carries a field only when it is set.
+            Object.fromEntries(Object.entries(account).filter(([, v]) => typeof v === 'string')),
+            resendRejected === true,
+            requestId,
+            true
+          )
+        : api.sessions.restart(
+            id,
+            Object.fromEntries(Object.entries(account).filter(([, v]) => typeof v === 'string')),
+            resendRejected === true,
+            requestId
+          )
+      ).then(loose<SessionInfo & { resumed: boolean; requestId?: string }>)
   }),
   getPiUsage: viaServer<['today' | '7d' | '30d' | 'all'], PiUsageTotals>({
     ipc: (range) => ipcRenderer.invoke('usage:get-pi', range),

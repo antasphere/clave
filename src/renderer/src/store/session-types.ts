@@ -349,6 +349,9 @@ export interface Session {
    *  clave_send_to_session / clave_read_session. Persisted on the session's
    *  record since #259, so it comes back at a restore (`adopt-record.ts`). */
   spawnedBy?: string
+  /** The same tab, nested under it or not (PRDCT-4192): the reach rule's
+   *  fallback once the window's memory of the open is gone. */
+  openedBy?: string
   /** Which wave or lane this tab works on, its role and its standing, as its
    *  record keeps it (PRDCT-4123). Absent means an ordinary tab. Set by the
    *  agent tools and the entry's menu through the server, never by a title. */
@@ -511,7 +514,7 @@ export interface FileTab {
   view?: 'rendered' | 'source'
 }
 
-export type ActiveView = 'terminals' | 'settings' | 'agents' | 'extensions'
+export type ActiveView = 'terminals' | 'settings' | 'agents' | 'extensions' | 'ongoing'
 
 export type SettingsSection =
   | 'servers'

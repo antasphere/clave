@@ -9,6 +9,7 @@
  * here holds this one, and a change to one event is a change to both files.
  */
 import { Schema } from 'effect'
+import { INPUT_KINDS } from './input-kinds'
 import { Command, Query } from '@structure-ai/cqrs'
 import { CapabilityUnavailable } from './errors'
 import { LaunchProfileView } from './settings/launch-profiles'
@@ -32,7 +33,14 @@ export const Session = Schema.Struct({
   title: Schema.String,
   /** The view this session is read in, `<pluginId>/<viewId>`. Absent means
    *  the host picks the first view that renders this transport. */
-  viewId: Schema.optional(Schema.NonEmptyString)
+  viewId: Schema.optional(Schema.NonEmptyString),
+  /** Which process under this id this is: 1 at the first spawn, one more at
+   *  every spawn under the same id since the host started (a Resume, a move
+   *  to another account). A `state_change` carries the run it belongs to, so
+   *  a pane that hears an `ended` of run 1 after the `idle` of run 2 knows it
+   *  for the old process's word (PRDCT-4191). Absent on a host before this
+   *  field and on a stopped record, which runs nothing. */
+  run: Schema.optional(Schema.Number)
 })
 export type Session = typeof Session.Type
 
@@ -91,7 +99,12 @@ export const UserMessage = Schema.Struct({
   text: Schema.String,
   /** The files the reader attached, as the transcript shows them: never bytes. */
   attachments: Schema.optional(Attachments),
-  parent: Schema.optional(Schema.String)
+  parent: Schema.optional(Schema.String),
+  /** The form this message carries the answers of (the request's provider
+   *  id, PRDCT-4157): the person's Approve or Skip on a hosted form, written
+   *  to the agent as their next message so an idle agent wakes with the
+   *  answers. A view draws the form's record row for it, never a bubble. */
+  form: Schema.optional(Schema.String)
 })
 export type UserMessage = typeof UserMessage.Type
 export const PreparedPrompt = Schema.Struct({
@@ -108,7 +121,15 @@ export const PermissionResponse = Schema.Struct({
   type: Schema.Literal('permission_response'),
   id: Schema.String,
   optionId: Schema.String,
-  answers: Schema.optional(Schema.Record({ key: Schema.String, value: Schema.String }))
+  /** A request carrying `questions`: the question's key → the chosen label(s)
+   *  or the reader's own words; a hosted multi-select answers with the labels
+   *  as an array, a provider's own question with one string. */
+  answers: Schema.optional(
+    Schema.Record({
+      key: Schema.String,
+      value: Schema.Union(Schema.String, Schema.Array(Schema.String))
+    })
+  )
 })
 export const Interrupt = Schema.Struct({ type: Schema.Literal('interrupt') })
 export const SetModel = Schema.Struct({
@@ -168,6 +189,7 @@ export type SessionWrite = typeof SessionWrite.Type
 
 export const PermissionModeOption = Schema.Struct({ id: Schema.String, label: Schema.String })
 export type PermissionModeOption = typeof PermissionModeOption.Type
+export const InputKind = Schema.Literal(...INPUT_KINDS)
 export const AgentQuestion = Schema.Struct({
   /** Stable answer key; older providers without IDs use the question text. */
   id: Schema.optional(Schema.NonEmptyString),
@@ -176,7 +198,23 @@ export const AgentQuestion = Schema.Struct({
   options: Schema.Array(
     Schema.Struct({ label: Schema.String, description: Schema.optional(Schema.String) })
   ),
-  multiSelect: Schema.optional(Schema.Boolean)
+  multiSelect: Schema.optional(Schema.Boolean),
+  /** A hosted input request's question (clave_request_input, PRDCT-4157):
+   *  the kind of value asked for, and the field's own words. Absent on a
+   *  provider's native question, which is a choice among its options. The
+   *  one rule for whether an answer fits is `input-kinds.ts`. */
+  kind: Schema.optional(InputKind),
+  hint: Schema.optional(Schema.String),
+  placeholder: Schema.optional(Schema.String),
+  default: Schema.optional(Schema.String),
+  optional: Schema.optional(Schema.Boolean),
+  /** A `link` question: the address to open, and the words on the button
+   *  that says the reader is back. */
+  url: Schema.optional(Schema.String),
+  confirm: Schema.optional(Schema.String),
+  /** A `number` question's bounds. */
+  min: Schema.optional(Schema.Number),
+  max: Schema.optional(Schema.Number)
 })
 export type AgentQuestion = typeof AgentQuestion.Type
 export const EffortOption = Schema.Struct({
@@ -266,7 +304,13 @@ export const SessionEvent = Schema.Union(
     detail: Schema.optional(Schema.String),
     questions: Schema.optional(Schema.Array(AgentQuestion))
   }),
-  Schema.Struct({ type: Schema.Literal('state_change'), state: AgentState }),
+  Schema.Struct({
+    type: Schema.Literal('state_change'),
+    state: AgentState,
+    /** The run of the process whose state this is (`Session.run`); absent
+     *  from an adapter's own frame, stamped by the host that publishes it. */
+    run: Schema.optional(Schema.Number)
+  }),
   Schema.Struct({
     type: Schema.Literal('session_meta'),
     model: Schema.NullOr(Schema.String),
@@ -276,6 +320,21 @@ export const SessionEvent = Schema.Union(
   Schema.Struct({ type: Schema.Literal('error'), message: Schema.String, fatal: Schema.Boolean }),
   Schema.Struct({ type: Schema.Literal('turn_interrupted') }),
   Schema.Struct({ type: Schema.Literal('permission_withdrawn'), id: Schema.String }),
+  /** A hosted form's answers changed under the card (PRDCT-4157): the agent
+   *  set fields from what the person said (`clave_input_set`), or the form
+   *  was approved and `sent` carries every answer to the views that did not
+   *  send them. `answers` is the patch, by the question's key. */
+  Schema.Struct({
+    type: Schema.Literal('permission_updated'),
+    id: Schema.String,
+    answers: Schema.Record({
+      key: Schema.String,
+      value: Schema.Union(Schema.String, Schema.Array(Schema.String))
+    }),
+    sent: Schema.optional(Schema.Boolean),
+    /** The agent's word under a field it could not fill, by the question's key. */
+    notes: Schema.optional(Schema.Record({ key: Schema.String, value: Schema.String }))
+  }),
   Schema.Struct({
     type: Schema.Literal('context_usage'),
     used: Schema.Number,
@@ -373,8 +432,13 @@ export const SpawnOptions = Schema.Struct({
   // ── ADR 0004: what a routine run declares beyond a tab's launch ──
   /** Claude's reasoning effort to start on (`--effort`); a chat defaults to the last picked. */
   effort: Schema.optional(Schema.String),
-  /** The permission mode a Claude session without `dangerousMode` asks under. */
-  permissionMode: Schema.optional(Schema.Literal('default', 'acceptEdits', 'plan')),
+  /** The permission mode a Claude session without `dangerousMode` asks under:
+   *  the CLI's `--permission-mode` values short of bypass, which is
+   *  `dangerousMode`. `auto` and `dontAsk` joined so a Resume brings a chat
+   *  back in the mode it was running (PRDCT-4191). */
+  permissionMode: Schema.optional(
+    Schema.Literal('default', 'acceptEdits', 'plan', 'auto', 'dontAsk')
+  ),
   /** A Claude Code plugin folder loaded for this session alone (`--plugin-dir`). */
   pluginDir: Schema.optional(Schema.String),
   /** One paragraph appended to Claude's system prompt (`--append-system-prompt`). */
@@ -392,7 +456,15 @@ export const SpawnOptions = Schema.Struct({
   /** The caller when `clave_open_session` uses `attachToParent: true`:
    *  folds the tab under its parent and restores the messaging link at boot.
    *  Absent for separate tabs, including agent opens without attachment. */
-  spawnedBy: Schema.optional(Schema.String)
+  spawnedBy: Schema.optional(Schema.String),
+  /** The tab whose agent opened this one through `clave_open_session`,
+   *  whether or not it is nested under it (PRDCT-4192): what "parent" and the
+   *  reach rule read once the host's memory of the open is gone (a restart).
+   *  Always written by an agent's open; absent for a tab a person opened. */
+  openedBy: Schema.optional(Schema.String),
+  /** Bypass stays reachable to a Claude chat resumed in another mode when
+   *  its launch had it (`--allow-dangerously-skip-permissions`), PRDCT-4191. */
+  allowDangerous: Schema.optional(Schema.Boolean)
 })
 export type SpawnOptions = typeof SpawnOptions.Type
 
@@ -607,6 +679,14 @@ export const SessionRecord = Schema.Struct({
   view: Schema.optional(SessionRecordView),
   link: Schema.optional(SessionLink),
   spawnedBy: Schema.optional(Schema.String),
+  /** The tab whose agent opened this one, nested or not (PRDCT-4192). */
+  openedBy: Schema.optional(Schema.String),
+  /** The permission mode the chat was last running in, as the provider
+   *  reported it (`bypassPermissions` included), so a Resume brings it back
+   *  in that mode and not the one it was launched on (PRDCT-4191). */
+  permissionMode: Schema.optional(Schema.String),
+  /** The reasoning effort the chat was last running at, the same way. */
+  effort: Schema.optional(Schema.String),
   work: Schema.optional(WorkAssignment),
   live: Schema.optional(Schema.Boolean),
   running: Schema.optional(Schema.Boolean)
@@ -790,7 +870,10 @@ export const RestartSession = Command.define('RestartSession', {
     id: Schema.String,
     account: AccountOverride,
     requestId: Schema.optional(RestartRequestId),
-    resendRejected: Schema.optional(Schema.Boolean)
+    resendRejected: Schema.optional(Schema.Boolean),
+    /** A Resume, not a move: refused when the session is running, so a
+     *  client reading a stale view never cuts a live turn (PRDCT-4193). */
+    onlyIfStopped: Schema.optional(Schema.Boolean)
   }),
   success: RestartedSession,
   failure: Schema.Union(SessionNotFound, CapabilityUnavailable, SessionStartFailed)

@@ -39,6 +39,7 @@ import {
 } from './served-core'
 import { sessionTools } from './served-session-tools'
 import { workTools } from './served-work-tools'
+import { isServerTabRef } from './session-targets'
 import { ATTACHED_COMMANDS, attachedShell } from './served-attached'
 
 export {
@@ -426,6 +427,17 @@ const TOOLS: Record<string, (ctx: Ctx, key: string, p: Payload) => Promise<unkno
 }
 const SERVED = new Set(Object.keys(TOOLS))
 
+/** The reference a command's subject tab travels under: `sessionId` for most,
+ *  `id` for a tab's rename, `to` for a handover's successor. A subject that
+ *  is a tab of another Clave server (its `clave-owner:session:…` key) is
+ *  the window's to reach: this process holds no connection to that server
+ *  (PRDCT-4193; reading already deferred so since PRDCT-4166). */
+function subjectRefs(command: string, payload: Record<string, unknown>): unknown[] {
+  if (command === 'rename') return payload.target === 'group' ? [] : [payload.id]
+  if (command === 'handOver') return [payload.sessionId, payload.to]
+  return [payload.sessionId]
+}
+
 /** Serve an agent-tool command on the server, or answer `NOT_SERVED` for one
  *  the window must still run. */
 export async function serveCommand<W extends ToolWindow>(
@@ -434,6 +446,7 @@ export async function serveCommand<W extends ToolWindow>(
   ctx: ServedContext<W>
 ): Promise<unknown | NotServed> {
   if (!SERVED.has(command)) return NOT_SERVED
+  if (subjectRefs(command, payload).some(isServerTabRef)) return NOT_SERVED
   // Attached, the wave 4 tools alone take the server road (the wave 3 tools
   // keep the window there), over the server's own facts for this call.
   if (ctx.attached && !(ATTACHED_COMMANDS.has(command) && payload.target !== 'group'))

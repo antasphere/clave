@@ -712,7 +712,7 @@ export function FolioView({ session, onState, visible = true }: ChatViewProps): 
   const answer = async (
     id: string,
     optionId: string,
-    answers?: Record<string, string>
+    answers?: Record<string, string | string[]>
   ): Promise<void> => {
     setPending((current) => [...current, id])
     try {

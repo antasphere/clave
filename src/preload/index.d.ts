@@ -451,6 +451,13 @@ export interface SessionRecord {
   /** The tab whose agent opened this one: the boot restore folds it under
    *  that parent again and `"parent"` still reaches it. Absent = a user's tab. */
   spawnedBy?: string
+  /** The same tab, nested under it or not (PRDCT-4192): what the reach rule
+   *  reads after a restart. Absent = a user's tab. */
+  openedBy?: string
+  /** The permission mode and the effort the chat was last running in, as the
+   *  provider reported them (PRDCT-4191); a Resume brings them back. */
+  permissionMode?: string
+  effort?: string
   /** Which wave or lane the tab works on, its role and its standing
    *  (PRDCT-4123). Absent = an ordinary tab. */
   work?: WorkAssignment
@@ -684,6 +691,11 @@ export interface ElectronAPI extends FleetDesktopAPI {
    *  by a window on IPC for good. */
   onServerConnected: (callback: () => void) => () => void
   sessionsList: () => Promise<Session[]>
+  /** Which tab opened which, as main keeps it across a window reload
+   *  (`sessions/lineage.ts`, PRDCT-4193): child session id or key → opener
+   *  id. The window's reach rule reads it after a reload, when its own
+   *  memory of the opens is gone. */
+  lineageParents: () => Promise<Record<string, string>>
   /** Register stream/exit listeners first, then await this before writing. */
   sessionsSubscribe: (id: string) => Promise<Session>
   /** Release this view's subscription, then remove its stream/exit listeners. */
@@ -803,6 +815,8 @@ export interface ElectronAPI extends FleetDesktopAPI {
       link?: SessionLink
       /** The tab whose agent opened this one — persisted on the record. */
       spawnedBy?: string
+      /** The same tab, nested or not (PRDCT-4192) — persisted on the record. */
+      openedBy?: string
     }
   ) => Promise<SessionInfo>
   writeSession: (id: string, data: string) => void
@@ -990,6 +1004,12 @@ export interface ElectronAPI extends FleetDesktopAPI {
     sessionName: string,
     extras?: { sessionType?: string | null; locationId?: string | null }
   ) => Promise<{ success: boolean; error?: string }>
+  /** Ask where to save a conversation written as Markdown, and write it.
+   *  `error: 'cancelled'` when the reader closed the dialog. */
+  saveTranscript: (
+    markdown: string,
+    fileName: string
+  ) => Promise<{ success: boolean; error?: string; path?: string }>
   openExternal: (url: string) => Promise<void>
   /** The exchange timeline's digest: what the reader needs from a run of
    *  messages other tabs sent. A failure is a result, never a rejection. */
@@ -1023,6 +1043,8 @@ export interface ElectronAPI extends FleetDesktopAPI {
    *  in-app preview iframe loads it from (assets scoped to the file's directory). */
   registerHtmlPreview: (filePath: string) => Promise<{ url: string }>
   openFolderDialog: (defaultPath?: string) => Promise<string | null>
+  /** A native file picker; the chosen path, or null when the person cancelled (PRDCT-4157). */
+  openFileDialog: (defaultPath?: string) => Promise<string | null>
   onUpdateAvailable: (callback: (version: string) => void) => () => void
   onUpdateDownloaded: (callback: (version: string) => void) => () => void
   onDownloadProgress: (callback: (progress: DownloadProgress) => void) => () => void
@@ -1177,6 +1199,8 @@ export interface ElectronAPI extends FleetDesktopAPI {
       codexAccountLabel?: string
       /** Send the message the limit rejected again on the new account. */
       resendRejected?: boolean
+      /** A Resume, not a move: refused while the session runs (PRDCT-4193). */
+      onlyIfStopped?: boolean
     },
     requestId?: string
   ) => Promise<(SessionInfo & { resumed: boolean; requestId?: string }) | { error: string }>

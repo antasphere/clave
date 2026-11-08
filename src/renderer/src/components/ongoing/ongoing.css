@@ -1,0 +1,468 @@
+/* Ongoing conversations (PRDCT-4190): the page (OngoingPage.tsx) and the
+   sidebar's foot card (OngoingShelf.tsx). In the paper of the primitives
+   (--card-surface, --card-shadow, --control-surface, --field-shadow): white
+   cards on the ground, a half-pixel edge, no grey borders; the accent only
+   where something asks for the person. */
+
+/* ── The sidebar's foot card ── */
+
+.ongoing-shelf {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  height: 2rem;
+  padding: 0 0.625rem 0 0.5625rem;
+  text-align: left;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition:
+    background-color 150ms,
+    color 150ms,
+    border-color 150ms;
+}
+.ongoing-shelf:hover {
+  color: var(--text-primary);
+  background-color: color-mix(in srgb, var(--surface-0) 70%, var(--text-primary) 4%);
+}
+.ongoing-shelf:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+.ongoing-shelf.is-pressed {
+  color: var(--text-primary);
+  background-color: color-mix(in srgb, var(--surface-0) 60%, var(--color-accent) 9%);
+  border-color: color-mix(in srgb, var(--color-accent) 28%, var(--color-border));
+}
+.ongoing-shelf-icon {
+  width: 1rem;
+  height: 1rem;
+  flex-shrink: 0;
+  opacity: 0.85;
+}
+.ongoing-shelf-label {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  letter-spacing: 0.005em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ongoing-shelf-count,
+.ongoing-shelf-attention {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3125rem;
+  min-width: 1.125rem;
+  height: 1.125rem;
+  padding: 0 0.375rem;
+  justify-content: center;
+  border-radius: var(--radius-full);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+.ongoing-shelf-count {
+  color: var(--text-secondary);
+  background-color: color-mix(in srgb, var(--text-primary) 7%, transparent);
+}
+.ongoing-shelf-attention {
+  color: var(--color-accent);
+  background-color: color-mix(in srgb, var(--color-accent) 13%, transparent);
+}
+.ongoing-shelf-dot {
+  width: 0.375rem;
+  height: 0.375rem;
+  border-radius: var(--radius-full);
+  background-color: var(--color-accent);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .ongoing-shelf-dot {
+    animation: ongoing-breathe 2.4s ease-in-out infinite;
+  }
+}
+@keyframes ongoing-breathe {
+  50% {
+    opacity: 0.45;
+  }
+}
+
+/* ── The page ── */
+
+.ongoing-page {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.ongoing-page-inner {
+  max-width: 64rem;
+  margin: 0 auto;
+  padding: 3.5rem 2.5rem 4rem;
+}
+.ongoing-page-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 2rem;
+  margin-bottom: 2rem;
+}
+.ongoing-page-head-text {
+  display: flex;
+  flex-direction: column;
+  gap: 0.375rem;
+  min-width: 0;
+}
+/* The page's drawing beside its title, once it holds a conversation (the
+   empty page carries it under the words instead). */
+.ongoing-head-drawing {
+  flex-shrink: 0;
+  width: 13.5rem;
+  height: auto;
+  margin: -0.5rem -0.5rem 0 0;
+}
+/* Beside the title the drawing stands on nothing: its ground line goes. */
+.ongoing-head-drawing > line:first-of-type {
+  display: none;
+}
+@media (max-width: 900px) {
+  .ongoing-head-drawing {
+    display: none;
+  }
+}
+.ongoing-eyebrow {
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+}
+.ongoing-page-title {
+  font-size: 1.625rem;
+  line-height: 1.15;
+  letter-spacing: -0.015em;
+  color: var(--text-primary);
+  font-weight: 400;
+}
+.ongoing-page-lede {
+  max-width: 52ch;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--text-secondary);
+}
+.ongoing-page-count {
+  margin-top: 0.5rem;
+  font-size: 12px;
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+.ongoing-page-count .is-accent {
+  color: var(--color-accent);
+}
+
+.ongoing-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(18.5rem, 1fr));
+  gap: 0.875rem;
+}
+
+/* One conversation: a paper card. The head says where it stands, then its
+   name, the person's own note, the last exchange, and the foot says where it
+   came from and what a click does. */
+.ongoing-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  min-height: 12.5rem;
+  padding: 0.875rem 0.875rem 0.75rem 1rem;
+  border-radius: var(--radius-xl);
+  background-color: var(--card-surface);
+  box-shadow: var(--card-shadow);
+  cursor: pointer;
+  outline: none;
+  transition:
+    box-shadow 180ms var(--ease-out-expo),
+    background-color 150ms,
+    translate 180ms var(--ease-out-expo);
+}
+.ongoing-card:hover,
+.ongoing-card[data-menu-open='true'] {
+  background-color: color-mix(in oklab, var(--card-surface), var(--text-primary) 2.5%);
+  box-shadow:
+    var(--card-shadow),
+    0 6px 18px -10px rgb(0 0 0 / 0.28);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .ongoing-card:hover,
+  .ongoing-card[data-menu-open='true'] {
+    translate: 0 -1px;
+  }
+  .ongoing-card {
+    animation: ongoing-card-in 380ms var(--ease-out-expo) backwards;
+  }
+}
+@keyframes ongoing-card-in {
+  from {
+    opacity: 0;
+    translate: 0 6px;
+  }
+}
+.ongoing-card:focus-visible {
+  box-shadow: var(--focus-ring);
+}
+.ongoing-card[aria-busy='true'] {
+  cursor: progress;
+}
+/* A conversation that asks for the person carries the accent on its edge. */
+.ongoing-card[data-ongoing-status='waiting'],
+.ongoing-card[data-ongoing-status='unread'] {
+  box-shadow:
+    0 0 0 0.5px color-mix(in srgb, var(--color-accent) 55%, transparent),
+    inset 2px 0 0 var(--color-accent);
+}
+
+.ongoing-card-head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-height: 1.5rem;
+}
+.ongoing-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+.ongoing-status-dot {
+  width: 0.4375rem;
+  height: 0.4375rem;
+  border-radius: var(--radius-full);
+  background-color: color-mix(in srgb, var(--text-primary) 30%, transparent);
+}
+.ongoing-status[data-status='open'] .ongoing-status-dot {
+  background-color: color-mix(in srgb, var(--text-primary) 55%, transparent);
+}
+.ongoing-status[data-status='resting'] .ongoing-status-dot {
+  background-color: transparent;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--text-primary) 40%, transparent);
+}
+.ongoing-status[data-status='working'] .ongoing-status-dot {
+  background-color: var(--text-secondary);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .ongoing-status[data-status='working'] .ongoing-status-dot {
+    animation: ongoing-breathe 1.2s ease-in-out infinite;
+  }
+}
+.ongoing-status:is([data-status='waiting'], [data-status='unread']) {
+  color: var(--color-accent);
+}
+.ongoing-status:is([data-status='waiting'], [data-status='unread']) .ongoing-status-dot {
+  background-color: var(--color-accent);
+}
+.ongoing-card-when {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.ongoing-card-more {
+  margin-right: -0.25rem;
+  opacity: 0;
+  transition: opacity 120ms;
+}
+.ongoing-card:is(:hover, :focus-within, [data-menu-open='true']) .ongoing-card-more {
+  opacity: 1;
+}
+.ongoing-card[data-menu-open='true'] .ongoing-card-more {
+  color: var(--text-primary);
+  background-color: color-mix(in srgb, var(--text-primary) 8%, transparent);
+}
+
+.ongoing-card-title {
+  font-size: 14px;
+  line-height: 1.3;
+  color: var(--text-primary);
+  font-weight: 500;
+  letter-spacing: -0.005em;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.ongoing-note,
+.ongoing-note-input {
+  width: 100%;
+  min-height: 1.5rem;
+  margin: -0.125rem 0 0 -0.375rem;
+  padding: 0.1875rem 0.375rem;
+  border-radius: var(--radius-lg);
+  font-size: 12.5px;
+  line-height: 1.4;
+  text-align: left;
+  color: var(--text-secondary);
+}
+.ongoing-note {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transition: background-color 120ms;
+}
+.ongoing-note:hover {
+  background-color: color-mix(in srgb, var(--text-primary) 5%, transparent);
+}
+.ongoing-note.is-empty {
+  color: var(--text-tertiary);
+  opacity: 0;
+}
+.ongoing-card:is(:hover, :focus-within, [data-menu-open='true']) .ongoing-note.is-empty {
+  opacity: 1;
+}
+.ongoing-note-input {
+  background-color: var(--control-surface);
+  box-shadow: var(--field-shadow);
+  color: var(--text-primary);
+  outline: none;
+}
+.ongoing-note-input:focus {
+  box-shadow: var(--focus-ring);
+}
+
+/* The last exchange, as a quote under a rule: what you said, then the first
+   line of what came back. */
+.ongoing-exchange {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  margin-top: 0.125rem;
+  padding-left: 0.625rem;
+  border-left: 1px solid color-mix(in srgb, var(--text-primary) 12%, transparent);
+  font-size: 12px;
+  line-height: 1.45;
+}
+.ongoing-exchange-you {
+  color: var(--text-secondary);
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+.ongoing-exchange-who {
+  margin-right: 0.375rem;
+  color: var(--text-tertiary);
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.ongoing-exchange-reply {
+  color: var(--text-tertiary);
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+.ongoing-exchange-none {
+  color: var(--text-tertiary);
+  font-style: italic;
+}
+.ongoing-skeleton {
+  display: block;
+  height: 0.625rem;
+  width: 88%;
+  margin: 0.1875rem 0;
+  border-radius: var(--radius-full);
+  background-color: color-mix(in srgb, var(--text-primary) 7%, transparent);
+}
+.ongoing-skeleton.is-short {
+  width: 56%;
+}
+
+.ongoing-card-foot {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: auto;
+  padding-top: 0.5rem;
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+.ongoing-card-from {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ongoing-card-continue {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  margin-left: auto;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  transition:
+    color 150ms,
+    gap 180ms var(--ease-out-expo);
+}
+.ongoing-card:is(:hover, :focus-visible) .ongoing-card-continue {
+  color: var(--text-primary);
+  gap: 0.4375rem;
+}
+
+.ongoing-status[data-status='elsewhere'] .ongoing-status-dot {
+  background-color: transparent;
+  box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--text-primary) 55%, transparent);
+}
+.ongoing-notice {
+  margin: -1rem 0 1.25rem;
+  padding: 0.5rem 0.75rem;
+  border-radius: var(--radius-lg);
+  font-size: 12.5px;
+  color: var(--text-primary);
+  background-color: var(--card-surface);
+  box-shadow:
+    var(--card-shadow),
+    inset 2px 0 0 var(--color-accent);
+}
+
+/* ── The empty page ── */
+
+.ongoing-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.375rem;
+  padding: 3rem 1.5rem;
+  text-align: center;
+}
+.ongoing-drawing {
+  width: 16rem;
+  max-width: 100%;
+  height: auto;
+  margin-bottom: 0.75rem;
+}
+.ongoing-empty strong {
+  color: var(--text-primary);
+  font-size: 14px;
+  font-weight: 400;
+}
+.ongoing-empty span {
+  max-width: 44ch;
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.5;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .ongoing-drawing-step {
+    animation: ongoing-step-in 460ms cubic-bezier(0.22, 1, 0.36, 1) backwards;
+  }
+}
+@keyframes ongoing-step-in {
+  from {
+    opacity: 0;
+    translate: 0 -4px;
+  }
+}

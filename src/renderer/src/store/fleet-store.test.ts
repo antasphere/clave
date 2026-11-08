@@ -311,3 +311,39 @@ describe('the servers’ versions (issue #266)', () => {
     })
   })
 })
+
+describe('who opened a server tab, named as this window names it (PRDCT-4193)', () => {
+  // The reach rule compares keys: a server record names its opener by the raw
+  // id of its own store, so the window must wrap it in that server's key, or
+  // a tab opened by an agent on the server would never reach its opener.
+  const withRecord = (owner: string, extra: Record<string, unknown>): FleetSnapshot => {
+    const base = snapshot(owner)
+    return {
+      ...base,
+      records: [
+        {
+          id: base.sessions[0].id,
+          cwd: '/server/repo',
+          folderName: 'repo',
+          running: true,
+          ...extra
+        } as unknown as FleetSnapshot['records'][number]
+      ]
+    }
+  }
+  it('maps the record’s openedBy and spawnedBy raw ids to keys of that server', () => {
+    const owner = `s-${serial}`
+    const a = withRecord(owner, { openedBy: 'opener-raw', spawnedBy: 'nester-raw' })
+    fleet.applyFleetSnapshot(a)
+    const session = store.useSessionStore.getState().sessions.find((s) => s.id === a.sessions[0].id)
+    expect(session?.openedBy).toBe(resourceKey('session', owner, 'opener-raw'))
+    expect(session?.spawnedBy).toBe(resourceKey('session', owner, 'nester-raw'))
+  })
+  it('leaves both undefined when the record names nobody', () => {
+    const a = withRecord(`s-${serial}`, {})
+    fleet.applyFleetSnapshot(a)
+    const session = store.useSessionStore.getState().sessions.find((s) => s.id === a.sessions[0].id)
+    expect(session?.openedBy).toBeUndefined()
+    expect(session?.spawnedBy).toBeUndefined()
+  })
+})

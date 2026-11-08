@@ -17,7 +17,8 @@ import {
   type SessionEvent,
   type HistoryItem,
   type ModelOption,
-  type CommandOption
+  type CommandOption,
+  flattenAnswers
 } from '../../../shared/session-model'
 import type {
   SessionAdapter,
@@ -794,7 +795,12 @@ export class CodexAdapter implements SessionAdapter {
     if (state.ended || state.closing) throw new Error('Codex session has ended')
     if (value.type === 'permission_response') {
       if (!state.connection) throw new Error('Codex has no pending approval')
-      state.translator.answer(value.id, value.optionId, state.connection, value.answers)
+      state.translator.answer(
+        value.id,
+        value.optionId,
+        state.connection,
+        flattenAnswers(value.answers)
+      )
       return
     }
     if (value.type === 'interrupt') {
