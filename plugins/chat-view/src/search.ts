@@ -310,22 +310,29 @@ export function useTranscriptSearch({
       if (currentMatch) {
         const rowEl = scroller.querySelector<HTMLElement>(`[data-row-index="${currentMatch.row}"]`)
         if (rowEl) {
-          const inRow = findRanges(rowEl, settled, MESSAGE_TEXT)
           // The words may be inside a closed card of the agent's working
-          // notes (WorkStretch), whose body is not in the document until it
-          // opens: open the one card that holds them, read off the row's
-          // data, and let the mutation mark again once its body is there.
-          if (inRow.length <= currentMatch.k) {
-            const holder = cardHolding(rows[currentMatch.row], settled.toLocaleLowerCase(), currentMatch.k)
-            const card =
-              holder === null
-                ? null
-                : rowEl.querySelectorAll<HTMLDetailsElement>('details.stretch-card')[holder]
-            if (card && !card.open) {
-              card.open = true
-              return
-            }
+          // notes (WorkStretch): read off the row's data which card holds
+          // them, open that one, and let the mutation mark again once its
+          // body is on screen. Decided on the data, not on the ranges found:
+          // a card opened once keeps its body in the document, closed, and
+          // a range found there would mark words the reader cannot see.
+          const holder = cardHolding(
+            rows[currentMatch.row],
+            settled.toLocaleLowerCase(),
+            currentMatch.k
+          )
+          const card =
+            holder === null
+              ? null
+              : rowEl.querySelectorAll<HTMLDetailsElement>('details.stretch-card')[holder]
+          if (card && !card.open) {
+            // The observer watches children and text, not attributes, and a
+            // card opened once keeps its body: mark again a beat later.
+            card.open = true
+            setTimeout(mark, 60)
+            return
           }
+          const inRow = findRanges(rowEl, settled, MESSAGE_TEXT)
           currentRange = inRow[Math.min(currentMatch.k, inRow.length - 1)] ?? null
         }
       }

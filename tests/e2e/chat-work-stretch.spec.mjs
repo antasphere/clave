@@ -234,6 +234,12 @@ export async function run(t) {
       await until(async () =>
         (await card.locator('details.stretch-card').evaluate((el) => el.open)) ? null : true
       )
+      // Find scrolled the transcript to the match: back to its end, where the
+      // turns to come are mounted.
+      await view.locator('.chat-scroll').evaluate((el) => {
+        el.scrollTop = el.scrollHeight
+      })
+      await win.waitForTimeout(400)
 
       // 4b. The agent carries on after its answer with no new message (a
       // background task reporting back): a new turn, the answer stays.
