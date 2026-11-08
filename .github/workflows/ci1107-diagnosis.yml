@@ -1,4 +1,4 @@
-name: CI1107 retained state diagnosis
+name: CI1107 minimal tmux diagnosis
 on:
   push:
     branches: [test/ci1107-r13-diagnostic]
@@ -9,9 +9,9 @@ jobs:
     name: Diagnose (${{ matrix.case }})
     strategy:
       fail-fast: false
-      max-parallel: 5
+      max-parallel: 2
       matrix:
-        case: [state_full, state_first, state_last, cleanup, tmux_per_spec]
+        case: [state_minimal, tmux_clean_minimal]
     runs-on: macos-latest
     timeout-minutes: 35
     steps:
@@ -51,7 +51,7 @@ jobs:
 
           HEAD = "e85fac6707eb3843f7f933ee62e32b15a8ad7c3c"
           case = os.environ["DIAG_CASE"]
-          assert case in {"state_full", "state_first", "state_last", "cleanup", "tmux_per_spec"}
+          assert case in {"state_full", "state_first", "state_last", "cleanup", "tmux_per_spec", "state_minimal", "tmux_clean_minimal"}
           assert subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip() == HEAD
           private = Path(os.environ["RUNNER_TEMP"]) / "ci1107-state-private" / case
           public = Path(os.environ["RUNNER_TEMP"]) / "ci1107-state-public"
@@ -65,6 +65,8 @@ jobs:
               expected = selected[:20] + ["triage-ui.spec.mjs"]
           elif case == "state_last":
               expected = selected[20:40]
+          if case in {"state_minimal", "tmux_clean_minimal"}:
+              expected = ["side-panel.spec.mjs", "triage-ui.spec.mjs"]
           runner = Path("tests/e2e/run.mjs")
           original = runner.read_text()
           instrumentation = r'''
@@ -98,6 +100,7 @@ jobs:
           function __after(file) {
             __state(file,'after')
             if(__case==='cleanup') {killLeakedApps();killLeakedServers();killLeakedE2eTmux();__state(file,'cleaned')}
+            if(__case==='tmux_clean_minimal') {killLeakedE2eTmux();__state(file,'cleaned')}
             if(__socket) {
               try {__exec('tmux',['-L','clave','kill-server'],{stdio:'ignore',timeout:3000})} catch {}
               __remove(__socket,{recursive:true})
