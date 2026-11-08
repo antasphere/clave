@@ -1,0 +1,202 @@
+name: CI1107 parity diagnosis
+on:
+  push:
+    branches: [test/ci1107-r13-diagnostic]
+permissions:
+  contents: read
+jobs:
+  diagnostic:
+    name: Diagnose (${{ matrix.case }})
+    strategy:
+      fail-fast: false
+      max-parallel: 5
+      matrix:
+        case: [shared_batch, shared_node, processes, sockets, alone]
+    runs-on: macos-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: e85fac6707eb3843f7f933ee62e32b15a8ad7c3c
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.4.1'
+      - name: Install tmux
+        run: brew install tmux
+      - name: Install dependencies
+        run: npm ci
+      - name: Download Electron
+        run: npx install-electron
+      - name: Build native helpers
+        run: npm run native:build
+      - name: Build the app
+        run: npx electron-vite build
+      - name: Diagnose immutable candidate
+        env:
+          DIAG_CASE: ${{ matrix.case }}
+        run: |
+          python3 - <<'PYDIAG'
+          """Bounded diagnostic cases on immutable R12 code. Never acceptance timing."""
+          import hashlib
+          import json
+          import os
+          import re
+          import shutil
+          import subprocess
+          import tempfile
+          import uuid
+          from pathlib import Path
+
+          HEAD = "e85fac6707eb3843f7f933ee62e32b15a8ad7c3c"
+          case = os.environ["DIAG_CASE"]
+          assert case in {"shared_batch", "shared_node", "processes", "sockets", "alone"}
+          assert subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip() == HEAD
+          private = Path(os.environ["RUNNER_TEMP"]) / "ci1107-private" / case
+          public = Path(os.environ["RUNNER_TEMP"]) / "ci1107-public"
+          private.mkdir(parents=True, exist_ok=True)
+          public.mkdir(parents=True, exist_ok=True)
+          specs = sorted(p.name for p in Path("tests/e2e").glob("*.spec.mjs"))
+          selected = json.loads(subprocess.check_output(
+              ["node", "tests/e2e/run.mjs", "--list", "--shard", "1/5"], text=True))
+          assert len(specs) == 196 and len(selected) == 42
+          assert all([n for n in specs if name in n] == [name] for name in selected)
+          VALIDATE = """import {mergeReports} from './tests/e2e/merge-reports.mjs';
+          import {readFileSync} from 'node:fs'; const d=JSON.parse(readFileSync(0,'utf8'));
+          mergeReports([{...d.report,shard:{index:1,total:1}}],d.expected,1);"""
+
+
+          def digest_command(args):
+              result = subprocess.run(args, capture_output=True, timeout=10)
+              return {"code": result.returncode, "sha256": hashlib.sha256(result.stdout).hexdigest()}
+
+
+          def tmux_snapshot(env):
+              out = {}
+              for option in ("default-shell", "update-environment"):
+                  result = subprocess.run(["tmux", "-L", "clave", "show-option", "-gv", option],
+                                          env=env, capture_output=True, text=True, timeout=5)
+                  value = result.stdout.strip()
+                  out[option] = {"code": result.returncode, "length": len(value),
+                                 "sha256": hashlib.sha256(value.encode()).hexdigest()}
+                  if option == "default-shell" and result.returncode == 0:
+                      out[option]["basename"] = Path(value).name
+              return out
+
+
+          def triage_metadata(namespace):
+              root = Path("/tmp") / namespace
+              summaries = []
+              if not root.is_dir():
+                  return summaries
+              for folder in root.glob("clave-e2e-triage-*"):
+                  calls = folder / "codex-calls.jsonl"
+                  if folder.is_symlink() or not folder.is_dir() or not calls.is_file():
+                      continue
+                  assert calls.stat().st_size <= 8 * 1024 * 1024
+                  rows = [json.loads(line) for line in calls.read_text().splitlines() if line]
+                  spawns = []
+                  for row in rows:
+                      if row.get("kind") != "spawn":
+                          continue
+                      argv = row.get("argv", [])
+                      spawns.append({"pid": row.get("pid"),
+                          "route": "app-server" if "app-server" in argv else "terminal",
+                          "cwdKind": "capture" if "/triage/" in row.get("cwd", "") else "workspace",
+                          "flags": [a for a in argv if re.fullmatch(r"--[a-z-]+", a)],
+                          "syntheticToken": row.get("syntheticToken")})
+                  journal = folder / "data" / "terminal-journal.jsonl"
+                  journal_rows = 0
+                  if journal.is_file() and journal.stat().st_size <= 8 * 1024 * 1024:
+                      journal_rows = len(journal.read_text().splitlines())
+                  summaries.append({"recordCount": len(rows), "spawns": spawns,
+                                    "terminalJournalRows": journal_rows})
+              return summaries
+
+
+          def invoke(args, expected, report_path, env, tag):
+              with (private / (tag + ".log")).open("w") as log:
+                  result = subprocess.run(args, env=env, stdout=log, stderr=subprocess.STDOUT, timeout=1800 if len(expected) > 1 else 660)
+              report = json.loads(report_path.read_text())
+              assert result.returncode in (0, 1) and report["completed"] is True
+              assert result.returncode == report["exitCode"]
+              assert report["selected"] == expected
+              subprocess.run(["node", "--input-type=module", "-e", VALIDATE],
+                             input=json.dumps({"report": report, "expected": expected}), text=True, check=True)
+              return report
+
+
+          result = {"case": case, "codeUnderTest": HEAD,
+                    "purpose": "Diagnostic only; every underlying assertion/failure remains unchanged.",
+                    "selection": selected, "reportsComplete": False}
+          try:
+              base = dict(os.environ)
+              base.pop("GITHUB_OUTPUT", None)
+              namespace = "clave-e2e-ci-" + str(uuid.uuid4())
+              base["CLAVE_E2E_NS"] = namespace
+              result["keychainsBefore"] = digest_command(["security", "list-keychains", "-d", "user"])
+              result["defaultKeychainBefore"] = digest_command(["security", "default-keychain", "-d", "user"])
+              result["tmuxBefore"] = tmux_snapshot(base)
+              results = {}
+              if case in {"shared_batch", "shared_node"}:
+                  if case == "shared_batch":
+                      directory = private / "batch"
+                      env = dict(base, GITHUB_OUTPUT=str(private / "batch-output"))
+                      report = invoke(["node", "tests/e2e/ci-batch.mjs", "1/5", "--report-dir="+str(directory)],
+                                      selected, directory / "shard-1.json", env, "shared")
+                      resource = json.loads((directory / "resources-host-1.json").read_text())
+                      namespace = resource["namespace"]
+                      assert resource["completed"] is True
+                  else:
+                      report = invoke(["node", "tests/e2e/run.mjs", "--shard", "1/5", "--report", str(private / "report.json")],
+                                      selected, private / "report.json", base, "shared")
+                  namespace += "-shard-1-of-5"
+                  results = report["results"]
+                  result["triageFixture"] = triage_metadata(namespace)
+              else:
+                  names = selected if case != "alone" else ["triage-ui.spec.mjs", "agent-updates.spec.mjs", "fleet-files.spec.mjs", "renderer-responsiveness.spec.mjs"]
+                  for index, name in enumerate(names):
+                      namespace = "clave-e2e-ci-" + str(uuid.uuid4()) + "-shard-1-of-5"
+                      env = dict(base, CLAVE_E2E_NS=namespace)
+                      socket = None
+                      if case == "sockets":
+                          socket = Path(tempfile.mkdtemp(prefix="ci1107-tmux-", dir="/tmp"))
+                          env["TMUX_TMPDIR"] = str(socket)
+                      try:
+                          target = private / f"spec-{index}.json"
+                          report = invoke(["node", "tests/e2e/run.mjs", name, "--report", str(target)],
+                                          [name], target, env, f"spec-{index}")
+                          results.update(report["results"])
+                          if name == "triage-ui.spec.mjs":
+                              result["triageFixture"] = triage_metadata(namespace)
+                      finally:
+                          if socket is not None:
+                              cleanup = subprocess.run(["tmux", "-L", "clave", "kill-server"],
+                                                       env=env, capture_output=True, timeout=10)
+                              assert socket.name.startswith("ci1107-tmux-") and socket.stat().st_uid == os.getuid()
+                              shutil.rmtree(socket)
+              result["counts"] = {name: len(checks) for name, checks in results.items()}
+              result["failedNames"] = {name: [c["name"] for c in checks if not c["ok"]]
+                                       for name, checks in results.items() if any(not c["ok"] for c in checks)}
+              result["triageCount"] = len(results["triage-ui.spec.mjs"])
+              result["reportsComplete"] = True
+              result["tmuxAfter"] = tmux_snapshot(base)
+              result["keychainsAfter"] = digest_command(["security", "list-keychains", "-d", "user"])
+              result["defaultKeychainAfter"] = digest_command(["security", "default-keychain", "-d", "user"])
+          except BaseException as error:
+              result["driverErrorType"] = type(error).__name__
+              raise
+          finally:
+              (public / (case + ".json")).write_text(json.dumps(result, indent=2) + "\n")
+              print(json.dumps({k: result.get(k) for k in ("case", "reportsComplete", "triageCount", "driverErrorType")}))
+          PYDIAG
+      - name: Upload allowlisted diagnostic summary
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: diagnosis-${{ matrix.case }}
+          path: ${{ runner.temp }}/ci1107-public/*.json
+          if-no-files-found: error
