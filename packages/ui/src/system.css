@@ -1714,6 +1714,86 @@ canvas[data-orb-state] {
   margin-top: var(--menu-row-gap);
 }
 
+/* The pane header's session menu (views/SessionMenu.tsx): the views as
+   drawn tiles, then the transcript and session rows. Wide enough for three
+   tiles side by side and a row's hint beside its label. */
+.session-menu {
+  width: 288px;
+}
+.view-tiles {
+  display: grid;
+  grid-template-columns: repeat(var(--view-tiles, 3), minmax(0, 1fr));
+  gap: 4px;
+  padding: 0 4px 4px;
+}
+/* A tile: the drawing on a paper card, the view's name under it. Hover is the
+   menu row's fill; the view on screen rings its card in the accent, the one
+   place the accent goes, as in the drawing inside it. */
+.view-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 5px;
+  padding: 5px 5px 4px;
+  border-radius: var(--control-radius);
+  font-size: 12px;
+  font-weight: var(--font-weight-medium);
+  color: var(--text-secondary);
+  text-align: center;
+  outline: none;
+  user-select: none;
+  cursor: pointer;
+  transition:
+    color 150ms,
+    background-color 150ms;
+}
+.view-tile:hover,
+.view-tile[data-highlighted] {
+  background-color: var(--surface-100);
+  color: var(--text-primary);
+}
+.view-tile[data-selected='true'] {
+  color: var(--text-primary);
+}
+.view-tile-art {
+  display: block;
+  padding: 4px;
+  border-radius: var(--radius-md);
+  background-color: var(--surface-0);
+  box-shadow: 0 0 0 0.5px var(--edge-color);
+  transition: box-shadow 150ms;
+}
+.view-tile[data-selected='true'] .view-tile-art {
+  box-shadow: 0 0 0 1.5px var(--color-accent);
+}
+.view-tile-art .view-drawing {
+  width: 100%;
+  height: auto;
+}
+.view-tile-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* A row's word on what it just did ("Copied", "Saved", "Failed"), where its
+   hint sits; the check says it to the eye before the menu closes. */
+.session-menu-note {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+.session-menu-note[data-tone='done'] {
+  color: var(--color-status-ready, var(--text-secondary));
+}
+.session-menu-note[data-tone='failed'] {
+  color: var(--color-destructive);
+}
+.session-menu-failure {
+  padding: 2px 8px 6px;
+  font-size: 11px;
+  color: var(--color-destructive);
+}
+
 /* Hairline between menu sections, inset so it reads as a break in the list
    rather than a border cutting the surface. */
 .menu-sep {
@@ -3171,36 +3251,44 @@ button.extension-card:hover {
 }
 /* The transcript runs right down to the composer and fades out over its
    last stretch instead of stopping on a hard edge: the ground's own colour
-   laid over the foot of the transcript, from clear to whole. A gradient over
-   it, NOT a mask on the scroller: a masked scroller is repainted on every
-   frame of a scroll, and the scroll stuttered with one (7 November 2026).
-   Above the rows, under the jump-to-end control; it takes no pointer. The
-   column's own foot padding is taller than the fade, so the last line sits
-   clear of it once the reader is at the end. */
+   laid over the foot of the transcript. A gradient over it, NOT a mask on the
+   scroller: a masked scroller is repainted on every frame of a scroll, and
+   the scroll stuttered with one (7 November 2026). Above the rows, under the
+   jump-to-end control; it takes no pointer. The column's own foot padding is
+   taller than the fade, so the last line sits clear of it once the reader is
+   at the end.
+
+   The curve (8 November 2026): never whole, and not symmetric. It stops at
+   88% at the composer, so the last line still shows through, falls steeply
+   to about a third over the stretch nearest the composer, then thins out
+   over a long tail. The cosine S it replaced went to 100% and read as a wall
+   painted over the text. Shared by every transcript view (Chat, Enclave,
+   Folio's desk in lab/folio.css) through --transcript-fade-image. */
+:root {
+  --transcript-fade: calc(var(--spacing) * 9);
+  --transcript-fade-image: linear-gradient(
+    to bottom,
+    transparent,
+    color-mix(in srgb, var(--surface-0) 3%, transparent) 20%,
+    color-mix(in srgb, var(--surface-0) 9%, transparent) 40%,
+    color-mix(in srgb, var(--surface-0) 16%, transparent) 55%,
+    color-mix(in srgb, var(--surface-0) 26%, transparent) 68%,
+    color-mix(in srgb, var(--surface-0) 38%, transparent) 78%,
+    color-mix(in srgb, var(--surface-0) 55%, transparent) 86%,
+    color-mix(in srgb, var(--surface-0) 73%, transparent) 93%,
+    color-mix(in srgb, var(--surface-0) 88%, transparent)
+  );
+}
 .chat-transcript::after {
-  --chat-fade: calc(var(--spacing) * 7);
   content: '';
   position: absolute;
   z-index: 5;
   left: 0;
   right: 0;
   bottom: 0;
-  height: var(--chat-fade);
+  height: var(--transcript-fade);
   pointer-events: none;
-  /* A cosine ease over eight steps: no visible edge where the fade begins,
-     none where it ends, and no banding between. */
-  background-image: linear-gradient(
-    to bottom,
-    transparent,
-    color-mix(in srgb, var(--surface-0) 4%, transparent) 12.5%,
-    color-mix(in srgb, var(--surface-0) 15%, transparent) 25%,
-    color-mix(in srgb, var(--surface-0) 31%, transparent) 37.5%,
-    color-mix(in srgb, var(--surface-0) 50%, transparent) 50%,
-    color-mix(in srgb, var(--surface-0) 69%, transparent) 62.5%,
-    color-mix(in srgb, var(--surface-0) 85%, transparent) 75%,
-    color-mix(in srgb, var(--surface-0) 96%, transparent) 87.5%,
-    var(--surface-0)
-  );
+  background-image: var(--transcript-fade-image);
 }
 /* The way back down. The transcript follows the stream only while the reader
    is at its end (`useTranscriptEnd`); one who scrolled up to re-read is left
@@ -4609,6 +4697,14 @@ details[open] > .chat-approval-items {
   padding: 0 calc(var(--spacing) * 6) calc(var(--spacing) * 3);
 }
 .chat-composer {
+  /* Above the transcript's fade (.chat-transcript::after, z-index 5): the
+     hairline and the lift are a box-shadow, and the half pixel of it above
+     the box lies over the fade's last, solid stretch, which painted over it
+     and cut the composer's top edge. Lifted on the form alone, not on its
+     wrapper, so the slash menu above keeps its own stacking beside the
+     jump-to-end control. */
+  position: relative;
+  z-index: 6;
   display: flex;
   align-items: flex-end;
   gap: calc(var(--spacing) * 2);

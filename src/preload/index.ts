@@ -1718,6 +1718,9 @@ const electronAPI = {
     extras?: { sessionType?: string | null; locationId?: string | null }
   ) => ipcRenderer.invoke('session:save-plan', cwd, claudeSessionId, sessionName, extras),
 
+  saveTranscript: (markdown: string, fileName: string) =>
+    ipcRenderer.invoke('session:save-transcript', markdown, fileName),
+
   openExternal: (url: string) => ipcRenderer.invoke('shell:openExternal', url),
   // What the reader needs from a run of messages other tabs sent: a one-shot
   // model call in main (src/main/exchange-digest.ts), answered as a result.

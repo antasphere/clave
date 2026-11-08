@@ -119,8 +119,8 @@ export async function run(t) {
 
     // ── The Enclave view keeps its draft the same way ────────────────────────
     const switchTo = async (title) => {
-      await win.getByLabel('Change view', { exact: true }).click()
-      const item = win.locator('.menu-item', { hasText: title })
+      await win.getByLabel('Session menu', { exact: true }).click()
+      const item = win.locator('.view-tile', { hasText: title })
       await item.waitFor()
       await win.waitForTimeout(500)
       await item.click({ force: true })

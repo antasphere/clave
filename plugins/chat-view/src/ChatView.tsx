@@ -99,6 +99,8 @@ import {
 } from '../../../src/shared/attachments'
 import { useComposerAttachments } from './composer-attachments'
 import { DropDrawing } from './DropDrawing'
+import { transcriptMarkdown } from './export'
+import { registerTranscriptExporter } from '../../../src/renderer/src/views/transcript-export'
 import { ViewEmpty } from './EmptyDrawing'
 import { ServerEnded } from './ServerEnded'
 import {
@@ -627,6 +629,34 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
     visible && before !== null,
     fetchEarlier,
     presentation.entries
+  )
+  // The whole conversation for the pane header's menu (copy, save as
+  // Markdown): what this view holds, with every older page of the past read in
+  // front of it first, so a long conversation is copied whole and not from
+  // where the reader happened to scroll. Read from a ref, so the exporter
+  // registered once per session always sees the entries as they are now.
+  const exportSource = useRef({ conversation, before })
+  exportSource.current = { conversation, before }
+  useEffect(
+    () =>
+      registerTranscriptExporter(session.id, async () => {
+        let { conversation: whole, before: cursor } = exportSource.current
+        while (cursor !== null) {
+          const page = await window.electronAPI.sessionsHistory(session.id, cursor, 2000)
+          whole = reduceConversation(whole, { prepend: page.items })
+          // A cursor that does not move would ask the same page forever.
+          cursor = page.before !== null && page.before < cursor ? page.before : null
+        }
+        const record = useViewSessionStore.getState().sessions.find((s) => s.id === session.id)
+        return transcriptMarkdown(whole.entries, {
+          title: record?.name ?? session.title,
+          agent: AGENT_NAMES[session.provider] ?? session.provider,
+          cwd: session.cwd,
+          model: whole.model,
+          exportedAt: new Date()
+        })
+      }),
+    [session.id, session.title, session.provider, session.cwd]
   )
   const write = async (input: SessionInput): Promise<void> => {
     await window.electronAPI.sessionsWrite(session.id, input)

@@ -12,12 +12,12 @@ import { observeNativeParser } from './diagnostics/prefix-cache/native-parser-ch
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 export async function chooseResourceView(win, id, kind) {
   const host = win.locator(`.chat-host[data-session-id="${id}"]`)
-  const picker = host.getByRole('button', { name: 'Change view', exact: true })
-  if ((await picker.getAttribute('title')) !== `View: ${kind === 'chat' ? 'Chat' : 'Enclave'}`) {
+  const picker = host.getByRole('button', { name: 'Session menu', exact: true })
+  if ((await picker.getAttribute('data-view-title')) !== (kind === 'chat' ? 'Chat' : 'Enclave')) {
     await picker.click()
-    const menu = win.locator('[role="menu"][aria-label="Views"]')
+    const menu = win.locator('[role="menu"][aria-label="Session menu"]')
     await menu
-      .getByRole('menuitem', { name: kind === 'chat' ? 'Chat' : 'Enclave', exact: true })
+      .getByRole('menuitemradio', { name: kind === 'chat' ? 'Chat' : 'Enclave', exact: true })
       .click()
     await menu.waitFor({ state: 'detached' })
   }
