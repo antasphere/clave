@@ -601,6 +601,42 @@ describe('taking a message back', () => {
     expect(answeredSince(typedThenApproved.entries)).toBe(false)
   })
 
+  it("the server's word of the approve before the view's own answer moves the form once", () => {
+    const id = 'clave:35e6218e-85f6-4dc0-9b19-366bf927d351'
+    const form: ChatEvent = {
+      type: 'permission_request',
+      id,
+      description: 'One thing.',
+      toolName: 'clave_request_input',
+      input: { tool: 'clave_request_input', layout: 'form' },
+      options: [
+        { id: 'answer', label: 'Approve' },
+        { id: 'deny', label: 'Skip' }
+      ],
+      questions: [{ id: 'login', question: 'Your GitHub login', kind: 'github-login', options: [] }]
+    }
+    // The person approves; the server's echo and withdrawal reach the view
+    // first, the agent begins to answer, and only then the view's own answer
+    // resolves: the form moved on the echo and never again.
+    const echoed = run([
+      form,
+      { type: 'user_message', text: 'hello' },
+      { type: 'permission_updated', id, answers: { login: 'luca-a' }, sent: true },
+      { type: 'permission_withdrawn', id },
+      { type: 'assistant_text', delta: 'Thanks.', final: true }
+    ])
+    const shape = (s: Conversation): string[] =>
+      visibleEntries(s.entries).map((e) => (e.kind === 'permission' ? 'form' : e.kind))
+    expect(shape(echoed)).toEqual(['user', 'form', 'assistant'])
+    const resolved = reduceConversation(echoed, {
+      answer: id,
+      optionId: 'answer',
+      answers: { login: 'luca-a' }
+    })
+    expect(shape(resolved)).toEqual(['user', 'form', 'assistant'])
+    expect(resolved.entries.filter((e) => e.kind === 'permission')).toHaveLength(2)
+  })
+
   it('two forms open at once each settle where they stood', () => {
     const idA = 'clave:aaaaaaaa-85f6-4dc0-9b19-366bf927d351'
     const idB = 'clave:bbbbbbbb-85f6-4dc0-9b19-366bf927d351'
