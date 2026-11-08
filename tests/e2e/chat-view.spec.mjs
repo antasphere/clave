@@ -110,11 +110,11 @@ export async function run(t) {
     // until 13 October and had failed on dev since. The picker lists the
     // plugin's views once the view registry has read the plugin records, a
     // beat after the composer is enabled: wait for it, then read the pane.
-    const picker = win.getByLabel('Change view', { exact: true })
+    const picker = win.getByLabel('Session menu', { exact: true })
     assert.ok(
       await until(async () => {
         if ((await picker.count()) !== 1) return null
-        return (await picker.getAttribute('title')) === 'View: Chat' ? true : null
+        return (await picker.getAttribute('data-view-title')) === 'Chat' ? true : null
       }),
       'the pane header names the Chat view within ten seconds'
     )

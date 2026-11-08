@@ -5,14 +5,7 @@ import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import { useRegistry } from './store'
 import { implemented, nativeViews } from './native-views'
 import { paneIsTerminal } from './pane-kind'
-import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
-import {
-  CheckIcon,
-  CommandLineIcon,
-  MagnifyingGlassIcon,
-  Squares2X2Icon,
-  XMarkIcon
-} from '@heroicons/react/24/outline'
+import { CommandLineIcon, MagnifyingGlassIcon, XMarkIcon } from '@heroicons/react/24/outline'
 import type { AgentState } from '../../../shared/session-model'
 import { claudeModelName } from '../../../shared/claude-models'
 import { TerminalPanel } from '../components/terminal/TerminalPanel'
@@ -21,7 +14,9 @@ import { bindKernelState } from './kernel-state'
 import { useSessionLog } from './conversation-store'
 import { clearSessionDraft } from './draft-store'
 import { PluginViewSurface } from './PluginViewSurface'
-import { availableViews, resolveView, type AvailableView } from './resolution'
+import { availableViews, resolveView } from './resolution'
+import { SessionMenu } from './SessionMenu'
+import { SessionCopyOffers } from '../components/terminal/SessionCopyOffers'
 import { emitTabClosed } from '../lib/exchange-capture'
 import { ConfirmDialog } from '@clave/ui/components'
 import { LinkedDocumentReopen } from '../components/files/LinkedDocumentReopen'
@@ -32,72 +27,6 @@ import { PaneSearch } from './PaneSearch'
 import { usePaneSearchStore } from './pane-search'
 import { useBackgroundTasks } from './background-tasks'
 
-/** The pane's view picker: every view that renders this session, the current
- *  one checked. Hidden when a session has only one view to be read in — a menu
- *  with a single item is chrome with nothing to decide. */
-function ViewPicker({
-  sessionId,
-  views,
-  active
-}: {
-  sessionId: string
-  views: AvailableView[]
-  active: string | undefined
-}): React.JSX.Element | null {
-  const [failure, setFailure] = useState('')
-  if (views.length < 2) return null
-  const current = views.find((view) => view.id === active)
-  const choose = async (id: string): Promise<void> => {
-    try {
-      const updated = await window.electronAPI.sessionsSetView(sessionId, id)
-      // The record in main is the truth; reflect it without waiting for a
-      // round trip through the plugin-change refresh.
-      useRegistry.setState((state) => ({
-        sessions: state.sessions.map((s) => (s.id === updated.id ? updated : s))
-      }))
-      setFailure('')
-    } catch (error) {
-      setFailure(String(error))
-    }
-  }
-  return (
-    <DropdownMenu.Root modal={false}>
-      <DropdownMenu.Trigger asChild>
-        <button
-          type="button"
-          className="panel-icon-btn"
-          aria-label="Change view"
-          title={failure || `View: ${current?.title ?? 'default'}`}
-          data-failed={failure ? 'true' : undefined}
-        >
-          <Squares2X2Icon className="w-4 h-4" />
-        </button>
-      </DropdownMenu.Trigger>
-      <DropdownMenu.Portal>
-        <DropdownMenu.Content
-          side="bottom"
-          align="end"
-          sideOffset={6}
-          className="menu-surface menu-pop z-50 min-w-[200px] p-1"
-          aria-label="Views"
-        >
-          <DropdownMenu.Label className="menu-label">Read this session as</DropdownMenu.Label>
-          {views.map((view) => (
-            <DropdownMenu.Item
-              key={view.id}
-              className="menu-item"
-              data-selected={view.id === active ? 'true' : undefined}
-              onSelect={() => void choose(view.id)}
-            >
-              <span className="truncate">{view.title}</span>
-              {view.id === active && <CheckIcon className="select-option-check" />}
-            </DropdownMenu.Item>
-          ))}
-        </DropdownMenu.Content>
-      </DropdownMenu.Portal>
-    </DropdownMenu.Root>
-  )
-}
 function RegisteredSessionView({
   sessionId,
   terminalSessionId,
@@ -290,6 +219,11 @@ function RegisteredSessionView({
             drawnInPane={viewId === 'clave.chat-view/chat' || viewId === 'clave.chat-view/lab'}
           />
           <LinkedDocumentReopen sessionId={sessionId} />
+          {/* What the agent handed over to copy (clave_offer_copy): absent
+              until it offers something. The terminal header had it; a chat
+              pane never mounted it, so an agent pointed at a button nobody
+              could see. */}
+          <SessionCopyOffers sessionId={sessionId} />
           {/* The state in words, for assistive tech and the specs only: the
               status glyph before the title says it on screen. */}
           <span className="chat-state sr-only" data-state={meta.state}>
@@ -305,7 +239,6 @@ function RegisteredSessionView({
               <MagnifyingGlassIcon className="w-4 h-4" />
             </button>
           )}
-          <ViewPicker sessionId={sessionId} views={views} active={viewId} />
           <span
             title={
               terminalSessionId
@@ -333,6 +266,7 @@ function RegisteredSessionView({
               <CommandLineIcon className="w-4 h-4" />
             </button>
           </span>
+          <SessionMenu sessionId={sessionId} views={views} active={viewId} />
           <button
             className="panel-icon-btn"
             aria-label="Close session"

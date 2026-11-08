@@ -1004,6 +1004,12 @@ export interface ElectronAPI extends FleetDesktopAPI {
     sessionName: string,
     extras?: { sessionType?: string | null; locationId?: string | null }
   ) => Promise<{ success: boolean; error?: string }>
+  /** Ask where to save a conversation written as Markdown, and write it.
+   *  `error: 'cancelled'` when the reader closed the dialog. */
+  saveTranscript: (
+    markdown: string,
+    fileName: string
+  ) => Promise<{ success: boolean; error?: string; path?: string }>
   openExternal: (url: string) => Promise<void>
   /** The exchange timeline's digest: what the reader needs from a run of
    *  messages other tabs sent. A failure is a result, never a rejection. */

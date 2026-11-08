@@ -200,8 +200,8 @@ export async function run(t) {
     for (const mode of ['chat', 'terminal']) {
       if (mode === 'terminal') {
         // The pane's view picker is the reader's road to the other presentation.
-        await host.getByRole('button', { name: 'Change view', exact: true }).click()
-        await win.getByRole('menuitem', { name: /enclave/i }).click()
+        await host.getByRole('button', { name: 'Session menu', exact: true }).click()
+        await win.getByRole('menuitemradio', { name: /enclave/i }).click()
       }
       const view = host.locator(`[data-testid="${mode}-view"]`)
       const shown = await until(() => view.locator('textarea:not(:disabled)').isVisible(), {

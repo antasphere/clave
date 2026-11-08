@@ -44,6 +44,16 @@ Drag sessions together in the sidebar to create groups. Groups let you organize 
 
 See the **Session Groups** doc for more on pinned groups and .clave files.
 
+## Ongoing Conversations
+
+Some conversations are not work: a situation you handle over weeks, like an exchange with your accountant or an email thread to sort out. Keep them out of the sidebar without closing them:
+
+- Right-click a Claude or Pi tab (or a selection of tabs) and choose **Move to Ongoing**. The row leaves the sidebar; it keeps its place in its group, which says "Kept in Ongoing" if nothing else is left in it.
+- An **Ongoing** card appears at the foot of the sidebar while the workspace keeps at least one. It counts them, and shows in the accent how many wait for your answer or hold a reply you have not read.
+- Click it to open the Ongoing page: one card per conversation, with where it stands, your own note (click "Add a note" on a card), the last exchange, and the group it came from. Click a card to continue the conversation in the pane. Escape goes back to your tabs.
+- An ongoing conversation survives a quit and a restart of the Mac. If no tab runs it any more, opening its card picks the same conversation up from its transcript; it is never offered in the restore prompt.
+- From a card's menu (the `…` button or a right-click): **Back to the sidebar** puts the tab back where it was, and **End conversation** closes it. The conversation stays in the session history either way.
+
 ## Closing Sessions
 
 - **Cmd+Backspace**: Kill the focused session
