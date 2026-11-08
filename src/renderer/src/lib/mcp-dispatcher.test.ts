@@ -658,6 +658,40 @@ describe('round 1: the window road refuses before resuming, and places by the pa
     expect(switchAccount.restartSessionProcess).not.toHaveBeenCalled()
   })
 
+  it('refuses a stopped claude agents menu with resume: true, restarting nothing (round 2, R05)', async () => {
+    useSessionStore.setState({
+      sessions: [
+        {
+          id: 'r5-lead',
+          name: 'Lead',
+          cwd: '/r',
+          sessionType: 'local',
+          alive: true,
+          claudeMode: true
+        },
+        {
+          id: 'r5-menu',
+          name: 'Agents',
+          cwd: '/r',
+          sessionType: 'local',
+          alive: false,
+          claudeMode: true,
+          claudeAgentsMode: true,
+          spawnedBy: 'r5-lead'
+        }
+      ] as never
+    })
+    const answer = await dispatchOnce('sendToSession', {
+      callerSessionId: 'r5-lead',
+      sessionId: 'r5-menu',
+      message: 'pick one',
+      resume: true
+    })
+    expect(answer.ok).toBe(false)
+    expect(answer.error).toContain('Refusing to send to a `claude agents` tab')
+    expect(switchAccount.restartSessionProcess).not.toHaveBeenCalled()
+  })
+
   it('opens a server tab in the server workspace paired with the caller’s (C6)', async () => {
     const paired = resourceKey('workspace', 'srv', 'ws-raw')
     useWorkspaceStore.setState({

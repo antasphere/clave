@@ -7,6 +7,7 @@ import {
 } from '../../../src/renderer/src/lib/fleet-identity'
 import { parseResourceKey } from '@clave/contract/fleet'
 import { bindFleetCatchup } from './fleet-sync'
+import { bindReconnectReset } from './reconnect'
 /** The Terminal view: a third reading of a session, started as a copy of
  *  `ChatView` and diverging from it on purpose. Shares its props with Chat. */
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react'
@@ -358,14 +359,9 @@ export function TerminalView({
   useEffect(() => {
     let live = true
     // A server's connection coming back may be to a server that counts its
-    // runs from 1 again: the run heard so far is forgotten first (PRDCT-4191).
-    const stopReconnect =
-      isRemoteKey(session.id) && window.electronAPI.onFleetStatus
-        ? window.electronAPI.onFleetStatus((status) => {
-            if (live && status.serverId === ownerOf(session.id) && status.state === 'connected')
-              dispatch({ reconnected: true })
-          })
-        : () => {}
+    // runs from 1 again: the run heard so far is forgotten first, bound
+    // ahead of every frame (PRDCT-4191, `reconnect.ts`).
+    const stopReconnect = bindReconnectReset(session.id, () => dispatch({ reconnected: true }))
     const catchup = bindFleetCatchup(session.id, (page) => {
       if (!live) return
       dispatch({ sync: page.items })

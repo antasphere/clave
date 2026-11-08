@@ -3,6 +3,7 @@ import type { HistoryItem, SessionEvent } from '../../../../src/shared/session-m
 import { isRemoteKey, ownerOf } from '../../../../src/renderer/src/lib/fleet-identity'
 import { endIsCurrent } from '../../../../src/renderer/src/views/session-end'
 import { bindFleetCatchup } from '../fleet-sync'
+import { bindReconnectReset } from '../reconnect'
 import { emptyConversation, reduceConversation, type Action, type Conversation } from '../reducer'
 import { emptyStatus, reduceStatus, type TerminalStatus } from '../terminal-status'
 import { foldSubagents, noSubagents, reduceSubagents, type SubagentLogs } from '../subagents'
@@ -55,14 +56,9 @@ export function useConversation(
   useEffect(() => {
     let live = true
     // A server's connection coming back may be to a server that counts its
-    // runs from 1 again: the run heard so far is forgotten first (PRDCT-4191).
-    const stopReconnect =
-      isRemoteKey(sessionId) && window.electronAPI.onFleetStatus
-        ? window.electronAPI.onFleetStatus((status) => {
-            if (live && status.serverId === ownerOf(sessionId) && status.state === 'connected')
-              dispatch({ reconnected: true })
-          })
-        : () => {}
+    // runs from 1 again: the run heard so far is forgotten first, bound
+    // ahead of every frame (PRDCT-4191, `reconnect.ts`).
+    const stopReconnect = bindReconnectReset(sessionId, () => dispatch({ reconnected: true }))
     const catchup = bindFleetCatchup(sessionId, (page) => {
       if (!live) return
       dispatch({ sync: page.items })

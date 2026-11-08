@@ -190,3 +190,14 @@ describe('server tab placement when nothing names a workspace (PRDCT-4193)', () 
     )
   })
 })
+
+describe('a server root saved with a trailing slash (round 2, R09b)', () => {
+  it('holds its own directory as well as the ones under it', () => {
+    const slashed = { ...ws(remote), rootDir: '/srv/x/' }
+    const base = { ...defaults, workspaces: [ws('local-ws'), slashed], server: 'a' }
+    expect(resolveSessionTarget({ ...base, cwd: '/srv/x' }).workspaceId).toBe(remote)
+    expect(resolveSessionTarget({ ...base, cwd: '/srv/x/' }).workspaceId).toBe(remote)
+    expect(resolveSessionTarget({ ...base, cwd: '/srv/x/deeper' }).workspaceId).toBe(remote)
+    expect(resolveSessionTarget({ ...base, cwd: '/srv/xy' }).workspaceId).toBeUndefined()
+  })
+})
