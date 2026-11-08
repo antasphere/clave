@@ -17,8 +17,26 @@ import {
   resolveProfileRef,
   resolveSpawnModes
 } from '../../shared/open-session-modes'
-import type { SecretAction } from '../../../packages/contract/src/requests'
+import type {
+  HostedRequestInput,
+  PendingRequest,
+  SecretAction
+} from '../../../packages/contract/src/requests'
 import type { PendingRequests } from '../../../packages/server/src/requests/service'
+import {
+  INPUT_RESULT_DESCRIPTION,
+  INPUT_SET_DESCRIPTION,
+  REQUEST_INPUT_DESCRIPTION,
+  inputResultPayload,
+  inputResultSchema,
+  inputSetSchema,
+  pollResult,
+  setRefusal,
+  type InputSetArgs,
+  requestInputSchema,
+  toHostedInput,
+  type RequestInputArgs
+} from './request-input'
 import type { Session, SessionRecord } from '@clave/contract/sessions'
 import { historyLines } from '../../shared/history-text'
 import {
@@ -34,6 +52,10 @@ export interface StandaloneMcpOptions {
   readonly sessions: SessionHostService
   readonly agentTools: AgentTokensService
   readonly requests: PendingRequests
+  /** PRDCT-4157: how a request an agent tool puts to the person is created,
+   *  the request-aware host's road, which publishes it to the session's views;
+   *  absent, the service's own create, seen by a view only when it subscribes. */
+  readonly createHosted?: ((input: HostedRequestInput) => PendingRequest) | undefined
   /** ADR 0004: the routines this server schedules; absent, the report tool says so. */
   readonly routines?: RoutinesService | undefined
   readonly executeSecret: (action: SecretAction, value: string) => Promise<void>
@@ -174,7 +196,7 @@ function buildServer(
     { name: 'clave-server', version: '1' },
     {
       instructions:
-        'Your Clave tools run on this server without a desktop. Ask for approval, clarification or a secret with clave_request_approval, clave_request_clarification or clave_request_secret. Calls return a requestId. Poll clave_request_result or clave_secret_result while pending; clients can answer later. Secret values and action output are never returned. Delegate work to a new tab with clave_open_session, then message it with clave_send_to_session (target "parent" to report back to the tab that opened yours; "mine" logs a checkpoint, typed nowhere), read it with clave_read_session, resume a stopped one with clave_resume_session and close it with clave_close_session; clave_create_group, clave_move_session and clave_rename organize the tabs. Sessions and paths are server-local.'
+        'Your Clave tools run on this server without a desktop. Ask the person for a plain value, a choice, a file, a link to open or a small form with clave_request_input (a form in their chat that lives across your turns; fill it from what they say with clave_input_set; clave_input_result reads it), for approval with clave_request_approval, for a secret with clave_request_secret. Calls return a requestId. Poll clave_request_result or clave_secret_result while pending; clients can answer later. Secret values and action output are never returned. Delegate work to a new tab with clave_open_session, then message it with clave_send_to_session (target "parent" to report back to the tab that opened yours; "mine" logs a checkpoint, typed nowhere), read it with clave_read_session, resume a stopped one with clave_resume_session and close it with clave_close_session; clave_create_group, clave_move_session and clave_rename organize the tabs. Sessions and paths are server-local.'
     }
   )
   server.registerTool(
@@ -196,6 +218,54 @@ function buildServer(
       })
       return text({ requestId: request.id, status: 'pending' })
     }
+  )
+  server.registerTool(
+    'clave_request_input',
+    { description: REQUEST_INPUT_DESCRIPTION, inputSchema: requestInputSchema },
+    async (args) => {
+      const createHosted = options.createHosted ?? ((input) => requests.createHosted(input))
+      const request = createHosted(toHostedInput(args as RequestInputArgs, sessionId))
+      const view = await pollResult(
+        (waitMs) => requests.resultAfter(request.id, sessionId, waitMs),
+        (args as RequestInputArgs).timeoutSeconds * 1000
+      )
+      return text(inputResultPayload(view))
+    }
+  )
+  server.registerTool(
+    'clave_input_set',
+    { description: INPUT_SET_DESCRIPTION, inputSchema: inputSetSchema },
+    async (args) => {
+      const { requestId, answers, submit, notes } = args as InputSetArgs
+      try {
+        return text(
+          inputResultPayload(
+            await requests.setAnswers({
+              requestId,
+              sessionId,
+              answers,
+              ...(submit && { submit: true }),
+              ...(notes && { notes })
+            })
+          )
+        )
+      } catch (error) {
+        return { isError: true, content: [{ type: 'text', text: setRefusal(error) }] }
+      }
+    }
+  )
+  server.registerTool(
+    'clave_input_result',
+    { description: INPUT_RESULT_DESCRIPTION, inputSchema: inputResultSchema },
+    async ({ requestId, waitSeconds }) =>
+      text(
+        inputResultPayload(
+          await pollResult(
+            (waitMs) => requests.resultAfter(requestId, sessionId, waitMs),
+            waitSeconds * 1000
+          )
+        )
+      )
   )
   server.registerTool(
     'clave_request_clarification',

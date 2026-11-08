@@ -285,7 +285,11 @@ async function main(): Promise<void> {
     host: owned?.host ?? originalSessions,
     requests,
     subscribeAll: (listener) => sessionManager.subscribeAll(listener),
-    subscribeRemoved: (listener) => sessionManager.subscribeRemoved(listener)
+    subscribeRemoved: (listener) => sessionManager.subscribeRemoved(listener),
+    // PRDCT-4157: a request an agent tool puts to the person reaches the
+    // session's open views as the adapter's own questions do.
+    publish: (id, event) => sessionManager.publishHostEvent(id, event),
+    setState: (id, state) => sessionManager.setState(id, state)
   })
   const sessions = requestHost.host
   installE2eHooks({ sessionHost: sessions })
@@ -359,7 +363,7 @@ async function main(): Promise<void> {
   const server = await startEmbedded({
     ports: {
       sessions,
-      requests,
+      requests: requestHost.port,
       files: createServerFiles({
         attachmentsRoot: path.join(dataDir, 'session-attachments'),
         watcher: new FileTreeWatcher()
@@ -403,6 +407,7 @@ async function main(): Promise<void> {
         sessions,
         agentTools,
         requests,
+        createHosted: requestHost.createHosted,
         routines,
         ...(sidebar && { sidebar }),
         // An agent's profile must belong to the mode it opens (a chat or

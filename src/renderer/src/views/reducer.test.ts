@@ -399,6 +399,274 @@ describe('taking a message back', () => {
     expect(shown(late)).toEqual(['go'])
   })
 
+  it('a form the agent asked lives across the turn, follows its writes, and folds its approve into the record', () => {
+    const form: ChatEvent = {
+      type: 'permission_request',
+      id: 'clave:1',
+      description: 'Four things before this machine is set up.',
+      toolName: 'clave_request_input',
+      input: { tool: 'clave_request_input', layout: 'steps' },
+      options: [
+        { id: 'answer', label: 'Approve' },
+        { id: 'deny', label: 'Skip' }
+      ],
+      questions: [
+        { id: 'login', question: 'Your GitHub login', kind: 'github-login', options: [] },
+        { id: 'name', question: 'The machine name', kind: 'text', options: [] }
+      ]
+    }
+    // The kernel's turn ends with the form open: the card stays live, where
+    // a provider's own question would read as answered elsewhere.
+    const open = run([form, { type: 'state_change', state: 'done' }])
+    expect(elsewhere(open.entries[0])).toBeUndefined()
+    expect(openRequests(open.entries).map((r) => r.id)).toEqual(['clave:1'])
+    // The agent set a field from what the reader said: the card's draft.
+    const drafted = reduceConversation(open, {
+      event: { type: 'permission_updated', id: 'clave:1', answers: { login: 'luca-a' } },
+      at: 2
+    })
+    expect(drafted.entries[0]).toMatchObject({ draft: { login: 'luca-a' } })
+    expect(drafted.entries[0]).not.toHaveProperty('answer')
+    // The approve, written to the agent as the reader's message, draws no
+    // bubble: the record row says it. Every view is handed the answers.
+    const message = [
+      '[The form "Four things before this machine is set up." was approved by the person]',
+      'Your GitHub login: luca-a',
+      '(form clave:35e6218e-85f6-4dc0-9b19-366bf927d351 · request r1: clave_input_result reads it, clave_input_set revises a field)'
+    ].join('\n')
+    const approved = run([
+      ...[{ ...form, id: 'clave:35e6218e-85f6-4dc0-9b19-366bf927d351' }],
+      {
+        type: 'permission_updated',
+        id: 'clave:35e6218e-85f6-4dc0-9b19-366bf927d351',
+        answers: { login: 'luca-a', name: 'mbp' },
+        sent: true
+      },
+      { type: 'permission_withdrawn', id: 'clave:35e6218e-85f6-4dc0-9b19-366bf927d351' },
+      { type: 'user_message', text: message, form: 'clave:35e6218e-85f6-4dc0-9b19-366bf927d351' },
+      { type: 'state_change', state: 'working' }
+    ])
+    // A message that carries the flag without saying so in its text is a
+    // message of the person like any other.
+    const faked = run([{ type: 'user_message', text: 'hello', form: 'clave:1' }])
+    expect(faked.entries.map((e) => e.kind)).toEqual(['user'])
+    expect(approved.entries.map((e) => e.kind)).toEqual(['permission'])
+    expect(approved.entries[0]).toMatchObject({
+      answer: 'answer',
+      answers: { login: 'luca-a', name: 'mbp' }
+    })
+    expect(approved.entries[0]).not.toHaveProperty('revised')
+    // A later correction on the approved form: the row reads revised; the
+    // same values again do not.
+    const id = 'clave:35e6218e-85f6-4dc0-9b19-366bf927d351'
+    const revised = reduceConversation(approved, {
+      event: { type: 'permission_updated', id, answers: { name: 'studio' }, sent: true },
+      at: 3
+    })
+    expect(revised.entries[0]).toMatchObject({
+      answers: { login: 'luca-a', name: 'studio' },
+      revised: true
+    })
+    const same = reduceConversation(approved, {
+      event: { type: 'permission_updated', id, answers: { name: 'mbp' }, sent: true },
+      at: 3
+    })
+    expect(same.entries[0]).not.toHaveProperty('revised')
+    // An empty value clears the answer, as the server dropped it.
+    const cleared = reduceConversation(approved, {
+      event: { type: 'permission_updated', id, answers: { name: '' }, sent: true },
+      at: 3
+    })
+    expect((cleared.entries[0] as { answers?: object }).answers).toEqual({ login: 'luca-a' })
+    // An update naming no entry changes nothing.
+    expect(
+      reduceConversation(approved, {
+        event: { type: 'permission_updated', id: 'nope', answers: { a: 'b' } },
+        at: 3
+      })
+    ).toBe(approved)
+  })
+
+  it('a form that settled is drawn where it stood, at the end, and the entry it left behind is not drawn', () => {
+    const id = 'clave:35e6218e-85f6-4dc0-9b19-366bf927d351'
+    const form: ChatEvent = {
+      type: 'permission_request',
+      id,
+      description: 'One thing.',
+      toolName: 'clave_request_input',
+      input: { tool: 'clave_request_input', layout: 'form' },
+      options: [
+        { id: 'answer', label: 'Approve' },
+        { id: 'deny', label: 'Skip' }
+      ],
+      questions: [{ id: 'login', question: 'Your GitHub login', kind: 'github-login', options: [] }]
+    }
+    const open = run([
+      form,
+      { type: 'state_change', state: 'done' },
+      { type: 'user_message', text: 'I am luca-a' },
+      { type: 'assistant_text', delta: 'Set.', final: true }
+    ])
+    expect(open.entries.map((e) => e.kind)).toEqual(['permission', 'user', 'assistant'])
+    // The reader approves: the record goes to the end, the old place is kept
+    // for the rows' keys and filtered out of what is drawn.
+    const approved = reduceConversation(open, {
+      answer: id,
+      optionId: 'answer',
+      answers: { login: 'luca-a' }
+    })
+    expect(approved.entries.map((e) => e.kind)).toEqual([
+      'permission',
+      'user',
+      'assistant',
+      'permission'
+    ])
+    expect(approved.entries[0]).toMatchObject({ relocated: true, answer: 'answer' })
+    expect(approved.entries[3]).toMatchObject({ answer: 'answer', answers: { login: 'luca-a' } })
+    expect(approved.entries[3]).not.toHaveProperty('relocated')
+    expect(visibleEntries(approved.entries).map((e) => e.kind)).toEqual([
+      'user',
+      'assistant',
+      'permission'
+    ])
+    expect(openRequests(approved.entries)).toEqual([])
+    // The agent's own approve, told by the server, lands the same way; a
+    // note under a field stands until the field changes.
+    const noted = reduceConversation(open, {
+      event: {
+        type: 'permission_updated',
+        id,
+        answers: {},
+        notes: { login: 'I did not catch a login' }
+      },
+      at: 2
+    })
+    expect(noted.entries[0]).toMatchObject({ notes: { login: 'I did not catch a login' } })
+    const filled = reduceConversation(noted, {
+      event: { type: 'permission_updated', id, answers: { login: 'luca-a' } },
+      at: 3
+    })
+    expect(filled.entries[0]).not.toHaveProperty('notes')
+    const sent = reduceConversation(filled, {
+      event: { type: 'permission_updated', id, answers: { login: 'luca-a' }, sent: true },
+      at: 4
+    })
+    expect(sent.entries.map((e) => e.kind)).toEqual([
+      'permission',
+      'user',
+      'assistant',
+      'permission'
+    ])
+    expect(visibleEntries(sent.entries).map((e) => e.kind)).toEqual([
+      'user',
+      'assistant',
+      'permission'
+    ])
+    // A form that is already the last entry stays where it is.
+    const alone = reduceConversation(run([form]), { answer: id, optionId: 'deny' })
+    expect(alone.entries).toHaveLength(1)
+    // A correction after the conversation moved on leaves the closed form
+    // where it closed; so does a second word that it settled.
+    const movedOn = [
+      { type: 'user_message', text: 'later' },
+      { type: 'assistant_text', delta: 'Reply.', final: true }
+    ].reduce((s, event) => reduceConversation(s, { event: event as ChatEvent, at: 5 }), approved)
+    const shape = (s: Conversation): string[] =>
+      visibleEntries(s.entries).map((e) =>
+        e.kind === 'permission' ? `form:${e.request.id.slice(0, 7)}` : e.kind
+      )
+    expect(shape(movedOn)).toEqual(['user', 'assistant', 'form:clave:3', 'user', 'assistant'])
+    const corrected = reduceConversation(movedOn, {
+      event: { type: 'permission_updated', id, answers: { login: 'luca-b' }, sent: true },
+      at: 6
+    })
+    expect(shape(corrected)).toEqual(shape(movedOn))
+    expect(visibleEntries(corrected.entries)[2]).toMatchObject({
+      revised: true,
+      answers: { login: 'luca-b' }
+    })
+    const withdrawnAgain = reduceConversation(corrected, {
+      event: { type: 'permission_withdrawn', id },
+      at: 7
+    })
+    expect(shape(withdrawnAgain)).toEqual(shape(movedOn))
+    // The approve is the reader's own doing: a message typed while the form
+    // was open, not yet answered by the agent, can still be taken back.
+    const typed = run([form, { type: 'user_message', text: 'hello' }])
+    const typedThenApproved = reduceConversation(typed, {
+      answer: id,
+      optionId: 'answer',
+      answers: { login: 'luca-a' }
+    })
+    expect(answeredSince(typedThenApproved.entries)).toBe(false)
+  })
+
+  it("the server's word of the approve before the view's own answer moves the form once", () => {
+    const id = 'clave:35e6218e-85f6-4dc0-9b19-366bf927d351'
+    const form: ChatEvent = {
+      type: 'permission_request',
+      id,
+      description: 'One thing.',
+      toolName: 'clave_request_input',
+      input: { tool: 'clave_request_input', layout: 'form' },
+      options: [
+        { id: 'answer', label: 'Approve' },
+        { id: 'deny', label: 'Skip' }
+      ],
+      questions: [{ id: 'login', question: 'Your GitHub login', kind: 'github-login', options: [] }]
+    }
+    // The person approves; the server's echo and withdrawal reach the view
+    // first, the agent begins to answer, and only then the view's own answer
+    // resolves: the form moved on the echo and never again.
+    const echoed = run([
+      form,
+      { type: 'user_message', text: 'hello' },
+      { type: 'permission_updated', id, answers: { login: 'luca-a' }, sent: true },
+      { type: 'permission_withdrawn', id },
+      { type: 'assistant_text', delta: 'Thanks.', final: true }
+    ])
+    const shape = (s: Conversation): string[] =>
+      visibleEntries(s.entries).map((e) => (e.kind === 'permission' ? 'form' : e.kind))
+    expect(shape(echoed)).toEqual(['user', 'form', 'assistant'])
+    const resolved = reduceConversation(echoed, {
+      answer: id,
+      optionId: 'answer',
+      answers: { login: 'luca-a' }
+    })
+    expect(shape(resolved)).toEqual(['user', 'form', 'assistant'])
+    expect(resolved.entries.filter((e) => e.kind === 'permission')).toHaveLength(2)
+  })
+
+  it('two forms open at once each settle where they stood', () => {
+    const idA = 'clave:aaaaaaaa-85f6-4dc0-9b19-366bf927d351'
+    const idB = 'clave:bbbbbbbb-85f6-4dc0-9b19-366bf927d351'
+    const ask = (id: string): ChatEvent => ({
+      type: 'permission_request',
+      id,
+      description: `Form ${id.slice(6, 7)}.`,
+      toolName: 'clave_request_input',
+      input: { tool: 'clave_request_input', layout: 'form' },
+      options: [
+        { id: 'answer', label: 'Approve' },
+        { id: 'deny', label: 'Skip' }
+      ],
+      questions: [{ id: 'x', question: 'X?', kind: 'text', options: [] }]
+    })
+    const open = run([
+      { type: 'assistant_text', delta: 'asked A', final: true },
+      ask(idA),
+      { type: 'assistant_text', delta: 'asked B', final: true },
+      ask(idB)
+    ])
+    const a = reduceConversation(open, { answer: idA, optionId: 'answer', answers: { x: '1' } })
+    const b = reduceConversation(a, { answer: idB, optionId: 'answer', answers: { x: '2' } })
+    const shape = visibleEntries(b.entries).map((e) =>
+      e.kind === 'permission' ? `form:${e.request.id.slice(6, 7)}` : e.kind
+    )
+    expect(shape).toEqual(['assistant', 'assistant', 'form:a', 'form:b'])
+    expect(openRequests(b.entries)).toEqual([])
+  })
+
   it('never touches an earlier, answered message', () => {
     const state = withdraw(
       run([

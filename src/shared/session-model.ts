@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { INPUT_KINDS } from '@clave/contract/input-kinds'
 import { AttachmentsSchema, ProviderImageSchema } from './attachments'
 import { isValidEffort } from './effort'
 
@@ -37,7 +38,12 @@ export const UserMessageSchema = z.object({
   attachments: AttachmentsSchema.optional(),
   /** A subagent's brief (the prompt its call gave it), named by that call:
    *  the first line of the subagent's own transcript, never the reader's. */
-  parent: z.string().optional()
+  parent: z.string().optional(),
+  /** The form this message carries the answers of (the request's provider
+   *  id, PRDCT-4157): the person's Approve or Skip on a hosted form, written
+   *  to the agent as their next message. The transcript draws the form's
+   *  record row for it, never a bubble. */
+  form: z.string().optional()
 })
 export type UserMessage = z.infer<typeof UserMessageSchema>
 /** What the provider is handed once main has prepared the attachments: the
@@ -61,7 +67,8 @@ export function userMessageEvent(input: UserMessageInput): UserMessage {
   return {
     type: 'user_message',
     text: input.text,
-    ...(input.attachments?.length ? { attachments: input.attachments } : {})
+    ...(input.attachments?.length ? { attachments: input.attachments } : {}),
+    ...(input.form ? { form: input.form } : {})
   }
 }
 /** What the provider receives for a user message: the prepared prompt when
@@ -73,10 +80,26 @@ export const PermissionResponseSchema = z.object({
   type: z.literal('permission_response'),
   id: z.string(),
   optionId: z.string(),
-  /** A request carrying `questions`: question text → the chosen label(s),
-   *  several joined by ", ", or the reader's own words. */
-  answers: z.record(z.string(), z.string()).optional()
+  /** A request carrying `questions`: the question's key → the chosen label(s)
+   *  or the reader's own words; a hosted multi-select answers with the labels
+   *  as an array, a provider's own question with one string (several joined
+   *  by ", "). */
+  answers: z.record(z.string(), z.union([z.string(), z.array(z.string())])).optional()
 })
+/** The answers as a provider's wire takes them: one string per question, a
+ *  hosted multi-select's labels joined by ", ". The adapters call this at
+ *  their boundary; a hosted request's answers never reach a provider. */
+export function flattenAnswers(
+  answers: Readonly<Record<string, string | readonly string[]>> | undefined
+): Record<string, string> | undefined {
+  if (!answers) return undefined
+  return Object.fromEntries(
+    Object.entries(answers).map(([key, value]) => [
+      key,
+      typeof value === 'string' ? value : value.join(', ')
+    ])
+  )
+}
 export const InterruptSchema = z.object({ type: z.literal('interrupt') })
 /** Switch the session's model; null asks the provider for its own default. */
 export const SetModelSchema = z.object({
@@ -114,7 +137,20 @@ export const AgentQuestionSchema = z.object({
   question: z.string(),
   header: z.string().optional(),
   options: z.array(z.object({ label: z.string(), description: z.string().optional() })),
-  multiSelect: z.boolean().optional()
+  multiSelect: z.boolean().optional(),
+  /** A hosted input request's question (clave_request_input, PRDCT-4157):
+   *  the kind of value asked for and the field's own words; absent on a
+   *  provider's native question. Mirrors `packages/contract/src/sessions.ts`;
+   *  the one rule for whether an answer fits is the contract's `input-kinds.ts`. */
+  kind: z.enum(INPUT_KINDS).optional(),
+  hint: z.string().optional(),
+  placeholder: z.string().optional(),
+  default: z.string().optional(),
+  optional: z.boolean().optional(),
+  url: z.string().optional(),
+  confirm: z.string().optional(),
+  min: z.number().optional(),
+  max: z.number().optional()
 })
 export type AgentQuestion = z.infer<typeof AgentQuestionSchema>
 export const SessionInputSchema = z.discriminatedUnion('type', [
@@ -267,6 +303,18 @@ export const SessionEventSchema = z.discriminatedUnion('type', [
    *  its own), or the turn it belonged to ended with it unanswered. A view
    *  settles its card for good; an answer to it would only be refused. */
   z.object({ type: z.literal('permission_withdrawn'), id: z.string() }),
+  /** A hosted form's answers changed under the card (PRDCT-4157): the agent
+   *  set fields from what the person said (`clave_input_set`), or the form
+   *  was approved and `sent` carries every answer to the views that did not
+   *  send them. `answers` is the patch, by the question's key. */
+  z.object({
+    type: z.literal('permission_updated'),
+    id: z.string(),
+    answers: z.record(z.string(), z.union([z.string(), z.array(z.string())])),
+    sent: z.boolean().optional(),
+    /** The agent's word under a field it could not fill, by the question's key. */
+    notes: z.record(z.string(), z.string()).optional()
+  }),
   /** How full the conversation's context is (or, with `parent`, a subagent's):
    *  the tokens its last call read and wrote, and the model's window once the
    *  provider has named it. The

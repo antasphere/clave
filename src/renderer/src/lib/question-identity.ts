@@ -24,11 +24,11 @@ export function questionIsPrivate(question: QuestionIdentity, input: unknown): b
 }
 
 /** A local transcript may show public answers, never a private input's value. */
-export function publicQuestionAnswers(
+export function publicQuestionAnswers<V>(
   questions: readonly QuestionIdentity[] | undefined,
   input: unknown,
-  answers: Record<string, string> | undefined
-): Record<string, string> | undefined {
+  answers: Record<string, V> | undefined
+): Record<string, V> | undefined {
   if (!answers) return undefined
   const privateKeys = new Set(
     questions?.filter((q) => questionIsPrivate(q, input)).map(questionKey) ?? []

@@ -2,8 +2,11 @@ import { Effect, Layer, Runtime } from 'effect'
 import { CommandHandler, QueryHandler } from '@structure-ai/cqrs'
 import { CapabilityUnavailable } from '@clave/contract/errors'
 import {
+  CreatePendingRequest,
+  ReadPendingRequestResult,
   ListPendingRequests,
   ResolvePendingRequest,
+  SetPendingRequestAnswers,
   RequestRejected
 } from '../../../contract/src/requests'
 import { ServerEvents } from '../events'
@@ -29,6 +32,25 @@ export const requestHandlers = [
   CommandHandler.make(ResolvePendingRequest, (input) =>
     Effect.flatMap(RequestsPort, (requests) =>
       Effect.tryPromise({ try: () => requests.resolve(input), catch: failure })
+    )
+  ),
+  // ── PRDCT-4157: a request an agent tool puts to the person, and its result ──
+  CommandHandler.make(CreatePendingRequest, (input) =>
+    Effect.flatMap(RequestsPort, (requests) =>
+      Effect.try({ try: () => requests.createHosted(input), catch: failure })
+    )
+  ),
+  CommandHandler.make(ReadPendingRequestResult, (input) =>
+    Effect.flatMap(RequestsPort, (requests) =>
+      Effect.tryPromise({
+        try: () => requests.resultAfter(input.requestId, input.sessionId, input.waitMs),
+        catch: failure
+      })
+    )
+  ),
+  CommandHandler.make(SetPendingRequestAnswers, (input) =>
+    Effect.flatMap(RequestsPort, (requests) =>
+      Effect.tryPromise({ try: () => requests.setAnswers(input), catch: failure })
     )
   )
 ] as const

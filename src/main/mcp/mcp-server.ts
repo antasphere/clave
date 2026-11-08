@@ -60,6 +60,20 @@ import {
   type SecretRequest
 } from '../secret-request-manager'
 import { createOffer } from '../copy-offer-manager'
+import {
+  INPUT_RESULT_DESCRIPTION,
+  INPUT_SET_DESCRIPTION,
+  REQUEST_INPUT_DESCRIPTION,
+  inputResultPayload,
+  inputResultSchema,
+  inputSetSchema,
+  pollResult,
+  requestInputSchema,
+  setRefusal,
+  toHostedInput,
+  type InputSetArgs,
+  type RequestInputArgs
+} from './request-input'
 
 const MCP_PATH = '/mcp'
 
@@ -68,19 +82,19 @@ const MCP_PATH = '/mcp'
 // 2026-09-08, when this block ran to 4242 chars and half the tools were unreachable.
 // KEEP THIS STRING UNDER 2000 CHARACTERS, and put the tool an agent must not miss
 // near the top. Anything longer belongs in a tool description, not here.
-const INSTRUCTIONS = `You are running inside Clave, a Mac app that runs agent sessions as tabs in sidebar groups. You are one of those tabs. Tabs and groups belong to a WORKSPACE (a root folder) and live in the WINDOW they were opened in; address any tab by session id or name and Clave routes the call. What you open lands in your own window unless you pass window or workspace. Pass "mine" as a sessionId or groupId to mean your own.
+const INSTRUCTIONS = `You are running inside Clave, a Mac app that runs agent sessions as tabs in sidebar groups. You are one of those tabs. Tabs and groups belong to a WORKSPACE (a root folder) and live in the WINDOW they were opened in; address any tab by session id or name. What you open lands in your own window unless you pass window or workspace. Pass "mine" as a sessionId or groupId to mean your own.
 
 Reach for a clave_* tool when:
-- the user will REVIEW, EDIT or MODIFY something you drafted (a document, a plan, an email) -> clave_open_side_panel opens it in an editor beside your tab, two panes; clave_side_panel reads it back when they are done; you send an email yourself, never from the panel. That is what "open it in the panel" means. clave_open_file is not.
+- the user will REVIEW, EDIT or MODIFY something you drafted (a document, a plan, an email) -> clave_open_side_panel opens it in an editor beside your tab, two panes; clave_side_panel reads it back when they are done; you send an email yourself, never from the panel. That is what "open it in the panel" means; clave_open_file is not.
 - they only need to READ a file -> clave_open_file (a tab; .html renders live).
-- a live page belongs to a group or a tab -> clave_set_group_view / clave_set_session_view (dashboard, preview, dev server).
-- work could run in parallel -> clave_open_session (a fresh agent tab: claude, codex, antigravity, pi or a plain terminal, any directory, optional prompt and model) or clave_add_group_terminal (a saved command such as a dev server). clave_launch_group starts a pinned .clave template.
-- you need a secret -> clave_request_secret. Never ask for one in the chat.
+- a live page belongs to a group or a tab -> clave_set_group_view / clave_set_session_view.
+- work could run in parallel -> clave_open_session (a fresh agent tab: claude, codex, antigravity, pi or a terminal, any directory, a prompt and a model) or clave_add_group_terminal (a saved command, e.g. a dev server). clave_launch_group starts a pinned .clave template.
+- a secret -> clave_request_secret; any other value to type or pick -> clave_request_input, a form in the chat that outlives your turn: ask, end the turn; chat answers go into it via clave_input_set. Never ask in prose.
 - the user must copy something you produced -> clave_offer_copy (a copy button, exact bytes).
-- long work finished -> clave_notify.
-- tabs must talk -> clave_send_to_session (target "parent" to report back to the tab that opened yours; your own id logs a checkpoint) and clave_read_session (read a tab's recent output without interrupting it).
+- long work done -> clave_notify.
+- tabs must talk -> clave_send_to_session ("parent" reports back to the tab that opened yours; your own id logs a checkpoint) and clave_read_session (a tab's recent output, without interrupting it).
 
-Also: clave_list (windows, tabs, groups, pinned templates), clave_create_group, clave_move_session, clave_rename, clave_focus, clave_close_session, clave_open_window, clave_switch_workspace (only when the user should look at another workspace). Pi tabs can be messaged and read but cannot call these tools.`
+Also: clave_list, clave_create_group, clave_move_session, clave_rename, clave_focus, clave_close_session, clave_open_window, clave_switch_workspace (only when the user should look elsewhere). Pi tabs can be messaged and read, not call these tools.`
 
 let httpServer: http.Server | null = null
 let serverToken: string | null = null
@@ -1360,6 +1374,74 @@ function buildServer(callerSessionId: string | undefined): McpServer {
       })
       const result = await waitForOutcome(request.id, args.timeoutSeconds * 1000)
       return secretRequestResult(result)
+    }
+  )
+
+  server.registerTool(
+    'clave_request_input',
+    { description: REQUEST_INPUT_DESCRIPTION, inputSchema: requestInputSchema },
+    async (args) => {
+      if (!callerSessionId)
+        return errorResult('clave_request_input needs a tab identity: call it from an agent tab.')
+      let input
+      try {
+        input = toHostedInput(args as RequestInputArgs, callerSessionId)
+      } catch (err) {
+        return errorResult(err instanceof Error ? err.message : String(err))
+      }
+      // Created on whichever server hosts the session (in-process, the app's
+      // own child, or an attached one): the request rides the native question
+      // road into the chat, and the poll reads the same record.
+      const api = await serverClient.api()
+      const request = await api.requests.create(input)
+      const view = await pollResult(
+        (waitMs) =>
+          api.requests.result({ requestId: request.id, sessionId: callerSessionId, waitMs }),
+        (args as RequestInputArgs).timeoutSeconds * 1000
+      )
+      return { content: [{ type: 'text', text: JSON.stringify(inputResultPayload(view)) }] }
+    }
+  )
+
+  server.registerTool(
+    'clave_input_set',
+    { description: INPUT_SET_DESCRIPTION, inputSchema: inputSetSchema },
+    async (args) => {
+      if (!callerSessionId) return errorResult(`No input request "${args.requestId}"`)
+      const { requestId, answers, submit, notes } = args as InputSetArgs
+      const api = await serverClient.api()
+      try {
+        const view = await api.requests.set({
+          requestId,
+          sessionId: callerSessionId,
+          answers,
+          ...(submit && { submit: true }),
+          ...(notes && { notes })
+        })
+        return { content: [{ type: 'text', text: JSON.stringify(inputResultPayload(view)) }] }
+      } catch (error) {
+        return errorResult(setRefusal(error))
+      }
+    }
+  )
+
+  server.registerTool(
+    'clave_input_result',
+    { description: INPUT_RESULT_DESCRIPTION, inputSchema: inputResultSchema },
+    async (args) => {
+      if (!callerSessionId) return errorResult(`No input request "${args.requestId}"`)
+      const api = await serverClient.api()
+      try {
+        const view = await pollResult(
+          (waitMs) =>
+            api.requests.result({ requestId: args.requestId, sessionId: callerSessionId, waitMs }),
+          args.waitSeconds * 1000
+        )
+        return { content: [{ type: 'text', text: JSON.stringify(inputResultPayload(view)) }] }
+      } catch {
+        // Scoped to the creating session: another tab's id answers as unknown.
+        return errorResult(`No input request "${args.requestId}"`)
+      }
     }
   )
 

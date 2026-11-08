@@ -1043,6 +1043,8 @@ export interface ElectronAPI extends FleetDesktopAPI {
    *  in-app preview iframe loads it from (assets scoped to the file's directory). */
   registerHtmlPreview: (filePath: string) => Promise<{ url: string }>
   openFolderDialog: (defaultPath?: string) => Promise<string | null>
+  /** A native file picker; the chosen path, or null when the person cancelled (PRDCT-4157). */
+  openFileDialog: (defaultPath?: string) => Promise<string | null>
   onUpdateAvailable: (callback: (version: string) => void) => () => void
   onUpdateDownloaded: (callback: (version: string) => void) => () => void
   onDownloadProgress: (callback: (progress: DownloadProgress) => void) => () => void

@@ -12,7 +12,8 @@ import { SenderChip } from './Delivery'
 import { parseDelivery } from '../../../src/shared/exchange-provenance'
 import type { ToolGroup as ToolRun } from './tools'
 import { TerminalTools } from './TerminalTools'
-import { PermissionRow } from './PromptDock'
+import { InlineQuestion, PermissionRow } from './PromptDock'
+import { isQuestion } from './approvals'
 import { ChatCode } from './code'
 import { Attachments } from './Attachments'
 import { openLink, wantsExternal } from '../../../src/renderer/src/lib/open-link'
@@ -132,7 +133,12 @@ export const EntryRow = memo(function EntryRow({
         <TurnMeta at={entry.at} text={entry.text} />
       </div>
     )
-  if (entry.kind === 'permission') return <PermissionRow entry={entry} />
+  if (entry.kind === 'permission')
+    return isQuestion(entry.request) && !entry.answer && !entry.answeredElsewhere ? (
+      <InlineQuestion entry={entry} />
+    ) : (
+      <PermissionRow entry={entry} />
+    )
   if (entry.kind === 'error')
     return (
       <div className="chat-notice" data-tone="error" role="alert">

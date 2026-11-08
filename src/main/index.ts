@@ -79,7 +79,8 @@ import { startClaveServer, stopClaveServer } from './server/clave-server'
 import { quitActivityRecord } from './activity/service'
 import { markClaveServerBootSettled } from './server/endpoint'
 import { setClaveServerEndpoint, setServerExternal, isServerExternal } from './server/endpoint'
-import { getSessionHost } from './sessions/host'
+import { getSessionHost, setSessionHost } from './sessions/host'
+import { sessionManager } from './sessions/session-manager'
 import { installE2eHooks } from './sessions/e2e-hooks'
 import { shellSettingsSource, shellAntasphereAccount } from './settings/shell-source'
 import { terminalPorts } from './ports/terminals'
@@ -169,10 +170,33 @@ async function bootServer(): Promise<void> {
       // The in-process server: `@clave/server` over the session manager
       // (server/clave-server.ts), which publishes its address to the windows.
       startInProcess: async () => {
+        // ── PRDCT-4157: the pending requests, in-process as on the daemon ──
+        // The host is wrapped so a request an agent tool puts to the person
+        // rides the native question road into the chat and its answer comes
+        // back to the tool; the wrapped host IS the host from here on
+        // (`setSessionHost`), for the server, the IPC arm and the test seam
+        // alike. Loaded here, with the server, so main's boot stays free of
+        // Effect (`server/lazy-load.test.ts`).
+        const [{ PendingRequests }, { requestAwareSessionHost }] = await Promise.all([
+          import('@clave/server'),
+          import('./sessions/request-aware-host')
+        ])
+        const aware = requestAwareSessionHost({
+          host: getSessionHost(),
+          requests: new PendingRequests(),
+          subscribeAll: (listener) => sessionManager.subscribeAll(listener),
+          subscribeRemoved: (listener) => sessionManager.subscribeRemoved(listener),
+          publish: (id, event) => sessionManager.publishHostEvent(id, event),
+          setState: (id, state) => sessionManager.setState(id, state)
+        })
+        setSessionHost(aware.host)
+        installE2eHooks({ sessionHost: aware.host })
         const endpoint = await startClaveServer({
           ports: {
             // ── Lane A: sessions ──
-            sessions: getSessionHost(),
+            sessions: aware.host,
+            // ── PRDCT-4157: the pending requests, the hosted create through the wrapper ──
+            requests: aware.port,
             // ── Lane D: settings, the shell's managers (settings/shell-source.ts) ──
             settings: shellSettingsSource,
             // ── Lane B: terminals (node-pty in this process, src/main/ports/terminal.ts) ──

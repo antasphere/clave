@@ -16,6 +16,10 @@
    Measured against the real builds: tests/e2e/density.spec.mjs. */
 
 :root[data-density='tight'] {
+  --ask-field-h: 32px;
+  --ask-btn-h: 28px;
+  --ask-gap: 12px;
+  --ask-pad: 10px;
   --frame-h: 26px;
   --frame-inset: 1px;
   --frame-radius: 5px;
@@ -26,6 +30,10 @@
 }
 
 :root[data-density='balanced'] {
+  --ask-field-h: 36px;
+  --ask-btn-h: 32px;
+  --ask-gap: 16px;
+  --ask-pad: 14px;
   --frame-h: 32px;
   --frame-inset: 2px;
   --frame-radius: 8px;
@@ -41,6 +49,10 @@
 }
 
 :root[data-density='comfortable'] {
+  --ask-field-h: 38px;
+  --ask-btn-h: 34px;
+  --ask-gap: 18px;
+  --ask-pad: 16px;
   --frame-h: 34px;
   --frame-inset: 2px;
   --frame-radius: 10px;
@@ -56,6 +68,10 @@
 }
 
 :root[data-density='spacious'] {
+  --ask-field-h: 40px;
+  --ask-btn-h: 36px;
+  --ask-gap: 20px;
+  --ask-pad: 18px;
   --frame-h: 36px;
   --frame-inset: 2px;
   --frame-radius: 12px;

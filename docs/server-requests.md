@@ -42,7 +42,31 @@ processes. Existing per-session token configs establish the caller; a request
 parameter cannot impersonate another session. `clave_request_approval`,
 `clave_request_clarification` and `clave_request_secret` return a `requestId`
 immediately. Poll `clave_request_result` or `clave_secret_result` from the same
-session. These tools keep working when no Mac is attached. An attached desktop's
+session. These tools keep working when no Mac is attached.
+
+`clave_request_input` (PRDCT-4157, `docs/agent-requests.md`) is the way an
+agent asks the person for plain values: a form of typed questions, drawn as a
+card in the chat of the session on every attached Mac, the same card a native
+question gets. It is a hosted request: a clarification the server created
+itself with a provider id under the `clave:` prefix (`createHosted`), so it
+rides the native road (published into the session's stream, answered with a
+`permission` response carrying `answers`, first valid answer wins, withdrawn
+from every view once settled) and its answers are kept for the tool
+(`clave_input_result`, bounded waits of 45 s). It lives across the agent's
+turns: the turn's end cancels the provider's own prompts and leaves it; the
+agent writes to it with `clave_input_set` (fields set from what the person
+said, published to every view as `permission_updated`); the person's approve
+or skip, when no read waits on it, is written to the session as the person's
+next message. A hosted request's answers are judged by each question's kind
+(`packages/contract/src/input-kinds.ts`); an answer that does not fit leaves
+the prompt pending. `clave_request_clarification`
+stays as it was for the agents written against it: a record with no provider
+id, answered from the sidebar's request host rather than the chat.
+
+The app runs the same pending-request service in-process and under its own
+separate server since PRDCT-4157 (`src/main/index.ts` wraps the session host
+with `requestAwareSessionHost`), so `requests.list`, `requests.resolve`,
+`requests.create` and `requests.result` answer on every server the app talks to. An attached desktop's
 MCP announcement cannot replace this endpoint. The legacy app-child mode retains
 its desktop announcement behavior. The daemon also exposes server-owned list,
 session read and session messaging tools, and lets an agent delegate:
