@@ -9,7 +9,8 @@ import {
   type HostedRequestInput,
   type RequestResultView,
   type RequestSnapshot,
-  type ResolveRequestInput
+  type ResolveRequestInput,
+  type SetRequestAnswersInput
 } from '../../../contract/src/requests'
 import {
   INPUT_REQUEST_OPTIONS,
@@ -55,8 +56,32 @@ interface Entry {
   /** A request an agent tool created (`createHosted`): answered to the tool
    *  that polls, never written to a provider. */
   hosted?: boolean
+  /** A hosted form's fields set while it is still open: by the agent from
+   *  what the person said (`setAnswers`). What the card shows and what the
+   *  tool reads on a pending form. */
+  draft?: Answers
+  /** A hosted form approved, then a field set again. */
+  revised?: boolean
+  /** How many result reads are waiting on this request right now: a settle
+   *  while one waits reaches the tool through it, so no message is owed. */
+  waiters?: number
+  /** The agent itself approved the form (`setAnswers` with `submit`). */
+  byAgent?: boolean
 }
-export type SettledListener = (request: PendingRequest, result: RequestResult) => void
+/** How a request settled, for the road that tells the agent: whether the
+ *  agent settled it itself, and whether a result read was waiting on it. */
+export interface SettledMeta {
+  readonly byAgent: boolean
+  readonly polled: boolean
+}
+export type SettledListener = (
+  request: PendingRequest,
+  result: RequestResult,
+  meta: SettledMeta
+) => void
+/** A hosted form's answers changed (PRDCT-4157): the patch, and whether
+ *  the form was already approved (`sent`). */
+export type UpdatedListener = (request: PendingRequest, answers: Answers, sent: boolean) => void
 const isSettled = (status: RequestStatus): boolean => status !== 'pending' && status !== 'running'
 const invalid = (): RequestRejected =>
   new RequestRejected({
@@ -70,6 +95,7 @@ export class PendingRequests {
   private readonly entries = new Map<string, Entry>()
   private readonly listeners = new Set<(revision: number) => void>()
   private readonly settled = new Set<SettledListener>()
+  private readonly updated = new Set<UpdatedListener>()
   private revision = 0
   private closed = false
   constructor(
@@ -107,13 +133,115 @@ export class PendingRequests {
     }
   }
   private settle(entry: Entry): void {
+    const meta: SettledMeta = {
+      byAgent: entry.byAgent === true,
+      polled: (entry.waiters ?? 0) > 0
+    }
     for (const listener of [...this.settled]) {
       try {
-        listener(structuredClone(entry.request), structuredClone(entry.result))
+        listener(structuredClone(entry.request), structuredClone(entry.result), meta)
       } catch {
         /* listener owns its failure */
       }
     }
+  }
+  /** Told when a hosted form's answers change under its card (PRDCT-4157):
+   *  a field the agent set on the open form, or on the approved one. */
+  onUpdated(listener: UpdatedListener): () => void {
+    this.updated.add(listener)
+    return () => {
+      this.updated.delete(listener)
+    }
+  }
+  private notifyUpdated(entry: Entry, answers: Answers, sent: boolean): void {
+    for (const listener of [...this.updated]) {
+      try {
+        listener(structuredClone(entry.request), structuredClone(answers), sent)
+      } catch {
+        /* listener owns its failure */
+      }
+    }
+  }
+  /** The fields of a hosted form still open that are set so far; empty for
+   *  any other request. What a late view starts its card from. */
+  draftOf(id: string): Answers {
+    const entry = this.entries.get(id)
+    return entry?.hosted && entry.result.status === 'pending' && entry.draft
+      ? structuredClone(entry.draft)
+      : {}
+  }
+  /**
+   * The agent writes to a form it asked (`clave_input_set`, PRDCT-4157):
+   * each field judged by its question's kind, the same rule the card applies
+   * as the person types. On a form still open the fields go to its draft,
+   * which the card shows and the tool reads; with `submit` the open form is
+   * approved with what it then holds, every required field answered. On a
+   * form already approved the fields replace the answers, and the form reads
+   * revised. A skipped or cancelled form takes nothing.
+   */
+  async setAnswers(input: SetRequestAnswersInput): Promise<RequestResultView> {
+    this.prune()
+    const entry = this.entries.get(input.requestId)
+    if (!entry || !entry.hosted || entry.request.sessionId !== input.sessionId)
+      throw new RequestRejected({
+        code: 'not_found',
+        message: 'No request belongs to this caller.'
+      })
+    const questions = entry.request.questions ?? []
+    const byKey = new Map(questions.map((q) => [q.id ?? q.question, q]))
+    const answers = trimAnswers(input.answers)
+    for (const [key, value] of Object.entries(answers)) {
+      const question = byKey.get(key)
+      if (!question)
+        throw new RequestRejected({
+          code: 'invalid',
+          message: `No question "${key}" on this form.`
+        })
+      const problem = answerProblem(question, value)
+      if (problem !== null)
+        throw new RequestRejected({ code: 'invalid', message: `"${key}": ${problem}.` })
+    }
+    const status = entry.result.status
+    if (status === 'pending') {
+      entry.draft = { ...entry.draft, ...answers }
+      this.changed()
+      if (Object.keys(answers).length) this.notifyUpdated(entry, answers, false)
+      if (input.submit) {
+        const missing = questions.find(
+          (q) => answerProblem(q, own(entry.draft ?? {}, q.id ?? q.question)) !== null
+        )
+        if (missing)
+          throw new RequestRejected({
+            code: 'invalid',
+            message: `"${missing.id ?? missing.question}" is still unanswered; set it, or let the person approve.`
+          })
+        entry.byAgent = true
+        await this.resolve({
+          requestId: entry.request.id,
+          response: { type: 'permission', optionId: 'answer', answers: entry.draft ?? {} }
+        })
+      }
+      return this.resultAfter(input.requestId, input.sessionId)
+    }
+    const response = entry.result.response
+    if (
+      status === 'completed' &&
+      response?.type === 'permission' &&
+      response.optionId === 'answer'
+    ) {
+      entry.result = {
+        ...entry.result,
+        response: { ...response, answers: { ...response.answers, ...answers } }
+      }
+      entry.revised = true
+      this.changed()
+      if (Object.keys(answers).length) this.notifyUpdated(entry, answers, true)
+      return this.resultAfter(input.requestId, input.sessionId)
+    }
+    throw new RequestRejected({
+      code: 'closed',
+      message: `This form was ${status === 'completed' ? 'skipped' : status}; ask again.`
+    })
   }
   /**
    * A request an agent tool puts to the person (`clave_request_input`,
@@ -167,28 +295,40 @@ export class PendingRequests {
       const answers =
         entry?.hosted && response?.type === 'permission' && response.optionId === 'answer'
           ? response.answers
-          : undefined
+          : entry?.hosted &&
+              result.status === 'pending' &&
+              entry.draft &&
+              Object.keys(entry.draft).length
+            ? entry.draft
+            : undefined
       return {
         requestId,
         status: skipped && result.status === 'completed' ? 'dismissed' : result.status,
-        ...(answers && { answers: answers as Answers })
+        ...(answers && { answers: answers as Answers }),
+        ...(entry?.revised && { revised: true })
       }
     }
     const first = view()
     const wait = Math.min(Math.max(0, waitMs), RESULT_WAIT_MAX_MS)
     if (isSettled(first.status) || wait === 0) return first
-    await new Promise<void>((resolve) => {
-      const timer = setTimeout(done, wait)
-      const off = this.subscribe(() => {
-        const entry = this.entries.get(requestId)
-        if (!entry || isSettled(entry.result.status)) done()
+    const waiting = this.entries.get(requestId)
+    if (waiting) waiting.waiters = (waiting.waiters ?? 0) + 1
+    try {
+      await new Promise<void>((resolve) => {
+        const timer = setTimeout(done, wait)
+        const off = this.subscribe(() => {
+          const entry = this.entries.get(requestId)
+          if (!entry || isSettled(entry.result.status)) done()
+        })
+        function done(): void {
+          clearTimeout(timer)
+          off()
+          resolve()
+        }
       })
-      function done(): void {
-        clearTimeout(timer)
-        off()
-        resolve()
-      }
-    })
+    } finally {
+      if (waiting) waiting.waiters = Math.max(0, (waiting.waiters ?? 1) - 1)
+    }
     return view()
   }
   create(input: RequestInput, resolve?: Resolver): PendingRequest {
@@ -344,12 +484,18 @@ export class PendingRequests {
   cancelSession(sessionId: string): void {
     this.cancel((request) => request.sessionId === sessionId)
   }
+  /** The provider's requests of a session are gone: one by its id, or all
+   *  of them when the turn ended. A hosted form lives across turns
+   *  (PRDCT-4157), so the unnamed cancel leaves it; naming its id still
+   *  cancels it. */
   cancelNative(sessionId: string, providerRequestId?: string): void {
     this.cancel(
       (request) =>
         request.sessionId === sessionId &&
         request.providerRequestId !== undefined &&
-        (providerRequestId === undefined || request.providerRequestId === providerRequestId)
+        (providerRequestId === undefined
+          ? !this.isHosted(request.id)
+          : request.providerRequestId === providerRequestId)
     )
   }
   private cancel(matches: (request: PendingRequest) => boolean): void {
@@ -372,5 +518,6 @@ export class PendingRequests {
       this.cancelSession(id)
     this.listeners.clear()
     this.settled.clear()
+    this.updated.clear()
   }
 }

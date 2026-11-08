@@ -41,7 +41,7 @@ describe('clave_request_input arguments', () => {
       ]
     })
     expect(args.layout).toBe('form')
-    expect(args.timeoutSeconds).toBe(30)
+    expect(args.timeoutSeconds).toBe(0)
     expect(toHostedInput(args, 'tab-1')).toEqual({
       sessionId: 'tab-1',
       description: 'Before we start.',

@@ -62,12 +62,16 @@ import {
 import { createOffer } from '../copy-offer-manager'
 import {
   INPUT_RESULT_DESCRIPTION,
+  INPUT_SET_DESCRIPTION,
   REQUEST_INPUT_DESCRIPTION,
   inputResultPayload,
   inputResultSchema,
+  inputSetSchema,
   pollResult,
   requestInputSchema,
+  setRefusal,
   toHostedInput,
+  type InputSetArgs,
   type RequestInputArgs
 } from './request-input'
 
@@ -85,7 +89,7 @@ Reach for a clave_* tool when:
 - they only need to READ a file -> clave_open_file (a tab; .html renders live).
 - a live page belongs to a group or a tab -> clave_set_group_view / clave_set_session_view.
 - work could run in parallel -> clave_open_session (a fresh agent tab: claude, codex, antigravity, pi or a terminal, any directory, a prompt and a model) or clave_add_group_terminal (a saved command, e.g. a dev server). clave_launch_group starts a pinned .clave template.
-- a secret -> clave_request_secret; any other answer the person must type or pick (a value, an e-mail, a login, a path, a choice, a link, a form) -> clave_request_input, a card in the chat. Never ask for either in prose.
+- a secret -> clave_request_secret; any other value to type or pick -> clave_request_input, a form in the chat that outlives your turn: ask, end the turn; chat answers go into it via clave_input_set. Never ask in prose.
 - the user must copy something you produced -> clave_offer_copy (a copy button, exact bytes).
 - long work done -> clave_notify.
 - tabs must talk -> clave_send_to_session ("parent" reports back to the tab that opened yours; your own id logs a checkpoint) and clave_read_session (a tab's recent output, without interrupting it).
@@ -1375,6 +1379,27 @@ function buildServer(callerSessionId: string | undefined): McpServer {
         (args as RequestInputArgs).timeoutSeconds * 1000
       )
       return { content: [{ type: 'text', text: JSON.stringify(inputResultPayload(view)) }] }
+    }
+  )
+
+  server.registerTool(
+    'clave_input_set',
+    { description: INPUT_SET_DESCRIPTION, inputSchema: inputSetSchema },
+    async (args) => {
+      if (!callerSessionId) return errorResult(`No input request "${args.requestId}"`)
+      const { requestId, answers, submit } = args as InputSetArgs
+      const api = await serverClient.api()
+      try {
+        const view = await api.requests.set({
+          requestId,
+          sessionId: callerSessionId,
+          answers,
+          ...(submit && { submit: true })
+        })
+        return { content: [{ type: 'text', text: JSON.stringify(inputResultPayload(view)) }] }
+      } catch (error) {
+        return errorResult(setRefusal(error))
+      }
     }
   )
 

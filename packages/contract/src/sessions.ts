@@ -92,7 +92,12 @@ export const UserMessage = Schema.Struct({
   text: Schema.String,
   /** The files the reader attached, as the transcript shows them: never bytes. */
   attachments: Schema.optional(Attachments),
-  parent: Schema.optional(Schema.String)
+  parent: Schema.optional(Schema.String),
+  /** The form this message carries the answers of (the request's provider
+   *  id, PRDCT-4157): the person's Approve or Skip on a hosted form, written
+   *  to the agent as their next message so an idle agent wakes with the
+   *  answers. A view draws the form's record row for it, never a bubble. */
+  form: Schema.optional(Schema.String)
 })
 export type UserMessage = typeof UserMessage.Type
 export const PreparedPrompt = Schema.Struct({
@@ -302,6 +307,19 @@ export const SessionEvent = Schema.Union(
   Schema.Struct({ type: Schema.Literal('error'), message: Schema.String, fatal: Schema.Boolean }),
   Schema.Struct({ type: Schema.Literal('turn_interrupted') }),
   Schema.Struct({ type: Schema.Literal('permission_withdrawn'), id: Schema.String }),
+  /** A hosted form's answers changed under the card (PRDCT-4157): the agent
+   *  set fields from what the person said (`clave_input_set`), or the form
+   *  was approved and `sent` carries every answer to the views that did not
+   *  send them. `answers` is the patch, by the question's key. */
+  Schema.Struct({
+    type: Schema.Literal('permission_updated'),
+    id: Schema.String,
+    answers: Schema.Record({
+      key: Schema.String,
+      value: Schema.Union(Schema.String, Schema.Array(Schema.String))
+    }),
+    sent: Schema.optional(Schema.Boolean)
+  }),
   Schema.Struct({
     type: Schema.Literal('context_usage'),
     used: Schema.Number,

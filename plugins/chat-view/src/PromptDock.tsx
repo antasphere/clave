@@ -649,6 +649,7 @@ export function InlineQuestion({ entry }: { entry: PermissionEntry }): React.JSX
           agent={host.agent}
           remote={host.remote}
           drafts={host.drafts}
+          draft={entry.draft}
           onAnswer={host.answer}
         />
       ) : (
@@ -725,13 +726,16 @@ export function PermissionRow({ entry }: { entry: PermissionEntry }): React.JSX.
         : question
           ? isDeny(entry.answer)
             ? 'Skipped'
-            : 'Answered'
+            : entry.revised
+              ? 'Revised'
+              : 'Answered'
           : chosen
   return (
     <div
       className="chat-permission-row"
       data-state={entry.answer ? 'answered' : entry.answeredElsewhere ? 'elsewhere' : 'waiting'}
       data-kind={question ? 'question' : 'permission'}
+      data-revised={entry.revised ? 'true' : undefined}
       role="status"
     >
       <Icon className="chat-tool-status" />

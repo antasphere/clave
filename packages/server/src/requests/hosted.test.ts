@@ -33,7 +33,7 @@ describe('hosted requests', () => {
     expect(request.toolName).toBe(INPUT_REQUEST_TOOL)
     expect(request.input).toEqual({ tool: INPUT_REQUEST_TOOL, layout: 'form' })
     expect(request.options).toEqual([
-      { id: 'answer', label: 'Send' },
+      { id: 'answer', label: 'Approve' },
       { id: 'deny', label: 'Skip' }
     ])
     expect(requests.isHosted(request.id)).toBe(true)
@@ -146,7 +146,7 @@ describe('hosted requests', () => {
     }
   })
 
-  it('belongs to its session alone and is cancelled with the turn or the session', async () => {
+  it('belongs to its session alone, lives across the turn, and is cancelled with the session or by name', async () => {
     const requests = new PendingRequests()
     const request = requests.createHosted(onboarding)
     await expect(requests.resultAfter(request.id, 'another')).rejects.toMatchObject({
@@ -154,12 +154,186 @@ describe('hosted requests', () => {
     })
     const settled = vi.fn()
     requests.onSettled(settled)
+    // The turn's end cancels the provider's own requests, never the form:
+    // the agent ends its turn and the person fills it or writes.
+    const native = requests.create({
+      sessionId: 's1',
+      kind: 'clarification',
+      providerRequestId: 'native-1',
+      description: 'A native question',
+      options: [{ id: 'answer', label: 'Submit' }],
+      questions: [{ question: 'Which?', options: [{ label: 'A' }] }]
+    })
     requests.cancelNative('s1')
-    expect((await requests.resultAfter(request.id, 's1')).status).toBe('cancelled')
+    expect((await requests.resultAfter(request.id, 's1')).status).toBe('pending')
+    expect(requests.result(native.id, 's1').status).toBe('cancelled')
     expect(settled).toHaveBeenCalledTimes(1)
+    // Named, the form is cancelled like any other request.
+    requests.cancelNative('s1', request.providerRequestId)
+    expect((await requests.resultAfter(request.id, 's1')).status).toBe('cancelled')
+    expect(settled).toHaveBeenCalledTimes(2)
     const next = requests.createHosted(onboarding)
     requests.cancelSession('s1')
     expect((await requests.resultAfter(next.id, 's1')).status).toBe('cancelled')
+    requests.close()
+  })
+
+  it('the agent sets fields on the open form: judged by kind, kept as the draft the tool reads, told to the views', async () => {
+    const requests = new PendingRequests()
+    const request = requests.createHosted(onboarding)
+    const updated = vi.fn()
+    requests.onUpdated(updated)
+    const set = { requestId: request.id, sessionId: 's1' }
+    await expect(
+      requests.setAnswers({ ...set, answers: { email: 'luca@antasphere' } })
+    ).rejects.toMatchObject({ code: 'invalid', message: '"email": This is not an e-mail address.' })
+    await expect(requests.setAnswers({ ...set, answers: { nope: 'x' } })).rejects.toMatchObject({
+      code: 'invalid',
+      message: 'No question "nope" on this form.'
+    })
+    await expect(
+      requests.setAnswers({ ...set, sessionId: 'another', answers: { login: 'luca-a' } })
+    ).rejects.toMatchObject({ code: 'not_found' })
+    expect(updated).not.toHaveBeenCalled()
+    const first = await requests.setAnswers({ ...set, answers: { login: ' luca-a ' } })
+    expect(first).toEqual({
+      requestId: request.id,
+      status: 'pending',
+      answers: { login: 'luca-a' }
+    })
+    expect(updated).toHaveBeenCalledWith(
+      expect.objectContaining({ id: request.id }),
+      { login: 'luca-a' },
+      false
+    )
+    const second = await requests.setAnswers({ ...set, answers: { projects: ['reb'] } })
+    expect(second.answers).toEqual({ login: 'luca-a', projects: ['reb'] })
+    expect(requests.draftOf(request.id)).toEqual({ login: 'luca-a', projects: ['reb'] })
+    // The draft is what a result read answers while the form is open, and
+    // the person's approve replaces it with every answer.
+    expect((await requests.resultAfter(request.id, 's1')).answers).toEqual({
+      login: 'luca-a',
+      projects: ['reb']
+    })
+    await requests.resolve({
+      requestId: request.id,
+      response: {
+        type: 'permission',
+        optionId: 'answer',
+        answers: { email: 'luca@antasphere.com', login: 'luca-a' }
+      }
+    })
+    expect(await requests.resultAfter(request.id, 's1')).toEqual({
+      requestId: request.id,
+      status: 'completed',
+      answers: { email: 'luca@antasphere.com', login: 'luca-a' }
+    })
+    expect(requests.draftOf(request.id)).toEqual({})
+    requests.close()
+  })
+
+  it('the agent approves the open form itself only once every required field is set', async () => {
+    const requests = new PendingRequests()
+    const request = requests.createHosted(onboarding)
+    const settled = vi.fn()
+    requests.onSettled(settled)
+    const set = { requestId: request.id, sessionId: 's1' }
+    await expect(
+      requests.setAnswers({ ...set, answers: { login: 'luca-a' }, submit: true })
+    ).rejects.toMatchObject({
+      code: 'invalid',
+      message: '"email" is still unanswered; set it, or let the person approve.'
+    })
+    // The field set before the refusal stays set; the form is still open.
+    expect((await requests.resultAfter(request.id, 's1')).status).toBe('pending')
+    expect(settled).not.toHaveBeenCalled()
+    const view = await requests.setAnswers({
+      ...set,
+      answers: { email: 'luca@antasphere.com' },
+      submit: true
+    })
+    expect(view).toEqual({
+      requestId: request.id,
+      status: 'completed',
+      answers: { login: 'luca-a', email: 'luca@antasphere.com' }
+    })
+    expect(settled).toHaveBeenCalledTimes(1)
+    expect(settled.mock.calls[0][2]).toEqual({ byAgent: true, polled: false })
+    requests.close()
+  })
+
+  it('a later correction sets a field on the approved form, which then reads revised', async () => {
+    const requests = new PendingRequests()
+    const request = requests.createHosted(onboarding)
+    const updated = vi.fn()
+    requests.onUpdated(updated)
+    await requests.resolve({
+      requestId: request.id,
+      response: {
+        type: 'permission',
+        optionId: 'answer',
+        answers: { email: 'luca@antasphere.com', login: 'luca-a' }
+      }
+    })
+    const view = await requests.setAnswers({
+      requestId: request.id,
+      sessionId: 's1',
+      answers: { login: 'luca-antasphere' }
+    })
+    expect(view).toEqual({
+      requestId: request.id,
+      status: 'completed',
+      answers: { email: 'luca@antasphere.com', login: 'luca-antasphere' },
+      revised: true
+    })
+    expect(updated).toHaveBeenCalledWith(
+      expect.objectContaining({ id: request.id }),
+      { login: 'luca-antasphere' },
+      true
+    )
+    await expect(
+      requests.setAnswers({ requestId: request.id, sessionId: 's1', answers: { login: 'x_y' } })
+    ).rejects.toMatchObject({ code: 'invalid' })
+    requests.close()
+  })
+
+  it('a skipped or cancelled form takes nothing more', async () => {
+    const requests = new PendingRequests()
+    const skipped = requests.createHosted(onboarding)
+    await requests.resolve({
+      requestId: skipped.id,
+      response: { type: 'permission', optionId: 'deny' }
+    })
+    await expect(
+      requests.setAnswers({ requestId: skipped.id, sessionId: 's1', answers: { login: 'a' } })
+    ).rejects.toMatchObject({ code: 'closed', message: 'This form was skipped; ask again.' })
+    const cancelled = requests.createHosted(onboarding)
+    requests.cancelSession('s1')
+    await expect(
+      requests.setAnswers({ requestId: cancelled.id, sessionId: 's1', answers: { login: 'a' } })
+    ).rejects.toMatchObject({ code: 'closed', message: 'This form was cancelled; ask again.' })
+    requests.close()
+  })
+
+  it('a settle says whether a result read was waiting on it', async () => {
+    const requests = new PendingRequests()
+    const request = requests.createHosted(onboarding)
+    const settled = vi.fn()
+    requests.onSettled(settled)
+    const waiting = requests.resultAfter(request.id, 's1', 5_000)
+    await new Promise((r) => setTimeout(r, 0))
+    await requests.resolve({
+      requestId: request.id,
+      response: { type: 'permission', optionId: 'deny' }
+    })
+    expect((await waiting).status).toBe('dismissed')
+    expect(settled.mock.calls[0][2]).toEqual({ byAgent: false, polled: true })
+    const second = requests.createHosted(onboarding)
+    await requests.resolve({
+      requestId: second.id,
+      response: { type: 'permission', optionId: 'deny' }
+    })
+    expect(settled.mock.calls[1][2]).toEqual({ byAgent: false, polled: false })
     requests.close()
   })
 

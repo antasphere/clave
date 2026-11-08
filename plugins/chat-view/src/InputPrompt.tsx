@@ -32,7 +32,15 @@ import { AskDrawing, LinkDrawing } from './AskDrawing'
    paper of the composer. A `form` lays every field out at once, which is how
    an onboarding asks everything up front; `steps` takes one question per
    page, the native question's motion. The provider's own question
-   (AskUserQuestion, Codex's request_user_input) keeps `QuestionPrompt`. */
+   (AskUserQuestion, Codex's request_user_input) keeps `QuestionPrompt`.
+
+   The form lives across the agent's turns: the person may answer in the chat
+   instead, the agent sets the fields from what was said (clave_input_set),
+   and the card follows (`draft`): each field lands with its seat ticked and
+   a brief flash, the steps layout moves on to the next open question on its
+   own, and an answered step folds into one line above the live one. The
+   person's Approve, or the agent's when the person said to go ahead, is the
+   end of it. */
 
 const host = (url: string): string => {
   try {
@@ -46,6 +54,26 @@ const host = (url: string): string => {
  *  of the virtualised transcript mounts again when it comes back, and must not
  *  take the caret from the composer a second time. */
 const focused = new Set<string>()
+
+/** The first question, from `from` on, whose answer does not fit yet; the
+ *  count when every one fits (the review page of the steps layout). */
+const nextOpen = (
+  keys: readonly string[],
+  problems: Record<string, string | null>,
+  from: number
+): number => {
+  for (let i = from; i < keys.length; i++) if (problems[keys[i]] !== null) return i
+  return keys.length
+}
+
+/** What a done line of the steps layout reads: the answer as the reader
+ *  will see it in the record row. */
+const shownValue = (question: AgentQuestion, value: InputAnswer | undefined): string => {
+  if (value === undefined) return ''
+  if (Array.isArray(value)) return value.join(', ')
+  if (question.kind === 'link') return question.confirm ?? "I'm back"
+  return String(value)
+}
 
 function Field({
   question,
@@ -338,6 +366,7 @@ export function InputPrompt({
   agent,
   remote,
   drafts,
+  draft,
   onAnswer
 }: {
   request: Permission
@@ -345,6 +374,9 @@ export function InputPrompt({
   agent: string
   remote: boolean
   drafts?: Map<string, Values>
+  /** The fields the agent set so far (the entry's `draft`): applied as they
+   *  arrive, over what the reader has not typed otherwise. */
+  draft?: Values
   onAnswer: Answer
 }): React.JSX.Element {
   const meta = inputRequestMeta(request.input)
@@ -355,11 +387,16 @@ export function InputPrompt({
   const [attempted, setAttempted] = useState(false)
   const [step, setStep] = useState(0)
   const [direction, setDirection] = useState<'forward' | 'back'>('forward')
+  /** Per field, how many times the agent set it: each landing flashes once. */
+  const [landed, setLanded] = useState<Record<string, number>>({})
   const body = useRef<HTMLDivElement>(null)
   const steps = meta?.layout === 'steps' && questions.length > 1
-  const shown = steps ? [questions[step]] : questions
+  // In the steps layout `step` runs from 0 to the count: the count is the
+  // review page, every question folded into its line and Approve under them.
+  const review = steps && step >= questions.length
+  const shown = steps ? (review ? [] : [questions[step]]) : questions
   const firstKind = shown[0]?.kind
-  const last = !steps || step === questions.length - 1
+  const last = !steps || step >= questions.length - 1
   const skip = request.options.find((o) => isDeny(o.id))
   const problemsOf = (vals: Values): Record<string, string | null> =>
     Object.fromEntries(
@@ -367,6 +404,7 @@ export function InputPrompt({
     ) as Record<string, string | null>
   const problems = problemsOf(values)
   const valid = Object.values(problems).every((p) => p === null)
+  const byAgent = Object.keys(landed).length > 0
   // The first card for this request takes the caret, once; the body itself
   // takes it when the first field is a choice or a link.
   const [takeFocus] = useState(() => {
@@ -391,6 +429,52 @@ export function InputPrompt({
     const id = `chat-field-${key.replace(/[^a-z0-9_-]/gi, '-')}`
     body.current?.querySelector<HTMLElement>(`#${CSS.escape(id)}`)?.focus()
   }
+  // The agent's writes land here: a field it set takes the value (over what
+  // the reader typed there, since the agent speaks for what the reader just
+  // said), ticks, flashes once, and in the steps layout the card moves on to
+  // the next open question a beat later, so the landing is seen.
+  const applied = useRef<Values>({})
+  const stepRef = useRef(step)
+  stepRef.current = step
+  useEffect(() => {
+    if (!draft) return
+    const changed = Object.entries(draft).filter(
+      ([key, value]) =>
+        keys.includes(key) && JSON.stringify(applied.current[key]) !== JSON.stringify(value)
+    )
+    if (!changed.length) return
+    applied.current = { ...applied.current, ...Object.fromEntries(changed) }
+    setValues((current) => {
+      const next = { ...current, ...Object.fromEntries(changed) }
+      drafts?.set(request.id, next)
+      return next
+    })
+    setTouched((current) => ({
+      ...current,
+      ...Object.fromEntries(changed.map(([key]) => [key, true]))
+    }))
+    setLanded((current) => ({
+      ...current,
+      ...Object.fromEntries(changed.map(([key]) => [key, (current[key] ?? 0) + 1]))
+    }))
+    if (!steps) return
+    const current = stepRef.current
+    const currentKey = keys[current]
+    if (currentKey === undefined || !changed.some(([key]) => key === currentKey)) return
+    const timer = setTimeout(() => {
+      setValues((vals) => {
+        const judged = problemsOf(vals)
+        if (judged[currentKey] === null) {
+          setDirection('forward')
+          setStep(nextOpen(keys, judged, current + 1))
+        }
+        return vals
+      })
+    }, 520)
+    return () => clearTimeout(timer)
+    // The keys and the questions are the request's, fixed for the card's life.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draft])
   /** The answer, judged on `vals`: the state, or the state plus the value
    *  just picked, which the click that picked it has not yet rendered. */
   const send = (vals: Values = values): void => {
@@ -399,28 +483,35 @@ export function InputPrompt({
     if (Object.values(judged).some((p) => p !== null)) {
       setAttempted(true)
       const first = keys.find((key) => judged[key] !== null)
-      if (first) focusField(first)
+      if (first) {
+        if (steps) {
+          setDirection('back')
+          setStep(keys.indexOf(first))
+        }
+        focusField(first)
+      }
       return
     }
     drafts?.delete(request.id)
     onAnswer(request.id, 'answer', answersOf(questions, vals))
   }
-  /** One step on: the next page in `steps`, the next field in a form, the
-   *  answer itself on the last. */
+  /** One step on: the next open question in `steps` (the review page once
+   *  every one is answered), the next field in a form, the answer itself on
+   *  the last. */
   const advance = (from: number, vals: Values = values): void => {
     if (busy) return
     if (steps) {
+      if (review) return send(vals)
       const key = keys[step]
-      if (problemsOf(vals)[key] !== null) {
+      const judged = problemsOf(vals)
+      if (judged[key] !== null) {
         touch(key)
         focusField(key)
         return
       }
-      if (last) send(vals)
-      else {
-        setDirection('forward')
-        setStep(step + 1)
-      }
+      if (last) return send(vals)
+      setDirection('forward')
+      setStep(nextOpen(keys, judged, step + 1))
       return
     }
     const next = keys[from + 1]
@@ -429,7 +520,12 @@ export function InputPrompt({
   }
   const back = (): void => {
     setDirection('back')
-    setStep(step - 1)
+    setStep(Math.min(step, questions.length) - 1)
+  }
+  const goTo = (index: number): void => {
+    if (busy) return
+    setDirection(index < step ? 'back' : 'forward')
+    setStep(index)
   }
   const doSkip = (): void => {
     if (!skip || busy) return
@@ -466,12 +562,18 @@ export function InputPrompt({
       el.querySelector<HTMLElement>('[data-state="problem"]')
     el.style.setProperty('--ask-progress', `${active ? active.offsetTop + 12 : el.offsetHeight}px`)
   })
+  // The steps already answered, folded into one line each above the live
+  // question (or every one, on the review page): the question and what was
+  // said, the seat ticked; a click reopens that step.
+  const folded = steps ? questions.slice(0, Math.min(step, questions.length)) : []
+  const approveLabel = 'Approve'
   return (
     <div
       ref={body}
       tabIndex={-1}
       className="chat-prompt-body"
       data-layout={steps ? 'steps' : 'form'}
+      data-review={review ? 'true' : undefined}
       onKeyDown={(event) => {
         if (busy) return
         if (event.key === 'Escape' && skip) {
@@ -521,7 +623,7 @@ export function InputPrompt({
         <div className="chat-ask-words">
           <div className="chat-prompt-head">
             <span className="chat-prompt-eyebrow">{agent} asks</span>
-            {steps && (
+            {steps && !review && (
               <span className="chat-prompt-step">
                 {step + 1}/{questions.length}
               </span>
@@ -541,6 +643,11 @@ export function InputPrompt({
             )}
           </div>
           <p className="chat-prompt-ask">{request.description}</p>
+          {byAgent && (
+            <p className="chat-ask-note" role="status">
+              {agent} filled in what you said. Approve, or change a field.
+            </p>
+          )}
         </div>
       </div>
       <ol
@@ -549,6 +656,35 @@ export function InputPrompt({
         className="chat-prompt-page chat-ask-fields"
         data-direction={direction}
       >
+        {folded.map((question, index) => {
+          const key = questionKey(question)
+          const fits = problems[key] === null
+          return (
+            <li
+              key={key}
+              className="chat-ask-field"
+              data-state={fits ? 'done' : 'problem'}
+              data-folded="true"
+              style={{ '--i': 0 } as React.CSSProperties}
+            >
+              <span className="chat-ask-seat" aria-hidden="true">
+                {fits && <CheckIcon />}
+              </span>
+              <button
+                type="button"
+                className="chat-ask-folded"
+                disabled={busy}
+                title="Change this answer"
+                onClick={() => goTo(index)}
+              >
+                <span className="chat-ask-folded-question">{question.question}</span>
+                <span className="chat-ask-folded-answer">
+                  {fits ? shownValue(question, own(values, key)) : (problems[key] ?? '')}
+                </span>
+              </button>
+            </li>
+          )
+        })}
         {shown.map((question, index) => {
           const key = questionKey(question)
           const at = steps ? step : index
@@ -558,11 +694,14 @@ export function InputPrompt({
               key={key}
               className="chat-ask-field"
               data-state={state}
-              style={{ '--i': index } as React.CSSProperties}
+              style={{ '--i': steps ? 0 : index } as React.CSSProperties}
             >
               <span className="chat-ask-seat" aria-hidden="true">
                 {state === 'done' && <CheckIcon />}
               </span>
+              {landed[key] ? (
+                <span key={landed[key]} className="chat-ask-flash" aria-hidden="true" />
+              ) : null}
               <Field
                 question={question}
                 value={own(values, key)}
@@ -605,11 +744,11 @@ export function InputPrompt({
           type="button"
           className="chat-ask-btn"
           data-primary="true"
-          title={steps && !last ? 'Next (Enter)' : 'Send (⌘ Enter)'}
+          title={steps && !last && !review ? 'Next (Enter)' : `${approveLabel} (⌘ Enter)`}
           disabled={busy || (attempted && !valid)}
           onClick={() => (steps ? advance(step) : send())}
         >
-          {steps && !last ? 'Next' : 'Send'}
+          {steps && !last && !review ? 'Next' : approveLabel}
         </button>
       </div>
     </div>

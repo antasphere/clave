@@ -77,7 +77,8 @@ import {
   CreatePendingRequest,
   ReadPendingRequestResult,
   ListPendingRequests,
-  ResolvePendingRequest
+  ResolvePendingRequest,
+  SetPendingRequestAnswers
 } from '../../contract/src/requests'
 
 export const RequestsLive = HttpApiBuilder.group(ClaveApi, 'requests', (handlers) =>
@@ -86,6 +87,7 @@ export const RequestsLive = HttpApiBuilder.group(ClaveApi, 'requests', (handlers
     .handle('resolve', HttpCqrs.command(ResolvePendingRequest))
     .handle('create', HttpCqrs.command(CreatePendingRequest))
     .handle('result', HttpCqrs.command(ReadPendingRequestResult))
+    .handle('set', HttpCqrs.command(SetPendingRequestAnswers))
 )
 import {
   AbsorbLayout,

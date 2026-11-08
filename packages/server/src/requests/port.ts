@@ -5,7 +5,8 @@ import type {
   PendingRequest,
   RequestResultView,
   RequestSnapshot,
-  ResolveRequestInput
+  ResolveRequestInput,
+  SetRequestAnswersInput
 } from '../../../contract/src/requests'
 
 export interface RequestsService {
@@ -21,6 +22,8 @@ export interface RequestsService {
     sessionId: string,
     waitMs?: number
   ) => Promise<RequestResultView>
+  /** The agent writes to a form it asked (PRDCT-4157). */
+  readonly setAnswers: (input: SetRequestAnswersInput) => Promise<RequestResultView>
 }
 const missing = (): never => {
   throw new CapabilityUnavailable({
@@ -40,6 +43,7 @@ export class RequestsPort extends Context.Tag('@clave/server/Requests')<
     resolve: async () => missing(),
     subscribe: () => () => {},
     createHosted: missing,
-    resultAfter: async () => missing()
+    resultAfter: async () => missing(),
+    setAnswers: async () => missing()
   }
 }

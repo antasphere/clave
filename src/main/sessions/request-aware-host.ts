@@ -2,22 +2,57 @@ import type { RequestsService, SessionHostService } from '@clave/server'
 import type { AgentState, SessionEvent, SessionStream } from '@clave/contract/sessions'
 import {
   RequestRejected,
+  type Answers,
   type HostedRequestInput,
   type PendingRequest
 } from '../../../packages/contract/src/requests'
-import type { PendingRequests } from '../../../packages/server/src/requests/service'
+import type { PendingRequests, RequestResult } from '../../../packages/server/src/requests/service'
 import { REQUEST_GONE } from '../../shared/request-refusals'
 
-const eventOf = (r: PendingRequest): Extract<SessionEvent, { type: 'permission_request' }> => ({
+/** The request as a view's question event. A form still open carries the
+ *  fields set so far as the questions' defaults, so a view that subscribes
+ *  late draws the card as it stands. */
+const eventOf = (
+  r: PendingRequest,
+  draft: Answers = {}
+): Extract<SessionEvent, { type: 'permission_request' }> => ({
   type: 'permission_request',
   id: r.providerRequestId!,
   description: r.description,
   options: [...(r.options ?? [])],
-  ...(r.questions && { questions: [...r.questions] }),
+  ...(r.questions && {
+    questions: r.questions.map((q) => {
+      const set = draft[q.id ?? q.question]
+      return typeof set === 'string' ? { ...q, default: set } : { ...q }
+    })
+  }),
   ...(r.toolName !== undefined && { toolName: r.toolName }),
   ...(r.input !== undefined && { input: r.input }),
   ...(r.detail !== undefined && { detail: r.detail })
 })
+
+/** What the agent reads when the person approves or skips a form while it
+ *  is not polling (PRDCT-4157): written to the session as the person's next
+ *  message, so an idle agent wakes with the answers. */
+export function formMessage(request: PendingRequest, result: RequestResult): string {
+  const response = result.response
+  const approved = response?.type === 'permission' && response.optionId === 'answer'
+  const head = approved
+    ? `[The form "${request.description}" was approved by the person]`
+    : `[The form "${request.description}" was skipped by the person]`
+  const lines = approved
+    ? (request.questions ?? []).flatMap((q) => {
+        const value = response.answers?.[q.id ?? q.question]
+        if (value === undefined) return []
+        const text = Array.isArray(value) ? value.join(', ') : String(value)
+        return [`${q.question}: ${text}`]
+      })
+    : []
+  const foot = approved
+    ? `(request ${request.id}: clave_input_result reads it, clave_input_set revises a field)`
+    : `(request ${request.id})`
+  return [head, ...lines, foot].join('\n')
+}
 
 /** Add request ownership around the frozen lifecycle host. The global stream
  * subscription exists before any client, and never makes stopped sessions ready. */
@@ -52,19 +87,56 @@ export function requestAwareSessionHost(options: {
     setState(input.sessionId, 'blocked')
     return request
   }
-  // A hosted request leaving pending (answered, skipped, cancelled with the
-  // turn) is withdrawn from every view, the way the adapter withdraws a
-  // native one; the session stops reading as waiting once nothing is.
-  const offSettled = requests.onSettled((request) => {
+  // A hosted request leaving pending (approved, skipped, cancelled with the
+  // session) is withdrawn from every view, the way the adapter withdraws a
+  // native one, after every view was handed the approved answers; the
+  // session stops reading as waiting once nothing is. The person's approve
+  // or skip reaches the agent as their next message unless a poll of the
+  // tool is waiting on it, which carries it instead.
+  const offSettled = requests.onSettled((request, result, meta) => {
     if (!request.providerRequestId || !requests.isHosted(request.id)) return
     const id = request.sessionId
+    const response = result.response
+    const approved = response?.type === 'permission' && response.optionId === 'answer'
     try {
+      if (approved && response.answers)
+        publish(id, {
+          type: 'permission_updated',
+          id: request.providerRequestId,
+          answers: { ...response.answers },
+          sent: true
+        })
       publish(id, { type: 'permission_withdrawn', id: request.providerRequestId })
     } catch {
       /* the session is gone with its views */
     }
     const waiting = requests.snapshot().pending.some((r) => r.sessionId === id)
     if (!waiting && base.get(id)?.state === 'blocked') setState(id, 'working')
+    const byPerson = result.status === 'completed' || result.status === 'dismissed'
+    if (byPerson && !meta.byAgent && !meta.polled && base.get(id))
+      void base
+        .write(id, {
+          type: 'user_message',
+          text: formMessage(request, result),
+          form: request.providerRequestId
+        })
+        .catch(() => {
+          /* the session took no message: the tool's own read still answers */
+        })
+  })
+  // A field the agent set on a form reaches every view of the session.
+  const offUpdated = requests.onUpdated((request, answers, sent) => {
+    if (!request.providerRequestId) return
+    try {
+      publish(request.sessionId, {
+        type: 'permission_updated',
+        id: request.providerRequestId,
+        answers: { ...answers },
+        ...(sent && { sent: true })
+      })
+    } catch {
+      /* the session is gone with its views */
+    }
   })
   const off = options.subscribeAll((id, stream) => {
     if (stream.kind !== 'event') return
@@ -75,6 +147,15 @@ export function requestAwareSessionHost(options: {
       event.type === 'turn_interrupted'
     )
       requests.cancelNative(id)
+    // A form the agent asked lives across its turns (PRDCT-4157): the agent
+    // ends its turn and the person fills the form or writes; the session
+    // reads as waiting for the person until it is approved or skipped.
+    if (
+      event.type === 'state_change' &&
+      (event.state === 'done' || event.state === 'idle') &&
+      requests.hostedPending(id).length > 0
+    )
+      setState(id, 'blocked')
     // The adapter's own word that a request is gone, the one the views settle
     // their card on; the raw frames below say the same for the built-in CLIs.
     if (event.type === 'permission_withdrawn') requests.cancelNative(id, event.id)
@@ -145,6 +226,7 @@ export function requestAwareSessionHost(options: {
     close: () => {
       off()
       offSettled()
+      offUpdated()
       offRemoved?.()
     },
     createHosted,
@@ -154,7 +236,8 @@ export function requestAwareSessionHost(options: {
       subscribe: (listener) => requests.subscribe(listener),
       createHosted,
       resultAfter: (requestId, sessionId, waitMs) =>
-        requests.resultAfter(requestId, sessionId, waitMs)
+        requests.resultAfter(requestId, sessionId, waitMs),
+      setAnswers: (input) => requests.setAnswers(input)
     },
     host: {
       ...base,
@@ -171,7 +254,7 @@ export function requestAwareSessionHost(options: {
             request.providerRequestId &&
             !seen.has(request.providerRequestId)
           )
-            listener({ kind: 'event', event: eventOf(request) })
+            listener({ kind: 'event', event: eventOf(request, requests.draftOf(request.id)) })
         return off
       },
       write: async (id, input) => {

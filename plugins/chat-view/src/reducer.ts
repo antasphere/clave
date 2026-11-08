@@ -5,6 +5,7 @@ import type {
   SessionEvent
 } from '../../../src/shared/session-model'
 import type { Attachment } from '../../../src/shared/attachments'
+import { inputRequestMeta } from '@clave/contract/input-kinds'
 
 export type ChatEvent = SessionEvent
 export type Permission = Extract<SessionEvent, { type: 'permission_request' }>
@@ -63,6 +64,12 @@ export type Entry =
          closed on the kernel's word and never this one, since an answer
          would only be refused (PRDCT-4032). */
       abandoned?: boolean
+      /** A form the agent asked (clave_request_input, PRDCT-4157), still
+       *  open: the fields the agent set from what the reader said, which the
+       *  card shows as they land. */
+      draft?: Record<string, string | string[]>
+      /** The form was approved, then a field was set again by the agent. */
+      revised?: boolean
       at: number
     }
   | { kind: 'error'; message: string; at: number }
@@ -201,12 +208,16 @@ export function reduceConversation(state: Conversation, action: Action): Convers
     // answer the host refused as naming no request, is never restored: back at
     // the head of the queue it hid the live request and took every click
     // (PRDCT-4032).
+    // A form the agent asked (PRDCT-4157) lives across the agent's turns: no
+    // state of the kernel closes it; the server's own word does
+    // (`permission_withdrawn`), or the reader's answer.
     const marks = event.state === 'working' || event.state === 'done' || event.state === 'idle'
     const clears = event.state === 'blocked'
     const touches = (e: Entry): boolean =>
       e.kind === 'permission' &&
       !e.answer &&
       !e.abandoned &&
+      inputRequestMeta(e.request.input) === null &&
       (marks ? e.answeredElsewhere !== true : clears && e.answeredElsewhere === true)
     if (!state.entries.some(touches)) return { ...state, state: event.state }
     return {
@@ -224,6 +235,36 @@ export function reduceConversation(state: Conversation, action: Action): Convers
     const entries = settle(state.entries, (request) => request.id === event.id)
     return entries === state.entries ? state : { ...state, entries }
   }
+  if (event.type === 'permission_updated') {
+    // A form's answers changed under its card (PRDCT-4157): the agent set
+    // fields on the open form (its draft, which the card shows landing), or
+    // the form was approved (`sent`: every answer, for the views that did not
+    // send them) or revised after its approval. The latest entry under the
+    // id is the one that speaks for it.
+    const index = state.entries.findLastIndex(
+      (e) => e.kind === 'permission' && e.request.id === event.id
+    )
+    const entry = state.entries[index]
+    if (entry?.kind !== 'permission') return state
+    const entries = [...state.entries]
+    if (event.sent || entry.answer) {
+      const answers = { ...entry.answers, ...event.answers }
+      const changed =
+        entry.answer !== undefined &&
+        Object.entries(event.answers).some(
+          (pair) => JSON.stringify(entry.answers?.[pair[0]]) !== JSON.stringify(pair[1])
+        )
+      entries[index] = {
+        ...entry,
+        answer: entry.answer ?? 'answer',
+        answers,
+        answeredElsewhere: undefined,
+        abandoned: undefined,
+        ...(changed && { revised: true })
+      }
+    } else entries[index] = { ...entry, draft: { ...entry.draft, ...event.answers } }
+    return { ...state, entries }
+  }
   // A subagent's own message, text, call or result (`parent`) is that
   // agent's, read by the view of it (`subagents.ts`), never the
   // conversation's: before this, a subagent's hundred calls were counted into
@@ -232,6 +273,9 @@ export function reduceConversation(state: Conversation, action: Action): Convers
   const entries = [...state.entries]
   switch (event.type) {
     case 'user_message':
+      // A form's approve or skip, written to the agent as the reader's message
+      // (PRDCT-4157): the form's record row already says it; no bubble.
+      if (event.form) break
       entries.push({
         kind: 'user',
         text: event.text,

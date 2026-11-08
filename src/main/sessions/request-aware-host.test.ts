@@ -313,6 +313,7 @@ describe('hosted requests on the native road', () => {
     published: SessionEvent[]
     states: string[]
     createHosted: ReturnType<typeof requestAwareSessionHost>['createHosted']
+    port: ReturnType<typeof requestAwareSessionHost>['port']
   } {
     const listeners = new Set<(value: SessionStream) => void>()
     const all = new Set<(id: string, value: SessionStream) => void>()
@@ -359,6 +360,7 @@ describe('hosted requests on the native road', () => {
       published,
       states,
       createHosted: wrapped.createHosted,
+      port: wrapped.port,
       emit: (event) => {
         for (const listener of listeners) listener({ kind: 'event', event })
         for (const listener of all) listener(session.id, { kind: 'event', event })
@@ -381,7 +383,7 @@ describe('hosted requests on the native road', () => {
       description: 'Before we start.',
       toolName: 'clave_request_input',
       options: [
-        { id: 'answer', label: 'Send' },
+        { id: 'answer', label: 'Approve' },
         { id: 'deny', label: 'Skip' }
       ]
     })
@@ -400,7 +402,10 @@ describe('hosted requests on the native road', () => {
       optionId: 'answer',
       answers: { email: 'luca@antasphere.com' }
     })
-    expect(f.write).not.toHaveBeenCalled()
+    // No provider is written to: the one write is the person's approve going
+    // to the agent as their message, since nothing polled.
+    expect(f.write).toHaveBeenCalledTimes(1)
+    expect(f.write.mock.calls[0][1]).toMatchObject({ type: 'user_message' })
     expect(await f.requests.resultAfter(request.id, session.id)).toEqual({
       requestId: request.id,
       status: 'completed',
@@ -461,15 +466,16 @@ describe('hosted requests on the native road', () => {
     f.requests.close()
   })
 
-  it("the turn's end cancels it, as a native question, and the card is withdrawn", async () => {
+  it("the session's end cancels it, and the card is withdrawn with no message to the agent", async () => {
     const f = hostedFixture()
     const request = f.createHosted(onboarding)
-    f.emit({ type: 'state_change', state: 'done' })
+    f.emit({ type: 'state_change', state: 'ended' })
     expect((await f.requests.resultAfter(request.id, session.id)).status).toBe('cancelled')
     expect(f.published.at(-1)).toEqual({
       type: 'permission_withdrawn',
       id: request.providerRequestId
     })
+    expect(f.write).not.toHaveBeenCalled()
     f.requests.close()
   })
 
@@ -477,6 +483,115 @@ describe('hosted requests on the native road', () => {
     const f = hostedFixture()
     expect(() => f.createHosted({ ...onboarding, sessionId: 'nobody' })).toThrow('Unknown session')
     expect(f.published).toHaveLength(0)
+    f.requests.close()
+  })
+
+  it("the turn's end leaves the form open and the session waiting for the person", () => {
+    const f = hostedFixture()
+    const request = f.createHosted(onboarding)
+    f.emit({ type: 'state_change', state: 'done' })
+    expect(f.requests.snapshot().pending.map((r) => r.id)).toEqual([request.id])
+    expect(f.published.filter((e) => e.type === 'permission_withdrawn')).toHaveLength(0)
+    expect(f.states).toEqual(['blocked', 'blocked'])
+    f.emit({ type: 'turn_interrupted' })
+    expect(f.requests.snapshot().pending).toHaveLength(1)
+    // A turn ending with no form open changes nothing.
+    f.requests.cancelSession(session.id)
+    f.states.length = 0
+    f.emit({ type: 'state_change', state: 'done' })
+    expect(f.states).toEqual([])
+    f.requests.close()
+  })
+
+  it("the person's approve reaches the agent as their next message, every view handed the answers first", async () => {
+    const f = hostedFixture()
+    const request = f.createHosted(onboarding)
+    f.emit({ type: 'state_change', state: 'done' })
+    await f.host.write(session.id, {
+      type: 'permission_response',
+      id: request.providerRequestId!,
+      optionId: 'answer',
+      answers: { email: 'luca@antasphere.com' }
+    })
+    expect(f.published.slice(1).map((e) => e.type)).toEqual([
+      'permission_updated',
+      'permission_withdrawn'
+    ])
+    expect(f.published[1]).toEqual({
+      type: 'permission_updated',
+      id: request.providerRequestId,
+      answers: { email: 'luca@antasphere.com' },
+      sent: true
+    })
+    expect(f.write).toHaveBeenCalledTimes(1)
+    const [, message] = f.write.mock.calls[0] as unknown as [string, Record<string, unknown>]
+    expect(message).toMatchObject({ type: 'user_message', form: request.providerRequestId })
+    expect(message.text).toContain('[The form "Before we start." was approved by the person]')
+    expect(message.text).toContain('Your team e-mail: luca@antasphere.com')
+    expect(message.text).toContain(`request ${request.id}`)
+    f.requests.close()
+  })
+
+  it('a skip reaches the agent as a message too; a poll waiting on the form carries it instead', async () => {
+    const f = hostedFixture()
+    const first = f.createHosted(onboarding)
+    await f.host.write(session.id, {
+      type: 'permission_response',
+      id: first.providerRequestId!,
+      optionId: 'deny'
+    })
+    expect(f.write).toHaveBeenCalledTimes(1)
+    expect((f.write.mock.calls[0] as unknown as [string, { text: string }])[1].text).toContain(
+      'was skipped by the person'
+    )
+    const second = f.createHosted(onboarding)
+    const poll = f.port.resultAfter(second.id, session.id, 5_000)
+    await new Promise((r) => setTimeout(r, 0))
+    await f.host.write(session.id, {
+      type: 'permission_response',
+      id: second.providerRequestId!,
+      optionId: 'answer',
+      answers: { email: 'luca@antasphere.com' }
+    })
+    expect((await poll).status).toBe('completed')
+    expect(f.write).toHaveBeenCalledTimes(1)
+    f.requests.close()
+  })
+
+  it('a field the agent sets reaches every view, a late view starts from it, and its own approve writes no message', async () => {
+    const f = hostedFixture()
+    const request = f.createHosted(onboarding)
+    const view = await f.port.setAnswers({
+      requestId: request.id,
+      sessionId: session.id,
+      answers: { email: 'luca@antasphere.com' }
+    })
+    expect(view.status).toBe('pending')
+    expect(f.published[1]).toEqual({
+      type: 'permission_updated',
+      id: request.providerRequestId,
+      answers: { email: 'luca@antasphere.com' }
+    })
+    const late: SessionEvent[] = []
+    f.host.subscribe(session.id, (value) => {
+      if (value.kind === 'event') late.push(value.event)
+    })
+    expect(late[0]).toMatchObject({
+      type: 'permission_request',
+      questions: [expect.objectContaining({ id: 'email', default: 'luca@antasphere.com' })]
+    })
+    await f.port.setAnswers({
+      requestId: request.id,
+      sessionId: session.id,
+      answers: {},
+      submit: true
+    })
+    expect(f.published.slice(2).map((e) => e.type)).toEqual([
+      'permission_updated',
+      'permission_withdrawn'
+    ])
+    expect(f.write).not.toHaveBeenCalled()
+    expect(f.requests.snapshot().pending).toHaveLength(0)
     f.requests.close()
   })
 

@@ -399,6 +399,78 @@ describe('taking a message back', () => {
     expect(shown(late)).toEqual(['go'])
   })
 
+  it('a form the agent asked lives across the turn, follows its writes, and folds its approve into the record', () => {
+    const form: ChatEvent = {
+      type: 'permission_request',
+      id: 'clave:1',
+      description: 'Four things before this machine is set up.',
+      toolName: 'clave_request_input',
+      input: { tool: 'clave_request_input', layout: 'steps' },
+      options: [
+        { id: 'answer', label: 'Approve' },
+        { id: 'deny', label: 'Skip' }
+      ],
+      questions: [
+        { id: 'login', question: 'Your GitHub login', kind: 'github-login', options: [] },
+        { id: 'name', question: 'The machine name', kind: 'text', options: [] }
+      ]
+    }
+    // The kernel's turn ends with the form open: the card stays live, where
+    // a provider's own question would read as answered elsewhere.
+    const open = run([form, { type: 'state_change', state: 'done' }])
+    expect(elsewhere(open.entries[0])).toBeUndefined()
+    expect(openRequests(open.entries).map((r) => r.id)).toEqual(['clave:1'])
+    // The agent set a field from what the reader said: the card's draft.
+    const drafted = reduceConversation(open, {
+      event: { type: 'permission_updated', id: 'clave:1', answers: { login: 'luca-a' } },
+      at: 2
+    })
+    expect(drafted.entries[0]).toMatchObject({ draft: { login: 'luca-a' } })
+    expect(drafted.entries[0]).not.toHaveProperty('answer')
+    // The approve, written to the agent as the reader's message, draws no
+    // bubble: the record row says it. Every view is handed the answers.
+    const approved = run([
+      ...[form],
+      {
+        type: 'permission_updated',
+        id: 'clave:1',
+        answers: { login: 'luca-a', name: 'mbp' },
+        sent: true
+      },
+      { type: 'permission_withdrawn', id: 'clave:1' },
+      { type: 'user_message', text: '[The form was approved]', form: 'clave:1' },
+      { type: 'state_change', state: 'working' }
+    ])
+    expect(approved.entries.map((e) => e.kind)).toEqual(['permission'])
+    expect(approved.entries[0]).toMatchObject({
+      answer: 'answer',
+      answers: { login: 'luca-a', name: 'mbp' }
+    })
+    expect(approved.entries[0]).not.toHaveProperty('revised')
+    // A later correction on the approved form: the row reads revised; the
+    // same values again do not.
+    const revised = reduceConversation(approved, {
+      event: { type: 'permission_updated', id: 'clave:1', answers: { name: 'studio' }, sent: true },
+      at: 3
+    })
+    expect(revised.entries[0]).toMatchObject({
+      answers: { login: 'luca-a', name: 'studio' },
+      revised: true
+    })
+    const same = reduceConversation(approved, {
+      event: { type: 'permission_updated', id: 'clave:1', answers: { name: 'mbp' }, sent: true },
+      at: 3
+    })
+    expect(same.entries[0]).not.toHaveProperty('revised')
+    // An update naming no entry changes nothing.
+    expect(
+      reduceConversation(approved, {
+        event: { type: 'permission_updated', id: 'nope', answers: { a: 'b' } },
+        at: 3
+      })
+    ).toBe(approved)
+  })
+
   it('never touches an earlier, answered message', () => {
     const state = withdraw(
       run([

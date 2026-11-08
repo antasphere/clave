@@ -1,10 +1,16 @@
 /**
- * `clave_request_input` and `clave_input_result`: an agent asks the person
- * for a plain value, a choice, a confirmation, a file, a link to open and come
- * back from, or several of those at once, and the person answers in a card
- * drawn in the chat under the agent's turn (PRDCT-4157). The plain
- * counterpart of `clave_request_secret`: here the value IS returned to the
- * agent, so nothing sensitive belongs in it.
+ * `clave_request_input`, `clave_input_set` and `clave_input_result`: an agent
+ * asks the person for a plain value, a choice, a confirmation, a file, a link
+ * to open and come back from, or several of those at once, and the person
+ * answers in a card drawn in the chat under the agent's turn (PRDCT-4157).
+ * The plain counterpart of `clave_request_secret`: here the value IS returned
+ * to the agent, so nothing sensitive belongs in it.
+ *
+ * The form lives across the agent's turns: the agent asks, ends its turn,
+ * and the person fills the fields or says the answers in the chat; the agent
+ * sets the fields from what was said (`clave_input_set`), the card follows,
+ * and the person's Approve comes back to the agent as their next message
+ * (or in the poll, for an agent that waits).
  *
  * One module for both MCP servers: the desktop's (`mcp-server.ts`, which
  * creates the request on whichever server hosts the session through the
@@ -81,11 +87,11 @@ export const requestInputSchema = {
   timeoutSeconds: z
     .number()
     .int()
-    .min(5)
+    .min(0)
     .max(300)
-    .default(30)
+    .default(0)
     .describe(
-      'How long to block waiting for the person before returning status "pending". Keep it well under your MCP client\'s tool timeout (commonly ~60s); the person can take as long as they like, you poll clave_input_result.'
+      'How long to wait for the person before returning status "pending". 0 (the default) returns at once: end your turn, and the approved form comes back to you as the person\'s next message. A wait above 0 is for an agent that cannot end its turn; keep it well under your MCP client\'s tool timeout (commonly ~60s) and poll clave_input_result after it.'
     )
 }
 export type RequestInputArgs = {
@@ -106,11 +112,35 @@ export const inputResultSchema = {
     .describe('Wait up to this long for the person before answering; 0 answers at once')
 }
 
+const answerValue = z.union([z.string().max(16_384), z.array(z.string().max(16_384)).max(100)])
+export const inputSetSchema = {
+  requestId: z.string().min(1).max(256),
+  answers: z
+    .record(z.string(), answerValue)
+    .describe(
+      "The fields to set, by question id: a string, or an array of labels for a multi-select choice. Each is checked by its kind, as the person's typing is; a value that does not fit is refused with the reason and nothing is set."
+    ),
+  submit: z
+    .boolean()
+    .default(false)
+    .describe(
+      'Approve the open form yourself with what it then holds, every required field set. Only when the person said to go ahead in the chat; otherwise leave the Approve to them.'
+    )
+}
+export type InputSetArgs = {
+  requestId: string
+  answers: Record<string, string | string[]>
+  submit: boolean
+}
+
 export const REQUEST_INPUT_DESCRIPTION =
-  'Ask the person for a plain value, a choice, a yes or no, a file, a link to open and come back from, or several of those at once, in a card drawn in the chat under your turn (the plain counterpart of clave_request_secret: the answers ARE returned to you, so never ask for a secret here). Use it for anything the person must type or pick (an e-mail, a GitHub login, a project name, a path, a date), typed answers are checked where they are typed (email, url, github-login, number, date). Ask everything you will need at once, as one form, so a long run is never interrupted later. The result is {status:"completed", answers:{<id>: value}} (a multi-select answers with an array), {status:"dismissed"} when the person skipped, or {status:"pending", requestId} when they have not answered within timeoutSeconds: then poll clave_input_result with waitSeconds up to 45 and keep polling in the same turn, never end it waiting. A bare multiple choice of one to four questions can also go through your own question tool.'
+  'Ask the person for a plain value, a choice, a yes or no, a file, a link to open and come back from, or several of those at once, in a form drawn in the chat under your turn (the plain counterpart of clave_request_secret: the answers ARE returned to you, so never ask for a secret here). Use it for anything the person must type or pick (an e-mail, a GitHub login, a project name, a path, a date); typed answers are checked as they are typed (email, url, github-login, number, date). Ask everything you will need at once, as one form, so a long run is never interrupted later. The form LIVES ACROSS YOUR TURNS: the call returns {status:"pending", requestId} at once; say in one sentence that the form is there and that the person may fill it in or just tell you, then END YOUR TURN. The person either fills the fields and approves, or answers in the chat: then set the fields from what they said with clave_input_set (the card follows, the person sees each field land) and end your turn again, saying what is still open. Their Approve comes back to you as their next message, listing every answer; {status:"dismissed"} means they skipped. Later corrections ("actually, call it X") are clave_input_set on the same requestId, on the approved form too. clave_input_result reads where the form stands at any time. A bare multiple choice of one to four questions can also go through your own question tool.'
+
+export const INPUT_SET_DESCRIPTION =
+  'Write to a form you asked with clave_request_input: set fields from what the person said in the chat ("my login is luca-a" -> {login: "luca-a"}), on the form still open or on one already approved (a later correction). The card updates in place and the person sees it. Each value is checked by the question\'s kind; one that does not fit is refused with the reason. With submit:true the open form is approved with what it holds, only when the person told you to go ahead. Returns {status, answers} as clave_input_result does.'
 
 export const INPUT_RESULT_DESCRIPTION =
-  'Fetch the outcome of a clave_request_input call that returned {status:"pending"}. Optionally wait up to waitSeconds (45 at most per call is safe) for the person to answer. Outcomes are kept ~10 minutes.'
+  'Where a form asked with clave_request_input stands: {status:"pending", answers} with the fields set so far, {status:"completed", answers} once approved (revised:true when a field changed after the approval), {status:"dismissed"} when the person skipped. Optionally wait up to waitSeconds (45 at most per call is safe) for the person. You rarely need to poll: an approved form reaches you as the person\'s next message. Outcomes are kept ~10 minutes.'
 
 /** The one place a question's shape is judged beyond its types: a choice
  *  needs its options and nothing else does, a link needs its address. */
@@ -143,8 +173,17 @@ export function inputResultPayload(view: RequestResultView): Record<string, unkn
   return {
     requestId: view.requestId,
     status: view.status,
-    ...(view.answers && { answers: view.answers })
+    ...(view.answers && { answers: view.answers }),
+    ...(view.revised && { revised: true })
   }
+}
+
+/** The reason a set was refused, in the agent's words: the server's message
+ *  when it is a refusal of this form, a plain line otherwise. */
+export function setRefusal(error: unknown): string {
+  const e = error as { _tag?: unknown; message?: unknown } | null
+  if (e && typeof e.message === 'string' && e.message) return e.message
+  return 'The form could not be written to.'
 }
 
 /** Poll the result until it settles or the budget is spent, one bounded

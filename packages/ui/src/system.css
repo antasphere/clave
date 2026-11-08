@@ -4506,6 +4506,87 @@ details[open] > .chat-tool-row .chat-tool-chevron,
     translate: 0 calc(var(--spacing) * 1.5);
   }
 }
+/* A field the agent set from what the reader said: the seat's tick draws
+   itself, and the field flashes once as the value lands. */
+.chat-ask-flash {
+  position: absolute;
+  inset: calc(var(--spacing) * -1) calc(var(--spacing) * -1.5);
+  z-index: 0;
+  pointer-events: none;
+  border-radius: var(--radius-control);
+  background-color: color-mix(in oklab, var(--color-accent) 14%, transparent);
+  opacity: 0;
+}
+.chat-ask-field > .chat-field-wrap {
+  position: relative;
+  z-index: 1;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .chat-ask-flash {
+    animation: chat-ask-flash 900ms var(--ease-out-expo) 1;
+  }
+  .chat-ask-field[data-state='done'] .chat-ask-seat svg {
+    animation: chat-ask-tick 360ms var(--ease-out-expo) 1;
+  }
+}
+@keyframes chat-ask-flash {
+  0% {
+    opacity: 0;
+  }
+  18% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+@keyframes chat-ask-tick {
+  from {
+    scale: 0.4;
+    opacity: 0;
+  }
+}
+/* A step already answered, folded into one line above the live question:
+   the question in the label's voice, what was said in the reader's; a click
+   reopens it. */
+.chat-ask-folded {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: calc(var(--spacing) * 2);
+  row-gap: calc(var(--spacing) * 0.5);
+  width: 100%;
+  min-height: var(--ask-seat);
+  padding: calc(var(--spacing) * 0.5) 0;
+  border: 0;
+  background: none;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: var(--text-sm);
+  text-align: left;
+  cursor: pointer;
+}
+.chat-ask-folded:hover .chat-ask-folded-answer {
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+}
+.chat-ask-folded-question {
+  color: var(--text-tertiary);
+}
+.chat-ask-folded-answer {
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+}
+.chat-ask-field[data-state='problem'] .chat-ask-folded-answer {
+  color: var(--color-destructive);
+}
+/* The agent filled the form from what the reader said. */
+.chat-ask-note {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+}
 @keyframes chat-ask-seat-pulse {
   0% {
     box-shadow:

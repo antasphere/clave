@@ -51,10 +51,15 @@ question gets. It is a hosted request: a clarification the server created
 itself with a provider id under the `clave:` prefix (`createHosted`), so it
 rides the native road (published into the session's stream, answered with a
 `permission` response carrying `answers`, first valid answer wins, withdrawn
-from every view once settled) and its answers are kept for the tool's poll,
-`clave_input_result` (bounded waits of 45 s). A hosted request's answers are
-judged by each question's kind (`packages/contract/src/input-kinds.ts`); an
-answer that does not fit leaves the prompt pending. `clave_request_clarification`
+from every view once settled) and its answers are kept for the tool
+(`clave_input_result`, bounded waits of 45 s). It lives across the agent's
+turns: the turn's end cancels the provider's own prompts and leaves it; the
+agent writes to it with `clave_input_set` (fields set from what the person
+said, published to every view as `permission_updated`); the person's approve
+or skip, when no read waits on it, is written to the session as the person's
+next message. A hosted request's answers are judged by each question's kind
+(`packages/contract/src/input-kinds.ts`); an answer that does not fit leaves
+the prompt pending. `clave_request_clarification`
 stays as it was for the agents written against it: a record with no provider
 id, answered from the sidebar's request host rather than the chat.
 

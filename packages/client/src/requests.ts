@@ -4,7 +4,8 @@ import type {
   PendingRequest,
   RequestResultView,
   RequestSnapshot,
-  ResolveRequestInput
+  ResolveRequestInput,
+  SetRequestAnswersInput
 } from '../../contract/src/requests'
 import type { Call } from './call'
 import type { PushStatus } from './push-client'
@@ -23,6 +24,8 @@ export interface RequestsClient {
     sessionId: string
     waitMs?: number
   }) => Promise<RequestResultView>
+  /** The agent writes to a form it asked (PRDCT-4157). */
+  readonly set: (input: SetRequestAnswersInput) => Promise<RequestResultView>
   readonly watch: (
     push: RequestPush,
     listener: (snapshot: RequestSnapshot) => void,
@@ -37,6 +40,7 @@ export const requestsClient = (call: Call, resolutionCall: Call = call): Request
     resolve: (payload) => resolutionCall((c) => c.requests.resolve({ payload })),
     create: (payload) => call((c) => c.requests.create({ payload })),
     result: (payload) => call((c) => c.requests.result({ payload })),
+    set: (payload) => call((c) => c.requests.set({ payload })),
     watch: (push, listener, onError) => {
       let stopped = false
       let generation = 0

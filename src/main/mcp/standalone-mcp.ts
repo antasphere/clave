@@ -25,10 +25,14 @@ import type {
 import type { PendingRequests } from '../../../packages/server/src/requests/service'
 import {
   INPUT_RESULT_DESCRIPTION,
+  INPUT_SET_DESCRIPTION,
   REQUEST_INPUT_DESCRIPTION,
   inputResultPayload,
   inputResultSchema,
+  inputSetSchema,
   pollResult,
+  setRefusal,
+  type InputSetArgs,
   requestInputSchema,
   toHostedInput,
   type RequestInputArgs
@@ -143,7 +147,7 @@ function buildServer(
     { name: 'clave-server', version: '1' },
     {
       instructions:
-        'Your Clave tools run on this server without a desktop. Ask the person for a plain value, a choice, a file, a link to open or a small form with clave_request_input (a card in their chat; poll clave_input_result), for approval with clave_request_approval, for a secret with clave_request_secret. Calls return a requestId. Poll clave_request_result or clave_secret_result while pending; clients can answer later. Secret values and action output are never returned. Delegate work to a new tab with clave_open_session, then message it with clave_send_to_session and close it with clave_close_session; clave_create_group, clave_move_session and clave_rename organize the tabs. Sessions and paths are server-local.'
+        'Your Clave tools run on this server without a desktop. Ask the person for a plain value, a choice, a file, a link to open or a small form with clave_request_input (a form in their chat that lives across your turns; fill it from what they say with clave_input_set; clave_input_result reads it), for approval with clave_request_approval, for a secret with clave_request_secret. Calls return a requestId. Poll clave_request_result or clave_secret_result while pending; clients can answer later. Secret values and action output are never returned. Delegate work to a new tab with clave_open_session, then message it with clave_send_to_session and close it with clave_close_session; clave_create_group, clave_move_session and clave_rename organize the tabs. Sessions and paths are server-local.'
     }
   )
   server.registerTool(
@@ -177,6 +181,27 @@ function buildServer(
         (args as RequestInputArgs).timeoutSeconds * 1000
       )
       return text(inputResultPayload(view))
+    }
+  )
+  server.registerTool(
+    'clave_input_set',
+    { description: INPUT_SET_DESCRIPTION, inputSchema: inputSetSchema },
+    async (args) => {
+      const { requestId, answers, submit } = args as InputSetArgs
+      try {
+        return text(
+          inputResultPayload(
+            await requests.setAnswers({
+              requestId,
+              sessionId,
+              answers,
+              ...(submit && { submit: true })
+            })
+          )
+        )
+      } catch (error) {
+        return { isError: true, content: [{ type: 'text', text: setRefusal(error) }] }
+      }
     }
   )
   server.registerTool(

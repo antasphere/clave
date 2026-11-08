@@ -34,7 +34,12 @@ export const UserMessageSchema = z.object({
   attachments: AttachmentsSchema.optional(),
   /** A subagent's brief (the prompt its call gave it), named by that call:
    *  the first line of the subagent's own transcript, never the reader's. */
-  parent: z.string().optional()
+  parent: z.string().optional(),
+  /** The form this message carries the answers of (the request's provider
+   *  id, PRDCT-4157): the person's Approve or Skip on a hosted form, written
+   *  to the agent as their next message. The transcript draws the form's
+   *  record row for it, never a bubble. */
+  form: z.string().optional()
 })
 export type UserMessage = z.infer<typeof UserMessageSchema>
 /** What the provider is handed once main has prepared the attachments: the
@@ -58,7 +63,8 @@ export function userMessageEvent(input: UserMessageInput): UserMessage {
   return {
     type: 'user_message',
     text: input.text,
-    ...(input.attachments?.length ? { attachments: input.attachments } : {})
+    ...(input.attachments?.length ? { attachments: input.attachments } : {}),
+    ...(input.form ? { form: input.form } : {})
   }
 }
 /** What the provider receives for a user message: the prepared prompt when
@@ -287,6 +293,16 @@ export const SessionEventSchema = z.discriminatedUnion('type', [
    *  its own), or the turn it belonged to ended with it unanswered. A view
    *  settles its card for good; an answer to it would only be refused. */
   z.object({ type: z.literal('permission_withdrawn'), id: z.string() }),
+  /** A hosted form's answers changed under the card (PRDCT-4157): the agent
+   *  set fields from what the person said (`clave_input_set`), or the form
+   *  was approved and `sent` carries every answer to the views that did not
+   *  send them. `answers` is the patch, by the question's key. */
+  z.object({
+    type: z.literal('permission_updated'),
+    id: z.string(),
+    answers: z.record(z.string(), z.union([z.string(), z.array(z.string())])),
+    sent: z.boolean().optional()
+  }),
   /** How full the conversation's context is (or, with `parent`, a subagent's):
    *  the tokens its last call read and wrote, and the model's window once the
    *  provider has named it. The

@@ -6,6 +6,7 @@ import {
   ReadPendingRequestResult,
   ListPendingRequests,
   ResolvePendingRequest,
+  SetPendingRequestAnswers,
   RequestRejected
 } from '../../../contract/src/requests'
 import { ServerEvents } from '../events'
@@ -45,6 +46,11 @@ export const requestHandlers = [
         try: () => requests.resultAfter(input.requestId, input.sessionId, input.waitMs),
         catch: failure
       })
+    )
+  ),
+  CommandHandler.make(SetPendingRequestAnswers, (input) =>
+    Effect.flatMap(RequestsPort, (requests) =>
+      Effect.tryPromise({ try: () => requests.setAnswers(input), catch: failure })
     )
   )
 ] as const

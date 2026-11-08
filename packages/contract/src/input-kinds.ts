@@ -34,7 +34,7 @@ export const INPUT_REQUEST_TOOL = 'clave_request_input'
  *  or a skip. The same two words a native question uses, so the card's
  *  keyboard and its transcript row read both alike. */
 export const INPUT_REQUEST_OPTIONS = [
-  { id: 'answer', label: 'Send' },
+  { id: 'answer', label: 'Approve' },
   { id: 'deny', label: 'Skip' }
 ] as const
 

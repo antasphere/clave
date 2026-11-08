@@ -96,9 +96,23 @@ export type HostedRequestInput = typeof HostedRequestInput.Type
 export const RequestResultView = Schema.Struct({
   requestId: Id,
   status: Schema.Literal('pending', 'running', 'completed', 'failed', 'dismissed', 'cancelled'),
-  answers: Schema.optional(Answers)
+  /** The answers: every one once the form is approved; on a form still open,
+   *  the fields set so far (by the agent, or approved and revised since). */
+  answers: Schema.optional(Answers),
+  /** The form was approved, then a field was set again (PRDCT-4157). */
+  revised: Schema.optional(Schema.Boolean)
 })
 export type RequestResultView = typeof RequestResultView.Type
+/** The agent writes to a form it asked (`clave_input_set`, PRDCT-4157):
+ *  fields set from what the person said, on the form still open or on one
+ *  already approved; `submit` approves the open form with what it holds. */
+export const SetRequestAnswersInput = Schema.Struct({
+  requestId: Id,
+  sessionId: Id,
+  answers: Answers,
+  submit: Schema.optional(Schema.Boolean)
+})
+export type SetRequestAnswersInput = typeof SetRequestAnswersInput.Type
 export const CreatePendingRequest = Command.define('CreatePendingRequest', {
   payload: HostedRequestInput,
   success: PendingRequest,
@@ -118,6 +132,11 @@ export const ReadPendingRequestResult = Command.define('ReadPendingRequestResult
   success: RequestResultView,
   failure: Schema.Union(RequestRejected, CapabilityUnavailable)
 })
+export const SetPendingRequestAnswers = Command.define('SetPendingRequestAnswers', {
+  payload: SetRequestAnswersInput,
+  success: RequestResultView,
+  failure: Schema.Union(RequestRejected, CapabilityUnavailable)
+})
 export const ListPendingRequests = Query.define('ListPendingRequests', {
   payload: Schema.Struct({}),
   success: RequestSnapshot,
@@ -132,6 +151,7 @@ export const requestsGroup = ApiGroup.make('requests')
   .add(HttpCqrs.queryEndpoint('list', '/requests/pending', ListPendingRequests))
   .add(HttpCqrs.commandEndpoint('create', '/requests/create', CreatePendingRequest))
   .add(HttpCqrs.commandEndpoint('result', '/requests/result', ReadPendingRequestResult))
+  .add(HttpCqrs.commandEndpoint('set', '/requests/set', SetPendingRequestAnswers))
   .add(
     HttpCqrs.commandEndpoint('resolve', '/requests/resolve', ResolvePendingRequest).setPayload(
       // Reapply after encodedSchema, which rebuilds refined fields and parents.
