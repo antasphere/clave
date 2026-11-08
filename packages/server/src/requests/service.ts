@@ -62,17 +62,13 @@ interface Entry {
   draft?: Answers
   /** A hosted form approved, then a field set again. */
   revised?: boolean
-  /** How many result reads are waiting on this request right now: a settle
-   *  while one waits reaches the tool through it, so no message is owed. */
-  waiters?: number
   /** The agent itself approved the form (`setAnswers` with `submit`). */
   byAgent?: boolean
 }
 /** How a request settled, for the road that tells the agent: whether the
- *  agent settled it itself, and whether a result read was waiting on it. */
+ *  agent settled it itself. */
 export interface SettledMeta {
   readonly byAgent: boolean
-  readonly polled: boolean
 }
 export type SettledListener = (
   request: PendingRequest,
@@ -133,10 +129,7 @@ export class PendingRequests {
     }
   }
   private settle(entry: Entry): void {
-    const meta: SettledMeta = {
-      byAgent: entry.byAgent === true,
-      polled: (entry.waiters ?? 0) > 0
-    }
+    const meta: SettledMeta = { byAgent: entry.byAgent === true }
     for (const listener of [...this.settled]) {
       try {
         listener(structuredClone(entry.request), structuredClone(entry.result), meta)
@@ -173,11 +166,13 @@ export class PendingRequests {
   /**
    * The agent writes to a form it asked (`clave_input_set`, PRDCT-4157):
    * each field judged by its question's kind, the same rule the card applies
-   * as the person types. On a form still open the fields go to its draft,
-   * which the card shows and the tool reads; with `submit` the open form is
-   * approved with what it then holds, every required field answered. On a
-   * form already approved the fields replace the answers, and the form reads
-   * revised. A skipped or cancelled form takes nothing.
+   * as the person types; an empty value clears an optional field. Nothing is
+   * written when anything is refused. On a form still open the fields go to
+   * its draft, which the card shows and the tool reads; with `submit` the
+   * open form is approved with what it then holds, every required field
+   * answered, judged before a field is written. On a form already approved
+   * the fields replace the answers, and the form reads revised once a value
+   * actually changed. A skipped or cancelled form takes nothing.
    */
   async setAnswers(input: SetRequestAnswersInput): Promise<RequestResultView> {
     this.prune()
@@ -190,6 +185,7 @@ export class PendingRequests {
     const questions = entry.request.questions ?? []
     const byKey = new Map(questions.map((q) => [q.id ?? q.question, q]))
     const answers = trimAnswers(input.answers)
+    const cleared = new Set<string>()
     for (const [key, value] of Object.entries(answers)) {
       const question = byKey.get(key)
       if (!question)
@@ -200,21 +196,46 @@ export class PendingRequests {
       const problem = answerProblem(question, value)
       if (problem !== null)
         throw new RequestRejected({ code: 'invalid', message: `"${key}": ${problem}.` })
+      if (typeof value === 'string' ? value === '' : value.length === 0) cleared.add(key)
+    }
+    /** The answers as they will stand, and the patch the views are told. */
+    const merge = (
+      current: Answers
+    ): { next: Answers; patch: Record<string, string | readonly string[]> } => {
+      const next: Record<string, string | readonly string[]> = { ...current }
+      const patch: Record<string, string | readonly string[]> = {}
+      for (const [key, value] of Object.entries(answers)) {
+        const before = own(current, key)
+        if (cleared.has(key)) {
+          if (before === undefined) continue
+          delete next[key]
+          patch[key] = ''
+        } else if (JSON.stringify(before) !== JSON.stringify(value)) {
+          next[key] = value
+          patch[key] = value
+        }
+      }
+      return { next, patch }
     }
     const status = entry.result.status
     if (status === 'pending') {
-      entry.draft = { ...entry.draft, ...answers }
-      this.changed()
-      if (Object.keys(answers).length) this.notifyUpdated(entry, answers, false)
+      const { next, patch } = merge(entry.draft ?? {})
       if (input.submit) {
         const missing = questions.find(
-          (q) => answerProblem(q, own(entry.draft ?? {}, q.id ?? q.question)) !== null
+          (q) => answerProblem(q, own(next, q.id ?? q.question)) !== null
         )
         if (missing)
           throw new RequestRejected({
             code: 'invalid',
             message: `"${missing.id ?? missing.question}" is still unanswered; set it, or let the person approve.`
           })
+      }
+      if (Object.keys(patch).length) {
+        entry.draft = next
+        this.changed()
+        this.notifyUpdated(entry, patch, false)
+      }
+      if (input.submit) {
         entry.byAgent = true
         await this.resolve({
           requestId: entry.request.id,
@@ -229,13 +250,13 @@ export class PendingRequests {
       response?.type === 'permission' &&
       response.optionId === 'answer'
     ) {
-      entry.result = {
-        ...entry.result,
-        response: { ...response, answers: { ...response.answers, ...answers } }
+      const { next, patch } = merge(response.answers ?? {})
+      if (Object.keys(patch).length) {
+        entry.result = { ...entry.result, response: { ...response, answers: next } }
+        entry.revised = true
+        this.changed()
+        this.notifyUpdated(entry, patch, true)
       }
-      entry.revised = true
-      this.changed()
-      if (Object.keys(answers).length) this.notifyUpdated(entry, answers, true)
       return this.resultAfter(input.requestId, input.sessionId)
     }
     throw new RequestRejected({
@@ -311,24 +332,18 @@ export class PendingRequests {
     const first = view()
     const wait = Math.min(Math.max(0, waitMs), RESULT_WAIT_MAX_MS)
     if (isSettled(first.status) || wait === 0) return first
-    const waiting = this.entries.get(requestId)
-    if (waiting) waiting.waiters = (waiting.waiters ?? 0) + 1
-    try {
-      await new Promise<void>((resolve) => {
-        const timer = setTimeout(done, wait)
-        const off = this.subscribe(() => {
-          const entry = this.entries.get(requestId)
-          if (!entry || isSettled(entry.result.status)) done()
-        })
-        function done(): void {
-          clearTimeout(timer)
-          off()
-          resolve()
-        }
+    await new Promise<void>((resolve) => {
+      const timer = setTimeout(done, wait)
+      const off = this.subscribe(() => {
+        const entry = this.entries.get(requestId)
+        if (!entry || isSettled(entry.result.status)) done()
       })
-    } finally {
-      if (waiting) waiting.waiters = Math.max(0, (waiting.waiters ?? 1) - 1)
-    }
+      function done(): void {
+        clearTimeout(timer)
+        off()
+        resolve()
+      }
+    })
     return view()
   }
   create(input: RequestInput, resolve?: Resolver): PendingRequest {

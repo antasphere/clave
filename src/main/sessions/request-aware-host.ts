@@ -6,53 +6,30 @@ import {
   type HostedRequestInput,
   type PendingRequest
 } from '../../../packages/contract/src/requests'
-import type { PendingRequests, RequestResult } from '../../../packages/server/src/requests/service'
+import type { PendingRequests } from '../../../packages/server/src/requests/service'
 import { REQUEST_GONE } from '../../shared/request-refusals'
+import { formMessage } from '../../shared/form-message'
 
-/** The request as a view's question event. A form still open carries the
- *  fields set so far as the questions' defaults, so a view that subscribes
- *  late draws the card as it stands. */
-const eventOf = (
-  r: PendingRequest,
-  draft: Answers = {}
-): Extract<SessionEvent, { type: 'permission_request' }> => ({
+const eventOf = (r: PendingRequest): Extract<SessionEvent, { type: 'permission_request' }> => ({
   type: 'permission_request',
   id: r.providerRequestId!,
   description: r.description,
   options: [...(r.options ?? [])],
-  ...(r.questions && {
-    questions: r.questions.map((q) => {
-      const set = draft[q.id ?? q.question]
-      return typeof set === 'string' ? { ...q, default: set } : { ...q }
-    })
-  }),
+  ...(r.questions && { questions: [...r.questions] }),
   ...(r.toolName !== undefined && { toolName: r.toolName }),
   ...(r.input !== undefined && { input: r.input }),
   ...(r.detail !== undefined && { detail: r.detail })
 })
 
-/** What the agent reads when the person approves or skips a form while it
- *  is not polling (PRDCT-4157): written to the session as the person's next
- *  message, so an idle agent wakes with the answers. */
-export function formMessage(request: PendingRequest, result: RequestResult): string {
-  const response = result.response
-  const approved = response?.type === 'permission' && response.optionId === 'answer'
-  const head = approved
-    ? `[The form "${request.description}" was approved by the person]`
-    : `[The form "${request.description}" was skipped by the person]`
-  const lines = approved
-    ? (request.questions ?? []).flatMap((q) => {
-        const value = response.answers?.[q.id ?? q.question]
-        if (value === undefined) return []
-        const text = Array.isArray(value) ? value.join(', ') : String(value)
-        return [`${q.question}: ${text}`]
-      })
-    : []
-  const foot = approved
-    ? `(request ${request.id}: clave_input_result reads it, clave_input_set revises a field)`
-    : `(request ${request.id})`
-  return [head, ...lines, foot].join('\n')
-}
+/** The fields of a form still open, as the event that tells a view of them:
+ *  what a view that subscribes late is handed after the question itself. */
+const draftEventOf = (
+  r: PendingRequest,
+  draft: Answers
+): Extract<SessionEvent, { type: 'permission_updated' }> | null =>
+  Object.keys(draft).length
+    ? { type: 'permission_updated', id: r.providerRequestId!, answers: { ...draft } }
+    : null
 
 /** Add request ownership around the frozen lifecycle host. The global stream
  * subscription exists before any client, and never makes stopped sessions ready. */
@@ -91,8 +68,10 @@ export function requestAwareSessionHost(options: {
   // session) is withdrawn from every view, the way the adapter withdraws a
   // native one, after every view was handed the approved answers; the
   // session stops reading as waiting once nothing is. The person's approve
-  // or skip reaches the agent as their next message unless a poll of the
-  // tool is waiting on it, which carries it instead.
+  // or skip reaches the agent as their next message, always: a tool call
+  // that waited on it reads it in its result too, and is told so, where a
+  // guess at whether anyone still listened to that call lost the approve
+  // when the call had been interrupted.
   const offSettled = requests.onSettled((request, result, meta) => {
     if (!request.providerRequestId || !requests.isHosted(request.id)) return
     const id = request.sessionId
@@ -113,11 +92,17 @@ export function requestAwareSessionHost(options: {
     const waiting = requests.snapshot().pending.some((r) => r.sessionId === id)
     if (!waiting && base.get(id)?.state === 'blocked') setState(id, 'working')
     const byPerson = result.status === 'completed' || result.status === 'dismissed'
-    if (byPerson && !meta.byAgent && !meta.polled && base.get(id))
+    if (byPerson && !meta.byAgent && base.get(id))
       void base
         .write(id, {
           type: 'user_message',
-          text: formMessage(request, result),
+          text: formMessage({
+            id: request.id,
+            form: request.providerRequestId,
+            description: request.description,
+            questions: request.questions ?? [],
+            ...(approved && response.answers && { answers: response.answers })
+          }),
           form: request.providerRequestId
         })
         .catch(() => {
@@ -149,13 +134,18 @@ export function requestAwareSessionHost(options: {
       requests.cancelNative(id)
     // A form the agent asked lives across its turns (PRDCT-4157): the agent
     // ends its turn and the person fills the form or writes; the session
-    // reads as waiting for the person until it is approved or skipped.
+    // reads as waiting for the person until it is approved or skipped. Set
+    // after this delivery is over: this listener runs inside the manager's
+    // delivery of `done`, and a state set from here would reach the sidebar's
+    // publisher before the `done` it answers.
     if (
       event.type === 'state_change' &&
       (event.state === 'done' || event.state === 'idle') &&
       requests.hostedPending(id).length > 0
     )
-      setState(id, 'blocked')
+      queueMicrotask(() => {
+        if (requests.hostedPending(id).length > 0 && base.get(id)) setState(id, 'blocked')
+      })
     // The adapter's own word that a request is gone, the one the views settle
     // their card on; the raw frames below say the same for the built-in CLIs.
     if (event.type === 'permission_withdrawn') requests.cancelNative(id, event.id)
@@ -253,8 +243,11 @@ export function requestAwareSessionHost(options: {
             request.sessionId === id &&
             request.providerRequestId &&
             !seen.has(request.providerRequestId)
-          )
-            listener({ kind: 'event', event: eventOf(request, requests.draftOf(request.id)) })
+          ) {
+            listener({ kind: 'event', event: eventOf(request) })
+            const draft = draftEventOf(request, requests.draftOf(request.id))
+            if (draft) listener({ kind: 'event', event: draft })
+          }
         return off
       },
       write: async (id, input) => {

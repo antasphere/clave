@@ -85,21 +85,29 @@ const remember = (id: string, patch: Partial<CardMemory>): void => {
   memory.set(id, { ...recalled(id), ...patch })
 }
 
-/** The first question, from `from` on, whose answer does not fit yet; the
- *  count when every one fits (the review page of the steps layout). */
-const nextOpen = (
+const isEmpty = (value: InputAnswer | undefined): boolean =>
+  value === undefined || (typeof value === 'string' ? value.trim() === '' : value.length === 0)
+
+/** Where the card goes on its own after the agent set the question it was
+ *  on: the first question, from `from` on, that has no answer yet or whose
+ *  answer does not fit (an optional one left empty included, since the
+ *  person has not seen it); the count when every one has one (the review
+ *  page). The person's own Next goes one page, whatever is on it. */
+const nextUnanswered = (
   keys: readonly string[],
+  values: Values,
   problems: Record<string, string | null>,
   from: number
 ): number => {
-  for (let i = from; i < keys.length; i++) if (problems[keys[i]] !== null) return i
+  for (let i = from; i < keys.length; i++)
+    if (isEmpty(own(values, keys[i])) || problems[keys[i]] !== null) return i
   return keys.length
 }
 
 /** What a done line of the steps layout reads: the answer as the reader
- *  will see it in the record row. */
+ *  will see it in the record row; an optional question left empty says so. */
 const shownValue = (question: AgentQuestion, value: InputAnswer | undefined): string => {
-  if (value === undefined) return ''
+  if (isEmpty(value)) return 'Left empty'
   if (Array.isArray(value)) return value.join(', ')
   if (question.kind === 'link') return question.confirm ?? "I'm back"
   return String(value)
@@ -494,6 +502,18 @@ export function InputPrompt({
   const applied = useRef<Values>(kept.applied)
   const stepRef = useRef(step)
   stepRef.current = step
+  const valuesRef = useRef(values)
+  valuesRef.current = values
+  /** The pending move to the next question after an agent's write; one at
+   *  a time, judged when it fires on the values of that moment, and never
+   *  cancelled by a second write landing before it. */
+  const moving = useRef<ReturnType<typeof setTimeout> | null>(null)
+  useEffect(
+    () => () => {
+      if (moving.current) clearTimeout(moving.current)
+    },
+    []
+  )
   useEffect(() => {
     if (!draft) return
     const changed = Object.entries(draft).filter(
@@ -516,21 +536,20 @@ export function InputPrompt({
       ...current,
       ...Object.fromEntries(changed.map(([key]) => [key, (current[key] ?? 0) + 1]))
     }))
-    if (!steps) return
-    const current = stepRef.current
-    const currentKey = keys[current]
+    if (!steps || moving.current) return
+    const currentKey = keys[stepRef.current]
     if (currentKey === undefined || !changed.some(([key]) => key === currentKey)) return
-    const timer = setTimeout(() => {
-      setValues((vals) => {
-        const judged = problemsOf(vals)
-        if (judged[currentKey] === null) {
-          setDirection('forward')
-          setStep(nextOpen(keys, judged, current + 1))
-        }
-        return vals
-      })
+    moving.current = setTimeout(() => {
+      moving.current = null
+      const at = stepRef.current
+      const key = keys[at]
+      if (key === undefined) return
+      const vals = valuesRef.current
+      const judged = problemsOf(vals)
+      if (isEmpty(own(vals, key)) || judged[key] !== null) return
+      setDirection('forward')
+      setStep(nextUnanswered(keys, vals, judged, at + 1))
     }, 520)
-    return () => clearTimeout(timer)
     // The keys and the questions are the request's, fixed for the card's life.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [draft])
@@ -571,7 +590,7 @@ export function InputPrompt({
       }
       if (last) return send(vals)
       setDirection('forward')
-      setStep(nextOpen(keys, judged, step + 1))
+      setStep(step + 1)
       return
     }
     const next = keys[from + 1]

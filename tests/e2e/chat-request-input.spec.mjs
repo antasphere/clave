@@ -144,17 +144,18 @@ export async function run(t) {
     /* 4. The form lives across the agent's turns and follows the agent's writes. */
     const second = payload(
       await mcp.call('clave_request_input', {
-        description: 'Two more.',
+        description: 'Three more.',
         layout: 'steps',
         questions: [
           { id: 'name', label: 'How should we call you?' },
+          { id: 'nick', label: 'A nickname, if you like', optional: true },
           { id: 'when', label: 'Your start date', kind: 'date' }
         ]
       })
     )
     assert.equal(second.status, 'pending', 'the default wait is none: the agent ends its turn')
     await card.waitFor()
-    assert.equal(await card.locator('.chat-prompt-step').innerText(), '1/2')
+    assert.equal(await card.locator('.chat-prompt-step').innerText(), '1/3')
     // A message typed while the form is open: the echo agent answers it and
     // ends its turn, and the card is still there, still live.
     await view.locator('textarea').fill('hello there')
@@ -167,6 +168,14 @@ export async function run(t) {
       0,
       'nothing reads No longer awaiting an answer'
     )
+    // The tab reads as waiting for the person, on the road the sidebar
+    // listens to (the server's own list), after the turn's done.
+    const listed = await until(async () => {
+      const tabs = toolPayload(await mcp.call('clave_list', {}))
+      const me = tabs?.sessions?.find((x) => x.id === record.id)
+      return me?.agentState === 'blocked' ? me : null
+    })
+    assert.ok(listed, 'the sidebar reads blocked while the form is open')
     t.check(
       "a message typed while the form is open leaves the form live across the agent's turn",
       true
@@ -188,7 +197,7 @@ export async function run(t) {
       answers: { name: 'Luca' }
     })
     await until(async () =>
-      (await card.locator('.chat-prompt-step').innerText()) === '2/2' ? true : null
+      (await card.locator('.chat-prompt-step').innerText()) === '2/3' ? true : null
     )
     const foldedLine = card.locator('.chat-ask-field[data-folded="true"]')
     assert.equal(await foldedLine.count(), 1, 'the answered step folded into one line')
@@ -199,6 +208,15 @@ export async function run(t) {
       'a field the agent set is refused when it does not fit, else lands, folds its step and the card moves on',
       true
     )
+    // The person's own Next goes one page, the optional question included:
+    // back to the first, Next lands on the second, not past it.
+    await card.getByRole('button', { name: 'Back', exact: true }).click()
+    assert.equal(await card.locator('.chat-prompt-step').innerText(), '1/3')
+    await card.getByRole('button', { name: 'Next', exact: true }).click()
+    assert.equal(await card.locator('.chat-prompt-step').innerText(), '2/3')
+    await card.getByRole('button', { name: 'Next', exact: true }).click()
+    assert.equal(await card.locator('.chat-prompt-step').innerText(), '3/3')
+    t.check("the person's Next goes one page and never skips an optional question", true)
     // The agent reads the form as it stands, then sets the last step: the
     // card reaches its review, both lines folded, Approve under them.
     const pending = payload(await mcp.call('clave_input_result', { requestId: second.requestId }))
@@ -214,7 +232,11 @@ export async function run(t) {
       })
     )
     await until(async () =>
-      (await card.locator('.chat-ask-field[data-folded="true"]').count()) === 2 ? true : null
+      (await card.locator('.chat-ask-field[data-folded="true"]').count()) === 3 ? true : null
+    )
+    assert.match(
+      await card.locator('.chat-ask-field[data-folded="true"]').nth(1).innerText(),
+      /Left empty/
     )
     assert.equal(
       await card.locator('.chat-prompt-step').count(),

@@ -73,8 +73,10 @@ said to go ahead, closes the form; a later "actually, call it studio-romain" is
   (with `url` and `confirm`: the person opens it in the browser and confirms
   they are back). `hint`, `placeholder`, `default` and `optional` are the
   field's own words and leave.
-- `layout`: `form` (every field at once, one Send; the default) or `steps`
-  (one question per page, the motion of a provider's native question).
+- `layout`: `form` (every field at once, one Approve; the default) or `steps`
+  (one question per page, the motion of a provider's native question; a step
+  the agent set folds into one line and the card moves on to the next
+  question with no answer yet, the person's own Next goes one page).
 - `timeoutSeconds` (0 to 300, default 0): how long the call waits for the
   person before returning `pending`. The default returns at once, for an
   agent that ends its turn; a wait is for an agent that cannot, kept well
@@ -89,25 +91,28 @@ ten minutes.
 
 The form lives across the agent's turns: a turn's end leaves it open and the
 session reads as waiting for the person, where a provider's own question is
-withdrawn with its turn. When the person approves or skips it while no read of
-the tool is waiting on it, the server writes the outcome to the session as the
-person's next message (the form's description, one line per answer, the
-request id), so an idle agent wakes with the answers; a view draws no bubble
-for that message, the form's record row stands for it. An agent that waited
-in the call, or in `clave_input_result { requestId, waitSeconds }` (45 at most
-per call), reads the outcome there instead.
+withdrawn with its turn. When the person approves or skips it, the server
+writes the outcome to the session as the person's next message (the form's
+description, one line per answer, the form's id and the request id on the
+last line), so an idle agent wakes with the answers; a view draws no bubble
+for that message, live or read back from a transcript, the form's record row
+stands for it. An agent that waited in the call, or in `clave_input_result {
+requestId, waitSeconds }` (45 at most per call), reads the outcome there too,
+and gets the message once its turn ends: the same answers, nothing to do with
+them. An interrupted wait therefore loses nothing.
 
 ### `clave_input_set`
 
 `{ requestId, answers, submit? }`: the agent writes to a form it asked. Each
 value is judged by its question's kind, the same rule as the card's, and one
 that does not fit is refused with the reason under the question's id, nothing
-set. On the open form the fields go to its draft, which the card shows landing
-and `clave_input_result` reads; `submit: true` approves the open form with what
-it then holds, refused while a required field is unanswered, and meant only
-for when the person said to go ahead in the chat. On an approved form the
-fields replace the answers and the form reads `revised`. A skipped or
-cancelled form takes nothing more.
+set; an empty value clears an optional field. On the open form the fields go
+to its draft, which the card shows landing and `clave_input_result` reads;
+`submit: true` approves the open form with what it then holds, refused before
+anything is written while a required field is unanswered, and meant only for
+when the person said to go ahead in the chat. On an approved form the fields
+replace the answers and the form reads `revised` once a value actually
+changed. A skipped or cancelled form takes nothing more.
 
 A typed answer is checked where it is typed, and again by the server as it is
 handed the answer, from the one rule in
@@ -137,10 +142,13 @@ ends with a form open. A field the agent sets (`setAnswers`) is published as a
 `permission_updated` event with the patch, `sent` once the form is approved,
 so every view updates its card or its record row, and a view that subscribes
 late gets the draft as the questions' defaults. And the person's approve or
-skip, settled with no result read waiting (`SettledMeta.polled`), is written to
-the session as a `user_message` carrying `form` (the provider id), which the
-chat view's reducer folds into the form's record instead of drawing a bubble;
-the agent's own `submit` writes no message.
+skip is written to the session as a `user_message` carrying `form` (the
+provider id) whose text names the form on its last line
+(`src/shared/form-message.ts`): the chat view's reducer folds it into the
+form's record instead of drawing a bubble, and the Claude adapter's transcript
+replay reads the marker back so a reload draws no bubble either; the agent's
+own `submit` writes no message. A view that subscribes late is handed the
+question, then a `permission_updated` with the draft so far.
 
 ### What the person sees
 

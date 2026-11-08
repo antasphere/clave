@@ -22,6 +22,7 @@ import {
   type SessionControl,
   flattenAnswers
 } from '../../../shared/session-model'
+import { formMessageMarker } from '../../../shared/form-message'
 import { buildAgentArgv, claudeProfilePermissions } from '../../../shared/agent-launch'
 import { isValidModelName } from '../../../shared/model-name'
 import { effortLabel, isValidEffort } from '../../../shared/effort'
@@ -151,6 +152,13 @@ export const HOST_COMMANDS: CommandOption[] = [
 /** The CLI's own acknowledgement of an interrupt, written into the
  *  conversation as a user text block: "[Request interrupted by user]", or
  *  "[Request interrupted by user for tool use]" when a tool was running. */
+/** A user message read back from the transcript: a form's outcome the host
+ *  wrote (PRDCT-4157) keeps its marker, so the view folds it into the form's
+ *  record as it did live, never a bubble of the person. */
+function userMessageOf(text: string): Extract<SessionEvent, { type: 'user_message' }> {
+  const form = formMessageMarker(text)
+  return { type: 'user_message', text, ...(form && { form }) }
+}
 function isInterruptNotice(text: unknown): boolean {
   return typeof text === 'string' && /^\[Request interrupted by user/.test(text.trim())
 }
@@ -559,7 +567,7 @@ export class ClaudeStreamTranslator {
       if (frame.type === 'user') {
         if (typeof content === 'string') {
           if (isInterruptNotice(content)) push({ type: 'turn_interrupted' })
-          else if (spokenText(content)) push({ type: 'user_message', text: spokenText(content) })
+          else if (spokenText(content)) push(userMessageOf(spokenText(content)))
           continue
         }
         for (const item of z.array(block).catch([]).parse(content)) {
@@ -575,7 +583,7 @@ export class ClaudeStreamTranslator {
             })
           } else if (item.type === 'text' && typeof item.text === 'string') {
             const text = spokenText(item.text)
-            if (text) push({ type: 'user_message', text })
+            if (text) push(userMessageOf(text))
           }
         }
       } else if (frame.type === 'assistant') {

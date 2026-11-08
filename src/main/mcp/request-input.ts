@@ -83,7 +83,7 @@ export const requestInputSchema = {
   layout: z
     .enum(['form', 'steps'])
     .default('form')
-    .describe('form: every field at once, one Send (default). steps: one question per page.'),
+    .describe('form: every field at once, one Approve (default). steps: one question per page.'),
   timeoutSeconds: z
     .number()
     .int()
@@ -91,7 +91,7 @@ export const requestInputSchema = {
     .max(300)
     .default(0)
     .describe(
-      'How long to wait for the person before returning status "pending". 0 (the default) returns at once: end your turn, and the approved form comes back to you as the person\'s next message. A wait above 0 is for an agent that cannot end its turn; keep it well under your MCP client\'s tool timeout (commonly ~60s) and poll clave_input_result after it.'
+      "How long to wait for the person before returning status \"pending\". 0 (the default) returns at once: end your turn, and the approved form comes back to you as the person's next message. A wait above 0 is for an agent that cannot end its turn; keep it well under your MCP client's tool timeout (commonly ~60s) and poll clave_input_result after it. The approve still arrives as the person's message once your turn ends: the same answers, nothing to do with them."
     )
 }
 export type RequestInputArgs = {

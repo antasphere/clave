@@ -6,6 +6,7 @@ import type {
 } from '../../../src/shared/session-model'
 import type { Attachment } from '../../../src/shared/attachments'
 import { inputRequestMeta } from '@clave/contract/input-kinds'
+import { formMessageMarker } from '../../../src/shared/form-message'
 
 export type ChatEvent = SessionEvent
 export type Permission = Extract<SessionEvent, { type: 'permission_request' }>
@@ -248,7 +249,12 @@ export function reduceConversation(state: Conversation, action: Action): Convers
     if (entry?.kind !== 'permission') return state
     const entries = [...state.entries]
     if (event.sent || entry.answer) {
-      const answers = { ...entry.answers, ...event.answers }
+      // An empty value clears the answer, as the server dropped it.
+      const answers = { ...entry.answers }
+      for (const [key, value] of Object.entries(event.answers)) {
+        if (value === '' || (Array.isArray(value) && value.length === 0)) delete answers[key]
+        else answers[key] = value
+      }
       const changed =
         entry.answer !== undefined &&
         Object.entries(event.answers).some(
@@ -274,8 +280,9 @@ export function reduceConversation(state: Conversation, action: Action): Convers
   switch (event.type) {
     case 'user_message':
       // A form's approve or skip, written to the agent as the reader's message
-      // (PRDCT-4157): the form's record row already says it; no bubble.
-      if (event.form) break
+      // (PRDCT-4157): the form's record row already says it; no bubble. The
+      // text has to say so itself, so nothing hides a bubble by the flag alone.
+      if (event.form && formMessageMarker(event.text) === event.form) break
       entries.push({
         kind: 'user',
         text: event.text,

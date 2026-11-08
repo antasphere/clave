@@ -244,12 +244,15 @@ describe('hosted requests', () => {
       code: 'invalid',
       message: '"email" is still unanswered; set it, or let the person approve.'
     })
-    // The field set before the refusal stays set; the form is still open.
-    expect((await requests.resultAfter(request.id, 's1')).status).toBe('pending')
+    // Nothing was written by the refused call; the form is still open.
+    expect(await requests.resultAfter(request.id, 's1')).toEqual({
+      requestId: request.id,
+      status: 'pending'
+    })
     expect(settled).not.toHaveBeenCalled()
     const view = await requests.setAnswers({
       ...set,
-      answers: { email: 'luca@antasphere.com' },
+      answers: { login: 'luca-a', email: 'luca@antasphere.com' },
       submit: true
     })
     expect(view).toEqual({
@@ -258,7 +261,61 @@ describe('hosted requests', () => {
       answers: { login: 'luca-a', email: 'luca@antasphere.com' }
     })
     expect(settled).toHaveBeenCalledTimes(1)
-    expect(settled.mock.calls[0][2]).toEqual({ byAgent: true, polled: false })
+    expect(settled.mock.calls[0][2]).toEqual({ byAgent: true })
+    requests.close()
+  })
+
+  it('a refused submit writes nothing, an empty value clears an optional field, and a no-op set revises nothing', async () => {
+    const requests = new PendingRequests()
+    const request = requests.createHosted(onboarding)
+    const updated = vi.fn()
+    requests.onUpdated(updated)
+    const set = { requestId: request.id, sessionId: 's1' }
+    // The refusal of the submit comes before any field is written.
+    await expect(
+      requests.setAnswers({ ...set, answers: { projects: ['reb'] }, submit: true })
+    ).rejects.toMatchObject({ code: 'invalid' })
+    expect(requests.draftOf(request.id)).toEqual({})
+    expect(updated).not.toHaveBeenCalled()
+    // An empty value on a required field is refused; on an optional one it
+    // clears the field, and the views are told with an empty value.
+    await expect(requests.setAnswers({ ...set, answers: { login: '' } })).rejects.toMatchObject({
+      code: 'invalid',
+      message: '"login": An answer is needed.'
+    })
+    await requests.setAnswers({ ...set, answers: { projects: ['reb'], login: 'luca-a' } })
+    const cleared = await requests.setAnswers({ ...set, answers: { projects: [] } })
+    expect(cleared.answers).toEqual({ login: 'luca-a' })
+    expect(updated).toHaveBeenLastCalledWith(expect.anything(), { projects: '' }, false)
+    // The same value again is no change: nothing published.
+    updated.mockClear()
+    await requests.setAnswers({ ...set, answers: { login: 'luca-a' } })
+    expect(updated).not.toHaveBeenCalled()
+    await requests.resolve({
+      requestId: request.id,
+      response: {
+        type: 'permission',
+        optionId: 'answer',
+        answers: { email: 'luca@antasphere.com', login: 'luca-a' }
+      }
+    })
+    const same = await requests.setAnswers({ ...set, answers: { login: 'luca-a' } })
+    expect(same).toEqual({
+      requestId: request.id,
+      status: 'completed',
+      answers: { email: 'luca@antasphere.com', login: 'luca-a' }
+    })
+    const none = await requests.setAnswers({ ...set, answers: {} })
+    expect(none.revised).toBeUndefined()
+    const dropped = await requests.setAnswers({ ...set, answers: { projects: [] } })
+    expect(dropped.revised).toBeUndefined()
+    const changed = await requests.setAnswers({ ...set, answers: { projects: ['wat'] } })
+    expect(changed).toEqual({
+      requestId: request.id,
+      status: 'completed',
+      answers: { email: 'luca@antasphere.com', login: 'luca-a', projects: ['wat'] },
+      revised: true
+    })
     requests.close()
   })
 
@@ -315,7 +372,7 @@ describe('hosted requests', () => {
     requests.close()
   })
 
-  it('a settle says whether a result read was waiting on it', async () => {
+  it("a settle says whether the agent settled it itself; the person's never does", async () => {
     const requests = new PendingRequests()
     const request = requests.createHosted(onboarding)
     const settled = vi.fn()
@@ -327,13 +384,7 @@ describe('hosted requests', () => {
       response: { type: 'permission', optionId: 'deny' }
     })
     expect((await waiting).status).toBe('dismissed')
-    expect(settled.mock.calls[0][2]).toEqual({ byAgent: false, polled: true })
-    const second = requests.createHosted(onboarding)
-    await requests.resolve({
-      requestId: second.id,
-      response: { type: 'permission', optionId: 'deny' }
-    })
-    expect(settled.mock.calls[1][2]).toEqual({ byAgent: false, polled: false })
+    expect(settled.mock.calls[0][2]).toEqual({ byAgent: false })
     requests.close()
   })
 

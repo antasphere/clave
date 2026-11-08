@@ -486,20 +486,33 @@ describe('hosted requests on the native road', () => {
     f.requests.close()
   })
 
-  it("the turn's end leaves the form open and the session waiting for the person", () => {
+  it("the turn's end leaves the form open and the session waiting for the person, after the turn's own word", async () => {
     const f = hostedFixture()
     const request = f.createHosted(onboarding)
     f.emit({ type: 'state_change', state: 'done' })
     expect(f.requests.snapshot().pending.map((r) => r.id)).toEqual([request.id])
     expect(f.published.filter((e) => e.type === 'permission_withdrawn')).toHaveLength(0)
+    // Not within the delivery of done: a listener behind this one (the
+    // sidebar's publisher) must hear done, then blocked.
+    expect(f.states).toEqual(['blocked'])
+    await Promise.resolve()
     expect(f.states).toEqual(['blocked', 'blocked'])
     f.emit({ type: 'turn_interrupted' })
     expect(f.requests.snapshot().pending).toHaveLength(1)
-    // A turn ending with no form open changes nothing.
+    // A turn ending with no form open changes nothing, and a form approved
+    // between the word and the microtask is not re-asserted.
     f.requests.cancelSession(session.id)
     f.states.length = 0
     f.emit({ type: 'state_change', state: 'done' })
+    await Promise.resolve()
     expect(f.states).toEqual([])
+    const again = f.createHosted(onboarding)
+    f.states.length = 0
+    f.emit({ type: 'state_change', state: 'done' })
+    f.requests.cancelNative(session.id, again.providerRequestId)
+    await Promise.resolve()
+    // The settle's own word, and no blocked after it.
+    expect(f.states).toEqual(['working'])
     f.requests.close()
   })
 
@@ -528,11 +541,11 @@ describe('hosted requests on the native road', () => {
     expect(message).toMatchObject({ type: 'user_message', form: request.providerRequestId })
     expect(message.text).toContain('[The form "Before we start." was approved by the person]')
     expect(message.text).toContain('Your team e-mail: luca@antasphere.com')
-    expect(message.text).toContain(`request ${request.id}`)
+    expect(message.text).toContain(`(form ${request.providerRequestId} · request ${request.id}`)
     f.requests.close()
   })
 
-  it('a skip reaches the agent as a message too; a poll waiting on the form carries it instead', async () => {
+  it('a skip reaches the agent as a message too, and so does an approve a poll was waiting on', async () => {
     const f = hostedFixture()
     const first = f.createHosted(onboarding)
     await f.host.write(session.id, {
@@ -554,7 +567,9 @@ describe('hosted requests on the native road', () => {
       answers: { email: 'luca@antasphere.com' }
     })
     expect((await poll).status).toBe('completed')
-    expect(f.write).toHaveBeenCalledTimes(1)
+    // The poll read it, and the message goes too: a poll whose caller was
+    // interrupted would otherwise swallow the approve.
+    expect(f.write).toHaveBeenCalledTimes(2)
     f.requests.close()
   })
 
@@ -576,9 +591,11 @@ describe('hosted requests on the native road', () => {
     f.host.subscribe(session.id, (value) => {
       if (value.kind === 'event') late.push(value.event)
     })
-    expect(late[0]).toMatchObject({
-      type: 'permission_request',
-      questions: [expect.objectContaining({ id: 'email', default: 'luca@antasphere.com' })]
+    expect(late.map((e) => e.type)).toEqual(['permission_request', 'permission_updated'])
+    expect(late[1]).toEqual({
+      type: 'permission_updated',
+      id: request.providerRequestId,
+      answers: { email: 'luca@antasphere.com' }
     })
     await f.port.setAnswers({
       requestId: request.id,

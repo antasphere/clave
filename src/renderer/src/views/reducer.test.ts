@@ -429,18 +429,27 @@ describe('taking a message back', () => {
     expect(drafted.entries[0]).not.toHaveProperty('answer')
     // The approve, written to the agent as the reader's message, draws no
     // bubble: the record row says it. Every view is handed the answers.
+    const message = [
+      '[The form "Four things before this machine is set up." was approved by the person]',
+      'Your GitHub login: luca-a',
+      '(form clave:35e6218e-85f6-4dc0-9b19-366bf927d351 · request r1: clave_input_result reads it, clave_input_set revises a field)'
+    ].join('\n')
     const approved = run([
-      ...[form],
+      ...[{ ...form, id: 'clave:35e6218e-85f6-4dc0-9b19-366bf927d351' }],
       {
         type: 'permission_updated',
-        id: 'clave:1',
+        id: 'clave:35e6218e-85f6-4dc0-9b19-366bf927d351',
         answers: { login: 'luca-a', name: 'mbp' },
         sent: true
       },
-      { type: 'permission_withdrawn', id: 'clave:1' },
-      { type: 'user_message', text: '[The form was approved]', form: 'clave:1' },
+      { type: 'permission_withdrawn', id: 'clave:35e6218e-85f6-4dc0-9b19-366bf927d351' },
+      { type: 'user_message', text: message, form: 'clave:35e6218e-85f6-4dc0-9b19-366bf927d351' },
       { type: 'state_change', state: 'working' }
     ])
+    // A message that carries the flag without saying so in its text is a
+    // message of the person like any other.
+    const faked = run([{ type: 'user_message', text: 'hello', form: 'clave:1' }])
+    expect(faked.entries.map((e) => e.kind)).toEqual(['user'])
     expect(approved.entries.map((e) => e.kind)).toEqual(['permission'])
     expect(approved.entries[0]).toMatchObject({
       answer: 'answer',
@@ -449,8 +458,9 @@ describe('taking a message back', () => {
     expect(approved.entries[0]).not.toHaveProperty('revised')
     // A later correction on the approved form: the row reads revised; the
     // same values again do not.
+    const id = 'clave:35e6218e-85f6-4dc0-9b19-366bf927d351'
     const revised = reduceConversation(approved, {
-      event: { type: 'permission_updated', id: 'clave:1', answers: { name: 'studio' }, sent: true },
+      event: { type: 'permission_updated', id, answers: { name: 'studio' }, sent: true },
       at: 3
     })
     expect(revised.entries[0]).toMatchObject({
@@ -458,10 +468,16 @@ describe('taking a message back', () => {
       revised: true
     })
     const same = reduceConversation(approved, {
-      event: { type: 'permission_updated', id: 'clave:1', answers: { name: 'mbp' }, sent: true },
+      event: { type: 'permission_updated', id, answers: { name: 'mbp' }, sent: true },
       at: 3
     })
     expect(same.entries[0]).not.toHaveProperty('revised')
+    // An empty value clears the answer, as the server dropped it.
+    const cleared = reduceConversation(approved, {
+      event: { type: 'permission_updated', id, answers: { name: '' }, sent: true },
+      at: 3
+    })
+    expect((cleared.entries[0] as { answers?: object }).answers).toEqual({ login: 'luca-a' })
     // An update naming no entry changes nothing.
     expect(
       reduceConversation(approved, {
