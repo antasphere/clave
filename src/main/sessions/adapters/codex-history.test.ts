@@ -89,6 +89,15 @@ describe('Codex resumed chat history', () => {
       { type: 'user_message', text, form: 'clave:35e6218e-85f6-4dc0-9b19-366bf927d351' },
       { type: 'user_message', text: 'a word of my own' }
     ])
+    // The same on the rows a current rollout writes.
+    const modern = replayCodexHistory([
+      message('UserMessage', 'u1', text),
+      message('UserMessage', 'u2', 'a word of my own')
+    ]).map(({ event }) => event)
+    expect(modern).toEqual([
+      { type: 'user_message', text, form: 'clave:35e6218e-85f6-4dc0-9b19-366bf927d351' },
+      { type: 'user_message', text: 'a word of my own' }
+    ])
   })
   it('reads older response-item turns, filters injected context, and closes unanswered calls', () => {
     const response = (payload: unknown): string => line('response_item', payload)

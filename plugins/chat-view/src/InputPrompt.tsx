@@ -63,6 +63,11 @@ const host = (url: string): string => {
  *  take the caret from the composer a second time. */
 const focused = new Set<string>()
 
+/** A press on one of the card's buttons leaves the focus where it is: a
+ *  blur would show the field's problem line, move the buttons down under
+ *  the pointer, and the release would land beside the button. */
+const keepFocus = (event: React.MouseEvent): void => event.preventDefault()
+
 const isEmpty = (value: InputAnswer | undefined): boolean =>
   value === undefined || (typeof value === 'string' ? value.trim() === '' : value.length === 0)
 
@@ -731,6 +736,7 @@ export function InputPrompt({
               <button
                 type="button"
                 className="chat-ask-folded"
+                onMouseDown={keepFocus}
                 disabled={busy}
                 title="Change this answer"
                 onClick={() => goTo(index)}
@@ -782,7 +788,13 @@ export function InputPrompt({
       </ol>
       <div className="chat-ask-actions">
         {steps && step > 0 && (
-          <button type="button" className="chat-ask-btn" disabled={busy} onClick={back}>
+          <button
+            type="button"
+            className="chat-ask-btn"
+            onMouseDown={keepFocus}
+            disabled={busy}
+            onClick={back}
+          >
             Back
           </button>
         )}
@@ -791,6 +803,7 @@ export function InputPrompt({
           <button
             type="button"
             className="chat-ask-btn"
+            onMouseDown={keepFocus}
             title="Skip (Esc)"
             disabled={busy}
             onClick={doSkip}
@@ -801,6 +814,7 @@ export function InputPrompt({
         <button
           type="button"
           className="chat-ask-btn"
+          onMouseDown={keepFocus}
           data-primary="true"
           title={steps && !last && !review ? 'Next (Enter)' : `${approveLabel} (⌘ Enter)`}
           disabled={busy || (attempted && !valid)}

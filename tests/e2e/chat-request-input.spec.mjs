@@ -329,24 +329,75 @@ export async function run(t) {
       el.scrollTop = el.scrollHeight
     })
 
-    /* 5. A skip answers dismissed, in the steps layout. */
-    const third = mcp
-      .call('clave_request_input', {
+    /* 5. The person's correction of a field the agent set survives a
+          remount, and a skip answers dismissed, in the steps layout. */
+    const third = payload(
+      await mcp.call('clave_request_input', {
         description: 'One more.',
         layout: 'steps',
-        timeoutSeconds: 5,
         questions: [
           { id: 'name', label: 'How should we call you?' },
           { id: 'when', label: 'Your start date', kind: 'date' }
         ]
       })
-      .catch((error) => ({ error: String(error) }))
+    )
     await card.waitFor()
     assert.equal(await card.locator('.chat-prompt-step').innerText(), '1/2')
+    payload(
+      await mcp.call('clave_input_set', { requestId: third.requestId, answers: { name: 'Luca' } })
+    )
+    await until(async () =>
+      (await card.locator('.chat-prompt-step').innerText()) === '2/2' ? true : null
+    )
+    await card.getByRole('button', { name: 'Back', exact: true }).click()
+    assert.ok(
+      await until(async () =>
+        (await card.locator('.chat-prompt-step').innerText()) === '1/2' ? true : null
+      ),
+      `back to the first step: ${(await card.innerText()).replace(/\n/g, ' | ')}`
+    )
+    const nameField = card.locator('.chat-field-wrap[data-kind="text"] input')
+    assert.ok(
+      await until(async () => ((await nameField.count()) === 1 ? true : null)),
+      `the name field is there: ${(await card.innerText()).replace(/\n/g, ' | ')}`
+    )
+    await nameField.fill('Luca B')
+    await card.getByRole('button', { name: 'Next', exact: true }).click()
+    assert.equal(await card.locator('.chat-prompt-step').innerText(), '2/2')
+    for (let i = 0; i < 6; i++) {
+      await view
+        .locator('textarea')
+        .fill(
+          `filler ${i} again: a long line so the transcript grows under the form and the card leaves the view`
+        )
+      await view.locator('textarea').press('Enter')
+      await win.waitForTimeout(150)
+    }
+    assert.ok(await until(async () => ((await card.count()) === 0 ? true : null)))
+    // Up the transcript a screen at a time until the row is mounted again.
+    const found = await until(async () => {
+      await view.locator('.chat-scroll').evaluate((el) => {
+        el.scrollTop = Math.max(0, el.scrollTop - el.clientHeight * 0.6)
+      })
+      await win.waitForTimeout(120)
+      return (await card.count()) === 1 ? true : null
+    })
+    assert.ok(found, 'the card is back once its row is in view again')
+    assert.equal(await card.locator('.chat-prompt-step').innerText(), '2/2')
+    assert.match(
+      await card.locator('.chat-ask-field[data-folded="true"]').first().innerText(),
+      /Luca B/
+    )
+    t.check("the person's correction of a field the agent set survives the card's remount", true)
     await card.getByRole('button', { name: 'Skip', exact: true }).click()
-    const skipped = payload(await third)
+    const skipped = payload(
+      await mcp.call('clave_input_result', { requestId: third.requestId, waitSeconds: 10 })
+    )
     assert.equal(skipped.status, 'dismissed', JSON.stringify(skipped))
     t.check('a skipped request answers dismissed to the agent', true)
+    await view.locator('.chat-scroll').evaluate((el) => {
+      el.scrollTop = el.scrollHeight
+    })
 
     /* 6. A provider's own question is inline too, answered through the host. */
     await fixture.evaluate(() => {
