@@ -3251,36 +3251,44 @@ button.extension-card:hover {
 }
 /* The transcript runs right down to the composer and fades out over its
    last stretch instead of stopping on a hard edge: the ground's own colour
-   laid over the foot of the transcript, from clear to whole. A gradient over
-   it, NOT a mask on the scroller: a masked scroller is repainted on every
-   frame of a scroll, and the scroll stuttered with one (7 November 2026).
-   Above the rows, under the jump-to-end control; it takes no pointer. The
-   column's own foot padding is taller than the fade, so the last line sits
-   clear of it once the reader is at the end. */
+   laid over the foot of the transcript. A gradient over it, NOT a mask on the
+   scroller: a masked scroller is repainted on every frame of a scroll, and
+   the scroll stuttered with one (7 November 2026). Above the rows, under the
+   jump-to-end control; it takes no pointer. The column's own foot padding is
+   taller than the fade, so the last line sits clear of it once the reader is
+   at the end.
+
+   The curve (8 November 2026): never whole, and not symmetric. It stops at
+   88% at the composer, so the last line still shows through, falls steeply
+   to about a third over the stretch nearest the composer, then thins out
+   over a long tail. The cosine S it replaced went to 100% and read as a wall
+   painted over the text. Shared by every transcript view (Chat, Enclave,
+   Folio's desk in lab/folio.css) through --transcript-fade-image. */
+:root {
+  --transcript-fade: calc(var(--spacing) * 9);
+  --transcript-fade-image: linear-gradient(
+    to bottom,
+    transparent,
+    color-mix(in srgb, var(--surface-0) 3%, transparent) 20%,
+    color-mix(in srgb, var(--surface-0) 9%, transparent) 40%,
+    color-mix(in srgb, var(--surface-0) 16%, transparent) 55%,
+    color-mix(in srgb, var(--surface-0) 26%, transparent) 68%,
+    color-mix(in srgb, var(--surface-0) 38%, transparent) 78%,
+    color-mix(in srgb, var(--surface-0) 55%, transparent) 86%,
+    color-mix(in srgb, var(--surface-0) 73%, transparent) 93%,
+    color-mix(in srgb, var(--surface-0) 88%, transparent)
+  );
+}
 .chat-transcript::after {
-  --chat-fade: calc(var(--spacing) * 7);
   content: '';
   position: absolute;
   z-index: 5;
   left: 0;
   right: 0;
   bottom: 0;
-  height: var(--chat-fade);
+  height: var(--transcript-fade);
   pointer-events: none;
-  /* A cosine ease over eight steps: no visible edge where the fade begins,
-     none where it ends, and no banding between. */
-  background-image: linear-gradient(
-    to bottom,
-    transparent,
-    color-mix(in srgb, var(--surface-0) 4%, transparent) 12.5%,
-    color-mix(in srgb, var(--surface-0) 15%, transparent) 25%,
-    color-mix(in srgb, var(--surface-0) 31%, transparent) 37.5%,
-    color-mix(in srgb, var(--surface-0) 50%, transparent) 50%,
-    color-mix(in srgb, var(--surface-0) 69%, transparent) 62.5%,
-    color-mix(in srgb, var(--surface-0) 85%, transparent) 75%,
-    color-mix(in srgb, var(--surface-0) 96%, transparent) 87.5%,
-    var(--surface-0)
-  );
+  background-image: var(--transcript-fade-image);
 }
 /* The way back down. The transcript follows the stream only while the reader
    is at its end (`useTranscriptEnd`); one who scrolled up to re-read is left

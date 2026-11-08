@@ -202,14 +202,34 @@
   min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
-  --folio-fade: calc(var(--spacing) * 7);
-  mask-image: linear-gradient(
-    to bottom,
+}
+/* The desk's two edges fade the page in and out over the ground, as the Chat
+   view's transcript does: overlays above the scroller, not a mask on it, which
+   repainted on every frame of a scroll. The foot is the shared curve
+   (--transcript-fade-image in system.css); the head is a short plain fade under
+   the spine. */
+.folio-desk::before,
+.folio-desk::after {
+  content: '';
+  position: absolute;
+  z-index: 4;
+  left: 0;
+  right: 0;
+  pointer-events: none;
+}
+.folio-desk::before {
+  top: 0;
+  height: calc(var(--spacing) * 3);
+  background-image: linear-gradient(
+    to top,
     transparent,
-    black calc(var(--spacing) * 3),
-    black calc(100% - var(--folio-fade)),
-    transparent
+    color-mix(in srgb, var(--surface-0) 88%, transparent)
   );
+}
+.folio-desk::after {
+  bottom: 0;
+  height: var(--transcript-fade);
+  background-image: var(--transcript-fade-image);
 }
 .folio-sheet {
   container: folio / inline-size;
@@ -570,6 +590,8 @@
 /* The way back to the page being written, while the reader is elsewhere. */
 .folio-back {
   position: absolute;
+  /* Over the desk's foot fade, as the chat's jump-to-end sits over its own. */
+  z-index: 10;
   bottom: calc(var(--spacing) * 3);
   left: 50%;
   translate: -50% 0;
