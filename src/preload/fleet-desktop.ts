@@ -126,17 +126,14 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
       }
   }
   const fleet = createFleetClient({
-    // A credential main cannot read (the keychain not open yet at boot, the
-    // saved token gone) is answered as no endpoint, so the state says
-    // "credentials unavailable" rather than "unreachable" (PRDCT-4165); main
-    // writes the reason in its log where the refusal happens.
-    resolve: async (serverId) => {
-      try {
-        return (await ports.invoke(FLEET_IPC.endpoint, serverId)) as Endpoint | null
-      } catch {
-        return null
-      }
-    },
+    // Main answers no endpoint for a credential it cannot read (the keychain
+    // not open yet at boot, the saved token gone), so the state says
+    // "credentials unavailable" rather than "unreachable", and writes the
+    // reason in its log where the refusal happens (PRDCT-4165); its other
+    // refusals (a connection disabled meanwhile) still throw and stand as
+    // unreachable until the next sync.
+    resolve: async (serverId) =>
+      (await ports.invoke(FLEET_IPC.endpoint, serverId)) as Endpoint | null,
     connect: (endpoint) => ports.connect(endpoint),
     retryMs: CONNECT_RETRY_MS
   })

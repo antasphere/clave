@@ -24,8 +24,10 @@ import {
 import { TEST_NO_ACTIVATE, TEST_VERSION } from '../test-mode'
 import log from 'electron-log/main'
 import {
+  isCredentialUnavailable,
   recordConnectionChange,
-  recordCredentialFailure
+  recordCredentialFailure,
+  recordCredentialOpened
 } from '../server-connections/connection-log'
 
 let shared: ServerConnectionRegistry | undefined
@@ -146,22 +148,23 @@ export function registerServerHandlers(
   })
   // Privileged preload only. E must not bridge this channel to renderer.
   // A credential that cannot be read is the one failure that happens here
-  // and not in the window: written to the log here (PRDCT-4165).
+  // and not in the window (PRDCT-4165): answered as no endpoint, which the
+  // fleet client names "credentials unavailable", and written to the log
+  // once until it opens again. Any other refusal (a disabled or unknown
+  // connection) is thrown as before, so a window racing a disconnect made
+  // elsewhere does not read it as a credential problem.
   ipcMain.handle(FLEET_IPC.endpoint, async (_event, id: string) => {
     try {
-      return await connections().endpoint(id)
+      const endpoint = await connections().endpoint(id)
+      recordCredentialOpened(id)
+      return endpoint
     } catch (error) {
+      if (!isCredentialUnavailable(error)) throw error
       const name = connections()
         .list()
         .find((c) => c.id === id)?.name
-      if (name)
-        recordCredentialFailure(
-          log,
-          id,
-          name,
-          error instanceof Error ? error.message : 'The saved server credential is unavailable.'
-        )
-      throw error
+      recordCredentialFailure(log, id, name ?? 'unknown server', (error as Error).message)
+      return null
     }
   })
   // A window's connection to a server changed state: the line in the main log.

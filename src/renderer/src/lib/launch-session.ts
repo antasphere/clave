@@ -9,7 +9,8 @@ import { getActiveWorkspaceId, getWorkspaceById, workspaceServer } from '../stor
 import { pickServerFolder } from '../store/server-folder-store'
 import { clearLaunchNotice, showLaunchNotice } from '../store/launch-notice-store'
 import { deliverPendingChatView, pendingChatView } from './pending-chat-view'
-import type { ServerLaunchPick } from './launch-source'
+import type { LaunchProfile, LauncherFamily } from '../../../shared/agent-launch'
+import { serverProfilesFor, useServerSettingsStore } from '../store/server-settings-state'
 import {
   agentAcceptsPrompt,
   agentSetupToModes,
@@ -55,10 +56,6 @@ export interface LaunchRequest {
   exactProfile?: boolean
   /** Explicit home for a capture-bound launch; ordinary launchers use their current workspace. */
   workspaceId?: string
-  /** For a launch on a server, what the setup's ids name in the SERVER's own
-   *  lists (PRDCT-4162, `lib/launch-source.ts`): the profile's definition and
-   *  the account, which travel as they are. Absent, the ids are this Mac's. */
-  onServer?: ServerLaunchPick
 }
 
 export interface LaunchSelectionError extends Error {
@@ -106,18 +103,55 @@ const NO_AGENT = {
   piMode: false
 }
 
+/** What a setup names in a SERVER's own lists (PRDCT-4162): the profile's
+ *  definition and the account, read from the settings this Mac keeps of the
+ *  server. The launcher builds a server's rows from those lists
+ *  (`lib/launch-source.ts`), and every launch that lands on a server resolves
+ *  the same way, whichever button or shortcut replayed the setup: a profile
+ *  the server lists is sent with its definition (which also stops the
+ *  preload substituting a Mac profile of the same id), an account the server
+ *  lists is sent by its id and label. A profile the server does not list
+ *  keeps the carried path of #241 (a Mac profile travels with its command);
+ *  an account the server does not list never travels, as before. A server
+ *  whose settings this Mac has not read yet offers its built-ins alone. */
+function serverPick(
+  serverId: string,
+  setup: AgentSetup
+): {
+  profile?: LaunchProfile
+  claudeAccount?: { id: string; label: string }
+  codexAccount?: { id: string; label: string }
+} {
+  const settings = useServerSettingsStore.getState().byServer[serverId] ?? {
+    profiles: null,
+    claude: [],
+    codex: []
+  }
+  const family: LauncherFamily = setup.kind === 'claude-agents' ? 'claude' : setup.kind
+  const profile = setup.launchProfileId
+    ? serverProfilesFor(settings, family).find((p) => p.id === setup.launchProfileId)
+    : undefined
+  const claude =
+    family === 'claude' && setup.claudeProfileId
+      ? settings.claude.find((a) => a.id === setup.claudeProfileId)
+      : undefined
+  const codex =
+    family === 'codex' && setup.codexAccountId
+      ? settings.codex.find((a) => a.id === setup.codexAccountId)
+      : undefined
+  return {
+    ...(profile ? { profile } : {}),
+    ...(claude ? { claudeAccount: { id: claude.id, label: claude.label } } : {}),
+    ...(codex ? { codexAccount: { id: codex.id, label: codex.label } } : {})
+  }
+}
+
 /** A launch on a connected Clave server, in the normal flow (#241): the
  *  launcher's setup travels, the cwd is the server workspace's root (or a
  *  folder picked on the server's disk), and the server runs it on its own
- *  executables and subscriptions. The launcher builds a server's rows from
- *  the server's own settings (PRDCT-4162, `lib/launch-source.ts`), so a
- *  profile or an account the setup names is looked up THERE first: a profile
- *  the server lists is sent with its definition (which also stops the preload
- *  substituting a Mac profile of the same id), an account the server lists is
- *  sent by its id and label, and the server's pool picks when none is named.
- *  A profile the server does not list keeps the carried path of #241 (a Mac
- *  profile travels with its command); an account the server does not list
- *  never travels, as before. An offline server refuses with a notice. */
+ *  executables and subscriptions, the profile and the account resolved
+ *  against the server's own lists (`serverPick`). An offline server refuses
+ *  with a notice. */
 async function launchOnServer(serverId: string, req: LaunchRequest): Promise<string | null> {
   const fleet = useFleetStore.getState()
   const serverName = fleet.connections.find((c) => c.id === serverId)?.name ?? 'The server'
@@ -144,19 +178,10 @@ async function launchOnServer(serverId: string, req: LaunchRequest): Promise<str
   const dangerousMode = req.setup?.dangerousMode ?? false
   const initialPrompt =
     req.initialPrompt && agentAcceptsPrompt(req.setup) ? req.initialPrompt : undefined
-  const serverProfile =
-    req.onServer?.profile && req.onServer.profile.id === req.setup?.launchProfileId
-      ? req.onServer.profile
-      : undefined
-  const claudeAccount =
-    (modes.claudeMode || modes.claudeAgentsMode) &&
-    req.onServer?.claudeAccount?.id === req.setup?.claudeProfileId
-      ? req.onServer?.claudeAccount
-      : undefined
-  const codexAccount =
-    modes.codexMode && req.onServer?.codexAccount?.id === req.setup?.codexAccountId
-      ? req.onServer?.codexAccount
-      : undefined
+  const pick = req.setup ? serverPick(serverId, req.setup) : {}
+  const serverProfile = pick.profile
+  const claudeAccount = modes.claudeMode || modes.claudeAgentsMode ? pick.claudeAccount : undefined
+  const codexAccount = modes.codexMode ? pick.codexAccount : undefined
   let id: string
   try {
     const info = await window.electronAPI.fleetStart(serverId, cwd, {

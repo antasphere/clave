@@ -72,7 +72,7 @@ export async function run(t) {
     t.check(
       'opening a tab there is refused in the window’s own words, the reason included',
       typeof refused === 'string' &&
-        refused.includes('Studio is Unreachable') &&
+        refused.includes('Studio is unreachable') &&
         refused.includes('did not answer at this address'),
       refused
     )

@@ -20,8 +20,11 @@ export interface FleetClientOptions {
    *  the credential unreadable, the factory refusing or timing out) the
    *  client tries again on its own (PRDCT-4165). Once the transport exists
    *  its push socket retries by itself; this covers the step before it,
-   *  which until then was tried once per boot and never again. Absent: no
-   *  retry, the state of the first attempt stands until the next connect. */
+   *  which until then was tried once per boot and never again. The wait
+   *  doubles on each failure in a row up to sixteen times this value, so a
+   *  credential gone for good costs a read every few minutes, not every few
+   *  seconds. Absent: no retry, the state of the first attempt stands until
+   *  the next connect. */
   readonly retryMs?: number
 }
 export interface FleetClient {
@@ -64,6 +67,9 @@ export function createFleetClient(options: FleetClientOptions): FleetClient {
   if (retryMs !== undefined && (!Number.isFinite(retryMs) || retryMs <= 0))
     throw new Error('Fleet retry must be a positive number of milliseconds.')
   const entries = new Map<ServerId, Entry>()
+  /** Failed acquisitions in a row per owner, the backoff's exponent. */
+  const failures = new Map<ServerId, number>()
+  const RETRY_CAP = 16
   const statuses = new Set<(status: ServerConnectionStatus) => void>()
   const events = new Set<(event: Sourced<ServerEventEnvelope>) => void>()
   const requests = new Set<(request: Sourced<ViewRequest>) => void>()
@@ -84,6 +90,11 @@ export function createFleetClient(options: FleetClientOptions): FleetClient {
   const clearWatch = (entry: Entry): void => {
     if (entry.timer !== undefined) clearTimeout(entry.timer)
     entry.timer = undefined
+  }
+  const connectedNow = (id: ServerId, entry: Entry): void => {
+    failures.delete(id)
+    clearWatch(entry)
+    publish(entry, { serverId: id, state: 'connected' })
   }
   const clearRetry = (entry: Entry): void => {
     if (entry.retry !== undefined) clearTimeout(entry.retry)
@@ -117,6 +128,7 @@ export function createFleetClient(options: FleetClientOptions): FleetClient {
     entry.cancel?.()
     clearWatch(entry)
     clearRetry(entry)
+    failures.delete(id)
     offAll(entry)
     const backing = entry.backing
     entry.backing = undefined
@@ -171,8 +183,7 @@ export function createFleetClient(options: FleetClientOptions): FleetClient {
           backing.push.onStatus((state, detail) => {
             if (!active(id, entry)) return
             if (state === 'open') {
-              clearWatch(entry)
-              publish(entry, { serverId: id, state: 'connected' })
+              connectedNow(id, entry)
             } else if (detail.final === 'unauthorized') {
               clearWatch(entry)
               publish(entry, { serverId: id, state: 'unauthorized', error: 'unauthorized' })
@@ -206,10 +217,7 @@ export function createFleetClient(options: FleetClientOptions): FleetClient {
         backing.push.connect()
         // A factory may have opened the socket before handing it over. Its
         // welcome then predates our listener and must not be lost.
-        if (backing.push.status === 'open') {
-          clearWatch(entry)
-          publish(entry, { serverId: id, state: 'connected' })
-        }
+        if (backing.push.status === 'open') connectedNow(id, entry)
         return backing
       })
       .catch(async () => {
@@ -229,11 +237,14 @@ export function createFleetClient(options: FleetClientOptions): FleetClient {
           // or replaced the entry meanwhile: a credential the keychain did
           // not give at boot, or a server not yet up, is not a final word.
           if (retryMs !== undefined && !closed && entries.get(id) === entry) {
+            const failed = (failures.get(id) ?? 0) + 1
+            failures.set(id, failed)
+            const wait = retryMs * Math.min(RETRY_CAP, 2 ** (failed - 1))
             entry.retry = setTimeout(() => {
               entry.retry = undefined
               if (!closed && entries.get(id) === entry && !entry.accepting)
                 void connect(id).catch(() => undefined)
-            }, retryMs)
+            }, wait)
           }
         }
         throw new Error('Could not connect to the owning Clave server.')

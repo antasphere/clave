@@ -23,7 +23,6 @@ import { describeClaudeProfileAuth, useClaudeProfileStore } from '../store/claud
 import { describeCodexAccountAuth, useCodexAccountStore } from '../store/codex-account-store'
 import { headroomLabel, useClaudeAccountsUsage, useCodexAccountsUsage } from '../store/usage-store'
 import { serverProfilesFor, type ServerSettings } from '../store/server-settings-store'
-import type { AgentSetup } from '../store/launch-prefs'
 
 /** The families whose sessions run on an account of a pool. */
 export type PooledFamily = 'claude' | 'codex'
@@ -110,35 +109,5 @@ export function serverLaunchSource(
     selectedProfileId: (family) => resolveLaunchProfile(preferences, family, null).id,
     accounts,
     selectedAccountId: (family) => accounts(family)[0]?.id ?? null
-  }
-}
-
-/** What a setup picked from a SERVER's source names there: the profile's
- *  definition and the account, handed to the launch so they travel as they
- *  are (`LaunchRequest.onServer`). Undefined for this Mac's source, whose ids
- *  the launch resolves itself. */
-export interface ServerLaunchPick {
-  profile?: LaunchProfile
-  claudeAccount?: { id: string; label: string }
-  codexAccount?: { id: string; label: string }
-}
-
-export function serverLaunchPick(
-  source: LaunchSource,
-  setup: AgentSetup
-): ServerLaunchPick | undefined {
-  if (source.serverId === LOCAL_SERVER_ID) return undefined
-  const family: LauncherFamily = setup.kind === 'claude-agents' ? 'claude' : setup.kind
-  const profile = setup.launchProfileId
-    ? source.profilesFor(family).find((p) => p.id === setup.launchProfileId)
-    : undefined
-  const account = (pooled: PooledFamily, id: string | undefined): LaunchAccount | undefined =>
-    id ? source.accounts(pooled).find((a) => a.id === id) : undefined
-  const claude = family === 'claude' ? account('claude', setup.claudeProfileId) : undefined
-  const codex = family === 'codex' ? account('codex', setup.codexAccountId) : undefined
-  return {
-    ...(profile ? { profile } : {}),
-    ...(claude ? { claudeAccount: { id: claude.id, label: claude.label } } : {}),
-    ...(codex ? { codexAccount: { id: codex.id, label: codex.label } } : {})
   }
 }

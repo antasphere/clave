@@ -17,7 +17,6 @@ import type { LaunchProfile, LauncherFamily } from '../../../../shared/agent-lau
 import { LOCAL_SERVER_ID } from '@clave/contract/fleet'
 import {
   localLaunchSource,
-  serverLaunchPick,
   serverLaunchSource,
   type LaunchAccount,
   type LaunchSource,
@@ -277,7 +276,7 @@ export function SessionLauncher({ onRemoteLaunch }: SessionLauncherProps): React
       const family: LauncherFamily = next.kind === 'claude-agents' ? 'claude' : next.kind
       void setWorkspaceLaunchProfile(activeWorkspaceId, family, next.launchProfileId)
     }
-    void run({ setup: next, cwd, remember: true, onServer: serverLaunchPick(topSource, next) })
+    void run({ setup: next, cwd, remember: true })
   }
 
   /** A Claude or Codex entry in the caret menu: one level per choice left to
@@ -649,8 +648,7 @@ export function SessionLauncher({ onRemoteLaunch }: SessionLauncherProps): React
                           serverId: server.serverId,
                           setup: next,
                           cwd: { kind: 'path', path: server.workspace!.rootDir },
-                          workspaceId: server.workspace!.id,
-                          onServer: serverLaunchPick(sourceFor(server.serverId), next)
+                          workspaceId: server.workspace!.id
                         })
                       },
                       { shortcuts: false, disabled: !server.online }

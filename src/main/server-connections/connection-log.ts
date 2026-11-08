@@ -83,15 +83,38 @@ export function recordConnectionChange(
   keep(described.line)
 }
 
-/** Write a credential that could not be read for a connect: the reason is
- *  the registry's own safe sentence, never the adapter's. */
+/** The registry's one sentence for a credential it could not open
+ *  (`ServerConnectionRegistry.endpoint`); any other refusal of an endpoint
+ *  (a disabled or unknown connection) is not a credential failure. */
+export const CREDENTIAL_UNAVAILABLE =
+  'The saved server credential is unavailable. Enter its token again.'
+
+export function isCredentialUnavailable(error: unknown): boolean {
+  return error instanceof Error && error.message === CREDENTIAL_UNAVAILABLE
+}
+
+/** The servers whose credential failed since it last opened: a failure is
+ *  written once, not on every retry of every window. */
+const failedCredentials = new Set<string>()
+
+/** Write a credential that could not be read for a connect, the first time
+ *  it fails since it last opened: the reason is the registry's own safe
+ *  sentence, never the adapter's. Answers whether a line was written. */
 export function recordCredentialFailure(
   logger: ConnectionLogger,
   serverId: string,
   name: string,
   reason: string
-): void {
+): boolean {
+  if (failedCredentials.has(serverId)) return false
+  failedCredentials.add(serverId)
   const line = `[fleet] ${name} (${serverId}): credentials unavailable, ${reason}`
   logger.warn(line)
   keep(line)
+  return true
+}
+
+/** The credential opened: the next failure is written again. */
+export function recordCredentialOpened(serverId: string): void {
+  failedCredentials.delete(serverId)
 }

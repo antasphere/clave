@@ -203,6 +203,48 @@ export async function run(t) {
       'claude-chat'
     )
 
+    // ── A second account on the server: picked from the menu, then replayed by the main button ──
+    // (verifier, round 1: the button named the account and started without it)
+    const account = await request(server, '/accounts/claude', { label: 'Second server account' })
+    await request(server, '/accounts/claude/token', {
+      id: account.id,
+      token: `sk-ant-oat01-${'x'.repeat(80)}`
+    })
+    await eventually(async () => {
+      await clickReady(win.locator('.launcher-caret'))
+      const entry = win.locator('[data-claude-entry="Claude Code"]').first()
+      await entry.hover()
+      const profile = win.locator('[data-launch-profile-entry="server-only-recorder"]').first()
+      await profile.waitFor()
+      if ((await profile.getAttribute('aria-haspopup')) !== 'menu') {
+        await win.keyboard.press('Escape')
+        return false
+      }
+      await profile.hover()
+      await win.locator(`[data-claude-account="${account.id}"]`).first().click()
+      return true
+    }, 'the server’s accounts reach the menu')
+    const picked = await startedOnServer()
+    t.equal(
+      'a profile and an account picked on the server start the server’s own profile',
+      picked.record?.launchProfileId,
+      'server-only-recorder'
+    )
+    t.equal('on the server account picked', picked.record?.claudeProfileId, account.id)
+    const button = win.locator('[data-launcher-agent]')
+    await eventually(
+      async () => ((await button.getAttribute('title')) ?? '').includes('Second server account'),
+      'the main button names the picked server account'
+    )
+    await clickReady(button)
+    const replayed = await startedOnServer()
+    t.equal(
+      'the main button starts the server’s profile it names',
+      replayed.record?.launchProfileId,
+      'server-only-recorder'
+    )
+    t.equal('on the server account it names', replayed.record?.claudeProfileId, account.id)
+
     assert.deepEqual(mac.errors, [])
   } finally {
     await world.close()

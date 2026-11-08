@@ -1,8 +1,11 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
+  CREDENTIAL_UNAVAILABLE,
   describeConnectionChange,
+  isCredentialUnavailable,
   recordConnectionChange,
-  recordCredentialFailure
+  recordCredentialFailure,
+  recordCredentialOpened
 } from './connection-log'
 
 const logger = (): { info: ReturnType<typeof vi.fn>; warn: ReturnType<typeof vi.fn> } => ({
@@ -67,16 +70,25 @@ describe('the server connection log (PRDCT-4165)', () => {
     )?.line
     expect(line).toBe('[fleet] Mac Studio (srv-1) (window 1): offline')
   })
-  it('writes a credential the registry could not open, with its safe sentence', () => {
+  it('writes a credential the registry could not open once, with its safe sentence, until it opens again', () => {
     const log = logger()
-    recordCredentialFailure(
-      log,
-      'srv-1',
-      'Mac Studio',
-      'The saved server credential is unavailable. Enter its token again.'
-    )
+    expect(recordCredentialFailure(log, 'srv-9', 'Mac Studio', CREDENTIAL_UNAVAILABLE)).toBe(true)
     expect(log.warn).toHaveBeenCalledWith(
-      '[fleet] Mac Studio (srv-1): credentials unavailable, The saved server credential is unavailable. Enter its token again.'
+      '[fleet] Mac Studio (srv-9): credentials unavailable, The saved server credential is unavailable. Enter its token again.'
     )
+    // Every window retries every few seconds: the second failure in a row is not written.
+    expect(recordCredentialFailure(log, 'srv-9', 'Mac Studio', CREDENTIAL_UNAVAILABLE)).toBe(false)
+    expect(log.warn).toHaveBeenCalledTimes(1)
+    recordCredentialOpened('srv-9')
+    expect(recordCredentialFailure(log, 'srv-9', 'Mac Studio', CREDENTIAL_UNAVAILABLE)).toBe(true)
+    expect(log.warn).toHaveBeenCalledTimes(2)
+  })
+  it('knows the registry’s credential sentence from its other refusals', () => {
+    expect(isCredentialUnavailable(new Error(CREDENTIAL_UNAVAILABLE))).toBe(true)
+    expect(isCredentialUnavailable(new Error('This server connection is disconnected.'))).toBe(
+      false
+    )
+    expect(isCredentialUnavailable(new Error('Unknown server connection.'))).toBe(false)
+    expect(isCredentialUnavailable(CREDENTIAL_UNAVAILABLE)).toBe(false)
   })
 })
