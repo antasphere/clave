@@ -41,5 +41,9 @@ describe('historyLines', () => {
       ])
     ).toEqual(['Agent: still writing'])
     expect(historyLines([])).toEqual([])
+    // A message that is only files says so, rather than an empty line.
+    expect(
+      historyLines([item({ type: 'user_message', text: '', attachments: [{} as never] })])
+    ).toEqual(['You: [1 attachment]'])
   })
 })

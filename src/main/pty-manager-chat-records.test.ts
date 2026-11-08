@@ -675,3 +675,31 @@ describe('a chat tab keeps what it was running on, for the spawn that brings it 
     })
   })
 })
+
+describe('bypass kept reachable on the spawn and the record (PRDCT-4191, round 3 C5)', () => {
+  it('passes allowDangerous to a Claude chat and records bypass as available', async () => {
+    await ptyManager.spawn('/project', {
+      launchProfileId: 'claude-chat',
+      permissionMode: 'plan',
+      allowDangerous: true
+    })
+    expect(mocks.claude.spawn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        options: expect.objectContaining({ permissionMode: 'plan', allowDangerous: true })
+      })
+    )
+    expect(mocks.backend.writeEventSessionRecord).toHaveBeenLastCalledWith(
+      expect.objectContaining({ dangerousMode: true, permissionMode: 'plan' })
+    )
+  })
+  it('passes nothing of it to a chat launched without it', async () => {
+    await ptyManager.spawn('/project', { launchProfileId: 'claude-chat', permissionMode: 'plan' })
+    const options = (
+      mocks.claude.spawn.mock.calls.at(-1)![0] as unknown as { options: Record<string, unknown> }
+    ).options
+    expect(options.allowDangerous).toBeUndefined()
+    expect(mocks.backend.writeEventSessionRecord).toHaveBeenLastCalledWith(
+      expect.objectContaining({ dangerousMode: false })
+    )
+  })
+})

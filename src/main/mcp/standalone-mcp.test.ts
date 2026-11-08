@@ -821,12 +821,12 @@ const record = (id: string, over: Partial<SessionRecord> = {}): SessionRecord =>
 function messagingHost(): {
   calls: string[]
   typed: Array<[string, string]>
-  restarted: Array<[string, unknown, boolean]>
+  restarted: Array<[string, unknown, boolean, boolean | undefined]>
   bind: (sessions: Map<string, Session>) => Partial<SessionHostService>
 } {
   const calls: string[] = []
   const typed: Array<[string, string]> = []
-  const restarted: Array<[string, unknown, boolean]> = []
+  const restarted: Array<[string, unknown, boolean, boolean | undefined]> = []
   return {
     calls,
     typed,
@@ -837,9 +837,9 @@ function messagingHost(): {
         typed.push([id, text])
         return { submitted: true, draftHandling: 'none' }
       },
-      restart: async (id, account, resendRejected) => {
+      restart: async (id, account, resendRejected, onlyIfStopped) => {
         calls.push(`restart:${id}`)
-        restarted.push([id, account, resendRejected])
+        restarted.push([id, account, resendRejected, onlyIfStopped])
         const session = sessions.get(id)
         if (session) sessions.set(id, { ...session, state: 'idle' })
         return {
@@ -863,7 +863,8 @@ async function messagingFixture(
   const bound: { sessions?: Map<string, Session> } = {}
   const lazy: Partial<SessionHostService> = {
     type: (id, text) => spies.bind(bound.sessions!).type!(id, text),
-    restart: (id, account, resend) => spies.bind(bound.sessions!).restart!(id, account, resend)
+    restart: (id, account, resend, onlyIfStopped) =>
+      spies.bind(bound.sessions!).restart!(id, account, resend, onlyIfStopped)
   }
   const fx = await sessionFixture({ ...hooks, host: lazy })
   bound.sessions = fx.sessions
@@ -989,7 +990,8 @@ describe('standalone MCP messaging: the shared target rule (PRDCT-4192)', () => 
       conversation: true
     })
     // The same tab, same account, no rejected message to send again.
-    expect(restarted).toEqual([['child', {}, false]])
+    // A Resume, not a move: the host is told to refuse a running session.
+    expect(restarted).toEqual([['child', {}, false, true]])
     const running = payload(
       await client.callTool({
         name: 'clave_open_session',
@@ -1033,7 +1035,8 @@ describe('standalone MCP messaging: the shared target rule (PRDCT-4192)', () => 
       )
     ).toMatchObject({ delivered: true, sessionId: 'child', name: 'Lane B' })
     expect(calls).toEqual(['restart:child', 'type:child'])
-    expect(restarted).toEqual([['child', {}, false]])
+    // A Resume, not a move: the host is told to refuse a running session.
+    expect(restarted).toEqual([['child', {}, false, true]])
   }, 15_000)
 })
 

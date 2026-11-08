@@ -11,6 +11,7 @@ export interface ReadableEvent {
   readonly message?: string
   readonly description?: string
   readonly parent?: string
+  readonly attachments?: ReadonlyArray<unknown>
 }
 
 /**
@@ -34,7 +35,9 @@ export function historyLines(items: ReadonlyArray<{ readonly event: ReadableEven
     switch (event.type) {
       case 'user_message':
         closeAnswer()
-        lines.push(`You: ${event.text ?? ''}`)
+        lines.push(
+          `You: ${event.text?.trim() ? event.text : `[${event.attachments?.length ?? 0} attachment${(event.attachments?.length ?? 0) === 1 ? '' : 's'}]`}`
+        )
         break
       case 'assistant_text':
         answer = (answer ?? '') + (event.delta ?? '')

@@ -277,7 +277,14 @@ export function MachineChip({ serverId }: { serverId: string }): React.JSX.Eleme
     </span>
   )
 }
-export function FleetResume({ sessionId }: { sessionId: string }): React.JSX.Element | null {
+export function FleetResume({
+  sessionId,
+  drawnInPane = false
+}: {
+  sessionId: string
+  /** The pane draws the ended state with Resume in it: the header shows none. */
+  drawnInPane?: boolean
+}): React.JSX.Element | null {
   const alive = useSessionStore((s) => s.sessions.find((v) => v.id === sessionId)?.alive)
   const status = useFleetStore((s) => s.statuses[ownerOf(sessionId)]?.state)
   const [busy, setBusy] = useState(false)
@@ -297,6 +304,8 @@ export function FleetResume({ sessionId }: { sessionId: string }): React.JSX.Ele
   if (status !== 'connected')
     return <span className="text-xs text-text-secondary">{status ?? 'Connecting'}</span>
   if (alive) return null
+  // The connection's word stays in the header; the button is the pane's.
+  if (drawnInPane) return null
   return (
     <>
       {failure ? (

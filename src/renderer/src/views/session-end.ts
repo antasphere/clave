@@ -24,9 +24,18 @@ export async function endIsCurrent(
     serverId
   ) => (await window.electronAPI.fleetSnapshot(serverId)).sessions
 ): Promise<boolean> {
-  const sessions = isRemoteKey(sessionId)
-    ? await serverSessions(ownerOf(sessionId)).catch(() => sessionsList())
-    : await sessionsList()
-  const record = sessions.find((s) => s.id === sessionId)
+  if (isRemoteKey(sessionId)) {
+    // A server that cannot be asked (its daemon stopping) is not running the
+    // chat for this window: the end is taken, and a server that comes back
+    // running it says so at the next bind, which the pane applies (round 4).
+    const asked = await serverSessions(ownerOf(sessionId)).then(
+      (sessions) => ({ ok: true as const, sessions }),
+      () => ({ ok: false as const })
+    )
+    if (!asked.ok) return true
+    const record = asked.sessions.find((s) => s.id === sessionId)
+    return !record || record.state === 'ended'
+  }
+  const record = (await sessionsList()).find((s) => s.id === sessionId)
   return !record || record.state === 'ended'
 }

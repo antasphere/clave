@@ -356,3 +356,33 @@ describe('a restart on another account', () => {
     )
   })
 })
+
+describe('a Resume of a running tab is refused on this Mac too (PRDCT-4193, round 3 C2)', () => {
+  const plan = (id: string): void => {
+    mocks.restartSpawn.mockReturnValue({
+      cwd: '/work/app',
+      options: { claudeMode: true, adoptSessionId: id, claudeProfileId: 'acc-2' },
+      resumed: true
+    })
+  }
+  it('rejects with onlyIfStopped while the session runs, and restarts an ended one', async () => {
+    const id = `life-${++sequence}`
+    windows()
+    spawned(id)
+    await spawnSession('w1', '/work/app', { claudeMode: true })
+    plan(id)
+    spawned(id)
+    mocks.states.set(id, { id, state: 'working' } as never)
+    await expect(restartSession(id, { onlyIfStopped: true })).rejects.toThrow(
+      'This session is running; there is nothing to resume.'
+    )
+    expect(mocks.restartSpawn).not.toHaveBeenCalled()
+    mocks.states.set(id, { id, state: 'ended' } as never)
+    await expect(restartSession(id, { onlyIfStopped: true })).resolves.toMatchObject({ id })
+    // A move to another account restarts a running session, as before.
+    mocks.states.set(id, { id, state: 'working' } as never)
+    plan(id)
+    spawned(id)
+    await expect(restartSession(id, { claudeProfileId: 'acc-2' })).resolves.toMatchObject({ id })
+  })
+})

@@ -312,6 +312,17 @@ export const sessionHandlers = [
       const host = yield* SessionHost
       yield* known(host, payload.id)
       const events = yield* ServerEvents
+      // A Resume of a session still running is refused HERE, before anything
+      // is announced: a `session.restarting` with no `session.restarted`
+      // after it would leave every window marking the tab as moving
+      // (PRDCT-4193, round 4). The host refuses it too, for its other callers.
+      const current = host.get(payload.id)
+      if (payload.onlyIfStopped === true && current && current.state !== 'ended')
+        return yield* Effect.fail(
+          new SessionStartFailed({
+            message: 'This session is running; there is nothing to resume.'
+          })
+        )
       // Said before the kill: the window hears the exit of the old process
       // first otherwise, and announces the tab as ended.
       yield* events.publish({ _tag: 'session.restarting', id: payload.id })

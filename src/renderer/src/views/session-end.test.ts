@@ -49,11 +49,14 @@ describe('an end heard for a tab on a Clave server (PRDCT-4191, round 3 C1)', ()
     ]
     expect(await endIsCurrent(key, async () => [], server)).toBe(false)
   })
-  it('falls back to the list when the server cannot be asked', async () => {
-    const list = vi.fn(async () => [{ id: key, state: 'ended' }] as never)
+  it('takes the end when the server cannot be asked, whatever the stale list says', async () => {
+    // A daemon stopping answers nothing: it is not running the chat for this
+    // window, and a daemon back running it says so at the next bind.
+    const list = vi.fn(async () => [{ id: key, state: 'working' }] as never)
     const server = async (): Promise<never> => {
       throw new Error('did not answer')
     }
     expect(await endIsCurrent(key, list, server)).toBe(true)
+    expect(list).not.toHaveBeenCalled()
   })
 })
