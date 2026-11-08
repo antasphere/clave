@@ -62,7 +62,9 @@ const optionsSchema = z.object({
   effort: z.string().refine(isValidEffort).optional(),
   permissionMode: z
     .enum(['manual', 'acceptEdits', 'bypassPermissions', 'plan', 'dontAsk', 'auto'])
-    .optional()
+    .optional(),
+  /** Bypass offered as a mode without starting in it (`--allow-dangerously-skip-permissions`). */
+  allowDangerous: z.boolean().optional()
 })
 type Permission = { input: unknown; suggestions: unknown[] }
 /** The modes a running session can be switched between, in the order the
@@ -1165,6 +1167,10 @@ export class ClaudeAdapter implements SessionAdapter {
           'stdio'
         )
         if (options.permissionMode) argv.push('--permission-mode', options.permissionMode)
+        // A chat resumed in another mode keeps bypass reachable when its
+        // launch had it: the CLI offers the switch without starting in it.
+        if (options.allowDangerous && options.permissionMode !== 'bypassPermissions')
+          argv.push('--allow-dangerously-skip-permissions')
         // A model that takes no effort (Haiku) runs at none whatever this says.
         if (options.effort) argv.push('--effort', options.effort)
         // ADR 0004: a routine run's contract skill and its one-line system
@@ -1230,7 +1236,11 @@ export class ClaudeAdapter implements SessionAdapter {
         return child
       }
     }
-    if (launchMode === 'bypassPermissions' || profilePermissions.bypassAvailable)
+    if (
+      launchMode === 'bypassPermissions' ||
+      profilePermissions.bypassAvailable ||
+      options.allowDangerous === true
+    )
       live.translator.modes = [...PERMISSION_MODES, BYPASS_MODE]
     live.translator.requestSettings = () => {
       if (!live.process || live.ended) return

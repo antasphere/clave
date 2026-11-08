@@ -282,7 +282,13 @@ function RegisteredSessionView({
           />
         </div>
         <div className="pane-header-actions">
-          <FleetResume sessionId={sessionId} />
+          {/* The chat view and Folio draw the ended state with Resume in it
+              (PRDCT-4191): one Resume per pane, so the header's steps aside
+              there and stays for the views that draw none. */}
+          <FleetResume
+            sessionId={sessionId}
+            drawnInPane={viewId === 'clave.chat-view/chat' || viewId === 'clave.chat-view/lab'}
+          />
           <LinkedDocumentReopen sessionId={sessionId} />
           {/* The state in words, for assistive tech and the specs only: the
               status glyph before the title says it on screen. */}

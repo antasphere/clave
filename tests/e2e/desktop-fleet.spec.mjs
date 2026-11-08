@@ -978,9 +978,12 @@ export async function run(t) {
     assert.equal(launches().length, 1, 'desktop did not implicitly restart the stopped provider')
     await showServer(win, savedA.id, a.cwd)
     await win.locator(`[data-sidebar-item-id="${providerKey}"]`).click()
+    // Two ways on since PRDCT-4191: the header's button and the one drawn in
+    // the pane's ended state; the header's is the one this spec presses.
     await win
       .locator(`[data-session-id="${providerKey}"]`)
       .getByRole('button', { name: 'Resume', exact: true })
+      .first()
       .click()
     await check(
       () => until(() => launches().some((entry) => entry.method === 'thread/resume')),

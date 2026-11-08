@@ -22,7 +22,16 @@ export interface RequestResult {
   readonly status: RequestStatus
   /** Secret responses and action output are deliberately absent. */
   readonly response?: Exclude<RequestResponse, { type: 'secret' }>
+  /** Why a request is `cancelled` when the server itself cancelled it: the
+   *  one reason today is a restart, which empties this store (PRDCT-4192). */
+  readonly reason?: string
 }
+
+/** What a caller polling a request this server has no memory of is told
+ *  (PRDCT-4192): the store is in memory, so after a restart every request
+ *  made before it is gone, and "no request belongs to this caller" read as
+ *  an ownership error to the agent that had asked. */
+export const LOST_TO_RESTART = 'the server restarted; ask again'
 type Resolver = (response: RequestResponse) => Promise<void>
 interface Entry {
   request: PendingRequest
@@ -127,7 +136,13 @@ export class PendingRequests {
   result(id: string, sessionId: string): RequestResult {
     this.prune()
     const entry = this.entries.get(id)
-    if (!entry || entry.request.sessionId !== sessionId)
+    // A request this store never heard of, or heard of and lost: the
+    // store lives in memory, so a restart empties it and every caller that
+    // was waiting polls an id nobody holds. Said as cancelled with its
+    // reason, not as another caller's request (PRDCT-4192). An expired
+    // result reads the same way: its ten minutes were up.
+    if (!entry) return { requestId: id, status: 'cancelled', reason: LOST_TO_RESTART }
+    if (entry.request.sessionId !== sessionId)
       throw new RequestRejected({
         code: 'not_found',
         message: 'No request belongs to this caller.'

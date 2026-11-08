@@ -268,7 +268,8 @@ export function createSessionHost(deps: SessionHostDeps): SessionHostService {
       }
       return typeIntoSession(id, text)
     },
-    restart: (id, account, resendRejected) => restartSession(id, { ...account, resendRejected })
+    restart: (id, account, resendRejected, onlyIfStopped) =>
+      restartSession(id, { ...account, resendRejected, onlyIfStopped })
   }
   return host
 }

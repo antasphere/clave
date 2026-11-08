@@ -21,7 +21,11 @@ export const SessionSchema = z.object({
   /** The view this session is read in, `<pluginId>/<viewId>`, as the pane's
    *  picker set it or the launch profile named it. Absent means the host
    *  picks the first view that renders this transport. */
-  viewId: z.string().min(1).optional()
+  viewId: z.string().min(1).optional(),
+  /** Which process under this id this is (1 at the first spawn, one more at
+   *  every spawn under the same id since the host started); a `state_change`
+   *  carries the run it belongs to (PRDCT-4191). Absent on a stopped record. */
+  run: z.number().optional()
 })
 export type Session = z.infer<typeof SessionSchema>
 
@@ -236,7 +240,13 @@ export const SessionEventSchema = z.discriminatedUnion('type', [
      *  allow; the reply is a permission_response carrying `answers`. */
     questions: z.array(AgentQuestionSchema).optional()
   }),
-  z.object({ type: z.literal('state_change'), state: AgentStateSchema }),
+  z.object({
+    type: z.literal('state_change'),
+    state: AgentStateSchema,
+    /** The run of the process whose state this is (`Session.run`): stamped by
+     *  the host that publishes the frame, absent from an adapter's own. */
+    run: z.number().optional()
+  }),
   z.object({
     type: z.literal('session_meta'),
     model: z.string().nullable(),

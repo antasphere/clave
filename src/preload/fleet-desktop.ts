@@ -462,7 +462,15 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
         if (chains.get(id) === next) chains.delete(id)
       })
       .catch(noop)
-    return next
+    // The callers of a terminal verb (a pane's size, a start, typed bytes)
+    // fire and forget, as the bridge declares them: a server that does not
+    // answer (its daemon stopping) used to surface as an uncaught rejection
+    // in the window (PRDCT-4198). Said once in the console, never thrown.
+    return next.catch((error: unknown) => {
+      console.warn(
+        `[fleet] a terminal call did not reach the server of ${id}: ${error instanceof Error ? error.message : String(error)}`
+      )
+    })
   }
   const fileLocation = (
     root: string,
@@ -1256,8 +1264,11 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
         id,
         (wireId) => local.restartSession(wireId, overrides, requestId),
         async (b, wireId) => {
-          const { resendRejected, ...account } = overrides
-          const result = await b.api.sessions.restart(wireId, account, resendRejected, requestId)
+          const { resendRejected, onlyIfStopped, ...account } = overrides
+          const result =
+            onlyIfStopped === true
+              ? await b.api.sessions.restart(wireId, account, resendRejected, requestId, true)
+              : await b.api.sessions.restart(wireId, account, resendRejected, requestId)
           refresh(parseSessionKey(id).serverId)
           return { ...result, id } as Awaited<ReturnType<ElectronAPI['restartSession']>>
         }

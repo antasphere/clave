@@ -277,32 +277,79 @@ export function MachineChip({ serverId }: { serverId: string }): React.JSX.Eleme
     </span>
   )
 }
-export function FleetResume({ sessionId }: { sessionId: string }): React.JSX.Element | null {
+export function FleetResume({
+  sessionId,
+  drawnInPane = false
+}: {
+  sessionId: string
+  /** The pane's view draws the ended state with Resume in it: the header
+   *  shows none WHILE that drawing is up (not while the pane says the tab is
+   *  moving to another account, or out of credits, which draw no Resume). */
+  drawnInPane?: boolean
+}): React.JSX.Element | null {
   const alive = useSessionStore((s) => s.sessions.find((v) => v.id === sessionId)?.alive)
+  const drawing = useSessionStore((s) => {
+    const session = s.sessions.find((v) => v.id === sessionId)
+    return session?.restarting !== true && session?.limitReported !== true
+  })
   const status = useFleetStore((s) => s.statuses[ownerOf(sessionId)]?.state)
   const [busy, setBusy] = useState(false)
+  // Why the last Resume failed, said in the tab (PRDCT-4191): until now the
+  // failure went to one generic line that only Settings → Servers showed,
+  // and the tab kept its "restarting" mark with nothing to click.
+  const [failure, setFailure] = useState<string | null>(null)
+  // A tab back alive has nothing left to explain: the last failure goes with
+  // it, so it never shows again at a later stop (round 1, N3). Derived during
+  // the render, the way React asks for state that follows a prop.
+  const [wasAlive, setWasAlive] = useState(alive)
+  if (alive !== wasAlive) {
+    setWasAlive(alive)
+    if (alive && failure !== null) setFailure(null)
+  }
   if (!isRemoteKey(sessionId)) return null
   if (status !== 'connected')
     return <span className="text-xs text-text-secondary">{status ?? 'Connecting'}</span>
   if (alive) return null
+  // The connection's word stays in the header; the button is the pane's,
+  // while the pane draws it (round 5).
+  if (drawnInPane && drawing) return null
   return (
-    <button
-      className="btn-secondary"
-      disabled={busy}
-      onClick={() => {
-        setBusy(true)
-        void window.electronAPI
-          .restartSession(sessionId, {})
-          .then(async (result) => {
-            if ('error' in result) throw new Error(result.error)
-            await window.electronAPI.fleetSnapshot(ownerOf(sessionId))
-          })
-          .catch(reportFleetError)
-          .finally(() => setBusy(false))
-      }}
-    >
-      <ArrowPathIcon className="w-3.5 h-3.5" />
-      Resume
-    </button>
+    <>
+      {failure ? (
+        <span
+          className="text-xs text-text-secondary truncate max-w-[16rem]"
+          data-fleet-resume-error
+          role="alert"
+          title={failure}
+        >
+          {failure}
+        </span>
+      ) : null}
+      <button
+        className="btn-secondary"
+        disabled={busy}
+        onClick={() => {
+          setBusy(true)
+          setFailure(null)
+          void window.electronAPI
+            .restartSession(sessionId, { onlyIfStopped: true })
+            .then(async (result) => {
+              if ('error' in result) throw new Error(result.error)
+              await window.electronAPI.fleetSnapshot(ownerOf(sessionId))
+            })
+            .catch((error: unknown) => {
+              // The server said no (or did not answer): the tab is not
+              // restarting any more, and the reason is this tab's to show.
+              useSessionStore.getState().setSessionRestarting(sessionId, false)
+              setFailure(`Resume failed: ${error instanceof Error ? error.message : String(error)}`)
+              reportFleetError(error)
+            })
+            .finally(() => setBusy(false))
+        }}
+      >
+        <ArrowPathIcon className="w-3.5 h-3.5" />
+        Resume
+      </button>
+    </>
   )
 }
