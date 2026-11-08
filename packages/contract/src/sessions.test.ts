@@ -60,6 +60,7 @@ const session = {
  *  other way round: the two copies of the model are one wire. */
 const inputs: unknown[] = [
   { type: 'user_message', text: 'hello' },
+  { type: 'permission_draft', id: 'clave:f', answers: { login: 'luca-b', projects: ['reb'] } },
   {
     type: 'user_message',
     text: 'see',
@@ -118,6 +119,7 @@ const inputs: unknown[] = [
 const rejectedInputs: unknown[] = [
   { type: 'set_effort', effort: '--dangerously' },
   { type: 'stop_task', taskId: '' },
+  { type: 'permission_draft', id: 'clave:f', answers: { login: 7 } },
   { type: 'user_message' },
   { type: 'nope' }
 ]
@@ -140,6 +142,7 @@ const events: unknown[] = [
   { type: 'permission_withdrawn', id: 'p' },
   { type: 'permission_updated', id: 'p', answers: { login: 'luca-a', projects: ['reb'] } },
   { type: 'permission_updated', id: 'p', answers: { login: 'luca-a' }, sent: true },
+  { type: 'permission_updated', id: 'p', answers: { login: 'luca-b' }, typed: true },
   { type: 'context_usage', used: 10, window: 200, parent: 'p' },
   { type: 'subagent_model', parent: 'p', model: 'sonnet' },
   { type: 'permission_mode', mode: 'default', modes: [{ id: 'default', label: 'Default' }] },

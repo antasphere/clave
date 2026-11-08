@@ -21,15 +21,35 @@ const eventOf = (r: PendingRequest): Extract<SessionEvent, { type: 'permission_r
   ...(r.detail !== undefined && { detail: r.detail })
 })
 
-/** The fields of a form still open, as the event that tells a view of them:
- *  what a view that subscribes late is handed after the question itself. */
-const draftEventOf = (
+/** The fields of a form still open, as the events that tell a view of them:
+ *  what a view that subscribes late is handed after the question itself. The
+ *  agent's fields as its fill; the person's own typing apart, marked `typed`
+ *  (PRDCT-4210), so the card starts from it and never shows it as landed. */
+const draftEventsOf = (
   r: PendingRequest,
-  draft: Answers
-): Extract<SessionEvent, { type: 'permission_updated' }> | null =>
-  Object.keys(draft).length
-    ? { type: 'permission_updated', id: r.providerRequestId!, answers: { ...draft } }
-    : null
+  draft: Answers,
+  typed: ReadonlySet<string>
+): Extract<SessionEvent, { type: 'permission_updated' }>[] => {
+  const of = (person: boolean): Record<string, string | readonly string[]> =>
+    Object.fromEntries(Object.entries(draft).filter(([key]) => typed.has(key) === person))
+  const agent = of(false)
+  const person = of(true)
+  return [
+    ...(Object.keys(agent).length
+      ? [{ type: 'permission_updated' as const, id: r.providerRequestId!, answers: agent }]
+      : []),
+    ...(Object.keys(person).length
+      ? [
+          {
+            type: 'permission_updated' as const,
+            id: r.providerRequestId!,
+            answers: person,
+            typed: true
+          }
+        ]
+      : [])
+  ]
+}
 
 /** Add request ownership around the frozen lifecycle host. The global stream
  * subscription exists before any client, and never makes stopped sessions ready. */
@@ -250,12 +270,25 @@ export function requestAwareSessionHost(options: {
             !seen.has(request.providerRequestId)
           ) {
             listener({ kind: 'event', event: eventOf(request) })
-            const draft = draftEventOf(request, requests.draftOf(request.id))
-            if (draft) listener({ kind: 'event', event: draft })
+            for (const event of draftEventsOf(
+              request,
+              requests.draftOf(request.id),
+              requests.typedOf(request.id)
+            ))
+              listener({ kind: 'event', event })
           }
         return off
       },
       write: async (id, input) => {
+        // What the person typed into a form still open (PRDCT-4210): the
+        // form's draft takes it, and nothing goes to the provider.
+        if (input.type === 'permission_draft') {
+          const request = requests.native(id, input.id, { pendingOnly: true })
+          if (!request || !requests.isHosted(request.id))
+            throw new RequestRejected({ code: 'not_found', message: REQUEST_GONE.notFound })
+          requests.setDraft({ requestId: request.id, sessionId: id, answers: input.answers })
+          return
+        }
         if (input.type !== 'permission_response') return base.write(id, input)
         const request = requests.native(id, input.id)
         if (!request)

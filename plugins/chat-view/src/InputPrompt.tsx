@@ -385,6 +385,9 @@ function Field({
 const answerText = (question: AgentQuestion, value: InputAnswer | undefined): string =>
   shownValue(question, value)
 
+/** How long the reader's typing rests before it reaches the form's draft. */
+const TYPING_SYNC_MS = 400
+
 export function InputPrompt({
   request,
   busy,
@@ -392,9 +395,11 @@ export function InputPrompt({
   remote,
   drafts,
   draft,
+  typed,
   notes,
   working = false,
-  onAnswer
+  onAnswer,
+  onType
 }: {
   request: Permission
   busy: boolean
@@ -404,17 +409,28 @@ export function InputPrompt({
   /** The fields the agent set so far (the entry's `draft`): applied as they
    *  arrive, over what the reader has not typed otherwise. */
   draft?: Values
+  /** What the reader had typed, as the server kept it (the entry's `typed`,
+   *  PRDCT-4210): a card that comes late starts from it, silently. */
+  typed?: Values
   /** The agent's word under a field it could not fill, by key. */
   notes?: Record<string, string>
   /** The agent is answering what the reader just wrote: the step the reader
    *  is on shows it working on it. */
   working?: boolean
   onAnswer: Answer
+  /** Where the reader's typing goes as it changes (PRDCT-4210): the form's
+   *  draft on the server, so the agent reads it and its submit approves it.
+   *  Called with the fields that changed, an emptied one as `''`. */
+  onType?: (id: string, answers: Record<string, string | string[]>) => void
 }): React.JSX.Element {
   const meta = inputRequestMeta(request.input)
   const questions = request.questions ?? []
   const keys = questions.map(questionKey)
-  const [values, setValues] = useState<Values>(() => initialValues(request, drafts))
+  const [values, setValues] = useState<Values>(() =>
+    drafts?.get(request.id)
+      ? initialValues(request, drafts)
+      : { ...initialValues(request, drafts), ...typed }
+  )
   const [kept] = useState(() => recalled(request.id))
   const [touched, setTouchedState] = useState<Record<string, boolean>>(kept.touched)
   const [attempted, setAttemptedState] = useState(kept.attempted)
@@ -478,6 +494,43 @@ export function InputPrompt({
     if (!takeFocus) return
     if (firstKind === 'choice' || firstKind === 'link') body.current?.focus({ preventScroll: true })
   }, [takeFocus, firstKind])
+  // The reader's typing reaches the form's draft (PRDCT-4210): a beat after
+  // the last change, the fields that differ from what the server holds
+  // (`synced`), so a field the agent set is never sent back as typed. An
+  // answer or a skip carries every value itself and drops what is waiting;
+  // a card that unmounts sends it at once.
+  const synced = useRef<Values>({ ...typed, ...kept.synced })
+  const typing = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const flush = (): void => {
+    if (typing.current) clearTimeout(typing.current)
+    typing.current = null
+    if (!onType) return
+    const wire = answersOf(questions, valuesRef.current)
+    const patch: Record<string, string | string[]> = {}
+    for (const key of keys) {
+      const value = wire[key] ?? ''
+      if (JSON.stringify(value) !== JSON.stringify(own(synced.current, key) ?? ''))
+        patch[key] = value
+    }
+    if (!Object.keys(patch).length) return
+    synced.current = { ...synced.current, ...patch }
+    remember(request.id, { synced: synced.current })
+    onType(request.id, patch)
+  }
+  const flushRef = useRef(flush)
+  flushRef.current = flush
+  // Only typing still waiting is sent on the way out: a copy of the card in
+  // a hidden view, or one just answered, has nothing of the reader's to send.
+  useEffect(
+    () => () => {
+      if (typing.current) flushRef.current()
+    },
+    []
+  )
+  const dropTyping = (): void => {
+    if (typing.current) clearTimeout(typing.current)
+    typing.current = null
+  }
   const set = (key: string, value: InputAnswer): void => {
     if (notes?.[key]) setDismissed((current) => ({ ...current, [key]: notes[key] }))
     setValues((current) => {
@@ -485,6 +538,9 @@ export function InputPrompt({
       drafts?.set(request.id, next)
       return next
     })
+    if (!onType) return
+    if (typing.current) clearTimeout(typing.current)
+    typing.current = setTimeout(() => flushRef.current(), TYPING_SYNC_MS)
   }
   const touch = (key: string): void => setTouched((current) => ({ ...current, [key]: true }))
   const shownProblem = (key: string): string | null =>
@@ -524,7 +580,10 @@ export function InputPrompt({
     )
     if (!changed.length) return
     applied.current = { ...applied.current, ...Object.fromEntries(changed) }
-    remember(request.id, { applied: applied.current })
+    // The server holds what the agent set: the reader's typing is told
+    // apart from it (PRDCT-4210).
+    synced.current = { ...synced.current, ...Object.fromEntries(changed) }
+    remember(request.id, { applied: applied.current, synced: synced.current })
     setValues((current) => {
       const next = { ...current, ...Object.fromEntries(changed) }
       drafts?.set(request.id, next)
@@ -555,6 +614,24 @@ export function InputPrompt({
     // The keys and the questions are the request's, fixed for the card's life.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [draft])
+  // The reader's typing kept by the server, handed to this view late (a
+  // reload, a view that mounted after the typing): it fills a field the card
+  // holds nothing in, as the reader left it, with no landing (PRDCT-4210).
+  useEffect(() => {
+    if (!typed) return
+    const fresh = Object.entries(typed).filter(
+      ([key]) => keys.includes(key) && isEmpty(own(valuesRef.current, key))
+    )
+    synced.current = { ...typed, ...synced.current }
+    if (!fresh.length) return
+    setValues((current) => {
+      const next = { ...current, ...Object.fromEntries(fresh) }
+      drafts?.set(request.id, next)
+      return next
+    })
+    // The keys are the request's, fixed for the card's life.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [typed])
   /** The answer, judged on `vals`: the state, or the state plus the value
    *  just picked, which the click that picked it has not yet rendered. */
   const send = (vals: Values = values): void => {
@@ -572,6 +649,7 @@ export function InputPrompt({
       }
       return
     }
+    dropTyping()
     drafts?.delete(request.id)
     forgetCard(request.id)
     onAnswer(request.id, 'answer', answersOf(questions, vals))
@@ -609,6 +687,7 @@ export function InputPrompt({
   }
   const doSkip = (): void => {
     if (!skip || busy) return
+    dropTyping()
     drafts?.delete(request.id)
     forgetCard(request.id)
     onAnswer(request.id, skip.id)

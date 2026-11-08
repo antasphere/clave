@@ -321,15 +321,40 @@ export async function run(t) {
     await card.getByRole('button', { name: 'Next', exact: true }).click()
     assert.equal(await card.locator('.chat-prompt-step').innerText(), '3/3')
     t.check('Next lands on a step the agent filled rather than skipping it', true)
+    // PRDCT-4210: the person retypes the name the agent set. A beat later
+    // the form's draft holds it, so the agent reads it; the card keeps it as
+    // typed and nothing lands on it as the agent's fill.
+    await card.locator('.chat-ask-field[data-folded="true"]').nth(0).locator('button').click()
+    assert.equal(await card.locator('.chat-prompt-step').innerText(), '1/3')
+    const flashes = await card.locator('.chat-ask-flash').count()
+    await card.locator('#chat-field-name').fill('Luca P')
+    const typedRead = await until(async () => {
+      const read = payload(await mcp.call('clave_input_result', { requestId: second.requestId }))
+      return read?.answers?.name === 'Luca P' ? read : null
+    })
+    assert.deepEqual(typedRead, {
+      requestId: second.requestId,
+      status: 'pending',
+      answers: { name: 'Luca P', when: '2026-11-17' }
+    })
+    await win.waitForTimeout(600)
+    assert.equal(await card.locator('#chat-field-name').inputValue(), 'Luca P')
+    assert.equal(
+      await card.locator('.chat-ask-flash').count(),
+      flashes,
+      "the person's own typing never lands as the agent's"
+    )
+    t.check("what the person types reaches the form's draft and the agent reads it", true)
     // The agent approves it itself (the person said to go ahead): the card
-    // collapses, no message is owed, the answers are the record's.
+    // collapses, no message is owed, the answers are the record's, the
+    // person's correction among them.
     const submitted = payload(
       await mcp.call('clave_input_set', { requestId: second.requestId, answers: {}, submit: true })
     )
     assert.deepEqual(submitted, {
       requestId: second.requestId,
       status: 'completed',
-      answers: { name: 'Luca', when: '2026-11-17' }
+      answers: { name: 'Luca P', when: '2026-11-17' }
     })
     await until(async () => ((await card.count()) === 0 ? true : null))
     // The closed form stands where the open one did, at the end: the last
@@ -341,7 +366,11 @@ export async function run(t) {
     assert.match(await secondRow.innerText(), /Approved/i)
     assert.equal(await secondRow.locator('.chat-ask-field[data-folded="true"]').count(), 3)
     assert.match(await secondRow.innerText(), /2026-11-17/)
-    t.check("the agent's own approve closes the form into its record", true)
+    assert.match(await secondRow.innerText(), /Luca P/)
+    t.check(
+      "the agent's own approve closes the form into its record, with what the person typed",
+      true
+    )
     // A later correction: the record reads Revised with the new value, and
     // the tool reads it so.
     const revised = payload(

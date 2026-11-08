@@ -979,7 +979,13 @@ export function TerminalView({
                   remote: isRemoteKey(session.id),
                   live: (entry) => liveCards.has(entry),
                   drafts: questionDrafts,
-                  working: state === 'working'
+                  working: state === 'working',
+                  // PRDCT-4210: the reader's typing reaches the form's draft
+                  // by the same write, on this Mac or the session's server.
+                  // A form settled meanwhile refuses it: nothing to tell.
+                  type: (id, answers) => {
+                    void write({ type: 'permission_draft', id, answers }).catch(() => {})
+                  }
                 }}
               >
                 <ExchangeContext.Provider value={exchanges}>

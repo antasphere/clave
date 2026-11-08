@@ -86,6 +86,10 @@ export type Entry =
        *  open: the fields the agent set from what the reader said, which the
        *  card shows as they land. */
       draft?: Record<string, string | string[]>
+      /** What the reader had typed into the open form, as the server holds
+       *  it (PRDCT-4210), handed to a view that came late: the card starts
+       *  from it, and nothing of it lands or reads as the agent's fill. */
+      typed?: Record<string, string | string[]>
       /** The form was approved, then a field was set again by the agent. */
       revised?: boolean
       /** The agent's word under a field it could not fill, by key; gone as
@@ -402,6 +406,13 @@ export function reduceConversation(state: Conversation, action: Action): Convers
     const entry = state.entries[index]
     if (entry?.kind !== 'permission') return state
     const entries = [...state.entries]
+    if (event.typed) {
+      // The reader's own typing, kept by the server for this view: only an
+      // open form takes it, and never into the agent's draft (PRDCT-4210).
+      if (event.sent || entry.answer || entry.answeredElsewhere) return state
+      entries[index] = { ...entry, typed: { ...entry.typed, ...event.answers } }
+      return { ...state, entries }
+    }
     if (event.sent || entry.answer) {
       // An empty value clears the answer, as the server dropped it.
       const answers = { ...entry.answers }

@@ -395,6 +395,79 @@ describe('hosted requests on the native road', () => {
     }
   }
 
+  it("the person's typing goes to the form's draft, never the provider, and a late view is handed it apart from the agent's (PRDCT-4210)", async () => {
+    const f = hostedFixture()
+    const request = f.createHosted({
+      ...onboarding,
+      questions: [
+        ...onboarding.questions,
+        { id: 'machine', question: 'This machine', kind: 'text' as const, options: [] }
+      ]
+    })
+    const form = request.providerRequestId!
+    await f.port.setAnswers({
+      requestId: request.id,
+      sessionId: session.id,
+      answers: { email: 'luca@antasphere.com', machine: 'mbp-a' }
+    })
+    const told = f.published.length
+    await f.host.write(session.id, {
+      type: 'permission_draft',
+      id: form,
+      answers: { machine: 'mbp-b' }
+    })
+    expect(f.write).not.toHaveBeenCalled()
+    expect(f.published).toHaveLength(told)
+    expect(await f.port.resultAfter(request.id, session.id, 0)).toMatchObject({
+      status: 'pending',
+      answers: { email: 'luca@antasphere.com', machine: 'mbp-b' }
+    })
+    const late: SessionEvent[] = []
+    f.host.subscribe(session.id, (value) => {
+      if (value.kind === 'event') late.push(value.event)
+    })
+    expect(late.map((e) => e.type)).toEqual([
+      'permission_request',
+      'permission_updated',
+      'permission_updated'
+    ])
+    expect(late[1]).toEqual({
+      type: 'permission_updated',
+      id: form,
+      answers: { email: 'luca@antasphere.com' }
+    })
+    expect(late[2]).toEqual({
+      type: 'permission_updated',
+      id: form,
+      answers: { machine: 'mbp-b' },
+      typed: true
+    })
+    // The agent submits on the person's word: the person's value is approved.
+    await f.port.setAnswers({
+      requestId: request.id,
+      sessionId: session.id,
+      answers: {},
+      submit: true
+    })
+    expect(await f.port.resultAfter(request.id, session.id, 0)).toMatchObject({
+      status: 'completed',
+      answers: { email: 'luca@antasphere.com', machine: 'mbp-b' }
+    })
+    // A settled form, or a provider's own request, takes no typing.
+    await expect(
+      f.host.write(session.id, { type: 'permission_draft', id: form, answers: { machine: 'x' } })
+    ).rejects.toMatchObject({ _tag: 'RequestRejected', code: 'not_found' })
+    f.emit(permission)
+    await expect(
+      f.host.write(session.id, { type: 'permission_draft', id: permission.id, answers: {} })
+    ).rejects.toMatchObject({ _tag: 'RequestRejected', code: 'not_found' })
+    expect(f.write).not.toHaveBeenCalledWith(
+      session.id,
+      expect.objectContaining({ type: 'permission_draft' })
+    )
+    f.requests.close()
+  })
+
   it('publishes the request as a question into the stream and marks the session waiting', () => {
     const f = hostedFixture()
     const seen: SessionEvent[] = []

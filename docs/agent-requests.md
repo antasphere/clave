@@ -110,7 +110,13 @@ question's id, nothing set; an empty value clears an optional field. `notes`,
 by question id, is a short word shown under a field the agent could not fill
 from what the person said ("I did not catch an e-mail in that"), so the form
 itself says why it still waits; it goes as soon as the field changes. On the open form the fields go
-to its draft, which the card shows landing and `clave_input_result` reads;
+to its draft, which the card shows landing and `clave_input_result` reads.
+What the person types into the card goes to the same draft as they type, a
+beat after the last change (a `permission_draft` write to the session, the
+local host's or the session's server's), so the read returns it and a field
+the person retyped over the agent's value holds the person's; the card never
+shows it back as the agent's fill. A field the agent sets after that speaks
+for the agent again;
 `submit: true` approves the open form with what it then holds, refused before
 anything is written while a required field is unanswered, and meant only for
 when the person said to go ahead in the chat. On an approved form the fields

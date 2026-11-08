@@ -69,6 +69,9 @@ interface Entry {
    *  what the person said (`setAnswers`). What the card shows and what the
    *  tool reads on a pending form. */
   draft?: Answers
+  /** The draft's fields the person typed last (PRDCT-4210), rather than the
+   *  agent: what a late view is handed as typed, never as the agent's fill. */
+  typed?: Set<string>
   /** A hosted form approved, then a field set again. */
   revised?: boolean
   /** The agent itself approved the form (`setAnswers` with `submit`). */
@@ -186,6 +189,57 @@ export class PendingRequests {
       ? structuredClone(entry.draft)
       : {}
   }
+  /** Which of an open hosted form's draft fields the person typed last
+   *  (PRDCT-4210); the rest the agent set. Empty for any other request. */
+  typedOf(id: string): ReadonlySet<string> {
+    const entry = this.entries.get(id)
+    return entry?.hosted && entry.result.status === 'pending' && entry.typed
+      ? new Set(entry.typed)
+      : new Set()
+  }
+  /**
+   * What the person typed into a form still open (PRDCT-4210): the card
+   * writes its fields as they change, so the draft holds them and the
+   * agent's read and its own submit see the person's values. Taken as typed,
+   * half-written or not: the kind rule judges an answer when the form is
+   * approved, by the person or by the agent's submit, never a keystroke. An
+   * emptied field leaves the draft. Nobody is told: the card that typed it
+   * already shows it, and the agent reads it when it asks. Refused on a form
+   * that is no longer open, a key the form does not ask, or a request that
+   * is not a hosted form of this session.
+   */
+  setDraft(input: { requestId: string; sessionId: string; answers: Answers }): void {
+    this.prune()
+    const entry = this.entries.get(input.requestId)
+    if (!entry || !entry.hosted || entry.request.sessionId !== input.sessionId)
+      throw new RequestRejected({
+        code: 'not_found',
+        message: 'No request belongs to this caller.'
+      })
+    if (entry.result.status !== 'pending')
+      throw new RequestRejected({ code: 'closed', message: 'The request was already settled.' })
+    const keys = new Set((entry.request.questions ?? []).map((q) => q.id ?? q.question))
+    const answers = trimAnswers(input.answers)
+    for (const key of Object.keys(answers))
+      if (!keys.has(key) || !isQuestionAnswerKey(key))
+        throw new RequestRejected({
+          code: 'invalid',
+          message: `No question "${key}" on this form.`
+        })
+    const next: Record<string, string | readonly string[]> = { ...entry.draft }
+    const typed = new Set(entry.typed)
+    for (const [key, value] of Object.entries(answers)) {
+      if (typeof value === 'string' ? value === '' : value.length === 0) {
+        delete next[key]
+        typed.delete(key)
+      } else {
+        next[key] = value
+        typed.add(key)
+      }
+    }
+    entry.draft = next
+    entry.typed = typed
+  }
   /**
    * The agent writes to a form it asked (`clave_input_set`, PRDCT-4157):
    * each field judged by its question's kind, the same rule the card applies
@@ -263,15 +317,28 @@ export class PendingRequests {
         const missing = questions.find(
           (q) => answerProblem(q, own(next, q.id ?? q.question)) !== null
         )
-        if (missing)
+        if (missing) {
+          const key = missing.id ?? missing.question
+          const value = own(next, key)
+          const problem = answerProblem(missing, value)
+          // A value that is there but does not fit is the person's typing
+          // (the agent's own values are judged as they are set, above).
+          const unanswered =
+            value === undefined || (typeof value === 'string' ? !value.trim() : !value.length)
           throw new RequestRejected({
             code: 'invalid',
-            message: `"${missing.id ?? missing.question}" is still unanswered; set it, or let the person approve.`
+            message: unanswered
+              ? `"${key}" is still unanswered; set it, or let the person approve.`
+              : `"${key}": ${problem}, as the person typed it; set it, or let the person approve.`
           })
+        }
       }
       const noted = Object.keys(notes).length > 0
       if (Object.keys(patch).length) {
         entry.draft = next
+        // A field the agent set speaks for the agent again, over the
+        // person's typing there (PRDCT-4210).
+        if (entry.typed) for (const key of Object.keys(patch)) entry.typed.delete(key)
         this.changed()
       }
       if (Object.keys(patch).length || noted)

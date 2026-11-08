@@ -27,6 +27,9 @@ export interface QuestionHost {
   /** The agent is working: a form's open step shows it reading what the
    *  person wrote. */
   working: boolean
+  /** Where a form's typing goes as the reader types (PRDCT-4210): the
+   *  form's draft, through the session's write. */
+  type?: (id: string, answers: Record<string, string | string[]>) => void
 }
 
 export const QuestionContext = createContext<QuestionHost | null>(null)

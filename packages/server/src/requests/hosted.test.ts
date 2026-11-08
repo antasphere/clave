@@ -515,3 +515,117 @@ describe('hosted requests', () => {
     requests.close()
   })
 })
+
+/* PRDCT-4210: what the person types into the card reaches the form's draft,
+   so the agent's read and its own submit see the person's values. */
+describe("the person's typing in the form's draft", () => {
+  it('the person corrects a field the agent set; the agent submits on their word and approves the correction', async () => {
+    const requests = new PendingRequests()
+    const request = requests.createHosted(onboarding)
+    const updated = vi.fn()
+    requests.onUpdated(updated)
+    await requests.setAnswers({
+      requestId: request.id,
+      sessionId: 's1',
+      answers: { email: 'luca@antasphere.com', login: 'luca-a' }
+    })
+    updated.mockClear()
+    requests.setDraft({ requestId: request.id, sessionId: 's1', answers: { login: ' luca-b ' } })
+    // Nobody is told: the card that typed it shows it already.
+    expect(updated).not.toHaveBeenCalled()
+    expect(await requests.resultAfter(request.id, 's1')).toEqual({
+      requestId: request.id,
+      status: 'pending',
+      answers: { email: 'luca@antasphere.com', login: 'luca-b' }
+    })
+    expect([...requests.typedOf(request.id)]).toEqual(['login'])
+    const view = await requests.setAnswers({
+      requestId: request.id,
+      sessionId: 's1',
+      answers: {},
+      submit: true
+    })
+    expect(view).toEqual({
+      requestId: request.id,
+      status: 'completed',
+      answers: { email: 'luca@antasphere.com', login: 'luca-b' }
+    })
+    requests.close()
+  })
+
+  it('a field the agent sets again speaks for the agent; an emptied field leaves the draft', async () => {
+    const requests = new PendingRequests()
+    const request = requests.createHosted(onboarding)
+    requests.setDraft({
+      requestId: request.id,
+      sessionId: 's1',
+      answers: { login: 'luca-b', projects: ['reb'] }
+    })
+    expect([...requests.typedOf(request.id)].sort()).toEqual(['login', 'projects'])
+    await requests.setAnswers({
+      requestId: request.id,
+      sessionId: 's1',
+      answers: { login: 'luca-c' }
+    })
+    expect([...requests.typedOf(request.id)]).toEqual(['projects'])
+    requests.setDraft({ requestId: request.id, sessionId: 's1', answers: { projects: [] } })
+    expect(requests.draftOf(request.id)).toEqual({ login: 'luca-c' })
+    expect([...requests.typedOf(request.id)]).toEqual([])
+    requests.close()
+  })
+
+  it("the agent's submit judges the person's half-typed value and says it is theirs", async () => {
+    const requests = new PendingRequests()
+    const request = requests.createHosted(onboarding)
+    requests.setDraft({
+      requestId: request.id,
+      sessionId: 's1',
+      answers: { email: 'luca@antasph', login: 'luca-a' }
+    })
+    await expect(
+      requests.setAnswers({ requestId: request.id, sessionId: 's1', answers: {}, submit: true })
+    ).rejects.toMatchObject({
+      code: 'invalid',
+      message: expect.stringMatching(/^"email": .*as the person typed it/)
+    })
+    expect((await requests.resultAfter(request.id, 's1')).status).toBe('pending')
+    requests.close()
+  })
+
+  it('is refused on a settled form, another session, a key the form does not ask, or a native request', async () => {
+    const requests = new PendingRequests()
+    const request = requests.createHosted(onboarding)
+    expect(() =>
+      requests.setDraft({ requestId: request.id, sessionId: 's2', answers: { login: 'x' } })
+    ).toThrow(expect.objectContaining({ code: 'not_found' }))
+    expect(() =>
+      requests.setDraft({ requestId: request.id, sessionId: 's1', answers: { nope: 'x' } })
+    ).toThrow(expect.objectContaining({ code: 'invalid' }))
+    expect(() =>
+      requests.setDraft({
+        requestId: request.id,
+        sessionId: 's1',
+        answers: JSON.parse('{"__proto__":"x"}')
+      })
+    ).toThrow(expect.objectContaining({ code: 'invalid' }))
+    const native = requests.create({
+      sessionId: 's1',
+      kind: 'permission',
+      providerRequestId: 'n1',
+      description: 'Run?',
+      options: [{ id: 'allow', label: 'Allow' }]
+    })
+    expect(() => requests.setDraft({ requestId: native.id, sessionId: 's1', answers: {} })).toThrow(
+      expect.objectContaining({ code: 'not_found' })
+    )
+    await requests.resolve({
+      requestId: request.id,
+      response: { type: 'permission', optionId: 'deny' }
+    })
+    expect(() =>
+      requests.setDraft({ requestId: request.id, sessionId: 's1', answers: { login: 'x' } })
+    ).toThrow(expect.objectContaining({ code: 'closed' }))
+    expect(requests.draftOf(request.id)).toEqual({})
+    requests.close()
+  })
+})
