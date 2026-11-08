@@ -99,7 +99,9 @@ export async function run(t) {
     for (const n of tmux) {
       try {
         execFileSync('tmux', ['-L', 'clave', 'kill-session', '-t', `=${n}`], { timeout: 10_000 })
-      } catch {}
+      } catch {
+        // the tmux session may already be gone
+      }
     }
     const second = await launchApp(DIR, { settleMs: 0, bootTimeoutMs: 20_000 }).catch((e) => ({
       err: String(e)

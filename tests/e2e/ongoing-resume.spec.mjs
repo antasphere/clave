@@ -85,7 +85,9 @@ export async function run(t) {
       execFileSync('tmux', ['-L', 'clave', 'kill-session', '-t', `=${rec.tmuxName}`], {
         timeout: 10_000
       })
-    } catch {}
+    } catch {
+      // the tmux session may already be gone
+    }
     const dead = await until(async () => {
       const l = await callMcp(app, 'list', {})
       const s = l.sessions.find((x) => x.id === a.sessionId)

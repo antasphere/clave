@@ -70,7 +70,6 @@ export async function run(t) {
   try {
     const w2 = await openWindow(app, win, WS.id, { settleMs: 1500 })
     const ws = await windows(app)
-    const id1 = ws[0].id
     const id2 = ws.find((w) => w.page === w2.page)?.id
     const page2 = w2.page
     t.check(
