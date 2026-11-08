@@ -4,8 +4,10 @@ import {
   entriesInWorkspace,
   entryFromSession,
   ongoingSessionIds,
+  launchOfRecord,
   relativeTime,
   resumableConversation,
+  sameLaunch,
   sessionOfEntry,
   sortEntries,
   splitOngoingDead,
@@ -136,16 +138,27 @@ describe('statusOf, sortEntries, attentionCount', () => {
     expect(statusOf(tab({ agentState: 'working' }))).toBe('working')
     expect(statusOf(tab({ hasUnseenActivity: true }))).toBe('unread')
     expect(statusOf(tab())).toBe('open')
+    expect(statusOf(undefined, true)).toBe('elsewhere')
+    expect(statusOf(tab({ alive: false }), true)).toBe('elsewhere')
+    expect(statusOf(tab(), true)).toBe('open')
   })
   it('puts what asks for the person first, then the newest kept', () => {
     const rows = [
       { entry: entry({ id: 'old', addedAt: 1 }), status: 'open' as const },
       { entry: entry({ id: 'new', addedAt: 9 }), status: 'open' as const },
       { entry: entry({ id: 'rest', addedAt: 99 }), status: 'resting' as const },
+      { entry: entry({ id: 'away', addedAt: 50 }), status: 'elsewhere' as const },
       { entry: entry({ id: 'ask', addedAt: 0 }), status: 'waiting' as const },
       { entry: entry({ id: 'read', addedAt: 0 }), status: 'unread' as const }
     ]
-    expect(sortEntries(rows).map((r) => r.entry.id)).toEqual(['ask', 'read', 'new', 'old', 'rest'])
+    expect(sortEntries(rows).map((r) => r.entry.id)).toEqual([
+      'ask',
+      'read',
+      'new',
+      'old',
+      'away',
+      'rest'
+    ])
   })
   it('counts the waiting and the unread only', () => {
     expect(attentionCount(['waiting', 'unread', 'working', 'open', 'resting'])).toBe(2)
@@ -174,6 +187,50 @@ describe('splitOngoingDead', () => {
       [entry({ sessionId: 'q', provider: 'pi', conversationId: 'same' })]
     )
     expect(resting).toEqual([])
+  })
+})
+
+describe('splitOngoingDead keeps what the dropped record knew', () => {
+  it('takes the account, the model and the folder of the record into the entry', () => {
+    const { entries } = splitOngoingDead(
+      [
+        {
+          id: 'tab-1',
+          cwd: '/moved',
+          model: 'opus',
+          claudeProfileId: 'acct-2',
+          claudeProfileLabel: 'Two',
+          configDir: '/acct-2'
+        }
+      ],
+      [
+        entry({ launch: { claudeProfileId: 'acct-1', claudeConfigDir: '/acct-1' } }),
+        entry({ id: 'other', sessionId: 'z', conversationId: 'cz' })
+      ]
+    )
+    expect(entries[0]).toMatchObject({
+      cwd: '/moved',
+      launch: {
+        model: 'opus',
+        claudeProfileId: 'acct-2',
+        claudeProfileLabel: 'Two',
+        claudeConfigDir: '/acct-2'
+      }
+    })
+    expect(entries[1]).toEqual(entry({ id: 'other', sessionId: 'z', conversationId: 'cz' }))
+  })
+  it('leaves an entry the record agrees with as it was', () => {
+    const e = entry({ launch: { model: 'opus' } })
+    const out = splitOngoingDead([{ id: 'tab-1', cwd: '/work', model: 'opus' }], [e])
+    expect(out.entries[0]).toBe(e)
+  })
+  it('reads the launch of a record and compares launches field by field', () => {
+    expect(launchOfRecord({ id: 'r', configDir: '/d', dangerousMode: true })).toEqual({
+      claudeConfigDir: '/d',
+      dangerousMode: true
+    })
+    expect(sameLaunch({ model: 'a' }, { model: 'a' })).toBe(true)
+    expect(sameLaunch({ model: 'a' }, {})).toBe(false)
   })
 })
 

@@ -13,7 +13,15 @@ import { useWorkspaceStore, getWorkspaceById } from '../../store/workspace-store
 import { ContextMenu, type ContextMenuItem } from '../ui/ContextMenu'
 import { useNow } from '../../lib/use-now'
 import { relativeTime, type OngoingStatus } from '../../lib/ongoing'
-import { endOngoing, openOngoing, returnToSidebar, setOngoingNote } from '../../lib/ongoing-actions'
+import {
+  endOngoing,
+  entriesElsewhere,
+  openOngoing,
+  OngoingOpenRefused,
+  returnToSidebar,
+  setOngoingNote
+} from '../../lib/ongoing-actions'
+import { useOngoingStore } from '../../store/ongoing-store'
 import { OngoingDrawing } from './OngoingDrawing'
 import { useOngoingRows, type OngoingRow } from './use-ongoing'
 import './ongoing.css'
@@ -31,6 +39,7 @@ const STATUS_LABEL: Record<OngoingStatus, string> = {
   unread: 'New reply',
   working: 'Working',
   open: 'Open',
+  elsewhere: 'In another window',
   resting: 'Resting'
 }
 
@@ -39,6 +48,7 @@ const STATUS_HINT: Record<OngoingStatus, string> = {
   unread: 'Something came in since you last looked',
   working: 'The agent is in a turn',
   open: 'Its tab is running',
+  elsewhere: 'Its tab runs in another window; opening it brings the tab here',
   resting: 'No tab runs it now; opening it picks the conversation up where it was'
 }
 
@@ -199,7 +209,12 @@ function OngoingCard({
       tabIndex={0}
       aria-busy={opening || undefined}
       aria-label={`Continue ${name}`}
-      onClick={onOpen}
+      onClick={(e) => {
+        // The card's menu is drawn in a portal, and React still bubbles its
+        // clicks here: an item chosen in it must never also open the card.
+        if (!e.currentTarget.contains(e.target as Node)) return
+        onOpen()
+      }}
       onKeyDown={(e) => {
         if (e.target !== e.currentTarget) return
         if (e.key === 'Enter' || e.key === ' ') {
@@ -209,6 +224,7 @@ function OngoingCard({
       }}
       onContextMenu={(e) => {
         e.preventDefault()
+        if (!e.currentTarget.contains(e.target as Node)) return
         setMenu({ x: e.clientX, y: e.clientY })
       }}
     >
@@ -277,10 +293,33 @@ function OngoingCard({
   )
 }
 
+/** Which conversations run in another window, read while the page is open. */
+function useElsewhere(active: boolean): ReadonlySet<string> | undefined {
+  const entries = useOngoingStore((s) => s.entries)
+  const [ids, setIds] = useState<ReadonlySet<string> | undefined>(undefined)
+  useEffect(() => {
+    if (!active) return
+    let live = true
+    const read = (): void => {
+      void entriesElsewhere(entries).then((next) => {
+        if (live) setIds(next)
+      })
+    }
+    read()
+    const timer = setInterval(read, 4000)
+    return () => {
+      live = false
+      clearInterval(timer)
+    }
+  }, [active, entries])
+  return ids
+}
+
 export function OngoingPage(): React.JSX.Element {
-  const rows = useOngoingRows()
-  const now = useNow(30_000)
   const activeView = useSessionStore((s) => s.activeView)
+  const rows = useOngoingRows(useElsewhere(activeView === 'ongoing'))
+  const [notice, setNotice] = useState<string | null>(null)
+  const now = useNow(30_000)
   const workspaceName = useWorkspaceStore(
     (s) => getWorkspaceById(s.activeWorkspaceId)?.name ?? null
   )
@@ -302,7 +341,14 @@ export function OngoingPage(): React.JSX.Element {
   const open = (entryId: string): void => {
     if (opening) return
     setOpening(entryId)
-    void openOngoing(entryId).finally(() => setOpening(null))
+    setNotice(null)
+    void openOngoing(entryId)
+      .catch((err: unknown) => {
+        setNotice(
+          err instanceof OngoingOpenRefused ? err.message : 'This conversation could not be opened.'
+        )
+      })
+      .finally(() => setOpening(null))
   }
 
   const waiting = rows.filter((r) => r.status === 'waiting').length
@@ -325,6 +371,11 @@ export function OngoingPage(): React.JSX.Element {
           )}
         </header>
 
+        {notice && (
+          <p className="ongoing-notice" role="status">
+            {notice}
+          </p>
+        )}
         {rows.length === 0 ? (
           <div className="ongoing-empty" data-ongoing-empty>
             <OngoingDrawing />

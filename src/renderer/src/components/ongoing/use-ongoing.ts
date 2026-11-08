@@ -20,15 +20,15 @@ export interface OngoingRow {
 
 /** The active workspace's ongoing conversations, each with the tab it lives
  *  in and where it stands, in the page's order. */
-export function useOngoingRows(): OngoingRow[] {
+export function useOngoingRows(elsewhere?: ReadonlySet<string>): OngoingRow[] {
   const entries = useOngoingStore((s) => s.entries)
   const sessions = useSessionStore((s) => s.sessions)
   const workspaceId = useWorkspaceStore((s) => s.activeWorkspaceId)
   return useMemo(() => {
     const rows = entriesInWorkspace(entries, workspaceId).map((entry) => {
       const session = sessionOfEntry<Session>(entry, sessions)
-      return { entry, session, status: statusOf(session) }
+      return { entry, session, status: statusOf(session, !!elsewhere?.has(entry.id)) }
     })
     return sortEntries(rows)
-  }, [entries, sessions, workspaceId])
+  }, [entries, sessions, workspaceId, elsewhere])
 }

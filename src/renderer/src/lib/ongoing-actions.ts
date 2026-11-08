@@ -5,8 +5,10 @@ import { emitTabClosed } from './exchange-capture'
 import { isRemoteKey, ownerOf } from './fleet-identity'
 import {
   entryFromSession,
+  launchOf,
   ongoingSessionIds,
   resumableConversation,
+  sameLaunch,
   sessionOfEntry,
   type OngoingEntry
 } from './ongoing'
@@ -126,8 +128,10 @@ async function resumeEntry(entry: OngoingEntry, keepOngoing: boolean): Promise<s
     // A dead tab still in the store (its process ended while the app ran)
     // gives its place to the new one: same group, same spot.
     const group = dead ? store.groups.find((g) => g.sessionIds.includes(dead.id)) : undefined
+    // Else the group it came from, when it still runs: hidden there while it
+    // is ongoing, so "Back to the sidebar" puts it back where it was.
     const origin =
-      !keepOngoing && !group && entry.originGroup
+      !group && entry.originGroup
         ? store.groups.find((g) => g.id === entry.originGroup!.id)
         : undefined
     useSessionStore.getState().addSessionInGroup(session, (group ?? origin)?.id ?? null)
@@ -139,36 +143,125 @@ async function resumeEntry(entry: OngoingEntry, keepOngoing: boolean): Promise<s
   }
 }
 
-/** Open an ongoing conversation in the pane: its tab when it runs, else the
- *  conversation resumed in a new tab that stays ongoing. */
+/** One action at a time per conversation: a second click (or a menu's click
+ *  reaching the card under it) while a resume is starting must never start a
+ *  second agent on the same conversation. */
+const busy = new Set<string>()
+async function exclusive<T>(entryId: string, run: () => Promise<T>): Promise<T | null> {
+  if (busy.has(entryId)) return null
+  busy.add(entryId)
+  try {
+    return await run()
+  } finally {
+    busy.delete(entryId)
+  }
+}
+
+/** The entries' tabs that run in ANOTHER window of this Mac, by tab id: that
+ *  window's store holds them, this one's does not. Read off their records (a
+ *  read by id answers whatever the window), which name the window they live
+ *  in. */
+async function tabsElsewhere(
+  entries: readonly OngoingEntry[]
+): Promise<{ ids: Set<string>; myWindowId: number | null }> {
+  const ids = new Set<string>()
+  const local = entries.filter((e) => !isRemoteKey(e.sessionId))
+  if (local.length === 0) return { ids, myWindowId: null }
+  const api = window.electronAPI
+  const [records, mine] = await Promise.all([
+    api.listSessionRecords({ ids: local.map((e) => e.sessionId) }).catch(() => []),
+    api.windowIdentity().catch(() => null)
+  ])
+  if (!mine) return { ids, myWindowId: null }
+  const here = useSessionStore.getState().sessions
+  for (const r of records) {
+    if (r.live === false || !r.windowKey || r.windowKey === mine.windowKey) continue
+    if (here.some((s) => s.id === r.id)) continue
+    ids.add(r.id)
+  }
+  return { ids, myWindowId: mine.windowId }
+}
+
+async function runningElsewhere(
+  entry: OngoingEntry
+): Promise<{ sessionId: string; myWindowId: number } | null> {
+  const { ids, myWindowId } = await tabsElsewhere([entry])
+  return ids.has(entry.sessionId) && myWindowId !== null
+    ? { sessionId: entry.sessionId, myWindowId }
+    : null
+}
+
+/** The ids of the given entries whose tab runs in another window. */
+export async function entriesElsewhere(entries: readonly OngoingEntry[]): Promise<Set<string>> {
+  const { ids } = await tabsElsewhere(entries)
+  return new Set(entries.filter((e) => ids.has(e.sessionId)).map((e) => e.id))
+}
+
+/** The reason an open was refused, worded for the page. */
+export class OngoingOpenRefused extends Error {}
+
+async function waitForSession(id: string, ms = 4000): Promise<boolean> {
+  const until = Date.now() + ms
+  while (Date.now() < until) {
+    if (useSessionStore.getState().sessions.some((s) => s.id === id)) return true
+    await new Promise((r) => setTimeout(r, 50))
+  }
+  return false
+}
+
+/** Open an ongoing conversation in the pane: its tab when it runs here; its
+ *  tab brought over when it runs in another window; else the conversation
+ *  resumed in a new tab that stays ongoing. Never a second agent on it. */
 export async function openOngoing(entryId: string): Promise<string | null> {
-  const entry = useOngoingStore.getState().entries.find((e) => e.id === entryId)
-  if (!entry) return null
-  const session = sessionOfEntry<Session>(entry, useSessionStore.getState().sessions)
-  const id = session && session.alive ? session.id : await resumeEntry(entry, true)
-  if (!id) return null
-  useSessionStore.getState().selectSession(id, false)
-  useSessionStore.getState().setFocusedSession(id)
-  return id
+  return exclusive(entryId, async () => {
+    const entry = useOngoingStore.getState().entries.find((e) => e.id === entryId)
+    if (!entry) return null
+    const session = sessionOfEntry<Session>(entry, useSessionStore.getState().sessions)
+    let id: string | null = session && session.alive ? session.id : null
+    if (!id) {
+      const other = await runningElsewhere(entry)
+      if (other) {
+        const moved = await window.electronAPI.windowMoveSessions(
+          [other.sessionId],
+          other.myWindowId
+        )
+        if (!moved.moved.includes(other.sessionId) || !(await waitForSession(other.sessionId)))
+          throw new OngoingOpenRefused(
+            'This conversation is open in another window, and its tab cannot be brought over.'
+          )
+        id = other.sessionId
+      }
+    }
+    if (!id) id = await resumeEntry(entry, true)
+    if (!id) return null
+    useSessionStore.getState().selectSession(id, false)
+    useSessionStore.getState().setFocusedSession(id)
+    return id
+  })
 }
 
 /** Put the conversation back in the sidebar, where its tab sat; a resting
- *  one is resumed first, into the group it came from when that still runs. */
+ *  one is resumed first, into the group it came from when that still runs.
+ *  One running in another window goes back to that window's sidebar. */
 export async function returnToSidebar(entryId: string): Promise<void> {
-  const entry = useOngoingStore.getState().entries.find((e) => e.id === entryId)
-  if (!entry) return
-  const session = sessionOfEntry<Session>(entry, useSessionStore.getState().sessions)
-  const id = session && session.alive ? session.id : await resumeEntry(entry, false)
-  await useOngoingStore.getState().update((entries) => entries.filter((e) => e.id !== entryId))
-  if (id) {
-    useSessionStore.getState().selectSession(id, false)
-    useSessionStore.getState().setFocusedSession(id)
-  }
+  await exclusive(entryId, async () => {
+    const entry = useOngoingStore.getState().entries.find((e) => e.id === entryId)
+    if (!entry) return
+    const session = sessionOfEntry<Session>(entry, useSessionStore.getState().sessions)
+    let id: string | null = session && session.alive ? session.id : null
+    if (!id && !(await runningElsewhere(entry))) id = await resumeEntry(entry, false)
+    await useOngoingStore.getState().update((entries) => entries.filter((e) => e.id !== entryId))
+    if (id) {
+      useSessionStore.getState().selectSession(id, false)
+      useSessionStore.getState().setFocusedSession(id)
+    }
+  })
 }
 
 /** End the conversation: its tab is closed and it leaves Ongoing. The
  *  conversation itself stays in the session history. */
 export async function endOngoing(entryId: string): Promise<void> {
+  if (busy.has(entryId)) return
   const entry = useOngoingStore.getState().entries.find((e) => e.id === entryId)
   if (!entry) return
   const state = useSessionStore.getState()
@@ -212,6 +305,10 @@ export function startOngoingFollow(): () => void {
       if (conv && conv.conversationId !== e.conversationId)
         patch.conversationId = conv.conversationId
       if (s.cwd && s.cwd !== e.cwd) patch.cwd = s.cwd
+      // An account switch or a model change restarts the tab on new launch
+      // fields: the resume after a reboot must run on them.
+      const launch = launchOf(s)
+      if (!sameLaunch(launch, e.launch)) patch.launch = launch
       if (Object.keys(patch).length > 0) changes.set(e.id, patch)
     }
     if (changes.size === 0) return
@@ -219,4 +316,21 @@ export function startOngoingFollow(): () => void {
       .getState()
       .update((list) => list.map((e) => (changes.has(e.id) ? { ...e, ...changes.get(e.id) } : e)))
   })
+}
+
+/** The boot's word on the resting conversations: what their dropped records
+ *  knew of the launch (the account, the model) stays with the entries. */
+export function keepRestingLaunch(next: readonly OngoingEntry[]): void {
+  const { entries } = useOngoingStore.getState()
+  const changed = next.filter((n) => {
+    const e = entries.find((x) => x.id === n.id)
+    return e && (e.cwd !== n.cwd || !sameLaunch(e.launch, n.launch))
+  })
+  if (changed.length === 0) return
+  void useOngoingStore.getState().update((list) =>
+    list.map((e) => {
+      const n = changed.find((x) => x.id === e.id)
+      return n ? { ...e, cwd: n.cwd, launch: n.launch } : e
+    })
+  )
 }

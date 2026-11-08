@@ -1639,8 +1639,12 @@ export function Sidebar(): React.JSX.Element {
   const handleGroupClick = useCallback(
     (groupId: string, modifiers: { metaKey: boolean; shiftKey: boolean }) => {
       const state = useSessionStore.getState()
-      const group = state.groups.find((g) => g.id === groupId)
-      if (!group) return
+      const found = state.groups.find((g) => g.id === groupId)
+      if (!found) return
+      // The header selects the rows it shows: an ongoing conversation hidden
+      // in the group (PRDCT-4190) is never put in the pane by it.
+      const hidden = ongoingSessionIds(useOngoingStore.getState().entries, state.sessions)
+      const group = { ...found, sessionIds: found.sessionIds.filter((id) => !hidden.has(id)) }
       if (modifiers.metaKey) {
         // Cmd+Click: toggle all sessions in group
         const allSelected = group.sessionIds.every((id) => state.selectedSessionIds.includes(id))

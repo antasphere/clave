@@ -69,6 +69,18 @@ export async function performGroupDissolve(groupId: string, mode: DissolveMode):
   const store = useSessionStore.getState()
   if (mode === 'delete') store.deleteGroup(groupId)
   else store.ungroupSessions(groupId)
+  // The store falls back to the last tab when the selection empties: never
+  // to an ongoing conversation the sidebar does not show.
+  const after = useSessionStore.getState()
+  if (after.selectedSessionIds.some((sid) => ongoing.has(sid))) {
+    const selected = after.selectedSessionIds.filter((sid) => !ongoing.has(sid))
+    useSessionStore.setState({
+      selectedSessionIds: selected,
+      focusedSessionId: selected.includes(after.focusedSessionId ?? '')
+        ? after.focusedSessionId
+        : (selected[0] ?? null)
+    })
+  }
 }
 
 interface DissolveState {

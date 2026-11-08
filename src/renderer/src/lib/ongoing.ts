@@ -79,9 +79,9 @@ export interface OngoingSessionLike {
   hasUnseenActivity?: boolean
 }
 
-/** The conversation a tab can be brought back to, or null when it has none
- *  yet (a Claude tab before its first message) or never will (a terminal, a
- *  Codex or Antigravity tab: no resume Clave can drive). Only such a tab can
+/** The conversation a tab can be brought back to, or null when it never will
+ *  (a terminal, a Codex or Antigravity tab: no resume Clave can drive). A
+ *  Claude tab has its id from the spawn, before its first message. Only such a tab can
  *  become ongoing: a long-lived conversation that cannot come back after a
  *  reboot would be a promise the page could not keep. */
 export function resumableConversation(
@@ -94,12 +94,8 @@ export function resumableConversation(
   return null
 }
 
-export function entryFromSession(
-  s: OngoingSessionLike,
-  options: { id: string; now: number; originGroup: { id: string; name: string } | null }
-): OngoingEntry | null {
-  const conv = resumableConversation(s)
-  if (!conv) return null
+/** What a resume needs, as the tab holds it now. */
+export function launchOf(s: OngoingSessionLike): OngoingLaunch {
   const launch: OngoingLaunch = {}
   if (s.claudeAgentsMode) launch.claudeAgentsMode = true
   if (s.dangerousMode) launch.dangerousMode = true
@@ -110,6 +106,54 @@ export function entryFromSession(
   if (s.claudeProfileId) launch.claudeProfileId = s.claudeProfileId
   if (s.claudeProfileLabel) launch.claudeProfileLabel = s.claudeProfileLabel
   if (s.claudeConfigDir) launch.claudeConfigDir = s.claudeConfigDir
+  return launch
+}
+
+/** The fields of a session record a resting conversation takes its launch
+ *  from: the record is the last word on the account and the model the tab
+ *  ran on (an account switch rewrites it), and the boot drops it. */
+export interface OngoingRecordLike {
+  id: string
+  cwd?: string
+  claudeSessionId?: string
+  piSessionId?: string
+  claudeAgentsMode?: boolean
+  dangerousMode?: boolean
+  model?: string
+  launchProfileId?: string
+  piProvider?: string
+  piThinking?: PiThinkingLevel
+  claudeProfileId?: string
+  claudeProfileLabel?: string
+  configDir?: string
+}
+
+export function launchOfRecord(r: OngoingRecordLike): OngoingLaunch {
+  return launchOf({
+    claudeAgentsMode: r.claudeAgentsMode,
+    dangerousMode: !!r.dangerousMode,
+    model: r.model,
+    launchProfileId: r.launchProfileId,
+    piProvider: r.piProvider,
+    piThinking: r.piThinking,
+    claudeProfileId: r.claudeProfileId,
+    claudeProfileLabel: r.claudeProfileLabel,
+    claudeConfigDir: r.configDir
+  } as OngoingSessionLike)
+}
+
+export function sameLaunch(a: OngoingLaunch, b: OngoingLaunch): boolean {
+  const keys = new Set([...Object.keys(a), ...Object.keys(b)]) as Set<keyof OngoingLaunch>
+  for (const k of keys) if (a[k] !== b[k]) return false
+  return true
+}
+
+export function entryFromSession(
+  s: OngoingSessionLike,
+  options: { id: string; now: number; originGroup: { id: string; name: string } | null }
+): OngoingEntry | null {
+  const conv = resumableConversation(s)
+  if (!conv) return null
   return {
     id: options.id,
     workspaceId: s.workspaceId ?? null,
@@ -121,7 +165,7 @@ export function entryFromSession(
     note: '',
     originGroup: options.originGroup,
     addedAt: options.now,
-    launch
+    launch: launchOf(s)
   }
 }
 
@@ -173,12 +217,16 @@ export function entriesInWorkspace(
  * - `working`: its agent is in a turn;
  * - `unread`: it said something nobody has looked at yet;
  * - `open`: its tab runs and has nothing new;
+ * - `elsewhere`: its tab runs in another window; opening it brings it here;
  * - `resting`: no tab runs it; opening it resumes the conversation.
  */
-export type OngoingStatus = 'waiting' | 'working' | 'unread' | 'open' | 'resting'
+export type OngoingStatus = 'waiting' | 'working' | 'unread' | 'open' | 'elsewhere' | 'resting'
 
-export function statusOf(session: OngoingSessionLike | undefined): OngoingStatus {
-  if (!session || !session.alive) return 'resting'
+export function statusOf(
+  session: OngoingSessionLike | undefined,
+  elsewhere = false
+): OngoingStatus {
+  if (!session || !session.alive) return elsewhere ? 'elsewhere' : 'resting'
   if (session.agentState === 'blocked' || session.promptWaiting) return 'waiting'
   if (session.agentState === 'working') return 'working'
   if (session.hasUnseenActivity) return 'unread'
@@ -190,7 +238,8 @@ const STATUS_RANK: Record<OngoingStatus, number> = {
   unread: 1,
   working: 2,
   open: 3,
-  resting: 4
+  elsewhere: 4,
+  resting: 5
 }
 
 /** The page's order: what asks for the person first, then what moved, then
@@ -216,13 +265,15 @@ export function attentionCount(statuses: readonly OngoingStatus[]): number {
  * conversations would start a dozen agents nobody asked for). Its record is
  * dropped and the entry brings the conversation back when it is opened.
  */
-export function splitOngoingDead<
-  R extends { id: string; claudeSessionId?: string; piSessionId?: string }
->(deadTabs: readonly R[], entries: readonly OngoingEntry[]): { restore: R[]; resting: R[] } {
+export function splitOngoingDead<R extends OngoingRecordLike>(
+  deadTabs: readonly R[],
+  entries: readonly OngoingEntry[]
+): { restore: R[]; resting: R[]; entries: OngoingEntry[] } {
   const restore: R[] = []
   const resting: R[] = []
+  let next = [...entries]
   for (const r of deadTabs) {
-    const kept = entries.some(
+    const i = next.findIndex(
       (e) =>
         e.sessionId === r.id ||
         (e.provider === 'claude' &&
@@ -230,9 +281,20 @@ export function splitOngoingDead<
           e.conversationId === r.claudeSessionId) ||
         (e.provider === 'pi' && !!r.piSessionId && e.conversationId === r.piSessionId)
     )
-    ;(kept ? resting : restore).push(r)
+    if (i === -1) {
+      restore.push(r)
+      continue
+    }
+    resting.push(r)
+    // The record goes; what it knew of the launch stays with the entry.
+    const e = next[i]
+    const launch = launchOfRecord(r)
+    const cwd = r.cwd || e.cwd
+    if (!sameLaunch(launch, e.launch) || cwd !== e.cwd) {
+      next = next.map((x, j) => (j === i ? { ...e, launch, cwd } : x))
+    }
   }
-  return { restore, resting }
+  return { restore, resting, entries: next }
 }
 
 /** A relative time the page writes ("just now", "5 min ago", "3 days ago"). */

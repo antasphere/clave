@@ -66,7 +66,7 @@ import { placeRecords, adoptRehomed, adoptHiddenRecord } from '../../lib/adopt-r
 import { requestGroupDissolve, useDissolveStore } from '../../lib/group-dissolve'
 import { planBootAdoption, bootSurvivors } from '../../lib/boot-adoption'
 import { splitOngoingDead } from '../../lib/ongoing'
-import { startOngoingFollow } from '../../lib/ongoing-actions'
+import { keepRestingLaunch, startOngoingFollow } from '../../lib/ongoing-actions'
 import { useOngoingStore, startOngoingSync } from '../../store/ongoing-store'
 import { OngoingPage } from '../ongoing/OngoingPage'
 import { savedLayoutSessionIds } from '../../../../shared/adoption-scope'
@@ -290,6 +290,7 @@ export function AppShell(): React.JSX.Element {
         // launch. Its record goes; the entry resumes it when it is opened.
         await useOngoingStore.getState().hydrate()
         const ongoingDead = splitOngoingDead(plan.deadTabs, useOngoingStore.getState().entries)
+        keepRestingLaunch(ongoingDead.entries)
         for (const s of ongoingDead.resting) {
           void window.electronAPI?.discardSessionRecord?.(s.tmuxName ?? s.id)
         }
@@ -442,6 +443,7 @@ export function AppShell(): React.JSX.Element {
             serverPlan.deadTabs,
             useOngoingStore.getState().entries
           )
+          keepRestingLaunch(serverOngoing.entries)
           for (const s of serverOngoing.resting)
             void window.electronAPI?.discardSessionRecord?.(s.tmuxName ?? s.id)
           serverPlan.deadTabs = serverOngoing.restore

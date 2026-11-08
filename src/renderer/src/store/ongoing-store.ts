@@ -35,8 +35,12 @@ function sanitize(raw: unknown): OngoingEntry[] {
 }
 
 async function readSaved(): Promise<OngoingEntry[] | null> {
+  // No preferences to read (a window without the bridge): nothing is known,
+  // which is not the same as an empty list.
+  const get = window.electronAPI?.preferencesGet
+  if (!get) return null
   try {
-    const raw = await window.electronAPI?.preferencesGet(ONGOING_PREF_KEY)
+    const raw = await get(ONGOING_PREF_KEY)
     return sanitize(raw)
   } catch {
     return null
@@ -45,6 +49,9 @@ async function readSaved(): Promise<OngoingEntry[] | null> {
 
 /** Changes run one after the other: each reads what the last one wrote. */
 let queue: Promise<void> = Promise.resolve()
+/** Changes not yet written: a read of the saved list meanwhile would show the
+ *  window a state its own change has already moved past. */
+let pending = 0
 
 export const useOngoingStore = create<OngoingStore>((set, get) => ({
   entries: [],
@@ -58,6 +65,7 @@ export const useOngoingStore = create<OngoingStore>((set, get) => ({
     // and is then applied again over what is saved, so a change another
     // window made in between is kept.
     set({ entries: change(get().entries) })
+    pending++
     const run = queue.then(async () => {
       const saved = (await readSaved()) ?? get().entries
       const next = change(saved)
@@ -68,7 +76,11 @@ export const useOngoingStore = create<OngoingStore>((set, get) => ({
       }
       set({ entries: next })
     })
-    queue = run.catch(() => {})
+    queue = run
+      .catch(() => {})
+      .finally(() => {
+        pending--
+      })
     return run
   }
 }))
@@ -77,8 +89,9 @@ export const useOngoingStore = create<OngoingStore>((set, get) => ({
  *  may have moved a conversation in or out in the meantime. */
 export function startOngoingSync(): () => void {
   const onFocus = (): void => {
+    if (pending > 0) return
     void readSaved().then((saved) => {
-      if (saved) useOngoingStore.setState({ entries: saved })
+      if (saved && pending === 0) useOngoingStore.setState({ entries: saved })
     })
   }
   window.addEventListener('focus', onFocus)
