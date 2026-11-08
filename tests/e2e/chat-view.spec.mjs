@@ -257,8 +257,18 @@ export async function run(t) {
       .locator('.chat-permission-row[data-state="answered"]')
       .filter({ hasText: 'Allow once' })
       .waitFor()
-    assert.equal(await win.locator('.chat-prompt').count(), 0, 'nothing is waiting any more')
+    // Counted in the view that answered: the plugin's other views mounted
+    // hidden on this session (Terminal, Folio) learn of the answer from the
+    // provider's next word, which the echo adapter never says; the request
+    // answered elsewhere, below, proves that every view clears on it
+    // (PRDCT-4209).
+    assert.equal(await view.locator('.chat-prompt').count(), 0, 'nothing is waiting any more')
     assert.equal(await win.getByRole('button', { name: 'Deny', exact: true }).count(), 0)
+    // The view's own answer leaves the sidebar to the kernel. Checked here,
+    // before the adapter's next word: an injected state_change IS that word
+    // (the session manager takes it as the session's state since #135), so
+    // after the ones below the kernel is working and the dot follows it.
+    assert.equal(await waitingDot.count(), 1, 'view-only answers cannot clear kernel blocked state')
     t.check('permission choice crosses the real write IPC with correlated id and option', true)
     // A second request the adapter stops holding — answered by another consumer
     // of this window, or abandoned by the adapter itself. The echo adapter has
@@ -280,7 +290,7 @@ export async function run(t) {
       }
     ])
     // Waiting requests dock above the composer, in the reader's words.
-    const outside = win.locator('.chat-prompt').filter({ hasText: 'rm /tmp/example' })
+    const outside = view.locator('.chat-prompt').filter({ hasText: 'rm /tmp/example' })
     await outside.waitFor()
     assert.match(await outside.innerText(), /Allow the agent to run a command\?/)
     await win.locator('.chat-state[data-state="blocked"]').waitFor()
@@ -291,11 +301,12 @@ export async function run(t) {
     )
     await inject(fixture, record.id, [{ type: 'state_change', state: 'working' }])
     await win.locator('.chat-state[data-state="working"]').waitFor()
-    const elsewhere = win.locator('.chat-permission-row[data-state="elsewhere"]')
+    const elsewhere = view.locator('.chat-permission-row[data-state="elsewhere"]')
     await elsewhere.waitFor()
     assert.match(await elsewhere.innerText(), /No longer awaiting an answer/)
     // The dock leaves with it: no button is left that could answer the request.
     assert.ok(
+      // Window-wide: every view of the plugin mounted on the session clears.
       await until(async () => (await win.locator('.chat-prompt').count()) === 0),
       'the dock must leave once the request was answered elsewhere'
     )
@@ -331,8 +342,8 @@ export async function run(t) {
     await win.locator('.chat-state[data-state="working"]').waitFor()
     assert.equal(await win.locator('.chat-state').innerText(), 'working')
     // The provider's mark breathes as soon as the agent works, before any text.
-    await win.locator('.chat-provider-mark[data-state="working"]').waitFor()
-    await win.locator('.chat-turn-wrap[data-side="end"]').first().hover()
+    await view.locator('.chat-provider-mark[data-state="working"]').waitFor()
+    await view.locator('.chat-turn-wrap[data-side="end"]').first().hover()
     await win.getByRole('button', { name: 'Copy message', exact: true }).first().click()
     assert.equal(await win.evaluate(() => navigator.clipboard.readText()), '/help\n')
     t.check('the working mark shows before text; a turn copies itself from its meta line', true)
@@ -340,17 +351,16 @@ export async function run(t) {
     // returns with the next one, rather than resting under the answer.
     await inject(fixture, record.id, [{ type: 'state_change', state: 'done' }])
     assert.ok(
-      await until(async () => (await win.locator('.chat-provider-mark').count()) === 0),
+      await until(async () => (await view.locator('.chat-provider-mark').count()) === 0),
       'the mark must leave when the agent stops'
     )
     await inject(fixture, record.id, [{ type: 'state_change', state: 'working' }])
-    await win.locator('.chat-provider-mark[data-state="working"]').waitFor()
+    await view.locator('.chat-provider-mark[data-state="working"]').waitFor()
     t.check('the mark leaves when the agent stops and returns when it works again', true)
-    assert.equal(await waitingDot.count(), 1, 'view-only answers cannot clear kernel blocked state')
     await kernelState(app, record.id, 'working')
     assert.ok(await until(async () => (await waitingDot.count()) === 0))
     await win.getByRole('button', { name: 'Interrupt', exact: true }).click()
-    assert.match(
+    assert.equal(
       await win
         .locator(`[data-sidebar-item-id="${record.id}"] .sidebar-tab-status`)
         .getAttribute('data-status'),
@@ -390,7 +400,7 @@ export async function run(t) {
     t.check('an interrupted turn mutes the message that started it and raises no error', true)
     // A drag from Clave's own file or git panel carries newline-separated
     // absolute paths as text/plain; the composer takes them at the caret.
-    await win.locator('.chat-composer').evaluate((form) => {
+    await view.locator('.chat-composer').evaluate((form) => {
       const dt = new DataTransfer()
       dt.setData('text/plain', '/Users/example/notes/a b.txt\n/Users/example/src/c.ts')
       form.dispatchEvent(
@@ -431,14 +441,21 @@ export async function run(t) {
     assert.ok(true)
     await inject(fixture, record.id, [{ type: 'error', message: 'Fixture error', fatal: false }])
     assert.equal(await win.getByRole('alert').innerText(), 'Fixture error')
+    // The end is taken once main's record says so (session-end.ts: a word of
+    // exit over a live record was a predecessor's), so the adapter says it
+    // first, then the exit code arrives.
+    await inject(fixture, record.id, [{ type: 'state_change', state: 'ended' }])
     await app.evaluate(
       ({ BrowserWindow }, id) =>
         BrowserWindow.getAllWindows()[0].webContents.send(`sessions:exit:${id}`, 0),
       record.id
     )
-    await win.getByText('Session ended (exit 0)', { exact: true }).waitFor()
+    await view.getByText('Session ended (exit 0)', { exact: true }).waitFor()
     assert.ok(await input.isDisabled())
     t.check('interrupt, inline errors and exit state reach the conversation', true)
+    // The process never exited: the adapter's word brings the session back
+    // for the checks below, which need a live composer.
+    await inject(fixture, record.id, [{ type: 'state_change', state: 'idle' }])
     const beforeDisable = await unsubscribeCount(fixture, record.id)
     await win.evaluate(() => window.electronAPI.pluginsDisable('clave.chat-view'))
     await win.locator('.xterm').waitFor()
