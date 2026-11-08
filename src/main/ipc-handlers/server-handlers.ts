@@ -22,6 +22,13 @@ import {
   type VersionSync
 } from '../server-connections/version-sync'
 import { TEST_NO_ACTIVATE, TEST_VERSION } from '../test-mode'
+import log from 'electron-log/main'
+import {
+  isCredentialUnavailable,
+  recordConnectionChange,
+  recordCredentialFailure,
+  recordCredentialOpened
+} from '../server-connections/connection-log'
 
 let shared: ServerConnectionRegistry | undefined
 
@@ -140,7 +147,39 @@ export function registerServerHandlers(
     changed()
   })
   // Privileged preload only. E must not bridge this channel to renderer.
-  ipcMain.handle(FLEET_IPC.endpoint, (_event, id: string) => connections().endpoint(id))
+  // A credential that cannot be read is the one failure that happens here
+  // and not in the window (PRDCT-4165): answered as no endpoint, which the
+  // fleet client names "credentials unavailable", and written to the log
+  // once until it opens again. Any other refusal (a disabled or unknown
+  // connection) is thrown as before, so a window racing a disconnect made
+  // elsewhere does not read it as a credential problem.
+  ipcMain.handle(FLEET_IPC.endpoint, async (_event, id: string) => {
+    try {
+      const endpoint = await connections().endpoint(id)
+      recordCredentialOpened(id)
+      return endpoint
+    } catch (error) {
+      if (!isCredentialUnavailable(error)) throw error
+      const name = connections()
+        .list()
+        .find((c) => c.id === id)?.name
+      recordCredentialFailure(log, id, name ?? 'unknown server', (error as Error).message)
+      return null
+    }
+  })
+  // A window's connection to a server changed state: the line in the main log.
+  ipcMain.handle(FLEET_IPC.status, (event, status: unknown) => {
+    const serverId =
+      status && typeof status === 'object' ? (status as { serverId?: unknown }).serverId : undefined
+    const name =
+      (typeof serverId === 'string' &&
+        connections()
+          .list()
+          .find((c) => c.id === serverId)?.name) ||
+      'unknown server'
+    const win = BrowserWindow.fromWebContents(event.sender)
+    recordConnectionChange(log, status, name, win?.id ?? null)
+  })
   // The decisions carry versions, refs and the manual command, never a token.
   ipcMain.handle(FLEET_IPC.versions, (_event, refresh?: boolean) =>
     !versions ? [] : refresh === true ? versions.refresh() : versions.results()

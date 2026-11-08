@@ -413,9 +413,15 @@ describe('who may reach whom', () => {
     expect((await run(h, 'readSession', { sessionId: 'name-mate' })) as object).toMatchObject({
       sessionId: 'mate'
     })
-    await expect(run(h, 'readSession', { sessionId: 'nobody' })).rejects.toThrow(
-      'No session with id or name "nobody"'
-    )
+    // A reference no tab of this host carries is the window's to resolve: a
+    // tab running on another server is known there alone (PRDCT-4166), and
+    // the window says "no session" when it has none either.
+    expect(await run(h, 'readSession', { sessionId: 'nobody' })).toBe(NOT_SERVED)
+    expect(
+      await run(h, 'readSession', {
+        sessionId: 'clave-owner:session:server-1:81e34f37-0000-4000-8000-000000000000'
+      })
+    ).toBe(NOT_SERVED)
     h.w.parents = {}
     await expect(run(h, 'readSession', { sessionId: 'parent' })).rejects.toThrow(
       'This session has no live parent'

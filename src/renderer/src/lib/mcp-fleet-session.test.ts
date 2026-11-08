@@ -3,7 +3,8 @@ const f = vi.hoisted(() => ({ move: vi.fn() }))
 vi.mock('../store/session-store', () => ({
   useSessionStore: { getState: () => ({ moveItems: f.move }) }
 }))
-import { openFleetSession } from './mcp-fleet-session'
+import { assertServerConnected, openFleetSession } from './mcp-fleet-session'
+import { useFleetStore } from '../store/fleet-store'
 const profile = {
   id: 'remote',
   name: 'Remote only',
@@ -176,6 +177,44 @@ describe('MCP fleet session launch', () => {
       const options = api.fleetStart.mock.calls.at(-1)![2]
       expect(options.spawnedBy).toBe(attachToParent ? 'parent' : undefined)
     }
+  })
+  it('refuses a server the window shows as off, in the Servers page’s words, and lets a connecting one through (PRDCT-4165)', async () => {
+    const api = setup()
+    const studio = { id: 'studio', name: 'Studio', url: 'http://studio:1', enabled: true }
+    const set = (
+      statuses: Record<string, { serverId: string; state: string; error?: string }>,
+      enabled = true
+    ): void =>
+      useFleetStore.setState({
+        connections: [{ ...studio, enabled }],
+        statuses: statuses as never
+      })
+    set({ studio: { serverId: 'studio', state: 'offline', error: 'unreachable' } })
+    await expect(
+      openFleetSession('studio', undefined, undefined, { cwd: '/', mode: 'terminal' })
+    ).rejects.toThrow(
+      'Studio is unreachable. The server did not answer at this address. Check the address and that the server is running.'
+    )
+    set({ studio: { serverId: 'studio', state: 'unauthorized', error: 'unauthorized' } })
+    expect(() => assertServerConnected('studio')).toThrow(
+      'Studio refused its token. The server refused the token. Remove this server and add it again with its current token.'
+    )
+    set({}, false)
+    expect(() => assertServerConnected('studio')).toThrow(
+      'Studio is disconnected. Reconnect it in Settings → Servers.'
+    )
+    expect(api.fleetStart).not.toHaveBeenCalled()
+    // Connecting, reconnecting, or not reported yet: the fleet client waits for the welcome.
+    for (const state of ['connecting', 'reconnecting', 'connected'])
+      expect(() => {
+        set({ studio: { serverId: 'studio', state } })
+        assertServerConnected('studio')
+      }).not.toThrow()
+    set({})
+    expect(() => assertServerConnected('studio')).not.toThrow()
+    // A server the window never saved is the fleet client's to refuse.
+    expect(() => assertServerConnected('elsewhere')).not.toThrow()
+    useFleetStore.setState({ connections: [], statuses: {} })
   })
   it('propagates an offline server without creating a session anywhere else', async () => {
     const api = setup()

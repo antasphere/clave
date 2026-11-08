@@ -51,6 +51,10 @@ export interface E2eHooks {
   // clipboard. A hidden test instance must never write the person's
   // clipboard, so under test mode it lands here instead. ──
   serverSetup: { copiedToken: string | null }
+  // ── PRDCT-4165: the lines main wrote about the servers' connections
+  // (`src/main/server-connections/connection-log.ts`), oldest first, so a
+  // spec reads what the log says without reading the person's log file. ──
+  fleetLog: string[]
   // ── later lanes add theirs here ──
 }
 
