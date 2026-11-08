@@ -130,7 +130,10 @@ export const FLEET_IPC = {
   versionsChanged: 'server:fleet:versions-changed',
   upgradeNow: 'server:fleet:upgrade-now',
   /** A window heard a server's upgrade change, or its welcome: read that server again. */
-  versionRefresh: 'server:fleet:version-refresh'
+  versionRefresh: 'server:fleet:version-refresh',
+  /** A window's connection to a server changed state (PRDCT-4165): main writes
+   *  the line in its log, the one place a failed connection says why. */
+  status: 'server:fleet:status'
 } as const
 
 /** Reserved prefix is escaped for local resources too, so any local ID can

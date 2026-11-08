@@ -22,6 +22,11 @@ import {
   type VersionSync
 } from '../server-connections/version-sync'
 import { TEST_NO_ACTIVATE, TEST_VERSION } from '../test-mode'
+import log from 'electron-log/main'
+import {
+  recordConnectionChange,
+  recordCredentialFailure
+} from '../server-connections/connection-log'
 
 let shared: ServerConnectionRegistry | undefined
 
@@ -140,7 +145,38 @@ export function registerServerHandlers(
     changed()
   })
   // Privileged preload only. E must not bridge this channel to renderer.
-  ipcMain.handle(FLEET_IPC.endpoint, (_event, id: string) => connections().endpoint(id))
+  // A credential that cannot be read is the one failure that happens here
+  // and not in the window: written to the log here (PRDCT-4165).
+  ipcMain.handle(FLEET_IPC.endpoint, async (_event, id: string) => {
+    try {
+      return await connections().endpoint(id)
+    } catch (error) {
+      const name = connections()
+        .list()
+        .find((c) => c.id === id)?.name
+      if (name)
+        recordCredentialFailure(
+          log,
+          id,
+          name,
+          error instanceof Error ? error.message : 'The saved server credential is unavailable.'
+        )
+      throw error
+    }
+  })
+  // A window's connection to a server changed state: the line in the main log.
+  ipcMain.handle(FLEET_IPC.status, (event, status: unknown) => {
+    const serverId =
+      status && typeof status === 'object' ? (status as { serverId?: unknown }).serverId : undefined
+    const name =
+      (typeof serverId === 'string' &&
+        connections()
+          .list()
+          .find((c) => c.id === serverId)?.name) ||
+      'unknown server'
+    const win = BrowserWindow.fromWebContents(event.sender)
+    recordConnectionChange(log, status, name, win?.id ?? null)
+  })
   // The decisions carry versions, refs and the manual command, never a token.
   ipcMain.handle(FLEET_IPC.versions, (_event, refresh?: boolean) =>
     !versions ? [] : refresh === true ? versions.refresh() : versions.results()

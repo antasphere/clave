@@ -16,6 +16,13 @@ export interface FleetClientOptions {
    *  the listeners attached before it, and the fleet attaches them here. */
   readonly connect: (endpoint: Endpoint, serverId: ServerId) => Backing | Promise<Backing>
   readonly timeoutMs?: number
+  /** How long after a connection could not be acquired at all (no endpoint,
+   *  the credential unreadable, the factory refusing or timing out) the
+   *  client tries again on its own (PRDCT-4165). Once the transport exists
+   *  its push socket retries by itself; this covers the step before it,
+   *  which until then was tried once per boot and never again. Absent: no
+   *  retry, the state of the first attempt stands until the next connect. */
+  readonly retryMs?: number
 }
 export interface FleetClient {
   connect(serverId: ServerId): Promise<Backing>
@@ -41,6 +48,8 @@ interface Entry {
   backing?: Backing
   cancel?: () => void
   timer?: ReturnType<typeof setTimeout>
+  /** The retry of a failed acquisition, when `retryMs` is set. */
+  retry?: ReturnType<typeof setTimeout>
   off: Set<() => void>
 }
 
@@ -51,6 +60,9 @@ export function createFleetClient(options: FleetClientOptions): FleetClient {
   const timeoutMs = options.timeoutMs ?? 10_000
   if (!Number.isFinite(timeoutMs) || timeoutMs <= 0 || timeoutMs > 60_000)
     throw new Error('Fleet timeout must be between 1 and 60000 milliseconds.')
+  const retryMs = options.retryMs
+  if (retryMs !== undefined && (!Number.isFinite(retryMs) || retryMs <= 0))
+    throw new Error('Fleet retry must be a positive number of milliseconds.')
   const entries = new Map<ServerId, Entry>()
   const statuses = new Set<(status: ServerConnectionStatus) => void>()
   const events = new Set<(event: Sourced<ServerEventEnvelope>) => void>()
@@ -72,6 +84,10 @@ export function createFleetClient(options: FleetClientOptions): FleetClient {
   const clearWatch = (entry: Entry): void => {
     if (entry.timer !== undefined) clearTimeout(entry.timer)
     entry.timer = undefined
+  }
+  const clearRetry = (entry: Entry): void => {
+    if (entry.retry !== undefined) clearTimeout(entry.retry)
+    entry.retry = undefined
   }
   const watchWelcome = (id: ServerId, entry: Entry): void => {
     if (entry.timer !== undefined) return
@@ -100,6 +116,7 @@ export function createFleetClient(options: FleetClientOptions): FleetClient {
     entry.accepting = false
     entry.cancel?.()
     clearWatch(entry)
+    clearRetry(entry)
     offAll(entry)
     const backing = entry.backing
     entry.backing = undefined
@@ -113,6 +130,8 @@ export function createFleetClient(options: FleetClientOptions): FleetClient {
     const old = entries.get(id)
     if (old?.accepting && old.status.state !== 'unauthorized') return old.pending!
     if (old?.backing) return disconnect(id).then(() => connect(id))
+    // An explicit connect replaces the retry a failed attempt had scheduled.
+    if (old) clearRetry(old)
     const entry: Entry = {
       accepting: true,
       status: { serverId: id, state: 'connecting' },
@@ -206,6 +225,16 @@ export function createFleetClient(options: FleetClientOptions): FleetClient {
             error: credentialsUnavailable ? 'credentials-unavailable' : 'unreachable'
           })
           if (backing) await dispose(backing)
+          // Tried again on its own, as long as nobody disconnected, removed
+          // or replaced the entry meanwhile: a credential the keychain did
+          // not give at boot, or a server not yet up, is not a final word.
+          if (retryMs !== undefined && !closed && entries.get(id) === entry) {
+            entry.retry = setTimeout(() => {
+              entry.retry = undefined
+              if (!closed && entries.get(id) === entry && !entry.accepting)
+                void connect(id).catch(() => undefined)
+            }, retryMs)
+          }
         }
         throw new Error('Could not connect to the owning Clave server.')
       })
