@@ -55,6 +55,36 @@ const host = (url: string): string => {
  *  take the caret from the composer a second time. */
 const focused = new Set<string>()
 
+/** What a card keeps across its row's unmounts, beside the values the host's
+ *  `drafts` map keeps: the transcript is virtualised, and a card at the edge
+ *  of the view mounts again as the agent speaks under it. A card that came
+ *  back at its first step with the agent's writes replayed would change its
+ *  height, scroll out, and mount again, without end. */
+interface CardMemory {
+  step: number
+  direction: 'forward' | 'back'
+  landed: Record<string, number>
+  applied: Values
+  touched: Record<string, boolean>
+  attempted: boolean
+}
+const memory = new Map<string, CardMemory>()
+const recalled = (id: string): CardMemory =>
+  memory.get(id) ?? {
+    step: 0,
+    direction: 'forward',
+    landed: {},
+    applied: {},
+    touched: {},
+    attempted: false
+  }
+/** Written on a change of state, never on a render: a second instance of
+ *  the same card (a hidden view of the session) must not write its own
+ *  standing over the one the reader is looking at. */
+const remember = (id: string, patch: Partial<CardMemory>): void => {
+  memory.set(id, { ...recalled(id), ...patch })
+}
+
 /** The first question, from `from` on, whose answer does not fit yet; the
  *  count when every one fits (the review page of the steps layout). */
 const nextOpen = (
@@ -383,12 +413,40 @@ export function InputPrompt({
   const questions = request.questions ?? []
   const keys = questions.map(questionKey)
   const [values, setValues] = useState<Values>(() => initialValues(request, drafts))
-  const [touched, setTouched] = useState<Record<string, boolean>>({})
-  const [attempted, setAttempted] = useState(false)
-  const [step, setStep] = useState(0)
-  const [direction, setDirection] = useState<'forward' | 'back'>('forward')
+  const [kept] = useState(() => recalled(request.id))
+  const [touched, setTouchedState] = useState<Record<string, boolean>>(kept.touched)
+  const [attempted, setAttemptedState] = useState(kept.attempted)
+  const [step, setStepState] = useState(kept.step)
+  const [direction, setDirectionState] = useState<'forward' | 'back'>(kept.direction)
   /** Per field, how many times the agent set it: each landing flashes once. */
-  const [landed, setLanded] = useState<Record<string, number>>({})
+  const [landed, setLandedState] = useState<Record<string, number>>(kept.landed)
+  // Every change of standing is remembered as it is made (CardMemory).
+  const setStep = (next: number): void => {
+    remember(request.id, { step: next })
+    setStepState(next)
+  }
+  const setDirection = (next: 'forward' | 'back'): void => {
+    remember(request.id, { direction: next })
+    setDirectionState(next)
+  }
+  const setAttempted = (next: boolean): void => {
+    remember(request.id, { attempted: next })
+    setAttemptedState(next)
+  }
+  const setTouched = (
+    update: (current: Record<string, boolean>) => Record<string, boolean>
+  ): void =>
+    setTouchedState((current) => {
+      const next = update(current)
+      remember(request.id, { touched: next })
+      return next
+    })
+  const setLanded = (update: (current: Record<string, number>) => Record<string, number>): void =>
+    setLandedState((current) => {
+      const next = update(current)
+      remember(request.id, { landed: next })
+      return next
+    })
   const body = useRef<HTMLDivElement>(null)
   const steps = meta?.layout === 'steps' && questions.length > 1
   // In the steps layout `step` runs from 0 to the count: the count is the
@@ -433,7 +491,7 @@ export function InputPrompt({
   // the reader typed there, since the agent speaks for what the reader just
   // said), ticks, flashes once, and in the steps layout the card moves on to
   // the next open question a beat later, so the landing is seen.
-  const applied = useRef<Values>({})
+  const applied = useRef<Values>(kept.applied)
   const stepRef = useRef(step)
   stepRef.current = step
   useEffect(() => {
@@ -444,6 +502,7 @@ export function InputPrompt({
     )
     if (!changed.length) return
     applied.current = { ...applied.current, ...Object.fromEntries(changed) }
+    remember(request.id, { applied: applied.current })
     setValues((current) => {
       const next = { ...current, ...Object.fromEntries(changed) }
       drafts?.set(request.id, next)
@@ -493,6 +552,7 @@ export function InputPrompt({
       return
     }
     drafts?.delete(request.id)
+    memory.delete(request.id)
     onAnswer(request.id, 'answer', answersOf(questions, vals))
   }
   /** One step on: the next open question in `steps` (the review page once
@@ -530,6 +590,7 @@ export function InputPrompt({
   const doSkip = (): void => {
     if (!skip || busy) return
     drafts?.delete(request.id)
+    memory.delete(request.id)
     onAnswer(request.id, skip.id)
   }
   /** Where each field stands on the rail: done once its answer fits, the
