@@ -47,8 +47,25 @@ resources/native/haptic-helper
 resources/native/secure-files-helper
 
 # Fonts Clave may use but not redistribute — copied in by scripts/copy-private-fonts.mjs
-src/renderer/src/assets/fonts/private/
+apps/desktop/src/renderer/src/assets/fonts/private/
 
 # Built bundled plugins (scripts/build-plugins.mjs)
+apps/plugins/analytics/main.mjs
+apps/plugins/analytics/dist/
+
+# Ignored output can remain in existing checkouts after the source relocation.
+# Keep the private font protected from git until the old folders are removed.
+src/renderer/src/assets/fonts/private/
 plugins/analytics/main.mjs
 plugins/analytics/dist/
+packages/mobile/ios/
+packages/mobile/android/
+packages/mobile/.expo/
+packages/mobile/expo-env.d.ts
+packages/mobile/e2e/.output/
+
+# Pi extension copied from apps/pi-state during the build
+resources/pi-clave-state.js
+
+# Python tooling bytecode
+__pycache__/

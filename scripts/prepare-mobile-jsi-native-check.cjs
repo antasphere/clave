@@ -40,7 +40,7 @@ function prepareNativeCheck(worktree, variant) {
     throw new Error('Native check requires expo-modules-jsi 58.0.21')
   const apple = own(path.join(sdk, 'apple'))
   const core = own(
-    path.join(root, 'packages/mobile/ios/Pods/ExpoModulesCore/ExpoModulesCore.xcframework')
+    path.join(root, 'apps/mobile/ios/Pods/ExpoModulesCore/ExpoModulesCore.xcframework')
   )
   if (!fs.statSync(core).isDirectory()) throw new Error('Missing Core test framework')
   const records = read(
@@ -105,7 +105,7 @@ function prepareNativeCheck(worktree, variant) {
   if (digest(selectedScheduler) !== (variant === 'original' ? ORIGINAL : PATCHED))
     throw new Error('Invalid selected scheduler')
   const check = fs.readFileSync(
-    own(path.join(root, 'packages/mobile/native-checks/ClaveSchedulerAffinityTests.swift')),
+    own(path.join(root, 'apps/mobile/native-checks/ClaveSchedulerAffinityTests.swift')),
     'utf8'
   )
   const stagedRecords = 'import UserNotifications\n' + records

@@ -10,7 +10,7 @@ import { until } from './harness.mjs'
    Every locator is scoped to the conversation view. Two views of this plugin are
    mounted on the session at once and `hidden` takes the other out of sight but
    not out of the DOM, so a window-wide class query resolves to both copies and
-   fails on strictness (src/renderer/src/views/README.md). */
+   fails on strictness (apps/desktop/src/renderer/src/views/README.md). */
 
 export async function run(t) {
   const chat = await openChat('chat-tool-groups')

@@ -373,7 +373,7 @@ export function listeningPorts(
 
 /** How long `app.close()` may take before the Electron process is killed by
  *  its exact pid. The app's own quit ceiling and hammer
- *  (`src/main/quit-cleanup.ts`, 8 s + 2 s) come first, so a stalled quit
+ *  (`packages/host/src/quit-cleanup.ts`, 8 s + 2 s) come first, so a stalled quit
  *  names its pending wait in the app's log before the harness ends it. */
 export const CLOSE_TIMEOUT_MS = 25_000
 /** How long a window may take to finish its boot before the launch fails. */
@@ -527,7 +527,7 @@ export async function launchAppProcess(dir, { env = {}, args = [], server = serv
     app = await electron.launch({
       executablePath: ELECTRON_BIN,
       // `args` are extra main-process flags a spec needs (`--test-version=…`,
-      // see src/main/test-mode.ts); the three fixed ones always come first.
+      // see packages/host/src/test-mode.ts); the three fixed ones always come first.
       args: ['.', `--user-data-dir=${dir}`, '--test-no-activate', ...serverArgs, ...args],
       cwd: REPO,
       // Extra environment for the main process (e.g. CLAVE_TRANSCRIPTS_ROOT, so
@@ -932,7 +932,7 @@ export async function spyPtySpawn(app) {
       return original(event, cwd, options)
     })
     // ...and a window on the server starts them through the session host
-    // (`src/main/sessions/host.ts`, exposed under --test-no-activate by
+    // (`packages/host/src/sessions/host.ts`, exposed under --test-no-activate by
     // `sessions/e2e-hooks.ts`): the same spawn, wrapped the same way. Both are
     // tapped because which one a spawn takes depends on whether the server was
     // up when the window made its first call.
@@ -958,7 +958,7 @@ export async function spyPtySpawn(app) {
 }
 
 /** Where a test instance journals its terminal spawns and writes: under its
- *  user-data directory, under `--test-no-activate` (`src/main/terminal-journal.ts`,
+ *  user-data directory, under `--test-no-activate` (`packages/host/src/terminal-journal.ts`,
  *  which also names the file on `globalThis.__claveE2E.terminalJournal`). */
 /** How each app data folder was last launched by `launchApp`: the journal
  *  is read where the terminal manager of THAT launch runs. An existence
@@ -1005,7 +1005,7 @@ function readTerminalJournal(dir) {
  *  and reports its size, so a tab that is not on screen has no process and a
  *  `ps` check answers on which tab happened to be mounted rather than on the
  *  code. The journal is written by the terminal manager itself, below IPC
- *  (`src/main/terminal-journal.ts`), so it sees the launch whether the window
+ *  (`packages/host/src/terminal-journal.ts`), so it sees the launch whether the window
  *  asked over IPC or over the server, and it exists only under
  *  `--test-no-activate`. It replaces `spyPtySpawn`, which tapped
  *  `ipcMain._invokeHandlers` inside the main process (PRDCT-3240); a spec
@@ -1174,7 +1174,7 @@ export async function selectBuiltIn(win, label, profileName, family) {
  *  `server` (the server's own command, through the client) or `window` (a
  *  view request the window answered through the server). Recorded by main
  *  under --test-no-activate on the shared hooks namespace
- *  (`globalThis.__claveE2E.mcpRoads`, `src/main/mcp/roads.ts`); an app that
+ *  (`globalThis.__claveE2E.mcpRoads`, `packages/host/src/mcp/roads.ts`); an app that
  *  never ran a tool answers an empty list. */
 export async function mcpRoads(app) {
   return app.evaluate(() => globalThis.__claveE2E?.mcpRoads ?? [])

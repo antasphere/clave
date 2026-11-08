@@ -12,7 +12,7 @@ owner's routes), the server's `packages/server/src/notify/` (the dispatcher, the
 transports behind one port, the recording fake, the credentials), the write ledger
 `packages/server/src/sessions/writes.ts`, and the main-process seam that feeds the
 dispatcher what the server's own events do not carry,
-`src/main/server/session-events.ts` (`observeSessionsForNotify`).
+`packages/host/src/server/session-events.ts` (`observeSessionsForNotify`).
 
 ## What is sent, and when
 
@@ -239,7 +239,7 @@ A message with no id is written every time, as before, and answers `accepted`.
 
 ## Verification
 
-- `npx vitest run packages/server/src/notify packages/server/src/sessions/writes.test.ts src/main/server/session-events.test.ts packages/contract/src/sessions.test.ts`:
+- `npx vitest run packages/server/src/notify packages/server/src/sessions/writes.test.ts packages/host/src/server/session-events.test.ts packages/contract/src/sessions.test.ts`:
   every category's dispatch and payload against the recording transport, the forbidden
   fields, the collapse ids, the grace, the once-per-window rule, the two transports
   against local fakes (an h2c fake APNs that verifies the provider token against the

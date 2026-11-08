@@ -167,7 +167,7 @@ else
 fi
 
 # ── Stamp whats-new.json: "next" → new version ────────────────────
-WHATS_NEW="src/renderer/src/help/whats-new.json"
+WHATS_NEW="apps/desktop/src/renderer/src/help/whats-new.json"
 if [[ -f "$WHATS_NEW" ]] && grep -q '"version": "next"' "$WHATS_NEW"; then
   node -e "
     const fs = require('fs');

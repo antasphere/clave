@@ -40,7 +40,7 @@ export default defineConfig({
   main: {
     plugins: [
       externalizeDepsPlugin({ exclude: [...BUNDLED_SOURCE, ...BUNDLED_ESM] }),
-      // The bundled plugins written in TypeScript (plugins/analytics) are built where the
+      // The bundled plugins written in TypeScript (apps/plugins/analytics) are built where the
       // plugin store reads bundled plugins from, by dev and build alike.
       {
         name: 'clave-bundled-plugins',
@@ -52,28 +52,34 @@ export default defineConfig({
     build: {
       rollupOptions: {
         input: {
-          index: resolve('src/main/index.ts'),
-          'plugin-runner': resolve('src/main/plugins/plugin-runner.ts'),
+          index: resolve('apps/desktop/src/main/index.ts'),
+          'plugin-runner': resolve('apps/plugin-runner/src/main.ts'),
           // The terminal process of the standalone server (ADR 0003, wave
           // 3), run under plain Node from `out/main/terminal-process.js` by
           // scripts/server-process.mjs: it cannot run from its sources.
-          'terminal-process': resolve('src/main/terminal-process/main.ts'),
+          'terminal-process': resolve('apps/terminals/src/main.ts'),
           // The server as its own process (ADR 0003, wave 5): run from
           // `out/main/server-entry.js` under the app's own Node
           // (ELECTRON_RUN_AS_NODE) by the packaged app, and still from its
           // sources under Bun by the dev script and the harness.
-          'server-entry': resolve('src/main/server-entry.ts')
+          'server-entry': resolve('apps/server/src/main.ts')
         }
       }
     }
   },
   preload: {
+    build: { rollupOptions: { input: resolve('apps/desktop/src/preload/index.ts') } },
     plugins: [externalizeDepsPlugin({ exclude: BUNDLED_SOURCE })]
   },
   renderer: {
+    root: resolve('apps/desktop/src/renderer'),
+    build: {
+      outDir: resolve('out/renderer'),
+      rollupOptions: { input: resolve('apps/desktop/src/renderer/index.html') }
+    },
     resolve: {
       alias: {
-        '@renderer': resolve('src/renderer/src')
+        '@renderer': resolve('apps/desktop/src/renderer/src')
       }
     },
     plugins: [react(), tailwindcss(), rendererModuleMetadata()]

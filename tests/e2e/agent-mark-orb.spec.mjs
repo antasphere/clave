@@ -1,7 +1,7 @@
 // Pinned to the in-process server for the reason chat-view.spec.mjs gives:
 // the chat's views are plugin views leased from the shell's plugin host.
 /**
- * Appearance → Agent mark, through the bundled orbs plugin (`plugins/orbs`).
+ * Appearance → Agent mark, through the bundled orbs plugin (`apps/plugins/orbs`).
  *
  * The mark is what stands for an agent in three slots — the sidebar tab's
  * icon, the chat pane's status before its title, the mark at the end of a

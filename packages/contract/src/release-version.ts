@@ -2,7 +2,7 @@
  * What a Clave release tag names (issue #266): `v` and a strict semver
  * version without build metadata. Pure and free of Effect on purpose: the
  * desktop's version sync applies it in main at boot, where no Effect module
- * may load (`src/main/server/lazy-load.test.ts`); `server-info.ts` re-exports it.
+ * may load (`packages/host/src/server/lazy-load.test.ts`); `server-info.ts` re-exports it.
  */
 /** Strict semver without build metadata: what a Clave release tag carries
  *  after its `v` (`3.0.0`, `3.0.0-beta.9`). Numeric identifiers have no

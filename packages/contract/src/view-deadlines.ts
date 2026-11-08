@@ -3,7 +3,7 @@
  * import at all: Electron main reads them at boot (the bridge's default
  * timeout, the client's ceiling), and `views.ts` beside them is built on
  * Effect Schema and the framework, which main must never load before its
- * first server call (`src/main/server/lazy-load.test.ts`). `views.ts`
+ * first server call (`packages/host/src/server/lazy-load.test.ts`). `views.ts`
  * re-exports them, so a reader of the domain sees one surface.
  */
 

@@ -11,7 +11,7 @@ if [[ "${1:-}" == "--linux" && "$(uname)" != "Linux" ]]; then
 fi
 
 build_secure_files() {
-  local src="$ROOT/native/secure-files/main.c"
+  local src="$ROOT/apps/native/secure-files/main.c"
   local out="$ROOT/resources/native/secure-files-helper"
   # Recompile this small security boundary on every build. A restored source
   # can have an older mtime than a binary produced by a verification mutation.
@@ -41,7 +41,7 @@ fi
 
 build_helper() {
   local name="$1"
-  local src="$ROOT/native/$name/main.swift"
+  local src="$ROOT/apps/native/$name/main.swift"
   local out="$ROOT/resources/native/$name-helper"
 
   if [[ -f "$out" && "$out" -nt "$src" ]]; then

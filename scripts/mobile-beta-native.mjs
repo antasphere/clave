@@ -411,9 +411,9 @@ async function main(o) {
     for (const key of ['metro-port', 'server-port', 'relay-port']) await freePort(o[key])
     const load = (file) => import(pathToFileURL(path.join(o.worktree, file)).href)
     const { startDevServer, ensureWorkspace, call } = await load(
-      'packages/mobile/scripts/dev-server.mjs'
+      'apps/mobile/scripts/dev-server.mjs'
     )
-    const { proveNativeSource } = await load('packages/mobile/scripts/native-provenance.mjs')
+    const { proveNativeSource } = await load('apps/mobile/scripts/native-provenance.mjs')
     phase = 'server-workspace-profiles'
     server = await startDevServer({
       port: Number(o['server-port']),
@@ -458,7 +458,7 @@ async function main(o) {
         '--port',
         o['metro-port']
       ],
-      { cwd: path.join(o.worktree, 'packages/mobile'), env, stdio: 'ignore' }
+      { cwd: path.join(o.worktree, 'apps/mobile'), env, stdio: 'ignore' }
     )
     await wait(async () =>
       (
@@ -520,7 +520,7 @@ async function main(o) {
       REPLY_INDEX: o.provider === 'echo' ? 1 : 0,
       CLEAR_STATE: Boolean(o['ios-udid'])
     }
-    let flow = readFileSync(path.join(o.worktree, 'packages/mobile/e2e/beta-provider.yaml'), 'utf8')
+    let flow = readFileSync(path.join(o.worktree, 'apps/mobile/e2e/beta-provider.yaml'), 'utf8')
     flow = renderNativeFlow(flow, values)
     const flowFile = path.join(privateDir, 'flow.yaml')
     writeFileSync(flowFile, flow, { mode: 0o600 })
@@ -613,7 +613,7 @@ async function main(o) {
     phase = 'native-source'
     receipt.source = await proveNativeSource({ port: Number(o['metro-port']), deviceName })
     assert.equal(receipt.source.candidate, o.candidate)
-    assert.equal(realpathSync(receipt.source.worktree), path.join(o.worktree, 'packages/mobile'))
+    assert.equal(realpathSync(receipt.source.worktree), path.join(o.worktree, 'apps/mobile'))
     cleanHead(o)
     phase = 'sanitized-screenshot'
     const screenshot = path.join(o.output, 'phone-pass.png')

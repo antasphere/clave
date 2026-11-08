@@ -10,29 +10,35 @@ import { startEmbedded, type EmbeddedServer } from '../embedded'
 import { memoryDeviceStorage } from './port'
 import { DEVICE_FORBIDDEN_MESSAGE } from './scope'
 import { PendingRequests } from '../requests/service'
-import { EchoAdapter } from '../../../../src/main/sessions/adapters/echo-adapter'
-import { SessionManager } from '../../../../src/main/sessions/session-manager'
-import { serverOwnedSessionHost } from '../../../../src/main/sessions/server-owned-host'
-import { standaloneSidebar } from '../../../../src/main/server/standalone-sidebar'
-import { Drafts, MemoryKeyValueStore } from '../../../mobile/src/chat/drafts'
-import { MemorySecureStore, SecureCredentialStore } from '../../../mobile/src/machines/credentials'
-import type { Machine } from '../../../mobile/src/machines/types'
-import type { PushSocketConstructor } from '../../../mobile/src/api/push'
-import type { ClaveServerClient, ClaveServerClientOptions } from '../../../mobile/src/api/client'
+import { EchoAdapter } from '../../../host/src/sessions/adapters/echo-adapter'
+import { SessionManager } from '../../../host/src/sessions/session-manager'
+import { serverOwnedSessionHost } from '../../../host/src/sessions/server-owned-host'
+import { standaloneSidebar } from '../../../host/src/server/standalone-sidebar'
+import { Drafts, MemoryKeyValueStore } from '../../../../apps/mobile/src/chat/drafts'
+import {
+  MemorySecureStore,
+  SecureCredentialStore
+} from '../../../../apps/mobile/src/machines/credentials'
+import type { Machine } from '../../../../apps/mobile/src/machines/types'
+import type { PushSocketConstructor } from '../../../../apps/mobile/src/api/push'
+import type {
+  ClaveServerClient,
+  ClaveServerClientOptions
+} from '../../../../apps/mobile/src/api/client'
 
 // Metadata reads use the real manager, producer, contract, router and device auth.
 // The unused process ports refuse to reach a desktop or a provider.
 vi.mock('electron', () => {
   throw new Error('The paired metadata fixture imported Electron.')
 })
-vi.mock('../../../../src/main/pty-manager', () => ({
+vi.mock('../../../host/src/pty-manager', () => ({
   ptyManager: {
     getSessionRecord: () => {
       throw new Error('The fixture must use its exact-ID record source.')
     }
   }
 }))
-vi.mock('../../../../src/main/sessions/lifecycle', () => ({
+vi.mock('../../../host/src/sessions/lifecycle', () => ({
   readScreen: vi.fn(),
   restartSession: vi.fn(),
   typeIntoSession: vi.fn(),
@@ -41,15 +47,15 @@ vi.mock('../../../../src/main/sessions/lifecycle', () => ({
   stopSession: vi.fn(),
   writeTerminal: vi.fn()
 }))
-vi.mock('../../../../src/main/title-generator', () => ({ notifyChatMessage: vi.fn() }))
-vi.mock('../../../../src/main/sessions/attachments', () => ({ preparePrompt: vi.fn() }))
-vi.mock('../../../../src/main/sessions/chat-model-default', () => ({
+vi.mock('../../../host/src/title-generator', () => ({ notifyChatMessage: vi.fn() }))
+vi.mock('../../../host/src/sessions/attachments', () => ({ preparePrompt: vi.fn() }))
+vi.mock('../../../host/src/sessions/chat-model-default', () => ({
   rememberChatEffort: vi.fn(),
   rememberChatModel: vi.fn()
 }))
-vi.mock('../../../../src/main/sessions/chat-view-default', () => ({ rememberChatView: vi.fn() }))
-vi.mock('../../../../src/main/sessions/records', () => ({ sessionRecords: {} }))
-import { createSessionHost } from '../../../../src/main/sessions/host'
+vi.mock('../../../host/src/sessions/chat-view-default', () => ({ rememberChatView: vi.fn() }))
+vi.mock('../../../host/src/sessions/records', () => ({ sessionRecords: {} }))
+import { createSessionHost } from '../../../host/src/sessions/host'
 
 type Issuer = Awaited<ReturnType<typeof startOidcProvider>>
 interface MobileState {
@@ -343,7 +349,7 @@ it('serves authoritative live and stopped workspace stamps to a real paired phon
     // ambient declarations out of the server's Node TypeScript compilation.
     const { createStore } = await vi.importActual<{
       createStore(services: ConsumerServices): MobileStore
-    }>('../../../mobile/src/state/store')
+    }>('../../../../apps/mobile/src/state/store')
     store = createStore({
       build: 'development',
       credentials,

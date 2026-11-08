@@ -10,7 +10,7 @@
  * shell's); the server only knows what it would disclose.
  *
  * Mirrors the preload's `.clave` methods as of this change
- * (`src/preload/index.ts`), and is place 3 of the six-place mirror rule in
+ * (`apps/desktop/src/preload/index.ts`), and is place 3 of the six-place mirror rule in
  * the app's CLAUDE.md: the shape here, the parser and the writer in
  * `@clave/server/workspace-files`, the trust boundary beside them.
  */

@@ -175,8 +175,8 @@ async function runScenario({ label, evidenceDir }) {
     })
     const inputs = Object.keys(built.metafile.inputs)
     for (const suffix of [
-      'plugins/chat-view/src/MarkdownMessage.tsx',
-      'plugins/chat-view/src/markdown-parser-reuse.ts',
+      'apps/plugins/chat-view/src/MarkdownMessage.tsx',
+      'apps/plugins/chat-view/src/markdown-parser-reuse.ts',
       'react-dom/cjs/react-dom-client.development.js',
       'react-markdown/lib/index.js',
       'remark-parse/lib/index.js'

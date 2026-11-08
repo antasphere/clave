@@ -5,7 +5,7 @@
  * the standalone entry builds over its data directory. It imports nothing of
  * Effect or the framework (`@clave/server/workspace-files` is the light
  * entry, the way `@clave/server/sidebar-layouts` is), so building it costs
- * the shell nothing (`src/main/server/lazy-load.test.ts`).
+ * the shell nothing (`packages/host/src/server/lazy-load.test.ts`).
  *
  * Places 2 and 3 of the six-place mirror rule in the app's CLAUDE.md live
  * beside each other here: the trust boundary in `trust.ts`, the parser

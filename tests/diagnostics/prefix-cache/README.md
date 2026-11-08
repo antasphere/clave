@@ -1,5 +1,8 @@
 # Legacy prefix-cache diagnostics
 
+The historical paths below describe the archived revision. Current app code lives
+under `apps/plugins/chat-view`; this snapshot stays in `tests/diagnostics/prefix-cache`.
+
 Frozen from internal P2 checkpoint 5151c41e9e1fc746def610f4cd45db60ed6186f1.
 The original sources and full history remain at that Git commit. P4 removes
 the custom wrapper/parser from the shipping graph; this directory keeps the

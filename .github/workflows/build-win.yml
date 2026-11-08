@@ -62,9 +62,9 @@ jobs:
             echo "::warning::SYNONYM_WOFF2_B64 is not set: this build offers Geist only"
             exit 0
           fi
-          mkdir -p src/renderer/src/assets/fonts/private
-          printf '%s' "$SYNONYM_WOFF2_B64" | base64 --decode > src/renderer/src/assets/fonts/private/Synonym-Variable.woff2
-          ls -l src/renderer/src/assets/fonts/private
+          mkdir -p apps/desktop/src/renderer/src/assets/fonts/private
+          printf '%s' "$SYNONYM_WOFF2_B64" | base64 --decode > apps/desktop/src/renderer/src/assets/fonts/private/Synonym-Variable.woff2
+          ls -l apps/desktop/src/renderer/src/assets/fonts/private
 
       - name: Build and package (unsigned NSIS installer, x64)
         run: npm run build:win -- --publish never

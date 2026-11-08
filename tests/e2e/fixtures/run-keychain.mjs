@@ -9,7 +9,7 @@ import { mkdirSync, rmSync } from 'node:fs'
 import path from 'node:path'
 
 const SECURITY = '/usr/bin/security'
-/** The service the standalone server files its items under (`src/main/ports/standalone.ts`). */
+/** The service the standalone server files its items under (`packages/host/src/ports/standalone.ts`). */
 export const KEYCHAIN_SERVICE = 'Clave server'
 
 export function runKeychain(file) {

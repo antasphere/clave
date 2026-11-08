@@ -5,6 +5,8 @@ directories:
   buildResources: build
 files:
   - '!**/.vscode/*'
+  - '!apps'
+  - '!packages'
   - '!src/*'
   - '!native'
   - '!electron.vite.config.{js,ts,mjs,cjs}'
@@ -15,7 +17,7 @@ files:
   - '!plugins'
   - '!.claude-plugin'
 extraResources:
-  - from: plugins
+  - from: apps/plugins
     to: plugins
 beforePack: scripts/prepare-resvg.cjs
 asarUnpack:

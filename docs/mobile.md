@@ -1,6 +1,6 @@
 # Clave on the phone: the package, the toolchain, the checks
 
-`packages/mobile` (`@clave/mobile`) is Clave on an iPhone or an Android phone: the sessions
+`apps/mobile` (`@clave/mobile`) is Clave on an iPhone or an Android phone: the sessions
 running at home, their conversations, the agents' requests, a launch from a saved profile
 (the spec: `knowledge/specs/2026-10-29-mobile-app.md` on clave-os, decisions 1, 6, 7 and 8;
 the acceptance criteria: issue #283). React Native 0.88.1 on Expo SDK 58.0.21, React 19.3.1,
@@ -33,7 +33,7 @@ export LANG=en_US.UTF-8
 
 ```sh
 npm install                       # at the repository root: one install for every workspace
-cd packages/mobile
+cd apps/mobile
 npm run typecheck                 # tsc --noEmit
 npm run lint                      # the root ESLint config, one tree
 npm test                          # vitest, the package's own config, under Node
@@ -43,7 +43,7 @@ npm run check:release-bundle      # two Metro exports: the developer screen pres
 The native projects are generated, never edited (`ios/` and `android/` are git-ignored):
 
 ```sh
-npx expo prebuild --platform ios --clean      # the iOS project; applies plugins/with-jsi-xcode26.js
+npx expo prebuild --platform ios --clean      # the iOS project; applies apps/mobile/plugins/with-jsi-xcode26.js
 (cd ios && LANG=en_US.UTF-8 pod install)
 npx expo run:ios --device 26A905C4-1DFF-453C-8846-C9904410448E     # builds, installs and opens the app on the simulator, with Metro
 npx expo prebuild --platform android --clean
@@ -81,7 +81,7 @@ The first `expo run:ios` attempt failed: expo-modules-jsi 58.0.21 does not compi
 26.0.1 (Swift 6.2.0), `JavaScriptObject.swift:946: sending 'slot' risks causing data races`
 (expo/expo#52462, open on that day). The module's own fix for the same error elsewhere
 (expo/expo#51040, released in 58.0.9) wraps the captured pointer in its `UncheckedSendable`
-struct; `plugins/with-jsi-xcode26.js` applies that one change at prebuild time, idempotently,
+struct; `apps/mobile/plugins/with-jsi-xcode26.js` applies that one change at prebuild time, idempotently,
 and fails loudly the day the module's code is neither the known original nor the patched form.
 Delete the plugin when expo-modules-jsi ships the fix or when the team's Xcode moves to a Swift
 that accepts the original.
@@ -98,7 +98,7 @@ TestFlight archive, a signed APK) are built on top of that by the beta's deliver
 ## The standalone server the app is developed against
 
 ```sh
-npm run dev:server            # from packages/mobile: scripts/dev-server.mjs
+npm run dev:server            # from apps/mobile: scripts/dev-server.mjs
 ```
 
 It starts this checkout's server entry as a daemon under the repository's Bun, on
@@ -133,7 +133,7 @@ server's address and token, kept in the phone's secure store under a machine id 
   history; a 401 is `unauthenticated`, a 422 is the server's declared failure in its own words)
   and `ClavePushClient`, the desktop's push client ported with a liveness ping (a ping every
   20 s once open; a socket that answers nothing within 10 s is closed and reopened).
-- `src/chat/`: the conversation reducer ported from `plugins/chat-view/src/reducer.ts` with
+- `src/chat/`: the conversation reducer ported from `apps/plugins/chat-view/src/reducer.ts` with
   its semantics (deltas joined until `final`, tool calls paired with results by id, the
   permission cards and what the kernel's state does to them), the page cursor, the drafts
   (one per session per machine, in AsyncStorage), and the composer's send with the
@@ -234,7 +234,7 @@ The phone uses `GET /sessions/timeline` from the ordered-history server. It subs
 A native check must prove which source it ran. With the candidate committed, sources frozen and a fresh Metro started with `--clear`, run:
 
 ```sh
-node packages/mobile/scripts/native-provenance.mjs \
+node apps/mobile/scripts/native-provenance.mjs \
   --port 8081 --device-name 'iPhone 17 Pro' \
   --output /tmp/clave-mobile-c/native-source.json
 ```

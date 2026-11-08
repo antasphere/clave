@@ -3,7 +3,7 @@
  * writes to a session, what a session streams back, and the commands and
  * queries that reach them.
  *
- * Ported field by field from `src/shared/session-model.ts` (zod), which stays
+ * Ported field by field from `packages/shared/src/session-model.ts` (zod), which stays
  * the renderer's copy until a lane moves the renderer onto this one. The two
  * must agree: `session-model.test.ts` holds the zod side, `sessions.test.ts`
  * here holds this one, and a change to one event is a change to both files.
@@ -39,7 +39,7 @@ export const Session = Schema.Struct({
 })
 export type Session = typeof Session.Type
 
-// ── Attachments (src/shared/attachments.ts) ──
+// ── Attachments (packages/shared/src/attachments.ts) ──
 
 export const MAX_ATTACHMENTS = 10
 
@@ -136,7 +136,7 @@ export const SetModel = Schema.Struct({
   model: Schema.NullOr(Schema.String)
 })
 export type SetModel = typeof SetModel.Type
-/** A level as a provider spells it: a short lowercase word (src/shared/effort.ts). */
+/** A level as a provider spells it: a short lowercase word (packages/shared/src/effort.ts). */
 export const Effort = Schema.String.pipe(
   Schema.pattern(/^[a-z][a-z0-9_-]{0,31}$/, { message: () => 'Invalid reasoning effort' })
 )
@@ -348,7 +348,7 @@ export type HistoryPage = typeof HistoryPage.Type
 // ── Starting and stopping ──
 
 /** Who owns a session that is not a tab of its own, as the shell records it
- *  (`src/shared/session-link.ts`): a group's terminal, a pane's attached web
+ *  (`packages/shared/src/session-link.ts`): a group's terminal, a pane's attached web
  *  view, a toolbar command. */
 export const SessionLink = Schema.Union(
   Schema.Struct({
@@ -608,12 +608,12 @@ export type SessionRecordView = typeof SessionRecordView.Type
 
 /**
  * A session's persisted record: what survives a quit and what a window brings
- * a tab back from. The shell's `SessionRecord` (`src/main/sessions/adapters/
+ * a tab back from. The shell's `SessionRecord` (`packages/host/src/sessions/adapters/
  * pty-backend.ts`) field by field, with the two the listing adds: `live`,
  * whether the backing tmux session still runs, and `running`, set only on a
  * record asked for by id whose process this host already runs. A field the
  * schema does not name is DROPPED on the wire, silently: the test beside the
- * shell's type (`src/main/sessions/records-contract.test.ts`) holds the two
+ * shell's type (`packages/host/src/sessions/records-contract.test.ts`) holds the two
  * copies together.
  */
 export const SessionRecord = Schema.Struct({

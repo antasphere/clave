@@ -4,7 +4,7 @@
 #   scripts/sync-exos-contract.sh <path-to-exos-monorepo-checkout>
 #
 # Copies packages/contract/src/workstream-events.ts and the §6.3 fixtures into
-# src/main/exchange-capture/contract/, stamping the exos commit sha the copy
+# packages/host/src/exchange-capture/contract/, stamping the exos commit sha the copy
 # mirrors. Never edit the mirror by hand; run the conformance test after.
 set -euo pipefail
 EXOS="${1:?usage: $0 <exos-monorepo-checkout>}"

@@ -61,7 +61,7 @@ The window was hidden (`--test-no-activate`), so nothing here is foreground late
    - Even under its own `--user-data-dir` and `--test-no-activate`, an instance reads
      the machine's Claude login from the macOS Keychain and calls the usage-limits
      endpoint at boot. The path is `readLimitsWith` → `readKeychainAccessToken` →
-     `readFromEndpoint` in `src/main/usage-manager.ts`.
+     `readFromEndpoint` in `src/main/usage-manager.ts`, now `packages/host/src/usage-manager.ts`.
    - That is not inference and nothing is billed, but the benchmark is not
      credential-isolated on this point.
 

@@ -1,7 +1,7 @@
 /**
  * The git port (wave wcs1023, lane C, #242): what the server needs from
  * whoever holds the checkouts. The daemon implements it over the app's own
- * git implementation (`src/main/server/git-port.ts`); a server with nothing
+ * git implementation (`packages/host/src/server/git-port.ts`); a server with nothing
  * behind it runs on `GitPort.none`, which refuses every call as unavailable
  * rather than answer "not a repository" for a folder it never looked at.
  *

@@ -1,4 +1,4 @@
-// The GitHub pull request panel (plugins/github): a pull request link in a
+// The GitHub pull request panel (apps/plugins/github): a pull request link in a
 // chat opens the pull request in the side panel, read and written through the
 // user's own `gh`. Nothing here reaches GitHub — `gh` on the PATH is a stub
 // that answers `pr view` and `pr diff` from fixtures and records every call it

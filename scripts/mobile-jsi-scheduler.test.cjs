@@ -14,7 +14,7 @@ const {
 const { tmpdir } = require('node:os')
 const path = require('node:path')
 const { test } = require('node:test')
-const { applyJsiSchedulerFix } = require('../packages/mobile/plugins/with-jsi-scheduler')
+const { applyJsiSchedulerFix } = require('../apps/mobile/plugins/with-jsi-scheduler')
 
 // This copies source to a disposable fixture. It never patches the input SDK.
 const pkg = process.env.CLAVE_JSI_TEST_PACKAGE || require.resolve('expo-modules-jsi/package.json')
@@ -98,13 +98,10 @@ function stagingFixture(run) {
   const root = mkdtempSync(path.join(tmpdir(), 'clave-jsi-stage-'))
   const sdk = path.join(root, 'node_modules/expo-modules-jsi')
   const apple = path.join(sdk, 'apple')
-  const core = path.join(
-    root,
-    'packages/mobile/ios/Pods/ExpoModulesCore/ExpoModulesCore.xcframework'
-  )
+  const core = path.join(root, 'apps/mobile/ios/Pods/ExpoModulesCore/ExpoModulesCore.xcframework')
   const records =
     'node_modules/expo-notifications/ios/ExpoNotifications/Notifications/TriggerRecords.swift'
-  const suite = 'packages/mobile/native-checks/ClaveSchedulerAffinityTests.swift'
+  const suite = 'apps/mobile/native-checks/ClaveSchedulerAffinityTests.swift'
   const copies = [
     ['apple/Package.swift', path.join(apple, 'Package.swift')],
     ['apple/scripts/build-xcframework.sh', path.join(apple, 'scripts/build-xcframework.sh')],

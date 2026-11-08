@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { Schema } from 'effect'
 import { SessionStream } from './sessions'
 import { SessionPosition, TimelinePage, GetSessionTimeline } from './timeline'
-import { SessionStreamSchema } from '../../../src/shared/session-model'
+import { SessionStreamSchema } from '../../shared/src/session-model'
 
 const position = { generation: 'process-adoption', sequence: 7 }
 const event = { type: 'assistant_text', delta: 'same', final: true } as const

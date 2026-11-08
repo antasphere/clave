@@ -1,7 +1,7 @@
 /**
  * The ports, one per domain: what the server needs from whoever runs it.
  * Inside the app the shell implements each over the managers it already has
- * (`src/main/server/*`); a standalone entry gives the ones it can and the
+ * (`packages/host/src/server/*`); a standalone entry gives the ones it can and the
  * domain's `none` for the rest, which answers `CapabilityUnavailable`.
  *
  * The pattern a lane follows: the port lives in its domain folder

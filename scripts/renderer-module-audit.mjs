@@ -9,10 +9,10 @@ export const digest = (value) => createHash('sha256').update(value).digest('hex'
 const forbidden =
   /(?:MarkdownMessage\.tsx|markdown-parser-reuse(?:\.ts)?|diagnostics\/prefix-cache)/
 const required = [
-  'src/renderer/src/main.tsx',
-  'src/renderer/src/views/native-views.ts',
-  'plugins/chat-view/src/ChatView.tsx',
-  'plugins/chat-view/src/TerminalView.tsx',
+  'apps/desktop/src/renderer/src/main.tsx',
+  'apps/desktop/src/renderer/src/views/native-views.ts',
+  'apps/plugins/chat-view/src/ChatView.tsx',
+  'apps/plugins/chat-view/src/TerminalView.tsx',
   'node_modules/react-markdown/lib/index.js',
   'node_modules/remark-gfm/lib/index.js',
   'node_modules/remark-parse/lib/index.js'
@@ -84,7 +84,7 @@ export function rendererModuleMetadata(root = process.cwd()) {
           {
             schema: 2,
             owner: 'electron.vite.config.ts:renderer',
-            nativeRegistry: 'src/renderer/src/views/native-views.ts',
+            nativeRegistry: 'apps/desktop/src/renderer/src/views/native-views.ts',
             chunks,
             sources,
             inputs
@@ -100,7 +100,7 @@ export function rendererModuleMetadata(root = process.cwd()) {
 export function validateRendererAudit(audit, readSource, readOutput, actualOutputFiles) {
   assert.equal(audit?.schema, 2, 'missing/stale module audit schema')
   assert.equal(audit.owner, 'electron.vite.config.ts:renderer')
-  assert.equal(audit.nativeRegistry, 'src/renderer/src/views/native-views.ts')
+  assert.equal(audit.nativeRegistry, 'apps/desktop/src/renderer/src/views/native-views.ts')
   assert.ok(audit.chunks?.length > 0, 'nonempty actual chunks required')
   assert.ok(
     Array.isArray(actualOutputFiles) && actualOutputFiles.length > 0,

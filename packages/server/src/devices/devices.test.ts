@@ -25,8 +25,8 @@ import { FakeSettingsSource } from '../settings/test-support'
 import { PendingRequests } from '../requests/service'
 import { createServerFiles } from '../files/service'
 import { ensureFileHelper } from '../files/test-support'
-import { ClaveServerClient } from '../../../mobile/src/api/client'
-import { AttachmentClient } from '../../../mobile/src/attachments/client'
+import { ClaveServerClient } from '../../../../apps/mobile/src/api/client'
+import { AttachmentClient } from '../../../../apps/mobile/src/attachments/client'
 import type { TimelinePage } from '@clave/contract/timeline'
 
 type Provider = Awaited<ReturnType<typeof startOidcProvider>>

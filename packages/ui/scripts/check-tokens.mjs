@@ -6,7 +6,10 @@ import { fileURLToPath } from 'node:url'
 const dir = path.dirname(fileURLToPath(import.meta.url))
 const read = (relative) => readFileSync(new URL(relative, import.meta.url), 'utf8')
 const css = read('../src/tokens.css').replace(/\/\*[\s\S]*?\*\//g, '')
-const app = read('../../../src/renderer/src/assets/main.css').replace(/\/\*[\s\S]*?\*\//g, '')
+const app = read('../../../apps/desktop/src/renderer/src/assets/main.css').replace(
+  /\/\*[\s\S]*?\*\//g,
+  ''
+)
 const overrides = JSON.parse(read('./expected-theme-overrides.json'))
 const expected = JSON.parse(read('./expected-tokens.json'))
 const declarations = (body) => new Set([...body.matchAll(/(--[\w-]+)\s*:/g)].map((m) => m[1]))
@@ -163,10 +166,10 @@ for (const [, selector, body] of system.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
  * Deliberately narrow. It refuses the arbitrary-value forms that restate the
  * spec's own numbers, not every length in the renderer — `h-4` icons, `text-xs`
  * captions and the rest are Tailwind's scale doing its job, and dragging them in
- * would make this noise nobody reads. The terminal and plugins/ are out of scope
- * by the brief; this only walks src/renderer/src.
+ * would make this noise nobody reads. The terminal and apps/plugins/ are out of scope
+ * by the brief; this only walks apps/desktop/src/renderer/src.
  */
-const RENDERER = path.join(dir, '../../../src/renderer/src')
+const RENDERER = path.join(dir, '../../../apps/desktop/src/renderer/src')
 /* Each pattern: what a component must not write, and what to write instead. */
 const RENDERER_LITERALS = [
   [/\btext-\[13px\]/, 'text-[13px]', 'text-control (font-size: var(--control-text))'],

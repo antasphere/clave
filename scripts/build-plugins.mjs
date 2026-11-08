@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type -- plain JavaScript build tooling */
 /**
- * Builds the bundled plugins whose sources are TypeScript: today `plugins/analytics`.
+ * Builds the bundled plugins whose sources are TypeScript: today `apps/plugins/analytics`.
  * Its runnable `main.mjs` and its page assets under `dist/` (the deck page and the settings
  * page, their scripts, one stylesheet) are build outputs (git-ignored), produced here for
  * `electron-vite dev` / `build` (through the inline vite plugin in electron.vite.config.ts)
@@ -8,12 +8,12 @@
  * a rebuild touches nothing it does not have to.
  */
 import { build } from 'esbuild'
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
-const plugin = path.join(root, 'plugins', 'analytics')
+const plugin = path.join(root, 'apps', 'plugins', 'analytics')
 const dist = path.join(plugin, 'dist')
 // Generated code is not linted: the config ignores `dist/`, and this line marks `main.mjs`.
 const BANNER = [
@@ -74,6 +74,10 @@ function tokensForBrowser() {
 }
 
 export async function buildPlugins() {
+  copyFileSync(
+    path.join(root, 'apps/pi-state/index.js'),
+    path.join(root, 'resources/pi-clave-state.js')
+  )
   mkdirSync(dist, { recursive: true })
   await bundle(path.join(plugin, 'src', 'main.ts'), path.join(plugin, 'main.mjs'), {
     format: 'esm',

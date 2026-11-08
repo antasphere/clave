@@ -13,7 +13,7 @@
  * closing) uses the granular commands below, and every change, whoever made
  * it, reaches every client as `sidebar.layout_changed`.
  *
- * Ported field by field from `src/renderer/src/store/session-types.ts`
+ * Ported field by field from `apps/desktop/src/renderer/src/store/session-types.ts`
  * (`SessionGroup`, `GroupTerminalConfig`, `GroupViewConfig`), which stays
  * the renderer's copy; `layout.test.ts` holds the two shapes together.
  */
