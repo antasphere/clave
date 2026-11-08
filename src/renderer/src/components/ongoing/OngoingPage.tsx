@@ -200,96 +200,101 @@ function OngoingCard({
 
   const lastAt = turn?.at ?? null
   return (
-    <article
-      className="ongoing-card"
-      data-ongoing-card={entry.id}
-      data-ongoing-status={status}
-      data-session-id={session?.id}
-      role="button"
-      tabIndex={0}
-      aria-busy={opening || undefined}
-      aria-label={`Continue ${name}`}
-      onClick={(e) => {
-        // The card's menu is drawn in a portal, and React still bubbles its
-        // clicks here: an item chosen in it must never also open the card.
-        if (!e.currentTarget.contains(e.target as Node)) return
-        onOpen()
-      }}
-      onKeyDown={(e) => {
-        if (e.target !== e.currentTarget) return
-        if (e.key === 'Enter' || e.key === ' ') {
-          e.preventDefault()
+    <>
+      <article
+        className="ongoing-card"
+        data-ongoing-card={entry.id}
+        data-ongoing-status={status}
+        data-menu-open={menu ? 'true' : undefined}
+        data-session-id={session?.id}
+        role="button"
+        tabIndex={0}
+        aria-busy={opening || undefined}
+        aria-label={`Continue ${name}`}
+        onClick={(e) => {
+          // The card's menu is drawn in a portal, and React still bubbles its
+          // clicks here: an item chosen in it must never also open the card.
+          if (!e.currentTarget.contains(e.target as Node)) return
           onOpen()
-        }
-      }}
-      onContextMenu={(e) => {
-        e.preventDefault()
-        if (!e.currentTarget.contains(e.target as Node)) return
-        setMenu({ x: e.clientX, y: e.clientY })
-      }}
-    >
-      <header className="ongoing-card-head">
-        <span className="ongoing-status" data-status={status} title={STATUS_HINT[status]}>
-          <span className="ongoing-status-dot" />
-          {STATUS_LABEL[status]}
-        </span>
-        <span className="ongoing-card-when" title={new Date(entry.addedAt).toLocaleString()}>
-          {lastAt ? relativeTime(lastAt, now) : `kept ${relativeTime(entry.addedAt, now)}`}
-        </span>
-        <button
-          type="button"
-          className="btn-icon btn-icon-sm ongoing-card-more"
-          aria-label="More"
-          title="More"
-          onClick={(e) => {
-            e.stopPropagation()
-            const r = e.currentTarget.getBoundingClientRect()
-            setMenu({ x: r.right - 4, y: r.bottom + 4 })
-          }}
-        >
-          <EllipsisHorizontalIcon className="w-4 h-4" />
-        </button>
-      </header>
+        }}
+        onKeyDown={(e) => {
+          if (e.target !== e.currentTarget) return
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault()
+            onOpen()
+          }
+        }}
+        onContextMenu={(e) => {
+          e.preventDefault()
+          if (!e.currentTarget.contains(e.target as Node)) return
+          setMenu({ x: e.clientX, y: e.clientY })
+        }}
+      >
+        <header className="ongoing-card-head">
+          <span className="ongoing-status" data-status={status} title={STATUS_HINT[status]}>
+            <span className="ongoing-status-dot" />
+            {STATUS_LABEL[status]}
+          </span>
+          <span className="ongoing-card-when" title={new Date(entry.addedAt).toLocaleString()}>
+            {lastAt ? relativeTime(lastAt, now) : `kept ${relativeTime(entry.addedAt, now)}`}
+          </span>
+          <button
+            type="button"
+            className="btn-icon btn-icon-sm ongoing-card-more"
+            aria-label="More"
+            title="More"
+            onClick={(e) => {
+              e.stopPropagation()
+              const r = e.currentTarget.getBoundingClientRect()
+              // Under the button, from its left edge: the menu hangs off it.
+              setMenu({ x: r.left, y: r.bottom + 4 })
+            }}
+          >
+            <EllipsisHorizontalIcon className="w-4 h-4" />
+          </button>
+        </header>
 
-      <h3 className="ongoing-card-title">{name}</h3>
-      <NoteField
-        entryId={entry.id}
-        note={entry.note}
-        editing={editingNote}
-        setEditing={setEditingNote}
-      />
+        <h3 className="ongoing-card-title">{name}</h3>
+        <NoteField
+          entryId={entry.id}
+          note={entry.note}
+          editing={editingNote}
+          setEditing={setEditingNote}
+        />
 
-      <div className="ongoing-exchange">
-        {turn === undefined ? (
-          <>
-            <span className="ongoing-skeleton" />
-            <span className="ongoing-skeleton is-short" />
-          </>
-        ) : turn ? (
-          <>
-            <p className="ongoing-exchange-you">
-              <span className="ongoing-exchange-who">You</span>
-              {firstLine(turn.you, 160)}
-            </p>
-            {turn.reply && <p className="ongoing-exchange-reply">{firstLine(turn.reply)}</p>}
-          </>
-        ) : (
-          <p className="ongoing-exchange-none">Nothing said yet</p>
-        )}
-      </div>
+        <div className="ongoing-exchange">
+          {turn === undefined ? (
+            <>
+              <span className="ongoing-skeleton" />
+              <span className="ongoing-skeleton is-short" />
+            </>
+          ) : turn ? (
+            <>
+              <p className="ongoing-exchange-you">
+                <span className="ongoing-exchange-who">You</span>
+                {firstLine(turn.you, 160)}
+              </p>
+              {turn.reply && <p className="ongoing-exchange-reply">{firstLine(turn.reply)}</p>}
+            </>
+          ) : (
+            <p className="ongoing-exchange-none">Nothing said yet</p>
+          )}
+        </div>
 
-      <footer className="ongoing-card-foot">
-        <span className="ongoing-card-from" title={entry.cwd}>
-          {entry.originGroup ? entry.originGroup.name : entry.cwd.split('/').pop() || entry.cwd}
-        </span>
-        <span className="ongoing-card-continue">
-          {opening ? 'Opening…' : status === 'resting' ? 'Pick up' : 'Continue'}
-          <ArrowRightIcon className="w-3.5 h-3.5" />
-        </span>
-      </footer>
-
+        <footer className="ongoing-card-foot">
+          <span className="ongoing-card-from" title={entry.cwd}>
+            {entry.originGroup ? entry.originGroup.name : entry.cwd.split('/').pop() || entry.cwd}
+          </span>
+          <span className="ongoing-card-continue">
+            {opening ? 'Opening…' : status === 'resting' ? 'Pick up' : 'Continue'}
+            <ArrowRightIcon className="w-3.5 h-3.5" />
+          </span>
+        </footer>
+      </article>
+      {/* Outside the card: its hover lift is a transform, and a transformed
+        ancestor moves the menu's fixed anchor away from the button. */}
       {menu && <ContextMenu items={items} x={menu.x} y={menu.y} onClose={() => setMenu(null)} />}
-    </article>
+    </>
   )
 }
 
@@ -357,18 +362,21 @@ export function OngoingPage(): React.JSX.Element {
     <div className="ongoing-page" data-ongoing-page>
       <div className="ongoing-page-inner">
         <header className="ongoing-page-head">
-          {workspaceName && <p className="ongoing-eyebrow">{workspaceName}</p>}
-          <h1 className="ongoing-page-title">Ongoing</h1>
-          <p className="ongoing-page-lede">
-            Conversations that stay open beside your work. They keep out of the sidebar and wait
-            here until you end them.
-          </p>
-          {rows.length > 0 && (
-            <p className="ongoing-page-count">
-              {rows.length} conversation{rows.length === 1 ? '' : 's'}
-              {waiting > 0 && <span className="is-accent"> · {waiting} waiting for you</span>}
+          <div className="ongoing-page-head-text">
+            {workspaceName && <p className="ongoing-eyebrow">{workspaceName}</p>}
+            <h1 className="ongoing-page-title">Ongoing</h1>
+            <p className="ongoing-page-lede">
+              Conversations that stay open beside your work. They keep out of the sidebar and wait
+              here until you end them.
             </p>
-          )}
+            {rows.length > 0 && (
+              <p className="ongoing-page-count">
+                {rows.length} conversation{rows.length === 1 ? '' : 's'}
+                {waiting > 0 && <span className="is-accent"> · {waiting} waiting for you</span>}
+              </p>
+            )}
+          </div>
+          {rows.length > 0 && <OngoingDrawing className="ongoing-head-drawing" />}
         </header>
 
         {notice && (

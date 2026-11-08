@@ -103,9 +103,33 @@
 }
 .ongoing-page-head {
   display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 2rem;
+  margin-bottom: 2rem;
+}
+.ongoing-page-head-text {
+  display: flex;
   flex-direction: column;
   gap: 0.375rem;
-  margin-bottom: 2rem;
+  min-width: 0;
+}
+/* The page's drawing beside its title, once it holds a conversation (the
+   empty page carries it under the words instead). */
+.ongoing-head-drawing {
+  flex-shrink: 0;
+  width: 13.5rem;
+  height: auto;
+  margin: -0.5rem -0.5rem 0 0;
+}
+/* Beside the title the drawing stands on nothing: its ground line goes. */
+.ongoing-head-drawing > line:first-of-type {
+  display: none;
+}
+@media (max-width: 900px) {
+  .ongoing-head-drawing {
+    display: none;
+  }
 }
 .ongoing-eyebrow {
   font-size: 11px;
@@ -162,14 +186,16 @@
     background-color 150ms,
     translate 180ms var(--ease-out-expo);
 }
-.ongoing-card:hover {
+.ongoing-card:hover,
+.ongoing-card[data-menu-open='true'] {
   background-color: color-mix(in oklab, var(--card-surface), var(--text-primary) 2.5%);
   box-shadow:
     var(--card-shadow),
     0 6px 18px -10px rgb(0 0 0 / 0.28);
 }
 @media (prefers-reduced-motion: no-preference) {
-  .ongoing-card:hover {
+  .ongoing-card:hover,
+  .ongoing-card[data-menu-open='true'] {
     translate: 0 -1px;
   }
   .ongoing-card {
@@ -248,8 +274,12 @@
   opacity: 0;
   transition: opacity 120ms;
 }
-.ongoing-card:is(:hover, :focus-within) .ongoing-card-more {
+.ongoing-card:is(:hover, :focus-within, [data-menu-open='true']) .ongoing-card-more {
   opacity: 1;
+}
+.ongoing-card[data-menu-open='true'] .ongoing-card-more {
+  color: var(--text-primary);
+  background-color: color-mix(in srgb, var(--text-primary) 8%, transparent);
 }
 
 .ongoing-card-title {
@@ -289,7 +319,7 @@
   color: var(--text-tertiary);
   opacity: 0;
 }
-.ongoing-card:is(:hover, :focus-within) .ongoing-note.is-empty {
+.ongoing-card:is(:hover, :focus-within, [data-menu-open='true']) .ongoing-note.is-empty {
   opacity: 1;
 }
 .ongoing-note-input {

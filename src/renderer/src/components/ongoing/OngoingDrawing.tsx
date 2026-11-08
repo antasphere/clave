@@ -9,7 +9,8 @@ import type React from 'react'
    paper bubbles on a thread that runs down the page; the thread does not
    stop at the last one, it carries on to where the next exchange will be,
    drawn in the accent and ending on the pen. A tab put aside, still open.
-   Words never go inside a drawing: the page says them underneath. */
+   Words never go inside a drawing: the page says them underneath. The same
+   drawing heads the page beside its title once it holds a conversation. */
 
 function Pen({ x, y }: { x: number; y: number }): React.JSX.Element {
   return (
@@ -22,9 +23,13 @@ function Pen({ x, y }: { x: number; y: number }): React.JSX.Element {
   )
 }
 
-export function OngoingDrawing(): React.JSX.Element {
+export function OngoingDrawing({ className }: { className?: string } = {}): React.JSX.Element {
   return (
-    <svg viewBox="0 0 240 150" className="chat-drawing ongoing-drawing" aria-hidden="true">
+    <svg
+      viewBox="0 0 240 150"
+      className={`chat-drawing ongoing-drawing${className ? ` ${className}` : ''}`}
+      aria-hidden="true"
+    >
       <line className="ln ln--thin" x1="18" y1="138" x2="222" y2="138" />
       {/* the thread the exchanges hang on */}
       <path className="ln ln--soft" d="M58,20 C58,46 58,70 58,96" />
