@@ -4796,6 +4796,9 @@ details[open] > .chat-tool-row .chat-tool-chevron,
 .chat-prompt-body[data-closed='true'] .chat-ask-folded {
   cursor: default;
 }
+.chat-prompt-body[data-closed='true'] .chat-ask-folded:hover .chat-ask-folded-answer {
+  text-decoration: none;
+}
 .chat-prompt-body[data-closed='true'] .chat-ask-folded[data-static='true'] {
   display: flex;
   flex-wrap: wrap;
