@@ -34,7 +34,12 @@ const ARRIVALS = [
   '.chat-row[data-arrive] > *',
   '.chat-row[data-arrive] .term-turn > *',
   '.chat-prompt',
-  '.chat-composer-files .chat-attachment'
+  '.chat-composer-files .chat-attachment',
+  // The card of the agent's working notes (PRDCT-4212): the card that has
+  // just folded, the digest's title landing, the note that needs the reader.
+  '.work-stretch[data-fresh]',
+  '.stretch-title-words',
+  '.stretch-flag'
 ]
 const PRESSED = ['.chat-jump-end', '.chat-turn-copy', '.chat-composer-tool', '.chat-model-trigger']
 
@@ -60,6 +65,14 @@ describe('chat motion', () => {
   it('the jump control rises from the foot it sits over, not from a menu origin', () => {
     expect(block('.chat-jump-end')).toMatch(/animation:\s*chat-rise/)
     expect(block('@keyframes chat-rise')).toMatch(/translate:\s*0\s+calc/)
+  })
+  it('a card of working notes opens by gliding to its height, its steps rising in turn', () => {
+    expect(block('.stretch-card::details-content')).toMatch(/transition:[^;]*block-size/)
+    expect(block('.stretch-step')).toMatch(/transition-delay:[^;]*--stretch-i/)
+    expect(block('.stretch-card[open] .stretch-step')).toMatch(/opacity:\s*1/)
+    // The rail and the steps are the exchange timeline's geometry, so the
+    // two cards read as one family.
+    expect(block('.stretch-step')).toMatch(/grid-template-columns:[^;]*--stretch-rail/)
   })
   it('a tool row reveals what it opens to, on every opening', () => {
     expect(chat).toMatch(/details\[open\] > \.chat-tool-panel \{[^}]*animation:\s*chat-reveal/)

@@ -49,7 +49,11 @@ import { SidePanel } from '../git/SidePanel'
 import { FilePreview } from '../files/FilePreview'
 import { GitDiffPreview } from '../git/GitDiffPreview'
 import { GitJourneyPanel } from '../git/GitJourneyPanel'
-import { Bars3BottomLeftIcon, MagnifyingGlassIcon } from '@heroicons/react/24/outline'
+import {
+  ArrowsPointingInIcon,
+  Bars3BottomLeftIcon,
+  MagnifyingGlassIcon
+} from '@heroicons/react/24/outline'
 import { cn } from '@clave/ui/components'
 import { usePinnedStore, initClaveFileWatchers } from '../../store/pinned-store'
 import { allWorkspaces, findWorkspace, useWorkspaceStore } from '../../store/workspace-store'
@@ -1020,6 +1024,9 @@ export function AppShell(): React.JSX.Element {
                   search and file-tree pair: a plugin configures this bar, it does not get
                   a bar of its own. */}
               <PluginToolbar />
+              {/* Fold the agent's working notes in the chat views (PRDCT-4212):
+                  the same choice as Settings → Appearance → Conversation. */}
+              <FoldNotesButton />
               {/* File palette button */}
               <button
                 onClick={toggleFilePalette}
@@ -1182,6 +1189,27 @@ function DissolveConfirmDialog(): React.JSX.Element {
       onConfirm={() => void confirm()}
       onCancel={cancel}
     />
+  )
+}
+
+/** The toolbar's switch for the chat views' folded working notes: lit when
+ *  on. Flips the one preference the Appearance page holds. */
+function FoldNotesButton(): React.JSX.Element {
+  const fold = useSessionStore((s) => s.foldWorkNotes)
+  const setFold = useSessionStore((s) => s.setFoldWorkNotes)
+  return (
+    <button
+      onClick={() => setFold(!fold)}
+      className={cn('btn-icon btn-icon-md flex-shrink-0', fold && '!text-accent')}
+      title={
+        fold ? 'Working notes folded · click to show every line' : "Fold the agent's working notes"
+      }
+      aria-label="Fold working notes"
+      aria-pressed={fold}
+      data-testid="fold-notes-toggle"
+    >
+      <ArrowsPointingInIcon className="w-4 h-4" />
+    </button>
   )
 }
 
