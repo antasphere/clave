@@ -12,6 +12,14 @@ export function resolveSessionTarget(input: {
   callerServerId?: string
   workspaces: Workspace[]
   connections: SavedServerConnection[]
+  /** Where the tab opens on a server when nothing names a workspace there
+   *  (PRDCT-4193): the directory it opens in, matched against the server's
+   *  workspace roots, and the server workspaces paired with the caller's
+   *  local one (`pairedServerWorkspaces`), which win when exactly one is
+   *  that server's. Absent, a server tab opened from a Mac tab lands in no
+   *  workspace, as before. */
+  cwd?: string
+  pairedWorkspaceIds?: readonly string[]
 }): { serverId: string; workspaceId?: string } {
   let explicitOwner: string | undefined
   if (input.server !== undefined) {
@@ -57,14 +65,43 @@ export function resolveSessionTarget(input: {
         ? ownerOf(workspace.id)
         : (input.callerServerId ?? ownerOf(input.defaultWorkspaceId)))
   if (input.group && ownerOf(input.group.id) !== serverId)
-    throw new Error('The target group belongs to another server.')
+    throw new Error(
+      'The target group belongs to another server. Omit groupId, or pass a group of that server from clave_list.'
+    )
   if (workspace && ownerOf(workspace.id) !== serverId)
     throw new Error('The target workspace belongs to another server.')
   if (workspace && input.group?.workspaceId && workspace.id !== input.group.workspaceId)
     throw new Error('The target group belongs to another workspace.')
   const candidate = workspace?.id ?? input.group?.workspaceId ?? input.defaultWorkspaceId
-  return {
-    serverId,
-    ...(candidate && ownerOf(candidate) === serverId ? { workspaceId: candidate } : {})
+  if (candidate && ownerOf(candidate) === serverId) return { serverId, workspaceId: candidate }
+  // A server tab with nothing naming a workspace of that server (PRDCT-4193):
+  // the server workspace paired with the caller's, else the one whose root
+  // holds the directory, so the tab shows where the coordinator works
+  // instead of in no workspace at all.
+  if (serverId !== LOCAL_SERVER_ID) {
+    const placed = placeOnServer(serverId, input.workspaces, input.pairedWorkspaceIds, input.cwd)
+    if (placed) return { serverId, workspaceId: placed }
   }
+  return { serverId }
+}
+
+/** The server workspace a tab lands in when its open names none: the one
+ *  paired with the caller's local workspace when exactly one is this
+ *  server's, else the server workspace whose root holds `cwd`, the deepest
+ *  root winning; undefined when neither applies. */
+function placeOnServer(
+  serverId: string,
+  workspaces: Workspace[],
+  paired: readonly string[] | undefined,
+  cwd: string | undefined
+): string | undefined {
+  const own = (paired ?? []).filter((id) => ownerOf(id) === serverId)
+  if (own.length === 1) return own[0]
+  if (!cwd) return undefined
+  const holds = (root: string): boolean =>
+    cwd === root || cwd.startsWith(root.replace(/\/+$/, '') + '/')
+  const holder = workspaces
+    .filter((w) => ownerOf(w.id) === serverId && holds(w.rootDir))
+    .sort((a, b) => b.rootDir.length - a.rootDir.length)[0]
+  return holder?.id
 }

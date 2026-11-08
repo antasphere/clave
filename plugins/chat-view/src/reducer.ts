@@ -73,6 +73,11 @@ export interface Conversation {
    *  key — as it would under a plain index, remounting the transcript. */
   first: number
   state: AgentState
+  /** The run of the process whose state this is (`Session.run`), once a
+   *  frame or the subscribe answer named one: a `state_change` of an older
+   *  run is the old process's word and leaves the state alone
+   *  (PRDCT-4191). Null until the host has said. */
+  run: number | null
   model: string | null
   /** The reasoning effort the provider last reported; null while it has not
    *  said, or for a model that runs at none. */
@@ -86,6 +91,7 @@ export const emptyConversation: Conversation = {
   entries: [],
   first: 0,
   state: 'idle',
+  run: null,
   model: null,
   effort: null,
   permissionMode: null
@@ -104,6 +110,10 @@ export type Action =
   /** The host refused this view's answer because it no longer holds the
    *  request: the card is retired without an answer. */
   | { retire: string }
+  /** The host's own word on the session, as the subscribe answered it
+   *  (PRDCT-4191): its state and its run, which win over the seed the pane
+   *  took from the list it read at mount. */
+  | { session: { state: AgentState; run?: number } }
 
 /** Whether anything answers the reader's last message yet: text, a tool call,
  *  a question, an error. What decides, on Escape, between taking the message
@@ -134,6 +144,21 @@ function settle(entries: Entry[], matches: (request: Permission) => boolean): En
 }
 export function reduceConversation(state: Conversation, action: Action): Conversation {
   if ('exit' in action) return { ...state, state: 'ended', exitCode: action.exit }
+  if ('session' in action) {
+    // The subscribe's answer is the host's current word: a run older than
+    // one already heard is a stale answer (a subscribe that resolved after
+    // the new process spoke) and changes nothing.
+    const run = action.session.run
+    if (run !== undefined && state.run !== null && run < state.run) return state
+    const ended = action.session.state === 'ended'
+    return {
+      ...state,
+      state: action.session.state,
+      run: run ?? state.run,
+      // A live word clears the exit code a dead run left on the pane.
+      ...(ended ? {} : { exitCode: undefined })
+    }
+  }
   if ('retire' in action) {
     // The host no longer holds the request this view's answer named: the
     // card leaves the dock with no answer recorded, since nothing ran. The
@@ -153,7 +178,12 @@ export function reduceConversation(state: Conversation, action: Action): Convers
   }
   if ('sync' in action) {
     if (!action.sync.length) return state
-    return action.sync.reduce(reduceConversation, { ...state, entries: [], first: 0 })
+    // The past rebuilds the entries, never the state: the state is the
+    // kernel's word on the stream (and the subscribe's answer), and a
+    // replayed page may hold a fatal error or a blocked request of a process
+    // that is no longer the one running (PRDCT-4191).
+    const synced = action.sync.reduce(reduceConversation, { ...state, entries: [], first: 0 })
+    return { ...synced, state: state.state, run: state.run, exitCode: state.exitCode }
   }
   if ('prepend' in action) {
     if (!action.prepend.length) return state
@@ -186,6 +216,11 @@ export function reduceConversation(state: Conversation, action: Action): Convers
   const { event } = action
   const at = action.at ?? Date.now()
   if (event.type === 'state_change') {
+    // A frame of an older run is the old process's word (its `ended` after
+    // the new process's `idle`, heard out of order): it leaves the state
+    // alone. A frame naming a newer run moves the pane to that run.
+    if (event.run !== undefined && state.run !== null && event.run < state.run) return state
+    const run = event.run ?? state.run
     // The kernel record is the conversation's state, never the view's own tally
     // of what it answered. Leaving blocked means the adapter is holding no
     // request of ours any more, whether it was answered elsewhere or abandoned,
@@ -207,13 +242,14 @@ export function reduceConversation(state: Conversation, action: Action): Convers
       !e.answer &&
       !e.abandoned &&
       (marks ? e.answeredElsewhere !== true : clears && e.answeredElsewhere === true)
-    if (!state.entries.some(touches)) return { ...state, state: event.state }
+    if (!state.entries.some(touches)) return { ...state, state: event.state, run }
     return {
       ...state,
       entries: state.entries.map((e) =>
         touches(e) ? { ...e, answeredElsewhere: marks ? true : undefined } : e
       ),
-      state: event.state
+      state: event.state,
+      run
     }
   }
   if (event.type === 'permission_withdrawn') {

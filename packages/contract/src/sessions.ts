@@ -32,7 +32,14 @@ export const Session = Schema.Struct({
   title: Schema.String,
   /** The view this session is read in, `<pluginId>/<viewId>`. Absent means
    *  the host picks the first view that renders this transport. */
-  viewId: Schema.optional(Schema.NonEmptyString)
+  viewId: Schema.optional(Schema.NonEmptyString),
+  /** Which process under this id this is: 1 at the first spawn, one more at
+   *  every spawn under the same id since the host started (a Resume, a move
+   *  to another account). A `state_change` carries the run it belongs to, so
+   *  a pane that hears an `ended` of run 1 after the `idle` of run 2 knows it
+   *  for the old process's word (PRDCT-4191). Absent on a host before this
+   *  field and on a stopped record, which runs nothing. */
+  run: Schema.optional(Schema.Number)
 })
 export type Session = typeof Session.Type
 
@@ -266,7 +273,13 @@ export const SessionEvent = Schema.Union(
     detail: Schema.optional(Schema.String),
     questions: Schema.optional(Schema.Array(AgentQuestion))
   }),
-  Schema.Struct({ type: Schema.Literal('state_change'), state: AgentState }),
+  Schema.Struct({
+    type: Schema.Literal('state_change'),
+    state: AgentState,
+    /** The run of the process whose state this is (`Session.run`); absent
+     *  from an adapter's own frame, stamped by the host that publishes it. */
+    run: Schema.optional(Schema.Number)
+  }),
   Schema.Struct({
     type: Schema.Literal('session_meta'),
     model: Schema.NullOr(Schema.String),
@@ -373,8 +386,13 @@ export const SpawnOptions = Schema.Struct({
   // ── ADR 0004: what a routine run declares beyond a tab's launch ──
   /** Claude's reasoning effort to start on (`--effort`); a chat defaults to the last picked. */
   effort: Schema.optional(Schema.String),
-  /** The permission mode a Claude session without `dangerousMode` asks under. */
-  permissionMode: Schema.optional(Schema.Literal('default', 'acceptEdits', 'plan')),
+  /** The permission mode a Claude session without `dangerousMode` asks under:
+   *  the CLI's `--permission-mode` values short of bypass, which is
+   *  `dangerousMode`. `auto` and `dontAsk` joined so a Resume brings a chat
+   *  back in the mode it was running (PRDCT-4191). */
+  permissionMode: Schema.optional(
+    Schema.Literal('default', 'acceptEdits', 'plan', 'auto', 'dontAsk')
+  ),
   /** A Claude Code plugin folder loaded for this session alone (`--plugin-dir`). */
   pluginDir: Schema.optional(Schema.String),
   /** One paragraph appended to Claude's system prompt (`--append-system-prompt`). */
@@ -392,7 +410,12 @@ export const SpawnOptions = Schema.Struct({
   /** The caller when `clave_open_session` uses `attachToParent: true`:
    *  folds the tab under its parent and restores the messaging link at boot.
    *  Absent for separate tabs, including agent opens without attachment. */
-  spawnedBy: Schema.optional(Schema.String)
+  spawnedBy: Schema.optional(Schema.String),
+  /** The tab whose agent opened this one through `clave_open_session`,
+   *  whether or not it is nested under it (PRDCT-4192): what "parent" and the
+   *  reach rule read once the host's memory of the open is gone (a restart).
+   *  Always written by an agent's open; absent for a tab a person opened. */
+  openedBy: Schema.optional(Schema.String)
 })
 export type SpawnOptions = typeof SpawnOptions.Type
 
@@ -607,6 +630,14 @@ export const SessionRecord = Schema.Struct({
   view: Schema.optional(SessionRecordView),
   link: Schema.optional(SessionLink),
   spawnedBy: Schema.optional(Schema.String),
+  /** The tab whose agent opened this one, nested or not (PRDCT-4192). */
+  openedBy: Schema.optional(Schema.String),
+  /** The permission mode the chat was last running in, as the provider
+   *  reported it (`bypassPermissions` included), so a Resume brings it back
+   *  in that mode and not the one it was launched on (PRDCT-4191). */
+  permissionMode: Schema.optional(Schema.String),
+  /** The reasoning effort the chat was last running at, the same way. */
+  effort: Schema.optional(Schema.String),
   work: Schema.optional(WorkAssignment),
   live: Schema.optional(Schema.Boolean),
   running: Schema.optional(Schema.Boolean)

@@ -16,10 +16,18 @@
  */
 import type { LayoutSnapshot } from '@clave/contract/sidebar'
 import type { AccountOverride, Session } from '@clave/contract/sessions'
-import { LOCAL_SERVER_ID, parseSessionKey } from '@clave/contract/fleet'
-import { sanitizeForPaste } from '../../shared/paste-sanitize'
-import { buildCheckpointProvenance, buildProvenanceHeader } from '../../shared/exchange-provenance'
 import { pickAccount } from '../../shared/account-pool'
+import {
+  type TargetHost,
+  assertCanReach,
+  checkpointCapture,
+  findTarget,
+  isRelated as relatedOn,
+  isServerTabRef,
+  readAnswer,
+  resolveTarget as resolveOn,
+  sendToTarget
+} from './session-targets'
 import {
   poolOf,
   resolveAccountRef as resolveAccountRefFrom,
@@ -29,7 +37,6 @@ import {
 import { resolveProfileRef, resolveSpawnModes } from '../../shared/open-session-modes'
 import { substituteTokens } from '../../shared/prompt-tokens'
 import { resolveDeclaredGroupView } from '../../shared/group-view'
-import { shareAGroup } from '../../shared/group-reach'
 import type { PinnedBlueprint, PinnedBlueprintSession } from '../../shared/pinned-blueprint'
 import {
   type AccountProvider,
@@ -63,65 +70,38 @@ const nameOf = (ctx: Ctx, session: Session): string => {
   const record = ctx.shell.record(session.id)
   return record?.displayName || record?.folderName || session.title
 }
-const agentStateOf = (session: Session): string | null =>
-  session.state === 'ended' ? null : session.state
 const modeOfSession = (ctx: Ctx, session: Session): string =>
   modeOf(ctx.shell.record(session.id), session.provider)
 
-// ── Who may reach whom ──
+// ── Who may reach whom: the shared rule (`session-targets.ts`), over this host's facts ──
 
 /** The tab that opened this one: main's own memory of the open, else the
- *  session's record, which is what still says it after a restart (#259). */
+ *  session's record, which is what still says it after a restart (#259):
+ *  the opener nested or not (`openedBy`, PRDCT-4192), else the nesting
+ *  parent (`spawnedBy`). */
 function parentOfSession(ctx: Ctx, sessionId: string): string | null {
-  return ctx.shell.parentOf(sessionId) ?? ctx.shell.record(sessionId)?.spawnedBy ?? null
+  const record = ctx.shell.record(sessionId)
+  return ctx.shell.parentOf(sessionId) ?? record?.openedBy ?? record?.spawnedBy ?? null
 }
 
-/** A tab of another Clave server, by the key `clave_open_session` returned
- *  for it (`clave-owner:session:<serverId>:<id>`): this process holds no
- *  connection to that server, so such a tab is the window's to reach
- *  (PRDCT-4166). A bare id, or anything that is not a resource key, is a tab
- *  of this host. */
-function isServerTabRef(ref: string): boolean {
-  if (!ref.startsWith('clave-owner:')) return false
-  try {
-    return parseSessionKey(ref).serverId !== LOCAL_SERVER_ID
-  } catch {
-    return false
+/** This host, as the shared resolver reads it: the server's sessions through
+ *  the typed client, the records and the lineage through the shell, the
+ *  groups of every window's layout. */
+function targetHost(ctx: Ctx, key: string): TargetHost {
+  return {
+    caller: ctx.callerSessionId,
+    routedKey: key,
+    get: (id) =>
+      ctx.api.sessions.get(id).catch((err) => {
+        if (tagOf(err) === 'SessionNotFound') return null
+        throw err
+      }),
+    list: () => ctx.api.sessions.list(),
+    nameOf: (session) => nameOf(ctx, session),
+    modeOf: (session) => modeOfSession(ctx, session),
+    parentOf: (id) => parentOfSession(ctx, id),
+    groups: async () => (await allLayouts(ctx, key)).flatMap((l) => l.groups)
   }
-}
-
-/** The tab a reference names among this host's, or null: an id, then an
- *  exact name, the routed window's tabs first. */
-async function findTarget(ctx: Ctx, key: string, ref: string): Promise<Session | null> {
-  const byId = await ctx.api.sessions.get(ref).catch((err) => {
-    if (tagOf(err) === 'SessionNotFound') return null
-    throw err
-  })
-  if (byId) return byId
-  const all = await ctx.api.sessions.list()
-  const named = all.filter((s) => nameOf(ctx, s) === ref)
-  return named.find((s) => s.windowKey === key) ?? named[0] ?? null
-}
-
-/** The renderer's `resolveTargetSession`: "parent", an id, then an exact
- *  name, the routed window's tabs first. */
-async function resolveTarget(ctx: Ctx, key: string, ref: string): Promise<Session> {
-  if (ref === 'parent') {
-    if (!ctx.callerSessionId) {
-      throw new Error('Target "parent" requires the call to come from inside a Clave session')
-    }
-    const parentId = parentOfSession(ctx, ctx.callerSessionId)
-    const parent = parentId ? await ctx.api.sessions.get(parentId).catch(() => null) : null
-    if (!parent) {
-      throw new Error(
-        'This session has no live parent — only tabs opened via clave_open_session know their opener, and that tab is no longer open. Use clave_list and target a session id or name instead.'
-      )
-    }
-    return parent
-  }
-  const found = await findTarget(ctx, key, ref)
-  if (!found) throw new Error(`No session with id or name "${ref}"`)
-  return found
 }
 
 /** Whether two tabs are related for the agent tools' reach: the same tab, one
@@ -133,38 +113,12 @@ export function isRelated(
   caller: string,
   targetId: string
 ): boolean {
-  return (
-    caller === targetId ||
-    parentOfSession(ctx, targetId) === caller ||
-    parentOfSession(ctx, caller) === targetId ||
-    shareAGroup(
-      layouts.flatMap((l) => l.groups),
-      caller,
-      targetId
-    )
+  return relatedOn(
+    { parentOf: (id) => parentOfSession(ctx, id) },
+    layouts.flatMap((l) => l.groups),
+    caller,
+    targetId
   )
-}
-
-/** The renderer's reach rule, over the server's facts: a tab reaches itself,
- *  the tab that opened it, a tab it opened, or a tab or terminal in the same
- *  group. */
-function assertCanReach(
-  ctx: Ctx,
-  layouts: readonly LayoutSnapshot[],
-  target: Session,
-  verb: 'message' | 'read'
-): void {
-  const caller = ctx.callerSessionId
-  if (!caller) {
-    throw new Error(
-      `clave_${verb === 'message' ? 'send_to' : 'read'}_session must be called from inside a Clave agent tab — this request has no tab identity.`
-    )
-  }
-  if (!isRelated(ctx, layouts, caller, target.id)) {
-    throw new Error(
-      `Refusing to ${verb} tab "${nameOf(ctx, target)}": it is not related to yours. You can only reach the tab that opened yours ("parent"), tabs you opened, or tabs in the same group. Put both tabs in one group to allow this.`
-    )
-  }
 }
 
 // ── The tools ──
@@ -254,10 +208,10 @@ async function readSession(ctx: Ctx, key: string, p: Payload): Promise<unknown |
   // server over the fleet bridge (PRDCT-4166). Until then main answered
   // "no session" for every server tab an agent had just opened.
   if (isServerTabRef(ref)) return NOT_SERVED
-  const target =
-    ref === 'parent' ? await resolveTarget(ctx, key, ref) : await findTarget(ctx, key, ref)
+  const host = targetHost(ctx, key)
+  const target = ref === 'parent' ? await resolveOn(host, ref) : await findTarget(host, ref)
   if (!target) return NOT_SERVED
-  assertCanReach(ctx, await allLayouts(ctx, key), target, 'read')
+  await assertCanReach(host, target, 'read')
   const requested = Math.min(Math.max(typeof p.lines === 'number' ? p.lines : 100, 1), 500)
   let screen: { lines: readonly string[] }
   try {
@@ -275,117 +229,70 @@ async function readSession(ctx: Ctx, key: string, p: Payload): Promise<unknown |
     }
     throw err
   }
-  return {
-    sessionId: target.id,
-    name: nameOf(ctx, target),
-    mode: modeOfSession(ctx, target),
-    alive: target.state !== 'ended',
-    agentState: agentStateOf(target),
-    lines: screen.lines.length,
-    text: screen.lines.join('\n')
-  }
+  return readAnswer(host, target, screen.lines)
 }
 
-/** A self-addressed send: logged into the transport record, delivered
- *  nowhere, typed nowhere (the solo lane's checkpoint). */
-async function checkpoint(
-  ctx: Ctx,
-  key: string,
-  selfId: string,
-  message: string
-): Promise<unknown> {
-  const self = await ctx.api.sessions.get(selfId).catch(() => null)
-  if (!self) throw new Error('Calling session not found')
-  if (modeOfSession(ctx, self) === 'pi') throw new Error('Pi exchange capture is not supported yet')
-  const text = sanitizeForPaste(message)
-  const endpoint = endpointOf(ctx, self, await allLayouts(ctx, key))
-  if (!endpoint) throw new Error('Pi exchange capture is not supported yet')
-  const name = nameOf(ctx, self)
-  ctx.shell.captureMessage({
-    ts: new Date().toISOString(),
-    sender: endpoint,
-    target: endpoint,
-    text,
-    provenance: buildCheckpointProvenance({ id: self.id, name }),
-    delivered: false
-  })
-  return {
-    checkpoint: true,
-    logged: true,
-    delivered: false,
-    sessionId: self.id,
-    name,
-    note: 'Checkpoint logged to the transport record; nothing was typed into any tab.'
-  }
-}
-
-async function sendToSession(ctx: Ctx, key: string, p: Payload): Promise<unknown> {
-  const caller = ctx.callerSessionId
+async function sendToSession(ctx: Ctx, key: string, p: Payload): Promise<unknown | NotServed> {
   const ref = str(p.sessionId) ?? ''
-  const message = str(p.message) ?? ''
-  if (caller && ref === 'mine') return checkpoint(ctx, key, caller, message)
-  const target = await resolveTarget(ctx, key, ref)
-  if (caller && target.id === caller) return checkpoint(ctx, key, caller, message)
+  // A tab of another server is the window's (PRDCT-4193); so is a name no
+  // tab of this host carries, which the window may know as a server tab's.
+  if (isServerTabRef(ref)) return NOT_SERVED
+  const host = targetHost(ctx, key)
+  if (ref !== 'mine' && ref !== 'parent' && !(await findTarget(host, ref))) return NOT_SERVED
   const layouts = await allLayouts(ctx, key)
-  assertCanReach(ctx, layouts, target, 'message')
-  const targetName = nameOf(ctx, target)
-  if (target.state === 'ended') throw new Error(`Session "${targetName}" has ended`)
-  const mode = modeOfSession(ctx, target)
-  if (mode === 'terminal') {
-    throw new Error(
-      'Refusing to send to a plain terminal — text typed there would run as a shell command. Target an agent tab (claude/antigravity/codex).'
-    )
-  }
-  if (mode === 'claude-agents') {
-    throw new Error('Refusing to send to a `claude agents` tab — it is a menu UI, not a chat input')
-  }
-  const sender = caller ? await ctx.api.sessions.get(caller).catch(() => null) : null
-  const senderName = sender ? nameOf(ctx, sender) : undefined
-  // The provenance header: the receiving agent must be able to tell this
-  // text came from a sibling tab, not from the person, and know how to
-  // answer it. Header and message are filtered apart, so the record holds
-  // exactly what was delivered under which provenance.
-  const cleanHeader = sanitizeForPaste(
-    buildProvenanceHeader(sender && senderName ? { id: sender.id, name: senderName } : undefined)
-  )
-  const cleanMessage = sanitizeForPaste(message)
-  const text = `${cleanHeader}\n${cleanMessage}`
-  let outcome: { submitted: boolean; draftHandling: string }
-  try {
-    outcome = await ctx.api.sessions.type(target.id, text, senderName)
-  } catch (err) {
-    const tag = tagOf(err)
-    if (tag === 'SessionNotFound') throw new Error(`No session with id or name "${ref}"`)
-    if (tag === 'SessionWriteRefused')
-      throw new Error((err as { message?: string }).message ?? 'The write was refused')
-    throw err
-  }
-  const after = await ctx.api.sessions.get(target.id).catch(() => null)
-  const stillAlive = after !== null && after.state !== 'ended'
-  // Transport capture (observability): once the submit landed, with the
-  // delivery as it stood; a Pi tab on either side is not captured.
-  if (sender && outcome.submitted && modeOfSession(ctx, sender) !== 'pi' && mode !== 'pi') {
-    const from = endpointOf(ctx, sender, layouts)
-    const to = endpointOf(ctx, target, layouts)
-    if (from && to) {
-      ctx.shell.captureMessage({
-        ts: new Date().toISOString(),
-        sender: from,
-        target: to,
-        text: cleanMessage,
-        provenance: cleanHeader,
-        delivered: stillAlive
-      })
+  return sendToTarget(
+    host,
+    { ref, message: str(p.message) ?? '', resume: p.resume === true },
+    {
+      // A self-addressed send: logged into the transport record, delivered
+      // nowhere, typed nowhere (the solo lane's checkpoint).
+      checkpoint: (self, name, message) => {
+        if (modeOfSession(ctx, self) === 'pi')
+          throw new Error('Pi exchange capture is not supported yet')
+        const endpoint = endpointOf(ctx, self, layouts)
+        if (!endpoint) throw new Error('Pi exchange capture is not supported yet')
+        const { text, provenance } = checkpointCapture(self, name, message)
+        ctx.shell.captureMessage({
+          ts: new Date().toISOString(),
+          sender: endpoint,
+          target: endpoint,
+          text,
+          provenance,
+          delivered: false
+        })
+        return true
+      },
+      type: async (target, text, senderName) => {
+        try {
+          return await ctx.api.sessions.type(target.id, text, senderName)
+        } catch (err) {
+          const tag = tagOf(err)
+          if (tag === 'SessionNotFound') throw new Error(`No session with id or name "${ref}"`)
+          if (tag === 'SessionWriteRefused')
+            throw new Error((err as { message?: string }).message ?? 'The write was refused')
+          throw err
+        }
+      },
+      // The Resume the person's button makes, under the same id, the
+      // conversation resumed where the provider can (PRDCT-4193).
+      resume: async (target) => {
+        await ctx.api.sessions.restart(target.id, {})
+      },
+      capture: ({ sender, target, text, provenance, delivered }) => {
+        const from = endpointOf(ctx, sender, layouts)
+        const to = endpointOf(ctx, target, layouts)
+        if (from && to)
+          ctx.shell.captureMessage({
+            ts: new Date().toISOString(),
+            sender: from,
+            target: to,
+            text,
+            provenance,
+            delivered
+          })
+      }
     }
-  }
-  return {
-    delivered: stillAlive,
-    sessionId: target.id,
-    name: targetName,
-    mode,
-    agentState: agentStateOf(target),
-    draftHandling: outcome.draftHandling
-  }
+  )
 }
 
 // ── Accounts: the pool's rule, shared with the routines (`served-accounts.ts`) ──
@@ -567,7 +474,10 @@ async function openSession(ctx: Ctx, key: string, p: Payload): Promise<unknown> 
         // keep the in-memory messaging link below without sidebar nesting.
         ...(p.attachToParent === true && ctx.callerSessionId
           ? { spawnedBy: ctx.callerSessionId }
-          : {})
+          : {}),
+        // The opener, nested or not, on the record (PRDCT-4192): what the
+        // reach rule reads once this process's memory of the open is gone.
+        ...(ctx.callerSessionId ? { openedBy: ctx.callerSessionId } : {})
       }
     })
   } catch (err) {

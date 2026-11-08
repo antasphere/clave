@@ -525,8 +525,20 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
     let stopConnected: () => void = () => {}
     void window.electronAPI
       .sessionsSubscribe(session.id)
-      .then(() => {
+      .then((current) => {
         if (!live) return
+        // The host's own word on the session, now (PRDCT-4191): the seed
+        // above is the list the pane read at mount, a copy a server restart
+        // and a Resume leave stale (a remounted pane read `ended` while the
+        // server had the chat back, and the composer refused to type). A
+        // live word is taken as it is; an end is taken once the record
+        // confirms it, as an end heard on the stream is.
+        const word = {
+          state: current.state,
+          ...(current.run !== undefined ? { run: current.run } : {})
+        }
+        if (word.state === 'ended') confirmed(() => dispatch({ session: word }))
+        else dispatch({ session: word })
         setReady(true)
         // Asked once subscribed, when the adapter has read the transcript;
         // whatever streamed meanwhile is newer and stays after it. A read

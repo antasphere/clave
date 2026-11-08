@@ -957,6 +957,9 @@ const electronAPI = {
       off()
     }
   },
+  // Which tab opened which, as main keeps it (PRDCT-4193): main's own, never
+  // the server's, since it holds the opens this Mac made on other servers.
+  lineageParents: (): Promise<Record<string, string>> => ipcRenderer.invoke('lineage:parents'),
   // ── Sessions (lane A): every call goes to the server once main names it ──
   sessionsList: viaServer<[], Session[]>({
     ipc: () => ipcRenderer.invoke('sessions:list'),

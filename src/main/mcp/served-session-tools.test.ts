@@ -800,7 +800,8 @@ describe('opening a session', () => {
           autoExecute: false,
           initialPrompt: 'do it',
           workspaceId: 'ws1',
-          spawnedBy: 'caller'
+          spawnedBy: 'caller',
+          openedBy: 'caller'
         }
       }
     ])

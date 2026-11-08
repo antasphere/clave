@@ -87,7 +87,11 @@ describe('remote transcript catch-up', () => {
       'earlier',
       'missed while offline'
     ])
-    expect(next.state).toBe('done')
+    // The replay rebuilds the entries, never the state: the state is the
+    // kernel's word on the stream, told again at every bind (PRDCT-4191),
+    // and a page may hold the end or the blocked request of a process that
+    // is no longer the one running.
+    expect(next.state).toBe(existing.state)
     expect(reduceConversation(next, { sync: checkpoint }).entries).toEqual(next.entries)
   })
 })

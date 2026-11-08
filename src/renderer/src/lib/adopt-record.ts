@@ -216,8 +216,9 @@ function sessionFromRecord(
     workspaceId,
     view: s.view ? { ...s.view } : undefined,
     // The tab whose agent opened this one: folded under it again, and its
-    // "parent" still answers (#259).
+    // "parent" still answers (#259); nested or not (PRDCT-4192).
     spawnedBy: s.spawnedBy,
+    openedBy: s.openedBy,
     // Which wave or lane it works on, as its record keeps it (PRDCT-4123).
     work: s.work,
     // A chat that is not running comes back without starting its agent:
@@ -289,7 +290,8 @@ async function spawnFromRecord(
       link: s.link,
       // The parent too, so the restored spawn itself carries it: a later
       // account switch respawns from these options (#259, V1-F1).
-      spawnedBy: s.spawnedBy
+      spawnedBy: s.spawnedBy,
+      openedBy: s.openedBy
     })
     return { session: sessionFromRecord(s, activeWorkspaceId, info) }
   } catch (err) {
@@ -465,6 +467,7 @@ function sessionOfRecord(s: SessionRecord, workspaceId: string | undefined): Ses
     workspaceId,
     view: s.view ? { ...s.view } : undefined,
     spawnedBy: s.spawnedBy,
+    openedBy: s.openedBy,
     work: s.work,
     detectedUrl: null,
     serverStatus: null,

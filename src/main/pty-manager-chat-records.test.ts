@@ -16,6 +16,7 @@ const mocks = vi.hoisted(() => {
       setSessionWorkspace: vi.fn(),
       setSessionClaudeSessionId: vi.fn(),
       setSessionCodexThreadId: vi.fn(),
+      setSessionRuntime: vi.fn(),
       getSessionRecord: vi.fn(() => null),
       tmuxNameOf: vi.fn(() => null),
       waitForTmuxSessionGone: vi.fn(async () => undefined),

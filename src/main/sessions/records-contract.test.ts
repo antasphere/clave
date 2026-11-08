@@ -46,6 +46,9 @@ const full = {
   view: { url: 'http://127.0.0.1:1', title: 't', command: 'serve', cwd: '/v' },
   link: { kind: 'group-terminal' as const, groupId: 'g1', terminalId: 't1' },
   spawnedBy: '6f1c2c8e-1b9a-4d6e-9b1a-2f3c4d5e6f70',
+  openedBy: '7a2d3d9f-2c0b-4e7f-8c2b-3a4d5e6f7a81',
+  permissionMode: 'acceptEdits',
+  effort: 'high',
   work: {
     unit: 'stable-wave/lane-a',
     kind: 'lane' as const,

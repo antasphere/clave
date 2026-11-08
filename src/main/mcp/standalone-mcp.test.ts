@@ -358,7 +358,7 @@ describe('standalone MCP session tools', () => {
         }
       })
     )
-    expect(opened).toEqual({ sessionId: 'started-1', groupId: null })
+    expect(opened).toEqual({ sessionId: 'started-1', groupId: null, workspaceId: null })
     expect(started).toHaveLength(1)
     expect(started[0].cwd).toBe(directory)
     expect(started[0].options).toMatchObject({

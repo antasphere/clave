@@ -281,28 +281,51 @@ export function FleetResume({ sessionId }: { sessionId: string }): React.JSX.Ele
   const alive = useSessionStore((s) => s.sessions.find((v) => v.id === sessionId)?.alive)
   const status = useFleetStore((s) => s.statuses[ownerOf(sessionId)]?.state)
   const [busy, setBusy] = useState(false)
+  // Why the last Resume failed, said in the tab (PRDCT-4191): until now the
+  // failure went to one generic line that only Settings → Servers showed,
+  // and the tab kept its "restarting" mark with nothing to click.
+  const [failure, setFailure] = useState<string | null>(null)
   if (!isRemoteKey(sessionId)) return null
   if (status !== 'connected')
     return <span className="text-xs text-text-secondary">{status ?? 'Connecting'}</span>
   if (alive) return null
   return (
-    <button
-      className="btn-secondary"
-      disabled={busy}
-      onClick={() => {
-        setBusy(true)
-        void window.electronAPI
-          .restartSession(sessionId, {})
-          .then(async (result) => {
-            if ('error' in result) throw new Error(result.error)
-            await window.electronAPI.fleetSnapshot(ownerOf(sessionId))
-          })
-          .catch(reportFleetError)
-          .finally(() => setBusy(false))
-      }}
-    >
-      <ArrowPathIcon className="w-3.5 h-3.5" />
-      Resume
-    </button>
+    <>
+      {failure ? (
+        <span
+          className="text-xs text-text-secondary truncate max-w-[16rem]"
+          data-fleet-resume-error
+          role="alert"
+          title={failure}
+        >
+          {failure}
+        </span>
+      ) : null}
+      <button
+        className="btn-secondary"
+        disabled={busy}
+        onClick={() => {
+          setBusy(true)
+          setFailure(null)
+          void window.electronAPI
+            .restartSession(sessionId, {})
+            .then(async (result) => {
+              if ('error' in result) throw new Error(result.error)
+              await window.electronAPI.fleetSnapshot(ownerOf(sessionId))
+            })
+            .catch((error: unknown) => {
+              // The server said no (or did not answer): the tab is not
+              // restarting any more, and the reason is this tab's to show.
+              useSessionStore.getState().setSessionRestarting(sessionId, false)
+              setFailure(`Resume failed: ${error instanceof Error ? error.message : String(error)}`)
+              reportFleetError(error)
+            })
+            .finally(() => setBusy(false))
+        }}
+      >
+        <ArrowPathIcon className="w-3.5 h-3.5" />
+        Resume
+      </button>
+    </>
   )
 }

@@ -198,7 +198,9 @@ describe('SessionManager', () => {
     manager.setState('a', 'working')
     expect(streams.mock.calls).toEqual([
       [{ kind: 'pty', data }],
-      [{ kind: 'event', event: { type: 'state_change', state: 'working' } }]
+      // Stamped with the run the state belongs to (PRDCT-4191): the first
+      // process under the id is run 1.
+      [{ kind: 'event', event: { type: 'state_change', state: 'working', run: 1 } }]
     ])
     expect(all).toHaveBeenCalledWith('a', { kind: 'pty', data })
     manager.write('a', data)

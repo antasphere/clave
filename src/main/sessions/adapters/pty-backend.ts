@@ -605,6 +605,19 @@ export interface SessionRecord {
    *  memory, gone at a quit; this is what brings the link back. Absent for a
    *  tab the user opened. Carried forward across adoption like the name. */
   spawnedBy?: string
+  /** The tab whose agent opened this one through `clave_open_session`,
+   *  nested under it or not (PRDCT-4192): what "parent" and the reach rule
+   *  read once the host's memory of the open is gone. `spawnedBy` keeps
+   *  meaning nesting. Always written by an agent's open; absent for a tab a
+   *  person opened. Carried forward across adoption like spawnedBy. */
+  openedBy?: string
+  /** The permission mode the chat was last running in, as the provider
+   *  reported it (`bypassPermissions` included), written back on every
+   *  `permission_mode` event so a Resume brings the mode back and not the
+   *  launch's (PRDCT-4191). Absent until the provider has said. */
+  permissionMode?: string
+  /** The reasoning effort the chat was last running at, the same way. */
+  effort?: string
   /** Which wave or lane this session works on, its role and its standing
    *  (PRDCT-4123): carried across adoption like spawnedBy, changed only
    *  through the server's ChangeSessionWork. */
@@ -850,7 +863,7 @@ export interface PtySpawnOptions {
   effort?: string
   /** The mode a Claude session without `dangerousMode` asks under
    *  (`--permission-mode`); the skip flag wins when both are set. */
-  permissionMode?: 'default' | 'acceptEdits' | 'plan'
+  permissionMode?: 'default' | 'acceptEdits' | 'plan' | 'auto' | 'dontAsk'
   /** A Claude Code plugin folder loaded for this session alone (`--plugin-dir`):
    *  the routine contract skill rides on it. */
   pluginDir?: string
@@ -891,6 +904,8 @@ export interface PtySpawnOptions {
   /** The session id of the tab whose agent opened this one — persisted on
    *  the record (SessionRecord.spawnedBy). Omitted = opened by the user. */
   spawnedBy?: string
+  /** The same tab, nested or not (SessionRecord.openedBy, PRDCT-4192). */
+  openedBy?: string
   /** The assignment a restart carries: read from the record before the kill
    *  (pty-manager `restartSpawn`), never from a client; a spawn without it
    *  keeps the previous record's. */
@@ -1311,6 +1326,8 @@ export class PtyBackend {
       // Who opened it: the opening agent's tab, else what the record already
       // said, so a reattach, a respawn or an account switch keeps the child.
       spawnedBy: lineageOf(id, options?.spawnedBy, previous?.spawnedBy),
+      // The opener, nested or not (PRDCT-4192), the same way.
+      openedBy: lineageOf(id, options?.openedBy, previous?.openedBy),
       // Which work it does (PRDCT-4123), the same way: a restart's, read off
       // the record before its kill, else what the record already said.
       work: sanitizeWork(options?.work) ?? sanitizeWork(previous?.work)
@@ -1688,6 +1705,39 @@ export class PtyBackend {
     const meta = readSessionRecord(key)
     if (!meta || meta.codexThreadId === threadId) return
     writeSessionRecord({ ...meta, codexThreadId: threadId })
+  }
+
+  /** What the chat is running on now, as the provider last acknowledged it
+   *  (PRDCT-4191): the model of a `session_meta`, the mode of a
+   *  `permission_mode`, the effort of an `effort` event. Mirrors
+   *  setSessionCodexThreadId: the record is what a Resume reads, and until
+   *  now it held the launch's values only, so a chat moved to another mode
+   *  came back in the one it started in. A key set to null is dropped
+   *  (the provider says the model runs at no effort). Nothing is written
+   *  when nothing changes. */
+  setSessionRuntime(
+    id: string,
+    patch: { model?: string; permissionMode?: string; effort?: string | null }
+  ): void {
+    const key = this.recordKeyForSession(id)
+    if (!key) return
+    const meta = readSessionRecord(key)
+    if (!meta) return
+    const next: SessionRecord = { ...meta }
+    if (patch.model !== undefined && /^[A-Za-z0-9][A-Za-z0-9._:[\]-]{0,127}$/.test(patch.model))
+      next.model = patch.model
+    if (patch.permissionMode !== undefined && /^[a-zA-Z]{1,32}$/.test(patch.permissionMode))
+      next.permissionMode = patch.permissionMode
+    if (patch.effort === null) delete next.effort
+    else if (patch.effort !== undefined && /^[a-z][a-z0-9_-]{0,31}$/.test(patch.effort))
+      next.effort = patch.effort
+    if (
+      next.model === meta.model &&
+      next.permissionMode === meta.permissionMode &&
+      next.effort === meta.effort
+    )
+      return
+    writeSessionRecord(next)
   }
 
   /** Re-home a record to another window WITHOUT touching the process — used

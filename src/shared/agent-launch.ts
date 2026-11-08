@@ -272,7 +272,7 @@ export function buildAgentArgv(input: {
   piStateExtensionPath?: string
   // ── ADR 0004: a routine run's own flags, Claude only ──
   effort?: string
-  permissionMode?: 'default' | 'acceptEdits' | 'plan'
+  permissionMode?: 'default' | 'acceptEdits' | 'plan' | 'auto' | 'dontAsk'
   pluginDir?: string
   appendSystemPrompt?: string
 }): string[] {

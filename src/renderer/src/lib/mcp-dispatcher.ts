@@ -40,9 +40,11 @@ import {
   accountProviderOf,
   nextAccountFor,
   resolveAccountRef,
+  restartSessionProcess,
   sessionAccountExhausted,
   switchSessionAccount
 } from './switch-account'
+import { pairedServerWorkspaces } from '../store/pairing-store'
 import type { CodexAccount } from '../../../preload/index.d'
 import { effectiveSwitchMode } from '../store/account-policy-store'
 import type { PiThinkingLevel } from '../../../shared/agent-launch'
@@ -417,8 +419,16 @@ export function resolveAccountForSpawn(ref: string | undefined): ClaudeProfile {
 // Legacy window-owned opens keep the live messaging link independently of
 // persisted sidebar attachment. Served opens keep their link in main.
 const messagingParents = new Map<string, string>()
+// Main's own memory of the opens (`sessions/lineage.ts`), read once at
+// init (PRDCT-4193): a tab this Mac opened on a Clave server is known
+// there alone, and a window reload emptied the map above, so a coordinator
+// was "not related" to every server lane it had opened.
+const persistedParents = new Map<string, string>()
 const messagingParentOf = (session: Session): string | undefined =>
-  messagingParents.get(session.id) ?? session.spawnedBy
+  messagingParents.get(session.id) ??
+  persistedParents.get(session.id) ??
+  session.openedBy ??
+  session.spawnedBy
 
 export async function openSessionProgrammatically(payload: {
   cwd: string
@@ -465,19 +475,27 @@ export async function openSessionProgrammatically(payload: {
     ? resolveGroup(candidateGroups, payload.groupId, payload.callerSessionId)
     : null
 
+  const callerWorkspaceId = workspaceForSpawn(undefined, payload.callerSessionId)
   const { serverId, workspaceId } = resolveSessionTarget({
     server: payload.server,
     workspace: payload.workspace,
     group: targetGroup,
-    defaultWorkspaceId: workspaceForSpawn(undefined, payload.callerSessionId),
+    defaultWorkspaceId: callerWorkspaceId,
     callerServerId: payload.callerSessionId ? ownerOf(payload.callerSessionId) : undefined,
     workspaces: allWorkspaces(useWorkspaceStore.getState()),
-    connections
+    connections,
+    // Where a server tab lands when nothing names a workspace there
+    // (PRDCT-4193): beside the caller, in the server workspace paired with
+    // the caller's, else in the one holding the directory.
+    cwd: payload.cwd,
+    pairedWorkspaceIds: callerWorkspaceId
+      ? pairedServerWorkspaces(callerWorkspaceId).map((p) => p.workspaceId)
+      : []
   })
   if (serverId !== LOCAL_SERVER_ID) {
     const result = await openFleetSession(serverId, workspaceId, targetGroup?.id, payload)
     if (payload.callerSessionId) messagingParents.set(result.sessionId, payload.callerSessionId)
-    return result
+    return { ...result, workspaceId: workspaceId ?? null }
   }
 
   const mode = payload.mode ?? 'claude'
@@ -535,7 +553,9 @@ export async function openSessionProgrammatically(payload: {
     initialPrompt: mode !== 'terminal' ? payload.prompt || undefined : undefined,
     workspaceId,
     // Only attached tabs persist the parent for sidebar nesting and restart.
-    spawnedBy
+    spawnedBy,
+    // The opener, nested or not, on the record (PRDCT-4192).
+    openedBy: payload.callerSessionId
   })
 
   if (payload.callerSessionId) messagingParents.set(info.id, payload.callerSessionId)
@@ -864,15 +884,23 @@ async function handleSetSessionView(payload: {
     // never to displayOrder or a group, so no row appears (and addSession is
     // bypassed for the same reason the group-terminal spawn bypasses it —
     // it would steal focus and auto-nest into the selected group).
-    const info = await window.electronAPI.spawnSession(payload.cwd ?? session.cwd, {
+    const spawnOptions = {
       claudeMode: false,
       initialCommand: payload.command,
       autoExecute: true,
       workspaceId: session.workspaceId ?? undefined,
       // Owner on the record: what brings it back as this view's server rather
       // than as a tab of its own next launch.
-      link: { kind: 'session-view', ownerId: id }
-    })
+      link: { kind: 'session-view' as const, ownerId: id }
+    }
+    // A tab on a Clave server gets its serving terminal on that server
+    // (PRDCT-4193): the page it serves is read there, and a Mac-local
+    // process would serve nothing a reader of the tab can reach.
+    const owner = ownerOf(id)
+    const info =
+      owner === LOCAL_SERVER_ID
+        ? await window.electronAPI.spawnSession(payload.cwd ?? session.cwd, spawnOptions)
+        : await window.electronAPI.fleetStart(owner, payload.cwd ?? session.cwd, spawnOptions)
     // Hidden pane, zero size: kick the PTY or the command never runs.
     window.electronAPI.startSession(info.id, 120, 30)
     useSessionStore.setState((current) => ({
@@ -1099,7 +1127,7 @@ function resolveTargetSession(ref: string, callerSessionId: string | undefined):
 function assertCanReach(
   callerSessionId: string | undefined,
   target: Session,
-  verb: 'message' | 'read' | 'assign' | 'hand over to'
+  verb: 'message' | 'read' | 'resume' | 'assign' | 'hand over to'
 ): void {
   // Identity is the token-derived callerSessionId (unforgeable), NOT the
   // caller's presence in THIS window's store: with several windows the caller
@@ -1109,7 +1137,7 @@ function assertCanReach(
   // whatever this store can see.
   if (!callerSessionId) {
     throw new Error(
-      `${verb === 'message' ? 'clave_send_to_session' : verb === 'read' ? 'clave_read_session' : verb === 'assign' ? 'clave_set_work' : 'clave_hand_over'} must be called from inside a Clave agent tab — this request has no tab identity.`
+      `${verb === 'message' ? 'clave_send_to_session' : verb === 'read' ? 'clave_read_session' : verb === 'resume' ? 'clave_resume_session' : verb === 'assign' ? 'clave_set_work' : 'clave_hand_over'} must be called from inside a Clave agent tab — this request has no tab identity.`
     )
   }
   if (callerSessionId === target.id) return
@@ -1285,9 +1313,49 @@ export function typeIntoAgentTab(
   return run
 }
 
+/** Bring a stopped tab back under its id, the Resume the tab's own button
+ *  makes (PRDCT-4193): a tab of this Mac through its restart, a tab on a
+ *  Clave server through that server's, the snapshot read again so the store
+ *  knows it alive before anything is typed into it. */
+async function resumeStoppedSession(target: Session): Promise<{ resumed: boolean }> {
+  const result = await restartSessionProcess(target.id)
+  if (!result.ok) throw new Error(result.error ?? `Session "${target.name}" could not be resumed`)
+  if (ownerOf(target.id) !== LOCAL_SERVER_ID)
+    await window.electronAPI.fleetSnapshot(ownerOf(target.id)).catch(() => undefined)
+  return { resumed: result.resumed }
+}
+
+/** `clave_resume_session` on the window's road: a stopped tab the caller
+ *  can reach, of this Mac or of a connected server, started again under
+ *  its id. A running tab is refused: there is nothing to resume. */
+async function handleResumeSession(payload: {
+  sessionId: string
+  callerSessionId?: string
+}): Promise<unknown> {
+  const ref =
+    payload.sessionId === 'mine' && payload.callerSessionId
+      ? payload.callerSessionId
+      : payload.sessionId
+  const target = resolveTargetSession(ref, payload.callerSessionId)
+  assertCanReach(payload.callerSessionId, target, 'resume')
+  if (target.alive)
+    throw new Error(`Session "${target.name}" is running; there is nothing to resume.`)
+  const { resumed } = await resumeStoppedSession(target)
+  const after = useSessionStore.getState().sessions.find((s) => s.id === target.id)
+  return {
+    resumed: true,
+    sessionId: target.id,
+    name: target.name,
+    mode: sessionMode(target),
+    alive: after?.alive === true,
+    conversation: resumed
+  }
+}
+
 async function handleSendToSession(payload: {
   sessionId: string
   message: string
+  resume?: boolean
   callerSessionId?: string
 }): Promise<unknown> {
   // "mine", the caller's own id, or the caller's own tab name all mean the
@@ -1296,12 +1364,21 @@ async function handleSendToSession(payload: {
   if (payload.callerSessionId && payload.sessionId === 'mine') {
     return handleSelfCheckpoint(payload.callerSessionId, payload.message)
   }
-  const target = resolveTargetSession(payload.sessionId, payload.callerSessionId)
+  let target = resolveTargetSession(payload.sessionId, payload.callerSessionId)
   if (payload.callerSessionId && target.id === payload.callerSessionId) {
     return handleSelfCheckpoint(payload.callerSessionId, payload.message)
   }
   assertCanReach(payload.callerSessionId, target, 'message')
-  if (!target.alive) throw new Error(`Session "${target.name}" has ended`)
+  if (!target.alive) {
+    // Never a silent restart: a message meant for a live tab must not bring
+    // back a process the person stopped on purpose (PRDCT-4193).
+    if (payload.resume !== true)
+      throw new Error(
+        `Session "${target.name}" has ended; resume it with clave_resume_session, or pass resume: true to resume it and deliver.`
+      )
+    await resumeStoppedSession(target)
+    target = useSessionStore.getState().sessions.find((s) => s.id === target.id) ?? target
+  }
   const mode = sessionMode(target)
   if (mode === 'terminal') {
     throw new Error(
@@ -1617,6 +1694,8 @@ async function execute(command: string, payload: unknown): Promise<unknown> {
       return handleSendToSession(payload as Parameters<typeof handleSendToSession>[0])
     case 'readSession':
       return handleReadSession(payload as Parameters<typeof handleReadSession>[0])
+    case 'resumeSession':
+      return handleResumeSession(payload as Parameters<typeof handleResumeSession>[0])
     case 'setWork':
       return handleSetWork(payload as Record<string, unknown>)
     case 'handOver':
@@ -1646,6 +1725,13 @@ async function execute(command: string, payload: unknown): Promise<unknown> {
 
 /** Subscribe to MCP commands from the main process. Returns an unsubscribe fn. */
 export function initMcpDispatcher(): () => void {
+  // Main's memory of the opens, for the reach rule after a reload (PRDCT-4193).
+  void window.electronAPI.lineageParents?.().then(
+    (parents) => {
+      for (const [child, parent] of Object.entries(parents)) persistedParents.set(child, parent)
+    },
+    () => undefined
+  )
   return window.electronAPI.onMcpCommand((msg: McpCommandMessage) => {
     void (async () => {
       try {
