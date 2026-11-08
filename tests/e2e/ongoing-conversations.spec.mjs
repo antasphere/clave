@@ -123,7 +123,9 @@ export async function run(t) {
     const shell = await callMcp(app, 'openSession', { cwd: ROOT, mode: 'terminal', name: 'shell' })
     await until(async () => (await drawn(win, sessionId)) && (await drawn(win, shell.sessionId)))
     const rec = await win.evaluate(async (id) => {
-      const r = (await window.electronAPI.listSessionRecords({ ids: [id] })).find((s) => s.id === id)
+      const r = (await window.electronAPI.listSessionRecords({ ids: [id] })).find(
+        (s) => s.id === id
+      )
       return r ? { claudeSessionId: r.claudeSessionId ?? null, tmuxName: r.tmuxName ?? null } : null
     }, sessionId)
     conversationId = rec?.claudeSessionId ?? null

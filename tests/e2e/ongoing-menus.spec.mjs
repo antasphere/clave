@@ -96,7 +96,8 @@ export async function run(t) {
     )
     for (const id of [acc.sessionId, other.sessionId]) {
       const r = await win.evaluate(
-        async (i) => (await window.electronAPI.listSessionRecords({ ids: [i] })).find((s) => s.id === i),
+        async (i) =>
+          (await window.electronAPI.listSessionRecords({ ids: [i] })).find((s) => s.id === i),
         id
       )
       if (r?.tmuxName) tmuxNames.push(r.tmuxName)
@@ -196,6 +197,11 @@ export async function run(t) {
       'P3 group delete keeps the ongoing tab',
       !!accAlive,
       l3.sessions.map((s) => s.name)
+    )
+    t.check(
+      'P3x group delete leaves the ongoing tab alive',
+      !!accAlive && accAlive.alive !== false,
+      accAlive && { alive: accAlive.alive }
     )
     t.check('P3 group delete leaves it hidden', !(await drawn(win, acc.sessionId)))
     const s3 = await win.evaluate(

@@ -75,6 +75,7 @@ export const useOngoingStore = create<OngoingStore>((set, get) => ({
         console.error('Could not save the ongoing conversations:', err)
       }
       set({ entries: next })
+      announce()
     })
     queue = run
       .catch(() => {})
@@ -85,17 +86,36 @@ export const useOngoingStore = create<OngoingStore>((set, get) => ({
   }
 }))
 
-/** Refresh the window's copy when it comes back to the front: another window
- *  may have moved a conversation in or out in the meantime. */
+/** The windows of this app tell each other when the list changed: every
+ *  window is a renderer of the same origin, so one channel reaches them all. */
+let channel: BroadcastChannel | null = null
+function announce(): void {
+  try {
+    channel?.postMessage('changed')
+  } catch {
+    // a closed channel: the focus refresh still catches up
+  }
+}
+
+/** Refresh the window's copy when another window changed the list, and when
+ *  it comes back to the front (a change it could not hear). */
 export function startOngoingSync(): () => void {
-  const onFocus = (): void => {
+  const refresh = (): void => {
     if (pending > 0) return
     void readSaved().then((saved) => {
       if (saved && pending === 0) useOngoingStore.setState({ entries: saved })
     })
   }
-  window.addEventListener('focus', onFocus)
-  return () => window.removeEventListener('focus', onFocus)
+  window.addEventListener('focus', refresh)
+  if (typeof BroadcastChannel !== 'undefined') {
+    channel = new BroadcastChannel('clave-ongoing-conversations')
+    channel.onmessage = refresh
+  }
+  return () => {
+    window.removeEventListener('focus', refresh)
+    channel?.close()
+    channel = null
+  }
 }
 
 export function newOngoingId(): string {

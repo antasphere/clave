@@ -219,6 +219,34 @@ describe('splitOngoingDead keeps what the dropped record knew', () => {
     })
     expect(entries[1]).toEqual(entry({ id: 'other', sessionId: 'z', conversationId: 'cz' }))
   })
+  it('takes the launch from the record of the tab it names, never an older one', () => {
+    const e = entry({
+      sessionId: 'tab-2',
+      launch: { claudeProfileId: 'acct-2', claudeConfigDir: '/acct-2' }
+    })
+    const own = {
+      id: 'tab-2',
+      cwd: '/work',
+      claudeSessionId: 'conv-1',
+      claudeProfileId: 'acct-2',
+      configDir: '/acct-2'
+    }
+    const stale = {
+      id: 'tab-1',
+      cwd: '/work',
+      claudeSessionId: 'conv-1',
+      claudeProfileId: 'acct-1',
+      configDir: '/acct-1'
+    }
+    for (const order of [
+      [own, stale],
+      [stale, own]
+    ]) {
+      const r = splitOngoingDead(order, [e])
+      expect(r.resting.map((x) => x.id).sort()).toEqual(['tab-1', 'tab-2'])
+      expect(r.entries[0].launch.claudeConfigDir).toBe('/acct-2')
+    }
+  })
   it('leaves an entry the record agrees with as it was', () => {
     const e = entry({ launch: { model: 'opus' } })
     const out = splitOngoingDead([{ id: 'tab-1', cwd: '/work', model: 'opus' }], [e])

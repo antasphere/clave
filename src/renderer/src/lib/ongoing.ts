@@ -286,8 +286,11 @@ export function splitOngoingDead<R extends OngoingRecordLike>(
       continue
     }
     resting.push(r)
-    // The record goes; what it knew of the launch stays with the entry.
+    // The record goes; what it knew of the launch stays with the entry, but
+    // only the record of the tab the entry names: an older record of the
+    // same conversation holds the launch it had then.
     const e = next[i]
+    if (r.id !== e.sessionId) continue
     const launch = launchOfRecord(r)
     const cwd = r.cwd || e.cwd
     if (!sameLaunch(launch, e.launch) || cwd !== e.cwd) {

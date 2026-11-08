@@ -135,7 +135,15 @@ async function resumeEntry(entry: OngoingEntry, keepOngoing: boolean): Promise<s
         ? store.groups.find((g) => g.id === entry.originGroup!.id)
         : undefined
     useSessionStore.getState().addSessionInGroup(session, (group ?? origin)?.id ?? null)
-    if (dead && !dead.alive) useSessionStore.getState().removeSession(dead.id)
+    if (dead && !dead.alive) {
+      // Its record goes with it: a second record of the conversation would
+      // be read at the next boot as well, with the launch it had then.
+      const records = await window.electronAPI
+        .listSessionRecords({ ids: [dead.id] })
+        .catch(() => [])
+      for (const r of records) void window.electronAPI.discardSessionRecord?.(r.tmuxName ?? r.id)
+      useSessionStore.getState().removeSession(dead.id)
+    }
     return info.id
   } catch (err) {
     console.error('Could not resume the ongoing conversation:', err)
@@ -261,21 +269,47 @@ export async function returnToSidebar(entryId: string): Promise<void> {
 /** End the conversation: its tab is closed and it leaves Ongoing. The
  *  conversation itself stays in the session history. */
 export async function endOngoing(entryId: string): Promise<void> {
-  if (busy.has(entryId)) return
-  const entry = useOngoingStore.getState().entries.find((e) => e.id === entryId)
-  if (!entry) return
-  const state = useSessionStore.getState()
-  const session = sessionOfEntry<Session>(entry, state.sessions)
-  await useOngoingStore.getState().update((entries) => entries.filter((e) => e.id !== entryId))
-  if (!session) return
-  emitTabClosed(session, state.groups, 'user', null)
-  try {
-    await window.electronAPI.killSession(session.id)
-  } catch {
-    if (isRemoteKey(session.id)) return
-    // already gone
-  }
-  useSessionStore.getState().removeSession(session.id)
+  await exclusive(entryId, async () => {
+    const entry = useOngoingStore.getState().entries.find((e) => e.id === entryId)
+    if (!entry) return
+    let session = sessionOfEntry<Session>(entry, useSessionStore.getState().sessions)
+    if (!session) {
+      // Its tab runs in another window: brought here first, so it is closed
+      // here and leaves nothing behind there; a tab that cannot move is
+      // stopped where it is.
+      const other = await runningElsewhere(entry)
+      if (other) {
+        // A move takes focus in its new window; the person stays where they
+        // were (the page, the tabs they had), since this tab only comes to go.
+        const before = useSessionStore.getState()
+        const kept = {
+          activeView: before.activeView,
+          selectedSessionIds: before.selectedSessionIds,
+          focusedSessionId: before.focusedSessionId
+        }
+        const moved = await window.electronAPI
+          .windowMoveSessions([other.sessionId], other.myWindowId)
+          .catch(() => null)
+        if (moved?.moved.includes(other.sessionId) && (await waitForSession(other.sessionId))) {
+          session = useSessionStore.getState().sessions.find((s) => s.id === other.sessionId)
+          useSessionStore.setState(kept)
+        } else {
+          await window.electronAPI.killSession(other.sessionId).catch(() => {})
+        }
+      }
+    }
+    await useOngoingStore.getState().update((entries) => entries.filter((e) => e.id !== entryId))
+    if (!session) return
+    const state = useSessionStore.getState()
+    emitTabClosed(session, state.groups, 'user', null)
+    try {
+      await window.electronAPI.killSession(session.id)
+    } catch {
+      if (isRemoteKey(session.id)) return
+      // already gone
+    }
+    useSessionStore.getState().removeSession(session.id)
+  })
 }
 
 export function setOngoingNote(entryId: string, note: string): void {
