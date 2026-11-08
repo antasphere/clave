@@ -238,9 +238,10 @@ export async function run(t) {
     t.check('and the message reaches the resumed process', reached, inputs().slice(-4))
     // A server terminal shown on the Mac while its daemon stops raises one
     // uncaught "Clave's server at <url> did not answer" in the renderer
-    // (reproduced without any agent tool: fleetStart, show, restart). It is
-    // reported to the lane as a product finding, outside this spec's change;
-    // every other renderer error still fails the spec.
+    // (reproduced without any agent tool: fleetStart, show, restart), a
+    // defect older than this spec's change and filed as PRDCT-4198; every
+    // other renderer error still fails the spec, and that task puts this
+    // one back under the assertion.
     assert.deepEqual(
       mac.errors.filter(
         (m) => !/^Clave's server at http:\/\/127\.0\.0\.1:\d+ did not answer$/.test(m)
