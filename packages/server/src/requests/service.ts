@@ -429,12 +429,29 @@ export class PendingRequests {
         .map((entry) => structuredClone(entry.request))
     }
   }
-  native(sessionId: string, providerRequestId: string): PendingRequest | undefined {
+  /** The request a provider id names in a session: the pending one when
+   *  (or the one being answered) when there is one, else the latest settled one still kept for late reads.
+   *  A provider reuses its ids across a restart (Codex counts from "0"
+   *  again), so a settled record never hides the new process's question
+   *  (PRDCT-4179); `pendingOnly` asks for the live one alone. */
+  native(
+    sessionId: string,
+    providerRequestId: string,
+    options: { readonly pendingOnly?: boolean } = {}
+  ): PendingRequest | undefined {
     this.prune()
-    const entry = [...this.entries.values()].find(
-      (e) => e.request.sessionId === sessionId && e.request.providerRequestId === providerRequestId
-    )
-    return entry && structuredClone(entry.request)
+    let found: Entry | undefined
+    for (const entry of this.entries.values()) {
+      if (
+        entry.request.sessionId !== sessionId ||
+        entry.request.providerRequestId !== providerRequestId
+      )
+        continue
+      if (!isSettled(entry.result.status)) return structuredClone(entry.request)
+      if (!options.pendingOnly && (!found || entry.request.createdAt >= found.request.createdAt))
+        found = entry
+    }
+    return found && structuredClone(found.request)
   }
   subscribe(listener: (revision: number) => void): () => void {
     this.listeners.add(listener)

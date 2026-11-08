@@ -160,7 +160,11 @@ export function requestAwareSessionHost(options: {
       if (raw?.method === 'serverRequest/resolved' && raw.params?.requestId !== undefined)
         requests.cancelNative(id, JSON.stringify(raw.params.requestId))
     }
-    if (event.type !== 'permission_request' || requests.native(id, event.id)) return
+    // A question already standing is not asked twice; one the provider asks
+    // again under a settled record's id (a restarted process counting its
+    // ids from the start) is a new question (PRDCT-4179).
+    if (event.type !== 'permission_request' || requests.native(id, event.id, { pendingOnly: true }))
+      return
     const input = event.input as {
       questions?: Array<{ id?: unknown; question?: unknown; isSecret?: unknown }>
     } | null
