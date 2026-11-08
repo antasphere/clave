@@ -272,6 +272,20 @@ describe('a kept deck Slideless no longer has (round 1, Note 2)', () => {
     expect(warnings[0].message).toContain('not found')
   })
 
+  it('does not retry a refusal that does not say the deck is gone: the kept link is not orphaned (round 2, Minor 2)', async () => {
+    const state = { deckId: 'deck-1', share: { tokenId: 't', url: 'https://s.example/d/1' } }
+    const reset = publisher([{ code: 1, stdout: '', stderr: 'fetch failed: ECONNRESET' }])
+    await expect(
+      reset.publisher.publish({ folder: '/tmp/x', title: 'T', state, shareName: 'n' })
+    ).rejects.toThrow(/ECONNRESET/)
+    expect(reset.calls).toHaveLength(1)
+    const signedOut = publisher([{ code: 1, stdout: '', stderr: 'unauthorized: sign in first' }])
+    await expect(
+      signedOut.publisher.publish({ folder: '/tmp/x', title: 'T', state, shareName: 'n' })
+    ).rejects.toThrow(/sign in/)
+    expect(signedOut.calls).toHaveLength(1)
+  })
+
   it('does not retry when the CLI is missing or did not answer: one call, then the failure', async () => {
     const missing = publisher([{ code: 1, stdout: '', stderr: '', errorCode: 'ENOENT' }])
     await expect(missing.publisher.publish({ ...input, state })).rejects.toThrow(INSTALL_HINT)

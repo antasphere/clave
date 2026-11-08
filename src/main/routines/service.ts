@@ -645,6 +645,18 @@ export function createRoutineService(options: RoutineServiceOptions): RoutineSer
         })
       }
       await refresh()
+      // A run that reported and was then cut off by the stop (the ADR's own
+      // case: an update ending the app) still has its deck and nothing on
+      // Slideless, since the publish waits for the run's end and that end
+      // never came (round 2, Minor 1): it is published now, once.
+      for (const d of declarations) {
+        if (!d.report.publish) continue
+        for (const run of store.state(d.key)?.runs ?? []) {
+          if (!run.deck || run.published || run.publishError) continue
+          if (run.state === 'running' || run.state === 'waiting') continue
+          void publishRun(d, run.id, path.dirname(path.resolve(decksRoot, run.deck)))
+        }
+      }
       offFiles = options.files.onEvent((event) => {
         if (event._tag === 'workspace_files.changed' && watched.has(event.path)) void refresh()
       })

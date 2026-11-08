@@ -49,9 +49,10 @@ export function cacheRemoteDeck(
   return file
 }
 
-/** How many runs' pages a server keeps here: twice the runs a server keeps
- *  (`KEEP_RUNS`), so the pages of every run a panel can still select are
- *  there and the folder never grows without end (round 1, Note 4). */
+/** How many runs' pages a server keeps here: a bound on the folder, not a
+ *  promise that every selectable run's page is there (a server keeps twenty
+ *  runs per routine, across any number of routines); a page evicted is read
+ *  over the API again when its run is selected (round 1, Note 4; round 2). */
 export const KEEP_REMOTE_DECKS = 40
 
 /** Keep the newest `keep` run folders of one server, by the page's modification

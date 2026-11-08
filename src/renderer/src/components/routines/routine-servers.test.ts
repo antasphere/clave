@@ -228,6 +228,19 @@ describe('mergeRoutineSurfaces', () => {
     expect(out).toEqual([])
   })
 
+  it('a server older than the field, listing no runsHere, is read as running what it lists (round 2, Gap)', () => {
+    // An older server ran every routine it read: a listing without the field
+    // must surface its routines, not drop them.
+    const { runsHere: _dropped, ...older } = decl({ rootDir: BOX, name: 'Old' })
+    void _dropped
+    const out = mergeRoutineSurfaces(
+      input({ remote: { s1: listing('s1', 'Box', [view(older)]) }, connected: new Set(['s1']) })
+    )
+    expect(out.map((o) => [o.view.routine.name, o.serverId, o.runsOn])).toEqual([
+      ['Old', 's1', 'server']
+    ])
+  })
+
   it('orders local first, then servers by id, and never shows a routine twice', () => {
     const here = decl({ rootDir: MAC, name: 'Here' })
     const pinned = decl({ rootDir: MAC, name: 'Pinned', server: 'A', runsHere: false })

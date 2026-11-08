@@ -137,6 +137,17 @@ export function parseShare(stdout: string): { tokenId: string; url: string } | n
   return { tokenId: token.id, url }
 }
 
+/** Whether a refused push says the kept deck is gone (the instance's
+ *  `not_found`, a 404, "no such deck"), the one refusal a new deck answers;
+ *  a network error, a signed-out key or any other refusal is not that, and a
+ *  new deck would orphan the link the person keeps (round 2, Minor 2). */
+export const isGone = (result: ExecResult): boolean =>
+  result.errorCode !== 'ENOENT' &&
+  result.code !== null &&
+  /not_found|not found|404|no such|does not exist|deleted/i.test(
+    `${result.stderr}\n${result.stdout}`
+  )
+
 const firstLine = (text: string): string =>
   (text.split('\n').find((l) => l.trim() !== '') ?? '').trim().slice(0, 300)
 
@@ -205,12 +216,7 @@ export class SlidelessPublisher implements RoutinePublisher {
     // under its id is refused, and the routine would fail on every run after
     // (round 1, Note 2). One new deck is made instead, and the state follows
     // it; a CLI missing or silent is not that case and stays a failure.
-    if (
-      pushed.code !== 0 &&
-      input.state?.deckId &&
-      pushed.errorCode !== 'ENOENT' &&
-      pushed.code !== null
-    ) {
+    if (pushed.code !== 0 && input.state?.deckId && isGone(pushed)) {
       this.log(
         'warn',
         `publish: the push to the kept deck was refused (${firstLine(pushed.stderr) || `exit code ${pushed.code}`}); making a new deck`

@@ -755,6 +755,55 @@ describe('the publish to Slideless (PRDCT-4149)', () => {
     for (const line of lines) expect(line).not.toContain('SECRET')
   })
 
+  it('publishes at the next start a run that reported and was cut off by the stop (round 2, Minor 1)', async () => {
+    const host = fakeHost()
+    const file = workspace([published])
+    const storage = memory()
+    const first = await build(file, host, storage, { publisher: fakePublisher() })
+    const run = await first.runNow(key(file, 'Health'))
+    await first.report({
+      sessionId: 's1',
+      status: 'ok',
+      headline: 'h',
+      summary: 's',
+      data: { n: 1 }
+    })
+    // No end: the server stops here. The next life marks the run failed and
+    // finds its deck with nothing published.
+    await first.close()
+    const publisher = fakePublisher()
+    const second = await build(file, fakeHost(), storage, { publisher })
+    await second.start()
+    await vi.waitFor(() => expect(runOf(second, run.id).published).toBeDefined())
+    expect(publisher.inputs).toHaveLength(1)
+    expect(runOf(second, run.id)).toMatchObject({ state: 'failed', published: { version: 1 } })
+    // A third life publishes it no second time.
+    const third = await build(file, fakeHost(), storage, { publisher: fakePublisher() })
+    await third.start()
+    await new Promise((resolve) => setTimeout(resolve, 30))
+    expect(runOf(third, run.id).published?.version).toBe(1)
+  })
+
+  it('a run interrupted after its report keeps the report and publishes once (round 2, Note 1)', async () => {
+    const host = fakeHost()
+    const file = workspace([published])
+    const publisher = fakePublisher()
+    const service = await build(file, host, memory(), { publisher })
+    const run = await service.runNow(key(file, 'Health'))
+    await service.report({
+      sessionId: 's1',
+      status: 'attention',
+      headline: 'h',
+      summary: 's',
+      data: { n: 1 }
+    })
+    host.emit('s1', { kind: 'event', event: { type: 'turn_interrupted' } })
+    host.emit('s1', { kind: 'event', event: { type: 'state_change', state: 'done' } })
+    await vi.waitFor(() => expect(runOf(service, run.id).published).toBeDefined())
+    expect(runOf(service, run.id).state).toBe('attention')
+    expect(publisher.inputs).toHaveLength(1)
+  })
+
   it('never calls the publisher for a routine that does not publish', async () => {
     const host = fakeHost()
     const file = workspace([routine('Health')])
