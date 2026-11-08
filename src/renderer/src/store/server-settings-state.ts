@@ -58,3 +58,22 @@ export function serverProfilesFor(
     (profile) => profile.family === family
   )
 }
+
+/** The read of a server's settings, registered by `server-settings-store.ts`
+ *  (which owns the read and its usage summaries) when it loads; a module
+ *  that never loaded it, a unit test's, has nothing to wait for. */
+let loader: ((serverId: string) => Promise<void>) | null = null
+export function registerServerSettingsLoader(load: (serverId: string) => Promise<void>): void {
+  loader = load
+}
+
+/** The settings of a server, read first when this Mac has not read them yet
+ *  (verifier, round 2: a setup replayed in the seconds after boot, before
+ *  the launcher's read landed, lost the account it named). A read that fails
+ *  leaves the entry as it is; the launch then sends what it can. */
+export async function serverSettingsReady(serverId: string): Promise<ServerSettings | undefined> {
+  const current = useServerSettingsStore.getState().byServer[serverId]
+  if (current?.status === 'ready' || !loader) return current
+  await loader(serverId).catch(() => undefined)
+  return useServerSettingsStore.getState().byServer[serverId]
+}

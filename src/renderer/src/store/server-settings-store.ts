@@ -13,6 +13,7 @@ import { useFleetStore } from './fleet-store'
 export type { AccountUsageSummary } from './usage-store'
 
 import {
+  registerServerSettingsLoader,
   useServerSettingsStore,
   type ServerSettings,
   type ServerUsageProvider
@@ -370,3 +371,7 @@ export function startServerSettingsEvents(): void {
     }
   })
 }
+
+// A server launch made before this Mac read the server's settings waits for
+// this read (`serverSettingsReady` in server-settings-state.ts).
+registerServerSettingsLoader(loadServerSettings)

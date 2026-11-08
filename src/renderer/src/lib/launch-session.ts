@@ -10,7 +10,7 @@ import { pickServerFolder } from '../store/server-folder-store'
 import { clearLaunchNotice, showLaunchNotice } from '../store/launch-notice-store'
 import { deliverPendingChatView, pendingChatView } from './pending-chat-view'
 import type { LaunchProfile, LauncherFamily } from '../../../shared/agent-launch'
-import { serverProfilesFor, useServerSettingsStore } from '../store/server-settings-state'
+import { serverProfilesFor, serverSettingsReady } from '../store/server-settings-state'
 import {
   agentAcceptsPrompt,
   agentSetupToModes,
@@ -113,16 +113,18 @@ const NO_AGENT = {
  *  lists is sent by its id and label. A profile the server does not list
  *  keeps the carried path of #241 (a Mac profile travels with its command);
  *  an account the server does not list never travels, as before. A server
- *  whose settings this Mac has not read yet offers its built-ins alone. */
-function serverPick(
+ *  whose settings this Mac has not read yet is read first, so a setup
+ *  replayed right after boot sends the account it names (verifier, round 2);
+ *  a read that fails leaves the built-ins alone. */
+async function serverPick(
   serverId: string,
   setup: AgentSetup
-): {
+): Promise<{
   profile?: LaunchProfile
   claudeAccount?: { id: string; label: string }
   codexAccount?: { id: string; label: string }
-} {
-  const settings = useServerSettingsStore.getState().byServer[serverId] ?? {
+}> {
+  const settings = (await serverSettingsReady(serverId)) ?? {
     profiles: null,
     claude: [],
     codex: []
@@ -178,7 +180,7 @@ async function launchOnServer(serverId: string, req: LaunchRequest): Promise<str
   const dangerousMode = req.setup?.dangerousMode ?? false
   const initialPrompt =
     req.initialPrompt && agentAcceptsPrompt(req.setup) ? req.initialPrompt : undefined
-  const pick = req.setup ? serverPick(serverId, req.setup) : {}
+  const pick = req.setup ? await serverPick(serverId, req.setup) : {}
   const serverProfile = pick.profile
   const claudeAccount = modes.claudeMode || modes.claudeAgentsMode ? pick.claudeAccount : undefined
   const codexAccount = modes.codexMode ? pick.codexAccount : undefined

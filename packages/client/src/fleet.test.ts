@@ -291,6 +291,28 @@ describe('independent fleet backings', () => {
     await vi.advanceTimersByTimeAsync(100)
     expect(reads).toBe(before + 2)
   })
+  it('an explicit connect after failed attempts starts the retry wait over (verifier, round 2)', async () => {
+    vi.useFakeTimers()
+    let reads = 0
+    const client = make({
+      resolve: async () => {
+        reads++
+        return null
+      },
+      connect: () => fakeBacking(),
+      timeoutMs: 50,
+      retryMs: 100
+    })
+    await client.connect('a').catch(() => undefined)
+    await vi.advanceTimersByTimeAsync(100) // retry 1 (wait 100)
+    await vi.advanceTimersByTimeAsync(200) // retry 2 (wait 200)
+    expect(reads).toBe(3)
+    // Connect pressed in Settings: the attempt is made now, and the next wait is the base again.
+    await client.connect('a').catch(() => undefined)
+    expect(reads).toBe(4)
+    await vi.advanceTimersByTimeAsync(100)
+    expect(reads).toBe(5)
+  })
   it('does not retry a failed acquisition once disconnected, removed or closed', async () => {
     vi.useFakeTimers()
     let reads = 0

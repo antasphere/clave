@@ -135,13 +135,19 @@ export function createFleetClient(options: FleetClientOptions): FleetClient {
     publish(entry, { serverId: id, state: 'disconnected' })
     if (backing) await dispose(backing)
   }
+  /** An explicit connect (the app's, a person's Connect in Settings) starts
+   *  the retry wait over; the client's own retries keep doubling it. */
   const connect = (id: ServerId): Promise<Backing> => {
+    failures.delete(id)
+    return attempt(id)
+  }
+  const attempt = (id: ServerId): Promise<Backing> => {
     if (closed) return Promise.reject(new Error('This fleet client is closed.'))
     if (typeof id !== 'string' || !id.length)
       return Promise.reject(new Error('A server owner is required.'))
     const old = entries.get(id)
     if (old?.accepting && old.status.state !== 'unauthorized') return old.pending!
-    if (old?.backing) return disconnect(id).then(() => connect(id))
+    if (old?.backing) return disconnect(id).then(() => attempt(id))
     // An explicit connect replaces the retry a failed attempt had scheduled.
     if (old) clearRetry(old)
     const entry: Entry = {
@@ -243,7 +249,7 @@ export function createFleetClient(options: FleetClientOptions): FleetClient {
             entry.retry = setTimeout(() => {
               entry.retry = undefined
               if (!closed && entries.get(id) === entry && !entry.accepting)
-                void connect(id).catch(() => undefined)
+                void attempt(id).catch(() => undefined)
             }, wait)
           }
         }
