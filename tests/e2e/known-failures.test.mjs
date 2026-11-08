@@ -1,5 +1,18 @@
+import { readFileSync } from 'node:fs'
 import { describe, it, expect } from 'vitest'
 import { loadKnown, classify, summarize } from './known-failures.mjs'
+
+describe('the checked-in known-failures.json', () => {
+  // run.mjs refuses a bad file at startup, but only when the suite runs; the
+  // unit job is where a bad edit should go red first (lane B's verifier, round 1).
+  it('loads: every task names a listed spec, no crash is a known check', () => {
+    const raw = JSON.parse(readFileSync(new URL('./known-failures.json', import.meta.url), 'utf8'))
+    const k = loadKnown(raw)
+    expect(Object.keys(k.specs).length + k.unstable.length).toBeGreaterThan(0)
+    for (const spec of Object.keys(k.tasks))
+      expect(spec in k.specs || k.unstable.includes(spec)).toBe(true)
+  })
+})
 
 describe('loadKnown', () => {
   it('takes an absent file as nothing known', () => {

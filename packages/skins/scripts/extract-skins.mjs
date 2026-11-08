@@ -6,8 +6,8 @@
 // what the stylesheet says (`extract-skins.test.mjs`, PRDCT-4169): a skin that
 // misses a token the theme declares, or carries one the exclusion list took
 // back, is a red test and not a dirty tree after the next run.
-import { readFileSync, writeFileSync, mkdirSync } from 'node:fs'
-import { fileURLToPath, pathToFileURL } from 'node:url'
+import { readFileSync, writeFileSync, mkdirSync, realpathSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 import postcss from 'postcss'
 
 export const root = fileURLToPath(new URL('../', import.meta.url))
@@ -67,7 +67,20 @@ export function extractFromCheckout() {
 
 const json = (value) => JSON.stringify(value, null, 2) + '\n'
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+/** Run as a script (never when imported by the test): the entry point is this
+ *  file, compared by real path so a symlinked checkout still writes. */
+const invokedDirectly = (() => {
+  try {
+    return (
+      process.argv[1] &&
+      realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url))
+    )
+  } catch {
+    return false
+  }
+})()
+
+if (invokedDirectly) {
   const { tokenNames, skins } = extractFromCheckout()
   writeFileSync(TOKEN_NAMES_FILE, json(tokenNames))
   for (const id of SKIN_IDS) {

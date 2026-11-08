@@ -401,12 +401,16 @@ export async function run(t) {
       // from its record and names it.
       // The built-in terminal profile, named: the workspace's default could be
       // a chat profile, whose message is not a paste into a terminal.
+      // Folding under the caller is opt-in since 7ccde5fb (attachToParent): a
+      // lane lead or a successor stays a row of its own on purpose, a worker
+      // asks to be folded. The fold checks below are about a worker.
       const worker = toolPayload(
         await client.call('clave_open_session', {
           cwd: ROOT,
           mode: 'claude',
           profile: 'builtin-claude',
-          name: 'Worker'
+          name: 'Worker',
+          attachToParent: true
         })
       )
       t.check('clave_open_session answers a session', typeof worker?.sessionId === 'string', worker)
@@ -660,13 +664,15 @@ export async function run(t) {
       const agent = mcpHttpClient(mcpEndpoint(DIR), agentToken)
       await agent.init()
 
-      // A tab opened, named and placed: served; the window takes it in.
+      // A tab opened, named and placed: served; the window takes it in. Folded
+      // under its opener on request (attachToParent, opt-in since 7ccde5fb).
       const worker = toolPayload(
         await agent.call('clave_open_session', {
           cwd: ROOT,
           mode: 'claude',
           profile: 'builtin-claude',
-          name: 'Worker'
+          name: 'Worker',
+          attachToParent: true
         })
       )
       t.check('clave_open_session answers a session', typeof worker?.sessionId === 'string', worker)
