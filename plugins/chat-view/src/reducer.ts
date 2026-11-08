@@ -154,7 +154,10 @@ export function reduceConversation(state: Conversation, action: Action): Convers
     return {
       ...state,
       state: action.session.state,
-      run: run ?? state.run,
+      // An `ended` with no run is a host that runs nothing under this id (a
+      // stopped record, after the server restarted): the runs start again
+      // from the next process, whatever number the old host had reached.
+      run: run ?? (ended ? null : state.run),
       // A live word clears the exit code a dead run left on the pane.
       ...(ended ? {} : { exitCode: undefined })
     }
@@ -220,7 +223,10 @@ export function reduceConversation(state: Conversation, action: Action): Convers
     // the new process's `idle`, heard out of order): it leaves the state
     // alone. A frame naming a newer run moves the pane to that run.
     if (event.run !== undefined && state.run !== null && event.run < state.run) return state
-    const run = event.run ?? state.run
+    // An `ended` with no run is the host's word that nothing runs under the
+    // id any more (a stopped record told at bind, after a server restart):
+    // the next process's run, whatever its number, is taken.
+    const run = event.run ?? (event.state === 'ended' ? null : state.run)
     // The kernel record is the conversation's state, never the view's own tally
     // of what it answered. Leaving blocked means the adapter is holding no
     // request of ours any more, whether it was answered elsewhere or abandoned,
@@ -242,14 +248,19 @@ export function reduceConversation(state: Conversation, action: Action): Convers
       !e.answer &&
       !e.abandoned &&
       (marks ? e.answeredElsewhere !== true : clears && e.answeredElsewhere === true)
-    if (!state.entries.some(touches)) return { ...state, state: event.state, run }
+    // A live word clears the exit code a dead run left on the pane, as the
+    // subscribe's answer does: a process that ended with (exit 1) and came
+    // back must not show that code again when the new run ends.
+    const exitCode = event.state === 'ended' ? state.exitCode : undefined
+    if (!state.entries.some(touches)) return { ...state, state: event.state, run, exitCode }
     return {
       ...state,
       entries: state.entries.map((e) =>
         touches(e) ? { ...e, answeredElsewhere: marks ? true : undefined } : e
       ),
       state: event.state,
-      run
+      run,
+      exitCode
     }
   }
   if (event.type === 'permission_withdrawn') {

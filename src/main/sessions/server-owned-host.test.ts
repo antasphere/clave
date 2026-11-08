@@ -11,8 +11,9 @@ import type {
 } from '@clave/contract/sessions'
 import type { SessionStream } from '../../shared/session-model'
 import { standaloneSidebar } from '../server/standalone-sidebar'
-import { serverOwnedSessionHost } from './server-owned-host'
+import { resumeOptions, serverOwnedSessionHost } from './server-owned-host'
 
+type WireStateFrame = Extract<SessionStream, { kind: 'event' }>['event']
 const dirs: string[] = []
 afterEach(() => dirs.splice(0).forEach((dir) => rmSync(dir, { recursive: true, force: true })))
 const directory = (): string => {
@@ -61,7 +62,10 @@ const session: Session = {
   title: 'Kept title'
 }
 
-function fixture(dataDir = directory()): {
+function fixture(
+  dataDir = directory(),
+  extra: { currentState?: (id: string) => WireStateFrame | undefined } = {}
+): {
   host: SessionHostService
   close: () => void
   dataDir: string
@@ -124,6 +128,7 @@ function fixture(dataDir = directory()): {
     dataDir,
     sidebar,
     ready,
+    ...(extra.currentState ? { currentState: extra.currentState } : {}),
     subscribeAll: (fn) => {
       stream = fn
       return () => {
@@ -492,5 +497,102 @@ describe('live server-retained history', () => {
     } finally {
       f.close()
     }
+  })
+})
+
+describe('the state a subscriber binds to (PRDCT-4191)', () => {
+  // A server chat tab stayed "Session ended" after the server resumed it: the
+  // pane seeds its state from the list it read at mount, and a resumed chat
+  // starts idle, a state nothing publishes. The host now tells it at bind.
+  const frames = (received: WireStream[]): unknown[] =>
+    received.flatMap((value) =>
+      value.kind === 'event' && value.event.type === 'state_change' ? [value.event] : []
+    )
+
+  it('tells a subscriber of a live session its current state, with the run', async () => {
+    const currentState = vi.fn(
+      (): WireStateFrame => ({ type: 'state_change', state: 'working', run: 3 })
+    )
+    const f = fixture(directory(), { currentState })
+    const started = await f.host.start({ cwd: '/repo' })
+    const received: WireStream[] = []
+    const off = f.host.subscribe(started.id, (value) => received.push(value))
+    expect(currentState).toHaveBeenCalledWith(started.id)
+    expect(frames(received)).toEqual([{ type: 'state_change', state: 'working', run: 3 }])
+    off()
+    f.close()
+  })
+
+  it('tells a stopped record ended, with no run, after its saved terminal', () => {
+    const currentState = vi.fn()
+    const f = fixture(directory(), { currentState })
+    f.emit(record.id, { kind: 'pty', data: Buffer.from('saved screen') })
+    const received: WireStream[] = []
+    const off = f.host.subscribe(record.id, (value) => received.push(value))
+    expect(received).toHaveLength(2)
+    expect(received[0].kind).toBe('pty')
+    expect(received[1]).toEqual({ kind: 'event', event: { type: 'state_change', state: 'ended' } })
+    // Nothing runs, so there is no live state to ask for.
+    expect(currentState).not.toHaveBeenCalled()
+    off()
+    f.close()
+  })
+
+  it('tells the already-bound subscriber the new process state when a Resume binds it', async () => {
+    const f = fixture(directory(), {
+      currentState: (id) =>
+        f.live.has(id) ? { type: 'state_change', state: 'idle', run: 2 } : undefined
+    })
+    const received: WireStream[] = []
+    const off = f.host.subscribe(record.id, (value) => received.push(value))
+    expect(frames(received)).toEqual([{ type: 'state_change', state: 'ended' }])
+    await f.host.restart(record.id, {}, false)
+    // The pane learns the chat is idle again, under the run that resumed it.
+    expect(frames(received)).toEqual([
+      { type: 'state_change', state: 'ended' },
+      { type: 'state_change', state: 'idle', run: 2 }
+    ])
+    off()
+    f.close()
+  })
+
+  it('tells nothing of a live session when no currentState is given, as before', async () => {
+    const f = fixture()
+    const started = await f.host.start({ cwd: '/repo' })
+    const received: WireStream[] = []
+    const off = f.host.subscribe(started.id, (value) => received.push(value))
+    expect(frames(received)).toEqual([])
+    off()
+    f.close()
+  })
+})
+
+describe('resumeOptions carries what the chat was running on (PRDCT-4191, PRDCT-4192)', () => {
+  it('carries the opener, so "parent" and the reach rule survive a Resume', () => {
+    const opener = '9e3a0b11-0000-4000-8000-0000000000bb'
+    expect(resumeOptions({ ...record, openedBy: opener }).openedBy).toBe(opener)
+  })
+
+  it('turns a reported bypass into dangerousMode with no permissionMode', () => {
+    const options = resumeOptions({ ...record, permissionMode: 'bypassPermissions' })
+    expect(options.dangerousMode).toBe(true)
+    expect(options.permissionMode).toBeUndefined()
+  })
+
+  it('passes a reported plan mode and leaves the launch bypass off', () => {
+    const options = resumeOptions({ ...record, dangerousMode: true, permissionMode: 'plan' })
+    expect(options).toMatchObject({ dangerousMode: false, permissionMode: 'plan' })
+  })
+
+  it('keeps the record dangerousMode when no mode was reported', () => {
+    expect(resumeOptions({ ...record, dangerousMode: true }).dangerousMode).toBe(true)
+    expect(resumeOptions(record).dangerousMode).toBe(false)
+    expect(resumeOptions(record).permissionMode).toBeUndefined()
+  })
+
+  it('passes a well-formed effort and drops one that is not', () => {
+    expect(resumeOptions({ ...record, effort: 'high' }).effort).toBe('high')
+    expect(resumeOptions({ ...record, effort: 'HIGH; rm' }).effort).toBeUndefined()
+    expect('effort' in resumeOptions({ ...record, effort: 'HIGH; rm' })).toBe(false)
   })
 })

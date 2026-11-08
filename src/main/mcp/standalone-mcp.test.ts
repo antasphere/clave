@@ -17,6 +17,8 @@ import { createAgentTokenStore } from '../sessions/agent-tokens'
 import { executeSecretAction } from '../secret-actions'
 import { builtInProfileFamily, startStandaloneMcp } from './standalone-mcp'
 import { agentSessionFixtureCatalog } from './standalone-mcp.fixtures'
+import { sanitizeForPaste } from '../../shared/paste-sanitize'
+import { buildProvenanceHeader } from '../../shared/exchange-provenance'
 import { sessionHandlers } from '../../../packages/server/src/sessions/handlers'
 import { sidebarHandlers } from '../../../packages/server/src/sidebar/handlers'
 import { SidebarLayoutsPort } from '../../../packages/server/src/sidebar/port'
@@ -223,9 +225,15 @@ async function sessionFixture(
     records?: SessionRecord[]
     /** Options laid over the fixture's own `startStandaloneMcp` call. */
     options?: Partial<Parameters<typeof startStandaloneMcp>[0]>
+    /** Host methods laid over the fixture's own (PRDCT-4192: `type` and
+     *  `restart` spies for the messaging tools). */
+    host?: Partial<SessionHostService>
   } = {}
 ): Promise<{
   client: Client
+  /** A client holding the token of another tab of this server, as that
+   *  tab's agent would call the tools. */
+  connectAs: (id: string) => Promise<Client>
   started: StartedCall[]
   stopped: string[]
   resized: Array<[string, number, number]>
@@ -310,7 +318,8 @@ async function sessionFixture(
     },
     resize: (id, cols, rows) => {
       resized.push([id, cols, rows])
-    }
+    },
+    ...hooks.host
   }
   const mcp = await startStandaloneMcp({
     sessions: host,
@@ -327,16 +336,20 @@ async function sessionFixture(
   })
   closes.push(() => mcp.close())
   tokens.announce(mcp.url)
-  const file = tokens.mcpConfig.write('caller')!
-  const config = JSON.parse(await readFile(file, 'utf8'))
-  const client = new Client({ name: 'session-tools-test', version: '1' })
-  await client.connect(
-    new StreamableHTTPClientTransport(new URL(mcp.url), {
-      requestInit: { headers: { Authorization: config.mcpServers.clave.headers.Authorization } }
-    })
-  )
-  closes.push(() => client.close())
-  return { client, started, stopped, resized, sessions, sidebar, host, directory }
+  const connectAs = async (id: string): Promise<Client> => {
+    const file = tokens.mcpConfig.write(id)!
+    const config = JSON.parse(await readFile(file, 'utf8'))
+    const client = new Client({ name: 'session-tools-test', version: '1' })
+    await client.connect(
+      new StreamableHTTPClientTransport(new URL(mcp.url), {
+        requestInit: { headers: { Authorization: config.mcpServers.clave.headers.Authorization } }
+      })
+    )
+    closes.push(() => client.close())
+    return client
+  }
+  const client = await connectAs('caller')
+  return { client, connectAs, started, stopped, resized, sessions, sidebar, host, directory }
 }
 const errorText = (result: Awaited<ReturnType<Client['callTool']>>): string => {
   expect(result.isError).toBe(true)
@@ -394,6 +407,11 @@ describe('standalone MCP session tools', () => {
       )
       if (attachToParent === true) expect(started[0].options?.spawnedBy).toBe('caller')
       else expect(started[0].options).not.toHaveProperty('spawnedBy')
+      // The opener rides on the record whether the tab nests or not
+      // (PRDCT-4192): it is what "parent" and the reach rule read once this
+      // server restarted and the in-memory map is gone.
+      expect(started[0].options?.openedBy).toBe('caller')
+      expect(opened).toHaveProperty('workspaceId', null)
       const listed = payload(await client.callTool({ name: 'clave_list', arguments: {} }))
         .sessions as Array<Record<string, unknown>>
       expect(listed.find((s) => s.id === opened.sessionId)?.parentId).toBe('caller')
@@ -419,7 +437,7 @@ describe('standalone MCP session tools', () => {
     const { client, started, directory } = await sessionFixture({
       records: [callerRecord('ws-studio')]
     })
-    payload(
+    const opened = payload(
       await client.callTool({
         name: 'clave_open_session',
         arguments: { cwd: directory, mode: 'codex', name: 'Verifier' }
@@ -427,6 +445,8 @@ describe('standalone MCP session tools', () => {
     )
     expect(started).toHaveLength(1)
     expect(started[0].options?.workspaceId).toBe('ws-studio')
+    // The answer says where the tab landed (PRDCT-4193).
+    expect(opened.workspaceId).toBe('ws-studio')
     // The agent inherits, it never picks: the desktop's argument stays refused.
     expect(
       errorText(
@@ -768,6 +788,252 @@ describe('standalone MCP session tools: boundaries', () => {
       'The tab started but was not renamed: rename refused by the host'
     ])
     expect(sessions.has('started-1')).toBe(true)
+  }, 15_000)
+})
+
+/** A tab of the server-owned host, idle unless said otherwise. */
+const tab = (id: string, over: Partial<Session> = {}): Session => ({
+  id,
+  cwd: '/srv/repo',
+  windowKey: SERVER_LAYOUT_KEY,
+  provider: 'codex',
+  adapterId: 'codex-chat',
+  transport: 'events',
+  state: 'idle',
+  createdAt: 3,
+  title: id,
+  ...over
+})
+/** A record as the daemon keeps it, a Codex chat unless said otherwise. */
+const record = (id: string, over: Partial<SessionRecord> = {}): SessionRecord => ({
+  id,
+  cwd: '/srv/repo',
+  folderName: 'repo',
+  claudeMode: false,
+  antigravityMode: false,
+  codexMode: true,
+  piMode: false,
+  claudeAgentsMode: false,
+  dangerousMode: false,
+  ...over
+})
+/** `type` and `restart` spies over the fixture's sessions, in call order. */
+function messagingHost(): {
+  calls: string[]
+  typed: Array<[string, string]>
+  restarted: Array<[string, unknown, boolean]>
+  bind: (sessions: Map<string, Session>) => Partial<SessionHostService>
+} {
+  const calls: string[] = []
+  const typed: Array<[string, string]> = []
+  const restarted: Array<[string, unknown, boolean]> = []
+  return {
+    calls,
+    typed,
+    restarted,
+    bind: (sessions) => ({
+      type: async (id, text) => {
+        calls.push(`type:${id}`)
+        typed.push([id, text])
+        return { submitted: true, draftHandling: 'none' }
+      },
+      restart: async (id, account, resendRejected) => {
+        calls.push(`restart:${id}`)
+        restarted.push([id, account, resendRejected])
+        const session = sessions.get(id)
+        if (session) sessions.set(id, { ...session, state: 'idle' })
+        return {
+          id,
+          cwd: '/srv/repo',
+          folderName: 'repo',
+          alive: true,
+          claudeSessionId: null,
+          piSessionId: null,
+          resumed: true
+        }
+      }
+    })
+  }
+}
+/** The fixture with the messaging spies bound to its own sessions map. */
+async function messagingFixture(
+  hooks: Parameters<typeof sessionFixture>[0] = {}
+): Promise<Awaited<ReturnType<typeof sessionFixture>> & ReturnType<typeof messagingHost>> {
+  const spies = messagingHost()
+  const bound: { sessions?: Map<string, Session> } = {}
+  const lazy: Partial<SessionHostService> = {
+    type: (id, text) => spies.bind(bound.sessions!).type!(id, text),
+    restart: (id, account, resend) => spies.bind(bound.sessions!).restart!(id, account, resend)
+  }
+  const fx = await sessionFixture({ ...hooks, host: lazy })
+  bound.sessions = fx.sessions
+  return { ...fx, ...spies }
+}
+
+// PRDCT-4192: the daemon's agent tools resolve and reach a tab by the same
+// rule as the desktop's (`session-targets.ts`). Before it, "mine" typed the
+// caller's own checkpoint into its input as its next instruction, "parent"
+// was not understood and nothing kept a lane from typing into a terminal.
+describe('standalone MCP messaging: the shared target rule (PRDCT-4192)', () => {
+  it('takes a send to "mine" or to its own id as a checkpoint, typed nowhere and not logged', async () => {
+    const { client, typed } = await messagingFixture()
+    for (const ref of ['mine', 'caller']) {
+      expect(
+        payload(
+          await client.callTool({
+            name: 'clave_send_to_session',
+            arguments: { sessionId: ref, message: 'Checkpoint: slice 1 green.' }
+          })
+        )
+      ).toMatchObject({
+        checkpoint: true,
+        // This server keeps no exchange record, and says so.
+        logged: false,
+        delivered: false,
+        sessionId: 'caller',
+        name: 'Lane lead'
+      })
+    }
+    expect(typed).toEqual([])
+  }, 15_000)
+
+  it('delivers to "parent" from the in-memory map, under the provenance header', async () => {
+    const { client, connectAs, typed, directory } = await messagingFixture()
+    const { sessionId } = payload(
+      await client.callTool({
+        name: 'clave_open_session',
+        arguments: { cwd: directory, mode: 'codex' }
+      })
+    )
+    const child = await connectAs(sessionId as string)
+    const answer = payload(
+      await child.callTool({
+        name: 'clave_send_to_session',
+        arguments: { sessionId: 'parent', message: 'LANE DONE' }
+      })
+    )
+    expect(answer).toMatchObject({ delivered: true, sessionId: 'caller', name: 'Lane lead' })
+    expect(typed).toEqual([
+      [
+        'caller',
+        `${sanitizeForPaste(buildProvenanceHeader({ id: sessionId as string, name: 'new tab' }))}\nLANE DONE`
+      ]
+    ])
+  }, 15_000)
+
+  it("reads the opener from the record once the listener's map is empty (a restart of this server)", async () => {
+    // A fresh listener: nothing was opened through it, so only the record
+    // can say who opened `child`.
+    const { client, connectAs, sessions, typed } = await messagingFixture({
+      records: [record('child', { openedBy: 'caller' })]
+    })
+    sessions.set('child', tab('child'))
+    const listed = payload(await client.callTool({ name: 'clave_list', arguments: {} }))
+      .sessions as Array<Record<string, unknown>>
+    expect(listed.find((s) => s.id === 'child')?.parentId).toBe('caller')
+    const child = await connectAs('child')
+    expect(
+      payload(
+        await child.callTool({
+          name: 'clave_send_to_session',
+          arguments: { sessionId: 'parent', message: 'back' }
+        })
+      )
+    ).toMatchObject({ delivered: true, sessionId: 'caller' })
+    expect(typed.map(([id]) => id)).toEqual(['caller'])
+  }, 15_000)
+
+  it('refuses a plain terminal it opened and a tab it is not related to, typing nothing', async () => {
+    const { client, sessions, typed, directory } = await messagingFixture()
+    const terminal = payload(
+      await client.callTool({
+        name: 'clave_open_session',
+        arguments: { cwd: directory, mode: 'terminal' }
+      })
+    )
+    expect(
+      errorText(
+        await client.callTool({
+          name: 'clave_send_to_session',
+          arguments: { sessionId: terminal.sessionId, message: 'rm -rf /' }
+        })
+      )
+    ).toContain('Refusing to send to a plain terminal')
+    sessions.set('stranger', tab('stranger'))
+    expect(
+      errorText(
+        await client.callTool({
+          name: 'clave_send_to_session',
+          arguments: { sessionId: 'stranger', message: 'hello' }
+        })
+      )
+    ).toContain('Refusing to message tab "stranger": it is not related to yours.')
+    expect(typed).toEqual([])
+  }, 15_000)
+
+  it('resumes a stopped tab it opened with clave_resume_session and refuses a running one', async () => {
+    const { client, sessions, restarted, directory } = await messagingFixture({
+      records: [record('child', { openedBy: 'caller' })]
+    })
+    sessions.set('child', tab('child', { state: 'ended' }))
+    expect(
+      payload(
+        await client.callTool({ name: 'clave_resume_session', arguments: { sessionId: 'child' } })
+      )
+    ).toEqual({
+      resumed: true,
+      sessionId: 'child',
+      name: 'repo',
+      mode: 'codex',
+      alive: true,
+      conversation: true
+    })
+    // The same tab, same account, no rejected message to send again.
+    expect(restarted).toEqual([['child', {}, false]])
+    const running = payload(
+      await client.callTool({
+        name: 'clave_open_session',
+        arguments: { cwd: directory, mode: 'codex' }
+      })
+    )
+    expect(
+      errorText(
+        await client.callTool({
+          name: 'clave_resume_session',
+          arguments: { sessionId: running.sessionId }
+        })
+      )
+    ).toContain('Session "new tab" is running; there is nothing to resume.')
+    expect(restarted).toHaveLength(1)
+  }, 15_000)
+
+  it('refuses a send to an ended tab with the way back, and with resume: true restarts it then types', async () => {
+    const { client, sessions, calls, restarted } = await messagingFixture({
+      records: [record('child', { openedBy: 'caller', displayName: 'Lane B' })]
+    })
+    sessions.set('child', tab('child', { state: 'ended' }))
+    expect(
+      errorText(
+        await client.callTool({
+          name: 'clave_send_to_session',
+          arguments: { sessionId: 'child', message: 'continue' }
+        })
+      )
+    ).toContain(
+      'Session "Lane B" has ended; resume it with clave_resume_session, or pass resume: true to resume it and deliver.'
+    )
+    // Never a silent restart.
+    expect(calls).toEqual([])
+    expect(
+      payload(
+        await client.callTool({
+          name: 'clave_send_to_session',
+          arguments: { sessionId: 'Lane B', message: 'continue', resume: true }
+        })
+      )
+    ).toMatchObject({ delivered: true, sessionId: 'child', name: 'Lane B' })
+    expect(calls).toEqual(['restart:child', 'type:child'])
+    expect(restarted).toEqual([['child', {}, false]])
   }, 15_000)
 })
 

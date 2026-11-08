@@ -454,6 +454,36 @@ describe('who may reach whom', () => {
       'This session has no live parent'
     )
   })
+  it('after a restart, reads the opener of a tab opened unnested from its record (PRDCT-4192)', async () => {
+    // A tab opened without attachToParent carries no spawnedBy: before
+    // `openedBy`, the reach it had died with main's memory of the open.
+    const h = setup({
+      ...world(),
+      layouts: [layout('wA', [])],
+      parents: {},
+      records: {
+        caller: record('caller', { openedBy: 'parent' }),
+        child: record('child', { openedBy: 'caller' }),
+        parent: record('parent'),
+        stranger: record('stranger', { displayName: 'Far away' })
+      }
+    })
+    expect((await run(h, 'readSession', { sessionId: 'parent' })) as object).toMatchObject({
+      sessionId: 'parent'
+    })
+    expect((await run(h, 'readSession', { sessionId: 'child' })) as object).toMatchObject({
+      sessionId: 'child'
+    })
+    expect(
+      (await run(h, 'sendToSession', { sessionId: 'child', message: 'hi' })) as object
+    ).toMatchObject({ delivered: true, sessionId: 'child' })
+    // The opener wins over the nesting parent when both are on the record.
+    h.w.records.child = record('child', { openedBy: 'caller', spawnedBy: 'stranger' })
+    expect((await run(h, 'readSession', { sessionId: 'child' })) as object).toMatchObject({
+      sessionId: 'child'
+    })
+    await expect(run(h, 'readSession', { sessionId: 'stranger' })).rejects.toThrow('not related')
+  })
   it('answers the screen as the window did, and says when a tab has none', async () => {
     const h = setup(world())
     expect(await run(h, 'readSession', { sessionId: 'child', lines: 7 })).toEqual({
@@ -547,6 +577,38 @@ describe('a message typed into a tab', () => {
     expect(h.argsOf('sessions.type')).toEqual([])
     expect(h.argsOf('captureMessage')).toEqual([])
   })
+  it('hands a name no tab of this host carries back to the window (PRDCT-4193)', async () => {
+    // The window may know it as a tab of a Clave server; this host has none.
+    const h = setup(world())
+    expect(await run(h, 'sendToSession', { sessionId: 'Lane on the VPS', message: 'x' })).toBe(
+      NOT_SERVED
+    )
+    expect(h.argsOf('sessions.type')).toEqual([])
+  })
+  it('refuses an ended tab with the way back; resume: true restarts it, then types (PRDCT-4193)', async () => {
+    const h = setup(world())
+    h.w.sessions.push(session('gone', { state: 'ended' }))
+    h.w.records.gone = record('gone', { displayName: 'Gone' })
+    h.w.parents.gone = 'caller'
+    await expect(run(h, 'sendToSession', { sessionId: 'gone', message: 'x' })).rejects.toThrow(
+      'Session "Gone" has ended; resume it with clave_resume_session, or pass resume: true to resume it and deliver.'
+    )
+    // Never a silent restart.
+    expect(h.argsOf('sessions.restart')).toEqual([])
+    h.impl['sessions.restart'] = (id: string) => {
+      h.w.sessions = h.w.sessions.map((x) => (x.id === id ? { ...x, state: 'idle' } : x))
+      return { id, resumed: true }
+    }
+    expect(
+      await run(h, 'sendToSession', { sessionId: 'Gone', message: 'continue', resume: true })
+    ).toMatchObject({ delivered: true, sessionId: 'gone', name: 'Gone', agentState: 'idle' })
+    expect(h.argsOf('sessions.restart')).toEqual([['gone', {}]])
+    expect(h.argsOf('sessions.type')).toEqual([
+      ['gone', expect.stringMatching(/\ncontinue$/), 'Lane D']
+    ])
+    const names = h.names()
+    expect(names.indexOf('sessions.restart')).toBeLessThan(names.indexOf('sessions.type'))
+  })
   it('a self-addressed send is a checkpoint: logged, typed nowhere', async () => {
     const h = setup(world())
     for (const ref of ['mine', 'caller', 'Lane D']) {
@@ -587,6 +649,39 @@ describe('a message typed into a tab', () => {
     const [, text, from] = h.argsOf('sessions.type')[0] as [string, string, string]
     expect(text.startsWith('[Message from Clave tab "Lane[201~ D" — reply with')).toBe(true)
     expect(from).toBe('Lane\x1b[201~ D')
+  })
+})
+
+// PRDCT-4193: a tab of another Clave server, by the key clave_open_session
+// returned for it, is the window's to reach: this process holds no
+// connection to that server. Before, main answered "no session" for it, or
+// acted on a local tab that happened to share the raw id.
+describe("a tab of another server is the window's", () => {
+  const SERVER_TAB = 'clave-owner:session:server-1:81e34f37-0000-4000-8000-000000000000'
+  it.each([
+    ['sendToSession', { sessionId: SERVER_TAB, message: 'hi' }],
+    ['rename', { target: 'session', id: SERVER_TAB, name: 'Lane' }],
+    ['setSessionView', { sessionId: SERVER_TAB, url: 'http://127.0.0.1:4814' }],
+    ['switchAccount', { sessionId: SERVER_TAB, account: 'acc-2' }],
+    ['closeSession', { sessionId: SERVER_TAB }],
+    ['moveSession', { sessionId: SERVER_TAB, groupId: 'g' }],
+    ['setWork', { sessionId: SERVER_TAB, work: { kind: 'idle' } }],
+    ['handOver', { sessionId: 'caller', to: SERVER_TAB }],
+    ['handOver', { sessionId: SERVER_TAB, to: 'caller' }]
+  ])('%s answers NOT_SERVED for it, asking the server nothing', async (command, payload) => {
+    const h = setup({
+      layouts: [layout('wA', [group('g', { sessionIds: ['caller'] })])],
+      sessions: [session('caller'), session('81e34f37-0000-4000-8000-000000000000')],
+      records: { caller: record('caller') }
+    })
+    expect(await run(h, command, payload)).toBe(NOT_SERVED)
+    expect(h.calls).toEqual([])
+  })
+  it('a group rename is not a tab: its id is never read as a server tab', async () => {
+    const h = setup()
+    // A group named like a key still renames here, through the layout.
+    await run(h, 'rename', { target: 'group', id: SERVER_TAB, name: 'Lane' }).catch(() => undefined)
+    expect(h.names().some((n) => n.startsWith('sidebar.'))).toBe(true)
   })
 })
 
@@ -881,6 +976,10 @@ describe('opening a session', () => {
     )
     expect((h.argsOf('sessions.start')[0] as { options: unknown }).options).not.toHaveProperty(
       'spawnedBy'
+    )
+    // No caller, no opener on the record either (PRDCT-4192).
+    expect((h.argsOf('sessions.start')[0] as { options: unknown }).options).not.toHaveProperty(
+      'openedBy'
     )
     expect(h.argsOf('setParent')).toEqual([])
   })

@@ -345,6 +345,68 @@ describe('the session records', () => {
     expect(backend.discardSessionRecord('../escape')).toBeUndefined()
   })
 
+  it('keep what a chat runs on as the provider says it, and write nothing that does not change it (PRDCT-4191)', () => {
+    // What a Resume reads: until this, the record held the launch's values,
+    // so a chat moved to another mode came back in the one it started in.
+    const id = '55555555-5555-4555-8555-555555555555'
+    backend.writeEventSessionRecord({
+      id,
+      adapterId: 'claude-chat',
+      transport: 'events',
+      cwd,
+      folderName: 'x',
+      claudeMode: true,
+      antigravityMode: false,
+      codexMode: false,
+      piMode: false,
+      claudeAgentsMode: false,
+      dangerousMode: false,
+      model: 'opus'
+    })
+    backend.setSessionRuntime(id, { model: 'claude-sonnet-4-5[1m]' })
+    backend.setSessionRuntime(id, { permissionMode: 'bypassPermissions' })
+    backend.setSessionRuntime(id, { effort: 'high' })
+    expect(readRecord(id)).toMatchObject({
+      model: 'claude-sonnet-4-5[1m]',
+      permissionMode: 'bypassPermissions',
+      effort: 'high',
+      adapterId: 'claude-chat'
+    })
+    // Values that are not one are ignored, never written.
+    backend.setSessionRuntime(id, {
+      model: '../x y',
+      permissionMode: 'no-such mode',
+      effort: 'HIGH'
+    })
+    expect(readRecord(id)).toMatchObject({
+      model: 'claude-sonnet-4-5[1m]',
+      permissionMode: 'bypassPermissions',
+      effort: 'high'
+    })
+    // An effort of null: the model runs at none, the key goes.
+    backend.setSessionRuntime(id, { effort: null })
+    expect(readRecord(id)).not.toHaveProperty('effort')
+    // Unchanged: no write. The file is laid out by hand here, a rewrite
+    // would lay it out compact again.
+    const laidOut = JSON.stringify(readRecord(id), null, 2)
+    fs.writeFileSync(recordFile(id), laidOut)
+    backend.setSessionRuntime(id, { model: 'claude-sonnet-4-5[1m]', effort: null })
+    backend.setSessionRuntime(id, { permissionMode: 'bypassPermissions' })
+    expect(fs.readFileSync(recordFile(id), 'utf-8')).toBe(laidOut)
+    // A session with no record: nothing written, nothing thrown.
+    backend.setSessionRuntime('66666666-6666-4666-8666-666666666666', { model: 'opus' })
+    expect(fs.existsSync(recordFile('66666666-6666-4666-8666-666666666666'))).toBe(false)
+  })
+
+  it('keep the tab that opened a session, nested or not, across an adoption (PRDCT-4192)', () => {
+    const opener = backend.spawn(cwd, { claudeMode: false, tmuxMode: false })
+    const opened = backend.spawn(cwd, { claudeMode: false, tmuxMode: false, openedBy: opener.id })
+    expect(readRecord(opened.id).openedBy).toBe(opener.id)
+    backend.kill(opened.id, false)
+    backend.spawn(cwd, { claudeMode: false, tmuxMode: false, adoptSessionId: opened.id })
+    expect(readRecord(opened.id).openedBy).toBe(opener.id)
+  })
+
   it('move from the legacy folder once, on the first use of the records', () => {
     const legacy = path.join(dir, 'clave-tmux-sessions')
     fs.mkdirSync(legacy, { recursive: true })

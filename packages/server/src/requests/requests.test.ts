@@ -3,7 +3,8 @@ import WebSocket from 'ws'
 import { startEmbedded, type EmbeddedServer } from '../embedded'
 import { createApiClient, type ClaveApiClient } from '../../../client/src/api'
 import { PushClient, type PushSocketConstructor } from '../../../client/src/push-client'
-import { PendingRequests } from './service'
+import { LOST_TO_RESTART, PendingRequests } from './service'
+import { RequestRejected } from '../../../contract/src/requests'
 import { SessionHost } from '../sessions/port'
 import type { Session, SessionStream } from '../../../contract/src/sessions'
 import { requestAwareSessionHost } from '../../../../src/main/sessions/request-aware-host'
@@ -414,5 +415,53 @@ describe('shared requests over authenticated HTTP and push', () => {
     })
     expect(oversized.status).toBe(413)
     expect(await oversized.text()).not.toContain(secret)
+  })
+})
+
+describe('a request polled after the store lost it (PRDCT-4192)', () => {
+  // The store lives in memory: after a restart every request made before it
+  // is gone, and the agent that asked must read "cancelled, ask again", not
+  // an ownership error that tells it nothing it can act on.
+  const input = {
+    sessionId: 's',
+    kind: 'permission' as const,
+    description: 'Approve?',
+    options: [{ id: 'yes', label: 'Yes' }]
+  }
+  it('answers an id it never issued as cancelled, with the restart as its reason', () => {
+    const requests = new PendingRequests()
+    closes.push(() => requests.close())
+    expect(requests.result('never-issued', 's')).toEqual({
+      requestId: 'never-issued',
+      status: 'cancelled',
+      reason: LOST_TO_RESTART
+    })
+  })
+  it('still refuses another caller polling a request that exists', () => {
+    const requests = new PendingRequests()
+    closes.push(() => requests.close())
+    const request = requests.create(input)
+    let thrown: unknown
+    try {
+      requests.result(request.id, 'another')
+    } catch (error) {
+      thrown = error
+    }
+    expect(thrown).toBeInstanceOf(RequestRejected)
+    expect(thrown).toMatchObject({ code: 'not_found' })
+    // The owner still reads its own request, untouched by the refusal.
+    expect(requests.result(request.id, 's').status).toBe('pending')
+  })
+  it('answers cancelled in a fresh store for an id the previous one issued, as after a restart', () => {
+    const before = new PendingRequests()
+    const request = before.create(input)
+    before.close()
+    const after = new PendingRequests()
+    closes.push(() => after.close())
+    expect(after.result(request.id, 's')).toEqual({
+      requestId: request.id,
+      status: 'cancelled',
+      reason: LOST_TO_RESTART
+    })
   })
 })

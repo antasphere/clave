@@ -390,8 +390,17 @@ export function TerminalView({
     )
     void window.electronAPI
       .sessionsSubscribe(session.id)
-      .then(() => {
-        if (live) setReady(true)
+      .then((current) => {
+        if (!live) return
+        // The host's own word on the session, over the seed read at mount
+        // (PRDCT-4191), as the chat view takes it.
+        const word = {
+          state: current.state,
+          ...(current.run !== undefined ? { run: current.run } : {})
+        }
+        if (word.state === 'ended') confirmed(() => dispatch({ session: word }))
+        else dispatch({ session: word })
+        setReady(true)
         // Asked once subscribed, when the adapter has read the transcript;
         // whatever streamed meanwhile is newer and stays after it. A host
         // without the call rejects inside the chain and shows no past.

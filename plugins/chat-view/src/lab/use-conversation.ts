@@ -85,8 +85,16 @@ export function useConversation(
     let stopConnected: () => void = () => {}
     void window.electronAPI
       .sessionsSubscribe(sessionId)
-      .then(() => {
+      .then((current) => {
         if (!live) return
+        // The host's own word on the session, over the seed read at mount
+        // (PRDCT-4191), as the chat view takes it.
+        const word = {
+          state: current.state,
+          ...(current.run !== undefined ? { run: current.run } : {})
+        }
+        if (word.state === 'ended') confirmed(() => dispatch({ session: word }))
+        else dispatch({ session: word })
         setReady(true)
         pastReader.current = readPast(() => window.electronAPI.sessionsHistory(sessionId), {
           read: (page) => {
