@@ -134,9 +134,11 @@ export async function run(t) {
       () => null,
       (error) => error.message
     )
+    // The target resolver refuses a disconnected server by name before the
+    // state check does; either sentence says the server and that it is off.
     t.check(
       'and refuse a tab while the server is disconnected',
-      typeof whileOff === 'string' && whileOff.includes('Studio is Disconnected'),
+      typeof whileOff === 'string' && whileOff.includes('Studio') && /disconnected/i.test(whileOff),
       whileOff
     )
     await win.evaluate((id) => window.electronAPI.fleetConnect(id), saved.id)
