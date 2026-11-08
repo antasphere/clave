@@ -3209,8 +3209,8 @@ button.extension-card:hover {
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  width: 1.25rem;
-  height: 1.25rem;
+  width: var(--control-h-xs);
+  height: var(--control-h-xs);
   border-radius: var(--radius-control);
   color: var(--text-tertiary);
 }

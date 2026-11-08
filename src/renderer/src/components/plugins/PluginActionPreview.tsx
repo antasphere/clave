@@ -37,7 +37,10 @@ export function PluginActionPreview({
   return (
     <div className="min-w-[168px] px-2 py-1.5" data-plugin-action-preview={entry.id}>
       {(rows ?? []).map((row, index) => (
-        <div key={`${index}:${row.label}`} className="flex items-center justify-between gap-4 h-5">
+        <div
+          key={`${index}:${row.label}`}
+          className="flex items-center justify-between gap-4 h-control-xs"
+        >
           <span className="text-[11px] text-text-tertiary">{row.label}</span>
           <span className="text-[12px] text-text-primary tabular-nums text-right">{row.value}</span>
         </div>
