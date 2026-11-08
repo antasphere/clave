@@ -1612,8 +1612,12 @@ const electronAPI = {
   // capture above; the list is the dialog's one read.
   historyStamp: (row: unknown) => ipcRenderer.send('history:stamp', row),
   historyList: () => ipcRenderer.invoke('history:list'),
-  historyConversation: (cwd: string, claudeSessionId: string, provider?: 'claude' | 'pi') =>
-    ipcRenderer.invoke('history:conversation', { cwd, claudeSessionId, provider }),
+  historyConversation: (
+    cwd: string,
+    claudeSessionId: string,
+    provider?: 'claude' | 'pi',
+    configDir?: string
+  ) => ipcRenderer.invoke('history:conversation', { cwd, claudeSessionId, provider, configDir }),
   scrollSessionToText: (id: string, needle: string, fromBottom: number) =>
     ipcRenderer.invoke('session:scroll-to-text', id, needle, fromBottom),
   historySearch: (request: {

@@ -12,7 +12,7 @@ import { useSessionStore } from '../../store/session-store'
 import { useWorkspaceStore, getWorkspaceById } from '../../store/workspace-store'
 import { ContextMenu, type ContextMenuItem } from '../ui/ContextMenu'
 import { useNow } from '../../lib/use-now'
-import { relativeTime, type OngoingStatus } from '../../lib/ongoing'
+import { conversationConfigDir, relativeTime, type OngoingStatus } from '../../lib/ongoing'
 import {
   endOngoing,
   entriesElsewhere,
@@ -64,12 +64,13 @@ interface LastTurn {
 function useLastTurn(row: OngoingRow): LastTurn | null | undefined {
   const [turn, setTurn] = useState<LastTurn | null | undefined>(undefined)
   const { cwd, conversationId, provider } = row.entry
+  const configDir = conversationConfigDir(row.entry, row.session)
   const pulse = `${row.status}:${row.session?.agentState ?? ''}`
   const read = window.electronAPI?.historyConversation
   useEffect(() => {
     if (!read) return
     let live = true
-    read(cwd, conversationId, provider)
+    read(cwd, conversationId, provider, configDir)
       .then((res) => {
         if (!live) return
         const last = res.exists ? res.turns[res.turns.length - 1] : undefined
@@ -89,7 +90,7 @@ function useLastTurn(row: OngoingRow): LastTurn | null | undefined {
     return () => {
       live = false
     }
-  }, [read, cwd, conversationId, provider, pulse])
+  }, [read, cwd, conversationId, provider, configDir, pulse])
   return turn
 }
 

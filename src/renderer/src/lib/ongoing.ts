@@ -94,6 +94,18 @@ export function resumableConversation(
   return null
 }
 
+/** The account directory a conversation's transcript lives under, when its
+ *  tab ran with one (PRDCT-4207): the tab's own while it runs, else the one
+ *  the entry kept. Undefined means the shared Claude home, which is where a
+ *  Default or token account writes, and always for Pi. */
+export function conversationConfigDir(
+  entry: Pick<OngoingEntry, 'provider' | 'launch'>,
+  session?: { claudeConfigDir?: string } | null
+): string | undefined {
+  if (entry.provider !== 'claude') return undefined
+  return session?.claudeConfigDir || entry.launch.claudeConfigDir || undefined
+}
+
 /** What a resume needs, as the tab holds it now. */
 export function launchOf(s: OngoingSessionLike): OngoingLaunch {
   const launch: OngoingLaunch = {}

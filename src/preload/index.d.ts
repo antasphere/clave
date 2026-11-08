@@ -948,11 +948,14 @@ export interface ElectronAPI extends FleetDesktopAPI {
    *  fire-and-forget; the folded list for the dialog. */
   historyStamp: (row: HistoryLedgerRow) => void
   historyList: () => Promise<{ entries: HistoryListEntry[]; skippedLines: number }>
-  /** The message trail's read: a live tab's conversation as turns. */
+  /** The message trail's read: a live tab's conversation as turns.
+   *  `configDir` is the tab's own account directory, when it ran with one:
+   *  its transcript lives there rather than under `~/.claude`. */
   historyConversation: (
     cwd: string,
     claudeSessionId: string,
-    provider?: 'claude' | 'pi'
+    provider?: 'claude' | 'pi',
+    configDir?: string
   ) => Promise<{ exists: boolean; turns: ConversationTurn[] }>
   /** Click-to-scroll: tmux-backed tabs are driven in main (`tmux: true`);
    *  plain ones answer `tmux: false` and the caller scans xterm's buffer. */

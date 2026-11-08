@@ -6,7 +6,9 @@ import type { OngoingEntry } from '../lib/ongoing'
  * kept in the app's preferences under one key. Each window holds a copy:
  * every change reads the saved list first and writes it back with the one
  * change applied, so two windows editing different entries never undo each
- * other, and a window refreshes its copy when it is focused again.
+ * other, and a window refreshes its copy when it is focused again. The read
+ * and the write run under a lock every window shares (PRDCT-4208), so two
+ * windows saving at the same instant never write from the same stale read.
  */
 
 export const ONGOING_PREF_KEY = 'ongoingConversations'
@@ -47,6 +49,28 @@ async function readSaved(): Promise<OngoingEntry[] | null> {
   }
 }
 
+export const ONGOING_LOCK = 'clave-ongoing-conversations'
+
+/** Run `work` holding the lock the app's windows share: every window is a
+ *  renderer of the same origin, so the Web Locks API serialises them. A
+ *  window without it (a test, an unsupported context) runs unlocked, as
+ *  before; a refused request runs unlocked too, so a save is never lost to
+ *  the lock itself. */
+export async function withSharedLock<T>(work: () => Promise<T>): Promise<T> {
+  const locks = typeof navigator !== 'undefined' ? navigator.locks : undefined
+  if (!locks?.request) return work()
+  let ran = false
+  try {
+    return await locks.request(ONGOING_LOCK, () => {
+      ran = true
+      return work()
+    })
+  } catch (err) {
+    if (ran) throw err
+    return work()
+  }
+}
+
 /** Changes run one after the other: each reads what the last one wrote. */
 let queue: Promise<void> = Promise.resolve()
 /** Changes not yet written: a read of the saved list meanwhile would show the
@@ -67,13 +91,16 @@ export const useOngoingStore = create<OngoingStore>((set, get) => ({
     set({ entries: change(get().entries) })
     pending++
     const run = queue.then(async () => {
-      const saved = (await readSaved()) ?? get().entries
-      const next = change(saved)
-      try {
-        await window.electronAPI?.preferencesSet(ONGOING_PREF_KEY, next)
-      } catch (err) {
-        console.error('Could not save the ongoing conversations:', err)
-      }
+      const next = await withSharedLock(async () => {
+        const saved = (await readSaved()) ?? get().entries
+        const applied = change(saved)
+        try {
+          await window.electronAPI?.preferencesSet(ONGOING_PREF_KEY, applied)
+        } catch (err) {
+          console.error('Could not save the ongoing conversations:', err)
+        }
+        return applied
+      })
       set({ entries: next })
       announce()
     })
@@ -89,17 +116,34 @@ export const useOngoingStore = create<OngoingStore>((set, get) => ({
 /** The windows of this app tell each other when the list changed: every
  *  window is a renderer of the same origin, so one channel reaches them all. */
 let channel: BroadcastChannel | null = null
-function announce(): void {
+function post(message: unknown): void {
   try {
-    channel?.postMessage('changed')
+    channel?.postMessage(message)
   } catch {
     // a closed channel: the focus refresh still catches up
   }
 }
+function announce(): void {
+  post('changed')
+}
+
+/** Tell the other windows a tab was ended from here while it ran there (its
+ *  move was refused): the window holding it drops its row (PRDCT-4208). */
+export function announceEnded(sessionId: string): void {
+  post({ ended: sessionId })
+}
+
+/** What another window's message asks of this one: a tab it ended to drop,
+ *  else a refresh of the list. */
+export function endedOf(message: unknown): string | null {
+  const ended = (message as { ended?: unknown } | null)?.ended
+  return typeof ended === 'string' && ended ? ended : null
+}
 
 /** Refresh the window's copy when another window changed the list, and when
- *  it comes back to the front (a change it could not hear). */
-export function startOngoingSync(): () => void {
+ *  it comes back to the front (a change it could not hear). `onEnded` drops
+ *  a tab another window ended while this one held it. */
+export function startOngoingSync(onEnded?: (sessionId: string) => void): () => void {
   const refresh = (): void => {
     if (pending > 0) return
     void readSaved().then((saved) => {
@@ -108,8 +152,12 @@ export function startOngoingSync(): () => void {
   }
   window.addEventListener('focus', refresh)
   if (typeof BroadcastChannel !== 'undefined') {
-    channel = new BroadcastChannel('clave-ongoing-conversations')
-    channel.onmessage = refresh
+    channel = new BroadcastChannel(ONGOING_LOCK)
+    channel.onmessage = (event: MessageEvent) => {
+      const ended = endedOf(event.data)
+      if (ended) onEnded?.(ended)
+      else refresh()
+    }
   }
   return () => {
     window.removeEventListener('focus', refresh)
