@@ -55,6 +55,7 @@ import {
   HOST_COMMANDS,
   claudeModelOptions
 } from './claude-adapter'
+import { formMessage } from '../../../shared/form-message'
 
 /** What the adapter wrote to the CLI since the last read, without the
  *  get_settings reads it makes at ready and after every confirmed switch to
@@ -1234,6 +1235,27 @@ it('dates each replayed event by its transcript line, and closes a dead call at 
     // call never ties every later turn to it and a page may begin at each.
     { event: { type: 'tool_result', id: 'lost', output: undefined } },
     { event: { type: 'user_message', text: 'second' } }
+  ])
+})
+it("replays a form's outcome with its marker, in either shape the transcript keeps a user message (PRDCT-4157)", () => {
+  const text = formMessage({
+    id: 'r1',
+    form: 'clave:35e6218e-85f6-4dc0-9b19-366bf927d351',
+    description: 'Four things before this machine is set up.',
+    questions: [{ id: 'login', question: 'Your GitHub login' }],
+    answers: { login: 'luca-a' }
+  })
+  const items = translator.replay(
+    [
+      { type: 'user', message: { role: 'user', content: text } },
+      { type: 'user', message: { role: 'user', content: [{ type: 'text', text }] } },
+      { type: 'user', message: { role: 'user', content: 'and a word of my own' } }
+    ].map((line) => JSON.stringify(line))
+  )
+  expect(items.map((item) => item.event)).toEqual([
+    { type: 'user_message', text, form: 'clave:35e6218e-85f6-4dc0-9b19-366bf927d351' },
+    { type: 'user_message', text, form: 'clave:35e6218e-85f6-4dc0-9b19-366bf927d351' },
+    { type: 'user_message', text: 'and a word of my own' }
   ])
 })
 it('keeps a resumed past in main for the view to page, and streams none of it', async () => {
