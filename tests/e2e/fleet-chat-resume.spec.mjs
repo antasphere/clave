@@ -150,10 +150,17 @@ export async function run(t) {
       'the pane reads the chat as ended after the restart'
     )
     const ended = await pane.locator('[data-chat-ended]').first().getAttribute('data-chat-ended')
-    t.equal('after the restart the pane says the session ended', ended, 'exit')
-    const resume = pane.getByRole('button', { name: 'Resume', exact: true })
+    t.equal('after the restart the pane draws the server’s ended state', ended, 'server')
+    t.check(
+      'and names the server in it',
+      (await pane.locator('[data-chat-ended="server"]').textContent())?.includes(
+        mac.owners[0].name
+      ) === true
+    )
+    // The way on is in the drawn state itself, beside the header's button.
+    const resume = pane.locator('[data-chat-resume]')
     await resume.waitFor()
-    t.check('and offers Resume', true)
+    t.check('and offers Resume in it', true)
     t.equal('the restart alone started no CLI', processes().length, 1)
 
     await resume.click()

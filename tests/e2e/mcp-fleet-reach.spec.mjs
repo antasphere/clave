@@ -173,9 +173,9 @@ export async function run(t) {
       history?.slice(0, 2000)
     )
 
-    // The desktop's read takes a server tab's SCREEN (PRDCT-4166): a terminal
-    // has one; a chat has none and answers "no terminal buffer" on this road
-    // (the daemon's own clave_read_session reads a chat's history instead).
+    // The desktop reads a server terminal's screen (PRDCT-4166) and, since
+    // PRDCT-4199, a server chat's recent history as lines, one per thing
+    // said or done, which the two surfaces now answer alike.
     const read = await until(async () => {
       const answer = await mcp.call('clave_read_session', { sessionId: terminal.sessionId })
       const payload = toolErrored(answer) ? null : toolPayload(answer)
@@ -185,6 +185,16 @@ export async function run(t) {
       'clave_read_session still reads the server terminal',
       read?.sessionId === terminal.sessionId,
       read
+    )
+    const readChat = await until(async () => {
+      const answer = await mcp.call('clave_read_session', { sessionId: chat.sessionId })
+      const payload = toolErrored(answer) ? null : toolPayload(answer)
+      return payload?.text?.includes(marker) ? payload : null
+    })
+    t.check(
+      'clave_read_session reads the server chat as lines of its history, the message among them',
+      !!readChat && readChat.sessionId === chat.sessionId && readChat.text.includes(`You: `),
+      readChat
     )
 
     // The daemon restarts: the chat is a stopped record.

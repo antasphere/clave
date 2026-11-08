@@ -45,6 +45,7 @@ import {
   switchSessionAccount
 } from './switch-account'
 import { pairedServerWorkspaces } from '../store/pairing-store'
+import { historyLines } from '../../../shared/history-text'
 import type { CodexAccount } from '../../../preload/index.d'
 import { effectiveSwitchMode } from '../store/account-policy-store'
 import type { PiThinkingLevel } from '../../../shared/agent-launch'
@@ -1515,6 +1516,24 @@ async function handleReadSession(payload: {
   assertCanReach(payload.callerSessionId, target, 'read')
   const requested = Math.min(Math.max(payload.lines ?? 100, 1), 500)
   const lines: string[] = []
+  // A chat has no terminal screen: its recent history is read instead, one
+  // line per thing said or done, on this Mac and on a server alike
+  // (PRDCT-4199; until then a server chat answered "no terminal buffer").
+  const record = (await window.electronAPI.sessionsList()).find((s) => s.id === target.id)
+  if (record?.transport === 'events') {
+    const page = await window.electronAPI.sessionsHistory(target.id, undefined, requested)
+    const text = historyLines(page.items)
+    return {
+      sessionId: target.id,
+      name: target.name,
+      mode: sessionMode(target),
+      alive: target.alive,
+      agentState: target.agentState ?? null,
+      lines: text.length,
+      text: text.join('\n'),
+      history: page.items
+    }
+  }
   if (ownerOf(target.id) !== LOCAL_SERVER_ID) {
     let screen: { lines: readonly string[] }
     try {

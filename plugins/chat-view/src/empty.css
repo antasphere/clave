@@ -36,3 +36,24 @@
     translate: -4px 0;
   }
 }
+
+/* The ended state of a chat on a Clave server (ServerEnded.tsx): the empty
+   state's layout, sat at the foot of the conversation rather than filling
+   it, the failure said under the sentence in the destructive ink. */
+.chat-ended-server {
+  min-height: 0;
+  padding: calc(var(--spacing) * 6) calc(var(--spacing) * 6) calc(var(--spacing) * 4);
+  text-align: center;
+}
+.chat-ended-server .view-empty-drawing {
+  width: calc(var(--spacing) * 48);
+}
+.chat-ended-server .chat-notice-action:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+.chat-ended-server-failure {
+  max-width: 44ch;
+  color: var(--color-destructive);
+  font-size: var(--text-xs);
+}

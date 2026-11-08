@@ -20,6 +20,7 @@ import {
 import type { SecretAction } from '../../../packages/contract/src/requests'
 import type { PendingRequests } from '../../../packages/server/src/requests/service'
 import type { Session, SessionRecord } from '@clave/contract/sessions'
+import { historyLines } from '../../shared/history-text'
 import {
   type TargetHost,
   readAnswer,
@@ -490,11 +491,11 @@ function buildServer(
         const screen = await sessions.screen(target.id, args.lines)
         return text(readAnswer(targetHost, target, screen.lines))
       }
-      // A chat has no screen: its recent history, under the same envelope.
+      // A chat has no screen: its recent history, one line per thing said
+      // or done, under the same envelope (PRDCT-4199).
       const page = sessions.history(target.id, undefined, args.lines)
       return text({
-        ...(readAnswer(targetHost, target, []) as Record<string, unknown>),
-        lines: page.items.length,
+        ...(readAnswer(targetHost, target, historyLines(page.items)) as Record<string, unknown>),
         history: page.items
       })
     }

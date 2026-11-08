@@ -17,6 +17,7 @@
 import type { LayoutSnapshot } from '@clave/contract/sidebar'
 import type { AccountOverride, Session } from '@clave/contract/sessions'
 import { pickAccount } from '../../shared/account-pool'
+import { historyLines } from '../../shared/history-text'
 import {
   type TargetHost,
   assertCanReach,
@@ -213,6 +214,15 @@ async function readSession(ctx: Ctx, key: string, p: Payload): Promise<unknown |
   if (!target) return NOT_SERVED
   await assertCanReach(host, target, 'read')
   const requested = Math.min(Math.max(typeof p.lines === 'number' ? p.lines : 100, 1), 500)
+  // A chat has no screen: its recent history, one line per thing said or
+  // done, under the same envelope (PRDCT-4199).
+  if (target.transport === 'events') {
+    const page = await ctx.api.sessions.history(target.id, undefined, requested)
+    return {
+      ...(readAnswer(host, target, historyLines(page.items)) as Record<string, unknown>),
+      history: page.items
+    }
+  }
   let screen: { lines: readonly string[] }
   try {
     screen = await ctx.api.sessions.screen(target.id, requested)

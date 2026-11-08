@@ -100,6 +100,7 @@ import {
 import { useComposerAttachments } from './composer-attachments'
 import { DropDrawing } from './DropDrawing'
 import { ViewEmpty } from './EmptyDrawing'
+import { ServerEnded } from './ServerEnded'
 import {
   failureText,
   pathForMessage,
@@ -1335,6 +1336,9 @@ export function EndedNotice({
       </div>
     )
   }
+  // A chat on a Clave server: its own drawn state, the server named and
+  // Resume as the way on (PRDCT-4191), where a plain notice said "ended".
+  if (isRemoteKey(sessionId)) return <ServerEnded sessionId={sessionId} exitCode={exitCode} />
   return (
     <div className="chat-notice" role="status" data-chat-ended="exit">
       Session ended

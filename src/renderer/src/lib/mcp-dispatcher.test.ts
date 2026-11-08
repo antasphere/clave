@@ -692,6 +692,63 @@ describe('round 1: the window road refuses before resuming, and places by the pa
     expect(switchAccount.restartSessionProcess).not.toHaveBeenCalled()
   })
 
+  it('reads a chat, on this Mac or on a server, as lines of its history (PRDCT-4199)', async () => {
+    const remote = resourceKey('session', 'srv', 'chat')
+    useSessionStore.setState({
+      sessions: [
+        {
+          id: 'rd-lead',
+          name: 'Lead',
+          cwd: '/r',
+          sessionType: 'local',
+          alive: true,
+          claudeMode: true
+        },
+        {
+          id: remote,
+          name: 'Server chat',
+          cwd: '/srv/r',
+          sessionType: 'local',
+          alive: true,
+          claudeMode: true,
+          agentState: 'idle',
+          spawnedBy: 'rd-lead'
+        }
+      ] as never
+    })
+    const sessionsHistory = vi.fn(async () => ({
+      items: [
+        { event: { type: 'user_message', text: 'hello server' }, at: 1 },
+        { event: { type: 'assistant_text', delta: 'stub heard: hello server', final: true }, at: 2 }
+      ],
+      before: null
+    }))
+    Object.assign(globals.window.electronAPI, {
+      sessionsList: vi.fn(async () => [{ id: remote, transport: 'events' }]),
+      sessionsHistory,
+      fleetScreen: vi.fn(async () => {
+        throw new Error('no terminal screen')
+      })
+    })
+    const answer = await dispatchOnce('readSession', {
+      callerSessionId: 'rd-lead',
+      sessionId: remote,
+      lines: 50
+    })
+    expect(answer.ok).toBe(true)
+    expect(answer.result).toMatchObject({
+      sessionId: remote,
+      name: 'Server chat',
+      mode: 'claude',
+      alive: true,
+      agentState: 'idle',
+      lines: 2,
+      text: 'You: hello server\nAgent: stub heard: hello server'
+    })
+    expect((answer.result as { history: unknown[] }).history).toHaveLength(2)
+    expect(sessionsHistory).toHaveBeenCalledWith(remote, undefined, 50)
+  })
+
   it('opens a server tab in the server workspace paired with the caller’s (C6)', async () => {
     const paired = resourceKey('workspace', 'srv', 'ws-raw')
     useWorkspaceStore.setState({

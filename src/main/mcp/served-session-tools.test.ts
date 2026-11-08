@@ -1223,3 +1223,45 @@ describe('launching a pinned group', () => {
     expect(h.argsOf('sidebar.createGroup')).toHaveLength(1)
   })
 })
+
+describe('a chat read through the served tools answers its history as lines (PRDCT-4199)', () => {
+  it('reads the recent history of an events session instead of a screen', async () => {
+    const h = setup({
+      layouts: [layout('wA', [])],
+      sessions: [session('caller')],
+      records: { caller: record('caller') },
+      parents: {}
+    })
+    h.w.sessions.push(
+      session('chat', { transport: 'events', provider: 'claude', state: 'working' })
+    )
+    h.w.records.chat = record('chat', { displayName: 'A chat' })
+    h.w.parents.chat = 'caller'
+    h.impl['sessions.history'] = (id: string, before: unknown, limit: number) => {
+      void before
+      void id
+      return {
+        items: [
+          { event: { type: 'user_message', text: 'ship it' }, at: 1 },
+          { event: { type: 'tool_call', id: 't', name: 'Bash', input: {} }, at: 2 }
+        ].slice(0, limit),
+        before: null
+      }
+    }
+    const out = (await run(h, 'readSession', { sessionId: 'chat', lines: 20 })) as Record<
+      string,
+      unknown
+    >
+    expect(out).toMatchObject({
+      sessionId: 'chat',
+      name: 'A chat',
+      alive: true,
+      agentState: 'working',
+      lines: 2,
+      text: 'You: ship it\nTool: Bash'
+    })
+    expect(out.history).toHaveLength(2)
+    expect(h.argsOf('sessions.history')).toEqual([['chat', undefined, 20]])
+    expect(h.argsOf('sessions.screen')).toEqual([])
+  })
+})
