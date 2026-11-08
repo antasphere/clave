@@ -658,9 +658,14 @@ describe('a chat whose CLI exited on its own resumes (round 5, major 1)', () => 
 
 describe('a Resume of a chat the host still holds binds and readies the new process (round 6)', () => {
   it('rebinds the subscribers and makes the new process ready, as the record road does', async () => {
+    // The state told at bind is the LIVE entry's at that moment: a bind made
+    // before the restart would tell the held entry's `ended` and bind the
+    // subscribers to a process the restart then replaces (round 7, R4).
     const f = fixture(directory(), {
-      currentState: (id) =>
-        f.live.has(id) ? { type: 'state_change', state: 'idle', run: 2 } : undefined
+      currentState: (id) => {
+        const live = f.live.get(id)
+        return live ? { type: 'state_change', state: live.state, run: 2 } : undefined
+      }
     })
     const started = await f.host.start({ cwd: '/repo' })
     const received: WireStream[] = []
