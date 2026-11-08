@@ -54,7 +54,13 @@ const DIR = userDataDir('live-chat-restore')
 const ROOT = fixturePath('live-chat-restore-root')
 const BIN = `${ROOT}/bin`
 const STARTS = `${ROOT}/agent-starts.jsonl`
-const WS = { id: 'live-chat-restore-ws', name: 'Live chats', rootDir: ROOT }
+const WS = {
+  id: 'live-chat-restore-ws',
+  name: 'Live chats',
+  rootDir: ROOT,
+  profileFile: null,
+  createdAt: 1
+}
 const KEY = 'live-chat-restore-window'
 /** The line the renderer logs for a record it failed to adopt. */
 const ADOPT_FAILED = 'Failed to adopt session record'
@@ -176,6 +182,11 @@ function seedChats({ groupId }) {
 }
 
 const env = () => ({
+  // The suite is run from inside a Clave tab, whose CLAVE_SESSION_ID the test
+  // app would inherit and pass to the Codex CLI it runs for itself (usage, the
+  // model list): the stub then logs that run as a session's start, under this
+  // tab's id. An app started from the Finder has no tab id; neither does this one.
+  CLAVE_SESSION_ID: '',
   SHELL: `${BIN}/bash`,
   PATH: `${BIN}:${process.env.PATH}`,
   CLAVE_TRANSCRIPTS_ROOT: `${ROOT}/transcripts`,

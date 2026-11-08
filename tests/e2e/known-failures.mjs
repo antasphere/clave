@@ -6,7 +6,8 @@
 //   {
 //     "why": "...",
 //     "specs": { "<spec file>": ["<check name>", ...] },
-//     "unstable": ["<spec file>", ...]
+//     "unstable": ["<spec file>", ...],
+//     "tasks": { "<spec file>": "<task id>" }
 //   }
 //
 // `specs` names checks that fail on dev deterministically, by spec and by
@@ -19,13 +20,21 @@
 // goes under `unstable` instead: every failure in it is UNSTABLE, counted
 // apart and printed, and the spec is explicitly, visibly, not a gate until
 // it is fixed. Anything else fails the run.
+//
+// `tasks` names the task that owns each listed spec (PRDCT-4172, 8 November
+// 2026): a failure nobody owns is a failure nobody fixes, and the `why`
+// paragraph had become the only place a reader could dig an id out of. Every
+// key must be a spec listed under `specs` or `unstable`, every value a task
+// id; a spec listed without a task is still accepted, the older entries
+// predate the field.
 
 export const RAN_TO_COMPLETION = ' ran to completion'
+const TASK_ID = /^[A-Z][A-Z0-9]*-\d+$/
 
 /** Validate and normalise the file's content. Throws on a shape that would
  *  hide something: a spec listed both ways, a "ran to completion" check. */
 export function loadKnown(raw) {
-  const out = { why: '', specs: {}, unstable: [] }
+  const out = { why: '', specs: {}, unstable: [], tasks: {} }
   if (raw == null) return out
   if (typeof raw !== 'object') throw new Error('known-failures.json: an object is expected')
   out.why = typeof raw.why === 'string' ? raw.why : ''
@@ -53,6 +62,18 @@ export function loadKnown(raw) {
       )
   }
   out.unstable = [...unstable]
+  const tasks = raw.tasks ?? {}
+  if (typeof tasks !== 'object' || Array.isArray(tasks))
+    throw new Error('known-failures.json: "tasks" must map a spec file to its task id')
+  for (const [spec, task] of Object.entries(tasks)) {
+    if (!(spec in out.specs) && !out.unstable.includes(spec))
+      throw new Error(
+        `known-failures.json: "tasks"."${spec}" names a spec that is neither under "specs" nor "unstable"`
+      )
+    if (typeof task !== 'string' || !TASK_ID.test(task))
+      throw new Error(`known-failures.json: "tasks"."${spec}" must be a task id like PRDCT-4172`)
+  }
+  out.tasks = { ...tasks }
   return out
 }
 
