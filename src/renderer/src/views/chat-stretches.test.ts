@@ -3,10 +3,12 @@ import type { Entry } from '../../../../plugins/chat-view/src/reducer'
 import { groupEntries, visibleEntries } from '../../../../plugins/chat-view/src/tools'
 import {
   MIN_NOTES,
+  countsLabel,
   foldStretches,
   isBoundary,
   noteCount,
   rowKey,
+  spanLabel,
   stretchNotes,
   stretchSpan,
   toolCount,
@@ -375,6 +377,15 @@ describe('the card’s facts', () => {
     const { from, to } = stretchSpan(stretch(rows))
     expect(from).toBe(1002)
     expect(to).toBe(1010)
+  })
+
+  it('says how long a stretch took, and nothing under a second', () => {
+    expect(spanLabel(0, 400)).toBe('')
+    expect(spanLabel(0, 42_000)).toBe('42 s')
+    expect(spanLabel(0, 4 * 60_000)).toBe('4 min')
+    expect(spanLabel(0, 90 * 60_000)).toBe('1 h 30 min')
+    expect(countsLabel(4, 5, '4 min')).toBe('4 notes · 5 tool calls · 4 min')
+    expect(countsLabel(1, 0, '')).toBe('1 note')
   })
 
   it('folds nothing with no entries', () => {

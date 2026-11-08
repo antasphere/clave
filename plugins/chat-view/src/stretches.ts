@@ -197,9 +197,12 @@ function foldSegment(segment: readonly Block[]): Row[] {
   return out
 }
 
-/** How long the stretch took, as the reader reads it. */
+/** How long the stretch took, as the reader reads it; nothing under a
+ *  second (a conversation replayed from its transcript stamps every entry
+ *  with the same moment). */
 export function spanLabel(from: number, to: number): string {
   const seconds = Math.max(0, Math.round((to - from) / 1000))
+  if (seconds < 1) return ''
   if (seconds < 60) return `${seconds} s`
   const minutes = Math.round(seconds / 60)
   if (minutes < 60) return `${minutes} min`
@@ -212,6 +215,6 @@ export function spanLabel(from: number, to: number): string {
 export function countsLabel(notes: number, tools: number, span: string): string {
   const parts = [`${notes} ${notes === 1 ? 'note' : 'notes'}`]
   if (tools) parts.push(`${tools} ${tools === 1 ? 'tool call' : 'tool calls'}`)
-  parts.push(span)
+  if (span) parts.push(span)
   return parts.join(' · ')
 }
