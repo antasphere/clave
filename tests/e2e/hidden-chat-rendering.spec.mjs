@@ -84,13 +84,13 @@ export async function run(t) {
       }, text)
   const choose = async (kind) => {
     const title = kind === 'terminal' ? 'Enclave' : 'Chat'
-    const picker = host.getByRole('button', { name: 'Change view', exact: true })
+    const picker = host.getByRole('button', { name: 'Session menu', exact: true })
     await picker.click()
-    const menu = win.locator('[role="menu"][aria-label="Views"]')
-    await menu.getByRole('menuitem', { name: title, exact: true }).click()
+    const menu = win.locator('[role="menu"][aria-label="Session menu"]')
+    await menu.getByRole('menuitemradio', { name: title, exact: true }).click()
     await menu.waitFor({ state: 'detached' })
     await view(kind).getByRole('textbox', { name: 'Message', exact: true }).waitFor()
-    assert.equal(await picker.getAttribute('title'), `View: ${title}`)
+    assert.equal(await picker.getAttribute('data-view-title'), title)
     await frames()
   }
   const observe = async (kind) =>

@@ -4,9 +4,10 @@ The host owns the pane, focus, close and header. Bundled first-party native view
 are resolved by `<pluginId>/<viewId>` through the single static import map in
 `registry.tsx`, and the resolution itself is `resolution.ts`, which imports no
 React and is unit-tested on its own. A plugin may contribute SEVERAL views
-(`contributes.views[]`, each with an optional `title` the picker shows): the
+(`contributes.views[]`, each with an optional `title` the menu's tile shows): the
 session record carries the chosen one in `viewId`, set by the launch profile at
-spawn or by the picker in the pane header, and `sessions:set-view` writes it in
+spawn or by the "View as" tiles of the pane header's session menu
+(`SessionMenu.tsx`, the ⋯ button), and `sessions:set-view` writes it in
 main. Resolution never fails — the session's own choice, else the first view
 that renders its transport, else the terminal — so disabling a plugin or
 dropping a view from a manifest can never strand a session on a dead view.
@@ -106,9 +107,17 @@ provider lane's, on a shared message.
 
 A known limit, and the one thing here a reader would not assume: `registry.tsx`
 refreshes its copy of the session records when the session store changes or a
-plugin does, and main broadcasts no record change of its own. The picker
-compensates by patching that copy after its IPC, and a session launched from a
+plugin does, and main broadcasts no record change of its own. The session
+menu compensates by patching that copy after its IPC, and a session launched from a
 profile arrives with the store change that created it — so every path a person
 can take is current. A `viewId` written any OTHER way reaches the record but not
 the pane until something unrelated refreshes it. Whoever adds the next writer
 adds the broadcast with it.
+
+The same menu holds what can be taken out of a session: the conversation copied
+or saved as Markdown, Claude's raw transcript and plan, the resume command, the
+folder. The transcript is the VIEW's to write, not the host's: the chat view
+keeps its entries privately with the pages of the past it has read, so it
+registers an exporter for its session (`transcript-export.ts`) that reads every
+older page first and writes the Markdown (`plugins/chat-view/src/export.ts`).
+The menu offers the transcript rows only while an exporter is registered.

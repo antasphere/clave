@@ -209,7 +209,42 @@ async function showNotFoundError(
   }
 }
 
+/** The longest transcript the save will write: far past any conversation,
+ *  short of a renderer handing main something unbounded. */
+const MAX_TRANSCRIPT_BYTES = 64 * 1024 * 1024
+
 export function registerSessionExportHandlers(): void {
+  // The chat pane's menu: the conversation as the view wrote it in Markdown,
+  // for any provider (the discussion save below is Claude's raw JSONL).
+  ipcMain.handle('session:save-transcript', async (event, markdown: unknown, fileName: unknown) => {
+    if (typeof markdown !== 'string' || Buffer.byteLength(markdown) > MAX_TRANSCRIPT_BYTES)
+      throw new Error('A transcript is a string under 64 MB.')
+    const name =
+      typeof fileName === 'string' && fileName.trim()
+        ? Array.from(fileName, (c) => (c.charCodeAt(0) < 32 || c === '/' || c === '\\' ? ' ' : c))
+            .join('')
+            .slice(0, 120)
+        : 'Session.md'
+    const win = BrowserWindow.fromWebContents(event.sender)
+    const saveOptions = {
+      defaultPath: name,
+      filters: [
+        { name: 'Markdown', extensions: ['md'] },
+        { name: 'All Files', extensions: ['*'] }
+      ]
+    }
+    const result = win
+      ? await dialog.showSaveDialog(win, saveOptions)
+      : await dialog.showSaveDialog(saveOptions)
+    if (result.canceled || !result.filePath) return { success: false, error: 'cancelled' }
+    try {
+      writeFileSync(result.filePath, markdown, 'utf-8')
+      return { success: true, path: result.filePath }
+    } catch (err) {
+      return { success: false, error: String(err) }
+    }
+  })
+
   ipcMain.handle(
     'session:save-discussion',
     async (

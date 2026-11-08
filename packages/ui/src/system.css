@@ -1714,6 +1714,86 @@ canvas[data-orb-state] {
   margin-top: var(--menu-row-gap);
 }
 
+/* The pane header's session menu (views/SessionMenu.tsx): the views as
+   drawn tiles, then the transcript and session rows. Wide enough for three
+   tiles side by side and a row's hint beside its label. */
+.session-menu {
+  width: 288px;
+}
+.view-tiles {
+  display: grid;
+  grid-template-columns: repeat(var(--view-tiles, 3), minmax(0, 1fr));
+  gap: 4px;
+  padding: 0 4px 4px;
+}
+/* A tile: the drawing on a paper card, the view's name under it. Hover is the
+   menu row's fill; the view on screen rings its card in the accent, the one
+   place the accent goes, as in the drawing inside it. */
+.view-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 5px;
+  padding: 5px 5px 4px;
+  border-radius: var(--control-radius);
+  font-size: 12px;
+  font-weight: var(--font-weight-medium);
+  color: var(--text-secondary);
+  text-align: center;
+  outline: none;
+  user-select: none;
+  cursor: pointer;
+  transition:
+    color 150ms,
+    background-color 150ms;
+}
+.view-tile:hover,
+.view-tile[data-highlighted] {
+  background-color: var(--surface-100);
+  color: var(--text-primary);
+}
+.view-tile[data-selected='true'] {
+  color: var(--text-primary);
+}
+.view-tile-art {
+  display: block;
+  padding: 4px;
+  border-radius: var(--radius-md);
+  background-color: var(--surface-0);
+  box-shadow: 0 0 0 0.5px var(--edge-color);
+  transition: box-shadow 150ms;
+}
+.view-tile[data-selected='true'] .view-tile-art {
+  box-shadow: 0 0 0 1.5px var(--color-accent);
+}
+.view-tile-art .view-drawing {
+  width: 100%;
+  height: auto;
+}
+.view-tile-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* A row's word on what it just did ("Copied", "Saved", "Failed"), where its
+   hint sits; the check says it to the eye before the menu closes. */
+.session-menu-note {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+.session-menu-note[data-tone='done'] {
+  color: var(--color-status-ready, var(--text-secondary));
+}
+.session-menu-note[data-tone='failed'] {
+  color: var(--color-destructive);
+}
+.session-menu-failure {
+  padding: 2px 8px 6px;
+  font-size: 11px;
+  color: var(--color-destructive);
+}
+
 /* Hairline between menu sections, inset so it reads as a break in the list
    rather than a border cutting the surface. */
 .menu-sep {
@@ -4609,6 +4689,14 @@ details[open] > .chat-approval-items {
   padding: 0 calc(var(--spacing) * 6) calc(var(--spacing) * 3);
 }
 .chat-composer {
+  /* Above the transcript's fade (.chat-transcript::after, z-index 5): the
+     hairline and the lift are a box-shadow, and the half pixel of it above
+     the box lies over the fade's last, solid stretch, which painted over it
+     and cut the composer's top edge. Lifted on the form alone, not on its
+     wrapper, so the slash menu above keeps its own stacking beside the
+     jump-to-end control. */
+  position: relative;
+  z-index: 6;
   display: flex;
   align-items: flex-end;
   gap: calc(var(--spacing) * 2);
