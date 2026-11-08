@@ -1,0 +1,144 @@
+/**
+ * Where a launch's choices come from (PRDCT-4162): the machine a new tab
+ * will run on owns the executables, the launch profiles and the
+ * subscriptions, so the launcher's rows are built from THAT machine's
+ * settings. This Mac's source reads the local stores; a server's source reads
+ * the settings this Mac keeps of it (`server-settings-store`, read over the
+ * server's connection and kept current by its pushes). The launcher renders
+ * one source the same way whichever machine it is, so the "Run on <server>"
+ * section offers what the server can start, chat forms and saved profiles
+ * included, the way the top section does for the machine the active
+ * workspace lives on. Until PRDCT-4162 the server section was a second,
+ * hand-written list of three rows.
+ */
+import { LOCAL_SERVER_ID } from '@clave/contract/fleet'
+import {
+  DEFAULT_LAUNCH_PROFILE_PREFERENCES,
+  resolveLaunchProfile,
+  type LaunchProfile,
+  type LauncherFamily
+} from '../../../shared/agent-launch'
+import { profilesFor, selectedLaunchProfile } from '../store/launch-profile-store'
+import { describeClaudeProfileAuth, useClaudeProfileStore } from '../store/claude-profile-store'
+import { describeCodexAccountAuth, useCodexAccountStore } from '../store/codex-account-store'
+import { headroomLabel, useClaudeAccountsUsage, useCodexAccountsUsage } from '../store/usage-store'
+import { serverProfilesFor, type ServerSettings } from '../store/server-settings-store'
+import type { AgentSetup } from '../store/launch-prefs'
+
+/** The families whose sessions run on an account of a pool. */
+export type PooledFamily = 'claude' | 'codex'
+
+/** An account row of the caret menu, whichever provider and machine. */
+export interface LaunchAccount {
+  id: string
+  label: string
+  title: string
+  headroom: string | null
+}
+
+export interface LaunchSource {
+  /** The machine: `LOCAL_SERVER_ID` for this Mac, else the saved server's id. */
+  serverId: string
+  /** How the menu names the machine: `This Mac`, or the server's saved name. */
+  name: string
+  /** Whether the machine's settings are known: a server not read yet offers
+   *  its built-ins and no account, and its rows fill in when the read lands. */
+  ready: boolean
+  profilesFor(family: LauncherFamily): LaunchProfile[]
+  selectedProfileId(family: LauncherFamily): string
+  accounts(family: PooledFamily): LaunchAccount[]
+  selectedAccountId(family: PooledFamily): string | null
+}
+
+/** This Mac, from the local stores; read at render so the caller's own
+ *  subscriptions to those stores decide when the menu redraws. */
+export function localLaunchSource(workspaceId: string | null): LaunchSource {
+  return {
+    serverId: LOCAL_SERVER_ID,
+    name: 'This Mac',
+    ready: true,
+    profilesFor,
+    selectedProfileId: (family) => selectedLaunchProfile(family, workspaceId).id,
+    accounts: (family) => {
+      if (family === 'claude') {
+        const usage = useClaudeAccountsUsage.getState().byAccount
+        return useClaudeProfileStore.getState().profiles.map((account) => ({
+          id: account.id,
+          label: account.label,
+          title: `${account.label} · ${describeClaudeProfileAuth(account)}`,
+          headroom: headroomLabel(usage[account.id])
+        }))
+      }
+      const usage = useCodexAccountsUsage.getState().byAccount
+      return useCodexAccountStore.getState().accounts.map((account) => ({
+        id: account.id,
+        label: account.label,
+        title: `${account.label} · ${describeCodexAccountAuth(account)}`,
+        headroom: headroomLabel(usage[account.id])
+      }))
+    },
+    selectedAccountId: (family) =>
+      family === 'claude'
+        ? useClaudeProfileStore.getState().selectedProfileId
+        : useCodexAccountStore.getState().selectedAccountId
+  }
+}
+
+/** A saved server, from the settings this Mac read of it. A server keeps no
+ *  per-workspace default this Mac could name, so its selected profile is its
+ *  global default; its selected account is the first it lists, its own
+ *  machine login, and a launch that names none leaves the pick to the
+ *  server's pool. */
+export function serverLaunchSource(
+  serverId: string,
+  name: string,
+  settings: ServerSettings
+): LaunchSource {
+  const preferences = settings.profiles ?? DEFAULT_LAUNCH_PROFILE_PREFERENCES
+  const accounts = (family: PooledFamily): LaunchAccount[] =>
+    (family === 'claude' ? settings.claude : settings.codex).map((account) => ({
+      id: account.id,
+      label: account.label,
+      title: `${account.label} · on ${name}`,
+      headroom: headroomLabel(settings.usage[family][account.id])
+    }))
+  return {
+    serverId,
+    name,
+    ready: settings.status === 'ready',
+    profilesFor: (family) => serverProfilesFor(settings, family),
+    selectedProfileId: (family) => resolveLaunchProfile(preferences, family, null).id,
+    accounts,
+    selectedAccountId: (family) => accounts(family)[0]?.id ?? null
+  }
+}
+
+/** What a setup picked from a SERVER's source names there: the profile's
+ *  definition and the account, handed to the launch so they travel as they
+ *  are (`LaunchRequest.onServer`). Undefined for this Mac's source, whose ids
+ *  the launch resolves itself. */
+export interface ServerLaunchPick {
+  profile?: LaunchProfile
+  claudeAccount?: { id: string; label: string }
+  codexAccount?: { id: string; label: string }
+}
+
+export function serverLaunchPick(
+  source: LaunchSource,
+  setup: AgentSetup
+): ServerLaunchPick | undefined {
+  if (source.serverId === LOCAL_SERVER_ID) return undefined
+  const family: LauncherFamily = setup.kind === 'claude-agents' ? 'claude' : setup.kind
+  const profile = setup.launchProfileId
+    ? source.profilesFor(family).find((p) => p.id === setup.launchProfileId)
+    : undefined
+  const account = (pooled: PooledFamily, id: string | undefined): LaunchAccount | undefined =>
+    id ? source.accounts(pooled).find((a) => a.id === id) : undefined
+  const claude = family === 'claude' ? account('claude', setup.claudeProfileId) : undefined
+  const codex = family === 'codex' ? account('codex', setup.codexAccountId) : undefined
+  return {
+    ...(profile ? { profile } : {}),
+    ...(claude ? { claudeAccount: { id: claude.id, label: claude.label } } : {}),
+    ...(codex ? { codexAccount: { id: codex.id, label: codex.label } } : {})
+  }
+}

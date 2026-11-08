@@ -9,6 +9,7 @@ import { getActiveWorkspaceId, getWorkspaceById, workspaceServer } from '../stor
 import { pickServerFolder } from '../store/server-folder-store'
 import { clearLaunchNotice, showLaunchNotice } from '../store/launch-notice-store'
 import { deliverPendingChatView, pendingChatView } from './pending-chat-view'
+import type { ServerLaunchPick } from './launch-source'
 import {
   agentAcceptsPrompt,
   agentSetupToModes,
@@ -54,6 +55,10 @@ export interface LaunchRequest {
   exactProfile?: boolean
   /** Explicit home for a capture-bound launch; ordinary launchers use their current workspace. */
   workspaceId?: string
+  /** For a launch on a server, what the setup's ids name in the SERVER's own
+   *  lists (PRDCT-4162, `lib/launch-source.ts`): the profile's definition and
+   *  the account, which travel as they are. Absent, the ids are this Mac's. */
+  onServer?: ServerLaunchPick
 }
 
 export interface LaunchSelectionError extends Error {
@@ -102,10 +107,17 @@ const NO_AGENT = {
 }
 
 /** A launch on a connected Clave server, in the normal flow (#241): the
- *  launcher's setup and launch profile travel, the cwd is the server
- *  workspace's root (or a folder picked on the server's disk), and the
- *  server runs it on its own accounts and pool — this Mac's account pick
- *  never travels. An offline server refuses with a notice. */
+ *  launcher's setup travels, the cwd is the server workspace's root (or a
+ *  folder picked on the server's disk), and the server runs it on its own
+ *  executables and subscriptions. The launcher builds a server's rows from
+ *  the server's own settings (PRDCT-4162, `lib/launch-source.ts`), so a
+ *  profile or an account the setup names is looked up THERE first: a profile
+ *  the server lists is sent with its definition (which also stops the preload
+ *  substituting a Mac profile of the same id), an account the server lists is
+ *  sent by its id and label, and the server's pool picks when none is named.
+ *  A profile the server does not list keeps the carried path of #241 (a Mac
+ *  profile travels with its command); an account the server does not list
+ *  never travels, as before. An offline server refuses with a notice. */
 async function launchOnServer(serverId: string, req: LaunchRequest): Promise<string | null> {
   const fleet = useFleetStore.getState()
   const serverName = fleet.connections.find((c) => c.id === serverId)?.name ?? 'The server'
@@ -132,6 +144,19 @@ async function launchOnServer(serverId: string, req: LaunchRequest): Promise<str
   const dangerousMode = req.setup?.dangerousMode ?? false
   const initialPrompt =
     req.initialPrompt && agentAcceptsPrompt(req.setup) ? req.initialPrompt : undefined
+  const serverProfile =
+    req.onServer?.profile && req.onServer.profile.id === req.setup?.launchProfileId
+      ? req.onServer.profile
+      : undefined
+  const claudeAccount =
+    (modes.claudeMode || modes.claudeAgentsMode) &&
+    req.onServer?.claudeAccount?.id === req.setup?.claudeProfileId
+      ? req.onServer?.claudeAccount
+      : undefined
+  const codexAccount =
+    modes.codexMode && req.onServer?.codexAccount?.id === req.setup?.codexAccountId
+      ? req.onServer?.codexAccount
+      : undefined
   let id: string
   try {
     const info = await window.electronAPI.fleetStart(serverId, cwd, {
@@ -139,6 +164,13 @@ async function launchOnServer(serverId: string, req: LaunchRequest): Promise<str
       dangerousMode,
       ...(initialPrompt ? { initialPrompt } : {}),
       ...(req.setup?.launchProfileId ? { launchProfileId: req.setup.launchProfileId } : {}),
+      ...(serverProfile ? { launchProfile: serverProfile } : {}),
+      ...(claudeAccount
+        ? { claudeProfileId: claudeAccount.id, claudeProfileLabel: claudeAccount.label }
+        : {}),
+      ...(codexAccount
+        ? { codexAccountId: codexAccount.id, codexAccountLabel: codexAccount.label }
+        : {}),
       ...(workspace ? { workspaceId: workspace.id } : {})
     })
     id = info.id

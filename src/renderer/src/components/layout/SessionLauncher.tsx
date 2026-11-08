@@ -1,13 +1,9 @@
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useAgentStore } from '../../store/agent-store'
 import { useLocationStore } from '../../store/location-store'
-import { useClaudeProfileStore, describeClaudeProfileAuth } from '../../store/claude-profile-store'
-import {
-  useClaudeAccountsUsage,
-  useCodexAccountsUsage,
-  headroomLabel
-} from '../../store/usage-store'
-import { useCodexAccountStore, describeCodexAccountAuth } from '../../store/codex-account-store'
+import { useClaudeProfileStore } from '../../store/claude-profile-store'
+import { useClaudeAccountsUsage, useCodexAccountsUsage } from '../../store/usage-store'
+import { useCodexAccountStore } from '../../store/codex-account-store'
 import { useWorkspaceStore } from '../../store/workspace-store'
 import {
   useLaunchPrefsStore,
@@ -16,13 +12,22 @@ import {
   type AgentKind
 } from '../../store/launch-prefs'
 import { launchSession, type LaunchCwd } from '../../lib/launch-session'
+import { setWorkspaceLaunchProfile, useLaunchProfileStore } from '../../store/launch-profile-store'
+import type { LaunchProfile, LauncherFamily } from '../../../../shared/agent-launch'
+import { LOCAL_SERVER_ID } from '@clave/contract/fleet'
 import {
-  profilesFor,
-  selectedLaunchProfile,
-  setWorkspaceLaunchProfile,
-  useLaunchProfileStore
-} from '../../store/launch-profile-store'
-import type { LauncherFamily } from '../../../../shared/agent-launch'
+  localLaunchSource,
+  serverLaunchPick,
+  serverLaunchSource,
+  type LaunchAccount,
+  type LaunchSource,
+  type PooledFamily
+} from '../../lib/launch-source'
+import {
+  loadServerSettings,
+  startServerSettingsEvents,
+  useServerSettingsStore
+} from '../../store/server-settings-store'
 import {
   CommandLineIcon,
   FolderIcon,
@@ -48,7 +53,7 @@ import {
 import { useShortcutLabel } from '../../store/keymap-store'
 import { useFleetStore } from '../../store/fleet-store'
 import { pairedServerWorkspaces, usePairingStore } from '../../store/pairing-store'
-import { getWorkspaceById } from '../../store/workspace-store'
+import { getWorkspaceById, workspaceServer } from '../../store/workspace-store'
 import { ServerIcon } from '@heroicons/react/24/outline'
 
 /** What the caret's remote entries hand back to the sidebar, which owns the
@@ -59,14 +64,6 @@ export interface RemoteLaunchRequest {
   claudeMode: boolean
   antigravityMode: boolean
   codexMode: boolean
-}
-
-/** An account row in the caret menu, whichever provider's pool it is from. */
-interface PooledAccount {
-  id: string
-  label: string
-  title: string
-  headroom: string | null
 }
 
 interface SessionLauncherProps {
@@ -137,18 +134,26 @@ export function SessionLauncher({ onRemoteLaunch }: SessionLauncherProps): React
   const [menuAlignOffset, setMenuAlignOffset] = useState(0)
   const caretRef = useRef<HTMLButtonElement | null>(null)
   const agentButtonRef = useRef<HTMLButtonElement | null>(null)
-
   const agents = useAgentStore((s) => s.agents)
   const locations = useLocationStore((s) => s.locations)
+  // The local stores a source reads at render: subscribed here so a change
+  // in any of them redraws the menu (the sources themselves read getState).
   const profiles = useClaudeProfileStore((s) => s.profiles)
   const selectedProfileId = useClaudeProfileStore((s) => s.selectedProfileId)
   const accountsUsage = useClaudeAccountsUsage((s) => s.byAccount)
   const codexAccounts = useCodexAccountStore((s) => s.accounts)
   const selectedCodexAccountId = useCodexAccountStore((s) => s.selectedAccountId)
   const codexAccountsUsage = useCodexAccountsUsage((s) => s.byAccount)
+  void profiles
+  void selectedProfileId
+  void accountsUsage
+  void codexAccounts
+  void selectedCodexAccountId
+  void codexAccountsUsage
   const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId)
   const launchProfilePreferences = useLaunchProfileStore((s) => s.preferences)
   void launchProfilePreferences
+  const serverSettings = useServerSettingsStore((s) => s.byServer)
   // Subscribing to the map (not calling the getter) is what re-renders the
   // button when a launch changes what it remembers.
   const byWorkspace = useLaunchPrefsStore((s) => s.byWorkspace)
@@ -171,37 +176,86 @@ export function SessionLauncher({ onRemoteLaunch }: SessionLauncherProps): React
   const pairings = usePairingStore((s) => s.servers)
   const connections = useFleetStore((s) => s.connections)
   const statuses = useFleetStore((s) => s.statuses)
+  const serverName = (serverId: string): string =>
+    connections.find((c) => c.id === serverId)?.name ?? 'Server'
   const pairedServers = pairedServerWorkspaces(activeWorkspaceId)
     .map(({ serverId, workspaceId }) => ({
       serverId,
       workspace: getWorkspaceById(workspaceId),
-      name: connections.find((c) => c.id === serverId)?.name ?? 'Server',
+      name: serverName(serverId),
       color: pairings[serverId]?.color,
       online: statuses[serverId]?.state === 'connected'
     }))
     .filter((s) => s.workspace !== undefined)
+  // The machine the active workspace lives on is the one the top section and
+  // the buttons start on (`launchServer`): a server workspace's launcher
+  // offers that server's profiles and accounts, chat forms included (PRDCT-4162).
+  const activeServerId = workspaceServer(activeWorkspaceId)
+  const sourceFor = (serverId: string): LaunchSource =>
+    serverId === LOCAL_SERVER_ID
+      ? localLaunchSource(activeWorkspaceId)
+      : serverLaunchSource(serverId, serverName(serverId), serverSettingsFor(serverId))
+  const serverSettingsFor = (serverId: string): Parameters<typeof serverLaunchSource>[2] =>
+    serverSettings[serverId] ?? {
+      status: 'idle',
+      error: null,
+      claude: [],
+      codex: [],
+      migrated: [],
+      profiles: null,
+      usage: { claude: {}, codex: {} }
+    }
+  const topSource = sourceFor(activeServerId ?? LOCAL_SERVER_ID)
   const hasRemoteLocations = connectedRemoteLocations.length > 0 || pairedServers.length > 0
   const hasAgentLocations = agents.length > 0
-  const multiProfile = profiles.length > 1
+  const multiProfile = topSource.accounts('claude').length > 1
+
+  // The servers whose rows the menu draws, read while they are connected so
+  // the rows are there before the menu opens; read again when a server
+  // (re)connects (the store does that itself) and when the menu opens.
+  const serversToRead = [
+    ...(activeServerId && statuses[activeServerId]?.state === 'connected' ? [activeServerId] : []),
+    ...pairedServers.filter((s) => s.online).map((s) => s.serverId)
+  ]
+  const serversKey = serversToRead.join('\u0000')
+  useEffect(() => {
+    if (!serversKey) return
+    startServerSettingsEvents()
+    for (const serverId of serversKey.split('\u0000')) void loadServerSettings(serverId)
+  }, [serversKey])
 
   const AgentLogo = AGENT_LOGOS[setup.kind]
   const setupFamily: LauncherFamily = setup.kind === 'claude-agents' ? 'claude' : setup.kind
-  const binaryProfile = selectedLaunchProfile(setupFamily, activeWorkspaceId, setup.launchProfileId)
+  const binaryProfile =
+    topSource.profilesFor(setupFamily).find((p) => p.id === setup.launchProfileId) ??
+    topSource
+      .profilesFor(setupFamily)
+      .find((p) => p.id === topSource.selectedProfileId(setupFamily))
   const profileLabel =
     multiProfile && (setup.kind === 'claude' || setup.kind === 'claude-agents')
-      ? profiles.find((p) => p.id === (setup.claudeProfileId ?? selectedProfileId))?.label
+      ? topSource
+          .accounts('claude')
+          .find((p) => p.id === (setup.claudeProfileId ?? topSource.selectedAccountId('claude')))
+          ?.label
       : undefined
 
   /** Opening measures the agent button so the menu hangs off its left edge,
    *  not the caret's — see MENU_ICON_INSET. */
-  const openMenu = useCallback((open: boolean) => {
-    if (open && agentButtonRef.current && caretRef.current) {
-      const button = agentButtonRef.current.getBoundingClientRect()
-      const caret = caretRef.current.getBoundingClientRect()
-      setMenuAlignOffset(Math.round(button.left - caret.left - MENU_ICON_INSET))
-    }
-    setMenuOpen(open)
-  }, [])
+  const openMenu = useCallback(
+    (open: boolean) => {
+      if (open && agentButtonRef.current && caretRef.current) {
+        const button = agentButtonRef.current.getBoundingClientRect()
+        const caret = caretRef.current.getBoundingClientRect()
+        setMenuAlignOffset(Math.round(button.left - caret.left - MENU_ICON_INSET))
+      }
+      if (open && serversKey) {
+        for (const serverId of serversKey.split('\u0000'))
+          if (serverSettings[serverId]?.status !== 'ready') void loadServerSettings(serverId)
+      }
+      setMenuOpen(open)
+    },
+    [serversKey, serverSettings]
+  )
 
   const run = useCallback(async (request: Parameters<typeof launchSession>[0]) => {
     setBusy(true)
@@ -217,17 +271,14 @@ export function SessionLauncher({ onRemoteLaunch }: SessionLauncherProps): React
   const cwdFor = (e: { altKey: boolean }): LaunchCwd =>
     e.altKey ? { kind: 'ask' } : { kind: 'workspace-root' }
 
-  const launchAgent = useCallback(
-    (next: AgentSetup, cwd: LaunchCwd) => {
-      setMenuOpen(false)
-      if (activeWorkspaceId && next.launchProfileId) {
-        const family: LauncherFamily = next.kind === 'claude-agents' ? 'claude' : next.kind
-        void setWorkspaceLaunchProfile(activeWorkspaceId, family, next.launchProfileId)
-      }
-      void run({ setup: next, cwd, remember: true })
-    },
-    [activeWorkspaceId, run]
-  )
+  const launchAgent = (next: AgentSetup, cwd: LaunchCwd): void => {
+    setMenuOpen(false)
+    if (activeWorkspaceId && next.launchProfileId && !activeServerId) {
+      const family: LauncherFamily = next.kind === 'claude-agents' ? 'claude' : next.kind
+      void setWorkspaceLaunchProfile(activeWorkspaceId, family, next.launchProfileId)
+    }
+    void run({ setup: next, cwd, remember: true, onServer: serverLaunchPick(topSource, next) })
+  }
 
   /** A Claude or Codex entry in the caret menu: one level per choice left to
    *  make. With a single launch profile and a single account it launches on a
@@ -235,199 +286,242 @@ export function SessionLauncher({ onRemoteLaunch }: SessionLauncherProps): React
    *  CLI, its chat view, every saved profile and its chat twin — and, with
    *  more than one account, hovering a profile opens that provider's accounts
    *  beside it, each with its headroom. With one profile and several accounts
-   *  the accounts come straight after the entry. */
-  const renderPooledEntry = useCallback(
-    (entry: {
-      family: 'claude' | 'codex'
-      label: string
-      shortcut: string | undefined
-      Logo: typeof ClaudeLogo
-      accounts: PooledAccount[]
-      selectedAccountId: string | null
-      launch: (launchProfileId: string, accountId?: string) => void
-    }) => {
-      const { family, label, shortcut, Logo, accounts, selectedAccountId, launch } = entry
-      const binaryProfiles = profilesFor(family)
-      const selectedBinaryId = selectedLaunchProfile(family, activeWorkspaceId).id
-      const multiAccount = accounts.length > 1
-      const entryAttr = { [`data-${family}-entry`]: label }
-      if (!multiAccount && binaryProfiles.length === 1) {
-        return (
-          <DropdownMenuItem onSelect={() => launch(binaryProfiles[0].id)}>
-            <Logo className="w-3.5 h-3.5 flex-shrink-0 text-text-tertiary" />
-            <span className="flex-1">{label}</span>
-            {shortcut && <DropdownMenuShortcut>{shortcut}</DropdownMenuShortcut>}
-          </DropdownMenuItem>
-        )
-      }
-      const accountRows = (binaryId: string): React.JSX.Element[] =>
-        accounts.map((account) => (
-          <DropdownMenuItem
-            key={account.id}
-            {...{ [`data-${family}-account`]: account.id }}
-            onSelect={() => launch(binaryId, account.id)}
-            title={account.title}
-          >
-            <span className="flex-1 truncate">{account.label}</span>
-            {account.headroom && (
-              <span className="text-[11px] text-text-tertiary tabular-nums flex-shrink-0">
-                {account.headroom}
-              </span>
-            )}
-            {binaryId === selectedBinaryId && account.id === selectedAccountId && (
-              <CheckIcon className="w-3.5 h-3.5 flex-shrink-0 text-text-tertiary" />
-            )}
-          </DropdownMenuItem>
-        ))
-      const profileCheck = (binaryId: string): React.JSX.Element | null =>
-        binaryId === selectedBinaryId ? (
-          <CheckIcon className="w-3.5 h-3.5 flex-shrink-0 text-text-tertiary" />
-        ) : null
+   *  the accounts come straight after the entry. The profiles and the
+   *  accounts are the source's: this Mac's, or the server's the row runs on. */
+  const renderPooledEntry = (entry: {
+    family: PooledFamily
+    label: string
+    shortcut: string | undefined
+    Logo: typeof ClaudeLogo
+    binaryProfiles: LaunchProfile[]
+    selectedBinaryId: string
+    accounts: LaunchAccount[]
+    selectedAccountId: string | null
+    disabled: boolean
+    launch: (launchProfileId: string, accountId?: string) => void
+  }): React.JSX.Element => {
+    const {
+      family,
+      label,
+      shortcut,
+      Logo,
+      binaryProfiles,
+      selectedBinaryId,
+      accounts,
+      selectedAccountId,
+      disabled,
+      launch
+    } = entry
+    const multiAccount = accounts.length > 1
+    const entryAttr = { [`data-${family}-entry`]: label }
+    if (!multiAccount && binaryProfiles.length === 1) {
       return (
-        <DropdownMenuSub>
-          <DropdownMenuSubTrigger {...entryAttr}>
-            <Logo className="w-3.5 h-3.5 flex-shrink-0 text-text-tertiary" />
-            <span className="flex-1">{label}</span>
-            <ChevronRightIcon className="w-3 h-3 flex-shrink-0 text-text-tertiary" />
-          </DropdownMenuSubTrigger>
-          <DropdownMenuSubContent>
-            {binaryProfiles.length === 1 ? (
-              <>
-                <DropdownMenuLabel>Account</DropdownMenuLabel>
-                {accountRows(binaryProfiles[0].id)}
-              </>
-            ) : (
-              <>
-                <DropdownMenuLabel>Launch profile</DropdownMenuLabel>
-                {binaryProfiles.map((binary) =>
-                  multiAccount ? (
-                    <DropdownMenuSub key={binary.id}>
-                      <DropdownMenuSubTrigger data-launch-profile-entry={binary.id}>
-                        <span className="flex-1 truncate">{binary.name}</span>
-                        {profileCheck(binary.id)}
-                        <ChevronRightIcon className="w-3 h-3 flex-shrink-0 text-text-tertiary" />
-                      </DropdownMenuSubTrigger>
-                      <DropdownMenuSubContent>
-                        <DropdownMenuLabel>Account</DropdownMenuLabel>
-                        {accountRows(binary.id)}
-                      </DropdownMenuSubContent>
-                    </DropdownMenuSub>
-                  ) : (
-                    <DropdownMenuItem
-                      key={binary.id}
-                      data-launch-profile-entry={binary.id}
-                      onSelect={() => launch(binary.id)}
-                    >
+        <DropdownMenuItem
+          {...entryAttr}
+          disabled={disabled}
+          onSelect={() => launch(binaryProfiles[0].id)}
+        >
+          <Logo className="w-3.5 h-3.5 flex-shrink-0 text-text-tertiary" />
+          <span className="flex-1">{label}</span>
+          {shortcut && <DropdownMenuShortcut>{shortcut}</DropdownMenuShortcut>}
+        </DropdownMenuItem>
+      )
+    }
+    const accountRows = (binaryId: string): React.JSX.Element[] =>
+      accounts.map((account) => (
+        <DropdownMenuItem
+          key={account.id}
+          {...{ [`data-${family}-account`]: account.id }}
+          onSelect={() => launch(binaryId, account.id)}
+          title={account.title}
+        >
+          <span className="flex-1 truncate">{account.label}</span>
+          {account.headroom && (
+            <span className="text-[11px] text-text-tertiary tabular-nums flex-shrink-0">
+              {account.headroom}
+            </span>
+          )}
+          {binaryId === selectedBinaryId && account.id === selectedAccountId && (
+            <CheckIcon className="w-3.5 h-3.5 flex-shrink-0 text-text-tertiary" />
+          )}
+        </DropdownMenuItem>
+      ))
+    const profileCheck = (binaryId: string): React.JSX.Element | null =>
+      binaryId === selectedBinaryId ? (
+        <CheckIcon className="w-3.5 h-3.5 flex-shrink-0 text-text-tertiary" />
+      ) : null
+    return (
+      <DropdownMenuSub>
+        <DropdownMenuSubTrigger {...entryAttr} disabled={disabled}>
+          <Logo className="w-3.5 h-3.5 flex-shrink-0 text-text-tertiary" />
+          <span className="flex-1">{label}</span>
+          <ChevronRightIcon className="w-3 h-3 flex-shrink-0 text-text-tertiary" />
+        </DropdownMenuSubTrigger>
+        <DropdownMenuSubContent>
+          {binaryProfiles.length === 1 ? (
+            <>
+              <DropdownMenuLabel>Account</DropdownMenuLabel>
+              {accountRows(binaryProfiles[0].id)}
+            </>
+          ) : (
+            <>
+              <DropdownMenuLabel>Launch profile</DropdownMenuLabel>
+              {binaryProfiles.map((binary) =>
+                multiAccount ? (
+                  <DropdownMenuSub key={binary.id}>
+                    <DropdownMenuSubTrigger data-launch-profile-entry={binary.id}>
                       <span className="flex-1 truncate">{binary.name}</span>
                       {profileCheck(binary.id)}
-                    </DropdownMenuItem>
-                  )
-                )}
-              </>
-            )}
-          </DropdownMenuSubContent>
-        </DropdownMenuSub>
-      )
-    },
-    [activeWorkspaceId]
-  )
+                      <ChevronRightIcon className="w-3 h-3 flex-shrink-0 text-text-tertiary" />
+                    </DropdownMenuSubTrigger>
+                    <DropdownMenuSubContent>
+                      <DropdownMenuLabel>Account</DropdownMenuLabel>
+                      {accountRows(binary.id)}
+                    </DropdownMenuSubContent>
+                  </DropdownMenuSub>
+                ) : (
+                  <DropdownMenuItem
+                    key={binary.id}
+                    data-launch-profile-entry={binary.id}
+                    onSelect={() => launch(binary.id)}
+                  >
+                    <span className="flex-1 truncate">{binary.name}</span>
+                    {profileCheck(binary.id)}
+                  </DropdownMenuItem>
+                )
+              )}
+            </>
+          )}
+        </DropdownMenuSubContent>
+      </DropdownMenuSub>
+    )
+  }
 
-  const claudeAccounts: PooledAccount[] = profiles.map((account) => ({
-    id: account.id,
-    label: account.label,
-    title: `${account.label} · ${describeClaudeProfileAuth(account)}`,
-    headroom: headroomLabel(accountsUsage[account.id])
-  }))
-  const codexPooledAccounts: PooledAccount[] = codexAccounts.map((account) => ({
-    id: account.id,
-    label: account.label,
-    title: `${account.label} · ${describeCodexAccountAuth(account)}`,
-    headroom: headroomLabel(codexAccountsUsage[account.id])
-  }))
-
-  const renderClaudeEntry = (
-    kind: AgentKind,
-    label: string,
-    shortcut: string | undefined,
-    dangerousMode: boolean
-  ): React.JSX.Element =>
-    renderPooledEntry({
-      family: 'claude',
-      label,
-      shortcut,
-      Logo: ClaudeLogo,
-      accounts: claudeAccounts,
-      selectedAccountId: selectedProfileId,
-      launch: (launchProfileId, claudeProfileId) =>
-        launchAgent(
-          { kind, dangerousMode, claudeProfileId, launchProfileId },
-          { kind: 'workspace-root' }
-        )
-    })
-
-  const renderCodexEntry = (
-    label: string,
-    shortcut: string | undefined,
-    dangerousMode: boolean
-  ): React.JSX.Element =>
-    renderPooledEntry({
-      family: 'codex',
-      label,
-      shortcut,
-      Logo: CodexLogo,
-      accounts: codexPooledAccounts,
-      selectedAccountId: selectedCodexAccountId,
-      launch: (launchProfileId, codexAccountId) =>
-        launchAgent(
-          { kind: 'codex', dangerousMode, codexAccountId, launchProfileId },
-          { kind: 'workspace-root' }
-        )
-    })
-
-  const renderAgentEntry = useCallback(
-    (
-      kind: Exclude<AgentKind, 'claude' | 'claude-agents'>,
-      label: string,
-      shortcut?: string,
-      dangerousMode = false
-    ) => {
-      const binaryProfiles = profilesFor(kind)
-      const Logo = AGENT_LOGOS[kind]
-      const launch = (launchProfileId: string): void =>
-        launchAgent({ kind, dangerousMode, launchProfileId }, { kind: 'workspace-root' })
-      if (binaryProfiles.length === 1) {
-        return (
-          <DropdownMenuItem onSelect={() => launch(binaryProfiles[0].id)}>
-            <Logo className="w-3.5 h-3.5 flex-shrink-0 text-text-tertiary" />
-            <span className="flex-1">{label}</span>
-            {shortcut && <DropdownMenuShortcut>{shortcut}</DropdownMenuShortcut>}
-          </DropdownMenuItem>
-        )
-      }
-      const selected = selectedLaunchProfile(kind, activeWorkspaceId)
+  /** An Antigravity or Pi entry: no account, one level for the profile. */
+  const renderAgentEntry = (entry: {
+    kind: Exclude<AgentKind, 'claude' | 'claude-agents' | 'codex'>
+    label: string
+    shortcut: string | undefined
+    binaryProfiles: LaunchProfile[]
+    selectedBinaryId: string
+    disabled: boolean
+    launch: (launchProfileId: string) => void
+  }): React.JSX.Element => {
+    const { kind, label, shortcut, binaryProfiles, selectedBinaryId, disabled, launch } = entry
+    const Logo = AGENT_LOGOS[kind]
+    if (binaryProfiles.length === 1) {
       return (
-        <DropdownMenuSub>
-          <DropdownMenuSubTrigger>
-            <Logo className="w-3.5 h-3.5 flex-shrink-0 text-text-tertiary" />
-            <span className="flex-1">{label}</span>
-            <ChevronRightIcon className="w-3 h-3 flex-shrink-0 text-text-tertiary" />
-          </DropdownMenuSubTrigger>
-          <DropdownMenuSubContent>
-            <DropdownMenuLabel>Launch profile</DropdownMenuLabel>
-            {binaryProfiles.map((profile) => (
-              <DropdownMenuItem key={profile.id} onSelect={() => launch(profile.id)}>
-                <span className="flex-1 truncate">{profile.name}</span>
-                {profile.id === selected.id && (
-                  <CheckIcon className="w-3.5 h-3.5 text-text-tertiary" />
-                )}
-              </DropdownMenuItem>
-            ))}
-          </DropdownMenuSubContent>
-        </DropdownMenuSub>
+        <DropdownMenuItem disabled={disabled} onSelect={() => launch(binaryProfiles[0].id)}>
+          <Logo className="w-3.5 h-3.5 flex-shrink-0 text-text-tertiary" />
+          <span className="flex-1">{label}</span>
+          {shortcut && <DropdownMenuShortcut>{shortcut}</DropdownMenuShortcut>}
+        </DropdownMenuItem>
       )
-    },
-    [activeWorkspaceId, launchAgent]
-  )
+    }
+    return (
+      <DropdownMenuSub>
+        <DropdownMenuSubTrigger disabled={disabled}>
+          <Logo className="w-3.5 h-3.5 flex-shrink-0 text-text-tertiary" />
+          <span className="flex-1">{label}</span>
+          <ChevronRightIcon className="w-3 h-3 flex-shrink-0 text-text-tertiary" />
+        </DropdownMenuSubTrigger>
+        <DropdownMenuSubContent>
+          <DropdownMenuLabel>Launch profile</DropdownMenuLabel>
+          {binaryProfiles.map((profile) => (
+            <DropdownMenuItem
+              key={profile.id}
+              data-launch-profile-entry={profile.id}
+              onSelect={() => launch(profile.id)}
+            >
+              <span className="flex-1 truncate">{profile.name}</span>
+              {profile.id === selectedBinaryId && (
+                <CheckIcon className="w-3.5 h-3.5 text-text-tertiary" />
+              )}
+            </DropdownMenuItem>
+          ))}
+        </DropdownMenuSubContent>
+      </DropdownMenuSub>
+    )
+  }
+
+  /** The seven agent rows of ONE machine, from its source: the one function
+   *  the top section and every "Run on <server>" section render with, so a
+   *  server offers exactly what it can start (PRDCT-4162). `launch` is where
+   *  the setup goes: the launcher's own path for the top section, an explicit
+   *  server for a server section. Shortcuts are shown for the top section
+   *  alone: they fire the machine the active workspace lives on. */
+  const renderSourceEntries = (
+    source: LaunchSource,
+    launch: (setup: AgentSetup) => void,
+    options: { shortcuts: boolean; disabled: boolean }
+  ): React.JSX.Element => {
+    const shortcut = (label: string | null): string | undefined =>
+      options.shortcuts ? (label ?? undefined) : undefined
+    const claudeEntry = (
+      kind: AgentKind,
+      label: string,
+      key: string | null,
+      dangerousMode: boolean
+    ): React.JSX.Element =>
+      renderPooledEntry({
+        family: 'claude',
+        label,
+        shortcut: shortcut(key),
+        Logo: ClaudeLogo,
+        binaryProfiles: source.profilesFor('claude'),
+        selectedBinaryId: source.selectedProfileId('claude'),
+        accounts: source.accounts('claude'),
+        selectedAccountId: source.selectedAccountId('claude'),
+        disabled: options.disabled,
+        launch: (launchProfileId, claudeProfileId) =>
+          launch({ kind, dangerousMode, claudeProfileId, launchProfileId })
+      })
+    const codexEntry = (
+      label: string,
+      key: string | null,
+      dangerousMode: boolean
+    ): React.JSX.Element =>
+      renderPooledEntry({
+        family: 'codex',
+        label,
+        shortcut: shortcut(key),
+        Logo: CodexLogo,
+        binaryProfiles: source.profilesFor('codex'),
+        selectedBinaryId: source.selectedProfileId('codex'),
+        accounts: source.accounts('codex'),
+        selectedAccountId: source.selectedAccountId('codex'),
+        disabled: options.disabled,
+        launch: (launchProfileId, codexAccountId) =>
+          launch({ kind: 'codex', dangerousMode, codexAccountId, launchProfileId })
+      })
+    const agentEntry = (
+      kind: 'antigravity' | 'pi',
+      label: string,
+      key: string | null
+    ): React.JSX.Element =>
+      renderAgentEntry({
+        kind,
+        label,
+        shortcut: shortcut(key),
+        binaryProfiles: source.profilesFor(kind),
+        selectedBinaryId: source.selectedProfileId(kind),
+        disabled: options.disabled,
+        launch: (launchProfileId) => launch({ kind, dangerousMode: false, launchProfileId })
+      })
+    return (
+      <>
+        {claudeEntry('claude', 'Claude Code', claudeShortcut, false)}
+        {claudeEntry('claude', 'Claude Code (skip permissions)', dangerousShortcut, true)}
+        {claudeEntry('claude-agents', 'Claude Agents', agentsShortcut, false)}
+        {agentEntry('antigravity', 'Antigravity CLI', antigravityShortcut)}
+        {codexEntry('Codex CLI', codexShortcut, false)}
+        {codexEntry('Codex CLI (YOLO)', yoloCodexShortcut, true)}
+        {agentEntry('pi', 'Pi', piShortcut)}
+      </>
+    )
+  }
+
+  const topLabel = hasRemoteLocations || topSource.serverId !== LOCAL_SERVER_ID
 
   return (
     <div className="relative">
@@ -451,7 +545,7 @@ export function SessionLauncher({ onRemoteLaunch }: SessionLauncherProps): React
               disabled={busy}
               className="launcher-btn"
               data-launcher-agent
-              title={`${describeSetup(setup, [binaryProfile.name, profileLabel].filter(Boolean).join(' · '))} — workspace root (⌥ to choose a folder)`}
+              title={`${describeSetup(setup, [binaryProfile?.name, profileLabel].filter(Boolean).join(' · '))} — workspace root (⌥ to choose a folder)`}
               onClick={(e) => void run({ setup, cwd: cwdFor(e), remember: true })}
             >
               <AgentLogo className="w-3.5 h-3.5 flex-shrink-0 text-text-tertiary" />
@@ -486,29 +580,32 @@ export function SessionLauncher({ onRemoteLaunch }: SessionLauncherProps): React
                 sideOffset={MENU_SIDE_OFFSET}
                 alignOffset={menuAlignOffset}
               >
-                {hasRemoteLocations && <DropdownMenuLabel>This Mac</DropdownMenuLabel>}
+                {topLabel && (
+                  <DropdownMenuLabel>
+                    <span
+                      className="flex items-center gap-1.5"
+                      data-launch-source={topSource.serverId}
+                    >
+                      {topSource.serverId !== LOCAL_SERVER_ID && (
+                        <ServerIcon
+                          className="w-3 h-3 flex-shrink-0"
+                          style={
+                            pairings[topSource.serverId]?.color
+                              ? { color: pairings[topSource.serverId]?.color }
+                              : undefined
+                          }
+                        />
+                      )}
+                      <span className="truncate">{topSource.name}</span>
+                    </span>
+                  </DropdownMenuLabel>
+                )}
 
-                {renderClaudeEntry('claude', 'Claude Code', claudeShortcut ?? undefined, false)}
-                {renderClaudeEntry(
-                  'claude',
-                  'Claude Code (skip permissions)',
-                  dangerousShortcut ?? undefined,
-                  true
+                {renderSourceEntries(
+                  topSource,
+                  (next) => launchAgent(next, { kind: 'workspace-root' }),
+                  { shortcuts: true, disabled: false }
                 )}
-                {renderClaudeEntry(
-                  'claude-agents',
-                  'Claude Agents',
-                  agentsShortcut ?? undefined,
-                  false
-                )}
-                {renderAgentEntry(
-                  'antigravity',
-                  'Antigravity CLI',
-                  antigravityShortcut ?? undefined
-                )}
-                {renderCodexEntry('Codex CLI', codexShortcut ?? undefined, false)}
-                {renderCodexEntry('Codex CLI (YOLO)', yoloCodexShortcut ?? undefined, true)}
-                {renderAgentEntry('pi', 'Pi', piShortcut ?? undefined)}
 
                 {pairedServers.map((server) => (
                   <div
@@ -544,34 +641,20 @@ export function SessionLauncher({ onRemoteLaunch }: SessionLauncherProps): React
                       <CommandLineIcon className="w-3.5 h-3.5 flex-shrink-0 text-text-tertiary" />
                       <span className="flex-1">Terminal</span>
                     </DropdownMenuItem>
-                    <DropdownMenuItem
-                      disabled={!server.online}
-                      onSelect={() =>
+                    {renderSourceEntries(
+                      sourceFor(server.serverId),
+                      (next) => {
+                        setMenuOpen(false)
                         void run({
                           serverId: server.serverId,
-                          setup: { kind: 'claude', dangerousMode: false },
+                          setup: next,
                           cwd: { kind: 'path', path: server.workspace!.rootDir },
-                          workspaceId: server.workspace!.id
+                          workspaceId: server.workspace!.id,
+                          onServer: serverLaunchPick(sourceFor(server.serverId), next)
                         })
-                      }
-                    >
-                      <ClaudeLogo className="w-3.5 h-3.5 flex-shrink-0 text-text-tertiary" />
-                      <span className="flex-1">Claude Code</span>
-                    </DropdownMenuItem>
-                    <DropdownMenuItem
-                      disabled={!server.online}
-                      onSelect={() =>
-                        void run({
-                          serverId: server.serverId,
-                          setup: { kind: 'codex', dangerousMode: false },
-                          cwd: { kind: 'path', path: server.workspace!.rootDir },
-                          workspaceId: server.workspace!.id
-                        })
-                      }
-                    >
-                      <CodexLogo className="w-3.5 h-3.5 flex-shrink-0 text-text-tertiary" />
-                      <span className="flex-1">Codex CLI</span>
-                    </DropdownMenuItem>
+                      },
+                      { shortcuts: false, disabled: !server.online }
+                    )}
                   </div>
                 ))}
 
