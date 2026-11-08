@@ -23,6 +23,7 @@ import { reportFleetError, useFleetStore } from '../../store/fleet-store'
 import { ServerCombineRow } from '../fleet/ServerCombineRow'
 import { useSessionStore, type SettingsSection as Section } from '../../store/session-store'
 import { useSettingsMachineStore } from '../../store/settings-machine-store'
+import { savedServerOf } from '../../lib/tailnet-match'
 import { useWorkspaceStore } from '../../store/workspace-store'
 import {
   SettingsPage,
@@ -510,7 +511,10 @@ function ThisMacServer(): React.JSX.Element {
 /**
  * The machines of this Mac's tailnet, from Tailscale's own status, the ones
  * answering as a Clave server on the default port marked; a pick fills the
- * address and the name, the token stays pasted by hand.
+ * address and the name, the token stays pasted by hand. A machine that is
+ * already one of the saved servers (same host, same port; PRDCT-4163) shows
+ * that server's name and its connection state instead of Use: there is
+ * nothing to add, and Use would have saved it twice.
  */
 function TailnetScan({
   onPick
@@ -519,6 +523,8 @@ function TailnetScan({
 }): React.JSX.Element {
   const [scan, setScan] = useState<TailnetScan | null>(null)
   const [busy, setBusy] = useState(false)
+  const connections = useFleetStore((s) => s.connections)
+  const statuses = useFleetStore((s) => s.statuses)
   const run = async (): Promise<void> => {
     setBusy(true)
     try {
@@ -556,37 +562,52 @@ function TailnetScan({
         </div>
       )}
       {scan?.available &&
-        scan.machines.map((machine) => (
-          <div
-            className="settings-row"
-            key={machine.dnsName || machine.ip || machine.name}
-            data-tailnet-machine={machine.ip || machine.name}
-            data-clave-server={machine.claveServer ? 'true' : undefined}
-            data-online={machine.online ? 'true' : undefined}
-          >
-            <div className="min-w-0">
-              <div className="flex items-center gap-2 min-w-0">
-                <p className="settings-row-title truncate">{machine.name}</p>
-                {machine.claveServer && <span className="badge badge-muted">Clave server</span>}
-                {!machine.online && <span className="badge badge-muted">Offline</span>}
+        scan.machines.map((machine) => {
+          const saved = savedServerOf(machine, connections)
+          const state = saved ? describeServerState(statuses[saved.id], saved.enabled) : null
+          return (
+            <div
+              className="settings-row"
+              key={machine.dnsName || machine.ip || machine.name}
+              data-tailnet-machine={machine.ip || machine.name}
+              data-clave-server={machine.claveServer ? 'true' : undefined}
+              data-online={machine.online ? 'true' : undefined}
+              data-saved-server={saved?.id}
+            >
+              <div className="min-w-0">
+                <div className="flex items-center gap-2 min-w-0">
+                  <p className="settings-row-title truncate">{machine.name}</p>
+                  {saved ? (
+                    <span className="badge badge-muted truncate">Saved as {saved.name}</span>
+                  ) : (
+                    machine.claveServer && <span className="badge badge-muted">Clave server</span>
+                  )}
+                  {!machine.online && <span className="badge badge-muted">Offline</span>}
+                </div>
+                <p className="settings-row-description truncate">
+                  {machine.ip || 'No IPv4 address'}
+                  {machine.os ? ` · ${machine.os}` : ''}
+                </p>
               </div>
-              <p className="settings-row-description truncate">
-                {machine.ip || 'No IPv4 address'}
-                {machine.os ? ` · ${machine.os}` : ''}
-              </p>
+              <div className="settings-row-controls">
+                {saved && state ? (
+                  <span className="status-text" data-status={state.tone}>
+                    {state.label}
+                  </span>
+                ) : (
+                  <button
+                    className="btn-secondary"
+                    onClick={() => onPick({ name: machine.name, url: machine.url })}
+                    disabled={!machine.online || !machine.url}
+                    data-tailnet-use
+                  >
+                    Use
+                  </button>
+                )}
+              </div>
             </div>
-            <div className="settings-row-controls">
-              <button
-                className="btn-secondary"
-                onClick={() => onPick({ name: machine.name, url: machine.url })}
-                disabled={!machine.online || !machine.url}
-                data-tailnet-use
-              >
-                Use
-              </button>
-            </div>
-          </div>
-        ))}
+          )
+        })}
     </div>
   )
 }
