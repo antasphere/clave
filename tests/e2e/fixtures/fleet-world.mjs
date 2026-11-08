@@ -154,11 +154,12 @@ function seedCodexStub(dir) {
  * `count` daemons (two by default), each started with the fleet flags plus
  * `serverArgs`; `world.mac(label, { args })` adds app flags to a Mac's launch
  * (the server upgrade spec's `--test-version`, issue #266). `codexStub` puts
- * a stand-in `codex` on the daemons' PATH for the API-key login.
+ * a stand-in `codex` on the daemons' PATH for the API-key login. `env` adds
+ * variables to the daemons' environment (a spec's own transcripts root).
  */
 export async function fleetWorld(
   label,
-  { gitRepo = false, count = 2, serverArgs = [], codexStub = false } = {}
+  { gitRepo = false, count = 2, serverArgs = [], codexStub = false, env = {} } = {}
 ) {
   const run = `${label}-${randomUUID()}`
   const servers = []
@@ -202,7 +203,8 @@ export async function fleetWorld(
     env: {
       SHELL: '/bin/sh',
       ...(keychain && { CLAVE_KEYCHAIN_FILE: keychain.file }),
-      ...(stubs.length && { PATH: `${stubs.join(':')}:${process.env.PATH ?? ''}` })
+      ...(stubs.length && { PATH: `${stubs.join(':')}:${process.env.PATH ?? ''}` }),
+      ...env
     },
     seedFrom: seed,
     args: [
