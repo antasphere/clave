@@ -16,6 +16,7 @@
  */
 import type { LayoutSnapshot } from '@clave/contract/sidebar'
 import type { AccountOverride, Session } from '@clave/contract/sessions'
+import { LOCAL_SERVER_ID, parseSessionKey } from '@clave/contract/fleet'
 import { sanitizeForPaste } from '../../shared/paste-sanitize'
 import { buildCheckpointProvenance, buildProvenanceHeader } from '../../shared/exchange-provenance'
 import { pickAccount } from '../../shared/account-pool'
@@ -35,6 +36,7 @@ import {
   type AccountSwitchMode,
   type Ctx,
   NOT_SERVED,
+  type NotServed,
   type Payload,
   type ServedPoolAccount,
   allLayouts,
@@ -74,6 +76,33 @@ function parentOfSession(ctx: Ctx, sessionId: string): string | null {
   return ctx.shell.parentOf(sessionId) ?? ctx.shell.record(sessionId)?.spawnedBy ?? null
 }
 
+/** A tab of another Clave server, by the key `clave_open_session` returned
+ *  for it (`clave-owner:session:<serverId>:<id>`): this process holds no
+ *  connection to that server, so such a tab is the window's to reach
+ *  (PRDCT-4166). A bare id, or anything that is not a resource key, is a tab
+ *  of this host. */
+function isServerTabRef(ref: string): boolean {
+  if (!ref.startsWith('clave-owner:')) return false
+  try {
+    return parseSessionKey(ref).serverId !== LOCAL_SERVER_ID
+  } catch {
+    return false
+  }
+}
+
+/** The tab a reference names among this host's, or null: an id, then an
+ *  exact name, the routed window's tabs first. */
+async function findTarget(ctx: Ctx, key: string, ref: string): Promise<Session | null> {
+  const byId = await ctx.api.sessions.get(ref).catch((err) => {
+    if (tagOf(err) === 'SessionNotFound') return null
+    throw err
+  })
+  if (byId) return byId
+  const all = await ctx.api.sessions.list()
+  const named = all.filter((s) => nameOf(ctx, s) === ref)
+  return named.find((s) => s.windowKey === key) ?? named[0] ?? null
+}
+
 /** The renderer's `resolveTargetSession`: "parent", an id, then an exact
  *  name, the routed window's tabs first. */
 async function resolveTarget(ctx: Ctx, key: string, ref: string): Promise<Session> {
@@ -90,14 +119,7 @@ async function resolveTarget(ctx: Ctx, key: string, ref: string): Promise<Sessio
     }
     return parent
   }
-  const byId = await ctx.api.sessions.get(ref).catch((err) => {
-    if (tagOf(err) === 'SessionNotFound') return null
-    throw err
-  })
-  if (byId) return byId
-  const all = await ctx.api.sessions.list()
-  const named = all.filter((s) => nameOf(ctx, s) === ref)
-  const found = named.find((s) => s.windowKey === key) ?? named[0]
+  const found = await findTarget(ctx, key, ref)
   if (!found) throw new Error(`No session with id or name "${ref}"`)
   return found
 }
@@ -225,8 +247,16 @@ async function setSessionView(ctx: Ctx, _key: string, p: Payload): Promise<unkno
   return { sessionId: id, view: { url, title } }
 }
 
-async function readSession(ctx: Ctx, key: string, p: Payload): Promise<unknown> {
-  const target = await resolveTarget(ctx, key, str(p.sessionId) ?? '')
+async function readSession(ctx: Ctx, key: string, p: Payload): Promise<unknown | NotServed> {
+  const ref = str(p.sessionId) ?? ''
+  // A tab running on another server, by its key or by a name no tab of this
+  // host carries, is read by the window that shows it, from the owning
+  // server over the fleet bridge (PRDCT-4166). Until then main answered
+  // "no session" for every server tab an agent had just opened.
+  if (isServerTabRef(ref)) return NOT_SERVED
+  const target =
+    ref === 'parent' ? await resolveTarget(ctx, key, ref) : await findTarget(ctx, key, ref)
+  if (!target) return NOT_SERVED
   assertCanReach(ctx, await allLayouts(ctx, key), target, 'read')
   const requested = Math.min(Math.max(typeof p.lines === 'number' ? p.lines : 100, 1), 500)
   let screen: { lines: readonly string[] }
