@@ -65,6 +65,10 @@ import { initServedToolsEvents } from '../../lib/served-events'
 import { placeRecords, adoptRehomed, adoptHiddenRecord } from '../../lib/adopt-record'
 import { requestGroupDissolve, useDissolveStore } from '../../lib/group-dissolve'
 import { planBootAdoption, bootSurvivors } from '../../lib/boot-adoption'
+import { splitOngoingDead } from '../../lib/ongoing'
+import { startOngoingFollow } from '../../lib/ongoing-actions'
+import { useOngoingStore, startOngoingSync } from '../../store/ongoing-store'
+import { OngoingPage } from '../ongoing/OngoingPage'
 import { savedLayoutSessionIds } from '../../../../shared/adoption-scope'
 import { parkToolbarSurvivor } from '../../lib/toolbar-terminal-registry'
 import { initSecretStore } from '../../store/secret-store'
@@ -130,6 +134,17 @@ export function AppShell(): React.JSX.Element {
   // focus on every change and clears the report when it goes away. A window that never
   // reports leaves the plugins with the last report from whichever window did.
   const focusedSessionId = useSessionStore((s) => s.focusedSessionId)
+  // The ongoing conversations (PRDCT-4190) follow their tabs (a rename, the
+  // provider's id) and are read again when the window comes back to the front.
+  useEffect(() => {
+    const stopFollow = startOngoingFollow()
+    const stopSync = startOngoingSync()
+    if (!useOngoingStore.getState().hydrated) void useOngoingStore.getState().hydrate()
+    return () => {
+      stopFollow()
+      stopSync()
+    }
+  }, [])
   useEffect(() => {
     void window.electronAPI.pluginsContext(focusedSessionId ?? null).catch(() => {
       /* The plugin registry reports its own failures in Settings. */
@@ -270,6 +285,15 @@ export function AppShell(): React.JSX.Element {
         // where they belong instead of as rows beside the groups.
         const survivors = (await window.electronAPI?.listSessionRecords?.()) ?? []
         const plan = planBootAdoption(survivors)
+        // An ongoing conversation whose process is gone is not work to
+        // restore (PRDCT-4190): never behind the prompt, never spawned at
+        // launch. Its record goes; the entry resumes it when it is opened.
+        await useOngoingStore.getState().hydrate()
+        const ongoingDead = splitOngoingDead(plan.deadTabs, useOngoingStore.getState().entries)
+        for (const s of ongoingDead.resting) {
+          void window.electronAPI?.discardSessionRecord?.(s.tmuxName ?? s.id)
+        }
+        plan.deadTabs = ongoingDead.restore
         // Whether that read was EVERY adoptable record (inside the app) or
         // the server's come after the boot (attached, or no server named
         // yet): the merge below prunes a saved id with no record only when
@@ -413,6 +437,14 @@ export function AppShell(): React.JSX.Element {
           if (fresh.length === 0) return
           const ws = useWorkspaceStore.getState().activeWorkspaceId
           const serverPlan = planBootAdoption(fresh)
+          if (!useOngoingStore.getState().hydrated) await useOngoingStore.getState().hydrate()
+          const serverOngoing = splitOngoingDead(
+            serverPlan.deadTabs,
+            useOngoingStore.getState().entries
+          )
+          for (const s of serverOngoing.resting)
+            void window.electronAPI?.discardSessionRecord?.(s.tmuxName ?? s.id)
+          serverPlan.deadTabs = serverOngoing.restore
           // What needs no process first, so nothing waits on a reattach: the
           // dead hidden halves discarded, the toolbar survivors parked for
           // their button (a click before the restore had settled started a
@@ -1066,6 +1098,11 @@ export function AppShell(): React.JSX.Element {
             >
               <ExtensionsPanel />
             </div>
+            {activeView === 'ongoing' && (
+              <div className="flex-1 flex min-h-0 view-fade-in">
+                <OngoingPage />
+              </div>
+            )}
           </div>
         </div>
       </div>

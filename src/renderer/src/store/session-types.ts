@@ -514,7 +514,7 @@ export interface FileTab {
   view?: 'rendered' | 'source'
 }
 
-export type ActiveView = 'terminals' | 'settings' | 'agents' | 'extensions'
+export type ActiveView = 'terminals' | 'settings' | 'agents' | 'extensions' | 'ongoing'
 
 export type SettingsSection =
   | 'servers'

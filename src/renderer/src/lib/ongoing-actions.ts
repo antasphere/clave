@@ -1,0 +1,222 @@
+import { useSessionStore } from '../store/session-store'
+import { useOngoingStore, newOngoingId } from '../store/ongoing-store'
+import { accountSessionFields, accountSpawnFields } from '../store/claude-profile-store'
+import { emitTabClosed } from './exchange-capture'
+import { isRemoteKey, ownerOf } from './fleet-identity'
+import {
+  entryFromSession,
+  ongoingSessionIds,
+  resumableConversation,
+  sessionOfEntry,
+  type OngoingEntry
+} from './ongoing'
+import type { Session } from '../store/session-types'
+
+/**
+ * What the person does with an ongoing conversation (PRDCT-4190): move tabs
+ * in, open one, put one back in the sidebar, end one. The rules are
+ * `lib/ongoing.ts`; this is where they meet the session store and main.
+ */
+
+/** Whether the tab's menu offers "Move to Ongoing". */
+export function canMoveToOngoing(session: Session | undefined): boolean {
+  return !!session && resumableConversation(session) !== null
+}
+
+/** Move tabs to Ongoing. Their rows leave the sidebar and keep their place,
+ *  hidden, in their group; a tab that cannot come back after its process
+ *  ends (no conversation to resume) is left where it is. Returns the ids
+ *  moved. */
+export function moveToOngoing(sessionIds: string[]): string[] {
+  const state = useSessionStore.getState()
+  const existing = useOngoingStore.getState().entries
+  const already = ongoingSessionIds(existing, state.sessions)
+  const now = Date.now()
+  const added: OngoingEntry[] = []
+  for (const id of sessionIds) {
+    if (already.has(id)) continue
+    const session = state.sessions.find((s) => s.id === id)
+    if (!session) continue
+    const group = state.groups.find((g) => g.sessionIds.includes(id))
+    const entry = entryFromSession(session, {
+      id: newOngoingId(),
+      now,
+      originGroup: group ? { id: group.id, name: group.name } : null
+    })
+    if (entry) added.push(entry)
+  }
+  if (added.length === 0) return []
+  const movedIds = new Set(added.map((e) => e.sessionId))
+  void useOngoingStore
+    .getState()
+    .update((entries) => [...added.filter((a) => !entries.some((e) => e.id === a.id)), ...entries])
+  // A moved tab no longer reads as selected: the pane would otherwise keep
+  // showing the conversation the person just put away.
+  const selected = state.selectedSessionIds.filter((id) => !movedIds.has(id))
+  if (selected.length !== state.selectedSessionIds.length) {
+    if (selected.length > 0) useSessionStore.getState().selectSessions(selected)
+    else useSessionStore.setState({ selectedSessionIds: [], focusedSessionId: null })
+  }
+  return [...movedIds]
+}
+
+/** Bring a resting conversation back in a new tab and return its id. The
+ *  entry names the new tab BEFORE the tab is added, so the row never shows
+ *  in the sidebar while it starts. */
+async function resumeEntry(entry: OngoingEntry, keepOngoing: boolean): Promise<string | null> {
+  const store = useSessionStore.getState()
+  const dead = sessionOfEntry<Session>(entry, store.sessions)
+  const isPi = entry.provider === 'pi'
+  const isAgents = !!entry.launch.claudeAgentsMode
+  const dangerousMode = isPi ? false : !!entry.launch.dangerousMode
+  try {
+    const info = await window.electronAPI.fleetStart(ownerOf(entry.sessionId), entry.cwd, {
+      claudeMode: !isAgents && !isPi,
+      claudeAgentsMode: isAgents,
+      piMode: isPi,
+      dangerousMode,
+      model: entry.launch.model,
+      launchProfileId: entry.launch.launchProfileId,
+      piProvider: entry.launch.piProvider,
+      piThinking: entry.launch.piThinking,
+      resumeSessionId: entry.conversationId,
+      ...(isPi ? {} : accountSpawnFields(entry.launch)),
+      workspaceId: entry.workspaceId ?? undefined
+    })
+    if (keepOngoing) {
+      const conversationId =
+        (isPi ? info.piSessionId : info.claudeSessionId) || entry.conversationId
+      // Synchronous on the window's copy: the new tab is hidden before it is added.
+      void useOngoingStore
+        .getState()
+        .update((entries) =>
+          entries.map((e) => (e.id === entry.id ? { ...e, sessionId: info.id, conversationId } : e))
+        )
+    }
+    const session: Session = {
+      id: info.id,
+      cwd: info.cwd,
+      folderName: info.folderName,
+      name: entry.name || info.folderName,
+      alive: info.alive,
+      activityStatus: 'idle',
+      promptWaiting: null,
+      claudeMode: !isAgents && !isPi,
+      claudeAgentsMode: isAgents,
+      antigravityMode: false,
+      codexMode: false,
+      piMode: isPi,
+      dangerousMode,
+      model: info.model,
+      workspaceId: entry.workspaceId ?? undefined,
+      claudeSessionId: info.claudeSessionId,
+      piSessionId: info.piSessionId,
+      launchProfileId: info.launchProfileId,
+      piProvider: info.piProvider,
+      piThinking: info.piThinking,
+      ...(isPi ? {} : accountSessionFields(entry.launch)),
+      sessionType: 'local',
+      detectedUrl: null,
+      serverStatus: null,
+      serverCommand: null,
+      hasUnseenActivity: false,
+      userRenamed: true,
+      planFilePath: null
+    }
+    // A dead tab still in the store (its process ended while the app ran)
+    // gives its place to the new one: same group, same spot.
+    const group = dead ? store.groups.find((g) => g.sessionIds.includes(dead.id)) : undefined
+    const origin =
+      !keepOngoing && !group && entry.originGroup
+        ? store.groups.find((g) => g.id === entry.originGroup!.id)
+        : undefined
+    useSessionStore.getState().addSessionInGroup(session, (group ?? origin)?.id ?? null)
+    if (dead && !dead.alive) useSessionStore.getState().removeSession(dead.id)
+    return info.id
+  } catch (err) {
+    console.error('Could not resume the ongoing conversation:', err)
+    return null
+  }
+}
+
+/** Open an ongoing conversation in the pane: its tab when it runs, else the
+ *  conversation resumed in a new tab that stays ongoing. */
+export async function openOngoing(entryId: string): Promise<string | null> {
+  const entry = useOngoingStore.getState().entries.find((e) => e.id === entryId)
+  if (!entry) return null
+  const session = sessionOfEntry<Session>(entry, useSessionStore.getState().sessions)
+  const id = session && session.alive ? session.id : await resumeEntry(entry, true)
+  if (!id) return null
+  useSessionStore.getState().selectSession(id, false)
+  useSessionStore.getState().setFocusedSession(id)
+  return id
+}
+
+/** Put the conversation back in the sidebar, where its tab sat; a resting
+ *  one is resumed first, into the group it came from when that still runs. */
+export async function returnToSidebar(entryId: string): Promise<void> {
+  const entry = useOngoingStore.getState().entries.find((e) => e.id === entryId)
+  if (!entry) return
+  const session = sessionOfEntry<Session>(entry, useSessionStore.getState().sessions)
+  const id = session && session.alive ? session.id : await resumeEntry(entry, false)
+  await useOngoingStore.getState().update((entries) => entries.filter((e) => e.id !== entryId))
+  if (id) {
+    useSessionStore.getState().selectSession(id, false)
+    useSessionStore.getState().setFocusedSession(id)
+  }
+}
+
+/** End the conversation: its tab is closed and it leaves Ongoing. The
+ *  conversation itself stays in the session history. */
+export async function endOngoing(entryId: string): Promise<void> {
+  const entry = useOngoingStore.getState().entries.find((e) => e.id === entryId)
+  if (!entry) return
+  const state = useSessionStore.getState()
+  const session = sessionOfEntry<Session>(entry, state.sessions)
+  await useOngoingStore.getState().update((entries) => entries.filter((e) => e.id !== entryId))
+  if (!session) return
+  emitTabClosed(session, state.groups, 'user', null)
+  try {
+    await window.electronAPI.killSession(session.id)
+  } catch {
+    if (isRemoteKey(session.id)) return
+    // already gone
+  }
+  useSessionStore.getState().removeSession(session.id)
+}
+
+export function setOngoingNote(entryId: string, note: string): void {
+  const clean = note.replace(/\s+/g, ' ').trim().slice(0, 240)
+  void useOngoingStore
+    .getState()
+    .update((entries) => entries.map((e) => (e.id === entryId ? { ...e, note: clean } : e)))
+}
+
+/**
+ * Keep each entry true to the tab it lives in: its name follows a rename,
+ * and its conversation id follows the provider's (a Claude tab learns its id
+ * at the first message, a resume may hand out a new one). Writes only on a
+ * real change.
+ */
+export function startOngoingFollow(): () => void {
+  return useSessionStore.subscribe((state, prev) => {
+    if (state.sessions === prev.sessions) return
+    const { entries } = useOngoingStore.getState()
+    const changes = new Map<string, Partial<OngoingEntry>>()
+    for (const e of entries) {
+      const s = state.sessions.find((x) => x.id === e.sessionId)
+      if (!s) continue
+      const conv = resumableConversation(s)
+      const patch: Partial<OngoingEntry> = {}
+      if (s.name && s.name !== e.name) patch.name = s.name
+      if (conv && conv.conversationId !== e.conversationId)
+        patch.conversationId = conv.conversationId
+      if (s.cwd && s.cwd !== e.cwd) patch.cwd = s.cwd
+      if (Object.keys(patch).length > 0) changes.set(e.id, patch)
+    }
+    if (changes.size === 0) return
+    void useOngoingStore
+      .getState()
+      .update((list) => list.map((e) => (changes.has(e.id) ? { ...e, ...changes.get(e.id) } : e)))
+  })
+}
