@@ -32,6 +32,20 @@ describe('the message a form becomes for the agent', () => {
     )
     expect(formMessageMarker(text)).toBe(outcome.form)
   })
+  it("reads a description that spans lines, and a question's own line break", () => {
+    const text = formMessage({
+      ...outcome,
+      description: 'Two things before we start.\nFirst your login.',
+      answers: { login: 'luca-a' }
+    })
+    expect(
+      text.startsWith('[The form "Two things before we start.\nFirst your login." was approved')
+    ).toBe(true)
+    expect(formMessageMarker(text)).toBe(outcome.form)
+    expect(formMessageMarker(formMessage({ ...outcome, description: 'A\nB\nC' }))).toBe(
+      outcome.form
+    )
+  })
   it('is not read into a message that only looks like one', () => {
     expect(formMessageMarker('[The form "x" was approved by the person]')).toBeUndefined()
     expect(

@@ -16,7 +16,7 @@ import { useDisclosure } from './disclosure'
 import { ChatCode } from './code'
 import { Key } from './prompt-bits'
 import { InputPrompt } from './InputPrompt'
-import { isDeny, isInputRequest } from './input-request'
+import { isDeny, isInputRequest, forgetCard } from './input-request'
 import { useQuestionHost, type Answer } from './question-context'
 
 export type { Answer } from './question-context'
@@ -636,8 +636,16 @@ export function PromptDock({
 export function InlineQuestion({ entry }: { entry: PermissionEntry }): React.JSX.Element {
   const host = useQuestionHost()
   const { request } = entry
-  if (!host || entry.answer || entry.answeredElsewhere || !isQuestion(request) || !host.live(entry))
+  if (
+    !host ||
+    entry.answer ||
+    entry.answeredElsewhere ||
+    !isQuestion(request) ||
+    !host.live(entry)
+  ) {
+    if (entry.answer || entry.answeredElsewhere) forgetCard(request.id)
     return <PermissionRow entry={entry} />
+  }
   const busy = host.busy(request.id)
   return (
     <section className="chat-prompt" data-kind="question" data-inline="true" aria-label="Question">

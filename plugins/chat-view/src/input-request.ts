@@ -53,3 +53,37 @@ export const isInputRequest = (request: Permission): boolean =>
 
 /** A refusal, by the option's id: the words every provider uses. */
 export const isDeny = (id: string): boolean => /deny|decline|cancel|reject|abort/i.test(id)
+
+/** What a card keeps across its row's unmounts, beside the values the host's
+ *  `drafts` map keeps: the transcript is virtualised, and a card at the edge
+ *  of the view mounts again as the agent speaks under it. A card that came
+ *  back at its first step with the agent's writes replayed would change its
+ *  height, scroll out, and mount again, without end. */
+export interface CardMemory {
+  step: number
+  direction: 'forward' | 'back'
+  landed: Record<string, number>
+  applied: Values
+  touched: Record<string, boolean>
+  attempted: boolean
+}
+const memory = new Map<string, CardMemory>()
+export const recalled = (id: string): CardMemory =>
+  memory.get(id) ?? {
+    step: 0,
+    direction: 'forward',
+    landed: {},
+    applied: {},
+    touched: {},
+    attempted: false
+  }
+/** Written on a change of state, never on a render: a second instance of
+ *  the same card (a hidden view of the session) must not write its own
+ *  standing over the one the reader is looking at. */
+export const remember = (id: string, patch: Partial<CardMemory>): void => {
+  memory.set(id, { ...recalled(id), ...patch })
+}
+/** A form settled (answered, skipped, withdrawn): nothing to come back to. */
+export const forgetCard = (id: string): void => {
+  memory.delete(id)
+}

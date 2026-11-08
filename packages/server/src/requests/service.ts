@@ -198,6 +198,11 @@ export class PendingRequests {
         throw new RequestRejected({ code: 'invalid', message: `"${key}": ${problem}.` })
       if (typeof value === 'string' ? value === '' : value.length === 0) cleared.add(key)
     }
+    /** The same answer, a multi-select's labels in any order. */
+    const same = (a: unknown, b: unknown): boolean =>
+      Array.isArray(a) && Array.isArray(b)
+        ? JSON.stringify([...a].sort()) === JSON.stringify([...b].sort())
+        : JSON.stringify(a) === JSON.stringify(b)
     /** The answers as they will stand, and the patch the views are told. */
     const merge = (
       current: Answers
@@ -210,7 +215,7 @@ export class PendingRequests {
           if (before === undefined) continue
           delete next[key]
           patch[key] = ''
-        } else if (JSON.stringify(before) !== JSON.stringify(value)) {
+        } else if (!same(before, value)) {
           next[key] = value
           patch[key] = value
         }

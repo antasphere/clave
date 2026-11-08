@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { openChat, inject } from './chat-view.spec.mjs'
-import { fixturePath, until } from './harness.mjs'
+import { callMcp, fixturePath, until } from './harness.mjs'
 import { mcpClient, tabAgent, toolPayload } from './mcp-client.mjs'
 
 /* An agent asks the person for plain values through clave_request_input
@@ -29,7 +29,7 @@ const payload = (rpc) => {
 
 export async function run(t) {
   const chat = await openChat('chat-request-input')
-  const { win, record, fixture, server } = chat
+  const { app, win, record, fixture, server } = chat
   const view = win.locator('[data-testid="chat-view"]')
   const dir = fixturePath('chat-request-input')
   try {
@@ -168,14 +168,16 @@ export async function run(t) {
       0,
       'nothing reads No longer awaiting an answer'
     )
-    // The tab reads as waiting for the person, on the road the sidebar
-    // listens to (the server's own list), after the turn's done.
-    const listed = await until(async () => {
-      const tabs = toolPayload(await mcp.call('clave_list', {}))
-      const me = tabs?.sessions?.find((x) => x.id === record.id)
+    // The tab reads as waiting for the person where the sidebar reads it:
+    // the renderer's own store, fed by the server's state pushes, after the
+    // turn's done (a blocked published inside the delivery of done ended on
+    // done there, verifier round 3).
+    const sidebar = await until(async () => {
+      const res = await callMcp(app, 'list', {})
+      const me = res?.sessions?.find((x) => x.id === record.id)
       return me?.agentState === 'blocked' ? me : null
     })
-    assert.ok(listed, 'the sidebar reads blocked while the form is open')
+    assert.ok(sidebar, 'the sidebar reads blocked while the form is open')
     t.check(
       "a message typed while the form is open leaves the form live across the agent's turn",
       true
@@ -217,6 +219,36 @@ export async function run(t) {
     await card.getByRole('button', { name: 'Next', exact: true }).click()
     assert.equal(await card.locator('.chat-prompt-step').innerText(), '3/3')
     t.check("the person's Next goes one page and never skips an optional question", true)
+    // The card keeps its standing when its row leaves the view and comes
+    // back: the transcript is virtualised, and a card that came back at its
+    // first step flapped without end (the lane's rehearsal on a Claude tab).
+    for (let i = 0; i < 6; i++) {
+      await view
+        .locator('textarea')
+        .fill(
+          `filler ${i}: a long line so the transcript grows under the form and the card leaves the view for good`
+        )
+      await view.locator('textarea').press('Enter')
+      await win.waitForTimeout(150)
+    }
+    assert.ok(
+      await until(async () => ((await card.count()) === 0 ? true : null)),
+      'the card left the view as the transcript grew under it'
+    )
+    await view.locator('.chat-scroll').evaluate((el) => {
+      el.scrollTop = 0
+    })
+    assert.ok(
+      await until(async () => ((await card.count()) === 1 ? true : null)),
+      'the card is back once its row is in view again'
+    )
+    assert.equal(await card.locator('.chat-prompt-step').innerText(), '3/3')
+    assert.equal(await card.locator('.chat-ask-field[data-folded="true"]').count(), 2)
+    assert.match(await card.innerText(), /filled in what you said/)
+    t.check(
+      'a card that left the view and came back is at the same step, its folded lines kept',
+      true
+    )
     // The agent reads the form as it stands, then sets the last step: the
     // card reaches its review, both lines folded, Approve under them.
     const pending = payload(await mcp.call('clave_input_result', { requestId: second.requestId }))
@@ -231,9 +263,13 @@ export async function run(t) {
         answers: { when: '2026-11-17' }
       })
     )
-    await until(async () =>
-      (await card.locator('.chat-ask-field[data-folded="true"]').count()) === 3 ? true : null
+    assert.ok(
+      await until(async () =>
+        (await card.locator('.chat-prompt-body[data-review="true"]').count()) === 1 ? true : null
+      ),
+      'the card reached its review once every step had an answer'
     )
+    assert.equal(await card.locator('.chat-ask-field[data-folded="true"]').count(), 3)
     assert.match(
       await card.locator('.chat-ask-field[data-folded="true"]').nth(1).innerText(),
       /Left empty/
@@ -246,6 +282,13 @@ export async function run(t) {
     const approve = card.getByRole('button', { name: 'Approve', exact: true })
     assert.equal(await approve.count(), 1)
     t.check('with every step set the card shows its review: the lines folded and Approve', true)
+    // From the review, a folded line reopens its step, and Next from there
+    // goes one page even onto a step the agent already filled.
+    await card.locator('.chat-ask-field[data-folded="true"]').nth(1).locator('button').click()
+    assert.equal(await card.locator('.chat-prompt-step').innerText(), '2/3')
+    await card.getByRole('button', { name: 'Next', exact: true }).click()
+    assert.equal(await card.locator('.chat-prompt-step').innerText(), '3/3')
+    t.check('Next lands on a step the agent filled rather than skipping it', true)
     // The agent approves it itself (the person said to go ahead): the card
     // collapses, no message is owed, the answers are the record's.
     const submitted = payload(
@@ -280,6 +323,11 @@ export async function run(t) {
     await until(async () => ((await secondRow.innerText()).includes('Revised') ? true : null))
     assert.match(await secondRow.innerText(), /Luca A/)
     t.check('a correction after the approve revises the record in place', true)
+
+    // Back to the end of the transcript, where the next cards arrive.
+    await view.locator('.chat-scroll').evaluate((el) => {
+      el.scrollTop = el.scrollHeight
+    })
 
     /* 5. A skip answers dismissed, in the steps layout. */
     const third = mcp

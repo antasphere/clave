@@ -19,7 +19,15 @@ import { openLink } from '../../../src/renderer/src/lib/open-link'
 import type { Permission } from './reducer'
 import type { Answer } from './question-context'
 import { Key } from './prompt-bits'
-import { answersOf, initialValues, isDeny, type Values } from './input-request'
+import {
+  answersOf,
+  forgetCard,
+  initialValues,
+  isDeny,
+  recalled,
+  remember,
+  type Values
+} from './input-request'
 import { own } from '@clave/contract/input-kinds'
 import { AskDrawing, LinkDrawing } from './AskDrawing'
 
@@ -54,36 +62,6 @@ const host = (url: string): string => {
  *  of the virtualised transcript mounts again when it comes back, and must not
  *  take the caret from the composer a second time. */
 const focused = new Set<string>()
-
-/** What a card keeps across its row's unmounts, beside the values the host's
- *  `drafts` map keeps: the transcript is virtualised, and a card at the edge
- *  of the view mounts again as the agent speaks under it. A card that came
- *  back at its first step with the agent's writes replayed would change its
- *  height, scroll out, and mount again, without end. */
-interface CardMemory {
-  step: number
-  direction: 'forward' | 'back'
-  landed: Record<string, number>
-  applied: Values
-  touched: Record<string, boolean>
-  attempted: boolean
-}
-const memory = new Map<string, CardMemory>()
-const recalled = (id: string): CardMemory =>
-  memory.get(id) ?? {
-    step: 0,
-    direction: 'forward',
-    landed: {},
-    applied: {},
-    touched: {},
-    attempted: false
-  }
-/** Written on a change of state, never on a render: a second instance of
- *  the same card (a hidden view of the session) must not write its own
- *  standing over the one the reader is looking at. */
-const remember = (id: string, patch: Partial<CardMemory>): void => {
-  memory.set(id, { ...recalled(id), ...patch })
-}
 
 const isEmpty = (value: InputAnswer | undefined): boolean =>
   value === undefined || (typeof value === 'string' ? value.trim() === '' : value.length === 0)
@@ -571,7 +549,7 @@ export function InputPrompt({
       return
     }
     drafts?.delete(request.id)
-    memory.delete(request.id)
+    forgetCard(request.id)
     onAnswer(request.id, 'answer', answersOf(questions, vals))
   }
   /** One step on: the next open question in `steps` (the review page once
@@ -609,7 +587,7 @@ export function InputPrompt({
   const doSkip = (): void => {
     if (!skip || busy) return
     drafts?.delete(request.id)
-    memory.delete(request.id)
+    forgetCard(request.id)
     onAnswer(request.id, skip.id)
   }
   /** Where each field stands on the rail: done once its answer fits, the

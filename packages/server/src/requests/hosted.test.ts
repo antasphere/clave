@@ -309,6 +309,13 @@ describe('hosted requests', () => {
     expect(none.revised).toBeUndefined()
     const dropped = await requests.setAnswers({ ...set, answers: { projects: [] } })
     expect(dropped.revised).toBeUndefined()
+    await requests.setAnswers({ ...set, answers: { projects: ['reb', 'wat'] } })
+    const reordered = await requests.setAnswers({ ...set, answers: { projects: ['wat', 'reb'] } })
+    expect(reordered.answers).toEqual({
+      email: 'luca@antasphere.com',
+      login: 'luca-a',
+      projects: ['reb', 'wat']
+    })
     const changed = await requests.setAnswers({ ...set, answers: { projects: ['wat'] } })
     expect(changed).toEqual({
       requestId: request.id,

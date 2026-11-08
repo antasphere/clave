@@ -20,7 +20,8 @@ export interface FormOutcome {
   answers?: Readonly<Record<string, string | readonly string[]>>
 }
 
-const HEAD = /^\[The form "[\s\S]*?" was (approved|skipped) by the person\]$/
+/** The head spans the description's own lines; the foot is the last line. */
+const HEAD = /^\[The form "[\s\S]*?" was (approved|skipped) by the person\]\n/
 const FOOT = /^\(form (clave:[0-9a-f-]{36})(?: · |\))/
 
 /** The message, as the agent reads it. */
@@ -45,8 +46,8 @@ export function formMessage(outcome: FormOutcome): string {
  *  line and its last line both have to say so. Undefined for any other text,
  *  so a message that merely claims the marker hides nothing. */
 export function formMessageMarker(text: string): string | undefined {
-  const lines = text.trimEnd().split('\n')
-  if (lines.length < 2 || !HEAD.test(lines[0])) return undefined
-  const foot = FOOT.exec(lines[lines.length - 1])
+  const trimmed = text.trimEnd()
+  if (!HEAD.test(trimmed)) return undefined
+  const foot = FOOT.exec(trimmed.slice(trimmed.lastIndexOf('\n') + 1))
   return foot?.[1]
 }
