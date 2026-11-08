@@ -4494,8 +4494,8 @@ details[open] > .chat-tool-row .chat-tool-chevron,
 /* Each field comes in a beat after the one above it, from a touch below. */
 @media (prefers-reduced-motion: no-preference) {
   .chat-ask-field {
-    animation: chat-ask-field-in 460ms var(--ease-out-expo) backwards;
-    animation-delay: calc(120ms + var(--i, 0) * 70ms);
+    animation: chat-ask-field-in 560ms var(--ease-out-expo) backwards;
+    animation-delay: calc(120ms + var(--i, 0) * 80ms);
   }
   .chat-ask-field[data-state='active'] .chat-ask-seat {
     animation: chat-ask-seat-pulse 1200ms var(--ease-out-expo) 1;
@@ -4596,19 +4596,26 @@ details[open] > .chat-tool-row .chat-tool-chevron,
 .chat-ask-open {
   display: grid;
   transition:
-    grid-template-rows 360ms var(--ease-out-expo),
-    opacity 240ms var(--ease-out-expo),
-    visibility 0s linear 360ms;
+    grid-template-rows 480ms var(--ease-out-expo),
+    opacity 320ms var(--ease-out-expo),
+    visibility 0s linear 480ms;
 }
 .chat-ask-fold > div,
 .chat-ask-open > div {
   min-height: 0;
   overflow: hidden;
 }
+/* Room for the field's focus ring while the box is open, given back as it
+   folds; the clip is what lets the box shut. */
 .chat-ask-open > div {
   display: flex;
   flex-direction: column;
   gap: calc(var(--spacing) * 1.5);
+  padding: 6px;
+  margin: -6px;
+  transition:
+    padding 480ms var(--ease-out-expo),
+    margin 480ms var(--ease-out-expo);
 }
 .chat-ask-fold {
   grid-template-rows: 0fr;
@@ -4620,35 +4627,44 @@ details[open] > .chat-tool-row .chat-tool-chevron,
   opacity: 1;
   visibility: visible;
   transition-delay: 0s, 0s, 0s;
+  /* A row that arrives grows from shut, as the one above folds. */
+  @starting-style {
+    grid-template-rows: 0fr;
+    opacity: 0;
+  }
 }
 .chat-ask-field[data-folded='true'] .chat-ask-fold {
   grid-template-rows: 1fr;
   opacity: 1;
   visibility: visible;
-  transition-delay: 80ms, 120ms, 0s;
+  transition-delay: 120ms, 160ms, 0s;
 }
 .chat-ask-field[data-folded='true'] .chat-ask-open {
   grid-template-rows: 0fr;
   opacity: 0;
   visibility: hidden;
 }
+.chat-ask-field[data-folded='true'] .chat-ask-open > div {
+  padding: 0;
+  margin: 0;
+}
 /* The step that arrives: its label, its hint and its field come in one after
    the other, from a touch below. */
 @media (prefers-reduced-motion: no-preference) {
   .chat-ask-open .chat-field-wrap > * {
-    animation: chat-ask-child-in 420ms var(--ease-out-expo) backwards;
+    animation: chat-ask-child-in 540ms var(--ease-out-expo) backwards;
   }
   .chat-ask-open .chat-field-wrap > :nth-child(1) {
-    animation-delay: 60ms;
+    animation-delay: 120ms;
   }
   .chat-ask-open .chat-field-wrap > :nth-child(2) {
-    animation-delay: 130ms;
+    animation-delay: 210ms;
   }
   .chat-ask-open .chat-field-wrap > :nth-child(3) {
-    animation-delay: 200ms;
+    animation-delay: 300ms;
   }
   .chat-ask-open .chat-field-wrap > :nth-child(n + 4) {
-    animation-delay: 260ms;
+    animation-delay: 380ms;
   }
 }
 @keyframes chat-ask-child-in {

@@ -631,14 +631,30 @@ export function InputPrompt({
   // all the way once every field is answered: measured, since fields differ
   // in height, and written as a length the stylesheet draws.
   const list = useRef<HTMLOListElement>(null)
-  useLayoutEffect(() => {
+  const measureRail = (): void => {
     const el = list.current
     if (!el) return
     const active =
       el.querySelector<HTMLElement>('[data-state="active"]') ??
       el.querySelector<HTMLElement>('[data-state="problem"]')
     el.style.setProperty('--ask-progress', `${active ? active.offsetTop + 12 : el.offsetHeight}px`)
-  })
+  }
+  useLayoutEffect(measureRail)
+  // The rows fold and arrive over a few hundred milliseconds: a length taken
+  // at render is stale by the time they settle, so it is taken again as the
+  // list changes size and when a transition ends.
+  useEffect(() => {
+    const el = list.current
+    if (!el) return
+    const observer = new ResizeObserver(() => measureRail())
+    observer.observe(el)
+    const settled = (): void => measureRail()
+    el.addEventListener('transitionend', settled)
+    return () => {
+      observer.disconnect()
+      el.removeEventListener('transitionend', settled)
+    }
+  }, [])
   // The rows of the rail. In the steps layout every step up to the one the
   // reader is on has a row of its own, keyed by its question, so a row
   // already there is never drawn again: the step that closes folds its field
