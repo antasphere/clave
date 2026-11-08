@@ -39,6 +39,16 @@ interface FleetPorts {
   versions?(callback: (statuses: ServerVersionStatus[]) => void): () => void
 }
 const noop = (): void => {}
+/** How long after a connection could not be acquired the window tries again
+ *  by itself (`createFleetClient`'s `retryMs`): until PRDCT-4165 a first
+ *  attempt that failed at boot stood for the life of the window. */
+const CONNECT_RETRY_MS = 20_000
+const LOGGED_STATES: ReadonlySet<ServerConnectionStatus['state']> = new Set([
+  'connected',
+  'offline',
+  'unauthorized',
+  'disconnected'
+])
 const remote = (id: string): boolean => parseSessionKey(id).serverId !== LOCAL_SERVER_ID
 const key = (serverId: string, id: string): string => sessionKey({ serverId, sessionId: id })
 
@@ -116,11 +126,30 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
       }
   }
   const fleet = createFleetClient({
+    // Main answers no endpoint for a credential it cannot read (the keychain
+    // not open yet at boot, the saved token gone), so the state says
+    // "credentials unavailable" rather than "unreachable", and writes the
+    // reason in its log where the refusal happens (PRDCT-4165); its other
+    // refusals (a connection disabled meanwhile) still throw and stand as
+    // unreachable until the next sync.
     resolve: async (serverId) =>
       (await ports.invoke(FLEET_IPC.endpoint, serverId)) as Endpoint | null,
-    connect: (endpoint) => ports.connect(endpoint)
+    connect: (endpoint) => ports.connect(endpoint),
+    retryMs: CONNECT_RETRY_MS
   })
   const backing = (serverId: string): Promise<Backing> => fleet.backing(serverId)
+  // Every change of a server's state that a person would want to find in the
+  // log afterwards (PRDCT-4165): connected, offline with its reason, the token
+  // refused, disconnected. The retries of the socket between two of those are
+  // not written. Main holds no connection of its own, so the window tells it.
+  const lastReported = new Map<string, string>()
+  fleet.onStatus((status) => {
+    if (!LOGGED_STATES.has(status.state)) return
+    const line = `${status.state}:${status.error ?? ''}`
+    if (lastReported.get(status.serverId) === line) return
+    lastReported.set(status.serverId, line)
+    void ports.invoke(FLEET_IPC.status, status).catch(noop)
+  })
   const scopeRecord = (serverId: string, record: SessionRecord): SessionRecord => ({
     ...record,
     id: key(serverId, record.id),
@@ -964,6 +993,14 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
       })
       refresh(serverId)
       return { ...info, id: key(serverId, info.id) } as SessionInfo
+    },
+    fleetScreen: async (sessionId, lines) => {
+      const ref = parseSessionKey(sessionId)
+      if (ref.serverId === LOCAL_SERVER_ID)
+        throw new Error('A tab of this Mac is read from its pane, not from a server.')
+      const b = await backing(ref.serverId)
+      const screen = await b.api.sessions.screen(ref.sessionId, lines)
+      return { lines: [...screen.lines] }
     },
     fleetLaunchSettings: async (serverId) => {
       const { api } = await backing(serverId)

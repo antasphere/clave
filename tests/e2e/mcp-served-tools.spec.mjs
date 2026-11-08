@@ -141,7 +141,13 @@ const foldedUnder = (win, parentId, childId) =>
   )
 /** The names the opener's selector lists, read by opening it. */
 const subagentNames = async (win, parentId) => {
-  await win.locator(`[data-sidebar-item-id="${parentId}"] .subagent-trigger`).click()
+  const trigger = win.locator(`[data-sidebar-item-id="${parentId}"] .subagent-trigger`)
+  // No selector on the opener's row: the tab is not folded (the check that
+  // says so is red), so there is nothing to open and no names. Answer that
+  // rather than wait on a click that never lands and take every later check
+  // down with it.
+  if ((await trigger.count()) === 0) return []
+  await trigger.click()
   const names = await win.getByRole('menuitem').allInnerTexts()
   await win.keyboard.press('Escape')
   return names
@@ -395,12 +401,16 @@ export async function run(t) {
       // from its record and names it.
       // The built-in terminal profile, named: the workspace's default could be
       // a chat profile, whose message is not a paste into a terminal.
+      // Folding under the caller is opt-in since 7ccde5fb (attachToParent): a
+      // lane lead or a successor stays a row of its own on purpose, a worker
+      // asks to be folded. The fold checks below are about a worker.
       const worker = toolPayload(
         await client.call('clave_open_session', {
           cwd: ROOT,
           mode: 'claude',
           profile: 'builtin-claude',
-          name: 'Worker'
+          name: 'Worker',
+          attachToParent: true
         })
       )
       t.check('clave_open_session answers a session', typeof worker?.sessionId === 'string', worker)
@@ -654,13 +664,15 @@ export async function run(t) {
       const agent = mcpHttpClient(mcpEndpoint(DIR), agentToken)
       await agent.init()
 
-      // A tab opened, named and placed: served; the window takes it in.
+      // A tab opened, named and placed: served; the window takes it in. Folded
+      // under its opener on request (attachToParent, opt-in since 7ccde5fb).
       const worker = toolPayload(
         await agent.call('clave_open_session', {
           cwd: ROOT,
           mode: 'claude',
           profile: 'builtin-claude',
-          name: 'Worker'
+          name: 'Worker',
+          attachToParent: true
         })
       )
       t.check('clave_open_session answers a session', typeof worker?.sessionId === 'string', worker)

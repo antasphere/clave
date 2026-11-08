@@ -274,6 +274,77 @@ describe('launches in a server workspace (#241)', () => {
     expect(f.remember).toHaveBeenCalledWith(serverWorkspace, setup)
   })
 
+  it('sends the server’s own profile definition and account when the setup names them, reading the server first when it was not read yet (PRDCT-4162)', async () => {
+    withServer()
+    // The modes rule is mocked to Codex above, so the pick exercised is a Codex one.
+    const { registerServerSettingsLoader, useServerSettingsStore } =
+      await import('../store/server-settings-state')
+    const serverProfile = {
+      id: 'srv-recorder',
+      name: 'Server recorder',
+      family: 'codex' as const,
+      command: ['/srv/bin/codex'],
+      additionalArgs: []
+    }
+    const filled = {
+      status: 'ready' as const,
+      error: null,
+      claude: [{ id: 'default', label: 'Default' }],
+      codex: [
+        { id: 'default', label: 'Default' },
+        { id: 'srv-acc', label: 'Second server account' }
+      ],
+      migrated: [],
+      profiles: {
+        version: 1 as const,
+        customProfiles: [serverProfile],
+        globalDefaults: {},
+        workspaceOverrides: {}
+      },
+      usage: { claude: {}, codex: {} }
+    }
+    // Not read yet: the launch reads the server first, through the registered loader.
+    const load = vi.fn(async (serverId: string) => {
+      useServerSettingsStore.setState({ byServer: { [serverId]: filled as never } })
+    })
+    registerServerSettingsLoader(load)
+    useServerSettingsStore.setState({ byServer: {} })
+    await launchSession({
+      setup: {
+        kind: 'codex',
+        dangerousMode: false,
+        launchProfileId: 'srv-recorder',
+        codexAccountId: 'srv-acc'
+      },
+      cwd: { kind: 'workspace-root' }
+    })
+    expect(load).toHaveBeenCalledWith('fixture-remote')
+    expect(f.fleetStart.mock.calls[0][2]).toMatchObject({
+      launchProfileId: 'srv-recorder',
+      launchProfile: serverProfile,
+      codexAccountId: 'srv-acc',
+      codexAccountLabel: 'Second server account'
+    })
+    // Already read: no second read; a Mac account the server does not list never travels.
+    f.fleetStart.mockClear()
+    await launchSession({
+      setup: {
+        kind: 'codex',
+        dangerousMode: false,
+        launchProfileId: 'codex-work',
+        codexAccountId: 'mac-account'
+      },
+      cwd: { kind: 'workspace-root' }
+    })
+    expect(load).toHaveBeenCalledTimes(1)
+    const options = f.fleetStart.mock.calls[0][2]
+    expect(options).toMatchObject({ launchProfileId: 'codex-work' })
+    expect(options).not.toHaveProperty('launchProfile')
+    expect(options).not.toHaveProperty('codexAccountId')
+    useServerSettingsStore.setState({ byServer: {} })
+    registerServerSettingsLoader(async () => undefined)
+  })
+
   it('asks for a folder on the server, opened at the workspace root, for ⌥', async () => {
     withServer()
     f.pickFolder.mockResolvedValue('/srv/repo/sub')

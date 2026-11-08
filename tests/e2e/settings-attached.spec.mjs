@@ -12,8 +12,12 @@
 //     account added from the window is listed by the server's API and absent
 //     from main's own managers (read through the test hooks), which is the
 //     reason the quota specs pin the in-process server.
-//  3. The three commands a standalone server cannot carry are refused with
-//     the declared failure and its sentence, which reaches the window.
+//  3. The command a standalone server cannot carry, a terminal login, is
+//     refused with the declared failure and its sentence, which reaches the
+//     window. The app icon used to be refused the same way; since 4dee132b
+//     (22 October 2026) it belongs to this Electron shell, like the updater
+//     channel, so an attached window's icon write is accepted and never
+//     reaches the server.
 import { mkdirSync, rmSync } from 'node:fs'
 import {
   launchApp,
@@ -92,7 +96,11 @@ export async function run(t) {
         (err) => String(err?.message ?? err)
       )
     )
-    t.check('and so is the app icon', typeof icon === 'string' && icon.includes('no Dock'))
+    t.check(
+      'and the app icon is the shell’s own: the write is accepted while attached',
+      icon === null,
+      icon
+    )
   } finally {
     await app.close()
   }

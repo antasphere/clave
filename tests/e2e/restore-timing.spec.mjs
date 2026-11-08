@@ -47,7 +47,13 @@ const DIR = userDataDir('restore-timing')
 const ROOT = fixturePath('restore-timing-root')
 const BIN = `${ROOT}/bin`
 const STARTS = `${ROOT}/agent-starts.jsonl`
-const WS = { id: 'restore-timing-ws', name: 'Timing', rootDir: ROOT }
+const WS = {
+  id: 'restore-timing-ws',
+  name: 'Timing',
+  rootDir: ROOT,
+  profileFile: null,
+  createdAt: 1
+}
 const KEY = 'restore-timing-window'
 const GROUPS = 5
 const PER_GROUP = 20
@@ -209,6 +215,11 @@ export async function run(t) {
   const records = all.map((id, i) => chatRecord(id, i < all.length * CODEX_SHARE))
   writeFixtures(records, groups)
   const env = {
+    // The suite is run from inside a Clave tab, whose CLAVE_SESSION_ID the test
+    // app would inherit and pass to the Codex CLI it runs for itself (usage, the
+    // model list): the stub then logs that run as a session's start, under this
+    // tab's id. An app started from the Finder has no tab id; neither does this one.
+    CLAVE_SESSION_ID: '',
     SHELL: `${BIN}/bash`,
     PATH: `${BIN}:${process.env.PATH}`,
     CLAVE_TRANSCRIPTS_ROOT: `${ROOT}/transcripts`,

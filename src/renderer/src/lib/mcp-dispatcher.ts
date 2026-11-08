@@ -1422,22 +1422,41 @@ async function handleSendToSession(payload: {
   }
 }
 
-function handleReadSession(payload: {
+/** A tab's recent output. A tab of this Mac is read from its pane's buffer; a
+ *  tab running on a server (PRDCT-4166) is read from the owning server over
+ *  the fleet bridge, which answers whether or not its pane is mounted here:
+ *  the server keeps the screen, this window only draws it. */
+async function handleReadSession(payload: {
   sessionId: string
   lines?: number
   callerSessionId?: string
-}): unknown {
+}): Promise<unknown> {
   const target = resolveTargetSession(payload.sessionId, payload.callerSessionId)
   assertCanReach(payload.callerSessionId, target, 'read')
-  const terminal = getRegisteredTerminal(target.id)
-  if (!terminal) {
-    throw new Error(`Session "${target.name}" has no terminal buffer (tab not mounted yet)`)
-  }
   const requested = Math.min(Math.max(payload.lines ?? 100, 1), 500)
-  const buffer = terminal.buffer.active
   const lines: string[] = []
-  for (let i = Math.max(0, buffer.length - requested); i < buffer.length; i++) {
-    lines.push(buffer.getLine(i)?.translateToString(true) ?? '')
+  if (ownerOf(target.id) !== LOCAL_SERVER_ID) {
+    let screen: { lines: readonly string[] }
+    try {
+      screen = await window.electronAPI.fleetScreen(target.id, requested)
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      throw new Error(
+        message.includes('no terminal screen')
+          ? `Session "${target.name}" has no terminal buffer (tab not mounted yet)`
+          : `Session "${target.name}" could not be read from its server: ${message}`
+      )
+    }
+    lines.push(...screen.lines)
+  } else {
+    const terminal = getRegisteredTerminal(target.id)
+    if (!terminal) {
+      throw new Error(`Session "${target.name}" has no terminal buffer (tab not mounted yet)`)
+    }
+    const buffer = terminal.buffer.active
+    for (let i = Math.max(0, buffer.length - requested); i < buffer.length; i++) {
+      lines.push(buffer.getLine(i)?.translateToString(true) ?? '')
+    }
   }
   // The TUI viewport is mostly blank padding — drop trailing empty rows.
   while (lines.length && lines[lines.length - 1].trim() === '') lines.pop()

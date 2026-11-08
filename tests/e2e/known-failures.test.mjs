@@ -1,14 +1,56 @@
+import { readFileSync } from 'node:fs'
 import { describe, it, expect } from 'vitest'
 import { loadKnown, classify, summarize } from './known-failures.mjs'
 
+describe('the checked-in known-failures.json', () => {
+  // run.mjs refuses a bad file at startup, but only when the suite runs; the
+  // unit job is where a bad edit should go red first (lane B's verifier, round 1).
+  it('loads: every task names a listed spec, no crash is a known check', () => {
+    const raw = JSON.parse(readFileSync(new URL('./known-failures.json', import.meta.url), 'utf8'))
+    const k = loadKnown(raw)
+    expect(Object.keys(k.specs).length + k.unstable.length).toBeGreaterThan(0)
+    for (const spec of Object.keys(k.tasks))
+      expect(spec in k.specs || k.unstable.includes(spec)).toBe(true)
+  })
+})
+
 describe('loadKnown', () => {
   it('takes an absent file as nothing known', () => {
-    expect(loadKnown(null)).toEqual({ why: '', specs: {}, unstable: [] })
+    expect(loadKnown(null)).toEqual({ why: '', specs: {}, unstable: [], tasks: {} })
   })
 
   it('reads specs and unstable', () => {
     const k = loadKnown({ why: 'w', specs: { 'a.spec.mjs': ['x'] }, unstable: ['b.spec.mjs'] })
-    expect(k).toEqual({ why: 'w', specs: { 'a.spec.mjs': ['x'] }, unstable: ['b.spec.mjs'] })
+    expect(k).toEqual({
+      why: 'w',
+      specs: { 'a.spec.mjs': ['x'] },
+      unstable: ['b.spec.mjs'],
+      tasks: {}
+    })
+  })
+
+  it('reads the task that owns a listed spec, under either list', () => {
+    const k = loadKnown({
+      specs: { 'a.spec.mjs': ['x'] },
+      unstable: ['b.spec.mjs'],
+      tasks: { 'a.spec.mjs': 'PRDCT-1', 'b.spec.mjs': 'PRDCT-22' }
+    })
+    expect(k.tasks).toEqual({ 'a.spec.mjs': 'PRDCT-1', 'b.spec.mjs': 'PRDCT-22' })
+  })
+
+  it('refuses a task on a spec that is not listed: the task would own nothing', () => {
+    expect(() =>
+      loadKnown({ specs: { 'a.spec.mjs': ['x'] }, tasks: { 'z.spec.mjs': 'PRDCT-1' } })
+    ).toThrow(/neither under "specs" nor "unstable"/)
+  })
+
+  it('refuses a task that is not an id', () => {
+    expect(() =>
+      loadKnown({ specs: { 'a.spec.mjs': ['x'] }, tasks: { 'a.spec.mjs': 'later' } })
+    ).toThrow(/must be a task id/)
+    expect(() => loadKnown({ specs: { 'a.spec.mjs': ['x'] }, tasks: ['PRDCT-1'] })).toThrow(
+      /must map a spec file/
+    )
   })
 
   it('refuses a "ran to completion" check: a crash is never known', () => {

@@ -117,6 +117,46 @@ export async function run(t) {
     )
     t.check('the token never appears in the page', !(await page.innerText()).includes(a.token))
 
+    // Scanned again, the machine just saved is said to be that server, with
+    // its state, and offers no Use (PRDCT-4163): the saved address is its
+    // IPv4 on the scan port, which is how a pick saves it.
+    await page.locator('[data-tailnet-scan-button]').click()
+    await eventually(
+      async () => (await machine('127.0.0.1').getAttribute('data-saved-server')) === saved.id,
+      'the scan knows the machine is the saved server'
+    )
+    t.check(
+      'the row names the saved server',
+      (await machine('127.0.0.1').innerText()).includes('Saved as studio-mini')
+    )
+    t.equal(
+      'and shows its connection state',
+      await machine('127.0.0.1').locator('.status-text').innerText(),
+      'Connected'
+    )
+    t.equal(
+      'and offers no Use',
+      await machine('127.0.0.1').locator('[data-tailnet-use]').count(),
+      0
+    )
+    t.equal(
+      'a machine that is not saved keeps its Use',
+      await machine('127.0.0.2').locator('[data-tailnet-use]').count(),
+      1
+    )
+    // Disconnected in Settings, the scan says so too.
+    await win.evaluate((id) => window.electronAPI.fleetDisconnect(id), saved.id)
+    await eventually(
+      async () =>
+        (await machine('127.0.0.1').locator('.status-text').innerText()) === 'Disconnected',
+      'the scan follows the saved server’s state'
+    )
+    await win.evaluate((id) => window.electronAPI.fleetConnect(id), saved.id)
+    await eventually(
+      async () => (await machine('127.0.0.1').locator('.status-text').innerText()) === 'Connected',
+      'and back'
+    )
+
     // Tailscale stopped: the scan says so instead of listing anything.
     writeFileSync(file, JSON.stringify(status('Stopped')))
     await page.locator('[data-tailnet-scan-button]').click()

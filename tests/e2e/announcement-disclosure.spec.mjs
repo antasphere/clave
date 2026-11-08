@@ -48,6 +48,7 @@ import {
   fixturePath
 } from './harness.mjs'
 import { mkdirSync, writeFileSync } from 'node:fs'
+import { NOTE_CHECK, noteDetail, whatsNewNoteFor } from './whats-new-note.mjs'
 
 const DIR = userDataDir('announcement-disclosure')
 const ROOT = fixturePath('disclosure-root')
@@ -156,180 +157,189 @@ export async function run(t) {
   try {
     // ── 1. The what's-new card is collapsed, and opens ───────────────────
     const version = await app.evaluate(({ app: a }) => a.getVersion())
-    await win.evaluate((v) => {
-      localStorage.setItem('clave-whats-new-last-seen-version', `${v}-stale`)
-    }, version)
-    await win.reload()
-    await win.waitForLoadState('domcontentloaded')
-    await win.waitForTimeout(4000)
 
-    const wn = await win.evaluate(() => {
-      const heading = [...document.querySelectorAll('span')].find((s) =>
-        /^New in /.test(s.textContent ?? '')
-      )
-      if (!heading) return { present: false }
-      const card = heading.closest('div.rounded-xl')
-      const toggle = [...card.querySelectorAll('button')].find((b) =>
-        /What's changed|Hide details/.test(b.textContent ?? '')
-      )
-      return {
-        present: true,
-        hasToggle: !!toggle,
-        expanded: toggle?.getAttribute('aria-expanded'),
-        // The description body must NOT be in the DOM while collapsed.
-        cardChars: (card.textContent ?? '').length
-      }
-    })
+    // Only when the checkout carries a note for the version it built: the
+    // card is absent otherwise, by design, and the checks below would be
+    // about nothing (the check is red on a checkout without one, and named in
+    // known-failures.json with its task).
+    const note = whatsNewNoteFor(version)
+    t.check(NOTE_CHECK, note !== null, noteDetail(version))
+    if (note) {
+      await win.evaluate((v) => {
+        localStorage.setItem('clave-whats-new-last-seen-version', `${v}-stale`)
+      }, version)
+      await win.reload()
+      await win.waitForLoadState('domcontentloaded')
+      await win.waitForTimeout(4000)
 
-    t.check('the what’s-new card is on screen', wn.present === true, wn)
-    t.check('it offers a disclosure', wn.hasToggle === true, wn)
-    t.check('it is collapsed at rest', wn.expanded === 'false', wn)
-    // Guard the guard: collapsed must be genuinely shorter than the note, or
-    // "collapsed" is meaningless. The headline alone is a line, not paragraphs.
-    t.check(
-      'collapsed shows the headline only, not the note',
-      wn.cardChars > 0 && wn.cardChars < 400,
-      `card renders ${wn.cardChars} chars while collapsed — the body is still in the card`
-    )
+      const wn = await win.evaluate(() => {
+        const heading = [...document.querySelectorAll('span')].find((s) =>
+          /^New in /.test(s.textContent ?? '')
+        )
+        if (!heading) return { present: false }
+        const card = heading.closest('div.rounded-xl')
+        const toggle = [...card.querySelectorAll('button')].find((b) =>
+          /What's changed|Hide details/.test(b.textContent ?? '')
+        )
+        return {
+          present: true,
+          hasToggle: !!toggle,
+          expanded: toggle?.getAttribute('aria-expanded'),
+          // The description body must NOT be in the DOM while collapsed.
+          cardChars: (card.textContent ?? '').length
+        }
+      })
 
-    // Open it and measure the note that appears.
-    const opened = await win.evaluate(() => {
-      const heading = [...document.querySelectorAll('span')].find((s) =>
-        /^New in /.test(s.textContent ?? '')
+      t.check('the what’s-new card is on screen', wn.present === true, wn)
+      t.check('it offers a disclosure', wn.hasToggle === true, wn)
+      t.check('it is collapsed at rest', wn.expanded === 'false', wn)
+      // Guard the guard: collapsed must be genuinely shorter than the note, or
+      // "collapsed" is meaningless. The headline alone is a line, not paragraphs.
+      t.check(
+        'collapsed shows the headline only, not the note',
+        wn.cardChars > 0 && wn.cardChars < 400,
+        `card renders ${wn.cardChars} chars while collapsed — the body is still in the card`
       )
-      const card = heading.closest('div.rounded-xl')
-      const toggle = [...card.querySelectorAll('button')].find((b) =>
-        /What's changed/.test(b.textContent ?? '')
-      )
-      toggle.click()
-      return true
-    })
-    t.check('the disclosure could be clicked', opened === true, opened)
-    await win.waitForTimeout(500)
 
-    const wnOpen = await win.evaluate(() => {
-      const heading = [...document.querySelectorAll('span')].find((s) =>
-        /^New in /.test(s.textContent ?? '')
-      )
-      const card = heading.closest('div.rounded-xl')
-      const toggle = [...card.querySelectorAll('button')].find((b) =>
-        /Hide details/.test(b.textContent ?? '')
-      )
-      // The scrolling box the note lives in.
-      const box = [...card.querySelectorAll('div')].find(
-        (d) => getComputedStyle(d).overflowY === 'auto' && d.scrollHeight > 0
-      )
-      let scrolled = null
-      if (box) {
-        box.scrollTop = 9999
-        scrolled = box.scrollTop
-        box.scrollTop = 0
-      }
-      const sidebar = card.closest('.flex.flex-col.h-full')
-      return {
-        expanded: toggle?.getAttribute('aria-expanded') ?? null,
-        label: toggle?.textContent?.trim() ?? null,
-        cardChars: (card.textContent ?? '').length,
-        hasBox: !!box,
-        clientHeight: box?.clientHeight ?? null,
-        scrollHeight: box?.scrollHeight ?? null,
-        scrolled,
-        cardBottom: Math.round(card.getBoundingClientRect().bottom),
-        sidebarBottom: sidebar ? Math.round(sidebar.getBoundingClientRect().bottom) : null,
-        viewportHeight: window.innerHeight
-      }
-    })
+      // Open it and measure the note that appears.
+      const opened = await win.evaluate(() => {
+        const heading = [...document.querySelectorAll('span')].find((s) =>
+          /^New in /.test(s.textContent ?? '')
+        )
+        const card = heading.closest('div.rounded-xl')
+        const toggle = [...card.querySelectorAll('button')].find((b) =>
+          /What's changed/.test(b.textContent ?? '')
+        )
+        toggle.click()
+        return true
+      })
+      t.check('the disclosure could be clicked', opened === true, opened)
+      await win.waitForTimeout(500)
 
-    t.check('it reports itself expanded', wnOpen.expanded === 'true', wnOpen)
-    t.check('the toggle now offers to hide', /Hide details/.test(wnOpen.label ?? ''), wnOpen)
-    t.check(
-      'the note is now in the card',
-      wnOpen.cardChars > wn.cardChars + 200,
-      `collapsed ${wn.cardChars} chars → expanded ${wnOpen.cardChars}; the note did not appear`
-    )
-    t.check('the note has a scrolling box', wnOpen.hasBox === true, wnOpen)
-    // The cap, at the moment it matters: with the note OPEN.
-    t.check(
-      'the open note is capped rather than as tall as its text',
-      wnOpen.clientHeight > 0 && wnOpen.scrollHeight > wnOpen.clientHeight + 20,
-      wnOpen
-    )
-    t.check(
-      'the cap keeps it a sidebar element, not a screenful',
-      wnOpen.clientHeight <= Math.round(wnOpen.viewportHeight * 0.45),
-      wnOpen
-    )
-    // The one that cannot be faked by a class name: the box actually moved.
-    t.check(
-      'scrolling the open note actually moves it',
-      wnOpen.scrolled > 0,
-      `scrollTop settled at ${wnOpen.scrolled}`
-    )
-    t.check(
-      'the card stays inside the window with the note open',
-      wnOpen.cardBottom <= wnOpen.viewportHeight,
-      wnOpen
-    )
+      const wnOpen = await win.evaluate(() => {
+        const heading = [...document.querySelectorAll('span')].find((s) =>
+          /^New in /.test(s.textContent ?? '')
+        )
+        const card = heading.closest('div.rounded-xl')
+        const toggle = [...card.querySelectorAll('button')].find((b) =>
+          /Hide details/.test(b.textContent ?? '')
+        )
+        // The scrolling box the note lives in.
+        const box = [...card.querySelectorAll('div')].find(
+          (d) => getComputedStyle(d).overflowY === 'auto' && d.scrollHeight > 0
+        )
+        let scrolled = null
+        if (box) {
+          box.scrollTop = 9999
+          scrolled = box.scrollTop
+          box.scrollTop = 0
+        }
+        const sidebar = card.closest('.flex.flex-col.h-full')
+        return {
+          expanded: toggle?.getAttribute('aria-expanded') ?? null,
+          label: toggle?.textContent?.trim() ?? null,
+          cardChars: (card.textContent ?? '').length,
+          hasBox: !!box,
+          clientHeight: box?.clientHeight ?? null,
+          scrollHeight: box?.scrollHeight ?? null,
+          scrolled,
+          cardBottom: Math.round(card.getBoundingClientRect().bottom),
+          sidebarBottom: sidebar ? Math.round(sidebar.getBoundingClientRect().bottom) : null,
+          viewportHeight: window.innerHeight
+        }
+      })
 
-    // The note must use the card's WIDTH, not share a flex row with the
-    // chevron beside it. The first version of this did exactly that — the
-    // trigger and the note were wrapped together so "Try it" could sit next to
-    // the chevron — and the paragraphs rendered in a column roughly half the
-    // card wide, squeezed against the toggle. Every assertion above still
-    // passed: the box was capped, it scrolled, and it stayed in the window.
-    // Only a width comparison sees it, which is why it is measured here.
-    const width = await win.evaluate(() => {
-      const heading = [...document.querySelectorAll('span')].find((s) =>
-        /^New in /.test(s.textContent ?? '')
+      t.check('it reports itself expanded', wnOpen.expanded === 'true', wnOpen)
+      t.check('the toggle now offers to hide', /Hide details/.test(wnOpen.label ?? ''), wnOpen)
+      t.check(
+        'the note is now in the card',
+        wnOpen.cardChars > wn.cardChars + 200,
+        `collapsed ${wn.cardChars} chars → expanded ${wnOpen.cardChars}; the note did not appear`
       )
-      const card = heading.closest('div.rounded-xl')
-      const box = [...card.querySelectorAll('div')].find(
-        (d) => getComputedStyle(d).overflowY === 'auto'
+      t.check('the note has a scrolling box', wnOpen.hasBox === true, wnOpen)
+      // The cap, at the moment it matters: with the note OPEN.
+      t.check(
+        'the open note is capped rather than as tall as its text',
+        wnOpen.clientHeight > 0 && wnOpen.scrollHeight > wnOpen.clientHeight + 20,
+        wnOpen
       )
-      return {
-        noteWidth: Math.round(box.getBoundingClientRect().width),
-        cardWidth: Math.round(card.getBoundingClientRect().width)
-      }
-    })
-    t.check(
-      'the open note spans the card rather than a column beside the toggle',
-      width.noteWidth >= width.cardWidth * 0.8,
-      `note is ${width.noteWidth}px inside a ${width.cardWidth}px card — it is sharing a flex row with the disclosure`
-    )
+      t.check(
+        'the cap keeps it a sidebar element, not a screenful',
+        wnOpen.clientHeight <= Math.round(wnOpen.viewportHeight * 0.45),
+        wnOpen
+      )
+      // The one that cannot be faked by a class name: the box actually moved.
+      t.check(
+        'scrolling the open note actually moves it',
+        wnOpen.scrolled > 0,
+        `scrollTop settled at ${wnOpen.scrolled}`
+      )
+      t.check(
+        'the card stays inside the window with the note open',
+        wnOpen.cardBottom <= wnOpen.viewportHeight,
+        wnOpen
+      )
 
-    // Close it again — a disclosure that only opens is half a control.
-    const wnClosed = await win.evaluate(() => {
-      const heading = [...document.querySelectorAll('span')].find((s) =>
-        /^New in /.test(s.textContent ?? '')
+      // The note must use the card's WIDTH, not share a flex row with the
+      // chevron beside it. The first version of this did exactly that — the
+      // trigger and the note were wrapped together so "Try it" could sit next to
+      // the chevron — and the paragraphs rendered in a column roughly half the
+      // card wide, squeezed against the toggle. Every assertion above still
+      // passed: the box was capped, it scrolled, and it stayed in the window.
+      // Only a width comparison sees it, which is why it is measured here.
+      const width = await win.evaluate(() => {
+        const heading = [...document.querySelectorAll('span')].find((s) =>
+          /^New in /.test(s.textContent ?? '')
+        )
+        const card = heading.closest('div.rounded-xl')
+        const box = [...card.querySelectorAll('div')].find(
+          (d) => getComputedStyle(d).overflowY === 'auto'
+        )
+        return {
+          noteWidth: Math.round(box.getBoundingClientRect().width),
+          cardWidth: Math.round(card.getBoundingClientRect().width)
+        }
+      })
+      t.check(
+        'the open note spans the card rather than a column beside the toggle',
+        width.noteWidth >= width.cardWidth * 0.8,
+        `note is ${width.noteWidth}px inside a ${width.cardWidth}px card — it is sharing a flex row with the disclosure`
       )
-      const card = heading.closest('div.rounded-xl')
-      const toggle = [...card.querySelectorAll('button')].find((b) =>
-        /Hide details/.test(b.textContent ?? '')
+
+      // Close it again — a disclosure that only opens is half a control.
+      const wnClosed = await win.evaluate(() => {
+        const heading = [...document.querySelectorAll('span')].find((s) =>
+          /^New in /.test(s.textContent ?? '')
+        )
+        const card = heading.closest('div.rounded-xl')
+        const toggle = [...card.querySelectorAll('button')].find((b) =>
+          /Hide details/.test(b.textContent ?? '')
+        )
+        toggle.click()
+        return true
+      })
+      t.check('the open note could be closed', wnClosed === true, wnClosed)
+      await win.waitForTimeout(500)
+      const wnAfter = await win.evaluate(() => {
+        const heading = [...document.querySelectorAll('span')].find((s) =>
+          /^New in /.test(s.textContent ?? '')
+        )
+        const card = heading.closest('div.rounded-xl')
+        const toggle = [...card.querySelectorAll('button')].find((b) =>
+          /What's changed/.test(b.textContent ?? '')
+        )
+        return {
+          expanded: toggle?.getAttribute('aria-expanded') ?? null,
+          cardChars: (card.textContent ?? '').length
+        }
+      })
+      t.check('it collapses again', wnAfter.expanded === 'false', wnAfter)
+      t.check(
+        'and the note leaves the card with it',
+        wnAfter.cardChars < wnOpen.cardChars - 200,
+        `still ${wnAfter.cardChars} chars after collapsing (open was ${wnOpen.cardChars})`
       )
-      toggle.click()
-      return true
-    })
-    t.check('the open note could be closed', wnClosed === true, wnClosed)
-    await win.waitForTimeout(500)
-    const wnAfter = await win.evaluate(() => {
-      const heading = [...document.querySelectorAll('span')].find((s) =>
-        /^New in /.test(s.textContent ?? '')
-      )
-      const card = heading.closest('div.rounded-xl')
-      const toggle = [...card.querySelectorAll('button')].find((b) =>
-        /What's changed/.test(b.textContent ?? '')
-      )
-      return {
-        expanded: toggle?.getAttribute('aria-expanded') ?? null,
-        cardChars: (card.textContent ?? '').length
-      }
-    })
-    t.check('it collapses again', wnAfter.expanded === 'false', wnAfter)
-    t.check(
-      'and the note leaves the card with it',
-      wnAfter.cardChars < wnOpen.cardChars - 200,
-      `still ${wnAfter.cardChars} chars after collapsing (open was ${wnOpen.cardChars})`
-    )
+    }
 
     // ── 2. The update card carries the release notes, off the badge ──────
     // Dev builds are `supported: false` and never reach the `available` phase,
