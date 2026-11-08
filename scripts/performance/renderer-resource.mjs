@@ -206,7 +206,7 @@ export function validateOwnershipRunner(realUid, effectiveUid, fixtureBound) {
 export const OWNERSHIP_FIXTURE_SOURCES = Object.freeze({
   'tests/e2e/harness.mjs': 'f45341e65e73f584ad802d4abe4f89fc67dcddf1008d59e60ff4cd1e9bb413c2',
   'tests/e2e/renderer-resource-workload.mjs':
-    '21c4a6817652fe4b8f3e90a6ba71fcf4deb5d883fd48f005d02fcd00d89ce9ff',
+    'a0e3121e04c32606c7bcbd761c78e02571589f1942aa7dae290e8605fae03a40',
   'tests/e2e/renderer-resource-fixture.mjs':
     '7afa9ed987c9fbae0e4dca5083ddfa24d33893bf804c83cf7ccf7fcf2d908614',
   'src/main/sessions/adapters/echo-adapter.ts':

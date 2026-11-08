@@ -58,6 +58,11 @@ export interface FleetDesktopAPI {
     cwd: string,
     options?: Parameters<import('./index.d').ElectronAPI['spawnSession']>[1]
   ): Promise<SessionInfo>
+  /** The recent output of a tab running on a server, read from that server
+   *  (PRDCT-4166): `sessionId` is the tab's remote key; the lines are the
+   *  server's retained screen, the way its own agent tools read it. Refused
+   *  for a tab of this Mac, whose pane holds the buffer. */
+  fleetScreen(sessionId: string, lines?: number): Promise<{ lines: readonly string[] }>
   fleetSaveLayout(
     serverId: string,
     layout: WindowLayout,

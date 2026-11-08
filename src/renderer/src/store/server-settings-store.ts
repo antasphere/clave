@@ -1,11 +1,9 @@
-import { create } from 'zustand'
 import type { ClaudeAccount, CodexAccount, UsageError, UsageLimits } from '../../../preload/index.d'
 import type { FleetSettingsEvent } from '../../../preload/fleet-types'
-import {
-  BUILT_IN_LAUNCH_PROFILES,
-  type LaunchProfile,
-  type LaunchProfilePreferences,
-  type LauncherFamily
+import type {
+  LaunchProfile,
+  LaunchProfilePreferences,
+  LauncherFamily
 } from '../../../shared/agent-launch'
 import { tightestWindow, type AccountUsageSummary } from './usage-store'
 import { DEFAULT_CLAUDE_PROFILE_ID } from './claude-profile-store'
@@ -14,35 +12,15 @@ import { useFleetStore } from './fleet-store'
 
 export type { AccountUsageSummary } from './usage-store'
 
-/**
- * One server's settings as this Mac sees them: its accounts, their usage and
- * its launch profiles, read through the fleet bridge and kept current by the
- * server's push events. Nothing here is this Mac's own settings; the local
- * stores (`claude-profile-store`, `codex-account-store`, `usage-store`,
- * `launch-profile-store`) stay the truth for the local machine, and a server
- * never writes into them.
- */
-export type ServerUsageProvider = 'claude' | 'codex'
+import {
+  registerServerSettingsLoader,
+  useServerSettingsStore,
+  type ServerSettings,
+  type ServerUsageProvider
+} from './server-settings-state'
 
-export interface ServerSettings {
-  status: 'idle' | 'loading' | 'ready' | 'error'
-  /** One safe sentence, never the raw error. */
-  error: string | null
-  /** The server's list as it answered, the Default first. */
-  claude: ClaudeAccount[]
-  /** The server's list as it answered, the Default first. */
-  codex: CodexAccount[]
-  migrated: string[]
-  profiles: LaunchProfilePreferences | null
-  usage: {
-    claude: Record<string, AccountUsageSummary>
-    codex: Record<string, AccountUsageSummary>
-  }
-}
-
-export const useServerSettingsStore = create<{ byServer: Record<string, ServerSettings> }>(() => ({
-  byServer: {}
-}))
+export { serverProfilesFor, useServerSettingsStore } from './server-settings-state'
+export type { ServerSettings, ServerUsageProvider } from './server-settings-state'
 
 // A server error can carry source details and paths of the server's disk;
 // the page only needs to know it should check the connection (the stance of
@@ -303,17 +281,6 @@ export function loadServerSettings(serverId: string): Promise<void> {
   return run
 }
 
-/** The launch profiles of a family on that server: the built-ins and its own,
- *  by the rule of launch-profile-store's profilesFor. */
-export function serverProfilesFor(
-  settings: ServerSettings,
-  family: LauncherFamily
-): LaunchProfile[] {
-  return [...BUILT_IN_LAUNCH_PROFILES, ...(settings.profiles?.customProfiles ?? [])].filter(
-    (profile) => profile.family === family
-  )
-}
-
 function replaceProfiles(serverId: string, profiles: LaunchProfilePreferences): void {
   patch(serverId, (current) => ({ ...current, profiles }))
 }
@@ -404,3 +371,7 @@ export function startServerSettingsEvents(): void {
     }
   })
 }
+
+// A server launch made before this Mac read the server's settings waits for
+// this read (`serverSettingsReady` in server-settings-state.ts).
+registerServerSettingsLoader(loadServerSettings)

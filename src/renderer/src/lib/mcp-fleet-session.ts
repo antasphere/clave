@@ -7,6 +7,35 @@ import {
 } from '../../../shared/open-session-modes'
 import type { PiThinkingLevel } from '../../../shared/agent-launch'
 import { useSessionStore } from '../store/session-store'
+import { useFleetStore } from '../store/fleet-store'
+import { describeServerState } from './server-connection-text'
+
+/** The state this window holds of a server, in the words its Servers page
+ *  uses (PRDCT-4165): a tool that cannot reach a server says the same thing
+ *  the person reads in Settings, the reason included, instead of a transport
+ *  error. A server still connecting is let through: the fleet client waits
+ *  for its welcome, as it always did. The fleet client's own refusal stays
+ *  the last line of defence. */
+export function assertServerConnected(serverId: string): void {
+  const fleet = useFleetStore.getState()
+  const connection = fleet.connections.find((c) => c.id === serverId)
+  // A server this window has no saved connection for is left to the fleet
+  // client's own refusal: the target was resolved from the saved list already.
+  if (!connection) return
+  const status = fleet.statuses[serverId]
+  const { error } = describeServerState(status, connection.enabled)
+  if (!connection.enabled)
+    throw new Error(`${connection.name} is disconnected. Reconnect it in Settings → Servers.`)
+  switch (status?.state) {
+    case 'offline':
+      throw new Error(`${connection.name} is unreachable. ${error ?? ''}`.trim())
+    case 'unauthorized':
+      throw new Error(`${connection.name} refused its token. ${error ?? ''}`.trim())
+    default:
+      // connected, or on its way there (connecting, reconnecting, not reported yet)
+      return
+  }
+}
 
 /** The server owns the executable and subscriptions. Never resolve these
  * against the Mac's profile or account stores for a remote launch. */
@@ -32,6 +61,7 @@ export async function openFleetSession(
     attachToParent?: boolean
   }
 ): Promise<{ sessionId: string; groupId: string | null; serverId: string }> {
+  assertServerConnected(serverId)
   const mode = payload.mode ?? 'claude'
   const { family, ...modes } = resolveSpawnModes(payload)
   if (payload.account && !modes.claudeMode && !modes.codexMode)

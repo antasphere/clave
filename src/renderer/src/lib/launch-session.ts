@@ -8,6 +8,9 @@ import { accountForLaunch } from './switch-account'
 import { getActiveWorkspaceId, getWorkspaceById, workspaceServer } from '../store/workspace-store'
 import { pickServerFolder } from '../store/server-folder-store'
 import { clearLaunchNotice, showLaunchNotice } from '../store/launch-notice-store'
+import { deliverPendingChatView, pendingChatView } from './pending-chat-view'
+import type { LaunchProfile, LauncherFamily } from '../../../shared/agent-launch'
+import { serverProfilesFor, serverSettingsReady } from '../store/server-settings-state'
 import {
   agentAcceptsPrompt,
   agentSetupToModes,
@@ -100,11 +103,57 @@ const NO_AGENT = {
   piMode: false
 }
 
+/** What a setup names in a SERVER's own lists (PRDCT-4162): the profile's
+ *  definition and the account, read from the settings this Mac keeps of the
+ *  server. The launcher builds a server's rows from those lists
+ *  (`lib/launch-source.ts`), and every launch that lands on a server resolves
+ *  the same way, whichever button or shortcut replayed the setup: a profile
+ *  the server lists is sent with its definition (which also stops the
+ *  preload substituting a Mac profile of the same id), an account the server
+ *  lists is sent by its id and label. A profile the server does not list
+ *  keeps the carried path of #241 (a Mac profile travels with its command);
+ *  an account the server does not list never travels, as before. A server
+ *  whose settings this Mac has not read yet is read first, so a setup
+ *  replayed right after boot sends the account it names (verifier, round 2);
+ *  a read that fails leaves the built-ins alone. */
+async function serverPick(
+  serverId: string,
+  setup: AgentSetup
+): Promise<{
+  profile?: LaunchProfile
+  claudeAccount?: { id: string; label: string }
+  codexAccount?: { id: string; label: string }
+}> {
+  const settings = (await serverSettingsReady(serverId)) ?? {
+    profiles: null,
+    claude: [],
+    codex: []
+  }
+  const family: LauncherFamily = setup.kind === 'claude-agents' ? 'claude' : setup.kind
+  const profile = setup.launchProfileId
+    ? serverProfilesFor(settings, family).find((p) => p.id === setup.launchProfileId)
+    : undefined
+  const claude =
+    family === 'claude' && setup.claudeProfileId
+      ? settings.claude.find((a) => a.id === setup.claudeProfileId)
+      : undefined
+  const codex =
+    family === 'codex' && setup.codexAccountId
+      ? settings.codex.find((a) => a.id === setup.codexAccountId)
+      : undefined
+  return {
+    ...(profile ? { profile } : {}),
+    ...(claude ? { claudeAccount: { id: claude.id, label: claude.label } } : {}),
+    ...(codex ? { codexAccount: { id: codex.id, label: codex.label } } : {})
+  }
+}
+
 /** A launch on a connected Clave server, in the normal flow (#241): the
- *  launcher's setup and launch profile travel, the cwd is the server
- *  workspace's root (or a folder picked on the server's disk), and the
- *  server runs it on its own accounts and pool — this Mac's account pick
- *  never travels. An offline server refuses with a notice. */
+ *  launcher's setup travels, the cwd is the server workspace's root (or a
+ *  folder picked on the server's disk), and the server runs it on its own
+ *  executables and subscriptions, the profile and the account resolved
+ *  against the server's own lists (`serverPick`). An offline server refuses
+ *  with a notice. */
 async function launchOnServer(serverId: string, req: LaunchRequest): Promise<string | null> {
   const fleet = useFleetStore.getState()
   const serverName = fleet.connections.find((c) => c.id === serverId)?.name ?? 'The server'
@@ -131,6 +180,10 @@ async function launchOnServer(serverId: string, req: LaunchRequest): Promise<str
   const dangerousMode = req.setup?.dangerousMode ?? false
   const initialPrompt =
     req.initialPrompt && agentAcceptsPrompt(req.setup) ? req.initialPrompt : undefined
+  const pick = req.setup ? await serverPick(serverId, req.setup) : {}
+  const serverProfile = pick.profile
+  const claudeAccount = modes.claudeMode || modes.claudeAgentsMode ? pick.claudeAccount : undefined
+  const codexAccount = modes.codexMode ? pick.codexAccount : undefined
   let id: string
   try {
     const info = await window.electronAPI.fleetStart(serverId, cwd, {
@@ -138,6 +191,13 @@ async function launchOnServer(serverId: string, req: LaunchRequest): Promise<str
       dangerousMode,
       ...(initialPrompt ? { initialPrompt } : {}),
       ...(req.setup?.launchProfileId ? { launchProfileId: req.setup.launchProfileId } : {}),
+      ...(serverProfile ? { launchProfile: serverProfile } : {}),
+      ...(claudeAccount
+        ? { claudeProfileId: claudeAccount.id, claudeProfileLabel: claudeAccount.label }
+        : {}),
+      ...(codexAccount
+        ? { codexAccountId: codexAccount.id, codexAccountLabel: codexAccount.label }
+        : {}),
       ...(workspace ? { workspaceId: workspace.id } : {})
     })
     id = info.id
@@ -173,6 +233,16 @@ async function launchOnServer(serverId: string, req: LaunchRequest): Promise<str
  *
  *  Returns the new session id, or null when the launch was cancelled or failed. */
 export async function launchSession(req: LaunchRequest): Promise<string | null> {
+  const id = await launchSessionNow(req)
+  // A chat style picked in the first-run walk and not yet known to the
+  // process that opens sessions rides on the first chat (pending-chat-view.ts).
+  if (id && req.setup && pendingChatView()) {
+    await deliverPendingChatView(id, window.electronAPI).catch(() => false)
+  }
+  return id
+}
+
+async function launchSessionNow(req: LaunchRequest): Promise<string | null> {
   clearLaunchNotice()
   const serverId = launchServer(req)
   if (serverId !== LOCAL_SERVER_ID) return launchOnServer(serverId, req)

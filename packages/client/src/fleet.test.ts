@@ -220,6 +220,141 @@ describe('independent fleet backings', () => {
     a.test.status('open')
     expect(client.list()[0].state).toBe('connected')
   })
+  it('tries a failed acquisition again on its own, and says why it failed meanwhile (PRDCT-4165)', async () => {
+    vi.useFakeTimers()
+    const a = fakeBacking()
+    let reads = 0
+    const client = make({
+      // The first read of the credential fails, as a keychain not yet open at
+      // boot does; the second gives the endpoint.
+      resolve: async () => (++reads === 1 ? null : { url: 'http://a', token: 't' }),
+      connect: () => a,
+      timeoutMs: 50,
+      retryMs: 1_000
+    })
+    await client.connect('a').catch(() => undefined)
+    expect(client.list()[0]).toEqual({
+      serverId: 'a',
+      state: 'offline',
+      error: 'credentials-unavailable'
+    })
+    await expect(client.backing('a')).rejects.toThrow('not connected')
+    await vi.advanceTimersByTimeAsync(999)
+    expect(reads).toBe(1)
+    await vi.advanceTimersByTimeAsync(2)
+    expect(reads).toBe(2)
+    a.test.status('open')
+    expect(client.list()[0].state).toBe('connected')
+    expect(await client.backing('a')).toBe(a)
+  })
+  it('doubles the wait between failed acquisitions, up to sixteen times, and starts over once connected', async () => {
+    vi.useFakeTimers()
+    let reads = 0
+    let give = false
+    const a = fakeBacking()
+    const client = make({
+      resolve: async () => {
+        reads++
+        return give ? { url: 'http://a', token: 't' } : null
+      },
+      connect: () => a,
+      timeoutMs: 50,
+      retryMs: 100
+    })
+    await client.connect('a').catch(() => undefined)
+    expect(reads).toBe(1)
+    await vi.advanceTimersByTimeAsync(100) // 1st retry after 100
+    expect(reads).toBe(2)
+    await vi.advanceTimersByTimeAsync(199)
+    expect(reads).toBe(2)
+    await vi.advanceTimersByTimeAsync(1) // 2nd after 200
+    expect(reads).toBe(3)
+    await vi.advanceTimersByTimeAsync(400) // 3rd after 400
+    expect(reads).toBe(4)
+    for (let i = 0; i < 10; i++) await vi.advanceTimersByTimeAsync(1_600)
+    // Capped: sixteen times the base, so exactly one read per 1 600 ms from here on.
+    for (let i = 0; i < 3; i++) {
+      const atCap = reads
+      await vi.advanceTimersByTimeAsync(1_600)
+      expect(reads).toBe(atCap + 1)
+    }
+    give = true
+    await vi.advanceTimersByTimeAsync(1_600)
+    a.test.status('open')
+    expect(client.list()[0].state).toBe('connected')
+    // Disconnected and failing again: the wait starts over at the base.
+    await client.disconnect('a')
+    give = false
+    const before = reads
+    await client.connect('a').catch(() => undefined)
+    expect(reads).toBe(before + 1)
+    await vi.advanceTimersByTimeAsync(100)
+    expect(reads).toBe(before + 2)
+  })
+  it('an explicit connect after failed attempts starts the retry wait over (verifier, round 2)', async () => {
+    vi.useFakeTimers()
+    let reads = 0
+    const client = make({
+      resolve: async () => {
+        reads++
+        return null
+      },
+      connect: () => fakeBacking(),
+      timeoutMs: 50,
+      retryMs: 100
+    })
+    await client.connect('a').catch(() => undefined)
+    await vi.advanceTimersByTimeAsync(100) // retry 1 (wait 100)
+    await vi.advanceTimersByTimeAsync(200) // retry 2 (wait 200)
+    expect(reads).toBe(3)
+    // Connect pressed in Settings: the attempt is made now, and the next wait is the base again.
+    await client.connect('a').catch(() => undefined)
+    expect(reads).toBe(4)
+    await vi.advanceTimersByTimeAsync(100)
+    expect(reads).toBe(5)
+  })
+  it('does not retry a failed acquisition once disconnected, removed or closed', async () => {
+    vi.useFakeTimers()
+    let reads = 0
+    const client = make({
+      resolve: async () => {
+        reads++
+        return null
+      },
+      connect: () => fakeBacking(),
+      timeoutMs: 50,
+      retryMs: 100
+    })
+    await client.connect('a').catch(() => undefined)
+    await client.disconnect('a')
+    await vi.advanceTimersByTimeAsync(250)
+    expect(reads).toBe(1)
+    expect(client.list()).toEqual([{ serverId: 'a', state: 'disconnected' }])
+    await client.connect('b').catch(() => undefined)
+    await client.remove('b')
+    await vi.advanceTimersByTimeAsync(250)
+    expect(reads).toBe(2)
+    await client.connect('c').catch(() => undefined)
+    await client.close()
+    await vi.advanceTimersByTimeAsync(250)
+    expect(reads).toBe(3)
+  })
+  it('without retryMs a failed acquisition stands until the next connect, as before', async () => {
+    vi.useFakeTimers()
+    let reads = 0
+    const client = make({
+      resolve: async () => {
+        reads++
+        return null
+      },
+      connect: () => fakeBacking(),
+      timeoutMs: 50
+    })
+    await client.connect('a').catch(() => undefined)
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(reads).toBe(1)
+    expect(client.list()[0].state).toBe('offline')
+  })
   it('disconnects only transports, detaches callbacks, retains state until remove, and reconnects fresh', async () => {
     const a = fakeBacking(),
       replacement = fakeBacking()

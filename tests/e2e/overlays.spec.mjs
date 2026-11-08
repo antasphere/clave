@@ -67,13 +67,13 @@ export async function run(t) {
     t.equal('rows are rounded menu-items, not full-bleed strips', pop?.itemRadius, '6px')
     t.check('both workspaces and both actions are rows', (pop?.items ?? 0) >= 4, pop?.items)
 
-    // The popover's ground is the panels' own: the token the toolbar, the
-    // terminal cards and the sidebar's boxes are painted with, resolved through
-    // a probe so the check holds in every theme. A surface one shade off — the
-    // old --surface-100, which is the rows' hover fill — goes red here.
+    // The popover's ground is the card tier of paper (tokens.css "Paper"),
+    // the sheet a settings card is painted with, resolved through a probe so
+    // the check holds in every theme. A surface one shade off — the old
+    // --surface-100, which is the rows' hover fill — goes red here.
     const ground = await win.evaluate(() => {
       const probe = document.createElement('div')
-      probe.style.backgroundColor = 'var(--surface-0)'
+      probe.style.backgroundColor = 'var(--card-surface)'
       document.body.appendChild(probe)
       const bg = getComputedStyle(probe).backgroundColor
       probe.remove()
@@ -86,7 +86,7 @@ export async function run(t) {
       ground
     )
     t.equal(
-      "the surface is painted with the panels' ground (--surface-0)",
+      "the surface is painted with the card paper (--card-surface)",
       ground?.surface,
       ground?.ground
     )

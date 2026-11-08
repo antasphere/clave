@@ -113,6 +113,26 @@ export function getUserShell(): string {
   return process.env.SHELL || '/bin/zsh'
 }
 
+/**
+ * The folder Anthropic's native installer puts `claude` in. It goes at the
+ * END of the login PATH Clave spawns with, so it never shadows a command the
+ * profile already places, and so a process that read its environment before
+ * the CLI was installed (the separate server, booted before the first-run
+ * walk's one-click install) still finds it without a restart, whatever the
+ * installer did or did not write to the profile. A folder that is not there
+ * costs a PATH lookup nothing.
+ */
+export function withNativeAgentDirs(
+  env: Record<string, string>,
+  home: string = process.env.HOME || ''
+): Record<string, string> {
+  if (isWindows || !home) return env
+  const dir = path.join(home, '.local', 'bin')
+  const dirs = (env.PATH || '').split(':').filter(Boolean)
+  if (!dirs.includes(dir)) env.PATH = [...dirs, dir].join(':')
+  return env
+}
+
 function parseEnvOutput(output: string): Record<string, string> {
   const env: Record<string, string> = {}
   for (const entry of output.split('\0')) {
@@ -161,14 +181,36 @@ export function loginShellEnvAsync(): Promise<Record<string, string>> {
         if (loginShellEnv === null) {
           // Not already set by the sync fallback.
           const env = err ? {} : parseEnvOutput(stdout)
-          loginShellEnv =
+          loginShellEnv = withNativeAgentDirs(
             Object.keys(env).length > 0 ? env : ({ ...process.env } as Record<string, string>)
+          )
         }
         resolve(loginShellEnv)
       }
     )
   })
   return loginShellEnvPending
+}
+
+/**
+ * Read the login shell environment again, after something changed what the
+ * profile exports: an agent CLI installed from the first-run walk
+ * (`onboarding.ts`) adds its folder to the PATH in the person's profile, and
+ * the cached copy predates it. The old copy keeps serving until the new one
+ * is read, so nothing falls back to the blocking read meanwhile.
+ */
+export async function refreshLoginShellEnv(): Promise<Record<string, string>> {
+  if (isWindows) return loginShellEnvAsync()
+  const env = await new Promise<Record<string, string> | null>((resolve) => {
+    execFile(
+      getUserShell(),
+      ['-lic', 'env -0'],
+      { encoding: 'utf-8', maxBuffer: 10 * 1024 * 1024 },
+      (err, stdout) => resolve(err ? null : parseEnvOutput(stdout))
+    )
+  })
+  if (env && Object.keys(env).length > 0) loginShellEnv = withNativeAgentDirs(env)
+  return loginShellEnvAsync()
 }
 
 export function getLoginShellEnv(): Record<string, string> {
@@ -186,10 +228,11 @@ export function getLoginShellEnv(): Record<string, string> {
       maxBuffer: 10 * 1024 * 1024
     })
     const env = parseEnvOutput(output)
-    loginShellEnv =
+    loginShellEnv = withNativeAgentDirs(
       Object.keys(env).length > 0 ? env : ({ ...process.env } as Record<string, string>)
+    )
   } catch {
-    loginShellEnv = { ...process.env } as Record<string, string>
+    loginShellEnv = withNativeAgentDirs({ ...process.env } as Record<string, string>)
   }
   return loginShellEnv
 }

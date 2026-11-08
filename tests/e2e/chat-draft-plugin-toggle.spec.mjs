@@ -10,8 +10,10 @@
 //    with its text (`draft-store.ts` holds it; keep it in the view's own state
 //    and the text is gone).
 // Then the kept draft is sent and read back as the user's turn. Two more
-// checks close the draft store's own seams: the terminal view reads the same
-// draft (keep it in TerminalView's own state and it is gone after a toggle),
+// checks close the draft store's own seams: the Enclave view (the terminal-shaped
+// reading of the session, called Terminal in the view menu until 7 November
+// 2026) reads the same draft (keep it in TerminalView's own state and it is
+// gone after a toggle),
 // and the draft is keyed by session (key it globally and a second tab opens
 // with the first tab's text).
 import { mkdirSync, writeFileSync } from 'node:fs'
@@ -115,7 +117,7 @@ export async function run(t) {
     state = await composerState()
     t.check('and the composer is empty after the send', state.value === '', state)
 
-    // ── The terminal view keeps its draft the same way ───────────────────────
+    // ── The Enclave view keeps its draft the same way ────────────────────────
     const switchTo = async (title) => {
       await win.getByLabel('Change view', { exact: true }).click()
       const item = win.locator('.menu-item', { hasText: title })
@@ -124,7 +126,7 @@ export async function run(t) {
       await item.click({ force: true })
       await win.waitForTimeout(300)
     }
-    await switchTo(/^Terminal$/)
+    await switchTo(/^Enclave$/)
     const terminal = win.locator('.terminal-view textarea:not(:disabled)')
     await terminal.waitFor()
     await terminal.click()

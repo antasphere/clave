@@ -20,6 +20,7 @@ export default defineConfig({
       'src/**/*.test.{ts,tsx}',
       'scripts/**/*.test.mjs',
       'tests/e2e/**/*.test.mjs',
+      'packages/skins/scripts/*.test.mjs',
       'packages/{contract,server,client}/src/**/*.test.ts',
       'plugins/*/src/**/*.test.ts'
     ],

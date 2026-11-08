@@ -640,6 +640,12 @@ export type {
 import type { GitBatchProgress } from '../shared/git-batch'
 import type { MicAccessState } from '../shared/mic'
 import type { TriagePrepareResult, TriageSnapshot } from '../shared/triage'
+import type {
+  OnboardingAgent,
+  OnboardingAgentId,
+  OnboardingInstallResult,
+  OnboardingState
+} from '../shared/onboarding'
 import type { DigestDone, DigestRequest, DigestResult } from '../shared/exchange-digest'
 import type {
   ServerInstallProgress,
@@ -1025,6 +1031,13 @@ export interface ElectronAPI extends FleetDesktopAPI {
   onOpenSettingsSection: (callback: (section: string) => void) => () => void
   /** The menu's "Debug Clave…" asks this window to open its triage. */
   onOpenTriage: (callback: () => void) => () => void
+  onboardingGetState: () => Promise<OnboardingState>
+  onboardingAgents: (fresh?: boolean) => Promise<OnboardingAgent[]>
+  onboardingInstall: (id: OnboardingAgentId) => Promise<OnboardingInstallResult>
+  onboardingComplete: () => Promise<void>
+  onboardingSetChatView: (viewId: string) => Promise<void>
+  onboardingCreateFolder: (parent: string, name: string) => Promise<string>
+  onOpenOnboarding: (callback: () => void) => () => void
   onMissionControlEntered: (callback: () => void) => () => void
   onMissionControlExited: (callback: () => void) => () => void
   missionControlGetEnabled: () => Promise<boolean>

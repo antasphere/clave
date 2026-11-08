@@ -610,6 +610,14 @@ function openPersistedWindows(): void {
 }
 
 app.whenReady().then(() => {
+  // First, before any manager writes its file: whether this is a first
+  // install is read from what the data directory holds (preferences-manager.ts),
+  // so it must be read while that is still the truth.
+  try {
+    preferencesManager.get('onboarding')
+  } catch (err) {
+    console.error('[onboarding] could not read the first-run state:', err)
+  }
   electronApp.setAppUserModelId('com.clave.app')
 
   // The Dock tile is created at ready; hide it here so the test instance shows
