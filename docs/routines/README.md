@@ -48,6 +48,14 @@ and the template copied to `~/.antasphere/.clave/routines/workspace-health/` (th
 files of `workspace-health/` here). A personal copy of the workspace file (`romain.clave`)
 changes `params.extra` or the account without touching the shared one.
 
+To run it on the Mac Studio rather than on whichever Mac reads the file, add
+`"server": "MacStudio"` beside `scope` (the Mac Studio server's own name: the first label of its hostname, or the name its install gave it with `--server-name`). The Mac Studio's
+server then runs it alone; every other Mac lists it and never runs it, and a Mac connected
+to the Mac Studio shows that server's runs on the same toolbar button, with the report
+read over the connection and Run now asked of the Mac Studio. Add `"publish": true` inside
+`report` to also push every run's deck to the workspace's Slideless, behind one share link
+the panel shows.
+
 Until Steward's reconciler (`steward doctor` / `steward up`) lands, the prompt names
 today's commands; the day it lands, the prompt shrinks to the reconciler and the schema
 keeps its shape.

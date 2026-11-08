@@ -3,7 +3,14 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { WorkspaceFiles, memoryWorkspaceFilesStorage } from '@clave/server/workspace-files'
-import { MAX_TIMEOUT_MINUTES, resolveRoutines, substituteParams } from './resolve'
+import {
+  MAX_TIMEOUT_MINUTES,
+  type ServerIdentity,
+  defaultServerName,
+  resolveRoutines,
+  runsOn,
+  substituteParams
+} from './resolve'
 
 let root: string
 beforeEach(() => {
@@ -230,5 +237,85 @@ describe('bounds and confinement (round 1, F5 and F11)', () => {
     expect(byName.long.invalid).toBeNull()
     expect(byName['schema-out'].invalid).toContain('schema')
     expect(byName['schema-out'].invalid).toContain('outside')
+  })
+})
+
+describe('the server a routine names (PRDCT-4149)', () => {
+  const studio: ServerIdentity = { id: 'srv-1', name: 'Studio' }
+
+  it('runs an unpinned routine anywhere, a pinned one only on the server it names', () => {
+    expect(runsOn(null, studio)).toBe(true)
+    expect(runsOn(undefined, studio)).toBe(true)
+    expect(runsOn('', studio)).toBe(true)
+    expect(runsOn('   ', studio)).toBe(true)
+    expect(runsOn('srv-1', studio)).toBe(true)
+    expect(runsOn('studio', studio)).toBe(true)
+    expect(runsOn('  STUDIO ', studio)).toBe(true)
+    expect(runsOn('MacBook', studio)).toBe(false)
+    expect(runsOn('srv-2', studio)).toBe(false)
+  })
+
+  it('names a server after its hostname without .local, never with nothing', () => {
+    expect(defaultServerName('MacStudio.local')).toBe('MacStudio')
+    expect(defaultServerName('MacStudio.LOCAL')).toBe('MacStudio')
+    expect(defaultServerName('  studio.Local  ')).toBe('studio')
+    expect(defaultServerName('build-box')).toBe('build-box')
+    expect(defaultServerName('romains-macbook-pro2.home')).toBe('romains-macbook-pro2')
+    expect(defaultServerName('studio.lan')).toBe('studio')
+    expect(defaultServerName('.odd')).toBe('clave-server')
+    expect(defaultServerName('')).toBe('clave-server')
+    expect(defaultServerName('   ')).toBe('clave-server')
+  })
+
+  async function read(identity?: ServerIdentity): Promise<Record<string, RoutineLike>> {
+    template(root, 'ok')
+    const file = profile(root, 'default', {
+      name: 'G',
+      cwd: '.',
+      sessions: [],
+      terminals: [],
+      routines: [
+        health({ name: 'pinned', server: 'Studio', report: { template: '.clave/routines/ok' } }),
+        health({ name: 'free', report: { template: '.clave/routines/ok' } }),
+        health({
+          name: 'published',
+          report: { template: '.clave/routines/ok', publish: true }
+        })
+      ]
+    })
+    const files = new WorkspaceFiles(memoryWorkspaceFilesStorage())
+    files.trustRoot(root)
+    const { declarations } = await resolveRoutines(
+      files,
+      [{ id: 'ws', name: 'A', rootDir: root, profileFile: file }],
+      undefined,
+      identity
+    )
+    return Object.fromEntries(declarations.map((d) => [d.name, d]))
+  }
+  type RoutineLike = Awaited<ReturnType<typeof resolveRoutines>>['declarations'][number]
+
+  it('runs a routine pinned by name on the server of that name, whatever the case', async () => {
+    const byName = await read({ id: 'x', name: 'studio' })
+    expect(byName.pinned).toMatchObject({ server: 'Studio', runsHere: true })
+    expect(byName.free).toMatchObject({ server: null, runsHere: true })
+  })
+
+  it('lists a routine pinned elsewhere without running it', async () => {
+    const byName = await read({ id: 'y', name: 'MacBook' })
+    expect(byName.pinned).toMatchObject({ server: 'Studio', runsHere: false, invalid: null })
+    expect(byName.free.runsHere).toBe(true)
+  })
+
+  it('runs only the unpinned routines for a reader with no identity', async () => {
+    const byName = await read()
+    expect(byName.pinned.runsHere).toBe(false)
+    expect(byName.free.runsHere).toBe(true)
+  })
+
+  it('publishes nothing unless the report says so', async () => {
+    const byName = await read({ id: 'x', name: 'studio' })
+    expect(byName.free.report.publish).toBe(false)
+    expect(byName.published.report.publish).toBe(true)
   })
 })

@@ -1,11 +1,14 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { tmpdir } from 'node:os'
 import type { SessionHostService, StartInput } from '@clave/server'
+import type { RoutineRun } from '@clave/contract/routines'
 import type { Session, SessionInfo, SessionStream } from '@clave/contract/sessions'
 import { WorkspaceFiles, memoryWorkspaceFilesStorage } from '@clave/server/workspace-files'
+import { DECKS_DIR, escapeForScript } from './deck'
 import type { LaunchFacts } from './launch'
+import { PublishFailure, type PublishInput, type PublishOutcome } from './publisher'
 import {
   RoutineReportRefusal,
   createRoutineService,
@@ -461,5 +464,202 @@ describe('the agents that can report (round 2, gap)', () => {
     expect(run.state).toBe('failed')
     expect(run.reason).toContain('cannot report')
     expect(host.starts).toEqual([])
+  })
+})
+
+/** An hourly schedule whose latest occurrence is about thirty minutes old, and
+ *  a store whose clock last considered it hours ago: a due catch-up at the
+ *  next tick (the same seed as the catch-up test above). */
+function dueHourly(
+  file: string,
+  name: string,
+  storage = memory()
+): {
+  schedule: string
+  storage: ReturnType<typeof memory>
+} {
+  const schedule = `${(new Date().getMinutes() + 30) % 60} * * * *`
+  new RoutinesStore(storage).considered(key(file, name), Date.now() - 3 * 3_600_000, schedule)
+  return { schedule, storage }
+}
+
+describe('a routine pinned to a server (PRDCT-4149)', () => {
+  it('is listed on another server and never run there, by the tick or by Run now', async () => {
+    const schedule = `${(new Date().getMinutes() + 30) % 60} * * * *`
+    const file = workspace([routine('Nightly', { server: 'Studio', schedule })])
+    const { storage } = dueHourly(file, 'Nightly')
+    const host = fakeHost()
+    const service = await build(file, host, storage)
+    await service.tick()
+    expect(host.starts).toEqual([])
+    const listed = service.list().routines[0]
+    expect(listed.routine).toMatchObject({ server: 'Studio', runsHere: false })
+    expect(listed.runs).toEqual([])
+    expect(listed.nextRunAt).toEqual(expect.any(Number))
+    const refused = service.runNow(key(file, 'Nightly'))
+    await expect(refused).rejects.toThrow(/Studio/)
+    await expect(refused).rejects.toThrow(/TestMac/)
+    expect(host.starts).toEqual([])
+  })
+
+  it('runs on the server it names, whatever the case of the name', async () => {
+    const schedule = `${(new Date().getMinutes() + 30) % 60} * * * *`
+    const file = workspace([routine('Nightly', { server: 'testmac', schedule })])
+    const { storage } = dueHourly(file, 'Nightly')
+    const host = fakeHost()
+    const service = await build(file, host, storage)
+    await service.tick()
+    expect(host.starts).toHaveLength(1)
+    expect(service.list().routines[0].routine.runsHere).toBe(true)
+    expect(service.list().routines[0].runs[0].trigger).toBe('catch-up')
+  })
+
+  it('runs on a server named by its id under another identity', async () => {
+    const file = workspace([routine('Nightly', { server: 'srv-42' })])
+    const host = fakeHost()
+    const service = await build(file, host, memory(), {
+      identity: () => ({ id: 'srv-42', name: 'Studio' })
+    })
+    const run = await service.runNow(key(file, 'Nightly'))
+    expect(run.state).toBe('running')
+    expect(service.list().server).toEqual({ id: 'srv-42', name: 'Studio' })
+  })
+
+  it('answers the server it lists from', async () => {
+    const file = workspace([routine('Health')])
+    const service = await build(file, fakeHost())
+    expect(service.list().server).toEqual({ id: 'server-test', name: 'TestMac' })
+  })
+})
+
+describe('the deck read over the API (PRDCT-4149)', () => {
+  it('answers the filled page of a reported run, and refuses a run with no deck', async () => {
+    const host = fakeHost()
+    const file = workspace([routine('Health')])
+    const service = await build(file, host)
+    const run = await service.runNow(key(file, 'Health'))
+    const headline = 'all good </script> here'
+    await service.report({ sessionId: 's1', status: 'ok', headline, summary: 's', data: { n: 1 } })
+    host.emit('s1', { kind: 'event', event: { type: 'state_change', state: 'done' } })
+    const { html } = await service.deck(run.id)
+    const block = html.slice(html.indexOf('id="slideless-data"'), html.lastIndexOf('</script>'))
+    expect(block).toContain(escapeForScript(JSON.stringify(headline)))
+    expect(block).not.toContain(headline)
+
+    await expect(service.deck('no-such-run')).rejects.toThrow(/no-such-run/)
+
+    const bare = await service.runNow(key(file, 'Health'))
+    host.emit('s2', { kind: 'event', event: { type: 'state_change', state: 'done' } })
+    expect(service.list().routines[0].runs[0]).toMatchObject({ id: bare.id, deck: null })
+    await expect(service.deck(bare.id)).rejects.toThrow(/no deck/)
+  })
+})
+
+describe('the publish to Slideless (PRDCT-4149)', () => {
+  /** A publisher that records what it is asked and answers a new version each time. */
+  function fakePublisher(fail?: string): {
+    inputs: PublishInput[]
+    publish: (input: PublishInput) => Promise<PublishOutcome>
+  } {
+    const inputs: PublishInput[] = []
+    return {
+      inputs,
+      publish: async (input) => {
+        inputs.push(input)
+        if (fail) throw new PublishFailure(fail)
+        const share = { tokenId: 'tok', url: 'https://s.example/d' }
+        return {
+          deckId: 'deck-1',
+          version: inputs.length,
+          url: share.url,
+          state: { deckId: 'deck-1', share },
+          shareError: null
+        }
+      }
+    }
+  }
+
+  const published = routine('Health', {
+    report: { template: '.clave/routines/ok', publish: true }
+  })
+
+  async function reportedRun(
+    service: RoutineService,
+    host: ReturnType<typeof fakeHost>,
+    file: string,
+    sessionId: string
+  ): Promise<string> {
+    const run = await service.runNow(key(file, 'Health'))
+    await service.report({ sessionId, status: 'ok', headline: 'h', summary: 's', data: { n: 1 } })
+    host.emit(sessionId, { kind: 'event', event: { type: 'state_change', state: 'done' } })
+    return run.id
+  }
+
+  const runOf = (service: RoutineService, id: string): RoutineRun =>
+    service.list().routines[0].runs.find((r) => r.id === id)!
+
+  it('pushes each run once, from its deck folder, under the routine name, with the kept state', async () => {
+    const host = fakeHost()
+    const file = workspace([published])
+    const publisher = fakePublisher()
+    const service = await build(file, host, memory(), { publisher })
+    const first = await reportedRun(service, host, file, 's1')
+    await vi.waitFor(() => expect(runOf(service, first).published).toBeDefined())
+    expect(publisher.inputs).toHaveLength(1)
+    const deck = runOf(service, first).deck!
+    expect(publisher.inputs[0]).toMatchObject({
+      folder: dirname(join(root, 'data', DECKS_DIR, deck)),
+      title: 'Health',
+      state: null
+    })
+    expect(runOf(service, first)).toMatchObject({
+      state: 'ok',
+      published: { deckId: 'deck-1', version: 1, url: 'https://s.example/d' },
+      publishError: null
+    })
+
+    const second = await reportedRun(service, host, file, 's2')
+    await vi.waitFor(() => expect(runOf(service, second).published).toBeDefined())
+    expect(publisher.inputs).toHaveLength(2)
+    expect(publisher.inputs[1].state).toEqual({
+      deckId: 'deck-1',
+      share: { tokenId: 'tok', url: 'https://s.example/d' }
+    })
+    expect(runOf(service, second).published?.version).toBe(2)
+  })
+
+  it('writes why on the run when the publish fails, and leaves the run ok', async () => {
+    const host = fakeHost()
+    const file = workspace([published])
+    const service = await build(file, host, memory(), { publisher: fakePublisher('x') })
+    const id = await reportedRun(service, host, file, 's1')
+    await vi.waitFor(() => expect(runOf(service, id).publishError).toBe('x'))
+    expect(runOf(service, id).state).toBe('ok')
+    expect(runOf(service, id).published).toBeUndefined()
+  })
+
+  it('says no publisher runs in this process when the server has none', async () => {
+    for (const publisher of [false as const, undefined]) {
+      const host = fakeHost()
+      const file = workspace([published])
+      const service = await build(file, host, memory(), { publisher })
+      const id = await reportedRun(service, host, file, 's1')
+      await vi.waitFor(() =>
+        expect(runOf(service, id).publishError).toMatch(/no Slideless publisher/)
+      )
+      expect(runOf(service, id).state).toBe('ok')
+    }
+  })
+
+  it('never calls the publisher for a routine that does not publish', async () => {
+    const host = fakeHost()
+    const file = workspace([routine('Health')])
+    const publisher = fakePublisher()
+    const service = await build(file, host, memory(), { publisher })
+    const id = await reportedRun(service, host, file, 's1')
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(publisher.inputs).toEqual([])
+    expect(runOf(service, id).publishError).toBeUndefined()
+    expect(runOf(service, id).published).toBeUndefined()
   })
 })

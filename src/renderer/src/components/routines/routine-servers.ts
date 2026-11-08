@@ -1,0 +1,163 @@
+import { LOCAL_SERVER_ID, resourceKey, type ServerPairings } from '@clave/contract/fleet'
+import type {
+  RoutineDeclaration,
+  RoutineView,
+  RoutinesListing
+} from '@clave/contract/routines/model'
+
+/**
+ * One toolbar for every server's routines (PRDCT-4149). A `.clave` file may
+ * name the server that runs a routine; every server that reads the file lists
+ * the routine, and only the named one runs it. This Mac reads its own
+ * server's listing and the listing of every connected server, and this module
+ * decides, purely, which view of each routine the toolbar shows: the one of
+ * the server that RUNS it, since that is where its runs, its badge and its
+ * report live, placed in the Mac workspace the person looks at.
+ */
+export interface RoutineSurface {
+  /** The view as the owning server lists it. */
+  view: RoutineView
+  /** LOCAL_SERVER_ID or the connected server's id: where the acts go. */
+  serverId: string
+  /** The listing server's own name, or the Mac's connection name as a fallback. */
+  serverName: string
+  /** Where the routine runs. */
+  runsOn: 'here' | 'server'
+  /** False when a pinned routine's server is not connected (its view is then the LOCAL listing's). */
+  reachable: boolean
+  /** The workspace id the toolbar filters by. */
+  workspaceId: string
+  /** The routine's `server` field as written; null when whichever server reads the file runs it. */
+  pinnedTo: string | null
+}
+
+export interface RoutineSurfacesInput {
+  local: RoutinesListing | null
+  /** By server id, the last listing heard. */
+  remote: Record<string, RoutinesListing>
+  /** Server ids whose status is `connected`. */
+  connected: ReadonlySet<string>
+  /** Server id → the Mac's saved name for the connection. */
+  connectionNames: Record<string, string>
+  pairings: ServerPairings['servers']
+}
+
+/** A routine's identity across machines: its file relative to the file's
+ *  root, and its name. Two machines hold the same tree at different paths;
+ *  the same routine is the same file under each root. */
+export function relId(decl: Pick<RoutineDeclaration, 'rootDir' | 'file' | 'name'>): string {
+  const root = decl.rootDir.replace(/\/+$/, '')
+  const file =
+    root && decl.file.startsWith(`${root}/`) ? decl.file.slice(root.length + 1) : decl.file
+  return `${file}::${decl.name}`
+}
+
+/** Whether the listing server runs the view's routine. A server older than
+ *  the field lists no `runsHere` at all, and it ran every routine it read. */
+const runsThere = (view: RoutineView): boolean => view.routine.runsHere !== false
+
+/** A listing's own name: an older server sends no identity. */
+const listingName = (
+  listing: RoutinesListing,
+  serverId: string,
+  names: Record<string, string>
+): string => listing.server?.name ?? names[serverId] ?? serverId
+
+export function mergeRoutineSurfaces(input: RoutineSurfacesInput): RoutineSurface[] {
+  const { local, remote, connected, connectionNames, pairings } = input
+  const surfaces: RoutineSurface[] = []
+  const placed = new Set<string>()
+  const add = (surface: RoutineSurface): void => {
+    const id = `${surface.serverId}\u0000${surface.view.routine.key}`
+    if (placed.has(id)) return
+    placed.add(id)
+    surfaces.push(surface)
+  }
+  const serverIds = Object.keys(remote).sort()
+  // The remote views a pinned local routine took over: surfaced once, under
+  // the local workspace, and never again as a remote routine of their own.
+  const consumed = new Set<string>()
+
+  // The server a pin names, by its id or its own name; a connected one wins
+  // when two listings answer to the same name.
+  const ownerOf = (pin: string): string | null => {
+    const wanted = pin.trim()
+    const lower = wanted.toLowerCase()
+    const matches = serverIds.filter((id) => {
+      const server = remote[id].server
+      return !!server && (server.id === wanted || server.name.trim().toLowerCase() === lower)
+    })
+    return matches.find((id) => connected.has(id)) ?? matches[0] ?? null
+  }
+
+  for (const view of local?.routines ?? []) {
+    const decl = view.routine
+    if (runsThere(view)) {
+      add({
+        view,
+        serverId: LOCAL_SERVER_ID,
+        serverName: local?.server?.name ?? 'This Mac',
+        runsOn: 'here',
+        reachable: true,
+        workspaceId: decl.workspaceId,
+        pinnedTo: decl.server
+      })
+      continue
+    }
+    const pin = decl.server ?? ''
+    const owner = ownerOf(pin)
+    const id = relId(decl)
+    const twin = owner
+      ? remote[owner].routines.find((v) => runsThere(v) && relId(v.routine) === id)
+      : undefined
+    // The owner's twin is this routine: it never surfaces again on its own,
+    // even while its server is away (the local view stands for it then).
+    if (owner && twin) consumed.add(`${owner}\u0000${id}`)
+    if (owner && twin && connected.has(owner)) {
+      add({
+        view: twin,
+        serverId: owner,
+        serverName: listingName(remote[owner], owner, connectionNames),
+        runsOn: 'server',
+        reachable: true,
+        workspaceId: decl.workspaceId,
+        pinnedTo: decl.server
+      })
+      continue
+    }
+    const lower = pin.trim().toLowerCase()
+    const savedName = Object.values(connectionNames).find(
+      (name) => name.trim().toLowerCase() === lower
+    )
+    add({
+      view,
+      serverId: LOCAL_SERVER_ID,
+      serverName: owner ? listingName(remote[owner], owner, connectionNames) : (savedName ?? pin),
+      runsOn: 'server',
+      reachable: false,
+      workspaceId: decl.workspaceId,
+      pinnedTo: decl.server
+    })
+  }
+
+  for (const serverId of serverIds) {
+    const listing = remote[serverId]
+    for (const view of listing.routines) {
+      if (!runsThere(view)) continue
+      const decl = view.routine
+      if (consumed.has(`${serverId}\u0000${relId(decl)}`)) continue
+      const pairing = pairings[serverId]
+      const paired = pairing?.combine === true ? pairing.pairs[decl.workspaceId] : undefined
+      add({
+        view,
+        serverId,
+        serverName: listingName(listing, serverId, connectionNames),
+        runsOn: 'server',
+        reachable: connected.has(serverId),
+        workspaceId: paired ?? resourceKey('workspace', serverId, decl.workspaceId),
+        pinnedTo: decl.server ?? null
+      })
+    }
+  }
+  return surfaces
+}

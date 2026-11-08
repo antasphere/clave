@@ -176,7 +176,7 @@ async function main(): Promise<void> {
   const identity = config.daemon ? daemonIdentity(dataDir, arg('token-file')) : undefined
   // ── PRDCT-4149: this server's own name, what a routine's `server` field names it by ──
   // `--server-name` (the install script's option) else the machine's hostname
-  // without `.local`; the id is the daemon's stable one, or the listener's once up.
+  // first label only; the id is the daemon's stable one, or the listener's once up.
   const serverName =
     arg('server-name')?.trim() ||
     process.env.CLAVE_SERVER_NAME?.trim() ||

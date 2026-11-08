@@ -68,12 +68,12 @@ export function runsOn(server: string | null | undefined, identity: ServerIdenti
   return wanted === identity.id || wanted.toLowerCase() === identity.name.trim().toLowerCase()
 }
 
-/** The machine's own name, the default a server answers to: its hostname
- *  without a trailing `.local` (what macOS appends on the tailnet), lower-cased
- *  by whoever compares it. */
+/** The machine's own name, the default a server answers to: the first label
+ *  of its hostname, without the domain a network appends (`.local` on a Mac,
+ *  `.home` or `.lan` from a router), lower-cased by whoever compares it. */
 export function defaultServerName(hostname: string): string {
-  const trimmed = hostname.trim().replace(/\.local$/i, '')
-  return trimmed || 'clave-server'
+  const label = hostname.trim().split('.')[0]?.trim() ?? ''
+  return label || 'clave-server'
 }
 
 /** One routine of one group, as the scheduler sees it. Pure. */

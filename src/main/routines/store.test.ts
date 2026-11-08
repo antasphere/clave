@@ -99,6 +99,26 @@ describe('RoutinesStore', () => {
     expect(store.prune(new Set(['declared']))).toEqual(['kept'])
   })
 
+  it("keeps a routine's Slideless deck and share link across a reload (PRDCT-4149)", () => {
+    const storage = memory()
+    const store = new RoutinesStore(storage)
+    expect(store.publishState('k')).toBeNull()
+    const state = { deckId: 'deck-1', share: { tokenId: 't-1', url: 'https://s.example/d/1' } }
+    store.setPublishState('k', state)
+    expect(store.publishState('k')).toEqual(state)
+    expect(new RoutinesStore(storage).publishState('k')).toEqual(state)
+  })
+
+  it("forgets a pruned routine's publish state with the routine", () => {
+    let now = 0
+    const store = new RoutinesStore(memory(), () => now)
+    store.considered('old', 0, '* * * * *')
+    store.setPublishState('old', { deckId: 'deck-old', share: null })
+    now = PRUNE_AFTER_MS + 1
+    expect(store.prune(new Set())).toEqual(['old'])
+    expect(store.publishState('old')).toBeNull()
+  })
+
   it('keeps the viewer port for the next start', () => {
     const storage = memory()
     const store = new RoutinesStore(storage)

@@ -98,7 +98,7 @@ export function claveServerId(): string | null {
 }
 
 /** This Mac's own name as a server (PRDCT-4149): the environment's when the
- *  harness gives one, else the machine's hostname without `.local`. */
+ *  harness gives one, else the first label of the machine's hostname. */
 export function ownServerName(): string {
   return process.env.CLAVE_SERVER_NAME?.trim() || defaultServerName(hostname())
 }
