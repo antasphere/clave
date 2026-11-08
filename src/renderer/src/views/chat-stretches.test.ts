@@ -7,6 +7,7 @@ import {
   foldStretches,
   isBoundary,
   noteCount,
+  plainNote,
   rowKey,
   spanLabel,
   stretchNotes,
@@ -42,7 +43,13 @@ const user = (text: string, over: Partial<Extract<Entry, { kind: 'user' }>> = {}
   at: ++clock,
   ...over
 })
-const assistant = (text: string): Entry => ({ kind: 'assistant', text, final: true, at: ++clock })
+const assistant = (text: string, closes?: boolean): Entry => ({
+  kind: 'assistant',
+  text,
+  final: true,
+  at: ++clock,
+  ...(closes ? { closes } : {})
+})
 const error = (message: string): Entry => ({ kind: 'error', message, at: ++clock })
 /** A permission to use a tool, answered or not. */
 const approval = (id: string, answer?: string): Entry => ({
@@ -131,7 +138,7 @@ describe('foldStretches: the shape of a finished turn', () => {
     expect(rows).toHaveLength(10)
   })
 
-  it('folds an earlier turn whatever the state, since a later message ended it', () => {
+  it('folds an earlier turn once a later message began a turn of its own, whatever the state', () => {
     const rows = fold([...longTurn(), user('thanks'), ...step('Looking.', 'x1')], false)
     expect(kinds(rows)).toEqual([
       'user',
@@ -182,6 +189,75 @@ describe('foldStretches: the shape of a finished turn', () => {
       true
     )
     expect(kinds(rows)).toEqual(['user', 'work-stretch', 'assistant', 'tool-group'])
+  })
+
+  it('a message that arrived while the agent worked ends nothing: no fold until the turn is over', () => {
+    const before = [
+      user('go'),
+      ...step('One.', 'a'),
+      ...step('Two.', 'b'),
+      ...step('Three.', 'c'),
+      ...step('Four.', 'd'),
+      user('and also this', { midTurn: true }),
+      ...step('Five.', 'e'),
+      ...step('Six.', 'f'),
+      ...step('Seven.', 'g')
+    ]
+    // Still working: everything stays.
+    expect(kinds(fold(before, false))).not.toContain('work-stretch')
+    // The turn ended on its answer: the notes on each side of the message
+    // fold apart, the words right before the message stay with it.
+    const rows = fold([...before, assistant('Done.', true)], false)
+    expect(kinds(rows)).toEqual([
+      'user',
+      'work-stretch',
+      'assistant',
+      'tool-group',
+      'user',
+      'work-stretch',
+      'assistant'
+    ])
+    expect(stretchNotes(stretch(rows, 0))).toEqual(['One.', 'Two.', 'Three.'])
+    expect(stretchNotes(stretch(rows, 1))).toEqual(['Five.', 'Six.', 'Seven.'])
+  })
+
+  it('an agent that carries on after its answer starts a new turn: the answer stays what it was', () => {
+    const rows = fold(
+      [
+        ...longTurn().slice(0, -1),
+        assistant('I fixed both errors.', true),
+        // A background task reported back and the agent went on, no message.
+        tool('bg'),
+        ...step('Reading the task result.', 'r1'),
+        ...step('One more check.', 'r2'),
+        ...step('And the docs.', 'r3'),
+        assistant('All green now.', true)
+      ],
+      true
+    )
+    expect(kinds(rows)).toEqual([
+      'user',
+      'work-stretch',
+      'assistant',
+      'work-stretch',
+      'assistant'
+    ])
+    const first = rows[2]
+    expect(first.kind === 'assistant' && first.text).toBe('I fixed both errors.')
+    expect(stretch(rows, 1).steps[0].note).toBeNull()
+    expect(stretchNotes(stretch(rows, 1))).toEqual([
+      'Reading the task result.',
+      'One more check.',
+      'And the docs.'
+    ])
+  })
+
+  it('a turn that ended stays folded while the agent works again', () => {
+    const rows = fold(
+      [...longTurn().slice(0, -1), assistant('I fixed both errors.', true), tool('bg'), assistant('Looking.')],
+      false
+    )
+    expect(kinds(rows)).toEqual(['user', 'work-stretch', 'assistant', 'tool-group', 'assistant'])
   })
 
   it('takes the work before the first note into the card as a first step', () => {
@@ -358,17 +434,29 @@ describe('foldStretches: what folds and what is a boundary', () => {
 })
 
 describe('the card’s facts', () => {
-  it('keys a stretch by its first entry, so the key holds while the past arrives in front', () => {
+  it('keys a stretch by its last entry, so the key holds while the past lengthens its turn in front', () => {
     const entries = longTurn()
     const ordinal = new Map<Entry, number>()
     entries.forEach((entry, i) => ordinal.set(entry, 100 + i))
     const rows = fold(entries)
     const card = stretch(rows)
-    expect(rowKey(card, (e) => ordinal.get(e))).toBe('stretch-entry-101')
-    // Shifted by a page of the past: the same key.
-    entries.forEach((entry, i) => ordinal.set(entry, 400 + i))
-    expect(rowKey(card, (e) => ordinal.get(e))).toBe('stretch-entry-401')
+    expect(rowKey(card, (e) => ordinal.get(e))).toBe('stretch-tools-t5')
+    // A page of the past arrived in front, cutting into this turn: two more
+    // notes at the card's start, every ordinal shifted. The same key.
+    const earlier = [...step('Earlier note.', 'e1'), ...step('Another.', 'e2')]
+    const longer = [entries[0], ...earlier, ...entries.slice(1)]
+    longer.forEach((entry, i) => ordinal.set(entry, 400 + i))
+    const grown = stretch(fold(longer))
+    expect(noteCount(grown.steps)).toBe(6)
+    expect(rowKey(grown, (e) => ordinal.get(e))).toBe('stretch-tools-t5')
     expect(rowKey(rows[0], (e) => ordinal.get(e))).toBe('entry-400')
+  })
+
+  it('reads a note plain for the face: no fence, no marks, the first line for a title', () => {
+    const note = '```ts\nconst x = 1\n```\n\n## Quick check before I go on:\n\nShould I **drop** the `legacy` table?\n- yes\n- no'
+    expect(plainNote(note, true)).toBe('Quick check before I go on:')
+    expect(plainNote(note)).toBe('Quick check before I go on:\nShould I drop the legacy table?\nyes\nno')
+    expect(plainNote('   ')).toBe('')
   })
 
   it('spans from the first note to the last tool', () => {

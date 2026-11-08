@@ -12,9 +12,13 @@ import { until } from './harness.mjs'
      the digest's title, and the note the digest flagged verbatim in accent;
    - the card opens to one step per note, each with its tool run under it,
      and the flagged step is marked;
+   - an agent that carries on after its answer without a new message (a
+     background task reporting back) starts a new turn: the answer stays;
    - a question the agent asked is a boundary: it stays on its own row, and
      the notes on each side fold into two cards; a permission the agent asked
      for a tool folds inside;
+   - a message that arrives while the agent works ends nothing: the work
+     before it stays as it is until the turn is over, then folds apart;
    - the preference: off in Settings → Appearance, every line is back; the
      toolbar button turns it on again, and the choice is kept.
    Under the harness no model runs: the digest's reply comes from
@@ -133,6 +137,23 @@ export async function run(t) {
           face.flag === NOTES[2],
         face
       )
+      // Filed under the tab, in a bucket of its own beside the exchange digests.
+      const filed = await until(async () => {
+        const keys = await chat.app.evaluate(({ app }, id) => {
+          const fs = process.getBuiltinModule('fs')
+          const path = process.getBuiltinModule('path')
+          const file = path.join(app.getPath('userData'), 'exchange-digests.json')
+          if (!fs.existsSync(file)) return null
+          const data = JSON.parse(fs.readFileSync(file, 'utf-8'))
+          return { work: Object.keys(data[`${id}:work`] ?? {}), plain: Object.keys(data[id] ?? {}) }
+        }, record.id)
+        return keys && keys.work.length === 1 ? keys : null
+      }, 8000)
+      t.check(
+        `${mode}: the title is filed under the tab's own work bucket, apart from the exchange digests`,
+        !!filed && filed.work.length === 1 && filed.plain.length === 0,
+        filed
+      )
 
       // 4. Open: one step per note, its work under it, the flagged step marked.
       await card.locator('.stretch-summary').click()
@@ -156,6 +177,28 @@ export async function run(t) {
         opened
       )
       await card.locator('.stretch-summary').click()
+
+      // 4b. The agent carries on after its answer with no new message (a
+      // background task reporting back): a new turn, the answer stays.
+      await inject(fixture, record.id, [
+        working,
+        ...call(),
+        ...note('Picked up the background result.'),
+        { type: 'assistant_text', delta: 'All green now.', final: true },
+        idle
+      ])
+      await view
+        .locator('.chat-turn[data-role="assistant"]', { hasText: 'All green now.' })
+        .waitFor()
+      const carried = { cards: await cards.count(), outside: await outside() }
+      t.check(
+        `${mode}: an agent carrying on after its answer leaves that answer where it was`,
+        carried.cards === 1 &&
+          carried.outside.includes(ANSWER) &&
+          carried.outside.includes('Picked up the background result.') &&
+          carried.outside.includes('All green now.'),
+        carried
+      )
 
       // 5. A question mid-stretch is a boundary; a tool permission folds in.
       await inject(fixture, record.id, [
@@ -220,6 +263,60 @@ export async function run(t) {
         }
       )
 
+      // 5b. A message that arrives while the agent works ends nothing.
+      await inject(fixture, record.id, [
+        working,
+        { type: 'user_message', text: 'one more thing' },
+        ...note('Starting on it.'),
+        ...note('Reading the module.'),
+        ...note('Found the place.'),
+        ...note('Changing it.'),
+        { type: 'user_message', text: 'and also rename the flag' }
+      ])
+      await view
+        .locator('.chat-turn[data-role="user"]', { hasText: 'and also rename the flag' })
+        .waitFor()
+      await inject(fixture, record.id, [
+        ...note('Noted, renaming too.'),
+        ...note('Running the checks.'),
+        ...note('Both done.')
+      ])
+      await view.locator('.chat-turn[data-role="assistant"]', { hasText: 'Both done.' }).waitFor()
+      // The rows are virtualised, so turns above may be out of the document:
+      // what holds is that the notes near the end are still turns of their
+      // own, and that no card holds this turn's notes.
+      const midTurn = {
+        outside: await outside(),
+        inCards: await cards.evaluateAll(
+          (els) =>
+            els.filter((el) => /Changing it\.|Noted, renaming too\./.test(el.textContent)).length
+        )
+      }
+      t.check(
+        `${mode}: a message arriving mid-turn folds nothing while the agent still works`,
+        ['Changing it.', 'Noted, renaming too.', 'Running the checks.', 'Both done.'].every(
+          (text) => midTurn.outside.includes(text)
+        ) && midTurn.inCards === 0,
+        midTurn
+      )
+      await inject(fixture, record.id, [
+        { type: 'assistant_text', delta: 'Done, flag renamed as well.', final: true },
+        idle
+      ])
+      await until(async () => ((await cards.count()) >= 2 ? true : null))
+      // The two newest cards, the ones of this turn: three notes each.
+      const newest = await cards.evaluateAll((els) => els.slice(-2).map((el) => el.dataset.notes))
+      const after = { newest, outside: await outside() }
+      t.check(
+        `${mode}: once that turn is over, the notes on each side of the message fold apart and the words before it stay`,
+        JSON.stringify(after.newest) === '["3","3"]' &&
+          after.outside.includes('Changing it.') &&
+          after.outside.includes('Done, flag renamed as well.') &&
+          !after.outside.includes('Starting on it.') &&
+          !after.outside.includes('Noted, renaming too.'),
+        after
+      )
+
       // 6. The preference: off in Settings, on from the toolbar, kept.
       await win.evaluate(() =>
         document.querySelector('.sidebar-footer-btn[aria-label="Settings"]')?.click()
@@ -242,15 +339,15 @@ export async function run(t) {
       t.check(
         `${mode}: off in Settings → Appearance, every line is back in the transcript`,
         off.cards === 0 &&
-          ['Checks are green.', 'Writing the summary.', 'Done with the other one.'].every((text) =>
-            off.outside.includes(text)
+          ['Noted, renaming too.', 'Running the checks.', 'Done, flag renamed as well.'].every(
+            (text) => off.outside.includes(text)
           ),
         off
       )
       const button = win.locator('[data-testid="fold-notes-toggle"]')
       assert.equal(await button.getAttribute('aria-pressed'), 'false')
       await button.click()
-      await until(async () => ((await cards.count()) === 3 ? true : null))
+      await until(async () => ((await cards.count()) >= 2 ? true : null))
       const on = {
         cards: await cards.count(),
         pressed: await button.getAttribute('aria-pressed'),
@@ -258,7 +355,7 @@ export async function run(t) {
       }
       t.check(
         `${mode}: the toolbar button folds them again and the choice is kept`,
-        on.cards === 3 && on.pressed === 'true' && on.kept === 'on',
+        on.cards >= 2 && on.pressed === 'true' && on.kept === 'on',
         on
       )
     } finally {

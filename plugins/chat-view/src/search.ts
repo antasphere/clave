@@ -266,6 +266,17 @@ export function useTranscriptSearch({
         const rowEl = scroller.querySelector<HTMLElement>(`[data-row-index="${currentMatch.row}"]`)
         if (rowEl) {
           const inRow = findRanges(rowEl, settled, MESSAGE_TEXT)
+          // The words may be inside a closed card of the agent's working
+          // notes (WorkStretch), whose body is not in the document until it
+          // opens: open the row's first closed card and let the mutation
+          // mark again, one card at a time until the words are found.
+          const closed = rowEl.querySelector<HTMLDetailsElement>(
+            'details.stretch-card:not([open])'
+          )
+          if (inRow.length <= currentMatch.k && closed) {
+            closed.open = true
+            return
+          }
           currentRange = inRow[Math.min(currentMatch.k, inRow.length - 1)] ?? null
         }
       }

@@ -50,6 +50,22 @@ export function workDigestKey(notes: readonly string[]): string {
   return `work-${notes.length}-${(hash >>> 0).toString(36)}`
 }
 
+/** Where a tab's work digests are filed: a bucket of their own beside the
+ *  tab's exchange digests, so the two never share a key or a cap. */
+export const workDigestBucket = (sessionId: string): string => `${sessionId}:work`
+
+/** The notes a digest reads: the latest MAX_NOTES, each clipped to
+ *  MAX_NOTE_CHARS, and how many were left out in front (`offset`), so a note
+ *  number the model answers is put back in the stretch's own count. */
+export const MAX_NOTES = 40
+export const MAX_NOTE_CHARS = 600
+export function clipNotes(notes: readonly string[]): { notes: string[]; offset: number } {
+  const kept = notes
+    .slice(-MAX_NOTES)
+    .map((note) => (note.length > MAX_NOTE_CHARS ? `${note.slice(0, MAX_NOTE_CHARS)}…` : note))
+  return { notes: kept, offset: notes.length - kept.length }
+}
+
 /** The opening line of the prompt: the session history reads it to keep
  *  these one-shots out of the reader's past conversations. */
 export const WORK_DIGEST_MARKER =

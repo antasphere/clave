@@ -88,40 +88,89 @@ export function stretchSpan(stretch: WorkStretch): { from: number; to: number } 
 export const stretchNotes = (stretch: WorkStretch): string[] =>
   stretch.steps.flatMap((step) => (step.note && step.work.length ? [step.note.text] : []))
 
-/** The first block of a stretch, whose key is the stretch's. */
-function firstBlock(stretch: WorkStretch): Block {
-  const step = stretch.steps[0]
-  return step.note ?? step.work[0]
+/** The last block of a stretch, whose key is the stretch's. */
+function lastBlock(stretch: WorkStretch): Block {
+  const step = stretch.steps[stretch.steps.length - 1]
+  return step.work[step.work.length - 1] ?? step.note!
 }
 
 /** The key a view renders a row under, stable for the row's life: a stretch
- *  by its first entry's key, so the card a reader opened stays open while a
- *  page of the past arrives in front. */
+ *  by its LAST entry's key. A page of the past arriving in front can lengthen
+ *  a card's turn at its start (a long turn cut by a page); its end never
+ *  moves, since a stretch folds only once its turn is over, so the card a
+ *  reader opened stays open and keeps its key. */
 export function rowKey(row: Row, ordinal: (entry: Entry) => number | undefined): string {
   return row.kind === 'work-stretch'
-    ? `stretch-${blockKey(firstBlock(row), ordinal)}`
+    ? `stretch-${blockKey(lastBlock(row), ordinal)}`
     : blockKey(row, ordinal)
 }
 
-/** The rows of a view with its stretches folded: `blocks` as `groupEntries`
- *  built them, `lastTurnOver` the view's word on the turn in progress (the
- *  conversation is neither working nor blocked). Every turn but the last is
- *  over by construction. */
-export function foldStretches(blocks: readonly Block[], lastTurnOver: boolean): Row[] {
-  const turns: Block[][] = []
-  for (const block of blocks) {
-    if (startsTurn(block) || !turns.length) turns.push([])
-    turns[turns.length - 1].push(block)
-  }
-  const out: Row[] = []
-  turns.forEach((turn, i) => {
-    const over = i < turns.length - 1 || lastTurnOver
-    if (!over) {
-      out.push(...turn)
-      return
+/** A note as the card's face reads it: its lines without their markup, no
+ *  code fence, no heading or list marks, no emphasis; the first non-empty
+ *  line for a title (`first`), every line otherwise. */
+export function plainNote(text: string, first = false): string {
+  const lines: string[] = []
+  let inFence = false
+  for (const raw of text.split('\n')) {
+    if (/^\s*(```|~~~)/.test(raw)) {
+      inFence = !inFence
+      continue
     }
-    out.push(...foldTurn(turn))
+    if (inFence) continue
+    const line = raw
+      .replace(/^\s*(#{1,6}\s+|[-*+]\s+|\d+[.)]\s+|>\s*)/, '')
+      .replace(/(\*\*|__)(.+?)\1/g, '$2')
+      .replace(/(^|[^*])\*([^*]+)\*/g, '$1$2')
+      .replace(/`([^`]*)`/g, '$1')
+      .trim()
+    if (!line) continue
+    if (first) return line
+    lines.push(line)
+  }
+  return lines.join('\n')
+}
+
+/** A message that began a turn of its own, not one that arrived while the
+ *  agent worked (`midTurn`, the reducer's word). */
+const beginsTurn = (block: Block): boolean =>
+  (block.kind === 'user' && !block.midTurn) ||
+  (block.kind === 'delivery-group' && !block.messages[0]?.midTurn)
+
+/** The words a turn ended on, the reducer's word (`closes`). */
+const endsTurn = (block: Block): boolean => block.kind === 'assistant' && block.closes === true
+
+/** The rows of a view with its stretches folded: `blocks` as `groupEntries`
+ *  built them, `lastTurnOver` the view's word on the conversation (neither
+ *  working nor blocked). A TURN runs from a message to the words the agent
+ *  ended on, or to the next message; a message that arrived while the agent
+ *  worked cuts the turn too (the words before it stay), but ends nothing. A
+ *  turn is OVER once something ended at or after its start: the words a turn
+ *  ended on, a message that began a turn of its own (so the one before it was
+ *  done; a conversation replayed from its transcript carries no other word),
+ *  or the conversation settled. An agent that carries on after its answer
+ *  without a new message (a background task reporting back) therefore starts
+ *  a new turn, and the answer before it stays what it was. */
+export function foldStretches(blocks: readonly Block[], lastTurnOver: boolean): Row[] {
+  // Whether something ended at or after each index, read from the end.
+  const over = new Array<boolean>(blocks.length)
+  let later = lastTurnOver
+  for (let i = blocks.length - 1; i >= 0; i--) {
+    const block = blocks[i]
+    over[i] = later || endsTurn(block)
+    if (endsTurn(block) || beginsTurn(block)) later = true
+  }
+  const turns: { at: number; blocks: Block[] }[] = []
+  blocks.forEach((block, i) => {
+    if (startsTurn(block) || !turns.length) turns.push({ at: i, blocks: [] })
+    turns[turns.length - 1].blocks.push(block)
+    if (endsTurn(block)) turns.push({ at: i + 1, blocks: [] })
   })
+  const out: Row[] = []
+  for (const turn of turns) {
+    if (!turn.blocks.length) continue
+    if (!over[turn.at]) out.push(...turn.blocks)
+    else out.push(...foldTurn(turn.blocks))
+  }
   return out
 }
 

@@ -87,6 +87,14 @@ describe('chat motion', () => {
   it('reduced motion keeps every fade and drops every move', () => {
     for (const selector of [...ARRIVALS, '.chat-drop-overlay'])
       expect(reduced, `${selector} under reduced motion`).toContain(selector)
+    // The card of working notes: its glide and its rising steps stop too.
+    const stretchReduced = chat.slice(
+      chat.indexOf('@media (prefers-reduced-motion: reduce)', chat.indexOf('.stretch-card'))
+    )
+    for (const selector of ['.stretch-card::details-content', '.stretch-step', '.stretch-chevron'])
+      expect(stretchReduced, `${selector} under reduced motion`).toMatch(
+        new RegExp(`${selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[^{]*\\{[^}]*transition:\\s*none`)
+      )
     expect(reduced).toMatch(/transition-property:\s*opacity/)
     expect(reduced).toMatch(/@starting-style\s*\{[^}]*translate:\s*none/)
     expect(reduced).toMatch(/animation-name:\s*scrim-in/)

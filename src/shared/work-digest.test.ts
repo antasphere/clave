@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import {
+  MAX_NOTES,
   WORK_DIGEST_MARKER,
+  clipNotes,
   parseWorkDigestReply,
+  workDigestBucket,
   workDigestKey,
   workDigestPrompt
 } from './work-digest'
@@ -67,5 +70,31 @@ describe('parseWorkDigestReply', () => {
     expect(parseWorkDigestReply('{"title": 3, "needs_you": true}', 1)).toBeNull()
     expect(parseWorkDigestReply('{"title": " . ", "needs_you": false}', 1)).toBeNull()
     expect(parseWorkDigestReply('{broken', 1)).toBeNull()
+  })
+})
+
+describe('clipNotes', () => {
+  it('keeps the latest notes and says how many were left out in front', () => {
+    const notes = Array.from({ length: MAX_NOTES + 5 }, (_, i) => `note ${i + 1}`)
+    const clipped = clipNotes(notes)
+    expect(clipped.notes).toHaveLength(MAX_NOTES)
+    expect(clipped.notes[0]).toBe('note 6')
+    expect(clipped.offset).toBe(5)
+  })
+
+  it('clips a long note and leaves a short stretch whole', () => {
+    const long = 'x'.repeat(900)
+    const clipped = clipNotes(['short', long])
+    expect(clipped.offset).toBe(0)
+    expect(clipped.notes[0]).toBe('short')
+    expect(clipped.notes[1].length).toBe(601)
+    expect(clipped.notes[1].endsWith('…')).toBe(true)
+  })
+})
+
+describe('workDigestBucket', () => {
+  it('files a tab’s work digests apart from its exchange digests', () => {
+    expect(workDigestBucket('tab-1')).toBe('tab-1:work')
+    expect(workDigestBucket('tab-1')).not.toBe('tab-1')
   })
 })

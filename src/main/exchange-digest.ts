@@ -18,7 +18,9 @@ import {
   type DigestResult
 } from '../shared/exchange-digest'
 import {
+  clipNotes,
   parseWorkDigestReply,
+  workDigestBucket,
   workDigestPrompt,
   type WorkDigestDone,
   type WorkDigestRequest,
@@ -94,20 +96,15 @@ const digests = (): DigestStore =>
  *  share one call. */
 const inflight = new Map<string, Promise<DigestResult>>()
 
-const isWorkKey = (key: string): boolean => key.startsWith('work-')
-
 /** Every exchange digest read for a tab: what its timelines show on opening. */
 export function digestsOf(sessionId: string): Record<string, DigestDone> {
-  return Object.fromEntries(
-    Object.entries(digests().of(sessionId)).filter(([key]) => !isWorkKey(key))
-  ) as Record<string, DigestDone>
+  return digests().of(sessionId)
 }
 
-/** Every work digest read for a tab: what its cards are titled on opening. */
+/** Every work digest read for a tab (its own bucket, `workDigestBucket`):
+ *  what its cards are titled on opening. */
 export function workDigestsOf(sessionId: string): Record<string, WorkDigestDone> {
-  return Object.fromEntries(
-    Object.entries(digests().of(sessionId)).filter(([key]) => isWorkKey(key))
-  ) as unknown as Record<string, WorkDigestDone>
+  return digests().of(workDigestBucket(sessionId)) as unknown as Record<string, WorkDigestDone>
 }
 
 /** A timeline's digest: the one filed for these messages, or a call read now
@@ -134,26 +131,21 @@ export function requestDigest(request: DigestRequest): Promise<DigestResult> {
 export function requestWorkDigest(request: WorkDigestRequest): Promise<WorkDigestResult> {
   if (closed) return Promise.resolve({ ok: false, error: 'Clave is quitting' })
   if (!request.notes.length) return Promise.resolve({ ok: false, error: 'No notes' })
-  const filed = digests().get(request.sessionId, request.key) as unknown as
-    | WorkDigestDone
-    | undefined
+  const bucket = workDigestBucket(request.sessionId)
+  const filed = digests().get(bucket, request.key) as unknown as WorkDigestDone | undefined
   if (filed) return Promise.resolve(filed)
-  const id = `${request.sessionId}|${request.key}`
+  const id = `${bucket}|${request.key}`
   const running = workInflight.get(id)
   if (running) return running
   const ask = readWork(request).then((result) => {
     workInflight.delete(id)
-    if (result.ok) digests().put(request.sessionId, request.key, result as unknown as DigestDone)
+    if (result.ok) digests().put(bucket, request.key, result as unknown as DigestDone)
     return result
   })
   workInflight.set(id, ask)
   return ask
 }
 const workInflight = new Map<string, Promise<WorkDigestResult>>()
-
-/** The notes a work digest reads: the latest, each clipped. */
-const MAX_NOTES = 40
-const MAX_NOTE_CHARS = 600
 
 function read(request: DigestRequest): Promise<DigestResult> {
   // Under the end-to-end harness no model is called: a spec that wants a
@@ -213,10 +205,7 @@ function readWork(request: WorkDigestRequest): Promise<WorkDigestResult> {
       )
     )
   }
-  const notes = request.notes
-    .slice(-MAX_NOTES)
-    .map((note) => (note.length > MAX_NOTE_CHARS ? `${note.slice(0, MAX_NOTE_CHARS)}…` : note))
-  const offset = request.notes.length - notes.length
+  const { notes, offset } = clipNotes(request.notes)
   return oneShot(
     request.launch,
     workDigestPrompt(notes, request.tools),

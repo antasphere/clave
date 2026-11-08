@@ -2,11 +2,11 @@ import { useContext, useMemo, useState, type CSSProperties, type ReactNode } fro
 import { ChevronDownIcon } from '@heroicons/react/24/outline'
 import { workDigestKey } from '../../../src/shared/work-digest'
 import { useDisclosure } from './disclosure'
-import { gist } from './exchanges'
 import { useWorkDigestState } from './digest'
 import {
   countsLabel,
   noteCount,
+  plainNote,
   spanLabel,
   stretchNotes,
   stretchSpan,
@@ -24,7 +24,7 @@ import type { Block } from './tools'
  * notes folding into one line, the title the work digest read (until it
  * lands, the first note's first line), and the counts beneath. When the
  * digest found a note that asked the reader something or changed the plan,
- * that note is on the face verbatim, in accent, and its step is marked
+ * that note is on the face whole (its markup dropped), in accent, and its step is marked
  * inside. Open, the card is a rail of steps, one node each: what the agent
  * said, in the transcript's own rows, then what it did under it. The rows
  * inside are the view's own (`render`), so a note reads as a note does and a
@@ -66,7 +66,7 @@ export function WorkStretch({
   // (the digest counts notes alone) finds its step.
   const noteSteps = stretch.steps.filter((step) => step.note !== null && step.work.length > 0)
   const flaggedStep = flagged === null ? null : noteSteps[flagged]
-  const title = done?.title ?? gist(notes[0] ?? '') ?? ''
+  const title = done?.title ?? plainNote(notes[0] ?? '', true)
   return (
     <section
       className="work-stretch"
@@ -111,7 +111,7 @@ export function WorkStretch({
                   <circle className="ring" cx="7" cy="7" r="5.6" />
                   <circle className="dot dot--c" cx="7" cy="7" r="2.4" />
                 </svg>
-                <span className="stretch-flag-words">{gist(flaggedStep.note.text)}</span>
+                <span className="stretch-flag-words">{plainNote(flaggedStep.note.text)}</span>
               </span>
             )}
           </span>

@@ -11,6 +11,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { WORK_DIGEST_MARKER } from '../../shared/work-digest'
 import { SessionLedger, normalizeLedgerRow, type LedgerRow } from './ledger'
 import {
   captureEventsToRows,
@@ -278,6 +279,9 @@ describe('isTitleHelperConversation', () => {
     expect(isTitleHelperConversation(`  ${TITLE_HELPER_MARKER}…`)).toBe(true)
     expect(isTitleHelperConversation('Generate a title for my landing page')).toBe(false)
     expect(isTitleHelperConversation(null)).toBe(false)
+  })
+  it('skips the work digest’s one-shots too (the card titles of the agent’s working notes)', () => {
+    expect(isTitleHelperConversation(`${WORK_DIGEST_MARKER}, so its human knows`)).toBe(true)
   })
 })
 
