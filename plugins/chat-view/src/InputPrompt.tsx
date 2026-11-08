@@ -16,7 +16,7 @@ import {
 import type { AgentQuestion } from '../../../src/shared/session-model'
 import { questionKey } from '../../../src/renderer/src/lib/question-identity'
 import { openLink } from '../../../src/renderer/src/lib/open-link'
-import type { Permission } from './reducer'
+import type { Entry, Permission } from './reducer'
 import type { Answer } from './question-context'
 import { Key } from './prompt-bits'
 import {
@@ -381,6 +381,10 @@ function Field({
   )
 }
 
+/** One step's answer as the folded line and the record read it. */
+const answerText = (question: AgentQuestion, value: InputAnswer | undefined): string =>
+  shownValue(question, value)
+
 export function InputPrompt({
   request,
   busy,
@@ -388,6 +392,8 @@ export function InputPrompt({
   remote,
   drafts,
   draft,
+  notes,
+  working = false,
   onAnswer
 }: {
   request: Permission
@@ -398,6 +404,11 @@ export function InputPrompt({
   /** The fields the agent set so far (the entry's `draft`): applied as they
    *  arrive, over what the reader has not typed otherwise. */
   draft?: Values
+  /** The agent's word under a field it could not fill, by key. */
+  notes?: Record<string, string>
+  /** The agent is answering what the reader just wrote: the step the reader
+   *  is on shows it working on it. */
+  working?: boolean
   onAnswer: Answer
 }): React.JSX.Element {
   const meta = inputRequestMeta(request.input)
@@ -411,6 +422,8 @@ export function InputPrompt({
   const [direction, setDirectionState] = useState<'forward' | 'back'>(kept.direction)
   /** Per field, how many times the agent set it: each landing flashes once. */
   const [landed, setLandedState] = useState<Record<string, number>>(kept.landed)
+  /** The notes the reader typed over: gone until a new one arrives. */
+  const [dismissed, setDismissed] = useState<Record<string, string>>({})
   // Every change of standing is remembered as it is made (CardMemory).
   const setStep = (next: number): void => {
     remember(request.id, { step: next })
@@ -465,15 +478,21 @@ export function InputPrompt({
     if (!takeFocus) return
     if (firstKind === 'choice' || firstKind === 'link') body.current?.focus({ preventScroll: true })
   }, [takeFocus, firstKind])
-  const set = (key: string, value: InputAnswer): void =>
+  const set = (key: string, value: InputAnswer): void => {
+    if (notes?.[key]) setDismissed((current) => ({ ...current, [key]: notes[key] }))
     setValues((current) => {
       const next = { ...current, [key]: value }
       drafts?.set(request.id, next)
       return next
     })
+  }
   const touch = (key: string): void => setTouched((current) => ({ ...current, [key]: true }))
   const shownProblem = (key: string): string | null =>
     attempted || touched[key] ? problems[key] : null
+  const noteFor = (key: string): string | undefined => {
+    const note = notes?.[key]
+    return note && dismissed[key] !== note ? note : undefined
+  }
   const focusField = (key: string): void => {
     const id = `chat-field-${key.replace(/[^a-z0-9_-]/gi, '-')}`
     body.current?.querySelector<HTMLElement>(`#${CSS.escape(id)}`)?.focus()
@@ -557,9 +576,8 @@ export function InputPrompt({
     forgetCard(request.id)
     onAnswer(request.id, 'answer', answersOf(questions, vals))
   }
-  /** One step on: the next open question in `steps` (the review page once
-   *  every one is answered), the next field in a form, the answer itself on
-   *  the last. */
+  /** One step on: the next page in `steps` (the review page past the last),
+   *  the next field in a form, the answer itself on the last. */
   const advance = (from: number, vals: Values = values): void => {
     if (busy) return
     if (steps) {
@@ -600,16 +618,12 @@ export function InputPrompt({
    *  answer does not fit says so (problem), the rest wait (open). */
   const stateOf = (key: string, index: number): 'done' | 'active' | 'problem' | 'open' => {
     const value = own(values, key)
-    const filled = !(
-      value === undefined || (typeof value === 'string' ? value.trim() === '' : value.length === 0)
-    )
+    const filled = !isEmpty(value)
     if (shownProblem(key) !== null) return 'problem'
     if (filled && problems[key] === null) return 'done'
     const firstOpen = shown.findIndex((q) => {
       const k = questionKey(q)
-      const v = own(values, k)
-      const f = !(v === undefined || (typeof v === 'string' ? v.trim() === '' : v.length === 0))
-      return !(f && problems[k] === null)
+      return !(!isEmpty(own(values, k)) && problems[k] === null)
     })
     return firstOpen === index ? 'active' : 'open'
   }
@@ -625,10 +639,11 @@ export function InputPrompt({
       el.querySelector<HTMLElement>('[data-state="problem"]')
     el.style.setProperty('--ask-progress', `${active ? active.offsetTop + 12 : el.offsetHeight}px`)
   })
-  // The steps already answered, folded into one line each above the live
-  // question (or every one, on the review page): the question and what was
-  // said, the seat ticked; a click reopens that step.
-  const folded = steps ? questions.slice(0, Math.min(step, questions.length)) : []
+  // The rows of the rail. In the steps layout every step up to the one the
+  // reader is on has a row of its own, keyed by its question, so a row
+  // already there is never drawn again: the step that closes folds its field
+  // away and its answer in, the step that opens arrives, the rest stand.
+  const rows = steps ? questions.slice(0, Math.min(step + 1, questions.length)) : questions
   const approveLabel = 'Approve'
   return (
     <div
@@ -699,6 +714,7 @@ export function InputPrompt({
                 aria-label="Skip the question"
                 title="Skip (Esc)"
                 disabled={busy}
+                onMouseDown={keepFocus}
                 onClick={doSkip}
               >
                 <XMarkIcon />
@@ -708,56 +724,30 @@ export function InputPrompt({
           <p className="chat-prompt-ask">{request.description}</p>
           {byAgent && (
             <p className="chat-ask-note" role="status">
-              {agent} filled in what you said. Approve, or change a field.
+              {agent.charAt(0).toUpperCase() + agent.slice(1)} filled in what you said. Approve, or
+              change a field.
             </p>
           )}
         </div>
       </div>
-      <ol
-        key={steps ? step : 'form'}
-        ref={list}
-        className="chat-prompt-page chat-ask-fields"
-        data-direction={direction}
-      >
-        {folded.map((question, index) => {
+      <ol ref={list} className="chat-ask-fields" data-direction={direction}>
+        {rows.map((question, index) => {
           const key = questionKey(question)
-          const fits = problems[key] === null
-          return (
-            <li
-              key={key}
-              className="chat-ask-field"
-              data-state={fits ? 'done' : 'problem'}
-              data-folded="true"
-              style={{ '--i': 0 } as React.CSSProperties}
-            >
-              <span className="chat-ask-seat" aria-hidden="true">
-                {fits && <CheckIcon />}
-              </span>
-              <button
-                type="button"
-                className="chat-ask-folded"
-                onMouseDown={keepFocus}
-                disabled={busy}
-                title="Change this answer"
-                onClick={() => goTo(index)}
-              >
-                <span className="chat-ask-folded-question">{question.question}</span>
-                <span className="chat-ask-folded-answer">
-                  {fits ? shownValue(question, own(values, key)) : (problems[key] ?? '')}
-                </span>
-              </button>
-            </li>
-          )
-        })}
-        {shown.map((question, index) => {
-          const key = questionKey(question)
-          const at = steps ? step : index
-          const state = stateOf(key, index)
+          const folded = steps && index < step
+          const active = !steps || index === step
+          const state = folded
+            ? problems[key] === null
+              ? 'done'
+              : 'problem'
+            : stateOf(key, steps ? 0 : index)
+          const note = noteFor(key)
           return (
             <li
               key={key}
               className="chat-ask-field"
               data-state={state}
+              data-folded={folded ? 'true' : undefined}
+              data-working={working && active && state !== 'done' ? 'true' : undefined}
               style={{ '--i': steps ? 0 : index } as React.CSSProperties}
             >
               <span className="chat-ask-seat" aria-hidden="true">
@@ -766,22 +756,56 @@ export function InputPrompt({
               {landed[key] ? (
                 <span key={landed[key]} className="chat-ask-flash" aria-hidden="true" />
               ) : null}
-              <Field
-                question={question}
-                value={own(values, key)}
-                problem={shownProblem(key)}
-                busy={busy}
-                remote={remote}
-                autoFocus={takeFocus && index === 0}
-                onChange={(value) => set(key, value)}
-                onTouch={() => touch(key)}
-                onEnter={() => advance(at)}
-                onPick={
-                  steps && !question.multiSelect
-                    ? (value) => advance(at, { ...values, [key]: value })
-                    : undefined
-                }
-              />
+              {steps && (
+                <div className="chat-ask-fold" inert={!folded}>
+                  <div>
+                    <button
+                      type="button"
+                      className="chat-ask-folded"
+                      disabled={busy}
+                      title="Change this answer"
+                      onMouseDown={keepFocus}
+                      onClick={() => goTo(index)}
+                    >
+                      <span className="chat-ask-folded-question">{question.question}</span>
+                      <span className="chat-ask-folded-answer">
+                        {problems[key] === null
+                          ? answerText(question, own(values, key))
+                          : (problems[key] ?? '')}
+                      </span>
+                    </button>
+                  </div>
+                </div>
+              )}
+              <div className="chat-ask-open" inert={folded}>
+                <div>
+                  <Field
+                    question={question}
+                    value={own(values, key)}
+                    problem={shownProblem(key)}
+                    busy={busy}
+                    remote={remote}
+                    autoFocus={takeFocus && index === 0}
+                    onChange={(value) => set(key, value)}
+                    // Leaving a field one has written in judges it; leaving
+                    // it empty (to answer in the chat, say) does not.
+                    onTouch={() => {
+                      if (!isEmpty(own(values, key))) touch(key)
+                    }}
+                    onEnter={() => advance(steps ? step : index)}
+                    onPick={
+                      steps && !question.multiSelect
+                        ? (value) => advance(step, { ...values, [key]: value })
+                        : undefined
+                    }
+                  />
+                  {note && !folded && (
+                    <span className="chat-field-note" role="status">
+                      {note}
+                    </span>
+                  )}
+                </div>
+              </div>
             </li>
           )
         })}
@@ -823,6 +847,78 @@ export function InputPrompt({
           {steps && !last && !review ? 'Next' : approveLabel}
         </button>
       </div>
+    </div>
+  )
+}
+
+/** The form once it settled, where it stood: the same head, every step
+ *  folded with its answer beside it, no buttons; {{Approved}}, {{Revised}}
+ *  once the agent set a field again, {{Skipped}}, or the word that it is no
+ *  longer awaited. The record of what was asked and said, read in place. */
+export function ClosedForm({
+  entry,
+  agent
+}: {
+  entry: Extract<Entry, { kind: 'permission' }>
+  agent: string
+}): React.JSX.Element {
+  const { request } = entry
+  const questions = request.questions ?? []
+  const skipped = entry.answer !== undefined && isDeny(entry.answer)
+  const status = !entry.answer
+    ? 'No longer awaiting an answer'
+    : skipped
+      ? 'Skipped'
+      : entry.revised
+        ? 'Revised'
+        : 'Approved'
+  return (
+    <div className="chat-prompt-body" data-layout="steps" data-closed="true">
+      <div className="chat-ask-head">
+        <AskDrawing />
+        <div className="chat-ask-words">
+          <div className="chat-prompt-head">
+            <span className="chat-prompt-eyebrow">{agent} asked</span>
+            <span
+              className="chat-ask-status"
+              data-status={skipped ? 'skipped' : entry.answer ? 'approved' : 'gone'}
+            >
+              {status}
+            </span>
+          </div>
+          <p className="chat-prompt-ask">{request.description}</p>
+        </div>
+      </div>
+      <ol className="chat-ask-fields" style={{ '--ask-progress': '100%' } as React.CSSProperties}>
+        {questions.map((question) => {
+          const key = questionKey(question)
+          const value = entry.answers?.[key]
+          const answered = value !== undefined && !isEmpty(value)
+          return (
+            <li
+              key={key}
+              className="chat-ask-field"
+              data-state={answered ? 'done' : 'open'}
+              data-folded="true"
+              style={{ '--i': 0 } as React.CSSProperties}
+            >
+              <span className="chat-ask-seat" aria-hidden="true">
+                {answered && <CheckIcon />}
+              </span>
+              <div className="chat-ask-fold">
+                <div>
+                  <span className="chat-ask-folded" data-static="true">
+                    <span className="chat-ask-folded-question">{question.question}</span>
+                    <span className="chat-ask-folded-answer">
+                      {skipped || !entry.answer ? '' : answerText(question, value)}
+                    </span>
+                  </span>
+                </div>
+              </div>
+            </li>
+          )
+        })}
+      </ol>
     </div>
   )
 }

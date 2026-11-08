@@ -1387,14 +1387,15 @@ function buildServer(callerSessionId: string | undefined): McpServer {
     { description: INPUT_SET_DESCRIPTION, inputSchema: inputSetSchema },
     async (args) => {
       if (!callerSessionId) return errorResult(`No input request "${args.requestId}"`)
-      const { requestId, answers, submit } = args as InputSetArgs
+      const { requestId, answers, submit, notes } = args as InputSetArgs
       const api = await serverClient.api()
       try {
         const view = await api.requests.set({
           requestId,
           sessionId: callerSessionId,
           answers,
-          ...(submit && { submit: true })
+          ...(submit && { submit: true }),
+          ...(notes && { notes })
         })
         return { content: [{ type: 'text', text: JSON.stringify(inputResultPayload(view)) }] }
       } catch (error) {

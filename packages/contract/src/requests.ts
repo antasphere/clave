@@ -110,7 +110,12 @@ export const SetRequestAnswersInput = Schema.Struct({
   requestId: Id,
   sessionId: Id,
   answers: Answers,
-  submit: Schema.optional(Schema.Boolean)
+  submit: Schema.optional(Schema.Boolean),
+  /** A word under a field, by the question's key: why the agent could not
+   *  fill it from what the person said. Shown until the field changes. */
+  notes: Schema.optional(
+    Schema.Record({ key: Text, value: Schema.String.pipe(Schema.maxLength(500)) })
+  )
 })
 export type SetRequestAnswersInput = typeof SetRequestAnswersInput.Type
 export const CreatePendingRequest = Command.define('CreatePendingRequest', {

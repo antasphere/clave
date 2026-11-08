@@ -62,6 +62,9 @@ import { isQuestion } from './approvals'
 import { QuestionContext } from './question-context'
 import type { Values } from './input-request'
 import { refusedAnswer } from './refused-answer'
+import { FormTail } from './FormTail'
+import { InlineQuestion } from './PromptDock'
+import { isInputRequest } from './input-request'
 import {
   liveQuestionCards,
   remoteRequestFor,
@@ -697,15 +700,25 @@ export function TerminalView({
   // a page of the past arriving in front must not shift a key, or every turn
   // below it would render as another and the column's arrival would replay on
   // the ones at the end. Memoised, so a keystroke rebuilds none of it.
-  const { blocks, liveCards } = useMemo(() => {
+  const { blocks, liveCards, tail } = useMemo(() => {
     const entries = withServerPending(presentation.entries, remotePending, session.id)
     const ordinal = new Map<Entry, number>()
     entries.forEach((entry, i) => ordinal.set(entry, presentation.first + i))
-    const built = groupEntries(visibleEntries(entries)).map((block) => ({
-      block,
-      key: blockKey(block, (entry) => ordinal.get(entry))
-    }))
-    return { blocks: built, liveCards: liveQuestionCards(entries, remotePending, session.id) }
+    const live = liveQuestionCards(entries, remotePending, session.id)
+    // A form the agent asked floats at the end while it is open (FormTail):
+    // out of the rows, drawn after them.
+    const floating = entries.filter(
+      (e): e is Extract<Entry, { kind: 'permission' }> =>
+        e.kind === 'permission' && live.has(e) && isInputRequest(e.request)
+    )
+    const floatingSet = new Set<Entry>(floating)
+    const built = groupEntries(visibleEntries(entries).filter((e) => !floatingSet.has(e))).map(
+      (block) => ({
+        block,
+        key: blockKey(block, (entry) => ordinal.get(entry))
+      })
+    )
+    return { blocks: built, liveCards: live, tail: floating }
   }, [presentation.entries, presentation.first, remotePending, session.id])
   // One section per exchange: the reader's message and everything answering
   // it, so a pinned question is carried off by its own section's end.
@@ -897,7 +910,8 @@ export function TerminalView({
                   agent: AGENT_NAMES[session.provider] ?? 'the agent',
                   remote: isRemoteKey(session.id),
                   live: (entry) => liveCards.has(entry),
-                  drafts: questionDrafts
+                  drafts: questionDrafts,
+                  working: state === 'working'
                 }}
               >
                 <ExchangeContext.Provider value={exchanges}>
@@ -920,6 +934,13 @@ export function TerminalView({
                     )}
                   </TranscriptRows>
                 </ExchangeContext.Provider>
+                {tail.length > 0 && (
+                  <FormTail>
+                    {tail.map((entry) => (
+                      <InlineQuestion key={entry.request.id} entry={entry} />
+                    ))}
+                  </FormTail>
+                )}
               </QuestionContext.Provider>
             </ToolDisclosure.Provider>
             {showMark && <ProviderMark provider={session.provider} />}

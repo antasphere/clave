@@ -67,7 +67,10 @@ export async function run(t) {
         ]
       })
       .catch((error) => ({ error: String(error) }))
-    const card = view.locator('.chat-rows .chat-prompt[data-inline="true"][data-kind="question"]')
+    // A form the agent asked floats at the end of the conversation while it
+    // is open (the tail after the rows); a provider's own question stays in
+    // its row. Both are inline, never docked.
+    const card = view.locator('.chat-column .chat-prompt[data-inline="true"][data-kind="question"]')
     await card.waitFor()
     t.check('the card is drawn in the transcript, inline', true)
     assert.equal(
@@ -122,8 +125,10 @@ export async function run(t) {
     await row.waitFor()
     assert.match(await row.innerText(), /luca-a/)
     assert.match(await row.innerText(), /reb, wat/)
-    assert.equal(await card.count(), 0, 'the card collapsed into its record')
-    t.check('the answered card collapsed into the transcript record of what was said', true)
+    assert.match(await row.innerText(), /Approved/i)
+    assert.equal(await row.locator('.chat-ask-field[data-folded="true"]').count(), 4)
+    assert.equal(await card.count(), 0, 'the card closed into its record')
+    t.check('the approved card stays as the closed form, every step folded with its answer', true)
     // Nothing polled when the person approved (the tool's own wait had
     // passed): the approve went to the agent as the person's next message,
     // which the echo agent answers back word for word. The message itself
@@ -163,6 +168,16 @@ export async function run(t) {
     await until(async () => ((await view.innerText()).includes('hello there') ? true : null))
     await win.waitForTimeout(300)
     assert.equal(await card.count(), 1, 'the card survives the turn')
+    // The message went above the form: the form floats at the end.
+    const lastBubble = view
+      .locator('.chat-rows [data-side="end"], .chat-rows [data-role="user"]')
+      .last()
+    const bubbleBox = await lastBubble.boundingBox()
+    const cardBox = await card.boundingBox()
+    assert.ok(
+      bubbleBox && cardBox && cardBox.y > bubbleBox.y,
+      'the form sits below the message typed while it was open'
+    )
     assert.equal(
       await view.locator('.chat-permission-row[data-state="elsewhere"]').count(),
       0,
@@ -219,36 +234,42 @@ export async function run(t) {
     await card.getByRole('button', { name: 'Next', exact: true }).click()
     assert.equal(await card.locator('.chat-prompt-step').innerText(), '3/3')
     t.check("the person's Next goes one page and never skips an optional question", true)
-    // The card keeps its standing when its row leaves the view and comes
-    // back: the transcript is virtualised, and a card that came back at its
-    // first step flapped without end (the lane's rehearsal on a Claude tab).
+    // The form floats at the end: messages typed while it is open land
+    // above it, it keeps its standing, and it is never carried off by the
+    // virtualised rows.
     for (let i = 0; i < 6; i++) {
       await view
         .locator('textarea')
-        .fill(
-          `filler ${i}: a long line so the transcript grows under the form and the card leaves the view for good`
-        )
+        .fill(`filler ${i}: a long line so the transcript grows above the form while it is open`)
       await view.locator('textarea').press('Enter')
       await win.waitForTimeout(150)
     }
-    assert.ok(
-      await until(async () => ((await card.count()) === 0 ? true : null)),
-      'the card left the view as the transcript grew under it'
-    )
-    await view.locator('.chat-scroll').evaluate((el) => {
-      el.scrollTop = 0
-    })
-    assert.ok(
-      await until(async () => ((await card.count()) === 1 ? true : null)),
-      'the card is back once its row is in view again'
-    )
+    await until(async () => ((await view.innerText()).includes('filler 5') ? true : null))
+    assert.equal(await card.count(), 1, 'the form is still there')
     assert.equal(await card.locator('.chat-prompt-step').innerText(), '3/3')
     assert.equal(await card.locator('.chat-ask-field[data-folded="true"]').count(), 2)
     assert.match(await card.innerText(), /filled in what you said/)
+    const filler = view
+      .locator('.chat-rows [data-side="end"], .chat-rows [data-role="user"]')
+      .last()
+    const fillerBox = await filler.boundingBox()
+    const tailBox = await card.boundingBox()
+    assert.ok(fillerBox && tailBox && tailBox.y > fillerBox.y, 'the form is below the last message')
     t.check(
-      'a card that left the view and came back is at the same step, its folded lines kept',
+      'the open form stays at the end of the conversation, under what was said meanwhile, at its step',
       true
     )
+    // A note under the step the agent could not fill from what was said.
+    payload(
+      await mcp.call('clave_input_set', {
+        requestId: second.requestId,
+        answers: {},
+        notes: { when: 'I did not catch a date in that' }
+      })
+    )
+    await card.locator('.chat-field-note').waitFor()
+    assert.match(await card.locator('.chat-field-note').innerText(), /did not catch a date/)
+    t.check("the agent's note stands under the field it could not fill", true)
     // The agent reads the form as it stands, then sets the last step: the
     // card reaches its review, both lines folded, Approve under them.
     const pending = payload(await mcp.call('clave_input_result', { requestId: second.requestId }))
@@ -270,6 +291,7 @@ export async function run(t) {
       'the card reached its review once every step had an answer'
     )
     assert.equal(await card.locator('.chat-ask-field[data-folded="true"]').count(), 3)
+    assert.equal(await card.locator('.chat-field-note').count(), 0, 'the note went with the change')
     assert.match(
       await card.locator('.chat-ask-field[data-folded="true"]').nth(1).innerText(),
       /Left empty/
@@ -300,10 +322,14 @@ export async function run(t) {
       answers: { name: 'Luca', when: '2026-11-17' }
     })
     await until(async () => ((await card.count()) === 0 ? true : null))
+    // The closed form stands where the open one did, at the end: the last
+    // record of the conversation (the first form's row is far above, out of
+    // the virtualised rows by now).
     const secondRow = view
       .locator('.chat-permission-row[data-kind="question"][data-state="answered"]')
-      .nth(1)
-    assert.match(await secondRow.innerText(), /Answered/)
+      .last()
+    assert.match(await secondRow.innerText(), /Approved/i)
+    assert.equal(await secondRow.locator('.chat-ask-field[data-folded="true"]').count(), 3)
     assert.match(await secondRow.innerText(), /2026-11-17/)
     t.check("the agent's own approve closes the form into its record", true)
     // A later correction: the record reads Revised with the new value, and
@@ -320,7 +346,12 @@ export async function run(t) {
       answers: { name: 'Luca A', when: '2026-11-17' },
       revised: true
     })
-    await until(async () => ((await secondRow.innerText()).includes('Revised') ? true : null))
+    await until(async () =>
+      (await secondRow.innerText()).includes('REVISED') ||
+      (await secondRow.innerText()).includes('Revised')
+        ? true
+        : null
+    )
     assert.match(await secondRow.innerText(), /Luca A/)
     t.check('a correction after the approve revises the record in place', true)
 
@@ -373,22 +404,17 @@ export async function run(t) {
       await view.locator('textarea').press('Enter')
       await win.waitForTimeout(150)
     }
-    assert.ok(await until(async () => ((await card.count()) === 0 ? true : null)))
-    // Up the transcript a screen at a time until the row is mounted again.
-    const found = await until(async () => {
-      await view.locator('.chat-scroll').evaluate((el) => {
-        el.scrollTop = Math.max(0, el.scrollTop - el.clientHeight * 0.6)
-      })
-      await win.waitForTimeout(120)
-      return (await card.count()) === 1 ? true : null
-    })
-    assert.ok(found, 'the card is back once its row is in view again')
+    await until(async () => ((await view.innerText()).includes('filler 5 again') ? true : null))
+    assert.equal(await card.count(), 1, 'the form is still there')
     assert.equal(await card.locator('.chat-prompt-step').innerText(), '2/2')
     assert.match(
       await card.locator('.chat-ask-field[data-folded="true"]').first().innerText(),
       /Luca B/
     )
-    t.check("the person's correction of a field the agent set survives the card's remount", true)
+    t.check(
+      "the person's correction of a field the agent set stands while the conversation goes on",
+      true
+    )
     await card.getByRole('button', { name: 'Skip', exact: true }).click()
     const skipped = payload(
       await mcp.call('clave_input_result', { requestId: third.requestId, waitSeconds: 10 })

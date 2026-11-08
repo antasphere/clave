@@ -301,7 +301,9 @@ export const SessionEventSchema = z.discriminatedUnion('type', [
     type: z.literal('permission_updated'),
     id: z.string(),
     answers: z.record(z.string(), z.union([z.string(), z.array(z.string())])),
-    sent: z.boolean().optional()
+    sent: z.boolean().optional(),
+    /** The agent's word under a field it could not fill, by the question's key. */
+    notes: z.record(z.string(), z.string()).optional()
   }),
   /** How full the conversation's context is (or, with `parent`, a subagent's):
    *  the tokens its last call read and wrote, and the model's window once the

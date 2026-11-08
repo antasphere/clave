@@ -77,7 +77,12 @@ export type SettledListener = (
 ) => void
 /** A hosted form's answers changed (PRDCT-4157): the patch, and whether
  *  the form was already approved (`sent`). */
-export type UpdatedListener = (request: PendingRequest, answers: Answers, sent: boolean) => void
+export type UpdatedListener = (
+  request: PendingRequest,
+  answers: Answers,
+  sent: boolean,
+  notes?: Readonly<Record<string, string>>
+) => void
 const isSettled = (status: RequestStatus): boolean => status !== 'pending' && status !== 'running'
 const invalid = (): RequestRejected =>
   new RequestRejected({
@@ -146,10 +151,19 @@ export class PendingRequests {
       this.updated.delete(listener)
     }
   }
-  private notifyUpdated(entry: Entry, answers: Answers, sent: boolean): void {
+  private notifyUpdated(
+    entry: Entry,
+    answers: Answers,
+    sent: boolean,
+    notes?: Readonly<Record<string, string>>
+  ): void {
     for (const listener of [...this.updated]) {
       try {
-        listener(structuredClone(entry.request), structuredClone(answers), sent)
+        if (notes)
+          listener(structuredClone(entry.request), structuredClone(answers), sent, {
+            ...notes
+          })
+        else listener(structuredClone(entry.request), structuredClone(answers), sent)
       } catch {
         /* listener owns its failure */
       }
@@ -186,6 +200,17 @@ export class PendingRequests {
     const byKey = new Map(questions.map((q) => [q.id ?? q.question, q]))
     const answers = trimAnswers(input.answers)
     const cleared = new Set<string>()
+    const notes = Object.fromEntries(
+      Object.entries(input.notes ?? {}).flatMap(([key, note]) =>
+        note.trim() ? [[key, note.trim()]] : []
+      )
+    )
+    for (const key of Object.keys(notes))
+      if (!byKey.has(key))
+        throw new RequestRejected({
+          code: 'invalid',
+          message: `No question "${key}" on this form.`
+        })
     for (const [key, value] of Object.entries(answers)) {
       const question = byKey.get(key)
       if (!question)
@@ -235,11 +260,13 @@ export class PendingRequests {
             message: `"${missing.id ?? missing.question}" is still unanswered; set it, or let the person approve.`
           })
       }
+      const noted = Object.keys(notes).length > 0
       if (Object.keys(patch).length) {
         entry.draft = next
         this.changed()
-        this.notifyUpdated(entry, patch, false)
       }
+      if (Object.keys(patch).length || noted)
+        this.notifyUpdated(entry, patch, false, noted ? notes : undefined)
       if (input.submit) {
         entry.byAgent = true
         await this.resolve({

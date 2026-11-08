@@ -487,6 +487,86 @@ describe('taking a message back', () => {
     ).toBe(approved)
   })
 
+  it('a form that settled is drawn where it stood, at the end, and the entry it left behind is not drawn', () => {
+    const id = 'clave:35e6218e-85f6-4dc0-9b19-366bf927d351'
+    const form: ChatEvent = {
+      type: 'permission_request',
+      id,
+      description: 'One thing.',
+      toolName: 'clave_request_input',
+      input: { tool: 'clave_request_input', layout: 'form' },
+      options: [
+        { id: 'answer', label: 'Approve' },
+        { id: 'deny', label: 'Skip' }
+      ],
+      questions: [{ id: 'login', question: 'Your GitHub login', kind: 'github-login', options: [] }]
+    }
+    const open = run([
+      form,
+      { type: 'state_change', state: 'done' },
+      { type: 'user_message', text: 'I am luca-a' },
+      { type: 'assistant_text', delta: 'Set.', final: true }
+    ])
+    expect(open.entries.map((e) => e.kind)).toEqual(['permission', 'user', 'assistant'])
+    // The reader approves: the record goes to the end, the old place is kept
+    // for the rows' keys and filtered out of what is drawn.
+    const approved = reduceConversation(open, {
+      answer: id,
+      optionId: 'answer',
+      answers: { login: 'luca-a' }
+    })
+    expect(approved.entries.map((e) => e.kind)).toEqual([
+      'permission',
+      'user',
+      'assistant',
+      'permission'
+    ])
+    expect(approved.entries[0]).toMatchObject({ relocated: true, answer: 'answer' })
+    expect(approved.entries[3]).toMatchObject({ answer: 'answer', answers: { login: 'luca-a' } })
+    expect(approved.entries[3]).not.toHaveProperty('relocated')
+    expect(visibleEntries(approved.entries).map((e) => e.kind)).toEqual([
+      'user',
+      'assistant',
+      'permission'
+    ])
+    expect(openRequests(approved.entries)).toEqual([])
+    // The agent's own approve, told by the server, lands the same way; a
+    // note under a field stands until the field changes.
+    const noted = reduceConversation(open, {
+      event: {
+        type: 'permission_updated',
+        id,
+        answers: {},
+        notes: { login: 'I did not catch a login' }
+      },
+      at: 2
+    })
+    expect(noted.entries[0]).toMatchObject({ notes: { login: 'I did not catch a login' } })
+    const filled = reduceConversation(noted, {
+      event: { type: 'permission_updated', id, answers: { login: 'luca-a' } },
+      at: 3
+    })
+    expect(filled.entries[0]).not.toHaveProperty('notes')
+    const sent = reduceConversation(filled, {
+      event: { type: 'permission_updated', id, answers: { login: 'luca-a' }, sent: true },
+      at: 4
+    })
+    expect(sent.entries.map((e) => e.kind)).toEqual([
+      'permission',
+      'user',
+      'assistant',
+      'permission'
+    ])
+    expect(visibleEntries(sent.entries).map((e) => e.kind)).toEqual([
+      'user',
+      'assistant',
+      'permission'
+    ])
+    // A form that is already the last entry stays where it is.
+    const alone = reduceConversation(run([form]), { answer: id, optionId: 'deny' })
+    expect(alone.entries).toHaveLength(1)
+  })
+
   it('never touches an earlier, answered message', () => {
     const state = withdraw(
       run([

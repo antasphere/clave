@@ -24,6 +24,9 @@ export interface QuestionHost {
    *  (`liveQuestionCards`); any other unanswered entry stays a muted row. */
   live: (entry: Entry) => boolean
   drafts: Map<string, Record<string, InputAnswer>>
+  /** The agent is working: a form's open step shows it reading what the
+   *  person wrote. */
+  working: boolean
 }
 
 export const QuestionContext = createContext<QuestionHost | null>(null)

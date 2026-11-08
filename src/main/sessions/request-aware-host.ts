@@ -110,14 +110,15 @@ export function requestAwareSessionHost(options: {
         })
   })
   // A field the agent set on a form reaches every view of the session.
-  const offUpdated = requests.onUpdated((request, answers, sent) => {
+  const offUpdated = requests.onUpdated((request, answers, sent, notes) => {
     if (!request.providerRequestId) return
     try {
       publish(request.sessionId, {
         type: 'permission_updated',
         id: request.providerRequestId,
         answers: { ...answers },
-        ...(sent && { sent: true })
+        ...(sent && { sent: true }),
+        ...(notes && { notes: { ...notes } })
       })
     } catch {
       /* the session is gone with its views */

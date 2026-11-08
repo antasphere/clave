@@ -125,19 +125,26 @@ export const inputSetSchema = {
     .default(false)
     .describe(
       'Approve the open form yourself with what it then holds, every required field set. Only when the person said to go ahead in the chat; otherwise leave the Approve to them.'
+    ),
+  notes: z
+    .record(z.string(), z.string().max(500))
+    .optional()
+    .describe(
+      'A short word shown under a field you could NOT fill from what the person said, by question id ("I did not catch an e-mail in that"), so the form itself says why it still waits. Gone as soon as the field changes. Say the same in the chat.'
     )
 }
 export type InputSetArgs = {
   requestId: string
   answers: Record<string, string | string[]>
   submit: boolean
+  notes?: Record<string, string>
 }
 
 export const REQUEST_INPUT_DESCRIPTION =
   'Ask the person for a plain value, a choice, a yes or no, a file, a link to open and come back from, or several of those at once, in a form drawn in the chat under your turn (the plain counterpart of clave_request_secret: the answers ARE returned to you, so never ask for a secret here). Use it for anything the person must type or pick (an e-mail, a GitHub login, a project name, a path, a date); typed answers are checked as they are typed (email, url, github-login, number, date). Ask everything you will need at once, as one form, so a long run is never interrupted later. The form LIVES ACROSS YOUR TURNS: the call returns {status:"pending", requestId} at once and the form is drawn where you called it, ABOVE whatever you say next; say in one sentence that the form is there (never "below") and that the person may fill it in or just tell you, then END YOUR TURN. The person either fills the fields and approves, or answers in the chat: then set the fields from what they said with clave_input_set (the card follows, the person sees each field land) and end your turn again, saying what is still open. Their Approve comes back to you as their next message, listing every answer; {status:"dismissed"} means they skipped. Later corrections ("actually, call it X") are clave_input_set on the same requestId, on the approved form too. clave_input_result reads where the form stands at any time. A bare multiple choice of one to four questions can also go through your own question tool.'
 
 export const INPUT_SET_DESCRIPTION =
-  'Write to a form you asked with clave_request_input: set fields from what the person said in the chat ("my login is luca-a" -> {login: "luca-a"}), on the form still open or on one already approved (a later correction). The card updates in place and the person sees it. Each value is checked by the question\'s kind; one that does not fit is refused with the reason. With submit:true the open form is approved with what it holds, only when the person told you to go ahead. Returns {status, answers} as clave_input_result does.'
+  'Write to a form you asked with clave_request_input: set fields from what the person said in the chat ("my login is luca-a" -> {login: "luca-a"}), on the form still open or on one already approved (a later correction). The card updates in place and the person sees it. Each value is checked by the question\'s kind; one that does not fit is refused with the reason, and when what the person said does not fit a field, leave it unset and put a short note under it (notes: {<id>: "..."}) while you say so in the chat. With submit:true the open form is approved with what it holds, only when the person told you to go ahead. Returns {status, answers} as clave_input_result does.'
 
 export const INPUT_RESULT_DESCRIPTION =
   'Where a form asked with clave_request_input stands: {status:"pending", answers} with the fields set so far, {status:"completed", answers} once approved (revised:true when a field changed after the approval), {status:"dismissed"} when the person skipped. Optionally wait up to waitSeconds (45 at most per call is safe) for the person. You rarely need to poll: an approved form reaches you as the person\'s next message. Outcomes are kept ~10 minutes.'

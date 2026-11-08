@@ -187,7 +187,7 @@ function buildServer(
     'clave_input_set',
     { description: INPUT_SET_DESCRIPTION, inputSchema: inputSetSchema },
     async (args) => {
-      const { requestId, answers, submit } = args as InputSetArgs
+      const { requestId, answers, submit, notes } = args as InputSetArgs
       try {
         return text(
           inputResultPayload(
@@ -195,7 +195,8 @@ function buildServer(
               requestId,
               sessionId,
               answers,
-              ...(submit && { submit: true })
+              ...(submit && { submit: true }),
+              ...(notes && { notes })
             })
           )
         )

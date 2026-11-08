@@ -361,6 +361,31 @@ describe('hosted requests', () => {
     requests.close()
   })
 
+  it('a note under a field the agent could not fill reaches the views, and names a question of the form', async () => {
+    const requests = new PendingRequests()
+    const request = requests.createHosted(onboarding)
+    const updated = vi.fn()
+    requests.onUpdated(updated)
+    const set = { requestId: request.id, sessionId: 's1' }
+    await expect(
+      requests.setAnswers({ ...set, answers: {}, notes: { nope: 'x' } })
+    ).rejects.toMatchObject({ code: 'invalid', message: 'No question "nope" on this form.' })
+    const view = await requests.setAnswers({
+      ...set,
+      answers: {},
+      notes: { email: ' I did not catch an e-mail in that ' }
+    })
+    expect(view).toEqual({ requestId: request.id, status: 'pending' })
+    expect(updated).toHaveBeenCalledWith(expect.objectContaining({ id: request.id }), {}, false, {
+      email: 'I did not catch an e-mail in that'
+    })
+    // A blank note is no note.
+    updated.mockClear()
+    await requests.setAnswers({ ...set, answers: {}, notes: { email: '  ' } })
+    expect(updated).not.toHaveBeenCalled()
+    requests.close()
+  })
+
   it('a skipped or cancelled form takes nothing more', async () => {
     const requests = new PendingRequests()
     const skipped = requests.createHosted(onboarding)

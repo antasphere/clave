@@ -57,6 +57,8 @@ import { digestKey } from '../../../src/shared/exchange-digest'
 import { useExchangeJump } from './jump'
 import { useSessionStore } from '../../../src/renderer/src/store/session-store'
 import { ApprovalRun, InlineQuestion, PermissionRow, PromptDock } from './PromptDock'
+import { FormTail } from './FormTail'
+import { isInputRequest } from './input-request'
 import { isQuestion } from './approvals'
 import { QuestionContext } from './question-context'
 import type { Values } from './input-request'
@@ -852,16 +854,27 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
   // a page of the past arriving in front must not shift a key, or every turn
   // below it would render as another and the column's arrival would replay on
   // the ones at the end. Memoised, so a keystroke rebuilds none of it.
-  const { blocks, liveCards } = useMemo(() => {
+  const { blocks, liveCards, tail } = useMemo(() => {
     const entries = withServerPending(presentation.entries, remotePending, session.id)
     const ordinal = new Map<Entry, number>()
     entries.forEach((entry, i) => ordinal.set(entry, presentation.first + i))
+    const live = liveQuestionCards(entries, remotePending, session.id)
+    // A form the agent asked floats at the end while it is open (FormTail):
+    // out of the rows, drawn after them.
+    const floating = entries.filter(
+      (e): e is Extract<Entry, { kind: 'permission' }> =>
+        e.kind === 'permission' && live.has(e) && isInputRequest(e.request)
+    )
+    const floatingSet = new Set<Entry>(floating)
     return {
-      blocks: groupEntries(visibleEntries(entries)).map((block) => ({
-        block,
-        key: blockKey(block, (entry) => ordinal.get(entry))
-      })),
-      liveCards: liveQuestionCards(entries, remotePending, session.id)
+      blocks: groupEntries(visibleEntries(entries).filter((e) => !floatingSet.has(e))).map(
+        (block) => ({
+          block,
+          key: blockKey(block, (entry) => ordinal.get(entry))
+        })
+      ),
+      liveCards: live,
+      tail: floating
     }
   }, [presentation.entries, presentation.first, remotePending, session.id])
   // The reader's open tool rows, kept across the rows' unmounts (`ToolDisclosure`).
@@ -1026,7 +1039,8 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
                   agent: AGENT_NAMES[session.provider] ?? 'the agent',
                   remote: isRemoteKey(session.id),
                   live: (entry) => liveCards.has(entry),
-                  drafts: questionDrafts
+                  drafts: questionDrafts,
+                  working: state === 'working'
                 }}
               >
                 <ExchangeContext.Provider value={exchanges}>
@@ -1048,6 +1062,13 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
                     )}
                   </TranscriptRows>
                 </ExchangeContext.Provider>
+                {tail.length > 0 && (
+                  <FormTail>
+                    {tail.map((entry) => (
+                      <InlineQuestion key={entry.request.id} entry={entry} />
+                    ))}
+                  </FormTail>
+                )}
               </QuestionContext.Provider>
             </ToolDisclosure.Provider>
             {showMark && <ProviderMark provider={session.provider} />}

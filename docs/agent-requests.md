@@ -103,10 +103,13 @@ them. An interrupted wait therefore loses nothing.
 
 ### `clave_input_set`
 
-`{ requestId, answers, submit? }`: the agent writes to a form it asked. Each
-value is judged by its question's kind, the same rule as the card's, and one
-that does not fit is refused with the reason under the question's id, nothing
-set; an empty value clears an optional field. On the open form the fields go
+`{ requestId, answers, submit?, notes? }`: the agent writes to a form it
+asked. Each value is judged by its question's kind, the same rule as the
+card's, and one that does not fit is refused with the reason under the
+question's id, nothing set; an empty value clears an optional field. `notes`,
+by question id, is a short word shown under a field the agent could not fill
+from what the person said ("I did not catch an e-mail in that"), so the form
+itself says why it still waits; it goes as soon as the field changes. On the open form the fields go
 to its draft, which the card shows landing and `clave_input_result` reads;
 `submit: true` approves the open form with what it then holds, refused before
 anything is written while a required field is unanswered, and meant only for
@@ -152,8 +155,12 @@ question, then a `permission_updated` with the draft so far.
 
 ### What the person sees
 
-The card sits in the agent's own column, under its words, with no box around
-it (`InputPrompt.tsx`, placed by `InlineQuestion` in `PromptDock.tsx`): a
+The card sits in the agent's own column, with no box around it
+(`InputPrompt.tsx`, placed by `InlineQuestion` in `PromptDock.tsx`). While it
+is open it floats at the end of the conversation (`FormTail.tsx`, drawn after
+the rows): a message the person types lands above it and the form is carried
+down, and while the agent answers that message the dot of the step the person
+is on turns. A
 drawing in the chat's hand at its head beside the agent's sentence, then the
 fields down a rail, one seat per field, the accent running down the rail as far
 as the field the person is on and all the way once every answer fits, then Skip
@@ -164,12 +171,18 @@ preset restates, so the card reads as the chrome around it. Enter moves to the
 next field and approves on the last; ⌘↩ approves; Esc skips. A field the agent
 set from what the person said lands with its seat ticked and a short flash,
 and a line under the agent's words says it filled in what was said. In the
-`steps` layout an answered step folds into one line above the live question
-(the question, then what was said; a click reopens it), the card moves on to
-the next open step on its own, and once every step is answered it shows them
-all folded with Approve under them. Once approved, the card gives way to one
-muted row with each question and what was said, which reads Revised when the
-agent set a field again later. A person scrolled up the transcript when a
+`steps` layout every step is a row of its own that stands still: the step
+that closes folds its field away and its answer in beside its dot, the step
+that opens arrives with its label, hint and field one after the other, and a
+click on a folded line reopens it. The person's Next goes one page; a field
+the agent set moves the card on to the next step with no answer yet, and once
+every step has one the card shows them all folded with Approve under them.
+Once approved, skipped or withdrawn, the form stays where it closed as the
+closed form (`ClosedForm`): the same head with {{Approved}}, {{Skipped}} or
+{{Revised}} beside it, every step folded with its answer, no buttons. In the
+transcript its settled entry is appended where it stood (the reducer's
+`relocateSettled`), and the entry it left behind is kept for the rows' keys
+and never drawn. A person scrolled up the transcript when a
 question arrives is told above the composer and brought to it. The dock above
 the composer keeps what it always held best: a tool to allow.
 

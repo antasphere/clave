@@ -71,6 +71,13 @@ export type Entry =
       draft?: Record<string, string | string[]>
       /** The form was approved, then a field was set again by the agent. */
       revised?: boolean
+      /** The agent's word under a field it could not fill, by key; gone as
+       *  the field changes. */
+      notes?: Record<string, string>
+      /** A form that settled was moved to the end of the conversation, where
+       *  it stood while it was open: this is the entry it left behind, kept
+       *  for the rows' keys and never drawn. */
+      relocated?: boolean
       at: number
     }
   | { kind: 'error'; message: string; at: number }
@@ -141,6 +148,25 @@ function settle(entries: Entry[], matches: (request: Permission) => boolean): En
     ? entries.map((e) => (touches(e) ? { ...e, answeredElsewhere: true, abandoned: true } : e))
     : entries
 }
+/** A form the agent asked floats at the end of the conversation while it is
+ *  open (the view draws it after the rows), and stays where it closed: its
+ *  settled entry is appended at the end and the one it left behind is kept
+ *  for the rows' keys, undrawn. Any other entry is left in place. */
+function relocateSettled(entries: Entry[], at: number): Entry[] {
+  const index = entries.findLastIndex(
+    (e) =>
+      e.kind === 'permission' &&
+      !e.relocated &&
+      (e.answer !== undefined || e.answeredElsewhere === true) &&
+      inputRequestMeta(e.request.input) !== null
+  )
+  if (index < 0 || index === entries.length - 1) return entries
+  const entry = entries[index] as Extract<Entry, { kind: 'permission' }>
+  const next = [...entries]
+  next[index] = { ...entry, relocated: true }
+  next.push({ ...entry, at })
+  return next
+}
 export function reduceConversation(state: Conversation, action: Action): Conversation {
   if ('exit' in action) return { ...state, state: 'ended', exitCode: action.exit }
   if ('retire' in action) {
@@ -149,7 +175,9 @@ export function reduceConversation(state: Conversation, action: Action): Convers
     // kernel's word stays the state; its next state_change says what is
     // awaited.
     const entries = settle(state.entries, (request) => request.id === action.retire)
-    return entries === state.entries ? state : { ...state, entries }
+    return entries === state.entries
+      ? state
+      : { ...state, entries: relocateSettled(entries, Date.now()) }
   }
   if ('withdraw' in action) {
     if (answeredSince(state.entries)) return state
@@ -188,7 +216,7 @@ export function reduceConversation(state: Conversation, action: Action): Convers
     const waiting = openRequests(entries).length > 0
     return {
       ...state,
-      entries,
+      entries: relocateSettled(entries, Date.now()),
       state: state.state === 'blocked' && !waiting ? 'working' : state.state
     }
   }
@@ -234,7 +262,7 @@ export function reduceConversation(state: Conversation, action: Action): Convers
     // server's request store settles its record on the same word, and no
     // later blocked reopens it. The kernel's own state_change follows.
     const entries = settle(state.entries, (request) => request.id === event.id)
-    return entries === state.entries ? state : { ...state, entries }
+    return entries === state.entries ? state : { ...state, entries: relocateSettled(entries, at) }
   }
   if (event.type === 'permission_updated') {
     // A form's answers changed under its card (PRDCT-4157): the agent set
@@ -268,7 +296,18 @@ export function reduceConversation(state: Conversation, action: Action): Convers
         abandoned: undefined,
         ...(changed && { revised: true })
       }
-    } else entries[index] = { ...entry, draft: { ...entry.draft, ...event.answers } }
+      return { ...state, entries: relocateSettled(entries, at) }
+    }
+    // A note stands under its field until the field changes.
+    const notes = { ...entry.notes, ...event.notes }
+    for (const key of Object.keys(event.answers)) if (!event.notes?.[key]) delete notes[key]
+    const { notes: _gone, ...rest } = entry
+    void _gone
+    entries[index] = {
+      ...rest,
+      draft: { ...entry.draft, ...event.answers },
+      ...(Object.keys(notes).length ? { notes } : {})
+    }
     return { ...state, entries }
   }
   // A subagent's own message, text, call or result (`parent`) is that

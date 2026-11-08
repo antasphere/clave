@@ -15,7 +15,7 @@ import { approvalRunSummary, decisionWord, describeApproval, isQuestion } from '
 import { useDisclosure } from './disclosure'
 import { ChatCode } from './code'
 import { Key } from './prompt-bits'
-import { InputPrompt } from './InputPrompt'
+import { ClosedForm, InputPrompt } from './InputPrompt'
 import { isDeny, isInputRequest, forgetCard } from './input-request'
 import { useQuestionHost, type Answer } from './question-context'
 
@@ -658,6 +658,8 @@ export function InlineQuestion({ entry }: { entry: PermissionEntry }): React.JSX
           remote={host.remote}
           drafts={host.drafts}
           draft={entry.draft}
+          notes={entry.notes}
+          working={host.working}
           onAnswer={host.answer}
         />
       ) : (
@@ -704,8 +706,24 @@ function AnswerList({
  *  ("Allowed", "Declined"), never the protocol's method name and raw
  *  decision id the Codex adapter carries. */
 export function PermissionRow({ entry }: { entry: PermissionEntry }): React.JSX.Element {
+  const host = useQuestionHost()
   const { request } = entry
   const question = isQuestion(request)
+  // A form the agent asked stays as the form it was, closed: every step
+  // folded with its answer, where it stood when it settled (PRDCT-4157).
+  if (isInputRequest(request) && (entry.answer || entry.answeredElsewhere))
+    return (
+      <div
+        className="chat-permission-row"
+        data-state={entry.answer ? 'answered' : 'elsewhere'}
+        data-kind="question"
+        data-revised={entry.revised ? 'true' : undefined}
+        data-form="closed"
+        role="status"
+      >
+        <ClosedForm entry={entry} agent={host?.agent ?? 'The agent'} />
+      </div>
+    )
   const Icon = question ? QuestionMarkCircleIcon : ShieldCheckIcon
   const chosen = entry.answer ? decisionWord(request, entry.answer) : null
   const approval = question

@@ -318,7 +318,9 @@ export const SessionEvent = Schema.Union(
       key: Schema.String,
       value: Schema.Union(Schema.String, Schema.Array(Schema.String))
     }),
-    sent: Schema.optional(Schema.Boolean)
+    sent: Schema.optional(Schema.Boolean),
+    /** The agent's word under a field it could not fill, by the question's key. */
+    notes: Schema.optional(Schema.Record({ key: Schema.String, value: Schema.String }))
   }),
   Schema.Struct({
     type: Schema.Literal('context_usage'),
