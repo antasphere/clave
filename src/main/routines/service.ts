@@ -637,25 +637,29 @@ export function createRoutineService(options: RoutineServiceOptions): RoutineSer
       }
       claims.prune()
       // A run this process (or its predecessor on this data) never finished.
+      const cutOff: RoutineRun[] = []
       for (const open of store.openRuns()) {
-        store.updateRun(open.id, {
+        const ended = store.updateRun(open.id, {
           state: 'failed',
           endedAt: now(),
           reason: 'the server stopped during the run'
         })
+        if (ended) cutOff.push(ended)
       }
       await refresh()
       // A run that reported and was then cut off by the stop (the ADR's own
       // case: an update ending the app) still has its deck and nothing on
       // Slideless, since the publish waits for the run's end and that end
-      // never came (round 2, Minor 1): it is published now, once.
-      for (const d of declarations) {
-        if (!d.report.publish) continue
-        for (const run of store.state(d.key)?.runs ?? []) {
-          if (!run.deck || run.published || run.publishError) continue
-          if (run.state === 'running' || run.state === 'waiting') continue
-          void publishRun(d, run.id, path.dirname(path.resolve(decksRoot, run.deck)))
-        }
+      // never came (round 2, Minor 1): it is published now, once. Only the
+      // runs THIS start ended, oldest first, so a routine that turns
+      // publishing on does not push its whole history with the oldest run
+      // ending as the version the link shows (round 3, Minor 1); and not a
+      // routine this server no longer runs (round 3, Note 2).
+      for (const run of [...cutOff].sort((a, b) => a.startedAt - b.startedAt)) {
+        const d = declaration(run.routineKey)
+        if (!d || !d.report.publish || d.runsHere === false) continue
+        if (!run.deck || run.published || run.publishError) continue
+        void publishRun(d, run.id, path.dirname(path.resolve(decksRoot, run.deck)))
       }
       offFiles = options.files.onEvent((event) => {
         if (event._tag === 'workspace_files.changed' && watched.has(event.path)) void refresh()

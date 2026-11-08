@@ -777,11 +777,108 @@ describe('the publish to Slideless (PRDCT-4149)', () => {
     await vi.waitFor(() => expect(runOf(second, run.id).published).toBeDefined())
     expect(publisher.inputs).toHaveLength(1)
     expect(runOf(second, run.id)).toMatchObject({ state: 'failed', published: { version: 1 } })
-    // A third life publishes it no second time.
-    const third = await build(file, fakeHost(), storage, { publisher: fakePublisher() })
+    // A third life publishes it no second time: the SAME publisher counts.
+    const third = await build(file, fakeHost(), storage, { publisher })
     await third.start()
     await new Promise((resolve) => setTimeout(resolve, 30))
+    expect(publisher.inputs).toHaveLength(1)
     expect(runOf(third, run.id).published?.version).toBe(1)
+  })
+
+  it('publishes at a start only the runs that start ended, oldest first, and never a routine turning publishing on (round 3)', async () => {
+    const storage = memory()
+    const host = fakeHost()
+    // Three runs recorded while the routine did not publish: adopting the
+    // feature must not push that history.
+    const quiet = await build(workspace([routine('Health')]), host, storage)
+    for (const sid of ['s1', 's2', 's3']) {
+      const run = await quiet.runNow(key(quiet.list().routines[0].routine.file, 'Health'))
+      await quiet.report({
+        sessionId: sid,
+        status: 'ok',
+        headline: sid,
+        summary: 's',
+        data: { n: 1 }
+      })
+      host.emit(sid, { kind: 'event', event: { type: 'state_change', state: 'done' } })
+      expect(runOf(quiet, run.id).deck).toBeTruthy()
+    }
+    await quiet.close()
+    const publisher = fakePublisher()
+    const file = workspace([published])
+    const adopting = await build(file, fakeHost(), storage, { publisher })
+    await adopting.start()
+    await new Promise((resolve) => setTimeout(resolve, 30))
+    expect(publisher.inputs).toEqual([])
+
+    // Two runs reported and cut off by the stop, the older first on Slideless;
+    // a run whose publish already failed is not retried at a start.
+    const live = fakeHost()
+    const cutOff = await build(file, live, storage, { publisher: fakePublisher('refused') })
+    const first = await cutOff.runNow(key(file, 'Health'))
+    await cutOff.report({
+      sessionId: 's1',
+      status: 'ok',
+      headline: 'first',
+      summary: 's',
+      data: { n: 1 }
+    })
+    await new Promise((resolve) => setTimeout(resolve, 5))
+    const second = await cutOff.runNow(key(file, 'Health')).catch(() => null)
+    // One run at a time per routine: the second run waits for the first to end,
+    // so it is refused here; the first alone is the run the stop cuts off.
+    expect(second).toBeNull()
+    await cutOff.close()
+    const next = fakePublisher()
+    const restarted = await build(file, fakeHost(), storage, { publisher: next })
+    await restarted.start()
+    await vi.waitFor(() => expect(runOf(restarted, first.id).published).toBeDefined())
+    expect(next.inputs).toHaveLength(1)
+    // Its publish now on the record, a further start pushes nothing more.
+    const again = fakePublisher()
+    const later = await build(file, fakeHost(), storage, { publisher: again })
+    await later.start()
+    await new Promise((resolve) => setTimeout(resolve, 30))
+    expect(again.inputs).toEqual([])
+  })
+
+  it('a run whose publish failed is not retried at the next start (round 3, Gap)', async () => {
+    const storage = memory()
+    const host = fakeHost()
+    const file = workspace([published])
+    const failing = await build(file, host, storage, { publisher: fakePublisher('refused') })
+    const id = await reportedRun(failing, host, file, 's1')
+    await vi.waitFor(() => expect(runOf(failing, id).publishError).toBe('refused'))
+    await failing.close()
+    const publisher = fakePublisher()
+    const next = await build(file, fakeHost(), storage, { publisher })
+    await next.start()
+    await new Promise((resolve) => setTimeout(resolve, 30))
+    expect(publisher.inputs).toEqual([])
+  })
+
+  it('a run cut off is not published at a start on a server the routine no longer names (round 3, Note 2)', async () => {
+    const storage = memory()
+    const host = fakeHost()
+    const file = workspace([published])
+    const before = await build(file, host, storage, { publisher: fakePublisher() })
+    await before.runNow(key(file, 'Health'))
+    await before.report({
+      sessionId: 's1',
+      status: 'ok',
+      headline: 'h',
+      summary: 's',
+      data: { n: 1 }
+    })
+    await before.close()
+    const publisher = fakePublisher()
+    // The same file now pins the routine to another server: this server no
+    // longer runs it, and the run it cut off is not its to publish.
+    const pinnedFile = workspace([{ ...published, server: 'Studio' }])
+    const pinnedAway = await build(pinnedFile, fakeHost(), storage, { publisher })
+    await pinnedAway.start()
+    await new Promise((resolve) => setTimeout(resolve, 30))
+    expect(publisher.inputs).toEqual([])
   })
 
   it('a run interrupted after its report keeps the report and publishes once (round 2, Note 1)', async () => {

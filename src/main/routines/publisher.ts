@@ -144,9 +144,8 @@ export function parseShare(stdout: string): { tokenId: string; url: string } | n
 export const isGone = (result: ExecResult): boolean =>
   result.errorCode !== 'ENOENT' &&
   result.code !== null &&
-  /not_found|not found|404|no such|does not exist|deleted/i.test(
-    `${result.stderr}\n${result.stdout}`
-  )
+  // The CLI's refusal is on stderr; stdout may carry the deck's own id.
+  /\b(not_found|not found|404|no such|does not exist|deleted)\b/i.test(result.stderr)
 
 const firstLine = (text: string): string =>
   (text.split('\n').find((l) => l.trim() !== '') ?? '').trim().slice(0, 300)
