@@ -66,6 +66,12 @@ export function clipNotes(notes: readonly string[]): { notes: string[]; offset: 
   return { notes: kept, offset: notes.length - kept.length }
 }
 
+/** A reply read on clipped notes, its note number put back in the stretch's
+ *  own count (`clipNotes`' offset). */
+export function placeNote(reply: WorkDigestDone, offset: number): WorkDigestDone {
+  return reply.note === null ? reply : { ...reply, note: reply.note + offset }
+}
+
 /** The opening line of the prompt: the session history reads it to keep
  *  these one-shots out of the reader's past conversations. */
 export const WORK_DIGEST_MARKER =

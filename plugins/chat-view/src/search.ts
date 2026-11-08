@@ -78,6 +78,51 @@ function occurrences(text: string, needle: string): number {
   return n
 }
 
+/** Which card of the agent's working notes (WorkStretch, `work-stretch`
+ *  blocks) holds the `k`-th occurrence of `needle` in a row, counted the way
+ *  `rowTexts` counts, in the order the row's cards stand: its index among
+ *  the row's cards, or null when the occurrence is outside every card. */
+export function cardHolding(row: unknown, needle: string, k: number): number | null {
+  let seen = 0
+  let card = -1
+  let found: number | null = null
+  const visit = new Set<object>()
+  const walk = (value: unknown, inCard: number, depth: number): void => {
+    if (found !== null || !value || typeof value !== 'object' || depth > 8 || visit.has(value))
+      return
+    visit.add(value)
+    if (Array.isArray(value)) {
+      for (const item of value) walk(item, inCard, depth + 1)
+      return
+    }
+    const v = value as Record<string, unknown>
+    if (v.kind === 'work-stretch') {
+      card++
+      const mine = card
+      for (const key of Object.keys(v)) walk(v[key], mine, depth + 1)
+      return
+    }
+    const text =
+      v.kind === 'user' && typeof v.text === 'string' && !v.withdrawn
+        ? (parseDelivery(v.text)?.body ?? v.text)
+        : v.kind === 'assistant' && typeof v.text === 'string'
+          ? v.text
+          : v.kind === 'error' && typeof v.message === 'string'
+            ? v.message
+            : null
+    if (text !== null) {
+      const n = occurrences(text.toLocaleLowerCase(), needle)
+      if (seen + n > k) found = inCard
+      seen += n
+      return
+    }
+    if (v.kind === 'tool' || v.kind === 'permission') return
+    for (const key of Object.keys(v)) walk(v[key], inCard, depth + 1)
+  }
+  walk(row, -1, 0)
+  return found === null || found < 0 ? null : found
+}
+
 /** One match: its row, and which occurrence it is within that row. */
 export interface Match {
   row: number
@@ -268,14 +313,18 @@ export function useTranscriptSearch({
           const inRow = findRanges(rowEl, settled, MESSAGE_TEXT)
           // The words may be inside a closed card of the agent's working
           // notes (WorkStretch), whose body is not in the document until it
-          // opens: open the row's first closed card and let the mutation
-          // mark again, one card at a time until the words are found.
-          const closed = rowEl.querySelector<HTMLDetailsElement>(
-            'details.stretch-card:not([open])'
-          )
-          if (inRow.length <= currentMatch.k && closed) {
-            closed.open = true
-            return
+          // opens: open the one card that holds them, read off the row's
+          // data, and let the mutation mark again once its body is there.
+          if (inRow.length <= currentMatch.k) {
+            const holder = cardHolding(rows[currentMatch.row], settled.toLocaleLowerCase(), currentMatch.k)
+            const card =
+              holder === null
+                ? null
+                : rowEl.querySelectorAll<HTMLDetailsElement>('details.stretch-card')[holder]
+            if (card && !card.open) {
+              card.open = true
+              return
+            }
           }
           currentRange = inRow[Math.min(currentMatch.k, inRow.length - 1)] ?? null
         }

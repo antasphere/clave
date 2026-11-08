@@ -15,10 +15,11 @@ export type Entry =
       kind: 'user'
       text: string
       final: boolean
-      /** The message arrived while the agent was working on the turn before
-       *  it (Claude takes one mid-turn and queues it; another tab's message
-       *  lands the same way): it did not end that turn. The fold of the
-       *  agent's working notes reads it (stretches.ts, PRDCT-4212). */
+      /** The message arrived while the turn before it was still going, the
+       *  agent working or waiting on a permission (Claude takes one mid-turn
+       *  and queues it; another tab's message lands the same way): it did not
+       *  end that turn. The fold of the agent's working notes reads it
+       *  (stretches.ts, PRDCT-4212). */
       midTurn?: boolean
       at: number
       attachments?: Attachment[]
@@ -190,7 +191,9 @@ function settle(entries: Entry[], matches: (request: Permission) => boolean): En
 /** The entries with the agent's last words marked as the ones the turn
  *  ended on (`closes`), when they are not yet; the same array otherwise. */
 function closeTurn(entries: Entry[]): Entry[] {
-  const index = entries.findLastIndex((e) => e.kind === 'assistant')
+  // Words, never an empty entry (a closing frame that opened nothing): the
+  // views filter those out, and a mark on one would cut the turn nowhere.
+  const index = entries.findLastIndex((e) => e.kind === 'assistant' && e.text.trim() !== '')
   const last = entries[index]
   if (last?.kind !== 'assistant' || last.closes) return entries
   const next = [...entries]
@@ -281,7 +284,14 @@ export function reduceConversation(state: Conversation, action: Action): Convers
     // kernel's word on the stream (and the subscribe's answer), and a
     // replayed page may hold a fatal error or a blocked request of a process
     // that is no longer the one running (PRDCT-4191).
-    const synced = action.sync.reduce(reduceConversation, { ...state, entries: [], first: 0 })
+    // Replayed from rest: a transcript carries no state changes, and a replay
+    // read under the live `working` would mark every message as mid-turn.
+    const synced = action.sync.reduce(reduceConversation, {
+      ...state,
+      entries: [],
+      first: 0,
+      state: 'idle'
+    })
     return { ...synced, state: state.state, run: state.run, exitCode: state.exitCode }
   }
   if ('prepend' in action) {
@@ -444,8 +454,8 @@ export function reduceConversation(state: Conversation, action: Action): Convers
         final: true,
         at,
         ...(event.attachments?.length ? { attachments: event.attachments } : {}),
-        // Sent while the agent worked: it did not end the turn in progress.
-        ...(state.state === 'working' ? { midTurn: true } : {})
+        // Sent while the turn before was still going: it did not end it.
+        ...(state.state === 'working' || state.state === 'blocked' ? { midTurn: true } : {})
       })
       break
     case 'assistant_text': {

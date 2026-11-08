@@ -4,6 +4,7 @@ import {
   WORK_DIGEST_MARKER,
   clipNotes,
   parseWorkDigestReply,
+  placeNote,
   workDigestBucket,
   workDigestKey,
   workDigestPrompt
@@ -96,5 +97,14 @@ describe('workDigestBucket', () => {
   it('files a tab’s work digests apart from its exchange digests', () => {
     expect(workDigestBucket('tab-1')).toBe('tab-1:work')
     expect(workDigestBucket('tab-1')).not.toBe('tab-1')
+  })
+})
+
+describe('placeNote', () => {
+  it('puts a clipped reply’s note number back in the stretch’s own count', () => {
+    const reply = { ok: true as const, title: 'x', needsYou: true, note: 1 }
+    expect(placeNote(reply, 5).note).toBe(6)
+    expect(placeNote({ ...reply, note: null }, 5).note).toBeNull()
+    expect(placeNote(reply, 0)).toEqual(reply)
   })
 })

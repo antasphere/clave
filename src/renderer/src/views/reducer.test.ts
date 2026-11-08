@@ -847,6 +847,38 @@ describe('the run is ordered within one connection to the host (round 1, C2 and 
 })
 
 describe('the turn’s shape, for the fold of the agent’s working notes (PRDCT-4212)', () => {
+  it('marks words, never an empty closing entry, and a replay carries no mid-turn marks', () => {
+    const at = 1000
+    const emptyTail = [
+      { type: 'user_message', text: 'go' },
+      { type: 'state_change', state: 'working' },
+      { type: 'assistant_text', delta: 'Done.', final: true },
+      { type: 'tool_call', id: 't', name: 'Read', input: {} },
+      { type: 'assistant_text', delta: '', final: false },
+      { type: 'state_change', state: 'idle' }
+    ].reduce((s, event) => reduceConversation(s, { event: event as never, at }), emptyConversation)
+    const words = emptyTail.entries.filter((e) => e.kind === 'assistant')
+    expect(words.map((e) => e.kind === 'assistant' && [e.text, !!e.closes])).toEqual([
+      ['Done.', true],
+      ['', false]
+    ])
+    const working = reduceConversation(emptyConversation, {
+      event: { type: 'state_change', state: 'working' },
+      at
+    })
+    const synced = reduceConversation(working, {
+      sync: [
+        { event: { type: 'user_message', text: 'one' }, at },
+        { event: { type: 'assistant_text', delta: 'a', final: true }, at },
+        { event: { type: 'user_message', text: 'two' }, at }
+      ] as never
+    })
+    expect(synced.state).toBe('working')
+    expect(
+      synced.entries.filter((e) => e.kind === 'user').map((e) => e.kind === 'user' && e.midTurn)
+    ).toEqual([undefined, undefined])
+  })
+
   const at = 1000
   const turn = (state: Conversation = emptyConversation): Conversation =>
     [
@@ -882,13 +914,19 @@ describe('the turn’s shape, for the fold of the agent’s working notes (PRDCT
     expect(twice.entries).toBe(once.entries)
   })
 
-  it('a message sent while the agent works is marked mid-turn; one sent while it rests is not', () => {
+  it('a message sent while the agent works or waits on a permission is marked mid-turn; one sent while it rests is not', () => {
     const mid = reduceConversation(turn(), {
       event: { type: 'user_message', text: 'and also this' },
       at
     })
     const sent = mid.entries.at(-1)
     expect(sent?.kind === 'user' && sent.midTurn).toBe(true)
+    const blocked = reduceConversation(
+      reduceConversation(turn(), { event: { type: 'state_change', state: 'blocked' }, at }),
+      { event: { type: 'user_message', text: 'while it waits' }, at }
+    )
+    const waited = blocked.entries.at(-1)
+    expect(waited?.kind === 'user' && waited.midTurn).toBe(true)
     const rested = reduceConversation(
       reduceConversation(turn(), { event: { type: 'state_change', state: 'idle' }, at }),
       { event: { type: 'user_message', text: 'next' }, at }

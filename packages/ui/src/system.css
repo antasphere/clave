@@ -6910,14 +6910,9 @@ button.exchange-part-who:hover {
   block-size: var(--size);
   margin-top: calc((1lh - var(--size)) / 2);
 }
-/* The note whole, its lines kept, clamped so a long one does not take the
-   face over: the open card has it entire. */
+/* The note whole, its lines kept: a note that needs the reader is never cut. */
 .stretch-flag-words {
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 6;
   min-width: 0;
-  overflow: hidden;
   overflow-wrap: anywhere;
   white-space: pre-line;
 }

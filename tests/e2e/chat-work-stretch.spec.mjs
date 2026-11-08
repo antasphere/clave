@@ -45,11 +45,23 @@ const note = (text, calls = 1) => [
 ]
 
 const NOTES = [
-  'Formatting the first fix, then investigating the second error.',
+  '```ts\nconst fix = 1\n```\nFormatting the first fix, then investigating the second error.',
   'Typecheck: web is clean; node has 8 errors that exist on dev too.',
-  'Still tracing where the composer builds the tab attachment.',
+  'Still tracing where the **composer** builds the tab attachment.\n\nShould I keep the `legacy` path?',
   'Write path understood: the server client validates the dropped tab.'
 ]
+/** A phrase of each note the open card must show (markdown rendered). */
+const NOTE_KEYS = [
+  'Formatting the first fix',
+  'Typecheck: web is clean',
+  'Should I keep the legacy path?',
+  'Write path understood'
+]
+/** The flagged note as the face reads it: whole, its marks dropped. */
+const FLAG_TEXT =
+  'Still tracing where the composer builds the tab attachment.\nShould I keep the legacy path?'
+/** The first note's first plain line, the title before the digest lands. */
+const FALLBACK_TITLE = 'Formatting the first fix, then investigating the second error.'
 const ANSWER = 'I fixed both errors and the unit tests for the new code pass.'
 const TITLE = 'Traced and fixed the attachment check'
 const REPLY = JSON.stringify({ title: TITLE, needs_you: true, note: 3 })
@@ -103,7 +115,7 @@ export async function run(t) {
         outside: await outside(),
         eyebrow: await card.locator('.stretch-eyebrow').innerText(),
         title: await card.locator('.stretch-title-words').innerText(),
-        open: await card.locator('details').evaluate((el) => el.open)
+        open: await card.locator('details.stretch-card').evaluate((el) => el.open)
       }
       t.check(
         `${mode}: once the turn is over the notes fold into one closed card and the answer stays outside`,
@@ -114,6 +126,7 @@ export async function run(t) {
           folded.outside.length === 1 &&
           folded.outside[0] === ANSWER &&
           folded.eyebrow.startsWith('4 notes · 5 tool calls') &&
+          folded.title === FALLBACK_TITLE &&
           !folded.open,
         folded
       )
@@ -134,7 +147,7 @@ export async function run(t) {
         face.read === true &&
           face.title === TITLE &&
           face.needs === 'true' &&
-          face.flag === NOTES[2],
+          face.flag === FLAG_TEXT,
         face
       )
       // Filed under the tab, in a bucket of its own beside the exchange digests.
@@ -165,18 +178,62 @@ export async function run(t) {
           .evaluateAll((els) => els.map((el) => el.hasAttribute('data-needs-you'))),
         notes: await card
           .locator('.stretch-step .chat-turn[data-role="assistant"]')
-          .evaluateAll((els) => els.map((el) => el.textContent.trim())),
+          .evaluateAll((els) => els.map((el) => el.textContent.replace(/\s+/g, ' ').trim())),
         runs: await card.locator(`.stretch-step ${toolRow}`).count()
       }
       t.check(
         `${mode}: open, the card is one step per note with its tool run, the flagged step marked`,
         opened.steps === 4 &&
           JSON.stringify(opened.flagged) === '[false,false,true,false]' &&
-          JSON.stringify(opened.notes) === JSON.stringify(NOTES) &&
+          opened.notes.length === 4 &&
+          NOTE_KEYS.every((key, i) => opened.notes[i].includes(key)) &&
           opened.runs === 4,
         opened
       )
       await card.locator('.stretch-summary').click()
+      await until(async () =>
+        (await card.locator('details.stretch-card').evaluate((el) => el.open)) ? null : true
+      )
+
+      // 4a. Find: words that live only inside the closed card (not on its
+      // face, where the flagged note already shows) open it and are marked
+      // there (the way chat-pane-search drives the field).
+      await view.locator('textarea').click()
+      await win.keyboard.press('Meta+f')
+      const field = win.locator('[data-pane-search] input')
+      await field.waitFor()
+      await until(async () =>
+        (await field.evaluate((el) => document.activeElement === el)) ? true : null
+      )
+      await field.type('web is clean')
+      const found = await until(async () => {
+        const state = await win.evaluate(() => ({
+          count: document.querySelector('.pane-search-count')?.textContent ?? '',
+          current: CSS.highlights.get('pane-search-current')?.size ?? 0,
+          open: !!document.querySelector('.work-stretch details.stretch-card[open]')
+        }))
+        return state.current === 1 && state.open ? state : null
+      }, 10000)
+      const findState = await win.evaluate(() => ({
+        count: document.querySelector('.pane-search-count')?.textContent ?? '',
+        field: document.querySelector('[data-pane-search] input')?.value ?? null,
+        all: CSS.highlights.get('pane-search')?.size ?? 0,
+        current: CSS.highlights.get('pane-search-current')?.size ?? 0,
+        open: [...document.querySelectorAll('.work-stretch details.stretch-card')].map(
+          (d) => d.open
+        ),
+        rows: document.querySelectorAll('[data-row-index]').length
+      }))
+      t.check(
+        `${mode}: Find opens the closed card holding the words and marks them`,
+        !!found && found.count === '1 of 1',
+        { found, findState }
+      )
+      await field.press('Escape')
+      await card.locator('.stretch-summary').click()
+      await until(async () =>
+        (await card.locator('details.stretch-card').evaluate((el) => el.open)) ? null : true
+      )
 
       // 4b. The agent carries on after its answer with no new message (a
       // background task reporting back): a new turn, the answer stays.

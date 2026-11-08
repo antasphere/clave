@@ -119,8 +119,11 @@ export function plainNote(text: string, first = false): string {
     if (inFence) continue
     const line = raw
       .replace(/^\s*(#{1,6}\s+|[-*+]\s+|\d+[.)]\s+|>\s*)/, '')
+      .replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1')
       .replace(/(\*\*|__)(.+?)\1/g, '$2')
-      .replace(/(^|[^*])\*([^*]+)\*/g, '$1$2')
+      // Emphasis opens at a word's start and closes at its end: `2*3*4` is
+      // arithmetic and keeps its stars.
+      .replace(/(^|\s)[*_](\S(?:[^*_]*?\S)?)[*_](?=[\s.,;:!?)]|$)/g, '$1$2')
       .replace(/`([^`]*)`/g, '$1')
       .trim()
     if (!line) continue

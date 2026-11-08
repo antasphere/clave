@@ -400,6 +400,24 @@ describe('foldStretches: what folds and what is a boundary', () => {
     ])
   })
 
+  it('a message from another tab that arrived mid-turn ends nothing either', () => {
+    const header =
+      '[Message from Clave tab "Verifier" — reply with clave_send_to_session sessionId="v1"]\n'
+    const rows = fold(
+      [
+        user('go'),
+        ...step('One.', 'a'),
+        ...step('Two.', 'b'),
+        ...step('Three.', 'c'),
+        ...step('Four.', 'd'),
+        user(header + 'VERIFY-ACK: starting.', { midTurn: true }),
+        ...step('Five.', 'e')
+      ],
+      false
+    )
+    expect(kinds(rows)).not.toContain('work-stretch')
+  })
+
   it('a message from another tab ends the turn like the reader’s', () => {
     const header =
       '[Message from Clave tab "Verifier" — reply with clave_send_to_session sessionId="v1"]\n'
@@ -457,6 +475,9 @@ describe('the card’s facts', () => {
     expect(plainNote(note, true)).toBe('Quick check before I go on:')
     expect(plainNote(note)).toBe('Quick check before I go on:\nShould I drop the legacy table?\nyes\nno')
     expect(plainNote('   ')).toBe('')
+    expect(plainNote('See [the docs](https://x.y) and _this_, then 2*3*4 = 24.')).toBe(
+      'See the docs and this, then 2*3*4 = 24.'
+    )
   })
 
   it('spans from the first note to the last tool', () => {

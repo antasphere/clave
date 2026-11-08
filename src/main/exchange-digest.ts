@@ -20,6 +20,7 @@ import {
 import {
   clipNotes,
   parseWorkDigestReply,
+  placeNote,
   workDigestBucket,
   workDigestPrompt,
   type WorkDigestDone,
@@ -217,7 +218,7 @@ function readWork(request: WorkDigestRequest): Promise<WorkDigestResult> {
       console.warn('[exchange-digest] unreadable work reply:', reply.stdout.slice(0, 200))
       return { ok: false, error: 'The model did not answer in the asked shape' }
     }
-    return { ...parsed, note: parsed.note === null ? null : parsed.note + offset }
+    return placeNote(parsed, offset)
   })
 }
 
