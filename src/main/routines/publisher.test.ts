@@ -279,6 +279,15 @@ describe('a kept deck Slideless no longer has (round 1, Note 2)', () => {
       reset.publisher.publish({ folder: '/tmp/x', title: 'T', state, shareName: 'n' })
     ).rejects.toThrow(/ECONNRESET/)
     expect(reset.calls).toHaveLength(1)
+    // The refusal is read where the CLI writes it: a stdout that happens to
+    // carry "404" (a deck id) beside a network error is no gone deck (round 4).
+    const lookalike = publisher([
+      { code: 1, stdout: '{"deck":"k-404-z"}', stderr: 'fetch failed: ECONNRESET' }
+    ])
+    await expect(
+      lookalike.publisher.publish({ folder: '/tmp/x', title: 'T', state, shareName: 'n' })
+    ).rejects.toThrow(/ECONNRESET/)
+    expect(lookalike.calls).toHaveLength(1)
     const signedOut = publisher([{ code: 1, stdout: '', stderr: 'unauthorized: sign in first' }])
     await expect(
       signedOut.publisher.publish({ folder: '/tmp/x', title: 'T', state, shareName: 'n' })
