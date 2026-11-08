@@ -848,7 +848,7 @@ describe('the run is ordered within one connection to the host (round 1, C2 and 
 
 describe('the turn’s shape, for the fold of the agent’s working notes (PRDCT-4212)', () => {
   const at = 1000
-  const turn = (state = emptyConversation) =>
+  const turn = (state: Conversation = emptyConversation): Conversation =>
     [
       { type: 'user_message', text: 'go' },
       { type: 'state_change', state: 'working' },
