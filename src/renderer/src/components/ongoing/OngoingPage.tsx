@@ -80,7 +80,7 @@ function useLastTurn(row: OngoingRow): LastTurn | null | undefined {
       live = false
     }
   }, [read, cwd, conversationId, provider, pulse])
-  return read ? turn : null
+  return turn
 }
 
 function firstLine(text: string, max = 220): string {
@@ -281,8 +281,9 @@ export function OngoingPage(): React.JSX.Element {
   const rows = useOngoingRows()
   const now = useNow(30_000)
   const activeView = useSessionStore((s) => s.activeView)
-  const workspaceId = useWorkspaceStore((s) => s.activeWorkspaceId)
-  const workspaceName = getWorkspaceById(workspaceId)?.name ?? null
+  const workspaceName = useWorkspaceStore(
+    (s) => getWorkspaceById(s.activeWorkspaceId)?.name ?? null
+  )
   const [opening, setOpening] = useState<string | null>(null)
 
   // Escape leaves the page for the tabs, as it leaves Settings.
@@ -310,7 +311,7 @@ export function OngoingPage(): React.JSX.Element {
     <div className="ongoing-page" data-ongoing-page>
       <div className="ongoing-page-inner">
         <header className="ongoing-page-head">
-          <p className="ongoing-eyebrow">{workspaceName ?? 'Workspace'}</p>
+          {workspaceName && <p className="ongoing-eyebrow">{workspaceName}</p>}
           <h1 className="ongoing-page-title">Ongoing</h1>
           <p className="ongoing-page-lede">
             Conversations that stay open beside your work. They keep out of the sidebar and wait
