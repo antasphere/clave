@@ -461,3 +461,30 @@ describe('readAnswer', () => {
     })
   })
 })
+
+describe('a stopped tab that can never be typed into is refused before any resume (round 1, C1)', () => {
+  // `resume: true` on a stopped plain terminal brought the terminal back as
+  // a bare shell and then refused the send: the refusal now comes first,
+  // and nothing is restarted.
+  it('refuses a stopped terminal and a stopped claude agents menu without resuming them', async () => {
+    const host = fakeHost({
+      caller: 'me',
+      sessions: [
+        session('me'),
+        session('term', { state: 'ended' }),
+        session('menu', { state: 'ended' })
+      ],
+      modes: { term: 'terminal', menu: 'claude-agents' },
+      parents: { term: 'me', menu: 'me' }
+    })
+    const io = fakeIo()
+    await expect(
+      sendToTarget(host, { ref: 'term', message: 'ls', resume: true }, io)
+    ).rejects.toThrow('Refusing to send to a plain terminal')
+    await expect(
+      sendToTarget(host, { ref: 'menu', message: 'x', resume: true }, io)
+    ).rejects.toThrow('Refusing to send to a `claude agents` tab')
+    expect(io.resume).not.toHaveBeenCalled()
+    expect(io.type).not.toHaveBeenCalled()
+  })
+})

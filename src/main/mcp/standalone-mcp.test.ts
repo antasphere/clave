@@ -1146,3 +1146,39 @@ describe('agent-sessions/delegation-group fixture', () => {
     expect(sessions.has(tabId)).toBe(false)
   }, 15_000)
 })
+
+describe('standalone MCP: the reach on a read, and a stopped terminal asked to resume (round 1, C1 and C4)', () => {
+  it('refuses to read a tab the caller is not related to', async () => {
+    const { client, sessions } = await messagingFixture()
+    sessions.set('stranger', tab('stranger'))
+    const answer = await client.callTool({
+      name: 'clave_read_session',
+      arguments: { sessionId: 'stranger' }
+    })
+    expect(answer.isError).toBe(true)
+    expect(errorText(answer)).toContain(
+      'Refusing to read tab "stranger": it is not related to yours.'
+    )
+  }, 15_000)
+
+  it('refuses a stopped plain terminal it opened even with resume: true, and restarts nothing', async () => {
+    const { client, sessions, restarted, typed } = await messagingFixture({
+      records: [
+        record('term', {
+          openedBy: 'caller',
+          codexMode: false,
+          claudeMode: false
+        })
+      ]
+    })
+    sessions.set('term', tab('term', { state: 'ended', provider: 'terminal', transport: 'pty' }))
+    const answer = await client.callTool({
+      name: 'clave_send_to_session',
+      arguments: { sessionId: 'term', message: 'echo hi', resume: true }
+    })
+    expect(answer.isError).toBe(true)
+    expect(errorText(answer)).toContain('Refusing to send to a plain terminal')
+    expect(restarted).toEqual([])
+    expect(typed).toEqual([])
+  }, 15_000)
+})

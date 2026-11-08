@@ -54,6 +54,15 @@ export function useConversation(
   const pastReader = useRef<PastReader | null>(null)
   useEffect(() => {
     let live = true
+    // A server's connection coming back may be to a server that counts its
+    // runs from 1 again: the run heard so far is forgotten first (PRDCT-4191).
+    const stopReconnect =
+      isRemoteKey(sessionId) && window.electronAPI.onFleetStatus
+        ? window.electronAPI.onFleetStatus((status) => {
+            if (live && status.serverId === ownerOf(sessionId) && status.state === 'connected')
+              dispatch({ reconnected: true })
+          })
+        : () => {}
     const catchup = bindFleetCatchup(sessionId, (page) => {
       if (!live) return
       dispatch({ sync: page.items })
@@ -131,6 +140,7 @@ export function useConversation(
       .catch(() => {})
     return () => {
       live = false
+      stopReconnect()
       catchup.close()
       pastReader.current?.stop()
       pastReader.current = null

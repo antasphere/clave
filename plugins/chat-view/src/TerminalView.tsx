@@ -357,6 +357,15 @@ export function TerminalView({
   const [slashDismissed, setSlashDismissed] = useState<string | null>(null)
   useEffect(() => {
     let live = true
+    // A server's connection coming back may be to a server that counts its
+    // runs from 1 again: the run heard so far is forgotten first (PRDCT-4191).
+    const stopReconnect =
+      isRemoteKey(session.id) && window.electronAPI.onFleetStatus
+        ? window.electronAPI.onFleetStatus((status) => {
+            if (live && status.serverId === ownerOf(session.id) && status.state === 'connected')
+              dispatch({ reconnected: true })
+          })
+        : () => {}
     const catchup = bindFleetCatchup(session.id, (page) => {
       if (!live) return
       dispatch({ sync: page.items })
@@ -432,6 +441,7 @@ export function TerminalView({
       .catch(() => {})
     return () => {
       live = false
+      stopReconnect()
       catchup.close()
       stop()
       stopExit()

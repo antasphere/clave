@@ -114,6 +114,11 @@ export type Action =
    *  (PRDCT-4191): its state and its run, which win over the seed the pane
    *  took from the list it read at mount. */
   | { session: { state: AgentState; run?: number } }
+  /** The connection to the session's server came back (PRDCT-4191): runs
+   *  are ordered within one host lifetime only, and a reconnect may be to a
+   *  host that counts from 1 again, so the run heard so far is forgotten
+   *  and the first word of the new connection is taken whatever its number. */
+  | { reconnected: true }
 
 /** Whether anything answers the reader's last message yet: text, a tool call,
  *  a question, an error. What decides, on Escape, between taking the message
@@ -144,12 +149,16 @@ function settle(entries: Entry[], matches: (request: Permission) => boolean): En
 }
 export function reduceConversation(state: Conversation, action: Action): Conversation {
   if ('exit' in action) return { ...state, state: 'ended', exitCode: action.exit }
+  if ('reconnected' in action) return state.run === null ? state : { ...state, run: null }
   if ('session' in action) {
-    // The subscribe's answer is the host's current word: a run older than
-    // one already heard is a stale answer (a subscribe that resolved after
-    // the new process spoke) and changes nothing.
+    // The subscribe's answer is the host's current word AT THE TIME IT WAS
+    // TAKEN: a run older than one already heard is a stale answer, and so
+    // is an answer of the very run the stream has already spoken for (an
+    // invoke reply is not ordered against the frames sent meanwhile: a
+    // `working` heard first must not fall back to the reply's `idle`,
+    // round 1, C3). Only a run the pane has not heard of applies.
     const run = action.session.run
-    if (run !== undefined && state.run !== null && run < state.run) return state
+    if (run !== undefined && state.run !== null && run <= state.run) return state
     const ended = action.session.state === 'ended'
     return {
       ...state,

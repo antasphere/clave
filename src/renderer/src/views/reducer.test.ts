@@ -525,3 +525,56 @@ describe('a host that runs nothing under the id resets the run (PRDCT-4191)', ()
     ).toMatchObject({ state: 'working', run: 3 })
   })
 })
+
+describe('the run is ordered within one connection to the host (round 1, C2 and C3)', () => {
+  const heard = (state: Conversation['state'], run: number | null): Conversation => ({
+    ...emptyConversation,
+    state,
+    run
+  })
+  it('a subscribe answer of the very run the stream already spoke for changes nothing', () => {
+    // An invoke reply is not ordered against the frames sent meanwhile: a
+    // `working` heard first must not fall back to the reply's older `idle`.
+    const working = heard('working', 2)
+    expect(reduceConversation(working, { session: { state: 'idle', run: 2 } })).toBe(working)
+    expect(reduceConversation(working, { session: { state: 'idle', run: 1 } })).toBe(working)
+    expect(reduceConversation(working, { session: { state: 'idle', run: 3 } })).toMatchObject({
+      state: 'idle',
+      run: 3
+    })
+  })
+  it('a reconnect forgets the run, so a host counting from 1 again is heard', () => {
+    // The pane heard run 2 of the old daemon life; the daemon restarted and
+    // another Mac resumed the chat before this one reconnected, so the first
+    // word of the new connection is `idle run 1`, with no `ended` before it.
+    const stale = heard('ended', 2)
+    expect(
+      reduceConversation(stale, { event: { type: 'state_change', state: 'idle', run: 1 } })
+    ).toBe(stale)
+    const reconnected = reduceConversation(stale, { reconnected: true })
+    expect(reconnected.run).toBeNull()
+    expect(
+      reduceConversation(reconnected, { event: { type: 'state_change', state: 'idle', run: 1 } })
+    ).toMatchObject({ state: 'idle', run: 1 })
+    expect(
+      reduceConversation(reconnected, { session: { state: 'working', run: 1 } })
+    ).toMatchObject({
+      state: 'working',
+      run: 1
+    })
+    // A reconnect with nothing heard yet is the same object.
+    expect(reduceConversation(reconnected, { reconnected: true })).toBe(reconnected)
+  })
+  it('a live state_change of a newer run clears the exit code a dead run left (round 1, C5)', () => {
+    const dead: Conversation = { ...emptyConversation, state: 'ended', run: 1, exitCode: 7 }
+    const alive = reduceConversation(dead, {
+      event: { type: 'state_change', state: 'idle', run: 2 }
+    })
+    expect(alive).toMatchObject({ state: 'idle', run: 2 })
+    expect(alive.exitCode).toBeUndefined()
+    // An ended frame keeps the code the exit gave.
+    expect(
+      reduceConversation(dead, { event: { type: 'state_change', state: 'ended', run: 1 } }).exitCode
+    ).toBe(7)
+  })
+})

@@ -239,6 +239,11 @@ export async function sendToTarget(
   if (caller && target.id === caller) return checkpoint(target)
   await assertCanReach(host, target, 'message')
   const targetName = host.nameOf(target)
+  // The tabs a message can never be typed into are refused BEFORE any
+  // resume: a stopped terminal asked to resume and deliver would otherwise
+  // come back as a bare shell while the call fails (round 1, C1).
+  const mode = host.modeOf(target)
+  refuseUntypable(mode)
   if (target.state === 'ended') {
     // Never a silent restart: a message meant for a live tab must not bring
     // back a process the person stopped on purpose (PRDCT-4193).
@@ -246,8 +251,6 @@ export async function sendToTarget(
     await io.resume(target)
     target = (await host.get(target.id)) ?? target
   }
-  const mode = host.modeOf(target)
-  refuseUntypable(mode)
   const sender = caller ? await host.get(caller) : null
   const senderName = sender ? host.nameOf(sender) : undefined
   // The provenance header: the receiving agent must be able to tell this

@@ -46,6 +46,8 @@ import { resourceKey } from '@clave/contract/fleet'
 
 import { useWorkspaceStore } from '../store/workspace-store'
 import { useSessionStore } from '../store/session-store'
+import { useFleetStore } from '../store/fleet-store'
+import { usePairingStore } from '../store/pairing-store'
 const codex = (id: string, name: string, flags: string[] = []): LaunchProfile => ({
   id,
   name,
@@ -580,5 +582,142 @@ describe('resume and reach on the window road (PRDCT-4193)', () => {
       })
     )
     expect(spawnSession).not.toHaveBeenCalled()
+  })
+})
+
+/* Round 1 of the lane's verifier: a stopped terminal asked to resume and
+   deliver must be refused before any restart (C1), and the paired-workspace
+   placement must reach the fleet open from the dispatcher (C6). */
+describe('round 1: the window road refuses before resuming, and places by the pairing', () => {
+  const dispatchOnce = async (
+    command: string,
+    payload: Record<string, unknown>
+  ): Promise<{ ok: boolean; result?: unknown; error?: string }> => {
+    let receive: (msg: { requestId: string; command: string; payload: unknown }) => void = () => {}
+    const response = new Promise<{ ok: boolean; result?: unknown; error?: string }>((resolve) => {
+      globals.window.electronAPI.onMcpCommand = (handler: typeof receive) => {
+        receive = handler
+        return () => {}
+      }
+      globals.window.electronAPI.mcpRespond = resolve
+    })
+    globals.window.electronAPI.lineageParents = vi.fn(async () => ({}))
+    const unsubscribe = initMcpDispatcher()
+    await new Promise((r) => setTimeout(r, 0))
+    receive({ requestId: command, command, payload })
+    try {
+      return await response
+    } finally {
+      unsubscribe()
+    }
+  }
+  beforeEach(() => {
+    switchAccount.restartSessionProcess.mockReset()
+    switchAccount.restartSessionProcess.mockImplementation(async () => ({
+      ok: true,
+      resumed: true
+    }))
+    Object.assign(globals.window.electronAPI, {
+      sessionsWrite: vi.fn(async () => undefined),
+      sessionsList: vi.fn(async () => []),
+      captureExchangeMessage: vi.fn(),
+      fleetSnapshot: vi.fn(async () => undefined)
+    })
+  })
+
+  it('refuses a stopped plain terminal with resume: true, restarting nothing (C1)', async () => {
+    useSessionStore.setState({
+      sessions: [
+        {
+          id: 'c1-lead',
+          name: 'Lead',
+          cwd: '/r',
+          sessionType: 'local',
+          alive: true,
+          claudeMode: true
+        },
+        {
+          id: 'c1-term',
+          name: 'Dev server',
+          cwd: '/r',
+          sessionType: 'local',
+          alive: false,
+          claudeMode: false,
+          spawnedBy: 'c1-lead'
+        }
+      ] as never
+    })
+    const answer = await dispatchOnce('sendToSession', {
+      callerSessionId: 'c1-lead',
+      sessionId: 'c1-term',
+      message: 'npm run dev',
+      resume: true
+    })
+    expect(answer.ok).toBe(false)
+    expect(answer.error).toContain('Refusing to send to a plain terminal')
+    expect(switchAccount.restartSessionProcess).not.toHaveBeenCalled()
+  })
+
+  it('opens a server tab in the server workspace paired with the caller’s (C6)', async () => {
+    const paired = resourceKey('workspace', 'srv', 'ws-raw')
+    useWorkspaceStore.setState({
+      activeWorkspaceId: 'ws-local',
+      workspaces: [
+        { id: 'ws-local', name: 'Local', rootDir: '/local', profileFile: null, createdAt: 1 }
+      ],
+      serverWorkspaces: {
+        srv: [{ id: paired, name: 'Studio', rootDir: '/srv/repo', profileFile: null, createdAt: 1 }]
+      }
+    })
+    useSessionStore.setState({
+      sessions: [
+        {
+          id: 'c6-lead',
+          cwd: '/local/x',
+          sessionType: 'local',
+          alive: true,
+          workspaceId: 'ws-local'
+        }
+      ] as never
+    })
+    useFleetStore.setState({
+      connections: [{ id: 'srv', name: 'Studio Mac', url: 'http://srv', enabled: true }] as never,
+      statuses: { srv: { serverId: 'srv', state: 'connected' } } as never
+    })
+    usePairingStore.setState({
+      servers: { srv: { combine: true, pairs: { 'ws-raw': 'ws-local' }, declined: [] } }
+    } as never)
+    const fleetStart = vi.fn(async (serverId: string, cwd: string) => ({
+      id: resourceKey('session', serverId, 'new'),
+      cwd,
+      folderName: 'elsewhere',
+      alive: true,
+      claudeSessionId: null,
+      piSessionId: null
+    }))
+    Object.assign(globals.window.electronAPI, {
+      fleetStart,
+      resizeSession: vi.fn(),
+      setSessionDisplayName: vi.fn(async () => undefined)
+    })
+    try {
+      // The directory is under no root of the server: only the pairing places it.
+      const result = (await openSessionProgrammatically({
+        cwd: '/srv/elsewhere',
+        server: 'srv',
+        mode: 'terminal',
+        command: 'ls',
+        callerSessionId: 'c6-lead'
+      })) as { workspaceId: string | null }
+      expect(fleetStart).toHaveBeenCalledWith(
+        'srv',
+        '/srv/elsewhere',
+        expect.objectContaining({ workspaceId: paired })
+      )
+      expect(result.workspaceId).toBe(paired)
+    } finally {
+      usePairingStore.setState({ servers: {} } as never)
+      useFleetStore.setState({ connections: [], statuses: {} } as never)
+    }
   })
 })

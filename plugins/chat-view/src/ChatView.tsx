@@ -491,6 +491,17 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
   const [slashDismissed, setSlashDismissed] = useState<string | null>(null)
   useEffect(() => {
     let live = true
+    // A server's connection coming back may be to a server that restarted
+    // and counts its runs from 1 again: the run heard so far is forgotten
+    // before any frame of the new connection arrives (PRDCT-4191, round 1
+    // C2). Bound first, so no frame slips in ahead of it.
+    const stopReconnect =
+      isRemoteKey(session.id) && window.electronAPI.onFleetStatus
+        ? window.electronAPI.onFleetStatus((status) => {
+            if (live && status.serverId === ownerOf(session.id) && status.state === 'connected')
+              dispatch({ reconnected: true })
+          })
+        : () => {}
     const catchup = bindFleetCatchup(session.id, (page) => {
       if (!live) return
       dispatch({ sync: page.items })
@@ -586,6 +597,7 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
       .catch(() => {})
     return () => {
       live = false
+      stopReconnect()
       catchup.close()
       pastReader.current?.stop()
       pastReader.current = null

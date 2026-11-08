@@ -285,6 +285,14 @@ export function FleetResume({ sessionId }: { sessionId: string }): React.JSX.Ele
   // failure went to one generic line that only Settings → Servers showed,
   // and the tab kept its "restarting" mark with nothing to click.
   const [failure, setFailure] = useState<string | null>(null)
+  // A tab back alive has nothing left to explain: the last failure goes with
+  // it, so it never shows again at a later stop (round 1, N3). Derived during
+  // the render, the way React asks for state that follows a prop.
+  const [wasAlive, setWasAlive] = useState(alive)
+  if (alive !== wasAlive) {
+    setWasAlive(alive)
+    if (alive && failure !== null) setFailure(null)
+  }
   if (!isRemoteKey(sessionId)) return null
   if (status !== 'connected')
     return <span className="text-xs text-text-secondary">{status ?? 'Connecting'}</span>

@@ -1369,6 +1369,18 @@ async function handleSendToSession(payload: {
     return handleSelfCheckpoint(payload.callerSessionId, payload.message)
   }
   assertCanReach(payload.callerSessionId, target, 'message')
+  // The tabs a message can never be typed into are refused BEFORE any
+  // resume: a stopped terminal asked to resume and deliver would otherwise
+  // come back as a bare shell while the call fails (round 1, C1).
+  const mode = sessionMode(target)
+  if (mode === 'terminal') {
+    throw new Error(
+      'Refusing to send to a plain terminal — text typed there would run as a shell command. Target an agent tab (claude/antigravity/codex).'
+    )
+  }
+  if (mode === 'claude-agents') {
+    throw new Error('Refusing to send to a `claude agents` tab — it is a menu UI, not a chat input')
+  }
   if (!target.alive) {
     // Never a silent restart: a message meant for a live tab must not bring
     // back a process the person stopped on purpose (PRDCT-4193).
@@ -1378,15 +1390,6 @@ async function handleSendToSession(payload: {
       )
     await resumeStoppedSession(target)
     target = useSessionStore.getState().sessions.find((s) => s.id === target.id) ?? target
-  }
-  const mode = sessionMode(target)
-  if (mode === 'terminal') {
-    throw new Error(
-      'Refusing to send to a plain terminal — text typed there would run as a shell command. Target an agent tab (claude/antigravity/codex).'
-    )
-  }
-  if (mode === 'claude-agents') {
-    throw new Error('Refusing to send to a `claude agents` tab — it is a menu UI, not a chat input')
   }
   const sender = payload.callerSessionId
     ? useSessionStore.getState().sessions.find((s) => s.id === payload.callerSessionId)

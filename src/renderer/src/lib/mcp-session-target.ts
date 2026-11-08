@@ -98,8 +98,11 @@ function placeOnServer(
   const own = (paired ?? []).filter((id) => ownerOf(id) === serverId)
   if (own.length === 1) return own[0]
   if (!cwd) return undefined
-  const holds = (root: string): boolean =>
-    cwd === root || cwd.startsWith(root.replace(/\/+$/, '') + '/')
+  // A root saved with a trailing slash holds its own directory too (round 1, N4).
+  const holds = (root: string): boolean => {
+    const bare = root.replace(/\/+$/, '')
+    return cwd.replace(/\/+$/, '') === bare || cwd.startsWith(bare + '/')
+  }
   const holder = workspaces
     .filter((w) => ownerOf(w.id) === serverId && holds(w.rootDir))
     .sort((a, b) => b.rootDir.length - a.rootDir.length)[0]
