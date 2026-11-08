@@ -67,6 +67,7 @@ export function resumeOptions(record: SessionRecord): SpawnOptions {
     dangerousMode: runtime.dangerousMode,
     model: runtime.model,
     ...(runtime.permissionMode !== undefined ? { permissionMode: runtime.permissionMode } : {}),
+    ...(runtime.allowDangerous ? { allowDangerous: true } : {}),
     ...(runtime.effort !== undefined ? { effort: runtime.effort } : {}),
     launchProfileId: record.launchProfileId,
     launchProfile: record.launchProfile,
@@ -272,8 +273,14 @@ export function serverOwnedSessionHost(options: ServerOwnedHostOptions): {
     changeWork: (id, change) => base.changeWork(id, change),
     // Releasing a client window is not a server lifecycle operation.
     release: () => ({ released: [], refused: [] }),
-    restart: (id, account, resendRejected) => {
+    restart: (id, account, resendRejected, onlyIfStopped) => {
       if (closing.has(id)) return Promise.reject(new Error('This session is closing'))
+      // A Resume asked of a running session is refused here, on the server's
+      // own word: a Mac reading a stale view (a connection blip) must never
+      // cut a live turn (PRDCT-4193, round 3 C2). A move to another account
+      // (no `onlyIfStopped`) restarts a running session as before.
+      if (onlyIfStopped && base.get(id))
+        return Promise.reject(new Error('This session is running; there is nothing to resume.'))
       const existing = pending.get(id)
       if (existing) return existing
       const resume = async (): Promise<RestartedSession> => {

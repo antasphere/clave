@@ -76,13 +76,19 @@ export async function findTarget(host: TargetHost, ref: string): Promise<Session
   if (byId) return byId
   const all = await host.list()
   const named = all.filter((s) => host.nameOf(s) === ref)
-  return (
-    (host.routedKey !== undefined
-      ? named.find((s) => s.windowKey === host.routedKey)
-      : undefined) ??
-    named[0] ??
-    null
-  )
+  if (named.length <= 1) return named[0] ?? null
+  // Several tabs share the name: the routed window's first, and among those
+  // the one the caller can reach (round 3, C4: a Mac tab and a server tab
+  // both called "Lane A" refused the caller its own related tab).
+  const routed = named.filter((s) => host.routedKey !== undefined && s.windowKey === host.routedKey)
+  const candidates = routed.length ? routed : named
+  if (host.caller && candidates.length > 1) {
+    const groups = await host.groups()
+    const caller = host.caller
+    const reachable = candidates.find((s) => isRelated(host, groups, caller, s.id))
+    if (reachable) return reachable
+  }
+  return candidates[0]
 }
 
 /** The renderer's `resolveTargetSession`: "parent", an id, then an exact

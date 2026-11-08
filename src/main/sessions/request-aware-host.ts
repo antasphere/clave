@@ -144,9 +144,9 @@ export function requestAwareSessionHost(options: {
         await base.stop(id)
         requests.cancelSession(id)
       },
-      restart: async (id, account, resend) => {
+      restart: async (id, account, resend, onlyIfStopped) => {
         requests.cancelSession(id)
-        return base.restart(id, account, resend)
+        return base.restart(id, account, resend, onlyIfStopped)
       }
     }
   }

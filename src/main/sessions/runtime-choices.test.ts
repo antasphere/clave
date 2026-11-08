@@ -13,11 +13,13 @@ describe('runtimeChoices', () => {
   })
 
   it('passes another known mode and turns the dangerous flag off', () => {
-    // The person left bypass for it, so the launch's flag must not win.
+    // The person left bypass for it, so the launch's flag must not win; the
+    // way back to bypass stays open, since the launch had it (round 3, C5).
     for (const mode of ['default', 'acceptEdits', 'plan', 'auto', 'dontAsk'])
       expect(runtimeChoices({ dangerousMode: true, permissionMode: mode })).toEqual({
         dangerousMode: false,
-        permissionMode: mode
+        permissionMode: mode,
+        allowDangerous: true
       })
   })
 
@@ -41,5 +43,24 @@ describe('runtimeChoices', () => {
     for (const effort of ['High', '1x', '', 'a'.repeat(33), 'max; rm -rf'])
       expect(runtimeChoices({ effort })).toEqual({ dangerousMode: false })
     expect(runtimeChoices({ effort: 'x_high-2' }).effort).toBe('x_high-2')
+  })
+})
+
+describe('bypass kept reachable (round 3, C5)', () => {
+  it('a chat launched skipping permissions and resumed in another mode keeps the way back', () => {
+    expect(runtimeChoices({ dangerousMode: true, permissionMode: 'plan' })).toEqual({
+      dangerousMode: false,
+      permissionMode: 'plan',
+      allowDangerous: true
+    })
+    // Launched asking: nothing to keep.
+    expect(runtimeChoices({ dangerousMode: false, permissionMode: 'plan' })).toEqual({
+      dangerousMode: false,
+      permissionMode: 'plan'
+    })
+    // Still in bypass: the flag itself, nothing to allow.
+    expect(runtimeChoices({ dangerousMode: true, permissionMode: 'bypassPermissions' })).toEqual({
+      dangerousMode: true
+    })
   })
 })

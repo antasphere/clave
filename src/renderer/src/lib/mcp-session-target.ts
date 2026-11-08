@@ -95,7 +95,11 @@ function placeOnServer(
   paired: readonly string[] | undefined,
   cwd: string | undefined
 ): string | undefined {
-  const own = (paired ?? []).filter((id) => ownerOf(id) === serverId)
+  // A pairing names a workspace the server may no longer have (removed there
+  // since the pairing was made): only one the server still lists is taken
+  // (round 3, C3); otherwise the directory decides.
+  const listed = new Set(workspaces.filter((w) => ownerOf(w.id) === serverId).map((w) => w.id))
+  const own = (paired ?? []).filter((id) => ownerOf(id) === serverId && listed.has(id))
   if (own.length === 1) return own[0]
   if (!cwd) return undefined
   // A root saved with a trailing slash holds its own directory too (round 1, N4).

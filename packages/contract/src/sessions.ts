@@ -415,7 +415,10 @@ export const SpawnOptions = Schema.Struct({
    *  whether or not it is nested under it (PRDCT-4192): what "parent" and the
    *  reach rule read once the host's memory of the open is gone (a restart).
    *  Always written by an agent's open; absent for a tab a person opened. */
-  openedBy: Schema.optional(Schema.String)
+  openedBy: Schema.optional(Schema.String),
+  /** Bypass stays reachable to a Claude chat resumed in another mode when
+   *  its launch had it (`--allow-dangerously-skip-permissions`), PRDCT-4191. */
+  allowDangerous: Schema.optional(Schema.Boolean)
 })
 export type SpawnOptions = typeof SpawnOptions.Type
 
@@ -821,7 +824,10 @@ export const RestartSession = Command.define('RestartSession', {
     id: Schema.String,
     account: AccountOverride,
     requestId: Schema.optional(RestartRequestId),
-    resendRejected: Schema.optional(Schema.Boolean)
+    resendRejected: Schema.optional(Schema.Boolean),
+    /** A Resume, not a move: refused when the session is running, so a
+     *  client reading a stale view never cuts a live turn (PRDCT-4193). */
+    onlyIfStopped: Schema.optional(Schema.Boolean)
   }),
   success: RestartedSession,
   failure: Schema.Union(SessionNotFound, CapabilityUnavailable, SessionStartFailed)

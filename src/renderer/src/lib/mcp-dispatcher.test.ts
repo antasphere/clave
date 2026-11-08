@@ -449,7 +449,9 @@ describe('resume and reach on the window road (PRDCT-4193)', () => {
       callerSessionId: 'r-lead',
       sessionId: 'r-child'
     })
-    expect(switchAccount.restartSessionProcess).toHaveBeenCalledWith('r-child')
+    expect(switchAccount.restartSessionProcess).toHaveBeenCalledWith('r-child', {
+      onlyIfStopped: true
+    })
     expect(answer).toMatchObject({ ok: true })
     expect(answer.result).toEqual({
       resumed: true,
@@ -470,7 +472,9 @@ describe('resume and reach on the window road (PRDCT-4193)', () => {
     })
     const answer = await dispatch('resumeSession', { callerSessionId: 'r-lead', sessionId: remote })
     expect(answer.ok).toBe(true)
-    expect(switchAccount.restartSessionProcess).toHaveBeenCalledWith(remote)
+    expect(switchAccount.restartSessionProcess).toHaveBeenCalledWith(remote, {
+      onlyIfStopped: true
+    })
     expect(fleetSnapshot).toHaveBeenCalledWith('srv')
   })
 
@@ -514,7 +518,9 @@ describe('resume and reach on the window road (PRDCT-4193)', () => {
       resume: true
     })
     expect(answer).toMatchObject({ ok: true, result: { delivered: true, sessionId: 's-child' } })
-    expect(switchAccount.restartSessionProcess).toHaveBeenCalledWith('s-child')
+    expect(switchAccount.restartSessionProcess).toHaveBeenCalledWith('s-child', {
+      onlyIfStopped: true
+    })
     expect(sessionsWrite).toHaveBeenCalledTimes(1)
     expect(sessionsWrite.mock.calls[0][0]).toBe('s-child')
     expect(sessionsWrite.mock.calls[0][1]).toMatchObject({ type: 'user_message' })
@@ -747,6 +753,51 @@ describe('round 1: the window road refuses before resuming, and places by the pa
     })
     expect((answer.result as { history: unknown[] }).history).toHaveLength(2)
     expect(sessionsHistory).toHaveBeenCalledWith(remote, undefined, 50)
+  })
+
+  it('names the reachable tab when a Mac tab and a server tab share a name (round 3, C4)', async () => {
+    const remote = resourceKey('session', 'srv', 'lane-a')
+    useSessionStore.setState({
+      sessions: [
+        {
+          id: 'c4-lead',
+          name: 'Lead',
+          cwd: '/r',
+          sessionType: 'local',
+          alive: true,
+          claudeMode: true
+        },
+        // The Mac's own "Lane A", unrelated to the caller, listed first.
+        {
+          id: 'c4-local',
+          name: 'Lane A',
+          cwd: '/r',
+          sessionType: 'local',
+          alive: true,
+          claudeMode: true
+        },
+        {
+          id: remote,
+          name: 'Lane A',
+          cwd: '/srv/r',
+          sessionType: 'local',
+          alive: true,
+          claudeMode: true,
+          spawnedBy: 'c4-lead'
+        }
+      ] as never
+    })
+    Object.assign(globals.window.electronAPI, {
+      sessionsList: vi.fn(async () => [{ id: remote, transport: 'events' }]),
+      sessionsWrite: vi.fn(async () => undefined)
+    })
+    const answer = await dispatchOnce('sendToSession', {
+      callerSessionId: 'c4-lead',
+      sessionId: 'Lane A',
+      message: 'hello'
+    })
+    expect(answer.ok).toBe(true)
+    expect(answer.result).toMatchObject({ sessionId: remote, delivered: true })
   })
 
   it('opens a server tab in the server workspace paired with the caller’s (C6)', async () => {

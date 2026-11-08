@@ -316,7 +316,13 @@ export const sessionHandlers = [
       // first otherwise, and announces the tab as ended.
       yield* events.publish({ _tag: 'session.restarting', id: payload.id })
       const restarted = yield* Effect.tryPromise({
-        try: () => host.restart(payload.id, payload.account, payload.resendRejected === true),
+        try: () =>
+          host.restart(
+            payload.id,
+            payload.account,
+            payload.resendRejected === true,
+            payload.onlyIfStopped === true
+          ),
         catch: (error) =>
           error instanceof CapabilityUnavailable
             ? error

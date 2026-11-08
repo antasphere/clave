@@ -1191,6 +1191,8 @@ export interface ElectronAPI extends FleetDesktopAPI {
       codexAccountLabel?: string
       /** Send the message the limit rejected again on the new account. */
       resendRejected?: boolean
+      /** A Resume, not a move: refused while the session runs (PRDCT-4193). */
+      onlyIfStopped?: boolean
     },
     requestId?: string
   ) => Promise<(SessionInfo & { resumed: boolean; requestId?: string }) | { error: string }>

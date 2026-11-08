@@ -69,13 +69,23 @@ export async function run(t) {
       options: { claudeMode: true, launchProfileId: 'chat:claude:chat-resume-stub' }
     })
     const rawId = started.id
+    // A second chat nobody ever messages: no process, no exit frame; only
+    // the server's word at bind can tell the pane it ended (round 3, C1).
+    const idle = await request(server, '/sessions/start', {
+      cwd: server.root,
+      options: { claudeMode: true, launchProfileId: 'chat:claude:chat-resume-stub' }
+    })
 
     const mac = await world.mac('resume')
     await connectMac(mac, world.servers, { ui: false })
     const owner = mac.owners[0].id
     const key = owned('session', owner, rawId)
+    const idleKey = owned('session', owner, idle.id)
     const { win } = mac
     await showServer(mac, 0)
+    // The idle chat's pane mounts once shown; shown first, then the chat.
+    await win.locator(`[data-sidebar-item-id="${idleKey}"]`).click()
+    await win.locator(`[data-session-id="${idleKey}"] [data-testid="chat-view"]`).waitFor()
     await win.locator(`[data-sidebar-item-id="${key}"]`).click()
     const pane = win.locator(`[data-session-id="${key}"]`)
     const chat = pane.locator('[data-testid="chat-view"]')
@@ -131,6 +141,19 @@ export async function run(t) {
     )
     t.check('the session record keeps the permission mode the CLI reported', true)
 
+    // A restart of the chat on the same daemon first (an account move, a
+    // Resume): the pane hears run 2, so the daemon restart below brings a
+    // daemon counting from 1 again to a pane that heard a higher run
+    // (round 1, C2; round 3, improvement 1).
+    await request(server, '/sessions/restart', { id: rawId, account: {} })
+    await eventually(() => processes().length === 2, 'the same-daemon restart starts the CLI again')
+    await eventually(
+      async () =>
+        (await pane.locator('[data-chat-ended]').count()) === 0 && (await composer.isEnabled()),
+      'the pane follows the same-daemon restart and is live again'
+    )
+    t.check('a restart on the same daemon leaves the pane live (run 2)', true)
+
     await world.restart(0)
     assert.equal(
       (await request(server, '/sessions')).find((s) => s.id === rawId)?.state,
@@ -153,7 +176,8 @@ export async function run(t) {
     t.equal('after the restart the pane draws the server’s ended state', ended, 'server')
     t.check(
       'and names the server in it',
-      (await pane.locator('[data-chat-ended="server"]').textContent())?.includes(
+      // The chat view and the Folio lab both draw it; one is enough to read.
+      (await pane.locator('[data-chat-ended="server"]').first().textContent())?.includes(
         mac.owners[0].name
       ) === true
     )
@@ -161,11 +185,17 @@ export async function run(t) {
     const resume = pane.locator('[data-chat-resume]')
     await resume.waitFor()
     t.check('and offers Resume in it', true)
-    t.equal('the restart alone started no CLI', processes().length, 1)
+    t.equal('the restart alone started no CLI', processes().length, 2)
+    await eventually(
+      async () =>
+        (await win.locator(`[data-session-id="${idleKey}"] [data-chat-ended]`).count()) > 0,
+      'the never-messaged chat reads ended too, on the server’s word alone'
+    )
+    t.check('a chat that never ran a process reads ended after the restart', true)
 
     await resume.click()
-    await eventually(() => processes().length === 2, 'Resume starts the CLI again')
-    const relaunch = processes()[1]
+    await eventually(() => processes().length === 3, 'Resume starts the CLI again')
+    const relaunch = processes()[2]
     const argv = relaunch.argv
     t.check(
       'the resumed CLI continues the same conversation (--resume <id>)',

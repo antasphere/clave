@@ -596,3 +596,30 @@ describe('resumeOptions carries what the chat was running on (PRDCT-4191, PRDCT-
     expect('effort' in resumeOptions({ ...record, effort: 'HIGH; rm' })).toBe(false)
   })
 })
+
+describe('a Resume of a running session is refused on the server (round 3, C2)', () => {
+  it('rejects with onlyIfStopped and restarts nothing; a move without it still restarts', async () => {
+    const f = fixture()
+    const started = await f.host.start({ cwd: '/repo' })
+    const restart = vi.fn(async () => ({
+      id: started.id,
+      cwd: '/repo',
+      folderName: 'repo',
+      alive: true,
+      claudeSessionId: null,
+      piSessionId: null,
+      resumed: true
+    }))
+    ;(f.base as unknown as { restart: typeof restart }).restart = restart
+    await expect(f.host.restart(started.id, {}, false, true)).rejects.toThrow(
+      'This session is running; there is nothing to resume.'
+    )
+    expect(restart).not.toHaveBeenCalled()
+    await f.host.restart(started.id, {}, false)
+    expect(restart).toHaveBeenCalledTimes(1)
+    // A stopped record resumes with the precondition as without it.
+    const resumed = await f.host.restart(record.id, {}, false, true)
+    expect(resumed.id).toBe(record.id)
+    f.close()
+  })
+})

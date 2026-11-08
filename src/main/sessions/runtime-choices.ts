@@ -27,6 +27,9 @@ export interface RuntimeChoices {
   model?: string
   dangerousMode: boolean
   permissionMode?: 'default' | 'acceptEdits' | 'plan' | 'auto' | 'dontAsk'
+  /** Bypass kept reachable to a chat resumed in another mode, because its
+   *  launch had it: the CLI accepts the switch back only when told so. */
+  allowDangerous?: boolean
   effort?: string
 }
 
@@ -42,6 +45,8 @@ export function runtimeChoices(record: RuntimeRecord): RuntimeChoices {
   else if (mode && SPAWN_MODES.has(mode)) {
     out.dangerousMode = false
     out.permissionMode = mode as RuntimeChoices['permissionMode']
+    // The person left bypass for this mode: the way back stays open.
+    if (record.dangerousMode === true) out.allowDangerous = true
   }
   if (record.effort && EFFORT.test(record.effort)) out.effort = record.effort
   return out

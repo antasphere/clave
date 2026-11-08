@@ -286,7 +286,7 @@ async function sendToSession(ctx: Ctx, key: string, p: Payload): Promise<unknown
       // The Resume the person's button makes, under the same id, the
       // conversation resumed where the provider can (PRDCT-4193).
       resume: async (target) => {
-        await ctx.api.sessions.restart(target.id, {})
+        await ctx.api.sessions.restart(target.id, {}, false, undefined, true)
       },
       capture: ({ sender, target, text, provenance, delivered }) => {
         const from = endpointOf(ctx, sender, layouts)

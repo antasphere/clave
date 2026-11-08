@@ -201,3 +201,21 @@ describe('a server root saved with a trailing slash (round 2, R09b)', () => {
     expect(resolveSessionTarget({ ...base, cwd: '/srv/xy' }).workspaceId).toBeUndefined()
   })
 })
+
+describe('a pairing to a workspace the server no longer lists (round 3, C3)', () => {
+  it('is skipped, and the directory decides', () => {
+    const gone = resourceKey('workspace', 'a', 'removed')
+    const held = { ...ws(remote), rootDir: '/srv/repo' }
+    const base = { ...defaults, workspaces: [ws('local-ws'), held], server: 'a' }
+    expect(
+      resolveSessionTarget({ ...base, pairedWorkspaceIds: [gone], cwd: '/srv/repo/x' }).workspaceId
+    ).toBe(remote)
+    expect(
+      resolveSessionTarget({ ...base, pairedWorkspaceIds: [gone], cwd: '/elsewhere' }).workspaceId
+    ).toBeUndefined()
+    // A listed pairing still wins over the directory.
+    expect(
+      resolveSessionTarget({ ...base, pairedWorkspaceIds: [remote], cwd: '/elsewhere' }).workspaceId
+    ).toBe(remote)
+  })
+})

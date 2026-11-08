@@ -488,3 +488,30 @@ describe('a stopped tab that can never be typed into is refused before any resum
     expect(io.type).not.toHaveBeenCalled()
   })
 })
+
+describe('two tabs with the same name (round 3, C4)', () => {
+  it('names the one the caller can reach, and the first when none is', async () => {
+    const host = fakeHost({
+      caller: 'me',
+      sessions: [session('me'), session('far', { windowKey: 'wB' }), session('mine-kid')],
+      names: { far: 'Lane A', 'mine-kid': 'Lane A' },
+      parents: { 'mine-kid': 'me' }
+    })
+    expect((await findTarget(host, 'Lane A'))?.id).toBe('mine-kid')
+    const nobody = fakeHost({
+      caller: 'me',
+      sessions: [session('me'), session('far'), session('other')],
+      names: { far: 'Lane A', other: 'Lane A' }
+    })
+    expect((await findTarget(nobody, 'Lane A'))?.id).toBe('far')
+    // The routed window still comes first among the reachable.
+    const routed = fakeHost({
+      caller: 'me',
+      routedKey: 'wB',
+      sessions: [session('me'), session('far', { windowKey: 'wB' }), session('mine-kid')],
+      names: { far: 'Lane A', 'mine-kid': 'Lane A' },
+      parents: { far: 'me', 'mine-kid': 'me' }
+    })
+    expect((await findTarget(routed, 'Lane A'))?.id).toBe('far')
+  })
+})

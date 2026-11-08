@@ -96,10 +96,10 @@ export async function run(t) {
     })
     assert.equal(toolErrored(terminalOpen), false, JSON.stringify(terminalOpen))
     const terminal = toolPayload(terminalOpen)
-    t.check(
-      'a server tab opened with no workspace answers workspaceId',
-      'workspaceId' in terminal,
-      terminal
+    t.equal(
+      'a server tab opened before the Mac knows a workspace of that server answers workspaceId null',
+      terminal.workspaceId,
+      null
     )
     t.check(
       'and it names the server’s key',
@@ -171,6 +171,26 @@ export async function run(t) {
       !!history?.includes('[Message from Clave tab') &&
         !!history?.includes(`sessionId=\\"${caller.sessionId}\\"`),
       history?.slice(0, 2000)
+    )
+
+    // The window reloads: its memory of the opens is gone, and the reach to
+    // the server chat comes from the lineage main kept (PRDCT-4193).
+    await win.reload()
+    const afterReload = await until(async () => {
+      const answer = await mcp.call('clave_send_to_session', {
+        sessionId: chat.sessionId,
+        message: `${marker}-after-reload`
+      })
+      return toolErrored(answer) ? null : toolPayload(answer)
+    })
+    t.check(
+      'after a window reload the caller still reaches the server chat it opened',
+      afterReload?.delivered === true,
+      afterReload
+    )
+    await eventually(
+      () => heard(`${marker}-after-reload`),
+      'the message after the reload reaches the CLI'
     )
 
     // The desktop reads a server terminal's screen (PRDCT-4166) and, since
@@ -252,10 +272,14 @@ export async function run(t) {
     // defect older than this spec's change and filed as PRDCT-4198; every
     // other renderer error still fails the spec, and that task puts this
     // one back under the assertion.
+    const didNotAnswer = (m) =>
+      /^Clave's server at http:\/\/127\.0\.0\.1:\d+ did not answer$/.test(m)
+    assert.ok(
+      mac.errors.filter(didNotAnswer).length <= 2,
+      `at most one such error per daemon restart (two restarts): ${JSON.stringify(mac.errors)}`
+    )
     assert.deepEqual(
-      mac.errors.filter(
-        (m) => !/^Clave's server at http:\/\/127\.0\.0\.1:\d+ did not answer$/.test(m)
-      ),
+      mac.errors.filter((m) => !didNotAnswer(m)),
       []
     )
   } finally {

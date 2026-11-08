@@ -528,7 +528,7 @@ function buildServer(
               return { submitted: outcome.submitted, draftHandling: outcome.draftHandling }
             },
             resume: async (target) => {
-              await sessions.restart(target.id, {}, false)
+              await sessions.restart(target.id, {}, false, true)
             }
           }
         )
@@ -546,7 +546,7 @@ function buildServer(
     async (args) =>
       text(
         await resumeTarget(targetHost, args.sessionId, async (target) => {
-          const result = await sessions.restart(target.id, {}, false)
+          const result = await sessions.restart(target.id, {}, false, true)
           return { resumed: result.resumed }
         })
       )

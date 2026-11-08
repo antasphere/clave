@@ -3,7 +3,7 @@ import { LOCAL_SERVER_ID } from '@clave/contract/fleet'
 import { useFleetStore } from '../store/fleet-store'
 import { allWorkspaces } from '../store/workspace-store'
 import { resolveSessionTarget } from './mcp-session-target'
-import { openFleetSession } from './mcp-fleet-session'
+import { assertServerConnected, openFleetSession } from './mcp-fleet-session'
 import { ownerOf } from './fleet-identity'
 import { flushLinkedDocument } from '../store/linked-document-store'
 import type { LinkedOpen } from '../../../shared/linked-documents'
@@ -1110,9 +1110,30 @@ function resolveTargetSession(ref: string, callerSessionId: string | undefined):
     }
     return parent
   }
-  const found = sessions.find((s) => s.id === ref) ?? sessions.find((s) => s.name === ref)
-  if (!found) throw new Error(`No session with id or name "${ref}"`)
-  return found
+  const byId = sessions.find((s) => s.id === ref)
+  if (byId) return byId
+  const named = sessions.filter((s) => s.name === ref)
+  if (named.length === 0) throw new Error(`No session with id or name "${ref}"`)
+  // Several tabs share the name (one on this Mac, one on a server): the one
+  // the caller can reach wins, else the first (round 3, C4).
+  return (
+    (callerSessionId && named.length > 1
+      ? named.find((s) => canReach(callerSessionId, s))
+      : undefined) ?? named[0]
+  )
+}
+
+/** Whether the caller may reach the target under the rule `assertCanReach`
+ *  enforces: itself, the tab that opened it, a tab it opened, a groupmate. */
+function canReach(callerSessionId: string, target: Session): boolean {
+  if (callerSessionId === target.id) return true
+  const state = useSessionStore.getState()
+  const caller = state.sessions.find((s) => s.id === callerSessionId)
+  return (
+    messagingParentOf(target) === callerSessionId ||
+    (!!caller &&
+      (target.id === messagingParentOf(caller) || shareAGroup(state.groups, caller.id, target.id)))
+  )
 }
 
 /**
@@ -1319,7 +1340,10 @@ export function typeIntoAgentTab(
  *  Clave server through that server's, the snapshot read again so the store
  *  knows it alive before anything is typed into it. */
 async function resumeStoppedSession(target: Session): Promise<{ resumed: boolean }> {
-  const result = await restartSessionProcess(target.id)
+  // A server that is away is said in the Servers page's words, not as a
+  // transport error (round 3, improvement 9).
+  if (ownerOf(target.id) !== LOCAL_SERVER_ID) assertServerConnected(ownerOf(target.id))
+  const result = await restartSessionProcess(target.id, { onlyIfStopped: true })
   if (!result.ok) throw new Error(result.error ?? `Session "${target.name}" could not be resumed`)
   if (ownerOf(target.id) !== LOCAL_SERVER_ID)
     await window.electronAPI.fleetSnapshot(ownerOf(target.id)).catch(() => undefined)

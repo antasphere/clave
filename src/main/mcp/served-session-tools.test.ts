@@ -602,7 +602,8 @@ describe('a message typed into a tab', () => {
     expect(
       await run(h, 'sendToSession', { sessionId: 'Gone', message: 'continue', resume: true })
     ).toMatchObject({ delivered: true, sessionId: 'gone', name: 'Gone', agentState: 'idle' })
-    expect(h.argsOf('sessions.restart')).toEqual([['gone', {}]])
+    // A Resume, not a move: the host is told to refuse a running session.
+    expect(h.argsOf('sessions.restart')).toEqual([['gone', {}, false, undefined, true]])
     expect(h.argsOf('sessions.type')).toEqual([
       ['gone', expect.stringMatching(/\ncontinue$/), 'Lane D']
     ])

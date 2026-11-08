@@ -134,6 +134,44 @@ export async function run(t) {
     )
     t.equal('and the checkpoint typed nothing into the caller', userFrames(launch.pid).length, 1)
 
+    // The opened chat answers its opener as "parent" (its own config, read
+    // once its process is up), and a tab nobody related opened is refused.
+    const chatConfig = path.join(server.dataDir, 'mcp-configs', `${chat.sessionId}.json`)
+    await eventually(
+      () => existsSync(chatConfig),
+      'the opened chat’s CLI starts and gets its config'
+    )
+    const asChat = await connect(chatConfig)
+    const toParent = await asChat.call('clave_send_to_session', {
+      sessionId: 'parent',
+      message: 'LANE DONE · from the opened chat'
+    })
+    t.check(
+      'the opened chat reaches its opener as "parent"',
+      !toolErrored(toParent) && toolPayload(toParent)?.sessionId === caller.id,
+      toParent
+    )
+    await eventually(
+      () =>
+        userFrames(launch.pid).some((f) =>
+          JSON.stringify(f).includes('LANE DONE · from the opened chat')
+        ),
+      'the parent’s CLI receives the message'
+    )
+    const stranger = await request(server, '/sessions/start', {
+      cwd: server.root,
+      options: { claudeMode: true, launchProfileId: 'chat:claude:server-mcp-stub' }
+    })
+    const toStranger = await mcp.call('clave_send_to_session', {
+      sessionId: stranger.id,
+      message: 'never delivered'
+    })
+    t.check(
+      'a tab nobody related opened is refused to the caller',
+      toolErrored(toStranger) && errorText(toStranger).includes('not related to yours'),
+      errorText(toStranger)
+    )
+
     // The daemon restarts: every tab is a stopped record; the tokens are on disk.
     await world.restart(0)
     t.equal(

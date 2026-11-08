@@ -31,7 +31,17 @@ if (argv.includes('-p') && !argv.includes('--input-format')) {
     .map((line) => JSON.parse(line))
   const after = (flag) => (argv.includes(flag) ? argv[argv.indexOf(flag) + 1] : undefined)
   const sessionId = after('--resume') ?? after('--session-id')
-  const mode = after('--stub-mode') ?? 'acceptEdits'
+  // The mode the CLI was launched in is the mode its init frame reports, as
+  // the real CLI does; `--stub-mode` names the one a first launch pretends
+  // the person switched to. The real CLI refuses `default` on its command
+  // line (the running name; `manual` is the flag's), and so does the stub.
+  const launched = after('--permission-mode')
+  if (launched === 'default') {
+    process.stderr.write('error: invalid --permission-mode default (use manual)\n')
+    process.exit(2)
+  }
+  const mode =
+    (launched === 'manual' ? 'default' : launched) ?? after('--stub-mode') ?? 'acceptEdits'
   const log = (file, value) =>
     appendFileSync(path.join(process.cwd(), file), JSON.stringify(value) + '\n', { mode: 0o600 })
   log('claude-stub-processes.jsonl', { pid: process.pid, argv })

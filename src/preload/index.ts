@@ -2256,22 +2256,31 @@ const electronAPI = {
         codexAccountLabel?: string
         /** Send the message the limit rejected again on the new account. */
         resendRejected?: boolean
+        /** A Resume: refused while the session runs (PRDCT-4193). */
+        onlyIfStopped?: boolean
       },
       string | undefined
     ],
     (SessionInfo & { resumed: boolean; requestId?: string }) | { error: string }
   >({
     ipc: (id, overrides) => ipcRenderer.invoke('pty:restart', id, overrides),
-    server: ({ api }, id, { resendRejected, ...account }, requestId) =>
-      api.sessions
-        .restart(
-          id,
-          // The wire's account carries a field only when it is set.
-          Object.fromEntries(Object.entries(account).filter(([, v]) => typeof v === 'string')),
-          resendRejected === true,
-          requestId
-        )
-        .then(loose<SessionInfo & { resumed: boolean; requestId?: string }>)
+    server: ({ api }, id, { resendRejected, onlyIfStopped, ...account }, requestId) =>
+      (onlyIfStopped === true
+        ? api.sessions.restart(
+            id,
+            // The wire's account carries a field only when it is set.
+            Object.fromEntries(Object.entries(account).filter(([, v]) => typeof v === 'string')),
+            resendRejected === true,
+            requestId,
+            true
+          )
+        : api.sessions.restart(
+            id,
+            Object.fromEntries(Object.entries(account).filter(([, v]) => typeof v === 'string')),
+            resendRejected === true,
+            requestId
+          )
+      ).then(loose<SessionInfo & { resumed: boolean; requestId?: string }>)
   }),
   getPiUsage: viaServer<['today' | '7d' | '30d' | 'all'], PiUsageTotals>({
     ipc: (range) => ipcRenderer.invoke('usage:get-pi', range),

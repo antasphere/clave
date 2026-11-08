@@ -258,6 +258,11 @@ export async function restartSession(
   overrides: RestartOverrides,
   windowKey?: string | null
 ): Promise<SessionInfoResult & { resumed: boolean }> {
+  // A Resume, not a move: a session still running is left alone, so a view
+  // that read it stopped by mistake never cuts its turn (PRDCT-4193).
+  const current = sessionManager.get(id)
+  if (overrides.onlyIfStopped && current && current.state !== 'ended')
+    throw new Error('This session is running; there is nothing to resume.')
   const plan = ptyManager.restartSpawn(id, overrides)
   if (!plan) throw new Error('This session cannot be restarted from here.')
   const windows = sessionWindows()

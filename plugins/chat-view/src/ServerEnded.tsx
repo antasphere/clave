@@ -59,7 +59,7 @@ export function ServerEnded({
   const resume = (): void => {
     setBusy(true)
     setFailure(null)
-    void restartSessionProcess(sessionId)
+    void restartSessionProcess(sessionId, { onlyIfStopped: true })
       .then(async (result) => {
         if (!result.ok) throw new Error(result.error ?? 'The server did not resume the chat')
         await window.electronAPI.fleetSnapshot(owner)

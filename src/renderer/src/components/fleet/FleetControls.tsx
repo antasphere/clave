@@ -316,7 +316,7 @@ export function FleetResume({ sessionId }: { sessionId: string }): React.JSX.Ele
           setBusy(true)
           setFailure(null)
           void window.electronAPI
-            .restartSession(sessionId, {})
+            .restartSession(sessionId, { onlyIfStopped: true })
             .then(async (result) => {
               if ('error' in result) throw new Error(result.error)
               await window.electronAPI.fleetSnapshot(ownerOf(sessionId))

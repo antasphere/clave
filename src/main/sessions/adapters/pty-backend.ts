@@ -864,6 +864,9 @@ export interface PtySpawnOptions {
   /** The mode a Claude session without `dangerousMode` asks under
    *  (`--permission-mode`); the skip flag wins when both are set. */
   permissionMode?: 'default' | 'acceptEdits' | 'plan' | 'auto' | 'dontAsk'
+  /** Bypass kept reachable to a Claude chat resumed in another mode when its
+   *  launch had it (`--allow-dangerously-skip-permissions`, PRDCT-4191). */
+  allowDangerous?: boolean
   /** A Claude Code plugin folder loaded for this session alone (`--plugin-dir`):
    *  the routine contract skill rides on it. */
   pluginDir?: string

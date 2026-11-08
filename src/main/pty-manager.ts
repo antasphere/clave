@@ -29,13 +29,17 @@ function restartRuntime(
     effort?: string
   } | null,
   previous: { model?: string; dangerousMode?: boolean; permissionMode?: string; effort?: string }
-): Pick<PtySpawnOptions, 'model' | 'dangerousMode' | 'permissionMode' | 'effort'> {
+): Pick<
+  PtySpawnOptions,
+  'model' | 'dangerousMode' | 'permissionMode' | 'effort' | 'allowDangerous'
+> {
   if (!record) return {}
   const runtime = runtimeChoices({ ...previous, ...record })
   return {
     ...(runtime.model !== undefined ? { model: runtime.model } : {}),
     dangerousMode: runtime.dangerousMode,
     ...(runtime.permissionMode !== undefined ? { permissionMode: runtime.permissionMode } : {}),
+    ...(runtime.allowDangerous ? { allowDangerous: true } : {}),
     ...(runtime.effort !== undefined ? { effort: runtime.effort } : {})
   }
 }
@@ -131,6 +135,8 @@ export interface RestartOverrides {
   codexAccountId?: string
   codexAccountLabel?: string
   resendRejected?: boolean
+  /** A Resume: refused while the session runs (PRDCT-4193). */
+  onlyIfStopped?: boolean
 }
 
 class PtyManager {
@@ -328,6 +334,10 @@ class PtyManager {
                   ? 'manual'
                   : options.permissionMode
                 : undefined,
+            // Bypass kept reachable to a Claude chat resumed in another mode
+            // when its launch had it (PRDCT-4191).
+            allowDangerous:
+              adapter.provider === 'claude' && options?.allowDangerous === true ? true : undefined,
             // What `--yolo` means to a Codex terminal: no approvals AND no
             // sandbox. The app-server takes the two separately, and without
             // this a dangerous chat ran in the config's sandbox.
@@ -398,7 +408,9 @@ class PtyManager {
       codexMode: codex,
       piMode: false,
       claudeAgentsMode: false,
-      dangerousMode: options?.dangerousMode === true,
+      // Whether bypass is available to the chat: launched skipping the
+      // permissions, or resumed in another mode with bypass kept reachable.
+      dangerousMode: options?.dangerousMode === true || options?.allowDangerous === true,
       model: options?.model,
       launchProfileId: profileId,
       launchProfile: options?.launchProfile,
@@ -554,7 +566,9 @@ class PtyManager {
     if (!spawn) return null
     const conversationId = this.conversationIdOf(id)
     const previous = spawn.options ?? {}
-    const { resendRejected, ...requested } = overrides
+    // `onlyIfStopped` is the lifecycle's precondition, never a spawn option.
+    const { resendRejected, onlyIfStopped: _onlyIfStopped, ...requested } = overrides
+    void _onlyIfStopped
     const account = accountOverrides(requested)
     const options: PtySpawnOptions = {
       ...previous,
