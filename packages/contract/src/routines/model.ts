@@ -56,7 +56,9 @@ export const RoutineReportSpec = Schema.Struct({
   template: Schema.String,
   schema: Schema.String,
   width: Schema.Number,
-  height: Schema.Number
+  height: Schema.Number,
+  /** Every run's deck pushed to Slideless by the server that runs it (PRDCT-4149). */
+  publish: Schema.Boolean
 })
 export type RoutineReportSpec = typeof RoutineReportSpec.Type
 
@@ -83,6 +85,13 @@ export const RoutineDeclaration = Schema.Struct({
   catchUp: Schema.Boolean,
   timeoutMinutes: Schema.Number,
   scope: RoutineScope,
+  /** The server that runs this routine, as the file names it (its own name
+   *  or its id), null when whichever server reads the file runs it. */
+  server: Schema.NullOr(Schema.String),
+  /** Whether THIS server runs it: true with no `server` named or when the
+   *  name or id is this server's; false for a routine pinned elsewhere,
+   *  which is listed, its next occurrence shown, and never run here. */
+  runsHere: Schema.Boolean,
   report: RoutineReportSpec,
   /** Why this routine can never run as declared (an unknown scope, a
    *  schedule that does not parse, a template outside the file's folder):
@@ -129,7 +138,22 @@ export const RoutineRun = Schema.Struct({
   /** The run's deck, as a path under the viewer's root (`<routine>/<run>/index.html`), null until a valid report. */
   deck: Schema.NullOr(Schema.String),
   /** Whether the person dismissed the run's badge. */
-  seen: Schema.Boolean
+  seen: Schema.Boolean,
+  /** The run's deck on Slideless, when the routine publishes (PRDCT-4149):
+   *  the deck's id, the version this run became, and the routine's share
+   *  link (a bearer URL: shown to the person, never written on a record).
+   *  Absent on a run recorded before publishing existed. */
+  published: Schema.optional(
+    Schema.NullOr(
+      Schema.Struct({
+        deckId: Schema.String,
+        version: Schema.Number,
+        url: Schema.NullOr(Schema.String)
+      })
+    )
+  ),
+  /** Why the publish did not happen, when the routine asked for one; the run itself stands. */
+  publishError: Schema.optional(Schema.NullOr(Schema.String))
 })
 export type RoutineRun = typeof RoutineRun.Type
 
@@ -147,7 +171,10 @@ export type RoutineView = typeof RoutineView.Type
  *  note saying why). */
 export const RoutinesListing = Schema.Struct({
   routines: Schema.Array(RoutineView),
-  viewer: Schema.Struct({ url: Schema.NullOr(Schema.String), note: Schema.String })
+  viewer: Schema.Struct({ url: Schema.NullOr(Schema.String), note: Schema.String }),
+  /** This server, as a routine's `server` field names it (PRDCT-4149): its
+   *  id and its own name (the machine's hostname unless the server was given one). */
+  server: Schema.Struct({ id: Schema.String, name: Schema.String })
 })
 export type RoutinesListing = typeof RoutinesListing.Type
 
@@ -174,6 +201,15 @@ export class RoutineReportRefused extends Schema.TaggedError<RoutineReportRefuse
 export const ListRoutines = Query.define('ListRoutines', {
   payload: Schema.Struct({}),
   success: RoutinesListing
+})
+
+/** A run's deck page, filled (PRDCT-4149): what a Mac attached to this
+ *  server shows for a run it cannot reach through the server's own viewer.
+ *  One self-contained HTML document, bounded; refused for a run with no deck. */
+export const GetRoutineDeck = Query.define('GetRoutineDeck', {
+  payload: Schema.Struct({ runId: Schema.String }),
+  success: Schema.Struct({ html: Schema.String }),
+  failure: RoutineRefused
 })
 
 /** A run outside the schedule, the person's own ask; refused while one is in flight. */

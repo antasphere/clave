@@ -178,6 +178,7 @@ async function build(
     sessions: host,
     files,
     workspaces: async () => [{ id: 'ws', name: 'W', rootDir: root, profileFile: file }],
+    identity: () => ({ id: 'server-test', name: 'TestMac' }),
     facts,
     storage,
     dataDir: join(root, 'data'),

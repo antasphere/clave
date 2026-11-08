@@ -51,6 +51,31 @@ export function routineKey(file: string, name: string): string {
   return `${file}::${name}`
 }
 
+/** A server as a routine's `server` field may name it (PRDCT-4149): its
+ *  stable id and its own name (the machine's hostname unless given one). */
+export interface ServerIdentity {
+  readonly id: string
+  readonly name: string
+}
+
+/** Whether a server runs a routine: every routine with no `server`, and a
+ *  pinned one whose name (case-insensitive, trimmed) or id is this server's.
+ *  Pure, so the rule has tests of its own. */
+export function runsOn(server: string | null | undefined, identity: ServerIdentity): boolean {
+  if (!server) return true
+  const wanted = server.trim()
+  if (!wanted) return true
+  return wanted === identity.id || wanted.toLowerCase() === identity.name.trim().toLowerCase()
+}
+
+/** The machine's own name, the default a server answers to: its hostname
+ *  without a trailing `.local` (what macOS appends on the tailnet), lower-cased
+ *  by whoever compares it. */
+export function defaultServerName(hostname: string): string {
+  const trimmed = hostname.trim().replace(/\.local$/i, '')
+  return trimmed || 'clave-server'
+}
+
 /** One routine of one group, as the scheduler sees it. Pure. */
 export function declare(
   routine: ClaveRoutine,
@@ -61,6 +86,9 @@ export function declare(
     workspace: RegistryWorkspace
     /** Whether the template folder is usable; checked on disk by the caller. */
     template: (template: string, root: string) => { ok: true } | { ok: false; reason: string }
+    /** The server reading the file: decides `runsHere` for a pinned routine.
+     *  Absent (a reader with no identity), only an unpinned routine runs. */
+    identity?: ServerIdentity
   }
 ): RoutineDeclaration {
   const { file, rootDir, group, workspace } = context
@@ -85,9 +113,16 @@ export function declare(
         template,
         schema: routine.report?.schema ?? path.join(template, 'schema.json'),
         width: routine.report?.width ?? DEFAULT_PANEL.width,
-        height: routine.report?.height ?? DEFAULT_PANEL.height
+        height: routine.report?.height ?? DEFAULT_PANEL.height,
+        publish: routine.report?.publish ?? false
       }
-    : { template: '', schema: '', width: DEFAULT_PANEL.width, height: DEFAULT_PANEL.height }
+    : {
+        template: '',
+        schema: '',
+        width: DEFAULT_PANEL.width,
+        height: DEFAULT_PANEL.height,
+        publish: false
+      }
   if (!template) reasons.push('no report template is declared (report.template)')
   else {
     const checked = context.template(template, rootDir)
@@ -132,6 +167,8 @@ export function declare(
       MAX_TIMEOUT_MINUTES
     ),
     scope: scope === 'team' ? 'team' : 'machine',
+    server: routine.server?.trim() || null,
+    runsHere: context.identity ? runsOn(routine.server, context.identity) : !routine.server?.trim(),
     report,
     invalid: reasons.length ? reasons.join('; ') : null
   }
@@ -173,7 +210,8 @@ export async function resolveRoutines(
   template: (template: string, root: string) => { ok: true } | { ok: false; reason: string } = (
     t,
     r
-  ) => checkTemplate(t, r)
+  ) => checkTemplate(t, r),
+  identity?: ServerIdentity
 ): Promise<ResolvedRoutines> {
   const declarations: RoutineDeclaration[] = []
   const read = new Set<string>()
@@ -199,7 +237,8 @@ export async function resolveRoutines(
             rootDir: entry.rootDir,
             group,
             workspace,
-            template
+            template,
+            ...(identity ? { identity } : {})
           })
           // Two routines of one file with one name are one identity: the
           // second is recorded as invalid rather than overwriting the first.

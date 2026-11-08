@@ -29,8 +29,10 @@ import { broadcastToAllWindows } from '../window-routing'
 import { TEST_NO_ACTIVATE } from '../test-mode'
 import { waitForMcpRuntime } from '../mcp/mcp-runtime'
 import { launchFactsFromManagers } from './facts'
+import { SlidelessPublisher } from './publisher'
 import { createRoutineService, type RoutineService } from './service'
 import { contractPluginDir } from './skill'
+import { claveServerId, ownServerName } from '../server/clave-server'
 
 let service: RoutineService | null = null
 
@@ -68,6 +70,17 @@ export function shellRoutines(): RoutineService {
     ...(TEST_NO_ACTIVATE ? { claimsDir: join(userData, 'routine-claims') } : {}),
     holder: `clave-shell:${process.pid}`,
     pluginDir: contractPluginDir(resourcesDir()),
+    // This Mac, as a routine's `server` field may name it (PRDCT-4149): the
+    // in-process server's id once it listens, and the machine's own name
+    // unless the environment gives one (the e2e harness does).
+    identity: () => ({ id: claveServerId() ?? '', name: ownServerName() }),
+    publisher: TEST_NO_ACTIVATE
+      ? false
+      : new SlidelessPublisher({
+          env: () => loginShellEnvAsync(),
+          log: (level, message) =>
+            (level === 'warn' ? console.warn : console.log)(`[routines] ${message}`)
+        }),
     viewer: TEST_NO_ACTIVATE ? false : { env: () => loginShellEnvAsync() },
     rehome: (sessionId, windowKey) => {
       ptyManager.setSessionWindowKey(sessionId, windowKey)

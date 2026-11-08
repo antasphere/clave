@@ -185,6 +185,8 @@ interface RawRoutine {
   catchUp?: unknown
   timeoutMinutes?: unknown
   scope?: unknown
+  /** The server that runs it, by its own name or its id (PRDCT-4149). */
+  server?: unknown
   report?: unknown
 }
 interface RawSession {
@@ -292,12 +294,14 @@ export function resolveRoutine(raw: RawRoutine, dir: string): ClaveRoutine | nul
             schema?: unknown
             width?: unknown
             height?: unknown
+            publish?: unknown
           }
           return {
             template: path.resolve(dir, r.template),
             ...(text(r.schema) ? { schema: path.resolve(dir, r.schema as string) } : {}),
             ...(count(r.width) !== undefined ? { width: count(r.width) as number } : {}),
-            ...(count(r.height) !== undefined ? { height: count(r.height) as number } : {})
+            ...(count(r.height) !== undefined ? { height: count(r.height) as number } : {}),
+            ...(flag(r.publish) !== undefined ? { publish: flag(r.publish) as boolean } : {})
           }
         })()
       : undefined
@@ -326,6 +330,7 @@ export function resolveRoutine(raw: RawRoutine, dir: string): ClaveRoutine | nul
       ? { timeoutMinutes: count(raw.timeoutMinutes) as number }
       : {}),
     ...(text(raw.scope) ? { scope: (raw.scope as string).trim() } : {}),
+    ...(text(raw.server) ? { server: (raw.server as string).trim() } : {}),
     ...(report ? { report } : {})
   }
 }

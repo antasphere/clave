@@ -95,7 +95,11 @@ export type ServerUpgradeStatus = typeof ServerUpgradeStatus.Type
 export const ServerInfo = Schema.Struct({
   version: Schema.String,
   installRef: Schema.NullOr(Schema.String),
-  upgrade: ServerUpgradeStatus
+  upgrade: ServerUpgradeStatus,
+  /** The server's own name (PRDCT-4149): what a routine's `server` field
+   *  names it by, the machine's hostname unless the server was given one.
+   *  Optional: a server before it sends none. */
+  name: Schema.optional(Schema.String)
 })
 export type ServerInfo = typeof ServerInfo.Type
 
