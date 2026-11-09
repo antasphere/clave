@@ -4,8 +4,15 @@ import {
   shortLabel,
   formatReset,
   usageProviderForSession,
-  headroomLabel
+  headroomLabel,
+  accountUsageFieldsOf,
+  claudeUsageForModel,
+  capOutLabel,
+  capStatus,
+  capStatusLine,
+  type AccountUsageSummary
 } from './usage-store'
+import { isExhausted } from '../../../shared/account-pool'
 import type { UsageWindow } from '../../../preload/index.d'
 
 describe('focused session usage provider', () => {
@@ -171,6 +178,121 @@ describe('headroomLabel', () => {
   it('says nothing before a read, or after a failed one', () => {
     expect(headroomLabel(undefined)).toBeNull()
     expect(headroomLabel({ status: 'error', tightest: null, error: 'x' })).toBeNull()
+  })
+})
+
+/**
+ * The split in the renderer's own summary (PRDCT-4253) and the one
+ * vocabulary for a cap that is out (PRDCT-4254). Romain's case of 9 November
+ * 2026: the Fable week spent, 60% of the week left.
+ */
+const DAY = 86_400_000
+const H = 3_600_000
+const now = Date.UTC(2026, 10, 9, 12, 0, 0)
+const overall = w({
+  key: 'weekly',
+  kind: 'weekly_all',
+  label: 'Weekly · all models',
+  usedPercentage: 40,
+  resetsAt: now + 2 * DAY + 5 * H
+})
+const fable = w({
+  key: 'fable',
+  kind: 'weekly_scoped',
+  scope: 'Fable',
+  label: 'Weekly · Fable',
+  usedPercentage: 100,
+  severity: 'critical',
+  resetsAt: now + 3 * DAY
+})
+const block = w({
+  key: 'session',
+  kind: 'session',
+  label: 'Current session (5h)',
+  usedPercentage: 20,
+  resetsAt: now + 2 * H
+})
+const account: AccountUsageSummary = {
+  status: 'ready',
+  error: null,
+  ...accountUsageFieldsOf([block, overall, fable])
+}
+
+describe('the account view and the session view of one read', () => {
+  it('puts the tightest SHARED cap in tightest and the family that is out in scopedOut', () => {
+    expect(account.tightest).toBe(overall)
+    expect(account.shared).toBe(overall)
+    expect(account.scopedOut).toEqual(['Fable'])
+    expect(isExhausted(account)).toBe(false)
+    expect(headroomLabel(account)).toBe('60% left · Overall')
+  })
+  it('is out for a session on Fable and open for one on Opus', () => {
+    const onFable = claudeUsageForModel(account, 'claude-fable-5-1')!
+    expect(onFable.tightest).toBe(fable)
+    expect(onFable.shared).toBe(overall)
+    expect(onFable.windows).toEqual([block, overall, fable])
+    expect(isExhausted(onFable)).toBe(true)
+    const onOpus = claudeUsageForModel(account, 'claude-opus-5-5')!
+    expect(onOpus.tightest).toBe(overall)
+    expect(onOpus.windows).toEqual([block, overall])
+    expect(onOpus.scopedOut).toEqual([])
+    expect(isExhausted(onOpus)).toBe(false)
+    // The read's own fields ride along.
+    expect(onOpus.status).toBe('ready')
+  })
+  it('leaves a failed read as it is', () => {
+    const failed: AccountUsageSummary = { status: 'error', tightest: null, error: 'x' }
+    expect(claudeUsageForModel(failed, 'opus')).toBe(failed)
+  })
+})
+
+describe('the one vocabulary for a cap that is out', () => {
+  it('names the cap and when it comes back, in or at', () => {
+    expect(capOutLabel(fable, { now })).toBe('Fable out · back in 3d')
+    expect(capOutLabel({ ...overall, usedPercentage: 100 }, { now })).toBe(
+      'Overall out · back in 2d 5h'
+    )
+    expect(capOutLabel(block, { now, reset: 'at' })).toMatch(/^5h out · back \S/)
+    expect(capOutLabel({ ...fable, resetsAt: null })).toBe('Fable out')
+  })
+  it('reads the shared headroom first, then every family that is out, on an account', () => {
+    expect(capStatus(account, { now })).toEqual({
+      headroom: '60% left · Overall',
+      out: ['Fable out · back in 3d'],
+      stopping: null,
+      exhausted: false
+    })
+    expect(capStatusLine(account, { now })).toBe('60% left · Overall · Fable out · back in 3d')
+  })
+  it('reads the shared cap out when it is, and says nothing of headroom', () => {
+    const spent = {
+      ...account,
+      ...accountUsageFieldsOf([block, { ...overall, usedPercentage: 99 }, fable])
+    }
+    const status = capStatus(spent, { now })!
+    expect(status.headroom).toBeNull()
+    expect(status.stopping?.key).toBe('weekly')
+    expect(status.exhausted).toBe(true)
+    expect(status.out).toEqual(['Overall out · back in 2d 5h', 'Fable out · back in 3d'])
+  })
+  it('names the cap that stops THIS session on a session view, once', () => {
+    const onFable = capStatus(claudeUsageForModel(account, 'claude-fable-5-1'), { now })!
+    expect(onFable.stopping).toBe(fable)
+    expect(onFable.exhausted).toBe(true)
+    expect(onFable.out).toEqual(['Fable out · back in 3d'])
+    // What the account still has for the other models.
+    expect(onFable.headroom).toBe('60% left · Overall')
+    const onOpus = capStatus(claudeUsageForModel(account, 'claude-opus-5-5'), { now })!
+    expect(onOpus.stopping).toBeNull()
+    expect(onOpus.out).toEqual([])
+    expect(capStatusLine(claudeUsageForModel(account, 'claude-opus-5-5'), { now })).toBe(
+      '60% left · Overall'
+    )
+  })
+  it('says nothing before a read or after a failed one', () => {
+    expect(capStatus(undefined)).toBeNull()
+    expect(capStatus({ status: 'error', tightest: null, error: 'x' })).toBeNull()
+    expect(capStatusLine({ status: 'loading', tightest: null, error: null })).toBeNull()
   })
 })
 

@@ -25,6 +25,10 @@ export interface AccountFacts {
 export const poolOf = (accounts: ServedPoolAccount[]): PoolAccount[] =>
   accounts.map((a) => ({ id: a.id, usable: a.usable, ...(a.fallback ? { fallback: true } : {}) }))
 
+/** Every account's usage as the pool reads it for a context: with a model,
+ *  the session view (the shared caps plus that model's family cap); without
+ *  one, the account view (the shared caps alone). A Codex pool has no
+ *  families, so its caller passes no context. */
 export const usageOf = (
   accounts: ServedPoolAccount[],
   context?: { model?: string }
@@ -35,16 +39,18 @@ export const usageOf = (
 
 /** The renderer's `accountForLaunch`: a named account is honoured; with none
  *  named, follow the launch setting: the recommendation, or the selected
- *  one while it has headroom, else the next along. */
+ *  one while it has headroom, else the next along. `model` is the model
+ *  the launch will run: a Claude account is judged for that model's caps. */
 export function accountForLaunch(
   facts: AccountFacts,
-  provider: AccountProvider
+  provider: AccountProvider,
+  model?: string
 ): ServedPoolAccount {
   const accounts = facts.accounts(provider)
   const selected = facts.selectedAccountId(provider) ?? 'default'
   const id = pickAccount({
     accounts: poolOf(accounts),
-    usage: usageOf(accounts),
+    usage: usageOf(accounts, provider === 'claude' ? { model } : undefined),
     preferredId: selected,
     preferRecommended: facts.useRecommendedAccount?.() === true
   })
@@ -56,9 +62,10 @@ export function accountForLaunch(
 export function resolveAccountRef(
   facts: AccountFacts,
   provider: AccountProvider,
-  ref: string | undefined
+  ref: string | undefined,
+  model?: string
 ): ServedPoolAccount {
-  if (!ref || ref === 'any') return accountForLaunch(facts, provider)
+  if (!ref || ref === 'any') return accountForLaunch(facts, provider, model)
   const accounts = facts.accounts(provider)
   const byId = accounts.find((a) => a.id === ref)
   if (byId) return byId

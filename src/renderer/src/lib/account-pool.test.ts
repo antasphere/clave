@@ -60,6 +60,29 @@ describe('isExhausted', () => {
     expect(isExhausted(used(40, { severity: 'critical' }))).toBe(true)
     expect(isExhausted(used(40, { severity: 'warning' }))).toBe(false)
   })
+  it('reads the view’s tightest window, which an account view never takes from a family cap', () => {
+    // The summary builders (`usage-summary.ts`) put the tightest SHARED cap
+    // in an account view’s `tightest`; a family that is out sits in `scopedOut`.
+    const overall = { ...used(40).tightest!, key: 'weekly', kind: 'weekly_all' }
+    const fable = {
+      ...used(100).tightest!,
+      key: 'fable',
+      kind: 'weekly_scoped',
+      scope: 'Fable',
+      severity: 'critical' as const
+    }
+    const account: AccountUsageSummary = {
+      status: 'ready',
+      error: null,
+      tightest: overall,
+      shared: overall,
+      windows: [overall, fable],
+      scopedOut: ['Fable']
+    }
+    expect(isExhausted(account)).toBe(false)
+    // The same read seen from a session on Fable.
+    expect(isExhausted({ ...account, tightest: fable })).toBe(true)
+  })
   it('never on a guess: no reading, or a failed one, is not exhaustion', () => {
     expect(isExhausted(undefined)).toBe(false)
     // The renderer's summary, as the store builds it, fits the pool's type.
@@ -93,32 +116,47 @@ describe('pickAccount', () => {
     )
   })
 
-  it("balances automatic switches using each account's 5-hour session headroom", () => {
-    const usage = {
-      work: {
-        ...used(20),
-        windows: [
-          used(20).tightest!,
-          { ...used(20).tightest!, key: 'weekly', kind: 'weekly_all', usedPercentage: 80 }
-        ]
-      },
-      team: {
-        ...used(60),
-        windows: [
-          used(60).tightest!,
-          { ...used(60).tightest!, key: 'weekly', kind: 'weekly_all', usedPercentage: 10 }
-        ]
-      }
+  describe('ranks automatic switches by weekly headroom', () => {
+    const weekly = (sessionUsed: number | null, weeklyUsed: number): AccountUsageSummary => {
+      const session = sessionUsed === null ? [] : [used(sessionUsed).tightest!]
+      const week = { ...used(0).tightest!, key: 'weekly', kind: 'weekly_all', usedPercentage: weeklyUsed }
+      return { ...used(0), tightest: week, windows: [...session, week] }
     }
-    expect(
+    const move = (usage: Record<string, AccountUsageSummary>): string =>
       pickAccount({
         accounts,
         usage,
         preferredId: 'default',
         leavingId: 'default',
-        preferSessionHeadroom: true
+        preferWeeklyHeadroom: true
       })
-    ).toBe('work')
+    it('takes the target with the most weekly headroom, whatever its 5-hour block says', () => {
+      // Work's block is fresher, Team's week is: the week is what runs out.
+      expect(move({ work: weekly(20, 80), team: weekly(60, 10) })).toBe('team')
+    })
+    it('uses the 5-hour block only to break a weekly tie, and only when every target has one', () => {
+      expect(move({ work: weekly(60, 30), team: weekly(20, 30) })).toBe('team')
+      // Team is a verified Ultra account: no 5-hour window since 30 October
+      // 2026. The tie holds, and the ring's order decides.
+      expect(move({ work: weekly(60, 30), team: weekly(null, 30) })).toBe('work')
+    })
+    it('ranks an Ultra account with no 5-hour window by its week like any other', () => {
+      expect(move({ work: weekly(5, 50), team: weekly(null, 20) })).toBe('team')
+      expect(move({ work: weekly(5, 20), team: weekly(null, 50) })).toBe('work')
+    })
+    it("ranks a session's view by the cap that binds its week: its family's when tighter", () => {
+      const fable = (weeklyUsed: number, fableUsed: number): AccountUsageSummary => {
+        const week = { ...used(0).tightest!, key: 'weekly', kind: 'weekly_all', usedPercentage: weeklyUsed }
+        const family = { ...week, key: 'fable', kind: 'weekly_scoped', scope: 'Fable', usedPercentage: fableUsed }
+        return { ...used(0), tightest: family, windows: [week, family] }
+      }
+      // Work has more of its week, Team more of its Fable cap: on Fable, Team.
+      expect(move({ work: fable(30, 80), team: fable(50, 40) })).toBe('team')
+    })
+    it('puts a target with no weekly read last, and falls back to the ring with no reads at all', () => {
+      expect(move({ work: used(10), team: weekly(10, 90) })).toBe('team')
+      expect(move({})).toBe('work')
+    })
   })
 
   it('takes a fallback only when every subscription account is out', () => {

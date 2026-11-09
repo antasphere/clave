@@ -70,12 +70,21 @@ function poolAccounts(provider: AccountProvider): PoolAccount[] {
 
 /** The pool's pick for a new session. A named account is honored; when no
  *  account is named, the selected account is used while it has headroom, else
- *  the next one along. The launch setting can opt into the menu recommendation. */
-export function accountForLaunch(provider: 'claude', preferredId?: string): ClaudeProfile
-export function accountForLaunch(provider: 'codex', preferredId?: string): CodexAccount
+ *  the next one along. The launch setting can opt into the menu recommendation.
+ *  `model` is the model the launch will run (the `.clave` file's, the agent
+ *  call's): a Claude account is judged for THAT model's caps, so a Fable
+ *  week spent never costs a launch on Opus its account. With no model, the
+ *  shared caps alone decide. */
+export function accountForLaunch(
+  provider: 'claude',
+  preferredId?: string,
+  model?: string
+): ClaudeProfile
+export function accountForLaunch(provider: 'codex', preferredId?: string, model?: string): CodexAccount
 export function accountForLaunch(
   provider: AccountProvider,
-  preferredId?: string
+  preferredId?: string,
+  model?: string
 ): ClaudeProfile | CodexAccount {
   const selected =
     provider === 'codex'
@@ -92,7 +101,7 @@ export function accountForLaunch(
   }
   const id = pickAccount({
     accounts: poolAccounts(provider),
-    usage: accountsUsageFor(provider),
+    usage: poolUsageForModel(provider, model),
     preferredId: preferredId ?? selected,
     preferRecommended:
       preferredId === undefined && useAccountPolicyStore.getState().useRecommendedAccount
@@ -104,10 +113,13 @@ export function accountForLaunch(
  *  "any" for the pool's pick. Throws with the names that exist. */
 export function resolveAccountRef(
   provider: AccountProvider,
-  ref: string | undefined
+  ref: string | undefined,
+  model?: string
 ): ClaudeProfile | CodexAccount {
   if (!ref || ref === 'any') {
-    return provider === 'codex' ? accountForLaunch('codex') : accountForLaunch('claude')
+    return provider === 'codex'
+      ? accountForLaunch('codex', undefined, model)
+      : accountForLaunch('claude', undefined, model)
   }
   if (provider === 'codex') {
     const { accounts } = useCodexAccountStore.getState()
@@ -138,15 +150,24 @@ export function sessionAccountUsage(session: Session): AccountUsageSummary | und
   return provider === 'claude' ? claudeUsageForModel(summary, session.model) : summary
 }
 
-function sessionPoolUsage(
-  session: Session,
-  provider: AccountProvider
+/** Every account's usage as seen for one model: the shared caps plus that
+ *  model's family cap on each (a Codex pool has no families). */
+function poolUsageForModel(
+  provider: AccountProvider,
+  model: string | undefined
 ): Record<string, AccountUsageSummary | undefined> {
   const usage = accountsUsageFor(provider)
   if (provider !== 'claude') return usage
   return Object.fromEntries(
-    Object.entries(usage).map(([id, summary]) => [id, claudeUsageForModel(summary, session.model)])
+    Object.entries(usage).map(([id, summary]) => [id, claudeUsageForModel(summary, model)])
   )
+}
+
+function sessionPoolUsage(
+  session: Session,
+  provider: AccountProvider
+): Record<string, AccountUsageSummary | undefined> {
+  return poolUsageForModel(provider, session.model)
 }
 
 /** One account a session could move to, as the Switch account menu draws it. */
@@ -200,7 +221,7 @@ export function nextAccountFor(session: Session): string | null {
     usage: sessionPoolUsage(session, provider),
     preferredId: current,
     leavingId: current,
-    preferSessionHeadroom: true
+    preferWeeklyHeadroom: true
   })
   return next === current ? null : next
 }

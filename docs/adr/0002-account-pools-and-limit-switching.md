@@ -1,6 +1,6 @@
 # ADR 0002: account pools and limit-driven switching
 
-Status: accepted, 2026-09-25 (implemented in the same change); amended 2026-09-26 (a tab the limit ended is brought back)
+Status: accepted, 2026-09-25 (implemented in the same change); amended 2026-09-26 (a tab the limit ended is brought back); amended 2026-11-09 (a quota is per account and model family)
 
 ## Context
 
@@ -40,7 +40,15 @@ The user can add as many accounts as they hold.
 
 ### What "about to hit the limit" means
 
-An account is exhausted when its tightest usage window, as `tightestWindow()` picks it today, has about five percent or less left. The threshold is the same for both providers. Claude reads the unified rate-limit headers or the usage endpoint as today; Codex reads `account/rateLimits/read`.
+A quota is per account AND model family. Anthropic meters a subscription with shared caps (the weekly all-models cap, and the 5-hour block where the plan still has one) and one weekly cap per family (Fable, Opus, Sonnet), reported as `weekly_scoped` windows whose scope is the family. A family cap that is out stops the sessions on that family and nothing else, so an account is never "at limit" because one family's week is spent.
+
+An **account** is exhausted when its tightest SHARED cap has about five percent or less left, or the service already calls it critical. A family whose cap is out is a fact of its own on the account's summary (`scopedOut: ['Fable']`), shown beside the shared headroom and never as the account's exhaustion. A **session** is exhausted when a shared cap or its OWN family's cap is: its usage is read through the session's model (`usageSummaryForModel`, `claudeUsageForModel`), which keeps the shared caps and that family's cap and drops the other families'. A **launch** picks its account for the model it will run (`accountForLaunch(provider, preferredId, model)`): an account with its Fable week spent and 60% of its week left takes a launch on Opus and refuses one on Fable. A launch with no model is judged on the shared caps alone. The threshold is the same for both providers; Codex has one cap set and no families. Claude reads the unified rate-limit headers or the usage endpoint as today; Codex reads `account/rateLimits/read`.
+
+The 5-hour block is optional: Anthropic removed it for verified Ultra accounts on 2026-10-30 (Pro and Max keep it). Nothing assumes a `session` window exists. Automatic switches rank their targets by weekly headroom (the least left among the view's weekly caps, the all-models cap or the session's family), the 5-hour block breaking a tie only when every target has one.
+
+A cap that is out is named one way everywhere, `<Cap> out · back <when>` (`Fable out · back in 2d 5h`, `Overall out · back Thu 14:00`): the cap by its short name, the return by the service's reset. The words "At limit", "Limit reached" and "out of usage credits" are retired; an account-level readout gives the shared headroom first, then every family that is out; a session-level readout names the cap that stops that session.
+
+Until 2026-11-09 the summary took the tightest window over every cap with no model context, so the moment the Fable weekly cap was critical the account read "at limit" in every account-level readout and a new launch on Opus skipped it with most of the week left. Only a session whose model was known filtered correctly (PR #208).
 
 ### When a switch happens
 

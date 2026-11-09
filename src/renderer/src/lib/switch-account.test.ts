@@ -91,6 +91,45 @@ describe('session account quota', () => {
   })
 })
 
+describe('the launch picks its account for the model it will run', () => {
+  afterEach(() => {
+    useClaudeProfileStore.setState({ selectedProfileId: 'default' })
+  })
+  it('lands a launch on Opus on an account whose Fable cap is out, and skips it for Fable', () => {
+    const spare = { ...originalProfiles[0], id: 'spare', label: 'Spare', hasToken: true }
+    useClaudeProfileStore.setState({ profiles: [...originalProfiles, spare], selectedProfileId: 'default' })
+    // The selected account: its Fable week spent, 75% of its week left.
+    // The spare: open everywhere.
+    const open = { ...windows[0], usedPercentage: 10 }
+    useClaudeAccountsUsage.setState({
+      byAccount: {
+        default: summary,
+        spare: { status: 'ready', error: null, windows: [open], tightest: open }
+      }
+    })
+    expect(accountForLaunch('claude', undefined, 'claude-opus-5-5').id).toBe('default')
+    expect(accountForLaunch('claude', undefined, 'claude-fable-5-1').id).toBe('spare')
+    // No model: the shared caps alone decide, and they have room.
+    expect(accountForLaunch('claude').id).toBe('default')
+    // A named account is an instruction, whatever its caps.
+    expect(accountForLaunch('claude', 'default', 'claude-fable-5-1').id).toBe('default')
+  })
+  it('skips an account whose SHARED cap is out for every model', () => {
+    const spare = { ...originalProfiles[0], id: 'spare', label: 'Spare', hasToken: true }
+    useClaudeProfileStore.setState({ profiles: [...originalProfiles, spare], selectedProfileId: 'default' })
+    const spent = { ...windows[0], usedPercentage: 97 }
+    const open = { ...windows[0], usedPercentage: 10 }
+    useClaudeAccountsUsage.setState({
+      byAccount: {
+        default: { status: 'ready', error: null, windows: [spent], tightest: spent },
+        spare: { status: 'ready', error: null, windows: [open], tightest: open }
+      }
+    })
+    expect(accountForLaunch('claude', undefined, 'claude-opus-5-5').id).toBe('spare')
+    expect(accountForLaunch('claude').id).toBe('spare')
+  })
+})
+
 describe('recommended account setting', () => {
   afterEach(() => {
     useAccountPolicyStore.setState({ useRecommendedAccount: false })

@@ -310,8 +310,9 @@ async function sendToSession(ctx: Ctx, key: string, p: Payload): Promise<unknown
 const resolveAccountRef = (
   ctx: Ctx,
   provider: AccountProvider,
-  ref: string | undefined
-): ServedPoolAccount => resolveAccountRefFrom(ctx.shell, provider, ref)
+  ref: string | undefined,
+  model?: string
+): ServedPoolAccount => resolveAccountRefFrom(ctx.shell, provider, ref, model)
 
 const providerOf = (ctx: Ctx, session: Session): AccountProvider | null => {
   const mode = modeOfSession(ctx, session)
@@ -339,7 +340,7 @@ async function switchAccount(ctx: Ctx, _key: string, p: Payload): Promise<unknow
       usage: usageOf(accounts, provider === 'claude' ? { model: record?.model } : undefined),
       preferredId: current,
       leavingId: current,
-      preferSessionHeadroom: true
+      preferWeeklyHeadroom: true
     })
     if (next === current) throw new Error('No other account of this provider has headroom')
     target = accounts.find((a) => a.id === next) ?? { id: next, label: next }
@@ -450,8 +451,10 @@ async function openSession(ctx: Ctx, key: string, p: Payload): Promise<unknown> 
       `The account argument applies to claude and codex modes only (got mode "${mode}")`
     )
   }
+  // The Claude account is judged for the model the tab will run: a Fable
+  // week spent never costs a launch on Opus its account (PRDCT-4253).
   const accountFields = claudeMode
-    ? spawnFieldsOf('claude', resolveAccountRef(ctx, 'claude', accountRef))
+    ? spawnFieldsOf('claude', resolveAccountRef(ctx, 'claude', accountRef, model))
     : codexMode
       ? spawnFieldsOf('codex', resolveAccountRef(ctx, 'codex', accountRef))
       : {}
