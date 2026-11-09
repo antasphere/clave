@@ -36,12 +36,9 @@ function AccountLimitBadge({ session }: { session: Session }): React.JSX.Element
   const accountId = provider ? sessionAccountId(session, provider) : ''
   const claude = useClaudeAccountsUsage((s) => s.byAccount[accountId])
   const codex = useCodexAccountsUsage((s) => s.byAccount[accountId])
-  const summary =
-    provider === 'codex'
-      ? codex
-      : provider === 'claude'
-        ? claudeUsageForModel(claude, session.model)
-        : undefined
+  const summary = provider
+    ? claudeUsageForModel(provider === 'codex' ? codex : claude, session.model)
+    : undefined
   const stopping = capStatus(summary)?.stopping ?? null
   if (isRemoteKey(session.id) || !provider || !session.alive || !stopping) return null
   // The cap that stops THIS tab, named with its return (PRDCT-4254).

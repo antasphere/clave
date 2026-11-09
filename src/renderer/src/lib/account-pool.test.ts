@@ -171,7 +171,16 @@ describe('pickAccount', () => {
     })
     it('puts a target with no weekly read last, and falls back to the ring with no reads at all', () => {
       expect(move({ work: used(10), team: weekly(10, 90) })).toBe('team')
+      // Whichever side of the ring the read-less target sits on.
+      expect(move({ work: weekly(10, 50), team: used(10) })).toBe('work')
       expect(move({})).toBe('work')
+    })
+    it('never lets one target’s 5-hour block decide when another has none', () => {
+      // Equal weeks; only Team has a 5-hour window (fresh). Without the
+      // "every target has one" guard Team would win on a block Work cannot
+      // be compared on; the ring's order holds instead.
+      expect(move({ work: weekly(null, 50), team: weekly(10, 50) })).toBe('work')
+      expect(move({ work: weekly(10, 50), team: weekly(null, 50) })).toBe('work')
     })
   })
 

@@ -527,7 +527,7 @@ export async function openSessionProgrammatically(payload: {
   // Codex have pools; nothing else does.
   const claudeProfile = claudeMode ? resolveAccountForSpawn(payload.account, model) : null
   const codexAccount = codexMode
-    ? (resolveAccountRef('codex', payload.account) as CodexAccount)
+    ? (resolveAccountRef('codex', payload.account, model) as CodexAccount)
     : null
   if (payload.account && !claudeMode && !codexMode) {
     throw new Error(

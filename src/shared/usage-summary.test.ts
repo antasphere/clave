@@ -92,12 +92,67 @@ describe('usageSummaryForModel, the session view', () => {
   it('matches the family by the model id’s own tokens, whatever the case', () => {
     expect(familyOfModel(read.windows, 'FABLE')).toBe('Fable')
     expect(familyOfModel(read.windows, 'claude-fable-5[1m]')).toBe('Fable')
+    // An alias with the context marker glued on: the split is on every
+    // non-alphanumeric run, not on dashes alone.
+    expect(familyOfModel(read.windows, 'fable[1m]')).toBe('Fable')
+    expect(familyOfModel(read.windows, 'opus[1m]')).toBe('Opus')
     expect(familyOfModel(read.windows, 'opus')).toBe('Opus')
     expect(familyOfModel(read.windows, 'sonnet')).toBeNull()
     expect(usageWindowsForModel(read.windows, 'fable')).toEqual([session, overall, fable])
   })
   it('is nothing for no summary', () => {
     expect(usageSummaryForModel(undefined, 'fable')).toBeUndefined()
+  })
+})
+
+describe('a family is any window with a scope, whatever its kind', () => {
+  // Codex's Spark bucket: a 5-hour block AND a weekly cap of its own, both
+  // scoped Spark, beside the account's weekly all-models cap.
+  const codexWeek = w({ kind: 'weekly_all', usedPercentage: 30 })
+  const sparkBlock = w({
+    kind: 'session',
+    scope: 'Spark',
+    usedPercentage: 100,
+    severity: 'critical'
+  })
+  const sparkWeek = w({ kind: 'weekly_scoped', scope: 'Spark', usedPercentage: 20 })
+  it('keeps a Codex account open when only its Spark block is out, and names Spark', () => {
+    const account = usageSummaryOf({ windows: [codexWeek, sparkBlock, sparkWeek] })!
+    expect(account.tightest).toBe(codexWeek)
+    expect(isExhausted(account)).toBe(false)
+    expect(account.scopedOut).toEqual(['Spark'])
+    // The tighter of the two Spark windows stands for the family.
+    expect(account.scoped?.[0].window).toBe(sparkBlock)
+  })
+  it('is out for a Codex session on a Spark model, open for one on another model', () => {
+    const account = usageSummaryOf({ windows: [codexWeek, sparkBlock, sparkWeek] })
+    const onSpark = usageSummaryForModel(account, 'gpt-5.3-codex-spark')!
+    expect(onSpark.tightest).toBe(sparkBlock)
+    expect(isExhausted(onSpark)).toBe(true)
+    const onCodex = usageSummaryForModel(account, 'gpt-5.3-codex')!
+    expect(onCodex.windows).toEqual([codexWeek])
+    expect(isExhausted(onCodex)).toBe(false)
+  })
+  it('treats a scoped kind with no name as shared: it stops every model', () => {
+    const nameless = w({
+      kind: 'weekly_scoped',
+      scope: null,
+      usedPercentage: 100,
+      severity: 'critical'
+    })
+    const account = usageSummaryOf({ windows: [overall, nameless] })!
+    expect(account.tightest).toBe(nameless)
+    expect(isExhausted(account)).toBe(true)
+    expect(account.scoped).toEqual([])
+    expect(usageSummaryForModel(account, 'opus')!.windows).toEqual([overall, nameless])
+  })
+  it('matches a family whose scope carries stray spaces', () => {
+    const padded = { ...fable, scope: ' Fable ' }
+    const account = usageSummaryOf({ windows: [overall, padded] })
+    expect(account!.scopedOut).toEqual(['Fable'])
+    const onFable = usageSummaryForModel(account, 'claude-fable-5-1')!
+    expect(onFable.windows).toEqual([overall, padded])
+    expect(isExhausted(onFable)).toBe(true)
   })
 })
 

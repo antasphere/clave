@@ -31,7 +31,11 @@ export async function run(t) {
   mkdirSync(ROOT, { recursive: true })
   seedWorkspaces(DIR, { workspaces: [WS], activeWorkspaceId: WS.id, fresh: true })
   seedTrustedRoots(DIR, [ROOT])
-  const { app, win } = await launchApp(DIR, { server: 'in-process' })
+  // No machine-login read: the canned read below is the only Claude read.
+  const { app, win } = await launchApp(DIR, {
+    server: 'in-process',
+    args: ['--test-no-machine-usage']
+  })
   const errors = []
   win.on('pageerror', (e) => errors.push(e.message))
   try {
@@ -94,6 +98,15 @@ export async function run(t) {
         return false
       }
     })
+    // Main's own boot read of the Default account started before the stub
+    // was installed and lands on its own clock; wait for it to be in the
+    // snapshot, then read again, forced, so the canned numbers are what
+    // every check below reads and nothing later overwrites them.
+    await until(async () =>
+      win.evaluate(async () => 'default' in (await window.electronAPI.getClaudeUsageSnapshot()))
+    )
+    await win.evaluate(() => window.electronAPI.getUsageLimits('default', { force: true }))
+    await until(async () => /62% left/.test((await foot().textContent()) ?? ''))
     const capIs = async (cap) =>
       !!(await until(async () => (await foot().getAttribute('data-usage-cap')) === cap))
     const text = async () => ((await foot().textContent()) ?? '').replace(/\s+/g, ' ').trim()

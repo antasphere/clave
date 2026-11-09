@@ -293,7 +293,7 @@ export async function run(t) {
     // report, never "out of usage credits" nor an exit code (PRDCT-4254).
     t.check(
       'the pane names the account that is out, not an exit code',
-      /^Work is out(,| on )/.test((await notice.first().textContent()) ?? ''),
+      /^Work is out, as its agent reported\./.test((await notice.first().textContent()) ?? ''),
       await notice.first().textContent()
     )
     const button = win.locator(`[data-chat-continue-on="${accounts.play}"]`)

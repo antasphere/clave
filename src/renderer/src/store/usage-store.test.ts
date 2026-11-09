@@ -10,6 +10,7 @@ import {
   capOutLabel,
   capStatus,
   capStatusLine,
+  formatResetAt,
   type AccountUsageSummary
 } from './usage-store'
 import { isExhausted } from '../../../shared/account-pool'
@@ -253,7 +254,50 @@ describe('the one vocabulary for a cap that is out', () => {
       'Overall out · back in 2d 5h'
     )
     expect(capOutLabel(block, { now, reset: 'at' })).toMatch(/^5h out · back \S/)
+    // `at` is a date, never a distance.
+    expect(capOutLabel(block, { now, reset: 'at' })).not.toMatch(/back in /)
+    expect(capOutLabel(block, { now, reset: 'at' })).toBe(
+      `5h out · back ${formatResetAt(block.resetsAt)}`
+    )
     expect(capOutLabel({ ...fable, resetsAt: null })).toBe('Fable out')
+  })
+  it('names every cap of the view that is out, the stopping one first', () => {
+    // The 5-hour block out for 2h AND the week out for 2d 5h: naming the
+    // block alone would say the account is back in 2h.
+    const blockOut = { ...block, usedPercentage: 100, severity: 'critical' as const }
+    const weekOut = { ...overall, usedPercentage: 97, severity: 'warning' as const }
+    const status = capStatus(
+      { status: 'ready', error: null, ...accountUsageFieldsOf([blockOut, weekOut, fable]) },
+      { now }
+    )!
+    expect(status.stopping).toBe(blockOut)
+    expect(status.out).toEqual([
+      '5h out · back in 2h',
+      'Overall out · back in 2d 5h',
+      'Fable out · back in 3d'
+    ])
+    expect(status.headroom).toBeNull()
+    // A session on Fable with the week out behind it names both, once each.
+    const account = {
+      status: 'ready' as const,
+      error: null,
+      ...accountUsageFieldsOf([weekOut, fable])
+    }
+    expect(capStatus(claudeUsageForModel(account, 'fable'), { now })!.out).toEqual([
+      'Fable out · back in 3d',
+      'Overall out · back in 2d 5h'
+    ])
+  })
+  it('names the families that are out even when the read has no shared cap', () => {
+    const familiesOnly = { status: 'ready' as const, error: null, ...accountUsageFieldsOf([fable]) }
+    expect(familiesOnly.tightest).toBeNull()
+    expect(capStatus(familiesOnly, { now })).toEqual({
+      headroom: null,
+      out: ['Fable out · back in 3d'],
+      stopping: null,
+      exhausted: false
+    })
+    expect(capStatusLine(familiesOnly, { now })).toBe('Fable out · back in 3d')
   })
   it('reads the shared headroom first, then every family that is out, on an account', () => {
     expect(capStatus(account, { now })).toEqual({

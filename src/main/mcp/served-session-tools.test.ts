@@ -709,6 +709,58 @@ describe('an account switch', () => {
       switched: true
     })
   })
+  it('moves a tab to the open account with the most of its week left, not the next in the ring', async () => {
+    const h = setup({ ...world(), switchMode: 'automatic' })
+    const week = (used: number): ServedPoolAccount['usage'] => {
+      const w = { kind: 'weekly_all', scope: null, usedPercentage: used, severity: 'normal' }
+      return { tightest: w, windows: [w] }
+    }
+    h.w.accounts.claude = [
+      { id: 'default', label: 'Default', usable: true, usage: week(97) },
+      { id: 'acc-2', label: 'Second', usable: true, usage: week(80) },
+      { id: 'acc-3', label: 'Third', usable: true, usage: week(10) }
+    ]
+    expect(await run(h, 'switchAccount', { sessionId: 'far', account: 'any' })).toMatchObject({
+      account: { id: 'acc-3' }
+    })
+  })
+  it('opens a tab on the account judged for the model it will run: a spent Fable week skips the account on Fable only', async () => {
+    const h = setup(world())
+    const week = { kind: 'weekly_all', scope: null, usedPercentage: 40, severity: 'normal' }
+    const fable = {
+      kind: 'weekly_scoped',
+      scope: 'Fable',
+      usedPercentage: 100,
+      severity: 'critical'
+    }
+    const open = { kind: 'weekly_all', scope: null, usedPercentage: 10, severity: 'normal' }
+    h.w.accounts.claude = [
+      {
+        id: 'default',
+        label: 'Default',
+        usable: true,
+        usage: { tightest: week, windows: [week, fable] }
+      },
+      { id: 'acc-2', label: 'Second', usable: true, usage: { tightest: open, windows: [open] } }
+    ]
+    h.w.selected.claude = 'default'
+    const chosen = (): string =>
+      (h.argsOf('sessions.start').at(-1) as { options: Record<string, string> }).options
+        .claudeProfileId
+    await run(h, 'openSession', { cwd: '/proj', mode: 'claude', model: 'claude-fable-5-1' })
+    expect(chosen()).toBe('acc-2')
+    await run(h, 'openSession', { cwd: '/proj', mode: 'claude', model: 'claude-opus-5-5' })
+    expect(chosen()).toBe('default')
+    await run(h, 'openSession', {
+      cwd: '/proj',
+      mode: 'claude',
+      model: 'claude-fable-5-1',
+      account: 'any'
+    })
+    expect(chosen()).toBe('acc-2')
+    await run(h, 'openSession', { cwd: '/proj', mode: 'claude' })
+    expect(chosen()).toBe('default')
+  })
   it('refuses what is not an account tab, an unknown account, and a pool with no headroom', async () => {
     const h = setup(world())
     await expect(run(h, 'switchAccount', { sessionId: 't1', account: 'any' })).rejects.toThrow(

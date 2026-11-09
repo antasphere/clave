@@ -31,8 +31,8 @@ import { UsageColumn } from '../usage/UsageColumn'
 function useTargetSummary(target: SwitchTarget): AccountUsageSummary | undefined {
   const claude = useClaudeAccountsUsage((s) => s.byAccount[target.id])
   const codex = useCodexAccountsUsage((s) => s.byAccount[target.id])
-  if (target.provider === 'codex') return codex ?? target.summary
-  return claude ? claudeUsageForModel(claude, target.model) : target.summary
+  const live = target.provider === 'codex' ? codex : claude
+  return live ? claudeUsageForModel(live, target.model) : target.summary
 }
 
 export function AccountSwitchRow({ target }: { target: SwitchTarget }): ReactElement {
@@ -44,12 +44,13 @@ export function AccountSwitchRow({ target }: { target: SwitchTarget }): ReactEle
   const level = w ? capLevel(w) : 'normal'
   const left = w ? Math.max(0, Math.round(100 - w.usedPercentage)) : null
   const weekly = formatResetIn(soonestWeeklyReset(summary), now)
-  // An account that is out for this tab is worth knowing about by which cap
-  // stopped it and when that cap comes back ("Fable out · back in 2d 5h"),
-  // never by the week's renewal; the shared headroom beside it says what
-  // the account still has for the other models.
+  // An account that is out for this tab is worth knowing about by when the
+  // cap that stopped it comes back ("Back in 2d 5h"; the badge names the
+  // cap), never by the week's renewal; the shared headroom beside it says
+  // what the account still has for the other models.
+  const back = status?.stopping ? formatResetIn(status.stopping.resetsAt, now) : null
   const detail = exhausted
-    ? [...(status?.out ?? []), status?.headroom].filter(Boolean).join(' · ')
+    ? [back ? `Back ${back}` : null, status?.headroom].filter(Boolean).join(' · ')
     : weekly
       ? `Week renews ${weekly}`
       : summary?.status === 'error'

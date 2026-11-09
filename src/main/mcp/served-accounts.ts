@@ -26,9 +26,9 @@ export const poolOf = (accounts: ServedPoolAccount[]): PoolAccount[] =>
   accounts.map((a) => ({ id: a.id, usable: a.usable, ...(a.fallback ? { fallback: true } : {}) }))
 
 /** Every account's usage as the pool reads it for a context: with a model,
- *  the session view (the shared caps plus that model's family cap); without
- *  one, the account view (the shared caps alone). A Codex pool has no
- *  families, so its caller passes no context. */
+ *  the session view (the shared caps plus that model's family cap, Claude's
+ *  families and Codex's model buckets alike); without one, the account view
+ *  (the shared caps alone). */
 export const usageOf = (
   accounts: ServedPoolAccount[],
   context?: { model?: string }
@@ -50,7 +50,7 @@ export function accountForLaunch(
   const selected = facts.selectedAccountId(provider) ?? 'default'
   const id = pickAccount({
     accounts: poolOf(accounts),
-    usage: usageOf(accounts, provider === 'claude' ? { model } : undefined),
+    usage: usageOf(accounts, { model }),
     preferredId: selected,
     preferRecommended: facts.useRecommendedAccount?.() === true
   })

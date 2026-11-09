@@ -5,9 +5,11 @@
  * Anthropic meters a subscription per account AND model family: shared caps
  * (the 5-hour block where the plan still has one, the weekly all-models cap)
  * and one weekly cap per family (Fable, Opus, Sonnet), the service's
- * `weekly_scoped` kind with the family as its `scope`. A family cap that is
- * out stops the sessions on that family and nothing else, so the summary
- * keeps the two apart:
+ * `weekly_scoped` kind with the family as its `scope`; Codex meters a model
+ * bucket (Spark) with a 5-hour block and a weekly cap of its own, both
+ * scoped to it. A window with a `scope` is a FAMILY's, whatever its kind
+ * (`familyOf`). A family cap that is out stops the sessions on that family
+ * and nothing else, so the summary keeps the two apart:
  *
  * - `shared` is the tightest shared window, `scoped` one entry per family
  *   with its own `exhausted` word, `scopedOut` the families whose cap is out.
@@ -35,13 +37,20 @@ interface ReadLike {
 
 const rank: Record<string, number> = { normal: 0, warning: 1, critical: 2 }
 
-/** The service's kind for a cap scoped to one model family. */
-export const SCOPED_KIND = 'weekly_scoped'
+/** The family a window is scoped to, or null for a shared one. A family is
+ *  named by the window's `scope`, whatever its kind: Anthropic's weekly cap
+ *  per family (`weekly_scoped`, scope `Fable`), and Codex's model buckets
+ *  (Spark has a 5-hour block AND a weekly cap of its own, both scoped
+ *  `Spark`). A scoped kind with no name is shared: it stops every model. */
+export function familyOf(w: PoolUsageWindow): string | null {
+  const scope = w.scope?.trim()
+  return scope ? scope : null
+}
 
 /** A cap every model of the account draws on: the 5-hour block, the weekly
- *  all-models cap, and whatever kind the service adds that names no family. */
+ *  all-models cap, and whatever the service adds that names no family. */
 export function isSharedWindow(w: PoolUsageWindow): boolean {
-  return w.kind !== SCOPED_KIND
+  return familyOf(w) === null
 }
 
 /** The family a model id belongs to among the families the read names, by
@@ -57,9 +66,8 @@ export function familyOfModel(
       .split(/[^a-z0-9]+/)
       .filter(Boolean) ?? []
   for (const w of windows) {
-    if (w.kind !== SCOPED_KIND) continue
-    const scope = w.scope?.trim()
-    if (scope && tokens.includes(scope.toLowerCase())) return scope
+    const family = familyOf(w)
+    if (family && tokens.includes(family.toLowerCase())) return family
   }
   return null
 }
@@ -72,7 +80,10 @@ export function usageWindowsForModel<W extends PoolUsageWindow>(
   model?: string
 ): W[] {
   const family = familyOfModel(windows, model)
-  return windows.filter((w) => isSharedWindow(w) || (family !== null && w.scope === family))
+  return windows.filter((w) => {
+    const own = familyOf(w)
+    return own === null || own === family
+  })
 }
 
 export function tightestOf<W extends PoolUsageWindow>(windows: ReadonlyArray<W>): W | null {
@@ -95,8 +106,7 @@ export function scopedCapsOf<W extends PoolUsageWindow>(
 ): (ScopedCap & { window: W })[] {
   const byFamily = new Map<string, W>()
   for (const w of windows) {
-    if (isSharedWindow(w)) continue
-    const family = w.scope?.trim()
+    const family = familyOf(w)
     if (!family) continue
     const held = byFamily.get(family)
     byFamily.set(family, held ? (tightestOf([held, w]) ?? w) : w)

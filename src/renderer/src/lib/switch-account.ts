@@ -151,17 +151,16 @@ export function sessionAccountUsage(session: Session): AccountUsageSummary | und
   const provider = accountProviderOf(session)
   if (!provider) return undefined
   const summary = accountsUsageFor(provider)[sessionAccountId(session, provider)]
-  return provider === 'claude' ? claudeUsageForModel(summary, session.model) : summary
+  return claudeUsageForModel(summary, session.model)
 }
 
 /** Every account's usage as seen for one model: the shared caps plus that
- *  model's family cap on each (a Codex pool has no families). */
+ *  model's family cap on each (Claude's families, Codex's model buckets). */
 function poolUsageForModel(
   provider: AccountProvider,
   model: string | undefined
 ): Record<string, AccountUsageSummary | undefined> {
   const usage = accountsUsageFor(provider)
-  if (provider !== 'claude') return usage
   return Object.fromEntries(
     Object.entries(usage).map(([id, summary]) => [id, claudeUsageForModel(summary, model)])
   )

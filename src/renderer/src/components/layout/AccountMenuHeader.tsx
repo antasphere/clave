@@ -48,7 +48,7 @@ export function AccountMenuHeader({
   const claudeSummary = useClaudeAccountsUsage((s) => s.byAccount[own.id])
   const codexSummary = useCodexAccountsUsage((s) => s.byAccount[own.id])
   // The session's view of its account: the shared caps and its own family's.
-  const summary = codex ? codexSummary : claudeUsageForModel(claudeSummary, session.model)
+  const summary = claudeUsageForModel(codex ? codexSummary : claudeSummary, session.model)
   const status = capStatus(summary, { now })
   const exhausted = status?.exhausted === true
   // Out: the cap that stops this session, named with its return, then what

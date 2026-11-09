@@ -1,12 +1,11 @@
 import type { Session } from '../../../src/renderer/src/store/session-types'
 import { sessionAccountUsage } from '../../../src/renderer/src/lib/switch-account'
 import {
-  capName,
   capStatus,
-  formatResetIn,
   useClaudeAccountsUsage,
   useCodexAccountsUsage
 } from '../../../src/renderer/src/store/usage-store'
+import { limitSentence } from './limit-sentence'
 
 /**
  * The sentence the ended notice opens with when the account's limit ended
@@ -24,7 +23,5 @@ export function useLimitSentence(host: Session | undefined): string {
   useClaudeAccountsUsage((s) => s.byAccount[accountId])
   useCodexAccountsUsage((s) => s.byAccount[accountId])
   const stopping = host ? (capStatus(sessionAccountUsage(host))?.stopping ?? null) : null
-  if (!stopping) return `${account} is out, as its agent reported.`
-  const back = formatResetIn(stopping.resetsAt)
-  return `${account} is out on ${capName(stopping)}${back ? `, back ${back}` : ''}.`
+  return limitSentence(account, stopping)
 }

@@ -17,7 +17,8 @@ import {
   sessionAccountUsage,
   sessionSwitchTargets,
   accountForLaunch,
-  nextAccountFor
+  nextAccountFor,
+  resolveAccountRef
 } from './switch-account'
 
 vi.mock('../store/session-store', () => ({ useSessionStore: {} }))
@@ -78,16 +79,31 @@ describe('session account quota', () => {
     )
   })
 
-  it('still applies shared exhaustion to Claude and leaves Codex quotas intact', () => {
+  it('still applies shared exhaustion to Claude, and the family rule to Codex’s model buckets', () => {
     const shared = { ...windows[0], usedPercentage: 99 }
     useClaudeAccountsUsage.setState({
       byAccount: { default: { ...summary, windows: [shared, windows[1]] } }
     })
     expect(sessionAccountExhausted(session('opus'))).toBe(true)
-    useCodexAccountsUsage.setState({ byAccount: { default: summary } })
-    expect(sessionAccountUsage({ ...session('opus'), claudeMode: false, codexMode: true })).toBe(
-      summary
-    )
+    // Codex: Spark's own block is a family cap; a session on another model
+    // is judged on the shared week alone, one on Spark on both.
+    const week = { ...windows[0], key: 'week', usedPercentage: 30 }
+    const spark = {
+      ...windows[1],
+      key: 'spark',
+      kind: 'session',
+      scope: 'Spark',
+      label: 'Spark 5h'
+    }
+    useCodexAccountsUsage.setState({
+      byAccount: { default: { ...summary, windows: [week, spark], tightest: week } }
+    })
+    const codex = { ...session('gpt-5.3-codex'), claudeMode: false, codexMode: true }
+    expect(sessionAccountUsage(codex)?.windows).toEqual([week])
+    expect(sessionAccountExhausted(codex)).toBe(false)
+    const onSpark = { ...codex, model: 'gpt-5.3-codex-spark' }
+    expect(sessionAccountUsage(onSpark)?.tightest?.key).toBe('spark')
+    expect(sessionAccountExhausted(onSpark)).toBe(true)
   })
 })
 
@@ -116,6 +132,25 @@ describe('the launch picks its account for the model it will run', () => {
     expect(accountForLaunch('claude').id).toBe('default')
     // A named account is an instruction, whatever its caps.
     expect(accountForLaunch('claude', 'default', 'claude-fable-5-1').id).toBe('default')
+    // The agent road: "any" (and no account) resolves through the same pick
+    // for the same model.
+    expect(resolveAccountRef('claude', 'any', 'claude-fable-5-1').id).toBe('spare')
+    expect(resolveAccountRef('claude', undefined, 'claude-fable-5-1').id).toBe('spare')
+    expect(resolveAccountRef('claude', 'any', 'claude-opus-5-5').id).toBe('default')
+  })
+  it('moves a tab to the open account with the most of its week left, not the next in the ring', () => {
+    const second = { ...originalProfiles[0], id: 'second', label: 'Second', hasToken: true }
+    const third = { ...originalProfiles[0], id: 'third', label: 'Third', hasToken: true }
+    useClaudeProfileStore.setState({ profiles: [...originalProfiles, second, third] })
+    const week = (used: number): AccountUsageSummary => {
+      const w = { ...windows[0], usedPercentage: used }
+      return { status: 'ready', error: null, windows: [w], tightest: w }
+    }
+    // Leaving default: the ring says Second next, but Third has far more week.
+    useClaudeAccountsUsage.setState({
+      byAccount: { default: week(97), second: week(80), third: week(10) }
+    })
+    expect(nextAccountFor(session('opus'))).toBe('third')
   })
   it('skips an account whose SHARED cap is out for every model', () => {
     const spare = { ...originalProfiles[0], id: 'spare', label: 'Spare', hasToken: true }

@@ -61,8 +61,10 @@ export function AccountChip({ sessionId }: { sessionId: string }): React.JSX.Ele
   const clearFrame = useRef<number | null>(null)
   if (!host || !provider || !own) return null
 
-  const summary =
-    provider === 'codex' ? codexSummary : claudeUsageForModel(claudeSummary, host.model)
+  const summary = claudeUsageForModel(
+    provider === 'codex' ? codexSummary : claudeSummary,
+    host.model
+  )
   const w = headroomWindow(summary)
   // Out: the cap that stops THIS session, named ("Fable out"); a limit the
   // CLI reported that the poll does not show yet reads "Out" alone, since

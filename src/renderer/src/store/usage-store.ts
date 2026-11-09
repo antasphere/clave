@@ -7,7 +7,7 @@ import {
   tightestOf,
   usageWindowsForModel
 } from '../../../shared/usage-summary'
-import { isExhausted, type ScopedCap } from '../../../shared/account-pool'
+import { isExhausted, windowExhausted, type ScopedCap } from '../../../shared/account-pool'
 import { createUsageResource, type UsageResource } from './usage-resource'
 import { DEFAULT_CLAUDE_PROFILE_ID } from './claude-profile-store'
 import { DEFAULT_CODEX_ACCOUNT_ID } from './codex-account-store'
@@ -259,7 +259,11 @@ export function claudeModelWindows(windows: UsageWindow[], model?: string): Usag
   return usageWindowsForModel(windows, model)
 }
 
-export function claudeUsageForModel(
+/** The SESSION view of an account's summary: the shared caps plus the cap of
+ *  the session's own model family, `tightest` over those; with no model,
+ *  the shared caps alone. Claude's families (Fable, Opus) and Codex's model
+ *  buckets (Spark) alike: a family is any window with a scope. */
+export function usageForModel(
   summary: AccountUsageSummary | undefined,
   model?: string
 ): AccountUsageSummary | undefined {
@@ -270,6 +274,9 @@ export function claudeUsageForModel(
   )
   return { ...summary, ...splitWindows(windows), windows }
 }
+
+/** The name the session view had when only Claude had families. */
+export const claudeUsageForModel = usageForModel
 
 /** Select by service severity, then utilization. Without a session context,
  * consider every reported window for the account overview. */
@@ -462,14 +469,24 @@ export function capStatus(
   summary: AccountUsageSummary | undefined,
   words: CapWords = {}
 ): CapStatus | null {
-  if (!summary || summary.status === 'error' || !summary.tightest) return null
+  if (!summary || summary.status === 'error') return null
+  // A read that names only family caps has no tightest for the account as a
+  // whole, and still has families to name.
+  if (!summary.tightest && !summary.scoped?.length) return null
   const exhausted = isExhausted(summary)
   const stopping = exhausted ? summary.tightest : null
-  const out: string[] = []
-  if (stopping) out.push(capOutLabel(stopping, words))
+  // Every cap of the view that is out: the stopping one first, then the
+  // others in the read's order, a shared cap out behind the stopping one
+  // included (a 5-hour block out for 2h with the week out for 4d names both).
+  const windows = summary.windows ?? (summary.tightest ? [summary.tightest] : [])
+  const outWindows = [
+    ...(stopping ? [stopping] : []),
+    ...windows.filter((w) => w !== stopping && windowExhausted(w))
+  ]
   for (const cap of summary.scoped ?? []) {
-    if (cap.exhausted && cap.window !== stopping) out.push(capOutLabel(cap.window, words))
+    if (cap.exhausted && !outWindows.includes(cap.window)) outWindows.push(cap.window)
   }
+  const out = outWindows.map((w) => capOutLabel(w, words))
   // The shared headroom: the tightest shared cap while it is open. A session
   // view whose family cap is out still says what the account has left.
   const shared = summary.shared === undefined ? summary.tightest : summary.shared

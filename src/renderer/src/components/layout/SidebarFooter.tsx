@@ -365,7 +365,7 @@ export function SidebarFooter(): React.ReactElement {
               error: null,
               ...accountUsageFieldsOf(quota.data?.windows ?? [])
             }
-            return provider === 'claude' ? claudeUsageForModel(read, focusedSession?.model) : read
+            return claudeUsageForModel(read, focusedSession?.model)
           })()
         )
       : null

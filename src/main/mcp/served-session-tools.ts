@@ -337,7 +337,7 @@ async function switchAccount(ctx: Ctx, _key: string, p: Payload): Promise<unknow
     const accounts = ctx.shell.accounts(provider)
     const next = pickAccount({
       accounts: poolOf(accounts),
-      usage: usageOf(accounts, provider === 'claude' ? { model: record?.model } : undefined),
+      usage: usageOf(accounts, { model: record?.model }),
       preferredId: current,
       leavingId: current,
       preferWeeklyHeadroom: true
@@ -451,12 +451,12 @@ async function openSession(ctx: Ctx, key: string, p: Payload): Promise<unknown> 
       `The account argument applies to claude and codex modes only (got mode "${mode}")`
     )
   }
-  // The Claude account is judged for the model the tab will run: a Fable
-  // week spent never costs a launch on Opus its account (PRDCT-4253).
+  // The account is judged for the model the tab will run: a Fable week
+  // spent never costs a launch on Opus its account (PRDCT-4253).
   const accountFields = claudeMode
     ? spawnFieldsOf('claude', resolveAccountRef(ctx, 'claude', accountRef, model))
     : codexMode
-      ? spawnFieldsOf('codex', resolveAccountRef(ctx, 'codex', accountRef))
+      ? spawnFieldsOf('codex', resolveAccountRef(ctx, 'codex', accountRef, model))
       : {}
   const cwd = str(p.cwd) ?? ''
   const command = str(p.command)
