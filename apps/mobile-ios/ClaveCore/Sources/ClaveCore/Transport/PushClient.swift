@@ -61,7 +61,8 @@ public func pushURL(of url: String) -> String {
 /// socket reopened with a jittered backoff when it drops and every
 /// subscription asked again, so a screen that was listening keeps listening
 /// without knowing the socket changed. A refused token (4001) and a revoked
-/// device (4011) are final.
+/// device (4011) are final. The client runs until `stop()` or a final close:
+/// its socket loop holds it alive, so the owner stops it when done.
 public actor PushClient {
   /// Every frame and every change of the channel, until the client ends.
   public nonisolated let events: AsyncStream<PushEvent>
@@ -190,6 +191,10 @@ public actor PushClient {
     }
     defer { timer.cancel() }
     return try await withCheckedThrowingContinuation { continuation in
+      guard subscriptions[sessionId] != nil else {
+        continuation.resume(throwing: PushClientError("Unsubscribed before the server answered."))
+        return
+      }
       subscriptions[sessionId]?.waiters[id] = continuation
     }
   }
