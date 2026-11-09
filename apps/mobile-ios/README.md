@@ -61,7 +61,10 @@ argument `--ui-test-fake` selects in a Debug build), then `scripts/check-release
 which builds Release and proves the fake, the launch overrides and the developer connection
 are absent from its binary (`--prove-red` builds Release with `DEBUG` set and expects the
 check to fail). `CLAVE_IOS_SIMULATOR_UDID` names the simulator (on a shared Mac, name one you
-created).
+created). Each step's verdict is its tool's own exit code, the output read from a log file
+afterwards; `bash apps/mobile-ios/scripts/prove-ci-gate.sh` runs `ci.sh` with stand-ins for
+swift, xcodebuild and the release check and proves it exits non-zero, without printing
+`ci: green`, when any one of the four steps fails.
 
 ## The fixture check
 

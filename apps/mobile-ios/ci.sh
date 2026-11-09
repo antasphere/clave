@@ -15,8 +15,22 @@ set -euo pipefail
 cd "$(dirname "$0")"
 echo "ci: Xcode $(xcodebuild -version | tr '\n' ' ')"
 
+# Each tool's own exit code is the step's verdict. The output goes to a log file
+# and the lines worth reading are shown from it afterwards: a pipe into grep
+# would leave the verdict to the filter, and under pipefail a `|| true` after
+# the pipe resets PIPESTATUS, so a failing build used to read as a success.
+step_log() { mktemp "${TMPDIR:-/tmp}/clave-ios-ci.XXXXXX"; }
+
 echo "ci: swift test (ClaveCore)"
-(cd ClaveCore && swift test 2>&1 | grep -E "error:|warning:|Executed [0-9]+ tests|failed" | tail -5; exit "${PIPESTATUS[0]}")
+log="$(step_log)"
+status=0
+(cd ClaveCore && swift test) >"$log" 2>&1 || status=$?
+grep -E "error:|warning:|Executed [0-9]+ tests|failed" "$log" | tail -5 || true
+if [ "$status" -ne 0 ]; then
+  echo "ci: swift test exited $status (log: $log)"
+  exit "$status"
+fi
+rm -f "$log"
 
 UDID="${CLAVE_IOS_SIMULATOR_UDID:-}"
 if [ -z "$UDID" ]; then
@@ -42,11 +56,18 @@ echo "ci: simulator $UDID"
 DERIVED="${CLAVE_IOS_DERIVED_DATA:-$PWD/DerivedData}"
 
 run_xcodebuild() {
+  local log status=0
+  log="$(step_log)"
   xcodebuild -project Clave.xcodeproj -scheme Clave \
     -destination "platform=iOS Simulator,id=$UDID" \
-    -derivedDataPath "$DERIVED" "$@" 2>&1 \
-    | grep -E "Test Case|Test Suite|error:|\*\* (TEST|BUILD)" || true
-  return "${PIPESTATUS[0]}"
+    -derivedDataPath "$DERIVED" "$@" >"$log" 2>&1 || status=$?
+  grep -E "Test Case|Test Suite|error:|\*\* (TEST|BUILD)" "$log" || true
+  if [ "$status" -ne 0 ]; then
+    echo "ci: xcodebuild exited $status (log: $log)"
+  else
+    rm -f "$log"
+  fi
+  return "$status"
 }
 
 echo "ci: xcodebuild build"

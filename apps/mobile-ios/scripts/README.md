@@ -5,6 +5,11 @@ the app. The other two scripts run the app against an isolated fixture stack on 
 `check-release-binary.sh` (bash, from `apps/mobile-ios`) builds Debug and Release for the
 simulator and reads both binaries with `strings`: the development-only markers must be in
 Debug and absent from Release; `--prove-red` shows the check fails when the guard is off.
+`prove-ci-gate.sh` (bash, from `apps/mobile-ios`) runs `ci.sh` in a scratch folder with
+stand-ins for swift, xcodebuild and the release check, and proves the gate exits non-zero
+when the core's tests, the build, the tests or the release check fail; `--against <file>`
+runs the same scenarios on another copy (the copy at ca3f0f35 printed `ci: green` and exited
+0 on a failed build and on failed tests).
 
 ## The fixture stack
 
