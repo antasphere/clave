@@ -55,7 +55,18 @@ vi.mock('./shell-launch', async (importOriginal) => ({
 }))
 vi.mock('./session-history', () => ({ TITLE_HELPER_MARKER: 'Generate a short 2-4 word title' }))
 
-import { TITLE_CLI_ARGS, cleanup, notifyChatMessage, scheduleChatTitle } from './title-generator'
+import {
+  TITLE_CLI_ARGS,
+  cleanup,
+  disableTitleGeneration,
+  enableTitleGenerationForTests,
+  notifyChatMessage,
+  resetShutdownForTests,
+  scheduleChatTitle,
+  scheduleTitleGeneration,
+  titleGenerationDisabled,
+  watchedTitleSessionsForTests
+} from './title-generator'
 
 describe('title generation CLI arguments', () => {
   it('asks Haiku for one turn with no MCP server, skill or tool', () => {
@@ -287,6 +298,67 @@ describe('a chat tab is named by its first message', () => {
     await settled()
     expect(mocks.execFile).toHaveBeenCalledTimes(1)
     expect(send).not.toHaveBeenCalled()
+  })
+})
+
+// A fixture daemon on the Echo adapter must reach no provider (the native
+// mobile wave, 9 November 2026), and every fresh chat was named by a `claude
+// -p` one-shot under the machine's login, the Echo chat included. The
+// standalone entry's `--no-titles` sets the opt-out below; the app never does.
+// Both call sites are guarded: the chat path (`scheduleChatTitle` then the
+// first message) and the terminal path (`scheduleTitleGeneration`).
+describe("the daemon's opt-out names no tab", () => {
+  // The quit tests above shut the door; these run with it open.
+  beforeEach(() => resetShutdownForTests())
+  afterEach(() => enableTitleGenerationForTests())
+
+  it('is off by default and says what turned it off', () => {
+    expect(titleGenerationDisabled()).toBeNull()
+    disableTitleGeneration('--no-titles')
+    expect(titleGenerationDisabled()).toBe('--no-titles')
+  })
+
+  it("a fresh chat's first message starts no CLI and names nothing", async () => {
+    disableTitleGeneration('--no-titles')
+    const id = `chat-${++sequence}`
+    const { win, send } = window()
+    scheduleChatTitle(id)
+    notifyChatMessage(id, 'please make the sidebar tab follow the first message I send', win)
+    await settled()
+    expect(mocks.execFile).not.toHaveBeenCalled()
+    expect(send).not.toHaveBeenCalled()
+  })
+
+  it('a chat scheduled before the opt-out is not named after it either', async () => {
+    const id = `chat-${++sequence}`
+    const { win, send } = window()
+    scheduleChatTitle(id)
+    disableTitleGeneration('--no-titles')
+    notifyChatMessage(id, 'please make the sidebar tab follow the first message I send', win)
+    await settled()
+    expect(mocks.execFile).not.toHaveBeenCalled()
+    expect(send).not.toHaveBeenCalled()
+  })
+
+  it('a fresh terminal session is not watched for its first message', () => {
+    const before = watchedTitleSessionsForTests()
+    disableTitleGeneration('--no-titles')
+    const id = `term-${++sequence}`
+    scheduleTitleGeneration(id, '/tmp/never-watched', `claude-${id}`, null)
+    expect(watchedTitleSessionsForTests()).toBe(before)
+    cleanup(id)
+  })
+
+  it('titles run again once the opt-out is lifted', async () => {
+    disableTitleGeneration('--no-titles')
+    enableTitleGenerationForTests()
+    const id = `chat-${++sequence}`
+    const { win, send } = window()
+    scheduleChatTitle(id)
+    notifyChatMessage(id, 'please make the sidebar tab follow the first message I send', win)
+    await settled()
+    expect(mocks.execFile).toHaveBeenCalledTimes(1)
+    expect(send).toHaveBeenCalledWith(`session:auto-title:${id}`, 'follow the first message')
   })
 })
 
