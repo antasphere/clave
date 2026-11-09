@@ -1,28 +1,26 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { AgentState, Session } from '../../../src/shared/session-model'
 import type { ProviderSwitchPlan } from '../../../src/preload/index.d'
-import { claudeContextWindow, claudeModelName } from '../../../src/shared/claude-models'
+import { claudeModelName } from '../../../src/shared/claude-models'
 import {
   canWriteHandoffNote,
+  handoffBudgetChars,
   planProviderSwitch,
   providerSwitchLanding,
   requestHandoffNote,
   sessionById,
-  switchSessionProvider
+  settleProviderSwitchAsk,
+  switchSessionProvider,
+  takeProviderSwitchAsk
 } from '../../../src/renderer/src/lib/switch-provider'
+import { useViewSessionStore } from '../../../src/renderer/src/views/session-store'
 import type { ProviderPick } from './ModelMenu'
 import type { ProviderSwitchLanding } from './ProviderSwitch'
 import { reduceConversation, type Conversation, type Entry } from './reducer'
 import { editedFiles, handoffMessage, transcriptMarkdown, type TranscriptMeta } from './export'
 import { providerLabel } from './models'
 
-/** The characters the handoff message may take: half the target model's
- *  window when its id names one (Clave's table), else a 200k window, at
- *  four characters a token. The full tape goes to the file regardless. */
-export function handoffBudgetChars(modelId: string): number {
-  const window = claudeContextWindow(modelId) ?? 200_000
-  return Math.round(window * 0.5 * 4)
-}
+export { handoffBudgetChars }
 
 /** The whole conversation, the pages not yet read pulled in first, the way
  *  the transcript's export reads it: a handoff must carry what was said
@@ -106,6 +104,17 @@ export function useProviderSwitch({
     },
     [session.id, working]
   )
+  // The limit card's provider rung (integration round 2, F11): the card asks
+  // for the move; the popover opens on it here, and settles the card's
+  // promise with the move's result or the cancel.
+  const asked = useViewSessionStore(
+    (s) => s.sessions.find((x) => x.id === session.id)?.providerSwitchAsk ?? null
+  )
+  useEffect(() => {
+    if (!asked) return
+    const ask = takeProviderSwitchAsk(session.id)
+    if (ask) begin({ ...ask, model: ask.model })
+  }, [asked, session.id, begin])
   // The road, asked once per target.
   useEffect(() => {
     if (!state || state.plan !== null) return
@@ -122,7 +131,10 @@ export function useProviderSwitch({
       live = false
     }
   }, [session.id, state])
-  const cancel = useCallback((): void => setState(null), [])
+  const cancel = useCallback((): void => {
+    settleProviderSwitchAsk(session.id, { cancelled: true })
+    setState(null)
+  }, [session.id])
   const confirm = useCallback(
     async ({ note }: { note: boolean }): Promise<void> => {
       if (!state?.plan) return
@@ -149,10 +161,13 @@ export function useProviderSwitch({
               }
             : s
         )
+        const stored = sessionById(session.id)
         const result = await switchSessionProvider(session.id, {
           from: session.provider,
           target,
           road: plan.road,
+          // The move the limit caused carries the rejected message across (G7).
+          resendRejected: !!stored?.limitReported,
           handoff: async () => {
             const entries = await wholeConversation(session.id, source())
             const head: TranscriptMeta = { ...meta(), agent: from, exportedAt: new Date() }
@@ -175,7 +190,9 @@ export function useProviderSwitch({
             })
           }
         })
+        settleProviderSwitchAsk(session.id, result)
         if (!result.ok) {
+          // The refusal stays on screen here, in the popover (G6).
           setState((s) => (s ? { ...s, busy: null, error: result.error ?? 'The move failed.' } : s))
           return
         }

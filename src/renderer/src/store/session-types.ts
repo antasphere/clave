@@ -428,6 +428,15 @@ export interface Session {
    *  whether it was converted into this provider's storage or carried as a
    *  handoff message. On the record, so the first card survives a relaunch. */
   continuedFrom?: { provider: string; road: 'converted' | 'handoff' }
+  /** Runtime: the limit card asked for a move to another provider
+   *  (PRDCT-4300): the view's popover opens on it, the one place that says
+   *  the move reconstructs the conversation, and clears it. */
+  providerSwitchAsk?: {
+    adapterId: string
+    provider: string
+    label: string
+    model: { id: string; label: string }
+  } | null
   /** True between the kill and the respawn of an account switch, so the
    *  exit is not announced as the session ending. */
   restarting?: boolean

@@ -23,7 +23,11 @@ const h = vi.hoisted(() => ({
   restart: vi.fn()
 }))
 vi.mock('../store/session-store', () => ({
-  useSessionStore: { getState: () => h.state, setState: vi.fn() }
+  useSessionStore: {
+    getState: () => h.state,
+    setState: (update: (state: typeof h.state) => Partial<typeof h.state>) =>
+      Object.assign(h.state, update(h.state))
+  }
 }))
 vi.mock('../store/usage-store', () => ({
   accountsUsageFor: () => ({}),
@@ -97,6 +101,7 @@ describe('switchSessionProvider', () => {
     })
     expect(handoff).not.toHaveBeenCalled()
     expect(h.restart).toHaveBeenCalledWith('s1', {
+      resendRejected: false,
       overrides: {
         codexAccountId: 'c1',
         codexAccountLabel: 'Codex 1',
@@ -253,7 +258,7 @@ describe('requestHandoffNote', () => {
 })
 
 describe("lane E's third rung: the road the limit policy takes (PRDCT-4300)", () => {
-  it('names Codex for a Claude tab once the host has said what it runs, and nothing before', async () => {
+  it('names Codex for a Claude chat once the host has said what it runs, nothing for a terminal tab', async () => {
     const { registerProviderSwitchRoad } = await import('./account-policy')
     mod.installProviderSwitchRoad()
     expect(registerProviderSwitchRoad).toHaveBeenCalledWith({
@@ -266,47 +271,68 @@ describe("lane E's third rung: the road the limit policy takes (PRDCT-4300)", ()
         label: 'Codex'
       })
     )
-    // A terminal tab's conversation is the CLI's own: no provider rung for it.
     expect(
       mod.providerSwitchTargetFor({ ...h.session, launchProfileId: 'claude-terminal' } as Session)
     ).toBeNull()
   })
-  it("moves the tab on the plan's road with the target's first model, the handoff written from the host's history", async () => {
-    ;(h.api.providerSwitchPlan as ReturnType<typeof vi.fn>).mockResolvedValue({
-      from: { adapterId: 'claude-chat', provider: 'claude' },
-      to: { adapterId: 'codex-chat', provider: 'codex' },
-      road: 'handoff',
-      reason: 'no transcript'
+  it("asks the tab's view to open the popover on the target's first model, and settles with the popover's word (F11)", async () => {
+    mod.installProviderSwitchRoad()
+    await vi.waitFor(() => expect(mod.providerSwitchTargetFor(h.session)).not.toBeNull())
+    const pending = mod.switchToProvider('s1', 'codex-chat')
+    await vi.waitFor(() =>
+      expect((h.state.sessions as Session[])[0].providerSwitchAsk).toEqual({
+        adapterId: 'codex-chat',
+        provider: 'codex',
+        label: 'Codex',
+        model: { id: 'gpt-5.5', label: 'GPT-5.5' }
+      })
+    )
+    // Nothing moved on the card's click alone.
+    expect(h.restart).not.toHaveBeenCalled()
+    // The view takes the ask, once.
+    expect(mod.takeProviderSwitchAsk('s1')).toMatchObject({ adapterId: 'codex-chat' })
+    expect((h.state.sessions as Session[])[0].providerSwitchAsk).toBeNull()
+    expect(mod.takeProviderSwitchAsk('s1')).toBeNull()
+    mod.settleProviderSwitchAsk('s1', { ok: true, resumed: true, road: 'converted' })
+    await expect(pending).resolves.toEqual({ ok: true, resumed: true, road: 'converted' })
+  })
+  it('a cancelled popover settles the card as cancelled; an ask nobody takes is withdrawn with a word', async () => {
+    const cancelled = mod.switchToProvider('s1', 'codex-chat')
+    await vi.waitFor(() =>
+      expect((h.state.sessions as Session[])[0].providerSwitchAsk).not.toBeNull()
+    )
+    mod.settleProviderSwitchAsk('s1', { cancelled: true })
+    await expect(cancelled).resolves.toEqual({ cancelled: true })
+    vi.useFakeTimers()
+    const orphan = mod.switchToProvider('s1', 'codex-chat')
+    await vi.advanceTimersByTimeAsync(10)
+    await vi.advanceTimersByTimeAsync(mod.ASK_TIMEOUT_MS + 1)
+    await expect(orphan).resolves.toMatchObject({
+      ok: false,
+      error: expect.stringContaining('No chat view')
     })
-    ;(h.api.sessionsHistory as ReturnType<typeof vi.fn>).mockResolvedValue({
-      items: [
-        { event: { type: 'user_message', text: 'first question' } },
-        { event: { type: 'assistant_text', delta: 'an answer', final: true } },
-        { event: { type: 'tool_call', id: 't', name: 'Bash', input: {} } },
-        { event: { type: 'assistant_text', delta: 'sub', final: true, parent: 'x' } }
-      ],
-      before: null
-    })
-    const result = await mod.switchToProvider('s1', 'codex-chat')
-    expect(result).toMatchObject({ ok: true, road: 'handoff' })
-    const call = h.restart.mock.calls.at(-1)![1]
-    expect(call.overrides).toMatchObject({ adapterId: 'codex-chat', model: 'gpt-5.5' })
-    expect(call.overrides.firstMessage).toContain('# Continued from Claude · handoff')
-    expect(call.overrides.firstMessage).toContain('first question')
-    expect(call.overrides.firstMessage).toContain('an answer')
-    expect(call.overrides.firstMessage).toContain('- Bash')
-    expect(call.overrides.firstMessage).not.toContain('sub')
-    expect(call.overrides.firstMessage).toContain('The full conversation is in /tape.md')
+    expect((h.state.sessions as Session[])[0].providerSwitchAsk).toBeNull()
   })
   it('refuses when the provider lists no model', async () => {
     ;(h.api.adaptersModels as ReturnType<typeof vi.fn>).mockResolvedValue([])
-    ;(h.api.providerSwitchPlan as ReturnType<typeof vi.fn>).mockResolvedValue({
-      from: { adapterId: 'claude-chat', provider: 'claude' },
-      to: { adapterId: 'codex-chat', provider: 'codex' },
-      road: 'convert',
-      codexVersion: '0.167.0'
-    })
     expect(await mod.switchToProvider('s1', 'codex-chat')).toMatchObject({ ok: false })
     expect(h.restart).not.toHaveBeenCalled()
+  })
+  it('the move the limit caused carries the rejected message across (G7)', async () => {
+    await mod.switchSessionProvider('s1', {
+      from: 'claude',
+      target,
+      road: 'handoff',
+      resendRejected: true,
+      handoff: async () => 'handoff'
+    })
+    expect(h.restart.mock.calls[0][1]).toMatchObject({ resendRejected: true })
+  })
+})
+
+describe('the handoff budget (one rule for the popover and the card)', () => {
+  it('sizes the handoff to half the target’s window, a 200k window when the id names none', () => {
+    expect(mod.handoffBudgetChars('claude-opus-5-5')).toBe(2_000_000)
+    expect(mod.handoffBudgetChars('gpt-5.5')).toBe(400_000)
   })
 })

@@ -130,8 +130,12 @@ export function providerSwitchOptions(
     claudeSessionId: undefined,
     // The handoff is the fresh conversation's first message, as a launch's
     // prompt is: every chat adapter sends its launch prompt at ready. A
-    // resumed thread already holds the conversation and gets none.
-    initialPrompt: target.resume === undefined ? target.firstMessage : undefined,
+    // resumed thread already holds the conversation and gets none. The
+    // message the cap rejected (`initialInput`, set by the restart when the
+    // move is the limit's doing) crosses the move once, as the new
+    // provider's first turn: after the converted history, or at the end of
+    // the handoff as what is to be answered now (integration round 2, G7).
+    initialPrompt: firstTurn(previous.initialInput?.text, target),
     initialInput: undefined,
     // The account the move lands on comes with the override's own account
     // fields; the other provider's are not the target's.
@@ -141,6 +145,20 @@ export function providerSwitchOptions(
     ...(claude ? { codexAccountId: undefined, codexAccountLabel: undefined } : {}),
     ...(target.continuedFrom ? { continuedFrom: target.continuedFrom } : {})
   }
+}
+
+/** The moved tab's first turn: the rejected message alone on a resumed
+ *  thread; the handoff, with the rejected message under its own heading,
+ *  on a fresh conversation; nothing when there is neither. */
+export function firstTurn(
+  rejected: string | undefined,
+  target: Pick<ProviderOverride, 'resume' | 'firstMessage'>
+): string | undefined {
+  const message = rejected?.trim() ? rejected : undefined
+  if (target.resume !== undefined) return message
+  if (target.firstMessage === undefined) return message
+  if (message === undefined) return target.firstMessage
+  return `${target.firstMessage.trimEnd()}\n\n## The message the previous agent could not take, yours to answer now\n\n${message}\n`
 }
 
 /** The note the restarted tab's first card reads. */

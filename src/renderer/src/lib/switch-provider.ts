@@ -1,4 +1,5 @@
-import type { HistoryItem, ModelOption, SessionStream } from '../../../shared/session-model'
+import type { ModelOption, SessionStream } from '../../../shared/session-model'
+import { claudeContextWindow } from '../../../shared/claude-models'
 import type { ProviderChoice, ProviderSwitchPlan } from '../../../preload/index.d'
 import { isChatSession, registerProviderSwitchRoad } from './account-policy'
 import { useSessionStore, type Session } from '../store/session-store'
@@ -137,6 +138,9 @@ export interface ProviderSwitchInput {
   /** The handoff message, built when the move takes that road: the chat view
    *  holds the conversation and writes it (`export.ts`, `handoffMessage`). */
   handoff: () => Promise<string>
+  /** The move is the limit's doing: the message the cap rejected crosses it
+   *  as the new provider's first turn (integration round 2, G7). */
+  resendRejected?: boolean
 }
 
 export type ProviderSwitchResult = SwitchResult & {
@@ -172,6 +176,7 @@ export async function switchSessionProvider(
   const codex = target.adapterId === 'codex-chat'
   const claude = target.adapterId === 'claude-chat'
   const result = await restartSessionProcess(sessionId, {
+    resendRejected: input.resendRejected === true,
     overrides: {
       ...landing.overrides,
       adapterId: target.adapterId,
@@ -239,80 +244,97 @@ export function providerSwitchTargetFor(
   return choice ? { adapterId: choice.adapterId, label: choice.label } : null
 }
 
-/** A conversation's past as Markdown, from the host's history alone: the
- *  limit policy moves a tab from outside its view, where the chat's own
- *  export (with the tool outputs and the files) is not at hand. The person's
- *  and the agent's words, each tool run as one line. */
-export function historyMarkdown(items: readonly HistoryItem[], from: string): string {
-  const out: string[] = [`# Continued from ${from} · handoff`, '']
-  out.push(
-    `This conversation ran on ${from} and moves to you here. You are reading a transcript of it, not continuing it: what ${from} had in its working memory and the approvals it was granted are not yours. Read, then carry on from where it stopped.`,
-    '',
-    '## The conversation so far'
-  )
-  let answer = ''
-  const flush = (): void => {
-    if (answer.trim()) out.push('', `## ${from}`, '', answer.trim())
-    answer = ''
-  }
-  for (const { event } of items) {
-    if ('parent' in event && event.parent) continue
-    if (event.type === 'user_message') {
-      flush()
-      out.push('', '## You', '', event.text.trim())
-    } else if (event.type === 'assistant_text') answer += event.delta
-    else if (event.type === 'tool_call') {
-      flush()
-      out.push(`- ${event.name}`)
-    }
-  }
-  flush()
-  return out.join('\n').trimEnd() + '\n'
+/** The characters a handoff may take: half the target model's window when
+ *  its id names one (Clave's table), else a 200k window, at four characters
+ *  a token. The full tape goes to the file regardless. */
+export function handoffBudgetChars(modelId: string): number {
+  const window = claudeContextWindow(modelId) ?? 200_000
+  return Math.round(window * 0.5 * 4)
 }
 
-/** The move the limit policy makes on its provider rung: the road asked of
- *  the host, the target's first listed model, the handoff written from the
- *  host's history when the conversion is refused or does not apply. */
+/** What the limit card asked for: a move the view's popover opens on. */
+export type ProviderSwitchAsk = NonNullable<Session['providerSwitchAsk']>
+const pendingAsks = new Map<string, (result: ProviderSwitchResult | { cancelled: true }) => void>()
+
+/** The ask a view takes, once: read and cleared together. */
+export function takeProviderSwitchAsk(sessionId: string): ProviderSwitchAsk | null {
+  const session = sessionById(sessionId)
+  const ask = session?.providerSwitchAsk ?? null
+  if (ask)
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((s) =>
+        s.id === sessionId ? { ...s, providerSwitchAsk: null } : s
+      )
+    }))
+  return ask
+}
+
+/** The popover's word on the ask: the move's result, or that it was cancelled. */
+export function settleProviderSwitchAsk(
+  sessionId: string,
+  result: ProviderSwitchResult | { cancelled: true }
+): void {
+  const settle = pendingAsks.get(sessionId)
+  pendingAsks.delete(sessionId)
+  settle?.(result)
+}
+
+/** The limit card's provider rung: the move is asked of the view's popover,
+ *  the one place that says the move reconstructs the conversation and
+ *  offers the handoff note (integration round 2, F11); the promise settles
+ *  with the popover's word, a refusal kept on screen there (G6). The
+ *  target's first listed model is what the popover opens on. */
 export async function switchToProvider(
   sessionId: string,
   adapterId: string
-): Promise<ProviderSwitchResult> {
+): Promise<ProviderSwitchResult | { cancelled: true }> {
   const session = sessionById(sessionId)
   if (!session) return { ok: false, resumed: false, error: 'No such session', road: 'handoff' }
-  const from = accountProviderOf(session) ?? 'claude'
-  const [plan, models] = await Promise.all([
-    planProviderSwitch(sessionId, adapterId),
-    window.electronAPI.adaptersModels(adapterId, session.cwd)
-  ])
+  const models = await window.electronAPI.adaptersModels(adapterId, session.cwd)
   const model = models[0]
   if (!model)
     return { ok: false, resumed: false, error: 'The provider lists no model here', road: 'handoff' }
-  const target: ProviderSwitchTarget = {
+  const target = providerSwitchTargetFor(session)
+  const ask: ProviderSwitchAsk = {
     adapterId,
-    provider: plan.to.provider,
-    label: providerSwitchTargetFor(session)?.label ?? plan.to.provider,
-    model
+    provider:
+      adapterId === 'codex-chat' ? 'codex' : adapterId === 'claude-chat' ? 'claude' : adapterId,
+    label: target?.adapterId === adapterId ? target.label : adapterId,
+    model: { id: model.id, label: model.label }
   }
-  return switchSessionProvider(sessionId, {
-    from,
-    target,
-    road: plan.road,
-    handoff: async () => {
-      const items: HistoryItem[] = []
-      let before: number | undefined
-      for (;;) {
-        const page = await window.electronAPI.sessionsHistory(sessionId, before, 2000)
-        items.unshift(...page.items)
-        if (page.before === null || (before !== undefined && page.before >= before)) break
-        before = page.before
-      }
-      const fromLabel = from === 'codex' ? 'Codex' : 'Claude'
-      const tape = historyMarkdown(items, fromLabel)
-      const { path } = await window.electronAPI.providerSwitchHandoff(sessionId, tape)
-      return `${tape}\nThe full conversation is in ${path}.\n`
+  return new Promise((resolve) => {
+    pendingAsks.get(sessionId)?.({ cancelled: true })
+    // A pane that never takes the ask (none mounted for this tab) must not
+    // hold the policy's promise for good: the ask is withdrawn, with a word.
+    const timer = setTimeout(() => {
+      if (pendingAsks.get(sessionId) !== settle) return
+      pendingAsks.delete(sessionId)
+      useSessionStore.setState((state) => ({
+        sessions: state.sessions.map((s) =>
+          s.id === sessionId && s.providerSwitchAsk === ask ? { ...s, providerSwitchAsk: null } : s
+        )
+      }))
+      resolve({
+        ok: false,
+        resumed: false,
+        road: 'handoff',
+        error: 'No chat view took the move; open the tab and pick the provider from its chip.'
+      })
+    }, ASK_TIMEOUT_MS)
+    const settle = (result: ProviderSwitchResult | { cancelled: true }): void => {
+      clearTimeout(timer)
+      resolve(result)
     }
+    pendingAsks.set(sessionId, settle)
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((s) =>
+        s.id === sessionId ? { ...s, providerSwitchAsk: ask } : s
+      )
+    }))
   })
 }
+/** How long an ask waits for a pane before it is withdrawn. */
+export const ASK_TIMEOUT_MS = 15_000
 
 /** Lane E's third rung: offered once this module is loaded by the shell. */
 export function installProviderSwitchRoad(): void {

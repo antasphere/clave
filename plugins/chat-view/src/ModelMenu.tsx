@@ -167,6 +167,21 @@ export function ModelMenu({
   const [options, setOptions] = useState<ModelOption[] | null>(null)
   const [failure, setFailure] = useState<string | null>(null)
   const [providers, setProviders] = useState<ProviderChoice[] | null>(null)
+  // The list is asked once at mount, so the chip names the model from its
+  // first look (a Codex id reads as its label, not as "gpt-5.5"), and again
+  // at every opening, from a clean slate (integration round 2, N5).
+  useEffect(() => {
+    let live = true
+    Promise.resolve()
+      .then(() => window.electronAPI.sessionsModels(sessionId))
+      .then((list) => {
+        if (live) setOptions((current) => current ?? list)
+      })
+      .catch(() => undefined)
+    return () => {
+      live = false
+    }
+  }, [sessionId])
   useEffect(() => {
     if (!open) return
     let live = true
@@ -206,7 +221,10 @@ export function ModelMenu({
     />
   )
   const own: ProviderChoice = { adapterId, provider, label: providerLabel(provider) }
-  const others = (providers ?? []).filter((p) => p.adapterId !== adapterId)
+  // Another provider is listed only where a pick can move the tab: a remote
+  // tab and the Folio's read-only chip offer the tab's own models alone
+  // (integration round 2, F13).
+  const others = onSwitchProvider ? (providers ?? []).filter((p) => p.adapterId !== adapterId) : []
   return (
     <DropdownMenu.Root
       modal={false}

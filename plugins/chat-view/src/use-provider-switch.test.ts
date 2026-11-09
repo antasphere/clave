@@ -1,7 +1,11 @@
 import { describe, expect, it, vi } from 'vitest'
 // The hook's module reaches the renderer's stores; the rules under test do not.
+vi.mock('../../../src/renderer/src/views/session-store', () => ({ useViewSessionStore: vi.fn() }))
 vi.mock('../../../src/renderer/src/lib/switch-provider', () => ({
   canWriteHandoffNote: vi.fn(),
+  handoffBudgetChars: (id: string) => (id.startsWith('claude-') ? 2_000_000 : 400_000),
+  settleProviderSwitchAsk: vi.fn(),
+  takeProviderSwitchAsk: vi.fn(),
   planProviderSwitch: vi.fn(),
   providerSwitchLanding: vi.fn(),
   requestHandoffNote: vi.fn(),

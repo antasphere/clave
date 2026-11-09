@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   continuedFrom,
+  firstTurn,
   launchProfileFor,
   planRoad,
   providerOf,
@@ -184,5 +185,43 @@ describe('the plan the popover announces, from the facts the host gathered (veri
       road: 'handoff',
       reason: expect.stringContaining('could not be run')
     })
+  })
+})
+
+describe('the message the cap rejected crosses the move once, as the first turn (integration round 2, G7)', () => {
+  it('rides alone onto a resumed thread, and under its own heading at the end of a handoff', () => {
+    expect(firstTurn('fix the test', { resume: 'thread-7', firstMessage: 'never' })).toBe(
+      'fix the test'
+    )
+    expect(
+      firstTurn('fix the test', { firstMessage: '# Continued from Claude · handoff\n\nbody\n' })
+    ).toBe(
+      '# Continued from Claude · handoff\n\nbody\n\n## The message the previous agent could not take, yours to answer now\n\nfix the test\n'
+    )
+  })
+  it('is nothing when the move is not the limit’s doing', () => {
+    expect(firstTurn(undefined, { resume: 'thread-7' })).toBeUndefined()
+    expect(firstTurn('   ', { resume: 'thread-7' })).toBeUndefined()
+    expect(firstTurn(undefined, { firstMessage: 'handoff' })).toBe('handoff')
+  })
+  it('the spawn carries it as the launch prompt, the restart’s initialInput consumed', () => {
+    const previous: PtySpawnOptions = {
+      claudeMode: true,
+      launchProfileId: 'claude-chat',
+      initialInput: { type: 'user_message', text: 'the rejected one' }
+    }
+    const converted = providerSwitchOptions(previous, {
+      adapterId: 'codex-chat',
+      resume: 'thread-7'
+    })
+    expect(converted.initialPrompt).toBe('the rejected one')
+    expect(converted.initialInput).toBeUndefined()
+    const handed = providerSwitchOptions(previous, {
+      adapterId: 'codex-chat',
+      firstMessage: 'handoff'
+    })
+    expect(handed.initialPrompt).toContain('handoff')
+    expect(handed.initialPrompt).toContain('the rejected one')
+    expect(handed.initialInput).toBeUndefined()
   })
 })

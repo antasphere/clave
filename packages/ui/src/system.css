@@ -6076,6 +6076,10 @@ details[open] > .chat-approval-items {
   min-width: calc(var(--spacing) * 56);
   max-width: calc(var(--spacing) * 80);
   padding: var(--spacing);
+  /* The menu is a portal outside the chat view: the glyph size its rows'
+     chevrons take (the provider rows, "Earlier versions") rides with it, or
+     the chevron fills the row (integration round 2, F8). */
+  --chat-glyph: calc(var(--spacing) * 3.5);
 }
 .chat-model-option {
   align-items: flex-start;
