@@ -1510,32 +1510,39 @@ describe('a created routine moved into a file (verifier rounds 1 and 2, F1 and G
     ])
   })
 
-  it('one failed refresh does not poison the extra pass: later moves land and answer ok (round 6, M3)', async () => {
+  it('one failed refresh does not poison the extra pass: a move whose refresh overlaps a running one lands and answers ok (round 6, M3)', async () => {
     const file = workspace([])
     let fail = false
+    // A gate the test opens: the running pass holds until the move has asked for its own.
+    let release: () => void = () => {}
+    let hold: Promise<void> | null = null
     const service = await build(file, fakeHost(), memory(), {
       defaultTemplate: tpl(),
       workspaces: async () => {
         if (fail) throw new Error('settings unreadable')
-        await new Promise((resolve) => setTimeout(resolve, 10))
+        if (hold) await hold
         return [{ id: 'ws', name: 'W', rootDir: root, profileFile: file }]
       }
     })
     const a = await service.create(digest({ name: 'Alpha' }))
-    const b = await service.create(digest({ name: 'Beta' }))
     fail = true
     const failing = service.refresh()
     const overlapping = service.refresh()
     await expect(failing).rejects.toThrow(/settings unreadable/)
     await expect(overlapping).rejects.toThrow(/settings unreadable/)
     fail = false
+    hold = new Promise<void>((resolve) => {
+      release = resolve
+    })
     const racing = service.refresh()
-    await service.moveToFile(a.routine.key, {})
+    // The move's own refresh is asked while `racing` still holds the gate.
+    const moving = service.moveToFile(a.routine.key, {})
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    release()
     await racing
-    await service.moveToFile(b.routine.key, {})
+    await expect(moving).resolves.toMatchObject({ name: 'Alpha' })
     expect(service.list().routines.map((v) => [v.routine.name, v.routine.origin])).toEqual([
-      ['Alpha', 'file'],
-      ['Beta', 'file']
+      ['Alpha', 'file']
     ])
   })
 
