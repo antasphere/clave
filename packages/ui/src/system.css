@@ -6934,16 +6934,24 @@ button.exchange-part-who:hover {
 .stretch-card[open] .stretch-chevron {
   rotate: 180deg;
 }
-/* Opening: the height glides, the steps rise in one after another. */
+/* The height glides both ways on the ease-in-out the tool runs use, and the
+   content fades with it; the steps rise in one after another on the way in. */
 .stretch-card::details-content {
   block-size: 0;
   overflow: clip;
+  opacity: 0;
   transition:
-    block-size calc(var(--default-transition-duration) * 2) var(--ease-out-expo),
-    content-visibility calc(var(--default-transition-duration) * 2) allow-discrete;
+    block-size calc(var(--default-transition-duration) * 1.75) var(--term-disclosure-ease),
+    opacity calc(var(--default-transition-duration) * 1.75) var(--term-disclosure-ease),
+    content-visibility calc(var(--default-transition-duration) * 1.75) allow-discrete;
 }
 .stretch-card[open]::details-content {
   block-size: auto;
+  opacity: 1;
+  transition:
+    block-size calc(var(--default-transition-duration) * 2.25) var(--term-disclosure-ease),
+    opacity calc(var(--default-transition-duration) * 2.25) var(--term-disclosure-ease),
+    content-visibility calc(var(--default-transition-duration) * 2.25) allow-discrete;
 }
 .stretch-body {
   padding: 0 calc(var(--spacing) * 3) calc(var(--spacing) * 3);
@@ -6962,14 +6970,28 @@ button.exchange-part-who:hover {
   padding-bottom: calc(var(--spacing) * 2.5);
   opacity: 0;
   translate: 0 calc(var(--spacing) * -1);
+  /* Closing: every step fades at once while the height folds. */
   transition:
-    opacity calc(var(--default-transition-duration) * 2) var(--ease-out-expo),
-    translate calc(var(--default-transition-duration) * 3) var(--ease-out-settle);
-  transition-delay: calc(var(--default-transition-duration) * 0.35 * var(--stretch-i, 0));
+    opacity var(--default-transition-duration) var(--term-disclosure-ease),
+    translate var(--default-transition-duration) var(--term-disclosure-ease);
 }
+/* Opening: each step a beat after the one above it, easing in and out, no
+   overshoot. A keyframe, not a transition: a closed card's content is hidden
+   (content-visibility), so a step has no style to transition FROM and would
+   simply appear. The delay is the opening's only, so the close is not
+   staggered. */
 .stretch-card[open] .stretch-step {
   opacity: 1;
   translate: 0 0;
+  animation: stretch-step-in calc(var(--default-transition-duration) * 2.5)
+    var(--term-disclosure-ease) backwards;
+  animation-delay: calc(var(--default-transition-duration) * 0.35 * var(--stretch-i, 0));
+}
+@keyframes stretch-step-in {
+  from {
+    opacity: 0;
+    translate: 0 calc(var(--spacing) * -1);
+  }
 }
 /* The rail, one segment per step, ending at the last step's node. */
 .stretch-step::before {
@@ -7112,10 +7134,13 @@ button.exchange-part-who:hover {
 @media (prefers-reduced-motion: reduce) {
   .stretch-card,
   .stretch-card::details-content,
+  .stretch-card[open]::details-content,
   .stretch-step,
+  .stretch-card[open] .stretch-step,
   .stretch-chevron {
     transition: none;
   }
+  .stretch-card[open] .stretch-step,
   .stretch-drawing .stretch-fold,
   .stretch-drawing .stretch-land,
   .stretch-drawing .stretch-note,
@@ -7291,7 +7316,11 @@ button.exchange-part-who:hover {
    a glyph. Both levels open and close by animating their height. */
 .terminal-view {
   interpolate-size: allow-keywords;
-  /* An ease-in-out (cubic): the smoothest open and close for a height. */
+}
+/* An ease-in-out (cubic): the smoothest open and close for a height. Every
+   disclosure that glides (a tool run, a call, a card of working notes) uses it,
+   both ways; none of them springs past its mark. */
+:root {
   --term-disclosure-ease: cubic-bezier(0.65, 0, 0.35, 1);
 }
 .term-tools,
@@ -7478,7 +7507,9 @@ button.exchange-part-who:hover {
 }
 @media (prefers-reduced-motion: reduce) {
   .term-tools::details-content,
-  .term-call::details-content {
+  .term-call::details-content,
+  .term-tools[open]::details-content,
+  .term-call[open]::details-content {
     transition-property: opacity, content-visibility;
   }
   .term-tools[data-state='running'] > .term-tools-row .term-tools-title,
