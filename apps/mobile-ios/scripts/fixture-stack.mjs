@@ -13,7 +13,7 @@
 //   node apps/mobile-ios/scripts/fixture-stack.mjs [--server 47101] [--relay 47102]
 //        [--tmpdir /private/tmp/clave-native-a/stack] [--approve]
 //        [--dry-run | --self-check | --once | --prove-tmpdir-guard
-//         | --prove-env-guard stray|no-env-file|live-stub | --prove-prerequisites
+//         | --prove-env-guard stray|no-env-file|live-stub|relay-issuer | --prove-prerequisites
 //         | --prove-inside keys|cache|resolver|args|probe | --prove-recorder-read missing|unreadable
 //         | --prove-title-guard recorder|folder]
 //
@@ -66,8 +66,9 @@
 // symlink run root) with their sentinels intact, an owned folder reused as the
 // same folder and a dry run leaving a reused folder alone; --prove-env-guard
 // starts nothing and shows one pre-boot check red and the others green on one
-// stray variable, on the daemon's command without --no-env-file, or on a stub
-// shell echoing a live environment, the key named and never its value; --prove-prerequisites hands check 3
+// stray variable, on the daemon's command with --env-file=.env in place of
+// --no-env-file, on a stub shell echoing a live environment, or on a relay
+// command naming the hub as its issuer, the key named and never its value; --prove-prerequisites hands check 3
 // a discovery read saying titles "on"; --prove-inside cache|resolver|args
 // hands check 4 one stray key in the daemon's environment, a cached PATH
 // without the recorders, a one-shot whose file is not the recorder, or
@@ -538,28 +539,31 @@ const expect = (condition, message) => {
  * CLAUDE_CONFIG_DIR and CODEX_HOME the empty folders the stack made. No shell
  * is run here.
  */
-export async function preBootChecks({ relay = null, args, env, stubs, log }) {
+export async function preBootChecks({ relay, args, env, stubs, log }) {
+  if (!Array.isArray(relay))
+    throw new Error('preBootChecks needs the relay command: a boot that forgets it fails closed')
   const results = []
-  if (relay)
-    await runCheck(
-      results,
-      log,
-      'the relay command starts Bun with --no-env-file before the entry and names the fixture issuer',
-      () => {
-        expect(
-          relay[0] === '--no-env-file' &&
-            typeof relay[1] === 'string' &&
-            relay[1].endsWith(path.join('apps', 'relay', 'src', 'main.ts')),
-          `the relay command does not start with --no-env-file and the relay entry: ${JSON.stringify(relay.slice(0, 2))}`
-        )
-        const issuer = relay[relay.indexOf('--issuer') + 1]
-        expect(
-          typeof issuer === 'string' && issuer.startsWith('http://127.0.0.1:'),
-          `the relay's issuer is ${issuer}`
-        )
-        return '--no-env-file, then the entry, the loopback issuer'
-      }
-    )
+  await runCheck(
+    results,
+    log,
+    'the relay command starts Bun with --no-env-file before the entry and names the fixture issuer',
+    () => {
+      expect(
+        relay[0] === '--no-env-file' &&
+          typeof relay[1] === 'string' &&
+          relay[1].endsWith(path.join('apps', 'relay', 'src', 'main.ts')),
+        `the relay command does not start with --no-env-file and the relay entry: ${JSON.stringify(relay.slice(0, 2))}`
+      )
+      const at = relay.indexOf('--issuer')
+      const issuer = at >= 0 ? relay[at + 1] : undefined
+      expect(issuer !== undefined, 'the relay command names no issuer')
+      expect(
+        typeof issuer === 'string' && issuer.startsWith('http://127.0.0.1:'),
+        `the relay's issuer is ${issuer}`
+      )
+      return '--no-env-file, then the entry, the loopback issuer'
+    }
+  )
   await runCheck(
     results,
     log,
@@ -1648,11 +1652,12 @@ if (isMain) {
     const expected = {
       stray: { index: 2, pattern: /CLAVE_FIXTURE_STRAY_KEY/ },
       'no-env-file': { index: 1, pattern: /does not start with --no-env-file/ },
-      'live-stub': { index: 2, pattern: /still echoes a live one/ }
+      'live-stub': { index: 2, pattern: /still echoes a live one/ },
+      'relay-issuer': { index: 0, pattern: /the relay's issuer is/ }
     }[which]
     if (!expected) {
       process.stderr.write(
-        'fixture-stack: --prove-env-guard takes stray, no-env-file or live-stub\n'
+        'fixture-stack: --prove-env-guard takes stray, no-env-file, live-stub or relay-issuer\n'
       )
       process.exit(1)
     }
@@ -1666,10 +1671,11 @@ if (isMain) {
     const serverDir = path.join(options.tmpdir, 'server')
     const relayDir = path.join(options.tmpdir, 'relay')
     const stubs = writeStubs(place.folder, { issuer: 'http://127.0.0.1:0', serverDir })
+    // The hub's address stands in for a wrong issuer: nothing is ever sent to it here.
     const relay = relayArgs({
       relayDir,
       relayPort: options.relayPort,
-      issuer: 'http://127.0.0.1:0'
+      issuer: which === 'relay-issuer' ? 'https://account.antasphere.com' : 'http://127.0.0.1:0'
     })
     let args = daemonArgs({
       serverDir,
@@ -1679,7 +1685,10 @@ if (isMain) {
     let env = stubs.env
     if (which === 'stray')
       env = { ...env, CLAVE_FIXTURE_STRAY_KEY: 'a value that must never be printed' }
-    if (which === 'no-env-file') args = args.filter((a) => a !== '--no-env-file')
+    // The flag swapped for Bun's opposite, not removed: the entry keeps its place,
+    // so only the flag assertion itself can make the check red.
+    if (which === 'no-env-file')
+      args = args.map((a) => (a === '--no-env-file' ? '--env-file=.env' : a))
     if (which === 'live-stub')
       writeFileSync(stubs.shell, '#!/bin/sh\nexec /usr/bin/env -0\n', { mode: 0o700 })
     const results = await preBootChecks({ relay, args, env, stubs, log })
@@ -1730,8 +1739,12 @@ if (isMain) {
     log(
       'checks 3 to 5 run after the daemon announces itself and before anything is seeded: the discovery read (step 3b), the inside read through POST /e2e/evaluate (step 3c) and the probe the daemon runs itself (step 3d); the recorder watch runs from the probe to the stop (steps 3e and 7b)'
     )
-    const ok = results.every((c) => c.ok)
-    log(ok ? 'dry run: the three pre-boot checks pass' : 'dry run: a pre-boot check failed')
+    const ok = results.length === 3 && results.every((c) => c.ok)
+    log(
+      ok
+        ? `dry run: the three pre-boot checks pass (${results.length} of 3)`
+        : `dry run: a pre-boot check failed or is missing (${results.filter((c) => c.ok).length} of ${results.length} passed, 3 expected)`
+    )
     if (place.fresh) rmSync(place.folder, { recursive: true, force: true })
     process.exit(ok ? 0 : CHECK_FAILED_EXIT)
   }

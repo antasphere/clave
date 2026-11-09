@@ -9,7 +9,7 @@ Debug and absent from Release; `--prove-red` shows the check fails when the guar
 ## The fixture stack
 
 ```sh
-node apps/mobile-ios/scripts/fixture-stack.mjs [--approve] [--dry-run | --self-check | --once | --prove-tmpdir-guard | --prove-env-guard stray|no-env-file|live-stub | --prove-prerequisites | --prove-inside keys|cache|resolver|args|probe | --prove-recorder-read missing|unreadable | --prove-title-guard recorder|folder]
+node apps/mobile-ios/scripts/fixture-stack.mjs [--approve] [--dry-run | --self-check | --once | --prove-tmpdir-guard | --prove-env-guard stray|no-env-file|live-stub|relay-issuer | --prove-prerequisites | --prove-inside keys|cache|resolver|args|probe | --prove-recorder-read missing|unreadable | --prove-title-guard recorder|folder]
 node apps/mobile-ios/scripts/fixture-check.mjs --udid <simulator udid> [--only <xcodebuild -only-testing value>]
 ```
 
@@ -148,10 +148,10 @@ log and its own two folders.
 
 Proofs that the checks go red, every flag kept so no boot ever runs with wrong flags, and only
 the stack's own files touched: `--prove-tmpdir-guard` starts nothing; `--prove-env-guard
-stray|no-env-file|live-stub` starts nothing and hands the pre-boot checks one thing wrong (a
-stray variable, the daemon's command without `--no-env-file`, a stub shell echoing a live
-environment), expecting exactly that check red and the others green, the key named and never
-its value; `--prove-prerequisites` hands the third check a discovery read saying
+stray|no-env-file|live-stub|relay-issuer` starts nothing and hands the pre-boot checks one thing
+wrong (a stray variable, the daemon's command with `--env-file=.env` in place of `--no-env-file`,
+a stub shell echoing a live environment, a relay command naming the hub as its issuer),
+expecting exactly that check red and the others green, the key named and never its value; `--prove-prerequisites` hands the third check a discovery read saying
 `titles: "on"`; `--prove-inside keys` hands the fourth one stray key in the daemon's
 environment, `--prove-inside cache` a cached login `PATH` without the recorders,
 `--prove-inside resolver` a one-shot that would start another executable and `--prove-inside
