@@ -288,9 +288,12 @@ export async function run(t) {
     const proposed = await askOnWork('Proposed', 'second question')
     const notice = win.locator('[data-chat-ended="limit"]')
     await notice.first().waitFor({ timeout: 10_000 })
+    // The CLI's report reaches the window as a bare flag and the probe here
+    // reports the account open, so the notice names the account and the
+    // report, never "out of usage credits" nor an exit code (PRDCT-4254).
     t.check(
       'the pane names the account that is out, not an exit code',
-      /Work is out of usage credits/.test(await notice.first().textContent()),
+      /^Work is out(,| on )/.test((await notice.first().textContent()) ?? ''),
       await notice.first().textContent()
     )
     const button = win.locator(`[data-chat-continue-on="${accounts.play}"]`)

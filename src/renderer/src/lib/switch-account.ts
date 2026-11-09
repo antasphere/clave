@@ -80,7 +80,11 @@ export function accountForLaunch(
   preferredId?: string,
   model?: string
 ): ClaudeProfile
-export function accountForLaunch(provider: 'codex', preferredId?: string, model?: string): CodexAccount
+export function accountForLaunch(
+  provider: 'codex',
+  preferredId?: string,
+  model?: string
+): CodexAccount
 export function accountForLaunch(
   provider: AccountProvider,
   preferredId?: string,

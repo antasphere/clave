@@ -119,7 +119,12 @@ describe('pickAccount', () => {
   describe('ranks automatic switches by weekly headroom', () => {
     const weekly = (sessionUsed: number | null, weeklyUsed: number): AccountUsageSummary => {
       const session = sessionUsed === null ? [] : [used(sessionUsed).tightest!]
-      const week = { ...used(0).tightest!, key: 'weekly', kind: 'weekly_all', usedPercentage: weeklyUsed }
+      const week = {
+        ...used(0).tightest!,
+        key: 'weekly',
+        kind: 'weekly_all',
+        usedPercentage: weeklyUsed
+      }
       return { ...used(0), tightest: week, windows: [...session, week] }
     }
     const move = (usage: Record<string, AccountUsageSummary>): string =>
@@ -146,8 +151,19 @@ describe('pickAccount', () => {
     })
     it("ranks a session's view by the cap that binds its week: its family's when tighter", () => {
       const fable = (weeklyUsed: number, fableUsed: number): AccountUsageSummary => {
-        const week = { ...used(0).tightest!, key: 'weekly', kind: 'weekly_all', usedPercentage: weeklyUsed }
-        const family = { ...week, key: 'fable', kind: 'weekly_scoped', scope: 'Fable', usedPercentage: fableUsed }
+        const week = {
+          ...used(0).tightest!,
+          key: 'weekly',
+          kind: 'weekly_all',
+          usedPercentage: weeklyUsed
+        }
+        const family = {
+          ...week,
+          key: 'fable',
+          kind: 'weekly_scoped',
+          scope: 'Fable',
+          usedPercentage: fableUsed
+        }
         return { ...used(0), tightest: family, windows: [week, family] }
       }
       // Work has more of its week, Team more of its Fable cap: on Fable, Team.

@@ -97,7 +97,10 @@ describe('the launch picks its account for the model it will run', () => {
   })
   it('lands a launch on Opus on an account whose Fable cap is out, and skips it for Fable', () => {
     const spare = { ...originalProfiles[0], id: 'spare', label: 'Spare', hasToken: true }
-    useClaudeProfileStore.setState({ profiles: [...originalProfiles, spare], selectedProfileId: 'default' })
+    useClaudeProfileStore.setState({
+      profiles: [...originalProfiles, spare],
+      selectedProfileId: 'default'
+    })
     // The selected account: its Fable week spent, 75% of its week left.
     // The spare: open everywhere.
     const open = { ...windows[0], usedPercentage: 10 }
@@ -116,7 +119,10 @@ describe('the launch picks its account for the model it will run', () => {
   })
   it('skips an account whose SHARED cap is out for every model', () => {
     const spare = { ...originalProfiles[0], id: 'spare', label: 'Spare', hasToken: true }
-    useClaudeProfileStore.setState({ profiles: [...originalProfiles, spare], selectedProfileId: 'default' })
+    useClaudeProfileStore.setState({
+      profiles: [...originalProfiles, spare],
+      selectedProfileId: 'default'
+    })
     const spent = { ...windows[0], usedPercentage: 97 }
     const open = { ...windows[0], usedPercentage: 10 }
     useClaudeAccountsUsage.setState({

@@ -2,6 +2,13 @@ import { ArrowsRightLeftIcon, XMarkIcon } from '@heroicons/react/24/outline'
 import { useSessionStore } from '../../store/session-store'
 import { effectiveSwitchMode } from '../../store/account-policy-store'
 import { acceptAccountProposal, dismissAccountProposal } from '../../lib/account-policy'
+import { sessionAccountUsage } from '../../lib/switch-account'
+import {
+  capOutLabel,
+  capStatus,
+  useClaudeAccountsUsage,
+  useCodexAccountsUsage
+} from '../../store/usage-store'
 
 /**
  * The move the policy proposes, in the pane's header (ADR 0002): the account
@@ -17,16 +24,24 @@ export function AccountProposal({ sessionId }: { sessionId: string }): React.JSX
     const session = s.sessions.find((x) => x.id === sessionId)
     return session ? effectiveSwitchMode(session) === 'automatic' : false
   })
+  const session = useSessionStore((s) => s.sessions.find((x) => x.id === sessionId))
+  // Subscribed so a read that lands while the badge is up renames the cap.
+  useClaudeAccountsUsage((s) => s.byAccount)
+  useCodexAccountsUsage((s) => s.byAccount)
   if (!proposal) return null
-  const why = proposal.reason === 'reported' ? 'Limit reached' : 'At limit'
+  // The cap that stops THIS tab, named with its return, from the poll's
+  // read; the CLI's own report reaches the window as a bare flag, so a
+  // report the read does not show yet says only that the tab is out.
+  const stopping = session ? (capStatus(sessionAccountUsage(session))?.stopping ?? null) : null
+  const why = stopping ? capOutLabel(stopping) : 'Out'
   return (
     <span
       className="badge flex items-center gap-1 flex-shrink-0 bg-surface-100"
       data-account-proposal={proposal.accountId}
       title={
         automatic
-          ? `This account is at its limit. The tab moves to ${proposal.label} as soon as the agent is idle.`
-          : `This account is at its limit. Switch the tab to ${proposal.label}; the conversation carries on there.`
+          ? `${why}. The tab moves to ${proposal.label} as soon as the agent is idle.`
+          : `${why}. Switch the tab to ${proposal.label}; the conversation carries on there.`
       }
     >
       <span className="text-status-waiting">{why}</span>

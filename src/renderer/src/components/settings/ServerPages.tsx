@@ -17,8 +17,7 @@ import {
 import { useSessionStore } from '../../store/session-store'
 import { describeClaudeProfileAuth, describeTokenLife } from '../../store/claude-profile-store'
 import { describeCodexAccountAuth } from '../../store/codex-account-store'
-import { headroomLabel, formatAge, useUsageNavigation } from '../../store/usage-store'
-import { isExhausted } from '../../lib/account-pool'
+import { capStatusLine, formatAge, useUsageNavigation } from '../../store/usage-store'
 import { useNow } from '../../lib/use-now'
 import { ClaudeLogo, CodexLogo } from '../icons/cli-logos'
 import { QuotaOverview, ToolToggle, type QuotaProvider, type Tool } from '../usage/UsagePanel'
@@ -169,8 +168,7 @@ function ClaudeRow({
       ? 'Machine login on the server · its own ~/.claude'
       : describeClaudeProfileAuth(account),
     describeTokenLife(account),
-    headroomLabel(summary),
-    isExhausted(summary) ? 'at limit' : null
+    capStatusLine(summary)
   ]
     .filter(Boolean)
     .join(' · ')
@@ -205,8 +203,7 @@ function CodexRow({
     isDefault
       ? `${describeCodexAccountAuth(account)} · the server's own ~/.codex`
       : describeCodexAccountAuth(account),
-    account.kind === 'apiKey' ? 'fallback only' : headroomLabel(summary),
-    account.kind !== 'apiKey' && isExhausted(summary) ? 'at limit' : null
+    account.kind === 'apiKey' ? 'fallback only' : capStatusLine(summary)
   ]
     .filter(Boolean)
     .join(' · ')

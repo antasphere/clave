@@ -14,11 +14,11 @@ import {
 import {
   useClaudeAccountsUsage,
   useCodexAccountsUsage,
-  headroomLabel,
+  capStatus,
   formatReset,
   claudeUsageForModel
 } from '../../store/usage-store'
-import { isExhausted, soonestWeeklyReset } from '../../lib/account-pool'
+import { soonestWeeklyReset } from '../../lib/account-pool'
 import type { Session } from '../../store/session-types'
 import { useNow } from '../../lib/use-now'
 import { AccountUsageBars } from './AccountSwitchMenu'
@@ -47,21 +47,25 @@ export function AccountMenuHeader({
     : describeClaudeProfileAuth(getClaudeProfile(own.removed ? undefined : own.id))
   const claudeSummary = useClaudeAccountsUsage((s) => s.byAccount[own.id])
   const codexSummary = useCodexAccountsUsage((s) => s.byAccount[own.id])
+  // The session's view of its account: the shared caps and its own family's.
   const summary = codex ? codexSummary : claudeUsageForModel(claudeSummary, session.model)
-  const headroom = headroomLabel(summary)
-  const exhausted = isExhausted(summary)
-  // At its limit the question is when it comes back (the stopping cap's
-  // reset); otherwise when its week renews, which is what ranks the pool.
+  const status = capStatus(summary, { now })
+  const exhausted = status?.exhausted === true
+  // Out: the cap that stops this session, named with its return, then what
+  // the account still has for the other models. Open: the headroom, then
+  // when its week renews, which is what ranks the pool.
   const weekly = soonestWeeklyReset(summary)
-  const reset = exhausted
-    ? summary?.tightest
-      ? formatReset(summary.tightest.resetsAt)
-      : null
-    : weekly != null
+  const renews =
+    weekly != null
       ? formatReset(weekly)?.replace(/^resets/, 'week renews')
       : summary?.tightest
         ? formatReset(summary.tightest.resetsAt)
         : null
+  const line2 = status
+    ? exhausted
+      ? [...status.out, status.headroom].filter(Boolean).join(' · ')
+      : [status.headroom, ...status.out, renews].filter(Boolean).join(' · ')
+    : null
   const single = (codex ? codexAccounts : claudeProfiles).length <= 1
   const Logo = codex ? CodexLogo : ClaudeLogo
   const line = (
@@ -79,11 +83,7 @@ export function AccountMenuHeader({
           <span className="text-text-tertiary"> · {own.removed ? 'removed account' : auth}</span>
         </div>
         <div className="text-[11px] text-text-tertiary truncate tabular-nums">
-          {headroom
-            ? [headroom, reset, exhausted ? 'at limit' : null].filter(Boolean).join(' · ')
-            : summary?.status === 'error'
-              ? 'Usage unavailable'
-              : 'Reading usage…'}
+          {line2 ? line2 : summary?.status === 'error' ? 'Usage unavailable' : 'Reading usage…'}
         </div>
       </div>
     </div>

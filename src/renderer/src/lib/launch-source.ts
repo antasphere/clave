@@ -21,7 +21,7 @@ import {
 import { profilesFor, selectedLaunchProfile } from '../store/launch-profile-store'
 import { describeClaudeProfileAuth, useClaudeProfileStore } from '../store/claude-profile-store'
 import { describeCodexAccountAuth, useCodexAccountStore } from '../store/codex-account-store'
-import { headroomLabel, useClaudeAccountsUsage, useCodexAccountsUsage } from '../store/usage-store'
+import { capStatusLine, useClaudeAccountsUsage, useCodexAccountsUsage } from '../store/usage-store'
 import { serverProfilesFor, type ServerSettings } from '../store/server-settings-store'
 
 /** The families whose sessions run on an account of a pool. */
@@ -32,6 +32,8 @@ export interface LaunchAccount {
   id: string
   label: string
   title: string
+  /** The account's shared headroom, then every family that is out
+   *  ("60% left · Overall · Fable out · back in 2d 5h"), or null before a read. */
   headroom: string | null
 }
 
@@ -65,7 +67,7 @@ export function localLaunchSource(workspaceId: string | null): LaunchSource {
           id: account.id,
           label: account.label,
           title: `${account.label} · ${describeClaudeProfileAuth(account)}`,
-          headroom: headroomLabel(usage[account.id])
+          headroom: capStatusLine(usage[account.id])
         }))
       }
       const usage = useCodexAccountsUsage.getState().byAccount
@@ -73,7 +75,7 @@ export function localLaunchSource(workspaceId: string | null): LaunchSource {
         id: account.id,
         label: account.label,
         title: `${account.label} · ${describeCodexAccountAuth(account)}`,
-        headroom: headroomLabel(usage[account.id])
+        headroom: capStatusLine(usage[account.id])
       }))
     },
     selectedAccountId: (family) =>
@@ -99,7 +101,7 @@ export function serverLaunchSource(
       id: account.id,
       label: account.label,
       title: `${account.label} · on ${name}`,
-      headroom: headroomLabel(settings.usage[family][account.id])
+      headroom: capStatusLine(settings.usage[family][account.id])
     }))
   return {
     serverId,

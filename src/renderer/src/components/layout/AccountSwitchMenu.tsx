@@ -6,12 +6,13 @@ import {
   headroomWindow,
   capName,
   capLevel,
+  capStatus,
   formatResetAt,
   formatResetIn,
   claudeUsageForModel,
   type AccountUsageSummary
 } from '../../store/usage-store'
-import { isExhausted, soonestWeeklyReset } from '../../lib/account-pool'
+import { soonestWeeklyReset } from '../../lib/account-pool'
 import { useNow } from '../../lib/use-now'
 import type { SwitchTarget } from '../../lib/switch-account'
 import { UsageColumn } from '../usage/UsageColumn'
@@ -37,16 +38,18 @@ function useTargetSummary(target: SwitchTarget): AccountUsageSummary | undefined
 export function AccountSwitchRow({ target }: { target: SwitchTarget }): ReactElement {
   const now = useNow()
   const summary = useTargetSummary(target)
+  const status = capStatus(summary, { now })
   const w = headroomWindow(summary)
-  const exhausted = isExhausted(summary)
+  const exhausted = status?.exhausted === true
   const level = w ? capLevel(w) : 'normal'
   const left = w ? Math.max(0, Math.round(100 - w.usedPercentage)) : null
   const weekly = formatResetIn(soonestWeeklyReset(summary), now)
-  // An account at its limit is worth knowing about by when it comes back,
-  // which is the reset of the cap that stopped it, not the week's.
-  const back = exhausted ? formatResetIn(summary?.tightest?.resetsAt ?? null, now) : null
-  const detail = back
-    ? `Back ${back}`
+  // An account that is out for this tab is worth knowing about by which cap
+  // stopped it and when that cap comes back ("Fable out · back in 2d 5h"),
+  // never by the week's renewal; the shared headroom beside it says what
+  // the account still has for the other models.
+  const detail = exhausted
+    ? [...(status?.out ?? []), status?.headroom].filter(Boolean).join(' · ')
     : weekly
       ? `Week renews ${weekly}`
       : summary?.status === 'error'
@@ -77,8 +80,10 @@ export function AccountSwitchRow({ target }: { target: SwitchTarget }): ReactEle
       </span>
       {w && left != null && (
         <span className="account-switch-headroom">
-          <span className="account-switch-left">{exhausted ? 'At limit' : `${left}% left`}</span>
-          <span className="account-switch-cap">{capName(w)}</span>
+          <span className="account-switch-left">
+            {status?.stopping ? `${capName(status.stopping)} out` : `${left}% left`}
+          </span>
+          {!status?.stopping && <span className="account-switch-cap">{capName(w)}</span>}
         </span>
       )}
     </span>

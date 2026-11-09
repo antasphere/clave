@@ -50,6 +50,7 @@ import {
 import { ContextMeter } from './TerminalStatus'
 import { WorkCards } from './WorkCards'
 import { AccountChip } from './AccountChip'
+import { useLimitSentence } from './limit-words'
 import { useQuestionHeight } from './question-height'
 import { groupEntries, visibleEntries } from './tools'
 import { ToolDisclosure } from './disclosure'
@@ -1353,7 +1354,8 @@ function EndedNotice({
   const host = useViewSessionStore((s) => s.sessions.find((x) => x.id === sessionId))
   const limit = host?.limitReported === true
   const proposal = host?.accountProposal ?? null
-  const account = host?.claudeProfileLabel ?? host?.codexAccountLabel ?? 'This account'
+  // "Work is out on Fable, back in 2d 5h.": the account, the cap, the return.
+  const sentence = useLimitSentence(host)
   if (host?.restarting) {
     return (
       <div className="chat-notice" role="status" data-chat-ended="moving">
@@ -1364,7 +1366,7 @@ function EndedNotice({
   if (limit && proposal) {
     return (
       <div className="chat-notice" role="status" data-chat-ended="limit">
-        {account} is out of usage credits.{' '}
+        {sentence}{' '}
         <button
           type="button"
           className="chat-notice-action"
@@ -1379,8 +1381,7 @@ function EndedNotice({
   if (limit) {
     return (
       <div className="chat-notice" role="status" data-chat-ended="limit">
-        {account} is out of usage credits, and no other account has headroom. Add one in Settings →
-        Accounts to continue.
+        {sentence} No other account has headroom: add one in Settings → Accounts to continue.
       </div>
     )
   }
