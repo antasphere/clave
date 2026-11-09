@@ -1,0 +1,9 @@
+# Xcode
+xcuserdata/
+*.xcuserstate
+DerivedData/
+build/
+.build/
+.swiftpm/
+*.xcresult
+# the fixture stack writes under /private/tmp/clave-native-a, never here
