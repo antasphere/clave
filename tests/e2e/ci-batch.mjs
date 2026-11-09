@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Five hosted jobs each run one global shard on an isolated Mac. Only the aggregate
+// Four hosted jobs each run one global shard on an isolated Mac. Only the aggregate
 // can claim the full inventory; this process proves its own workers completed.
 import { spawn, execFile } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
@@ -23,12 +23,12 @@ import { mergeReports } from './merge-reports.mjs'
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const [host, reportOption, ...extra] = process.argv.slice(2)
 if (
-  !/^[1-5]\/5$/.test(host || '') ||
+  !/^[1-4]\/4$/.test(host || '') ||
   !reportOption?.startsWith('--report-dir=') ||
   !reportOption.slice(13) ||
   extra.length
 )
-  throw new Error('Usage: ci-batch.mjs 1/5|2/5|3/5|4/5|5/5 --report-dir=EMPTY_DIRECTORY')
+  throw new Error('Usage: ci-batch.mjs 1/4|2/4|3/4|4/4 --report-dir=EMPTY_DIRECTORY')
 const hostIndex = Number(host[0])
 const indices = [hostIndex]
 const directory = path.resolve(reportOption.slice(13))
@@ -57,7 +57,7 @@ for (const signal of ['SIGINT', 'SIGTERM'])
 const execute = promisify(execFile)
 const resources = {
   host: hostIndex,
-  globalShards: 5,
+  globalShards: 4,
   workers: 1,
   namespace,
   logicalCpus: availableParallelism(),
@@ -127,7 +127,7 @@ timer.unref()
 const waits = []
 let complete = false
 console.log(
-  `Hosted batch ${host}: shards ${indices.join(',')}/5, maximum 1 worker; reports: ${directory}`
+  `Hosted batch ${host}: shards ${indices.join(',')}/4, maximum 1 worker; reports: ${directory}`
 )
 try {
   // A cancellation may arrive during the asynchronous startup resource probe.
@@ -141,7 +141,7 @@ try {
         [
           path.join(HERE, 'run.mjs'),
           '--shard',
-          `${index}/5`,
+          `${index}/4`,
           '--report',
           path.join(directory, `shard-${index}.json`)
         ],
@@ -175,13 +175,13 @@ try {
     throw new Error(`A worker did not complete: ${JSON.stringify(resources.workerOutcomes)}`)
   for (const { index, code } of resources.workerOutcomes) {
     const report = JSON.parse(readFileSync(path.join(directory, `shard-${index}.json`), 'utf8'))
-    if (report.shard?.index !== index || report.shard.total !== 5 || report.exitCode !== code)
+    if (report.shard?.index !== index || report.shard.total !== 4 || report.exitCode !== code)
       throw new Error(`Worker ${index} status disagrees with its report`)
     // Validate this fragment against its independently computed global selection.
-    // Only the in-memory validation view is 1/1; the artifact stays index/5.
-    const expected = selectShard(specs, { index, total: 5 })
+    // Only the in-memory validation view is 1/1; the artifact stays index/4.
+    const expected = selectShard(specs, { index, total: 4 })
     const merged = mergeReports([{ ...report, shard: { index: 1, total: 1 } }], expected, 1)
-    console.log(`Shard ${index}/5: ${merged.specs} specs; ${JSON.stringify(merged.totals)}`)
+    console.log(`Shard ${index}/4: ${merged.specs} specs; ${JSON.stringify(merged.totals)}`)
     for (const failed of merged.failedChecks)
       console.log(`  ${failed.kind.toUpperCase()} ${failed.spec}: ${failed.name}`)
   }

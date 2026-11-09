@@ -39,13 +39,17 @@ describe('registry failure observation before fixture healing', () => {
   })
   it('fails closed at ten seconds if no failure is observed', async () => {
     let error = null
-    const completion = waitForRegistryFailure(observer()).catch((e) => {
+    const fixture = observer()
+    const completion = waitForRegistryFailure(fixture).catch((e) => {
       error = e
     })
     await vi.advanceTimersByTimeAsync(9999)
     expect(error).toBeNull()
+    const readsBeforeExpiry = fixture.evaluate.mock.calls.length
     await vi.advanceTimersByTimeAsync(1)
     await completion
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(fixture.evaluate).toHaveBeenCalledTimes(readsBeforeExpiry)
     expect(error.message).toBe(
       'Registry fixture did not observe its injected failure within 10000 ms'
     )
@@ -137,4 +141,116 @@ it('awaits the observed failure before healing the registry fixture', () => {
   visit(source)
   expect(observations).toBe(1)
   expect(ordered).toBe(true)
+})
+
+it('observes a pending failure at the next 100 ms poll', async () => {
+  const fixture = observer()
+  let observed = false
+  const completion = waitForRegistryFailure(fixture).then(() => {
+    observed = true
+  })
+  await vi.advanceTimersByTimeAsync(99)
+  expect(observed).toBe(false)
+  expect(fixture.evaluate).toHaveBeenCalledOnce()
+  globalThis.__registryFailures = 1
+  await vi.advanceTimersByTimeAsync(1)
+  expect(observed).toBe(true)
+  await completion
+  expect(fixture.evaluate).toHaveBeenCalledTimes(2)
+  expect(vi.getTimerCount()).toBe(0)
+})
+
+const AsyncFunction = Object.getPrototypeOf(async () => undefined).constructor
+function recoveryAssertions() {
+  const file = new URL('../chat-registry-retry.spec.mjs', import.meta.url)
+  const text = readFileSync(file, 'utf8')
+  const source = ts.createSourceFile(
+    file.pathname,
+    text,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.JS
+  )
+  const run = source.statements.find(
+    (node) => ts.isFunctionDeclaration(node) && node.name?.text === 'run'
+  )
+  const block = run.body.statements.find(ts.isTryStatement).tryBlock
+  const first = block.statements.findIndex((node) =>
+    node
+      .getText(source)
+      .includes('an existing blank event tab recovers after a transient registry failure')
+  )
+  const last = block.statements.findIndex((node) =>
+    node
+      .getText(source)
+      .includes('a failed registry read recovers its existing tab and reply without another event')
+  )
+  expect(first).toBeGreaterThanOrEqual(0)
+  expect(last).toBeGreaterThan(first)
+  return new AsyncFunction(
+    'assert',
+    't',
+    'win',
+    'until',
+    'record',
+    block.statements
+      .slice(first, last + 1)
+      .map((node) => node.getText(source))
+      .join('\n')
+  )
+}
+
+async function exerciseRecovery({
+  recovered = true,
+  textareas = 2,
+  reply = 'registry recovered without another action'
+} = {}) {
+  const { default: assert } = await import('node:assert/strict')
+  const checks = []
+  const pane = {
+    locator: (selector) =>
+      selector === 'textarea'
+        ? { fill: async () => {}, press: async () => {} }
+        : { waitFor: async () => {}, innerText: async () => reply }
+  }
+  const win = {
+    locator: (selector) => {
+      if (selector === '.xterm') return { count: async () => (recovered ? 0 : 1) }
+      if (selector === '[data-testid="chat-view"] textarea') return { count: async () => textareas }
+      return pane
+    },
+    evaluate: async () => [
+      { id: 'existing', adapterId: 'echo' },
+      { id: 'added', adapterId: 'echo' }
+    ]
+  }
+  const until = async (read, options) => {
+    expect(options.tries).toBeGreaterThan(0)
+    expect(options.gapMs).toBeGreaterThan(0)
+    expect(options.tries * options.gapMs).toBeLessThanOrEqual(4000)
+    return read()
+  }
+  await recoveryAssertions()(assert, { check: (...args) => checks.push(args) }, win, until, {
+    id: 'existing'
+  })
+  return checks
+}
+
+describe('registry recovery assertions execute the real caller tail', () => {
+  it('records success only after the existing tab and reply recover', async () => {
+    await expect(exerciseRecovery()).resolves.toEqual([
+      ['a failed registry read recovers its existing tab and reply without another event', true]
+    ])
+  })
+  it('refuses a tab that never recovers', async () => {
+    await expect(exerciseRecovery({ recovered: false })).rejects.toThrow(
+      'an existing blank event tab recovers'
+    )
+  })
+  it('refuses a missing textarea', async () => {
+    await expect(exerciseRecovery({ textareas: 1 })).rejects.toThrow()
+  })
+  it('refuses a reply without the submitted text', async () => {
+    await expect(exerciseRecovery({ reply: 'different reply' })).rejects.toThrow()
+  })
 })
