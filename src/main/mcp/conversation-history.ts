@@ -18,6 +18,8 @@
  */
 import type { Session, SessionRecord } from '@clave/contract/sessions'
 import type { HistoryListEntry } from '../session-history/service'
+import type { LedgerLaunch } from '../session-history/ledger'
+import { runtimeChoices } from '../../shared/runtime-choices'
 
 export interface HistoryLookups {
   /** The History dialog's rows: the ledger's conversations and the stores' transcripts. */
@@ -49,6 +51,10 @@ export interface HistoryRow {
   /** The tab that holds this conversation, when one does: alive while its
    *  process runs, stopped otherwise (Resume brings it back). */
   open: { sessionId: string; alive: boolean } | null
+  /** What it was last launched on, as the ledger remembers (PRDCT-4236):
+   *  bypass, the mode and the effort it ran at, the account. A resume
+   *  defaults to it. Absent when the ledger never saw it launched. */
+  launch?: LedgerLaunch
 }
 
 export interface HistoryFilter {
@@ -159,7 +165,8 @@ export async function listConversations(
         lastActivity: e.lastHumanAt,
         transcriptExists: e.transcript.exists,
         resumable: RESUMABLE.has(e.provider) && e.transcript.exists && !!e.cwd,
-        open
+        open,
+        ...(e.launch ? { launch: e.launch } : {})
       }
     })
     .filter((r) => filter.open !== true || r.open !== null)
@@ -187,6 +194,8 @@ export type ResumePlan =
       /** A Pi conversation's provider and thinking level, as the History knows them. */
       piProvider: string | null
       piThinking: string | null
+      /** What it was last launched on, as the ledger remembers (PRDCT-4236). */
+      launch: LedgerLaunch | null
     }
 
 export class ResumeRefused extends Error {}
@@ -237,7 +246,8 @@ export async function planResume(
     model: entry.model ?? null,
     workspaceId: entry.workspaceId,
     piProvider: entry.agentProvider ?? null,
-    piThinking: entry.thinking ?? null
+    piThinking: entry.thinking ?? null,
+    launch: entry.launch ?? null
   }
 }
 
@@ -252,6 +262,50 @@ export interface ResumeOpenIo {
   /** Shows the tab, as the dialog shows the one it found; a failure here
    *  never undoes the answer. */
   focus(sessionId: string): Promise<void>
+  /** Whether an account id still exists on this Mac, so a remembered
+   *  account is named only when the open can run on it (PRDCT-4236). */
+  isKnownAccount(provider: 'claude' | 'codex', id: string): boolean
+}
+
+/**
+ * The launch a resume defaults to (PRDCT-4236): what the ledger remembers,
+ * under the Resume's own rule (`runtimeChoices`), the caller's every value
+ * winning. A caller's `dangerous` decides bypass, and then no remembered
+ * mode is passed; a caller's `permissionMode` likewise stands alone. An
+ * account is named only when it still exists, else the pool picks, as
+ * before. Claude takes the mode; Claude and Codex take bypass, the effort and
+ * the account; Pi takes none of them.
+ */
+export function resumeLaunchDefaults(
+  plan: { provider: 'claude' | 'codex' | 'pi'; launch: LedgerLaunch | null },
+  p: Record<string, unknown>,
+  isKnownAccount: ResumeOpenIo['isKnownAccount']
+): Record<string, unknown> {
+  const launch = plan.launch
+  if (!launch || plan.provider === 'pi') return {}
+  const callerChoseMode = p.dangerous !== undefined || p.permissionMode !== undefined
+  const choices = runtimeChoices({
+    dangerousMode: launch.dangerous === true,
+    permissionMode: launch.permissionMode,
+    effort: launch.effort
+  })
+  const out: Record<string, unknown> = {}
+  if (!callerChoseMode) {
+    if (launch.dangerous !== undefined || launch.permissionMode !== undefined)
+      out.dangerous = choices.dangerousMode
+    if (plan.provider === 'claude' && choices.permissionMode) {
+      out.permissionMode = choices.permissionMode
+      if (choices.allowDangerous) out.allowDangerous = true
+    }
+  }
+  if (p.effort === undefined && choices.effort) out.effort = choices.effort
+  if (
+    p.account === undefined &&
+    launch.accountId &&
+    isKnownAccount(plan.provider, launch.accountId)
+  )
+    out.account = launch.accountId
+  return out
 }
 
 /**
@@ -327,6 +381,7 @@ export async function openResumed(
       ...(p.name === undefined ? { name: plan.title } : {}),
       ...workspace,
       ...pi,
+      ...resumeLaunchDefaults(plan, p, io.isKnownAccount),
       resumeSessionId: resume
     }
   }

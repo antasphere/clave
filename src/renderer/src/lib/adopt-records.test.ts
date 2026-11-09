@@ -714,3 +714,42 @@ describe('the work a record carries', () => {
     expect(workOf('opened')).toEqual(work)
   })
 })
+
+/**
+ * PRDCT-4236: the boot restore brings a chat back in the mode and at the
+ * effort it was RUNNING in, the Resume's own rule (`runtimeChoices`), not
+ * only on its launch flag.
+ */
+describe('the restore spawn keeps the record’s live mode and effort', () => {
+  const spawnOf = async (over: Partial<SessionRecord>): Promise<Record<string, unknown>> => {
+    const { attached } = placeRecords([{ ...record('r'), ...over } as SessionRecord], null)
+    await flush()
+    const options = spawnOptions.get('r') ?? {}
+    for (const answer of [...pending.values()]) answer(true)
+    await attached
+    return options
+  }
+
+  it('a mode short of bypass is passed as the mode, bypass kept reachable when it was launched with it', async () => {
+    const options = await spawnOf({ dangerousMode: true, permissionMode: 'plan', effort: 'high' })
+    expect(options).toMatchObject({
+      dangerousMode: false,
+      permissionMode: 'plan',
+      allowDangerous: true,
+      effort: 'high'
+    })
+  })
+
+  it('a reported bypass is the dangerous flag, no mode passed', async () => {
+    const options = await spawnOf({ dangerousMode: false, permissionMode: 'bypassPermissions' })
+    expect(options).toMatchObject({ dangerousMode: true })
+    expect(options).not.toHaveProperty('permissionMode')
+    expect(options).not.toHaveProperty('effort')
+  })
+
+  it('a record with no reported mode keeps its launch flag', async () => {
+    const options = await spawnOf({ dangerousMode: true })
+    expect(options).toMatchObject({ dangerousMode: true })
+    expect(options).not.toHaveProperty('allowDangerous')
+  })
+})

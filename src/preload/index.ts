@@ -1238,6 +1238,11 @@ const electronAPI = {
         configDir?: string
         claudeProfileId?: string
         claudeProfileLabel?: string
+        codexAccountId?: string
+        codexAccountLabel?: string
+        permissionMode?: 'default' | 'acceptEdits' | 'plan' | 'auto' | 'dontAsk'
+        effort?: string
+        allowDangerous?: boolean
         workspaceId?: string
         link?:
           | { kind: 'group-terminal'; groupId: string; terminalId: string }

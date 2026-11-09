@@ -56,6 +56,11 @@
  * it without `mode` errors or spawns no Codex tab on the thread, or a
  * mismatched `mode` is not refused.
  *
+ * - the History remembers what a conversation was launched on (PRDCT-4236):
+ *   reopened with `dangerous: true` and closed, its row carries
+ *   `launch.dangerous`, and a resume naming no `dangerous` starts it in
+ *   bypass again.
+ *
  * Nothing here reaches Anthropic or OpenAI: `claude` and `codex` on PATH are
  * stand-ins that log their argv and wait; CLAVE_TRANSCRIPTS_ROOT, CLAVE_CODEX_ROOT and CLAVE_PI_ROOT
  * point the History at fixture folders, never at the person's own stores.
@@ -427,6 +432,52 @@ export async function run(t) {
     t.check('the spawn carries the thread to resume', !!codexSpawn, await codexSpawns())
     t.equal('as a Codex tab', codexSpawn?.codexMode, true)
     t.equal('in the thread’s own directory', codexSpawn?.cwd, ROOT)
+
+    // ── i. The History remembers the launch, and a resume defaults to it ──
+    // Romain: "If I launched in Yolo … it gets back to that on relaunch,
+    // from the History as well." The conversation's tab is closed, reopened
+    // with dangerous, closed again; the History's row then says it ran in
+    // bypass, and a resume naming nothing starts it in bypass.
+    const closeAndWait = async (id) => {
+      const closed = await client.call('clave_close_session', { sessionId: id })
+      t.check('the tab closes', !toolErrored(closed), textOf(closed))
+      return until(
+        async () => {
+          const r = rowsOf(toolPayload(await client.call('clave_history', {})))
+          return r.length === 1 && r[0].open === null ? r[0] : null
+        },
+        { tries: 60 }
+      )
+    }
+    const released = await closeAndWait(tab)
+    t.check('once closed, no tab holds the conversation', !!released, released)
+    const yoloSpawns = spawnJournal(DIR)
+    const yolo = await client.call('clave_open_session', {
+      resume: CONVERSATION,
+      chat: false,
+      dangerous: true
+    })
+    t.check('a resume with dangerous answers', !toolErrored(yolo), textOf(yolo))
+    const yoloTab = toolPayload(yolo)?.sessionId
+    t.check('as a new tab', typeof yoloTab === 'string' && yoloTab !== tab, toolPayload(yolo))
+    const yoloDrawn = await until(async () => ((await rowCount(win, yoloTab)) === 1 ? true : null))
+    t.check('the bypass tab has its sidebar row', yoloDrawn === true)
+    const yoloSpawn = await until(async () =>
+      (await yoloSpawns()).find((s) => s.resumeSessionId === CONVERSATION)
+    )
+    t.equal('its spawn ran in bypass', yoloSpawn?.dangerousMode, true)
+    const remembered = await closeAndWait(yoloTab)
+    t.check('closed, the History row is free again', !!remembered, remembered)
+    t.equal('and remembers the launch in bypass', remembered?.launch?.dangerous, true)
+
+    const relaunchSpawns = spawnJournal(DIR)
+    const plain = await client.call('clave_open_session', { resume: CONVERSATION, chat: false })
+    t.check('a resume naming no dangerous answers', !toolErrored(plain), textOf(plain))
+    const relaunchSpawn = await until(async () =>
+      (await relaunchSpawns()).find((s) => s.resumeSessionId === CONVERSATION)
+    )
+    t.check('its spawn resumes the conversation', !!relaunchSpawn, await relaunchSpawns())
+    t.equal('in bypass, as it was last launched', relaunchSpawn?.dangerousMode, true)
   } finally {
     if (app) await app.close()
     // Only the stand-ins this spec started are ours to kill, by PID.

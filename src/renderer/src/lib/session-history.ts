@@ -1,7 +1,9 @@
 import { isRemoteKey, ownerOf } from './fleet-identity'
 import { useSessionStore, inActiveWorkspace } from '../store/session-store'
 import { getActiveWorkspaceId } from '../store/workspace-store'
-import { SessionHistoryDiff, resumeTargetGroup } from './session-history-diff'
+import { SessionHistoryDiff, historyResumeLaunch, resumeTargetGroup } from './session-history-diff'
+import { useClaudeProfileStore } from '../store/claude-profile-store'
+import { useCodexAccountStore } from '../store/codex-account-store'
 import type { HistoryListEntry, HistoryLedgerRow } from '../../../preload/index.d'
 
 /**
@@ -39,6 +41,15 @@ export function startSessionHistoryStamping(): void {
       return
     diff?.apply(state)
   })
+}
+
+/** An account's current label when it still exists on this Mac, else null. */
+function knownAccountLabel(provider: 'claude' | 'codex', id: string): string | null {
+  const list =
+    provider === 'claude'
+      ? useClaudeProfileStore.getState().profiles
+      : useCodexAccountStore.getState().accounts
+  return list.find((a) => a.id === id)?.label ?? null
 }
 
 /**
@@ -83,10 +94,12 @@ export async function resumeHistoryEntry(
         ? window.electronAPI.spawnSession
         : (cwd: string, options: Parameters<typeof window.electronAPI.spawnSession>[1]) =>
             window.electronAPI.fleetStart(owner, cwd, options)
+    // What it was launched on (PRDCT-4236): bypass, mode, effort, account.
+    const launch = historyResumeLaunch(entry, options.dangerousMode, knownAccountLabel)
     const info = await start(entry.cwd, {
       claudeMode: entry.provider === 'claude',
       piMode: entry.provider === 'pi',
-      dangerousMode: entry.provider === 'claude' && options.dangerousMode,
+      ...launch,
       model: entry.model ?? undefined,
       piProvider: entry.provider === 'pi' ? (entry.agentProvider ?? undefined) : undefined,
       piThinking: entry.provider === 'pi' ? (entry.thinking ?? undefined) : undefined,
@@ -110,8 +123,10 @@ export async function resumeHistoryEntry(
         antigravityMode: false,
         codexMode: false,
         piMode: entry.provider === 'pi',
-        dangerousMode: entry.provider === 'claude' && options.dangerousMode,
+        dangerousMode: launch.dangerousMode,
         model: info.model,
+        claudeProfileId: launch.claudeProfileId,
+        claudeProfileLabel: launch.claudeProfileLabel,
         workspaceId,
         claudeSessionId: info.claudeSessionId,
         piSessionId: info.piSessionId,

@@ -632,6 +632,9 @@ async function prepareResume(
     return await openResumed(historyLookups(api), p, callerSessionId, {
       isDirectory,
       isRegisteredWorkspace: (id) => workspaceManager.isRegistered(id),
+      isKnownAccount: (provider, id) =>
+        (provider === 'claude' ? claudeAccountsManager.get(id) : codexAccountsManager.get(id)) !==
+        undefined,
       restart: async (id) => {
         const restarted = await api.sessions.restart(id, {}, false, undefined, true)
         return { resumed: restarted.resumed }
@@ -881,7 +884,7 @@ function buildServer(callerSessionId: string | undefined): McpServer {
           .max(200)
           .optional()
           .describe(
-            "Reopen a PAST conversation by its id (a Claude session id, a Codex thread id or a Pi session id, as clave_history lists them): the new tab continues that conversation. Combines with chat (the chat view), dangerous, profile, model, account, groupId, workspace and name; mode, cwd, model and name default to the conversation's own. If a tab already runs the conversation it is focused and answered (alreadyOpen: true) and nothing is started; a stopped tab that still holds it is resumed in place. Errors when the transcript is gone or names no working directory."
+            "Reopen a PAST conversation by its id (a Claude session id, a Codex thread id or a Pi session id, as clave_history lists them): the new tab continues that conversation. Combines with chat (the chat view), dangerous, profile, model, account, permissionMode, effort, groupId, workspace and name; mode, cwd, model and name default to the conversation's own, and dangerous, permissionMode, effort and account to what it was last launched on (clave_history's launch). If a tab already runs the conversation it is focused and answered (alreadyOpen: true) and nothing is started; a stopped tab that still holds it is resumed in place. Errors when the transcript is gone or names no working directory."
           ),
         mode: z
           // 'gemini' is kept as a deprecated alias (the Gemini CLI was retired
@@ -931,6 +934,19 @@ function buildServer(callerSessionId: string | undefined): McpServer {
           .optional()
           .describe(
             'Account (subscription) the new tab runs on: an account id or its exact name as set in Settings → Accounts ("default" is the machine login), or "any" for whichever account of the pool has headroom. claude and codex modes only. Omit to follow Settings → Accounts: the selected account, or the recommended account when enabled, moved along the pool when exhausted. Unknown names error with the list. clave_list reports each session\'s account.'
+          ),
+        permissionMode: z
+          .enum(['default', 'acceptEdits', 'plan', 'auto', 'dontAsk'])
+          .optional()
+          .describe(
+            'The mode a Claude agent asks permission under, short of bypass (bypass is dangerous). claude mode only; ignored with dangerous: true. With resume, defaults to the mode the conversation last ran in.'
+          ),
+        effort: z
+          .string()
+          .regex(/^[a-z][a-z0-9_-]{0,31}$/)
+          .optional()
+          .describe(
+            'The reasoning effort the agent starts at ("low", "medium", "high", "xhigh", "max"). claude and codex chats. With resume, defaults to the effort the conversation last ran at.'
           ),
         provider: z.string().min(1).max(200).optional().describe('Pi provider id. Pi mode only.'),
         thinking: z

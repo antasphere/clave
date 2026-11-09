@@ -148,6 +148,31 @@ describe('clave_open_session on the window road', () => {
     await openSessionProgrammatically({ cwd: '/repo', mode: 'claude' })
     expect(spawned()).not.toHaveProperty('resumeSessionId')
   })
+  it('forwards the permission mode and the effort to the spawn; bypass is the flag (PRDCT-4236)', async () => {
+    await openSessionProgrammatically({
+      cwd: '/repo',
+      mode: 'claude',
+      permissionMode: 'acceptEdits',
+      allowDangerous: true,
+      effort: 'max'
+    })
+    expect(spawned()).toMatchObject({
+      permissionMode: 'acceptEdits',
+      allowDangerous: true,
+      effort: 'max',
+      dangerousMode: false
+    })
+    await openSessionProgrammatically({
+      cwd: '/repo',
+      mode: 'claude',
+      dangerous: true,
+      permissionMode: 'plan',
+      effort: 'Bad Effort'
+    })
+    expect(spawned()).toMatchObject({ dangerousMode: true })
+    expect(spawned()).not.toHaveProperty('permissionMode')
+    expect(spawned()).not.toHaveProperty('effort')
+  })
   it('refuses a terminal profile beside chat, and leaves a terminal open untouched by the chat rule', async () => {
     useLaunchProfileStore.setState({
       preferences: preferences({ globalDefaults: { codex: 'yolo' } }),

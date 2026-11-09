@@ -4,8 +4,23 @@ import {
   getConversation,
   listHistory,
   searchHistory,
-  stampHistory
+  stampHistory,
+  type StampRecordSource
 } from '../session-history/service'
+import { ptyManager } from '../pty-manager'
+import { isServerExternal } from '../server/endpoint'
+import { serverClient } from '../mcp/server-client'
+
+/** The session's record for a ledger row's launch (PRDCT-4236): main's own,
+ *  else, when the sessions live on a server of their own, the server's. */
+const stampRecords: StampRecordSource = {
+  local: (sessionId) => ptyManager.getSessionRecord(sessionId),
+  remote: async (sessionId) => {
+    if (!isServerExternal()) return null
+    const records = await (await serverClient.api()).sessions.listAdoptable([sessionId])
+    return records.find((r) => r.id === sessionId) ?? null
+  }
+}
 
 /** Session-history IPC (PRDCT-1738). `history:stamp` is fire-and-forget
  *  (`send`, not `invoke`): the renderer writes a ledger row whenever a tab's
@@ -15,7 +30,7 @@ import {
  *  totals; `history:search-cancel` aborts between lines. */
 export function registerHistoryHandlers(): void {
   ipcMain.on('history:stamp', (_event, row: unknown) => {
-    stampHistory(row)
+    void stampHistory(row, stampRecords)
   })
   ipcMain.handle('history:list', () => listHistory())
   // The message trail's read: a live tab's conversation as turns.

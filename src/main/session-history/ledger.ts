@@ -50,7 +50,23 @@ export interface LedgerRow {
   workspaceId: string | null
   groupId: string | null
   groupName: string | null
+  /** What the conversation was LAUNCHED on (PRDCT-4236), so a reopen from
+   *  the History comes back the same way: bypass, the mode it ran under
+   *  short of bypass, its effort, the account it ran on. Every field
+   *  optional: older rows carry none, and a row that does not know one
+   *  leaves the earlier row's value standing (`foldHistory`). */
+  dangerous?: boolean
+  permissionMode?: string
+  effort?: string
+  accountId?: string
+  accountLabel?: string
 }
+
+/** The launch fields of a row, as the fold keeps them on an entry. */
+export type LedgerLaunch = Pick<
+  LedgerRow,
+  'dangerous' | 'permissionMode' | 'effort' | 'accountId' | 'accountLabel'
+>
 
 const KINDS: ReadonlySet<string> = new Set<LedgerKind>(['placed', 'closed'])
 const MODES: ReadonlySet<string> = new Set([
@@ -71,6 +87,25 @@ function str(v: unknown): string | null {
 const CLAUDE_SESSION_ID = /^[A-Za-z0-9_-]{1,128}$/
 const NAME_MAX = 512
 const CWD_MAX = 4096
+/** A mode or a level as a provider spells it (`shared/runtime-choices.ts`). */
+const TOKEN = /^[A-Za-z][A-Za-z0-9_-]{0,31}$/
+const ACCOUNT_ID_MAX = 128
+const ACCOUNT_LABEL_MAX = 256
+
+/** The launch fields of an untrusted row, each kept only when well-formed. */
+function launchOf(r: Record<string, unknown>): LedgerLaunch {
+  const out: LedgerLaunch = {}
+  if (typeof r.dangerous === 'boolean') out.dangerous = r.dangerous
+  const mode = str(r.permissionMode)
+  if (mode && TOKEN.test(mode)) out.permissionMode = mode
+  const effort = str(r.effort)
+  if (effort && TOKEN.test(effort)) out.effort = effort
+  const accountId = str(r.accountId)
+  if (accountId && accountId.length <= ACCOUNT_ID_MAX) out.accountId = accountId
+  const accountLabel = str(r.accountLabel)
+  if (accountLabel) out.accountLabel = accountLabel.slice(0, ACCOUNT_LABEL_MAX)
+  return out
+}
 
 /** Re-pick a row field by field: it crosses the IPC boundary from the
  *  renderer and must not smuggle extra keys — or the wrong shapes — into the
@@ -102,7 +137,8 @@ export function normalizeLedgerRow(input: unknown): LedgerRow | null {
     model: str(r.model),
     workspaceId: str(r.workspaceId),
     groupId: str(r.groupId),
-    groupName: str(r.groupName)
+    groupName: str(r.groupName),
+    ...launchOf(r)
   }
 }
 

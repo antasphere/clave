@@ -1,6 +1,7 @@
 import type { Session, SessionGroup } from '../store/session-types'
 import { sessionMode, groupOfSession } from './exchange-capture'
-import type { HistoryLedgerRow } from '../../../preload/index.d'
+import type { HistoryLedgerRow, HistoryListEntry } from '../../../preload/index.d'
+import { runtimeChoices, type RuntimeChoices } from '../../../shared/runtime-choices'
 import { entryInGroup, type GroupRef } from '../../../shared/history-group-match'
 import { encodeProjectDir } from '../../../shared/project-dir'
 
@@ -90,8 +91,21 @@ function identityRow(s: Session, group: SessionGroup | undefined, ts: string): H
     model: s.model ?? null,
     workspaceId: s.workspaceId ?? null,
     groupId: group?.id ?? null,
-    groupName: group?.name ?? null
+    groupName: group?.name ?? null,
+    // What it was launched on (PRDCT-4236), so a reopen from the History
+    // comes back the same way; main adds the mode and the effort.
+    dangerous: s.dangerousMode === true,
+    ...accountOf(s)
   }
+}
+
+/** The account a tab runs on: its Codex account for a Codex tab, its Claude
+ *  account otherwise; nothing when it names none (the pool's pick). */
+function accountOf(s: Session): { accountId?: string; accountLabel?: string } {
+  const id = s.codexMode ? s.codexAccountId : s.claudeProfileId
+  const label = s.codexMode ? s.codexAccountLabel : s.claudeProfileLabel
+  if (!id) return {}
+  return { accountId: id, ...(label ? { accountLabel: label } : {}) }
 }
 
 /** The placement identity as one string. NUL-separated (as an escape, never
@@ -103,8 +117,58 @@ function keyOf(r: HistoryLedgerRow): string {
     r.groupName ?? '',
     r.name,
     r.claudeSessionId ?? '',
-    r.workspaceId ?? ''
+    r.workspaceId ?? '',
+    // A switch of account or of bypass is a new launch to remember.
+    r.dangerous ? '1' : '0',
+    r.accountId ?? ''
   ].join('\u0000')
+}
+
+/** The spawn fields of a reopen from the History (PRDCT-4236): the launch the
+ *  ledger remembers, under the Resume's own rule (`runtimeChoices`). The
+ *  person's explicit "skip permissions" wins over a launch without bypass,
+ *  and then no mode short of bypass is passed. The account is named only
+ *  when it still exists (`accountExists` answers with its current label);
+ *  an unknown one falls back to the pool. Claude only: the History resumes
+ *  nothing else that takes these flags. */
+export function historyResumeLaunch(
+  entry: Pick<HistoryListEntry, 'provider' | 'model' | 'launch'>,
+  dangerousMode: boolean,
+  accountLabel: (provider: 'claude' | 'codex', id: string) => string | null
+): Pick<RuntimeChoices, 'dangerousMode' | 'permissionMode' | 'allowDangerous' | 'effort'> & {
+  claudeProfileId?: string
+  claudeProfileLabel?: string
+  codexAccountId?: string
+  codexAccountLabel?: string
+} {
+  if (entry.provider !== 'claude' && entry.provider !== 'codex') return { dangerousMode: false }
+  const launch = entry.launch ?? {}
+  // Asked for bypass: the remembered mode short of it is not passed.
+  const choices: RuntimeChoices = runtimeChoices({
+    dangerousMode: dangerousMode || launch.dangerous === true,
+    permissionMode: dangerousMode ? undefined : launch.permissionMode,
+    effort: launch.effort
+  })
+  const out: ReturnType<typeof historyResumeLaunch> = {
+    dangerousMode: entry.provider === 'claude' && choices.dangerousMode
+  }
+  if (entry.provider === 'claude') {
+    if (choices.permissionMode) out.permissionMode = choices.permissionMode
+    if (choices.allowDangerous) out.allowDangerous = true
+  }
+  if (choices.effort) out.effort = choices.effort
+  const id = launch.accountId
+  const label = id ? accountLabel(entry.provider, id) : null
+  if (id && label !== null) {
+    if (entry.provider === 'claude') {
+      out.claudeProfileId = id
+      out.claudeProfileLabel = label
+    } else {
+      out.codexAccountId = id
+      out.codexAccountLabel = label
+    }
+  }
+  return out
 }
 
 /** Where a resumed conversation lands: the group the dialog was filtered to

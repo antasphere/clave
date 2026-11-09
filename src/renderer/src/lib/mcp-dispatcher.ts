@@ -1,4 +1,5 @@
 import { workspaceForPath } from '../../../shared/workspace-types'
+import { spawnEffort, spawnPermissionMode } from '../../../shared/runtime-choices'
 import { LOCAL_SERVER_ID } from '@clave/contract/fleet'
 import { useFleetStore } from '../store/fleet-store'
 import { allWorkspaces } from '../store/workspace-store'
@@ -455,6 +456,12 @@ export async function openSessionProgrammatically(payload: {
   /** A past conversation reopened (PRDCT-4236): the History's id, resolved
    *  by main before the call, for the spawn's resume. */
   resumeSessionId?: string
+  /** The mode a Claude agent asks under short of bypass, and the effort to
+   *  start at: the caller's, or what a resumed conversation last ran on. */
+  permissionMode?: string
+  effort?: string
+  /** Bypass kept reachable to a conversation resumed in another mode. */
+  allowDangerous?: boolean
 }): Promise<unknown> {
   const state = useSessionStore.getState()
   const spawnedBy = payload.attachToParent === true ? payload.callerSessionId : undefined
@@ -541,6 +548,8 @@ export async function openSessionProgrammatically(payload: {
     ...(claudeProfile ? claudeProfileSpawnFields(claudeProfile) : {}),
     ...(codexAccount ? codexAccountSpawnFields(codexAccount) : {})
   }
+  const permissionMode = spawnPermissionMode(payload.permissionMode)
+  const effort = spawnEffort(payload.effort)
   const info = await window.electronAPI.spawnSession(payload.cwd, {
     claudeMode,
     antigravityMode,
@@ -551,6 +560,12 @@ export async function openSessionProgrammatically(payload: {
     launchProfileId,
     ...accountFields,
     ...(payload.resumeSessionId ? { resumeSessionId: payload.resumeSessionId } : {}),
+    // The mode and the effort to start at (PRDCT-4236). Bypass is the flag.
+    ...(claudeMode && !dangerousMode && permissionMode ? { permissionMode } : {}),
+    ...(claudeMode && !dangerousMode && permissionMode && payload.allowDangerous === true
+      ? { allowDangerous: true }
+      : {}),
+    ...((claudeMode || codexMode) && effort ? { effort } : {}),
     piProvider: piMode ? payload.provider : undefined,
     piThinking: piMode ? payload.thinking : undefined,
     initialCommand: mode === 'terminal' ? payload.command || undefined : undefined,

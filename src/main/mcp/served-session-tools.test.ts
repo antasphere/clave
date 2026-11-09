@@ -1039,6 +1039,40 @@ describe('opening a session', () => {
     await run(h, 'openSession', { cwd: '/proj', mode: 'claude' })
     expect(options(1)).not.toHaveProperty('resumeSessionId')
   })
+  it('forwards the permission mode and the effort to the start; bypass is the flag (PRDCT-4236)', async () => {
+    const h = setup(world())
+    const options = (n: number): Record<string, unknown> =>
+      (h.argsOf('sessions.start')[n] as { options: Record<string, unknown> }).options
+    await run(h, 'openSession', {
+      cwd: '/proj',
+      mode: 'claude',
+      permissionMode: 'plan',
+      allowDangerous: true,
+      effort: 'high'
+    })
+    expect(options(0)).toMatchObject({
+      permissionMode: 'plan',
+      allowDangerous: true,
+      effort: 'high',
+      dangerousMode: false
+    })
+    await run(h, 'openSession', {
+      cwd: '/proj',
+      mode: 'claude',
+      dangerous: true,
+      permissionMode: 'plan',
+      effort: 'NOT AN EFFORT'
+    })
+    expect(options(1)).toMatchObject({ dangerousMode: true })
+    expect(options(1)).not.toHaveProperty('permissionMode')
+    expect(options(1)).not.toHaveProperty('effort')
+    await run(h, 'openSession', {
+      cwd: '/proj',
+      mode: 'claude',
+      permissionMode: 'bypassPermissions'
+    })
+    expect(options(2)).not.toHaveProperty('permissionMode')
+  })
   it('with no window to mount a pane, kicks the process at a plain size', async () => {
     const h = setup({ ...world(), windows: [] })
     await run(h, 'openSession', { cwd: '/p', mode: 'terminal' })

@@ -242,7 +242,8 @@ describe('planResume: what a resume does with a conversation', () => {
       model: 'claude-opus-5-5',
       workspaceId: 'ws1',
       piProvider: null,
-      piThinking: null
+      piThinking: null,
+      launch: null
     })
   })
 
@@ -340,7 +341,8 @@ describe('openResumed: what the open does with a resume', () => {
       },
       focus: async (id) => {
         focused.push(id)
-      }
+      },
+      isKnownAccount: (provider, id) => provider === 'claude' && id === 'acc-anthropic'
     }
   }
   const history = [
@@ -447,6 +449,104 @@ describe('openResumed: what the open does with a resume', () => {
     )
     expect(out).toMatchObject({ payload: { cwd: '/work/odoo' } })
     expect((out as { payload: Record<string, unknown> }).payload).not.toHaveProperty('workspace')
+  })
+})
+
+describe('openResumed: the launch the ledger remembers is the default (PRDCT-4236)', () => {
+  const io: ResumeOpenIo = {
+    isDirectory: () => true,
+    isRegisteredWorkspace: () => true,
+    restart: async () => ({ resumed: false }),
+    focus: async () => {},
+    isKnownAccount: (provider, id) => provider === 'claude' && id === 'acc-anthropic'
+  }
+  const payloadOf = (out: unknown): Record<string, unknown> =>
+    (out as { payload: Record<string, unknown> }).payload
+
+  it('bypass, the effort and a known account come back when the caller names none', async () => {
+    const out = await openResumed(
+      lookups([
+        entry({
+          claudeSessionId: 'c1',
+          launch: { dangerous: true, effort: 'high', accountId: 'acc-anthropic' }
+        })
+      ]),
+      { resume: 'c1' },
+      'caller',
+      io
+    )
+    expect(payloadOf(out)).toMatchObject({
+      dangerous: true,
+      effort: 'high',
+      account: 'acc-anthropic',
+      resumeSessionId: 'c1'
+    })
+    expect(payloadOf(out)).not.toHaveProperty('permissionMode')
+  })
+
+  it('a mode short of bypass comes back as the mode, bypass kept reachable when it was launched with it', async () => {
+    const out = await openResumed(
+      lookups([
+        entry({ claudeSessionId: 'c1', launch: { dangerous: true, permissionMode: 'plan' } })
+      ]),
+      { resume: 'c1' },
+      'caller',
+      io
+    )
+    expect(payloadOf(out)).toMatchObject({
+      dangerous: false,
+      permissionMode: 'plan',
+      allowDangerous: true
+    })
+  })
+
+  it('the caller’s dangerous, permissionMode, effort and account win', async () => {
+    const launched = lookups([
+      entry({
+        claudeSessionId: 'c1',
+        launch: {
+          dangerous: true,
+          permissionMode: 'plan',
+          effort: 'high',
+          accountId: 'acc-anthropic'
+        }
+      })
+    ])
+    const out = payloadOf(
+      await openResumed(
+        launched,
+        { resume: 'c1', dangerous: false, effort: 'low', account: 'other' },
+        'caller',
+        io
+      )
+    )
+    expect(out).toMatchObject({ dangerous: false, effort: 'low', account: 'other' })
+    expect(out).not.toHaveProperty('permissionMode')
+    const mode = payloadOf(
+      await openResumed(launched, { resume: 'c1', permissionMode: 'acceptEdits' }, 'caller', io)
+    )
+    expect(mode).toMatchObject({ permissionMode: 'acceptEdits' })
+    expect(mode).not.toHaveProperty('dangerous')
+  })
+
+  it('an account no longer on this Mac is not named: the pool picks, as before', async () => {
+    const out = payloadOf(
+      await openResumed(
+        lookups([entry({ claudeSessionId: 'c1', launch: { accountId: 'acc-gone' } })]),
+        { resume: 'c1' },
+        'caller',
+        io
+      )
+    )
+    expect(out).not.toHaveProperty('account')
+    expect(out).not.toHaveProperty('dangerous')
+  })
+
+  it('clave_history rows carry the launch', async () => {
+    const { rows } = await listConversations(
+      lookups([entry({ claudeSessionId: 'c1', launch: { dangerous: true } })])
+    )
+    expect(rows[0].launch).toEqual({ dangerous: true })
   })
 })
 

@@ -11,6 +11,7 @@ import { join } from 'path'
 import {
   SessionHistoryDiff,
   dotStateOf,
+  historyResumeLaunch,
   encodeProjectDir,
   resumeTargetGroup,
   tabSessions,
@@ -83,6 +84,54 @@ describe('SessionHistoryDiff', () => {
       mode: 'claude',
       workspaceId: 'ws-1'
     })
+  })
+
+  it('the row carries the launch: bypass and the account (PRDCT-4236); a switch of either is a row', () => {
+    const { diff, rows } = harness()
+    const claude = session({
+      dangerousMode: true,
+      claudeProfileId: 'acc-anthropic',
+      claudeProfileLabel: 'Anthropic'
+    })
+    diff.apply({ sessions: [claude], groups: [], displayOrder: ['s1'] })
+    expect(rows[0]).toMatchObject({
+      dangerous: true,
+      accountId: 'acc-anthropic',
+      accountLabel: 'Anthropic'
+    })
+    diff.apply({
+      sessions: [{ ...claude, claudeProfileId: 'acc-2', claudeProfileLabel: 'Two' }],
+      groups: [],
+      displayOrder: ['s1']
+    })
+    expect(rows).toHaveLength(2)
+    expect(rows[1]).toMatchObject({ accountId: 'acc-2', accountLabel: 'Two' })
+    diff.apply({ sessions: [], groups: [], displayOrder: [] })
+    expect(rows[2]).toMatchObject({ kind: 'closed', dangerous: true, accountId: 'acc-2' })
+
+    const codex = harness()
+    codex.diff.apply({
+      sessions: [
+        session({
+          id: 'x',
+          claudeMode: false,
+          codexMode: true,
+          claudeProfileId: 'ignored',
+          codexAccountId: 'cx-1',
+          codexAccountLabel: 'Work'
+        })
+      ],
+      groups: [],
+      displayOrder: ['x']
+    })
+    expect(codex.rows[0]).toMatchObject({
+      dangerous: false,
+      accountId: 'cx-1',
+      accountLabel: 'Work'
+    })
+    const pool = harness()
+    pool.diff.apply({ sessions: [session({})], groups: [], displayOrder: ['s1'] })
+    expect(pool.rows[0]).not.toHaveProperty('accountId')
   })
 
   it('a move into a group is a row at the move, carrying the group id and name', () => {
@@ -270,5 +319,71 @@ describe('dotStateOf', () => {
     expect(dotStateOf(true, 'idle')).toBe('open')
     expect(dotStateOf(true, 'done')).toBe('open')
     expect(dotStateOf(true, undefined)).toBe('open')
+  })
+})
+
+describe('historyResumeLaunch: a reopen from the History comes back as it was launched (PRDCT-4236)', () => {
+  const known = (provider: 'claude' | 'codex', id: string): string | null =>
+    provider === 'claude' && id === 'acc-anthropic' ? 'Anthropic (now)' : null
+
+  it('bypass, effort and a known account come back, under the account’s current label', () => {
+    expect(
+      historyResumeLaunch(
+        {
+          provider: 'claude',
+          model: 'claude-fable-5',
+          launch: {
+            dangerous: true,
+            effort: 'high',
+            accountId: 'acc-anthropic',
+            accountLabel: 'old'
+          }
+        },
+        false,
+        known
+      )
+    ).toEqual({
+      dangerousMode: true,
+      effort: 'high',
+      claudeProfileId: 'acc-anthropic',
+      claudeProfileLabel: 'Anthropic (now)'
+    })
+  })
+
+  it('a mode short of bypass is the mode, bypass kept reachable; the person’s skip-permissions wins', () => {
+    const entry = {
+      provider: 'claude' as const,
+      model: null,
+      launch: { dangerous: true, permissionMode: 'plan' }
+    }
+    expect(historyResumeLaunch(entry, false, known)).toEqual({
+      dangerousMode: false,
+      permissionMode: 'plan',
+      allowDangerous: true
+    })
+    expect(historyResumeLaunch(entry, true, known)).toEqual({ dangerousMode: true })
+    expect(historyResumeLaunch({ ...entry, launch: { dangerous: false } }, true, known)).toEqual({
+      dangerousMode: true
+    })
+  })
+
+  it('an unknown account, a malformed mode or effort, and an entry with no launch name nothing', () => {
+    expect(
+      historyResumeLaunch(
+        {
+          provider: 'claude',
+          model: null,
+          launch: { accountId: 'acc-gone', permissionMode: 'weird', effort: 'NOPE!' }
+        },
+        false,
+        known
+      )
+    ).toEqual({ dangerousMode: false })
+    expect(historyResumeLaunch({ provider: 'claude', model: null }, false, known)).toEqual({
+      dangerousMode: false
+    })
+    expect(
+      historyResumeLaunch({ provider: 'pi', model: null, launch: { dangerous: true } }, true, known)
+    ).toEqual({ dangerousMode: false })
   })
 })

@@ -98,7 +98,21 @@ export interface HistoryLedgerRow {
   workspaceId: string | null
   groupId: string | null
   groupName: string | null
+  /** What the tab was launched on (PRDCT-4236): a reopen from the History
+   *  comes back the same way. The renderer fills `dangerous` and the account;
+   *  main adds the mode and the effort from the session's record. */
+  dangerous?: boolean
+  permissionMode?: string
+  effort?: string
+  accountId?: string
+  accountLabel?: string
 }
+
+/** The launch a History entry remembers, field by field from its latest row. */
+export type HistoryLaunch = Pick<
+  HistoryLedgerRow,
+  'dangerous' | 'permissionMode' | 'effort' | 'accountId' | 'accountLabel'
+>
 
 export type HistorySearchScope = 'human' | 'agent' | 'tools'
 
@@ -127,6 +141,7 @@ export interface HistoryListEntry {
   firstSeenAt: string
   lastSeenAt: string
   closedAt: string | null
+  launch?: HistoryLaunch
   transcript: {
     exists: boolean
     path: string
@@ -810,6 +825,12 @@ export interface ElectronAPI extends FleetDesktopAPI {
       /** The Codex account (ADR 0002); codex mode only. */
       codexAccountId?: string
       codexAccountLabel?: string
+      /** The mode a Claude session asks under short of bypass, and the
+       *  reasoning effort (PRDCT-4191/4236): a resume brings them back. */
+      permissionMode?: 'default' | 'acceptEdits' | 'plan' | 'auto' | 'dontAsk'
+      effort?: string
+      /** Bypass kept reachable to a session resumed in another mode. */
+      allowDangerous?: boolean
       workspaceId?: string
       /** Spawning the hidden half of something else — persisted on the record
        *  so the next launch restores it as that half, not as a tab. */

@@ -2,7 +2,7 @@ import * as path from 'path'
 import { homedir } from 'os'
 import { app } from 'electron'
 import { CaptureStore } from '../exchange-capture/store'
-import { SessionLedger, normalizeLedgerRow } from './ledger'
+import { SessionLedger, normalizeLedgerRow, type LedgerRow } from './ledger'
 import {
   captureEventsToRows,
   foldHistory,
@@ -105,18 +105,88 @@ export function conversationRoot(configDir: unknown): string {
   return transcriptsRoot()
 }
 
-/** Validate, then append. The one place a row enters the ledger. */
-export function stampHistory(input: unknown): void {
+/** What a session's record says of what it runs on: the mode and the effort
+ *  the provider last reported, the model it was launched on. */
+export interface StampRecord {
+  readonly model?: string | undefined
+  readonly permissionMode?: string | undefined
+  readonly effort?: string | undefined
+}
+
+/** Where the stamp reads a session's record (PRDCT-4236): main's own, and,
+ *  when main keeps none (its sessions live on a server of their own), the
+ *  server's. Either may answer nothing; neither may lose the row. */
+export interface StampRecordSource {
+  local(sessionId: string): StampRecord | null | undefined
+  remote?(sessionId: string): Promise<StampRecord | null | undefined>
+}
+
+/** How long a stamp waits on the server's record before writing without it. */
+export const STAMP_REMOTE_TIMEOUT_MS = 2_000
+
+/** Stamps are written one after the other, so a row that waits on the
+ *  server is never overtaken by a later row of the same tab. */
+let stampQueue: Promise<void> = Promise.resolve()
+
+/** The row with the record's mode, effort and (when the row has none) model. */
+export function enrichLedgerRow(row: LedgerRow, record: StampRecord | null | undefined): LedgerRow {
+  if (!record) return row
+  // Re-validated as any row is: a record field is a provider's word.
+  return (
+    normalizeLedgerRow({
+      ...row,
+      ...(record.permissionMode !== undefined ? { permissionMode: record.permissionMode } : {}),
+      ...(record.effort !== undefined ? { effort: record.effort } : {}),
+      ...(row.model === null && record.model ? { model: record.model } : {})
+    }) ?? row
+  )
+}
+
+async function recordFor(
+  sessionId: string,
+  source: StampRecordSource
+): Promise<StampRecord | null | undefined> {
+  try {
+    const local = source.local(sessionId)
+    if (local) return local
+  } catch {
+    // a record that cannot be read is a row without the launch's mode
+  }
+  if (!source.remote) return null
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    return await Promise.race([
+      source.remote(sessionId),
+      new Promise<null>((resolve) => {
+        timer = setTimeout(() => resolve(null), STAMP_REMOTE_TIMEOUT_MS)
+      })
+    ])
+  } catch {
+    return null
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
+}
+
+/** Validate, enrich from the session's record, then append. The one place a
+ *  row enters the ledger. Resolves once the row is written (or refused); a
+ *  record that cannot be read never loses the row. */
+export function stampHistory(input: unknown, source?: StampRecordSource): Promise<void> {
   const row = normalizeLedgerRow(input)
   if (!row) {
     console.error('[session-history] refusing to write a malformed ledger row')
-    return
+    return Promise.resolve()
   }
-  try {
-    getLedger().append(row)
-  } catch (err) {
-    console.error('[session-history] failed to append to the ledger', err)
+  const write = async (): Promise<void> => {
+    const enriched = source ? enrichLedgerRow(row, await recordFor(row.sessionId, source)) : row
+    try {
+      getLedger().append(enriched)
+    } catch (err) {
+      console.error('[session-history] failed to append to the ledger', err)
+    }
   }
+  stampQueue = stampQueue.then(write, write)
+  return stampQueue
 }
 
 export function listHistory(): {

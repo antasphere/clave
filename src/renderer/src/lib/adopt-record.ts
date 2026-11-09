@@ -3,6 +3,7 @@ import { useSessionStore, inActiveWorkspace } from '../store/session-store'
 import { useWorkspaceStore } from '../store/workspace-store'
 import type { Session, SessionViewConfig } from '../store/session-types'
 import { resolveHiddenOwner, serverOwnedStopped } from './boot-adoption'
+import { runtimeChoices } from '../../../shared/runtime-choices'
 
 /**
  * Bring one persisted session record back as a live tab in THIS window's
@@ -278,6 +279,9 @@ async function spawnFromRecord(
   const workspaceId = s.workspaceId ?? activeWorkspaceId ?? undefined
   // The host already runs it: there is nothing to reattach (issue #183).
   if (s.running === true) return { session: sessionOfRecord(s, workspaceId) }
+  // The mode and the effort the chat was RUNNING in, not only its launch
+  // flag (PRDCT-4236): the Resume's own rule, `runtimeChoices`.
+  const runtime = runtimeChoices(s)
   try {
     const info = await window.electronAPI.spawnSession(s.cwd, {
       claudeMode: s.claudeMode,
@@ -285,7 +289,10 @@ async function spawnFromRecord(
       codexMode: s.codexMode,
       piMode: s.piMode,
       claudeAgentsMode: s.claudeAgentsMode,
-      dangerousMode: s.dangerousMode,
+      dangerousMode: runtime.dangerousMode,
+      ...(runtime.permissionMode ? { permissionMode: runtime.permissionMode } : {}),
+      ...(runtime.allowDangerous ? { allowDangerous: true } : {}),
+      ...(runtime.effort ? { effort: runtime.effort } : {}),
       model: s.model,
       // Live survivor: MUST go through tmux to reattach. Dead record: fresh
       // spawn under the current global tmux preference — the name is still
