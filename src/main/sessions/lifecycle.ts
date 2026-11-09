@@ -26,7 +26,10 @@ import { dropDraftShadow, getDraftShadow } from '../../shared/draft-shadow'
 import { forgetScreen, hasScreen, renderScreen, retainOutput } from './terminal-screen'
 import { typeIntoTerminal, type TypingOutcome } from './typing'
 import { forgetLineage, parentOf, setParent } from './lineage'
-import type { SessionScreen } from '@clave/contract/sessions'
+import { resumeOptions } from './resume-options'
+import { accountOverrides } from '../restart-overrides'
+import { conversationIdOf } from '../../shared/runtime-choices'
+import type { SessionRecord, SessionScreen } from '@clave/contract/sessions'
 
 export type SessionInfoResult = {
   id: string
@@ -245,6 +248,26 @@ export function typeIntoSession(id: string, text: string): Promise<TypingOutcome
   })
 }
 
+/** The Resume of a tab this process never spawned, from its record. */
+function planFromRecord(
+  record: SessionRecord | undefined,
+  overrides: RestartOverrides
+): { cwd: string; options: PtySpawnOptions; resumed: boolean } | null {
+  if (!record) return null
+  const { resendRejected: _resend, onlyIfStopped: _only, ...requested } = overrides
+  void _resend
+  void _only
+  return {
+    cwd: record.cwd,
+    options: {
+      ...resumeOptions(record),
+      ...(record.tmuxName ? { adoptTmuxName: record.tmuxName } : {}),
+      ...accountOverrides(requested)
+    } as PtySpawnOptions,
+    resumed: !!conversationIdOf(record)
+  }
+}
+
 /**
  * The same tab restarted under the same id on another account (ADR 0002):
  * the spawn read back before the kill, the process stopped and waited for,
@@ -263,11 +286,43 @@ export async function restartSession(
   const current = sessionManager.get(id)
   if (overrides.onlyIfStopped && current && current.state !== 'ended')
     throw new Error('This session is running; there is nothing to resume.')
-  const plan = ptyManager.restartSpawn(id, overrides)
-  if (!plan) throw new Error('This session cannot be restarted from here.')
+  // The spawn this process made, read back; else the record. By the
+  // session's id, else by its id among the adoptable ones: a terminal's
+  // record is keyed by its tmux name, which the by-id read does not find for
+  // a session this process never spawned (round 2, N-F2). The adoptable
+  // listing is read only when the by-id read finds nothing and the record is
+  // needed: for the spawn, or for the window of an unbound tab.
+  const spawned = ptyManager.restartSpawn(id, overrides)
+  let record: SessionRecord | undefined = ptyManager.getSessionRecord(id) ?? undefined
+  let lookedUp = false
+  const recordOf = (): SessionRecord | undefined => {
+    if (!record && !lookedUp) {
+      lookedUp = true
+      record = ptyManager.listAdoptableSessions().find((r) => r.id === id)
+    }
+    return record
+  }
+  // A session this process never spawned but whose record it keeps (a tab the
+  // restore placed stopped because its start was refused, PRDCT-4236 round 1
+  // F3) resumes from the record, as a Clave server's own Resume does: the
+  // same allowlist, the record's tmux name offered so a tmux respawn reuses
+  // it and the name carries over, the account the caller names laid over it
+  // (the fields it names, not the ones it leaves undefined, round 2 N-F5).
+  // Until then the Resume of such a tab failed on a message naming nothing
+  // but its id.
+  const plan = spawned ?? planFromRecord(recordOf(), overrides)
+  if (!plan) throw new Error('This session is not running and left no record to resume from.')
   const windows = sessionWindows()
-  const key = windowKey !== undefined ? windowKey : windows.windowOf(id)
-  const record = ptyManager.getSessionRecord(id)
+  // The window that holds the tab; for a session this process never spawned
+  // nothing is bound, and the record says which window placed it (round 2,
+  // N-F1: a Resume under no window ran the CLI with its output going nowhere).
+  // A record naming a window that has since closed goes to the primary, where
+  // the restore places an orphan (round 3, R3-F1).
+  const recordKey = (): string | null => {
+    const placed = recordOf()?.windowKey
+    return placed && windows.isLive(placed) ? placed : windows.primaryKey()
+  }
+  const key = windowKey !== undefined ? windowKey : (windows.windowOf(id) ?? recordKey())
   // The kill ends the old process, whose exit forgets what a dead tab
   // leaves behind (the parent link among them); the same tab comes back
   // under the same id, so its link is kept across (verifier round 1, F1).

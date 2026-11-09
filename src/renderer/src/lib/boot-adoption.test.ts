@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest'
-import { planBootAdoption, survivingIds, bootSurvivors, type BootRecordLike } from './boot-adoption'
+import {
+  planBootAdoption,
+  serverOwnedStopped,
+  survivingIds,
+  bootSurvivors,
+  type BootRecordLike
+} from './boot-adoption'
 
 const tab = (id: string, live = true): BootRecordLike => ({ id, live })
 const term = (id: string, live = true, groupId = 'g1', terminalId = 't1'): BootRecordLike => ({
@@ -26,6 +32,28 @@ describe('planBootAdoption — a record only becomes a tab when it IS one', () =
     expect(plan.hidden).toEqual([])
     expect(plan.toolbar).toEqual([])
     expect(plan.discard).toEqual([])
+  })
+
+  it('a stopped record a Clave server owns is a tab that comes back silently, never behind the prompt (PRDCT-4236)', () => {
+    const owned = (id: string, extra: Partial<BootRecordLike> = {}): BootRecordLike => ({
+      id,
+      live: false,
+      running: false,
+      windowKey: 'server',
+      ...extra
+    })
+    const plan = planBootAdoption([
+      owned('chat', { transport: 'events' }),
+      owned('term', { transport: 'pty' }),
+      owned('live', { live: true, running: true }),
+      // The same shape stamped with a window's key is this Mac's dead record, offered as before.
+      owned('mine', { transport: 'pty', windowKey: 'w1' })
+    ])
+    expect(plan.liveTabs.map((r) => r.id)).toEqual(['chat', 'term', 'live'])
+    expect(plan.deadTabs.map((r) => r.id)).toEqual(['mine'])
+    expect(serverOwnedStopped(owned('x'))).toBe(true)
+    expect(serverOwnedStopped(owned('x', { running: true }))).toBe(false)
+    expect(serverOwnedStopped({ windowKey: 'w1', running: false })).toBe(false)
   })
 
   it('a live group terminal and a live view server are hidden halves, never tabs', () => {

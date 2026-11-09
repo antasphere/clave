@@ -484,7 +484,8 @@ export async function run(t) {
       })
       t.check('and its message reaches the parent’s terminal', !!backTyped)
 
-      // A tab nobody related opened is out of reach, and nothing is typed.
+      // A tab nobody related opened is reached all the same (PRDCT-4236):
+      // any tab of the machine may be messaged, and the message is typed.
       const sharedToken = JSON.parse(readFileSync(path.join(DIR, 'mcp-server.json'), 'utf-8')).token
       const anonymous = mcpHttpClient(mcpEndpoint(DIR), sharedToken)
       await anonymous.init()
@@ -493,21 +494,24 @@ export async function run(t) {
       )
       t.check('a tab opens with no caller', typeof stranger?.sessionId === 'string', stranger)
       const strangerWrites = writeJournal(DIR)
-      const refused = await client.call('clave_send_to_session', {
+      const deliveredRaw = await client.call('clave_send_to_session', {
         sessionId: stranger.sessionId,
-        message: 'nope'
+        message: 'hello stranger'
       })
       t.check(
-        'a message to an unrelated tab is refused',
-        toolErrored(refused) && JSON.stringify(refused).includes('not related to yours'),
-        refused
+        'a message to an unrelated tab is delivered',
+        toolPayload(deliveredRaw)?.delivered === true,
+        deliveredRaw
       )
-      await new Promise((r) => setTimeout(r, 400))
       // The pane's own replies to the process (device attributes, colours,
-      // focus) are written; a message would be a bracketed paste.
+      // focus) are written too; the message is the bracketed paste.
+      const strangerTyped = await until(async () => {
+        const w = await strangerWrites(stranger.sessionId)
+        return w.includes('\x1b[200~') && w.includes('hello stranger') ? w : null
+      })
       t.check(
-        'and no message was typed into it',
-        !(await strangerWrites(stranger.sessionId)).includes('\x1b[200~'),
+        'and it was typed into it as a bracketed paste',
+        typeof strangerTyped === 'string',
         await strangerWrites(stranger.sessionId)
       )
 

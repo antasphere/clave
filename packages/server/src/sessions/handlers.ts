@@ -48,6 +48,16 @@ import { ServerEvents } from '../events'
 const messageOf = (error: unknown): string =>
   error instanceof Error ? error.message : String(error)
 
+/** Whether the host keeps a record of that id, running or not; false where
+ *  it keeps none or cannot list them. */
+const recorded = (host: SessionHostService, id: string): boolean => {
+  try {
+    return host.listAdoptableRecords([id]).length > 0
+  } catch {
+    return false
+  }
+}
+
 /** The record, or the declared failure for an id this host does not know. */
 const known = (host: SessionHostService, id: string): Effect.Effect<Session, SessionNotFound> => {
   const session = host.get(id)
@@ -310,7 +320,12 @@ export const sessionHandlers = [
   CommandHandler.make(RestartSession, (payload) =>
     Effect.gen(function* () {
       const host = yield* SessionHost
-      yield* known(host, payload.id)
+      // A Resume reaches a session the host runs AND one it only keeps the
+      // record of: a tab the restore placed stopped because its start was
+      // refused (PRDCT-4236). Known by its record, the host's restart builds
+      // the spawn from it; unknown both ways, the id is nobody's.
+      if (!host.get(payload.id) && !recorded(host, payload.id))
+        return yield* Effect.fail(new SessionNotFound({ id: payload.id }))
       const events = yield* ServerEvents
       // A Resume of a session still running is refused HERE, before anything
       // is announced: a `session.restarting` with no `session.restarted`

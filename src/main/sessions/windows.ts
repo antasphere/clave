@@ -20,6 +20,12 @@ export interface SessionWindowsPort {
   unbind(sessionId: string): void
   /** The key of the window holding the session, null when none does. */
   windowOf(sessionId: string): string | null
+  /** Whether the key names a live window of this host; a host with no
+   *  windows answers true, its bindings being nominal. */
+  isLive(windowKey: string): boolean
+  /** The primary window's key, where an orphan lands; null on a host with
+   *  no windows. */
+  primaryKey(): string | null
   /** The per-window arm of what reaches a window directly: terminal bytes
    *  and exit, and a session's news when no server publishes them. A null
    *  key, a key naming no live window, or a host with no windows sends
@@ -43,6 +49,8 @@ export function inMemorySessionWindows(): SessionWindowsPort {
       hosts.delete(sessionId)
     },
     windowOf: (sessionId) => hosts.get(sessionId) ?? null,
+    isLive: () => true,
+    primaryKey: () => null,
     send: () => {},
     beforeStop: () => Promise.resolve()
   }

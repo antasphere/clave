@@ -349,7 +349,7 @@ export interface Session {
    *  clave_send_to_session / clave_read_session. Persisted on the session's
    *  record since #259, so it comes back at a restore (`adopt-record.ts`). */
   spawnedBy?: string
-  /** The same tab, nested under it or not (PRDCT-4192): the reach rule's
+  /** The same tab, nested under it or not (PRDCT-4192): the name tie-break's
    *  fallback once the window's memory of the open is gone. */
   openedBy?: string
   /** Which wave or lane this tab works on, its role and its standing, as its

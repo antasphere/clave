@@ -16,7 +16,7 @@ import {
   type PtySpawnOptions
 } from './sessions/adapters/pty-backend'
 import { lineageOf } from './sessions/lineage'
-import { runtimeChoices } from './sessions/runtime-choices'
+import { runtimeChoices } from '../shared/runtime-choices'
 
 /** The runtime choices a restart carries (PRDCT-4191): the record's, which
  *  the provider's acknowledgements keep current, over the launch's. A record

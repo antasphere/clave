@@ -606,7 +606,7 @@ export interface SessionRecord {
    *  tab the user opened. Carried forward across adoption like the name. */
   spawnedBy?: string
   /** The tab whose agent opened this one through `clave_open_session`,
-   *  nested under it or not (PRDCT-4192): what "parent" and the reach rule
+   *  nested under it or not (PRDCT-4192): what "parent" and the name tie-break
    *  read once the host's memory of the open is gone. `spawnedBy` keeps
    *  meaning nesting. Always written by an agent's open; absent for a tab a
    *  person opened. Carried forward across adoption like spawnedBy. */

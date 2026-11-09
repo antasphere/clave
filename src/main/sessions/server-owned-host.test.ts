@@ -11,7 +11,8 @@ import type {
 } from '@clave/contract/sessions'
 import type { SessionStream } from '../../shared/session-model'
 import { standaloneSidebar } from '../server/standalone-sidebar'
-import { resumeOptions, serverOwnedSessionHost } from './server-owned-host'
+import { serverOwnedSessionHost } from './server-owned-host'
+import { resumeOptions } from './resume-options'
 
 type WireStateFrame = Extract<SessionStream, { kind: 'event' }>['event']
 const dirs: string[] = []
@@ -588,6 +589,18 @@ describe('resumeOptions carries what the chat was running on (PRDCT-4191, PRDCT-
     expect(resumeOptions({ ...record, dangerousMode: true }).dangerousMode).toBe(true)
     expect(resumeOptions(record).dangerousMode).toBe(false)
     expect(resumeOptions(record).permissionMode).toBeUndefined()
+  })
+
+  it('resumes a Pi session through its session id, as the launch wants it (round 2, N-F3)', () => {
+    const options = resumeOptions({
+      ...record,
+      claudeMode: false,
+      piMode: true,
+      claudeSessionId: undefined,
+      codexThreadId: undefined,
+      piSessionId: 'pi-77'
+    })
+    expect(options.resumeSessionId).toBe('pi-77')
   })
 
   it('passes a well-formed effort and drops one that is not', () => {

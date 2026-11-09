@@ -511,6 +511,19 @@ const viaAttachedServer =
       if (terminalChains.get(id) === next) terminalChains.delete(id)
     }
   }
+
+/** The kill itself, on the host's road (IPC in-process, the server attached). */
+const killSessionOnHost = viaServer<[string], void>({
+  ipc: (id) => ipcRenderer.invoke('pty:kill', id),
+  server: ({ api }, id) => api.sessions.stop(id)
+})
+
+/** A closing tab's launch into the ledger while its record is still there
+ *  (PRDCT-4236): the bridge's `historyRestamp`, and the first step of its
+ *  `killSession`. */
+const historyRestamp = (sessionId: string): Promise<void> =>
+  ipcRenderer.invoke('history:restamp', sessionId)
+
 // ── The session records' road (wave 4, lane C) ──
 // Inside the app the records are main's, and IPC lands on the one instance
 // that applies the window's selection rule itself. Attached, the records are
@@ -526,6 +539,7 @@ const viaAttachedServer =
 // seconds is never clobbered by a late restore (PRDCT-3376). A read BY IDS is
 // the re-home path (post-boot): attached it must reach the server, which owns
 // a moved session's record.
+
 async function listSessionRecords(filter?: { ids?: string[] }): Promise<WireSessionRecord[]> {
   if (filter && Array.isArray(filter.ids) && (await serverMode()) === 'attached') {
     const backing = await serverRouter.backing()
@@ -1238,6 +1252,11 @@ const electronAPI = {
         configDir?: string
         claudeProfileId?: string
         claudeProfileLabel?: string
+        codexAccountId?: string
+        codexAccountLabel?: string
+        permissionMode?: 'default' | 'acceptEdits' | 'plan' | 'auto' | 'dontAsk'
+        effort?: string
+        allowDangerous?: boolean
         workspaceId?: string
         link?:
           | { kind: 'group-terminal'; groupId: string; terminalId: string }
@@ -1279,10 +1298,15 @@ const electronAPI = {
     server: ({ api }, id, cols, rows) => api.sessions.resize(id, cols, rows)
   }),
 
-  killSession: viaServer<[string], void>({
-    ipc: (id) => ipcRenderer.invoke('pty:kill', id),
-    server: ({ api }, id) => api.sessions.stop(id)
-  }),
+  // Every close of the window goes through here (the sidebar's, the header's,
+  // the keyboard's, a group's, an Ongoing end, the agent's window road): the
+  // History is told what the tab runs on from its record BEFORE the kill
+  // deletes it (PRDCT-4236, round 7), and never waits long nor fails the
+  // close for it. A tab of a connected server keeps its own History there.
+  killSession: async (id: string): Promise<void> => {
+    if (!id.startsWith('clave-owner:')) await historyRestamp(id).catch(() => undefined)
+    return killSessionOnHost(id)
+  },
 
   listSessions: () => ipcRenderer.invoke('pty:list'),
 
@@ -1611,6 +1635,7 @@ const electronAPI = {
   // Session history (PRDCT-1738): the ledger row is fire-and-forget like the
   // capture above; the list is the dialog's one read.
   historyStamp: (row: unknown) => ipcRenderer.send('history:stamp', row),
+  historyRestamp,
   historyList: () => ipcRenderer.invoke('history:list'),
   historyConversation: (
     cwd: string,

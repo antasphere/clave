@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { startEmbedded, type EmbeddedServer } from '../embedded'
-import { FakeSource, Peer, aSession } from '../test-support'
+import { FakeSource, Peer, aRecord, aSession } from '../test-support'
 
 /**
  * The sessions commands the last agent tools need (wave 4, lane D,
@@ -274,6 +274,29 @@ describe('a Resume of a running session (PRDCT-4193, round 5)', () => {
     expect(await eventOf(peer)).toEqual({ _tag: 'session.restarting', id: 's1' })
     expect(source.restarts).toEqual([{ id: 's1', account: {}, resendRejected: false }])
     peer.ws.close()
+  })
+})
+
+describe('a Resume of a session the host only keeps the record of (PRDCT-4236)', () => {
+  it('reaches the host’s restart instead of answering an unknown session', async () => {
+    source.records.push({ ...aRecord('r9', 'w1'), running: false, live: false })
+    const answer = await post('/sessions/restart', { id: 'r9', account: {}, onlyIfStopped: true })
+    // The fake host's restart knows no record road, so it refuses: what
+    // matters is that the command asked it, with the host's own words back,
+    // where it used to answer SessionNotFound before asking anything.
+    expect(answer.status).not.toBe(404)
+    const body = await answer.json()
+    expect(JSON.stringify(body)).toContain('Unknown session: r9')
+    expect(JSON.stringify(body)).not.toContain('SessionNotFound')
+  })
+
+  it('still answers an unknown session for an id with no record', async () => {
+    const answer = await post('/sessions/restart', {
+      id: 'nobody',
+      account: {},
+      onlyIfStopped: true
+    })
+    expect(JSON.stringify(await answer.json())).toContain('SessionNotFound')
   })
 })
 

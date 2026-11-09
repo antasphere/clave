@@ -37,6 +37,14 @@ import { codexUsageManager } from '../codex-usage'
 import { NOT_SERVED, type ServedShell, serveCommand } from './served-tools'
 import { serverClient } from './server-client'
 import {
+  historyWithLiveLaunch,
+  hostRecords,
+  restampSessionLaunch
+} from '../session-history/host-reads'
+import type { SessionRecord as SessionRecordWire } from '@clave/contract/sessions'
+import { listConversations, openResumed, type HistoryLookups } from './conversation-history'
+import { EFFORT_PATTERN, SPAWN_PERMISSION_MODES } from '../../shared/runtime-choices'
+import {
   BOOT_DECISION_WAIT_MS,
   getClaveServerEndpoint,
   whenClaveServerBootSettled
@@ -85,16 +93,17 @@ const MCP_PATH = '/mcp'
 const INSTRUCTIONS = `You are running inside Clave, a Mac app that runs agent sessions as tabs in sidebar groups. You are one of those tabs. Tabs and groups belong to a WORKSPACE (a root folder) and live in the WINDOW they were opened in; address any tab by session id or name. What you open lands in your own window unless you pass window or workspace. Pass "mine" as a sessionId or groupId to mean your own.
 
 Reach for a clave_* tool when:
-- the user will REVIEW, EDIT or MODIFY something you drafted (a document, a plan, an email) -> clave_open_side_panel opens it in an editor beside your tab, two panes; clave_side_panel reads it back when they are done; you send an email yourself, never from the panel. That is what "open it in the panel" means; clave_open_file is not.
-- they only need to READ a file -> clave_open_file (a tab; .html renders live).
+- the user will REVIEW or EDIT something you drafted (a document, a plan, an email) -> clave_open_side_panel opens it in an editor beside your tab, two panes; clave_side_panel reads it back when they are done; you send an email yourself, never from the panel. That is what "open it in the panel" means; clave_open_file is not.
+- they only need to READ a file -> clave_open_file (a tab).
 - a live page belongs to a group or a tab -> clave_set_group_view / clave_set_session_view.
-- work could run in parallel -> clave_open_session (a fresh agent tab: claude, codex, antigravity, pi or a terminal, any directory, a prompt and a model) or clave_add_group_terminal (a saved command, e.g. a dev server). clave_launch_group starts a pinned .clave template.
+- work could run in parallel -> clave_open_session (a fresh agent tab or terminal, any directory, a prompt, a model) or clave_add_group_terminal (a saved command). clave_launch_group starts a pinned .clave template.
+- a PAST conversation ("reopen it", "what was I working on") -> clave_history lists them; clave_open_session with resume: <id> reopens one.
 - a secret -> clave_request_secret; any other value to type or pick -> clave_request_input, a form in the chat that outlives your turn: ask, end the turn; chat answers go into it via clave_input_set. Never ask in prose.
-- the user must copy something you produced -> clave_offer_copy (a copy button, exact bytes).
+- the user must copy something you produced -> clave_offer_copy.
 - long work done -> clave_notify.
-- tabs must talk -> clave_send_to_session ("parent" reports back to the tab that opened yours; your own id logs a checkpoint) and clave_read_session (a tab's recent output, without interrupting it).
+- tabs must talk -> clave_send_to_session ("parent" reports back to the tab that opened yours; your own id logs a checkpoint) and clave_read_session (a tab's recent output).
 
-Also: clave_list, clave_create_group, clave_move_session, clave_rename, clave_focus, clave_close_session, clave_open_window, clave_switch_workspace (only when the user should look elsewhere). Pi tabs can be messaged and read, not call these tools.`
+Also: clave_list, clave_create_group, clave_move_session, clave_rename, clave_focus, clave_close_session, clave_open_window, clave_switch_workspace (only when they should look there). Pi tabs can be messaged and read, not call these tools.`
 
 let httpServer: http.Server | null = null
 let serverToken: string | null = null
@@ -484,6 +493,7 @@ const servedShell: ServedShell<NonNullable<BrowserWindowLike>> = {
   startPty: (id, cols, rows) => ptyManager.start(id, cols, rows),
   awaitRehomed: (ids) => awaitRehomed(ids),
   captureTabClosed: (payload) => captureTabClosed(payload),
+  historyRestamp: (sessionId) => restampSessionLaunch(sessionId),
   windowsListing: (callerWin) => windowsListing(callerWin),
   mintTerminalId: () => `term-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
   sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
@@ -578,6 +588,57 @@ async function openWindowFromTool(
   return { windowId, workspaceId }
 }
 
+/** The History's facts for the conversation tools (`conversation-history.ts`):
+ *  the dialog's rows, the server's records and sessions, the workspaces. The
+ *  records are read once per lookups, so one tool call reads the server once. */
+function historyLookups(api: Awaited<ReturnType<typeof serverClient.api>>): HistoryLookups {
+  // The listing a window restores from leaves out a hosted session whose
+  // process has ended (`hostedListing`); such a tab still holds its
+  // conversation, stopped (round 1, F2), so the records of every session the
+  // host lists and the listing lacks are read by id and added.
+  let read: Promise<readonly SessionRecordWire[]> | null = null
+  const records = (): Promise<readonly SessionRecordWire[]> => (read ??= hostRecords(api))
+  return {
+    // The ledger's memory with the live record of every held conversation
+    // laid over it (round 5 F1): what the tab's own Resume reads.
+    history: async () => (await historyWithLiveLaunch(api, records)).entries,
+    records,
+    sessions: () => api.sessions.list(),
+    workspaces: () => workspaceManager.getWorkspaces().map((w) => ({ id: w.id, name: w.name }))
+  }
+}
+
+const isDirectory = (dir: string): boolean => {
+  try {
+    return fs.statSync(dir).isDirectory()
+  } catch {
+    return false
+  }
+}
+
+/** `clave_open_session` with `resume` (PRDCT-4236): the decision is the
+ *  module's (`openResumed`), the host's facts come from here. */
+async function prepareResume(
+  p: Record<string, unknown>,
+  callerSessionId: string | undefined
+): Promise<{ result: unknown } | { payload: Record<string, unknown> }> {
+  const api = await serverClient.api()
+  return openResumed(historyLookups(api), p, callerSessionId, {
+    isDirectory,
+    isRegisteredWorkspace: (id) => workspaceManager.isRegistered(id),
+    isKnownAccount: (provider, id) =>
+      (provider === 'claude' ? claudeAccountsManager.get(id) : codexAccountsManager.get(id)) !==
+      undefined,
+    restart: async (id) => {
+      const restarted = await api.sessions.restart(id, {}, false, undefined, true)
+      return { resumed: restarted.resumed }
+    },
+    focus: async (id) => {
+      await runCommand('focus', { sessionId: id }, callerSessionId)
+    }
+  })
+}
+
 /** Run a renderer command and wrap the outcome as an MCP tool result. The
  *  target window is resolved first (§3.8): with several windows the sidebar
  *  state is partitioned by hosting, so the command runs where its subject —
@@ -587,10 +648,22 @@ async function openWindowFromTool(
  *  renderer handlers read, and is the fallback for a call with no `caller`. */
 async function runCommand(command: string, payload: unknown, caller?: string): Promise<ToolResult> {
   try {
-    const p = (payload ?? {}) as Record<string, unknown>
+    let p = (payload ?? {}) as Record<string, unknown>
     const callerSessionId =
       caller ?? (typeof p.callerSessionId === 'string' ? p.callerSessionId : undefined)
     let result: unknown
+    if (command === 'openSession') {
+      // A past conversation (PRDCT-4236): the History decides the directory,
+      // the provider and whether a tab already holds it, before any road.
+      if (typeof p.resume === 'string') {
+        const prepared = await prepareResume(p, callerSessionId)
+        if ('result' in prepared)
+          return { content: [{ type: 'text', text: JSON.stringify(prepared.result) }] }
+        p = prepared.payload
+      } else if (typeof p.cwd !== 'string' || !p.cwd) {
+        throw new Error('cwd is required unless resume names a conversation to reopen.')
+      }
+    }
     if (command === 'openWindow') {
       result = await openWindowFromTool(p, callerSessionId)
     } else {
@@ -660,7 +733,7 @@ async function runCommand(command: string, payload: unknown, caller?: string): P
           return { content: [{ type: 'text', text: JSON.stringify(result ?? { ok: true }) }] }
         }
       }
-      result = await callRenderer<unknown>(command, payload, win)
+      result = await callRenderer<unknown>(command, p, win)
       // A window-owned fleet launch keeps a messaging link in the renderer.
       // Local read/send tools still run on the server, so retain the same
       // authenticated relationship there independently of sidebar nesting.
@@ -745,6 +818,38 @@ function buildServer(callerSessionId: string | undefined): McpServer {
   )
 
   server.registerTool(
+    'clave_history',
+    {
+      description:
+        'List the past conversations the History dialog shows ("what was I working on", "find the conversation about", "reopen the chat on"): every Claude, Codex and Pi conversation of this Mac, newest first, with its id, title, directory, provider, model, workspace, the groups it sat in, its last activity, whether its transcript is still on disk and whether a tab has it open (alive or stopped). Read-only. Reopen one with clave_open_session and resume: <id>; a conversation a tab already holds is answered by that tab. Filters: query (a substring of the title, the tab name or the directory), workspace (id or name), provider, open (only conversations a tab holds), limit (50 by default, 200 at most). The remembered launch (bypass, mode, effort, account) is kept for Claude conversations; a Codex conversation shows none.',
+      inputSchema: {
+        query: z.string().min(1).max(500).optional(),
+        workspace: z.string().min(1).max(200).optional(),
+        provider: z.enum(['claude', 'codex', 'pi', 'antigravity']).optional(),
+        open: z.boolean().optional(),
+        limit: z.number().int().min(1).max(200).optional()
+      }
+    },
+    async (args) => {
+      try {
+        const api = await serverClient.api()
+        const { rows, total } = await listConversations(historyLookups(api), args)
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify({ conversations: rows, shown: rows.length, total })
+            }
+          ]
+        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err)
+        return { content: [{ type: 'text', text: message }], isError: true }
+      }
+    }
+  )
+
+  server.registerTool(
     'clave_open_session',
     {
       description:
@@ -764,13 +869,28 @@ function buildServer(callerSessionId: string | undefined): McpServer {
           .describe(
             'Destination server id or name from clave_list, or local for this Mac. Omit to follow the target group or workspace, then the calling tab. cwd is a path on the destination server. Conflicting group/workspace owners are refused.'
           ),
-        cwd: z.string().describe('Absolute path of the working directory for the new session'),
+        cwd: z
+          .string()
+          .optional()
+          .describe(
+            'Absolute path of the working directory for the new session. Required unless resume names a conversation, whose own directory is then the default.'
+          ),
+        resume: z
+          .string()
+          .min(1)
+          .max(200)
+          .optional()
+          .describe(
+            "Reopen a PAST conversation by its id (a Claude session id, a Codex thread id or a Pi session id, as clave_history lists them): the new tab continues that conversation. Combines with chat (the chat view), dangerous, profile, model, account, permissionMode, effort, groupId, workspace and name; mode, cwd, model and name default to the conversation's own, and dangerous, permissionMode, effort and account to what it was last launched on (clave_history's launch). If a tab already runs the conversation it is focused and answered (alreadyOpen: true) and nothing is started; a stopped tab that still holds it is resumed in place. Errors when the transcript is gone or names no working directory. The remembered launch applies to Claude conversations; a Codex or Pi one reopens on its model (and Pi's provider and thinking) with the flags you pass."
+          ),
         mode: z
           // 'gemini' is kept as a deprecated alias (the Gemini CLI was retired
           // and folded into Antigravity); it maps to an antigravity session.
           .enum(['claude', 'antigravity', 'gemini', 'codex', 'pi', 'terminal'])
-          .default('claude')
-          .describe('Which agent CLI to start, or terminal for a plain shell'),
+          .optional()
+          .describe(
+            "Which agent CLI to start, or terminal for a plain shell; claude when omitted. With resume, omit it: the conversation's own provider is used, and another is refused."
+          ),
         groupId: z
           .string()
           .optional()
@@ -811,6 +931,19 @@ function buildServer(callerSessionId: string | undefined): McpServer {
           .optional()
           .describe(
             'Account (subscription) the new tab runs on: an account id or its exact name as set in Settings → Accounts ("default" is the machine login), or "any" for whichever account of the pool has headroom. claude and codex modes only. Omit to follow Settings → Accounts: the selected account, or the recommended account when enabled, moved along the pool when exhausted. Unknown names error with the list. clave_list reports each session\'s account.'
+          ),
+        permissionMode: z
+          .enum(SPAWN_PERMISSION_MODES)
+          .optional()
+          .describe(
+            'The mode a Claude agent asks permission under, short of bypass (bypass is dangerous). claude mode only; ignored with dangerous: true. With resume, defaults to the mode the conversation last ran in.'
+          ),
+        effort: z
+          .string()
+          .regex(EFFORT_PATTERN)
+          .optional()
+          .describe(
+            'The reasoning effort the agent starts at ("low", "medium", "high", "xhigh", "max"). claude and codex chats. With resume, defaults to the effort the conversation last ran at.'
           ),
         provider: z.string().min(1).max(200).optional().describe('Pi provider id. Pi mode only.'),
         thinking: z
@@ -1047,12 +1180,12 @@ function buildServer(callerSessionId: string | undefined): McpServer {
     'clave_set_work',
     {
       description:
-        'Say which wave or lane a tab works on and its role, so the sidebar shows one stable entry per lane with its current lead, its verifier and its history, instead of one row per session. Use it when you coordinate a wave or lead a lane: for yourself ("mine", the default) or for a tab you can reach (one you opened, the one that opened you, or a tab in your group). A unit is a stable key you choose (a workstream stem, a run and lane id) with a short label; a lane may name its wave. Roles: coordinator (holds a wave), lead (holds a lane), verifier, worker. A role someone else holds is refused unless replace is true; to pass your own role to a successor use clave_hand_over. action "complete" marks your assignment done, "leave" removes it. clave_list shows every tab\'s assignment as work.',
+        'Say which wave or lane a tab works on and its role, so the sidebar shows one stable entry per lane with its current lead, its verifier and its history, instead of one row per session. Use it when you coordinate a wave or lead a lane: for yourself ("mine", the default) or for any other tab of this Mac or of a connected Clave server. A unit is a stable key you choose (a workstream stem, a run and lane id) with a short label; a lane may name its wave. Roles: coordinator (holds a wave), lead (holds a lane), verifier, worker. A role someone else holds is refused unless replace is true; to pass your own role to a successor use clave_hand_over. action "complete" marks your assignment done, "leave" removes it. clave_list shows every tab\'s assignment as work.',
       inputSchema: {
         sessionId: z
           .string()
           .optional()
-          .describe('The tab to assign: "mine" (the default) or a session id you can reach'),
+          .describe('The tab to assign: "mine" (the default) or any tab\'s session id'),
         action: z
           .enum(['assign', 'complete', 'leave'])
           .optional()
@@ -1088,7 +1221,7 @@ function buildServer(callerSessionId: string | undefined): McpServer {
     'clave_hand_over',
     {
       description:
-        "Hand your role in a wave or lane to a successor tab, or take over a role handed to you. As the holder: open the successor first (clave_open_session), then pass to: its session id; it shows as taking over and you keep the role until it accepts. As the successor: once you have read the handover, pass accept: true; the role becomes yours and the holder moves to the entry's history, its process left running. cancel: true withdraws your offer. The sidebar entry keeps its place through every handover, and a handover never accepted stays visible as pending.",
+        "Hand your role in a wave or lane to a successor tab, or take over a role handed to you. As the holder: open the successor first (clave_open_session), then pass to: its session id (any tab of this Mac or of a connected Clave server); it shows as taking over and you keep the role until it accepts. As the successor: once you have read the handover, pass accept: true; the role becomes yours and the holder moves to the entry's history, its process left running. cancel: true withdraws your offer. The sidebar entry keeps its place through every handover, and a handover never accepted stays visible as pending.",
       inputSchema: {
         to: z.string().optional().describe("The successor's session id"),
         accept: z.boolean().optional().describe('Take over the role handed to you'),
@@ -1132,7 +1265,7 @@ function buildServer(callerSessionId: string | undefined): McpServer {
     'clave_resume_session',
     {
       description:
-        'Resume a stopped tab ("resume the tab", "bring the lane back", "restart the stopped session"): the same tab, its agent started again under the same id with its conversation resumed where the provider can resume it, on the model and in the permission mode it was last running. Works for a tab of this Mac and for a tab on a connected Clave server (the key clave_list shows), after a server restart for instance. Only a tab you can reach: the one that opened yours ("parent"), a tab you opened, or a tab in your group. A running tab is refused: there is nothing to resume. To resume and deliver a message in one call, pass resume: true to clave_send_to_session instead.',
+        'Resume a stopped tab ("resume the tab", "bring the lane back", "restart the stopped session"): the same tab, its agent started again under the same id with its conversation resumed where the provider can resume it, on the model and in the permission mode it was last running. Works for a tab of this Mac and for a tab on a connected Clave server (the key clave_list shows), after a server restart for instance. Any tab of this Mac, and of a connected Clave server, can be resumed; read it first with clave_read_session to learn what it was doing. A running tab is refused: there is nothing to resume. To resume and deliver a message in one call, pass resume: true to clave_send_to_session instead.',
       inputSchema: {
         sessionId: z
           .string()
@@ -1146,7 +1279,7 @@ function buildServer(callerSessionId: string | undefined): McpServer {
     'clave_send_to_session',
     {
       description:
-        'Send a message to another agent tab (claude, antigravity, or codex): the text is typed into that tab\'s input under a provenance header naming your tab, then submitted. If the target agent is mid-task, the message queues as its next turn. Use it to report results back to the tab that opened yours (target "parent"), or to coordinate with a sibling. Addressed to your OWN tab ("mine", your own id, or your own name), it becomes a CHECKPOINT instead: nothing is delivered or typed anywhere — the message is only logged into the transport record as an internal note (exos workstream capture lands it), so a solo lane leaves a narrative. Write checkpoints headline-first with the exos lane vocabulary (ASSIGNMENT, EXPLORATION DONE, GATES GREEN, VERDICT, MERGED, LANE DONE…) so exos workstream stats derives the lane phases. Refused for plain terminals (typed text would run as a shell command). A tab that has ended is refused unless resume is true, which resumes it first (clave_resume_session) and then delivers.',
+        'Send a message to another agent tab (claude, antigravity, or codex): the text is typed into that tab\'s input under a provenance header naming your tab, then submitted. If the target agent is mid-task, the message queues as its next turn. Use it to report results back to the tab that opened yours (target "parent"), or to coordinate with a sibling. Any tab of this Mac, and of a connected Clave server, can be reached. Read a tab first with clave_read_session to learn what it is doing; message it only when you need it to act, never to report progress to a tab that did not ask: an unasked message becomes that agent\'s next instruction. Addressed to your OWN tab ("mine", your own id, or your own name), it becomes a CHECKPOINT instead: nothing is delivered or typed anywhere — the message is only logged into the transport record as an internal note (exos workstream capture lands it), so a solo lane leaves a narrative. Write checkpoints headline-first with the exos lane vocabulary (ASSIGNMENT, EXPLORATION DONE, GATES GREEN, VERDICT, MERGED, LANE DONE…) so exos workstream stats derives the lane phases. Refused for plain terminals (typed text would run as a shell command). A tab that has ended is refused unless resume is true, which resumes it first (clave_resume_session) and then delivers.',
       inputSchema: {
         sessionId: z
           .string()
@@ -1173,7 +1306,7 @@ function buildServer(callerSessionId: string | undefined): McpServer {
     'clave_read_session',
     {
       description:
-        "Read the last N rendered lines of a tab's terminal without interrupting it — check what a delegated agent is doing, read a dev server's logs, or inspect a sibling's state. Works for any tab, plain terminals included. Returns scrollback for normal-buffer output (most CLIs, including claude/codex inline); for a full-screen/alternate-screen program (e.g. a pager or a TUI that took over the screen) it returns only the currently visible screen, so a large `lines` value may come back shorter. Target by session id, exact tab name, or \"parent\".",
+        "Read the last N rendered lines of a tab's terminal without interrupting it — check what a delegated agent is doing, read a dev server's logs, or inspect a sibling's state. Works for any tab of this Mac and of a connected Clave server, plain terminals included: read a tab first to learn what it is doing, and message it only when you need it to act, never to report progress to a tab that did not ask: an unasked message becomes that agent's next instruction. Returns scrollback for normal-buffer output (most CLIs, including claude/codex inline); for a full-screen/alternate-screen program (e.g. a pager or a TUI that took over the screen) it returns only the currently visible screen, so a large `lines` value may come back shorter. Target by session id, exact tab name, or \"parent\".",
       inputSchema: {
         sessionId: z.string().describe('Target: a session id, an exact tab name, or "parent"'),
         lines: z
