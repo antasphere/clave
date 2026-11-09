@@ -28,7 +28,7 @@
     private var pairingReads = 0
     private var requestsPending = true
     private var requestsRevision = 1.0
-    private var sequence = 2
+    private var sequence = UITestFakeServer.seeded.count
     private var eventSeq = 0.0
     private var sockets: [UITestFakeSocket] = []
 
@@ -160,12 +160,7 @@
       case ("GET", "/sessions/timeline"):
         return encoded(timeline())
       case ("GET", "/sessions/history"):
-        return encoded(
-          HistoryPage(
-            items: [
-              HistoryItem(event: .userMessage(UserMessage(text: "seeded-fake")), at: 0),
-              HistoryItem(event: .assistantText(delta: "seeded-fake", final: true, parent: nil), at: 0),
-            ], before: nil))
+        return encoded(HistoryPage(items: Self.seeded.map { HistoryItem(event: $0, at: 0) }, before: nil))
       case ("GET", "/sessions/capabilities"):
         return json(["images": false])
       case ("GET", "/sessions/writes"):
@@ -265,6 +260,15 @@
         workspaceId: workspaceId, state: .idle, createdAt: 0, adapterId: "echo", title: "Seeded chat")
     }
 
+    /// The seeded conversation: the person's message, Echo's reply, and one completed tool call
+    /// (a read of the workspace's README) for the transcript's tool card.
+    static let seeded: [SessionEvent] = [
+      .userMessage(UserMessage(text: "seeded-fake")),
+      .assistantText(delta: "seeded-fake", final: true, parent: nil),
+      .toolCall(id: "t_fake", name: "Read", input: .object(["file_path": .string("/fake/scratch/README.md")]), parent: nil),
+      .toolResult(id: "t_fake", output: .string("# Scratch"), error: false, parent: nil),
+    ]
+
     static func clarification() -> PendingRequest {
       PendingRequest(
         id: "r_fake", sessionId: sessionId, kind: .clarification, description: "Echo has a question.", createdAt: 0,
@@ -276,10 +280,9 @@
     private func timeline() -> TimelinePage {
       let top = locked { sequence }
       return TimelinePage(
-        items: [
-          TimelineItem(event: .userMessage(UserMessage(text: "seeded-fake")), at: 0, position: SessionPosition(generation: Self.generation, sequence: 1)),
-          TimelineItem(event: .assistantText(delta: "seeded-fake", final: true, parent: nil), at: 0, position: SessionPosition(generation: Self.generation, sequence: 2)),
-        ], before: nil, cursor: SessionPosition(generation: Self.generation, sequence: top), truncated: false)
+        items: Self.seeded.enumerated().map { index, event in
+          TimelineItem(event: event, at: 0, position: SessionPosition(generation: Self.generation, sequence: index + 1))
+        }, before: nil, cursor: SessionPosition(generation: Self.generation, sequence: top), truncated: false)
     }
 
     private static func field(_ name: String, of body: Data?) -> String? {

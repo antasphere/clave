@@ -9,59 +9,18 @@ final class ShellFlowTests: XCTestCase {
   }
 
   @MainActor
-  private func launch() -> XCUIApplication {
-    let app = XCUIApplication()
-    app.launchArguments = ["--ui-test-fake"]
-    app.launch()
-    return app
-  }
-
-  @MainActor
-  private func element(_ app: XCUIApplication, _ identifier: String) -> XCUIElement {
-    app.descendants(matching: .any).matching(identifier: identifier).firstMatch
-  }
-
-  @MainActor
-  private func signIn(_ app: XCUIApplication) {
-    let signIn = app.buttons["machines.signin"]
-    XCTAssertTrue(signIn.waitForExistence(timeout: 10))
-    signIn.tap()
-    // The fake opener answers the browser's redirect itself: no sheet appears.
-    XCTAssertTrue(app.staticTexts["Fake Person"].waitForExistence(timeout: 10))
-    XCTAssertTrue(app.buttons["machines.signout"].exists)
-  }
-
-  @MainActor
   func testSignInPairAndOpenWorkspaces() {
-    let app = launch()
-    signIn(app)
-
-    let field = app.textFields["machines.relay.field"]
-    XCTAssertTrue(field.waitForExistence(timeout: 5))
-    field.tap()
-    field.typeText("https://relay.fake")
-    app.buttons["machines.relay.save"].tap()
-
-    XCTAssertTrue(element(app, "machines.row.m_fake").waitForExistence(timeout: 10))
-    XCTAssertTrue(app.staticTexts["Fake Mac"].exists)
-    // The row reads as one sentence to VoiceOver: name, online, platform.
-    XCTAssertTrue(element(app, "machines.online.m_fake").label.contains("Online"))
-
-    app.buttons["machines.pair.m_fake"].tap()
-    // The fake approves on the second read, two polls of two seconds apart.
-    let state = element(app, "pairing.state")
-    XCTAssertTrue(state.waitForExistence(timeout: 5))
-    let paired = NSPredicate(format: "label BEGINSWITH 'Paired'")
-    expectation(for: paired, evaluatedWith: state)
-    waitForExpectations(timeout: 15)
-
-    app.buttons["pairing.continue"].tap()
-    XCTAssertTrue(element(app, "placeholder.workspaces").waitForExistence(timeout: 5))
+    let app = signInAndPair()
+    // The real Workspaces screen, over the fake machine's one workspace.
+    let row = app.buttons["workspaces.row.scratch"]
+    XCTAssertTrue(row.exists)
+    XCTAssertEqual(row.label, "scratch")
+    XCTAssertFalse(element(app, "placeholder.workspaces").exists)
   }
 
   @MainActor
   func testRelaunchStartsSignedOut() {
-    let app = launch()
+    let app = launchFake()
     signIn(app)
     app.terminate()
     app.launch()
@@ -74,7 +33,7 @@ final class ShellFlowTests: XCTestCase {
 
   @MainActor
   func testAppearanceFromTheHeader() {
-    let app = launch()
+    let app = launchFake()
     let gear = app.buttons["machines.appearance"]
     XCTAssertTrue(gear.waitForExistence(timeout: 10))
     gear.tap()
