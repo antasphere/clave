@@ -93,6 +93,13 @@ export interface ProviderSwitchRoad {
   ): Promise<unknown>
 }
 
+/** The road's word that the person cancelled in its popover: nothing moved. */
+function wasCancelled(result: unknown): boolean {
+  return (
+    !!result && typeof result === 'object' && (result as { cancelled?: unknown }).cancelled === true
+  )
+}
+
 let providerRoad: ProviderSwitchRoad | null = null
 
 /** Register (or, with null, withdraw) the provider rung's road. */
@@ -256,24 +263,35 @@ export function runAccountPolicy(): void {
 
 /** Take one rung of the proposal, by hand. While it moves, the proposal is
  *  the rung taken alone, so the pane's notice names where the tab goes
- *  (`Moving to Codex…`, integration round 2, F12). */
+ *  (`Moving to Codex…`, integration round 2, F12). A provider road the
+ *  person cancels in its popover moved nothing: the ladder and the report
+ *  stand again as they were (lane D's round-2 note). */
 export async function acceptRung(sessionId: string, rung: LimitRung): Promise<void> {
   const store = useSessionStore.getState()
   const session = store.sessions.find((s) => s.id === sessionId)
   if (!session?.accountProposal) return
+  const ladder = session.accountProposal
   switching.add(sessionId)
-  store.setAccountProposal(sessionId, { reason: session.accountProposal.reason, rungs: [rung] })
+  store.setAccountProposal(sessionId, { reason: ladder.reason, rungs: [rung] })
   const resendRejected = !!session.limitReported
+  let cancelled = false
   try {
     if (rung.kind === 'account') {
       await switchSessionAccount(sessionId, rung.accountId, { resendRejected })
     } else if (rung.kind === 'model') {
       await switchSessionModel(sessionId, rung.model)
     } else if (providerRoad) {
-      await providerRoad.switchTo(sessionId, rung.adapterId, { resendRejected })
+      cancelled = wasCancelled(
+        await providerRoad.switchTo(sessionId, rung.adapterId, { resendRejected })
+      )
     }
   } finally {
-    settled(sessionId, { keepReport: rung.kind === 'model' })
+    if (cancelled) {
+      switching.delete(sessionId)
+      useSessionStore.getState().setAccountProposal(sessionId, ladder)
+    } else {
+      settled(sessionId, { keepReport: rung.kind === 'model' })
+    }
   }
 }
 

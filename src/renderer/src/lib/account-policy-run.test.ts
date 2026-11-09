@@ -476,6 +476,44 @@ describe('the provider rung (integration round 2, F12, G7)', () => {
     }
   })
 
+  it("a cancel in the road's popover leaves the ladder and the report standing, and the tab free to move again (lane D's round-2 note)", async () => {
+    let answer: unknown = { cancelled: true }
+    const calls: unknown[] = []
+    registerProviderSwitchRoad({
+      targetFor: () => ({ adapterId: 'codex-chat', label: 'Codex' }),
+      switchTo: async (id, adapterId, options) => {
+        calls.push([id, adapterId, options])
+        return answer
+      }
+    })
+    try {
+      fake.sessions = [chat()]
+      startAccountPolicy()
+      fake.limitListener!({ id: idOf(), report: { scope: { family: 'Fable' } } })
+      runAccountPolicy()
+      const ladder = lastProposal()
+      expect(ladder).toMatchObject({
+        rungs: [{ kind: 'model' }, { kind: 'account' }, { kind: 'provider' }]
+      })
+      await acceptRung(idOf(), { kind: 'provider', adapterId: 'codex-chat', label: 'Codex' })
+      // Nothing moved: the card shows the ladder again, the report is still open.
+      expect(lastProposal()).toEqual(ladder)
+      expect(fake.sessions[0].limitReported).toEqual({ scope: { family: 'Fable' } })
+      expect(fake.switched).toEqual([])
+      // The policy run after the cancel changes nothing: the ladder already stands.
+      runAccountPolicy()
+      expect(lastProposal()).toEqual(ladder)
+      // The person tries again and goes through this time: the card settles.
+      answer = { ok: true, resumed: true, road: 'converted' }
+      await acceptRung(idOf(), { kind: 'provider', adapterId: 'codex-chat', label: 'Codex' })
+      expect(calls).toHaveLength(2)
+      expect(lastProposal()).toBeNull()
+      expect(lastReport()).toEqual([idOf(), null])
+    } finally {
+      registerProviderSwitchRoad(null)
+    }
+  })
+
   it('a move with no report open carries no resend', async () => {
     const calls: unknown[] = []
     registerProviderSwitchRoad({
