@@ -23,6 +23,8 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
@@ -116,7 +118,11 @@ fun QuestionForm(
                             enabled = enabled,
                             keyboardOptions = if (secret) KeyboardOptions(keyboardType = KeyboardType.Password) else KeyboardOptions.Default,
                             visualTransformation = if (secret) PasswordVisualTransformation() else VisualTransformation.None,
-                            modifier = Modifier.fillMaxWidth().padding(top = Metrics.space(1)),
+                            // Named by its purpose, not its placeholder: TalkBack says "Your own answer".
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(top = Metrics.space(1))
+                                .semantics { contentDescription = "Your own answer" },
                         )
                     }
                 }

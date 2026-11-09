@@ -14,7 +14,6 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performScrollToNode
-import androidx.compose.ui.text.LinkAnnotation
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.clave.ui.theme.ThemeName
 import org.junit.Assert.assertEquals
@@ -38,8 +37,12 @@ class MarkdownEvidenceTest {
     private fun text(node: SemanticsNode) =
         node.config.getOrNull(SemanticsProperties.Text).orEmpty().joinToString(" ") { it.text }
 
+    private fun descriptions(node: SemanticsNode) =
+        node.config.getOrNull(SemanticsProperties.ContentDescription).orEmpty().joinToString(" ")
+
     private fun theReplyIn(theme: ThemeName) {
-        rule.setContent { EvidenceScreen(Screen.Chat, theme, 1f) }
+        val opened = mutableListOf<String>()
+        rule.setContent { EvidenceScreen(Screen.Chat, theme, 1f, onLink = { opened += it }) }
         val transcript = rule.onNodeWithTag("chat-transcript")
 
         transcript.performScrollToNode(hasText(Samples.userText))
@@ -54,22 +57,35 @@ class MarkdownEvidenceTest {
             rule.onNodeWithText(it, useUnmergedTree = true).assertExists()
         }
 
-        // The link: one text run carrying a URL link annotation over "the changelog".
+        // The link: one text run carrying a "url" string annotation over "the changelog".
         val paragraph = rule.onNodeWithText("the changelog", substring = true, useUnmergedTree = true).fetchSemanticsNode()
         val annotated = paragraph.config[SemanticsProperties.Text].first { it.text.contains("the changelog") }
-        val links = annotated.getLinkAnnotations(0, annotated.length)
+        val links = annotated.getStringAnnotations("url", 0, annotated.length)
         assertEquals("one link in the paragraph", 1, links.size)
         val link = links.single()
-        assertEquals("https://clave.app/changelog", (link.item as LinkAnnotation.Url).url)
+        assertEquals("https://clave.app/changelog", link.item)
         assertEquals("the changelog", annotated.text.substring(link.start, link.end))
-        // And whether the link is a node of its own with a click action, or only the span.
-        val unmerged = all(rule.onRoot(useUnmergedTree = true).fetchSemanticsNode())
-        val clickableLinkNodes = unmerged.filter {
-            SemanticsActions.OnClick in it.config && text(it).contains("the changelog")
-        }
-        val paragraphClickable = SemanticsActions.OnClick in paragraph.config
+        assertTrue("the link span keeps no LinkAnnotation", annotated.getLinkAnnotations(0, annotated.length).isEmpty())
 
-        // The image: its alt is the node's description; unreachable, the surface-100 placeholder holds its place.
+        // TalkBack reaches it from the paragraph: exactly one custom action, named by the link's words.
+        val actions = paragraph.config.getOrNull(SemanticsActions.CustomActions).orEmpty()
+        assertEquals("one custom action on the paragraph", 1, actions.size)
+        val action = actions.single()
+        assertEquals("Open the changelog", action.label)
+        val handled = rule.runOnIdle { action.action() }
+        assertTrue("the action reports it handled the link", handled)
+        assertEquals("the action opens the link's URL", listOf("https://clave.app/changelog"), opened)
+
+        // And no click target of its own: nothing in the paragraph carries a click action, and no
+        // node of the whole chat carries one without words.
+        val clickableInParagraph = all(paragraph).filter { SemanticsActions.OnClick in it.config }
+        assertTrue("no click action inside the paragraph: ${clickableInParagraph.map { it.config }}", clickableInParagraph.isEmpty())
+        val unlabelled = all(rule.onRoot().fetchSemanticsNode()).filter {
+            SemanticsActions.OnClick in it.config && text(it).isBlank() && descriptions(it).isBlank()
+        }
+        assertTrue("no unlabelled click target in the chat: ${unlabelled.map { it.config }}", unlabelled.isEmpty())
+
+        // The image: its alt is the node's description; unreachable, the placeholder holds its place and shows the alt.
         val image = rule.onNodeWithContentDescription("the dashboard", useUnmergedTree = true)
         image.assertExists()
         val imageNode = image.fetchSemanticsNode()
@@ -83,10 +99,10 @@ class MarkdownEvidenceTest {
         val notes = File(writeEvidenceDir(), "gfm-${theme.id}-semantics.txt")
         notes.writeText(
             buildString {
-                appendLine("link: LinkAnnotation.Url ${link.item.let { (it as LinkAnnotation.Url).url }} over [${link.start},${link.end}) \"${annotated.text.substring(link.start, link.end)}\"")
-                appendLine("link: paragraph node has OnClick = $paragraphClickable")
-                appendLine("link: separate clickable nodes carrying the link text = ${clickableLinkNodes.size}")
-                appendLine("link: paragraph node actions = ${paragraph.config.map { it.key.name }}")
+                appendLine("link: string annotation \"url\" ${link.item} over [${link.start},${link.end}) \"${annotated.text.substring(link.start, link.end)}\"")
+                appendLine("link: paragraph custom actions = ${actions.map { it.label }}, invoked -> $opened")
+                appendLine("link: click actions inside the paragraph = ${clickableInParagraph.size}, unlabelled click targets in the chat = ${unlabelled.size}")
+                appendLine("link: paragraph node keys = ${paragraph.config.map { it.key.name }}")
                 appendLine("image: contentDescription = ${imageNode.config.getOrNull(SemanticsProperties.ContentDescription)}")
                 appendLine("image: role = ${imageNode.config.getOrNull(SemanticsProperties.Role)}, height px = ${imageNode.boundsInRoot.height}")
             },

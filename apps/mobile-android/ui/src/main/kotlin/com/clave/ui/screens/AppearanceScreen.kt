@@ -25,6 +25,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.clipRect
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import com.clave.ui.chat.AssistantProse
@@ -139,11 +140,20 @@ private fun DrawScope.paintSwatch(colors: ThemeColors) {
     drawCircle(colors.accent, radius = dot / 2, center = Offset(pad + dot / 2, size.height - pad - dot / 2))
 }
 
-/** A short exchange in the current theme: a user turn, an answer, a tool row. */
+/**
+ * A short exchange in the current theme: a user turn, an answer, a tool row. It is a picture
+ * of the theme, not a conversation, so to TalkBack it is one description and offers nothing
+ * to press: its children's words and the tool row's toggle are cleared from the semantics.
+ */
 @Composable
 fun AppearancePreviewStrip(modifier: Modifier = Modifier) {
     var open by remember { mutableStateOf(false) }
-    Column(modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(Metrics.space(3))) {
+    Column(
+        modifier
+            .fillMaxWidth()
+            .clearAndSetSemantics { contentDescription = "A preview of the theme" },
+        verticalArrangement = Arrangement.spacedBy(Metrics.space(3)),
+    ) {
         UserTurn(text = "Can you tidy up the README before the release?")
         AssistantProse(
             markdown = "Sure. I will **rewrite the introduction** and keep the `npm install` steps as they are.",

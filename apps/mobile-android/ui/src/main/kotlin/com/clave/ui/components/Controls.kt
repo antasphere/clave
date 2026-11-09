@@ -272,7 +272,7 @@ fun StatusWord(status: SessionStatus, modifier: Modifier = Modifier) =
 fun StatusWord(reachability: Reachability, modifier: Modifier = Modifier) =
     StatusWord(reachability.label, reachability.color(Clave.colors.shared), modifier)
 
-/** `.badge.badge-muted`: a quiet fact beside a title. */
+/** `.badge.badge-muted`: a quiet fact beside a title, on one line, ellipsised when it runs out. */
 @Composable
 fun Badge(text: String, modifier: Modifier = Modifier) {
     val t = Clave.colors.theme
@@ -284,6 +284,7 @@ fun Badge(text: String, modifier: Modifier = Modifier) {
             .padding(horizontal = Metrics.space(1.5f), vertical = Metrics.space(0.5f)),
         style = ClaveTypography.type(Metrics.textBadge).copy(color = t.textTertiary),
         maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
     )
 }
 
@@ -360,7 +361,14 @@ fun ClaveTextField(
             ) {
                 Box(Modifier.weight(1f).padding(vertical = Metrics.space(2))) {
                     if (value.isEmpty() && placeholder != null) {
-                        BasicText(placeholder, style = style.copy(color = t.textTertiary), maxLines = 1)
+                        // One line, ellipsised: a long placeholder at a large font scale ends in
+                        // an ellipsis rather than being cut mid-letter by the field's edge.
+                        BasicText(
+                            placeholder,
+                            style = style.copy(color = t.textTertiary),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
                     }
                     inner()
                 }

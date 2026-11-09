@@ -25,22 +25,25 @@ fun Screen.title(): String = when (this) {
     Screen.Appearance -> "Appearance"
 }
 
-/** One screen with the samples, in one named theme, at one font scale; every callback a no-op. */
+/**
+ * One screen with the samples, in one named theme, at one font scale; every callback a no-op
+ * but the chat's [onLink], which a test passes to see which URL a link opened.
+ */
 @Composable
-fun EvidenceScreen(which: Screen, theme: ThemeName, fontScale: Float) {
+fun EvidenceScreen(which: Screen, theme: ThemeName, fontScale: Float, onLink: (String) -> Unit = {}) {
     ClaveTheme(theme) {
         if (fontScale != 1f) {
             CompositionLocalProvider(LocalDensity provides Density(LocalDensity.current.density, fontScale)) {
-                Painted(which)
+                Painted(which, onLink)
             }
         } else {
-            Painted(which)
+            Painted(which, onLink)
         }
     }
 }
 
 @Composable
-private fun Painted(which: Screen) {
+private fun Painted(which: Screen, onLink: (String) -> Unit) {
     when (which) {
         Screen.Machines -> MachinesScreen(
             state = Samples.machines(),
@@ -60,7 +63,7 @@ private fun Painted(which: Screen) {
             onBack = {}, onRequests = {}, onLoadOlder = {}, onTextChange = {},
             onSend = {}, onStop = {}, onPickPhotos = {}, onTakePhoto = {}, onPickDocuments = {},
             onRemoveAttachment = {}, onAnswer = { _, _, _ -> }, onToggle = {},
-            onResend = {}, onDiscard = {}, onLink = {},
+            onResend = {}, onDiscard = {}, onLink = onLink,
         )
         Screen.Appearance -> AppearanceScreen(Samples.appearance, onAppearance = {}, onBack = {})
     }

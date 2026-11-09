@@ -1,6 +1,7 @@
 package com.clave.ui.markdown
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -22,6 +23,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
@@ -29,40 +31,50 @@ import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.painter.ColorPainter
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.Layout
-import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.semantics.CustomAccessibilityAction
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.customActions
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.AnnotatedString
-import androidx.compose.ui.text.LinkAnnotation
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextLayoutResult
-import androidx.compose.ui.text.TextLinkStyles
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
-import androidx.compose.ui.text.withLink
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.Constraints
-import coil3.compose.AsyncImage
+import coil3.compose.SubcomposeAsyncImage
 import com.clave.ui.components.Rule
 import com.clave.ui.theme.Clave
 import com.clave.ui.theme.ClaveColors
+import com.clave.ui.theme.ClaveIcon
 import com.clave.ui.theme.ClaveTypography
+import com.clave.ui.theme.Icon
 import com.clave.ui.theme.Metrics
 import kotlin.math.max
 import kotlin.math.min
 
 private const val CODE_TAG = "clave.code"
+
+/** The tag of a link's range in a prose text; the annotation's item is the URL it opens. */
+internal const val URL_TAG = "url"
 private const val CODE_PAD = " "
 
 /**
  * The assistant's Markdown as `.chat-prose` draws it: paragraphs at 14 with a 1.5 line,
  * headings in the semibold at three sizes, inline code in the mono face on surface-100,
  * fences and tables scrolling sideways rather than wrapping code, links in the accent.
+ * A link opens through [onLink]; without one the links are styled but inert.
  */
 @Composable
 fun Markdown(
@@ -70,16 +82,14 @@ fun Markdown(
     modifier: Modifier = Modifier,
     onLink: ((String) -> Unit)? = null,
 ) {
-    val uriHandler = LocalUriHandler.current
-    val open: (String) -> Unit = onLink ?: { url -> runCatching { uriHandler.openUri(url) } }
     val blocks = remember(text) { parseMarkdown(text) }
     SelectionContainer(modifier) {
-        Blocks(blocks, Clave.colors.theme.textPrimary, open)
+        Blocks(blocks, Clave.colors.theme.textPrimary, onLink)
     }
 }
 
 @Composable
-private fun Blocks(blocks: List<MdBlock>, ink: Color, onLink: (String) -> Unit, modifier: Modifier = Modifier) {
+private fun Blocks(blocks: List<MdBlock>, ink: Color, onLink: ((String) -> Unit)?, modifier: Modifier = Modifier) {
     Column(modifier, verticalArrangement = Arrangement.spacedBy(Metrics.space(3))) {
         blocks.forEach { Block(it, ink, onLink) }
     }
@@ -89,7 +99,7 @@ private val bodyStyle: TextStyle
     get() = ClaveTypography.type(Metrics.textSm, lineHeight = Metrics.proseLineHeight)
 
 @Composable
-private fun Block(block: MdBlock, ink: Color, onLink: (String) -> Unit) {
+private fun Block(block: MdBlock, ink: Color, onLink: ((String) -> Unit)?) {
     val c = Clave.colors
     when (block) {
         is MdBlock.Paragraph -> Paragraph(block.inlines, ink, onLink)
@@ -122,7 +132,7 @@ private fun Block(block: MdBlock, ink: Color, onLink: (String) -> Unit) {
 
 /** Inline images break the run: each sits on its own line between the text around it. */
 @Composable
-private fun Paragraph(inlines: List<MdInline>, ink: Color, onLink: (String) -> Unit) {
+private fun Paragraph(inlines: List<MdInline>, ink: Color, onLink: ((String) -> Unit)?) {
     if (inlines.none { it is MdInline.Image }) {
         ProseText(inlines, bodyStyle.copy(color = ink), onLink)
         return
@@ -143,23 +153,52 @@ private fun Paragraph(inlines: List<MdInline>, ink: Color, onLink: (String) -> U
     }
 }
 
-/** A run of inlines as one text, with the inline code's rounded fill drawn behind it. */
+/**
+ * A run of inlines as one text, with the inline code's rounded fill drawn behind it.
+ *
+ * Its links are spans of this one text, never nodes of their own: a tap is mapped to the
+ * character under it and opens the URL annotated there, and each link is offered to TalkBack
+ * as a custom action of the text, "Open <the link's words>", so no click target exists
+ * without words. Without [onLink] the links are styled only: no tap, no action.
+ */
 @Composable
 private fun ProseText(
     inlines: List<MdInline>,
     style: TextStyle,
-    onLink: (String) -> Unit,
+    onLink: ((String) -> Unit)?,
     modifier: Modifier = Modifier,
 ) {
     val colors = Clave.colors
-    val annotated = remember(inlines, colors, style) { annotate(inlines, colors, style, onLink) }
+    val annotated = remember(inlines, colors, style) { annotate(inlines, colors, style) }
     var layout by remember { mutableStateOf<TextLayoutResult?>(null) }
     val codeFill = colors.theme.surface100
+    val links = remember(annotated) { annotated.getStringAnnotations(URL_TAG, 0, annotated.length) }
+    val linking = if (onLink != null && links.isNotEmpty()) {
+        Modifier
+            .pointerInput(annotated, onLink) {
+                detectTapGestures { offset ->
+                    val l = layout ?: return@detectTapGestures
+                    if (l.layoutInput.text != annotated) return@detectTapGestures
+                    val at = l.getOffsetForPosition(offset)
+                    annotated.getStringAnnotations(URL_TAG, at, at + 1).firstOrNull()?.let { onLink(it.item) }
+                }
+            }
+            .semantics {
+                customActions = links.map { link ->
+                    CustomAccessibilityAction("Open ${annotated.text.substring(link.start, link.end)}") {
+                        onLink(link.item)
+                        true
+                    }
+                }
+            }
+    } else {
+        Modifier
+    }
     BasicText(
         text = annotated,
         style = style,
         onTextLayout = { layout = it },
-        modifier = modifier.drawBehind {
+        modifier = modifier.then(linking).drawBehind {
             val l = layout ?: return@drawBehind
             if (l.layoutInput.text != annotated) return@drawBehind
             val radius = CornerRadius(Metrics.radiusSm.toPx())
@@ -187,15 +226,13 @@ private fun ProseText(
     )
 }
 
+/** The inlines as one styled string: code ranges tagged [CODE_TAG], link ranges tagged [URL_TAG] with their URL. */
 private fun annotate(
     inlines: List<MdInline>,
     colors: ClaveColors,
     base: TextStyle,
-    onLink: (String) -> Unit,
 ): AnnotatedString = buildAnnotatedString {
-    val linkStyles = TextLinkStyles(
-        style = SpanStyle(color = colors.theme.accent, textDecoration = TextDecoration.Underline),
-    )
+    val linkStyle = SpanStyle(color = colors.theme.accent, textDecoration = TextDecoration.Underline)
     fun append(items: List<MdInline>) {
         items.forEach { inline ->
             when (inline) {
@@ -213,9 +250,11 @@ private fun annotate(
                 }
                 is MdInline.Link -> {
                     val url = inline.url
-                    withLink(LinkAnnotation.Url(url, linkStyles) { onLink(url) }) {
+                    val start = length
+                    withStyle(linkStyle) {
                         if (inline.children.isEmpty()) append(url) else append(inline.children)
                     }
+                    addStringAnnotation(URL_TAG, url, start, length)
                 }
                 MdInline.SoftBreak -> append(' ')
                 MdInline.HardBreak -> append('\n')
@@ -231,7 +270,7 @@ private fun annotate(
 
 /** Lists with a hanging indent: the marker in its own column, the item's blocks beside it. */
 @Composable
-private fun ListView(items: List<List<MdBlock>>, ink: Color, onLink: (String) -> Unit, marker: (Int) -> String) {
+private fun ListView(items: List<List<MdBlock>>, ink: Color, onLink: ((String) -> Unit)?, marker: (Int) -> String) {
     val t = Clave.colors.theme
     Column(Modifier.padding(start = Metrics.space(1)), verticalArrangement = Arrangement.spacedBy(Metrics.space(1))) {
         items.forEachIndexed { index, item ->
@@ -276,7 +315,7 @@ private class GridLines {
 
 /** A table as a grid: each column as wide as its widest cell (capped), rules between cells. */
 @Composable
-private fun TableView(table: MdBlock.Table, onLink: (String) -> Unit) {
+private fun TableView(table: MdBlock.Table, onLink: ((String) -> Unit)?) {
     val t = Clave.colors.theme
     val columns = max(table.header.size, table.rows.maxOfOrNull { it.size } ?: 0)
     if (columns == 0) return
@@ -334,21 +373,55 @@ private fun TableView(table: MdBlock.Table, onLink: (String) -> Unit) {
     }
 }
 
-/** An image by URL through Coil: the alt is its description, surface-100 holds its place. */
+/**
+ * An image by URL through Coil: the alt is its description. The loaded image is at most
+ * [Metrics.imageMaxHeight] tall; while it loads, and when it cannot, [ImagePlaceholder]
+ * holds a short place for it and shows its alt, so an unreachable image still says what it was.
+ */
 @Composable
 private fun MarkdownImage(url: String, alt: String) {
-    val t = Clave.colors.theme
-    var loaded by remember(url) { mutableStateOf(false) }
-    AsyncImage(
+    SubcomposeAsyncImage(
         model = url,
         contentDescription = alt.ifEmpty { null },
-        placeholder = ColorPainter(t.surface100),
-        error = ColorPainter(t.surface100),
         contentScale = ContentScale.Fit,
-        onSuccess = { loaded = true },
+        loading = { ImagePlaceholder(alt) },
+        error = { ImagePlaceholder(alt) },
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(Metrics.radiusLg))
-            .heightIn(min = if (loaded) Metrics.space(0) else Metrics.imagePlaceholderHeight, max = Metrics.imageMaxHeight),
+            .heightIn(max = Metrics.imageMaxHeight),
     )
+}
+
+/**
+ * An image's place before it is there: surface-100, [Metrics.imagePlaceholderHeight] tall, the
+ * photo glyph above the alt in the tertiary ink. To TalkBack it is the image itself: one node
+ * whose description is the alt, the glyph and the visible words cleared under it.
+ */
+@Composable
+private fun ImagePlaceholder(alt: String) {
+    val t = Clave.colors.theme
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(Metrics.imagePlaceholderHeight)
+            .background(t.surface100)
+            .padding(horizontal = Metrics.space(3))
+            .clearAndSetSemantics {
+                if (alt.isNotEmpty()) contentDescription = alt
+                role = Role.Image
+            },
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(Metrics.space(1), Alignment.CenterVertically),
+    ) {
+        Icon(ClaveIcon.Photo, contentDescription = null, tint = t.textTertiary)
+        if (alt.isNotEmpty()) {
+            BasicText(
+                text = alt,
+                style = ClaveTypography.type(Metrics.textXs).copy(color = t.textTertiary, textAlign = TextAlign.Center),
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
 }

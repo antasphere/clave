@@ -52,7 +52,9 @@ import com.clave.ui.theme.Metrics
 /**
  * `.pane-header`: the one row at the top of every pane on the desktop and of every screen
  * here. It takes the status-bar inset itself, so it is safe outside a [ScreenScaffold] too;
- * inside one the inset is already consumed and nothing doubles.
+ * inside one the inset is already consumed and nothing doubles. The row is 44 tall at
+ * least and grows with the text, so at a large font scale the title and the subtitle each
+ * keep their whole line (ellipsised, never cut) rather than being clipped to the row.
  */
 @Composable
 fun PaneHeader(
@@ -67,8 +69,8 @@ fun PaneHeader(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(Metrics.paneHeaderHeight)
-                .padding(horizontal = Metrics.space(1)),
+                .heightIn(min = Metrics.paneHeaderHeight)
+                .padding(horizontal = Metrics.space(1), vertical = Metrics.space(1)),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(Metrics.space(1)),
         ) {
