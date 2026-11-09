@@ -40,6 +40,22 @@ export function sameScope(a: LimitScope, b: LimitScope): boolean {
   return a === b
 }
 
+/** Whether two reports say the same thing: the store keeps the one it has. */
+export function sameReport(a: LimitReport | null, b: LimitReport | null): boolean {
+  if (a === b) return true
+  if (!a || !b) return false
+  return sameScope(a.scope, b.scope) && a.resetsAt === b.resetsAt
+}
+
+/** A report as it crosses the wire (the IPC payload and the server event
+ *  carry `scope` and an optional `resetsAt` flat): the report, with no
+ *  `resetsAt` key when the wire had none. */
+export function reportFromWire(wire: { scope: LimitScope; resetsAt?: number }): LimitReport {
+  return wire.resetsAt !== undefined
+    ? { scope: wire.scope, resetsAt: wire.resetsAt }
+    : { scope: wire.scope }
+}
+
 /** The scope as one word, for a key or a log line: `shared`, `credits`,
  *  `unknown`, `family:Fable`. */
 export function scopeKey(scope: LimitScope): string {

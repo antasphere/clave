@@ -17,6 +17,7 @@ const f = vi.hoisted(() => ({
   accountId: null as string | null,
   accountCalls: [] as [string, string | undefined, string | undefined][],
   launchModel: vi.fn(async () => undefined as string | undefined),
+  modes: { codexMode: true } as Record<string, boolean>,
   activeWorkspaceId: 'workspace' as string | null,
   workspaces: new Map<string, { id: string; rootDir: string }>(),
   statuses: {} as Record<string, { state: string }>
@@ -66,7 +67,7 @@ vi.mock('../store/workspace-store', () => ({
 }))
 vi.mock('../store/launch-prefs', () => ({
   agentAcceptsPrompt: () => true,
-  agentSetupToModes: () => ({ codexMode: true }),
+  agentSetupToModes: () => f.modes,
   rememberAgentSetup: f.remember
 }))
 import { launchSession } from './launch-session'
@@ -78,6 +79,7 @@ afterEach(() => {
   f.accountCalls = []
   f.launchModel.mockReset()
   f.launchModel.mockResolvedValue(undefined)
+  f.modes = { codexMode: true }
   f.focusedSessionId = null
   f.activeWorkspaceId = 'workspace'
   f.workspaces.clear()
@@ -237,6 +239,34 @@ describe('launchSession acknowledgement and opt-in errors', () => {
     // The model is read for the launch's profile in the launch's workspace.
     expect(f.launchModel).toHaveBeenCalledWith('codex', 'codex-work', 'capture-workspace')
     expect(f.accountCalls).toEqual([['codex', 'work', 'gpt-5.5']])
+  })
+
+  it("judges a Claude chat's account for its remembered model too (round 1, L1)", async () => {
+    vi.stubGlobal('window', { electronAPI: { spawnSession: f.spawn } })
+    f.spawn.mockResolvedValue({
+      id: 'new',
+      cwd: '/private/triage',
+      folderName: 'triage',
+      alive: true
+    })
+    f.modes = { claudeMode: true }
+    f.launchModel.mockResolvedValue('claude-opus-5-5')
+    await launchSession({
+      ...request,
+      setup: {
+        kind: 'claude',
+        dangerousMode: false,
+        launchProfileId: 'claude-chat',
+        claudeProfileId: 'mac'
+      },
+      throwOnError: true
+    })
+    expect(f.launchModel).toHaveBeenCalledWith('claude', 'claude-chat', 'capture-workspace')
+    expect(f.accountCalls).toEqual([['claude', 'mac', 'claude-opus-5-5']])
+    expect(f.spawn).toHaveBeenCalledWith(
+      '/private/triage',
+      expect.objectContaining({ claudeProfileId: 'mac' })
+    )
   })
 
   it('judges a launch whose model this Mac cannot know on the shared caps alone', async () => {

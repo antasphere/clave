@@ -147,7 +147,9 @@ export const PermissionDraft = Schema.Struct({
 export const Interrupt = Schema.Struct({ type: Schema.Literal('interrupt') })
 export const SetModel = Schema.Struct({
   type: Schema.Literal('set_model'),
-  model: Schema.NullOr(Schema.String)
+  model: Schema.NullOr(Schema.String),
+  /** Whether the pick becomes the next chat's default; absent means yes (PRDCT-4302). */
+  remember: Schema.optional(Schema.Boolean)
 })
 export type SetModel = typeof SetModel.Type
 /** A level as a provider spells it: a short lowercase word (src/shared/effort.ts). */

@@ -1,5 +1,9 @@
 import { CLAUDE_MODELS, type ClaudeModel } from '../../../shared/claude-models'
-import { isExhausted, type AccountUsageSummary } from '../../../shared/account-pool'
+import {
+  isExhausted,
+  windowExhausted,
+  type AccountUsageSummary
+} from '../../../shared/account-pool'
 import { scopeFamily, type LimitReport } from '../../../shared/limit-report'
 import type { ResolvedScope } from './account-policy-rule'
 
@@ -25,8 +29,13 @@ export function resolveLimitScope(
   const named = report ? scopeFamily(report.scope) : null
   if (named) return { family: named }
   if (view && isExhausted(view)) {
+    // The one rule ranks the cap back LAST as the tightest, so a family cap
+    // out for the week sits above a 5-hour block out for two hours: a
+    // family is the scope only while every shared cap is open, since a
+    // model of another family draws on the shared caps too (round 1, F2).
+    const sharedOut = view.shared ? windowExhausted(view.shared) : false
     const family = view.tightest?.scope?.trim()
-    return family ? { family } : 'shared'
+    return family && !sharedOut ? { family } : 'shared'
   }
   // A report typed shared, or one that said nothing, with no cap out in the
   // read yet: the account rung, as before the report carried a scope.

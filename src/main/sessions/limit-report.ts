@@ -38,7 +38,6 @@ function familyOfType(type: string): string | null {
   const m = FAMILY_TYPE.exec(type)
   if (!m) return null
   if (m[1] === 'oi') return 'Fable'
-  if (m[1] === 'overage_included') return null
   return m[1].charAt(0).toUpperCase() + m[1].slice(1)
 }
 

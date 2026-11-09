@@ -35,7 +35,7 @@ import type {
 } from './session-types'
 import type { LimitProposal } from './session-types'
 import { ladderKey } from '../lib/account-policy-rule'
-import { sameScope, type LimitReport } from '../../../shared/limit-report'
+import { sameReport, type LimitReport } from '../../../shared/limit-report'
 import {
   PANEL_ROOTS,
   resolveDensity,
@@ -2079,15 +2079,7 @@ export const useSessionStore = create<SessionState>((set) => ({
     set((state) => {
       const session = state.sessions.find((s) => s.id === id)
       if (!session) return state
-      const held = session.limitReported ?? null
-      if (held === report) return state
-      if (
-        held !== null &&
-        report !== null &&
-        sameScope(held.scope, report.scope) &&
-        held.resetsAt === report.resetsAt
-      )
-        return state
+      if (sameReport(session.limitReported ?? null, report)) return state
       return {
         sessions: state.sessions.map((s) => (s.id === id ? { ...s, limitReported: report } : s))
       }

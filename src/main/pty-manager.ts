@@ -17,7 +17,7 @@ import {
 } from './sessions/adapters/pty-backend'
 import { lineageOf } from './sessions/lineage'
 import { limitReportOf } from './sessions/limit-report'
-import { scopeFamily, type LimitReport } from '../shared/limit-report'
+import type { LimitReport } from '../shared/limit-report'
 import { runtimeChoices } from './sessions/runtime-choices'
 
 /** The runtime choices a restart carries (PRDCT-4191): the record's, which
@@ -109,12 +109,14 @@ class PtyManager {
   /** A Codex chat session's thread, from the app-server's own meta. */
   private codexThreads = new Map<string, string>()
   private limitListeners = new Set<(sessionId: string, report: LimitReport) => void>()
-  /** The limit report still open on a session (ADR 0002, PRDCT-4302): set
-   *  when the CLI reports a FAMILY's cap, cleared when the message it
-   *  rejected goes again on another model, when a restart resends it, or
-   *  when the person writes something else. While it is open, the next
-   *  model the provider confirms resends that one message. */
-  private openFamilyReports = new Map<string, UserMessageInput>()
+  /** The limit report still open on a session (ADR 0002, PRDCT-4302): the
+   *  message the CLI's report rejected, whatever cap the CLI typed (its enum
+   *  has no Fable value and types a Fable rejection as a plain week, so the
+   *  WINDOW decides the rung from its read, never main). Closed when that
+   *  message goes again on another model, when a restart carries it, or when
+   *  the person writes something else. While it is open, the next model the
+   *  provider confirms resends that one message. */
+  private openReports = new Map<string, UserMessageInput>()
   /** The message a chat session's account rejected, kept from the CLI's own
    *  report to the restart that resends it on the next account. */
   private rejected = new Map<string, UserMessageInput>()
@@ -453,10 +455,10 @@ class PtyManager {
         if (report) {
           const last = claudeAdapter.lastUserMessage(id)
           if (last) this.rejected.set(id, last)
-          // A family's cap: the way on is another model of the same account,
-          // and the message it rejected is owed on that model.
-          if (last && scopeFamily(report.scope)) this.openFamilyReports.set(id, last)
-          else this.openFamilyReports.delete(id)
+          // The message the cap rejected is owed on whichever way on the
+          // window takes: the account rung's restart carries it, a model
+          // change resends it.
+          if (last) this.openReports.set(id, last)
           for (const listener of this.limitListeners) listener(id, report)
         }
       }
@@ -473,17 +475,16 @@ class PtyManager {
     })
   }
 
-  /** The message a FAMILY's cap rejected goes again on the model the provider
-   *  just confirmed (PRDCT-4302), once, while that report is still open on the
+  /** The message a cap rejected goes again on the model the provider just
+   *  confirmed (PRDCT-4302), once, while that report is still open on the
    *  session and the message is still the person's last: the CLI's own advice
-   *  was to switch model, and the question was never answered. A report on
-   *  the shared caps or the credits opens nothing here (the account rung's
-   *  restart resends through `initialInput`), and a hand switch with no open
-   *  report never resends. */
+   *  was to switch model, and the question was never answered. The account
+   *  rung's restart carries it instead (`initialInput`) and closes the
+   *  report; a hand switch with no open report never resends. */
   private resendOnModelChange(id: string): void {
-    const owed = this.openFamilyReports.get(id)
+    const owed = this.openReports.get(id)
     if (!owed) return
-    this.openFamilyReports.delete(id)
+    this.openReports.delete(id)
     if (claudeAdapter.lastUserMessage(id) !== owed) return
     if (!sessionManager.get(id)) return
     sessionManager.write(id, owed)
@@ -522,7 +523,7 @@ class PtyManager {
       this.spawns.delete(id)
       this.codexThreads.delete(id)
       this.rejected.delete(id)
-      this.openFamilyReports.delete(id)
+      this.openReports.delete(id)
       // Copy offers are surfaced in the tab's own header: once the tab is
       // gone they are unreachable, so their values leave memory with it.
       dismissSessionOffers(id)
@@ -564,7 +565,7 @@ class PtyManager {
     const spawn = this.spawns.get(id)
     if (!spawn) return null
     // A restart closes the report: the resend, when one is owed, rides it.
-    this.openFamilyReports.delete(id)
+    this.openReports.delete(id)
     const conversationId = this.conversationIdOf(id)
     const previous = spawn.options ?? {}
     // `onlyIfStopped` is the lifecycle's precondition, never a spawn option.

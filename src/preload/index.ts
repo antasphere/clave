@@ -14,7 +14,7 @@ import type {
 import type { AttachmentPreview, AttachmentSource, FileAttachment } from '../shared/attachments'
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import type { UpdaterState } from '../shared/updater-types'
-import type { LimitReport } from '../shared/limit-report'
+import { reportFromWire, type LimitReport } from '../shared/limit-report'
 import type { AgentUpdateId, AgentUpdatesState } from '../shared/agent-updates'
 import type {
   LaunchProfile,
@@ -1505,10 +1505,7 @@ const electronAPI = {
     { id: string; report: LimitReport }
   >('session:limit-reported', 'session.limit_reported', (event) => ({
     id: event.id,
-    report:
-      event.resetsAt !== undefined
-        ? { scope: event.scope, resetsAt: event.resetsAt }
-        : { scope: event.scope }
+    report: reportFromWire(event)
   })),
   onClearDetected: (sessionId: string, callback: (newClaudeSessionId: string | null) => void) =>
     onBothTransports(

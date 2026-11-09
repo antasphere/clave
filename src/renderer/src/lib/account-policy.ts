@@ -127,7 +127,9 @@ function settled(sessionId: string): void {
 async function switchSessionModel(sessionId: string, model: string): Promise<void> {
   pendingModels.begin(sessionId, model)
   try {
-    await window.electronAPI.sessionsWrite(sessionId, { type: 'set_model', model })
+    // Not remembered as the next chat's default: the way on at a cap is this
+    // tab's, not the person's pick (round 1, F3).
+    await window.electronAPI.sessionsWrite(sessionId, { type: 'set_model', model, remember: false })
   } catch (error) {
     pendingModels.forget(sessionId)
     throw error

@@ -57,12 +57,13 @@ vi.mock('./sessions/session-manager', () => ({
 import { ptyManager } from './pty-manager'
 
 /**
- * The message a FAMILY's cap rejected goes again on the model the provider
- * confirms next (ADR 0002, PRDCT-4302): once, while the report is open and
- * the message is still the person's last, by whichever hand the model
- * changed. A resend on a shared cap would send a message the account cannot
- * take; one after the person moved on would send a stale question; two
- * would ask twice.
+ * The message a cap rejected goes again on the model the provider confirms
+ * next (ADR 0002, PRDCT-4302): once, while the report is open and the message
+ * is still the person's last, by whichever hand the model changed, whatever
+ * cap the CLI typed (a Fable rejection comes typed as a plain week, and the
+ * window decides the rung from its read). One after the person moved on
+ * would send a stale question; two would ask twice; none on the week-typed
+ * report would leave the ADR's own case unanswered (round 1, F1).
  */
 const ask: UserMessageInput = { type: 'user_message', text: 'the question the cap refused' }
 const rejected = (rateLimitType: string): unknown => ({
@@ -149,6 +150,29 @@ describe('the limit report and the owed resend', () => {
     expect(fake.writes).toHaveLength(1)
   })
 
+  it("a cap the CLI typed as the week, then a model change: the same resend (the ADR's own Fable case)", () => {
+    const emit = attach('s1')
+    fake.lastUserMessage.set('s1', ask)
+    emit(rejected('seven_day'))
+    emit(modelNow('claude-opus-5-5'))
+    expect(fake.writes).toEqual([{ id: 's1', input: ask }])
+    emit(modelNow('claude-sonnet-5-5'))
+    expect(fake.writes).toHaveLength(1)
+  })
+
+  it('an untyped rejection, and the credits reply, open the same resend', () => {
+    const emit = attach('s1')
+    fake.lastUserMessage.set('s1', ask)
+    emit(rejected(''))
+    emit(modelNow('claude-opus-5-5'))
+    expect(fake.writes).toEqual([{ id: 's1', input: ask }])
+    const two = attach('s2')
+    fake.lastUserMessage.set('s2', ask)
+    two(synthetic('Your organization is out of usage credits.'))
+    two(modelNow('claude-opus-5-5'))
+    expect(fake.writes).toHaveLength(2)
+  })
+
   it('the model the session already runs is no change: nothing is resent', () => {
     const emit = attach('s1', 'claude-fable-5-1')
     fake.lastUserMessage.set('s1', ask)
@@ -157,23 +181,15 @@ describe('the limit report and the owed resend', () => {
     expect(fake.writes).toEqual([])
   })
 
-  it('a shared cap or the credits open no resend: the account rung carries it', () => {
-    const emit = attach('s1')
-    fake.lastUserMessage.set('s1', ask)
-    emit(rejected('seven_day'))
-    emit(modelNow('claude-opus-5-5'))
-    emit(synthetic('Your organization is out of usage credits.'))
-    emit(modelNow('claude-sonnet-5-5'))
-    expect(fake.writes).toEqual([])
-  })
-
-  it("a later shared report closes a family's open one", () => {
+  it('a later report keeps the latest rejected message open', () => {
     const emit = attach('s1')
     fake.lastUserMessage.set('s1', ask)
     emit(rejected('seven_day_oi'))
+    const again: UserMessageInput = { type: 'user_message', text: 'asked again, refused again' }
+    fake.lastUserMessage.set('s1', again)
     emit(rejected('five_hour'))
     emit(modelNow('claude-opus-5-5'))
-    expect(fake.writes).toEqual([])
+    expect(fake.writes).toEqual([{ id: 's1', input: again }])
   })
 
   it('the person moved on: a message written since is not what the cap rejected, nothing is resent', () => {
@@ -208,5 +224,32 @@ describe('the limit report and the owed resend', () => {
     expect(fake.writes).toEqual([])
     one(modelNow('claude-opus-5-5'))
     expect(fake.writes).toEqual([{ id: 's1', input: ask }])
+  })
+})
+
+describe('a restart or a kill closes the report (round 1, M6, M7)', () => {
+  it('a restart carries the message itself and closes the report: the model change after it resends nothing', () => {
+    const emit = attach('s1')
+    fake.lastUserMessage.set('s1', ask)
+    emit(rejected('seven_day_oi'))
+    ;(ptyManager as unknown as { spawns: Map<string, unknown> }).spawns.set('s1', {
+      cwd: '/tmp',
+      options: {}
+    })
+    const restart = ptyManager.restartSpawn('s1', { resendRejected: true })
+    expect(restart?.options.initialInput).toEqual(ask)
+    emit(modelNow('claude-opus-5-5'))
+    expect(fake.writes).toEqual([])
+  })
+
+  it('a kill forgets the report: a session attached again under the same id owes nothing', async () => {
+    const emit = attach('s1')
+    fake.lastUserMessage.set('s1', ask)
+    emit(rejected('seven_day_oi'))
+    await ptyManager.kill('s1')
+    const again = attach('s1')
+    fake.lastUserMessage.set('s1', ask)
+    again(modelNow('claude-opus-5-5'))
+    expect(fake.writes).toEqual([])
   })
 })

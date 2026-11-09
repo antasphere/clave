@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { modelRungFor, resolveLimitScope } from './limit-scope'
 import type { AccountUsageSummary, PoolUsageWindow } from '../../../shared/account-pool'
+import { usageSummaryForModel, usageSummaryOf } from '../../../shared/usage-summary'
 
 /**
  * Which cap stopped the tab, and which model is the way on (PRDCT-4302). A
@@ -28,11 +29,29 @@ const weekOut = w({ kind: 'weekly_all', usedPercentage: 100, severity: 'critical
 /** A session view: `tightest` over the shared caps and the session's family. */
 const view = (
   tightest: PoolUsageWindow | null,
-  windows: PoolUsageWindow[]
+  windows: PoolUsageWindow[],
+  shared?: PoolUsageWindow | null
 ): AccountUsageSummary => ({
   tightest,
-  windows
+  windows,
+  ...(shared !== undefined ? { shared } : {})
 })
+const blockOutSoon = w({
+  kind: 'session',
+  usedPercentage: 100,
+  severity: 'critical',
+  resetsAt: 2 * 3_600_000
+})
+const fableOutLater = w({
+  kind: 'weekly_scoped',
+  scope: 'Fable',
+  usedPercentage: 100,
+  severity: 'critical',
+  resetsAt: 4 * 86_400_000
+})
+/** The session view the product builds: the split's own `tightest` and `shared`. */
+const realView = (windows: PoolUsageWindow[], model: string): AccountUsageSummary =>
+  usageSummaryForModel(usageSummaryOf({ windows }), model) as AccountUsageSummary
 /** An account view: every family under `scoped`. */
 const account = (...out: string[]): AccountUsageSummary => ({
   tightest: week,
@@ -72,6 +91,32 @@ describe('resolveLimitScope', () => {
       'shared'
     )
     expect(resolveLimitScope({ scope: 'unknown' }, view(weekOut, [weekOut]))).toBe('shared')
+  })
+
+  it("reads the account's when a shared cap is out too, even when the family's cap comes back later (round 1, F2)", () => {
+    // The 5-hour block out for two hours, the Fable week out for four days:
+    // the one rule puts Fable on top of the session view, and a model of
+    // another family would still hit the block.
+    const both = realView([blockOutSoon, week, fableOutLater], 'claude-fable-5-1')
+    expect(both.tightest?.scope).toBe('Fable')
+    expect(resolveLimitScope({ scope: 'shared' }, both)).toBe('shared')
+    expect(resolveLimitScope({ scope: 'unknown' }, both)).toBe('shared')
+    expect(resolveLimitScope(null, both)).toBe('shared')
+    // The same read with the block open again: the family's.
+    expect(
+      resolveLimitScope({ scope: 'shared' }, realView([week, fableOutLater], 'claude-fable-5-1'))
+    ).toEqual({ family: 'Fable' })
+    // Hand-built views say the same, and a summary from before the split,
+    // with no `shared`, reads as it did.
+    expect(
+      resolveLimitScope(
+        { scope: 'shared' },
+        view(fableOutLater, [blockOutSoon, week, fableOutLater], blockOutSoon)
+      )
+    ).toBe('shared')
+    expect(resolveLimitScope({ scope: 'shared' }, view(fableOut, [week, fableOut]))).toEqual({
+      family: 'Fable'
+    })
   })
 
   it('reads the poll alone the same way when there is no report', () => {
