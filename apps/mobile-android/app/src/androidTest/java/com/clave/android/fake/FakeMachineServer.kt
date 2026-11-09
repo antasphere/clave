@@ -25,6 +25,12 @@ import org.json.JSONObject
  * recorded with its method, path, query, body and Authorization header for the test to
  * read; a path it does not know is recorded apart and refused with a 404, so the test can
  * name it.
+ *
+ * Switches a test turns on, each off by default so a test that does not touch them sees the
+ * stand-in above unchanged: [setSessionState] streams the agent's state, an interrupt write
+ * stops the turn, [failWrites] makes every write a 500 whose outcome the status route cannot
+ * tell, [pushDown] refuses the push upgrade with a 503 and [dropPush] closes the open sockets
+ * as a restarting server does.
  */
 class FakeMachineServer(private val token: String) : Closeable {
     /** One HTTP request as the stand-in received it. */
@@ -61,6 +67,40 @@ class FakeMachineServer(private val token: String) : Closeable {
     private var resolved = false
     private val subscribed = CopyOnWriteArrayList<WebSocket>()
 
+    /** Every push socket open on the stand-in's side, subscribed or not. */
+    private val openSockets = CopyOnWriteArrayList<WebSocket>()
+
+    /** The session's state as `GET /sessions` and the subscription report it; written under [lock]. */
+    @Volatile private var sessionState = "idle"
+
+    /** The client message ids of the writes [failWrites] refused: their status is `unknown`. */
+    private val failed = mutableSetOf<String>()
+
+    /** When true, `POST /sessions/write` answers 500 and the status route says `unknown` for that id. */
+    @Volatile var failWrites = false
+
+    /** When true, `GET /push` answers 503 instead of upgrading. */
+    @Volatile var pushDown = false
+
+    /** How many push sockets are subscribed to the echo session right now. */
+    val subscribers: Int get() = subscribed.size
+
+    /**
+     * The agent's state changes: `state_change` streamed to the subscribed sockets at the next
+     * position, and `GET /sessions` reports [state] from now on.
+     */
+    fun setSessionState(state: String) {
+        synchronized(lock) {
+            sessionState = state
+            stream("""{"type":"state_change","state":${JSONObject.quote(state)}}""")
+        }
+    }
+
+    /** Closes every open push socket with 1012, as a server restarting does. */
+    fun dropPush() {
+        for (socket in openSockets) socket.close(1012, "service restart")
+    }
+
     init {
         server.dispatcher = object : Dispatcher() {
             override fun dispatch(request: RecordedRequest): MockResponse = answer(request)
@@ -80,7 +120,10 @@ class FakeMachineServer(private val token: String) : Closeable {
         val url = request.requestUrl
         val path = url?.encodedPath ?: request.path.orEmpty().substringBefore('?')
         val method = request.method.orEmpty()
-        if (method == "GET" && path == PUSH_PATH) return MockResponse().withWebSocketUpgrade(PushSocket())
+        if (method == "GET" && path == PUSH_PATH) {
+            if (pushDown) return json(503, """{"message":"The stand-in's push is down on purpose."}""")
+            return MockResponse().withWebSocketUpgrade(PushSocket())
+        }
         val body = request.body.readUtf8()
         val authorization = request.getHeader("Authorization")
         requests += Recorded(method, path, url?.encodedQuery, body, authorization)
@@ -94,13 +137,16 @@ class FakeMachineServer(private val token: String) : Closeable {
         return when (route) {
             "GET /launch-profiles" -> json(200, """{"version":1,"customProfiles":[],"globalDefaults":{},"workspaceOverrides":{}}""")
             "GET /workspaces" -> json(200, WORKSPACES)
-            "GET /sessions" -> json(200, "[$SESSION]")
-            "GET /sessions/by-id" -> if (id == SESSION_ID) json(200, SESSION) else unknownSession()
+            "GET /sessions" -> json(200, "[${session()}]")
+            "GET /sessions/by-id" -> if (id == SESSION_ID) json(200, session()) else unknownSession()
             "GET /sessions/capabilities" -> if (id == SESSION_ID) json(200, """{"images":false}""") else unknownSession()
             "GET /sessions/timeline" -> if (id == SESSION_ID) json(200, page(url?.queryParameter("before")?.toLongOrNull())) else unknownSession()
             "GET /sessions/writes" -> synchronized(lock) {
-                if (url?.queryParameter("clientMessageId") in written) {
+                val asked = url?.queryParameter("clientMessageId")
+                if (asked in written) {
                     json(200, """{"status":"accepted","at":$AT}""")
+                } else if (asked in failed) {
+                    json(200, """{"status":"unknown"}""")
                 } else {
                     json(200, """{"status":"absent"}""")
                 }
@@ -130,6 +176,18 @@ class FakeMachineServer(private val token: String) : Closeable {
      */
     private fun write(body: String): MockResponse {
         val input = JSONObject(body).optJSONObject("input")
+        if (failWrites) {
+            input?.optString("clientMessageId")?.takeIf { it.isNotEmpty() }?.let { synchronized(lock) { failed += it } }
+            return json(500, """{"message":"The stand-in is failing writes on purpose."}""")
+        }
+        if (input?.optString("type") == "interrupt") {
+            synchronized(lock) {
+                sessionState = "idle"
+                stream("""{"type":"turn_interrupted"}""")
+                stream("""{"type":"state_change","state":"idle"}""")
+            }
+            return json(200, """{"status":"accepted","at":$AT}""")
+        }
         if (input?.optString("type") == "user_message") {
             synchronized(lock) {
                 written += input.optString("clientMessageId")
@@ -152,6 +210,9 @@ class FakeMachineServer(private val token: String) : Closeable {
         for (socket in subscribed) socket.send(frame)
     }
 
+    /** The echo session as the routes and the subscription answer it, in its current state. */
+    private fun session(): String = sessionJson(sessionState)
+
     private fun position(sequence: Long) = """{"generation":"$GENERATION","sequence":$sequence}"""
 
     private fun unknownSession() = json(422, """{"_tag":"SessionNotFound","message":"Unknown session"}""")
@@ -162,6 +223,10 @@ class FakeMachineServer(private val token: String) : Closeable {
     /** One push socket: the hello, the subscription and the liveness ping, as the server answers them. */
     private inner class PushSocket : WebSocketListener() {
         @Volatile private var welcomed = false
+
+        override fun onOpen(webSocket: WebSocket, response: Response) {
+            openSockets.addIfAbsent(webSocket)
+        }
 
         override fun onMessage(webSocket: WebSocket, text: String) {
             val frame = JSONObject(text)
@@ -182,7 +247,7 @@ class FakeMachineServer(private val token: String) : Closeable {
                     if (sessionId == SESSION_ID) {
                         synchronized(lock) {
                             subscribed.addIfAbsent(webSocket)
-                            webSocket.send("""{"_tag":"subscribed","sessionId":"$SESSION_ID","session":$SESSION}""")
+                            webSocket.send("""{"_tag":"subscribed","sessionId":"$SESSION_ID","session":${session()}}""")
                         }
                     } else {
                         webSocket.send("""{"_tag":"error","sessionId":${JSONObject.quote(sessionId)},"message":"Unknown session"}""")
@@ -199,15 +264,18 @@ class FakeMachineServer(private val token: String) : Closeable {
 
         override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
             subscribed.remove(webSocket)
+            openSockets.remove(webSocket)
             webSocket.close(1000, null)
         }
 
         override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
             subscribed.remove(webSocket)
+            openSockets.remove(webSocket)
         }
 
         override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
             subscribed.remove(webSocket)
+            openSockets.remove(webSocket)
         }
     }
 
@@ -233,9 +301,9 @@ class FakeMachineServer(private val token: String) : Closeable {
             "POST /requests/resolve",
         )
 
-        private val SESSION =
+        private fun sessionJson(state: String) =
             """{"id":"$SESSION_ID","provider":"echo","transport":"events","cwd":"/tmp/scratch","windowKey":"server",""" +
-                """"workspaceId":"$WORKSPACE_ID","state":"idle","createdAt":$AT,"adapterId":"dev-echo-adapter","title":"Echo chat"}"""
+                """"workspaceId":"$WORKSPACE_ID","state":"$state","createdAt":$AT,"adapterId":"dev-echo-adapter","title":"Echo chat"}"""
 
         private val WORKSPACES =
             """{"version":1,"workspaces":[{"id":"$WORKSPACE_ID","name":"Scratch","rootDir":"/tmp/scratch","profileFile":null,""" +
