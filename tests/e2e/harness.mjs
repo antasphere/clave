@@ -468,9 +468,18 @@ export async function launchApp(
     // Run on the first window as soon as its page has loaded, before the boot
     // is waited for: a spec that times the boot from inside the page installs
     // its watch here (restore-timing.spec.mjs, PRDCT-3527).
-    beforeBoot = null
+    beforeBoot = null,
+    // Main-process lifecycle fixtures must observe registration before its
+    // five-second budget expires. They do not need a renderer boot first.
+    // Every normal caller still waits for the window and its boot mark.
+    waitForWindow = true
   } = {}
 ) {
+  if (!waitForWindow && (waitForServer || beforeBoot !== null || settleMs !== 0)) {
+    throw new Error(
+      'waitForWindow: false requires waitForServer: false, beforeBoot: null and settleMs: 0'
+    )
+  }
   const base = { ...process.env }
   delete base.CLAVE_SERVER_URL
   delete base.CLAVE_SERVER_TOKEN
@@ -538,13 +547,16 @@ export async function launchApp(
       await started?.stop()
     }
   }
-  const win = await app.firstWindow()
-  await win.waitForLoadState('domcontentloaded')
-  if (beforeBoot) await beforeBoot(win)
-  // The boot, not a clock (waitForBoot above); a settleMs a spec still
-  // passes is waited after it.
-  await waitForBoot(win, { timeoutMs: bootTimeoutMs, dir: waitForServer ? dir : null, pid })
-  if (settleMs > 0) await win.waitForTimeout(settleMs)
+  let win = null
+  if (waitForWindow) {
+    win = await app.firstWindow()
+    await win.waitForLoadState('domcontentloaded')
+    if (beforeBoot) await beforeBoot(win)
+    // The boot, not a clock (waitForBoot above); a settleMs a spec still
+    // passes is waited after it.
+    await waitForBoot(win, { timeoutMs: bootTimeoutMs, dir: waitForServer ? dir : null, pid })
+    if (settleMs > 0) await win.waitForTimeout(settleMs)
+  }
   // The fixture: the one way into the process hosting the sessions, in
   // both modes (`serverFixture` below). Attached, the server this call
   // started; in-process, the app's own, read off its discovery file.
