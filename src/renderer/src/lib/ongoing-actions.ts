@@ -1,9 +1,10 @@
 import { useSessionStore } from '../store/session-store'
-import { useOngoingStore, newOngoingId } from '../store/ongoing-store'
+import { useOngoingStore, newOngoingId, announceEnded } from '../store/ongoing-store'
 import { accountSessionFields, accountSpawnFields } from '../store/claude-profile-store'
 import { emitTabClosed } from './exchange-capture'
 import { isRemoteKey, ownerOf } from './fleet-identity'
 import {
+  conversationConfigDir,
   entryFromSession,
   launchOf,
   ongoingSessionIds,
@@ -62,6 +63,21 @@ export function moveToOngoing(sessionIds: string[]): string[] {
   return [...movedIds]
 }
 
+/** Whether the Claude conversation has a transcript to resume from. Read on
+ *  this Mac only: a conversation of a server tab is that server's to find,
+ *  and a read that fails counts as there, so the resume is tried as before. */
+async function hasClaudeTranscript(entry: OngoingEntry): Promise<boolean> {
+  if (isRemoteKey(entry.sessionId)) return true
+  const read = window.electronAPI?.historyConversation
+  if (!read) return true
+  try {
+    const res = await read(entry.cwd, entry.conversationId, 'claude', conversationConfigDir(entry))
+    return res.exists
+  } catch {
+    return true
+  }
+}
+
 /** Bring a resting conversation back in a new tab and return its id. The
  *  entry names the new tab BEFORE the tab is added, so the row never shows
  *  in the sidebar while it starts. */
@@ -72,6 +88,9 @@ async function resumeEntry(entry: OngoingEntry, keepOngoing: boolean): Promise<s
   const isAgents = !!entry.launch.claudeAgentsMode
   const dangerousMode = isPi ? false : !!entry.launch.dangerousMode
   try {
+    // A Claude tab moved before it ever spoke has an id and no transcript:
+    // its resume would fail, so it starts fresh under that same id (F7).
+    const fresh = !isPi && !(await hasClaudeTranscript(entry))
     const info = await window.electronAPI.fleetStart(ownerOf(entry.sessionId), entry.cwd, {
       claudeMode: !isAgents && !isPi,
       claudeAgentsMode: isAgents,
@@ -81,7 +100,9 @@ async function resumeEntry(entry: OngoingEntry, keepOngoing: boolean): Promise<s
       launchProfileId: entry.launch.launchProfileId,
       piProvider: entry.launch.piProvider,
       piThinking: entry.launch.piThinking,
-      resumeSessionId: entry.conversationId,
+      ...(fresh
+        ? { claudeSessionId: entry.conversationId }
+        : { resumeSessionId: entry.conversationId }),
       ...(isPi ? {} : accountSpawnFields(entry.launch)),
       workspaceId: entry.workspaceId ?? undefined
     })
@@ -153,15 +174,34 @@ async function resumeEntry(entry: OngoingEntry, keepOngoing: boolean): Promise<s
 
 /** One action at a time per conversation: a second click (or a menu's click
  *  reaching the card under it) while a resume is starting must never start a
- *  second agent on the same conversation. */
-const busy = new Set<string>()
-async function exclusive<T>(entryId: string, run: () => Promise<T>): Promise<T | null> {
-  if (busy.has(entryId)) return null
-  busy.add(entryId)
+ *  second agent on the same conversation. A second open is dropped; an End
+ *  or a Back (`wait`) runs once the action in flight is over (R2-F4). It
+ *  never runs beside it: past `WAIT_MS` it is refused with a word for the
+ *  page, since the open may still land its tab. */
+const busy = new Map<string, Promise<unknown>>()
+export const WAIT_MS = 10_000
+async function exclusive<T>(
+  entryId: string,
+  run: () => Promise<T>,
+  wait = false
+): Promise<T | null> {
+  const until = Date.now() + WAIT_MS
+  // Checked again after every wake: a second waiter that woke first holds it.
+  while (busy.has(entryId)) {
+    if (!wait) return null
+    const left = until - Date.now()
+    if (left <= 0) throw new OngoingStillOpening()
+    await Promise.race([
+      busy.get(entryId)!.catch(() => {}),
+      new Promise((r) => setTimeout(r, left))
+    ])
+  }
+  const own = run()
+  busy.set(entryId, own)
   try {
-    return await run()
+    return await own
   } finally {
-    busy.delete(entryId)
+    if (busy.get(entryId) === own) busy.delete(entryId)
   }
 }
 
@@ -208,6 +248,21 @@ export async function entriesElsewhere(entries: readonly OngoingEntry[]): Promis
 /** The reason an open was refused, worded for the page. */
 export class OngoingOpenRefused extends Error {}
 
+/** End or Back refused because another action on the conversation (an
+ *  open, most often) is still running after `WAIT_MS`: running beside it
+ *  could start a second agent. */
+export class OngoingStillOpening extends OngoingOpenRefused {
+  constructor() {
+    super('This conversation is still busy with another action. Try again in a moment.')
+  }
+}
+
+/** What the Ongoing page says when an action on a card fails: the refusal's
+ *  own words, else `fallback`. */
+export function refusalNotice(err: unknown, fallback: string): string {
+  return err instanceof OngoingOpenRefused ? err.message : fallback
+}
+
 async function waitForSession(id: string, ms = 4000): Promise<boolean> {
   const until = Date.now() + ms
   while (Date.now() < until) {
@@ -252,64 +307,121 @@ export async function openOngoing(entryId: string): Promise<string | null> {
  *  one is resumed first, into the group it came from when that still runs.
  *  One running in another window goes back to that window's sidebar. */
 export async function returnToSidebar(entryId: string): Promise<void> {
-  await exclusive(entryId, async () => {
-    const entry = useOngoingStore.getState().entries.find((e) => e.id === entryId)
-    if (!entry) return
-    const session = sessionOfEntry<Session>(entry, useSessionStore.getState().sessions)
-    let id: string | null = session && session.alive ? session.id : null
-    if (!id && !(await runningElsewhere(entry))) id = await resumeEntry(entry, false)
-    await useOngoingStore.getState().update((entries) => entries.filter((e) => e.id !== entryId))
-    if (id) {
-      useSessionStore.getState().selectSession(id, false)
-      useSessionStore.getState().setFocusedSession(id)
-    }
-  })
+  await exclusive(
+    entryId,
+    async () => {
+      const entry = useOngoingStore.getState().entries.find((e) => e.id === entryId)
+      if (!entry) return
+      const session = sessionOfEntry<Session>(entry, useSessionStore.getState().sessions)
+      let id: string | null = session && session.alive ? session.id : null
+      if (!id && !(await runningElsewhere(entry))) id = await resumeEntry(entry, false)
+      await useOngoingStore.getState().update((entries) => entries.filter((e) => e.id !== entryId))
+      if (id) {
+        useSessionStore.getState().selectSession(id, false)
+        useSessionStore.getState().setFocusedSession(id)
+      }
+    },
+    true
+  )
 }
 
 /** End the conversation: its tab is closed and it leaves Ongoing. The
  *  conversation itself stays in the session history. */
 export async function endOngoing(entryId: string): Promise<void> {
-  await exclusive(entryId, async () => {
-    const entry = useOngoingStore.getState().entries.find((e) => e.id === entryId)
-    if (!entry) return
-    let session = sessionOfEntry<Session>(entry, useSessionStore.getState().sessions)
-    if (!session) {
-      // Its tab runs in another window: brought here first, so it is closed
-      // here and leaves nothing behind there; a tab that cannot move is
-      // stopped where it is.
-      const other = await runningElsewhere(entry)
-      if (other) {
-        // A move takes focus in its new window; the person stays where they
-        // were (the page, the tabs they had), since this tab only comes to go.
-        const before = useSessionStore.getState()
-        const kept = {
-          activeView: before.activeView,
-          selectedSessionIds: before.selectedSessionIds,
-          focusedSessionId: before.focusedSessionId
-        }
-        const moved = await window.electronAPI
-          .windowMoveSessions([other.sessionId], other.myWindowId)
-          .catch(() => null)
-        if (moved?.moved.includes(other.sessionId) && (await waitForSession(other.sessionId))) {
-          session = useSessionStore.getState().sessions.find((s) => s.id === other.sessionId)
-          useSessionStore.setState(kept)
-        } else {
-          await window.electronAPI.killSession(other.sessionId).catch(() => {})
+  await exclusive(
+    entryId,
+    async () => {
+      const entry = useOngoingStore.getState().entries.find((e) => e.id === entryId)
+      if (!entry) return
+      let session = sessionOfEntry<Session>(entry, useSessionStore.getState().sessions)
+      if (!session) {
+        // Its tab runs in another window: brought here first, so it is closed
+        // here and leaves nothing behind there; a tab that cannot move is
+        // stopped where it is.
+        const other = await runningElsewhere(entry)
+        if (other) {
+          // A move takes focus in its new window; the person stays where they
+          // were (the page, the tabs they had), since this tab only comes to go.
+          const view = keepPersonsView(other.sessionId)
+          const moved = await window.electronAPI
+            .windowMoveSessions([other.sessionId], other.myWindowId)
+            .catch(() => null)
+          if (moved?.moved.includes(other.sessionId) && (await waitForSession(other.sessionId))) {
+            session = useSessionStore.getState().sessions.find((s) => s.id === other.sessionId)
+            view.restore()
+          } else {
+            view.restore()
+            const stopped = await window.electronAPI
+              .killSession(other.sessionId)
+              .then(() => true)
+              .catch(() => false)
+            // The window that holds it drops its row (R3-N1); a tab that could
+            // not be stopped keeps its row there, since it still runs.
+            if (stopped) announceEnded(other.sessionId)
+          }
         }
       }
-    }
-    await useOngoingStore.getState().update((entries) => entries.filter((e) => e.id !== entryId))
-    if (!session) return
-    const state = useSessionStore.getState()
-    emitTabClosed(session, state.groups, 'user', null)
-    try {
-      await window.electronAPI.killSession(session.id)
-    } catch {
-      if (isRemoteKey(session.id)) return
-      // already gone
-    }
-    useSessionStore.getState().removeSession(session.id)
+      await useOngoingStore.getState().update((entries) => entries.filter((e) => e.id !== entryId))
+      if (!session) return
+      const state = useSessionStore.getState()
+      emitTabClosed(session, state.groups, 'user', null)
+      try {
+        await window.electronAPI.killSession(session.id)
+      } catch {
+        if (isRemoteKey(session.id)) return
+        // already gone
+      }
+      useSessionStore.getState().removeSession(session.id)
+    },
+    true
+  )
+}
+
+type PersonsView = Pick<
+  ReturnType<typeof useSessionStore.getState>,
+  'activeView' | 'selectedSessionIds' | 'focusedSessionId'
+>
+function viewOf(state: PersonsView): PersonsView {
+  return {
+    activeView: state.activeView,
+    selectedSessionIds: state.selectedSessionIds,
+    focusedSessionId: state.focusedSessionId
+  }
+}
+
+/** What the person looks at, kept across a move that brings `movedId` here
+ *  only to end it. The move's own focus on that tab is undone; a change the
+ *  person made meanwhile (another tab picked, another view) is theirs and
+ *  stays (R3-N2). `restore` is called once, when the move is over. */
+export function keepPersonsView(movedId: string): { restore: () => void } {
+  const isMove = (st: PersonsView): boolean =>
+    st.focusedSessionId === movedId || st.selectedSessionIds.includes(movedId)
+  let latest = viewOf(useSessionStore.getState())
+  const stop = useSessionStore.subscribe((st, prev) => {
+    if (isMove(st)) return
+    if (
+      st.activeView !== prev.activeView ||
+      st.selectedSessionIds !== prev.selectedSessionIds ||
+      st.focusedSessionId !== prev.focusedSessionId
+    )
+      latest = viewOf(st)
   })
+  return {
+    restore: () => {
+      stop()
+      if (isMove(useSessionStore.getState())) useSessionStore.setState(latest)
+    }
+  }
+}
+
+/** Another window ended a tab this window holds, after its move here was
+ *  refused: it was stopped already, so its row goes (R3-N1). */
+export function dropEndedTab(sessionId: string): void {
+  const state = useSessionStore.getState()
+  const session = state.sessions.find((s) => s.id === sessionId)
+  if (!session) return
+  emitTabClosed(session, state.groups, 'user', null)
+  useSessionStore.getState().removeSession(sessionId)
 }
 
 export function setOngoingNote(entryId: string, note: string): void {

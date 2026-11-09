@@ -17,6 +17,11 @@ import {
 
 const DIR = userDataDir('ongoing-windows-actions')
 const ROOT = fixturePath('ongoing-windows-actions-root')
+// The stub speaks at its first start, as a real tab would before it is moved: its
+// transcript is what a resume needs (PRDCT-4208, F7: none means a fresh start).
+const TRANSCRIPTS = `${ROOT}/transcripts`
+const SPOKEN = `${TRANSCRIPTS}/stub`
+const TRANSCRIPTS_ENV = { CLAVE_TRANSCRIPTS_ROOT: TRANSCRIPTS }
 const BIN = `${ROOT}/bin`
 const STARTS = `${ROOT}/agent-starts.jsonl`
 const WS = {
@@ -42,7 +47,7 @@ function writeFixtures() {
   seedTrustedRoots(DIR, [ROOT])
   writeFileSync(
     `${BIN}/claude`,
-    `#!/bin/sh\nargs=$(printf '%s' "$*" | tr -d '"\\\\' | cut -c1-200)\necho '{"session":"'"$CLAVE_SESSION_ID"'","args":"'"$args"'"}' >> ${JSON.stringify(STARTS)}\nexec sleep 600\n`,
+    `#!/bin/sh\nargs=$(printf '%s' "$*" | tr -d '"\\\\' | cut -c1-200)\necho '{"session":"'"$CLAVE_SESSION_ID"'","args":"'"$args"'"}' >> ${JSON.stringify(STARTS)}\nsid=''; prev=''; for a in "$@"; do [ "$prev" = '--session-id' ] && sid="$a"; prev="$a"; done\n[ -n "$sid" ] && mkdir -p ${JSON.stringify(SPOKEN)} && echo '{"type":"user","message":{"content":"hello"}}' > ${JSON.stringify(SPOKEN)}/"$sid".jsonl\nexec sleep 600\n`,
     { mode: 0o755 }
   )
   writeFileSync(
@@ -81,7 +86,7 @@ async function cardMenu(win, name, item) {
 }
 export async function run(t) {
   writeFixtures()
-  const { app, win } = await launchApp(DIR)
+  const { app, win } = await launchApp(DIR, { env: TRANSCRIPTS_ENV })
   try {
     const w2 = await openWindow(app, win, WS.id, { settleMs: 1500 })
     const ws = await windows(app)
@@ -136,10 +141,8 @@ export async function run(t) {
     )
     t.check('N1e Alpha stays out of window 1 sidebar', !(await drawnIn(win, ids.Alpha)))
     t.check(
-      'N1f no resume started',
-      starts()
-        .slice(before)
-        .filter((x) => x.args.includes('--resume')).length === 0
+      'N1f no agent started (neither a resume nor a fresh start)',
+      starts().slice(before).length === 0
     )
 
     // End Beta from window 1 while its tab runs in window 2.
@@ -161,10 +164,8 @@ export async function run(t) {
     const beforeG = starts().length
     await cardMenu(win, 'Gamma', 'Back to the sidebar')
     t.check(
-      'N3b "Back to the sidebar" for a tab in window 2 starts no agent',
-      starts()
-        .slice(beforeG)
-        .filter((x) => x.args.includes('--resume')).length === 0
+      'N3b "Back to the sidebar" for a tab in window 2 starts no agent (neither a resume nor a fresh start)',
+      starts().slice(beforeG).length === 0
     )
     const shown = await until(() => drawnIn(page2, ids.Gamma), { tries: 16, gapMs: 250 })
     t.check(

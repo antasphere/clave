@@ -70,7 +70,7 @@ import { placeRecords, adoptRehomed, adoptHiddenRecord } from '../../lib/adopt-r
 import { requestGroupDissolve, useDissolveStore } from '../../lib/group-dissolve'
 import { planBootAdoption, bootSurvivors } from '../../lib/boot-adoption'
 import { splitOngoingDead } from '../../lib/ongoing'
-import { keepRestingLaunch, startOngoingFollow } from '../../lib/ongoing-actions'
+import { dropEndedTab, keepRestingLaunch, startOngoingFollow } from '../../lib/ongoing-actions'
 import { useOngoingStore, startOngoingSync } from '../../store/ongoing-store'
 import { OngoingPage } from '../ongoing/OngoingPage'
 import { savedLayoutSessionIds } from '../../../../shared/adoption-scope'
@@ -142,7 +142,7 @@ export function AppShell(): React.JSX.Element {
   // provider's id) and are read again when the window comes back to the front.
   useEffect(() => {
     const stopFollow = startOngoingFollow()
-    const stopSync = startOngoingSync()
+    const stopSync = startOngoingSync(dropEndedTab)
     if (!useOngoingStore.getState().hydrated) void useOngoingStore.getState().hydrate()
     return () => {
       stopFollow()
