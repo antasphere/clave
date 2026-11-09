@@ -28,8 +28,10 @@ echo "ci.sh: installed platforms;android-${COMPILE_SDK} build-tools;${BUILD_TOOL
 export ANDROID_SDK_ROOT="$ANDROID_HOME"
 chmod +x ./gradlew
 
-echo "ci.sh: JVM unit tests of every module, then the debug APK"
-./gradlew --no-daemon --console=plain test assembleDebug
+echo "ci.sh: JVM unit tests of every module, then the debug and the (unsigned) release APK"
+./gradlew --no-daemon --console=plain test assembleDebug assembleRelease
+echo "ci.sh: the release APK carries no fake, no developer connection, no cleartext allowance"
+bash scripts/check-release-apk.sh app/build/outputs/apk/release/app-release-unsigned.apk
 
 # The figures, from the JUnit XML, so the log carries the counts and not only a verdict.
 python3 - <<'PY'
@@ -41,5 +43,5 @@ for f in glob.glob('**/build/test-results/**/*.xml', recursive=True):
     errors += int(r.get('errors', 0)); skipped += int(r.get('skipped', 0))
 print(f"ci.sh: JVM tests: {tests} tests, {failures} failures, {errors} errors, {skipped} skipped")
 PY
-ls -la app/build/outputs/apk/debug/*.apk
+ls -la app/build/outputs/apk/debug/*.apk app/build/outputs/apk/release/*.apk
 echo "ci.sh: done"
