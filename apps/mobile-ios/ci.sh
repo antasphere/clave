@@ -3,9 +3,10 @@
 # root by the mobile CI job on a macOS runner with Xcode 26.0.1
 # (DEVELOPER_DIR set by the job). Its exit code is the verdict.
 #
-# Three steps: the core package's tests on the Mac (fast, no simulator), the
-# app built for a simulator, and the app's host tests plus the launch smoke
-# test on that simulator. The simulator is the first available iPhone of the
+# Four steps: the core package's tests on the Mac (fast, no simulator), the
+# app built for a simulator, the app's host tests plus the launch smoke test
+# and the shell's flow on that simulator, and the release-binary check (a
+# Release build that must carry none of the development-only code). The simulator is the first available iPhone of the
 # newest iOS runtime the runner has; CLAVE_IOS_SIMULATOR_UDID overrides it.
 # The fixture check (scripts/fixture-check.mjs) needs the repository's Bun
 # and a booted simulator for minutes and stays a gate run by hand on a Mac.
@@ -51,5 +52,7 @@ run_xcodebuild() {
 echo "ci: xcodebuild build"
 run_xcodebuild build
 echo "ci: xcodebuild test (ClaveTests, ClaveUITests smoke)"
-run_xcodebuild test -only-testing:ClaveTests -only-testing:ClaveUITests/ClaveUITests
+run_xcodebuild test -only-testing:ClaveTests -only-testing:ClaveUITests/ClaveUITests -only-testing:ClaveUITests/ShellFlowTests
+echo "ci: release-binary check"
+CLAVE_IOS_SIMULATOR_UDID="$UDID" CLAVE_IOS_DERIVED_DATA="$DERIVED-release-check" bash scripts/check-release-binary.sh
 echo "ci: green"

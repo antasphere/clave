@@ -55,8 +55,12 @@ only (`Config/Info-Debug.plist`), and the transport policy refuses plain http in
 build a second time.
 
 `bash apps/mobile-ios/ci.sh`, run from the repository root, is the gate the mobile CI job
-runs on a macOS runner: the core's tests, the simulator build, the host tests and the launch
-smoke test. `CLAVE_IOS_SIMULATOR_UDID` names the simulator (on a shared Mac, name one you
+runs on a macOS runner: the core's tests, the simulator build, the host tests, the launch
+smoke test and the shell's flow (`ShellFlowTests`, against the in-process fake the launch
+argument `--ui-test-fake` selects in a Debug build), then `scripts/check-release-binary.sh`,
+which builds Release and proves the fake, the launch overrides and the developer connection
+are absent from its binary (`--prove-red` builds Release with `DEBUG` set and expects the
+check to fail). `CLAVE_IOS_SIMULATOR_UDID` names the simulator (on a shared Mac, name one you
 created).
 
 ## The fixture check

@@ -2,6 +2,9 @@
 
 `generate-tokens.mjs` and `build-icons.mjs` generate the desktop's tokens and icons for
 the app. The other two scripts run the app against an isolated fixture stack on this Mac.
+`check-release-binary.sh` (bash, from `apps/mobile-ios`) builds Debug and Release for the
+simulator and reads both binaries with `strings`: the development-only markers must be in
+Debug and absent from Release; `--prove-red` shows the check fails when the guard is off.
 
 ## The fixture stack
 
