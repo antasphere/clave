@@ -19,10 +19,8 @@ import {
 import { useAccountLoginStore } from '../../store/account-login-store'
 import {
   useClaudeAccountsUsage,
-  tightestWindow,
-  shortLabel,
-  formatReset,
-  headroomLabel
+  accountUsageFieldsOf,
+  capStatusLine
 } from '../../store/usage-store'
 import { isExhausted } from '../../lib/account-pool'
 import { ClaudeLogo } from '../icons/cli-logos'
@@ -32,11 +30,14 @@ import { LoginFlow } from './LoginFlow'
 /** What a paste came back with, in one line under the form. */
 function describeUsageResult(result: UsageLimits | UsageError): string {
   if ('error' in result) return result.error
-  const tightest = tightestWindow(result.windows)
-  if (!tightest) return 'Token accepted. No usage windows reported yet.'
-  const left = Math.max(0, Math.round(100 - tightest.usedPercentage))
-  const reset = formatReset(tightest.resetsAt)
-  return `Token accepted · ${left}% left · ${shortLabel(tightest)}${reset ? ` · ${reset}` : ''}`
+  // The account view: the shared headroom, then every family that is out.
+  const line = capStatusLine({
+    status: 'ready',
+    error: null,
+    ...accountUsageFieldsOf(result.windows)
+  })
+  if (!line) return 'Token accepted. No usage windows reported yet.'
+  return `Token accepted · ${line}`
 }
 
 /** The paste form, for a new account or a replacement token: the way in
@@ -225,12 +226,13 @@ function AccountRow({
   const summary = useClaudeAccountsUsage((s) => s.byAccount[account.id])
   const isDefault = account.id === DEFAULT_CLAUDE_PROFILE_ID
   const life = describeTokenLife(account)
-  const headroom = headroomLabel(summary)
+  // The shared headroom first, then every family that is out, named with
+  // its return ("60% left · Overall · Fable out · back in 2d 5h"): a family
+  // week spent is not the account out (PRDCT-4253, PRDCT-4254).
   const description = [
     isDefault ? 'Machine login · ~/.claude' : describeClaudeProfileAuth(account),
     life,
-    headroom,
-    isExhausted(summary) ? 'at limit' : null
+    capStatusLine(summary)
   ]
     .filter(Boolean)
     .join(' · ')
@@ -240,6 +242,7 @@ function AccountRow({
       className="settings-row"
       data-claude-account-row={account.id}
       data-account-exhausted={isExhausted(summary) ? 'true' : undefined}
+      data-account-scoped-out={summary?.scopedOut?.length ? summary.scopedOut.join(' ') : undefined}
     >
       <div className="flex items-center gap-3 flex-1 min-w-0">
         <Radio

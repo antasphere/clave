@@ -414,8 +414,8 @@ function alignSessionToGroupWorkspace(sessionId: string, group: SessionGroup): v
  *  label), else the pool's pick from the one selected in settings. An
  *  unknown name errors with the names that exist, never a silent
  *  fall-through to the wrong subscription. */
-export function resolveAccountForSpawn(ref: string | undefined): ClaudeProfile {
-  return resolveAccountRef('claude', ref) as ClaudeProfile
+export function resolveAccountForSpawn(ref: string | undefined, model?: string): ClaudeProfile {
+  return resolveAccountRef('claude', ref, model) as ClaudeProfile
 }
 
 // Legacy window-owned opens keep the live messaging link independently of
@@ -535,9 +535,9 @@ export async function openSessionProgrammatically(payload: {
   // in settings — the same rule the launcher applies, so an agent-opened tab
   // lands on the account the user would have got from the button. Claude and
   // Codex have pools; nothing else does.
-  const claudeProfile = claudeMode ? resolveAccountForSpawn(payload.account) : null
+  const claudeProfile = claudeMode ? resolveAccountForSpawn(payload.account, model) : null
   const codexAccount = codexMode
-    ? (resolveAccountRef('codex', payload.account) as CodexAccount)
+    ? (resolveAccountRef('codex', payload.account, model) as CodexAccount)
     : null
   if (payload.account && !claudeMode && !codexMode) {
     throw new Error(

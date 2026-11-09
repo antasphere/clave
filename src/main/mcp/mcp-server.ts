@@ -469,7 +469,8 @@ const servedShell: ServedShell<NonNullable<BrowserWindowLike>> = {
       return {
         id,
         label: account?.label ?? record.codexAccountLabel ?? 'Removed account',
-        exhausted: exhaustedFrom(read)
+        // Codex's model buckets (Spark) are families too: judged for the tab's model.
+        exhausted: exhaustedFrom(read, { model: record.model })
       }
     }
     if (record.claudeMode || record.claudeAgentsMode) {

@@ -78,6 +78,7 @@ import { emitTabClosed } from '../../../src/renderer/src/lib/exchange-capture'
 import { useViewSessionStore } from '../../../src/renderer/src/views/session-store'
 import { endIsCurrent } from '../../../src/renderer/src/views/session-end'
 import { acceptAccountProposal } from '../../../src/renderer/src/lib/account-policy'
+import { useLimitSentence } from './limit-words'
 import type { HistoryListEntry } from '../../../src/preload/index.d'
 import { ChatCode } from './code'
 import { ContextMeter } from './TerminalStatus'
@@ -1462,7 +1463,8 @@ export function EndedNotice({
   const host = useViewSessionStore((s) => s.sessions.find((x) => x.id === sessionId))
   const limit = host?.limitReported === true
   const proposal = host?.accountProposal ?? null
-  const account = host?.claudeProfileLabel ?? host?.codexAccountLabel ?? 'This account'
+  // "Work is out on Fable, back in 2d 5h.": the account, the cap, the return.
+  const sentence = useLimitSentence(host)
   // A chat on a Clave server draws its own state, Resume included, and keeps
   // drawing it while its own Resume runs (so its failure, if any, is kept);
   // the credit states below stay the shell's words (PRDCT-4191, round 5).
@@ -1480,7 +1482,7 @@ export function EndedNotice({
   if (limit && proposal) {
     return (
       <div className="chat-notice" role="status" data-chat-ended="limit">
-        {account} is out of usage credits.{' '}
+        {sentence}{' '}
         <button
           type="button"
           className="chat-notice-action"
@@ -1495,8 +1497,7 @@ export function EndedNotice({
   if (limit) {
     return (
       <div className="chat-notice" role="status" data-chat-ended="limit">
-        {account} is out of usage credits, and no other account has headroom. Add one in Settings →
-        Accounts to continue.
+        {sentence} No other account has headroom: add one in Settings → Accounts to continue.
       </div>
     )
   }
