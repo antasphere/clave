@@ -117,6 +117,9 @@ public class ClavePushClient(
         val exits = mutableListOf<Listener<Int>>()
         var ended = false
         var acked: Session? = null
+
+        /** The server's refusal of this socket's subscription, kept until the server answers again. */
+        var refused: String? = null
         val waiters = mutableListOf<CompletableDeferred<Session>>()
     }
 
@@ -208,7 +211,10 @@ public class ClavePushClient(
         val existing = subscriptions[sessionId]
         val fresh = existing == null || existing.ended
         val subscription = existing ?: Subscription().also { subscriptions[sessionId] = it }
-        if (fresh) subscription.acked = null
+        if (fresh) {
+            subscription.acked = null
+            subscription.refused = null
+        }
         subscription.ended = false
         val streamListener = Listener(onStream)
         val exitListener = onExit?.let { Listener(it) }
@@ -236,12 +242,14 @@ public class ClavePushClient(
      * The acknowledgement barrier: the server's record for a subscribed session once THIS
      * socket's `subscribed` frame arrived. A welcome invalidates every earlier acknowledgement,
      * so a snapshot fetched after this returns is never older than the subscription. Fails with
-     * the server's refusal, or after [timeoutMs].
+     * the server's refusal (kept when it arrived before this call, and thrown at once), or after
+     * [timeoutMs].
      */
     public suspend fun subscribed(sessionId: String, timeoutMs: Long = 10_000): Session {
         val (subscription, waiter) = synchronized(lock) {
             val subscription = subscriptions[sessionId] ?: throw PushError("Not subscribed to $sessionId", sessionId)
             subscription.acked?.let { return it }
+            subscription.refused?.let { throw PushError(it, sessionId) }
             if (stopped) throw PushError(CLOSED, sessionId)
             subscription to CompletableDeferred<Session>().also { subscription.waiters += it }
         }
@@ -343,7 +351,10 @@ public class ClavePushClient(
     }
 
     private fun scheduleReconnect(code: Int, reason: String) {
-        for (subscription in subscriptions.values) subscription.acked = null
+        for (subscription in subscriptions.values) {
+            subscription.acked = null
+            subscription.refused = null
+        }
         val attempt = ++attempts
         val delayMs = (
             min(backoffMaxMs.toDouble(), backoffBaseMs * 2.0.pow(min(attempt - 1, 10))) * (0.5 + random() * 0.5)
@@ -420,7 +431,10 @@ public class ClavePushClient(
                 serverVersion = frame.version
                 // The previous socket's acknowledgements go before the status listeners hear
                 // Open: a listener that fetches a snapshot must await this socket's barrier.
-                for (subscription in subscriptions.values) subscription.acked = null
+                for (subscription in subscriptions.values) {
+                    subscription.acked = null
+                    subscription.refused = null
+                }
                 setStatus(PushStatus.Open, PushStatusDetail())
                 armPing()
                 for ((sessionId, subscription) in subscriptions) {
@@ -444,11 +458,15 @@ public class ClavePushClient(
             is ServerFrame.Event -> _events.tryEmit(frame.envelope)
             is ServerFrame.Error -> {
                 val subscription = frame.sessionId?.let { subscriptions[it] }
-                if (subscription != null) failSubscribers(subscription, PushError(frame.message, frame.sessionId))
+                if (subscription != null) {
+                    subscription.refused = frame.message
+                    failSubscribers(subscription, PushError(frame.message, frame.sessionId))
+                }
                 _errors.tryEmit(frame.message to frame.sessionId)
             }
             is ServerFrame.Subscribed -> {
                 val subscription = subscriptions[frame.sessionId] ?: return
+                subscription.refused = null
                 subscription.acked = frame.session
                 val waiters = subscription.waiters.toList()
                 subscription.waiters.clear()

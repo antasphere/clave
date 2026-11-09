@@ -173,6 +173,20 @@ class ClavePushClientTest {
     }
 
     @Test
+    fun `a refusal that arrived before the barrier is awaited is kept, and the barrier throws it at once`() = runBlocking {
+        val c = client().connect()
+        val errors = CopyOnWriteArrayList<Pair<String, String?>>()
+        scope.launch(start = CoroutineStart.UNDISPATCHED) { c.errors.collect { errors += it } }
+        c.subscribe("nope", {})
+        until { errors.isNotEmpty() }
+        val asked = System.currentTimeMillis()
+        val error = expectPushError { withTimeout(5_000) { c.subscribed("nope") } }
+        assertEquals("Unknown session", error.message)
+        assertTrue("the barrier answered from the kept refusal, not from a timeout", System.currentTimeMillis() - asked < 1_000)
+        assertEquals(listOf("Unknown session" to "nope"), errors.toList())
+    }
+
+    @Test
     fun `delivers server events, ignores frames it does not know, and survives junk`() = runBlocking {
         val c = client().connect()
         withTimeout(5_000) { c.whenOpen() }
