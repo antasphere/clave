@@ -189,6 +189,14 @@ const knownMachine = (runsOn: string, listed: ReadonlyArray<Listed>): boolean =>
 /** Whether the machine a routine is placed on lists that routine itself
  *  (the same name in the same workspace, run there): then the owner's row
  *  stands and this machine's twin is dropped. */
+/** A routine's identity across machines, as the toolbar's merge reads it:
+ *  its file under its root, and its name (verifier round 1, F4). */
+const relId = (d: Pick<RoutineDeclaration, 'file' | 'rootDir' | 'name'>): string => {
+  const root = d.rootDir.replace(/\/+$/, '')
+  const file = root && d.file.startsWith(`${root}/`) ? d.file.slice(root.length + 1) : d.file
+  return `${file}::${d.name}`
+}
+
 const ownerLists = (d: RoutineDeclaration, listed: ReadonlyArray<Listed>): boolean =>
   listed.some(
     (l) =>
@@ -196,12 +204,7 @@ const ownerLists = (d: RoutineDeclaration, listed: ReadonlyArray<Listed>): boole
       d.runsOn &&
       (l.listing.server.id === d.runsOn.trim() ||
         lower(l.listing.server.name) === lower(d.runsOn)) &&
-      l.listing.routines.some(
-        (v) =>
-          v.routine.runsHere !== false &&
-          lower(v.routine.name) === lower(d.name) &&
-          lower(v.routine.workspaceName) === lower(d.workspaceName)
-      )
+      l.listing.routines.some((v) => v.routine.runsHere !== false && relId(v.routine) === relId(d))
   )
 
 export interface RoutineListAnswer {
@@ -547,13 +550,20 @@ export async function moveRoutineToFileTool(
           .toLowerCase()
           .replace(/[^a-z0-9]+/g, '-')
           .replace(/^-|-$/g, '') || 'routine'
-      template = path.join(workspace.rootDir, '.clave', 'routines', slug)
-      if (!fs.existsSync(template)) l.machine.files.copyDir(d.report.template, template)
+      // A folder of that name may be another routine's page: the next free one
+      // is taken, never an existing one (verifier round 1, F7).
+      const folderOf = (n: number): string =>
+        path.join(workspace.rootDir, '.clave', 'routines', n === 1 ? slug : `${slug}-${n}`)
+      let n = 1
+      while (fs.existsSync(folderOf(n))) n++
+      template = folderOf(n)
+      l.machine.files.copyDir(d.report.template, template)
     }
     const routine = {
       name: d.name,
       schedule: d.schedule,
-      prompt: d.prompt,
+      // As written, the `@`-tokens kept (verifier round 1, F6).
+      prompt: d.promptTemplate ?? d.prompt,
       ...(d.skill ? { skill: d.skill } : {}),
       cwd: d.cwd,
       ...d.launch,
@@ -581,8 +591,36 @@ export async function moveRoutineToFileTool(
         : nextGroups.length === 1
           ? { ...nextGroups[0] }
           : { groups: nextGroups }
-    await l.machine.files.write(file, data, workspace.rootDir)
+    // The store first: a delete refused (a run in flight) leaves the file
+    // untouched, so the routine never exists twice (verifier round 1, F1). A
+    // write that then fails puts the routine back in the store, as it was.
     await l.machine.routines.delete(d.key)
+    try {
+      await l.machine.files.write(file, data, workspace.rootDir)
+    } catch (error) {
+      await l.machine.routines
+        .create({
+          workspaceId: d.workspaceId,
+          name: d.name,
+          schedule: d.schedule,
+          prompt: d.promptTemplate ?? d.prompt,
+          ...(d.skill ? { skill: d.skill } : {}),
+          cwd: d.cwd,
+          launch: d.launch,
+          ...(d.icon ? { icon: d.icon } : {}),
+          ...(d.color ? { color: d.color } : {}),
+          catchUp: d.catchUp,
+          timeoutMinutes: d.timeoutMinutes,
+          report: {
+            ...(relTo(d.report.template).startsWith('..') ? {} : { template: d.report.template }),
+            ...(d.report.publish ? { publish: true } : {})
+          }
+        })
+        .catch(() => undefined)
+      throw new Error(
+        `The file could not be written (${error instanceof Error ? error.message : String(error)}); the routine stays in ${l.machine.label}’s store.`
+      )
+    }
     return {
       ok: true,
       name: d.name,

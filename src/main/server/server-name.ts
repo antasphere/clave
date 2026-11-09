@@ -42,7 +42,8 @@ export function resolveServerName(sources: ServerNameSources): string {
     const value = candidate?.trim()
     if (value && isServerName(value)) return value
   }
-  return defaultServerName(sources.hostname)
+  const fallback = defaultServerName(sources.hostname)
+  return isServerName(fallback) ? fallback : 'clave-server'
 }
 
 /** The stored name under `dir`, null when there is none or it is unreadable. */

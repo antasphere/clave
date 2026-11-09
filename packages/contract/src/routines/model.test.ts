@@ -111,3 +111,24 @@ describe('the routines listing on the wire', () => {
     })
   })
 })
+
+describe('a server name (PRDCT-4241)', () => {
+  it('is one word of the install script’s rule and never the word every, whatever its case', async () => {
+    const { isServerName } = await import('../server-name')
+    for (const ok of ['Studio', 'romains-mac-studio', 'a', 'x'.repeat(63), 'a.b_c-d'])
+      expect(isServerName(ok), ok).toBe(true)
+    for (const bad of [
+      'every',
+      'Every',
+      'EVERY',
+      '',
+      ' ',
+      'two words',
+      '-lead',
+      'x'.repeat(64),
+      'Stüdio',
+      42
+    ])
+      expect(isServerName(bad), String(bad)).toBe(false)
+  })
+})

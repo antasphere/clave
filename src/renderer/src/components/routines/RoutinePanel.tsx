@@ -436,7 +436,9 @@ export function RoutinePanel({
             data-testid="routine-delete-confirm-yes"
             onClick={() => {
               setConfirmDelete(false)
-              void remove(surface, view.routine.key).then(() => (onBack ?? onClose)())
+              void remove(surface, view.routine.key).then((done) => {
+                if (done) (onBack ?? onClose)()
+              })
             }}
           >
             Delete

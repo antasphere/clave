@@ -1054,7 +1054,7 @@ describe('the routines a server creates in its own store (PRDCT-4242)', () => {
     expect(own.routine.report.template).toBe(tpl())
   })
 
-  it('a paused routine is listed, skipped by the tick and refused by Run now; resumed, it runs', async () => {
+  it('a paused routine is listed, skipped by the tick and refused by Run now; resumed, it runs on Run now', async () => {
     const file = workspace([])
     const host = fakeHost()
     const storage = memory()
@@ -1075,7 +1075,12 @@ describe('the routines a server creates in its own store (PRDCT-4242)', () => {
     await expect(service.runNow(key)).rejects.toThrow(/is paused/)
     const resumed = await service.pause(key, false)
     expect(resumed.routine.paused).toBe(false)
+    // What was missed on hold is not caught up (verifier round 1, F5): the
+    // next tick starts nothing, Run now starts it.
     await service.tick()
+    expect(host.starts).toEqual([])
+    const run = await service.runNow(key)
+    expect(run.state).toBe('running')
     expect(host.starts).toHaveLength(1)
   })
 
@@ -1096,6 +1101,41 @@ describe('the routines a server creates in its own store (PRDCT-4242)', () => {
       new RegExp(`comes from ${file.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`)
     )
     await expect(service.pause(key(file, 'FromFile'), true)).rejects.toThrow(/edit the file/)
+  })
+
+  it('a name taken by a file routine or another created one is refused, on create and on rename', async () => {
+    const file = workspace([routine('FromFile')])
+    const service = await build(file, fakeHost(), memory(), { defaultTemplate: tpl() })
+    await expect(service.create(digest({ name: 'fromfile' }))).rejects.toThrow(/already exists/)
+    const one = await service.create(digest({ name: 'One' }))
+    await service.create(digest({ name: 'Two' }))
+    await expect(service.update(one.routine.key, { name: 'two' })).rejects.toThrow(/already exists/)
+    await expect(service.update(one.routine.key, { name: 'FROMFILE' })).rejects.toThrow(
+      /already exists/
+    )
+    // Its own name, in another case, is not a clash.
+    expect((await service.update(one.routine.key, { name: 'ONE' })).routine.name).toBe('ONE')
+    await expect(service.create(digest({ prompt: '  ' }))).rejects.toThrow(/needs a prompt/)
+  })
+
+  it('a resumed routine catches nothing up from the time it was on hold', async () => {
+    const file = workspace([])
+    const host = fakeHost()
+    const storage = memory()
+    const schedule = `${(new Date().getMinutes() + 30) % 60} * * * *`
+    const first = await build(file, fakeHost(), storage, { defaultTemplate: tpl() })
+    const view = await first.create(digest({ schedule }))
+    const key = view.routine.key
+    await first.pause(key, true)
+    await first.close()
+    // Hours on hold, as the store would carry them.
+    new RoutinesStore(storage).considered(key, Date.now() - 3 * 3_600_000, schedule)
+    const service = await build(file, host, storage, { defaultTemplate: tpl() })
+    await service.tick()
+    expect(host.starts).toEqual([])
+    await service.pause(key, false)
+    await service.tick()
+    expect(host.starts).toEqual([])
   })
 
   it('deletes a created routine with its runs and decks, never a file’s', async () => {

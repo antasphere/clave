@@ -73,3 +73,11 @@ describe('a server’s own name (PRDCT-4241)', () => {
     expect(own()).toBe('Studio')
   })
 })
+
+describe('what may name a server (verifier round 1)', () => {
+  it('never answers to every, in any case, even from the hostname', () => {
+    expect(resolveServerName({ stored: null, hostname: 'every.local' })).toBe('clave-server')
+    expect(resolveServerName({ stored: null, hostname: 'Every' })).toBe('clave-server')
+    expect(resolveServerName({ stored: 'Every', hostname: 'box' })).toBe('box')
+  })
+})

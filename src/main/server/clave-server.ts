@@ -129,7 +129,17 @@ export function ownServerName(): string {
 /** The name set from Settings, stored under the app's data; answers the name now in force. */
 export function setOwnServerName(name: string): string {
   if (!kept) throw new Error('This Mac keeps no server name of its own in this process')
-  return kept.set(name)
+  const next = kept.set(name)
+  for (const listener of [...nameListeners]) listener(next)
+  return next
+}
+
+const nameListeners = new Set<(name: string) => void>()
+/** Told each time this Mac's own name changes (PRDCT-4241): the routines
+ *  re-read their placements against the new name. */
+export function onOwnServerNameChanged(listener: (name: string) => void): () => void {
+  nameListeners.add(listener)
+  return () => nameListeners.delete(listener)
 }
 
 function defaultServerName(host: string): string {

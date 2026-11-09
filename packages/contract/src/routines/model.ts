@@ -105,6 +105,9 @@ export const RoutineDeclaration = Schema.Struct({
   origin: Schema.optional(Schema.Literal('file', 'created')),
   /** A created routine put on hold: listed, never ticked, Run now refused. */
   paused: Schema.optional(Schema.Boolean),
+  /** A created routine's prompt as written, before the `@`-tokens: what a
+   *  move into a file writes, so the file keeps the tokens (PRDCT-4243). */
+  promptTemplate: Schema.optional(Schema.String),
   report: RoutineReportSpec,
   /** Why this routine can never run as declared (an unknown scope, a
    *  schedule that does not parse, a template outside the file's folder):

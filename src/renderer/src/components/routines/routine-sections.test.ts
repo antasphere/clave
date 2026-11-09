@@ -180,5 +180,13 @@ describe('the one button’s badge', () => {
     expect(aggregateBadge([ok, away])).toMatchObject({ state: 'unreachable', dot: 'invalid' })
     const invalid = surface({ view: view(decl({ name: 'I', invalid: 'nope' })) })
     expect(aggregateBadge([away, invalid])).toMatchObject({ state: 'invalid' })
+    // The order, pair by pair: each state beats the one after it.
+    const waiting = surface({ view: view(decl({ name: 'Q' }), [run('waiting')]) })
+    expect(aggregateBadge([waiting, failed]).state).toBe('waiting')
+    expect(aggregateBadge([failed, invalid]).state).toBe('failed')
+    expect(aggregateBadge([invalid, away]).state).toBe('invalid')
+    expect(aggregateBadge([away, attention]).state).toBe('unreachable')
+    expect(aggregateBadge([attention, ok]).state).toBe('attention')
+    expect(aggregateBadge([ok, seen]).state).toBe('ok')
   })
 })

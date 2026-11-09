@@ -167,12 +167,16 @@ export function applyPatch(
 /** Why a created routine's folder, schedule or template can never run, in
  *  the words the refusal and the badge show; null when every one holds. */
 export function createdProblem(
-  routine: Pick<CreatedRoutine, 'name' | 'schedule' | 'cwd' | 'report' | 'timeoutMinutes'>,
+  routine: Pick<
+    CreatedRoutine,
+    'name' | 'prompt' | 'schedule' | 'cwd' | 'report' | 'timeoutMinutes'
+  >,
   rootDir: string,
   defaultTemplate: string,
   exists: (dir: string) => boolean = isDirectory
 ): string | null {
   if (!routine.name.trim()) return 'a routine needs a name'
+  if (!routine.prompt.trim()) return 'a routine needs a prompt: what the agent does'
   try {
     parseCron(routine.schedule)
   } catch (error) {
@@ -240,6 +244,7 @@ export function declareCreated(
     workspaceName: workspace?.name ?? routine.workspaceId,
     schedule: routine.schedule,
     prompt: workspace ? substituteTokens(routine.prompt, workspace.rootDir, cwd) : routine.prompt,
+    promptTemplate: routine.prompt,
     skill: routine.skill ?? null,
     cwd,
     launch: routine.launch,

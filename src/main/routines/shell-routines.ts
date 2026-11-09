@@ -32,7 +32,12 @@ import { launchFactsFromManagers } from './facts'
 import { SlidelessPublisher } from './publisher'
 import { createRoutineService, type RoutineService } from './service'
 import { contractPluginDir, defaultReportDir } from './skill'
-import { claveServerId, ownServerName, setOwnServerName } from '../server/clave-server'
+import {
+  claveServerId,
+  onOwnServerNameChanged,
+  ownServerName,
+  setOwnServerName
+} from '../server/clave-server'
 
 let service: RoutineService | null = null
 
@@ -97,6 +102,10 @@ export function shellRoutines(): RoutineService {
       (level === 'warn' ? console.warn : console.log)(`[routines] ${message}`)
   })
   installE2eHooks({ routines: service })
+  // A rename re-reads the placements: a routine placed on the new name runs
+  // here from now on, a created one carries it (verifier round 1, F2).
+  const built = service
+  onOwnServerNameChanged(() => void built.refresh())
   return service
 }
 

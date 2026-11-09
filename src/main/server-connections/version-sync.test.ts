@@ -420,6 +420,23 @@ describe('the version sync loop', () => {
     await expect(sync.rename('zzz', 'Studio')).rejects.toThrow('Unknown server connection.')
   })
 
+  it('keeps a server’s own name on its status while the server is away (verifier round 1, F3)', async () => {
+    let up = true
+    const sync = createVersionSync({
+      appVersion: () => '3.0.0-beta.9',
+      automatic: true,
+      connections: () => [{ id: 'a', name: 'Box', url: 'http://a', enabled: true }],
+      read: async () => (up ? info('3.0.0-beta.9', { name: 'box' }) : { kind: 'unreachable' }),
+      request: async () => {
+        throw new Error('not asked')
+      },
+      publish: () => {}
+    })
+    expect((await sync.refresh())[0]).toMatchObject({ kind: 'match', serverName: 'box' })
+    up = false
+    expect((await sync.refresh())[0]).toMatchObject({ kind: 'unreachable', serverName: 'box' })
+  })
+
   it('upgrades now on demand, for an upgrade that waits or failed', async () => {
     const { sync, requests } = fleet({ a: info('3.0.0-beta.8') })
     await sync.refresh()

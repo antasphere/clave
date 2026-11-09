@@ -832,16 +832,19 @@ function buildServer(callerSessionId: string | undefined): McpServer {
   )
   // ── PRDCT-4243: the routine tools, over this Mac and every connected server ──
   {
-    let open: Awaited<ReturnType<typeof routineMachines>> | null = null
+    // One handle per call, keyed by the machines it answered: two tool calls
+    // batched in one request never cross their disposal (verifier round 1, F11).
+    const handles = new WeakMap<ReadonlyArray<RoutineMachine>, () => Promise<void>>()
     registerRoutineTools(server, {
       machines: async () => {
-        open = await routineMachines()
+        const open = await routineMachines()
+        handles.set(open.machines, open.release)
         return open.machines
       },
-      release: async () => {
-        const current = open
-        open = null
-        await current?.release()
+      release: async (machines) => {
+        const release = handles.get(machines)
+        handles.delete(machines)
+        await release?.()
       },
       callerWorkspaceId: () =>
         callerSessionId

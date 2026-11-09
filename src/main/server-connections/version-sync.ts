@@ -240,6 +240,12 @@ export function createVersionSync(deps: VersionSyncDeps): VersionSync {
     // reads a server still older after the ask as failed.
     const decided = decideOne(connection.id, read)
     if (decided.kind === 'upgrade' && deps.automatic) return ask(connection.id, read, 'idle')
+    // A server away keeps the name it last gave (PRDCT-4241): what tells a
+    // routine placed on it from one placed on a machine nobody has.
+    if (decided.kind === 'unreachable') {
+      const previous = current.find((r) => r.serverId === connection.id)
+      if (previous?.serverName) return { ...decided, serverName: previous.serverName }
+    }
     return decided
   }
 

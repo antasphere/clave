@@ -336,7 +336,12 @@ async function main(): Promise<void> {
       activity: sessionActivity(sessionManager),
       idleMs: upgradeIdleMs(process.argv.slice(2), TEST_NO_ACTIVATE),
       name: serverName,
-      setName: (name) => serverName.set(name)
+      setName: (name) => {
+        const next = serverName.set(name)
+        // The routines re-read their placements against the new name (verifier round 1, F2).
+        void routines.refresh()
+        return next
+      }
     })
   }
   // ── Wave 3, lane A: the `.clave` files of this machine, their trust store under `--data-dir` ──
@@ -416,7 +421,12 @@ async function main(): Promise<void> {
       git: serverGitPort(),
       // ── Issue #266: the server domain ──
       serverInfo:
-        selfUpgrade ?? ServerInfoPort.appRun(version, serverName, (name) => serverName.set(name))
+        selfUpgrade ??
+        ServerInfoPort.appRun(version, serverName, (name) => {
+          const next = serverName.set(name)
+          void routines.refresh()
+          return next
+        })
     },
     port,
     host: config.host,

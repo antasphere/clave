@@ -16,9 +16,7 @@ export const RUNS_EVERYWHERE = 'every'
 /** Whether `value` may name a server: one word, the install script's rule, not `every`. */
 export function isServerName(value: unknown): value is string {
   return (
-    typeof value === 'string' &&
-    SERVER_NAME.test(value) &&
-    value.toLowerCase() !== RUNS_EVERYWHERE
+    typeof value === 'string' && SERVER_NAME.test(value) && value.toLowerCase() !== RUNS_EVERYWHERE
   )
 }
 

@@ -53,7 +53,8 @@ interface RoutinesState {
   /** A routine created on the surface's machine; throws the machine's refusal (the form shows it). */
   create: (surface: RoutineTarget, input: RoutineCreateInput) => Promise<RoutineView>
   update: (surface: RoutineTarget, key: string, patch: RoutinePatch) => Promise<RoutineView>
-  remove: (surface: RoutineTarget, key: string) => Promise<void>
+  /** True when the machine took the delete; false with the refusal on the error line. */
+  remove: (surface: RoutineTarget, key: string) => Promise<boolean>
   pause: (surface: RoutineTarget, key: string, paused: boolean) => Promise<RoutineView | null>
 }
 
@@ -132,11 +133,13 @@ export const useRoutinesStore = create<RoutinesState>((set, get) => {
         ? window.electronAPI.routinesUpdate(key, patch)
         : window.electronAPI.fleetRoutineUpdate(surface.serverId, key, patch),
     remove: async (surface, key) => {
-      await act(() =>
-        isLocal(surface)
+      const done = await act(async () => {
+        await (isLocal(surface)
           ? window.electronAPI.routinesDelete(key)
-          : window.electronAPI.fleetRoutineDelete(surface.serverId, key)
-      )
+          : window.electronAPI.fleetRoutineDelete(surface.serverId, key))
+        return true
+      })
+      return done === true
     },
     pause: (surface, key, paused) =>
       act(() =>

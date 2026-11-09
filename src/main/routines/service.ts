@@ -599,7 +599,12 @@ export function createRoutineService(options: RoutineServiceOptions): RoutineSer
         // Placed on another server (PRDCT-4149) or nowhere (PRDCT-4241):
         // listed, its next occurrence shown, and never considered here. A
         // created routine on hold (PRDCT-4242) waits the same way.
-        if (d.runsHere === false || d.paused) continue
+        if (d.runsHere === false) continue
+        // On hold (PRDCT-4242): the clock moves on so a resume catches nothing up.
+        if (d.paused) {
+          store.considered(d.key, at, d.schedule)
+          continue
+        }
         const state = store.seen(d.key)
         const decision = decideTick({
           schedule: d.schedule,
@@ -683,6 +688,18 @@ export function createRoutineService(options: RoutineServiceOptions): RoutineSer
     if (!resolved.ok) throw new Error(resolved.reason)
     if (!REPORTING_AGENTS.has(resolved.agent))
       throw new Error(`this agent cannot report: ${resolved.agent} has no Clave tools`)
+  }
+
+  /** Whether a routine of that name already lives in the workspace, on this
+   *  server: a created one, or one a file declares (verifier round 1, F8). */
+  const nameTaken = (workspaceId: string, name: string, exceptId?: string): boolean => {
+    const wanted = name.trim().toLowerCase()
+    return declarations.some(
+      (d) =>
+        d.workspaceId === workspaceId &&
+        d.name.toLowerCase() === wanted &&
+        !(exceptId && d.key === `created::${exceptId}`)
+    )
   }
 
   const viewOf = (id: string): RoutineView => {
@@ -929,13 +946,7 @@ export function createRoutineService(options: RoutineServiceOptions): RoutineSer
         throw new Error(`No workspace "${input.workspaceId}" is registered on this server`)
       const name = input.name.trim()
       if (!name) throw new Error('A routine needs a name')
-      if (
-        created
-          .all()
-          .some(
-            (r) => r.workspaceId === workspace.id && r.name.toLowerCase() === name.toLowerCase()
-          )
-      )
+      if (nameTaken(workspace.id, name))
         throw new Error(
           `A routine named "${name}" already exists in ${workspace.name}: pick another name or update it`
         )
@@ -967,14 +978,7 @@ export function createRoutineService(options: RoutineServiceOptions): RoutineSer
       const next = applyPatch(current, patch, workspace.rootDir)
       if (
         next.name.toLowerCase() !== current.name.toLowerCase() &&
-        created
-          .all()
-          .some(
-            (r) =>
-              r.id !== current.id &&
-              r.workspaceId === workspace.id &&
-              r.name.toLowerCase() === next.name.toLowerCase()
-          )
+        nameTaken(workspace.id, next.name, current.id)
       )
         throw new Error(`A routine named "${next.name}" already exists in ${workspace.name}`)
       refuseUnrunnable(next, workspace)
@@ -993,6 +997,8 @@ export function createRoutineService(options: RoutineServiceOptions): RoutineSer
     async pause(key, paused) {
       const current = ownRoutine(key, paused ? 'pause' : 'resume')
       created.replace({ ...current, paused })
+      // Resumed: what was missed while on hold is not caught up (verifier round 1, F5).
+      if (!paused) store.considered(key, now(), current.schedule)
       await refresh()
       return viewOf(current.id)
     },
