@@ -665,6 +665,56 @@ describe("a form's defaults are what the card shows (PRDCT-4210, verifier round 
     expect(view.answers).toEqual({ name: 'Luca', machine: 'mbp' })
     requests.close()
   })
+  it('the agent clearing a field with a default leaves it empty, as the card shows it (verifier round 3)', async () => {
+    const requests = new PendingRequests()
+    const optional = {
+      ...withDefault,
+      questions: [withDefault.questions[0], { ...withDefault.questions[1], optional: true }]
+    }
+    const request = requests.createHosted(optional)
+    const updated = vi.fn()
+    requests.onUpdated(updated)
+    await requests.setAnswers({
+      requestId: request.id,
+      sessionId: 's1',
+      answers: { machine: 'studio' }
+    })
+    await requests.setAnswers({ requestId: request.id, sessionId: 's1', answers: { machine: '' } })
+    expect(updated.mock.calls.at(-1)?.[1]).toEqual({ machine: '' })
+    expect((await requests.resultAfter(request.id, 's1')).answers).toBeUndefined()
+    // Cleared before anything was set there: the shown default goes too.
+    const other = requests.createHosted(optional)
+    await requests.setAnswers({ requestId: other.id, sessionId: 's1', answers: { machine: '' } })
+    expect((await requests.resultAfter(other.id, 's1')).answers).toBeUndefined()
+    // And the agent's submit approves it empty, as the card shows it.
+    const approved = await requests.setAnswers({
+      requestId: request.id,
+      sessionId: 's1',
+      answers: { name: 'Luca' },
+      submit: true
+    })
+    expect(approved.answers).toEqual({ name: 'Luca' })
+    requests.close()
+  })
+  it('a default is trimmed, and one that does not fit is said to be the form’s own', async () => {
+    const requests = new PendingRequests()
+    const padded = requests.createHosted({
+      ...withDefault,
+      questions: [{ ...withDefault.questions[1], default: ' mbp ' }]
+    })
+    expect((await requests.resultAfter(padded.id, 's1')).answers).toEqual({ machine: 'mbp' })
+    const misfit = requests.createHosted({
+      sessionId: 's1',
+      description: 'Mail.',
+      questions: [
+        { id: 'mail', question: 'E-mail', kind: 'email' as const, options: [], default: 'nope' }
+      ]
+    })
+    await expect(
+      requests.setAnswers({ requestId: misfit.id, sessionId: 's1', answers: {}, submit: true })
+    ).rejects.toMatchObject({ message: expect.stringMatching(/^"mail": .*the form's default/) })
+    requests.close()
+  })
   it('a default the person emptied stays empty, so the submit asks for it', async () => {
     const requests = new PendingRequests()
     const request = requests.createHosted(withDefault)
@@ -675,6 +725,8 @@ describe("a form's defaults are what the card shows (PRDCT-4210, verifier round 
     })
     expect((await requests.resultAfter(request.id, 's1')).answers).toEqual({ name: 'Luca' })
     expect(requests.draftOf(request.id)).toEqual({ name: 'Luca', machine: '' })
+    // The emptying is the person's: a late view is handed it as typed.
+    expect([...requests.typedOf(request.id)].sort()).toEqual(['machine', 'name'])
     await expect(
       requests.setAnswers({ requestId: request.id, sessionId: 's1', answers: {}, submit: true })
     ).rejects.toMatchObject({

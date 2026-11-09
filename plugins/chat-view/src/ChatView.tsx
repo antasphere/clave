@@ -59,7 +59,7 @@ import { ApprovalRun, InlineQuestion, PermissionRow, PromptDock } from './Prompt
 import { FormTail } from './FormTail'
 import { isInputRequest } from './input-request'
 import { isQuestion } from './approvals'
-import { QuestionContext } from './question-context'
+import { QuestionContext, typingWriter } from './question-context'
 import type { Values } from './input-request'
 import { refusedAnswer } from './refused-answer'
 import {
@@ -1130,11 +1130,7 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
                   working: state === 'working',
                   // PRDCT-4210: the reader's typing reaches the form's draft
                   // by the same write, on this Mac or the session's server.
-                  // A form settled meanwhile refuses it: nothing to tell.
-                  type: (id, answers) => {
-                    dispatch({ typedSent: id, answers })
-                    void write({ type: 'permission_draft', id, answers }).catch(() => {})
-                  }
+                  type: typingWriter(dispatch, write)
                 }}
               >
                 <ExchangeContext.Provider value={exchanges}>

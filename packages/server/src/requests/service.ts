@@ -326,14 +326,26 @@ export class PendingRequests {
         ? JSON.stringify([...a].sort()) === JSON.stringify([...b].sort())
         : JSON.stringify(a) === JSON.stringify(b)
     /** The answers as they will stand, and the patch the views are told. */
+    /** On an open form, a field with a default is cleared to an explicit
+     *  `''`: deleted, the default would come back under it while the card
+     *  shows it empty (verifier round 3). An approved form's answers carry
+     *  the defaults already, so a clear there drops the field. */
     const merge = (
-      current: Answers
+      current: Answers,
+      open = false
     ): { next: Answers; patch: Record<string, string | readonly string[]> } => {
       const next: Record<string, string | readonly string[]> = { ...current }
       const patch: Record<string, string | readonly string[]> = {}
       for (const [key, value] of Object.entries(answers)) {
         const before = own(current, key)
         if (cleared.has(key)) {
+          const question = byKey.get(key)
+          if (open && question?.default !== undefined && question.default.trim()) {
+            if (before === '') continue
+            next[key] = ''
+            patch[key] = ''
+            continue
+          }
           if (before === undefined) continue
           delete next[key]
           patch[key] = ''
@@ -346,7 +358,7 @@ export class PendingRequests {
     }
     const status = entry.result.status
     if (status === 'pending') {
-      const { next, patch } = merge(entry.draft ?? {})
+      const { next, patch } = merge(entry.draft ?? {}, true)
       // What the submit approves is what the card shows: the defaults under
       // the draft as it will stand.
       const shown = effectiveAnswers(questions, next)
@@ -362,11 +374,14 @@ export class PendingRequests {
           // (the agent's own values are judged as they are set, above).
           const unanswered =
             value === undefined || (typeof value === 'string' ? !value.trim() : !value.length)
+          // Whose value it is: the person's typing, or the form's own default
+          // (the agent's values are judged as they are set).
+          const whose = entry.typed?.has(key) ? 'as the person typed it' : "the form's default"
           throw new RequestRejected({
             code: 'invalid',
             message: unanswered
               ? `"${key}" is still unanswered; set it, or let the person approve.`
-              : `"${key}": ${problem}, as the person typed it; set it, or let the person approve.`
+              : `"${key}": ${problem}, ${whose}; set it, or let the person approve.`
           })
         }
       }

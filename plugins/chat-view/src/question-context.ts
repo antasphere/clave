@@ -35,3 +35,22 @@ export interface QuestionHost {
 export const QuestionContext = createContext<QuestionHost | null>(null)
 
 export const useQuestionHost = (): QuestionHost | null => useContext(QuestionContext)
+
+/** The one way a view sends a form's typing (PRDCT-4210), shared by the
+ *  conversation and Terminal views so neither can drift: the view first
+ *  records that the server now holds the reader's value in those fields (the
+ *  agent's earlier fill there is no longer the draft's), then writes it. A
+ *  form settled meanwhile refuses the write: nothing to tell. */
+export function typingWriter(
+  dispatch: (action: { typedSent: string; answers: Record<string, string | string[]> }) => void,
+  write: (input: {
+    type: 'permission_draft'
+    id: string
+    answers: Record<string, string | string[]>
+  }) => Promise<void>
+): (id: string, answers: Record<string, string | string[]>) => void {
+  return (id, answers) => {
+    dispatch({ typedSent: id, answers })
+    void write({ type: 'permission_draft', id, answers }).catch(() => {})
+  }
+}
