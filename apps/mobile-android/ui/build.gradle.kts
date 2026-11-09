@@ -25,6 +25,8 @@ kotlin {
 }
 dependencies {
     api(project(":core:contract"))
+    api(project(":core:chat"))
+    api(project(":core:devices"))
     val bom = platform(libs.compose.bom)
     implementation(bom)
     androidTestImplementation(bom)
@@ -45,5 +47,6 @@ dependencies {
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.test.ext.junit)
     androidTestImplementation(libs.compose.ui.test.junit4)
+    androidTestImplementation(libs.androidx.test.espresso.core)
     debugImplementation(libs.compose.ui.test.manifest)
 }

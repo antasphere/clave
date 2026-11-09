@@ -39,6 +39,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -328,6 +329,8 @@ fun ClaveTextField(
     keyboardOptions: KeyboardOptions = KeyboardOptions.Default,
     enabled: Boolean = true,
     trailing: (@Composable () -> Unit)? = null,
+    /** A secret is masked as typed: pass the password transformation. */
+    visualTransformation: VisualTransformation = VisualTransformation.None,
 ) {
     val t = Clave.colors.theme
     val shape = RoundedCornerShape(Metrics.fieldRadius)
@@ -342,6 +345,7 @@ fun ClaveTextField(
         singleLine = singleLine,
         textStyle = style,
         keyboardOptions = keyboardOptions,
+        visualTransformation = visualTransformation,
         cursorBrush = SolidColor(t.accent),
         interactionSource = interaction,
         decorationBox = { inner ->

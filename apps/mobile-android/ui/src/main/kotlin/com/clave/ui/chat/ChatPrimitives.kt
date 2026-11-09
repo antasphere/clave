@@ -435,7 +435,8 @@ fun PromptDock(count: Int, label: String, onOpen: () -> Unit, modifier: Modifier
 /**
  * The raised composer: attachments above the field, the field growing from one line to six,
  * the paper clip, and the round Send in the action ink that turns into Stop while the agent
- * works and nothing is typed (typing while it works still sends).
+ * works and nothing is typed (typing while it works still sends). A composer that is not
+ * `enabled` (the session has ended) takes nothing and sends nothing.
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -452,6 +453,7 @@ fun Composer(
     onRemoveAttachment: (Int) -> Unit = {},
     deliveryMark: String? = null,
     placeholder: String = "Write a message…",
+    enabled: Boolean = true,
 ) {
     val t = Clave.colors.theme
     val shape = RoundedCornerShape(Metrics.radiusXxl)
@@ -489,13 +491,13 @@ fun Composer(
                     onClick = onAttach,
                     contentDescription = "Add files",
                     size = Metrics.controlSmHeight,
-                    enabled = !sending,
+                    enabled = enabled && !sending,
                 )
                 val style = ClaveTypography.type(Metrics.textSm, lineHeight = Metrics.proseLineHeight).copy(color = t.textPrimary)
                 BasicTextField(
                     value = text,
                     onValueChange = onTextChange,
-                    enabled = !sending,
+                    enabled = enabled && !sending,
                     textStyle = style,
                     minLines = Metrics.composerMinLines,
                     maxLines = Metrics.composerMaxLines,
@@ -511,8 +513,8 @@ fun Composer(
                         }
                     },
                 )
-                val canSend = (text.isNotBlank() || attachments.isNotEmpty()) && !sending
-                if (working && text.isBlank()) {
+                val canSend = enabled && (text.isNotBlank() || attachments.isNotEmpty()) && !sending
+                if (enabled && working && text.isBlank()) {
                     RoundAction(ClaveIcon.Stop, "Interrupt", enabled = true, onClick = onStop)
                 } else {
                     RoundAction(ClaveIcon.ArrowUp, "Send message", enabled = canSend, onClick = onSend)
