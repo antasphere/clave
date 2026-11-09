@@ -234,7 +234,7 @@ export function ServerAccountsSettings({ serverId }: { serverId: string }): Reac
       description={`The Claude and Codex accounts signed in on ${name}. Sessions started there run on them, in this order.`}
       testId="accounts"
     >
-      <div data-server-settings={serverId}>
+      <div className="settings-page-sections" data-server-settings={serverId}>
         <ServerNotice serverId={serverId} {...page} />
         {page.connected && settings.status !== 'error' && (
           <>
@@ -376,7 +376,7 @@ export function ServerUsageSettings({ serverId }: { serverId: string }): ReactEl
         page.connected && <ServerUsageRefresh serverId={serverId} settings={settings} tool={tool} />
       }
     >
-      <div data-server-settings={serverId}>
+      <div className="settings-page-sections" data-server-settings={serverId}>
         <ServerNotice serverId={serverId} {...page} />
         {page.connected && settings.status !== 'error' && (
           <div className="space-y-6" data-usage-provider={tool}>

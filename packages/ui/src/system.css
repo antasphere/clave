@@ -2442,7 +2442,13 @@ canvas[data-orb-state] {
    it appears only once the page has scrolled (`data-scrolled`, set by
    `SettingsPage`), so a page at rest reads exactly as it did. The gap to the
    first section is split: 1rem inside the header, 1.25rem below it, the same
-   2.25rem at rest, and a stuck header no taller than it needs to be. */
+   2.25rem at rest, and a stuck header no taller than it needs to be.
+
+   It also bleeds 1rem past the page column on each side (into the scroller's
+   2rem padding) with the same padding back, so the text stays on the column:
+   the cards' shadows reach past the column's edge, and a header exactly the
+   column's width let them show through on both sides as the cards scrolled
+   under it. */
 .settings-page-header {
   position: sticky;
   top: -2rem;
@@ -2452,6 +2458,8 @@ canvas[data-orb-state] {
   justify-content: space-between;
   gap: 1rem;
   margin-top: -2rem;
+  margin-inline: -1rem;
+  padding-inline: 1rem;
   padding-top: 2rem;
   padding-bottom: 1rem;
   margin-bottom: 1.25rem;
