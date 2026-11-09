@@ -86,6 +86,8 @@ export interface ServedShell<W extends ToolWindow = ToolWindow> {
   awaitRehomed(ids: string[]): Promise<void>
   /** Records a tab's close on the exchange capture. */
   captureTabClosed(payload: TabClosedCapturePayload): void
+  /** The ledger told what a closing tab runs on, before its record goes (PRDCT-4236). */
+  historyRestamp?(sessionId: string): Promise<void>
   /** The `windows` block of clave_list, built by main for that caller's window. */
   windowsListing(callerWin: W | null): unknown[]
   /** A fresh quick-launch terminal id. */

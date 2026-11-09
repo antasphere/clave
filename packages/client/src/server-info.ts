@@ -26,6 +26,8 @@ export class ServerInfoMissing extends Error {
 export interface ServerInfoClient {
   readonly info: () => Promise<ServerInfo>
   readonly upgrade: (request: ServerUpgradeRequest) => Promise<ServerUpgradeStatus>
+  /** The server's own name set (PRDCT-4241); answers its info with it. */
+  readonly setName: (name: string) => Promise<ServerInfo>
 }
 
 /** The router's own "route not found": the server domain declares no 404 of
@@ -40,6 +42,7 @@ export const serverInfoClient = (call: Call, url: string): ServerInfoClient => {
     })
   return {
     info: () => missing(call((c) => c.server.info({ payload: {} }))),
-    upgrade: (request) => missing(call((c) => c.server.upgrade({ payload: request })))
+    upgrade: (request) => missing(call((c) => c.server.upgrade({ payload: request }))),
+    setName: (name) => missing(call((c) => c.server.name({ payload: { name } })))
   }
 }

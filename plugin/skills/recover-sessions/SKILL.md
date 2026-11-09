@@ -11,7 +11,9 @@ Use it when the user says any of: *"I lost my sessions"*, *"my computer crashed,
 
 ## What the user gets back
 
-Their history, verbatim. `claude --resume <session-id>` reopens a session with its full context, so a recovered tab picks up exactly where it stopped. What is genuinely lost is only Clave's own arrangement — which group a tab sat in and what it was called — and that is what you reconstruct from evidence plus the user's memory.
+Their history, verbatim. Clave reopens a past conversation natively: `clave_open_session` with `resume: <conversation-id>` starts a tab that continues it with its full context (a Claude session id, a Codex thread id or a Pi session id), as a chat with `chat: true`, so a recovered tab picks up exactly where it stopped. What is genuinely lost is only Clave's own arrangement — which group a tab sat in and what it was called — and even that is mostly kept: `clave_history` lists every past conversation with its title, directory, workspace and the groups it sat in.
+
+Before rebuilding anything, check what is still there: since Clave 3.0.0-beta.21 a restart keeps every stopped tab in its group, with its title and a Resume button, so a "lost" tab is often a stopped one. `clave_list` shows the tabs; `clave_resume_session` brings a stopped one back under the same id.
 
 ## Where the transcripts live
 
@@ -29,9 +31,17 @@ Before scanning, get the user's own picture in one short exchange: roughly how m
 
 If they cannot remember anything, skip straight to the scan and present what you find, newest first.
 
-## Step 2 — Scan the transcripts
+## Step 2 — List the History, then scan the transcripts
 
-Run the bundled script:
+Start with Clave's own History, which is what the History dialog shows:
+
+```
+clave_history → { query?, workspace?, provider?, open?, limit? }
+```
+
+One row per past conversation, newest first: `conversationId` (what `resume` takes), `title`, `cwd`, `provider`, `model`, `workspaceName`, the `groups` it sat in, `lastActivity`, `transcriptExists`, `resumable`, and `open` when a tab already holds it (`{ sessionId, alive }`: alive means it is running, stopped means `clave_resume_session` brings it back). Filter by `query` (title, tab name or directory) and `workspace`. For a session that the History names, this is all you need to reopen it.
+
+For the deeper read (which repository a long session really worked in, the tasks it named, where it stopped), run the bundled script:
 
 ```bash
 python3 <skill-dir>/scripts/scan-transcripts.py --since 14
@@ -80,14 +90,15 @@ Then create them:
 
 ```
 clave_create_group  → { name: "<group name>" }
-clave_open_session  → { groupId, mode: "terminal", name: "1 · schema design",
-                        cwd: "<the session's cwd>",
-                        command: "claude --resume <session-id>" }
+clave_open_session  → { groupId, resume: "<conversation-id>", chat: true,
+                        name: "1 · schema design" }
 ```
+
+`resume` fills the directory, the provider and the model from the conversation itself; pass `cwd` only when the original directory is gone. `chat: true` opens the chat view; without it the conversation reopens in a terminal tab running the CLI with `--resume`. `dangerous`, `model`, `account` and `profile` combine with it as with any open. A conversation a tab already runs is not started twice: the call answers that tab (`alreadyOpen: true`) and focuses it; a stopped tab that still holds it is resumed in place.
 
 Two mechanics that will bite you otherwise:
 
-⚠️ **Clave has no native resume.** `clave_open_session` in `claude` mode always starts a fresh conversation. To restore history, open the tab in `terminal` mode running `claude --resume <session-id>`. It behaves like a normal Claude tab once it starts. Run it from the session's original `cwd`.
+⚠️ **Never rebuild a conversation as a terminal running `claude --resume` by hand.** That was the only road before native resume existed, and it is how a lost chat came back as a plain terminal tab carrying the chat's title under a new id (9 November 2026). Use `resume`.
 
 ⚠️ **Empty groups get pruned.** Creating several groups and then filling them in a later batch silently loses the empty ones. Always create one group and immediately open a session in it, then move to the next group.
 
@@ -100,17 +111,17 @@ Close with a short account of what came back, and — the part users value most 
 - **Done, skip** — shipped and closed cleanly.
 - **Closed before the crash but resumable** — sessions that had already ended but hold context worth reopening.
 
-Offer to add any of them. Say plainly that a tab is a terminal running `--resume` rather than a native Clave session, so nothing about the setup is a surprise later.
+Offer to add any of them. Say plainly which tabs were reopened as chats and which as terminals, so nothing about the setup is a surprise later.
 
 ## Edge cases
 
-**A prompt that never reached disk.** A session opened moments before a crash may have only its bootstrap context saved, with the user's real question lost. Resuming it restores a conversation that never heard the question. Say so, ask the user to restate the idea, and pass it as the resume argument so the session starts on the right foot:
+**A prompt that never reached disk.** A session opened moments before a crash may have only its bootstrap context saved, with the user's real question lost. Resuming it restores a conversation that never heard the question. Say so, ask the user to restate the idea, and pass it as the first prompt so the session starts on the right foot:
 
-```bash
-claude --resume <session-id> '<the restated request>'
+```
+clave_open_session → { resume: "<conversation-id>", chat: true, prompt: "<the restated request>" }
 ```
 
-**A transcript that is gone.** If retention wiped it, the conversation is unrecoverable — do not pretend otherwise. Offer to start a fresh session seeded with what the user remembers, and mention raising `cleanupPeriodDays`.
+**A transcript that is gone.** If retention wiped it, the conversation is unrecoverable — do not pretend otherwise (`clave_history` says `transcriptExists: false`, and `resume` errors). Offer to start a fresh session seeded with what the user remembers, and mention raising `cleanupPeriodDays`.
 
 **Sessions that are noise.** The `~/.claude/projects/-/` directory holds one-shot helpers Claude Code runs for itself (tab-title and commit-message generation). The script filters them; never offer them as recoverable work.
 

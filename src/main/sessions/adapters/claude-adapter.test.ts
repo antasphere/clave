@@ -2278,6 +2278,38 @@ describe('the default resolved at ready (PRDCT-4256)', () => {
     ).toBe('claude-opus-5-5')
   })
 
+  it('writes a switch before the message that follows it, in stdin order (PRDCT-4273)', async () => {
+    // Probed on the real CLI 2.1.319 on 9 November 2026: a `set_model`
+    // control request written right before a `user` message is answered
+    // first, and the message's init frame and answer carry the new model
+    // (launched on sonnet, switched to haiku: init `claude-haiku-5-5`,
+    // assistant `claude-haiku-5-5`). The adapter's part of that is the
+    // order of its writes, pinned here: nothing of the composer needs
+    // disabling while a switch is in flight.
+    const { adapter, handle, child } = await readied()
+    requests(child)
+    adapter.write(handle, { type: 'set_model', model: 'claude-haiku-5-5' })
+    adapter.write(handle, { type: 'user_message', text: 'Reply with OK.' })
+    const frames = (written(child) ?? '')
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line))
+    expect(frames.map((f) => f.type)).toEqual(['control_request', 'user'])
+    expect(frames[0].request).toEqual({ subtype: 'set_model', model: 'claude-haiku-5-5' })
+    expect(frames[1].message.content).toBe('Reply with OK.')
+    // The chip's word comes with the CLI's answer, after the message went out.
+    expect(metas()).toEqual([null])
+    child.stdout.write(
+      JSON.stringify({
+        type: 'control_response',
+        response: { subtype: 'success', request_id: frames[0].request_id }
+      }) + '\n'
+    )
+    expect(metas()).toEqual([null, 'claude-haiku-5-5'])
+    child.emit('close', 0)
+    await adapter.kill(handle)
+  })
+
   it('reads which model a list makes the default', () => {
     expect(resolvedDefaultModel(DEFAULT_LIST)).toBe('claude-opus-5-5')
     expect(resolvedDefaultModel([{ value: 'default', displayName: 'Default' }])).toBeNull()

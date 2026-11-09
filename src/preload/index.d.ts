@@ -56,6 +56,7 @@ import type {
   WorkspaceState
 } from '../shared/workspace-types'
 import type { DownloadProgress, ReleaseNote, UpdaterState } from '../shared/updater-types'
+import type { LimitReport } from '../shared/limit-report'
 import type { AgentUpdateId, AgentUpdatesState } from '../shared/agent-updates'
 import type { GitRangeDirection } from '../shared/git-range'
 import type {
@@ -98,7 +99,21 @@ export interface HistoryLedgerRow {
   workspaceId: string | null
   groupId: string | null
   groupName: string | null
+  /** What the tab was launched on (PRDCT-4236): a reopen from the History
+   *  comes back the same way. The renderer fills `dangerous` and the account;
+   *  main adds the mode and the effort from the session's record. */
+  dangerous?: boolean
+  permissionMode?: string
+  effort?: string
+  accountId?: string
+  accountLabel?: string
 }
+
+/** The launch a History entry remembers, field by field from its latest row. */
+export type HistoryLaunch = Pick<
+  HistoryLedgerRow,
+  'dangerous' | 'permissionMode' | 'effort' | 'accountId' | 'accountLabel'
+>
 
 export type HistorySearchScope = 'human' | 'agent' | 'tools'
 
@@ -162,6 +177,7 @@ export interface HistoryListEntry {
   firstSeenAt: string
   lastSeenAt: string
   closedAt: string | null
+  launch?: HistoryLaunch
   transcript: {
     exists: boolean
     path: string
@@ -486,7 +502,7 @@ export interface SessionRecord {
   /** The tab whose agent opened this one: the boot restore folds it under
    *  that parent again and `"parent"` still reaches it. Absent = a user's tab. */
   spawnedBy?: string
-  /** The same tab, nested under it or not (PRDCT-4192): what the reach rule
+  /** The same tab, nested under it or not (PRDCT-4192): what the name tie-break
    *  reads after a restart. Absent = a user's tab. */
   openedBy?: string
   /** The permission mode and the effort the chat was last running in, as the
@@ -733,7 +749,7 @@ export interface ElectronAPI extends FleetDesktopAPI {
   sessionsList: () => Promise<Session[]>
   /** Which tab opened which, as main keeps it across a window reload
    *  (`sessions/lineage.ts`, PRDCT-4193): child session id or key → opener
-   *  id. The window's reach rule reads it after a reload, when its own
+   *  id. The window's name tie-break reads it after a reload, when its own
    *  memory of the opens is gone. */
   lineageParents: () => Promise<Record<string, string>>
   /** Register stream/exit listeners first, then await this before writing. */
@@ -874,6 +890,12 @@ export interface ElectronAPI extends FleetDesktopAPI {
       /** The Codex account (ADR 0002); codex mode only. */
       codexAccountId?: string
       codexAccountLabel?: string
+      /** The mode a Claude session asks under short of bypass, and the
+       *  reasoning effort (PRDCT-4191/4236): a resume brings them back. */
+      permissionMode?: 'default' | 'acceptEdits' | 'plan' | 'auto' | 'dontAsk'
+      effort?: string
+      /** Bypass kept reachable to a session resumed in another mode. */
+      allowDangerous?: boolean
       workspaceId?: string
       /** Spawning the hidden half of something else — persisted on the record
        *  so the next launch restores it as that half, not as a tab. */
@@ -958,7 +980,11 @@ export interface ElectronAPI extends FleetDesktopAPI {
   ) => () => void
   onSessionData: (id: string, callback: (data: string) => void) => () => void
   onSessionExit: (id: string, callback: (exitCode: number) => void) => () => void
-  onSessionLimitReported: (callback: (sessionId: string) => void) => () => void
+  /** A chat session's CLI reported its account's limit and which cap it hit
+   *  (ADR 0002, PRDCT-4302); both transports. */
+  onSessionLimitReported: (
+    callback: (payload: { id: string; report: LimitReport }) => void
+  ) => () => void
   onSessionAutoTitle: (sessionId: string, callback: (title: string) => void) => () => void
   onPlanDetected: (sessionId: string, callback: (planPath: string) => void) => () => void
   onClearDetected: (
@@ -1013,6 +1039,9 @@ export interface ElectronAPI extends FleetDesktopAPI {
   /** Session history (PRDCT-1738). A ledger row per placement change,
    *  fire-and-forget; the folded list for the dialog. */
   historyStamp: (row: HistoryLedgerRow) => void
+  /** The ledger told what a closing tab runs on, from its record, before the
+   *  record goes (PRDCT-4236): awaited before the kill, never a reason to fail it. */
+  historyRestamp: (sessionId: string) => Promise<void>
   historyList: () => Promise<{ entries: HistoryListEntry[]; skippedLines: number }>
   /** The message trail's read: a live tab's conversation as turns.
    *  `configDir` is the tab's own account directory, when it ran with one:
@@ -1056,6 +1085,23 @@ export interface ElectronAPI extends FleetDesktopAPI {
   routinesDismiss: (runId: string) => Promise<void>
   /** The run's conversation continued: in the panel (the session re-homed to this window) or as a tab (a new session this window places). */
   routinesOpenDiscussion: (runId: string, mode: 'panel' | 'tab') => Promise<{ sessionId: string }>
+  // ── PRDCT-4242: the routines the server keeps in its own store ──
+  routinesCreate: (
+    input: import('@clave/contract/routines/model').RoutineCreateInput
+  ) => Promise<import('@clave/contract/routines/model').RoutineView>
+  routinesUpdate: (
+    key: string,
+    patch: import('@clave/contract/routines/model').RoutinePatch
+  ) => Promise<import('@clave/contract/routines/model').RoutineView>
+  routinesDelete: (key: string) => Promise<void>
+  routinesPause: (
+    key: string,
+    paused: boolean
+  ) => Promise<import('@clave/contract/routines/model').RoutineView>
+  /** This Mac's own name as a server (PRDCT-4241): what a routine's runsOn places it by. */
+  routinesOwnName: () => Promise<string>
+  /** Set this Mac's own name as a server; answers the name in force. */
+  routinesSetOwnName: (name: string) => Promise<string>
   onRoutinesChanged: (callback: () => void) => () => void
   /** A connected server's run deck written under this Mac's user data and
    *  registered with the preview protocol (PRDCT-4149): its `clave-preview://` URL. */

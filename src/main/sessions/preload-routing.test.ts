@@ -263,6 +263,8 @@ describe('the preload routes the other session calls', () => {
       ['sessions:capabilities', 's1'],
       ['sessions:history', 's1', 40, 20],
       ['pty:spawn', '/repo', spawnOptions],
+      // A close tells the History what the tab runs on first (PRDCT-4236).
+      ['history:restamp', 's1'],
       ['pty:kill', 's1']
     ])
     expect(mocks.createApiClient).not.toHaveBeenCalled()
@@ -301,7 +303,10 @@ describe('the preload routes the other session calls', () => {
       channels().filter(
         (c) => c !== 'server:endpoint' && c !== 'server:external' && c !== 'window:identity'
       )
-    ).toEqual([])
+    ).toEqual([
+      // The History's restamp is main's whatever road the kill takes (PRDCT-4236).
+      'history:restamp'
+    ])
   })
 })
 

@@ -1,5 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync
+} from 'node:fs'
 import { dirname, join } from 'node:path'
 import { tmpdir } from 'node:os'
 import type { SessionHostService, StartInput } from '@clave/server'
@@ -58,6 +67,7 @@ const routine = (name: string, extra: Record<string, unknown> = {}): Record<stri
   schedule: '0 0 31 2 *',
   prompt: 'do it',
   report: { template: '.clave/routines/ok' },
+  runsOn: 'every',
   ...extra
 })
 
@@ -486,14 +496,14 @@ function dueHourly(
 describe('a routine pinned to a server (PRDCT-4149)', () => {
   it('is listed on another server and never run there, by the tick or by Run now', async () => {
     const schedule = `${(new Date().getMinutes() + 30) % 60} * * * *`
-    const file = workspace([routine('Nightly', { server: 'Studio', schedule })])
+    const file = workspace([routine('Nightly', { runsOn: 'Studio', schedule })])
     const { storage } = dueHourly(file, 'Nightly')
     const host = fakeHost()
     const service = await build(file, host, storage)
     await service.tick()
     expect(host.starts).toEqual([])
     const listed = service.list().routines[0]
-    expect(listed.routine).toMatchObject({ server: 'Studio', runsHere: false })
+    expect(listed.routine).toMatchObject({ runsOn: 'Studio', runsHere: false })
     expect(listed.runs).toEqual([])
     expect(listed.nextRunAt).toEqual(expect.any(Number))
     const refused = service.runNow(key(file, 'Nightly'))
@@ -504,7 +514,7 @@ describe('a routine pinned to a server (PRDCT-4149)', () => {
 
   it('runs on the server it names, whatever the case of the name', async () => {
     const schedule = `${(new Date().getMinutes() + 30) % 60} * * * *`
-    const file = workspace([routine('Nightly', { server: 'testmac', schedule })])
+    const file = workspace([routine('Nightly', { runsOn: 'testmac', schedule })])
     const { storage } = dueHourly(file, 'Nightly')
     const host = fakeHost()
     const service = await build(file, host, storage)
@@ -515,7 +525,7 @@ describe('a routine pinned to a server (PRDCT-4149)', () => {
   })
 
   it('runs on a server named by its id under another identity', async () => {
-    const file = workspace([routine('Nightly', { server: 'srv-42' })])
+    const file = workspace([routine('Nightly', { runsOn: 'srv-42' })])
     const host = fakeHost()
     const service = await build(file, host, memory(), {
       identity: () => ({ id: 'srv-42', name: 'Studio' })
@@ -874,7 +884,7 @@ describe('the publish to Slideless (PRDCT-4149)', () => {
     const publisher = fakePublisher()
     // The same file now pins the routine to another server: this server no
     // longer runs it, and the run it cut off is not its to publish.
-    const pinnedFile = workspace([{ ...published, server: 'Studio' }])
+    const pinnedFile = workspace([{ ...published, runsOn: 'Studio' }])
     const pinnedAway = await build(pinnedFile, fakeHost(), storage, { publisher })
     await pinnedAway.start()
     await new Promise((resolve) => setTimeout(resolve, 30))
@@ -973,5 +983,593 @@ describe('the deck read is confined and bounded (Gap 1)', () => {
     writeFileSync(join(root, 'data', DECKS_DIR, deck), 'x'.repeat(MAX_TEMPLATE_BYTES + 1))
     const service = await build(file, fakeHost(), storage)
     await expect(service.deck(runId)).rejects.toThrow(/5 MiB/)
+  })
+})
+
+// ── PRDCT-4242: the routines a server keeps in its own store ──
+describe('the routines a server creates in its own store (PRDCT-4242)', () => {
+  const tpl = (): string => join(root, '.clave', 'routines', 'ok')
+  const digest = (over: Record<string, unknown> = {}): Parameters<RoutineService['create']>[0] => ({
+    workspaceId: 'ws',
+    name: 'Digest',
+    schedule: '0 0 31 2 *',
+    prompt: 'Read @root_path and report.',
+    ...over
+  })
+
+  it('creates a routine that runs here, on the built-in report page, and lists it beside the files’', async () => {
+    const file = workspace([routine('FromFile')])
+    const host = fakeHost()
+    const service = await build(file, host, memory(), { defaultTemplate: tpl() })
+    const view = await service.create(
+      digest({ icon: 'bolt', launch: { model: 'm' }, schedule: '0 8 * * *' })
+    )
+    expect(view.routine).toMatchObject({
+      name: 'Digest',
+      origin: 'created',
+      runsOn: 'TestMac',
+      runsHere: true,
+      paused: false,
+      workspaceName: 'W',
+      cwd: root,
+      icon: 'bolt',
+      invalid: null
+    })
+    expect(view.routine.key).toMatch(/^created::/)
+    expect(view.routine.report.template).toBe(tpl())
+    expect(view.routine.prompt).toBe(`Read ${root} and report.`)
+    expect(view.nextRunAt).toEqual(expect.any(Number))
+    const names = service.list().routines.map((v) => [v.routine.name, v.routine.origin ?? 'file'])
+    expect(names).toEqual([
+      ['FromFile', 'file'],
+      ['Digest', 'created']
+    ])
+    // Run now starts it with the default page's schema, and a report lands a deck.
+    const run = await service.runNow(view.routine.key)
+    expect(run.state).toBe('running')
+    expect(host.starts).toHaveLength(1)
+    const reported = await service.report({
+      sessionId: 's1',
+      status: 'ok',
+      headline: 'h',
+      summary: 's',
+      data: { n: 1 }
+    })
+    expect(reported.deck).toMatch(/index\.html$/)
+  })
+
+  it('refuses what could never run, at creation: the workspace, the folder, the schedule, the agent, a twin name', async () => {
+    const file = workspace([])
+    const service = await build(file, fakeHost(), memory(), { defaultTemplate: tpl() })
+    await expect(service.create(digest({ workspaceId: 'nope' }))).rejects.toThrow(
+      /No workspace "nope"/
+    )
+    await expect(service.create(digest({ cwd: 'gone' }))).rejects.toThrow(/is not on this machine/)
+    await expect(service.create(digest({ schedule: 'daily' }))).rejects.toThrow(/does not parse/)
+    await expect(service.create(digest({ launch: { agent: 'pi' } }))).rejects.toThrow(
+      /cannot report/
+    )
+    await expect(service.create(digest({ name: '  ' }))).rejects.toThrow(/needs a name/)
+    await service.create(digest())
+    await expect(service.create(digest({ name: 'digest' }))).rejects.toThrow(/already exists/)
+    expect(service.list().routines).toHaveLength(1)
+  })
+
+  it('a created routine without a default page must name a template of its own', async () => {
+    const file = workspace([])
+    const service = await build(file, fakeHost(), memory())
+    await expect(service.create(digest())).rejects.toThrow(/built-in report page is missing/)
+    const own = await service.create(digest({ report: { template: '.clave/routines/ok' } }))
+    expect(own.routine.report.template).toBe(tpl())
+  })
+
+  it('a paused routine is listed, skipped by the tick and refused by Run now; resumed, it runs on Run now', async () => {
+    const file = workspace([])
+    const host = fakeHost()
+    const storage = memory()
+    const schedule = `${(new Date().getMinutes() + 30) % 60} * * * *`
+    const first = await build(file, fakeHost(), storage, { defaultTemplate: tpl() })
+    const view = await first.create(digest({ schedule }))
+    const key = view.routine.key
+    await first.close()
+    // Due for hours, as the catch-up tests seed it: on the store before the
+    // service that ticks reads it (the service caches its store).
+    new RoutinesStore(storage).considered(key, Date.now() - 3 * 3_600_000, schedule)
+    const service = await build(file, host, storage, { defaultTemplate: tpl() })
+    expect(service.list().routines.map((v) => v.routine.key)).toEqual([key])
+    const paused = await service.pause(key, true)
+    expect(paused.routine.paused).toBe(true)
+    await service.tick()
+    expect(host.starts).toEqual([])
+    await expect(service.runNow(key)).rejects.toThrow(/is paused/)
+    const resumed = await service.pause(key, false)
+    expect(resumed.routine.paused).toBe(false)
+    // What was missed on hold is not caught up (verifier round 1, F5): the
+    // next tick starts nothing, Run now starts it.
+    await service.tick()
+    expect(host.starts).toEqual([])
+    const run = await service.runNow(key)
+    expect(run.state).toBe('running')
+    expect(host.starts).toHaveLength(1)
+  })
+
+  it('updates a created routine’s fields and refuses to touch a file’s, naming the file', async () => {
+    const file = workspace([routine('FromFile')])
+    const service = await build(file, fakeHost(), memory(), { defaultTemplate: tpl() })
+    const view = await service.create(digest())
+    const updated = await service.update(view.routine.key, {
+      schedule: '30 8 * * 1-5',
+      name: 'Morning digest',
+      cwd: '.'
+    })
+    expect(updated.routine).toMatchObject({ schedule: '30 8 * * 1-5', name: 'Morning digest' })
+    await expect(service.update(view.routine.key, { schedule: 'nope' })).rejects.toThrow(
+      /does not parse/
+    )
+    await expect(service.update(key(file, 'FromFile'), { schedule: '0 9 * * *' })).rejects.toThrow(
+      new RegExp(`comes from ${file.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`)
+    )
+    await expect(service.pause(key(file, 'FromFile'), true)).rejects.toThrow(/edit the file/)
+  })
+
+  it('a name taken by a file routine or another created one is refused, on create and on rename', async () => {
+    const file = workspace([routine('FromFile')])
+    const service = await build(file, fakeHost(), memory(), { defaultTemplate: tpl() })
+    await expect(service.create(digest({ name: 'fromfile' }))).rejects.toThrow(/already exists/)
+    const one = await service.create(digest({ name: 'One' }))
+    await service.create(digest({ name: 'Two' }))
+    await expect(service.update(one.routine.key, { name: 'two' })).rejects.toThrow(/already exists/)
+    await expect(service.update(one.routine.key, { name: 'FROMFILE' })).rejects.toThrow(
+      /already exists/
+    )
+    // Its own name, in another case, is not a clash.
+    expect((await service.update(one.routine.key, { name: 'ONE' })).routine.name).toBe('ONE')
+    await expect(service.create(digest({ prompt: '  ' }))).rejects.toThrow(/needs a prompt/)
+  })
+
+  it('a resumed routine catches nothing up from the time it was on hold', async () => {
+    const file = workspace([])
+    const host = fakeHost()
+    const storage = memory()
+    const schedule = `${(new Date().getMinutes() + 30) % 60} * * * *`
+    const first = await build(file, fakeHost(), storage, { defaultTemplate: tpl() })
+    const view = await first.create(digest({ schedule }))
+    const key = view.routine.key
+    await first.pause(key, true)
+    await first.close()
+    // Hours on hold, as the store would carry them.
+    new RoutinesStore(storage).considered(key, Date.now() - 3 * 3_600_000, schedule)
+    const service = await build(file, host, storage, { defaultTemplate: tpl() })
+    await service.tick()
+    expect(host.starts).toEqual([])
+    await service.pause(key, false)
+    await service.tick()
+    expect(host.starts).toEqual([])
+  })
+
+  it('deletes a created routine with its runs and decks, never a file’s', async () => {
+    const file = workspace([routine('FromFile')])
+    const host = fakeHost()
+    const storage = memory()
+    const service = await build(file, host, storage, { defaultTemplate: tpl() })
+    const view = await service.create(digest())
+    const run = await service.runNow(view.routine.key)
+    await service.report({
+      sessionId: 's1',
+      status: 'ok',
+      headline: 'h',
+      summary: 's',
+      data: { n: 1 }
+    })
+    host.emit('s1', { kind: 'event', event: { type: 'state_change', state: 'done' } })
+    expect(
+      service.list().routines.find((v) => v.routine.key === view.routine.key)?.runs
+    ).toHaveLength(1)
+    await service.delete(view.routine.key)
+    expect(service.list().routines.map((v) => v.routine.name)).toEqual(['FromFile'])
+    expect(new RoutinesStore(storage).run(run.id)).toBeUndefined()
+    await expect(service.delete(key(file, 'FromFile'))).rejects.toThrow(/edit the file to delete/)
+    await expect(service.delete(view.routine.key)).rejects.toThrow(/No routine/)
+  })
+
+  it('a created routine whose workspace left the registry is listed as unable to run', async () => {
+    const file = workspace([])
+    const storage = memory()
+    const first = await build(file, fakeHost(), storage, { defaultTemplate: tpl() })
+    await first.create(digest())
+    await first.close()
+    const files = new WorkspaceFiles(memoryWorkspaceFilesStorage())
+    files.trustRoot(root)
+    const gone = createRoutineService({
+      sessions: fakeHost(),
+      files,
+      workspaces: async () => [],
+      identity: () => ({ id: 'server-test', name: 'TestMac' }),
+      facts,
+      storage,
+      dataDir: join(root, 'data'),
+      claimsDir: join(root, 'claims'),
+      holder: 'test',
+      pluginDir: join(root, 'plugin'),
+      viewer: false,
+      schedule: false,
+      rehome: () => {},
+      providerSessionIdOf: () => null,
+      defaultTemplate: tpl()
+    })
+    await gone.start()
+    const [listed] = gone.list().routines
+    expect(listed.routine).toMatchObject({ origin: 'created', runsHere: false })
+    expect(listed.routine.invalid).toMatch(/no longer registered/)
+  })
+})
+
+// ── PRDCT-4243: a created routine moved into a file, in one step on the server ──
+describe('a created routine moved into a file (verifier rounds 1 and 2, F1 and G1)', () => {
+  const tpl = (): string => join(root, '.clave', 'routines', 'ok')
+  const digest = (over: Record<string, unknown> = {}): Parameters<RoutineService['create']>[0] => ({
+    workspaceId: 'ws',
+    name: 'Morning digest',
+    schedule: '30 8 * * 1-5',
+    prompt: 'Read @root_path now',
+    launch: { model: 'm', dangerousMode: true },
+    icon: 'bolt',
+    ...over
+  })
+  const profile = (): string => join(root, '.clave', 'workspaces', 'default.clave')
+  const readFile = (): Record<string, unknown> => JSON.parse(readFileSync(profile(), 'utf8'))
+
+  it('writes the routine into the profile file’s group with runsOn, the prompt as typed and a copied page, and forgets it in the store', async () => {
+    const file = workspace([routine('FromFile')])
+    const host = fakeHost()
+    const storage = memory()
+    const service = await build(file, host, storage, { defaultTemplate: tpl() })
+    const view = await service.create(digest())
+    const run = await service.runNow(view.routine.key)
+    await service.report({
+      sessionId: 's1',
+      status: 'ok',
+      headline: 'h',
+      summary: 's',
+      data: { n: 1 }
+    })
+    host.emit('s1', { kind: 'event', event: { type: 'state_change', state: 'done' } })
+    const moved = await service.moveToFile(view.routine.key, {})
+    expect(moved).toEqual({
+      name: 'Morning digest',
+      file: profile(),
+      group: 'G',
+      template: join(root, '.clave', 'routines', 'morning-digest'),
+      runsOn: 'TestMac'
+    })
+    const written = readFile()
+    const routines = written.routines as Array<Record<string, unknown>>
+    expect(routines.map((r) => r.name)).toEqual(['FromFile', 'Morning digest'])
+    expect(routines[1]).toMatchObject({
+      runsOn: 'TestMac',
+      prompt: 'Read @root_path now',
+      model: 'm',
+      dangerousMode: true,
+      icon: 'bolt',
+      schedule: '30 8 * * 1-5',
+      report: { template: '.clave/routines/morning-digest' }
+    })
+    expect(routines[1]).not.toHaveProperty('server')
+    expect(existsSync(join(root, '.clave', 'routines', 'morning-digest', 'index.html'))).toBe(true)
+    // The store and the history: gone; the file's copy is listed, placed here, and runs.
+    await service.refresh()
+    const listed = service
+      .list()
+      .routines.map((v) => [v.routine.name, v.routine.origin, v.routine.runsHere])
+    expect(listed).toEqual([
+      ['FromFile', 'file', true],
+      ['Morning digest', 'file', true]
+    ])
+    expect(new RoutinesStore(storage).run(run.id)).toBeUndefined()
+  })
+
+  it('a move refused while a run is in flight changes nothing: no file written, no page copied, the routine kept', async () => {
+    const file = workspace([])
+    const host = fakeHost()
+    const service = await build(file, host, memory(), { defaultTemplate: tpl() })
+    const view = await service.create(digest())
+    await service.runNow(view.routine.key)
+    const before = readFileSync(profile(), 'utf8')
+    await expect(service.moveToFile(view.routine.key, {})).rejects.toThrow(/is running/)
+    expect(readFileSync(profile(), 'utf8')).toBe(before)
+    expect(existsSync(join(root, '.clave', 'routines', 'morning-digest'))).toBe(false)
+    expect(service.list().routines.map((v) => v.routine.origin)).toEqual(['created'])
+  })
+
+  it('takes the next free folder for the page, keeps a template of the routine’s own, refuses a taken name and a file’s routine', async () => {
+    const file = workspace([routine('FromFile')])
+    const service = await build(file, fakeHost(), memory(), { defaultTemplate: tpl() })
+    mkdirSync(join(root, '.clave', 'routines', 'morning-digest'), { recursive: true })
+    writeFileSync(
+      join(root, '.clave', 'routines', 'morning-digest', 'index.html'),
+      'someone else’s'
+    )
+    const a = await service.create(digest())
+    const movedA = await service.moveToFile(a.routine.key, { group: 'Jobs' })
+    expect(movedA.template).toBe(join(root, '.clave', 'routines', 'morning-digest-2'))
+    expect(
+      readFileSync(join(root, '.clave', 'routines', 'morning-digest', 'index.html'), 'utf8')
+    ).toBe('someone else’s')
+    expect((readFile().groups as Array<Record<string, unknown>>).map((g) => g.name)).toEqual([
+      'G',
+      'Jobs'
+    ])
+    await service.refresh()
+    // The same name again, into the same group: refused, the created one kept.
+    const b = await service
+      .create(digest({ name: 'Morning Digest', workspaceId: 'ws' }))
+      .catch((e: Error) => e)
+    expect(b).toBeInstanceOf(Error) // a name a file routine of the workspace holds (F8)
+    const own = await service.create(
+      digest({ name: 'Own page', report: { template: '.clave/routines/ok' } })
+    )
+    const movedOwn = await service.moveToFile(own.routine.key, { group: 'Jobs' })
+    expect(movedOwn.template).toBe(tpl())
+    await expect(service.moveToFile(key(file, 'FromFile'), {})).rejects.toThrow(
+      /edit the file to move/
+    )
+  })
+
+  it('two moves into one file at once both land, one after the other (round 3, H2)', async () => {
+    const file = workspace([])
+    const service = await build(file, fakeHost(), memory(), { defaultTemplate: tpl() })
+    const a = await service.create(digest({ name: 'Alpha' }))
+    const b = await service.create(digest({ name: 'Beta' }))
+    const outcomes = await Promise.allSettled([
+      service.moveToFile(a.routine.key, {}),
+      service.moveToFile(b.routine.key, {})
+    ])
+    expect(outcomes.map((o) => o.status)).toEqual(['fulfilled', 'fulfilled'])
+    const names = (readFile().routines as Array<{ name: string }>).map((r) => r.name)
+    expect(names).toEqual(['Alpha', 'Beta'])
+    expect(service.list().routines.map((v) => [v.routine.name, v.routine.origin])).toEqual([
+      ['Alpha', 'file'],
+      ['Beta', 'file']
+    ])
+  })
+
+  it('a move and a delete of the same routine at once: exactly one lands (round 3, H3)', async () => {
+    const file = workspace([])
+    const service = await build(file, fakeHost(), memory(), { defaultTemplate: tpl() })
+    const a = await service.create(digest({ name: 'Alpha' }))
+    const outcomes = await Promise.allSettled([
+      service.moveToFile(a.routine.key, {}),
+      service.delete(a.routine.key)
+    ])
+    expect(outcomes.map((o) => o.status).sort()).toEqual(['fulfilled', 'rejected'])
+    const inFile = ((readFile().routines as Array<{ name: string }> | undefined) ?? []).some(
+      (r) => r.name === 'Alpha'
+    )
+    const listed = service.list().routines.filter((v) => v.routine.name === 'Alpha')
+    // Moved: in the file once, listed once as a file's; deleted: nowhere.
+    expect(inFile ? listed.map((v) => v.routine.origin) : listed).toEqual(inFile ? ['file'] : [])
+  })
+
+  it('a rewrite keeps a legacy server value another routine still says, and a one-group multi file stays multi (round 3, H5 and R7)', async () => {
+    const legacy = { ...routine('Legacy pin'), runsOn: undefined, server: 'Studio' }
+    const file = workspace([legacy])
+    // The fixture writes a single group; make it a one-group multi file.
+    const doc = JSON.parse(readFileSync(file, 'utf8'))
+    writeFileSync(file, JSON.stringify({ groups: [doc] }))
+    const service = await build(file, fakeHost(), memory(), { defaultTemplate: tpl() })
+    const view = await service.create(digest())
+    await service.moveToFile(view.routine.key, {})
+    const written = readFile()
+    expect(written).toHaveProperty('groups')
+    const groups = written.groups as Array<{ routines: Array<Record<string, unknown>> }>
+    expect(groups).toHaveLength(1)
+    expect(groups[0].routines[0]).toMatchObject({ name: 'Legacy pin', server: 'Studio' })
+    expect(groups[0].routines[1]).toMatchObject({ name: 'Morning digest', runsOn: 'TestMac' })
+  })
+
+  it('a move forgets the routine’s decks (round 3, R8), and a resume with no tick on hold catches nothing up (N5)', async () => {
+    const file = workspace([])
+    const host = fakeHost()
+    const storage = memory()
+    const service = await build(file, host, storage, { defaultTemplate: tpl() })
+    const view = await service.create(digest())
+    await service.runNow(view.routine.key)
+    await service.report({
+      sessionId: 's1',
+      status: 'ok',
+      headline: 'h',
+      summary: 's',
+      data: { n: 1 }
+    })
+    host.emit('s1', { kind: 'event', event: { type: 'state_change', state: 'done' } })
+    const decks = join(root, 'data', DECKS_DIR)
+    const before = readdirSync(decks).filter((f) => f !== 'index.html')
+    expect(before).toHaveLength(1)
+    await service.moveToFile(view.routine.key, {})
+    expect(readdirSync(decks).filter((f) => f !== 'index.html')).toHaveLength(0)
+    // N5: paused, never ticked, the clock seeded hours back, resumed: nothing starts.
+    const schedule = `${(new Date().getMinutes() + 30) % 60} * * * *`
+    const paused = await service.create(digest({ name: 'Held', schedule }))
+    await service.pause(paused.routine.key, true)
+    await service.close()
+    new RoutinesStore(storage).considered(paused.routine.key, Date.now() - 3 * 3_600_000, schedule)
+    const second = await build(file, host, storage, { defaultTemplate: tpl() })
+    await second.pause(paused.routine.key, false)
+    await second.tick()
+    expect(host.starts).toHaveLength(1) // the one run of Morning digest above, nothing new
+  })
+
+  it('a move during an in-flight refresh is listed once the refresh ends (round 4, K1)', async () => {
+    const file = workspace([routine('Existing')])
+    const service = await build(file, fakeHost(), memory(), { defaultTemplate: tpl() })
+    const a = await service.create(digest({ name: 'Alpha' }))
+    const racing = service.refresh()
+    await service.moveToFile(a.routine.key, {})
+    await racing
+    expect(service.list().routines.map((v) => [v.routine.name, v.routine.origin])).toEqual([
+      ['Existing', 'file'],
+      ['Alpha', 'file']
+    ])
+  })
+
+  it('a paused routine is not moved: resume it first (round 4, K2)', async () => {
+    const file = workspace([])
+    const service = await build(file, fakeHost(), memory(), { defaultTemplate: tpl() })
+    const a = await service.create(digest())
+    await service.pause(a.routine.key, true)
+    await expect(service.moveToFile(a.routine.key, {})).rejects.toThrow(
+      /is paused: a file routine cannot be paused/
+    )
+    expect(service.list().routines[0].routine).toMatchObject({ origin: 'created', paused: true })
+  })
+
+  it('the profile file that cannot be read is refused, nothing overwritten (round 3, H1)', async () => {
+    const file = workspace([])
+    const service = await build(file, fakeHost(), memory(), { defaultTemplate: tpl() })
+    const view = await service.create(digest())
+    writeFileSync(file, '{"groups": [,]}')
+    await expect(service.moveToFile(view.routine.key, {})).rejects.toThrow(
+      /cannot be read as a workspace file/
+    )
+    expect(readFileSync(file, 'utf8')).toBe('{"groups": [,]}')
+    expect(service.list().routines.map((v) => v.routine.origin)).toEqual(['created'])
+    expect(existsSync(join(root, '.clave', 'routines', 'morning-digest'))).toBe(false)
+  })
+
+  it('a write that fails leaves the routine in the store and no copied page behind (round 3, H4)', async () => {
+    // The registered profile sits where no folder can be made: under a file.
+    const blocked = join(root, '.clave', 'workspaces', 'blocked')
+    mkdirSync(join(root, '.clave', 'workspaces'), { recursive: true })
+    writeFileSync(blocked, 'not a folder')
+    const file = workspace([])
+    const service = await build(file, fakeHost(), memory(), {
+      defaultTemplate: tpl(),
+      workspaces: async () => [
+        { id: 'ws', name: 'W', rootDir: root, profileFile: join(blocked, 'x.clave') }
+      ]
+    })
+    const view = await service.create(digest())
+    await expect(service.moveToFile(view.routine.key, {})).rejects.toThrow()
+    expect(service.list().routines.map((v) => v.routine.origin)).toEqual(['created'])
+    expect(existsSync(join(root, '.clave', 'routines', 'morning-digest'))).toBe(false)
+  })
+
+  it('a profile reached through a link is refused (rounds 4 and 5, K3 and L2)', async () => {
+    const elsewhere = mkdtempSync(join(tmpdir(), 'elsewhere-'))
+    try {
+      const file = workspace([])
+      symlinkSync(elsewhere, join(root, 'linkdir'))
+      const service = await build(file, fakeHost(), memory(), {
+        defaultTemplate: tpl(),
+        workspaces: async () => [
+          {
+            id: 'ws',
+            name: 'W',
+            rootDir: root,
+            profileFile: join(root, 'linkdir', 'sub', 'x.clave')
+          }
+        ]
+      })
+      const a = await service.create(digest({ name: 'Alpha' }))
+      await expect(service.moveToFile(a.routine.key, {})).rejects.toThrow(/goes through a link/)
+      expect(existsSync(join(elsewhere, 'sub', 'x.clave'))).toBe(false)
+      expect(service.list().routines[0].routine.origin).toBe('created')
+    } finally {
+      rmSync(elsewhere, { recursive: true, force: true })
+    }
+  })
+
+  it('with no registered profile, the move lands in the file the scheduler discovers, never in a new default one (round 6, M2)', async () => {
+    const romain = join(root, '.clave', 'workspaces', 'romain.clave')
+    mkdirSync(join(root, '.clave', 'workspaces'), { recursive: true })
+    mkdirSync(tpl(), { recursive: true })
+    writeFileSync(join(tpl(), 'index.html'), INDEX)
+    writeFileSync(join(tpl(), 'schema.json'), '{"type":"object"}')
+    writeFileSync(
+      romain,
+      JSON.stringify({
+        name: 'G',
+        cwd: '.',
+        sessions: [],
+        terminals: [],
+        routines: [routine('Mine')]
+      })
+    )
+    const service = await build(romain, fakeHost(), memory(), {
+      defaultTemplate: tpl(),
+      workspaces: async () => [{ id: 'ws', name: 'W', rootDir: root, profileFile: null }]
+    })
+    expect(service.list().routines.map((v) => v.routine.name)).toEqual(['Mine'])
+    const a = await service.create(digest({ name: 'Alpha' }))
+    const moved = await service.moveToFile(a.routine.key, {})
+    expect(moved.file).toBe(romain)
+    expect(existsSync(join(root, '.clave', 'workspaces', 'default.clave'))).toBe(false)
+    expect(service.list().routines.map((v) => [v.routine.name, v.routine.origin])).toEqual([
+      ['Mine', 'file'],
+      ['Alpha', 'file']
+    ])
+  })
+
+  it('one failed refresh does not poison the extra pass: a move whose refresh overlaps a running one lands and answers ok (round 6, M3)', async () => {
+    const file = workspace([])
+    let fail = false
+    // A gate the test opens: the running pass holds until the move has asked for its own.
+    let release: () => void = () => {}
+    let hold: Promise<void> | null = null
+    const service = await build(file, fakeHost(), memory(), {
+      defaultTemplate: tpl(),
+      workspaces: async () => {
+        if (fail) throw new Error('settings unreadable')
+        if (hold) await hold
+        return [{ id: 'ws', name: 'W', rootDir: root, profileFile: file }]
+      }
+    })
+    const a = await service.create(digest({ name: 'Alpha' }))
+    fail = true
+    const failing = service.refresh()
+    const overlapping = service.refresh()
+    await expect(failing).rejects.toThrow(/settings unreadable/)
+    await expect(overlapping).rejects.toThrow(/settings unreadable/)
+    fail = false
+    hold = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const racing = service.refresh()
+    // The move's own refresh is asked while `racing` still holds the gate.
+    const moving = service.moveToFile(a.routine.key, {})
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    release()
+    await racing
+    await expect(moving).resolves.toMatchObject({ name: 'Alpha' })
+    expect(service.list().routines.map((v) => [v.routine.name, v.routine.origin])).toEqual([
+      ['Alpha', 'file']
+    ])
+  })
+
+  it('many refreshes asked during one cost one more pass, not one each (round 5, L3)', async () => {
+    const file = workspace([])
+    let reads = 0
+    const service = await build(file, fakeHost(), memory(), {
+      defaultTemplate: tpl(),
+      workspaces: async () => {
+        reads++
+        await new Promise((resolve) => setTimeout(resolve, 20))
+        return [{ id: 'ws', name: 'W', rootDir: root, profileFile: file }]
+      }
+    })
+    const before = reads
+    await Promise.all(Array.from({ length: 10 }, () => service.refresh()))
+    expect(reads - before).toBe(2)
+  })
+
+  it('two creates at once with one name land once (verifier round 2, G2)', async () => {
+    const file = workspace([])
+    const service = await build(file, fakeHost(), memory(), { defaultTemplate: tpl() })
+    const outcomes = await Promise.allSettled([
+      service.create(digest({ name: 'Race' })),
+      service.create(digest({ name: 'race' }))
+    ])
+    expect(outcomes.map((o) => o.status).sort()).toEqual(['fulfilled', 'rejected'])
+    expect(service.list().routines).toHaveLength(1)
   })
 })

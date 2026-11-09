@@ -89,6 +89,7 @@ function mainVersionSync(connections: () => ServerConnectionRegistry): VersionSy
     },
     request: (serverId, version, when) =>
       withClient(serverId, (api) => api.server.upgrade({ version, when })),
+    setName: (serverId, name) => withClient(serverId, (api) => api.server.setName(name)),
     publish: (results: ServerVersionStatus[]) => {
       for (const win of BrowserWindow.getAllWindows())
         if (!win.isDestroyed()) win.webContents.send(FLEET_IPC.versionsChanged, results)
@@ -191,6 +192,11 @@ export function registerServerHandlers(
   ipcMain.handle(FLEET_IPC.upgradeNow, (_event, id: string) => {
     if (!versions) throw new Error('Server upgrades are not available.')
     return versions.upgradeNow(id)
+  })
+  // PRDCT-4241: the server's own name, set from this Mac and read again.
+  ipcMain.handle(FLEET_IPC.setServerName, (_event, id: string, name: string) => {
+    if (!versions) throw new Error('Server names cannot be set from this app.')
+    return versions.rename(id, name)
   })
   if (versions) {
     versions.start()

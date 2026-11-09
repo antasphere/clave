@@ -138,6 +138,7 @@ function EarlierVersions({
 export function ModelMenu({
   sessionId,
   model,
+  pending = false,
   disabled,
   onSelect,
   provider,
@@ -146,7 +147,13 @@ export function ModelMenu({
   onSwitchProvider
 }: {
   sessionId: string
+  /** The model the chip names: the reader's pick while the provider has not
+   *  answered it, else the model the provider reported (PRDCT-4273). */
   model: string | null
+  /** The pick is awaiting the provider's answer: marked on the chip for a
+   *  reader of the DOM; nothing is disabled, since a message written after
+   *  the switch runs on the new model. */
+  pending?: boolean
   disabled: boolean
   onSelect: (id: string) => void
   /** The provider the tab is on, as the host names it (`claude`, `codex`). */
@@ -217,6 +224,7 @@ export function ModelMenu({
           aria-label="Model"
           title="Change provider or model"
           disabled={disabled}
+          data-pending={pending ? 'true' : undefined}
         >
           <span className="chat-model-trigger-label">
             {providerChipLabel(provider, model, options)}

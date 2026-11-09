@@ -1087,16 +1087,22 @@ export function FolioView({ session, onState, visible = true }: ChatViewProps): 
             )}
             <ModelMenu
               sessionId={session.id}
-              model={conversation.model}
+              model={conversation.pendingModel ?? conversation.model}
+              pending={conversation.pendingModel !== null}
               disabled={closed}
-              onSelect={(id) => void write({ type: 'set_model', model: id }).catch(report)}
+              onSelect={(id) => {
+                // Shown the instant it is picked (PRDCT-4273); the provider's
+                // answer confirms it or, refusing, reverts the chip.
+                dispatch({ pickModel: id })
+                void write({ type: 'set_model', model: id }).catch(report)
+              }}
               provider={session.provider}
               adapterId={session.adapterId}
               cwd={session.cwd}
             />
             <EffortMenu
               sessionId={session.id}
-              model={conversation.model}
+              model={conversation.pendingModel ?? conversation.model}
               effort={conversation.effort}
               disabled={closed}
               onSelect={(id) => void write({ type: 'set_effort', effort: id }).catch(report)}

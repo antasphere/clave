@@ -97,6 +97,9 @@ export interface ServerVersionDecision {
   readonly automatic: boolean
   readonly serverVersion?: string
   readonly installRef?: string | null
+  /** The server's own name, as its info reports it (PRDCT-4241): what a
+   *  routine's `runsOn` names it by, kept while the server is away. */
+  readonly serverName?: string
   /** The version an upgrade goes, or went, to. */
   readonly target?: string
   /** For `upgrading`: whether the server waits for idle or runs it. */
@@ -129,6 +132,8 @@ export const FLEET_IPC = {
   versions: 'server:fleet:versions',
   versionsChanged: 'server:fleet:versions-changed',
   upgradeNow: 'server:fleet:upgrade-now',
+  /** The server's own name set from this Mac (PRDCT-4241), then read again. */
+  setServerName: 'server:fleet:set-server-name',
   /** A window heard a server's upgrade change, or its welcome: read that server again. */
   versionRefresh: 'server:fleet:version-refresh',
   /** A window's connection to a server changed state (PRDCT-4165): main writes

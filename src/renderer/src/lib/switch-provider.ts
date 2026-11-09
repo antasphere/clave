@@ -1,5 +1,6 @@
-import type { ModelOption, SessionStream } from '../../../shared/session-model'
-import type { ProviderSwitchPlan } from '../../../preload/index.d'
+import type { HistoryItem, ModelOption, SessionStream } from '../../../shared/session-model'
+import type { ProviderChoice, ProviderSwitchPlan } from '../../../preload/index.d'
+import { registerProviderSwitchRoad } from './account-policy'
 import { useSessionStore, type Session } from '../store/session-store'
 import { accountsUsageFor, claudeUsageForModel, headroomLabel } from '../store/usage-store'
 import {
@@ -199,4 +200,119 @@ export async function switchSessionProvider(
 /** The session as the store holds it, for callers outside React. */
 export function sessionById(sessionId: string): Session | undefined {
   return useSessionStore.getState().sessions.find((s) => s.id === sessionId)
+}
+
+// ── The road lane E's limit policy offers as its third rung ──
+
+/** The providers this Mac can run a tab on, read once from the host; null
+ *  until the answer is in (the rung waits for it) or when the host has no
+ *  such call. */
+let providerChoices: ProviderChoice[] | null = null
+let choicesAsked = false
+function askChoices(): void {
+  if (choicesAsked) return
+  choicesAsked = true
+  Promise.resolve()
+    .then(() => window.electronAPI.adaptersList())
+    .then((list) => {
+      providerChoices = list
+    })
+    .catch(() => {
+      providerChoices = []
+    })
+}
+
+/** The other provider a session could continue on at a limit: Codex for a
+ *  Claude tab, Claude for a Codex one, when this Mac runs it. Null for a tab
+ *  without an account pool, or while the host has not said what it runs. */
+export function providerSwitchTargetFor(
+  session: Session
+): { adapterId: string; label: string } | null {
+  askChoices()
+  const from = accountProviderOf(session)
+  const adapterId = from === 'claude' ? 'codex-chat' : from === 'codex' ? 'claude-chat' : null
+  if (!adapterId || !providerChoices) return null
+  const choice = providerChoices.find((c) => c.adapterId === adapterId)
+  return choice ? { adapterId: choice.adapterId, label: choice.label } : null
+}
+
+/** A conversation's past as Markdown, from the host's history alone: the
+ *  limit policy moves a tab from outside its view, where the chat's own
+ *  export (with the tool outputs and the files) is not at hand. The person's
+ *  and the agent's words, each tool run as one line. */
+export function historyMarkdown(items: readonly HistoryItem[], from: string): string {
+  const out: string[] = [`# Continued from ${from} · handoff`, '']
+  out.push(
+    `This conversation ran on ${from} and moves to you here. You are reading a transcript of it, not continuing it: what ${from} had in its working memory and the approvals it was granted are not yours. Read, then carry on from where it stopped.`,
+    '',
+    '## The conversation so far'
+  )
+  let answer = ''
+  const flush = (): void => {
+    if (answer.trim()) out.push('', `## ${from}`, '', answer.trim())
+    answer = ''
+  }
+  for (const { event } of items) {
+    if ('parent' in event && event.parent) continue
+    if (event.type === 'user_message') {
+      flush()
+      out.push('', '## You', '', event.text.trim())
+    } else if (event.type === 'assistant_text') answer += event.delta
+    else if (event.type === 'tool_call') {
+      flush()
+      out.push(`- ${event.name}`)
+    }
+  }
+  flush()
+  return out.join('\n').trimEnd() + '\n'
+}
+
+/** The move the limit policy makes on its provider rung: the road asked of
+ *  the host, the target's first listed model, the handoff written from the
+ *  host's history when the conversion is refused or does not apply. */
+export async function switchToProvider(
+  sessionId: string,
+  adapterId: string
+): Promise<ProviderSwitchResult> {
+  const session = sessionById(sessionId)
+  if (!session) return { ok: false, resumed: false, error: 'No such session', road: 'handoff' }
+  const from = accountProviderOf(session) ?? 'claude'
+  const [plan, models] = await Promise.all([
+    planProviderSwitch(sessionId, adapterId),
+    window.electronAPI.adaptersModels(adapterId, session.cwd)
+  ])
+  const model = models[0]
+  if (!model)
+    return { ok: false, resumed: false, error: 'The provider lists no model here', road: 'handoff' }
+  const target: ProviderSwitchTarget = {
+    adapterId,
+    provider: plan.to.provider,
+    label: providerSwitchTargetFor(session)?.label ?? plan.to.provider,
+    model
+  }
+  return switchSessionProvider(sessionId, {
+    from,
+    target,
+    road: plan.road,
+    handoff: async () => {
+      const items: HistoryItem[] = []
+      let before: number | undefined
+      for (;;) {
+        const page = await window.electronAPI.sessionsHistory(sessionId, before, 2000)
+        items.unshift(...page.items)
+        if (page.before === null || (before !== undefined && page.before >= before)) break
+        before = page.before
+      }
+      const fromLabel = from === 'codex' ? 'Codex' : 'Claude'
+      const tape = historyMarkdown(items, fromLabel)
+      const { path } = await window.electronAPI.providerSwitchHandoff(sessionId, tape)
+      return `${tape}\nThe full conversation is in ${path}.\n`
+    }
+  })
+}
+
+/** Lane E's third rung: offered once this module is loaded by the shell. */
+export function installProviderSwitchRoad(): void {
+  registerProviderSwitchRoad({ targetFor: providerSwitchTargetFor, switchTo: switchToProvider })
+  askChoices()
 }

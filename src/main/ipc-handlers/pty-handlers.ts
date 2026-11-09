@@ -17,7 +17,7 @@ import { registerSessionIpc } from '../sessions/ipc'
 import { windowRegistry } from '../window-registry'
 import { windowState } from '../window-state'
 import { startWatching as startAgentStateWatching } from '../agent-state-manager'
-import { hasServerEventPublisher } from '../server/session-events'
+import { hasServerEventPublisher, sessionLimitReported } from '../server/session-events'
 import { isServerExternal } from '../server/endpoint'
 import { adoptableRecordsFor, serverHoldsRecordsFor, tmuxAvailableFor } from './boot-reads'
 import { serverClient } from '../mcp/server-client'
@@ -79,12 +79,11 @@ export function registerPtyHandlers(): void {
   ): Promise<SessionInfoResult> =>
     spawnSession(win ? windowRegistry.getKeyForWindow(win.id) : null, cwd, options)
 
-  // The CLI's own word on its account's limit reaches the window holding the
-  // tab (ADR 0002): the policy there proposes or makes the move.
-  ptyManager.onLimitReported((sessionId) => {
-    const win = windowRegistry.getWindowForSession(sessionId)
-    if (win && !win.isDestroyed()) win.webContents.send('session:limit-reported', sessionId)
-  })
+  // The CLI's own word on its account's limit, and which cap it hit, reaches
+  // the window holding the tab (ADR 0002, PRDCT-4302) on both transports: the
+  // policy there offers a model of the same account, another account, or a
+  // provider, and makes the move in automatic mode.
+  ptyManager.onLimitReported((sessionId, report) => sessionLimitReported(sessionId, report))
 
   // `initialInput` is main's own (a restart's resend, pty-manager.ts): a
   // renderer's spawn never carries one. Nor `work` (PRDCT-4123): a session's

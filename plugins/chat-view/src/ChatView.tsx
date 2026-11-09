@@ -80,7 +80,7 @@ import { resumeHistoryEntry } from '../../../src/renderer/src/lib/session-histor
 import { emitTabClosed } from '../../../src/renderer/src/lib/exchange-capture'
 import { useViewSessionStore } from '../../../src/renderer/src/views/session-store'
 import { endIsCurrent } from '../../../src/renderer/src/views/session-end'
-import { acceptAccountProposal } from '../../../src/renderer/src/lib/account-policy'
+import { acceptRung } from '../../../src/renderer/src/lib/account-policy'
 import { useLimitSentence } from './limit-words'
 import type { HistoryListEntry } from '../../../src/preload/index.d'
 import { ChatCode } from './code'
@@ -1449,9 +1449,15 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
             )}
             <ModelMenu
               sessionId={session.id}
-              model={conversation.model}
+              model={conversation.pendingModel ?? conversation.model}
+              pending={conversation.pendingModel !== null}
               disabled={closed}
-              onSelect={(id) => void write({ type: 'set_model', model: id }).catch(report)}
+              onSelect={(id) => {
+                // Shown the instant it is picked (PRDCT-4273); the provider's
+                // answer confirms it or, refusing, reverts the chip.
+                dispatch({ pickModel: id })
+                void write({ type: 'set_model', model: id }).catch(report)
+              }}
               provider={session.provider}
               adapterId={session.adapterId}
               cwd={session.cwd}
@@ -1459,7 +1465,7 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
             />
             <EffortMenu
               sessionId={session.id}
-              model={conversation.model}
+              model={conversation.pendingModel ?? conversation.model}
               effort={conversation.effort}
               disabled={closed}
               onSelect={(id) => void write({ type: 'set_effort', effort: id }).catch(report)}
@@ -1502,8 +1508,10 @@ export function EndedNotice({
   exitCode?: number
 }): React.JSX.Element {
   const host = useViewSessionStore((s) => s.sessions.find((x) => x.id === sessionId))
-  const limit = host?.limitReported === true
+  const limit = !!host?.limitReported
   const proposal = host?.accountProposal ?? null
+  const rungs = proposal?.rungs ?? []
+  const first = rungs[0]
   // "Work is out on Fable, back in 2d 5h.": the account, the cap, the return.
   const sentence = useLimitSentence(host)
   // A chat on a Clave server draws its own state, Resume included, and keeps
@@ -1516,22 +1524,34 @@ export function EndedNotice({
   if (host?.restarting) {
     return (
       <div className="chat-notice" role="status" data-chat-ended="moving">
-        {proposal ? `Moving to ${proposal.label}…` : 'Moving to another account…'}
+        {first ? `Moving to ${first.label}…` : 'Moving to another account…'}
       </div>
     )
   }
-  if (limit && proposal) {
+  if (limit && rungs.length > 0) {
+    // The rungs in order (PRDCT-4302): another account resumes the
+    // conversation there with the rejected message sent again; another
+    // provider reconstructs it. A dead process takes no model, so the model
+    // rung is never here.
     return (
       <div className="chat-notice" role="status" data-chat-ended="limit">
-        {sentence}{' '}
-        <button
-          type="button"
-          className="chat-notice-action"
-          onClick={() => void acceptAccountProposal(sessionId)}
-          data-chat-continue-on={proposal.accountId}
-        >
-          Continue on {proposal.label}
-        </button>
+        {sentence}
+        {rungs.map((rung) => (
+          <button
+            key={`${rung.kind}:${rung.label}`}
+            type="button"
+            className="chat-notice-action"
+            onClick={() => void acceptRung(sessionId, rung)}
+            {...(rung.kind === 'account'
+              ? { 'data-chat-continue-on': rung.accountId }
+              : rung.kind === 'model'
+                ? { 'data-chat-continue-model': rung.model }
+                : { 'data-chat-continue-provider': rung.adapterId })}
+          >
+            {' '}
+            Continue on {rung.label}
+          </button>
+        ))}
       </div>
     )
   }

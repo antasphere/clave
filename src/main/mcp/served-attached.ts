@@ -30,7 +30,7 @@ const NEEDS: Record<string, ReadonlyArray<'records' | 'accounts' | 'profiles' | 
   switchAccount: ['records', 'accounts'],
   openSession: ['records', 'accounts', 'profiles'],
   launchGroup: ['records', 'accounts', 'pins'],
-  // PRDCT-4123: the caller's own unit and the parents the reach rule reads.
+  // PRDCT-4123: the caller's own unit and the parents the name tie-break reads.
   setWork: ['records'],
   handOver: ['records']
 }

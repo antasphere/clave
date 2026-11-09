@@ -419,6 +419,96 @@ describe('standalone MCP session tools', () => {
     15_000
   )
 
+  /**
+   * PRDCT-4236: `resume` on this server, which keeps no History of its own.
+   * A tab that runs the conversation is answered as it is; a stopped tab that
+   * holds it is resumed in place; a conversation nobody holds starts a new
+   * tab on the id in the directory the caller names, and needs that
+   * directory; a terminal cannot continue a conversation.
+   */
+  it('resume: a live holder answered, a stopped holder resumed in place, else a start on the id', async () => {
+    const restarted: Array<[string, unknown, boolean | undefined, boolean | undefined]> = []
+    const { client, started, directory } = await sessionFixture({
+      records: [
+        {
+          id: 'caller',
+          cwd: '/srv/repo',
+          folderName: 'repo',
+          claudeMode: true,
+          antigravityMode: false,
+          codexMode: false,
+          piMode: false,
+          claudeAgentsMode: false,
+          dangerousMode: false,
+          claudeSessionId: 'conv-live',
+          running: true,
+          workspaceId: 'ws-studio'
+        },
+        {
+          id: 'old',
+          cwd: '/srv/repo',
+          folderName: 'repo',
+          claudeMode: true,
+          antigravityMode: false,
+          codexMode: false,
+          piMode: false,
+          claudeAgentsMode: false,
+          dangerousMode: false,
+          claudeSessionId: 'conv-old',
+          running: false
+        }
+      ],
+      host: {
+        restart: async (id, account, resendRejected, onlyIfStopped) => {
+          restarted.push([id, account, resendRejected, onlyIfStopped])
+          return { id, alive: true, resumed: true } as never
+        }
+      }
+    })
+    const live = payload(
+      await client.callTool({ name: 'clave_open_session', arguments: { resume: 'conv-live' } })
+    )
+    expect(live).toMatchObject({
+      sessionId: 'caller',
+      alreadyOpen: true,
+      resumed: false,
+      workspaceId: 'ws-studio',
+      conversation: 'conv-live'
+    })
+    expect(started).toHaveLength(0)
+    const stopped = payload(
+      await client.callTool({ name: 'clave_open_session', arguments: { resume: 'conv-old' } })
+    )
+    expect(stopped).toMatchObject({ sessionId: 'old', alreadyOpen: true, resumed: true })
+    expect(restarted).toEqual([['old', {}, false, true]])
+    expect(started).toHaveLength(0)
+    const fresh = payload(
+      await client.callTool({
+        name: 'clave_open_session',
+        arguments: { resume: 'conv-new', cwd: directory, name: 'Odoo again' }
+      })
+    )
+    expect(fresh.sessionId).toBe('started-1')
+    expect(started).toHaveLength(1)
+    expect(started[0].options).toMatchObject({ claudeMode: true, resumeSessionId: 'conv-new' })
+    expect(
+      errorText(
+        await client.callTool({ name: 'clave_open_session', arguments: { resume: 'conv-new' } })
+      )
+    ).toContain(
+      'cwd is required unless resume names a conversation a tab of this server still holds.'
+    )
+    expect(
+      errorText(
+        await client.callTool({
+          name: 'clave_open_session',
+          arguments: { resume: 'conv-new', cwd: directory, mode: 'terminal' }
+        })
+      )
+    ).toContain('pass an agent mode, not terminal')
+    expect(started).toHaveLength(1)
+  }, 15_000)
+
   /** The caller's record, as the daemon keeps it, with or without a workspace. */
   const callerRecord = (workspaceId?: string): SessionRecord => ({
     id: 'caller',
@@ -866,7 +956,7 @@ async function messagingFixture(
     restart: (id, account, resend, onlyIfStopped) =>
       spies.bind(bound.sessions!).restart!(id, account, resend, onlyIfStopped)
   }
-  const fx = await sessionFixture({ ...hooks, host: lazy })
+  const fx = await sessionFixture({ ...hooks, host: { ...hooks.host, ...lazy } })
   bound.sessions = fx.sessions
   return { ...fx, ...spies }
 }
@@ -944,7 +1034,7 @@ describe('standalone MCP messaging: the shared target rule (PRDCT-4192)', () => 
     expect(typed.map(([id]) => id)).toEqual(['caller'])
   }, 15_000)
 
-  it('refuses a plain terminal it opened and a tab it is not related to, typing nothing', async () => {
+  it('refuses a plain terminal it opened, typing nothing, and messages a tab it is not related to', async () => {
     const { client, sessions, typed, directory } = await messagingFixture()
     const terminal = payload(
       await client.callTool({
@@ -960,16 +1050,19 @@ describe('standalone MCP messaging: the shared target rule (PRDCT-4192)', () => 
         })
       )
     ).toContain('Refusing to send to a plain terminal')
+    expect(typed).toEqual([])
+    // PRDCT-4236: any tab of this server can be messaged, related or not.
     sessions.set('stranger', tab('stranger'))
     expect(
-      errorText(
+      payload(
         await client.callTool({
           name: 'clave_send_to_session',
           arguments: { sessionId: 'stranger', message: 'hello' }
         })
       )
-    ).toContain('Refusing to message tab "stranger": it is not related to yours.')
-    expect(typed).toEqual([])
+    ).toMatchObject({ delivered: true, sessionId: 'stranger' })
+    expect(typed.map(([id]) => id)).toEqual(['stranger'])
+    expect(typed[0]?.[1]).toMatch(/\nhello$/)
   }, 15_000)
 
   it('resumes a stopped tab it opened with clave_resume_session and refuses a running one', async () => {
@@ -1150,18 +1243,25 @@ describe('agent-sessions/delegation-group fixture', () => {
   }, 15_000)
 })
 
-describe('standalone MCP: the reach on a read, and a stopped terminal asked to resume (round 1, C1 and C4)', () => {
-  it('refuses to read a tab the caller is not related to', async () => {
-    const { client, sessions } = await messagingFixture()
+describe('standalone MCP: a read of any tab, and a stopped terminal asked to resume (round 1, C1 and C4)', () => {
+  it('reads a tab the caller is not related to (PRDCT-4236)', async () => {
+    const read: string[] = []
+    const { client, sessions } = await messagingFixture({
+      host: {
+        history: (id) => {
+          read.push(id)
+          return { items: [], before: null }
+        }
+      }
+    })
     sessions.set('stranger', tab('stranger'))
     const answer = await client.callTool({
       name: 'clave_read_session',
       arguments: { sessionId: 'stranger' }
     })
-    expect(answer.isError).toBe(true)
-    expect(errorText(answer)).toContain(
-      'Refusing to read tab "stranger": it is not related to yours.'
-    )
+    expect(answer.isError).not.toBe(true)
+    expect(payload(answer)).toMatchObject({ sessionId: 'stranger', history: [] })
+    expect(read).toEqual(['stranger'])
   }, 15_000)
 
   it('refuses a stopped plain terminal it opened even with resume: true, and restarts nothing', async () => {

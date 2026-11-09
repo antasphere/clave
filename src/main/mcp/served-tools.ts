@@ -299,6 +299,9 @@ async function closeSession(ctx: Ctx, key: string, p: Payload): Promise<unknown>
     }
   }
 
+  // The History remembers what the tab ran on, read from its record before
+  // the stop deletes it (PRDCT-4236, round 6).
+  await ctx.shell.historyRestamp?.(id)
   await ctx.api.sessions.stop(id)
   for (let i = 0; i < 40; i++) {
     const current = await ctx.api.sessions.get(id).catch(() => null)

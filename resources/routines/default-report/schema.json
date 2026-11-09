@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Routine report",
+  "description": "The built-in report of a routine created on a Clave server: what the run found, as items with a verdict each, and the facts worth keeping. A routine that wants its own page names a template folder instead.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "items": {
+      "type": "array",
+      "description": "What the run found or did, one entry each, in the order worth reading.",
+      "maxItems": 100,
+      "items": {
+        "type": "object",
+        "required": ["title", "verdict"],
+        "additionalProperties": false,
+        "properties": {
+          "title": {
+            "type": "string",
+            "description": "What this entry is about, in a few words.",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "verdict": {
+            "description": "ok: nothing to do; done: the run did something; attention: something is left for the person; failed: this part could not be done; note: information, no verdict.",
+            "enum": ["ok", "done", "attention", "failed", "note"]
+          },
+          "detail": {
+            "type": "string",
+            "description": "One or two sentences in plain words.",
+            "maxLength": 2000
+          },
+          "actions": {
+            "type": "array",
+            "description": "What the person should do about it, one line each, with the command when there is one.",
+            "items": { "type": "string", "maxLength": 300 },
+            "maxItems": 20
+          }
+        }
+      }
+    },
+    "facts": {
+      "type": "object",
+      "description": "Figures and values worth keeping with the run, by name: a count, a version, a date.",
+      "additionalProperties": { "type": ["string", "number", "boolean"] },
+      "maxProperties": 40
+    }
+  }
+}

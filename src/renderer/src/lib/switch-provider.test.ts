@@ -29,6 +29,7 @@ vi.mock('../store/usage-store', () => ({
   claudeUsageForModel: () => undefined,
   headroomLabel: () => '72% left · Overall'
 }))
+vi.mock('./account-policy', () => ({ registerProviderSwitchRoad: vi.fn() }))
 vi.mock('./switch-account', () => ({
   accountForLaunch: (provider: string) =>
     provider === 'codex' ? { id: 'c1', label: 'Codex 1' } : { id: 'work', label: 'Work' },
@@ -47,7 +48,14 @@ beforeEach(async () => {
     providerSwitchConvert: vi.fn(async () => ({ ok: true, threadId: 'thread-7' })),
     providerSwitchPlan: vi.fn(),
     sessionsWrite: vi.fn(async () => undefined),
-    onSessionStream: vi.fn(() => () => undefined)
+    onSessionStream: vi.fn(() => () => undefined),
+    adaptersList: vi.fn(async () => [
+      { adapterId: 'claude-chat', provider: 'claude', label: 'Claude' },
+      { adapterId: 'codex-chat', provider: 'codex', label: 'Codex' }
+    ]),
+    adaptersModels: vi.fn(async () => [{ id: 'gpt-5.5', label: 'GPT-5.5' }]),
+    sessionsHistory: vi.fn(async () => ({ items: [], before: null })),
+    providerSwitchHandoff: vi.fn(async () => ({ path: '/tape.md', diffStat: null }))
   }
   Object.defineProperty(globalThis, 'window', {
     value: { electronAPI: h.api },
@@ -236,5 +244,60 @@ describe('requestHandoffNote', () => {
     const note = mod.requestHandoffNote('s1', 1000)
     await vi.advanceTimersByTimeAsync(1001)
     await expect(note).resolves.toBeNull()
+  })
+})
+
+describe("lane E's third rung: the road the limit policy takes (PRDCT-4300)", () => {
+  it('names Codex for a Claude tab once the host has said what it runs, and nothing before', async () => {
+    const { registerProviderSwitchRoad } = await import('./account-policy')
+    mod.installProviderSwitchRoad()
+    expect(registerProviderSwitchRoad).toHaveBeenCalledWith({
+      targetFor: mod.providerSwitchTargetFor,
+      switchTo: mod.switchToProvider
+    })
+    await vi.waitFor(() =>
+      expect(mod.providerSwitchTargetFor(h.session)).toEqual({
+        adapterId: 'codex-chat',
+        label: 'Codex'
+      })
+    )
+  })
+  it("moves the tab on the plan's road with the target's first model, the handoff written from the host's history", async () => {
+    ;(h.api.providerSwitchPlan as ReturnType<typeof vi.fn>).mockResolvedValue({
+      from: { adapterId: 'claude-chat', provider: 'claude' },
+      to: { adapterId: 'codex-chat', provider: 'codex' },
+      road: 'handoff',
+      reason: 'no transcript'
+    })
+    ;(h.api.sessionsHistory as ReturnType<typeof vi.fn>).mockResolvedValue({
+      items: [
+        { event: { type: 'user_message', text: 'first question' } },
+        { event: { type: 'assistant_text', delta: 'an answer', final: true } },
+        { event: { type: 'tool_call', id: 't', name: 'Bash', input: {} } },
+        { event: { type: 'assistant_text', delta: 'sub', final: true, parent: 'x' } }
+      ],
+      before: null
+    })
+    const result = await mod.switchToProvider('s1', 'codex-chat')
+    expect(result).toMatchObject({ ok: true, road: 'handoff' })
+    const call = h.restart.mock.calls.at(-1)![1]
+    expect(call.overrides).toMatchObject({ adapterId: 'codex-chat', model: 'gpt-5.5' })
+    expect(call.overrides.firstMessage).toContain('# Continued from Claude · handoff')
+    expect(call.overrides.firstMessage).toContain('first question')
+    expect(call.overrides.firstMessage).toContain('an answer')
+    expect(call.overrides.firstMessage).toContain('- Bash')
+    expect(call.overrides.firstMessage).not.toContain('sub')
+    expect(call.overrides.firstMessage).toContain('The full conversation is in /tape.md')
+  })
+  it('refuses when the provider lists no model', async () => {
+    ;(h.api.adaptersModels as ReturnType<typeof vi.fn>).mockResolvedValue([])
+    ;(h.api.providerSwitchPlan as ReturnType<typeof vi.fn>).mockResolvedValue({
+      from: { adapterId: 'claude-chat', provider: 'claude' },
+      to: { adapterId: 'codex-chat', provider: 'codex' },
+      road: 'convert',
+      codexVersion: '0.167.0'
+    })
+    expect(await mod.switchToProvider('s1', 'codex-chat')).toMatchObject({ ok: false })
+    expect(h.restart).not.toHaveBeenCalled()
   })
 })

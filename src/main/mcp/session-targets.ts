@@ -11,8 +11,9 @@
  * imports no Electron, no server client and no host, and is tested on fakes.
  *
  * What is decided here: the target of a reference (`"parent"`, an id, an
- * exact name, the routed window's tabs first); whether the caller may reach
- * it (itself, the tab that opened it, a tab it opened, a tab of its group);
+ * exact name, the routed window's tabs first, a shared name preferring the
+ * tab related to the caller); that the call carries a tab identity (any tab
+ * may be reached, PRDCT-4236);
  * the self-addressed send as a checkpoint that is never typed; the refusals
  * (a plain terminal, a `claude agents` menu, a tab that has ended, with the
  * way to bring it back); the provenance header on a delivery; and the
@@ -41,7 +42,7 @@ export interface TargetHost {
   modeOf(session: Session): string
   /** The tab that opened this one: the host's memory, else its record. */
   parentOf(id: string): string | null
-  /** The groups the reach rule reads: every window's on the desktop, the daemon's one sidebar. */
+  /** The groups the name tie-break reads: every window's on the desktop, the daemon's one sidebar. */
   groups(): Promise<readonly SidebarGroup[]>
   /** The window a name is resolved in first, when the host has windows. */
   readonly routedKey?: string
@@ -112,8 +113,9 @@ export async function resolveTarget(host: TargetHost, ref: string): Promise<Sess
   return found
 }
 
-/** Whether two tabs are related for the agent tools' reach: the same tab,
- *  one opened the other, or they share a group (its terminals included). */
+/** Whether two tabs are related: the same tab, one opened the other, or
+ *  they share a group (its terminals included). Only the tie-break between
+ *  tabs sharing a name reads it; it no longer limits what may be reached. */
 export function isRelated(
   host: Pick<TargetHost, 'parentOf'>,
   groups: readonly SidebarGroup[],
@@ -128,22 +130,14 @@ export function isRelated(
   )
 }
 
-/** The reach rule, over the host's facts: a tab reaches itself, the tab
- *  that opened it, a tab it opened, or a tab or terminal in the same group.
- *  Identity is the token-derived caller, so the rule is enforceable. */
-export async function assertCanReach(
-  host: TargetHost,
-  target: Session,
-  verb: ReachVerb
-): Promise<void> {
+/** The one condition on reaching another tab: the call carries a tab
+ *  identity (the token-derived caller). Any tab of the host may be read,
+ *  messaged, resumed or assigned (PRDCT-4236, decided 9 November 2026);
+ *  `isRelated` only breaks a tie between tabs sharing a name. */
+export function requireCaller(host: Pick<TargetHost, 'caller'>, verb: ReachVerb): void {
   if (!host.caller) {
     throw new Error(
       `${TOOL_OF[verb]} must be called from inside a Clave agent tab — this request has no tab identity.`
-    )
-  }
-  if (!isRelated(host, await host.groups(), host.caller, target.id)) {
-    throw new Error(
-      `Refusing to ${verb} tab "${host.nameOf(target)}": it is not related to yours. You can only reach the tab that opened yours ("parent"), tabs you opened, or tabs in the same group. Put both tabs in one group to allow this.`
     )
   }
 }
@@ -219,7 +213,7 @@ export interface SendIo {
 
 /**
  * `clave_send_to_session`, the whole of it but the typing: the checkpoint for
- * a self-addressed send, the target, the reach, the stopped tab (refused with
+ * a self-addressed send, the target, the caller identity, the stopped tab (refused with
  * the way back, or resumed first when `resume` is true), the untypable
  * tabs, the provenance header, the delivery and its capture.
  */
@@ -234,7 +228,7 @@ export async function sendToTarget(
     return checkpointAnswer(self, name, await io.checkpoint(self, name, p.message))
   }
   // "mine", the caller's own id, or the caller's own name all mean the
-  // checkpoint, resolved BEFORE the reach gate, which has nothing to gate on
+  // checkpoint, resolved BEFORE the identity gate, which has nothing to gate on
   // a message that never leaves the session.
   if (caller && p.ref === 'mine') {
     const self = await host.get(caller)
@@ -243,7 +237,7 @@ export async function sendToTarget(
   }
   let target = await resolveTarget(host, p.ref)
   if (caller && target.id === caller) return checkpoint(target)
-  await assertCanReach(host, target, 'message')
+  requireCaller(host, 'message')
   const targetName = host.nameOf(target)
   // The tabs a message can never be typed into are refused BEFORE any
   // resume: a stopped terminal asked to resume and deliver would otherwise
@@ -292,7 +286,7 @@ export async function sendToTarget(
 }
 
 /**
- * `clave_resume_session`: the target, the reach, and the restart of a tab
+ * `clave_resume_session`: the target, the caller identity, and the restart of a tab
  * that is not running; a running tab is refused, since there is nothing to
  * resume and a restart would cut its turn.
  */
@@ -302,7 +296,7 @@ export async function resumeTarget(
   resume: (target: Session) => Promise<{ resumed: boolean }>
 ): Promise<unknown> {
   const target = await resolveTarget(host, ref === 'mine' && host.caller ? host.caller : ref)
-  await assertCanReach(host, target, 'resume')
+  requireCaller(host, 'resume')
   const name = host.nameOf(target)
   if (target.state !== 'ended')
     throw new Error(`Session "${name}" is running; there is nothing to resume.`)

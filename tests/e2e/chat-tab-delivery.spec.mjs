@@ -25,7 +25,7 @@ export async function run(t) {
         (s) => s.adapterId === 'echo' && s.id !== target.id
       )
     )
-    // Tabs reach each other within a group.
+    // The two tabs share a group (any tab may reach any tab since PRDCT-4236).
     const { groupId } = await callMcp(app, 'createGroup', { name: 'Delivery' })
     for (const id of [target.id, sender.id])
       await callMcp(app, 'moveSession', { sessionId: id, groupId })

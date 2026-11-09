@@ -4,9 +4,14 @@ import {
   ArrowTopRightOnSquareIcon,
   ChatBubbleLeftRightIcon,
   CheckIcon,
+  ChevronLeftIcon,
   DocumentChartBarIcon,
   EllipsisHorizontalIcon,
-  QueueListIcon
+  PauseIcon,
+  PencilSquareIcon,
+  PlayIcon,
+  QueueListIcon,
+  TrashIcon
 } from '@heroicons/react/24/outline'
 import { IconButton } from '@clave/ui/components'
 import { AnimatePresence, motion } from 'framer-motion'
@@ -61,7 +66,9 @@ export function RoutinePanel({
   surface,
   icon,
   color,
-  onClose
+  onClose,
+  onBack,
+  onEdit
 }: {
   surface: RoutineSurface
   /** The routine's toolbar glyph, drawn again on the title's tile. */
@@ -69,13 +76,21 @@ export function RoutinePanel({
   /** The ink the toolbar draws the glyph in. */
   color?: string
   onClose: () => void
+  /** Back to the list the panel replaced (PRDCT-4244); absent, no chevron. */
+  onBack?: () => void
+  /** Edit a created routine (PRDCT-4242): the form the list opened it with. */
+  onEdit?: () => void
 }): React.JSX.Element {
   const view = surface.view
   const remote = surface.serverId !== LOCAL_SERVER_ID
+  const created = view.routine.origin === 'created'
   const viewer = useRoutinesStore((s) => s.viewer)
   const error = useRoutinesStore((s) => s.error)
   const runNow = useRoutinesStore((s) => s.runNow)
   const dismiss = useRoutinesStore((s) => s.dismiss)
+  const pause = useRoutinesStore((s) => s.pause)
+  const remove = useRoutinesStore((s) => s.remove)
+  const [confirmDelete, setConfirmDelete] = useState(false)
   const openDiscussion = useRoutinesStore((s) => s.openDiscussion)
   const [selectedId, setSelectedId] = useState<string | null>(null)
   // The tab the panel was left on, per routine: a message just sent in
@@ -263,6 +278,17 @@ export function RoutinePanel({
       tabIndex={-1}
     >
       <div className="routine-head" data-testid="routine-panel-header">
+        {onBack && (
+          <IconButton
+            className="panel-icon-btn routine-back"
+            data-testid="routine-back"
+            aria-label="Back to the routines"
+            tooltip="Back"
+            onClick={onBack}
+          >
+            <ChevronLeftIcon className="w-4 h-4" />
+          </IconButton>
+        )}
         <span className="routine-mark" style={{ color }} aria-hidden="true">
           {icon}
         </span>
@@ -273,8 +299,11 @@ export function RoutinePanel({
           <span className="routine-head-sub" data-testid="routine-panel-schedule">
             {view.routine.invalid
               ? 'Cannot run'
-              : `${describeCron(view.routine.schedule)}${next ? ` · next ${next}` : ''}`}
+              : view.routine.paused
+                ? 'Paused'
+                : `${describeCron(view.routine.schedule)}${next ? ` · next ${next}` : ''}`}
             {surface.runsOn === 'server' ? ` · on ${surface.serverName}` : ''}
+            {created ? ' · created here' : ''}
           </span>
         </div>
       </div>
@@ -290,13 +319,17 @@ export function RoutinePanel({
             className="panel-icon-btn"
             data-testid="routine-run-again"
             aria-label="Run now"
-            disabled={running || !!view.routine.invalid || !surface.reachable}
+            disabled={
+              running || !!view.routine.invalid || !surface.reachable || !!view.routine.paused
+            }
             tooltip={
               !surface.reachable
                 ? `Runs on ${surface.serverName}, not connected`
-                : running
-                  ? 'A run is in flight'
-                  : 'Run now'
+                : view.routine.paused
+                  ? 'Paused: resume it to run it'
+                  : running
+                    ? 'A run is in flight'
+                    : 'Run now'
             }
             onClick={() => void runNow(surface, view.routine.key)}
           >
@@ -338,10 +371,80 @@ export function RoutinePanel({
                 <CheckIcon className="menu-glyph" />
                 Dismiss
               </button>
+              {created && (
+                <>
+                  <div className="menu-sep" />
+                  {onEdit && (
+                    <button
+                      role="menuitem"
+                      className="menu-item"
+                      data-testid="routine-edit"
+                      onClick={() => {
+                        setMenuOpen(false)
+                        onEdit()
+                      }}
+                    >
+                      <PencilSquareIcon className="menu-glyph" />
+                      Edit
+                    </button>
+                  )}
+                  <button
+                    role="menuitem"
+                    className="menu-item"
+                    data-testid="routine-pause"
+                    onClick={() => {
+                      setMenuOpen(false)
+                      void pause(surface, view.routine.key, !view.routine.paused)
+                    }}
+                  >
+                    {view.routine.paused ? (
+                      <PlayIcon className="menu-glyph" />
+                    ) : (
+                      <PauseIcon className="menu-glyph" />
+                    )}
+                    {view.routine.paused ? 'Resume' : 'Pause'}
+                  </button>
+                  <button
+                    role="menuitem"
+                    className="menu-item menu-item--danger"
+                    data-testid="routine-delete"
+                    onClick={() => {
+                      setMenuOpen(false)
+                      setConfirmDelete(true)
+                    }}
+                  >
+                    <TrashIcon className="menu-glyph" />
+                    Delete
+                  </button>
+                </>
+              )}
             </div>
           )}
         </div>
       </div>
+
+      {confirmDelete && (
+        <div className="routine-note" data-tone="failed" data-testid="routine-delete-confirm">
+          <div className="routine-note-text">
+            <span>Delete “{view.routine.name}” and its run history?</span>
+          </div>
+          <button className="btn-secondary btn-compact" onClick={() => setConfirmDelete(false)}>
+            Keep it
+          </button>
+          <button
+            className="btn-primary btn-compact"
+            data-testid="routine-delete-confirm-yes"
+            onClick={() => {
+              setConfirmDelete(false)
+              void remove(surface, view.routine.key).then((done) => {
+                if (done) (onBack ?? onClose)()
+              })
+            }}
+          >
+            Delete
+          </button>
+        </div>
+      )}
 
       {/* What went wrong, if anything, in words and a glyph, the raw message
           folded under Details; a window still reaching its server says it is

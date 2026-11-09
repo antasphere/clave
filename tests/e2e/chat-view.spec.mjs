@@ -200,6 +200,12 @@ export async function run(t) {
         globalThis.__chatWrites.push(input)
         if (input.type === 'permission_response' || input.type === 'interrupt')
           return Promise.resolve()
+        // A switch is held while the spec says so (PRDCT-4273): the provider
+        // has not answered, and the chip must already read the pick.
+        if (input.type === 'set_model' && globalThis.__holdSwitch) {
+          globalThis.__releaseSwitch = () => write.call(host, id, input)
+          return Promise.resolve()
+        }
         return write.call(host, id, input)
       }
     })
@@ -331,6 +337,15 @@ export async function run(t) {
     // The menu is two levels (PRDCT-4300): the providers this host can run,
     // the tab's own first and selected with its model as the hint, then
     // that provider's models.
+    const modelInStore = (id) =>
+      win.evaluate(
+        (id) =>
+          window.__claveSessionStoreForTests?.getState().sessions.find((s) => s.id === id)?.model,
+        id
+      )
+    await fixture.evaluate(() => {
+      globalThis.__holdSwitch = true
+    })
     await win.getByRole('button', { name: 'Model', exact: true }).click()
     const providers = win.locator('.chat-model-provider')
     await providers.first().waitFor()
@@ -358,20 +373,40 @@ export async function run(t) {
         )
       )
     )
-    await win.locator('.chat-model-trigger').filter({ hasText: 'Echo · Echo 2' }).waitFor()
+    // The chip reads the pick before the provider has answered (PRDCT-4273):
+    // the switch is still held, so the provider knows nothing of it yet and
+    // the sidebar store still holds the model the provider last named (the
+    // meta injected above). The composer stays enabled: a message written
+    // after the switch runs on the new model.
+    await win
+      .locator('.chat-model-trigger[data-pending="true"]')
+      .filter({ hasText: 'Echo 2' })
+      .waitFor()
+    const held = await modelInStore(record.id)
+    assert.notEqual(held, 'echo-2', `the store waits for the provider (holds ${held})`)
+    assert.equal(
+      await win.locator('[data-testid="chat-view"] textarea:not(:disabled)').count(),
+      1,
+      'the composer is not disabled by a switch in flight'
+    )
+    t.check(
+      'the chip reads the picked model the instant it is picked, before the provider answers',
+      true
+    )
+    await fixture.evaluate(() => {
+      globalThis.__holdSwitch = false
+      return globalThis.__releaseSwitch()
+    })
+    await win
+      .locator('.chat-model-trigger:not([data-pending])')
+      .filter({ hasText: 'Echo 2' })
+      .waitFor()
     t.check('model picker lists the adapter models and switches through the write IPC', true)
     // The switch reaches the sidebar's own store, not only the pane (PRDCT-4256):
     // main pushes the provider's word on the model, and the foot judges the
     // caps by it. Read off the store itself, never inferred from a rendering.
     assert.ok(
-      await until(() =>
-        win.evaluate(
-          (id) =>
-            window.__claveSessionStoreForTests?.getState().sessions.find((s) => s.id === id)
-              ?.model === 'echo-2',
-          record.id
-        )
-      ),
+      await until(async () => (await modelInStore(record.id)) === 'echo-2'),
       'the sidebar store holds the model switched from the chip'
     )
     t.check('the model switched from the chip reaches the sidebar store', true)

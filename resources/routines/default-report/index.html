@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Routine report</title>
+    <script type="application/json" id="slideless-data">{}</script>
+    <style>
+      /* Clave's tokens by name, each with the deck's own fallback: inside Clave the
+         panel injects the app's resolved tokens (theme, density, text size), so the
+         deck follows Appearance; in a browser the fallbacks stand, light and dark. */
+      :root {
+        color-scheme: light dark;
+        --deck-f-ground: #fbfbf9; --deck-f-card: #ffffff; --deck-f-wash: #eeedeb;
+        --deck-f-ink: #1b1b18; --deck-f-ink-2: #5c5c56; --deck-f-ink-3: #70706a;
+        --deck-f-line: rgba(0, 0, 0, 0.1);
+        --deck-f-ok: #1f9d5a; --deck-f-fixed: #1f5fcf; --deck-f-attention: #b7791f; --deck-f-failed: #d14343;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --deck-f-ground: #0e0d0c; --deck-f-card: #161513; --deck-f-wash: #1d1c19;
+          --deck-f-ink: rgba(255, 255, 255, 0.95); --deck-f-ink-2: rgba(255, 255, 255, 0.6); --deck-f-ink-3: rgba(255, 255, 255, 0.47);
+          --deck-f-line: rgba(255, 255, 255, 0.1);
+          --deck-f-ok: #3fbf7a; --deck-f-fixed: #5aa2f7; --deck-f-attention: #e0a43a; --deck-f-failed: #ef6060;
+        }
+      }
+      :root {
+        --deck-ground: var(--surface-0, var(--deck-f-ground));
+        --deck-card: var(--surface-raised, var(--deck-f-card));
+        --deck-wash: var(--surface-100, var(--deck-f-wash));
+        --deck-ink: var(--text-primary, var(--deck-f-ink));
+        --deck-ink-2: var(--text-secondary, var(--deck-f-ink-2));
+        --deck-ink-3: var(--text-tertiary, var(--deck-f-ink-3));
+        --deck-line: var(--color-border, var(--deck-f-line));
+        --deck-ok: var(--color-status-ready, var(--deck-f-ok));
+        --deck-fixed: var(--color-accent, var(--deck-f-fixed));
+        --deck-attention: var(--color-status-waiting, var(--deck-f-attention));
+        --deck-failed: var(--color-destructive, var(--deck-f-failed));
+        --deck-running: var(--color-status-working, var(--deck-f-fixed));
+        --deck-radius: var(--radius-xl, 10px);
+        --deck-radius-sm: var(--radius-lg, 8px);
+        font-family: var(--font-sans, 'Geist Sans', 'Geist', -apple-system, BlinkMacSystemFont, system-ui, sans-serif);
+        -webkit-font-smoothing: antialiased;
+      }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; background: var(--deck-ground); color: var(--deck-ink); }
+      body { padding: 22px 22px 28px; font-size: var(--control-text, 13px); line-height: 1.5; }
+      .tone-ok { --deck-tone: var(--deck-ok); }
+      .tone-done, .tone-fixed { --deck-tone: var(--deck-fixed); }
+      .tone-note { --deck-tone: var(--deck-ink-3); }
+      .tone-attention { --deck-tone: var(--deck-attention); }
+      .tone-failed { --deck-tone: var(--deck-failed); }
+      .tone-running, .tone-waiting { --deck-tone: var(--deck-running); }
+
+      /* The hero: the status as a pill, the headline, when. */
+      .hero {
+        position: relative;
+        padding: 18px 18px 16px;
+        border-radius: var(--deck-radius);
+        background: linear-gradient(180deg, color-mix(in oklab, var(--deck-tone, var(--deck-ink-3)) 9%, var(--deck-card)), var(--deck-card));
+        border: 1px solid color-mix(in oklab, var(--deck-tone, var(--deck-ink-3)) 22%, var(--deck-line));
+        overflow: hidden;
+      }
+      .hero svg.mark { position: absolute; right: 14px; top: 14px; width: 44px; height: 44px; }
+      .mark .ring { fill: none; stroke: color-mix(in oklab, var(--deck-tone, var(--deck-ink-3)) 45%, transparent); stroke-width: 1.2; }
+      .mark .ring-2 { fill: none; stroke: color-mix(in oklab, var(--deck-tone, var(--deck-ink-3)) 22%, transparent); stroke-width: 1; }
+      .mark .dot { fill: var(--deck-tone, var(--deck-ink-3)); }
+      .pill {
+        display: inline-flex; align-items: center; gap: 6px;
+        padding: 3px 9px 3px 7px; border-radius: 999px;
+        font-size: 11px; font-weight: 500; letter-spacing: 0.02em;
+        color: var(--deck-tone); background: color-mix(in oklab, var(--deck-tone) 12%, transparent);
+      }
+      .pill::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--deck-tone); }
+      h1 { margin: 10px 56px 4px 0; font-size: 19px; line-height: 1.3; font-weight: 600; letter-spacing: -0.01em; text-wrap: balance; }
+      .when { color: var(--deck-ink-3); font-size: 12px; font-variant-numeric: tabular-nums; }
+
+      /* The counts, one tile per verdict. */
+      .counts { display: grid; grid-template-columns: repeat(auto-fit, minmax(84px, 1fr)); gap: 8px; margin: 14px 0 4px; }
+      .count { padding: 10px 12px; border-radius: var(--deck-radius-sm); background: var(--deck-wash); }
+      .count b { display: block; font-size: 18px; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--deck-ink); }
+      .count span { font-size: 11px; color: var(--deck-ink-3); }
+      .count.lit b { color: var(--deck-tone); }
+
+      h2 { margin: 22px 2px 8px; font-size: 11px; font-weight: 500; letter-spacing: 0.08em; text-transform: uppercase; color: var(--deck-ink-3); }
+
+      /* One card per finding, its tone on the edge. */
+      .cards { display: flex; flex-direction: column; gap: 8px; }
+      .card {
+        position: relative; padding: 12px 14px 12px 16px; border-radius: var(--deck-radius-sm);
+        background: var(--deck-card); border: 1px solid var(--deck-line);
+      }
+      .card::before { content: ''; position: absolute; left: 0; top: 10px; bottom: 10px; width: 3px; border-radius: 0 3px 3px 0; background: var(--deck-tone, var(--deck-ink-3)); }
+      .card-head { display: flex; align-items: baseline; gap: 10px; }
+      .card-title { flex: 1; min-width: 0; font-weight: 600; font-size: 13px; overflow-wrap: anywhere; }
+      .chip { flex-shrink: 0; font-size: 10.5px; font-weight: 500; letter-spacing: 0.06em; text-transform: uppercase; color: var(--deck-tone); }
+      .card p { margin: 4px 0 0; color: var(--deck-ink-2); }
+      .card .list-title { margin-top: 10px; font-size: 11px; color: var(--deck-ink-3); }
+      .card ul { margin: 4px 0 0; padding-left: 18px; color: var(--deck-ink-2); }
+      .card li + li { margin-top: 2px; }
+
+      /* The agent's account, as prose. */
+      .prose { color: var(--deck-ink-2); max-width: 64ch; }
+      .prose p { margin: 0 0 10px; }
+      .prose ul { margin: 0 0 10px; padding-left: 18px; }
+      .prose strong { color: var(--deck-ink); font-weight: 600; }
+      .prose code { font: 12px ui-monospace, 'Geist Mono', SFMono-Regular, Menlo, monospace; padding: 1px 5px; border-radius: 4px; background: var(--deck-wash); color: var(--deck-ink); }
+      .empty { color: var(--deck-ink-3); padding: 18px 2px; }
+      /* The facts, name and value, two columns. */
+      .facts { display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px; margin: 0; }
+      .facts dt { color: var(--deck-ink-3); font-size: 12px; }
+      .facts dd { margin: 0; color: var(--deck-ink); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+
+    </style>
+  </head>
+  <body>
+    <main id="deck"></main>
+    <script>
+      // The data Clave filled in: the run's envelope (`run`, `routine`) and the agent's `data`
+      // as `schema.json` describes it: `items[]` with a verdict each, and `facts` by name.
+      const doc = JSON.parse(document.getElementById('slideless-data').textContent || '{}')
+      const run = doc.run || {}
+      const data = doc.data || {}
+      const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c])
+      const WORD = { ok: 'OK', done: 'Done', attention: 'Attention', failed: 'Failed', note: 'Note', running: 'Running', waiting: 'Waiting on you' }
+      const when = (t) => {
+        if (!t) return ''
+        const d = new Date(t)
+        const time = d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
+        return new Date().toDateString() === d.toDateString() ? `Today, ${time}` : `${d.toLocaleDateString(undefined, { day: 'numeric', month: 'short' })}, ${time}`
+      }
+      // Markdown, the little an agent's summary uses: paragraphs, - lists, `code`, **bold**.
+      const inline = (s) => esc(s).replace(/`([^`]+)`/g, '<code>$1</code>').replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+      const prose = (md) => String(md || '').trim().split(/\n{2,}/).map((block) => {
+        const lines = block.split('\n')
+        return lines.every((l) => /^\s*[-*] /.test(l))
+          ? `<ul>${lines.map((l) => `<li>${inline(l.replace(/^\s*[-*] /, ''))}</li>`).join('')}</ul>`
+          : `<p>${lines.map(inline).join('<br>')}</p>`
+      }).join('')
+      const mark = `<svg class="mark" viewBox="0 0 44 44" aria-hidden="true"><circle class="ring-2" cx="22" cy="22" r="20"/><circle class="ring" cx="22" cy="22" r="13"/><circle class="dot" cx="22" cy="22" r="5"/></svg>`
+      const hero = () => `<section class="hero tone-${esc(run.status || 'none')}">${mark}
+        <span class="pill">${esc(WORD[run.status] || 'No report')}</span>
+        <h1>${esc(run.headline || 'No report yet')}</h1>
+        <div class="when">${run.reportedAt ? `${esc(when(run.reportedAt))} · ${esc(run.trigger === 'manual' ? 'run by hand' : run.trigger || '')}` : 'This deck has no report yet.'}</div>
+      </section>`
+      const counts = (verdicts, order) => {
+        const n = Object.fromEntries(order.map((v) => [v, 0]))
+        for (const v of verdicts) if (v in n) n[v]++
+        return `<div class="counts">${order.filter((v) => n[v] || v !== 'note').map((v) => `<div class="count tone-${v}${n[v] ? ' lit' : ''}"><b>${n[v]}</b><span>${WORD[v]}</span></div>`).join('')}</div>`
+      }
+      const list = (title, items) => (items && items.length ? `<div class="list-title">${title}</div><ul>${items.map((x) => `<li>${inline(x)}</li>`).join('')}</ul>` : '')
+      const summary = () => (run.summary ? `<h2>Summary</h2><div class="prose">${prose(run.summary)}</div>` : '')
+      const items = Array.isArray(data.items) ? data.items : []
+      const facts = data.facts && typeof data.facts === 'object' ? Object.entries(data.facts) : []
+      document.getElementById('deck').innerHTML =
+        hero() +
+        (items.length ? counts(items.map((c) => c.verdict), ['ok', 'done', 'attention', 'failed', 'note']) : '') +
+        (items.length
+          ? `<h2>What the run found</h2><div class="cards">${items
+              .map(
+                (c, i) => `<article class="card tone-${esc(c.verdict)}" style="--i:${i}">
+          <div class="card-head"><span class="card-title">${esc(c.title)}</span><span class="chip">${esc(WORD[c.verdict] || c.verdict)}</span></div>
+          ${c.detail ? `<p>${inline(c.detail)}</p>` : ''}
+          ${list('To do', c.actions)}
+        </article>`
+              )
+              .join('')}</div>`
+          : '') +
+        (facts.length
+          ? `<h2>Facts</h2><dl class="facts">${facts.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join('')}</dl>`
+          : '') +
+        (!items.length && !facts.length && !run.summary ? '<p class="empty">The run reported nothing beyond its headline.</p>' : '') +
+        summary()
+    </script>
+  </body>
+</html>

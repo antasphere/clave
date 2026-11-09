@@ -54,7 +54,7 @@ const run = {
 const decode = Schema.decodeUnknownSync(RoutinesListing)
 
 describe('the routines listing on the wire', () => {
-  it('decodes the listing of an older server: no server, no runsHere, no publish', () => {
+  it('decodes the listing of an older server: no runsOn, no runsHere, no origin, no publish', () => {
     const older = {
       routines: [
         {
@@ -71,7 +71,8 @@ describe('the routines listing on the wire', () => {
     const listing = decode(older)
     expect(listing.server).toBeUndefined()
     expect(listing.routines[0].routine.runsHere).toBeUndefined()
-    expect(listing.routines[0].routine.server).toBeUndefined()
+    expect(listing.routines[0].routine.runsOn).toBeUndefined()
+    expect(listing.routines[0].routine.origin).toBeUndefined()
     expect(listing.routines[0].routine.report.publish).toBeUndefined()
   })
 
@@ -81,8 +82,9 @@ describe('the routines listing on the wire', () => {
         {
           routine: {
             ...declaration,
-            server: 'Studio',
+            runsOn: 'Studio',
             runsHere: false,
+            origin: 'file',
             report: { template: '/t', schema: '/s', width: 400, height: 300, publish: true }
           },
           nextRunAt: 123,
@@ -101,11 +103,32 @@ describe('the routines listing on the wire', () => {
     const listing = decode(current)
     expect(listing.server).toEqual({ id: 'srv-1', name: 'Studio' })
     const view = listing.routines[0]
-    expect(view.routine).toMatchObject({ server: 'Studio', runsHere: false })
+    expect(view.routine).toMatchObject({ runsOn: 'Studio', runsHere: false, origin: 'file' })
     expect(view.routine.report.publish).toBe(true)
     expect(view.runs[0]).toMatchObject({
       published: { deckId: 'deck-1', version: 3, url: 'https://s.example/d' },
       publishError: 'the link was not minted'
     })
+  })
+})
+
+describe('a server name (PRDCT-4241)', () => {
+  it('is one word of the install script’s rule and never the word every, whatever its case', async () => {
+    const { isServerName } = await import('../server-name')
+    for (const ok of ['Studio', 'romains-mac-studio', 'a', 'x'.repeat(63), 'a.b_c-d'])
+      expect(isServerName(ok), ok).toBe(true)
+    for (const bad of [
+      'every',
+      'Every',
+      'EVERY',
+      '',
+      ' ',
+      'two words',
+      '-lead',
+      'x'.repeat(64),
+      'Stüdio',
+      42
+    ])
+      expect(isServerName(bad), String(bad)).toBe(false)
   })
 })

@@ -14,6 +14,7 @@ import type {
 import type { AttachmentPreview, AttachmentSource, FileAttachment } from '../shared/attachments'
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import type { UpdaterState } from '../shared/updater-types'
+import { reportFromWire, type LimitReport } from '../shared/limit-report'
 import type { AgentUpdateId, AgentUpdatesState } from '../shared/agent-updates'
 import type {
   LaunchProfile,
@@ -517,6 +518,19 @@ const viaAttachedServer =
       if (terminalChains.get(id) === next) terminalChains.delete(id)
     }
   }
+
+/** The kill itself, on the host's road (IPC in-process, the server attached). */
+const killSessionOnHost = viaServer<[string], void>({
+  ipc: (id) => ipcRenderer.invoke('pty:kill', id),
+  server: ({ api }, id) => api.sessions.stop(id)
+})
+
+/** A closing tab's launch into the ledger while its record is still there
+ *  (PRDCT-4236): the bridge's `historyRestamp`, and the first step of its
+ *  `killSession`. */
+const historyRestamp = (sessionId: string): Promise<void> =>
+  ipcRenderer.invoke('history:restamp', sessionId)
+
 // ── The session records' road (wave 4, lane C) ──
 // Inside the app the records are main's, and IPC lands on the one instance
 // that applies the window's selection rule itself. Attached, the records are
@@ -532,6 +546,7 @@ const viaAttachedServer =
 // seconds is never clobbered by a late restore (PRDCT-3376). A read BY IDS is
 // the re-home path (post-boot): attached it must reach the server, which owns
 // a moved session's record.
+
 async function listSessionRecords(filter?: { ids?: string[] }): Promise<WireSessionRecord[]> {
   if (filter && Array.isArray(filter.ids) && (await serverMode()) === 'attached') {
     const backing = await serverRouter.backing()
@@ -1262,6 +1277,11 @@ const electronAPI = {
         configDir?: string
         claudeProfileId?: string
         claudeProfileLabel?: string
+        codexAccountId?: string
+        codexAccountLabel?: string
+        permissionMode?: 'default' | 'acceptEdits' | 'plan' | 'auto' | 'dontAsk'
+        effort?: string
+        allowDangerous?: boolean
         workspaceId?: string
         link?:
           | { kind: 'group-terminal'; groupId: string; terminalId: string }
@@ -1303,10 +1323,15 @@ const electronAPI = {
     server: ({ api }, id, cols, rows) => api.sessions.resize(id, cols, rows)
   }),
 
-  killSession: viaServer<[string], void>({
-    ipc: (id) => ipcRenderer.invoke('pty:kill', id),
-    server: ({ api }, id) => api.sessions.stop(id)
-  }),
+  // Every close of the window goes through here (the sidebar's, the header's,
+  // the keyboard's, a group's, an Ongoing end, the agent's window road): the
+  // History is told what the tab runs on from its record BEFORE the kill
+  // deletes it (PRDCT-4236, round 7), and never waits long nor fails the
+  // close for it. A tab of a connected server keeps its own History there.
+  killSession: async (id: string): Promise<void> => {
+    if (!id.startsWith('clave-owner:')) await historyRestamp(id).catch(() => undefined)
+    return killSessionOnHost(id)
+  },
 
   listSessions: () => ipcRenderer.invoke('pty:list'),
 
@@ -1519,10 +1544,17 @@ const electronAPI = {
         onSessionEvent(push, 'session.plan_detected', sessionId, (event) => callback(event.path))
     ),
 
-  // A chat session's CLI reported its account's limit (ADR 0002): the policy
-  // reads the account and proposes or makes the move.
-  onSessionLimitReported: (callback: (sessionId: string) => void) =>
-    createIpcListener<[string]>('session:limit-reported', callback),
+  // A chat session's CLI reported its account's limit and which cap it hit
+  // (ADR 0002, PRDCT-4302): the policy resolves the scope against the
+  // account's read and offers a model, an account or a provider. Both
+  // transports, as the model change (`session.model_changed`) above.
+  onSessionLimitReported: viaServerEvent<
+    'session.limit_reported',
+    { id: string; report: LimitReport }
+  >('session:limit-reported', 'session.limit_reported', (event) => ({
+    id: event.id,
+    report: reportFromWire(event)
+  })),
   onClearDetected: (sessionId: string, callback: (newClaudeSessionId: string | null) => void) =>
     onBothTransports(
       createIpcListener<[string | null]>(`session:clear-detected:${sessionId}`, callback),
@@ -1643,6 +1675,7 @@ const electronAPI = {
   // Session history (PRDCT-1738): the ledger row is fire-and-forget like the
   // capture above; the list is the dialog's one read.
   historyStamp: (row: unknown) => ipcRenderer.send('history:stamp', row),
+  historyRestamp,
   historyList: () => ipcRenderer.invoke('history:list'),
   historyConversation: (
     cwd: string,
@@ -1723,6 +1756,34 @@ const electronAPI = {
       return api.routines.openDiscussion(runId, identity?.windowKey ?? '', mode)
     }
   }),
+  // PRDCT-4242: the routines the server keeps in its own store.
+  routinesCreate: viaServer<
+    [import('@clave/contract/routines/model').RoutineCreateInput],
+    import('@clave/contract/routines/model').RoutineView
+  >({
+    ipc: (input) => ipcRenderer.invoke('routines:create', input),
+    server: ({ api }, input) => api.routines.create(input)
+  }),
+  routinesUpdate: viaServer<
+    [string, import('@clave/contract/routines/model').RoutinePatch],
+    import('@clave/contract/routines/model').RoutineView
+  >({
+    ipc: (key, patch) => ipcRenderer.invoke('routines:update', key, patch),
+    server: ({ api }, key, patch) => api.routines.update(key, patch)
+  }),
+  routinesDelete: viaServer<[string], void>({
+    ipc: (key) => ipcRenderer.invoke('routines:delete', key),
+    server: ({ api }, key) => api.routines.delete(key)
+  }),
+  routinesPause: viaServer<[string, boolean], import('@clave/contract/routines/model').RoutineView>(
+    {
+      ipc: (key, paused) => ipcRenderer.invoke('routines:pause', key, paused),
+      server: ({ api }, key, paused) => api.routines.pause(key, paused)
+    }
+  ),
+  // PRDCT-4241: this Mac's own name as a server, the shell's to keep.
+  routinesOwnName: () => ipcRenderer.invoke('routines:own-name'),
+  routinesSetOwnName: (name: string) => ipcRenderer.invoke('routines:set-own-name', name),
   onRoutinesChanged: (callback: () => void) =>
     viaServerEvent<'routines.changed', null>(
       'routines:changed',

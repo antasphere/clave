@@ -3,6 +3,7 @@ import {
   hasServerEventPublisher,
   publishOrSend,
   sessionCleared,
+  sessionLimitReported,
   sessionModelChanged,
   sessionPlanDetected,
   sessionTitleChanged,
@@ -129,5 +130,32 @@ describe('a session’s news travels on one transport, never both', () => {
   it('with no port installed nothing is sent and nothing throws', () => {
     installSessionWindows(null)
     expect(() => sessionTitleChanged('s1', 'fix auth', 'w1')).not.toThrow()
+  })
+})
+
+describe('a session’s limit report travels on both transports, with its scope (PRDCT-4302)', () => {
+  afterEach(() => setServerEventPublisher(null))
+  it('reaches the session’s window over IPC while no server runs, the report whole', () => {
+    const { port, sent } = windows()
+    port.bind('s1', 'w1')
+    sessionLimitReported('s1', { scope: { family: 'Fable' }, resetsAt: 1_700_000_000_000 })
+    expect(sent).toEqual([
+      [
+        'session:limit-reported',
+        { id: 's1', report: { scope: { family: 'Fable' }, resetsAt: 1_700_000_000_000 } }
+      ]
+    ])
+  })
+  it('reaches the window over IPC AND the server once a publisher is set, flat on the event', async () => {
+    const { port, sent } = windows()
+    port.bind('s1', 'w1')
+    const published: unknown[] = []
+    setServerEventPublisher(async (event) => {
+      published.push(event)
+    })
+    sessionLimitReported('s1', { scope: 'shared' })
+    await Promise.resolve()
+    expect(sent).toEqual([['session:limit-reported', { id: 's1', report: { scope: 'shared' } }]])
+    expect(published).toEqual([{ _tag: 'session.limit_reported', id: 's1', scope: 'shared' }])
   })
 })
