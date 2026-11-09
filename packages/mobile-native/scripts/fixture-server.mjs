@@ -9,27 +9,39 @@
 //   node packages/mobile-native/scripts/fixture-server.mjs \
 //     --server 47301 --relay 47302 --issuer 47303 --tmpdir /private/tmp/clave-native-c
 //
-// It starts the provider on the issuer port (its dynamic registration takes
-// any redirect URI a client sends, so clave-ios:// and clave-android:// both
-// pass), the relay under the repository's Bun with that issuer, and the
-// daemon under Bun with `--dev-echo-adapter`, `--push-fake`, `--relay`, a
-// token file of the fixture's own and the three flags that keep it off every
-// provider (below). It then runs three checks and refuses to boot unless all
-// pass, printing them first so a worktree shows its stance before any chat:
+// It checks before it boots and again before it seeds, prints every check
+// as `check ok` or `check FAIL`, and refuses to go on unless all pass:
 //
-//   1. titles off: the daemon announces `titles: "off"` (--no-titles);
-//   2. test fixtures on, machine usage off: the daemon announces
-//      `testFixtures: true` and `machineUsage: false` (--test-no-activate,
-//      --test-no-machine-usage) and answers POST /e2e/evaluate;
-//   3. the recorders stand in: the daemon's own SHELL is the fixture's and
-//      its login environment, read the way the daemon reads it, resolves
-//      `claude` and `codex` to the fixture's recorders.
+//   before any process (`preflight`, also alone as `--preflight`):
+//   1. flags: the argv the daemon will be started with carries --no-titles,
+//      --test-no-activate and --test-no-machine-usage;
+//   2. the recorders stand in: the environment the daemon will be started
+//      with has the fixture's `zsh` as its login shell, and that shell's
+//      dump of the login environment, read the way the daemon reads it
+//      (`$SHELL -lic 'env -0'`), resolves `claude` and `codex` to the
+//      fixture's recorders;
+//   after the daemon announced itself and before any chat (`bootChecks`):
+//   3. the daemon's discovery file says `titles: "off"`;
+//   4. it says `testMode: true` and `machineUsage: false`, and the daemon
+//      answers POST /e2e/evaluate;
+//   5. inside the running daemon, through its test hooks: the title
+//      one-shot's own resolver (the daemon's cached login environment, the
+//      one-shot's locate) names the recorder `claude`, the cached login PATH
+//      names the recorder `codex`, and the daemon's SHELL is the fixture's;
+//   6. inside the running daemon, the keys of its environment are the
+//      allowlist's and the fixture's own and nothing else (names compared,
+//      never values).
 //
-// Only then does it sign the daemon in as the fixture owner through the
-// daemon's own sign-in command (the provider standing in for the browser),
-// wait for the relay to list the machine online, register a scratch workspace
-// and seed an Echo chat with a message carrying a nonce, and print where
-// everything is, one line per key:
+// Only then does it start the provider on the issuer port (its dynamic
+// registration takes any redirect URI a client sends, so clave-ios:// and
+// clave-android:// both pass), the relay under the repository's Bun with that
+// issuer, and the daemon under Bun with `--dev-echo-adapter`, `--push-fake`,
+// `--relay`, a token file of the fixture's own and the three flags; signs the
+// daemon in as the fixture owner through the daemon's own sign-in command
+// (the provider standing in for the browser); waits for the relay to list
+// the machine online; registers a scratch workspace; seeds an Echo chat with
+// a message carrying a nonce; and prints where everything is, one line per
+// key:
 //
 //   CLAVE_FIXTURE_SERVER_URL=http://127.0.0.1:47301
 //   CLAVE_FIXTURE_TOKEN_FILE=/private/tmp/clave-native-c/server/daemon-token
@@ -40,14 +52,22 @@
 //   CLAVE_FIXTURE_RECORDER_LOG=/private/tmp/clave-native-c/stubs/recorder.log
 //   CLAVE_FIXTURE_FILE=/private/tmp/clave-native-c/fixture.json
 //
-// and stays up until Ctrl-C stops the three processes. The token file is a
-// path: the token itself is never printed. `--approve` approves every pending
-// pairing as it appears (a development convenience, off by default; a runner
-// approves through POST /devices/approve with the token in the file
-// otherwise). `--check` runs the proof in this process after the boot and
-// exits non-zero on a failure, then stops everything. `--json` prints one
+// and stays up until Ctrl-C stops the three processes, WATCHING ITS RECORDER:
+// while it runs, the first line a recorder writes (a `claude` or a `codex`
+// invoked by the daemon for any reason) is printed and the fixture stops the
+// three processes and exits 3, so the enforcement is continuous and not a
+// dry run. The token file is a path: the token itself is never printed.
+// `--approve` approves every pending pairing as it appears (a development
+// convenience, off by default; a runner approves through POST /devices/approve
+// with the token in the file otherwise), under the same watch. `--check`
+// runs the proof in this process after the boot and exits non-zero on a
+// failure, then stops everything. `--preflight` runs the two pre-boot checks
+// on the folder's stubs and exits, no process started. `--json` prints one
 // JSON object instead of the lines. A port of 0 takes a free one; without
-// `--tmpdir` a fresh folder under the system temp directory is used.
+// `--tmpdir` a fresh folder under the system temp directory is used. Exit
+// codes: 2 a refused boot or a refused run folder, 3 the recorder caught an
+// attempt while running or its log could not be read, 1 a failed proof or an
+// error.
 //
 // No real agent, no real login. The daemon names every fresh chat by its
 // first message with a `claude -p` one-shot (packages/host/src/title-generator.ts),
@@ -62,55 +82,76 @@
 //     explicit Claude usage read off the machine login (the two together set
 //     TEST_NO_MACHINE_USAGE). The Codex read has no flag: it is covered by the
 //     recorder on the PATH and an empty Codex home.
-//   - the daemon's SHELL is a script named `zsh` under <tmpdir>/stubs that
-//     prints the fixture's own environment whatever its arguments (the daemon
-//     reads its login environment through `$SHELL -lic 'env -0'`, and only a
-//     POSIX shell's name is kept) and runs a `-c` command with /bin/sh; that
-//     environment's PATH starts with the stubs folder, where `claude` and
-//     `codex` are RECORDERS: each appends one line (the time, the command,
-//     its first two arguments, never the stdin) to <tmpdir>/stubs/recorder.log,
-//     `claude -p` answers a fixed title, `codex` exits silently.
-//     CLAUDE_CONFIG_DIR and CODEX_HOME point at empty folders of the fixture's
-//     own, and the variables of this Mac's agent logins never reach the daemon.
+//   - the daemon's environment is built from an ALLOWLIST, never from this
+//     shell's: HOME, USER, LOGNAME, TMPDIR, LANG, LC_ALL, LC_CTYPE, TERM and
+//     TZ as they are, then SHELL (the fixture's `zsh` under <tmpdir>/stubs,
+//     a script that prints the daemon's environment whatever its arguments,
+//     since only a POSIX shell's name is kept by the daemon, and runs a `-c`
+//     command with /bin/sh), PATH (the stubs folder, then the system
+//     directories and nothing of this shell's PATH, so the recorders are the
+//     only `claude` and `codex` the daemon can find), CLAUDE_CONFIG_DIR and
+//     CODEX_HOME (two folders of the fixture's own, recreated empty at every
+//     boot), the issuer, and on macOS the keychain file; both Bun children
+//     start with `--no-env-file`, so no .env of the working directory reaches
+//     them past the allowlist. The recorders each
+//     append one line per invocation (the time, the command, its first two
+//     arguments, never the stdin) to <tmpdir>/stubs/recorder.log; `claude -p`
+//     answers a fixed title, `codex` exits silently.
 //   - the proof (`--check`, and fixture-server.test.mjs) seeds the chat, waits
-//     past the clock's first tick, and asserts: zero recorder lines, the chat
-//     not named by a one-shot, no transcript of a title call born since the
-//     boot under ~/.claude/projects, no usage event on the push channel; then
-//     an explicit Claude read answers without the machine login and leaves
-//     the recorder silent, and an explicit Codex read reaches the codex
-//     recorder, exactly one line, and answers an error. Each row says whether
-//     it is derived from the code (a flag the daemon announces), observed by a
-//     recorder or on the wire, or a provider's answer (none is ever expected).
-//   - `--mutate <name>` is the verifier's knob and nobody's configuration:
-//     `drop-title-opt-out` boots without --no-titles, continues past the
-//     failed first check and shows the recorder catching the one-shot;
-//     `start-usage-clock` starts the clock through the test hook with every
-//     flag kept and shows the codex recorder and the usage events (the flags
-//     are kept because the machine login's keychain item is read by username
-//     through /usr/bin/security and no environment variable redirects it: a
-//     clock run without the flags would read the person's own login);
-//     `drop-recorders` boots with a PATH without the stubs, and the third
-//     check aborts before any chat, mutation or not.
+//     past the clock's first tick, and asserts: zero recorder lines, no
+//     session.title_changed for the chat, the two owned folders still empty,
+//     no usage event on the push channel; then an explicit Claude read
+//     answers without the machine login and leaves the recorder silent, and
+//     an explicit Codex read reaches the codex recorder, exactly one line,
+//     and answers an error. Each row says whether it rests on the argv, on
+//     the daemon's announcement (derived from the code's flags), on a
+//     recorder, on the wire, or on the owned folders; no row ever rests on a
+//     provider's answer, none being expected. The person's own folders
+//     (~/.claude, their Codex home) are never read.
+//   - `--mutate <name>` is the verifier's knob and nobody's configuration; a
+//     mutant run never boots the daemon with the wrong usage flags against
+//     this Mac's login. `drop-title-opt-out` boots without --no-titles (the
+//     recorders in place, the usage flags kept) and continues past the failed
+//     first and third checks so the recorder shows the one-shot too;
+//     `bypass-title-guard` keeps every flag and re-opens the titles through
+//     the daemon's test hook, so the daemon still announces titles off while
+//     the one-shot really runs, and the recorder alone catches it;
+//     `start-usage-clock` keeps every flag and starts the clock through the
+//     test hook, so the codex recorder and the usage events catch the reads
+//     while the Claude read stays off the machine login (the flags are kept
+//     because the keychain item is read by username through /usr/bin/security,
+//     which no environment variable redirects: a clock run without them would
+//     read the person's own login); `divergent-daemon-env` passes the
+//     preflight on the recorders' environment and then starts the daemon on
+//     this shell's PATH instead, so the fifth check, asked of the daemon's
+//     own resolver, fails and nothing is seeded (no CLI runs: titles are off
+//     and the clock is off); `drop-recorders` starts nothing at all: the
+//     second check aborts before any process.
 //
 // Secrets: the daemon's token is in the token file (mode 0600) and in the
 // discovery file under the data folder, never on stdout; on macOS the
 // daemon's sealed session goes to a keychain FILE under the data folder,
 // created here, never the login keychain; on Linux to the daemon's encrypted
-// files.
+// files. Nothing here deletes outside the folders the fixture created: the
+// two owned folders and the recorder log under <tmpdir>/stubs, and the
+// daemon's stored registration and session under <tmpdir>/server. A run
+// folder is taken only when it is missing, empty, or marked by the fixture
+// (a regular file `.clave-native-fixture` at its root holding exactly the
+// fixture's stamp, read with lstat so a symlink is refused); anything else is
+// refused before a byte is written, and a dry run never rewrites a folder it
+// reuses.
 import { execFileSync, spawn } from 'node:child_process'
 import { createHash, randomBytes } from 'node:crypto'
 import {
   accessSync,
   chmodSync,
-  closeSync,
   constants as fsConstants,
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
-  openSync,
   readdirSync,
   readFileSync,
-  readSync,
   realpathSync,
   rmSync,
   statSync,
@@ -144,23 +185,43 @@ export const MANIFEST_NAME = 'fixture.json'
 export const RECORDER_LOG_NAME = 'recorder.log'
 /** What the recorder `claude` answers a title one-shot with, were one ever asked. */
 export const STUB_TITLE = 'fixture chat'
-/** How the title generator's prompt begins (`TITLE_HELPER_MARKER` in the host). */
-export const TITLE_PROMPT_PREFIX = 'Generate a short 2-4 word title'
 /** The daemon's three flags that keep it off every provider. */
 export const DAEMON_FLAGS = ['--no-titles', '--test-no-activate', '--test-no-machine-usage']
 /** The verifier's mutations; never a configuration. */
-export const MUTATIONS = ['drop-title-opt-out', 'start-usage-clock', 'drop-recorders']
+export const MUTATIONS = [
+  'drop-title-opt-out',
+  'bypass-title-guard',
+  'start-usage-clock',
+  'divergent-daemon-env',
+  'drop-recorders'
+]
 /** The usage clock's first tick runs five seconds after the daemon starts. */
 export const CLOCK_WINDOW_MS = 7_000
-/** The variables of this Mac's agent logins, kept out of the daemon's environment. */
-const CREDENTIAL_KEYS = [
-  'CLAUDE_CODE_OAUTH_TOKEN',
-  'ANTHROPIC_API_KEY',
-  'CLAUDECODE',
-  'CLAUDE_CONFIG_DIR',
-  'CODEX_HOME',
-  'OPENAI_API_KEY'
+/** The variables of this shell the daemon's environment keeps, as they are. */
+export const ENV_ALLOWLIST = [
+  'HOME',
+  'USER',
+  'LOGNAME',
+  'TMPDIR',
+  'LANG',
+  'LC_ALL',
+  'LC_CTYPE',
+  'TERM',
+  'TZ'
 ]
+/** The system directories beside the recorders: `security`, `sysctl`, `sh`. */
+export const SYSTEM_PATH = '/usr/bin:/bin:/usr/sbin:/sbin'
+/** How often the running fixture reads its recorder log. */
+const RECORDER_WATCH_MS = 500
+/** The marker a run folder carries once the fixture owns it: a regular file
+ *  at the folder's root holding exactly RUN_FOLDER_OWNER. */
+export const RUN_FOLDER_MARKER = '.clave-native-fixture'
+export const RUN_FOLDER_OWNER = `clave-native-fixture-server/1 ${REPO}\n`
+/** The names a login shell may have for the daemon to run a command through
+ *  it (`POSIX_SHELLS` in packages/host/src/shell-launch.ts, mirrored here and
+ *  held in step by the test): any other name sends the Codex usage read and
+ *  the one-shot's not-found fallback to /bin/zsh, the real login shell. */
+export const POSIX_SHELL_NAMES = ['sh', 'bash', 'zsh', 'dash', 'ksh', 'mksh', 'ash']
 
 const stderr = (line) => process.stderr.write(`fixture: ${line}\n`)
 
@@ -185,7 +246,7 @@ export function parseArgs(argv) {
     if (
       a.startsWith('--') &&
       !/^--(server|relay|issuer|tmpdir|timeout|mutate)(=|$)/.test(a) &&
-      !['--approve', '--check', '--json'].includes(a)
+      !['--approve', '--check', '--json', '--preflight'].includes(a)
     )
       throw new Error(`unknown option ${a}`)
   const mutate = value('mutate', null)
@@ -197,9 +258,17 @@ export function parseArgs(argv) {
     timeoutMs: Number(value('timeout', '90000')),
     approve: argv.includes('--approve'),
     check: argv.includes('--check'),
+    preflight: argv.includes('--preflight'),
     json: argv.includes('--json'),
     mutate
   }
+}
+
+/** The daemon's flags for a run: the three, less `--no-titles` under the one mutation that drops it. */
+export function flagsFor(mutate) {
+  return mutate === 'drop-title-opt-out'
+    ? DAEMON_FLAGS.filter((f) => f !== '--no-titles')
+    : DAEMON_FLAGS
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
@@ -263,22 +332,80 @@ function stopChild(child) {
 }
 
 /**
+ * Take the run folder, or refuse it. A folder the fixture may write and
+ * clean is one it created, or one it marked: a regular file (lstat, never a
+ * symlink) at its root holding exactly RUN_FOLDER_OWNER. A missing or empty
+ * folder is claimed and marked; a folder holding anything else and no
+ * marker, a marker that is not a regular file, a marker naming another
+ * owner, or a root that is not a plain directory is refused before anything
+ * is written. `fresh` says whether the folder was created or empty.
+ */
+export function claimRunFolder(root) {
+  const marker = path.join(root, RUN_FOLDER_MARKER)
+  const refuse = (why) => {
+    const error = new Error(`refusing the run folder ${root}: ${why}`)
+    error.refusedFolder = true
+    return error
+  }
+  let stat = null
+  try {
+    stat = lstatSync(root)
+  } catch {
+    stat = null
+  }
+  if (stat && !stat.isDirectory())
+    throw refuse(stat.isSymbolicLink() ? 'it is a symlink' : 'it is not a directory')
+  if (!stat) mkdirSync(root, { recursive: true, mode: 0o700 })
+  if (readdirSync(root).length === 0) {
+    writeFileSync(marker, RUN_FOLDER_OWNER, { mode: 0o600, flag: 'wx' })
+    return { root, marker, fresh: true }
+  }
+  let markerStat
+  try {
+    markerStat = lstatSync(marker)
+  } catch {
+    throw refuse(`it is not empty and carries no ${RUN_FOLDER_MARKER}`)
+  }
+  if (!markerStat.isFile()) throw refuse(`${RUN_FOLDER_MARKER} is not a regular file`)
+  if (readFileSync(marker, 'utf8') !== RUN_FOLDER_OWNER)
+    throw refuse(`${RUN_FOLDER_MARKER} names another owner`)
+  return { root, marker, fresh: false }
+}
+
+/**
  * The stand-ins under <tmpdir>/stubs: `zsh`, the daemon's login shell, which
  * prints this environment whatever it is asked and runs a `-c` command with
  * /bin/sh; `claude` and `codex`, the recorders, each appending one line to
  * the recorder log per invocation (the time, the command, its first two
  * arguments, never the stdin); `claude -p` answers the fixed title so a
- * daemon that asked anyway gets a harmless one. The empty Claude config
- * folder and Codex home sit beside them. The log is removed at every boot.
+ * daemon that asked anyway gets a harmless one. The Claude config folder and
+ * the Codex home, the fixture's own, are recreated empty, and the recorder
+ * log recreated empty, at every boot: the log exists from the install on, so
+ * a read that finds it missing is a failure, never "no calls". Nothing
+ * outside this folder is touched, and with `reuse` an install already there
+ * is taken as it is, nothing rewritten (a dry run on a reused folder).
  */
-export function installStubs(dir) {
-  mkdirSync(dir, { recursive: true })
+export function installStubs(dir, { reuse = false } = {}) {
   const log = path.join(dir, RECORDER_LOG_NAME)
-  rmSync(log, { force: true })
   const claudeConfigDir = path.join(dir, 'claude-config')
   const codexHome = path.join(dir, 'codex-home')
-  mkdirSync(claudeConfigDir, { recursive: true })
-  mkdirSync(codexHome, { recursive: true })
+  const installed = {
+    dir,
+    shell: path.join(dir, 'zsh'),
+    claude: path.join(dir, 'claude'),
+    codex: path.join(dir, 'codex'),
+    log,
+    claudeConfigDir,
+    codexHome
+  }
+  if (reuse && [installed.shell, installed.claude, installed.codex, log].every(existsSync))
+    return installed
+  mkdirSync(dir, { recursive: true })
+  for (const owned of [claudeConfigDir, codexHome]) {
+    rmSync(owned, { recursive: true, force: true })
+    mkdirSync(owned, { recursive: true })
+  }
+  writeFileSync(log, '', { mode: 0o600 })
   const write = (name, body) => {
     const file = path.join(dir, name)
     writeFileSync(file, body)
@@ -339,26 +466,37 @@ export function installStubs(dir) {
   return { dir, shell, claude, codex, log, claudeConfigDir, codexHome }
 }
 
-/** The lines the recorders wrote since the boot, never a prompt. */
+/** The lines the recorders wrote since the boot, never a prompt. Throws when
+ *  the log is missing or unreadable: a read that fails is a failure, never
+ *  "no calls" (the log exists, empty, from the install on). */
 export function recorderLines(stubs) {
-  if (!existsSync(stubs.log)) return []
   return readFileSync(stubs.log, 'utf8').split('\n').filter(Boolean)
 }
 
-/** The daemon's own environment: the issuer, the keychain file on macOS,
- *  the recorders first on PATH and the stub as the login shell, credential
- *  sources of the fixture's own, none of this Mac's agent credentials, and
- *  never the address of a server this shell is attached to. */
-function childEnv(issuer, serverDir, stubs, { recorders = true } = {}) {
-  const env = { ...process.env }
-  delete env.CLAVE_SERVER_URL
-  delete env.CLAVE_SERVER_TOKEN
-  for (const key of CREDENTIAL_KEYS) delete env[key]
-  env.CLAVE_ANTASPHERE_ISSUER = issuer
+/** What the two owned folders hold, by name; both empty while nothing reached them. */
+export function ownedFolderEntries(stubs) {
+  const list = (dir) => (existsSync(dir) ? readdirSync(dir).sort() : [])
+  return { claudeConfigDir: list(stubs.claudeConfigDir), codexHome: list(stubs.codexHome) }
+}
+
+/**
+ * The daemon's environment, built from the allowlist and nothing of this
+ * shell's beyond it: the fixture's shell, a PATH of the recorders and the
+ * system directories (this shell's own PATH only under the two mutations
+ * that stand a real `claude` in the daemon's way, to be caught), the two
+ * owned credential folders, the issuer, and on macOS the keychain file.
+ * Computed once, checked before the boot, then handed to the daemon as it is.
+ */
+export function childEnv(issuer, serverDir, stubs, { recorders = true } = {}) {
+  const env = {}
+  for (const key of ENV_ALLOWLIST) if (process.env[key] !== undefined) env[key] = process.env[key]
   env.SHELL = stubs.shell
-  if (recorders) env.PATH = `${stubs.dir}${path.delimiter}${env.PATH ?? ''}`
+  env.PATH = recorders
+    ? `${stubs.dir}${path.delimiter}${SYSTEM_PATH}`
+    : (process.env.PATH ?? SYSTEM_PATH)
   env.CLAUDE_CONFIG_DIR = stubs.claudeConfigDir
   env.CODEX_HOME = stubs.codexHome
+  env.CLAVE_ANTASPHERE_ISSUER = issuer
   if (process.platform === 'darwin')
     env.CLAVE_KEYCHAIN_FILE = path.join(serverDir, 'fixture.keychain-db')
   return env
@@ -380,12 +518,14 @@ function ensureTokenFile(file) {
   return readFileSync(file, 'utf8').trim()
 }
 
-/** The relay as its own process: the entry under Bun, its url on stdout. */
-async function startRelay({ bun, port, dataDir, issuer, log, timeoutMs }) {
+/** The relay as its own process: the entry under Bun, its url on stdout, on
+ *  the same allowlisted environment without the recorders (it spawns nothing). */
+async function startRelay({ bun, port, dataDir, issuer, env, log, timeoutMs }) {
   mkdirSync(dataDir, { recursive: true, mode: 0o700 })
   const child = spawn(
     bun,
     [
+      '--no-env-file',
       path.join(REPO, 'apps/relay/src/main.ts'),
       '--port',
       String(port),
@@ -394,7 +534,7 @@ async function startRelay({ bun, port, dataDir, issuer, log, timeoutMs }) {
       '--issuer',
       issuer
     ],
-    { cwd: REPO, stdio: ['ignore', 'pipe', 'pipe'] }
+    { cwd: REPO, env, stdio: ['ignore', 'pipe', 'pipe'] }
   )
   let errors = ''
   child.stderr.on('data', (d) => {
@@ -426,28 +566,17 @@ async function startRelay({ bun, port, dataDir, issuer, log, timeoutMs }) {
   return { url, child, dataDir }
 }
 
-/** The daemon: this checkout's server entry under Bun, ready once it has
- *  written `clave-server.json` with its own pid. */
-async function startDaemon({
-  bun,
-  port,
-  dataDir,
-  tokenFile,
-  issuer,
-  relay,
-  stubs,
-  flags,
-  recorders,
-  log,
-  timeoutMs
-}) {
+/** The daemon: this checkout's server entry under Bun, in the environment
+ *  the preflight checked, ready once it has written `clave-server.json`
+ *  with its own pid. */
+async function startDaemon({ bun, port, dataDir, tokenFile, relay, env, flags, log, timeoutMs }) {
   mkdirSync(dataDir, { recursive: true, mode: 0o700 })
   chmodSync(dataDir, 0o700)
-  const env = childEnv(issuer, dataDir, stubs, { recorders })
   if (env.CLAVE_KEYCHAIN_FILE) ensureKeychain(env.CLAVE_KEYCHAIN_FILE)
   const token = ensureTokenFile(tokenFile)
   const terminalProcess = path.join(REPO, 'out', 'main', 'terminal-process.js')
   const args = [
+    '--no-env-file',
     path.join(REPO, 'apps', 'server', 'src', 'main.ts'),
     '--data-dir',
     dataDir,
@@ -541,33 +670,94 @@ export function loginShellEnvOf(shell, env) {
 
 const same = (a, b) => {
   try {
-    return realpathSync(a) === realpathSync(b)
+    return typeof a === 'string' && realpathSync(a) === realpathSync(b)
   } catch {
     return false
   }
 }
 
-/**
- * The three checks a worktree must pass before any chat. Each row names
- * what it rests on: `announced` is the daemon's own discovery file (derived
- * from the code's flags), `observed` is what the fixture saw on the wire or
- * on the daemon's own shell.
- */
-export async function bootChecks({ server, stubs, log }) {
-  const results = []
-  const check = async (name, kind, fn) => {
+/** Whether `shell` is the fixture's stand-in AND bears a name the daemon runs
+ *  a command through (POSIX_SHELL_NAMES): the Codex usage read and the
+ *  one-shot's not-found fallback route by the shell's basename, and any other
+ *  name sends them to /bin/zsh, the real login shell, with the PATH its
+ *  profile builds (the verifier's round 1, F2). */
+export function shellStandsIn(shell, stubShell) {
+  return same(shell, stubShell) && POSIX_SHELL_NAMES.includes(path.basename(shell))
+}
+
+/** One row of a check: its name, the stage, what it rests on, the verdict. */
+function checker(stage, results, log) {
+  return async (name, kind, fn) => {
     try {
       const detail = await fn()
-      results.push({ name, kind, ok: true, detail: detail ?? null })
+      results.push({ stage, name, kind, ok: true, detail: detail ?? null })
       log(`check ok    ${name}${detail ? ` (${detail})` : ''}`)
     } catch (error) {
-      results.push({ name, kind, ok: false, detail: error.message })
+      results.push({ stage, name, kind, ok: false, detail: error.message })
       log(`check FAIL  ${name}: ${error.message}`)
     }
   }
-  const expect = (condition, message) => {
-    if (!condition) throw new Error(message)
-  }
+}
+const expect = (condition, message) => {
+  if (!condition) throw new Error(message)
+}
+
+/**
+ * The two checks before any process starts: the argv the daemon will get
+ * carries the three flags (`argv`), and the environment it will get, read
+ * the way the daemon reads its login environment, resolves `claude` and
+ * `codex` to the recorders (`observed`). `--preflight` runs these alone.
+ */
+export async function preflight({ flags, stubs, env, log }) {
+  const results = []
+  const check = checker('preflight', results, log)
+  await check(
+    "flags: the daemon's argv carries --no-titles, --test-no-activate and --test-no-machine-usage",
+    'argv',
+    async () => {
+      const missing = DAEMON_FLAGS.filter((f) => !flags.includes(f))
+      expect(
+        missing.length === 0,
+        `missing ${missing.join(' ')}; the argv carries ${flags.join(' ')}`
+      )
+      return flags.join(' ')
+    }
+  )
+  await check(
+    "the recorders stand in: the daemon's login shell is the fixture's zsh and its login environment resolves claude and codex to the recorders",
+    'observed',
+    async () => {
+      expect(
+        shellStandsIn(env.SHELL, stubs.shell),
+        `the daemon's SHELL would be ${env.SHELL}, not the fixture's zsh`
+      )
+      const login = loginShellEnvOf(env.SHELL, env)
+      const claude = locateOnPath('claude', login.PATH)
+      const codex = locateOnPath('codex', login.PATH)
+      expect(
+        claude && same(claude, stubs.claude),
+        `claude resolves to ${claude ?? 'nothing'} on the daemon's login PATH`
+      )
+      expect(
+        codex && same(codex, stubs.codex),
+        `codex resolves to ${codex ?? 'nothing'} on the daemon's login PATH`
+      )
+      return `claude and codex are the recorders under ${stubs.dir}`
+    }
+  )
+  return results
+}
+
+/**
+ * The three checks after the daemon announced itself and before any chat:
+ * what its discovery file says (`announced`, derived from the code's flags),
+ * that its test fixture route answers, and, asked of the daemon itself
+ * through its test hooks, what its title one-shot would start and where its
+ * cached login PATH finds `codex` (`observed`).
+ */
+export async function bootChecks({ server, stubs, log }) {
+  const results = []
+  const check = checker('boot', results, log)
   const discovery = server.discovery
   await check(
     'titles off: the daemon announces titles "off" (--no-titles)',
@@ -581,43 +771,66 @@ export async function bootChecks({ server, stubs, log }) {
     }
   )
   await check(
-    'test fixtures on, machine usage off: the daemon announces testFixtures true and machineUsage false, and answers POST /e2e/evaluate',
+    'test mode on, machine usage off: the daemon announces testMode true and machineUsage false, and answers POST /e2e/evaluate',
     'announced',
     async () => {
-      expect(
-        discovery.testFixtures === true,
-        `testFixtures ${JSON.stringify(discovery.testFixtures)}`
-      )
+      expect(discovery.testMode === true, `testMode ${JSON.stringify(discovery.testMode)}`)
       expect(
         discovery.machineUsage === false,
         `machineUsage ${JSON.stringify(discovery.machineUsage)}`
       )
       const one = await evaluate(server, '() => 1')
       expect(one === 1, `the fixture route answered ${JSON.stringify(one)}`)
-      return 'testFixtures: true, machineUsage: false, /e2e/evaluate answers'
+      return 'testMode: true, machineUsage: false, /e2e/evaluate answers'
     }
   )
   await check(
-    "the recorders stand in: the daemon's SHELL is the fixture's zsh and its login environment resolves claude and codex to the recorders",
+    "inside the running daemon, the title one-shot's resolver and the cached login PATH name the recorders, and SHELL is the fixture's",
     'observed',
     async () => {
       const inside = await evaluate(
         server,
-        '() => ({ shell: process.env.SHELL, path: process.env.PATH })'
-      )
-      expect(same(inside.shell, stubs.shell), `the daemon's SHELL is ${inside.shell}`)
-      const login = loginShellEnvOf(inside.shell, { ...server.env, PATH: inside.path })
-      const claude = locateOnPath('claude', login.PATH)
-      const codex = locateOnPath('codex', login.PATH)
-      expect(
-        claude && same(claude, stubs.claude),
-        `claude resolves to ${claude ?? 'nothing'} on the daemon's login PATH`
+        `async () => {
+          const titles = globalThis.__claveE2E?.titles
+          if (!titles) throw new Error('no titles hook on this daemon')
+          const launch = await titles.launch()
+          return { shell: process.env.SHELL, file: launch.file, pathEnv: launch.pathEnv, codex: titles.locate('codex') }
+        }`
       )
       expect(
-        codex && same(codex, stubs.codex),
-        `codex resolves to ${codex ?? 'nothing'} on the daemon's login PATH`
+        shellStandsIn(inside.shell, stubs.shell),
+        `the daemon's SHELL is ${inside.shell}, not the fixture's zsh`
       )
-      return `claude and codex are the recorders under ${stubs.dir}`
+      expect(
+        same(inside.file, stubs.claude),
+        `the title one-shot would start ${inside.file} on the daemon's cached login PATH`
+      )
+      expect(
+        same(inside.codex, stubs.codex),
+        `codex resolves to ${inside.codex ?? 'nothing'} inside the daemon`
+      )
+      expect(
+        typeof inside.pathEnv === 'string' && inside.pathEnv.startsWith(stubs.dir + path.delimiter),
+        `the one-shot's PATH does not start with ${stubs.dir}`
+      )
+      return `one-shot ${path.basename(inside.file)} and codex are the recorders, by the daemon's own resolver`
+    }
+  )
+  await check(
+    "inside the running daemon, the environment's keys are the allowlist's and the fixture's own, nothing else",
+    'observed',
+    async () => {
+      // Names compared, never values: the daemon answers the sorted keys of
+      // its process.env, and they must be exactly the keys it was handed.
+      const inside = await evaluate(server, '() => Object.keys(process.env).sort()')
+      const handed = Object.keys(server.env).sort()
+      const extra = inside.filter((k) => !handed.includes(k))
+      const missing = handed.filter((k) => !inside.includes(k))
+      expect(
+        extra.length === 0 && missing.length === 0,
+        `extra: ${extra.join(', ') || 'none'}; missing: ${missing.join(', ') || 'none'}`
+      )
+      return `${inside.length} keys: ${inside.join(', ')}`
     }
   )
   return results
@@ -727,48 +940,9 @@ export async function seedEchoChat(server, workspace) {
   return { id: started.id, nonce, text, cursor: page.cursor }
 }
 
-/** The transcript folders a `claude -p` of the daemon would write under
- *  ~/.claude/projects: one per working directory, the path with every slash
- *  and dot as a dash (`getJsonlPath` in the title generator). */
-export function transcriptFolders(cwds) {
-  return cwds.map((cwd) =>
-    path.join(os.homedir(), '.claude', 'projects', path.resolve(cwd).replace(/[/.]/g, '-'))
-  )
-}
-
-/** The transcripts born after `sinceMs` in those folders whose head carries
- *  the title generator's prompt: the files a real `claude -p` would leave.
- *  Names only, never content. */
-export function titleTranscriptsSince(folders, sinceMs) {
-  const found = []
-  for (const folder of folders) {
-    if (!existsSync(folder)) continue
-    for (const name of readdirSync(folder)) {
-      if (!name.endsWith('.jsonl')) continue
-      const file = path.join(folder, name)
-      let stat
-      try {
-        stat = statSync(file)
-      } catch {
-        continue
-      }
-      const born = stat.birthtimeMs > 0 ? stat.birthtimeMs : stat.ctimeMs
-      if (born < sinceMs - 1_000) continue
-      const fd = openSync(file, 'r')
-      try {
-        const head = Buffer.alloc(64 * 1024)
-        const read = readSync(fd, head, 0, head.length, 0)
-        if (head.toString('utf8', 0, read).includes(TITLE_PROMPT_PREFIX)) found.push(file)
-      } finally {
-        closeSync(fd)
-      }
-    }
-  }
-  return found
-}
-
-/** A push socket of the owner's that keeps every usage event it hears. */
-function watchUsageEvents(server) {
+/** A push socket of the owner's that keeps every usage event and every title
+ *  change it hears. */
+function watchEvents(server) {
   const events = []
   const titles = []
   const socket = new WebSocket(`${server.url.replace(/^http/, 'ws')}/push`)
@@ -792,8 +966,19 @@ function watchUsageEvents(server) {
   return { events, titles, close: () => socket.close(1000, 'done') }
 }
 
-/** The whole fixture: the provider, the relay, the daemon checked, signed
- *  in and on the relay, the scratch workspace and the seeded chat. */
+/** The refusal: what failed, and whether a daemon was ever started. */
+function refusal(checks, before) {
+  const failed = checks.filter((c) => !c.ok)
+  const error = new Error(
+    `the fixture refuses to boot, before any ${before}: ${failed.map((c) => c.name).join('; ')}`
+  )
+  error.checks = checks
+  return error
+}
+
+/** The whole fixture: the preflight, the provider, the relay, the daemon
+ *  checked, signed in and on the relay, the scratch workspace and the seeded
+ *  chat. */
 export async function startFixture({
   ports,
   tmpdir,
@@ -806,20 +991,31 @@ export async function startFixture({
     throw new Error(`mutate takes one of ${MUTATIONS.join(', ')}`)
   if (mutate) log(`MUTATION ${mutate}: a proof run, never a configuration`)
   const root = tmpdir ?? mkdtempSync(path.join(os.tmpdir(), 'clave-native-fixture-'))
-  mkdirSync(root, { recursive: true })
+  claimRunFolder(root)
   const bun = bunBinary(process.env, REPO)
   const stubs = installStubs(path.join(root, 'stubs'))
+  const serverDir = path.join(root, 'server')
+  const flags = flagsFor(mutate)
+  // The issuer's port is known only once the provider listens; the preflight
+  // checks the shell and the PATH, which do not depend on it, on the very
+  // environment the daemon is then handed, the issuer filled in.
+  const env = childEnv('http://127.0.0.1:0', serverDir, stubs, {
+    recorders: mutate !== 'drop-recorders'
+  })
+  const checks = await preflight({ flags, stubs, env, log })
+  if (!checks[1].ok || (!checks[0].ok && !mutate)) throw refusal(checks, 'daemon')
   const provider = await startOidcProvider({
     port: ports?.issuer ?? 0,
     registrationStatus: 200,
     user: OWNER
   })
+  env.CLAVE_ANTASPHERE_ISSUER = provider.issuer
   log(`issuer ${provider.issuer}`)
   let relay = null
   let server = null
-  let usage = null
+  let watch = null
   const stop = async () => {
-    usage?.close()
+    watch?.close()
     await stopChild(server?.child)
     await stopChild(relay?.child)
     await provider.close()
@@ -830,47 +1026,51 @@ export async function startFixture({
       port: ports?.relay ?? 0,
       dataDir: path.join(root, 'relay'),
       issuer: provider.issuer,
+      env: { ...env, PATH: SYSTEM_PATH },
       log,
       timeoutMs
     })
     log(`relay ${relay.url}`)
-    const serverDir = path.join(root, 'server')
     // The provider's registrations live in its memory: a stored client of a
     // previous boot is unknown to this one, so the daemon registers and signs
     // in anew every boot. Its identity, its token and the relay's machine
     // credential stay.
     for (const stale of ['antasphere-account-client.json', 'antasphere-account-session.json'])
       rmSync(path.join(serverDir, stale), { force: true })
+    // The one mutation that gives the daemon an environment other than the
+    // checked one: this shell's PATH, carrying a real claude, so the fifth
+    // check, asked of the daemon's own resolver, has something to catch.
+    const daemonEnv =
+      mutate === 'divergent-daemon-env' ? { ...env, PATH: process.env.PATH ?? SYSTEM_PATH } : env
     server = await startDaemon({
       bun,
       port: ports?.server ?? 0,
       dataDir: serverDir,
       tokenFile: path.join(serverDir, TOKEN_FILE_NAME),
-      issuer: provider.issuer,
       relay: relay.url,
-      stubs,
-      flags:
-        mutate === 'drop-title-opt-out'
-          ? DAEMON_FLAGS.filter((f) => f !== '--no-titles')
-          : DAEMON_FLAGS,
-      recorders: mutate !== 'drop-recorders',
+      env: daemonEnv,
+      flags,
       log,
       timeoutMs
     })
     log(`server ${server.url}, its token in ${server.tokenFile}`)
-    const checks = await bootChecks({ server, stubs, log })
-    const failed = checks.filter((c) => !c.ok)
-    const interlock = checks[2]
-    if (!interlock.ok || (failed.length && !mutate)) {
-      const error = new Error(
-        `the fixture refuses to boot, before any chat: ${failed.map((c) => c.name).join('; ')}`
+    checks.push(...(await bootChecks({ server, stubs, log })))
+    if (!checks[4].ok || !checks[5].ok || (checks.some((c) => !c.ok) && !mutate))
+      throw refusal(checks, 'chat')
+    watch = watchEvents(server)
+    if (mutate === 'bypass-title-guard') {
+      const disabled = await evaluate(
+        server,
+        '() => { const titles = globalThis.__claveE2E.titles; titles.enable(); return titles.disabled() }'
       )
-      error.bootChecks = checks
-      throw error
+      log(
+        `MUTATION: the titles re-opened through the test hook (disabled: ${JSON.stringify(disabled)}); the daemon still announces ${server.discovery.titles}`
+      )
     }
-    usage = watchUsageEvents(server)
+    let clockStartedAt = null
     if (mutate === 'start-usage-clock') {
       await evaluate(server, '() => { globalThis.__claveE2E.usageClock.start(60000); return true }')
+      clockStartedAt = Date.now()
       log('MUTATION: the usage clock started through the test hook, every flag kept')
     }
     await signIn(server, provider)
@@ -893,9 +1093,10 @@ export async function startFixture({
         dataDir: server.dataDir,
         pid: server.child.pid,
         flags: server.flags,
+        envKeys: Object.keys(server.env).sort(),
         announces: {
           titles: server.discovery.titles,
-          testFixtures: server.discovery.testFixtures,
+          testMode: server.discovery.testMode,
           machineUsage: server.discovery.machineUsage
         }
       },
@@ -908,8 +1109,14 @@ export async function startFixture({
       machineId: machine.id,
       workspace: { id: workspace.id, name: workspace.name, rootDir: workspace.rootDir },
       session: { id: seed.id, nonce: seed.nonce, text: seed.text },
-      stubs: { dir: stubs.dir, recorderLog: stubs.log, title: STUB_TITLE },
-      bootChecks: checks,
+      stubs: {
+        dir: stubs.dir,
+        recorderLog: stubs.log,
+        title: STUB_TITLE,
+        claudeConfigDir: stubs.claudeConfigDir,
+        codexHome: stubs.codexHome
+      },
+      checks,
       mutation: mutate,
       approve
     }
@@ -927,9 +1134,9 @@ export async function startFixture({
       stubs,
       checks,
       mutate,
-      usageEvents: usage.events,
-      titleEvents: usage.titles,
-      transcriptFolders: transcriptFolders([REPO, scratch]),
+      usageEvents: watch.events,
+      titleEvents: watch.titles,
+      clockStartedAt,
       manifest,
       manifestFile,
       /** The lines the command prints: every value a reader needs, never the token. */
@@ -979,6 +1186,37 @@ function approveLoop({ server, log }) {
   return {
     stop: () => {
       stopped = true
+    }
+  }
+}
+
+/** The running fixture's watch on its recorder: the first lines a recorder
+ *  writes are handed to `onCaught(lines, null)` once; a read of the log that
+ *  fails is handed over as `onCaught(null, error)`, a failure and never "no
+ *  calls"; `stop` ends the watch. */
+export function watchRecorder(stubs, onCaught, intervalMs = RECORDER_WATCH_MS) {
+  let done = false
+  const timer = setInterval(() => {
+    if (done) return
+    let lines
+    try {
+      lines = recorderLines(stubs)
+    } catch (error) {
+      done = true
+      clearInterval(timer)
+      onCaught(null, error)
+      return
+    }
+    if (lines.length === 0) return
+    done = true
+    clearInterval(timer)
+    onCaught(lines, null)
+  }, intervalMs)
+  timer.unref?.()
+  return {
+    stop: () => {
+      done = true
+      clearInterval(timer)
     }
   }
 }
@@ -1075,11 +1313,12 @@ function pushHello(url, token) {
  * usage reads are kept off by the flag (Claude) and caught by the recorder
  * (Codex). Every row names what it rests on: `announced` (the daemon's
  * flags, derived from the code), `recorder`, `wire` (the push channel, the
- * routes' answers), or `transcripts`. No row ever rests on a provider's
- * answer: none is expected.
+ * routes' answers), or `owned-folders` (the fixture's own credential
+ * folders). No row ever rests on a provider's answer: none is expected. The
+ * person's own folders are never read.
  */
 export async function proveNoProvider(fixture, { log = stderr } = {}) {
-  const { server, seed, stubs, transcriptFolders: folders, usageEvents, titleEvents } = fixture
+  const { server, seed, stubs, usageEvents, titleEvents } = fixture
   const results = []
   const check = async (name, kind, fn) => {
     try {
@@ -1091,11 +1330,12 @@ export async function proveNoProvider(fixture, { log = stderr } = {}) {
       log(`FAIL  ${name}: ${error.message}`)
     }
   }
-  const expect = (condition, message) => {
-    if (!condition) throw new Error(message)
-  }
-  const sinceStart = Date.now() - server.startedAt
-  if (sinceStart < CLOCK_WINDOW_MS) await sleep(CLOCK_WINDOW_MS - sinceStart)
+  // The window is counted from the clock's start: the daemon's spawn in a
+  // plain run, the test hook's call under the start-usage-clock mutation,
+  // whose first tick comes five seconds after THAT (round 1, F1).
+  const clockFrom = fixture.clockStartedAt ?? server.startedAt
+  const sinceClock = Date.now() - clockFrom
+  if (sinceClock < CLOCK_WINDOW_MS) await sleep(CLOCK_WINDOW_MS - sinceClock)
 
   await check(
     'the recorders saw no claude and no codex since the boot, the seeded chat included',
@@ -1115,26 +1355,29 @@ export async function proveNoProvider(fixture, { log = stderr } = {}) {
     return `no session.title_changed for the chat, ${titleEvents.length} for any`
   })
   await check(
-    "no transcript of a title call was born since the boot under the daemon's folders",
-    'transcripts',
+    'the fixture-owned Claude config folder and Codex home are still empty: no transcript, no credential written',
+    'owned-folders',
     async () => {
-      const transcripts = titleTranscriptsSince(folders, server.startedAt)
+      const entries = ownedFolderEntries(stubs)
       expect(
-        transcripts.length === 0,
-        `a title call left ${transcripts.map((f) => path.basename(f)).join(', ')}`
+        entries.claudeConfigDir.length === 0,
+        `the Claude config folder holds ${entries.claudeConfigDir.join(', ')}`
       )
-      return `${folders.length} folders scanned`
+      expect(entries.codexHome.length === 0, `the Codex home holds ${entries.codexHome.join(', ')}`)
+      return 'both empty'
     }
   )
   await check(
-    'the usage clock did not run: no usage event on the push channel and no codex app-server in the recorder past the first tick (announced: testFixtures true)',
+    'the usage clock did not run: no usage event on the push channel and no codex app-server in the recorder past the first tick (announced: testMode true)',
     'wire',
     async () => {
-      expect(server.discovery.testFixtures === true, 'the daemon does not announce testFixtures')
+      expect(server.discovery.testMode === true, 'the daemon does not announce testMode')
       const codexLines = recorderLines(stubs).filter((l) => l.includes(' codex '))
-      expect(codexLines.length === 0, `codex invoked: ${codexLines.join(' | ')}`)
-      expect(usageEvents.length === 0, `usage events heard: ${usageEvents.join(', ')}`)
-      return `0 usage events in ${Math.round((Date.now() - server.startedAt) / 1000)} s`
+      expect(
+        codexLines.length === 0 && usageEvents.length === 0,
+        `codex invoked: ${codexLines.join(' | ') || 'never'}; usage events heard: ${usageEvents.join(', ') || 'none'}`
+      )
+      return `0 usage events and 0 codex lines in ${Math.round((Date.now() - clockFrom) / 1000)} s`
     }
   )
   await check(
@@ -1195,9 +1438,6 @@ export async function proveFixture(fixture, { log = stderr } = {}) {
       results.push({ name, kind: 'wire', ok: false, detail: error.message })
       log(`FAIL  ${name}: ${error.message}`)
     }
-  }
-  const expect = (condition, message) => {
-    if (!condition) throw new Error(message)
   }
   const road = `${relay.url}/m/${machine.id}`
 
@@ -1409,19 +1649,47 @@ export async function proveFixture(fixture, { log = stderr } = {}) {
 async function main(argv) {
   const options = parseArgs(argv)
   const log = options.json && !options.check ? () => {} : stderr
+  if (options.preflight) {
+    // The two pre-boot checks alone, on this folder's stubs and the
+    // environment the daemon would get; no provider, no relay, no daemon.
+    const root = options.tmpdir ?? mkdtempSync(path.join(os.tmpdir(), 'clave-native-fixture-'))
+    let claim
+    try {
+      claim = claimRunFolder(root)
+    } catch (error) {
+      if (!error.refusedFolder) throw error
+      stderr(error.message)
+      process.exit(2)
+    }
+    // A reused folder is checked as it is: a dry run rewrites nothing.
+    const stubs = installStubs(path.join(root, 'stubs'), { reuse: !claim.fresh })
+    const env = childEnv('http://127.0.0.1:0', path.join(root, 'server'), stubs, {
+      recorders: options.mutate !== 'drop-recorders'
+    })
+    const checks = await preflight({ flags: flagsFor(options.mutate), stubs, env, log: stderr })
+    const failed = checks.filter((c) => !c.ok).length
+    if (options.json) process.stdout.write(`${JSON.stringify({ preflight: checks }, null, 2)}\n`)
+    else process.stdout.write(`preflight: ${checks.length} checks, ${failed} failed\n`)
+    process.exit(failed ? 2 : 0)
+  }
   let fixture
   try {
     fixture = await startFixture({ ...options, log })
   } catch (error) {
-    if (error.bootChecks) {
+    if (error.refusedFolder) {
+      stderr(error.message)
+      process.stdout.write('refused: the run folder\n')
+      process.exit(2)
+    }
+    if (error.checks) {
       stderr(error.message)
       if (options.json)
         process.stdout.write(
-          `${JSON.stringify({ refused: true, checks: error.bootChecks }, null, 2)}\n`
+          `${JSON.stringify({ refused: true, checks: error.checks }, null, 2)}\n`
         )
       else
         process.stdout.write(
-          `refused to boot: ${error.bootChecks.filter((c) => !c.ok).length} of 3 checks failed\n`
+          `refused to boot: ${error.checks.filter((c) => !c.ok).length} of ${error.checks.length} checks failed\n`
         )
       process.exit(2)
     }
@@ -1457,12 +1725,23 @@ async function main(argv) {
     await exit(failed.length ? 1 : 0)
     return
   }
+  // Running: the recorder is watched for as long as the fixture lives, and
+  // the first line it writes stops everything with exit code 3.
+  watchRecorder(fixture.stubs, (lines, error) => {
+    if (error)
+      stderr(
+        `the recorder log could not be read (${error.message}); stopping: a read that fails is a failure, never "no calls"`
+      )
+    else stderr(`the recorder caught an attempt while running; stopping: ${lines.join(' | ')}`)
+    void exit(3)
+  })
   const lines = fixture.lines()
-  if (options.json) process.stdout.write(`${JSON.stringify(lines, null, 2)}\n`)
+  if (options.json)
+    process.stdout.write(`${JSON.stringify({ ...lines, checks: fixture.checks }, null, 2)}\n`)
   else {
     for (const [key, value] of Object.entries(lines)) process.stdout.write(`${key}=${value}\n`)
     process.stdout.write(
-      `fixture: running${options.approve ? ', approving every pairing' : ''}; Ctrl-C stops it. Android emulator: adb reverse the server, relay and issuer ports.\n`
+      `fixture: running${options.approve ? ', approving every pairing' : ''}, watching ${path.basename(fixture.stubs.log)}; Ctrl-C stops it. Android emulator: adb reverse the server, relay and issuer ports.\n`
     )
   }
 }
