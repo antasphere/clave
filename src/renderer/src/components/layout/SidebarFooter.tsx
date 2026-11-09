@@ -17,15 +17,21 @@ import {
   claudeUsageStore,
   codexUsageStore,
   piUsageStores,
-  tightestWindow,
-  shortLabel,
+  accountUsageFieldsOf,
+  claudeUsageForModel,
+  headroomWindow,
+  capName,
+  capOutLabel,
   formatReset,
   usageProviderForSession,
+  useClaudeAccountsUsage,
   useUsageNavigation,
   USAGE_PROVIDER_LABELS,
   piTodaySummary,
   type UsageProvider
 } from '../../store/usage-store'
+import { windowExhausted } from '../../lib/account-pool'
+import { accountForLaunch } from '../../lib/switch-account'
 import { useClaudeProfileStore } from '../../store/claude-profile-store'
 import { useCodexAccountStore } from '../../store/codex-account-store'
 import { PiLogo } from '../icons/cli-logos'
@@ -129,12 +135,14 @@ export function UpdateBanner(): React.ReactElement {
 /**
  * The second line of the foot panel: how much of your agent is left.
  *
- * The window shown is not named here and must not be — which caps an account
- * has is the service's business (a 5-hour session block, a weekly all-models
- * cap, one weekly cap per model, and whatever it adds next), so the store picks
- * whichever came back is tightest. What is on the line is therefore always the
- * one about to stop you, with its own short name beside it so you can see WHICH
- * ceiling that is without opening anything.
+ * The cap shown is the one GOVERNING the focused tab's provider and model
+ * (PRDCT-4255): the tightest of the tab's own family cap and the shared caps
+ * (the weekly all-models cap, the 5-hour block where the plan has one), as
+ * the service ranks them, a tie going to the all-models cap. Which caps an
+ * account has is the service's business, so nothing here names a kind; the
+ * line names the cap it shows (`Fable`, `Overall`, `5h`) so 62% can be told
+ * apart between the Fable week and the whole week, and when that cap is out
+ * it says so in the one vocabulary: "Fable out · back in 2d 5h".
  *
  * Percent LEFT, not percent used. The old line here counted minutes worked
  * today, which said nothing about whether you could keep going.
@@ -153,11 +161,16 @@ function UsageLine({
 
   const left = Math.max(0, Math.round(100 - w.usedPercentage))
   const reset = formatReset(w.resetsAt)
+  const out = windowExhausted(w)
   // The service's verdict first where it disagrees with the raw percentage:
   // it is plan-aware and a bare number is not.
   const rank = { normal: 0, warning: 1, critical: 2 }
   const byPct = left <= 10 ? 'critical' : left <= 30 ? 'warning' : 'normal'
-  const level = rank[w.severity ?? 'normal'] >= rank[byPct] ? (w.severity ?? 'normal') : byPct
+  const level = out
+    ? 'critical'
+    : rank[w.severity ?? 'normal'] >= rank[byPct]
+      ? (w.severity ?? 'normal')
+      : byPct
 
   const tone =
     level === 'critical'
@@ -175,7 +188,14 @@ function UsageLine({
       className="sidebar-footer-line"
       data-usage-provider={provider}
       data-usage-account={account ?? undefined}
-      title={[USAGE_PROVIDER_LABELS[provider], account, w.label, `${left}% left`, reset]
+      data-usage-cap={capName(w)}
+      title={[
+        USAGE_PROVIDER_LABELS[provider],
+        account,
+        w.label,
+        out ? capOutLabel(w, { reset: 'at' }) : `${left}% left`,
+        out ? null : reset
+      ]
         .filter(Boolean)
         .join(' · ')}
     >
@@ -186,10 +206,11 @@ function UsageLine({
         />
       </span>
       <span className={cn('text-[11px] font-medium tabular-nums flex-shrink-0', tone)}>
-        {left}% left
+        {out ? capOutLabel(w) : `${left}% left`}
       </span>
       <span className="text-[11px] text-text-tertiary truncate">
-        · {provider === 'codex' ? 'Codex' : (account ?? 'Claude')} · {shortLabel(w)}
+        · {provider === 'codex' ? 'Codex' : (account ?? 'Claude')}
+        {out ? '' : ` · ${capName(w)}`}
       </span>
     </button>
   )
@@ -267,22 +288,27 @@ export function SidebarFooter(): React.ReactElement {
         ? null
         : usageProviderForSession(s.sessions.find((session) => session.id === s.focusedSessionId))
   )
-  // The foot follows the focused tab's ACCOUNT, not just its provider: a tab
-  // on the second subscription reads that subscription's headroom. With no
-  // tab focused, the account the launcher would use next.
-  const selectedProfileId = useClaudeProfileStore((s) => s.selectedProfileId)
+  // The foot follows the focused tab's ACCOUNT and MODEL, not just its
+  // provider: a tab on the second subscription reads that subscription's
+  // headroom, filtered to the caps its model draws on. With no tab focused,
+  // the account the launcher would pick next (the pool's answer over every
+  // account's read), on the shared caps alone until a launch's model is
+  // known (lane B's resolved default, PRDCT-4256).
+  useClaudeProfileStore((s) => s.selectedProfileId)
   const profiles = useClaudeProfileStore((s) => s.profiles)
   const focusedSession = useSessionStore((s) =>
     s.focusedSessionId === null
       ? null
       : (s.sessions.find((session) => session.id === s.focusedSessionId) ?? null)
   )
+  // Subscribed so the launcher's pick follows the reads as they land.
+  useClaudeAccountsUsage((s) => s.byAccount)
   const selectedCodexId = useCodexAccountStore((s) => s.selectedAccountId)
   const codexAccounts = useCodexAccountStore((s) => s.accounts)
   const accountId =
     provider === 'codex'
       ? (focusedSession?.codexAccountId ?? selectedCodexId)
-      : (focusedSession?.claudeProfileId ?? selectedProfileId)
+      : (focusedSession?.claudeProfileId ?? accountForLaunch('claude').id)
   const account =
     provider === 'codex'
       ? codexAccounts.find((a) => a.id === accountId)
@@ -327,11 +353,20 @@ export function SidebarFooter(): React.ReactElement {
   // remaining headroom, else the hours worked, else nothing — and if that
   // leaves only the feedback icon, the row still carries it.
   const quotaProvider = provider === 'claude' || provider === 'codex' ? provider : null
+  // The cap governing the focused tab: the account's read seen for the tab's
+  // model (its family cap and the shared caps; a Codex account has one cap
+  // set), the tightest of those, a tie going to the all-models cap.
   const usage =
     quotaProvider && quota.status !== 'error'
-      ? tightestWindow(
-          quota.data?.windows ?? [],
-          provider === 'claude' && focusedSession ? { model: focusedSession.model } : undefined
+      ? headroomWindow(
+          (() => {
+            const read = {
+              status: quota.status,
+              error: null,
+              ...accountUsageFieldsOf(quota.data?.windows ?? [])
+            }
+            return provider === 'claude' ? claudeUsageForModel(read, focusedSession?.model) : read
+          })()
         )
       : null
   const piTotals = provider === 'pi' && pi.status !== 'error' ? pi.data : null
