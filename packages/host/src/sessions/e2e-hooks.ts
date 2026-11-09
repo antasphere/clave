@@ -52,6 +52,10 @@ export interface E2eHooks {
   // phones under `--push-fake` (`packages/server/src/notify/credentials.ts`),
   // installed by whichever entry runs the server ──
   notify: NotifyE2eHooks
+  /** The native mobile wave: the title opt-out of `packages/host/src/title-generator.ts`,
+   *  for the fixture's mutation that lets a one-shot through while the daemon
+   *  still announces titles off, so its recorder is what catches the call. */
+  titles: { enable(): void; disable(reason: string): void; disabled(): string | null }
   // ── later lanes add theirs here ──
 }
 
