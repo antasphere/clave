@@ -1,0 +1,15 @@
+[
+  {"_tag":"welcome","serverId":"srv-1","protocol":1,"version":"1.72.0"},
+  {"_tag":"subscribed","sessionId":"s1","session":{"id":"s1","provider":"claude","transport":"events","cwd":"/tmp/scratch","windowKey":"server","state":"working","createdAt":1730000000000,"adapterId":"claude-chat","title":"A chat"}},
+  {"_tag":"unsubscribed","sessionId":"s1"},
+  {"_tag":"stream","sessionId":"s1","stream":{"kind":"event","event":{"type":"assistant_text","delta":"hi","final":true},"position":{"generation":"g1","sequence":7}}},
+  {"_tag":"stream","sessionId":"s1","stream":{"kind":"pty","data":"aGk="}},
+  {"_tag":"exit","sessionId":"s1","code":0},
+  {"_tag":"event","id":"e1","seq":4,"at":2,"event":{"_tag":"requests.changed","revision":9}},
+  {"_tag":"event","id":"e2","seq":5,"at":3,"event":{"_tag":"workspaces.state_changed","workspaces":[{"id":"ws1","name":"scratch","rootDir":"/tmp/scratch","profileFile":null,"createdAt":1}],"revision":4,"instance":"i-1"}},
+  {"_tag":"event","id":"e3","seq":6,"at":4,"event":{"_tag":"devices.changed","revision":2}},
+  {"_tag":"event","id":"e4","seq":7,"at":5,"event":{"_tag":"plugins.changed"}},
+  {"_tag":"error","sessionId":"s1","message":"unknown session"},
+  {"_tag":"pong"},
+  {"_tag":"request","id":"v1","windowKey":"w","kind":"anything"}
+]
