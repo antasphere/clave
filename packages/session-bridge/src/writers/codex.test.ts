@@ -1,6 +1,6 @@
 import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { Session } from '../ir.ts'
 import { readClaude } from '../readers/claude.ts'
@@ -332,6 +332,8 @@ describe('writing the file', () => {
     expect(written.codexVersion).toBe('0.167.0')
     expect(payload(written.rows[0]).cli_version).toBe('0.167.0')
     expect(readdirSync(home)).toEqual(['sessions'])
+    // The day folder holds the thread and nothing else: no .tmp left behind.
+    expect(readdirSync(dirname(written.path))).toEqual([basename(written.path)])
     const back = readCodex(written.threadId, home)
     expect(back.head).toMatchObject({
       provider: 'codex',
@@ -480,6 +482,12 @@ describe('the findings of verifier round 1, pinned', () => {
       'model = "gpt-5.6-sol"\nmodel_reasoning_effort = "high"\n\n[tui]\nmodel = "other"\n'
     )
     expect(codexConfigModel(home)).toBe('gpt-5.6-sol')
+    // A literal string too, and nothing past the first table (a profile's model is the profile's).
+    writeFileSync(join(home, 'config.toml'), "model = 'gpt-5.6-terra'\n")
+    expect(codexConfigModel(home)).toBe('gpt-5.6-terra')
+    writeFileSync(join(home, 'config.toml'), '[profiles.x]\nmodel = "profile-only-model"\n')
+    expect(codexConfigModel(home)).toBeNull()
+    writeFileSync(join(home, 'config.toml'), 'model = "gpt-5.6-sol"\n')
     const written = await writeCodex(sample(), {
       codexHome: home,
       codexVersion: '0.167.0',

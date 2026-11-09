@@ -448,8 +448,9 @@ export function codexRollout(session: Session, options: CodexRolloutOptions = {}
   }
 }
 
-/** The model the home's `config.toml` names at its top level (`model = "…"`),
- *  or null: the one TOML key this package reads, by a line match. */
+/** The model the home's `config.toml` names at its top level (`model = "…"` or
+ *  `model = '…'`, before the first `[table]`), or null: the one TOML key this
+ *  package reads, by a line match. */
 export function codexConfigModel(codexHome: string): string | null {
   let toml: string
   try {
@@ -459,8 +460,9 @@ export function codexConfigModel(codexHome: string): string | null {
   }
   for (const line of toml.split('\n')) {
     if (/^\s*\[/.test(line)) break
-    const match = /^\s*model\s*=\s*"([^"]+)"/.exec(line)
-    if (match) return match[1]
+    // A TOML basic string ("…") or literal string ('…').
+    const match = /^\s*model\s*=\s*(["'])([^"']+)\1/.exec(line)
+    if (match) return match[2]
   }
   return null
 }

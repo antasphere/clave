@@ -32,8 +32,10 @@ session-bridge verify <thread id> [--codex-home <dir>] # read it back through th
 Options of `convert`: `--codex-home <dir>` (default `$CODEX_HOME` or `~/.codex`),
 `--cwd <dir>` (resolved to an absolute path; the transcript's own by default),
 `--claude-config-dir <dir>`, `--model <codex model>` named in the thread's context (the
-home's `config.toml` `model` by default, `gpt-5` last), `--no-header`, `--json`. Exit codes: 0 done, 1 an error, 2 usage, 3 a refusal
-(a Codex version outside the pin, a file the readers do not recognise).
+home's `config.toml` top-level `model` by default, `gpt-5` last), `--no-header`, `--json`.
+`verify --read-only` never resumes. Exit codes: 0 done, 1 an error, 2 usage, 3 a refusal
+(a Codex version outside the pin, a file the readers do not recognise, a thread
+`verify --read-only` could not read because Codex never loaded it).
 
 The CLI runs the TypeScript source directly on Node 22.6+ (type stripping), no
 build step. In the Clave monorepo: `node packages/session-bridge/bin/session-bridge.mjs …`.

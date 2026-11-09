@@ -20,6 +20,7 @@ import { join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
 import { readClaude } from '../readers/claude.ts'
 import { loadThread, readThread, resumeThread } from '../codex/app-server.ts'
+import { main } from '../cli.ts'
 import { SUPPORTED, versionSupported } from '../codex/version.ts'
 import { writeCodex } from './codex.ts'
 
@@ -118,6 +119,23 @@ describe.skipIf(!supported)(
       const unread = await readThread(written.threadId, { codexHome: home, cwd: elsewhere })
       expect(unread.turns).toEqual([])
       expect(rows()).toBe(before)
+      // --read-only never resumes: no turns, no row written, and the exit code says nothing was verified (R9).
+      const readOnly = await loadThread(written.threadId, {
+        codexHome: home,
+        cwd: elsewhere,
+        readOnly: true
+      })
+      expect(readOnly.loaded).toBe('read')
+      expect(readOnly.turns).toEqual([])
+      expect(rows()).toBe(before)
+      const out: string[] = []
+      const code = await main(['verify', written.threadId, '--codex-home', home, '--read-only'], {
+        out: (l) => out.push(l),
+        err: (l) => out.push(l)
+      })
+      expect(code).toBe(3)
+      expect(rows()).toBe(before)
+      expect(out.some((l) => l.includes('Codex has never loaded this thread'))).toBe(true)
       // loadThread resumes it once, keeping the thread's own cwd whatever the caller's; Codex appends its settings row.
       const loaded = await loadThread(written.threadId, { codexHome: home, cwd: elsewhere })
       expect(loaded.loaded).toBe('resumed')

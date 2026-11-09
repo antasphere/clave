@@ -207,6 +207,8 @@ export async function main(
             `  turn ${turn.id} ${turn.status}: ${turn.items.map((i) => String(i.type)).join(', ')}`
           )
       }
+      // Nothing could be verified: a never-loaded thread under --read-only is a refusal, not a pass.
+      if (!thread.turns.length && thread.loaded === 'read') return 3
       return 0
     }
     io.err(USAGE)

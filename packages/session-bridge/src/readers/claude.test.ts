@@ -181,4 +181,23 @@ describe('reading a Claude Code transcript', () => {
     expect(said).not.toContain('Caveat: EDGE4 the person really started with Caveat:')
     expect(said).toContain('[Image]')
   })
+  it('reads a row that holds a text and an image as ONE message, so no turn is split (verifier round 2, R6)', () => {
+    const row = JSON.stringify({
+      type: 'user',
+      sessionId: 's',
+      cwd: '/w',
+      timestamp: '2026-11-09T10:00:00.000Z',
+      message: {
+        role: 'user',
+        content: [
+          { type: 'text', text: 'What is this?' },
+          { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'AAAA' } },
+          { type: 'text', text: 'Second thought.' }
+        ]
+      }
+    })
+    expect(replayClaudeTranscript([row]).map((i) => i.event)).toEqual([
+      { type: 'user_message', text: 'What is this?\n[Image]\nSecond thought.' }
+    ])
+  })
 })
