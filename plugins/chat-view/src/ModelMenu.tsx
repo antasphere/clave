@@ -8,11 +8,18 @@ import { currentOption, foldModelOptions, modelChipLabel } from './models'
 export function ModelMenu({
   sessionId,
   model,
+  pending = false,
   disabled,
   onSelect
 }: {
   sessionId: string
+  /** The model the chip names: the reader's pick while the provider has not
+   *  answered it, else the model the provider reported (PRDCT-4273). */
   model: string | null
+  /** The pick is awaiting the provider's answer: marked on the chip for a
+   *  reader of the DOM; nothing is disabled, since a message written after
+   *  the switch runs on the new model. */
+  pending?: boolean
   disabled: boolean
   onSelect: (id: string) => void
 }): React.JSX.Element {
@@ -73,6 +80,7 @@ export function ModelMenu({
           aria-label="Model"
           title="Change model"
           disabled={disabled}
+          data-pending={pending ? 'true' : undefined}
         >
           <span className="chat-model-trigger-label">{modelChipLabel(model, options)}</span>
           <ChevronDownIcon />

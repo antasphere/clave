@@ -6,7 +6,8 @@ import { claudeModelName, earlierClaudeIds } from '../../../src/shared/claude-mo
 // Those two aside, ids must be EQUAL: a prefix match took Fable 5.1
 // (claude-fable-5-1) for Fable 5 (claude-fable-5).
 const plain = (id: string): string => id.replace(/\[[^\]]*\]$/, '').replace(/-\d{8}$/, '')
-const sameId = (reported: string, id: string): boolean => plain(reported) === plain(id)
+/** Whether two ids name one model, a context suffix or a date stamp aside. */
+export const sameId = (reported: string, id: string): boolean => plain(reported) === plain(id)
 // No model reported yet matches no row: the chip waits for the provider's
 // word (the Claude adapter asks it at ready, PRDCT-4256) rather than claiming
 // a default it cannot name.
