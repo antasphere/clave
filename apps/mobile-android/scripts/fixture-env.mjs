@@ -33,6 +33,7 @@ import {
   writeFileSync
 } from 'node:fs'
 import net from 'node:net'
+import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { WebSocket } from 'ws'
@@ -73,6 +74,7 @@ const RELAY_PORT = portArg('relay', 47202)
 const ISSUER_PORT = portArg('issuer', 47203)
 const TMPDIR = path.resolve(arg('tmpdir', '/private/tmp/clave-native-b/fixture'))
 const CHECK = flag('check')
+const RED_STUB = flag('red-stub')
 const APPROVE = flag('approve')
 
 const RELAY_URL = `http://127.0.0.1:${RELAY_PORT}`
@@ -81,15 +83,43 @@ const SERVER_DATA = path.join(TMPDIR, 'server')
 
 /** A directory of agent stubs that exit 1, so the daemon's title generator never spawns a
  *  real agent under the person's login from the fixture environment. */
+/**
+ * The fixture's own login environment, so no real agent ever runs from it. The daemon's
+ * title generator spawns `claude -p` under the person's login on a chat's first message,
+ * and takes its environment from `$SHELL -lic 'env -0'` (pty-backend.ts, getLoginShellEnv):
+ * a stub on the daemon's PATH alone does not hold, since the person's login profile puts
+ * the real CLI back ahead of it (three real calls left this Mac on 9 November 2026 before
+ * this was understood). So SHELL is a script that ignores its arguments and prints the
+ * daemon's own environment with `/usr/bin/env -0`, whose PATH starts with this directory,
+ * where `claude` and `codex` are stubs that touch a marker and exit 1. The check asserts the
+ * marker and that no new transcript carrying the title prompt appeared; `--red-stub` writes
+ * stubs without the marker, which makes that step fail, the proof the step can go red.
+ */
 function agentShims() {
   const dir = path.join(TMPDIR, 'shims')
   mkdirSync(dir, { recursive: true, mode: 0o700 })
+  writeFileSync(path.join(dir, 'shell'), '#!/bin/sh\n# The fixture login shell: whatever the arguments, print this process environment.\nexec /usr/bin/env -0\n', { mode: 0o755 })
   for (const name of ['claude', 'codex']) {
-    const file = path.join(dir, name)
-    writeFileSync(file, '#!/bin/sh\necho "fixture: no real agent runs here (' + name + ' disabled)" >&2\nexit 1\n', { mode: 0o755 })
+    const marker = RED_STUB ? '' : `touch "${dir}/called-${name}"\n`
+    writeFileSync(
+      path.join(dir, name),
+      `#!/bin/sh\n${marker}echo "fixture: no real agent runs here (${name} disabled)" >&2\nexit 1\n`,
+      { mode: 0o755 }
+    )
   }
   return dir
 }
+/** Where Claude Code keeps this checkout's transcripts: a real title call leaves one there. */
+const TRANSCRIPTS_DIR = path.join(os.homedir(), '.claude', 'projects', REPO.replace(/[/.]/g, '-'))
+const TITLE_PROMPT = 'Generate a short 2-4 word title for this Claude Code terminal session'
+const listTranscripts = () => {
+  try {
+    return new Set(readdirSync(TRANSCRIPTS_DIR).filter((f) => f.endsWith('.jsonl')))
+  } catch {
+    return new Set()
+  }
+}
+const transcriptsBefore = listTranscripts()
 const RELAY_DATA = path.join(TMPDIR, 'relay')
 const SCRATCH = path.join(TMPDIR, 'scratch')
 const TOKEN_FILE = path.join(TMPDIR, 'server-token')
@@ -296,6 +326,9 @@ async function startDaemon() {
       '--port',
       String(SERVER_PORT),
       '--dev-echo-adapter',
+      // The daemon polls the Claude and Codex usage windows with the machine login unless it is
+      // told it runs under a test: the fixture must never spend the person's quota.
+      '--test-no-activate',
       '--relay',
       RELAY_URL
     ],
@@ -308,6 +341,7 @@ async function startDaemon() {
       // default and nothing leaves the loopback. The Echo adapter runs in process and needs
       // neither binary.
       PATH: `${agentShims()}:${process.env.PATH ?? ''}`,
+      SHELL: path.join(TMPDIR, 'shims', 'shell'),
       CLAVE_ANTASPHERE_ISSUER: ISSUER_URL,
       CLAVE_KEYCHAIN_FILE: path.join(SERVER_DATA, 'keychain.json')
     }
@@ -739,6 +773,22 @@ async function runCheck(env) {
     }, 10_000)
     expect(refused, `GET /sessions answered ${last?.status} after the revocation`)
     return `revoke ${revoked.status}; GET /sessions 401`
+  })
+  await step('the title generator hit the stub and no real agent ran', async () => {
+    const marker = path.join(TMPDIR, 'shims', 'called-claude')
+    const deadline = Date.now() + 20_000
+    while (!existsSync(marker) && Date.now() < deadline) await new Promise((r) => setTimeout(r, 500))
+    const fresh = [...listTranscripts()].filter((f) => !transcriptsBefore.has(f))
+    const titled = fresh.filter((f) => {
+      try {
+        return readFileSync(path.join(TRANSCRIPTS_DIR, f), 'utf8').includes(TITLE_PROMPT)
+      } catch {
+        return false
+      }
+    })
+    if (!existsSync(marker)) throw new Error('the claude stub was never called: the title generator ran something else')
+    if (titled.length) throw new Error(`${titled.length} new transcript(s) carry the title prompt: a real agent ran`)
+    return `marker ${path.relative(TMPDIR, marker)}; ${fresh.length} new transcript(s), 0 with the title prompt`
   })
   return !failed
 }
