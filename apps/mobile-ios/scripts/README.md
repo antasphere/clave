@@ -82,24 +82,31 @@ the daemon's test route) and `--test-no-machine-usage` (no usage read of the mac
 the flag counts only beside the previous one, `packages/host/src/test-mode.ts`). The daemon's
 environment is built from an allowlist (`HOME`, `USER`, `LOGNAME`, `TMPDIR`, `LANG`,
 `LC_ALL`, `LC_CTYPE`, `TERM`) plus what the stack sets: `SHELL`, a script named `zsh` under
-`stubs/` that prints the daemon's own environment whatever it is asked (the daemon reads its
-login environment with `$SHELL -lic 'env -0'`) and runs a `-c` command with /bin/sh; `PATH`,
+`stubs/` that prints a FIXED environment the stack wrote into it at boot, the very same
+variables, never the environment of any process (the daemon reads its login environment with
+`$SHELL -lic 'env -0'`), and runs a `-c` command with /bin/sh; `PATH`,
 led by `stubs/bin`, where `claude` and `codex` are recorders that append one line (the time,
 the command, its first two arguments, never the stdin) to `stubs/recorder.log`, the `claude`
 one answering `--version` with `claude fixture-recorder` and a one-shot with a fixed title;
 `CLAUDE_CONFIG_DIR` and `CODEX_HOME`, two empty folders beside them; the issuer and the
-keychain file. Nothing else of the parent process reaches the daemon or the relay: no agent
-login, no server address. The claim is exactly that: an allowlisted environment and two empty
-credential folders.
+keychain file. Bun is started with `--no-env-file` before every entry (the daemon's and the
+relay's), since it loads `.env`, `.env.<NODE_ENV>` and `.env.local` from its working directory
+otherwise. Nothing else of the parent process or of the repository reaches the daemon or the
+relay: no agent login, no server address. The claim is exactly that: an allowlisted
+environment, written once into the daemon and once into its stub shell, and two empty
+credential folders; the fourth check reads the sorted keys of the daemon's `process.env` from
+inside and requires them equal to that set.
 
 Five checks, printed first, every boot; one failing stops the boot with exit 2:
 
-1. before any process starts, the daemon's command carries the three flags and
-   `--dev-echo-adapter` (`preBootChecks` in `fixture-stack.mjs`);
+1. before any process starts, the daemon's command starts Bun with `--no-env-file` before the
+   entry and carries the three flags and `--dev-echo-adapter` (`preBootChecks` in
+   `fixture-stack.mjs`);
 2. before any process starts, the environment handed to the daemon is the allowlist plus
-   the stack's own variables, its `SHELL` the stub, the first folder of its `PATH` the
-   recorders', `CLAUDE_CONFIG_DIR` and `CODEX_HOME` the empty folders (`preBootChecks`; no
-   shell is run for it);
+   the stack's own variables, its `SHELL` the stub whose text prints exactly those variables
+   and echoes no live environment, the first folder of its `PATH` the recorders',
+   `CLAUDE_CONFIG_DIR` and `CODEX_HOME` the empty folders (`preBootChecks`; no shell is run
+   for it);
 3. after the daemon has announced itself and before anything is seeded, its discovery file
    (`clave-server.json`) says `titles: "off"`, `testMode: true` and `machineUsage: false`
    (`startStack`, step 3b);
@@ -112,7 +119,8 @@ Five checks, printed first, every boot; one failing stops the boot with exit 2:
    the daemon's own module instances and the launch is built the way the title path builds
    it. The facts say which road was taken. The cached environment (read from the daemon's own
    backend module either way) must resolve `claude` and `codex` to the recorders by canonical
-   path and name the empty folders; the one-shot's executable must have the recorder's
+   path and name the empty folders; the sorted keys of the daemon's `process.env` must equal
+   the allowlist plus the stack's own; the one-shot's executable must have the recorder's
    canonical path, no wrapper token may precede its own arguments, and on the module road its
    environment must carry no credential (`startStack`, step 3c, `assertInside`). Nothing runs
    here;
@@ -141,8 +149,8 @@ file is not the recorder, `--prove-inside args` arguments other than `--version`
 before the probe, and `--prove-inside probe` hands the daemon a wrong expected canonical path,
 which it refuses to run, nothing started; `--prove-recorder-read missing|unreadable` removes or
 replaces the owned recorder log while the stack runs and expects the watch to latch a failure;
-`--prove-title-guard` plants one line in the recorder log while the stack runs and expects the
-watch to stop the daemon. That a real title call reaches the recorder rather than the CLI was
+`--prove-title-guard` runs the `claude` recorder itself with `-p` while the stack runs (never a
+CLI), so a foreign line lands in the recorder log, and expects the watch to stop the daemon. That a real title call reaches the recorder rather than the CLI was
 shown on 9 November 2026 at 11:29 and 11:30, before `--no-titles` existed; after lane C's
 fixture is on `mobile`, its `--mutate drop-title-opt-out` is the verifier's knob for that proof.
 
