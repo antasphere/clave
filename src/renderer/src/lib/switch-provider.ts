@@ -1,6 +1,6 @@
 import type { HistoryItem, ModelOption, SessionStream } from '../../../shared/session-model'
 import type { ProviderChoice, ProviderSwitchPlan } from '../../../preload/index.d'
-import { registerProviderSwitchRoad } from './account-policy'
+import { isChatSession, registerProviderSwitchRoad } from './account-policy'
 import { useSessionStore, type Session } from '../store/session-store'
 import { accountsUsageFor, claudeUsageForModel, headroomLabel } from '../store/usage-store'
 import {
@@ -223,15 +223,18 @@ function askChoices(): void {
 }
 
 /** The other provider a session could continue on at a limit: Codex for a
- *  Claude tab, Claude for a Codex one, when this Mac runs it. Null for a tab
- *  without an account pool, or while the host has not said what it runs. */
+ *  Claude chat, Claude for a Codex one, when this Mac runs it. Null for a
+ *  tab without an account pool, for a terminal tab (its conversation is the
+ *  CLI's own, nothing here can read or move it), or while the host has not
+ *  said what it runs. */
 export function providerSwitchTargetFor(
   session: Session
 ): { adapterId: string; label: string } | null {
   askChoices()
   const from = accountProviderOf(session)
-  const adapterId = from === 'claude' ? 'codex-chat' : from === 'codex' ? 'claude-chat' : null
-  if (!adapterId || !providerChoices) return null
+  if (!from || !isChatSession(session, from)) return null
+  const adapterId = from === 'claude' ? 'codex-chat' : 'claude-chat'
+  if (!providerChoices) return null
   const choice = providerChoices.find((c) => c.adapterId === adapterId)
   return choice ? { adapterId: choice.adapterId, label: choice.label } : null
 }

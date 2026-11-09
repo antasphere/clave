@@ -15,7 +15,8 @@ const h = vi.hoisted(() => ({
     codexMode: false,
     claudeProfileId: 'work',
     alive: true,
-    model: 'claude-opus-5-5'
+    model: 'claude-opus-5-5',
+    launchProfileId: 'claude-chat'
   } as unknown as Session,
   state: {} as Record<string, unknown>,
   api: {} as Record<string, unknown>,
@@ -29,7 +30,11 @@ vi.mock('../store/usage-store', () => ({
   claudeUsageForModel: () => undefined,
   headroomLabel: () => '72% left · Overall'
 }))
-vi.mock('./account-policy', () => ({ registerProviderSwitchRoad: vi.fn() }))
+vi.mock('./account-policy', () => ({
+  registerProviderSwitchRoad: vi.fn(),
+  isChatSession: (session: { launchProfileId?: string }) =>
+    session.launchProfileId === 'claude-chat' || session.launchProfileId === 'codex-chat'
+}))
 vi.mock('./switch-account', () => ({
   accountForLaunch: (provider: string) =>
     provider === 'codex' ? { id: 'c1', label: 'Codex 1' } : { id: 'work', label: 'Work' },
@@ -261,6 +266,10 @@ describe("lane E's third rung: the road the limit policy takes (PRDCT-4300)", ()
         label: 'Codex'
       })
     )
+    // A terminal tab's conversation is the CLI's own: no provider rung for it.
+    expect(
+      mod.providerSwitchTargetFor({ ...h.session, launchProfileId: 'claude-terminal' } as Session)
+    ).toBeNull()
   })
   it("moves the tab on the plan's road with the target's first model, the handoff written from the host's history", async () => {
     ;(h.api.providerSwitchPlan as ReturnType<typeof vi.fn>).mockResolvedValue({
