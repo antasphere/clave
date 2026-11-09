@@ -26,7 +26,7 @@ session-bridge convert --from claude --to codex <session id or transcript.jsonl>
 codex resume <the thread id it printed>
 
 session-bridge inspect <transcript or rollout>       # what the file is, what its tape holds
-session-bridge verify <thread id> [--codex-home <dir>] # read it back through the real Codex (thread/read: appends nothing, moves nothing)
+session-bridge verify <thread id> [--codex-home <dir>] # read it back through the real Codex (a resume once if Codex never loaded it, keeping its cwd)
 ```
 
 Options of `convert`: `--codex-home <dir>` (default `$CODEX_HOME` or `~/.codex`),

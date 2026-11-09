@@ -224,3 +224,20 @@ export async function readThread(
     await server.close()
   }
 }
+
+/** A thread with its turns, read without a resume when Codex has already
+ *  loaded it once, and resumed once otherwise: `thread/read` answers no turns
+ *  for a thread Codex never projected (a file just written, or copied in),
+ *  and only a resume projects it. The resume sends no `cwd`, so the thread
+ *  keeps its own; Codex appends its settings row to the file, as the person's
+ *  own `codex resume` does. `loaded` says which road was taken. */
+export async function loadThread(
+  threadId: string,
+  options: AppServerOptions & { readOnly?: boolean }
+): Promise<ResumedThread & { loaded: 'read' | 'resumed' }> {
+  const read = await readThread(threadId, options)
+  if (read.turns.length || options.readOnly) return { ...read, loaded: 'read' }
+  const { cwd: _cwd, ...rest } = options
+  void _cwd
+  return { ...(await resumeThread(threadId, rest)), loaded: 'resumed' }
+}

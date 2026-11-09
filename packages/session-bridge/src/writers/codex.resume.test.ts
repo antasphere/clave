@@ -6,12 +6,20 @@
  * when no `codex` in the supported range is on PATH.
  */
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  realpathSync,
+  rmSync
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
 import { readClaude } from '../readers/claude.ts'
-import { readThread, resumeThread } from '../codex/app-server.ts'
+import { loadThread, readThread, resumeThread } from '../codex/app-server.ts'
 import { SUPPORTED, versionSupported } from '../codex/version.ts'
 import { writeCodex } from './codex.ts'
 
@@ -92,7 +100,7 @@ describe.skipIf(!supported)(
       expect(existsSync(join(home, 'state_5.sqlite'))).toBe(true)
     }, 120_000)
 
-    it('is read back without being changed: readThread appends no row and moves no cwd (M1)', async () => {
+    it('is read back: a resume once, without a cwd, to project the thread Codex never loaded; a plain read after (M1)', async () => {
       const home = mkdtempSync(join(tmpdir(), 'session-bridge-codex-home-'))
       const cwd = join(home, 'workdir')
       mkdirSync(cwd)
@@ -101,13 +109,22 @@ describe.skipIf(!supported)(
         readClaude(join(fixtures, 'claude-transcript-edges.jsonl')),
         { codexHome: home, cwd }
       )
-      const before = readFileSync(written.path, 'utf8')
+      const rows = (): number =>
+        readFileSync(written.path, 'utf8').split('\n').filter(Boolean).length
+      const before = rows()
       const elsewhere = join(home, 'elsewhere')
       mkdirSync(elsewhere)
-      const read = await readThread(written.threadId, { codexHome: home, cwd: elsewhere })
-      expect(read.cwd).toBe(cwd)
-      expect(read.turns).toHaveLength(9)
-      expect(read.turns.map((t) => t.items.map((i) => i.type))).toEqual([
+      // Never loaded: a read answers no turns and changes nothing.
+      const unread = await readThread(written.threadId, { codexHome: home, cwd: elsewhere })
+      expect(unread.turns).toEqual([])
+      expect(rows()).toBe(before)
+      // loadThread resumes it once, keeping the thread's own cwd whatever the caller's; Codex appends its settings row.
+      const loaded = await loadThread(written.threadId, { codexHome: home, cwd: elsewhere })
+      expect(loaded.loaded).toBe('resumed')
+      // Codex answers the real path (macOS keeps /var behind /private/var).
+      expect(loaded.cwd).toBe(realpathSync(cwd))
+      expect(loaded.turns).toHaveLength(9)
+      expect(loaded.turns.map((t) => t.items.map((i) => i.type))).toEqual([
         ['userMessage', 'agentMessage'],
         ['userMessage', 'agentMessage'],
         ['userMessage', 'agentMessage'],
@@ -118,15 +135,19 @@ describe.skipIf(!supported)(
         ['userMessage', 'fileChange'],
         ['userMessage', 'agentMessage']
       ])
-      expect((read.turns[2].items[0].content as { text: string }[])[0].text).toBe('[Image]')
-      expect(read.turns[4].items[1]).toMatchObject({
+      expect((loaded.turns[2].items[0].content as { text: string }[])[0].text).toBe('[Image]')
+      expect(loaded.turns[4].items[1]).toMatchObject({
         status: 'failed',
         aggregatedOutput: 'EDGE5 late output\n[Image]'
       })
-      expect(readFileSync(written.path, 'utf8')).toBe(before)
-      // A resume without a cwd keeps the thread's own too.
-      const resumed = await resumeThread(written.threadId, { codexHome: home })
-      expect(resumed.cwd).toBe(cwd)
+      const afterResume = rows()
+      expect(afterResume).toBe(before + 1)
+      // Loaded once, a plain read answers the turns and appends nothing more.
+      const again = await loadThread(written.threadId, { codexHome: home, cwd: elsewhere })
+      expect(again.loaded).toBe('read')
+      expect(again.turns).toHaveLength(9)
+      expect(again.cwd).toBe(realpathSync(cwd))
+      expect(rows()).toBe(afterResume)
     }, 120_000)
   }
 )

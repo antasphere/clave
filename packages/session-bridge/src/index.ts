@@ -36,5 +36,11 @@ export {
   codexVersion,
   assertCodexSupported
 } from './codex/version.ts'
-export { CodexAppServer, resumeThread, readThread, CodexRpcError } from './codex/app-server.ts'
+export {
+  CodexAppServer,
+  resumeThread,
+  readThread,
+  loadThread,
+  CodexRpcError
+} from './codex/app-server.ts'
 export { uuidv7 } from './ids.ts'

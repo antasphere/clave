@@ -5,13 +5,15 @@
  *                          [--codex-home <dir>] [--claude-config-dir <dir>] [--model <codex model>]
  *                          [--no-header] [--json]
  *   session-bridge inspect <file> [--json]
- *   session-bridge verify <thread id> [--codex-home <dir>] [--json]
+ *   session-bridge verify <thread id> [--codex-home <dir>] [--read-only] [--json]
  *
  * `convert` reads the conversation, checks the installed Codex against the
  * pin, writes the thread and prints the `codex resume` to run. `inspect` says
  * what a file is and what its tape holds. `verify` reads a thread back through
- * the real Codex on the given home (`thread/read`, which appends nothing and
- * moves nothing) and prints what came back.
+ * the real Codex on the given home and prints what came back: `thread/read`
+ * when Codex has loaded the thread before, else one resume without a cwd (the
+ * thread keeps its own; Codex appends its settings row, as `codex resume`
+ * does), unless `--read-only` forbids it.
  */
 import { parseArgs } from 'node:util'
 import { existsSync, readFileSync } from 'node:fs'
@@ -19,7 +21,7 @@ import { resolve } from 'node:path'
 import { findClaudeTranscript, readClaude } from './readers/claude.ts'
 import { defaultCodexHome, readCodex } from './readers/codex.ts'
 import { writeCodex } from './writers/codex.ts'
-import { readThread } from './codex/app-server.ts'
+import { loadThread } from './codex/app-server.ts'
 import { UnsupportedVersionError } from './codex/version.ts'
 import { UnrecognisedTranscriptError, object, type Session } from './ir.ts'
 
@@ -29,7 +31,7 @@ const USAGE = `session-bridge: carry a coding-agent conversation from one CLI to
                          [--codex-home <dir>] [--claude-config-dir <dir>] [--model <codex model>]
                          [--no-header] [--json]
   session-bridge inspect <file> [--json]
-  session-bridge verify <thread id> [--codex-home <dir>] [--json]
+  session-bridge verify <thread id> [--codex-home <dir>] [--read-only] [--json]
 `
 
 export interface CliIo {
@@ -173,7 +175,8 @@ export async function main(
         options: {
           json: { type: 'boolean' },
           'codex-home': { type: 'string' },
-          cwd: { type: 'string' }
+          cwd: { type: 'string' },
+          'read-only': { type: 'boolean' }
         }
       })
       const threadId = positionals[0]
@@ -181,15 +184,24 @@ export async function main(
         io.err(USAGE)
         return 2
       }
-      const thread = await readThread(threadId, {
+      const thread = await loadThread(threadId, {
         codexHome: values['codex-home'] ?? defaultCodexHome(),
-        ...(values.cwd ? { cwd: resolve(values.cwd) } : {})
+        ...(values.cwd ? { cwd: resolve(values.cwd) } : {}),
+        readOnly: values['read-only'] === true
       })
       if (values.json) io.out(JSON.stringify(thread, null, 2))
       else {
         io.out(
           `thread ${thread.id} · ${thread.historyMode} · model ${thread.model ?? '?'} · ${thread.turns.length} turn(s)`
         )
+        if (thread.loaded === 'resumed')
+          io.out(
+            '  (Codex had never loaded this thread: resumed it once, keeping its cwd, to read it)'
+          )
+        else if (!thread.turns.length)
+          io.out(
+            '  (no turns: Codex has never loaded this thread; without --read-only a resume would load it)'
+          )
         for (const turn of thread.turns)
           io.out(
             `  turn ${turn.id} ${turn.status}: ${turn.items.map((i) => String(i.type)).join(', ')}`
