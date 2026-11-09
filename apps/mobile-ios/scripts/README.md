@@ -6,13 +6,15 @@ the app. The other two scripts run the app against an isolated fixture stack on 
 ## The fixture stack
 
 ```sh
-node apps/mobile-ios/scripts/fixture-stack.mjs [--approve] [--self-check | --once]
+node apps/mobile-ios/scripts/fixture-stack.mjs [--approve] [--dry-run | --self-check | --once | --prove-prerequisites | --prove-title-guard]
 node apps/mobile-ios/scripts/fixture-check.mjs --udid <simulator udid> [--only <xcodebuild -only-testing value>]
 ```
 
 `fixture-stack.mjs` brings the stack up and keeps it running until Ctrl-C. `--approve`
 approves every phone that asks to pair. `--self-check` proves the stack end to end and
-exits. `--once` brings it up, prints it and tears it down.
+exits. `--once` brings it up, prints it and tears it down. `--dry-run` runs the two
+pre-boot checks below on the very command and environment a boot would use, prints that
+command and exits without starting anything. A boot whose checks fail exits 2.
 
 `fixture-check.mjs` brings the stack up with approval on, boots the simulator if it is
 not booted, runs `xcodebuild test` (by default `-only-testing:ClaveUITests/FixtureFlowTests`),
@@ -36,6 +38,8 @@ owner-token     the server's bearer token, mode 0600 (the only place the scripts
 server/         the daemon's data, its keychain file included (no login keychain is touched)
 relay/          the relay's data
 scratch/        the workspace `scratch` the Echo chat runs in
+stubs/          zsh (the daemon's login shell, stood in for), bin/claude and bin/codex (the recorders),
+                recorder.log (one line per recorded call, never a prompt), claude-config/ and codex-home/ (empty)
 logs/           server.log, relay.log, xcodebuild.log
 results/        one .xcresult per check
 check.json      startedAt, finishedAt, udid, only, exitCode, resultBundle
@@ -54,17 +58,43 @@ things:
 ## No real model call from a boot
 
 The daemon names every fresh Claude-mode chat by its first message with a one-shot of the
-Claude CLI under the machine's login, and polls the machine's Claude and Codex usage unless
-told not to. The stack starts the daemon with `--test-no-activate` and `--test-no-machine-usage` (the
-second flag counts only beside the first, `packages/host/src/test-mode.ts`), with `SHELL` pointing at
-a script that answers the daemon's own environment whatever it is asked (the daemon reads
-the login shell's environment with `$SHELL -lic 'env -0'`), and with a `PATH` led by a
-folder holding a `claude` and a `codex` stub that drain their input, print a fixed title and
-touch a marker under `stubs/markers/`. After the seed the boot asserts that the marker is
-there and that no new transcript under `~/.claude/projects` carries the title prompt, else
-it fails. `--prove-title-guard` boots with a `claude` stub that leaves no marker and expects
-the boot to fail at that guard: the proof the check can go red, made with the stub still in
-place, never by removing it.
+Claude CLI under the machine's login, and reads the machine's Claude and Codex usage unless
+told not to. The stack starts the daemon with `--no-titles` (no tab is named, lane C's fix,
+PR #354), `--test-no-activate` (the test fixtures, which also stop the usage clock) and
+`--test-no-machine-usage` (no usage read of the machine login; the flag counts only beside
+the previous one, `packages/host/src/test-mode.ts`); with `SHELL` pointing at a script named
+`zsh` under `stubs/` that prints the daemon's own environment whatever it is asked (the
+daemon reads its login environment with `$SHELL -lic 'env -0'`) and runs a `-c` command with
+/bin/sh; with a `PATH` led by `stubs/bin`, where `claude` and `codex` are recorders that
+append one line (the time, the command, its first two arguments, never the stdin) to
+`stubs/recorder.log`, the `claude` one answering a one-shot with a fixed title; and with
+`CLAUDE_CONFIG_DIR` and `CODEX_HOME` pointing at empty folders beside them. None of this
+Mac's agent logins (`CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_API_KEY`, `CLAUDECODE`,
+`OPENAI_API_KEY`) and no address of a server this shell is attached to reaches any child.
+
+Three checks, printed first, every boot; one failing stops the boot with exit 2:
+
+1. before any process starts, the daemon's command carries the three flags and
+   `--dev-echo-adapter` (`preBootChecks` in `fixture-stack.mjs`);
+2. before any process starts, the daemon's login environment, read the way the daemon reads
+   it, resolves `claude` and `codex` to the recorders, names the empty Claude config folder
+   and Codex home, and carries none of the logins above (`preBootChecks`);
+3. after the daemon has announced itself and before anything is seeded, its discovery file
+   (`clave-server.json`) says `titles: "off"`, `testMode: true` and `machineUsage: false`
+   (`startStack`, step 3b).
+
+After the seed, the recorder interlock reads the recorders 12 s after the daemon started
+(7 s past the usage clock's first tick at 5 s, `packages/host/src/usage-manager.ts`, the
+figure lane C's fixture uses): any recorded line, or any new transcript under
+`~/.claude/projects` carrying the title prompt, fails the boot.
+
+Two proofs that the checks go red, both with every flag kept so no boot ever runs with
+wrong flags: `--prove-prerequisites` hands the third check a discovery read saying
+`titles: "on"` and expects the refusal before the seed; `--prove-title-guard` plants one
+line in the recorder log after the seed and expects the interlock to go red on it. That a
+real title call reaches the recorder rather than the CLI was shown on 9 November 2026 at
+11:29 and 11:30, before `--no-titles` existed; after lane C's fixture is on `mobile`, its
+`--mutate drop-title-opt-out` is the verifier's knob for that proof.
 
 ## What is a fixture, and what is not
 
@@ -73,8 +103,8 @@ place, never by removing it.
 - The chats run the Echo adapter (`--dev-echo-adapter`), which repeats what it is told and
   raises no request. The daemon around it is the real server entry: on 9 November 2026 two
   boots (11:18:58 and 11:19:54) let it call the real Claude CLI once each to name the
-  seeded chat, which the guard above now stops; the daemon also polls the machine's usage
-  unless `--test-no-activate` with `--test-no-machine-usage` says not to. Until that fix is on `mobile`, boots that start a session are on hold, and from
-  then on every boot first shows the title opt-out, the no-activate flags and the post-login
-  recorder interlock pass.
+  seeded chat, which the checks above now stop. Until lane C's fix (PR #354) is on `mobile`
+  and this branch is rebased onto it, the daemon announces none of the three prerequisites
+  and the boot refuses before the seed; every boot that starts a session is on hold until
+  the wave's coordinator lifts it.
 - The relay and the server are this checkout's own entries, run under the repository's Bun.

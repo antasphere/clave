@@ -66,6 +66,7 @@ checkout's relay and its standalone server with the Echo adapter, all on 127.0.0
 owner signed in, one Echo chat seeded with a nonce.
 
 ```sh
+node apps/mobile-ios/scripts/fixture-stack.mjs --dry-run        # the two pre-boot checks, nothing started
 node apps/mobile-ios/scripts/fixture-stack.mjs --self-check     # the stack alone, proven through the relay road
 node apps/mobile-ios/scripts/fixture-check.mjs --udid <udid>      # the UI tests of the app against it
 ```
@@ -75,15 +76,17 @@ raises no request. The daemon itself is not a fixture, and two boots of this sta
 9 November 2026 (11:18:58 and 11:19:54) let it make a real one-shot call of the Claude CLI
 under the machine's login, to name the seeded Echo chat by its first message, a fixture
 nonce: the daemon names every fresh Claude-mode chat that way, the Echo fixture included,
-and polls the machine's Claude and Codex usage unless told not to. Since then the stack
-starts the daemon with `--test-no-activate` and `--test-no-machine-usage`, a shell stub that answers the daemon's own
-environment and a `claude` and `codex` stub on the front of its PATH that touch a marker,
-and every boot asserts that the title call reached the stub and left no transcript
-(`scripts/README.md`). Once lane C's product fix is on `mobile`, every fixture boot, the
-verifier's included, must first show the three enforced prerequisites pass: the title
-opt-out flag set, `--test-no-activate` with `--test-no-machine-usage` set, and the
-post-login recorder interlock green; the fixture refuses to boot otherwise and prints them.
-Until that fix is in, fixture boots that start a session, seed, write or launch are on hold.
+and reads the machine's Claude and Codex usage unless told not to. Since then every boot
+runs three checks and refuses unless all pass (`scripts/README.md`): before any process
+starts, the daemon's command carries `--no-titles`, `--test-no-activate` and
+`--test-no-machine-usage`, and the daemon's login environment resolves `claude` and `codex`
+to the stack's recorders; after the daemon announces itself and before anything is seeded,
+its discovery file says `titles: "off"`, `testMode: true` and `machineUsage: false`
+(lane C's fix, PR #354 against `mobile`). After the seed, a recorded CLI call or a new
+transcript carrying the title prompt fails the boot. Until that fix is on `mobile` and
+this branch is rebased onto it, the daemon announces none of the three and the boot
+refuses before the seed; every fixture boot that starts a session, seeds, writes or
+launches is on hold until the wave's coordinator lifts it.
 
 ## What a device install needs
 
