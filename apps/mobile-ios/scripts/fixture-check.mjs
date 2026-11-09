@@ -173,7 +173,13 @@ async function main() {
     process.stderr.write(`fixture-check: ${err.message}\n`)
     if (exitCode === 0) exitCode = 1
   } finally {
-    await stack.stop()
+    const left = await stack.stop()
+    if (left.length) {
+      // The recorder watch saw a call, or a file landed in a credential folder:
+      // the run is red whatever xcodebuild said.
+      log(`the recorders or the credential folders were not silent: ${left.join(' | ')}`)
+      exitCode = 2
+    }
     log('stack stopped')
     if (booted) {
       log(`shutting down simulator ${udid} (this check booted it)`)

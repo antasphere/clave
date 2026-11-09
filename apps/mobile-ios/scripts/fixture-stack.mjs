@@ -12,38 +12,52 @@
 //
 //   node apps/mobile-ios/scripts/fixture-stack.mjs [--server 47101] [--relay 47102]
 //        [--tmpdir /private/tmp/clave-native-a/stack] [--approve]
-//        [--dry-run | --self-check | --once | --prove-prerequisites | --prove-title-guard]
+//        [--dry-run | --self-check | --once | --prove-tmpdir-guard | --prove-prerequisites
+//         | --prove-inside cache|resolver | --prove-title-guard]
 //
-// Every boot runs three checks and refuses (exit 2) unless all pass, printing
+// Every boot runs four checks and refuses (exit 2) unless all pass, printing
 // them first. Before any process starts: (1) the daemon's command carries
 // --no-titles, --test-no-activate and --test-no-machine-usage; (2) the
-// daemon's login environment, read the way the daemon reads it ($SHELL -lic
-// 'env -0'), resolves claude and codex to the recorders and names the empty
-// Claude config folder and Codex home, none of this Mac's agent logins in it.
-// After the daemon announces itself and before anything is seeded: (3) its
-// discovery file says titles "off", testMode true and machineUsage false.
-// After the seed, the recorder interlock fails the boot on any recorded CLI
-// call or any new transcript carrying the title prompt. --dry-run runs the two
-// pre-boot checks on the very command and environment a boot would use,
-// prints that command and exits without starting anything.
+// environment handed to the daemon is built from an allowlist, its SHELL is
+// the stack's stub, the first folder of its PATH holds the claude and codex
+// recorders, and CLAUDE_CONFIG_DIR and CODEX_HOME are empty folders the stack
+// made. After the daemon announces itself and before anything is seeded:
+// (3) its discovery file says titles "off", testMode true and machineUsage
+// false; (4) read INSIDE the daemon through its test route (POST
+// /e2e/evaluate, packages/server/src/fixtures/route.ts): its cached login
+// environment (getLoginShellEnv) resolves claude and codex to the recorders
+// and names the empty folders, and the one-shot launch the title path builds
+// (buildOneShotLaunch over launchProfileManager.resolveClaudeCli) names the
+// claude recorder as its executable. After the seed, the recorders and the
+// two folders are read at once and then every half second for the whole
+// run: one recorded call or one file in a folder stops the daemon and ends
+// the run with exit 2. --once and --self-check keep the stack up at least
+// 12 s (7 s past the usage clock's first tick at 5 s) under that watch.
+//
+// --dry-run runs the two pre-boot checks on the very command and environment
+// a boot would use, prints that command and exits without starting anything.
 // --approve approves every pending pairing as the owner (GET /devices every
 // second). --self-check proves the relay road end to end, prints PASS/FAIL
 // lines and exits. --once brings the stack up, prints it and tears it down.
-// The two proofs keep every flag (never a wrong-flags boot):
-// --prove-prerequisites hands check 3 a discovery read saying titles "on" and
-// expects the refusal before the seed; --prove-title-guard plants one line in
-// the recorder log after the seed and expects the interlock to go red on it.
-// Otherwise the stack runs until SIGINT/SIGTERM. The server's bearer token is
-// written to <tmpdir>/owner-token (mode 0600) and nowhere else: never to
-// stdout, stack.json or a log. Children's output goes to <tmpdir>/logs/.
+// The proofs keep every flag (never a wrong-flags boot): --prove-tmpdir-guard
+// starts nothing and shows a folder the stack does not own refused with its
+// sentinel intact; --prove-prerequisites hands check 3 a discovery read
+// saying titles "on"; --prove-inside cache|resolver hands check 4 a cached
+// PATH without the recorders, or a one-shot executable that is not the
+// recorder; --prove-title-guard plants one line in the recorder log while the
+// stack runs and expects the watch to stop the daemon. Otherwise the stack
+// runs until SIGINT/SIGTERM. The server's bearer token is written to
+// <tmpdir>/owner-token (mode 0600) and nowhere else: never to stdout,
+// stack.json or a log. Children's output goes to <tmpdir>/logs/.
 //
 // Import `startStack(options)` to drive the stack from another script.
-import { execFileSync, spawn } from 'node:child_process'
+import { spawn } from 'node:child_process'
 import {
   appendFileSync,
   createWriteStream,
   existsSync,
   mkdirSync,
+  mkdtempSync,
   readdirSync,
   readFileSync,
   realpathSync,
@@ -51,7 +65,7 @@ import {
   statSync,
   writeFileSync
 } from 'node:fs'
-import { homedir } from 'node:os'
+import os from 'node:os'
 import { randomBytes, randomUUID } from 'node:crypto'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -61,11 +75,8 @@ const HERE = path.dirname(fileURLToPath(import.meta.url))
 export const REPO = path.resolve(HERE, '..', '..', '..')
 const BUN = path.join(REPO, 'node_modules', '.bin', 'bun')
 const STEP_MS = 30_000
-/** The opening line of the daemon's own title prompt (packages/host/src/session-history/index.ts). */
-const TITLE_HELPER_MARKER = 'Generate a short 2-4 word title for this Claude Code terminal session'
-const TRANSCRIPTS = path.join(homedir(), '.claude', 'projects')
 /** What the daemon's discovery file must announce before anything is seeded
- *  (apps/server/src/main.ts under PR #354): no tab named, the test fixtures on,
+ *  (apps/server/src/main.ts under PR #354): no tab named, the test mode on,
  *  no usage read of the machine login. */
 export const PREREQUISITES = [
   ['titles', 'off'],
@@ -74,23 +85,52 @@ export const PREREQUISITES = [
 ]
 /** The flags every daemon boot carries (apps/server/src/main.ts, packages/host/src/test-mode.ts). */
 export const DAEMON_FLAGS = ['--no-titles', '--test-no-activate', '--test-no-machine-usage']
-/** The variables of this Mac's agent logins, never handed to a child. */
-const CREDENTIAL_KEYS = [
-  'CLAUDE_CODE_OAUTH_TOKEN',
-  'ANTHROPIC_API_KEY',
-  'CLAUDECODE',
-  'CLAUDE_CONFIG_DIR',
-  'CODEX_HOME',
-  'OPENAI_API_KEY'
+/** The only variables of this process a child may inherit; PATH and SHELL are rebuilt. */
+export const ENV_ALLOWLIST = [
+  'HOME',
+  'USER',
+  'LOGNAME',
+  'TMPDIR',
+  'LANG',
+  'LC_ALL',
+  'LC_CTYPE',
+  'TERM'
 ]
+/** The variables the stack sets itself on the daemon. */
+const DAEMON_OWN_KEYS = [
+  'PATH',
+  'SHELL',
+  'CLAVE_ANTASPHERE_ISSUER',
+  'CLAVE_KEYCHAIN_FILE',
+  'CLAUDE_CONFIG_DIR',
+  'CODEX_HOME'
+]
+/** The launch profile of the seeded chat; the title path resolves the Claude CLI for it. */
+const ECHO_PROFILE_ID = 'dev-echo-adapter'
 /** What the claude recorder answers a title one-shot with, were one ever asked. */
 const STUB_TITLE = 'fixture chat'
 /** A failed check stops the boot with this exit code, as lane C's fixture does. */
 export const CHECK_FAILED_EXIT = 2
-/** The recorders are read this long after the daemon started: 7 s past the
- *  usage clock's first tick at 5 s (packages/host/src/usage-manager.ts), the
- *  figure lane C's fixture uses. */
-const SILENCE_MS = 12_000
+/** The file that marks a run folder as this stack's own. */
+export const OWNER_MARKER = '.clave-fixture-stack'
+/** How often the recorders and the credential folders are read while the stack runs. */
+const WATCH_MS = 500
+/** The least a --once or --self-check run stays up under the watch: 7 s past
+ *  the usage clock's first tick at 5 s (packages/host/src/usage-manager.ts). */
+const MIN_RUN_MS = 12_000
+/** The daemon's modules the inside check imports, by absolute path, so the
+ *  dynamic import inside the daemon lands on the daemon's own instances. */
+const PTY_BACKEND = path.join(
+  REPO,
+  'packages',
+  'host',
+  'src',
+  'sessions',
+  'adapters',
+  'pty-backend.ts'
+)
+const ONE_SHOT = path.join(REPO, 'packages', 'host', 'src', 'claude-one-shot.ts')
+const PROFILE_MANAGER = path.join(REPO, 'packages', 'host', 'src', 'launch-profile-manager.ts')
 
 export const DEFAULTS = {
   serverPort: 47101,
@@ -107,6 +147,54 @@ const OWNER = {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
+/** An error that names the step it failed and the exit code the process ends with. */
+function fail(step, err, child, exitCode = 1) {
+  const detail = child ? `\n--- last lines of ${child.name}'s stderr ---\n${child.tail()}` : ''
+  const error = new Error(`${step} failed: ${err.message}${detail}`)
+  error.fixtureStep = step
+  error.exitCode = exitCode
+  return error
+}
+
+/**
+ * The run folder, owned: a folder this stack made carries OWNER_MARKER and is
+ * emptied and reused; a folder that does not exist or is empty becomes one;
+ * a folder that exists, holds anything and has no marker is refused before a
+ * single entry is touched. Nothing here ever removes the folder itself or
+ * anything above it.
+ */
+export function prepareRunFolder(tmpdir) {
+  const marker = path.join(tmpdir, OWNER_MARKER)
+  if (existsSync(tmpdir)) {
+    if (!statSync(tmpdir).isDirectory())
+      throw fail(
+        'prepare the run folder',
+        new Error(`${tmpdir} is not a folder`),
+        null,
+        CHECK_FAILED_EXIT
+      )
+    const entries = readdirSync(tmpdir)
+    if (entries.length && !existsSync(marker))
+      throw fail(
+        'prepare the run folder',
+        new Error(
+          `${tmpdir} holds ${entries.length} entr${entries.length === 1 ? 'y' : 'ies'} this stack did not make (no ${OWNER_MARKER}); choose an empty folder or one of the stack's own, nothing was touched`
+        ),
+        null,
+        CHECK_FAILED_EXIT
+      )
+    for (const entry of entries) rmSync(path.join(tmpdir, entry), { recursive: true, force: true })
+  } else {
+    mkdirSync(tmpdir, { recursive: true, mode: 0o700 })
+  }
+  writeFileSync(
+    marker,
+    `made by apps/mobile-ios/scripts/fixture-stack.mjs on ${new Date().toISOString()}; emptied at every run; safe to delete\n`,
+    { mode: 0o600 }
+  )
+  return marker
+}
+
 /**
  * The daemon names every fresh Claude-mode chat by its first message with a
  * one-shot of the Claude CLI, the Echo fixture included
@@ -119,10 +207,10 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
  * RECORDERS, each appending one line (the time, the command, its first two
  * arguments, never the stdin) to <tmpdir>/stubs/recorder.log, the claude one
  * answering a one-shot with a fixed title; and an empty Claude config folder
- * and Codex home beside them. A stub on the daemon's PATH alone is not enough:
- * the login profile would put the real CLI back in front. Under `--no-titles`
- * a line in the log after the seed is a call the daemon should not have made,
- * and the boot fails on it. The log is removed at every boot.
+ * and Codex home beside them, where a real CLI run with that environment
+ * would leave its files. A stub on the daemon's PATH alone is not enough: the
+ * login profile would put the real CLI back in front. The log is removed at
+ * every boot.
  */
 function writeStubs(tmpdir) {
   const dir = path.join(tmpdir, 'stubs')
@@ -184,56 +272,27 @@ function recorderLines(stubs) {
   return readFileSync(stubs.log, 'utf8').split('\n').filter(Boolean)
 }
 
-/** Every transcript file under ~/.claude/projects, so a boot can tell a new one. */
-function transcriptSnapshot() {
-  const seen = new Set()
-  if (!existsSync(TRANSCRIPTS)) return seen
-  for (const dir of readdirSync(TRANSCRIPTS)) {
-    const full = path.join(TRANSCRIPTS, dir)
-    let entries
-    try {
-      if (!statSync(full).isDirectory()) continue
-      entries = readdirSync(full)
-    } catch {
-      continue
-    }
-    for (const name of entries) if (name.endsWith('.jsonl')) seen.add(path.join(full, name))
-  }
-  return seen
-}
-
-/** The prerequisites `discovery` does not announce as wanted, by key; empty when all three hold. */
-export function unmetPrerequisites(discovery) {
-  return PREREQUISITES.filter(([key, want]) => discovery?.[key] !== want).map(([key]) => key)
-}
-
-/** The transcripts that appeared since `before` and carry the title prompt. */
-function newTitleTranscripts(before) {
+/** Every file under `folder`, relative, however deep; empty when the folder is. */
+function filesUnder(folder) {
   const out = []
-  for (const file of transcriptSnapshot()) {
-    if (before.has(file)) continue
-    try {
-      if (readFileSync(file, 'utf8').includes(TITLE_HELPER_MARKER)) out.push(file)
-    } catch {
-      /* gone already */
+  const walk = (dir, prefix) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const rel = prefix ? `${prefix}/${entry.name}` : entry.name
+      if (entry.isDirectory()) walk(path.join(dir, entry.name), rel)
+      else out.push(rel)
     }
   }
+  if (existsSync(folder)) walk(folder, '')
   return out
 }
 
-/** The login environment as the daemon reads it: `$SHELL -lic 'env -0'` with `env`, parsed. */
-export function loginShellEnvOf(shell, env) {
-  const output = execFileSync(shell, ['-lic', 'env -0'], {
-    env,
-    encoding: 'utf8',
-    maxBuffer: 10 * 1024 * 1024
-  })
-  const parsed = {}
-  for (const entry of output.split('\0')) {
-    const i = entry.indexOf('=')
-    if (i > 0) parsed[entry.slice(0, i)] = entry.slice(i + 1)
-  }
-  return parsed
+/** What the recorders and the two credential folders show: empty when nothing ran. */
+export function violations(stubs) {
+  const out = recorderLines(stubs).map((line) => `recorded: ${line}`)
+  for (const file of filesUnder(stubs.claudeConfigDir))
+    out.push(`a file in the Claude config folder: ${file}`)
+  for (const file of filesUnder(stubs.codexHome)) out.push(`a file in the Codex home: ${file}`)
+  return out
 }
 
 /** The first executable named `name` along `pathValue`, or null. */
@@ -253,19 +312,16 @@ export function locateOnPath(name, pathValue) {
 
 const same = (a, b) => {
   try {
-    return realpathSync(a) === realpathSync(b)
+    return typeof a === 'string' && typeof b === 'string' && realpathSync(a) === realpathSync(b)
   } catch {
     return false
   }
 }
 
-/** A child's environment: this process's, less the agent logins and the
- *  address of any server this shell is attached to, plus `extra`. */
+/** A child's environment, built from the allowlist and `extra`, nothing else of this process. */
 function childEnv(extra = {}) {
-  const env = { ...process.env }
-  delete env.CLAVE_SERVER_URL
-  delete env.CLAVE_SERVER_TOKEN
-  for (const key of CREDENTIAL_KEYS) delete env[key]
+  const env = {}
+  for (const key of ENV_ALLOWLIST) if (process.env[key] !== undefined) env[key] = process.env[key]
   return { ...env, ...extra }
 }
 
@@ -285,15 +341,15 @@ export function daemonArgs({ serverDir, serverPort, relayUrl }) {
   ]
 }
 
-/** The daemon's own environment: the issuer, a keychain FILE under its data
- *  folder, the stub as its login shell, the recorders first on PATH, the empty
- *  Claude config folder and Codex home. */
+/** The daemon's own environment: the allowlist, the issuer, a keychain FILE
+ *  under its data folder, the stub as its login shell, the recorders first on
+ *  PATH, the empty Claude config folder and Codex home. */
 export function daemonEnv({ issuer, serverDir, stubs }) {
   return childEnv({
+    PATH: `${stubs.bin}${path.delimiter}${process.env.PATH ?? '/usr/bin:/bin'}`,
+    SHELL: stubs.shell,
     CLAVE_ANTASPHERE_ISSUER: issuer,
     CLAVE_KEYCHAIN_FILE: path.join(serverDir, 'keychain.json'),
-    SHELL: stubs.shell,
-    PATH: `${stubs.bin}${path.delimiter}${process.env.PATH ?? '/usr/bin:/bin'}`,
     CLAUDE_CONFIG_DIR: stubs.claudeConfigDir,
     CODEX_HOME: stubs.codexHome
   })
@@ -323,9 +379,9 @@ const expect = (condition, message) => {
 /**
  * The two checks run BEFORE any process starts, on the very command and
  * environment the daemon gets: the command carries the three flags, and the
- * daemon's login environment, read the way the daemon reads it, resolves
- * `claude` and `codex` to the recorders, names the empty Claude config folder
- * and Codex home, and carries none of this Mac's agent logins.
+ * environment is the allowlist plus the stack's own variables, its SHELL the
+ * stub, the first folder of its PATH the recorders', CLAUDE_CONFIG_DIR and
+ * CODEX_HOME the empty folders the stack made. No shell is run here.
  */
 export async function preBootChecks({ args, env, stubs, log }) {
   const results = []
@@ -342,41 +398,128 @@ export async function preBootChecks({ args, env, stubs, log }) {
   await runCheck(
     results,
     log,
-    "the daemon's login environment resolves claude and codex to the recorders and names the empty Claude config folder and Codex home",
+    "the daemon's environment is the allowlist plus the stack's own: the stub shell, the recorders first on PATH, empty credential folders",
     () => {
-      expect(same(env.SHELL, stubs.shell), `the daemon's SHELL is ${env.SHELL}`)
-      const login = loginShellEnvOf(env.SHELL, env)
-      const claude = locateOnPath('claude', login.PATH)
-      const codex = locateOnPath('codex', login.PATH)
+      const allowed = new Set([...ENV_ALLOWLIST, ...DAEMON_OWN_KEYS])
+      const stray = Object.keys(env).filter((key) => !allowed.has(key))
+      expect(stray.length === 0, `the environment carries ${stray.join(', ')}`)
+      expect(same(env.SHELL, stubs.shell), `SHELL is ${env.SHELL}`)
+      const first = (env.PATH ?? '').split(path.delimiter)[0]
+      expect(same(first, stubs.bin), `the first folder of PATH is ${first}`)
       expect(
-        claude && same(claude, stubs.claude),
-        `claude resolves to ${claude ?? 'nothing'} on the daemon's login PATH`
-      )
-      expect(
-        codex && same(codex, stubs.codex),
-        `codex resolves to ${codex ?? 'nothing'} on the daemon's login PATH`
+        same(locateOnPath('claude', env.PATH), stubs.claude),
+        'claude on that PATH is not the recorder'
       )
       expect(
-        same(login.CLAUDE_CONFIG_DIR, stubs.claudeConfigDir) &&
-          readdirSync(stubs.claudeConfigDir).length === 0,
-        `CLAUDE_CONFIG_DIR is ${login.CLAUDE_CONFIG_DIR ?? 'unset'}`
+        same(locateOnPath('codex', env.PATH), stubs.codex),
+        'codex on that PATH is not the recorder'
       )
       expect(
-        same(login.CODEX_HOME, stubs.codexHome) && readdirSync(stubs.codexHome).length === 0,
-        `CODEX_HOME is ${login.CODEX_HOME ?? 'unset'}`
+        same(env.CLAUDE_CONFIG_DIR, stubs.claudeConfigDir) &&
+          filesUnder(stubs.claudeConfigDir).length === 0,
+        `CLAUDE_CONFIG_DIR is ${env.CLAUDE_CONFIG_DIR ?? 'unset'} or not empty`
       )
-      const leaked = CREDENTIAL_KEYS.filter(
-        (key) => key !== 'CLAUDE_CONFIG_DIR' && key !== 'CODEX_HOME' && key in login
-      )
-      expect(leaked.length === 0, `the login environment carries ${leaked.join(', ')}`)
       expect(
-        !('CLAVE_SERVER_URL' in login) && !('CLAVE_SERVER_TOKEN' in login),
-        'the login environment carries a server address'
+        same(env.CODEX_HOME, stubs.codexHome) && filesUnder(stubs.codexHome).length === 0,
+        `CODEX_HOME is ${env.CODEX_HOME ?? 'unset'} or not empty`
       )
-      return `claude and codex are the recorders under ${stubs.bin}; CLAUDE_CONFIG_DIR and CODEX_HOME are the empty folders beside them`
+      return `${Object.keys(env).length} variables, all allowlisted or the stack's; claude and codex are the recorders under ${stubs.bin}`
     }
   )
   return results
+}
+
+/**
+ * The source run INSIDE the daemon through POST /e2e/evaluate: a dynamic
+ * import by absolute path lands on the daemon's own module instances, so
+ * getLoginShellEnv() answers the daemon's cached login environment, and the
+ * launch the title path would build for the seeded chat's profile names the
+ * executable the daemon would actually start. Nothing is started.
+ */
+export function insideSource() {
+  return `async () => {
+    const backend = await import(${JSON.stringify(PTY_BACKEND)})
+    const oneShot = await import(${JSON.stringify(ONE_SHOT)})
+    const profiles = await import(${JSON.stringify(PROFILE_MANAGER)})
+    const login = backend.getLoginShellEnv()
+    const profile = profiles.launchProfileManager.resolveClaudeCli(null, ${JSON.stringify(ECHO_PROFILE_ID)})
+    const launch = oneShot.buildOneShotLaunch({ profile, args: ['-p'], loginEnv: login, userShell: backend.getUserShell() })
+    return {
+      shell: process.env.SHELL ?? null,
+      userShell: backend.getUserShell(),
+      cached: {
+        PATH: login.PATH ?? null,
+        SHELL: login.SHELL ?? null,
+        CLAUDE_CONFIG_DIR: login.CLAUDE_CONFIG_DIR ?? null,
+        CODEX_HOME: login.CODEX_HOME ?? null,
+        keys: Object.keys(login).length
+      },
+      profile: { id: profile.id, family: profile.family, command: profile.command },
+      oneShot: {
+        file: launch.file,
+        args: launch.args,
+        PATH: launch.env.PATH ?? null,
+        CLAUDE_CONFIG_DIR: launch.env.CLAUDE_CONFIG_DIR ?? null,
+        hasOauthToken: 'CLAUDE_CODE_OAUTH_TOKEN' in launch.env,
+        hasApiKey: 'ANTHROPIC_API_KEY' in launch.env
+      }
+    }
+  }`
+}
+
+/** Runs `source` inside the daemon through its test route; the awaited value. */
+export async function evaluateInside(serverUrl, token, source) {
+  const response = await fetch(`${serverUrl}/e2e/evaluate`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+    body: JSON.stringify({ source })
+  })
+  const text = await response.text()
+  let body = null
+  try {
+    body = JSON.parse(text)
+  } catch {
+    /* not JSON */
+  }
+  if (response.status !== 200 || !body?.ok)
+    throw new Error(`POST /e2e/evaluate answered ${response.status}: ${text.slice(0, 300)}`)
+  return body.value
+}
+
+/** What the inside read must show, checked against the stubs. */
+export function assertInside(inside, stubs) {
+  expect(same(inside.shell, stubs.shell), `the daemon's SHELL is ${inside.shell}`)
+  expect(same(inside.userShell, stubs.shell), `the daemon's login shell is ${inside.userShell}`)
+  expect(
+    same(locateOnPath('claude', inside.cached.PATH), stubs.claude),
+    `claude on the cached login PATH is ${locateOnPath('claude', inside.cached.PATH) ?? 'nothing'}`
+  )
+  expect(
+    same(locateOnPath('codex', inside.cached.PATH), stubs.codex),
+    `codex on the cached login PATH is ${locateOnPath('codex', inside.cached.PATH) ?? 'nothing'}`
+  )
+  expect(
+    same(inside.cached.CLAUDE_CONFIG_DIR, stubs.claudeConfigDir),
+    `the cached CLAUDE_CONFIG_DIR is ${inside.cached.CLAUDE_CONFIG_DIR}`
+  )
+  expect(
+    same(inside.cached.CODEX_HOME, stubs.codexHome),
+    `the cached CODEX_HOME is ${inside.cached.CODEX_HOME}`
+  )
+  expect(
+    inside.profile.family === 'claude',
+    `the resolver answered a ${inside.profile.family} profile`
+  )
+  expect(same(inside.oneShot.file, stubs.claude), `the one-shot would start ${inside.oneShot.file}`)
+  expect(
+    same(inside.oneShot.CLAUDE_CONFIG_DIR, stubs.claudeConfigDir),
+    `the one-shot's CLAUDE_CONFIG_DIR is ${inside.oneShot.CLAUDE_CONFIG_DIR}`
+  )
+  expect(
+    !inside.oneShot.hasOauthToken && !inside.oneShot.hasApiKey,
+    'the one-shot environment carries a credential'
+  )
+  return `SHELL ${path.basename(inside.shell)} under stubs; the cached login PATH and the resolver both name ${path.relative(stubs.dir, inside.oneShot.file)} for profile ${inside.profile.id}`
 }
 
 /** One authenticated call to the server: JSON in, JSON out, a thrown error on a non-2xx. */
@@ -425,12 +568,13 @@ async function until(what, probe, { ms = STEP_MS, gapMs = 250 } = {}) {
 }
 
 /** A child process whose output goes to <logs>/<name>.log, the last lines
- *  of stderr kept for a failure, and every given secret redacted. */
+ *  of stderr kept for a failure, and every given secret redacted. Its
+ *  environment is exactly `env`: nothing of this process beyond it. */
 function startChild(name, cmd, args, { env, logsDir, secrets }) {
   const file = createWriteStream(path.join(logsDir, `${name}.log`), { flags: 'a' })
   const child = spawn(cmd, args, {
     cwd: REPO,
-    env: childEnv(env),
+    env,
     stdio: ['ignore', 'pipe', 'pipe']
   })
   const tail = []
@@ -479,15 +623,6 @@ function startChild(name, cmd, args, { env, logsDir, secrets }) {
   }
 }
 
-/** What a failed step says: the error, and the child's last stderr lines. */
-function fail(step, err, child, exitCode = 1) {
-  const detail = child ? `\n--- last lines of ${child.name}'s stderr ---\n${child.tail()}` : ''
-  const error = new Error(`${step} failed: ${err.message}${detail}`)
-  error.fixtureStep = step
-  error.exitCode = exitCode
-  return error
-}
-
 async function readJson(url, bearer) {
   const res = await fetch(url, { headers: { authorization: `Bearer ${bearer}` } })
   const text = await res.text()
@@ -507,9 +642,12 @@ const echoReplyOf = (page, text) =>
 
 /**
  * Brings the whole stack up. Resolves the facts (the same as stack.json)
- * with `stop()` (server, relay, provider, in that order) and `selfCheck()`.
- * On any failure everything started so far is stopped and the error thrown
- * names the step and the child's last stderr lines.
+ * with `stop()` (the watch, the approver, the server, the relay, the
+ * provider, in that order; it answers the violations seen, empty when none),
+ * `selfCheck()`, `violation` (the list once the watch stopped the daemon)
+ * and `died` (resolves `server`, `relay` or `recorder`). On any failure
+ * everything started so far is stopped and the error thrown names the step,
+ * the child's last stderr lines and the exit code.
  */
 export async function startStack({
   serverPort = DEFAULTS.serverPort,
@@ -517,18 +655,18 @@ export async function startStack({
   tmpdir = DEFAULTS.tmpdir,
   approve = false,
   /** Proof runs only, every flag kept: a discovery read doctored before the
-   *  third check, and one line planted in the recorder log before the interlock. */
+   *  third check, an inside read doctored before the fourth. */
   injectDiscovery = null,
-  plantRecorderLine = false,
+  injectInside = null,
   log = (line) => process.stdout.write(`fixture-stack: ${line}\n`)
 } = {}) {
   const startedAt = Date.now()
-  rmSync(tmpdir, { recursive: true, force: true })
+  prepareRunFolder(tmpdir)
   const logsDir = path.join(tmpdir, 'logs')
   const serverDir = path.join(tmpdir, 'server')
   const relayDir = path.join(tmpdir, 'relay')
   const scratch = path.join(tmpdir, 'scratch')
-  for (const dir of [tmpdir, logsDir, serverDir, relayDir, scratch])
+  for (const dir of [logsDir, serverDir, relayDir, scratch])
     mkdirSync(dir, { recursive: true, mode: 0o700 })
 
   const secrets = []
@@ -536,14 +674,23 @@ export async function startStack({
   let relay = null
   let server = null
   let approver = null
+  let watch = null
+  let stubs = null
+  let violation = null
   let stopped = false
+  let resolveViolated
+  const violated = new Promise((r) => {
+    resolveViolated = r
+  })
   const stop = async () => {
-    if (stopped) return
+    if (stopped) return violation ?? []
     stopped = true
+    if (watch) clearInterval(watch)
     if (approver) approver.stop()
     if (server) await server.stop()
     if (relay) await relay.stop()
     if (provider) await provider.close()
+    return violation ?? (stubs ? violations(stubs) : [])
   }
 
   try {
@@ -568,7 +715,7 @@ export async function startStack({
         '--issuer',
         provider.issuer
       ],
-      { env: {}, logsDir, secrets }
+      { env: childEnv({ PATH: process.env.PATH ?? '/usr/bin:/bin' }), logsDir, secrets }
     )
     let relayUrl
     try {
@@ -586,7 +733,7 @@ export async function startStack({
     // naming no tab, the recorders catching any CLI call it makes anyway. The
     // two pre-boot checks run first, on the very command and environment the
     // daemon gets; one failing stops the boot before the daemon exists.
-    const stubs = writeStubs(tmpdir)
+    stubs = writeStubs(tmpdir)
     const args = daemonArgs({ serverDir, serverPort, relayUrl })
     const env = daemonEnv({ issuer: provider.issuer, serverDir, stubs })
     log(`daemon command: ${daemonCommandLine(args)}`)
@@ -603,7 +750,6 @@ export async function startStack({
         null,
         CHECK_FAILED_EXIT
       )
-    const transcriptsBefore = transcriptSnapshot()
     const serverStartedAt = Date.now()
     server = startChild('server', BUN, args, { env, logsDir, secrets })
     let discovery
@@ -622,8 +768,8 @@ export async function startStack({
     log(`server up at ${serverUrl} (serverId ${discovery.serverId})`)
 
     // 3b. The third check, after the daemon announced itself and before
-    // anything is seeded: its discovery file says titles "off", testMode
-    // true and machineUsage false. A daemon that does not say all three could
+    // anything is seeded: its discovery file says titles "off", testMode true
+    // and machineUsage false. A daemon that does not say all three could
     // reach a provider, so the boot stops here, the three printed.
     const read = injectDiscovery ? { ...discovery, ...injectDiscovery } : discovery
     if (injectDiscovery)
@@ -647,6 +793,36 @@ export async function startStack({
       throw fail(
         "read the daemon's prerequisites",
         new Error(postBoot[0].detail),
+        server,
+        CHECK_FAILED_EXIT
+      )
+
+    // 3c. The fourth check, inside the daemon and still before anything is
+    // seeded: its cached login environment and the one-shot launch the title
+    // path would build both name the recorders, and the one-shot carries no
+    // credential.
+    let inside
+    await runCheck(
+      postBoot,
+      log,
+      'inside the daemon, the cached login environment and the one-shot resolver name the recorders and the empty folders',
+      async () => {
+        inside = await evaluateInside(serverUrl, token, insideSource())
+        if (injectInside) {
+          inside = {
+            ...inside,
+            cached: { ...inside.cached, ...(injectInside.cached ?? {}) },
+            oneShot: { ...inside.oneShot, ...(injectInside.oneShot ?? {}) }
+          }
+          log(`inside read doctored for a proof: ${JSON.stringify(injectInside)}`)
+        }
+        return assertInside(inside, stubs)
+      }
+    )
+    if (!postBoot[1].ok)
+      throw fail(
+        'read the daemon from inside',
+        new Error(postBoot[1].detail),
         server,
         CHECK_FAILED_EXIT
       )
@@ -698,7 +874,7 @@ export async function startStack({
         cwd: scratch,
         options: {
           claudeMode: true,
-          launchProfileId: 'dev-echo-adapter',
+          launchProfileId: ECHO_PROFILE_ID,
           workspaceId: workspace.id
         }
       })
@@ -720,33 +896,30 @@ export async function startStack({
     }
     log(`Echo chat ${session.id} seeded with ${nonce}`)
 
-    // 7b. The recorder interlock: once the silence window since the daemon's
-    // start has passed, the recorders wrote no line and no new transcript
-    // carries the title prompt.
-    try {
-      const wait = serverStartedAt + SILENCE_MS - Date.now()
-      if (wait > 0) await sleep(wait)
-      if (plantRecorderLine) {
-        appendFileSync(
-          stubs.log,
-          `${new Date().toISOString()} claude -p (planted by --prove-title-guard)\n`
-        )
-        log('one line planted in the recorder log for a proof')
-      }
-      const recorded = recorderLines(stubs)
-      if (recorded.length)
-        throw new Error(
-          `the daemon called a CLI the recorders stood in for: ${recorded.join(' | ')}`
-        )
-      const leaked = newTitleTranscripts(transcriptsBefore)
-      if (leaked.length)
-        throw new Error(`a real title call left a transcript: ${leaked.join(', ')}`)
-    } catch (err) {
-      throw fail('read the recorders', err, server, CHECK_FAILED_EXIT)
-    }
+    // 7b. The recorder watch: the recorders and the two credential folders
+    // read now, then every half second for the whole run. One recorded call
+    // or one file stops the daemon and ends the run.
+    const seen = violations(stubs)
+    if (seen.length)
+      throw fail('read the recorders', new Error(seen.join(' | ')), server, CHECK_FAILED_EXIT)
     log(
-      `recorder interlock: no CLI call recorded ${SILENCE_MS / 1000} s after the daemon started, no new transcript carries the title prompt`
+      'recorder watch: nothing recorded after the seed; watching every half second until the stack stops'
     )
+    const onViolation = async (list) => {
+      if (violation) return
+      violation = list
+      clearInterval(watch)
+      watch = null
+      log(`recorder watch: ${list.join(' | ')}; stopping the daemon`)
+      if (approver) approver.stop()
+      await server.stop()
+      resolveViolated('recorder')
+    }
+    watch = setInterval(() => {
+      if (stopped || violation) return
+      const list = violations(stubs)
+      if (list.length) void onViolation(list)
+    }, WATCH_MS)
 
     // 8. The facts: the token to its own 0600 file, never anywhere else.
     const tokenFile = path.join(tmpdir, 'owner-token')
@@ -763,6 +936,7 @@ export async function startStack({
       scratch,
       tokenFile,
       announced,
+      inside,
       recorderLog: stubs.log
     }
     writeFileSync(path.join(tmpdir, 'stack.json'), JSON.stringify(facts, null, 2) + '\n')
@@ -775,13 +949,18 @@ export async function startStack({
     return {
       ...facts,
       readyMs,
+      serverStartedAt,
       providerPort: provider.port,
       tmpdir,
       stop,
+      get violation() {
+        return violation
+      },
       selfCheck: () => selfCheck({ facts, token, log }),
-      /** Resolves when the server or the relay exits on its own. */
+      /** Resolves when the server or the relay exits on its own, or the watch stopped the daemon. */
       died: Promise.race([
-        new Promise((r) => server.child.once('exit', () => r('server'))),
+        violated,
+        new Promise((r) => server.child.once('exit', () => r(violation ? 'recorder' : 'server'))),
         new Promise((r) => relay.child.once('exit', () => r('relay')))
       ])
     }
@@ -873,6 +1052,11 @@ async function selfCheck({ facts, token, log }) {
   return ok
 }
 
+/** The prerequisites `discovery` does not announce as wanted, by key; empty when all three hold. */
+export function unmetPrerequisites(discovery) {
+  return PREREQUISITES.filter(([key, want]) => discovery?.[key] !== want).map(([key]) => key)
+}
+
 function parseArgs(argv) {
   const value = (name, fallback) => {
     const i = argv.indexOf(`--${name}`)
@@ -886,7 +1070,9 @@ function parseArgs(argv) {
     selfCheck: argv.includes('--self-check'),
     once: argv.includes('--once'),
     dryRun: argv.includes('--dry-run'),
+    proveTmpdirGuard: argv.includes('--prove-tmpdir-guard'),
     provePrerequisites: argv.includes('--prove-prerequisites'),
+    proveInside: argv.includes('--prove-inside') ? value('prove-inside', 'resolver') : null,
     proveTitleGuard: argv.includes('--prove-title-guard')
   }
 }
@@ -902,8 +1088,56 @@ export function factLines(facts) {
     `CLAVE_FIXTURE_WORKSPACE_ID=${facts.workspaceId}`,
     `CLAVE_FIXTURE_SESSION_ID=${facts.sessionId}`,
     `CLAVE_FIXTURE_NONCE=${facts.nonce}`,
-    `CLAVE_FIXTURE_TOKEN_FILE=${facts.tokenFile}`
+    `CLAVE_FIXTURE_TOKEN_FILE=${facts.tokenFile}`,
+    `CLAVE_FIXTURE_RECORDER_LOG=${facts.recorderLog}`
   ]
+}
+
+/** The no-boot proof of the run folder's guard: a folder with a sentinel and no
+ *  marker is refused with the sentinel intact; a folder of the stack's own is
+ *  emptied and reused. Both folders are made and removed under the system
+ *  temp directory. Resolves true on PASS. */
+export function proveTmpdirGuard(write = (line) => process.stdout.write(line + '\n')) {
+  let ok = true
+  const report = (pass, what) => {
+    write(`${pass ? 'PASS' : 'FAIL'} ${what}`)
+    if (!pass) ok = false
+  }
+  const foreign = mkdtempSync(path.join(os.tmpdir(), 'clave-fixture-guard-foreign-'))
+  const sentinel = path.join(foreign, 'sentinel.txt')
+  const content = `not the stack's: ${randomUUID()}\n`
+  writeFileSync(sentinel, content)
+  mkdirSync(path.join(foreign, 'nested'))
+  writeFileSync(path.join(foreign, 'nested', 'also.txt'), 'kept\n')
+  try {
+    prepareRunFolder(foreign)
+    report(false, 'a folder with files and no marker was accepted')
+  } catch (err) {
+    const intact =
+      existsSync(sentinel) &&
+      readFileSync(sentinel, 'utf8') === content &&
+      existsSync(path.join(foreign, 'nested', 'also.txt'))
+    report(
+      err.fixtureStep === 'prepare the run folder' && err.exitCode === CHECK_FAILED_EXIT && intact,
+      `a folder with files and no ${OWNER_MARKER} is refused (exit ${err.exitCode}) and its sentinel is intact: ${err.message.split('\n')[0]}`
+    )
+  }
+  rmSync(foreign, { recursive: true, force: true })
+  const owned = mkdtempSync(path.join(os.tmpdir(), 'clave-fixture-guard-owned-'))
+  try {
+    prepareRunFolder(owned)
+    writeFileSync(path.join(owned, 'leftover.txt'), 'from a previous run\n')
+    prepareRunFolder(owned)
+    const entries = readdirSync(owned)
+    report(
+      entries.length === 1 && entries[0] === OWNER_MARKER,
+      `a folder of the stack's own is emptied and reused (entries after: ${entries.join(', ')})`
+    )
+  } catch (err) {
+    report(false, `a folder of the stack's own is emptied and reused: ${err.message}`)
+  }
+  rmSync(owned, { recursive: true, force: true })
+  return ok
 }
 
 const isMain = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)
@@ -914,16 +1148,33 @@ if (isMain) {
   const end = async (code) => {
     if (ending) return
     ending = true
-    if (stack) await stack.stop()
+    let left = []
+    if (stack) left = await stack.stop()
+    if (left.length) {
+      process.stdout.write(
+        `fixture-stack: the recorders or the credential folders were not silent: ${left.join(' | ')}\n`
+      )
+      code = CHECK_FAILED_EXIT
+    }
     process.stdout.write('fixture-stack: stopped\n')
     process.exit(code)
   }
   process.on('SIGINT', () => void end(0))
   process.on('SIGTERM', () => void end(0))
+  const log = (line) => process.stdout.write(`fixture-stack: ${line}\n`)
+  if (options.proveTmpdirGuard) {
+    process.exit(proveTmpdirGuard() ? 0 : 1)
+  }
   if (options.dryRun) {
     // The two pre-boot checks on the very command and environment a boot would
     // use, nothing started: the provider, the relay and the daemon stay down,
-    // and no process but `env -0` through the stub shell runs.
+    // and no process at all is run.
+    try {
+      prepareRunFolder(options.tmpdir)
+    } catch (err) {
+      process.stderr.write(`fixture-stack: ${err.message}\n`)
+      process.exit(err.exitCode ?? 1)
+    }
     const serverDir = path.join(options.tmpdir, 'server')
     const stubs = writeStubs(options.tmpdir)
     const args = daemonArgs({
@@ -936,49 +1187,66 @@ if (isMain) {
       serverDir,
       stubs
     })
-    const log = (line) => process.stdout.write(`fixture-stack: ${line}\n`)
     log(`dry run: nothing starts; the daemon command a boot runs is: ${daemonCommandLine(args)}`)
     const results = await preBootChecks({ args, env, stubs, log })
     log(
-      'the third check reads the discovery file after the daemon announces itself and before anything is seeded (startStack, step 3b)'
+      'the third check reads the discovery file and the fourth reads inside the daemon through POST /e2e/evaluate, both after the daemon announces itself and before anything is seeded (startStack, steps 3b and 3c); the recorder watch runs from the seed to the stop (step 7b)'
     )
     const ok = results.every((c) => c.ok)
     log(ok ? 'dry run: the two pre-boot checks pass' : 'dry run: a pre-boot check failed')
     process.exit(ok ? 0 : CHECK_FAILED_EXIT)
   }
+  const proof = async (name, options, step, expectedDeath = null) => {
+    try {
+      stack = await startStack(options)
+    } catch (err) {
+      const red = err.fixtureStep === step
+      process.stdout.write(`${red ? 'PASS' : 'FAIL'} ${name} (${err.message.split('\n')[0]})\n`)
+      process.exit(red ? 0 : 1)
+    }
+    if (expectedDeath) return
+    await stack.stop()
+    process.stdout.write(`FAIL ${name}: the boot went on\n`)
+    process.exit(1)
+  }
   if (options.provePrerequisites) {
     // Every flag kept; the discovery read handed to the third check says
     // titles "on": the boot must refuse before anything is seeded.
-    try {
-      stack = await startStack({ ...options, injectDiscovery: { titles: 'on' } })
-    } catch (err) {
-      const red = err.fixtureStep === "read the daemon's prerequisites"
-      process.stdout.write(
-        `${red ? 'PASS' : 'FAIL'} the boot refuses before the seed when the discovery read says titles "on" (${err.message.split('\n')[0]})\n`
-      )
-      process.exit(red ? 0 : 1)
-    }
-    await stack.stop()
-    process.stdout.write('FAIL the boot went on with a discovery read saying titles "on"\n')
-    process.exit(1)
+    await proof(
+      'the boot refuses before the seed when the discovery read says titles "on"',
+      { ...options, injectDiscovery: { titles: 'on' } },
+      "read the daemon's prerequisites"
+    )
+  }
+  if (options.proveInside) {
+    // Every flag kept; the inside read handed to the fourth check shows a
+    // cached login PATH without the recorders, or a one-shot that would start
+    // something other than the recorder: the boot must refuse before the seed.
+    const doctored =
+      options.proveInside === 'cache'
+        ? { cached: { PATH: '/usr/bin:/bin' } }
+        : { oneShot: { file: '/usr/local/bin/claude' } }
+    await proof(
+      `the boot refuses before the seed when the inside read shows a ${options.proveInside === 'cache' ? 'divergent cached login PATH' : 'one-shot resolver naming another executable'}`,
+      { ...options, injectInside: doctored },
+      'read the daemon from inside'
+    )
   }
   if (options.proveTitleGuard) {
-    // Every flag kept; one line planted in the recorder log after the seed:
-    // the interlock must go red on it.
-    try {
-      stack = await startStack({ ...options, plantRecorderLine: true })
-    } catch (err) {
-      const red = err.fixtureStep === 'read the recorders'
-      process.stdout.write(
-        `${red ? 'PASS' : 'FAIL'} the recorder interlock goes red on a recorded CLI call (${err.message.split('\n')[0]})\n`
-      )
-      process.exit(red ? 0 : 1)
-    }
-    await stack.stop()
-    process.stdout.write(
-      'FAIL the recorder interlock stayed green with a line in the recorder log\n'
+    // Every flag kept; the stack comes up, one line is planted in the
+    // recorder log while it runs, and the watch must stop the daemon.
+    await proof('the stack comes up for the recorder watch proof', options, null, 'recorder')
+    appendFileSync(
+      stack.recorderLog,
+      `${new Date().toISOString()} claude -p (planted by --prove-title-guard)\n`
     )
-    process.exit(1)
+    const who = await Promise.race([stack.died, sleep(WATCH_MS * 10).then(() => 'nobody')])
+    const left = await stack.stop()
+    const red = who === 'recorder' && left.length > 0
+    process.stdout.write(
+      `${red ? 'PASS' : 'FAIL'} the recorder watch stops the daemon on a recorded CLI call while the stack runs (died: ${who}; ${left.join(' | ')})\n`
+    )
+    process.exit(red ? 0 : 1)
   }
   try {
     stack = await startStack(options)
@@ -988,14 +1256,28 @@ if (isMain) {
   }
   process.stdout.write(factLines(stack).join('\n') + '\n')
   process.stdout.write('fixture-stack: ready\n')
+  const minimumRun = async () => {
+    const wait = stack.serverStartedAt + MIN_RUN_MS - Date.now()
+    if (wait > 0) {
+      log(`watching the recorders ${(wait / 1000).toFixed(1)} s more before stopping`)
+      await Promise.race([sleep(wait), stack.died])
+    }
+  }
   if (options.selfCheck) {
     const ok = await stack.selfCheck()
+    await minimumRun()
     await end(ok ? 0 : 1)
   } else if (options.once) {
+    await minimumRun()
     await end(0)
   } else {
     const who = await stack.died
-    process.stderr.write(`fixture-stack: the ${who} exited on its own; stopping\n`)
-    await end(1)
+    if (who === 'recorder') {
+      process.stderr.write('fixture-stack: the recorder watch stopped the daemon; stopping\n')
+      await end(CHECK_FAILED_EXIT)
+    } else {
+      process.stderr.write(`fixture-stack: the ${who} exited on its own; stopping\n`)
+      await end(1)
+    }
   }
 }
