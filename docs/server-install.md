@@ -30,20 +30,23 @@ The script:
 
 Its options (`bash ~/install-server.sh --help` lists them). They are saved once a run with them has the server answering, and every later run reuses them:
 
-| Option         | Default                                   | Meaning                                                                                                                                |
-| -------------- | ----------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
-| `--ref`        | `latest`                                  | `latest` (newest release, pre-releases included), `stable`, or a tag or branch such as `v3.0.0-beta.6`                                 |
-| `--host`       | `auto`                                    | `auto` uses the Tailscale address when Tailscale is up, else `127.0.0.1`. Also `tailscale`, `loopback`, or an address. Never `0.0.0.0` |
-| `--port`       | `43127`                                   | Port to listen on                                                                                                                      |
-| `--data-dir`   | `~/.local/share/clave-server`             | The server's private data: identity, token, history, encrypted settings                                                                |
-| `--path`       | the PATH of the shell running the script  | The PATH the agents get, after Node's own directory, so run the first install from a login shell that finds `claude` and `codex`       |
-| `--token-file` | none                                      | Provision the token from a 0600 file instead of generating one                                                                         |
-| `--name`       | `clave-server`                            | Service name, for several servers on one machine                                                                                       |
-| `--repo`       | `https://github.com/antasphere/clave.git` | Where to clone from, for a fork                                                                                                        |
-| `--force`      |                                           | Rebuild and restart even when nothing changed                                                                                          |
-| `--no-service` |                                           | Build only, and print the command to run under your own supervisor                                                                     |
+| Option          | Default                                   | Meaning                                                                                                                                |
+| --------------- | ----------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| `--ref`         | `latest`                                  | `latest` (newest release, pre-releases included), `stable`, or a tag or branch such as `v3.0.0-beta.6`                                 |
+| `--host`        | `auto`                                    | `auto` uses the Tailscale address when Tailscale is up, else `127.0.0.1`. Also `tailscale`, `loopback`, or an address. Never `0.0.0.0` |
+| `--port`        | `43127`                                   | Port to listen on                                                                                                                      |
+| `--data-dir`    | `~/.local/share/clave-server`             | The server's private data: identity, token, history, encrypted settings                                                                |
+| `--path`        | the PATH of the shell running the script  | The PATH the agents get, after Node's own directory, so run the first install from a login shell that finds `claude` and `codex`       |
+| `--token-file`  | none                                      | Provision the token from a 0600 file instead of generating one                                                                         |
+| `--name`        | `clave-server`                            | Service name, for several servers on one machine                                                                                       |
+| `--server-name` | this machine's hostname, first label only | The server's own name, what a `.clave` routine's `"server"` field names it by. Letters, digits, `.`, `_` and `-`, up to 63             |
+| `--repo`        | `https://github.com/antasphere/clave.git` | Where to clone from, for a fork                                                                                                        |
+| `--force`       |                                           | Rebuild and restart even when nothing changed                                                                                          |
+| `--no-service`  |                                           | Build only, and print the command to run under your own supervisor                                                                     |
 
 The agents get that PATH through a login shell, which reads `~/.profile` (or `~/.zprofile`) and never `~/.bashrc`, so a `claude` or `codex` added to PATH only in `~/.bashrc` is not found and its sessions end with "command not found". Every run checks this and names the agent it cannot find, with the `--path` to run again with.
+
+A `.clave` routine names the server that runs it by that name (`"server": "MacStudio"`), so give a machine whose hostname is not the name you want to write in the file a `--server-name`; the create-workspace skill's "Routines" section has the rest.
 
 `auto` is decided once and saved as what it found (`tailscale` or `loopback`). A later run on a machine whose Tailscale is down then fails, rather than moving the server to loopback without telling you.
 

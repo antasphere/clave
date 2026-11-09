@@ -17,6 +17,7 @@
  * through the Slideless viewer; keeps the last twenty runs (`store.ts`).
  */
 import { randomUUID } from 'node:crypto'
+import * as fs from 'node:fs'
 import * as path from 'node:path'
 import type {
   RoutineReportInput,
@@ -38,9 +39,17 @@ import type { SessionStream } from '@clave/contract/sessions'
 import type { StoragePort } from '../ports/storage'
 import { Viewer, type ViewerOptions } from '../../../plugins/analytics/src/viewer'
 import { Claims } from './claims'
-import { DECKS_DIR, type DeckEnvelope, removeRoutineDecks, writeDeck, writeRootIndex } from './deck'
+import {
+  DECKS_DIR,
+  type DeckEnvelope,
+  MAX_TEMPLATE_BYTES,
+  removeRoutineDecks,
+  writeDeck,
+  writeRootIndex
+} from './deck'
 import { type LaunchFacts, REPORTING_AGENTS, resolveLaunch } from './launch'
-import { type RegistryWorkspace, resolveRoutines } from './resolve'
+import { PublishFailure, SHARE_NAME_PREFIX, type RoutinePublisher } from './publisher'
+import { type RegistryWorkspace, type ServerIdentity, resolveRoutines } from './resolve'
 import { ON_TIME_MS, TICK_MS, decideTick, nextRunAt } from './scheduler'
 import { SYSTEM_PROMPT_LINE, firstMessage } from './skill'
 import { RoutinesStore } from './store'
@@ -83,6 +92,13 @@ export interface RoutineServiceOptions {
   readonly holder: string
   /** The contract skill's plugin folder (`skill.ts`, `contractPluginDir`). */
   readonly pluginDir: string
+  /** This server as a routine's `server` field names it (PRDCT-4149): its
+   *  id and its own name. Read at each use: an app-run server knows its id
+   *  only once its listener is up. */
+  readonly identity: () => ServerIdentity
+  /** The Slideless publisher for routines whose report says `publish: true`
+   *  (PRDCT-4149); absent or `false`, such a run carries why nothing was published. */
+  readonly publisher?: RoutinePublisher | false
   /** The viewer: the login shell's environment the CLI is found in; `false` for no viewer (tests). */
   readonly viewer?:
     | { env: () => Promise<Record<string, string>>; spawn?: ViewerOptions['spawn'] }
@@ -203,7 +219,12 @@ export function createRoutineService(options: RoutineServiceOptions): RoutineSer
     if (refreshing) return refreshing
     refreshing = (async () => {
       const workspaces = await options.workspaces()
-      const resolved = await resolveRoutines(options.files, workspaces)
+      const resolved = await resolveRoutines(
+        options.files,
+        workspaces,
+        undefined,
+        options.identity()
+      )
       declarations = resolved.declarations
       const liveKeys = new Set(declarations.map((d) => d.key))
       for (const d of declarations) store.seen(d.key)
@@ -276,6 +297,16 @@ export function createRoutineService(options: RoutineServiceOptions): RoutineSer
     // The process stops with the run: the transcript stays, the discussion resumes it.
     if (entry.run.sessionId) void options.sessions.stop(entry.run.sessionId).catch(() => undefined)
     emit()
+    // The deck goes to Slideless once the run has ended, not at each report
+    // (round 1, Minor 2): a run may correct its report, and one run is one
+    // version, the last deck it wrote.
+    const final = store.run(entry.run.id)
+    if (entry.report && entry.declaration.report.publish && final?.deck)
+      void publishRun(
+        entry.declaration,
+        entry.run.id,
+        path.dirname(path.resolve(decksRoot, final.deck))
+      )
   }
 
   /** A discussion continues the run's conversation, and a resumed chat may
@@ -480,6 +511,55 @@ export function createRoutineService(options: RoutineServiceOptions): RoutineSer
     return store.run(run.id) ?? withSession
   }
 
+  // ── The publish (PRDCT-4149) ──
+
+  /** The run's deck pushed to Slideless as a new version of the routine's
+   *  deck, after the report was taken; the outcome lands on the run and
+   *  never changes its state. One push at a time per routine, in order. */
+  const publishing = new Map<string, Promise<void>>()
+  async function publishRun(d: RoutineDeclaration, runId: string, folder: string): Promise<void> {
+    const previous = publishing.get(d.key) ?? Promise.resolve()
+    const next = previous
+      .catch(() => undefined)
+      .then(async () => {
+        if (!options.publisher) {
+          store.updateRun(runId, {
+            publishError:
+              'this server publishes no decks: no Slideless publisher runs in this process'
+          })
+          emit()
+          return
+        }
+        try {
+          const outcome = await options.publisher.publish({
+            folder,
+            title: d.name,
+            state: store.publishState(d.key),
+            shareName: `${SHARE_NAME_PREFIX} · ${d.name} · ${options.identity().name}`
+          })
+          store.setPublishState(d.key, outcome.state)
+          store.updateRun(runId, {
+            published: { deckId: outcome.deckId, version: outcome.version, url: outcome.url },
+            publishError: outcome.shareError
+          })
+          log(
+            'info',
+            `routine "${d.name}": run ${runId} published as version ${outcome.version} of deck ${outcome.deckId}`
+          )
+        } catch (error) {
+          const reason =
+            error instanceof PublishFailure
+              ? error.message
+              : `the publish failed: ${error instanceof Error ? error.message : String(error)}`
+          store.updateRun(runId, { publishError: reason })
+          log('warn', `routine "${d.name}": ${reason}`)
+        }
+        emit()
+      })
+    publishing.set(d.key, next)
+    await next
+  }
+
   // ── The tick ──
 
   async function tick(): Promise<boolean> {
@@ -488,6 +568,9 @@ export function createRoutineService(options: RoutineServiceOptions): RoutineSer
       let changed = false
       const at = now()
       for (const d of declarations) {
+        // Pinned to another server (PRDCT-4149): listed, its next occurrence
+        // shown, and never considered here, so the server it names runs it alone.
+        if (d.runsHere === false) continue
         const state = store.seen(d.key)
         const decision = decideTick({
           schedule: d.schedule,
@@ -554,14 +637,30 @@ export function createRoutineService(options: RoutineServiceOptions): RoutineSer
       }
       claims.prune()
       // A run this process (or its predecessor on this data) never finished.
+      const cutOff: RoutineRun[] = []
       for (const open of store.openRuns()) {
-        store.updateRun(open.id, {
+        const ended = store.updateRun(open.id, {
           state: 'failed',
           endedAt: now(),
           reason: 'the server stopped during the run'
         })
+        if (ended) cutOff.push(ended)
       }
       await refresh()
+      // A run that reported and was then cut off by the stop (the ADR's own
+      // case: an update ending the app) still has its deck and nothing on
+      // Slideless, since the publish waits for the run's end and that end
+      // never came (round 2, Minor 1): it is published now, once. Only the
+      // runs THIS start ended, oldest first, so a routine that turns
+      // publishing on does not push its whole history with the oldest run
+      // ending as the version the link shows (round 3, Minor 1); and not a
+      // routine this server no longer runs (round 3, Note 2).
+      for (const run of [...cutOff].sort((a, b) => a.startedAt - b.startedAt)) {
+        const d = declaration(run.routineKey)
+        if (!d || !d.report.publish || d.runsHere === false) continue
+        if (!run.deck || run.published || run.publishError) continue
+        void publishRun(d, run.id, path.dirname(path.resolve(decksRoot, run.deck)))
+      }
       offFiles = options.files.onEvent((event) => {
         if (event._tag === 'workspace_files.changed' && watched.has(event.path)) void refresh()
       })
@@ -593,13 +692,36 @@ export function createRoutineService(options: RoutineServiceOptions): RoutineSer
           nextRunAt: nextRunAt(routine.schedule, routine.invalid, at),
           runs: store.state(routine.key)?.runs ?? []
         })),
-        viewer: viewerState()
+        viewer: viewerState(),
+        server: options.identity()
       }
+    },
+    async deck(runId) {
+      const run = store.run(runId)
+      if (!run) throw new Error(`No run "${runId}"`)
+      if (!run.deck) throw new Error('This run has no deck: it ended without a valid report')
+      // The relative path the service itself wrote: confined to the decks root all the same.
+      const file = path.resolve(decksRoot, run.deck)
+      const rel = path.relative(decksRoot, file)
+      if (rel.startsWith('..') || path.isAbsolute(rel))
+        throw new Error('This run’s deck is outside the decks folder')
+      let stat: fs.Stats
+      try {
+        stat = fs.statSync(file)
+      } catch {
+        throw new Error('This run’s deck is no longer on disk')
+      }
+      if (stat.size > MAX_TEMPLATE_BYTES) throw new Error('This run’s deck is larger than 5 MiB')
+      return { html: fs.readFileSync(file, 'utf8') }
     },
     async runNow(key) {
       const d = declaration(key)
       if (!d) throw new Error(`No routine "${key}" is declared on this server`)
       if (d.invalid) throw new Error(`"${d.name}" cannot run: ${d.invalid}`)
+      if (d.runsHere === false)
+        throw new Error(
+          `"${d.name}" runs on ${d.server ?? 'another server'}, not on ${options.identity().name}: ask that server to run it`
+        )
       if (runningOf(key)) throw new Error(`"${d.name}" is running; wait for it to end`)
       if (claimsProblem)
         throw new Error(

@@ -1,5 +1,6 @@
 import type { RoutineRun, RoutineView } from '@clave/contract/routines/model'
 import { runTone, type RunTone } from '../../../../../plugins/routine-report/src/run-labels'
+import type { RoutineSurface } from './routine-servers'
 
 /**
  * What a routine's toolbar button says, and the one place that decides it
@@ -10,13 +11,15 @@ import { runTone, type RunTone } from '../../../../../plugins/routine-report/src
  *   working → a ring turns around the icon while a run is in flight
  *   dot     → a still dot in the run's colour while the last run is unseen,
  *             amber while a run waits on the person, red when the
- *             declaration cannot run; none once dismissed or before any run
+ *             declaration cannot run or the server that runs it is not
+ *             connected; none once dismissed or before any run
  *
  * Nothing pulses: a pulse reads as an alarm, and a run that is simply on its
  * way is not one.
  */
 export type RoutineBadgeState =
   | 'invalid'
+  | 'unreachable'
   | 'running'
   | 'waiting'
   | 'ok'
@@ -41,8 +44,16 @@ type BadgeInput = {
   runs: ReadonlyArray<Pick<RoutineRun, 'state' | 'seen'>>
 }
 
-export function routineBadge(view: BadgeInput): RoutineBadge {
+export function routineBadge(
+  view: BadgeInput,
+  surface?: Pick<RoutineSurface, 'runsOn' | 'reachable'>
+): RoutineBadge {
   if (view.routine.invalid) return { state: 'invalid', working: false, dot: 'invalid' }
+  // A routine another server runs, that server out of reach: the runs shown
+  // are not that server's (the local listing never runs it), so no run state
+  // can be trusted over the fact that nothing here can reach it.
+  if (surface?.runsOn === 'server' && !surface.reachable)
+    return { state: 'unreachable', working: false, dot: 'invalid' }
   const last = view.runs[0]
   if (!last) return { state: 'never', working: false, dot: null }
   const tone = runTone(last as RoutineRun)

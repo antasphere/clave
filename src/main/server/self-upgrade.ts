@@ -380,6 +380,8 @@ export interface SelfUpgradeOptions {
   readonly activity: AgentActivity
   readonly clock?: Clock
   readonly idleMs?: number
+  /** The server's own name (PRDCT-4149), told to the clients in its info. */
+  readonly name?: string
 }
 
 export type SelfUpgrade = ServerInfoService & { close(): void }
@@ -464,7 +466,8 @@ export function createSelfUpgrade(options: SelfUpgradeOptions): SelfUpgrade {
     info: (): ServerInfo => ({
       version: options.version,
       installRef: facts?.ref ?? null,
-      upgrade: status
+      upgrade: status,
+      ...(options.name ? { name: options.name } : {})
     }),
     requestUpgrade: (request: ServerUpgradeRequest): ServerUpgradeStatus => {
       if (!facts)

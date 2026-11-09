@@ -30,6 +30,8 @@ import {
   WorkspaceFiles,
   fileWorkspaceFilesStorage,
   memoryWorkspaceFilesStorage,
+  resolveRoutine,
+  serializeRoutine,
   type ReviewRequest
 } from './files'
 
@@ -1031,5 +1033,45 @@ describe('discovery', () => {
     expect(files.readImage(join(root, 'none.png'))).toBeNull()
     expect(files.exists(join(root, 'logo.png'))).toBe(true)
     expect(files.exists(join(root, 'none.png'))).toBe(false)
+  })
+})
+
+// PRDCT-4149: a routine names the server that runs it and may publish its
+// deck. The parser keeps only well-formed values (a non-empty string, a real
+// boolean) and the writer carries them back verbatim, so a file read and
+// written by the toolbar keeps its pin and its publish.
+describe("a routine's server and publish, read and written", () => {
+  const dir = '/w'
+  const base = { name: 'Nightly', schedule: '0 3 * * *', prompt: 'go' }
+  const report = { template: '.clave/routines/ok' }
+
+  it('reads the server trimmed and drops one that is not a string', () => {
+    expect(resolveRoutine({ ...base, server: '  Studio ' }, dir)?.server).toBe('Studio')
+    expect(resolveRoutine({ ...base, server: 42 }, dir)).not.toHaveProperty('server')
+    expect(resolveRoutine({ ...base, server: '   ' }, dir)).not.toHaveProperty('server')
+  })
+
+  it('reads report.publish only when it is a boolean', () => {
+    expect(resolveRoutine({ ...base, report: { ...report, publish: true } }, dir)?.report).toEqual({
+      template: '/w/.clave/routines/ok',
+      publish: true
+    })
+    expect(
+      resolveRoutine({ ...base, report: { ...report, publish: false } }, dir)?.report?.publish
+    ).toBe(false)
+    expect(resolveRoutine({ ...base, report: { ...report, publish: 'yes' } }, dir)?.report).toEqual(
+      { template: '/w/.clave/routines/ok' }
+    )
+  })
+
+  it('writes the server and report.publish back as read', () => {
+    const read = resolveRoutine(
+      { ...base, server: 'Studio', report: { ...report, publish: true } },
+      dir
+    )!
+    const written = serializeRoutine(read, (abs) => (abs ? abs.replace('/w/', '') : ''))
+    expect(written.server).toBe('Studio')
+    expect(written.report).toEqual({ template: '.clave/routines/ok', publish: true })
+    expect(resolveRoutine(written, dir)).toEqual(read)
   })
 })

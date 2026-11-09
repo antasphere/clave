@@ -987,6 +987,13 @@ export interface ElectronAPI extends FleetDesktopAPI {
   /** The run's conversation continued: in the panel (the session re-homed to this window) or as a tab (a new session this window places). */
   routinesOpenDiscussion: (runId: string, mode: 'panel' | 'tab') => Promise<{ sessionId: string }>
   onRoutinesChanged: (callback: () => void) => () => void
+  /** A connected server's run deck written under this Mac's user data and
+   *  registered with the preview protocol (PRDCT-4149): its `clave-preview://` URL. */
+  routinesCacheRemoteDeck: (
+    serverId: string,
+    runId: string,
+    html: string
+  ) => Promise<{ url: string }>
   copyOfferList: () => Promise<CopyOfferView[]>
   copyOfferCopy: (id: string) => Promise<CopyOfferView>
   copyOfferDismiss: (id: string) => Promise<void>

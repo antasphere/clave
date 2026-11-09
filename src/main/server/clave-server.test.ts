@@ -184,6 +184,8 @@ describe('the version the in-process server reports (issue #266, V1-F6)', () => 
       expect(await api.server.info()).toEqual({
         version: '3.0.0-beta.9',
         installRef: null,
+        // The server's own name (PRDCT-4149): this machine's, whatever it is.
+        name: expect.any(String),
         upgrade: {
           supported: false,
           reason: 'This server is run by the app; it updates with it',

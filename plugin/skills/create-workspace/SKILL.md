@@ -597,11 +597,13 @@ toolbar whatever the group's `toolbar` flag, after the group's terminals.
   "catchUp": true,
   "timeoutMinutes": 30,
   "scope": "machine",
+  "server": "MacStudio",
   "report": {
     "template": ".clave/routines/workspace-health",
     "schema": ".clave/routines/workspace-health/schema.json",
     "width": 560,
-    "height": 640
+    "height": 640,
+    "publish": true
   }
 }]
 ```
@@ -629,7 +631,15 @@ injects), `cwd` (resolved like a terminal's; the group's by default), `icon` and
 terminals' enums), `catchUp` (default `true`: an occurrence missed while the server was down
 runs once at its next start), `timeoutMinutes` (default 30), `scope` (`machine`, the default
 and the only one built: one run per machine; `team`, one run for the whole team, is refused
-with "not built yet" until a shared claim exists).
+with "not built yet" until a shared claim exists), `server` (the Clave server that runs the
+routine, by the server's own name or its id; the name is the first label of the machine's hostname
+unless the install gave it one with `--server-name`; every other machine that loads
+the file lists the routine and never runs it, provided its Clave knows the field, so keep every
+machine current; a server one pins to deserves an explicit `--server-name`; absent, whichever machine reads the file runs
+it, once per machine), `report.publish` (`true`: the server that runs the routine pushes every
+run's deck to the workspace's Slideless, as a new version of one deck per routine, and mints
+one named share link for it, forms and downloads off; it needs the Slideless CLI signed in as
+the server's user; a failed publish never fails the run, and the panel says why).
 
 **The report is a deck.** `report.template` names a folder inside the `.clave` file's own
 folder (never outside it) holding `index.html` with a

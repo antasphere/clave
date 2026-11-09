@@ -50,6 +50,9 @@ export interface RoutinesService {
   dismiss(runId: string): void
   /** The agent's report for the run its session is; throws `RoutineReportRefusal`. */
   report(input: RoutineReportInput): Promise<{ runId: string; deck: string }>
+  /** A run's filled deck page, for a client that cannot reach this server's
+   *  viewer (PRDCT-4149); throws for a run with no deck. */
+  deck(runId: string): Promise<{ html: string }>
   /** The run's conversation continued, in the panel or as a tab; answers the session. */
   openDiscussion(
     runId: string,
@@ -71,8 +74,13 @@ export class Routines extends Context.Tag('@clave/server/Routines')<Routines, Ro
   }
   /** A server with no scheduler behind it: nothing listed, every act refused. */
   static readonly none: RoutinesService = {
-    list: () => ({ routines: [], viewer: { url: null, note: NO_ROUTINES.message } }),
+    list: () => ({
+      routines: [],
+      viewer: { url: null, note: NO_ROUTINES.message },
+      server: { id: '', name: '' }
+    }),
     runNow: () => Promise.reject(NO_ROUTINES),
+    deck: () => Promise.reject(NO_ROUTINES),
     dismiss: () => {
       throw NO_ROUTINES
     },

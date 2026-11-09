@@ -76,7 +76,10 @@ import {
 } from '@clave/server'
 import { standaloneSettingsSource } from './settings/standalone-source'
 // ── ADR 0004: the routines, this server's own scheduler ──
+import * as os from 'node:os'
 import { createRoutineService } from './routines/service'
+import { SlidelessPublisher } from './routines/publisher'
+import { defaultServerName } from './routines/resolve'
 import { launchFactsFromManagers } from './routines/facts'
 import { contractPluginDir } from './routines/skill'
 import { claudeAccountsManager } from './claude-accounts'
@@ -171,6 +174,14 @@ async function main(): Promise<void> {
   const releaseLease = config.daemon ? acquireDaemonLease(dataDir) : undefined
   if (releaseLease) process.once('exit', releaseLease)
   const identity = config.daemon ? daemonIdentity(dataDir, arg('token-file')) : undefined
+  // ── PRDCT-4149: this server's own name, what a routine's `server` field names it by ──
+  // `--server-name` (the install script's option) else the machine's hostname
+  // first label only; the id is the daemon's stable one, or the listener's once up.
+  const serverName =
+    arg('server-name')?.trim() ||
+    process.env.CLAVE_SERVER_NAME?.trim() ||
+    defaultServerName(os.hostname())
+  let listeningServerId: string | null = null
 
   const log = (line: string): void => {
     process.stderr.write(`clave-server: ${line}\n`)
@@ -320,7 +331,8 @@ async function main(): Promise<void> {
       facts,
       runner: scriptRunner({ dataDir, name: 'reason' in facts ? 'clave-server' : facts.name }),
       activity: sessionActivity(sessionManager),
-      idleMs: upgradeIdleMs(process.argv.slice(2), TEST_NO_ACTIVATE)
+      idleMs: upgradeIdleMs(process.argv.slice(2), TEST_NO_ACTIVATE),
+      name: serverName
     })
   }
   // ── Wave 3, lane A: the `.clave` files of this machine, their trust store under `--data-dir` ──
@@ -347,6 +359,14 @@ async function main(): Promise<void> {
     ...(TEST_NO_ACTIVATE ? { claimsDir: path.join(dataDir, 'routine-claims') } : {}),
     holder: `clave-server:${process.pid}`,
     pluginDir: contractPluginDir(path.resolve(__dirname, '..', '..', 'resources')),
+    identity: () => ({ id: identity?.serverId ?? listeningServerId ?? '', name: serverName }),
+    publisher: TEST_NO_ACTIVATE
+      ? false
+      : new SlidelessPublisher({
+          env: () => loginShellEnvAsync(),
+          log: (level, message) =>
+            process.stderr.write(`clave-server: routines ${level}: ${message}\n`)
+        }),
     viewer: TEST_NO_ACTIVATE ? false : { env: () => loginShellEnvAsync() },
     rehome: (sessionId, windowKey) => ptyManager.setSessionWindowKey(sessionId, windowKey),
     // A run reports through the agent tools: the daemon's own MCP once it
@@ -390,7 +410,7 @@ async function main(): Promise<void> {
       // progress published to every attached client (server/git-port.ts).
       git: serverGitPort(),
       // ── Issue #266: the server domain ──
-      serverInfo: selfUpgrade ?? ServerInfoPort.appRun(version)
+      serverInfo: selfUpgrade ?? ServerInfoPort.appRun(version, serverName)
     },
     port,
     host: config.host,
@@ -401,6 +421,7 @@ async function main(): Promise<void> {
     // the app's; off, the route does not exist.
     testFixtures: TEST_NO_ACTIVATE
   })
+  listeningServerId = server.serverId
 
   const mcp = config.daemon
     ? await startStandaloneMcp({

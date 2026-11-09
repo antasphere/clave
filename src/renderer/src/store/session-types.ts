@@ -600,7 +600,16 @@ export interface PinnedGroupRoutine {
   catchUp?: boolean
   timeoutMinutes?: number
   scope?: string
-  report?: { template: string; schema?: string; width?: number; height?: number }
+  /** The Clave server that runs it, by the server's own name or id (PRDCT-4149). */
+  server?: string
+  report?: {
+    template: string
+    schema?: string
+    width?: number
+    height?: number
+    /** Every run's deck pushed to Slideless by the server that runs it. */
+    publish?: boolean
+  }
 }
 
 export interface PinnedGroup {

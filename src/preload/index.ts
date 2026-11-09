@@ -1692,6 +1692,8 @@ const electronAPI = {
       'routines.changed',
       () => null
     )(callback),
+  routinesCacheRemoteDeck: (serverId: string, runId: string, html: string) =>
+    ipcRenderer.invoke('routines:cache-remote-deck', serverId, runId, html),
   copyOfferList: () => ipcRenderer.invoke('copy-offer:list'),
 
   copyOfferCopy: (id: string) => ipcRenderer.invoke('copy-offer:copy', id),
