@@ -25,7 +25,7 @@ not booted, runs `xcodebuild test` (by default `-only-testing:ClaveUITests/Fixtu
 tears the stack down and exits with xcodebuild's code. `--push <payload.json>` sends a
 notification to the app once the tests are done. `--keep` leaves the stack up until
 Ctrl-C. The tests get the stack's facts as `TEST_RUNNER_CLAVE_FIXTURE_*` variables:
-`ISSUER_URL`, `RELAY_URL`, `SERVER_URL`, `MACHINE_ID`, `SESSION_ID`, `NONCE`. The owner's
+`ISSUER_URL`, `RELAY_URL`, `SERVER_URL`, `MACHINE_ID`, `WORKSPACE_ID`, `SESSION_ID`, `NONCE`. The owner's
 token is never passed to them.
 
 Both scripts take `--server <port>` (default 47101), `--relay <port>` (default 47102)

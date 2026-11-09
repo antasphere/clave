@@ -129,6 +129,7 @@ async function main() {
       TEST_RUNNER_CLAVE_FIXTURE_RELAY_URL: stack.relay,
       TEST_RUNNER_CLAVE_FIXTURE_SERVER_URL: stack.server,
       TEST_RUNNER_CLAVE_FIXTURE_MACHINE_ID: stack.machineId,
+      TEST_RUNNER_CLAVE_FIXTURE_WORKSPACE_ID: stack.workspaceId,
       TEST_RUNNER_CLAVE_FIXTURE_SESSION_ID: stack.sessionId,
       TEST_RUNNER_CLAVE_FIXTURE_NONCE: stack.nonce
     }
