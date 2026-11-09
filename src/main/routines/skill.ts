@@ -22,6 +22,14 @@ export function contractPluginDir(resourcesDir: string): string {
     .replace('app.asar', 'app.asar.unpacked')
 }
 
+/** The built-in report page a created routine gets (PRDCT-4242),
+ *  `resources/routines/default-report`, read from the unpacked asar like the plugin. */
+export function defaultReportDir(resourcesDir: string): string {
+  return path
+    .join(resourcesDir, 'routines', 'default-report')
+    .replace('app.asar', 'app.asar.unpacked')
+}
+
 /** The skill's own text, for an agent that loads no plugin. */
 export function contractSkillText(pluginDir: string): string {
   try {

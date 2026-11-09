@@ -26,6 +26,9 @@ import type { Unsubscribe } from '../sessions/port'
 export interface ServerInfoService {
   readonly info: () => ServerInfo
   readonly requestUpgrade: (request: ServerUpgradeRequest) => ServerUpgradeStatus
+  /** The server's own name set from a Mac (PRDCT-4241), valid already;
+   *  answers the info with it. Absent on a server that keeps no name. */
+  readonly setName?: (name: string) => ServerInfo
   /** Told every change of the upgrade's state; published as `server.upgrade_changed`. */
   readonly subscribe: (listener: (status: ServerUpgradeStatus) => void) => Unsubscribe
 }
@@ -55,15 +58,34 @@ export class ServerInfoPort extends Context.Tag('@clave/server/ServerInfo')<
     subscribe: () => () => {}
   }
   /** A server the app runs: the app's version, and no upgrade of its own;
-   *  `name` is the server's own name (PRDCT-4149) when the entry knows it. */
-  static appRun(version: string, name?: string): ServerInfoService {
+   *  `name` is the server's own name (PRDCT-4149) when the entry knows it,
+   *  read at each use when given as a function, and `setName` stores a new
+   *  one (PRDCT-4241) when the entry can. */
+  static appRun(
+    version: string,
+    name?: string | (() => string),
+    setName?: (name: string) => string
+  ): ServerInfoService {
     const upgrade: ServerUpgradeStatus = {
       supported: false,
       reason: APP_RUN_REASON,
       state: 'idle'
     }
+    const current = (): string | undefined => (typeof name === 'function' ? name() : name)
+    const info = (): ServerInfo => {
+      const own = current()
+      return { version, installRef: null, upgrade, ...(own ? { name: own } : {}) }
+    }
     return {
-      info: () => ({ version, installRef: null, upgrade, ...(name ? { name } : {}) }),
+      info,
+      ...(setName
+        ? {
+            setName: (next: string): ServerInfo => {
+              setName(next)
+              return info()
+            }
+          }
+        : {}),
       requestUpgrade: () => {
         throw new CapabilityUnavailable({ capability: 'server-upgrade', message: APP_RUN_REASON })
       },

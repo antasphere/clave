@@ -597,7 +597,7 @@ toolbar whatever the group's `toolbar` flag, after the group's terminals.
   "catchUp": true,
   "timeoutMinutes": 30,
   "scope": "machine",
-  "server": "MacStudio",
+  "runsOn": "romains-mac-studio",
   "report": {
     "template": ".clave/routines/workspace-health",
     "schema": ".clave/routines/workspace-health/schema.json",
@@ -612,7 +612,21 @@ toolbar whatever the group's `toolbar` flag, after the group's terminals.
 starts a new one), `schedule` (five cron fields in the machine's local time: minute, hour,
 day of month, month, day of week; `*`, lists, ranges, steps, names; no `@daily`), `prompt`
 (the job; `{{name}}` is filled from `params`, and the `@root_path` / `@project_path` tokens
-expand as in a session prompt) and `report.template` (below).
+expand as in a session prompt), `runsOn` (below) and `report.template` (below).
+
+**Where it runs: `runsOn`, required.** A routine lives in one workspace and runs on one
+machine, or explicitly on every machine. `runsOn` is a Clave server's own name or its id
+(Settings › Servers shows and sets a server's name; by default it is the first label of the
+machine's hostname, `romains-mac-studio` for `romains-mac-studio.home`; never the label the
+Mac saved the connection under), or the word `"every"`, once on every machine that reads the
+file. A routine that says neither is listed as unable to run and runs nowhere; so is one still
+written with the old `server` field, with the value to move. Every other machine that reads
+the file lists a placed routine and never runs it, and the Mac's toolbar shows the owning
+server's runs under the same workspace. Keep every machine on a current Clave: an older one
+does not know the field and would run the routine as if it said `every`. A routine made for
+one machine without a file to edit is created on that machine instead (an agent's
+`clave_routine_create`, or the “+” of a machine's section in the toolbar's Routines popover);
+`clave_routine_move_to_file` writes it into a file like this one when it should be shared.
 
 **The launch parameters**, every one optional, exactly the choices a person makes when
 opening a tab, resolved the way `clave_open_session` resolves them: `agent` (`claude`,
@@ -631,12 +645,7 @@ injects), `cwd` (resolved like a terminal's; the group's by default), `icon` and
 terminals' enums), `catchUp` (default `true`: an occurrence missed while the server was down
 runs once at its next start), `timeoutMinutes` (default 30), `scope` (`machine`, the default
 and the only one built: one run per machine; `team`, one run for the whole team, is refused
-with "not built yet" until a shared claim exists), `server` (the Clave server that runs the
-routine, by the server's own name or its id; the name is the first label of the machine's hostname
-unless the install gave it one with `--server-name`; every other machine that loads
-the file lists the routine and never runs it, provided its Clave knows the field, so keep every
-machine current; a server one pins to deserves an explicit `--server-name`; absent, whichever machine reads the file runs
-it, once per machine), `report.publish` (`true`: the server that runs the routine pushes every
+with "not built yet" until a shared claim exists), `report.publish` (`true`: the server that runs the routine pushes every
 run's deck to the workspace's Slideless, as a new version of one deck per routine, and mints
 one named share link for it, forms and downloads off; it needs the Slideless CLI signed in as
 the server's user; a failed publish never fails the run, and the panel says why).
@@ -659,10 +668,11 @@ Only a trusted file schedules anything; the scheduler never asks.
 
 **Where it runs.** The Clave server schedules (in the app, as its child, or as a daemon with
 no client attached), one occurrence per user across servers, and never from a window. The
-toolbar shows the active workspace's routines with a dot for the unseen last run (green ok,
-amber attention, red failed, pulsing while running or waiting on you); the panel has
-Report and Discussion (the run's conversation continued), Run again, Open as a tab, Dismiss
-and the last twenty runs.
+toolbar carries one Routines button whose popover lists the workspace's routines in sections,
+one per machine (this Mac, each connected server, then any machine a routine names that this
+Mac cannot reach); a row opens the routine's panel: Report and Discussion (the run's
+conversation continued), Runs (the last twenty), Run now, Open as a tab, Dismiss. A routine on
+`every` shows under each machine that lists it.
 
 ## How to use
 

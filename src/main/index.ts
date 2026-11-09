@@ -213,7 +213,9 @@ async function bootServer(): Promise<void> {
           // ── Lane C of wave 3: the end-to-end fixture route, test mode only ──
           testFixtures: TEST_NO_ACTIVATE,
           // ── Issue #266: the version it reports, the one its child gets too ──
-          appVersion: app.getVersion()
+          appVersion: app.getVersion(),
+          // ── PRDCT-4241: where this Mac keeps the name it answers to as a server ──
+          dataDir: app.getPath('userData')
         })
         // The scheduler reads its routines and arms its tick once the
         // server is up and the agent tools listen: a run it starts reaches

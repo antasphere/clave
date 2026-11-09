@@ -2,7 +2,9 @@
  * Routines on a connected Clave server (PRDCT-4149): a `.clave` routine may
  * name the server that runs it; every server that reads the file lists it,
  * only the named one runs it, and the Mac shows that server's runs and
- * reports on its own toolbar.
+ * reports on its own toolbar. The toolbar has ONE Routines button (PRDCT-4244)
+ * whose popover lists the routines in one section per machine (this Mac, each
+ * connected server by its own name, a machine away); a row opens the panel.
  *
  * One standalone daemon started with `--server-name studio` (the fixture
  * `claude` and a login-shell stub on its PATH), one hidden in-process Mac
@@ -16,15 +18,16 @@
  *  2. the Mac never runs it: its ticks over an overdue occurrence start
  *     nothing, and Run now there is refused naming both servers;
  *  3. the daemon runs it: Run now ends ok with the fixture's report and a deck;
- *  4. the Mac shows the server's run: the pinned routine's button (under the
- *     Mac workspace that holds the same file) is the server's view, ok, marked
- *     `studio`; the panel says `on studio` and shows the deck read over the
+ *  4. the Mac shows the server's run: the pinned routine's row (under the
+ *     Mac workspace that holds the same file) is the server's view, ok, in the
+ *     `studio` section; the Mac's unpinned routine is in the `This Mac`
+ *     section; the panel says `on studio` and shows the deck read over the
  *     API through `clave-preview://`, cached under the Mac's user data; the
- *     server workspace carries the server's unpinned routine, not the pinned
- *     one twice;
+ *     server workspace carries the server's unpinned routine in the `studio`
+ *     section, not the pinned one twice;
  *  5. Run now in the panel runs on the server, never on the Mac;
- *  6. the server away: the button reads unreachable, says where it runs and
- *     that it is not connected, and Run now is disabled.
+ *  6. the server away: the row reads unreachable in an away section noted
+ *     `Not connected`, says where it runs, and Run now is disabled.
  *
  * Fails if: a server runs a routine pinned elsewhere (by tick or by hand), the
  * listing loses `runsHere`/`server`, the Mac shows its own view while the
@@ -94,7 +97,7 @@ const CLAVE_DOC = {
       routines: [
         {
           name: PINNED,
-          server: 'studio',
+          runsOn: 'studio',
           schedule: HOURLY,
           prompt: 'ROUTINE-MODE:ok Check the machine at @root_path.',
           // The built-in Claude, so the daemon runs the fixture `claude` on its
@@ -108,6 +111,7 @@ const CLAVE_DOC = {
         },
         {
           name: LOCAL,
+          runsOn: 'every',
           schedule: NEVER,
           prompt: 'ROUTINE-MODE:ok Local.',
           model: 'fixture-model',
@@ -226,7 +230,46 @@ const list = (fixture) =>
 const viewOf = (listing, name) => listing?.routines.find((v) => v.routine.name === name)
 const runsOf = async (fixture, name) => viewOf(await list(fixture), name)?.runs ?? []
 const ended = (run) => run && run.state !== 'running' && run.state !== 'waiting'
-const button = (win, name) => win.locator(`[data-testid="routine-button"][data-routine="${name}"]`)
+// The one Routines button, its popover's list, a routine's rows and their sections.
+const LIST = '[data-testid="routines-list"]'
+const ROW = (name) => `[data-testid="routine-row"][data-routine="${name}"]`
+const rows = (win, name) => win.locator(`${LIST} ${ROW(name)}`)
+/** The section holding a routine's row (the `has` locator is relative to the section). */
+const sectionOf = (win, name, extra = '') =>
+  win.locator(`${LIST} [data-testid="routines-section"]`).filter({
+    has: win.locator(`${ROW(name)}${extra}`)
+  })
+/** Show the list: open the popover, or go back from a panel shown in it.
+ *  Retried from a fresh click: a tab taking focus as it mounts can close the
+ *  popover while it animates in. */
+async function openList(win) {
+  const list = win.locator(LIST)
+  for (let attempt = 0; attempt < 10; attempt++) {
+    if (await list.isVisible()) return
+    const back = win.locator('[data-testid="routine-back"]')
+    if (await back.isVisible()) await back.click()
+    else await win.locator('[data-testid="routines-button"]').click()
+    if (
+      await list.waitFor({ timeout: 1000 }).then(
+        () => true,
+        () => false
+      )
+    )
+      return
+  }
+  await list.waitFor({ timeout: 5000 })
+}
+/** A row's attribute, the list opened first; null while it is not there. */
+async function rowAttr(win, rowLocator, name) {
+  await openList(win).catch(() => {})
+  return await rowLocator.getAttribute(name, { timeout: 1000 }).catch(() => null)
+}
+/** Escape closes the popover; wait until it is gone before the next click. */
+async function closePopover(win) {
+  await win.keyboard.press('Escape')
+  await win.locator(LIST).waitFor({ state: 'hidden', timeout: 5000 })
+  await win.locator('[data-testid="routine-panel"]').waitFor({ state: 'hidden', timeout: 5000 })
+}
 
 async function closeSwitcher(win) {
   const add = win.getByRole('button', { name: 'Add workspace…', exact: true })
@@ -338,7 +381,11 @@ export async function run(t) {
       viewOf(macListing, PINNED).routine.runsHere,
       false
     )
-    t.equal('on the Mac the pin reads studio', viewOf(macListing, PINNED).routine.server, 'studio')
+    t.equal(
+      'on the Mac the routine is placed on studio (runsOn)',
+      viewOf(macListing, PINNED).routine.runsOn,
+      'studio'
+    )
     t.check(
       'on the Mac the pinned routine still shows its next run',
       typeof viewOf(macListing, PINNED).nextRunAt === 'number',
@@ -416,30 +463,44 @@ export async function run(t) {
     await step("the Mac's toolbar shows the server's view of the pinned routine", async () => {
       await switchTo(win, 'mac-a')
       await eventually(
-        async () =>
-          (await button(win, PINNED)
-            .getAttribute('data-state')
-            .catch(() => null)) === 'ok',
-        'the pinned button reads ok from the server'
+        async () => (await rowAttr(win, rows(win, PINNED), 'data-state')) === 'ok',
+        'the pinned row reads ok from the server'
       )
     })
-    const pinned = button(win, PINNED)
-    t.equal("the pinned button is the server's", await pinned.getAttribute('data-server'), owner)
+    const pinned = rows(win, PINNED)
+    t.equal('the pinned routine has one row in the Mac workspace', await pinned.count(), 1)
+    t.equal("the pinned row is the server's", await pinned.getAttribute('data-server'), owner)
     t.equal(
-      'its server mark names studio',
-      await pinned.locator('[data-testid="routine-server-mark"]').getAttribute('title'),
+      'its section is the server, titled studio',
+      await sectionOf(win, PINNED).getAttribute('data-machine'),
       'studio'
+    )
+    t.equal(
+      'that section is a connected server',
+      await sectionOf(win, PINNED).getAttribute('data-kind'),
+      'server'
     )
     t.check(
       'its title says where it runs',
       /runs on studio/.test((await pinned.getAttribute('title')) ?? ''),
       await pinned.getAttribute('title')
     )
-    t.equal("the Mac's own unpinned routine is beside it", await button(win, LOCAL).count(), 1)
+    const macLocal = rows(win, LOCAL)
+    t.equal("the Mac's own unpinned routine is listed once", await macLocal.count(), 1)
     t.equal(
-      'and carries no server mark',
-      await button(win, LOCAL).locator('[data-testid="routine-server-mark"]').count(),
-      0
+      "and it is the Mac's, with no server on its row",
+      await macLocal.getAttribute('data-server'),
+      null
+    )
+    t.equal(
+      'it sits in the This Mac section, named by the Mac',
+      await sectionOf(win, LOCAL, ':not([data-server])').getAttribute('data-machine'),
+      'This Mac · macbook'
+    )
+    t.equal(
+      'that section is this Mac',
+      await sectionOf(win, LOCAL, ':not([data-server])').getAttribute('data-kind'),
+      'here'
     )
 
     await pinned.click()
@@ -504,44 +565,73 @@ export async function run(t) {
       t.equal('a manual run', runs[0].trigger, 'manual')
     })
     t.equal('the Mac still ran nothing of it', (await runsOf(mac.fixture, PINNED)).length, 0)
-    await win.keyboard.press('Escape')
+    await closePopover(win)
 
     // The server workspace carries the server's own unpinned routine; the
     // pinned one is surfaced once, under the Mac workspace holding the file.
     await step("the server workspace shows the server's unpinned routine", async () => {
       await switchTo(win, serverWs.id)
       await eventually(
-        async () =>
-          (await button(win, LOCAL)
-            .getAttribute('data-server')
-            .catch(() => null)) === owner,
+        async () => (await rowAttr(win, rows(win, LOCAL), 'data-server')) === owner,
         "the server's Local only shows in the server workspace"
       )
     })
-    t.equal('the pinned routine is not shown twice', await button(win, PINNED).count(), 0)
+    t.equal(
+      'the pinned routine is not shown twice (no row of it in the server workspace)',
+      await rows(win, PINNED).count(),
+      0
+    )
+    // The every routine is listed by each machine that reads the file: the
+    // Mac's copy was under This Mac in the Mac workspace (above); the server's
+    // copy is here, under the server's own section. Both copies never meet in
+    // one list in this spec: no combined pairing joins the two workspaces.
+    const serverLocal = rows(win, LOCAL)
+    t.equal("the server's Local only is listed once here", await serverLocal.count(), 1)
+    t.equal(
+      "the every routine is also listed under the server's section, titled studio",
+      await sectionOf(win, LOCAL, `[data-server="${owner}"]`).getAttribute('data-machine'),
+      'studio'
+    )
+    t.equal(
+      'and that section is the connected server',
+      await sectionOf(win, LOCAL, `[data-server="${owner}"]`).getAttribute('data-server'),
+      owner
+    )
+    await closePopover(win)
     await switchTo(win, 'mac-a')
 
     // ── 6. The server away ──
     await step('the server away', async () => {
       await server.stop()
       await eventually(
-        async () =>
-          (await button(win, PINNED)
-            .getAttribute('data-state')
-            .catch(() => null)) === 'unreachable',
-        'the pinned button reads unreachable'
+        async () => (await rowAttr(win, rows(win, PINNED), 'data-state')) === 'unreachable',
+        'the pinned row reads unreachable'
       )
     })
-    const title = (await button(win, PINNED).getAttribute('title')) ?? ''
+    const away = rows(win, PINNED)
+    t.equal('the pinned routine still has one row', await away.count(), 1)
+    const awaySection = sectionOf(win, PINNED)
+    t.equal('its section is a machine away', await awaySection.getAttribute('data-kind'), 'away')
+    t.equal(
+      'the away section is titled by the server name',
+      await awaySection.getAttribute('data-machine'),
+      'studio'
+    )
+    t.equal(
+      'the away section says Not connected',
+      await awaySection.locator('[data-testid="routines-section-note"]').textContent(),
+      'Not connected'
+    )
+    const title = (await away.getAttribute('title')) ?? ''
     t.check('its title says it runs on studio', title.includes('runs on studio'), title)
     t.check('and that studio is not connected', title.includes('not connected'), title)
-    await button(win, PINNED).click()
+    await away.click()
     await panel.waitFor({ timeout: 5000 })
     t.check(
       'Run now is disabled while the server is away',
       await panel.locator('[data-testid="routine-run-again"]').isDisabled()
     )
-    await win.keyboard.press('Escape')
+    await closePopover(win)
     t.check('no page error on the Mac', mac.errors.length === 0, mac.errors)
   } finally {
     if (previousName === undefined) delete process.env.CLAVE_SERVER_NAME

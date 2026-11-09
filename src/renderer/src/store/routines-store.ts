@@ -4,9 +4,16 @@ import {
   LOCAL_SERVER_ID,
   type SavedServerConnection,
   type ServerConnectionStatus,
-  type ServerPairings
+  type ServerPairings,
+  type ServerVersionStatus
 } from '@clave/contract/fleet'
-import type { RoutineRun, RoutineView, RoutinesListing } from '@clave/contract/routines/model'
+import type {
+  RoutineCreateInput,
+  RoutinePatch,
+  RoutineRun,
+  RoutineView,
+  RoutinesListing
+} from '@clave/contract/routines/model'
 import { useFleetStore } from './fleet-store'
 import { usePairingStore } from './pairing-store'
 import { mergeRoutineSurfaces, type RoutineSurface } from '../components/routines/routine-servers'
@@ -42,6 +49,13 @@ interface RoutinesState {
     runId: string,
     mode: 'panel' | 'tab'
   ) => Promise<string | null>
+  // ── PRDCT-4242: the routines a machine keeps in its own store ──
+  /** A routine created on the surface's machine; throws the machine's refusal (the form shows it). */
+  create: (surface: RoutineTarget, input: RoutineCreateInput) => Promise<RoutineView>
+  update: (surface: RoutineTarget, key: string, patch: RoutinePatch) => Promise<RoutineView>
+  /** True when the machine took the delete; false with the refusal on the error line. */
+  remove: (surface: RoutineTarget, key: string) => Promise<boolean>
+  pause: (surface: RoutineTarget, key: string, paused: boolean) => Promise<RoutineView | null>
 }
 
 /** What an act needs of a surface: the server it goes to. */
@@ -107,7 +121,32 @@ export const useRoutinesStore = create<RoutinesState>((set, get) => {
           : window.electronAPI.fleetRoutineDiscussion(surface.serverId, runId, mode)
       )
       return opened?.sessionId ?? null
-    }
+    },
+    // A create or an update is answered by a form: its refusal is the form's
+    // to show, so these throw rather than land on the panel's error line.
+    create: (surface, input) =>
+      isLocal(surface)
+        ? window.electronAPI.routinesCreate(input)
+        : window.electronAPI.fleetRoutineCreate(surface.serverId, input),
+    update: (surface, key, patch) =>
+      isLocal(surface)
+        ? window.electronAPI.routinesUpdate(key, patch)
+        : window.electronAPI.fleetRoutineUpdate(surface.serverId, key, patch),
+    remove: async (surface, key) => {
+      const done = await act(async () => {
+        await (isLocal(surface)
+          ? window.electronAPI.routinesDelete(key)
+          : window.electronAPI.fleetRoutineDelete(surface.serverId, key))
+        return true
+      })
+      return done === true
+    },
+    pause: (surface, key, paused) =>
+      act(() =>
+        isLocal(surface)
+          ? window.electronAPI.routinesPause(key, paused)
+          : window.electronAPI.fleetRoutinePause(surface.serverId, key, paused)
+      )
   }
 })
 
@@ -173,14 +212,21 @@ export function surfacesOf(
   routines: Pick<RoutinesState, 'local' | 'remote'>,
   connections: readonly SavedServerConnection[],
   statuses: Record<string, ServerConnectionStatus>,
-  pairings: ServerPairings['servers']
+  pairings: ServerPairings['servers'],
+  versions: Record<string, ServerVersionStatus> = {}
 ): RoutineSurface[] {
   const saved = new Set(connections.map((c) => c.id))
+  // A saved server's own name, as the version sync last heard it: what
+  // tells a server that is away from a name nobody has (PRDCT-4241).
+  const knownNames: Record<string, string> = {}
+  for (const [id, status] of Object.entries(versions))
+    if (saved.has(id) && status.serverName) knownNames[id] = status.serverName
   return mergeRoutineSurfaces({
     local: routines.local,
     remote: Object.fromEntries(Object.entries(routines.remote).filter(([id]) => saved.has(id))),
     connected: connectedIds(statuses),
     connectionNames: Object.fromEntries(connections.map((c) => [c.id, c.name])),
+    knownNames,
     pairings
   })
 }
@@ -192,9 +238,10 @@ export function useRoutineSurfaces(): RoutineSurface[] {
   const connections = useFleetStore((s) => s.connections)
   const statuses = useFleetStore((s) => s.statuses)
   const pairings = usePairingStore((s) => s.servers)
+  const versions = useFleetStore((s) => s.versions)
   return useMemo(
-    () => surfacesOf({ local, remote }, connections, statuses, pairings),
-    [local, remote, connections, statuses, pairings]
+    () => surfacesOf({ local, remote }, connections, statuses, pairings, versions),
+    [local, remote, connections, statuses, pairings, versions]
   )
 }
 

@@ -87,15 +87,27 @@ export const RoutineDeclaration = Schema.Struct({
   catchUp: Schema.Boolean,
   timeoutMinutes: Schema.Number,
   scope: RoutineScope,
-  /** The server that runs this routine, as the file names it (its own name
-   *  or its id), null when whichever server reads the file runs it. */
-  server: Schema.optional(Schema.NullOr(Schema.String)),
-  /** Whether THIS server runs it: true with no `server` named or when the
-   *  name or id is this server's; false for a routine pinned elsewhere,
-   *  which is listed, its next occurrence shown, and never run here.
+  /** Where the routine runs, as declared (PRDCT-4241): `every` (once on
+   *  every machine that reads the file), or a server's own name or id as
+   *  written; null when the declaration says neither (it is then `invalid`
+   *  and runs nowhere). A created routine (`origin: created`) runs on the
+   *  server that stores it and carries that server's own name here. */
+  runsOn: Schema.optional(Schema.NullOr(Schema.String)),
+  /** Whether THIS server runs it: true for `every` or when the name or id
+   *  is this server's; false for a routine placed elsewhere (listed, its
+   *  next occurrence shown, never run here) and for one that says nothing.
    *  Both optional on the wire (an older server sends neither): a reader
    *  takes a missing `runsHere` as true, what such a server did. */
   runsHere: Schema.optional(Schema.Boolean),
+  /** Where the declaration comes from (PRDCT-4242): a `.clave` file on this
+   *  server's disk, or the server's own store of created routines. Absent
+   *  on the wire from an older server: a reader takes it as `file`. */
+  origin: Schema.optional(Schema.Literal('file', 'created')),
+  /** A created routine put on hold: listed, never ticked, Run now refused. */
+  paused: Schema.optional(Schema.Boolean),
+  /** A created routine's prompt as written, before the `@`-tokens: what a
+   *  move into a file writes, so the file keeps the tokens (PRDCT-4243). */
+  promptTemplate: Schema.optional(Schema.String),
   report: RoutineReportSpec,
   /** Why this routine can never run as declared (an unknown scope, a
    *  schedule that does not parse, a template outside the file's folder):
@@ -258,6 +270,108 @@ export const OpenRoutineDiscussion = Command.define('OpenRoutineDiscussion', {
   success: Schema.Struct({ sessionId: Schema.String }),
   failure: RoutineRefused
 })
+
+// ---------------------------------------------------------------------------
+// Created routines (PRDCT-4242): the ones a server keeps in its own store,
+// made over the API or by an agent tool, beside the ones its files declare.
+// ---------------------------------------------------------------------------
+
+/** The report of a created routine: a template folder under the workspace
+ *  root, or none for the built-in default page the app ships. */
+export const RoutineReportInput = Schema.Struct({
+  template: Schema.optional(Schema.String),
+  schema: Schema.optional(Schema.String),
+  width: Schema.optional(Schema.Number),
+  height: Schema.optional(Schema.Number),
+  publish: Schema.optional(Schema.Boolean)
+})
+export type RoutineReportInput = typeof RoutineReportInput.Type
+
+const createdFields = {
+  name: Schema.String,
+  /** Five cron fields, the server machine's local time. */
+  schedule: Schema.String,
+  /** The job, raw: the `@`-tokens are substituted at run time. */
+  prompt: Schema.String,
+  skill: Schema.optional(Schema.String),
+  /** Absolute, or relative to the workspace root; the workspace root when absent. */
+  cwd: Schema.optional(Schema.String),
+  launch: Schema.optional(RoutineLaunch),
+  icon: Schema.optional(Schema.String),
+  color: Schema.optional(Schema.String),
+  catchUp: Schema.optional(Schema.Boolean),
+  timeoutMinutes: Schema.optional(Schema.Number),
+  report: Schema.optional(RoutineReportInput)
+}
+
+/** What creates a routine on this server, in one of its workspaces. It runs
+ *  on this server alone: no `runsOn` is taken, none is needed. */
+export const RoutineCreateInput = Schema.Struct({
+  workspaceId: Schema.String,
+  ...createdFields
+})
+export type RoutineCreateInput = typeof RoutineCreateInput.Type
+
+/** What changes on a created routine: any of its fields but its workspace. */
+export const RoutinePatch = Schema.partial(Schema.Struct(createdFields))
+export type RoutinePatch = typeof RoutinePatch.Type
+
+/** A routine created in this server's store; refused when it could never
+ *  run (an unknown workspace, a folder that is not there, an account or a
+ *  profile this server does not have, a schedule that does not parse). */
+export const CreateRoutine = Command.define('CreateRoutine', {
+  payload: RoutineCreateInput,
+  success: RoutineView,
+  failure: RoutineRefused
+})
+
+/** A created routine changed; refused on a routine a file declares. */
+export const UpdateRoutine = Command.define('UpdateRoutine', {
+  payload: Schema.Struct({ key: Schema.String, patch: RoutinePatch }),
+  success: RoutineView,
+  failure: RoutineRefused
+})
+
+/** A created routine removed, its runs and decks with it; refused on a file's. */
+export const DeleteRoutine = Command.define('DeleteRoutine', {
+  payload: Schema.Struct({ key: Schema.String }),
+  success: Schema.Void,
+  failure: RoutineRefused
+})
+
+/** A created routine put on hold or taken off it: listed, never ticked while paused. */
+export const PauseRoutine = Command.define('PauseRoutine', {
+  payload: Schema.Struct({ key: Schema.String, paused: Schema.Boolean }),
+  success: RoutineView,
+  failure: RoutineRefused
+})
+
+/** A created routine written into a `.clave` file of its workspace with
+ *  `runsOn` set to this server's own name, then removed from the store, in
+ *  one step on the server so it never exists twice (PRDCT-4243): refused
+ *  while a run is in flight, on a paused routine, on a routine a file
+ *  declares, on a group that already holds the name. The built-in report page is copied under the
+ *  workspace first when the routine used it. */
+export const MoveRoutineToFile = Command.define('MoveRoutineToFile', {
+  payload: Schema.Struct({
+    key: Schema.String,
+    /** The group it joins in the workspace's profile file (the one the
+     *  scheduler reads); the file's first group by default, a group named
+     *  Routines when the file is empty. The file is never chosen: a move
+     *  into any other file would run nowhere or shadow the profile. */
+    group: Schema.optional(Schema.String)
+  }),
+  success: Schema.Struct({
+    name: Schema.String,
+    file: Schema.String,
+    group: Schema.String,
+    template: Schema.String,
+    runsOn: Schema.String
+  }),
+  failure: RoutineRefused
+})
+export type RoutineMoveInput = Omit<typeof MoveRoutineToFile.payload.Type, 'key'>
+export type RoutineMoved = typeof MoveRoutineToFile.success.Type
 
 // ---------------------------------------------------------------------------
 // Events: members of the server's one event union (`./events.ts`).

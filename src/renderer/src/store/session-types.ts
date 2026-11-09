@@ -600,7 +600,9 @@ export interface PinnedGroupRoutine {
   catchUp?: boolean
   timeoutMinutes?: number
   scope?: string
-  /** The Clave server that runs it, by the server's own name or id (PRDCT-4149). */
+  /** Where it runs (PRDCT-4241): a Clave server by its own name or id, or `every`. */
+  runsOn?: string
+  /** The field `runsOn` replaced; carried through a read for the scheduler to refuse, never written. */
   server?: string
   report?: {
     template: string

@@ -7,6 +7,8 @@ import {
   MAX_TIMEOUT_MINUTES,
   type ServerIdentity,
   defaultServerName,
+  placementOf,
+  placementProblem,
   resolveRoutines,
   runsOn,
   substituteParams
@@ -47,6 +49,7 @@ const health = (extra: Record<string, unknown> = {}): Record<string, unknown> =>
   color: 'teal',
   dangerous: true,
   report: { template: '.clave/routines/workspace-health', width: 600 },
+  runsOn: 'every',
   ...extra
 })
 
@@ -240,19 +243,54 @@ describe('bounds and confinement (round 1, F5 and F11)', () => {
   })
 })
 
-describe('the server a routine names (PRDCT-4149)', () => {
+describe('where a routine runs (PRDCT-4241)', () => {
   const studio: ServerIdentity = { id: 'srv-1', name: 'Studio' }
+  const on = (where?: string, server?: string): boolean =>
+    runsOn(
+      placementOf({
+        ...(where !== undefined ? { runsOn: where } : {}),
+        ...(server !== undefined ? { server } : {})
+      }),
+      studio
+    )
 
-  it('runs an unpinned routine anywhere, a pinned one only on the server it names', () => {
-    expect(runsOn(null, studio)).toBe(true)
-    expect(runsOn(undefined, studio)).toBe(true)
-    expect(runsOn('', studio)).toBe(true)
-    expect(runsOn('   ', studio)).toBe(true)
-    expect(runsOn('srv-1', studio)).toBe(true)
-    expect(runsOn('studio', studio)).toBe(true)
-    expect(runsOn('  STUDIO ', studio)).toBe(true)
-    expect(runsOn('MacBook', studio)).toBe(false)
-    expect(runsOn('srv-2', studio)).toBe(false)
+  it('runs on every machine only when the declaration says every, whatever the case', () => {
+    expect(on('every')).toBe(true)
+    expect(on(' Every ')).toBe(true)
+    expect(placementOf({ runsOn: 'every' })).toEqual({ kind: 'every' })
+  })
+
+  it('runs on the one machine named, by its own name or its id, never elsewhere', () => {
+    expect(on('srv-1')).toBe(true)
+    expect(on('studio')).toBe(true)
+    expect(on('  STUDIO ')).toBe(true)
+    expect(on('MacBook')).toBe(false)
+    expect(on('srv-2')).toBe(false)
+    expect(placementOf({ runsOn: ' Studio ' })).toEqual({ kind: 'machine', name: 'Studio' })
+  })
+
+  it('runs nowhere when the declaration says nothing, and says so', () => {
+    expect(on()).toBe(false)
+    expect(on('')).toBe(false)
+    expect(on('   ')).toBe(false)
+    expect(placementOf({})).toEqual({ kind: 'missing' })
+    expect(placementProblem({ kind: 'missing' })).toMatch(/runsOn/)
+    expect(placementProblem({ kind: 'missing' })).toMatch(/every/)
+  })
+
+  it('runs nowhere on the field runsOn replaced, naming the value to move', () => {
+    expect(on(undefined, 'Studio')).toBe(false)
+    expect(placementOf({ server: ' Studio ' })).toEqual({ kind: 'legacy', server: 'Studio' })
+    expect(placementProblem({ kind: 'legacy', server: 'Studio' })).toBe(
+      '"server" is no longer read: write runsOn: "Studio"'
+    )
+    // runsOn wins when both are written: the file was migrated and kept the old line.
+    expect(placementOf({ runsOn: 'every', server: 'Studio' })).toEqual({ kind: 'every' })
+  })
+
+  it('a placement that runs somewhere has no problem', () => {
+    expect(placementProblem({ kind: 'every' })).toBeNull()
+    expect(placementProblem({ kind: 'machine', name: 'x' })).toBeNull()
   })
 
   it('names a server after its hostname without .local, never with nothing', () => {
@@ -275,8 +313,15 @@ describe('the server a routine names (PRDCT-4149)', () => {
       sessions: [],
       terminals: [],
       routines: [
-        health({ name: 'pinned', server: 'Studio', report: { template: '.clave/routines/ok' } }),
+        health({ name: 'pinned', runsOn: 'Studio', report: { template: '.clave/routines/ok' } }),
         health({ name: 'free', report: { template: '.clave/routines/ok' } }),
+        health({ name: 'nowhere', runsOn: undefined, report: { template: '.clave/routines/ok' } }),
+        health({
+          name: 'legacy',
+          runsOn: undefined,
+          server: 'Studio',
+          report: { template: '.clave/routines/ok' }
+        }),
         health({
           name: 'published',
           report: { template: '.clave/routines/ok', publish: true }
@@ -295,19 +340,27 @@ describe('the server a routine names (PRDCT-4149)', () => {
   }
   type RoutineLike = Awaited<ReturnType<typeof resolveRoutines>>['declarations'][number]
 
-  it('runs a routine pinned by name on the server of that name, whatever the case', async () => {
+  it('runs a routine placed by name on the server of that name, whatever the case', async () => {
     const byName = await read({ id: 'x', name: 'studio' })
-    expect(byName.pinned).toMatchObject({ server: 'Studio', runsHere: true })
-    expect(byName.free).toMatchObject({ server: null, runsHere: true })
+    expect(byName.pinned).toMatchObject({ runsOn: 'Studio', runsHere: true, origin: 'file' })
+    expect(byName.free).toMatchObject({ runsOn: 'every', runsHere: true })
+  })
+
+  it('lists a routine that says nothing, or still says server, as unable to run anywhere', async () => {
+    const byName = await read({ id: 'x', name: 'studio' })
+    expect(byName.nowhere).toMatchObject({ runsOn: null, runsHere: false })
+    expect(byName.nowhere.invalid).toMatch(/say where it runs: runsOn/)
+    expect(byName.legacy).toMatchObject({ runsOn: null, runsHere: false })
+    expect(byName.legacy.invalid).toBe('"server" is no longer read: write runsOn: "Studio"')
   })
 
   it('lists a routine pinned elsewhere without running it', async () => {
     const byName = await read({ id: 'y', name: 'MacBook' })
-    expect(byName.pinned).toMatchObject({ server: 'Studio', runsHere: false, invalid: null })
+    expect(byName.pinned).toMatchObject({ runsOn: 'Studio', runsHere: false, invalid: null })
     expect(byName.free.runsHere).toBe(true)
   })
 
-  it('runs only the unpinned routines for a reader with no identity', async () => {
+  it('runs only the routines placed on every machine for a reader with no identity', async () => {
     const byName = await read()
     expect(byName.pinned.runsHere).toBe(false)
     expect(byName.free.runsHere).toBe(true)

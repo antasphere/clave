@@ -42,6 +42,17 @@ const bridge = {
   fleetRoutines: async (serverId: string): Promise<RoutinesListing> => {
     bridge.fleetReads.push(serverId)
     throw new Error('CapabilityUnavailable')
+  },
+  // PRDCT-4242: a delete the machine may refuse (a run in flight).
+  deleteRefusal: null as string | null,
+  deleted: [] as string[],
+  routinesDelete: async (key: string): Promise<void> => {
+    if (bridge.deleteRefusal) throw new Error(bridge.deleteRefusal)
+    bridge.deleted.push(`local:${key}`)
+  },
+  fleetRoutineDelete: async (serverId: string, key: string): Promise<void> => {
+    if (bridge.deleteRefusal) throw new Error(bridge.deleteRefusal)
+    bridge.deleted.push(`${serverId}:${key}`)
   }
 }
 
@@ -155,5 +166,17 @@ describe('routines store', () => {
       ['s1', 'k2']
     ])
     expect(await store.openDiscussion({ serverId: 's1' }, 'run', 'panel')).toBe('remote-key')
+  })
+
+  it('a delete answers whether the machine took it, the refusal on the error line (verifier round 2, N12)', async () => {
+    const { remove } = mod.useRoutinesStore.getState()
+    bridge.deleteRefusal = '"Digest" is running; wait for it to end'
+    expect(await remove({ serverId: 'local' }, 'created::a')).toBe(false)
+    expect(mod.useRoutinesStore.getState().error).toBe('"Digest" is running; wait for it to end')
+    bridge.deleteRefusal = null
+    expect(await remove({ serverId: 'local' }, 'created::a')).toBe(true)
+    expect(await remove({ serverId: 's1' }, 'created::b')).toBe(true)
+    expect(bridge.deleted).toEqual(['local:created::a', 's1:created::b'])
+    expect(mod.useRoutinesStore.getState().error).toBeNull()
   })
 })
