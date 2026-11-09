@@ -55,7 +55,12 @@ function fakes(): {
       },
       usage: {
         claudeSnapshot: async () => ({
-          a2: { windows: [{ kind: 'session', usedPercentage: 97, severity: 'normal' }] },
+          a2: {
+            windows: [
+              { kind: 'session', usedPercentage: 97, severity: 'normal' },
+              { kind: 'weekly_scoped', scope: 'Fable', usedPercentage: 100, severity: 'critical' }
+            ]
+          },
           default: { error: 'no read' }
         }),
         codexSnapshot: async () => ({})
@@ -92,6 +97,8 @@ function fakes(): {
     accounts: () => [{ id: 'base', label: 'Base', usable: true }],
     launchProfiles: () => [{ id: 'base-p', name: 'Base profile' }],
     chatDefault: () => 'base-chat',
+    // This Mac's own remembered chat model: never the server's.
+    launchModel: () => 'claude-fable-5-1',
     pins: () => [{ id: 'base-pin', name: 'Base pin', cwd: null, sessions: [], terminals: [] }]
   } as unknown as ServedShell
   return { api, calls, base, records }
@@ -130,6 +137,9 @@ describe('the attached shell', () => {
     expect(shell.chatDefault('claude', 'ws')).toBe('chat:claude:c1')
     expect(shell.chatDefault('codex', 'ws')).toBe('codex-chat')
     expect(shell.launchProfiles('claude').map((p) => p.id)).toContain('chat:claude:c1')
+    // The model a server's chat starts on is that server's preference, which
+    // its API does not serve: the Mac's own is never used to judge the pick.
+    expect(shell.launchModel?.('claude', 'chat:claude:c1', 'ws')).toBeUndefined()
   })
   it('reads the records for every command that names, reads or types into a tab', async () => {
     for (const command of ['setSessionView', 'readSession', 'sendToSession']) {
@@ -152,6 +162,12 @@ describe('the attached shell', () => {
   it('answers the accounts with their usage summarized, the usable rule as the window had it', async () => {
     const f = fakes()
     const shell = await attachedShell(f.base, f.api, 'switchAccount')
+    const fable = {
+      kind: 'weekly_scoped',
+      scope: 'Fable',
+      usedPercentage: 100,
+      severity: 'critical'
+    }
     expect(f.calls.sort()).toEqual(['claude', 'codex', 'records'])
     expect(shell.accounts('claude')).toEqual([
       { id: 'default', label: 'Default', usable: true },
@@ -159,9 +175,20 @@ describe('the attached shell', () => {
         id: 'a2',
         label: 'Two',
         usable: true,
+        // The account view: the shared caps rank `tightest`, the family
+        // caps travel split out, so the server's pick judges per family.
         usage: {
           tightest: { kind: 'session', usedPercentage: 97, severity: 'normal' },
-          windows: [{ kind: 'session', usedPercentage: 97, severity: 'normal' }]
+          shared: { kind: 'session', usedPercentage: 97, severity: 'normal' },
+          scoped: [
+            {
+              family: 'Fable',
+              exhausted: true,
+              window: fable
+            }
+          ],
+          scopedOut: ['Fable'],
+          windows: [{ kind: 'session', usedPercentage: 97, severity: 'normal' }, fable]
         }
       },
       { id: 'a3', label: 'Dead', usable: false }

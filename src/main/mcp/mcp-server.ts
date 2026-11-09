@@ -69,6 +69,7 @@ import {
   type SecretRequest
 } from '../secret-request-manager'
 import { createOffer } from '../copy-offer-manager'
+import { rememberedSpawnModel } from '../sessions/spawn-model'
 import {
   INPUT_RESULT_DESCRIPTION,
   INPUT_SET_DESCRIPTION,
@@ -541,6 +542,8 @@ const servedShell: ServedShell<NonNullable<BrowserWindowLike>> = {
       .map(({ id, name }) => ({ id, name })),
   chatDefault: (family, workspaceId) =>
     chatDefaultFor(launchProfileManager.getPreferences(), family, workspaceId),
+  launchModel: (family, launchProfileId, workspaceId) =>
+    rememberedSpawnModel(family, launchProfileId, workspaceId),
   pins: () => workspaceManager.load().pins as PinnedBlueprint[],
   parentOf: (sessionId) => parentOf(sessionId),
   setParent: (childId, parentId) => setParent(childId, parentId),

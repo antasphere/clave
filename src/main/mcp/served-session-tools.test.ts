@@ -50,6 +50,8 @@ interface World {
   switchMode: 'propose' | 'automatic'
   /** The chat profile the launcher would open, by `<family>@<workspace>`. */
   chatDefaults: Record<string, string | undefined>
+  /** The model a launch naming none runs once spawned, by `<family>@<workspace>`. */
+  launchModels: Record<string, string | undefined>
   pins: PinnedBlueprint[]
   /** The windows that are live, by key. */
   windows: string[]
@@ -83,6 +85,7 @@ function setup(partial: Partial<World> = {}): Harness {
     useRecommendedAccount: false,
     switchMode: 'propose',
     chatDefaults: {},
+    launchModels: {},
     pins: [],
     windows: ['wA', 'wB'],
     parents: {},
@@ -186,6 +189,10 @@ function setup(partial: Partial<World> = {}): Harness {
             ]
           : [],
     chatDefault: (family, workspaceId) => w.chatDefaults[`${family}@${workspaceId ?? ''}`],
+    launchModel: (family, launchProfileId, workspaceId) => {
+      note('launchModel', [family, launchProfileId, workspaceId])
+      return w.launchModels[`${family}@${workspaceId ?? ''}`]
+    },
     pins: () => w.pins,
     parentOf: (id) => w.parents[id] ?? null,
     setParent: (child, parent) => {
@@ -770,6 +777,54 @@ describe('an account switch', () => {
     expect(chosen()).toBe('acc-2')
     await run(h, 'openSession', { cwd: '/proj', mode: 'claude' })
     expect(chosen()).toBe('default')
+  })
+  it('with no model named, judges the account for the chat model main will start the tab on', async () => {
+    // Main gives a chat naming no model the one last picked in its composer
+    // (`pty-manager.ts`): the pick must judge that model, not the shared caps.
+    const h = setup(world())
+    const week = { kind: 'weekly_all', scope: null, usedPercentage: 40, severity: 'normal' }
+    const fable = {
+      kind: 'weekly_scoped',
+      scope: 'Fable',
+      usedPercentage: 100,
+      severity: 'critical'
+    }
+    const open = { kind: 'weekly_all', scope: null, usedPercentage: 10, severity: 'normal' }
+    h.w.accounts.claude = [
+      {
+        id: 'default',
+        label: 'Default',
+        usable: true,
+        usage: { tightest: week, windows: [week, fable] }
+      },
+      { id: 'acc-2', label: 'Second', usable: true, usage: { tightest: open, windows: [open] } }
+    ]
+    h.w.selected.claude = 'default'
+    const options = (): Record<string, unknown> =>
+      (h.argsOf('sessions.start').at(-1) as { options: Record<string, unknown> }).options
+    h.w.launchModels = { 'claude@ws1': 'claude-fable-5-1' }
+    await run(h, 'openSession', { cwd: '/proj', mode: 'claude', chat: true })
+    expect(options().claudeProfileId).toBe('acc-2')
+    // The spawn is still told no model: main applies the remembered one itself.
+    expect(options().model).toBeUndefined()
+    expect(h.calls.filter(([n]) => n === 'launchModel').at(-1)?.[1]).toEqual([
+      'claude',
+      'claude-chat',
+      'ws1'
+    ])
+    // Remembered Opus: the Fable cap is not this tab's, the selected account stays.
+    h.w.launchModels = { 'claude@ws1': 'claude-opus-5-5' }
+    await run(h, 'openSession', { cwd: '/proj', mode: 'claude', chat: true })
+    expect(options().claudeProfileId).toBe('default')
+    // A resumed conversation keeps its own model, unknown here: shared caps.
+    h.w.launchModels = { 'claude@ws1': 'claude-fable-5-1' }
+    await run(h, 'openSession', {
+      cwd: '/proj',
+      mode: 'claude',
+      chat: true,
+      resumeSessionId: '11111111-1111-4111-8111-111111111111'
+    })
+    expect(options().claudeProfileId).toBe('default')
   })
   it('judges a Codex tab for its model on a switch and an open: Spark’s bucket is a family', async () => {
     const h = setup({ ...world(), switchMode: 'automatic' })
@@ -1366,6 +1421,40 @@ describe('launching a pinned group', () => {
       'Launching "Same" spawned no sessions — check that its directories exist'
     )
     expect(h.argsOf('sidebar.createGroup')).toHaveLength(1)
+  })
+  it("judges a pinned session's account for the model its chat will start on", async () => {
+    // A pinned session names no model: it starts on the one its family's
+    // selected profile remembers, as the window's pinned groups judge it.
+    const h = setup({ ...world(), windows: [] })
+    const week = { kind: 'weekly_all', scope: null, usedPercentage: 40, severity: 'normal' }
+    const fable = {
+      kind: 'weekly_scoped',
+      scope: 'Fable',
+      usedPercentage: 100,
+      severity: 'critical'
+    }
+    const open = { kind: 'weekly_all', scope: null, usedPercentage: 10, severity: 'normal' }
+    h.w.accounts.claude = [
+      {
+        id: 'default',
+        label: 'Default',
+        usable: true,
+        usage: { tightest: week, windows: [week, fable] }
+      },
+      { id: 'acc-2', label: 'Second', usable: true, usage: { tightest: open, windows: [open] } }
+    ]
+    h.w.selected.claude = 'default'
+    h.w.pins[0].sessions[0].account = undefined
+    h.w.launchModels = { 'claude@ws1': 'claude-fable-5-1' }
+    await run(h, 'launchGroup', { group: 'Clave' })
+    expect(h.argsOf('sessions.start')[0]).toMatchObject({
+      options: { claudeProfileId: 'acc-2', workspaceId: 'ws1' }
+    })
+    expect(h.calls.filter(([n]) => n === 'launchModel')[0]?.[1]).toEqual([
+      'claude',
+      undefined,
+      'ws1'
+    ])
   })
 })
 

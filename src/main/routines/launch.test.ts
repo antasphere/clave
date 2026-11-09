@@ -84,6 +84,23 @@ describe('resolveLaunch', () => {
     expect(onOpus.ok && onOpus.spawn.claudeProfileId).toBe('default')
     const noModel = resolveLaunch(routine({}), withUsage)
     expect(noModel.ok && noModel.spawn.claudeProfileId).toBe('default')
+    // A routine naming no model runs the chat model main remembers for its
+    // profile: the account is judged for THAT one, the spawn still told none.
+    const asked: unknown[] = []
+    const remembersFable = facts({
+      ...withUsage,
+      launchModel: (family, launchProfileId, workspaceId) => {
+        asked.push([family, launchProfileId, workspaceId])
+        return 'claude-fable-5-1'
+      }
+    })
+    const onRemembered = resolveLaunch(routine({}), remembersFable)
+    expect(onRemembered.ok && onRemembered.spawn.claudeProfileId).toBe('acc-2')
+    expect(onRemembered.ok && onRemembered.spawn.model).toBeUndefined()
+    expect(asked).toEqual([['claude', 'chat:claude:work', 'ws']])
+    // A model named wins over the remembered one.
+    const named = resolveLaunch(routine({ model: 'claude-opus-5-5' }), remembersFable)
+    expect(named.ok && named.spawn.claudeProfileId).toBe('default')
   })
 
   it('falls back to the workspace defaults: a Claude chat on the workspace profile, the pool account', () => {

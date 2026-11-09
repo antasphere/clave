@@ -434,12 +434,19 @@ async function openSession(ctx: Ctx, key: string, p: Payload): Promise<unknown> 
     )
   }
   // The account is judged for the model the tab will run: a Fable week
-  // spent never costs a launch on Opus its account (PRDCT-4253).
-  const accountFields = claudeMode
-    ? spawnFieldsOf('claude', resolveAccountRef(ctx, 'claude', accountRef, model))
-    : codexMode
-      ? spawnFieldsOf('codex', resolveAccountRef(ctx, 'codex', accountRef, model))
-      : {}
+  // spent never costs a launch on Opus its account (PRDCT-4253). A launch
+  // naming no model runs the one main remembers for its chat, a resumed
+  // conversation its own, which nothing here knows (the shared caps judge).
+  const resumeSessionId = str(p.resumeSessionId)
+  const pooled: AccountProvider | null = claudeMode ? 'claude' : codexMode ? 'codex' : null
+  const judgedModel =
+    model ??
+    (pooled && resumeSessionId === undefined
+      ? ctx.shell.launchModel?.(pooled, launchProfileId, workspaceId)
+      : undefined)
+  const accountFields = pooled
+    ? spawnFieldsOf(pooled, resolveAccountRef(ctx, pooled, accountRef, judgedModel))
+    : {}
   const cwd = str(p.cwd) ?? ''
   const command = str(p.command)
   const prompt = str(p.prompt)
@@ -461,9 +468,7 @@ async function openSession(ctx: Ctx, key: string, p: Payload): Promise<unknown> 
         ...accountFields,
         // A past conversation reopened (PRDCT-4236): the History's id, for
         // the spawn's --resume (Claude), resume (Codex) or --session (Pi).
-        ...(str(p.resumeSessionId) !== undefined
-          ? { resumeSessionId: str(p.resumeSessionId) }
-          : {}),
+        ...(resumeSessionId !== undefined ? { resumeSessionId } : {}),
         // The mode and the effort to start at (PRDCT-4236): the caller's, or
         // the ones a resumed conversation last ran at. Bypass is the flag.
         ...launchModeFields({
@@ -601,7 +606,8 @@ function pinnedAccountFields(
   ctx: Ctx,
   session: PinnedBlueprintSession,
   groupName: string,
-  pinOtherProvider: boolean
+  pinOtherProvider: boolean,
+  workspaceId: string | undefined
 ): AccountOverride {
   const provider: AccountProvider | null = session.codexMode
     ? 'codex'
@@ -609,9 +615,16 @@ function pinnedAccountFields(
       ? 'claude'
       : null
   if (!provider) return {}
+  // A pinned session names no model: it starts on the one its family's
+  // selected profile remembers, and its account is judged for that one, as
+  // the window's pinned groups do (`pinned-store.ts`). `claude agents` runs
+  // no chat, so the shared caps judge it.
+  const model = session.claudeAgentsMode
+    ? undefined
+    : ctx.shell.launchModel?.(provider, undefined, workspaceId)
   let account: { id: string; label: string }
   try {
-    account = resolveAccountRef(ctx, provider, session.account)
+    account = resolveAccountRef(ctx, provider, session.account, model)
   } catch {
     const fallback = ctx.shell.accounts(provider).find((a) => a.id === 'default')
     account = fallback ?? { id: 'default', label: 'Default' }
@@ -691,7 +704,13 @@ async function launchGroup(ctx: Ctx, key: string, p: Payload): Promise<unknown> 
             : {}),
           dangerousMode: session.dangerousMode,
           ...(initialPrompt !== undefined ? { initialPrompt } : {}),
-          ...pinnedAccountFields(ctx, session, pin.name, pinOtherProvider),
+          ...pinnedAccountFields(
+            ctx,
+            session,
+            pin.name,
+            pinOtherProvider,
+            pin.workspaceId ?? undefined
+          ),
           // The pin's workspace wins over the window's: a launch of a hidden
           // workspace's pin must not leak its sessions into the view.
           ...(pin.workspaceId ? { workspaceId: pin.workspaceId } : {})
