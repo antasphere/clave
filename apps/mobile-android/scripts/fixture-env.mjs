@@ -111,6 +111,10 @@ if ((RED_FLAGS || RED_INTERLOCK) && !DRY_RUN) {
  *  `--test-no-machine-usage` keeps an explicit usage read off the machine login's keychain
  *  (test-mode.ts needs both). Lane C's fixture-server.mjs passes the same three, in this order. */
 const DAEMON_FLAGS = ['--no-titles', '--test-no-activate', '--test-no-machine-usage']
+/** The discovery file's three announcements (clave-server.json), read by name from here only:
+ *  lane C renames the second (its name collides with a guard counting that key in the
+ *  server's main.ts), and the rename is this one line once the final name is announced. */
+const DISCOVERY = { titles: 'titles', testFixtures: 'testFixtures', machineUsage: 'machineUsage' }
 /** What never travels into the daemon: this shell's server, and this Mac's agent credentials. */
 const STRIPPED_KEYS = [
   'CLAVE_SERVER_URL',
@@ -330,12 +334,12 @@ async function bootChecks(daemon, launch) {
   const check = checker(results)
   const discovery = daemon.discovery
   await check('titles off: the daemon announces titles "off" (--no-titles)', async () => {
-    expectThat(discovery.titles === 'off', `the discovery file says titles ${JSON.stringify(discovery.titles ?? null)}`)
+    expectThat(discovery[DISCOVERY.titles] === 'off', `the discovery file says ${DISCOVERY.titles} ${JSON.stringify(discovery[DISCOVERY.titles] ?? null)}`)
     return 'titles: off'
   })
   await check('test fixtures on, machine usage off: the daemon announces testFixtures true and machineUsage false, and answers POST /e2e/evaluate', async () => {
-    expectThat(discovery.testFixtures === true, `testFixtures ${JSON.stringify(discovery.testFixtures ?? null)}`)
-    expectThat(discovery.machineUsage === false, `machineUsage ${JSON.stringify(discovery.machineUsage ?? null)}`)
+    expectThat(discovery[DISCOVERY.testFixtures] === true, `${DISCOVERY.testFixtures} ${JSON.stringify(discovery[DISCOVERY.testFixtures] ?? null)}`)
+    expectThat(discovery[DISCOVERY.machineUsage] === false, `${DISCOVERY.machineUsage} ${JSON.stringify(discovery[DISCOVERY.machineUsage] ?? null)}`)
     const one = await evaluate(daemon, '() => 1')
     expectThat(one === 1, `the fixture route answered ${JSON.stringify(one)}`)
     return 'testFixtures: true, machineUsage: false, /e2e/evaluate answers'

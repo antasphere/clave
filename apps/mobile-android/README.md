@@ -83,11 +83,18 @@ adb -s emulator-5562 install -r app/build/outputs/apk/debug/app-debug.apk
 adb -s emulator-5562 shell am start -n com.clave.app.android.debug/com.clave.android.MainActivity
 ```
 
-The instrumented tests (Compose UI tests and the fixture check) run on that emulator:
+The instrumented tests (the platform adapters, the Compose screens and the fixture check) run
+on that emulator:
 
 ```sh
-./gradlew :ui:connectedDebugAndroidTest :app:connectedDebugAndroidTest
+./gradlew :platform:connectedDebugAndroidTest :ui:connectedDebugAndroidTest :app:connectedDebugAndroidTest
 ```
+
+The modules: `core/*` are pure JVM (the contract mirror, the sign-in, the transport, the
+conversation logic, the devices, the notifications, the state store), `ui` is the design
+system and the screens (stateless, state classes and callbacks), `platform` holds the
+adapters behind the core's ports (the Keystore, the preferences, the system browser, OkHttp,
+the notification channel, Firebase's token, the content resolver), and `app` composes them.
 
 Stop only your own device: `adb -s emulator-5562 emu kill`; delete only your own AVD:
 `avdmanager delete avd -n clave-native-b`.
@@ -104,9 +111,20 @@ chat over HTTP the way the phone does. A result on the Echo adapter proves the p
 never a real provider and never a physical phone.
 
 ```sh
-node apps/mobile-android/scripts/fixture-env.mjs --server 47201 --relay 47202 --issuer 47203 --tmpdir /private/tmp/clave-native-b
+node apps/mobile-android/scripts/fixture-env.mjs --server 47201 --relay 47202 --issuer 47203 --tmpdir /private/tmp/clave-native-b/fixture --dry-run
+node apps/mobile-android/scripts/fixture-env.mjs --server 47201 --relay 47202 --issuer 47203 --tmpdir /private/tmp/clave-native-b/fixture --approve
 adb -s emulator-5562 reverse tcp:47201 tcp:47201 && adb -s emulator-5562 reverse tcp:47202 tcp:47202 && adb -s emulator-5562 reverse tcp:47203 tcp:47203
 ```
+
+The daemon runs with `--no-titles --test-no-activate --test-no-machine-usage`, so it names no
+chat with a real agent, runs no usage clock and reads no machine login. The runner proves
+that stance twice and refuses to boot otherwise (exit 2): before anything starts, the three
+flags are in the daemon's argv, its login environment (read as the daemon reads it, `$SHELL
+-lic 'env -0'`) resolves `claude` and `codex` to the fixture's stubs, and no agent credential
+is in its environment; after the daemon announces itself and before any sign-in or chat, its
+discovery file says `titles: "off"`, `testFixtures: true` and `machineUsage: false`. `--dry-run`
+runs the first set alone and starts nothing. The shared fixture lane C ships
+(`packages/mobile-native/scripts/fixture-server.mjs`) runs the same three checks.
 
 In the app (debug build), Machines → the account: the issuer `http://127.0.0.1:47203`, the
 relay `http://127.0.0.1:47202`; sign in (the fixture provider approves on sight), pair with
