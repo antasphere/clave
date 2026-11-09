@@ -344,9 +344,9 @@ export function serializeRoutine(
   r: ClaveRoutineWrite,
   toRelative: (abs: string | null | undefined) => string
 ): RawRoutine {
-  // `server` is the field runsOn replaced (PRDCT-4241): read, never written.
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const { cwd, report, server: _server, ...rest } = r
+  // `server`, the field runsOn replaced (PRDCT-4241), is carried back as read:
+  // a file rewritten for one routine keeps what another still says.
+  const { cwd, report, ...rest } = r
   return {
     ...rest,
     ...(cwd ? { cwd: toRelative(cwd) } : {}),

@@ -718,6 +718,16 @@ export function createRoutineService(options: RoutineServiceOptions): RoutineSer
     return group
   }
 
+  /** The store's changes, one after the other: a move reads a file and
+   *  writes it back, so two moves into one file, or a move and a delete of
+   *  the same routine, must never interleave (verifier round 3, H2 and H3). */
+  let queue: Promise<unknown> = Promise.resolve()
+  const serialized = <T>(work: () => Promise<T>): Promise<T> => {
+    const next = queue.then(work, work)
+    queue = next.catch(() => undefined)
+    return next
+  }
+
   const viewOf = (id: string): RoutineView => {
     const key = `created::${id}`
     const routine = declaration(key)
@@ -727,6 +737,164 @@ export function createRoutineService(options: RoutineServiceOptions): RoutineSer
       nextRunAt: nextRunAt(routine.schedule, routine.invalid, now()),
       runs: store.state(key)?.runs ?? []
     }
+  }
+
+  async function createNow(input: RoutineCreateInput): Promise<RoutineView> {
+    const workspaces = await options.workspaces()
+    const workspace = workspaces.find((w) => w.id === input.workspaceId)
+    if (!workspace)
+      throw new Error(`No workspace "${input.workspaceId}" is registered on this server`)
+    const name = input.name.trim()
+    if (!name) throw new Error('A routine needs a name')
+    if (nameTaken(workspace.id, name))
+      throw new Error(
+        `A routine named "${name}" already exists in ${workspace.name}: pick another name or update it`
+      )
+    const candidate = {
+      workspaceId: workspace.id,
+      name,
+      schedule: input.schedule.trim(),
+      prompt: input.prompt,
+      ...(input.skill?.trim() ? { skill: input.skill.trim() } : {}),
+      cwd: path.resolve(workspace.rootDir, input.cwd ?? '.'),
+      launch: input.launch ?? {},
+      ...(input.icon ? { icon: input.icon } : {}),
+      ...(input.color ? { color: input.color } : {}),
+      ...(input.catchUp !== undefined ? { catchUp: input.catchUp } : {}),
+      ...(input.timeoutMinutes !== undefined ? { timeoutMinutes: input.timeoutMinutes } : {}),
+      ...(input.report ? { report: input.report } : {})
+    }
+    refuseUnrunnable(candidate, workspace)
+    const stored = created.add(candidate)
+    await refresh()
+    return viewOf(stored.id)
+  }
+  async function updateNow(key: string, patch: RoutinePatch): Promise<RoutineView> {
+    const current = ownRoutine(key, 'update')
+    const workspaces = await options.workspaces()
+    const workspace = workspaces.find((w) => w.id === current.workspaceId)
+    if (!workspace)
+      throw new Error(`Its workspace "${current.workspaceId}" is no longer registered here`)
+    const next = applyPatch(current, patch, workspace.rootDir)
+    if (
+      next.name.toLowerCase() !== current.name.toLowerCase() &&
+      nameTaken(workspace.id, next.name)
+    )
+      throw new Error(`A routine named "${next.name}" already exists in ${workspace.name}`)
+    refuseUnrunnable(next, workspace)
+    created.replace(next)
+    await refresh()
+    return viewOf(current.id)
+  }
+  async function deleteNow(key: string): Promise<void> {
+    const current = ownRoutine(key, 'delete')
+    if (runningOf(key)) throw new Error(`"${current.name}" is running; wait for it to end`)
+    created.remove(current.id)
+    store.forget(key)
+    removeRoutineDecks(decksRoot, key)
+    await refresh()
+  }
+  async function moveNow(key: string, input: RoutineMoveInput): Promise<RoutineMoved> {
+    const current = ownRoutine(key, 'move')
+    const d = declaration(key)!
+    const workspaces = await options.workspaces()
+    const workspace = workspaces.find((w) => w.id === current.workspaceId)
+    if (!workspace)
+      throw new Error(`Its workspace "${current.workspaceId}" is no longer registered here`)
+    const file = input.file
+      ? path.resolve(workspace.rootDir, input.file)
+      : (workspace.profileFile ??
+        path.join(workspace.rootDir, '.clave', 'workspaces', 'default.clave'))
+    if (path.extname(file) !== '.clave')
+      throw new Error(`${file} is not a .clave file: a routine moves into a workspace file`)
+    const read = await options.files.read(file, { rootDir: workspace.rootDir })
+    // A file that is there and reads as nothing (it does not parse, or nobody
+    // trusted it) is never taken as empty and overwritten (verifier round 3, H1).
+    if (!read && options.files.exists(file))
+      throw new Error(`${file} cannot be read as a workspace file: fix it, or trust it, first`)
+    // From here to the store's change nothing is awaited: a run cannot start
+    // between the check and the move, and a refused move changes nothing
+    // (verifier rounds 1 and 2, F1 and G1).
+    if (runningOf(key)) throw new Error(`"${d.name}" is running; wait for it to end`)
+    const groups: ClaveFileWriteGroup[] = read
+      ? read.type === 'multi'
+        ? read.groups.map((g) => ({ ...g }))
+        : [groupOfSingle(read)]
+      : []
+    const groupName = input.group?.trim() || (groups[0]?.name ?? 'Routines')
+    let at = groups.findIndex((g) => g.name.toLowerCase() === groupName.toLowerCase())
+    if (at < 0) {
+      groups.push({
+        name: groupName,
+        cwd: workspace.rootDir,
+        color: null,
+        sessions: [],
+        terminals: []
+      })
+      at = groups.length - 1
+    }
+    const group = groups[at]
+    if ((group.routines ?? []).some((r) => r.name.toLowerCase() === d.name.toLowerCase()))
+      throw new Error(
+        `The group "${group.name}" of ${file} already has a routine named "${d.name}"`
+      )
+    // The template under the root: the routine's own, else the built-in
+    // page copied to the next free folder, now that nothing can refuse.
+    let template = current.report?.template
+      ? path.resolve(workspace.rootDir, current.report.template)
+      : null
+    let copied: string | null = null
+    if (!template) {
+      if (!options.defaultTemplate) throw new Error('the built-in report page is missing')
+      template = freePageFolder(workspace.rootDir, d.name)
+      copyDirSync(options.defaultTemplate, template)
+      copied = template
+    }
+    const written = {
+      name: d.name,
+      schedule: current.schedule,
+      prompt: current.prompt,
+      ...(current.skill ? { skill: current.skill } : {}),
+      cwd: current.cwd ?? workspace.rootDir,
+      ...current.launch,
+      ...(current.icon ? { icon: current.icon } : {}),
+      ...(current.color ? { color: current.color } : {}),
+      ...(current.catchUp === false ? { catchUp: false } : {}),
+      ...(current.timeoutMinutes !== undefined ? { timeoutMinutes: current.timeoutMinutes } : {}),
+      runsOn: options.identity().name,
+      report: {
+        template,
+        ...(current.report?.schema
+          ? { schema: path.resolve(workspace.rootDir, current.report.schema) }
+          : {}),
+        ...(current.report?.width !== undefined ? { width: current.report.width } : {}),
+        ...(current.report?.height !== undefined ? { height: current.report.height } : {}),
+        ...(current.report?.publish ? { publish: true } : {})
+      }
+    }
+    groups[at] = { ...group, routines: [...(group.routines ?? []), written] }
+    const data: ClaveFileWriteData =
+      read?.type === 'multi' || groups.length > 1 ? { groups } : { ...groups[0] }
+    try {
+      options.files.write(file, data, workspace.rootDir)
+    } catch (error) {
+      // Nothing moved: the page copied for it goes too (verifier round 3, H4).
+      if (copied) fs.rmSync(copied, { recursive: true, force: true })
+      throw error
+    }
+    created.remove(current.id)
+    store.forget(key)
+    removeRoutineDecks(decksRoot, key)
+    await refresh()
+    return { name: d.name, file, group: group.name, template, runsOn: written.runsOn }
+  }
+  async function pauseNow(key: string, paused: boolean): Promise<RoutineView> {
+    const current = ownRoutine(key, paused ? 'pause' : 'resume')
+    created.replace({ ...current, paused })
+    // Resumed: what was missed while on hold is not caught up (verifier round 1, F5).
+    if (!paused) store.considered(key, now(), current.schedule)
+    await refresh()
+    return viewOf(current.id)
   }
 
   const service: RoutineService = {
@@ -955,149 +1123,11 @@ export function createRoutineService(options: RoutineServiceOptions): RoutineSer
       return { sessionId: info.id }
     },
     // ── PRDCT-4242: the routines this server keeps in its own store ──
-    async create(input: RoutineCreateInput) {
-      const workspaces = await options.workspaces()
-      const workspace = workspaces.find((w) => w.id === input.workspaceId)
-      if (!workspace)
-        throw new Error(`No workspace "${input.workspaceId}" is registered on this server`)
-      const name = input.name.trim()
-      if (!name) throw new Error('A routine needs a name')
-      if (nameTaken(workspace.id, name))
-        throw new Error(
-          `A routine named "${name}" already exists in ${workspace.name}: pick another name or update it`
-        )
-      const candidate = {
-        workspaceId: workspace.id,
-        name,
-        schedule: input.schedule.trim(),
-        prompt: input.prompt,
-        ...(input.skill?.trim() ? { skill: input.skill.trim() } : {}),
-        cwd: path.resolve(workspace.rootDir, input.cwd ?? '.'),
-        launch: input.launch ?? {},
-        ...(input.icon ? { icon: input.icon } : {}),
-        ...(input.color ? { color: input.color } : {}),
-        ...(input.catchUp !== undefined ? { catchUp: input.catchUp } : {}),
-        ...(input.timeoutMinutes !== undefined ? { timeoutMinutes: input.timeoutMinutes } : {}),
-        ...(input.report ? { report: input.report } : {})
-      }
-      refuseUnrunnable(candidate, workspace)
-      const stored = created.add(candidate)
-      await refresh()
-      return viewOf(stored.id)
-    },
-    async update(key, patch: RoutinePatch) {
-      const current = ownRoutine(key, 'update')
-      const workspaces = await options.workspaces()
-      const workspace = workspaces.find((w) => w.id === current.workspaceId)
-      if (!workspace)
-        throw new Error(`Its workspace "${current.workspaceId}" is no longer registered here`)
-      const next = applyPatch(current, patch, workspace.rootDir)
-      if (
-        next.name.toLowerCase() !== current.name.toLowerCase() &&
-        nameTaken(workspace.id, next.name)
-      )
-        throw new Error(`A routine named "${next.name}" already exists in ${workspace.name}`)
-      refuseUnrunnable(next, workspace)
-      created.replace(next)
-      await refresh()
-      return viewOf(current.id)
-    },
-    async delete(key) {
-      const current = ownRoutine(key, 'delete')
-      if (runningOf(key)) throw new Error(`"${current.name}" is running; wait for it to end`)
-      created.remove(current.id)
-      store.forget(key)
-      removeRoutineDecks(decksRoot, key)
-      await refresh()
-    },
-    async moveToFile(key, input: RoutineMoveInput): Promise<RoutineMoved> {
-      const current = ownRoutine(key, 'move')
-      const d = declaration(key)!
-      const workspaces = await options.workspaces()
-      const workspace = workspaces.find((w) => w.id === current.workspaceId)
-      if (!workspace)
-        throw new Error(`Its workspace "${current.workspaceId}" is no longer registered here`)
-      const file = input.file
-        ? path.resolve(workspace.rootDir, input.file)
-        : (workspace.profileFile ??
-          path.join(workspace.rootDir, '.clave', 'workspaces', 'default.clave'))
-      const read = await options.files.read(file, { rootDir: workspace.rootDir })
-      // From here to the store's change nothing is awaited: a run cannot start
-      // between the check and the move, and a refused move changes nothing
-      // (verifier rounds 1 and 2, F1 and G1).
-      if (runningOf(key)) throw new Error(`"${d.name}" is running; wait for it to end`)
-      const groups: ClaveFileWriteGroup[] = read
-        ? read.type === 'multi'
-          ? read.groups.map((g) => ({ ...g }))
-          : [groupOfSingle(read)]
-        : []
-      const groupName = input.group?.trim() || (groups[0]?.name ?? 'Routines')
-      let at = groups.findIndex((g) => g.name.toLowerCase() === groupName.toLowerCase())
-      if (at < 0) {
-        groups.push({
-          name: groupName,
-          cwd: workspace.rootDir,
-          color: null,
-          sessions: [],
-          terminals: []
-        })
-        at = groups.length - 1
-      }
-      const group = groups[at]
-      if ((group.routines ?? []).some((r) => r.name.toLowerCase() === d.name.toLowerCase()))
-        throw new Error(
-          `The group "${group.name}" of ${file} already has a routine named "${d.name}"`
-        )
-      // The template under the root: the routine's own, else the built-in
-      // page copied to the next free folder, now that nothing can refuse.
-      let template = current.report?.template
-        ? path.resolve(workspace.rootDir, current.report.template)
-        : null
-      if (!template) {
-        if (!options.defaultTemplate) throw new Error('the built-in report page is missing')
-        template = freePageFolder(workspace.rootDir, d.name)
-        copyDirSync(options.defaultTemplate, template)
-      }
-      const written = {
-        name: d.name,
-        schedule: current.schedule,
-        prompt: current.prompt,
-        ...(current.skill ? { skill: current.skill } : {}),
-        cwd: current.cwd ?? workspace.rootDir,
-        ...current.launch,
-        ...(current.icon ? { icon: current.icon } : {}),
-        ...(current.color ? { color: current.color } : {}),
-        ...(current.catchUp === false ? { catchUp: false } : {}),
-        ...(current.timeoutMinutes !== undefined ? { timeoutMinutes: current.timeoutMinutes } : {}),
-        runsOn: options.identity().name,
-        report: {
-          template,
-          ...(current.report?.schema
-            ? { schema: path.resolve(workspace.rootDir, current.report.schema) }
-            : {}),
-          ...(current.report?.width !== undefined ? { width: current.report.width } : {}),
-          ...(current.report?.height !== undefined ? { height: current.report.height } : {}),
-          ...(current.report?.publish ? { publish: true } : {})
-        }
-      }
-      groups[at] = { ...group, routines: [...(group.routines ?? []), written] }
-      const data: ClaveFileWriteData =
-        read?.type === 'multi' || groups.length > 1 ? { groups } : { ...groups[0] }
-      options.files.write(file, data, workspace.rootDir)
-      created.remove(current.id)
-      store.forget(key)
-      removeRoutineDecks(decksRoot, key)
-      await refresh()
-      return { name: d.name, file, group: group.name, template, runsOn: written.runsOn }
-    },
-    async pause(key, paused) {
-      const current = ownRoutine(key, paused ? 'pause' : 'resume')
-      created.replace({ ...current, paused })
-      // Resumed: what was missed while on hold is not caught up (verifier round 1, F5).
-      if (!paused) store.considered(key, now(), current.schedule)
-      await refresh()
-      return viewOf(current.id)
-    },
+    create: (input: RoutineCreateInput) => serialized(() => createNow(input)),
+    update: (key, patch: RoutinePatch) => serialized(() => updateNow(key, patch)),
+    delete: (key) => serialized(() => deleteNow(key)),
+    pause: (key, paused) => serialized(() => pauseNow(key, paused)),
+    moveToFile: (key, input: RoutineMoveInput) => serialized(() => moveNow(key, input)),
     subscribe(listener) {
       listeners.add(listener)
       return () => {

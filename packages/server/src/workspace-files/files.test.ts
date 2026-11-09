@@ -1072,15 +1072,15 @@ describe("a routine's placement and publish, read and written", () => {
     )
   })
 
-  it('writes runsOn and report.publish back as read, and never the legacy server field', () => {
+  it('writes runsOn and report.publish back as read, and keeps a legacy server value as read', () => {
     const read = resolveRoutine(
       { ...base, runsOn: 'Studio', server: 'Old', report: { ...report, publish: true } },
       dir
     )!
     const written = serializeRoutine(read, (abs) => (abs ? abs.replace('/w/', '') : ''))
     expect(written.runsOn).toBe('Studio')
-    expect(written).not.toHaveProperty('server')
+    expect(written.server).toBe('Old')
     expect(written.report).toEqual({ template: '.clave/routines/ok', publish: true })
-    expect(resolveRoutine(written, dir)).toEqual({ ...read, server: undefined })
+    expect(resolveRoutine(written, dir)).toEqual(read)
   })
 })

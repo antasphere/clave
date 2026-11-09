@@ -1,5 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync
+} from 'node:fs'
 import { dirname, join } from 'node:path'
 import { tmpdir } from 'node:os'
 import type { SessionHostService, StartInput } from '@clave/server'
@@ -1304,6 +1312,124 @@ describe('a created routine moved into a file (verifier rounds 1 and 2, F1 and G
     await expect(service.moveToFile(key(file, 'FromFile'), {})).rejects.toThrow(
       /edit the file to move/
     )
+  })
+
+  it('refuses a target that is not a .clave file, or one that is there and cannot be read, and overwrites nothing (round 3, H1)', async () => {
+    const file = workspace([])
+    const service = await build(file, fakeHost(), memory(), { defaultTemplate: tpl() })
+    const view = await service.create(digest())
+    const notes = join(root, 'notes.txt')
+    writeFileSync(notes, 'my precious notes')
+    await expect(service.moveToFile(view.routine.key, { file: notes })).rejects.toThrow(
+      /is not a .clave file/
+    )
+    expect(readFileSync(notes, 'utf8')).toBe('my precious notes')
+    const broken = join(root, '.clave', 'workspaces', 'broken.clave')
+    writeFileSync(broken, '{"groups": [,]}')
+    await expect(service.moveToFile(view.routine.key, { file: broken })).rejects.toThrow(
+      /cannot be read as a workspace file/
+    )
+    expect(readFileSync(broken, 'utf8')).toBe('{"groups": [,]}')
+    expect(service.list().routines.map((v) => v.routine.origin)).toEqual(['created'])
+    expect(existsSync(join(root, '.clave', 'routines', 'morning-digest'))).toBe(false)
+  })
+
+  it('two moves into one file at once both land, one after the other (round 3, H2)', async () => {
+    const file = workspace([])
+    const service = await build(file, fakeHost(), memory(), { defaultTemplate: tpl() })
+    const a = await service.create(digest({ name: 'Alpha' }))
+    const b = await service.create(digest({ name: 'Beta' }))
+    const outcomes = await Promise.allSettled([
+      service.moveToFile(a.routine.key, {}),
+      service.moveToFile(b.routine.key, {})
+    ])
+    expect(outcomes.map((o) => o.status)).toEqual(['fulfilled', 'fulfilled'])
+    const names = (readFile().routines as Array<{ name: string }>).map((r) => r.name)
+    expect(names).toEqual(['Alpha', 'Beta'])
+    expect(service.list().routines.map((v) => [v.routine.name, v.routine.origin])).toEqual([
+      ['Alpha', 'file'],
+      ['Beta', 'file']
+    ])
+  })
+
+  it('a move and a delete of the same routine at once: exactly one lands (round 3, H3)', async () => {
+    const file = workspace([])
+    const service = await build(file, fakeHost(), memory(), { defaultTemplate: tpl() })
+    const a = await service.create(digest({ name: 'Alpha' }))
+    const outcomes = await Promise.allSettled([
+      service.moveToFile(a.routine.key, {}),
+      service.delete(a.routine.key)
+    ])
+    expect(outcomes.map((o) => o.status).sort()).toEqual(['fulfilled', 'rejected'])
+    const inFile = ((readFile().routines as Array<{ name: string }> | undefined) ?? []).some(
+      (r) => r.name === 'Alpha'
+    )
+    const listed = service.list().routines.filter((v) => v.routine.name === 'Alpha')
+    // Moved: in the file once, listed once as a file's; deleted: nowhere.
+    expect(inFile ? listed.map((v) => v.routine.origin) : listed).toEqual(inFile ? ['file'] : [])
+  })
+
+  it('a write that fails leaves the routine in the store and no copied page behind (round 3, H4)', async () => {
+    const file = workspace([])
+    const service = await build(file, fakeHost(), memory(), { defaultTemplate: tpl() })
+    const view = await service.create(digest())
+    // The file's folder made unwritable by being a file itself.
+    const dir = join(root, '.clave', 'workspaces', 'blocked')
+    writeFileSync(dir, 'not a folder')
+    await expect(
+      service.moveToFile(view.routine.key, { file: join(dir, 'x.clave') })
+    ).rejects.toThrow()
+    expect(service.list().routines.map((v) => v.routine.origin)).toEqual(['created'])
+    expect(existsSync(join(root, '.clave', 'routines', 'morning-digest'))).toBe(false)
+  })
+
+  it('a rewrite keeps a legacy server value another routine still says, and a one-group multi file stays multi (round 3, H5 and R7)', async () => {
+    const legacy = { ...routine('Legacy pin'), runsOn: undefined, server: 'Studio' }
+    const file = workspace([legacy])
+    // The fixture writes a single group; make it a one-group multi file.
+    const doc = JSON.parse(readFileSync(file, 'utf8'))
+    writeFileSync(file, JSON.stringify({ groups: [doc] }))
+    const service = await build(file, fakeHost(), memory(), { defaultTemplate: tpl() })
+    const view = await service.create(digest())
+    await service.moveToFile(view.routine.key, {})
+    const written = readFile()
+    expect(written).toHaveProperty('groups')
+    const groups = written.groups as Array<{ routines: Array<Record<string, unknown>> }>
+    expect(groups).toHaveLength(1)
+    expect(groups[0].routines[0]).toMatchObject({ name: 'Legacy pin', server: 'Studio' })
+    expect(groups[0].routines[1]).toMatchObject({ name: 'Morning digest', runsOn: 'TestMac' })
+  })
+
+  it('a move forgets the routine’s decks (round 3, R8), and a resume with no tick on hold catches nothing up (N5)', async () => {
+    const file = workspace([])
+    const host = fakeHost()
+    const storage = memory()
+    const service = await build(file, host, storage, { defaultTemplate: tpl() })
+    const view = await service.create(digest())
+    await service.runNow(view.routine.key)
+    await service.report({
+      sessionId: 's1',
+      status: 'ok',
+      headline: 'h',
+      summary: 's',
+      data: { n: 1 }
+    })
+    host.emit('s1', { kind: 'event', event: { type: 'state_change', state: 'done' } })
+    const decks = join(root, 'data', DECKS_DIR)
+    const before = readdirSync(decks).filter((f) => f !== 'index.html')
+    expect(before).toHaveLength(1)
+    await service.moveToFile(view.routine.key, {})
+    expect(readdirSync(decks).filter((f) => f !== 'index.html')).toHaveLength(0)
+    // N5: paused, never ticked, the clock seeded hours back, resumed: nothing starts.
+    const schedule = `${(new Date().getMinutes() + 30) % 60} * * * *`
+    const paused = await service.create(digest({ name: 'Held', schedule }))
+    await service.pause(paused.routine.key, true)
+    await service.close()
+    new RoutinesStore(storage).considered(paused.routine.key, Date.now() - 3 * 3_600_000, schedule)
+    const second = await build(file, host, storage, { defaultTemplate: tpl() })
+    await second.pause(paused.routine.key, false)
+    await second.tick()
+    expect(host.starts).toHaveLength(1) // the one run of Morning digest above, nothing new
   })
 
   it('two creates at once with one name land once (verifier round 2, G2)', async () => {
