@@ -54,6 +54,47 @@ vi.mock('./shell-launch', async (importOriginal) => ({
   findExecutable: (command: string) => command
 }))
 vi.mock('./session-history', () => ({ TITLE_HELPER_MARKER: 'Generate a short 2-4 word title' }))
+// A terminal's transcript, faked: the generator finds it under the home's
+// .claude/projects, polls it with watchFile and reads the appended region
+// through fs.promises. The home is a path that exists nowhere, so nothing of
+// the machine's own transcripts is read or written by these tests.
+const transcripts = vi.hoisted(() => ({
+  home: '/clave-title-tests-home',
+  files: new Map<string, string>(),
+  watchers: new Map<string, (curr: { size: number }) => void>()
+}))
+vi.mock('fs', async (importOriginal) => {
+  const real = await importOriginal<typeof import('fs')>()
+  return {
+    ...real,
+    existsSync: (p: string) => transcripts.files.has(p) || real.existsSync(p),
+    watchFile: (p: string, _options: unknown, cb: (curr: { size: number }) => void) => {
+      transcripts.watchers.set(p, cb)
+    },
+    unwatchFile: (p: string) => {
+      transcripts.watchers.delete(p)
+    },
+    promises: {
+      ...real.promises,
+      open: async (p: string, flags: string) => {
+        if (!transcripts.files.has(p)) return real.promises.open(p, flags)
+        const bytes = () => Buffer.from(transcripts.files.get(p) ?? '', 'utf-8')
+        return {
+          stat: async () => ({ size: bytes().length }),
+          read: async (buf: Buffer, offset: number, length: number, position: number) => {
+            bytes().copy(buf, offset, position, position + length)
+            return { bytesRead: length, buffer: buf }
+          },
+          close: async () => {}
+        }
+      }
+    }
+  }
+})
+vi.mock('os', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('os')>()),
+  homedir: () => transcripts.home
+}))
 
 import {
   TITLE_CLI_ARGS,
@@ -347,6 +388,92 @@ describe("the daemon's opt-out names no tab", () => {
     scheduleTitleGeneration(id, '/tmp/never-watched', `claude-${id}`, null)
     expect(watchedTitleSessionsForTests()).toBe(before)
     cleanup(id)
+  })
+
+  /** A terminal's transcript as Claude Code writes it, under the faked home. */
+  function transcript(cwd: string, claudeSessionId: string) {
+    const file = `${transcripts.home}/.claude/projects/${cwd.replace(/[/.]/g, '-')}/${claudeSessionId}.jsonl`
+    transcripts.files.set(file, '')
+    return {
+      /** The user's message lands in the transcript, and the poll sees the file grow. */
+      async userMessage(text: string): Promise<void> {
+        const line = JSON.stringify({ type: 'user', message: { role: 'user', content: text } })
+        transcripts.files.set(file, `${transcripts.files.get(file) ?? ''}${line}\n`)
+        transcripts.watchers.get(file)?.({
+          size: Buffer.byteLength(transcripts.files.get(file) ?? '')
+        })
+        for (let i = 0; i < 4; i++) await settled()
+      },
+      forget(): void {
+        transcripts.files.delete(file)
+        transcripts.watchers.delete(file)
+      }
+    }
+  }
+
+  // The guards are checked one by one (the verifier's round 1, F4): each of
+  // the four has a behaviour of its own, so each is pinned by a test that
+  // goes red when that guard alone is removed.
+
+  it('control: a terminal watched with titles on is named by the first message of its transcript', async () => {
+    const id = `term-${++sequence}`
+    const { win, send } = window()
+    const t = transcript('/tmp/watched-control', `claude-${id}`)
+    try {
+      scheduleTitleGeneration(id, '/tmp/watched-control', `claude-${id}`, win)
+      await t.userMessage('please make the sidebar tab follow the first message I send')
+      expect(mocks.execFile).toHaveBeenCalledTimes(1)
+      expect(send).toHaveBeenCalledWith(`session:auto-title:${id}`, 'follow the first message')
+    } finally {
+      cleanup(id)
+      t.forget()
+    }
+  })
+
+  it('a terminal watched before the opt-out whose first message lands after it starts no CLI', async () => {
+    const id = `term-${++sequence}`
+    const { win, send } = window()
+    const t = transcript('/tmp/watched-before', `claude-${id}`)
+    try {
+      const before = watchedTitleSessionsForTests()
+      scheduleTitleGeneration(id, '/tmp/watched-before', `claude-${id}`, win)
+      expect(watchedTitleSessionsForTests()).toBe(before + 1)
+      disableTitleGeneration('--no-titles')
+      await t.userMessage('please make the sidebar tab follow the first message I send')
+      expect(mocks.execFile).not.toHaveBeenCalled()
+      expect(send).not.toHaveBeenCalled()
+    } finally {
+      cleanup(id)
+      t.forget()
+    }
+  })
+
+  it('a chat scheduled while titles are off is not named even once they are back on', async () => {
+    disableTitleGeneration('--no-titles')
+    const id = `chat-${++sequence}`
+    const { win, send } = window()
+    scheduleChatTitle(id)
+    enableTitleGenerationForTests()
+    notifyChatMessage(id, 'please make the sidebar tab follow the first message I send', win)
+    await settled()
+    expect(mocks.execFile).not.toHaveBeenCalled()
+    expect(send).not.toHaveBeenCalled()
+  })
+
+  it('a message sent while titles are off does not spend the chat: the first message once they are back on names it', async () => {
+    const id = `chat-${++sequence}`
+    const { win, send } = window()
+    scheduleChatTitle(id)
+    disableTitleGeneration('--no-titles')
+    notifyChatMessage(id, 'this message lands while the titles are off', win)
+    await settled()
+    expect(mocks.execFile).not.toHaveBeenCalled()
+    enableTitleGenerationForTests()
+    notifyChatMessage(id, 'please make the sidebar tab follow the first message I send', win)
+    await settled()
+    expect(mocks.execFile).toHaveBeenCalledTimes(1)
+    expect(mocks.prompts.join('')).toContain('please make the sidebar tab follow')
+    expect(send).toHaveBeenCalledWith(`session:auto-title:${id}`, 'follow the first message')
   })
 
   it('titles run again once the opt-out is lifted', async () => {
