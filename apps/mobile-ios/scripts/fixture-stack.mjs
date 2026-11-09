@@ -12,9 +12,10 @@
 //
 //   node apps/mobile-ios/scripts/fixture-stack.mjs [--server 47101] [--relay 47102]
 //        [--tmpdir /private/tmp/clave-native-a/stack] [--approve]
-//        [--dry-run | --self-check | --once | --prove-tmpdir-guard | --prove-env-guard | --prove-prerequisites
-//         | --prove-inside cache|resolver|args|probe | --prove-recorder-read missing|unreadable
-//         | --prove-title-guard]
+//        [--dry-run | --self-check | --once | --prove-tmpdir-guard
+//         | --prove-env-guard stray|no-env-file|live-stub | --prove-prerequisites
+//         | --prove-inside keys|cache|resolver|args|probe | --prove-recorder-read missing|unreadable
+//         | --prove-title-guard recorder|folder]
 //
 // The run folder is the stack's own or nothing happens: a folder it made holds
 // a regular file `.clave-fixture-stack` whose content is exactly this stack's
@@ -24,9 +25,10 @@
 // touched, and so is a run root that is itself a symlink. A dry run never
 // rewrites a reused folder: it works in a fresh one.
 //
-// Every boot runs five checks and refuses (exit 2) unless all pass, printing
-// them first. Before the daemon starts (the provider and the relay are already
-// up): (1) the daemon's command starts Bun
+// Every boot runs six checks and refuses (exit 2) unless all pass, printing
+// them first. Before the relay and the daemon start (the provider is
+// in-process): (0) the relay's command starts Bun with --no-env-file before
+// its entry and names the loopback issuer; (1) the daemon's command starts Bun
 // with --no-env-file before the entry (Bun loads .env files from its working
 // directory otherwise) and carries --no-titles, --test-no-activate and
 // --test-no-machine-usage; (2) the environment handed to the daemon is built
@@ -63,18 +65,21 @@
 // refusals (no marker, another owner, an inexact owner id, a symlink marker, a
 // symlink run root) with their sentinels intact, an owned folder reused as the
 // same folder and a dry run leaving a reused folder alone; --prove-env-guard
-// starts nothing and shows the second pre-boot check red on one stray
-// variable, the key named and never its value; --prove-prerequisites hands check 3
+// starts nothing and shows one pre-boot check red and the others green on one
+// stray variable, on the daemon's command without --no-env-file, or on a stub
+// shell echoing a live environment, the key named and never its value; --prove-prerequisites hands check 3
 // a discovery read saying titles "on"; --prove-inside cache|resolver|args
-// hands check 4 a cached PATH without the recorders, a one-shot whose file is
-// not the recorder, or arguments other than --version, and --prove-inside
+// hands check 4 one stray key in the daemon's environment, a cached PATH
+// without the recorders, a one-shot whose file is not the recorder, or
+// arguments other than --version, and --prove-inside
 // probe asks the daemon to run the probe against a wrong expected path, all
 // refused before the seed with nothing started; --prove-recorder-read
 // missing|unreadable removes or replaces the owned recorder log while the
 // stack runs and expects the watch to latch a failure; --prove-title-guard
 // runs the claude RECORDER itself with -p while the stack runs (never a CLI),
-// so a foreign line lands in the log, and expects the watch to stop the
-// daemon. Otherwise the stack runs until SIGINT/SIGTERM.
+// so a foreign line lands in the log, or plants one file in the Claude config
+// folder, and expects the watch to stop the daemon either way. Otherwise the
+// stack runs until SIGINT/SIGTERM.
 // The server's bearer token is written to <tmpdir>/owner-token (mode 0600)
 // and nowhere else: never to stdout, stack.json or a log. Children's output
 // goes to <tmpdir>/logs/.
@@ -452,6 +457,20 @@ function childEnv(extra = {}) {
   return { ...env, ...extra }
 }
 
+/** The relay's command: this checkout's relay entry under Bun, trusting the fixture's issuer. */
+export function relayArgs({ relayDir, relayPort, issuer }) {
+  return [
+    '--no-env-file',
+    path.join(REPO, 'apps', 'relay', 'src', 'main.ts'),
+    '--port',
+    String(relayPort),
+    '--data-dir',
+    relayDir,
+    '--issuer',
+    issuer
+  ]
+}
+
 /** The daemon's command: this checkout's server entry under Bun, Echo on, the three flags. */
 export function daemonArgs({ serverDir, serverPort, relayUrl }) {
   return [
@@ -510,14 +529,37 @@ const expect = (condition, message) => {
 }
 
 /**
- * The two checks run BEFORE any process starts, on the very command and
- * environment the daemon gets: the command carries the three flags, and the
- * environment is the allowlist plus the stack's own variables, its SHELL the
- * stub, the first folder of its PATH the recorders', CLAUDE_CONFIG_DIR and
- * CODEX_HOME the empty folders the stack made. No shell is run here.
+ * The checks run BEFORE the relay and the daemon start (the provider is
+ * in-process), on the very commands and environment the children get: the
+ * relay's command starts Bun with --no-env-file before its entry; the daemon's
+ * does too and carries the three flags; and the daemon's environment is the
+ * allowlist plus the stack's own variables, its SHELL the stub whose text
+ * prints exactly those, the first folder of its PATH the recorders',
+ * CLAUDE_CONFIG_DIR and CODEX_HOME the empty folders the stack made. No shell
+ * is run here.
  */
-export async function preBootChecks({ args, env, stubs, log }) {
+export async function preBootChecks({ relay = null, args, env, stubs, log }) {
   const results = []
+  if (relay)
+    await runCheck(
+      results,
+      log,
+      'the relay command starts Bun with --no-env-file before the entry and names the fixture issuer',
+      () => {
+        expect(
+          relay[0] === '--no-env-file' &&
+            typeof relay[1] === 'string' &&
+            relay[1].endsWith(path.join('apps', 'relay', 'src', 'main.ts')),
+          `the relay command does not start with --no-env-file and the relay entry: ${JSON.stringify(relay.slice(0, 2))}`
+        )
+        const issuer = relay[relay.indexOf('--issuer') + 1]
+        expect(
+          typeof issuer === 'string' && issuer.startsWith('http://127.0.0.1:'),
+          `the relay's issuer is ${issuer}`
+        )
+        return '--no-env-file, then the entry, the loopback issuer'
+      }
+    )
   await runCheck(
     results,
     log,
@@ -987,46 +1029,19 @@ export async function startStack({
     }
     log(`provider up at ${provider.issuer} (port ${provider.port})`)
 
-    // 2. The relay, trusting that provider.
-    relay = startChild(
-      'relay',
-      BUN,
-      [
-        '--no-env-file',
-        path.join(REPO, 'apps', 'relay', 'src', 'main.ts'),
-        '--port',
-        String(relayPort),
-        '--data-dir',
-        relayDir,
-        '--issuer',
-        provider.issuer
-      ],
-      { env: childEnv({ PATH: process.env.PATH ?? '/usr/bin:/bin' }), logsDir, secrets }
-    )
-    let relayUrl
-    try {
-      relayUrl = await until('the relay announcing its url', () => {
-        if (!relay.alive()) throw new Error(`the relay exited (${relay.child.exitCode})`)
-        const line = relay.stdoutLines.find((l) => l.trim().startsWith('{'))
-        return line ? JSON.parse(line).url : null
-      })
-    } catch (err) {
-      throw fail('start the relay', err, relay)
-    }
-    log(`relay up at ${relayUrl}`)
-
-    // 3. The server daemon, Echo on, pointed at the provider and the relay,
-    // naming no tab, the recorders catching any CLI call it makes anyway. The
-    // two pre-boot checks run first, on the very command and environment the
-    // daemon gets; one failing stops the boot before the daemon exists.
+    // 2. The stubs, both commands and the pre-boot checks, before the relay or
+    // the daemon exists: one failing stops the boot with nothing else started.
     stubs = writeStubs(tmpdir, { issuer: provider.issuer, serverDir })
+    const relayUrl = `http://127.0.0.1:${relayPort}`
+    const relayCommand = relayArgs({ relayDir, relayPort, issuer: provider.issuer })
     const args = daemonArgs({ serverDir, serverPort, relayUrl })
     const env = stubs.env
+    log(`relay command: ${daemonCommandLine(relayCommand)}`)
     log(`daemon command: ${daemonCommandLine(args)}`)
-    const preBoot = await preBootChecks({ args, env, stubs, log })
+    const preBoot = await preBootChecks({ relay: relayCommand, args, env, stubs, log })
     if (preBoot.some((c) => !c.ok))
       throw fail(
-        'check the daemon before boot',
+        'check the children before boot',
         new Error(
           preBoot
             .filter((c) => !c.ok)
@@ -1036,6 +1051,28 @@ export async function startStack({
         null,
         CHECK_FAILED_EXIT
       )
+
+    // 3. The relay, trusting that provider, on the band's port.
+    relay = startChild('relay', BUN, relayCommand, {
+      env: childEnv({ PATH: process.env.PATH ?? '/usr/bin:/bin' }),
+      logsDir,
+      secrets
+    })
+    try {
+      const announced = await until('the relay announcing its url', () => {
+        if (!relay.alive()) throw new Error(`the relay exited (${relay.child.exitCode})`)
+        const line = relay.stdoutLines.find((l) => l.trim().startsWith('{'))
+        return line ? JSON.parse(line).url : null
+      })
+      if (String(announced).replace(/\/$/, '') !== relayUrl)
+        throw new Error(`the relay announced ${announced}, not the band's ${relayUrl}`)
+    } catch (err) {
+      throw fail('start the relay', err, relay)
+    }
+    log(`relay up at ${relayUrl}`)
+
+    // 4. The server daemon, Echo on, pointed at the provider and the relay,
+    // naming no tab, the recorders catching any CLI call it makes anyway.
     const serverStartedAt = Date.now()
     server = startChild('server', BUN, args, { env, logsDir, secrets })
     let discovery
@@ -1098,6 +1135,9 @@ export async function startStack({
         if (injectInside) {
           inside = {
             ...inside,
+            envKeys: injectInside.envKeys
+              ? [...inside.envKeys, ...injectInside.envKeys].sort()
+              : inside.envKeys,
             cached: { ...inside.cached, ...(injectInside.cached ?? {}) },
             oneShot: { ...inside.oneShot, ...(injectInside.oneShot ?? {}) }
           }
@@ -1427,13 +1467,15 @@ function parseArgs(argv) {
     once: argv.includes('--once'),
     dryRun: argv.includes('--dry-run'),
     proveTmpdirGuard: argv.includes('--prove-tmpdir-guard'),
-    proveEnvGuard: argv.includes('--prove-env-guard'),
+    proveEnvGuard: argv.includes('--prove-env-guard') ? value('prove-env-guard', 'stray') : null,
     provePrerequisites: argv.includes('--prove-prerequisites'),
     proveInside: argv.includes('--prove-inside') ? value('prove-inside', 'resolver') : null,
     proveRecorderRead: argv.includes('--prove-recorder-read')
       ? value('prove-recorder-read', 'missing')
       : null,
     proveTitleGuard: argv.includes('--prove-title-guard')
+      ? value('prove-title-guard', 'recorder')
+      : null
   }
 }
 export { parseArgs as parseStackArgs }
@@ -1580,7 +1622,7 @@ if (isMain) {
     ending = true
     let left = []
     if (stack) left = await stack.stop()
-    else if (inFlightStop) await inFlightStop()
+    else if (inFlightStop) left = await inFlightStop()
     if (left.length) {
       process.stdout.write(
         `fixture-stack: the recorders or the credential folders were not silent: ${left.join(' | ')}\n`
@@ -1597,27 +1639,60 @@ if (isMain) {
     process.exit(proveTmpdirGuard() ? 0 : 1)
   }
   if (options.proveEnvGuard) {
-    // No boot: the second pre-boot check is handed the daemon's environment with
-    // one stray variable added, and must fail naming that key and nothing else.
-    const place = dryRunFolder(options.tmpdir)
+    // No boot. Three cases, each handing the pre-boot checks one thing wrong and
+    // expecting exactly that check red, the others green, the stray key named
+    // and its value never printed: `stray` (one stray variable in the daemon's
+    // environment), `no-env-file` (the daemon's command without the flag),
+    // `live-stub` (a stub shell that echoes a live environment again).
+    const which = options.proveEnvGuard
+    const expected = {
+      stray: { index: 2, pattern: /CLAVE_FIXTURE_STRAY_KEY/ },
+      'no-env-file': { index: 1, pattern: /does not start with --no-env-file/ },
+      'live-stub': { index: 2, pattern: /still echoes a live one/ }
+    }[which]
+    if (!expected) {
+      process.stderr.write(
+        'fixture-stack: --prove-env-guard takes stray, no-env-file or live-stub\n'
+      )
+      process.exit(1)
+    }
+    let place
+    try {
+      place = dryRunFolder(options.tmpdir)
+    } catch (err) {
+      process.stderr.write(`fixture-stack: ${err.message}\n`)
+      process.exit(err.exitCode ?? 1)
+    }
     const serverDir = path.join(options.tmpdir, 'server')
+    const relayDir = path.join(options.tmpdir, 'relay')
     const stubs = writeStubs(place.folder, { issuer: 'http://127.0.0.1:0', serverDir })
-    const args = daemonArgs({
+    const relay = relayArgs({
+      relayDir,
+      relayPort: options.relayPort,
+      issuer: 'http://127.0.0.1:0'
+    })
+    let args = daemonArgs({
       serverDir,
       serverPort: options.serverPort,
       relayUrl: `http://127.0.0.1:${options.relayPort}`
     })
-    const env = { ...stubs.env, CLAVE_FIXTURE_STRAY_KEY: 'a value that must never be printed' }
-    const results = await preBootChecks({ args, env, stubs, log })
+    let env = stubs.env
+    if (which === 'stray')
+      env = { ...env, CLAVE_FIXTURE_STRAY_KEY: 'a value that must never be printed' }
+    if (which === 'no-env-file') args = args.filter((a) => a !== '--no-env-file')
+    if (which === 'live-stub')
+      writeFileSync(stubs.shell, '#!/bin/sh\nexec /usr/bin/env -0\n', { mode: 0o700 })
+    const results = await preBootChecks({ relay, args, env, stubs, log })
     if (place.fresh) rmSync(place.folder, { recursive: true, force: true })
-    const second = results[1]
+    const redOnes = results.map((r, i) => (r.ok ? null : i)).filter((i) => i !== null)
+    const target = results[expected.index]
     const red =
-      second &&
-      !second.ok &&
-      /CLAVE_FIXTURE_STRAY_KEY/.test(second.detail) &&
-      !/never be printed/.test(second.detail)
+      redOnes.length === 1 &&
+      redOnes[0] === expected.index &&
+      expected.pattern.test(target.detail) &&
+      !/never be printed/.test(target.detail)
     process.stdout.write(
-      `${red ? 'PASS' : 'FAIL'} the second pre-boot check goes red on one stray variable in the daemon's environment, naming the key and never its value (${second?.detail ?? 'no result'})\n`
+      `${red ? 'PASS' : 'FAIL'} the pre-boot checks go red on ${which} alone, check ${expected.index + 1} of ${results.length}, the key named and never its value (red: ${JSON.stringify(redOnes.map((i) => i + 1))}; ${target?.detail ?? 'no result'})\n`
     )
     process.exit(red ? 0 : 1)
   }
@@ -1639,23 +1714,24 @@ if (isMain) {
         : `dry run in ${place.folder}, made and marked for the boot`
     )
     const serverDir = path.join(options.tmpdir, 'server')
-    const stubs = writeStubs(place.folder, {
-      issuer: 'http://127.0.0.1:<the free port the provider binds at boot>',
-      serverDir
-    })
+    const relayDir = path.join(options.tmpdir, 'relay')
+    const issuer = 'http://127.0.0.1:<the free port the provider binds at boot>'
+    const stubs = writeStubs(place.folder, { issuer, serverDir })
+    const relay = relayArgs({ relayDir, relayPort: options.relayPort, issuer })
     const args = daemonArgs({
       serverDir,
       serverPort: options.serverPort,
       relayUrl: `http://127.0.0.1:${options.relayPort}`
     })
     const env = stubs.env
+    log(`dry run: nothing starts; the relay command a boot runs is: ${daemonCommandLine(relay)}`)
     log(`dry run: nothing starts; the daemon command a boot runs is: ${daemonCommandLine(args)}`)
-    const results = await preBootChecks({ args, env, stubs, log })
+    const results = await preBootChecks({ relay, args, env, stubs, log })
     log(
       'checks 3 to 5 run after the daemon announces itself and before anything is seeded: the discovery read (step 3b), the inside read through POST /e2e/evaluate (step 3c) and the probe the daemon runs itself (step 3d); the recorder watch runs from the probe to the stop (steps 3e and 7b)'
     )
     const ok = results.every((c) => c.ok)
-    log(ok ? 'dry run: the two pre-boot checks pass' : 'dry run: a pre-boot check failed')
+    log(ok ? 'dry run: the three pre-boot checks pass' : 'dry run: a pre-boot check failed')
     if (place.fresh) rmSync(place.folder, { recursive: true, force: true })
     process.exit(ok ? 0 : CHECK_FAILED_EXIT)
   }
@@ -1688,6 +1764,7 @@ if (isMain) {
     // refused before the probe. probe: the daemon is handed a wrong expected
     // canonical path and must refuse to run its launch, nothing started.
     const doctored = {
+      keys: { injectInside: { envKeys: ['CLAVE_FIXTURE_STRAY_KEY'] } },
       cache: { injectInside: { cached: { PATH: '/usr/bin:/bin' } } },
       resolver: {
         injectInside: {
@@ -1698,7 +1775,9 @@ if (isMain) {
       probe: { injectProbeExpectation: { canonical: '/usr/local/bin/claude' } }
     }[options.proveInside]
     if (!doctored) {
-      process.stderr.write(`fixture-stack: --prove-inside takes cache, resolver, args or probe\n`)
+      process.stderr.write(
+        `fixture-stack: --prove-inside takes keys, cache, resolver, args or probe\n`
+      )
       process.exit(1)
     }
     await proof(
@@ -1732,22 +1811,39 @@ if (isMain) {
     process.exit(red ? 0 : 1)
   }
   if (options.proveTitleGuard) {
-    // Every flag kept; the stack comes up, one line is planted in the
-    // recorder log while it runs, and the watch must stop the daemon.
+    // Every flag kept; the stack comes up, then one of two things the watch must
+    // catch happens while it runs: `recorder`, the claude RECORDER itself run
+    // with -p the way a one-shot would be (never a CLI: it drains the prompt,
+    // answers the fixed title and writes its line); `folder`, one file planted
+    // in the owned Claude config folder. The daemon must stop either way.
+    const which = options.proveTitleGuard
+    if (!['recorder', 'folder'].includes(which)) {
+      process.stderr.write('fixture-stack: --prove-title-guard takes recorder or folder\n')
+      process.exit(1)
+    }
     await proof('the stack comes up for the recorder watch proof', options, null)
-    // The claude RECORDER itself, run with -p the way a one-shot would be, never
-    // a CLI: it drains the prompt, answers the fixed title and writes its line.
-    const answer = execFileSync(stack.recorderClaude, ['-p'], {
-      input: 'a foreign one-shot, planted by --prove-title-guard\n',
-      env: { PATH: '/usr/bin:/bin' },
-      encoding: 'utf8'
-    })
+    let what
+    if (which === 'recorder') {
+      const answer = execFileSync(stack.recorderClaude, ['-p'], {
+        input: 'a foreign one-shot, planted by --prove-title-guard\n',
+        env: { PATH: '/usr/bin:/bin' },
+        encoding: 'utf8'
+      })
+      what = `the claude recorder run with -p (it answered ${JSON.stringify(answer.trim())})`
+    } else {
+      writeFileSync(
+        path.join(path.dirname(stack.recorderLog), 'claude-config', 'planted.txt'),
+        'planted by --prove-title-guard\n'
+      )
+      what = 'one file planted in the Claude config folder'
+    }
     const who = await Promise.race([stack.died, sleep(WATCH_MS * 10).then(() => 'nobody')])
     const left = await stack.stop()
-    const red =
-      who === 'recorder' && left.length > 0 && left.some((l) => /recorded: .* claude -p/.test(l))
+    const caught =
+      which === 'recorder' ? /recorded: .* claude -p/ : /Claude config folder: planted\.txt/
+    const red = who === 'recorder' && left.length > 0 && left.some((l) => caught.test(l))
     process.stdout.write(
-      `${red ? 'PASS' : 'FAIL'} the recorder watch stops the daemon when the claude recorder is run with -p while the stack runs (the recorder answered ${JSON.stringify(answer.trim())}; died: ${who}; ${left.join(' | ')})\n`
+      `${red ? 'PASS' : 'FAIL'} the recorder watch stops the daemon on ${what} while the stack runs (died: ${who}; ${left.join(' | ')})\n`
     )
     process.exit(red ? 0 : 1)
   }

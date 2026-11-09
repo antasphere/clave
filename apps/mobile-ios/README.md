@@ -81,10 +81,11 @@ raises no request. The daemon itself is not a fixture, and two boots of this sta
 under the machine's login, to name the seeded Echo chat by its first message, a fixture
 nonce: the daemon names every fresh Claude-mode chat that way, the Echo fixture included,
 and reads the machine's Claude and Codex usage unless told not to. Since then every boot
-runs five checks and refuses unless all pass (`scripts/README.md`): before any process
-starts, the daemon's command carries `--no-titles`, `--test-no-activate` and
-`--test-no-machine-usage`, and its environment is an allowlist plus the stack's own stub
-shell, recorders and empty credential folders; after the daemon announces itself and before
+runs six checks and refuses unless all pass (`scripts/README.md`): before the relay and the
+daemon start, both commands start Bun with `--no-env-file` before their entry, the daemon's
+carries `--no-titles`, `--test-no-activate` and `--test-no-machine-usage`, and its environment
+is an allowlist plus the stack's own stub shell (printing a fixed environment the stack wrote),
+recorders and empty credential folders; after the daemon announces itself and before
 anything is seeded, its discovery file says `titles: "off"`, `testMode: true` and
 `machineUsage: false` (lane C's fix, PR #354 against `mobile`), a read inside the daemon
 shows its cached login environment and its one-shot resolver naming the recorders, and the
