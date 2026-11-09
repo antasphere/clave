@@ -55,6 +55,7 @@ import { sessionManager } from './sessions/session-manager'
 import * as titleGenerator from './title-generator'
 import * as exchangeDigest from './exchange-digest'
 import { rememberedChatEffort, rememberedChatModel } from './sessions/chat-model-default'
+import { sessionModelChanged } from './server/session-events'
 import { initialChatView } from './sessions/chat-view-default'
 import {
   defaultViewFor,
@@ -455,6 +456,10 @@ class PtyManager {
           session.model = stream.event.model
           // On the record too (PRDCT-4191): a Resume relaunches on it.
           ptyBackend.setSessionRuntime(id, { model: stream.event.model })
+          // And to the windows (PRDCT-4256): the sidebar's store used to keep
+          // the launch model for the tab's whole life, so its foot judged the
+          // caps by a model the chat had long left.
+          sessionModelChanged(id, stream.event.model)
         }
         // The thread the app-server opened: what a restart resumes.
         if (sessionManager.get(id)?.adapterId === 'codex-chat' && stream.event.providerSessionId) {

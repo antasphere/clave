@@ -41,6 +41,11 @@ export const ServerEvent = Schema.Union(
     id: Schema.String,
     providerSessionId: Schema.NullOr(Schema.String)
   }),
+  /** The session runs on `model` now, as its provider said it (the Claude
+   *  CLI's init frame, a switch it took, the default resolved at ready; the
+   *  Codex app-server's thread): what a window's sidebar judges the caps by
+   *  (PRDCT-4256). Sent over the window's IPC too while no server runs. */
+  Schema.TaggedStruct('session.model_changed', { id: Schema.String, model: Schema.String }),
   // ── Lane D: settings (accounts, usage, workspaces) ──
   ...SettingsEvent.members,
   // ── Lane C: the sidebar (a window's layout changed or went with its window) ──

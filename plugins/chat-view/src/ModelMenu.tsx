@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react'
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
-import { CheckIcon, ChevronDownIcon } from '@heroicons/react/24/outline'
+import { CheckIcon, ChevronDownIcon, ChevronRightIcon } from '@heroicons/react/24/outline'
 import type { ModelOption } from '../../../src/shared/session-model'
-import { currentOption, modelChipLabel } from './models'
+import { currentOption, foldModelOptions, modelChipLabel } from './models'
 
 /** The model chip on the composer's footer and the menu it opens above it. */
 export function ModelMenu({
@@ -38,6 +38,24 @@ export function ModelMenu({
     }
   }, [open, sessionId])
   const current = currentOption(model, options)
+  const { current: listed, earlier } = foldModelOptions(options ?? [])
+  const row = (option: ModelOption): React.JSX.Element => {
+    const selected = option === current
+    return (
+      <DropdownMenu.Item
+        key={option.id}
+        className="menu-item chat-model-option"
+        data-selected={selected ? 'true' : undefined}
+        onSelect={() => onSelect(option.id)}
+      >
+        <span className="chat-model-option-text">
+          <span className="truncate">{option.label}</span>
+          {option.hint && <span className="chat-model-option-hint">{option.hint}</span>}
+        </span>
+        {selected && <CheckIcon className="select-option-check" />}
+      </DropdownMenu.Item>
+    )
+  }
   return (
     <DropdownMenu.Root
       modal={false}
@@ -74,23 +92,35 @@ export function ModelMenu({
           {options?.length === 0 && !failure && (
             <div className="chat-model-empty">This session offers no other model</div>
           )}
-          {options?.map((option) => {
-            const selected = option === current
-            return (
-              <DropdownMenu.Item
-                key={option.id}
-                className="menu-item chat-model-option"
-                data-selected={selected ? 'true' : undefined}
-                onSelect={() => onSelect(option.id)}
+          {listed.map(row)}
+          {earlier.length > 0 && (
+            // The older versions of a family, one layer down (PRDCT-4257): a
+            // session on one shows it selected here, and the row says so.
+            <DropdownMenu.Sub>
+              <DropdownMenu.SubTrigger
+                className="menu-item chat-model-option chat-model-earlier"
+                data-selected={current && earlier.includes(current) ? 'true' : undefined}
               >
                 <span className="chat-model-option-text">
-                  <span className="truncate">{option.label}</span>
-                  {option.hint && <span className="chat-model-option-hint">{option.hint}</span>}
+                  <span className="truncate">Earlier versions</span>
+                  {current && earlier.includes(current) && (
+                    <span className="chat-model-option-hint">{current.label}</span>
+                  )}
                 </span>
-                {selected && <CheckIcon className="select-option-check" />}
-              </DropdownMenu.Item>
-            )
-          })}
+                <ChevronRightIcon className="chat-model-earlier-chevron" />
+              </DropdownMenu.SubTrigger>
+              <DropdownMenu.Portal>
+                <DropdownMenu.SubContent
+                  sideOffset={6}
+                  alignOffset={-6}
+                  className="menu-surface menu-pop chat-model-menu z-50"
+                  aria-label="Earlier versions"
+                >
+                  {earlier.map(row)}
+                </DropdownMenu.SubContent>
+              </DropdownMenu.Portal>
+            </DropdownMenu.Sub>
+          )}
         </DropdownMenu.Content>
       </DropdownMenu.Portal>
     </DropdownMenu.Root>

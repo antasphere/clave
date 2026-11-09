@@ -30,6 +30,7 @@ import {
   CLAUDE_MODELS,
   claudeContextWindow,
   claudeModelName,
+  isDefaultClaudeAlias,
   findClaudeModel
 } from '../../../shared/claude-models'
 import type {
@@ -976,13 +977,24 @@ interface Live {
 }
 
 /** One model as the CLI's initialize answer lists it. */
-interface CliModel {
-  value: string
-  displayName: string
-  description?: string
-  resolvedModel?: string
-  supportsEffort?: boolean
-  supportedEffortLevels?: string[]
+const cliModel = z.object({
+  value: z.string(),
+  displayName: z.string(),
+  description: z.string().optional(),
+  resolvedModel: z.string().optional(),
+  supportsEffort: z.boolean().optional(),
+  supportedEffortLevels: z.array(z.string()).optional()
+})
+const cliModels = z.array(cliModel)
+type CliModel = z.infer<typeof cliModel>
+const plainId = (id: string): string => id.replace(/\[[^\]]*\]$/, '')
+/** The model the CLI's `default` alias stands for, as its list says it; a
+ *  list without a default, or whose default names no resolution, answers the
+ *  first listed model's resolution, else null (the CLI's init frame will say). */
+export function resolvedDefaultModel(cli: CliModel[]): string | null {
+  const fallback = cli.find((m) => isDefaultClaudeAlias(m.value))
+  const model = fallback?.resolvedModel ?? cli[0]?.resolvedModel
+  return model && isValidModelName(model) && !isDefaultClaudeAlias(model) ? model : null
 }
 /** The efforts a listed model takes, as the menu offers them. */
 function cliEfforts(model: CliModel | undefined): Pick<ModelOption, 'efforts'> {
@@ -990,56 +1002,66 @@ function cliEfforts(model: CliModel | undefined): Pick<ModelOption, 'efforts'> {
   const efforts = levels.filter(isValidEffort).map((id) => ({ id, label: effortLabel(id) }))
   return efforts.length ? { efforts } : {}
 }
-/** The CLI's list made the menu: Default first, as the CLI glosses it
- *  ("Opus 5.5 · Best for everyday, complex tasks"), then every listed version
- *  under its own name, then whatever the CLI offers that no version covers.
- *  The gloss of a family's alias goes on its newest version, without the
- *  version the name already says; an older one reads "Earlier version". */
+/** The CLI's list made the menu (PRDCT-4257): every listed version under its
+ *  own name, the family's gloss on its newest ("Best for everyday, complex
+ *  tasks", without the version the name already says), "Earlier version" on an
+ *  older one, then whatever the CLI offers that no version covers. The CLI's
+ *  `default` is not a row of its own: the model it resolves to carries the
+ *  Default gloss on its row ("Default · Best for everyday, complex tasks"), and
+ *  selecting that row selects that model, so the alias never goes on the wire
+ *  (PRDCT-4256). */
 export function claudeModelOptions(cli: CliModel[]): ModelOption[] {
   const options: ModelOption[] = []
-  const fallback = cli.find((m) => m.value === 'default')
-  if (fallback)
-    options.push({
-      id: 'default',
-      label: 'Default',
-      ...(fallback.description ? { hint: fallback.description } : {}),
-      ...(fallback.resolvedModel ? { resolved: fallback.resolvedModel } : {}),
-      ...cliEfforts(fallback)
-    })
+  const fallback = cli.find((m) => isDefaultClaudeAlias(m.value))
+  const resolvedDefault = fallback?.resolvedModel ? plainId(fallback.resolvedModel) : null
+  // The default's gloss, without the model name the row already says.
+  const defaultGloss = fallback?.description?.replace(/^[^·]*·\s*/, '')
+  const defaultHint = defaultGloss ? `Default · ${defaultGloss}` : 'Default'
   const glossed = new Set<string>()
   for (const model of CLAUDE_MODELS) {
     const family = cli.find(
       (m) =>
-        m.value !== 'default' && findClaudeModel(m.resolvedModel ?? m.value)?.alias === model.alias
+        !isDefaultClaudeAlias(m.value) &&
+        findClaudeModel(m.resolvedModel ?? m.value)?.alias === model.alias
     )
     const gloss = family?.description?.replace(/^[^·]*·\s*/, '')
     const newest = !glossed.has(model.alias)
     glossed.add(model.alias)
     // The efforts are the version's own when the CLI lists it (Opus 4.6 takes
     // no xhigh), else its family's.
-    const resolved = model.id.replace(/\[[^\]]*\]$/, '')
+    const resolved = plainId(model.id)
     // The family's own row is its alias ("fable", "fable[1m]"), wherever the
     // CLI lists it; a dated version of the family is not.
-    const alias = cli.find((m) => m.value.replace(/\[[^\]]*\]$/, '') === model.alias)
+    const alias = cli.find((m) => plainId(m.value) === model.alias)
     const version = cli.find(
-      (m) =>
-        m.value !== 'default' &&
-        (m.resolvedModel ?? m.value).replace(/\[[^\]]*\]$/, '') === resolved
+      (m) => !isDefaultClaudeAlias(m.value) && plainId(m.resolvedModel ?? m.value) === resolved
     )
+    const isDefault = resolvedDefault !== null && resolved === resolvedDefault
+    const hint = isDefault
+      ? defaultHint
+      : newest && gloss
+        ? gloss
+        : !newest
+          ? 'Earlier version'
+          : undefined
     options.push({
       id: model.id,
       label: model.name,
-      ...(newest && gloss ? { hint: gloss } : !newest ? { hint: 'Earlier version' } : {}),
+      ...(hint ? { hint } : {}),
       resolved,
-      ...cliEfforts(version ?? alias ?? family)
+      ...cliEfforts(version ?? alias ?? (isDefault ? fallback : undefined) ?? family)
     })
   }
   for (const model of cli) {
-    if (model.value === 'default' || findClaudeModel(model.resolvedModel ?? model.value)) continue
+    if (isDefaultClaudeAlias(model.value) || findClaudeModel(model.resolvedModel ?? model.value))
+      continue
+    const isDefault =
+      resolvedDefault !== null && plainId(model.resolvedModel ?? model.value) === resolvedDefault
+    const hint = isDefault ? defaultHint : model.description
     options.push({
       id: model.value,
       label: claudeModelName(model.resolvedModel ?? model.value) ?? model.displayName,
-      ...(model.description ? { hint: model.description } : {}),
+      ...(hint ? { hint } : {}),
       ...(model.resolvedModel ? { resolved: model.resolvedModel } : {}),
       ...cliEfforts(model)
     })
@@ -1090,6 +1112,10 @@ export class ClaudeAdapter implements SessionAdapter {
       if (event.type === 'permission_mode') live.permissionMode = event.mode
       if (event.type === 'session_meta') {
         live.initialized = true
+        // The model the session runs on, as the CLI last said it (its init
+        // frame, a confirmed switch): what the default's resolution at ready
+        // must not overwrite when it lands late (PRDCT-4256).
+        if (event.model) live.model = event.model
         if (live.translator.commands) {
           lastCommandsByCwd.set(spec.cwd, live.translator.commands)
           lastCommandsAnywhere = live.translator.commands
@@ -1270,11 +1296,14 @@ export class ClaudeAdapter implements SessionAdapter {
     if (live.ready || live.ended) return
     if (live.commandError) live.emit({ type: 'error', message: live.commandError, fatal: false })
     // The session has a model from the moment it is looked at: the one it was
-    // launched on, or the CLI's default until its init frame names it. Sent
-    // past live.emit on purpose: only the CLI's own init marks initialized.
+    // launched on, or null until the CLI says which model its default is
+    // (below). The `default` alias itself never goes out: a chip reading
+    // "Default" names no model (PRDCT-4256). Sent past live.emit on purpose:
+    // only the CLI's own init marks initialized.
+    const launched = isDefaultClaudeAlias(live.model) ? null : live.model
     live.emitter.emit('stream', {
       kind: 'event',
-      event: { type: 'session_meta', model: live.model, providerSessionId: null }
+      event: { type: 'session_meta', model: launched, providerSessionId: null }
     })
     // Its mode too, the launch's until the CLI reports one.
     live.translator.publishMode(live.permissionMode)
@@ -1290,6 +1319,11 @@ export class ClaudeAdapter implements SessionAdapter {
     // The effort it starts at, in the CLI's own word: the launch's, else the
     // user's settings, else the model's default.
     live.translator.requestSettings()
+    // A chat launched on no model, or on the `default` alias, runs on whatever
+    // the CLI resolves that to: asked of the CLI now (initialize, no turn, no
+    // token), so the chip names the model before the first message instead
+    // of after its init frame. The frame still refines it later.
+    if (launched === null) this.resolveDefault(live)
     const initialInput = live.initialInput
     const initialPrompt = live.initialPrompt
     if (initialInput !== undefined) this.write(handle, initialInput)
@@ -1331,6 +1365,11 @@ export class ClaudeAdapter implements SessionAdapter {
     if (live.ended) throw new Error('Claude session has ended')
     if (input.type === 'set_model' && input.model !== null && !isValidModelName(input.model))
       throw new Error('Invalid model name')
+    // The menu selects the model the default resolves to, by its id; the
+    // alias itself is never sent, since the CLI echoes it back as the model and
+    // the chip then reads "Default" for good (PRDCT-4256).
+    if (input.type === 'set_model' && isDefaultClaudeAlias(input.model))
+      throw new Error('Pick a model by its id; the default alias names none')
     // A model can be chosen before the first message, as /model can in the
     // TUI: the switch starts the process, which accepts it before any turn.
     if (input.type === 'set_model' || input.type === 'set_effort') live.process ??= live.start()
@@ -1450,20 +1489,32 @@ export class ClaudeAdapter implements SessionAdapter {
    *  offers that the list does not know yet, so a model shipped after this
    *  build still shows. */
   async models(handle: SessionHandle): Promise<ModelOption[]> {
-    const models = z
-      .array(
-        z.object({
-          value: z.string(),
-          displayName: z.string(),
-          description: z.string().optional(),
-          resolvedModel: z.string().optional(),
-          supportsEffort: z.boolean().optional(),
-          supportedEffortLevels: z.array(z.string()).optional()
-        })
-      )
-      .safeParse((await this.initialize(this.live(handle))).models)
+    const models = cliModels.safeParse((await this.initialize(this.live(handle))).models)
     if (!models.success) throw new Error('Claude did not list its models')
     return claudeModelOptions(models.data)
+  }
+  /** Which model the CLI's default is, asked of the session's own process at
+   *  ready and announced as the session's model (PRDCT-4256). Nothing is said
+   *  when the CLI's own word came first (its init frame, a switch it took),
+   *  when the session ended meanwhile, or when the CLI cannot say. */
+  private resolveDefault(live: Live): void {
+    const before = live.model
+    void this.initialize(live)
+      .then((answer) => {
+        if (live.ended || live.initialized || live.model !== before) return
+        const models = cliModels.safeParse(answer.models)
+        const model = models.success ? resolvedDefaultModel(models.data) : null
+        if (!model) return
+        live.model = model
+        live.emitter.emit('stream', {
+          kind: 'event',
+          event: { type: 'session_meta', model, providerSessionId: null }
+        })
+      })
+      .catch(() => {
+        // The CLI did not answer in time, or refused: the chip waits for the
+        // init frame as it always did.
+      })
   }
   /** The CLI's initialize answer (commands, models, account), asked of the
    *  session's own process, started if the session has not spoken yet. No turn

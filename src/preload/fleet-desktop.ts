@@ -1509,6 +1509,13 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
         local.onSessionRestarting(cb),
         eventListener('session.restarting', (event, owner) => cb({ id: key(owner, event.id) }))
       ),
+    onSessionModelChanged: (cb) =>
+      both(
+        local.onSessionModelChanged(cb),
+        eventListener('session.model_changed', (event, owner) =>
+          cb({ id: key(owner, event.id), model: event.model })
+        )
+      ),
     onSessionRestarted: (cb) =>
       both(
         local.onSessionRestarted(cb),

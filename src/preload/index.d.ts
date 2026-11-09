@@ -874,6 +874,8 @@ export interface ElectronAPI extends FleetDesktopAPI {
   ) => () => void
   onSessionTyped: (callback: (payload: { id: string; from: string | null }) => void) => () => void
   onSessionRestarting: (callback: (payload: { id: string }) => void) => () => void
+  /** The session runs on `model` now, as its provider said it (PRDCT-4256). */
+  onSessionModelChanged: (callback: (payload: { id: string; model: string }) => void) => () => void
   onSessionRestarted: (
     callback: (payload: {
       id: string

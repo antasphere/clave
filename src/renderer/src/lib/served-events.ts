@@ -54,6 +54,13 @@ export function initServedToolsEvents(): void {
     store.setSessionInjectedFrom(id, from ?? 'another tab')
     if (!store.selectedSessionIds.includes(id)) store.setSessionUnseenActivity(id, true)
   })
+  // The model the session runs on, as its provider said it (PRDCT-4256): the
+  // record already holds it; the store follows so the sidebar's foot and the
+  // row's warning judge the caps by the model the chat is on now.
+  api.onSessionModelChanged?.(({ id, model }) => {
+    const store = useSessionStore.getState()
+    if (store.sessions.some((s) => s.id === id)) store.setSessionModel(id, model)
+  })
   api.onSessionRestarting?.(({ id }) => {
     const store = useSessionStore.getState()
     if (store.sessions.some((s) => s.id === id)) store.setSessionRestarting(id, true)

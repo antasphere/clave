@@ -67,3 +67,16 @@ it('never stores or hands out an effort a launch would refuse', () => {
   expect(rememberedChatEffort('claude-chat')).toBeUndefined()
   expect(rememberedChatEffort('codex-chat')).toBeUndefined()
 })
+
+it('never remembers the CLI’s `default` alias, and reads one stored before as nothing (PRDCT-4256)', () => {
+  rememberChatModel('claude-chat', 'claude-opus-5-5')
+  rememberChatModel('claude-chat', 'default')
+  expect(rememberedChatModel('claude-chat')).toBeUndefined()
+  rememberChatModel('claude-chat', 'claude-opus-5-5')
+  rememberChatModel('claude-chat', 'default[1m]')
+  expect(rememberedChatModel('claude-chat')).toBeUndefined()
+  // A file written by an earlier build, which stored the alias.
+  prefs.chatModels = { 'claude-chat': 'default', 'codex-chat': 'gpt-5.5' }
+  expect(rememberedChatModel('claude-chat')).toBeUndefined()
+  expect(rememberedChatModel('codex-chat')).toBe('gpt-5.5')
+})

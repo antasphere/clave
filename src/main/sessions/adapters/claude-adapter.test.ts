@@ -53,7 +53,8 @@ import {
   ClaudeAdapter,
   ClaudeStreamTranslator,
   HOST_COMMANDS,
-  claudeModelOptions
+  claudeModelOptions,
+  resolvedDefaultModel
 } from './claude-adapter'
 import { formMessage } from '../../../shared/form-message'
 
@@ -417,8 +418,12 @@ it('sends the configured initial prompt only on ready and refuses shell commands
       fatal: false
     }
   ])
-  expect(written(child)).toBe(
-    JSON.stringify({ type: 'user', message: { role: 'user', content: 'initial prompt' } }) + '\n'
+  // The default's resolution is asked first (PRDCT-4256), then the prompt.
+  const [resolution, prompt, ...more] = written(child)!.trim().split('\n')
+  expect(more).toEqual([])
+  expect(JSON.parse(resolution)).toMatchObject({ request: { subtype: 'initialize' } })
+  expect(prompt).toBe(
+    JSON.stringify({ type: 'user', message: { role: 'user', content: 'initial prompt' } })
   )
   // The prompt marks the session working at once, not at the init frame.
   expect(events.filter((event) => event.type === 'state_change')).toEqual([
@@ -726,14 +731,16 @@ it('lists the models by version, asking the CLI itself, starting a session that 
       }
     }) + '\n'
   )
+  // No row for the CLI's `default` alias: the model it resolves to carries
+  // the Default gloss on its own row, and picking it sends that model's id
+  // (PRDCT-4256, PRDCT-4257).
   await expect(listed).resolves.toEqual([
     {
-      id: 'default',
-      label: 'Default',
-      hint: 'Opus 5.5 · Best for everyday, complex tasks',
+      id: 'claude-opus-5-5',
+      label: 'Opus 5.5',
+      hint: 'Default · Best for everyday, complex tasks',
       resolved: 'claude-opus-5-5'
     },
-    { id: 'claude-opus-5-5', label: 'Opus 5.5', resolved: 'claude-opus-5-5' },
     { id: 'claude-fable-5-1[1m]', label: 'Fable 5.1', resolved: 'claude-fable-5-1' },
     {
       id: 'claude-fable-5[1m]',
@@ -926,6 +933,8 @@ it('switches the permission mode the way Shift+Tab does, and says why the CLI re
     if (s.kind === 'event') events.push(s.event)
   })
   adapter.ready(handle)
+  // The default's resolution went out at ready (PRDCT-4256); the rest is the test's.
+  expect(JSON.parse(written(child)!)).toMatchObject({ request: { subtype: 'initialize' } })
   // The launch's `manual` is the running `default`, and bypass is not offered
   // to a session that was not launched on it.
   const offered = events.find((e) => e.type === 'permission_mode')
@@ -1001,6 +1010,7 @@ it('offers bypass, and the way back to it, only to a session launched on it', as
     if (s.kind === 'event') events.push(s.event)
   })
   adapter.ready(handle)
+  expect(JSON.parse(written(child)!)).toMatchObject({ request: { subtype: 'initialize' } })
   const offered = events.find((e) => e.type === 'permission_mode')
   expect(offered).toMatchObject({ mode: 'bypassPermissions' })
   expect(offered?.type === 'permission_mode' && offered.modes.map((m) => m.id)).toEqual([
@@ -1035,7 +1045,13 @@ it('starts the process at ready so its boot overlaps the typing, and once only',
   // Booting is silent: the model and mode announcements, and no turn, no state.
   expect(events.map((e) => e.type)).toEqual(['session_meta', 'permission_mode'])
   expect(events[0]).toEqual({ type: 'session_meta', model: null, providerSessionId: null })
-  expect(written(child)).toBeNull()
+  // The one thing written is the ask of which model the default is (PRDCT-4256).
+  const [resolution, ...more] = written(child)!.trim().split('\n')
+  expect(more).toEqual([])
+  expect(JSON.parse(resolution)).toMatchObject({
+    type: 'control_request',
+    request: { subtype: 'initialize' }
+  })
   adapter.ready(handle)
   adapter.write(handle, { type: 'user_message', text: 'Hello' })
   expect(mock.spawn).toHaveBeenCalledTimes(1)
@@ -1840,6 +1856,7 @@ it('stops one background task by its id, and says why when the CLI refuses', asy
     if (s.kind === 'event') events.push(s.event)
   })
   adapter.ready(handle)
+  expect(JSON.parse(written(child)!)).toMatchObject({ request: { subtype: 'initialize' } })
   adapter.write(handle, { type: 'stop_task', taskId: 'task-7' })
   const request = JSON.parse(written(child)!)
   expect(request).toMatchObject({
@@ -1855,6 +1872,203 @@ it('stops one background task by its id, and says why when the CLI refuses', asy
     }) + '\n'
   )
   expect(events.at(-1)).toEqual({ type: 'error', message: 'no such task', fatal: false })
+})
+
+describe('the default resolved at ready (PRDCT-4256)', () => {
+  type Child = EventEmitter & { stdin: PassThrough; stdout: PassThrough; stderr: PassThrough }
+  const fakeChild = (): Child =>
+    Object.assign(new EventEmitter(), {
+      stdin: new PassThrough(),
+      stdout: new PassThrough(),
+      stderr: new PassThrough()
+    })
+  /** Every control request the adapter wrote since the last read, get_settings aside. */
+  const requests = (child: Child): { request_id: string; request: Record<string, unknown> }[] =>
+    (written(child) ?? '')
+      .trim()
+      .split('\n')
+      .filter(Boolean)
+      .map((line) => JSON.parse(line))
+      .filter((frame) => frame.type === 'control_request')
+  const answer = (child: Child, requestId: string, models: unknown[]): void => {
+    child.stdout.write(
+      JSON.stringify({
+        type: 'control_response',
+        response: { subtype: 'success', request_id: requestId, response: { models } }
+      }) + '\n'
+    )
+  }
+  const metas = (): (string | null)[] =>
+    events.flatMap((e) => (e.type === 'session_meta' ? [e.model] : []))
+  const DEFAULT_LIST = [
+    {
+      value: 'default',
+      displayName: 'Default (recommended)',
+      description: 'Opus 5.5 · Best for everyday, complex tasks',
+      resolvedModel: 'claude-opus-5-5'
+    },
+    { value: 'fable', displayName: 'Fable', resolvedModel: 'claude-fable-5-1' }
+  ]
+  async function readied(
+    options?: Record<string, unknown>
+  ): Promise<{ adapter: ClaudeAdapter; handle: { id: string }; child: Child }> {
+    const child = fakeChild()
+    mock.spawn.mockReturnValue(child)
+    const adapter = new ClaudeAdapter()
+    const handle = await adapter.spawn({ ...spec, ...(options ? { options } : {}) })
+    adapter.on(handle, 'stream', (s) => {
+      if (s.kind === 'event') events.push(s.event)
+    })
+    adapter.ready(handle)
+    return { adapter, handle, child }
+  }
+
+  it('names the model the default resolves to before any message, off the CLI’s own list', async () => {
+    const { adapter, handle, child } = await readied()
+    const [ask, ...rest] = requests(child)
+    expect(rest).toEqual([])
+    expect(ask.request).toEqual({ subtype: 'initialize' })
+    expect(metas()).toEqual([null])
+    answer(child, ask.request_id, DEFAULT_LIST)
+    await new Promise((resolve) => setImmediate(resolve))
+    expect(metas()).toEqual([null, 'claude-opus-5-5'])
+    expect(events.at(-1)).toEqual({
+      type: 'session_meta',
+      model: 'claude-opus-5-5',
+      providerSessionId: null
+    })
+    // No turn was sent, no state moved: the ask is free.
+    expect(events.some((e) => e.type === 'state_change')).toBe(false)
+    child.emit('close', 0)
+    await adapter.kill(handle)
+  })
+
+  it('a chat launched on the `default` alias announces no model until the CLI says which, and never the word', async () => {
+    const { adapter, handle, child } = await readied({ model: 'default' })
+    expect(metas()).toEqual([null])
+    const [ask] = requests(child)
+    answer(child, ask.request_id, DEFAULT_LIST)
+    await new Promise((resolve) => setImmediate(resolve))
+    expect(metas()).toEqual([null, 'claude-opus-5-5'])
+    child.emit('close', 0)
+    await adapter.kill(handle)
+  })
+
+  it('asks nothing for a chat launched on a named model', async () => {
+    const { adapter, handle, child } = await readied({ model: 'claude-sonnet-5-5' })
+    expect(metas()).toEqual(['claude-sonnet-5-5'])
+    expect(requests(child)).toEqual([])
+    child.emit('close', 0)
+    await adapter.kill(handle)
+  })
+
+  it('the CLI’s own word first wins: an init frame or a switch taken before the answer silences it', async () => {
+    const initFirst = await readied()
+    const [ask] = requests(initFirst.child)
+    initFirst.child.stdout.write(
+      JSON.stringify({
+        type: 'system',
+        subtype: 'init',
+        session_id: spec.id,
+        model: 'claude-fable-5-1[1m]'
+      }) + '\n'
+    )
+    answer(initFirst.child, ask.request_id, DEFAULT_LIST)
+    await new Promise((resolve) => setImmediate(resolve))
+    expect(metas()).toEqual([null, 'claude-fable-5-1[1m]'])
+    initFirst.child.emit('close', 0)
+    await initFirst.adapter.kill(initFirst.handle)
+    events.length = 0
+    vi.clearAllMocks()
+
+    const switched = await readied()
+    const [resolution] = requests(switched.child)
+    switched.adapter.write(switched.handle, {
+      type: 'set_model',
+      model: 'claude-haiku-4-5-20251001'
+    })
+    const [set] = requests(switched.child)
+    switched.child.stdout.write(
+      JSON.stringify({
+        type: 'control_response',
+        response: { subtype: 'success', request_id: set.request_id }
+      }) + '\n'
+    )
+    expect(metas()).toEqual([null, 'claude-haiku-4-5-20251001'])
+    answer(switched.child, resolution.request_id, DEFAULT_LIST)
+    await new Promise((resolve) => setImmediate(resolve))
+    expect(metas()).toEqual([null, 'claude-haiku-4-5-20251001'])
+    switched.child.emit('close', 0)
+    await switched.adapter.kill(switched.handle)
+  })
+
+  it('a list without a default takes the first model’s resolution, and one that resolves nothing says nothing', async () => {
+    const first = await readied()
+    answer(first.child, requests(first.child)[0].request_id, [
+      { value: 'fable', displayName: 'Fable', resolvedModel: 'claude-fable-5-1[1m]' },
+      { value: 'haiku', displayName: 'Haiku' }
+    ])
+    await new Promise((resolve) => setImmediate(resolve))
+    expect(metas()).toEqual([null, 'claude-fable-5-1[1m]'])
+    first.child.emit('close', 0)
+    await first.adapter.kill(first.handle)
+    events.length = 0
+    vi.clearAllMocks()
+
+    const none = await readied()
+    answer(none.child, requests(none.child)[0].request_id, [
+      { value: 'default', displayName: 'Default' },
+      { value: 'haiku', displayName: 'Haiku' }
+    ])
+    await new Promise((resolve) => setImmediate(resolve))
+    expect(metas()).toEqual([null])
+    none.child.emit('close', 0)
+    await none.adapter.kill(none.handle)
+    events.length = 0
+    vi.clearAllMocks()
+
+    // A refusal is nothing to show: the init frame will say.
+    const refused = await readied()
+    const [ask] = requests(refused.child)
+    refused.child.stdout.write(
+      JSON.stringify({
+        type: 'control_response',
+        response: { subtype: 'error', request_id: ask.request_id, error: 'no' }
+      }) + '\n'
+    )
+    await new Promise((resolve) => setImmediate(resolve))
+    expect(metas()).toEqual([null])
+    expect(events.some((e) => e.type === 'error')).toBe(false)
+    refused.child.emit('close', 0)
+    await refused.adapter.kill(refused.handle)
+  })
+
+  it('refuses to put the `default` alias on the wire as a switch', async () => {
+    const { adapter, handle, child } = await readied()
+    requests(child)
+    expect(() => adapter.write(handle, { type: 'set_model', model: 'default' })).toThrow(
+      /default alias/
+    )
+    expect(() => adapter.write(handle, { type: 'set_model', model: 'default[1m]' })).toThrow(
+      /default alias/
+    )
+    expect(requests(child)).toEqual([])
+    child.emit('close', 0)
+    await adapter.kill(handle)
+  })
+
+  it('reads which model a list makes the default', () => {
+    expect(resolvedDefaultModel(DEFAULT_LIST)).toBe('claude-opus-5-5')
+    expect(resolvedDefaultModel([{ value: 'default', displayName: 'Default' }])).toBeNull()
+    expect(resolvedDefaultModel([])).toBeNull()
+    // A default that resolves to itself, or to a name no launch would take, is no answer.
+    expect(
+      resolvedDefaultModel([{ value: 'default', displayName: 'D', resolvedModel: 'default' }])
+    ).toBeNull()
+    expect(
+      resolvedDefaultModel([{ value: 'default', displayName: 'D', resolvedModel: 'x; rm -rf' }])
+    ).toBeNull()
+  })
 })
 
 describe('the reasoning effort of a Claude chat', () => {
@@ -1951,14 +2165,17 @@ describe('the reasoning effort of a Claude chat', () => {
     ])
     const byId = (id: string): (typeof options)[number] | undefined =>
       options.find((option) => option.id === id)
-    expect(byId('default')?.efforts).toEqual([
+    // The CLI's default has no row of its own: its gloss and its levels sit on
+    // the row of the model it resolves to (PRDCT-4257).
+    expect(byId('default')).toBeUndefined()
+    expect(byId('claude-opus-5-5')?.hint).toBe('Default')
+    expect(byId('claude-opus-5-5')?.efforts).toEqual([
       { id: 'low', label: 'Low' },
       { id: 'medium', label: 'Medium' },
       { id: 'high', label: 'High' },
       { id: 'xhigh', label: 'Extra high' },
       { id: 'max', label: 'Max' }
     ])
-    expect(effortOf(byId('claude-opus-5-5'))).toEqual(FIVE)
     expect(effortOf(byId('claude-fable-5-1[1m]'))).toEqual(FIVE)
     expect(effortOf(byId('claude-fable-5[1m]'))).toEqual(['low', 'medium', 'high', 'max'])
     // supportsEffort false wins over any list; a model without levels has no key.
@@ -2038,9 +2255,10 @@ describe('the reasoning effort of a Claude chat', () => {
   it('asks for the settings at ready, and after a model switch only once the CLI took it', async () => {
     const { adapter, handle, child } = await started('effort-ready')
     adapter.ready(handle)
-    const [first, ...rest] = sent(child)
+    const [first, resolution, ...rest] = sent(child)
     expect(rest).toEqual([])
     expect(first).toMatchObject({ type: 'control_request', request: { subtype: 'get_settings' } })
+    expect(resolution).toMatchObject({ request: { subtype: 'initialize' } })
     // A CLI too old to say what it applied: nothing is shown, and nothing leaks.
     const before = events.length
     answer(child, { subtype: 'success', request_id: first.request_id, response: {} })

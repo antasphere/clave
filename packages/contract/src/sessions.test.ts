@@ -481,6 +481,16 @@ describe('the sessions’ server events', () => {
   it('refuses a cleared session without its provider session id', () => {
     expect(Either.isLeft(decode(ServerEvent, { _tag: 'session.cleared', id: 's1' }))).toBe(true)
   })
+  it('carries a session’s model change with the model named (PRDCT-4256)', () => {
+    const event = { _tag: 'session.model_changed', id: 's1', model: 'claude-opus-5-5' }
+    expect(Schema.decodeUnknownSync(ServerEvent)(event)).toEqual(event)
+    expect(Either.isLeft(decode(ServerEvent, { _tag: 'session.model_changed', id: 's1' }))).toBe(
+      true
+    )
+    expect(
+      Either.isLeft(decode(ServerEvent, { _tag: 'session.model_changed', id: 's1', model: null }))
+    ).toBe(true)
+  })
 })
 
 describe('restart correlation contract', () => {

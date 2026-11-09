@@ -3,6 +3,7 @@ import {
   hasServerEventPublisher,
   publishOrSend,
   sessionCleared,
+  sessionModelChanged,
   sessionPlanDetected,
   sessionTitleChanged,
   setServerEventPublisher
@@ -25,6 +26,46 @@ const windows = (): { port: SessionWindowsPort; sent: unknown[][] } => {
   installSessionWindows(port)
   return { port, sent }
 }
+
+describe('a session’s model travels on both transports, the window picking one (PRDCT-4256)', () => {
+  it('reaches the session’s window over IPC while no server runs', () => {
+    const { port, sent } = windows()
+    port.bind('s1', 'w1')
+    sessionModelChanged('s1', 'claude-opus-5-5')
+    expect(sent).toEqual([['session:model-changed', { id: 's1', model: 'claude-opus-5-5' }]])
+  })
+  it('reaches the window over IPC AND the server once a publisher is set', async () => {
+    const { port, sent } = windows()
+    port.bind('s1', 'w1')
+    const published: unknown[] = []
+    setServerEventPublisher(async (event) => {
+      published.push(event)
+    })
+    sessionModelChanged('s1', 'claude-fable-5-1[1m]')
+    await Promise.resolve()
+    expect(published).toEqual([
+      { _tag: 'session.model_changed', id: 's1', model: 'claude-fable-5-1[1m]' }
+    ])
+    // The IPC arm too: a window whose push socket is not welcomed yet hears
+    // it there, and one that is drops the IPC copy (the preload's dual listener).
+    expect(sent).toEqual([['session:model-changed', { id: 's1', model: 'claude-fable-5-1[1m]' }]])
+  })
+  it('a session bound to no window, or a publisher that fails, sends nowhere and throws nothing', async () => {
+    const { sent } = windows()
+    const quiet = vi.spyOn(console, 'error').mockImplementation(() => {})
+    setServerEventPublisher(async () => {
+      throw new Error('socket gone')
+    })
+    expect(() => sessionModelChanged('unbound', 'claude-opus-5-5')).not.toThrow()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(sent).toEqual([])
+    expect(quiet).toHaveBeenCalledWith(
+      expect.stringContaining('session.model_changed not published'),
+      expect.any(Error)
+    )
+    quiet.mockRestore()
+  })
+})
 
 afterEach(() => {
   setServerEventPublisher(null)

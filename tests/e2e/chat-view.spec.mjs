@@ -339,6 +339,21 @@ export async function run(t) {
     )
     await win.locator('.chat-model-trigger').filter({ hasText: 'Echo 2' }).waitFor()
     t.check('model picker lists the adapter models and switches through the write IPC', true)
+    // The switch reaches the sidebar's own store, not only the pane (PRDCT-4256):
+    // main pushes the provider's word on the model, and the foot judges the
+    // caps by it. Read off the store itself, never inferred from a rendering.
+    assert.ok(
+      await until(() =>
+        win.evaluate(
+          (id) =>
+            window.__claveSessionStoreForTests?.getState().sessions.find((s) => s.id === id)
+              ?.model === 'echo-2',
+          record.id
+        )
+      ),
+      'the sidebar store holds the model switched from the chip'
+    )
+    t.check('the model switched from the chip reaches the sidebar store', true)
     await win.locator('.chat-state[data-state="working"]').waitFor()
     assert.equal(await win.locator('.chat-state').innerText(), 'working')
     // The provider's mark breathes as soon as the agent works, before any text.

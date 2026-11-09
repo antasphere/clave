@@ -50,13 +50,41 @@ export function findClaudeModel(id: string | null | undefined): ClaudeModel | un
  */
 export function claudeModelName(id: string | null | undefined): string | null {
   if (!id) return null
-  if (bare(id) === 'default') return 'Default'
+  // The CLI's `default` alias names no model of its own: what it resolves to is
+  // asked of the CLI (the adapter's ready), never read off the word.
+  if (isDefaultClaudeAlias(id)) return null
   const known = findClaudeModel(id)
   if (known) return known.name
   const shape = FAMILY.exec(bare(id))
   if (!shape) return id
   const family = shape[1].charAt(0).toUpperCase() + shape[1].slice(1)
   return `${family} ${shape[2]}${shape[3] ? `.${shape[3]}` : ''}`
+}
+
+/** The CLI's `default` alias, with or without a context suffix ("default[1m]"). */
+export function isDefaultClaudeAlias(id: string | null | undefined): boolean {
+  return !!id && bare(id) === 'default'
+}
+
+/** The newest listed version of a family: the first the table lists under
+ *  that alias. */
+export function newestClaudeModel(alias: ClaudeModel['alias']): ClaudeModel | undefined {
+  return CLAUDE_MODELS.find((model) => model.alias === alias)
+}
+
+/**
+ * Whether an id names a listed version that is not its family's newest
+ * (Fable 5 beside Fable 5.1): what a menu folds under "Earlier versions".
+ * An alias ("fable"), an id the table does not know and the newest version
+ * itself are not earlier.
+ */
+export function isEarlierClaudeModel(id: string | null | undefined): boolean {
+  if (!id) return false
+  const plain = bare(id)
+  const known =
+    CLAUDE_MODELS.find((model) => model.id === id) ??
+    CLAUDE_MODELS.find((model) => bare(model.id) === plain)
+  return known !== undefined && newestClaudeModel(known.alias) !== known
 }
 
 /** The context window of a model, when it is known before any turn says so. */

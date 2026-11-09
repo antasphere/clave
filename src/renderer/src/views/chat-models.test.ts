@@ -3,20 +3,35 @@ import type { ModelOption } from '../../../shared/session-model'
 import {
   claudeContextWindow,
   claudeModelName,
-  findClaudeModel
+  findClaudeModel,
+  isDefaultClaudeAlias,
+  isEarlierClaudeModel
 } from '../../../shared/claude-models'
 import {
+  MODEL_PENDING,
   currentOption,
   effortChoice,
+  foldModelOptions,
   modelChipLabel
 } from '../../../../plugins/chat-view/src/models'
 
-// The menu as the Claude adapter builds it (claudeModelOptions).
+// The menu as the Claude adapter builds it (claudeModelOptions, PRDCT-4257):
+// no row for the CLI's `default` alias; the model it resolves to carries the
+// Default gloss on its own row.
 const options: ModelOption[] = [
-  { id: 'default', label: 'Default', hint: 'Opus 5.5 · Best', resolved: 'claude-opus-5-5' },
-  { id: 'claude-opus-5-5', label: 'Opus 5.5', resolved: 'claude-opus-5-5' },
+  {
+    id: 'claude-opus-5-5',
+    label: 'Opus 5.5',
+    hint: 'Default · Best for everyday, complex tasks',
+    resolved: 'claude-opus-5-5'
+  },
   { id: 'claude-fable-5-1[1m]', label: 'Fable 5.1', resolved: 'claude-fable-5-1' },
-  { id: 'claude-fable-5[1m]', label: 'Fable 5', resolved: 'claude-fable-5' },
+  {
+    id: 'claude-fable-5[1m]',
+    label: 'Fable 5',
+    hint: 'Earlier version',
+    resolved: 'claude-fable-5'
+  },
   { id: 'claude-haiku-4-5-20251001', label: 'Haiku 4.5', resolved: 'claude-haiku-4-5-20251001' }
 ]
 
@@ -27,20 +42,57 @@ it('names the model the same before and after the menu has been opened', () => {
     'claude-fable-5-1[1m]',
     'claude-fable-5',
     'claude-haiku-4-5-20251001',
-    'default',
     null
   ])
     expect(modelChipLabel(model, null)).toBe(modelChipLabel(model, options))
   expect(modelChipLabel('claude-opus-5-5', null)).toBe('Opus 5.5')
-  expect(modelChipLabel(null, null)).toBe('Default')
+  // The gloss stays in the menu; the chip says the name alone.
+  expect(modelChipLabel('claude-opus-5-5', options)).toBe('Opus 5.5')
 })
 
-it('tells Fable 5 from Fable 5.1, and a session on Opus from the default that is Opus too', () => {
+it('never writes "Default" on the chip: no model yet reads as pending, the alias as nothing (PRDCT-4256)', () => {
+  expect(MODEL_PENDING).toBe('…')
+  expect(modelChipLabel(null, null)).toBe(MODEL_PENDING)
+  expect(modelChipLabel(null, options)).toBe(MODEL_PENDING)
+  expect(modelChipLabel('default', null)).toBe(MODEL_PENDING)
+  expect(modelChipLabel('default[1m]', options)).toBe(MODEL_PENDING)
+  expect(claudeModelName('default')).toBeNull()
+  expect(isDefaultClaudeAlias('default')).toBe(true)
+  expect(isDefaultClaudeAlias('default[1m]')).toBe(true)
+  expect(isDefaultClaudeAlias('claude-opus-5-5')).toBe(false)
+  expect(isDefaultClaudeAlias(null)).toBe(false)
+  expect(currentOption(null, options)).toBeUndefined()
+  expect(currentOption('default', options)).toBeUndefined()
+})
+
+it('tells Fable 5 from Fable 5.1, and finds a session on Opus on the row that is also the default', () => {
   expect(currentOption('claude-fable-5', options)?.label).toBe('Fable 5')
   expect(currentOption('claude-fable-5-1', options)?.label).toBe('Fable 5.1')
   expect(currentOption('claude-opus-5-5', options)?.label).toBe('Opus 5.5')
-  expect(currentOption('default', options)?.label).toBe('Default')
-  expect(currentOption(null, options)?.label).toBe('Default')
+  expect(currentOption('claude-opus-5-5[1m]', options)?.label).toBe('Opus 5.5')
+  expect(currentOption('opus', options)).toBeUndefined()
+})
+
+it('folds the earlier versions of a family under one row, every id still a row (PRDCT-4257)', () => {
+  const { current, earlier } = foldModelOptions(options)
+  expect(current.map((o) => o.label)).toEqual(['Opus 5.5', 'Fable 5.1', 'Haiku 4.5'])
+  expect(earlier.map((o) => o.label)).toEqual(['Fable 5'])
+  expect(earlier[0].hint).toBe('Earlier version')
+  // A session on the earlier version still finds its own row.
+  expect(currentOption('claude-fable-5[1m]', options)).toBe(earlier[0])
+  // The table decides: the first listed of a family is its newest.
+  expect(isEarlierClaudeModel('claude-fable-5[1m]')).toBe(true)
+  expect(isEarlierClaudeModel('claude-fable-5')).toBe(true)
+  expect(isEarlierClaudeModel('claude-fable-5-1[1m]')).toBe(false)
+  expect(isEarlierClaudeModel('fable')).toBe(false)
+  expect(isEarlierClaudeModel('claude-opus-6')).toBe(false)
+  expect(isEarlierClaudeModel(null)).toBe(false)
+  // A provider that lists no versions folds nothing.
+  const codex: ModelOption[] = [
+    { id: 'gpt-5.5', label: 'GPT-5.5' },
+    { id: 'gpt-5.5-codex', label: 'GPT-5.5 Codex' }
+  ]
+  expect(foldModelOptions(codex)).toEqual({ current: codex, earlier: [] })
 })
 
 it('reads any Claude id as its name, a new one from its own shape', () => {
@@ -63,8 +115,13 @@ it('offers the efforts of the model the session is on, marking the reported one'
   const high = { id: 'high', label: 'High' }
   const max = { id: 'max', label: 'Max' }
   const withEfforts: ModelOption[] = [
-    { id: 'default', label: 'Default', resolved: 'claude-opus-5-5', efforts: [low, high] },
-    { id: 'claude-opus-5-5', label: 'Opus 5.5', efforts: [low, high, max], defaultEffort: 'high' },
+    {
+      id: 'claude-opus-5-5',
+      label: 'Opus 5.5',
+      hint: 'Default',
+      efforts: [low, high, max],
+      defaultEffort: 'high'
+    },
     { id: 'claude-fable-5', label: 'Fable 5', efforts: [low, high] },
     { id: 'claude-haiku-4-5-20251001', label: 'Haiku 4.5', efforts: [] },
     { id: 'echo-2', label: 'Echo 2' }
@@ -86,6 +143,6 @@ it('offers the efforts of the model the session is on, marking the reported one'
     efforts: [low, high],
     current: undefined
   })
-  // No model yet reads as the default option.
-  expect(effortChoice(null, 'low', withEfforts)).toEqual({ efforts: [low, high], current: low })
+  // No model yet offers no effort either: the chip hides until the provider says.
+  expect(effortChoice(null, 'low', withEfforts)).toBeNull()
 })

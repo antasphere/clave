@@ -6103,6 +6103,15 @@ details[open] > .chat-approval-items {
   font-size: var(--text-xs);
   color: var(--text-tertiary);
 }
+/* The "Earlier versions" row: a submenu trigger drawn as a model row, its
+   chevron where the check of a selected row sits. */
+.chat-model-earlier .chat-model-earlier-chevron {
+  width: var(--chat-glyph);
+  height: var(--chat-glyph);
+  flex-shrink: 0;
+  margin-top: calc(var(--spacing) / 2);
+  color: var(--text-tertiary);
+}
 
 /* The slash menu: the session's commands above the composer while a "/" is
    being named, on the menu material, anchored to the composer's left edge so
