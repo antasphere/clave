@@ -76,9 +76,9 @@ vi.mock('fs', async (importOriginal) => {
     },
     promises: {
       ...real.promises,
-      open: async (p: string, flags: string) => {
+      open: async (p: string, flags: string): Promise<unknown> => {
         if (!transcripts.files.has(p)) return real.promises.open(p, flags)
-        const bytes = () => Buffer.from(transcripts.files.get(p) ?? '', 'utf-8')
+        const bytes = (): Buffer => Buffer.from(transcripts.files.get(p) ?? '', 'utf-8')
         return {
           stat: async () => ({ size: bytes().length }),
           read: async (buf: Buffer, offset: number, length: number, position: number) => {
@@ -391,7 +391,10 @@ describe("the daemon's opt-out names no tab", () => {
   })
 
   /** A terminal's transcript as Claude Code writes it, under the faked home. */
-  function transcript(cwd: string, claudeSessionId: string) {
+  function transcript(
+    cwd: string,
+    claudeSessionId: string
+  ): { userMessage(text: string): Promise<void>; forget(): void } {
     const file = `${transcripts.home}/.claude/projects/${cwd.replace(/[/.]/g, '-')}/${claudeSessionId}.jsonl`
     transcripts.files.set(file, '')
     return {
