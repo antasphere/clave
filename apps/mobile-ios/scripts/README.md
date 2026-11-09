@@ -1,0 +1,60 @@
+# apps/mobile-ios/scripts
+
+`generate-tokens.mjs` and `build-icons.mjs` generate the desktop's tokens and icons for
+the app. The other two scripts run the app against an isolated fixture stack on this Mac.
+
+## The fixture stack
+
+```sh
+node apps/mobile-ios/scripts/fixture-stack.mjs [--approve] [--self-check | --once]
+node apps/mobile-ios/scripts/fixture-check.mjs --udid <simulator udid> [--only <xcodebuild -only-testing value>]
+```
+
+`fixture-stack.mjs` brings the stack up and keeps it running until Ctrl-C. `--approve`
+approves every phone that asks to pair. `--self-check` proves the stack end to end and
+exits. `--once` brings it up, prints it and tears it down.
+
+`fixture-check.mjs` brings the stack up with approval on, boots the simulator if it is
+not booted, runs `xcodebuild test` (by default `-only-testing:ClaveUITests/FixtureFlowTests`),
+tears the stack down and exits with xcodebuild's code. `--push <payload.json>` sends a
+notification to the app once the tests are done. `--keep` leaves the stack up until
+Ctrl-C. The tests get the stack's facts as `TEST_RUNNER_CLAVE_FIXTURE_*` variables:
+`ISSUER_URL`, `RELAY_URL`, `SERVER_URL`, `MACHINE_ID`, `SESSION_ID`, `NONCE`. The owner's
+token is never passed to them.
+
+Both scripts take `--server <port>` (default 47101), `--relay <port>` (default 47102)
+and `--tmpdir <dir>` (default `/private/tmp/clave-native-a/stack`). The provider takes a
+free port, which the scripts print. Everything listens on 127.0.0.1.
+
+## The tmpdir
+
+It is deleted and recreated on every run.
+
+```
+stack.json      issuer, relay, server, serverId, machineId, workspaceId, sessionId, nonce, scratch, tokenFile
+owner-token     the server's bearer token, mode 0600 (the only place the scripts write it)
+server/         the daemon's data, its keychain file included (no login keychain is touched)
+relay/          the relay's data
+scratch/        the workspace `scratch` the Echo chat runs in
+logs/           server.log, relay.log, xcodebuild.log
+results/        one .xcresult per check
+check.json      startedAt, finishedAt, udid, only, exitCode, resultBundle
+```
+
+## What the self-check proves
+
+The check runs after the owner has signed in, the server has claimed its machine on the
+relay, and one Echo chat has been seeded with a nonce. Through the relay road
+(`<relay>/m/<machineId>/...`, using the server's token as the bearer), it confirms two
+things:
+
+- the seeded chat's timeline holds the nonce;
+- a new message written through the road gets the Echo adapter's reply within 15 s.
+
+## Everything is a fixture
+
+- The provider is `tests/e2e/fixtures/oidc-provider.mjs`. It is local and approves on
+  sight. Nothing reaches account.antasphere.com.
+- The server runs only the Echo adapter (`--dev-echo-adapter`), which repeats what it is
+  told. No real agent provider ever runs.
+- The relay and the server are this checkout's own entries, run under the repository's Bun.
