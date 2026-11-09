@@ -22,7 +22,8 @@ export default defineConfig({
       'tests/e2e/**/*.test.mjs',
       'packages/skins/scripts/*.test.mjs',
       'packages/{contract,server,client}/src/**/*.test.ts',
-      'plugins/*/src/**/*.test.ts'
+      'plugins/*/src/**/*.test.ts',
+      'packages/session-bridge/src/**/*.test.ts'
     ],
     environment: 'node',
     // The framework ships TypeScript source, not compiled output, so Node
