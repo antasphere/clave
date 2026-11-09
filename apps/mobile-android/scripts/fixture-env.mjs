@@ -20,8 +20,11 @@
 // Otherwise it keeps running until SIGINT/SIGTERM, which stops every child.
 //
 // The run folder (--tmpdir) is the fixture's own: a folder it created, marked
-// with `.clave-fixture`. An existing folder without the marker, a symlink or a
-// file is refused untouched (exit 2); a marked folder is emptied at each run.
+// with `.clave-fixture`, a regular file naming this script as the owner and the
+// folder's real path as the one claimed. An existing folder without that marker
+// (or with a symlinked or foreign one), a symlink or a plain file is refused
+// untouched (exit 2); an owned folder is emptied at each real run. A dry run only
+// reads the folder and builds its shims in a scratch folder of its own.
 //
 // No real agent, no real login, proven before and after the boot and watched
 // for the whole run. BEFORE anything starts (preBootChecks): the daemon argv
@@ -33,11 +36,14 @@
 // `claude` and `codex` to the recorders. AFTER the daemon announces itself and
 // BEFORE anything is seeded (bootChecks, each inside the daemon's own process
 // through POST /e2e/evaluate): its discovery file says titles "off", testMode
-// true and machineUsage false; its cached login environment (getLoginShellEnv)
-// resolves the two commands to the recorders; the title one-shot's own launch
-// (buildOneShotLaunch, the resolver the title generator uses) is built and its
-// file compared with the recorder's BEFORE anything runs, then run with
-// --version for the probe line. One failed check refuses the
+// true and machineUsage false; the title module's own test hooks (#354,
+// `__claveE2E.titles`) say the opt-out is --no-titles, locate claude and codex
+// on the daemon's cached login PATH to the recorders, and answer the one-shot's
+// launch as the production resolver builds it, compared with the recorder by
+// canonical path; nothing is executed inside the daemon. The recorder's own
+// self-test runs BEFORE the boot, by the fixture itself (`claude --version` on
+// the recorder, never a CLI), so the log exists and holds that one line from
+// the start. One failed check refuses the
 // boot (exit 2) before any chat. From the daemon's start to the exit, in every
 // mode, the recorder log is watched: a line that is not the boot check's probe
 // stops everything with exit 3. The checked run's last step reads the same log
@@ -45,10 +51,16 @@
 //
 // Negatives, never a boot with a flag dropped: --red-flags (the argv without
 // --no-titles) and --red-interlock (a login shell that puts the real PATH
-// back) run under --dry-run only; --mutate divergent-cache (the daemon's cached
-// login PATH led by a decoy recorder) and --mutate wrong-resolver (the daemon's
-// own PATH led by the decoy, the cache intact) run under --check only, inside
-// the child, and every path they open leads to a recorder, never to the real CLI.
+// back) run under --dry-run only. --mutate divergent-cache (the daemon's cached
+// login PATH led by a decoy recorder) and --mutate wrong-resolver (the title
+// hooks patched to answer a foreign path) run under --check only, inside the
+// child, and the checks must refuse them with nothing executed; --mutate
+// decoy-on-process-path is a positive control (the daemon's own PATH led by
+// the decoy, the cache intact): a resolver reading the cache still answers the
+// recorder and the checks pass. --mutate recorder-removed|recorder-unreadable|
+// recorder-truncated damage the fixture's own recorder log after the checks,
+// under --check or --dry-run, and the guard must latch each (exit 3); the real
+// CLI is never involved in any of them.
 import { execFileSync, spawn } from 'node:child_process'
 import { createHash, randomBytes } from 'node:crypto'
 import {
@@ -58,6 +70,7 @@ import {
   existsSync,
   lstatSync,
   mkdirSync,
+  mkdtempSync,
   readFileSync,
   readdirSync,
   realpathSync,
@@ -66,6 +79,7 @@ import {
   writeFileSync
 } from 'node:fs'
 import net from 'node:net'
+import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { WebSocket } from 'ws'
@@ -111,18 +125,27 @@ const DRY_RUN = flag('dry-run')
 const RED_FLAGS = flag('red-flags')
 const RED_INTERLOCK = flag('red-interlock')
 const MUTATE = arg('mutate', null)
-const MUTATIONS = ['divergent-cache', 'wrong-resolver']
+/** The faults a run can carry, every flag kept and the real CLI never involved: the two resolver
+ *  faults and the positive control run inside the daemon under --check; the three recorder-file
+ *  faults damage the fixture's own log and run under --check or --dry-run. */
+const DAEMON_MUTATIONS = ['divergent-cache', 'wrong-resolver', 'decoy-on-process-path']
+const RECORDER_MUTATIONS = ['recorder-removed', 'recorder-unreadable', 'recorder-truncated']
+const MUTATIONS = [...DAEMON_MUTATIONS, ...RECORDER_MUTATIONS]
 if ((RED_FLAGS || RED_INTERLOCK) && !DRY_RUN) {
   process.stderr.write(
     'fixture: --red-flags and --red-interlock prove the pre-boot checks and run under --dry-run only: a daemon is never started with a flag dropped\n'
   )
   process.exit(2)
 }
-if (MUTATE !== null && (!MUTATIONS.includes(MUTATE) || !CHECK || APPROVE || DRY_RUN)) {
-  process.stderr.write(
-    `fixture: --mutate takes ${MUTATIONS.join(' or ')} and runs under --check only (never --approve, never --dry-run)\n`
-  )
-  process.exit(2)
+if (MUTATE !== null) {
+  const known = MUTATIONS.includes(MUTATE)
+  const allowed = known && !APPROVE && (CHECK || (DRY_RUN && RECORDER_MUTATIONS.includes(MUTATE)))
+  if (!allowed) {
+    process.stderr.write(
+      `fixture: --mutate takes ${MUTATIONS.join(', ')}; the daemon faults run under --check only, the recorder-file faults under --check or --dry-run, none under --approve\n`
+    )
+    process.exit(2)
+  }
 }
 
 /** The three flags that keep the daemon off every provider: `--no-titles` is its explicit
@@ -139,29 +162,53 @@ const DISCOVERY = { titles: 'titles', testMode: 'testMode', machineUsage: 'machi
 const ENV_ALLOWLIST = ['HOME', 'USER', 'LOGNAME', 'TMPDIR', 'LANG', 'LC_ALL', 'LC_CTYPE', 'TERM', 'TZ']
 /** What the fixture sets itself. */
 const ENV_FIXTURE_KEYS = ['PATH', 'SHELL', 'CLAUDE_CONFIG_DIR', 'CODEX_HOME', 'CLAVE_ANTASPHERE_ISSUER', 'CLAVE_KEYCHAIN_FILE']
-/** The daemon's modules the boot checks import inside its own process. */
+/** The daemon's login-environment module, imported inside its own process by one negative only
+ *  (the divergent cache); every check reads the production resolver through `__claveE2E.titles`. */
 const PTY_BACKEND = path.join(REPO, 'packages', 'host', 'src', 'sessions', 'adapters', 'pty-backend.ts')
-const ONE_SHOT = path.join(REPO, 'packages', 'host', 'src', 'claude-one-shot.ts')
-const PROFILES = path.join(REPO, 'packages', 'host', 'src', 'launch-profile-manager.ts')
 /** What the recorder answers a `--version` probe with; the title one-shot (-p) gets nothing. */
 const RECORDER_VERSION = 'claude fixture-recorder'
 const MARKER_NAME = '.clave-fixture'
+/** What the marker must say to be this fixture's: the owner this script writes, and the folder it claimed. */
+const MARKER_OWNER = 'apps/mobile-android/scripts/fixture-env.mjs'
 
 const RELAY_URL = `http://127.0.0.1:${RELAY_PORT}`
 const ISSUER_URL = `http://127.0.0.1:${ISSUER_PORT}`
 const SERVER_DATA = path.join(TMPDIR, 'server')
 
 /**
- * The run folder is the fixture's own. A folder this script created carries the marker; a
- * folder without it that holds anything, a symlink or a plain file is refused untouched: the
+ * The run folder is the fixture's own. A folder this script created carries a marker: a regular
+ * file (never a symlink) whose JSON names this script as the owner and the folder's own real
+ * path as the one claimed. A folder holding anything without such a marker, a symlink, a plain
+ * file, a marker of another owner or a marker that is a symlink is refused untouched: the
  * person's or another lane's data is never emptied by a wrong --tmpdir. A real run empties an
- * owned folder; a dry run keeps what is there.
+ * owned folder and claims it again. A dry run only reads: it says whether the folder would be
+ * accepted or refused, writes nothing into it, and builds its shims in a scratch folder of its
+ * own under the system's temp directory, removed at exit.
  */
+function markerOf(dir) {
+  const marker = path.join(dir, MARKER_NAME)
+  let state
+  try {
+    state = lstatSync(marker)
+  } catch {
+    return { present: false }
+  }
+  if (state.isSymbolicLink() || !state.isFile()) return { present: true, ours: false, why: `${MARKER_NAME} is not a regular file` }
+  let parsed
+  try {
+    parsed = JSON.parse(readFileSync(marker, 'utf8'))
+  } catch {
+    return { present: true, ours: false, why: `${MARKER_NAME} is not this fixture's JSON` }
+  }
+  if (parsed?.owner !== MARKER_OWNER) return { present: true, ours: false, why: `${MARKER_NAME} names another owner (${JSON.stringify(parsed?.owner ?? null)})` }
+  if (parsed?.folder !== realpathSync(dir)) return { present: true, ours: false, why: `${MARKER_NAME} claims another folder (${JSON.stringify(parsed?.folder ?? null)})` }
+  return { present: true, ours: true }
+}
+
 function claimRunFolder() {
   if (TMPDIR.split(path.sep).filter(Boolean).length < 2) {
     throw new RefusedBoot('the run folder', [{ name: `${TMPDIR} is too close to the root to be a run folder` }])
   }
-  const marker = path.join(TMPDIR, MARKER_NAME)
   let state
   try {
     state = lstatSync(TMPDIR)
@@ -173,22 +220,42 @@ function claimRunFolder() {
       throw new RefusedBoot('the run folder', [{ name: `${TMPDIR} is not a plain directory; nothing was touched` }])
     }
     const entries = readdirSync(TMPDIR)
-    if (entries.length > 0 && !existsSync(marker)) {
-      throw new RefusedBoot('the run folder', [
-        { name: `${TMPDIR} holds ${entries.length} entr${entries.length === 1 ? 'y' : 'ies'} and no ${MARKER_NAME} marker: not a run folder of this fixture; nothing was touched` }
-      ])
+    if (entries.length > 0) {
+      const marker = markerOf(TMPDIR)
+      if (!marker.present) {
+        throw new RefusedBoot('the run folder', [
+          { name: `${TMPDIR} holds ${entries.length} entr${entries.length === 1 ? 'y' : 'ies'} and no ${MARKER_NAME} marker: not a run folder of this fixture; nothing was touched` }
+        ])
+      }
+      if (!marker.ours) {
+        throw new RefusedBoot('the run folder', [{ name: `${TMPDIR}: ${marker.why}; nothing was touched` }])
+      }
     }
-    if (!DRY_RUN) {
-      for (const entry of entries) rmSync(path.join(TMPDIR, entry), { recursive: true, force: true })
+    if (DRY_RUN) {
+      say(`dry run: ${TMPDIR} would be ${entries.length === 0 ? 'claimed (empty)' : 'emptied and claimed again (this fixture\'s own marker)'}; nothing in it was touched`)
+      return
     }
+    for (const entry of entries) rmSync(path.join(TMPDIR, entry), { recursive: true, force: true })
   } else {
+    if (DRY_RUN) {
+      say(`dry run: ${TMPDIR} does not exist and would be created; nothing was touched`)
+      return
+    }
     mkdirSync(TMPDIR, { recursive: true, mode: 0o700 })
   }
   writeFileSync(
-    marker,
-    JSON.stringify({ owner: 'apps/mobile-android/scripts/fixture-env.mjs', claimedAt: new Date().toISOString(), pid: process.pid }) + '\n',
+    path.join(TMPDIR, MARKER_NAME),
+    JSON.stringify({ owner: MARKER_OWNER, folder: realpathSync(TMPDIR), claimedAt: new Date().toISOString(), pid: process.pid }) + '\n',
     { mode: 0o600 }
   )
+}
+
+/** Where the shims are built: the run folder, or a scratch folder of the dry run's own. */
+let SHIMS_ROOT = null
+function shimsRoot() {
+  if (SHIMS_ROOT) return SHIMS_ROOT
+  SHIMS_ROOT = DRY_RUN ? mkdtempSync(path.join(os.tmpdir(), 'clave-fixture-dry-run-')) : TMPDIR
+  return SHIMS_ROOT
 }
 
 /**
@@ -209,7 +276,7 @@ function claimRunFolder() {
  * ahead inside the daemon, so a wrong resolution lands on it and never on the real CLI.
  */
 function agentShims() {
-  const dir = path.join(TMPDIR, 'shims')
+  const dir = path.join(shimsRoot(), 'shims')
   mkdirSync(dir, { recursive: true, mode: 0o700 })
   const log = path.join(dir, 'recorder.log')
   const decoyDir = path.join(dir, 'decoy')
@@ -285,15 +352,38 @@ function agentShims() {
   }
 }
 
-/** The lines a recorder wrote since the launch was built; never a prompt. */
-function recorderLines(file) {
+/**
+ * The lines a recorder wrote since the launch was built, never a prompt. Absence is told from
+ * failure: a log that does not exist yet reads as no lines (nothing was called), a log that
+ * exists but cannot be read is a failure of the recorder itself, which the guard treats as a
+ * call it could not see. `readRecorder` answers both; `recorderLines` keeps the plain list for
+ * the places where absence is fine.
+ */
+function readRecorder(file) {
+  let state
   try {
-    return readFileSync(file, 'utf8').split('\n').filter((l) => l.trim() !== '')
+    state = lstatSync(file)
   } catch {
-    return []
+    return { lines: [], absent: true, error: null }
+  }
+  if (state.isSymbolicLink() || !state.isFile()) return { lines: [], absent: false, error: `${file} is not a regular file` }
+  try {
+    return { lines: readFileSync(file, 'utf8').split('\n').filter((l) => l.trim() !== ''), absent: false, error: null }
+  } catch (error) {
+    return { lines: [], absent: false, error: `${file} cannot be read: ${error?.code ?? error?.message ?? error}` }
   }
 }
+function recorderLines(file) {
+  return readRecorder(file).lines
+}
 const isProbe = (line) => / claude --version /.test(line + ' ')
+
+/** A recorder failure, latched: once set, no later success and no cleanup can bring the exit code
+ *  under 3. `exitWith` reads it. */
+let recorderFailure = null
+function latchRecorderFailure(reason) {
+  if (recorderFailure === null) recorderFailure = reason
+}
 
 /** Where `command` lives on `pathEnv`: the first directory holding an executable file of
  *  that name, as the host's `findExecutable` looks. */
@@ -431,6 +521,18 @@ async function preBootChecks(launch) {
       return `claude and codex are the recorders under ${launch.shims.dir}`
     }
   )
+  await check(
+    "the recorder records: run by the fixture itself with --version (never a CLI), it answers the recorder's line and the log holds exactly that one line",
+    async () => {
+      const answer = execFileSync(launch.shims.claude, ['--version'], { env: launch.env, encoding: 'utf8', timeout: 5000 }).trim()
+      expectThat(answer === RECORDER_VERSION, `the recorder answered ${JSON.stringify(answer)}`)
+      probesIssued += 1
+      const log = readRecorder(launch.shims.log)
+      expectThat(log.error === null && !log.absent, log.error ?? 'the recorder log was not written')
+      expectThat(log.lines.length === 1 && isProbe(log.lines[0]), `the recorder log holds: ${log.lines.join(' | ')}`)
+      return `one probe line in ${launch.shims.log}`
+    }
+  )
   return results
 }
 
@@ -472,118 +574,147 @@ async function bootChecks(daemon, launch) {
     expectThat(one === 1, `the fixture route answered ${JSON.stringify(one)}`)
     return 'testMode: true, machineUsage: false, /e2e/evaluate answers'
   })
+  // The title module's own test hooks (#354): the opt-out's state, the one-shot's launch as the
+  // production resolver answers it, and where a command lives on the cached login PATH; read from
+  // inside the daemon, nothing executed. The negatives patch what the hooks or the cache answer.
+  const HOOKS_SOURCE = `async (arg) => {
+    const t = globalThis.__claveE2E && globalThis.__claveE2E.titles
+    if (!t) return null
+    const fs = await import('node:fs')
+    const real = (file) => { try { return fs.realpathSync(file) } catch { return null } }
+    const launch = await t.launch()
+    const claude = t.locate('claude')
+    const codex = t.locate('codex')
+    return {
+      disabled: t.disabled(),
+      shell: process.env.SHELL ?? null,
+      launch: { file: launch.file, real: real(launch.file), args: launch.args, pathEnv: launch.pathEnv ?? null },
+      claude: claude, claudeReal: claude ? real(claude) : null,
+      codex: codex, codexReal: codex ? real(codex) : null
+    }
+  }`
   if (MUTATE === 'divergent-cache') {
     const mutated = await evaluate(daemon, PATH_PREFIX_SOURCE, { ptyBackend: PTY_BACKEND, where: 'cache', decoy: shims.decoyDir, on: true })
-    say(`mutation  divergent-cache: the daemon's cached login PATH now starts with the decoy (${mutated.split(':')[0]})`)
+    say(`mutation  divergent-cache: the daemon's cached login PATH now starts with the decoy (${mutated.split(':')[0]}); the resolver must answer the decoy and the check must refuse`)
   }
   if (MUTATE === 'wrong-resolver') {
-    const mutated = await evaluate(daemon, PATH_PREFIX_SOURCE, { ptyBackend: PTY_BACKEND, where: 'process', decoy: shims.decoyDir, on: true })
-    say(`mutation  wrong-resolver: the daemon's own PATH now starts with the decoy (${mutated.split(':')[0]}), its cached login PATH intact`)
-  }
-  await check(
-    "the daemon's own SHELL is the fixture's and its CACHED login environment (getLoginShellEnv, read inside the daemon) resolves claude and codex to the recorders",
-    async () => {
-      const inside = await evaluate(
-        daemon,
-        `async (arg) => {
-          const m = await import(arg.ptyBackend)
-          const login = m.getLoginShellEnv()
-          return { shell: process.env.SHELL ?? null, userShell: m.getUserShell(), loginShell: login.SHELL ?? null, loginPath: login.PATH ?? null, keys: Object.keys(login).length }
-        }`,
-        { ptyBackend: PTY_BACKEND }
-      )
-      expectThat(samePath(inside.shell, shims.shell), `the daemon's SHELL is ${inside.shell}`)
-      expectThat(samePath(inside.userShell, shims.shell), `the daemon reads its login shell as ${inside.userShell}`)
-      expectThat(inside.loginPath, 'the cached login environment has no PATH')
-      const claude = locateOnPath('claude', inside.loginPath)
-      const codex = locateOnPath('codex', inside.loginPath)
-      expectThat(claude && samePath(claude, shims.claude), `claude resolves to ${claude ?? 'nothing'} on the daemon's cached login PATH`)
-      expectThat(codex && samePath(codex, shims.codex), `codex resolves to ${codex ?? 'nothing'} on the daemon's cached login PATH`)
-      return `${inside.keys} keys cached; claude and codex are the recorders under ${shims.dir}`
-    }
-  )
-  // The one-shot's launch, built inside the daemon exactly as the title generator builds it;
-  // executed only when `execute` is set, and only after the parent has compared its file.
-  const ONE_SHOT_SOURCE = `async (arg) => {
-    const m = await import(arg.ptyBackend)
-    const o = await import(arg.oneShot)
-    const { launchProfileManager } = await import(arg.profiles)
-    const launch = o.buildOneShotLaunch({
-      profile: launchProfileManager.resolveClaudeCli(null, null),
-      args: ['--version'],
-      loginEnv: m.getLoginShellEnv(),
-      account: {},
-      userShell: m.getUserShell()
-    })
-    const built = { file: launch.file, args: launch.args, path: launch.env.PATH ?? null }
-    if (!arg.execute) return built
-    if (launch.file !== arg.expectFile) return { ...built, refused: 'the launch changed between the comparison and the probe' }
-    const cp = await import('node:child_process')
-    const run = await new Promise((resolve) =>
-      cp.execFile(launch.file, launch.args, { env: launch.env, timeout: 5000, encoding: 'utf8' }, (err, stdout, stderr) =>
-        resolve({ error: err ? err.message : null, stdout: String(stdout ?? ''), stderr: String(stderr ?? '') })
-      )
+    const patched = await evaluate(
+      daemon,
+      `(arg) => {
+        const t = globalThis.__claveE2E && globalThis.__claveE2E.titles
+        if (!t) return null
+        t.launch = async () => ({ file: arg.foreign, args: ['-p'], pathEnv: process.env.PATH })
+        t.locate = () => arg.foreign
+        return arg.foreign
+      }`,
+      { foreign: '/usr/bin/true' }
     )
-    return { ...built, ...run }
-  }`
-  const oneShotArgument = { ptyBackend: PTY_BACKEND, oneShot: ONE_SHOT, profiles: PROFILES }
-  let builtFile = null
+    say(`mutation  wrong-resolver: the title hooks now answer a foreign path (${patched}); the check must refuse it unrun`)
+  }
+  if (MUTATE === 'decoy-on-process-path') {
+    const mutated = await evaluate(daemon, PATH_PREFIX_SOURCE, { ptyBackend: PTY_BACKEND, where: 'process', decoy: shims.decoyDir, on: true })
+    say(`mutation  decoy-on-process-path (a positive control): the daemon's own PATH now starts with the decoy (${mutated.split(':')[0]}) while the cached login PATH is intact; a resolver reading the cache still answers the recorder, so the checks are expected to pass`)
+  }
+  let hooks = null
+  await check("the daemon carries the title module's test hooks (__claveE2E.titles, #354) and its opt-out says --no-titles", async () => {
+    hooks = await evaluate(daemon, HOOKS_SOURCE, {})
+    expectThat(hooks !== null, 'the daemon exposes no __claveE2E.titles: it predates #354; the boot waits for the rebase')
+    expectThat(hooks.disabled === '--no-titles', `the title module says disabled by ${JSON.stringify(hooks.disabled)}`)
+    return 'titles disabled by --no-titles'
+  })
   await check(
-    "the title one-shot's own launch (buildOneShotLaunch, the resolver the title generator uses), built inside the daemon and NOT run, names the recorder",
+    "the daemon's own SHELL is the fixture's, and the title module's locate (its cached login PATH, read inside the daemon) answers the recorders for claude and codex",
     async () => {
-      const built = await evaluate(daemon, ONE_SHOT_SOURCE, { ...oneShotArgument, execute: false })
-      expectThat(typeof built.file === 'string' && built.file !== '', 'the launch names no file')
+      expectThat(hooks !== null, 'no hooks')
+      expectThat(samePath(hooks.shell, shims.shell), `the daemon's SHELL is ${hooks.shell}`)
+      expectThat(hooks.claudeReal !== null && hooks.claudeReal === realpathSync(shims.claude), `claude locates to ${hooks.claude ?? 'nothing'} on the daemon's cached login PATH`)
+      expectThat(hooks.codexReal !== null && hooks.codexReal === realpathSync(shims.codex), `codex locates to ${hooks.codex ?? 'nothing'} on the daemon's cached login PATH`)
+      return `claude and codex are the recorders under ${shims.dir}`
+    }
+  )
+  await check(
+    "the title one-shot's launch, as the production resolver answers it inside the daemon, is the recorder by canonical path and found on a PATH led by the recorders; nothing is executed",
+    async () => {
+      expectThat(hooks !== null, 'no hooks')
+      const launch = hooks.launch
+      expectThat(typeof launch.file === 'string' && launch.file !== '', 'the launch names no file')
       expectThat(
-        samePath(built.file, shims.claude),
-        `the one-shot would run ${built.file} (${built.args.join(' ')}); nothing was executed`
+        launch.real !== null && launch.real === realpathSync(shims.claude),
+        `the one-shot would run ${launch.real ?? launch.file} (${(launch.args ?? []).join(' ')}); nothing was executed`
       )
-      builtFile = built.file
-      return `${built.file} ${built.args.join(' ')}, not run`
+      expectThat(typeof launch.pathEnv === 'string' && launch.pathEnv.split(path.delimiter)[0] === shims.dir, `the one-shot's PATH starts with ${(launch.pathEnv ?? '').split(path.delimiter)[0]}`)
+      return `${launch.real} ${(launch.args ?? []).slice(0, 2).join(' ')}…, not run`
     }
   )
-  await check(
-    "the same launch, run with --version inside the daemon only after the comparison, answers the recorder's line and leaves one probe line in the recorder log",
-    async () => {
-      expectThat(builtFile !== null, 'the launch was not compared first; nothing is run')
-      const before = recorderLines(shims.log).length
-      const decoyBefore = recorderLines(shims.decoyLog).length
-      const result = await evaluate(daemon, ONE_SHOT_SOURCE, { ...oneShotArgument, execute: true, expectFile: builtFile })
-      expectThat(!result.refused, result.refused ?? '')
-      const decoyHits = recorderLines(shims.decoyLog).length - decoyBefore
-      expectThat(decoyHits === 0, `the launch reached the decoy recorder ${decoyHits} time(s): ${result.file}`)
-      expectThat(result.error === null, `the probe failed: ${result.error}`)
-      expectThat(result.stdout.trim() === RECORDER_VERSION, `the probe answered ${JSON.stringify(result.stdout.trim())}`)
-      const fresh = recorderLines(shims.log).slice(before)
-      expectThat(fresh.length === 1 && isProbe(fresh[0]), `the recorder log gained ${fresh.length} line(s): ${fresh.join(' | ')}`)
-      return `${result.file} ${result.args.join(' ')} → ${RECORDER_VERSION}; one probe line in the recorder log`
-    }
-  )
-  if (MUTATE === 'wrong-resolver') {
+  if (MUTATE === 'decoy-on-process-path') {
     await evaluate(daemon, PATH_PREFIX_SOURCE, { ptyBackend: PTY_BACKEND, where: 'process', decoy: shims.decoyDir, on: false })
-    say('mutation  wrong-resolver: the decoy taken off the daemon\'s own PATH again')
+    say('mutation  decoy-on-process-path: the decoy taken off the daemon\'s own PATH again')
   }
   return results
 }
 
 /**
- * The recorder's guard, in every mode, from the daemon's start to the exit: a recorder line
- * that is not a probe of the boot check means an agent CLI was invoked from the fixture, and
- * everything stops with exit 3; the decoy log must stay empty too. Polled every half second.
+ * One look at the owned logs: null when all is as it should be, else the failure in words. The
+ * recorder's self-test wrote the log before the boot, so from then on the log must exist, be
+ * readable and hold that one probe line: a missing, unreadable or truncated log is a failure of
+ * the recorder itself, treated as a call that could not be seen. Any other line, or any decoy
+ * line, means an agent CLI was invoked from the fixture.
  */
+function recorderVerdict(shims) {
+  const log = readRecorder(shims.log)
+  const decoy = readRecorder(shims.decoyLog)
+  const probes = log.lines.filter(isProbe)
+  const unexpected = log.lines.filter((line) => !isProbe(line))
+  if (log.error) return `the recorder log is unreadable: ${log.error}`
+  if (probesIssued > 0 && log.absent) return `the recorder log is missing after the recorder's self-test wrote it`
+  if (probesIssued > 0 && probes.length < probesIssued) return `the recorder log holds ${probes.length} probe line(s), ${probesIssued} expected: truncated`
+  if (probes.length > probesIssued) return `the recorder saw ${probes.length} probe line(s), ${probesIssued} issued: ${probes.slice(probesIssued).join(' | ')}`
+  if (unexpected.length > 0) return `an agent CLI was invoked from the fixture: ${unexpected.join(' | ')}`
+  if (decoy.error) return `the decoy log is unreadable: ${decoy.error}`
+  if (decoy.lines.length > 0) return `the decoy recorder saw: ${decoy.lines.join(' | ')}`
+  return null
+}
+
+/** The recorder's guard, in every mode, from the daemon's start to the exit: one look every half
+ *  second; a failure is latched (exit code 3 at the latest exit, whatever happens after) and
+ *  everything stops. */
 function watchRecorders(shims) {
-  const probesAllowed = () => 1
   const timer = setInterval(() => {
-    const unexpected = recorderLines(shims.log).filter((line) => !isProbe(line))
-    const probes = recorderLines(shims.log).filter(isProbe)
-    const decoy = recorderLines(shims.decoyLog)
-    if (unexpected.length > 0 || probes.length > probesAllowed() || (decoy.length > 0 && MUTATE === null)) {
-      note(`recorder: an agent CLI was invoked from the fixture; stopping everything: ${[...unexpected, ...decoy, ...probes.slice(probesAllowed())].join(' | ')}`)
+    const failure = recorderVerdict(shims)
+    if (failure !== null) {
+      latchRecorderFailure(failure)
+      note(`recorder: ${failure}; stopping everything`)
       clearInterval(timer)
       void exitWith(3)
     }
   }, 500)
   timer.unref()
   return () => clearInterval(timer)
+}
+
+/** How many `claude --version` probes the fixture itself has issued: one, the pre-boot self-test. */
+let probesIssued = 0
+
+/** The negatives on the owned files, applied after the checks (under --check, after the boot
+ *  checks; under --dry-run, after the pre-boot checks): the recorder log removed, made unreadable,
+ *  or truncated to nothing. The guard must latch each, the real CLI never involved. */
+function mutateRecorderFiles(shims) {
+  switch (MUTATE) {
+    case 'recorder-removed':
+      rmSync(shims.log, { force: true })
+      say('mutation  recorder-removed: the recorder log was removed after the recorder self-test')
+      break
+    case 'recorder-unreadable':
+      chmodSync(shims.log, 0o000)
+      say('mutation  recorder-unreadable: the recorder log was made unreadable after the recorder self-test')
+      break
+    case 'recorder-truncated':
+      writeFileSync(shims.log, '')
+      say('mutation  recorder-truncated: the recorder log was truncated after the recorder self-test')
+      break
+    default:
+      break
+  }
 }
 
 const RELAY_DATA = path.join(TMPDIR, 'relay')
@@ -633,6 +764,10 @@ function stopAll() {
 
 async function exitWith(code) {
   await stopAll()
+  if (recorderFailure !== null) {
+    note(`recorder failure latched: ${recorderFailure}`)
+    process.exit(Math.max(code, 3))
+  }
   process.exit(code)
 }
 
@@ -1212,11 +1347,13 @@ async function runCheck(env) {
     expect(refused, `GET /sessions answered ${last?.status} after the revocation`)
     return `revoke ${revoked.status}; GET /sessions 401`
   })
-  await step('no agent CLI was invoked from the fixture: the recorder log holds the boot check\'s one probe and nothing else, the decoy log is empty, the two homes are still empty', async () => {
-    const lines = recorderLines(env.shims.log)
-    const unexpected = lines.filter((line) => !isProbe(line))
+  await step('no agent CLI was invoked from the fixture: the recorder log holds the self-test\'s one probe and nothing else, the decoy log is empty, the two homes are still empty', async () => {
+    expect(recorderFailure === null, `a recorder failure is latched: ${recorderFailure}`)
+    const log = readRecorder(env.shims.log)
+    expect(log.error === null && !log.absent, log.error ?? 'the recorder log is missing')
+    const unexpected = log.lines.filter((line) => !isProbe(line))
     expect(unexpected.length === 0, `the recorders saw: ${unexpected.join(' | ')}`)
-    expect(lines.filter(isProbe).length === 1, `${lines.filter(isProbe).length} probe line(s), one expected`)
+    expect(log.lines.filter(isProbe).length === probesIssued, `${log.lines.filter(isProbe).length} probe line(s), ${probesIssued} expected`)
     const decoy = recorderLines(env.shims.decoyLog)
     expect(decoy.length === 0, `the decoy recorder saw: ${decoy.join(' | ')}`)
     for (const home of [env.shims.claudeConfigDir, env.shims.codexHome]) {
@@ -1266,7 +1403,15 @@ async function main() {
   if (DRY_RUN) {
     say(`dry run: would start the daemon as: bun ${launch.args.join(' ')}`)
     say(`dry run: SHELL=${launch.env.SHELL} CLAUDE_CONFIG_DIR=${launch.env.CLAUDE_CONFIG_DIR} CODEX_HOME=${launch.env.CODEX_HOME}`)
-    say(preFailed.length ? 'dry run: the pre-boot checks FAILED; a boot would be refused (exit 2)' : 'dry run: the pre-boot checks passed; nothing was started (the boot checks and the recorder guard run only on a boot)')
+    say(preFailed.length ? 'dry run: the pre-boot checks FAILED; a boot would be refused (exit 2)' : 'dry run: the pre-boot checks passed; nothing was started (the boot checks run only on a boot)')
+    if (MUTATE !== null) {
+      mutateRecorderFiles(launch.shims)
+      const verdict = recorderVerdict(launch.shims)
+      if (verdict !== null) latchRecorderFailure(verdict)
+      say(verdict !== null ? `dry run: the recorder guard's one look latched: ${verdict} (exit 3)` : 'dry run: the recorder guard saw nothing wrong after the mutation: the negative did NOT go red')
+    }
+    say(`dry run: the shims were built in the scratch folder ${shimsRoot()}, removed now; ${TMPDIR} was only read`)
+    rmSync(shimsRoot(), { recursive: true, force: true })
     return exitWith(preFailed.length ? 2 : 0)
   }
   if (preFailed.length) throw new RefusedBoot('pre-boot', preFailed)
@@ -1290,6 +1435,7 @@ async function main() {
   const boot = await bootChecks(daemon, launch)
   const bootFailed = boot.filter((c) => !c.ok)
   if (bootFailed.length) throw new RefusedBoot('after the boot, before any chat', bootFailed)
+  mutateRecorderFiles(launch.shims)
   const owner = client(daemon.url, daemon.token)
 
   const signed = await signOwnerIn(owner)
