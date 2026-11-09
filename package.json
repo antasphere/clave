@@ -16,7 +16,8 @@
     "typecheck:node": "tsc --noEmit -p tsconfig.node.json --composite false",
     "typecheck:web": "tsc --noEmit -p tsconfig.web.json --composite false",
     "typecheck:plugins": "tsc --noEmit -p plugins/analytics/tsconfig.json",
-    "typecheck": "npm run typecheck:node && npm run typecheck:web && npm run typecheck:plugins",
+    "typecheck:session-bridge": "tsc --noEmit -p packages/session-bridge/tsconfig.json",
+    "typecheck": "npm run typecheck:node && npm run typecheck:web && npm run typecheck:plugins && npm run typecheck:session-bridge",
     "plugins:build": "node scripts/build-plugins.mjs",
     "start": "electron-vite preview",
     "dev": "npm run native:build && node scripts/copy-private-fonts.mjs && electron-vite dev",
@@ -153,7 +154,8 @@
     "packages/skins",
     "packages/contract",
     "packages/server",
-    "packages/client"
+    "packages/client",
+    "packages/session-bridge"
   ],
   "overrides": {
     "@effect/cli": "0.77.0"
