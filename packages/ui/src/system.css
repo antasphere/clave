@@ -8325,6 +8325,9 @@ button.term-agent-model:focus-visible {
   position: absolute;
   top: 0;
   right: 0;
+  /* No inset of its own: each page pads itself (the heads, the rows, the
+     form), and a padding here would be animated with the box. */
+  padding: 0;
   overflow: hidden;
 }
 .routines-page {
