@@ -35,8 +35,9 @@
 // through POST /e2e/evaluate): its discovery file says titles "off", testMode
 // true and machineUsage false; its cached login environment (getLoginShellEnv)
 // resolves the two commands to the recorders; the title one-shot's own launch
-// (buildOneShotLaunch, the resolver the title generator uses) lands on the
-// recorder, proven by running it with --version. One failed check refuses the
+// (buildOneShotLaunch, the resolver the title generator uses) is built and its
+// file compared with the recorder's BEFORE anything runs, then run with
+// --version for the probe line. One failed check refuses the
 // boot (exit 2) before any chat. From the daemon's start to the exit, in every
 // mode, the recorder log is watched: a line that is not the boot check's probe
 // stops everything with exit 3. The checked run's last step reads the same log
@@ -501,41 +502,58 @@ async function bootChecks(daemon, launch) {
       return `${inside.keys} keys cached; claude and codex are the recorders under ${shims.dir}`
     }
   )
+  // The one-shot's launch, built inside the daemon exactly as the title generator builds it;
+  // executed only when `execute` is set, and only after the parent has compared its file.
+  const ONE_SHOT_SOURCE = `async (arg) => {
+    const m = await import(arg.ptyBackend)
+    const o = await import(arg.oneShot)
+    const { launchProfileManager } = await import(arg.profiles)
+    const launch = o.buildOneShotLaunch({
+      profile: launchProfileManager.resolveClaudeCli(null, null),
+      args: ['--version'],
+      loginEnv: m.getLoginShellEnv(),
+      account: {},
+      userShell: m.getUserShell()
+    })
+    const built = { file: launch.file, args: launch.args, path: launch.env.PATH ?? null }
+    if (!arg.execute) return built
+    if (launch.file !== arg.expectFile) return { ...built, refused: 'the launch changed between the comparison and the probe' }
+    const cp = await import('node:child_process')
+    const run = await new Promise((resolve) =>
+      cp.execFile(launch.file, launch.args, { env: launch.env, timeout: 5000, encoding: 'utf8' }, (err, stdout, stderr) =>
+        resolve({ error: err ? err.message : null, stdout: String(stdout ?? ''), stderr: String(stderr ?? '') })
+      )
+    )
+    return { ...built, ...run }
+  }`
+  const oneShotArgument = { ptyBackend: PTY_BACKEND, oneShot: ONE_SHOT, profiles: PROFILES }
+  let builtFile = null
   await check(
-    "the title one-shot's own launch (buildOneShotLaunch, the resolver the title generator uses) lands on the recorder: run with --version inside the daemon, it answers the recorder's line and the recorder log holds that one probe",
+    "the title one-shot's own launch (buildOneShotLaunch, the resolver the title generator uses), built inside the daemon and NOT run, names the recorder",
     async () => {
+      const built = await evaluate(daemon, ONE_SHOT_SOURCE, { ...oneShotArgument, execute: false })
+      expectThat(typeof built.file === 'string' && built.file !== '', 'the launch names no file')
+      expectThat(
+        samePath(built.file, shims.claude),
+        `the one-shot would run ${built.file} (${built.args.join(' ')}); nothing was executed`
+      )
+      builtFile = built.file
+      return `${built.file} ${built.args.join(' ')}, not run`
+    }
+  )
+  await check(
+    "the same launch, run with --version inside the daemon only after the comparison, answers the recorder's line and leaves one probe line in the recorder log",
+    async () => {
+      expectThat(builtFile !== null, 'the launch was not compared first; nothing is run')
       const before = recorderLines(shims.log).length
       const decoyBefore = recorderLines(shims.decoyLog).length
-      const result = await evaluate(
-        daemon,
-        `async (arg) => {
-          const m = await import(arg.ptyBackend)
-          const o = await import(arg.oneShot)
-          const { launchProfileManager } = await import(arg.profiles)
-          const launch = o.buildOneShotLaunch({
-            profile: launchProfileManager.resolveClaudeCli(null, null),
-            args: ['--version'],
-            loginEnv: m.getLoginShellEnv(),
-            account: {},
-            userShell: m.getUserShell()
-          })
-          const cp = await import('node:child_process')
-          const run = await new Promise((resolve) =>
-            cp.execFile(launch.file, launch.args, { env: launch.env, timeout: 5000, encoding: 'utf8' }, (err, stdout, stderr) =>
-              resolve({ error: err ? err.message : null, stdout: String(stdout ?? ''), stderr: String(stderr ?? '') })
-            )
-          )
-          return { file: launch.file, args: launch.args, path: launch.env.PATH ?? null, ...run }
-        }`,
-        { ptyBackend: PTY_BACKEND, oneShot: ONE_SHOT, profiles: PROFILES }
-      )
+      const result = await evaluate(daemon, ONE_SHOT_SOURCE, { ...oneShotArgument, execute: true, expectFile: builtFile })
+      expectThat(!result.refused, result.refused ?? '')
       const decoyHits = recorderLines(shims.decoyLog).length - decoyBefore
       expectThat(decoyHits === 0, `the launch reached the decoy recorder ${decoyHits} time(s): ${result.file}`)
-      expectThat(samePath(result.file, shims.claude), `the one-shot would run ${result.file}`)
       expectThat(result.error === null, `the probe failed: ${result.error}`)
       expectThat(result.stdout.trim() === RECORDER_VERSION, `the probe answered ${JSON.stringify(result.stdout.trim())}`)
-      const lines = recorderLines(shims.log)
-      const fresh = lines.slice(before)
+      const fresh = recorderLines(shims.log).slice(before)
       expectThat(fresh.length === 1 && isProbe(fresh[0]), `the recorder log gained ${fresh.length} line(s): ${fresh.join(' | ')}`)
       return `${result.file} ${result.args.join(' ')} → ${RECORDER_VERSION}; one probe line in the recorder log`
     }
