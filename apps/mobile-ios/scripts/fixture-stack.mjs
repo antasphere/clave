@@ -24,11 +24,10 @@
 // Import `startStack(options)` to drive the stack from another script.
 import { spawn } from 'node:child_process'
 import { createWriteStream, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { randomBytes } from 'node:crypto'
+import { randomBytes, randomUUID } from 'node:crypto'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { startOidcProvider } from '../../../tests/e2e/fixtures/oidc-provider.mjs'
-import { call, ensureWorkspace } from '../../mobile/scripts/dev-server.mjs'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 export const REPO = path.resolve(HERE, '..', '..', '..')
@@ -49,6 +48,33 @@ const OWNER = {
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+
+/** One authenticated call to the server: JSON in, JSON out, a thrown error on a non-2xx. */
+export async function call(url, token, method, route, body) {
+  const response = await fetch(`${url}${route}`, {
+    method,
+    headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+    body: body === undefined ? undefined : JSON.stringify(body)
+  })
+  const text = await response.text()
+  if (!response.ok) throw new Error(`${method} ${route} answered ${response.status}: ${text}`)
+  return text ? JSON.parse(text) : undefined
+}
+
+/** Makes `rootDir` a workspace of the server, named `name`, when it is not one yet. */
+export async function ensureWorkspace(url, token, rootDir, name) {
+  mkdirSync(rootDir, { recursive: true })
+  const state = await call(url, token, 'GET', '/workspaces')
+  const existing = state.workspaces.find((w) => w.rootDir === rootDir)
+  if (existing) return existing
+  const workspace = { id: randomUUID(), name, rootDir, profileFile: null, createdAt: Date.now() }
+  const written = await call(url, token, 'POST', '/workspaces/registry', {
+    workspaces: [...state.workspaces, workspace],
+    base: { revision: state.revision, instance: state.instance }
+  })
+  if (!written.ok) throw new Error(`the server refused the workspace: ${written.reason}`)
+  return workspace
+}
 
 /** Polls `probe` until it answers something truthy, or throws past `ms`. */
 async function until(what, probe, { ms = STEP_MS, gapMs = 250 } = {}) {
