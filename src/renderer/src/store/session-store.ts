@@ -192,6 +192,9 @@ interface SessionState {
   textSize: TextSize
   /** The face the chrome is set in (`data-ui-font`). */
   uiFont: UiFont
+  /** Whether the chat views fold the agent's working notes into one card
+   *  once a turn is over (PRDCT-4212). On unless the reader turned it off. */
+  foldWorkNotes: boolean
   /** What stands for an agent in the chrome: `logo`, or a mark pack's `<pluginId>/<markId>`,
    *  saved raw and resolved at use against the packs this build can draw (`lib/marks.ts`). */
   agentMark: string
@@ -377,6 +380,7 @@ interface SessionState {
   setDensity: (density: Density) => void
   setTextSize: (textSize: TextSize) => void
   setUiFont: (uiFont: UiFont) => void
+  setFoldWorkNotes: (fold: boolean) => void
   setAgentMark: (agentMark: string) => void
   setTmuxMode: (enabled: boolean) => void
   setMessageTrailEnabled: (enabled: boolean) => void
@@ -1148,6 +1152,9 @@ function closePluginPage(): void {
   if (plugins.page) plugins.openPage(null)
 }
 
+/** Where the reader's choice to fold the agent's working notes is kept. */
+export const FOLD_WORK_NOTES_KEY = 'clave-fold-work-notes'
+
 export const useSessionStore = create<SessionState>((set) => ({
   sessions: [],
   fileTabs: [],
@@ -1170,6 +1177,7 @@ export const useSessionStore = create<SessionState>((set) => ({
   ),
   textSize: resolveTextSize(localStorage.getItem('clave-text-size')),
   uiFont: resolveUiFont(localStorage.getItem('clave-ui-font')),
+  foldWorkNotes: localStorage.getItem(FOLD_WORK_NOTES_KEY) !== 'off',
   agentMark: localStorage.getItem('clave-agent-mark') ?? LOGO_MARK,
   tmuxMode: localStorage.getItem('clave-tmux-mode') !== 'false',
   messageTrailEnabled: localStorage.getItem('clave-message-trail') !== 'false',
@@ -1924,6 +1932,11 @@ export const useSessionStore = create<SessionState>((set) => ({
   setTextSize: (textSize) => {
     localStorage.setItem('clave-text-size', textSize)
     set({ textSize })
+  },
+
+  setFoldWorkNotes: (fold) => {
+    localStorage.setItem(FOLD_WORK_NOTES_KEY, fold ? 'on' : 'off')
+    set({ foldWorkNotes: fold })
   },
 
   setUiFont: (uiFont) => {

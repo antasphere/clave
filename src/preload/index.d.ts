@@ -654,6 +654,7 @@ import type {
   OnboardingState
 } from '../shared/onboarding'
 import type { DigestDone, DigestRequest, DigestResult } from '../shared/exchange-digest'
+import type { WorkDigestDone, WorkDigestRequest, WorkDigestResult } from '../shared/work-digest'
 import type {
   ServerInstallProgress,
   ServerInstallResult,
@@ -1023,6 +1024,11 @@ export interface ElectronAPI extends FleetDesktopAPI {
   exchangeDigest: (request: DigestRequest) => Promise<DigestResult>
   /** Every digest already read for a tab, by the key of its messages. */
   exchangeDigestsOf: (sessionId: string) => Promise<Record<string, DigestDone>>
+  /** The title of a card of the agent's working notes, and whether a note
+   *  needs the reader (PRDCT-4212). A failure is a result, never a rejection. */
+  workDigest: (request: WorkDigestRequest) => Promise<WorkDigestResult>
+  /** Every work digest already read for a tab, by the key of its notes. */
+  workDigestsOf: (sessionId: string) => Promise<Record<string, WorkDigestDone>>
   /** The GitHub pull request panel's reads and writes, through the user's own
    *  `gh`. A failure is a result, never a rejection: the panel names the kind. */
   githubPull: (ref: PullRef) => Promise<GithubResult<PullRequestView>>

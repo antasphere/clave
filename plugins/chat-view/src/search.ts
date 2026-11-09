@@ -78,6 +78,73 @@ function occurrences(text: string, needle: string): number {
   return n
 }
 
+/** For every occurrence of `needle` in a row, counted the way `rowTexts`
+ *  counts and in the same order, which card of the agent's working notes
+ *  (WorkStretch, a `work-stretch` block) holds it: its index among the row's
+ *  cards, or null for words outside every card (the reader's message, the
+ *  answer, an error). The Terminal view's row is a whole turn, so a card's
+ *  words sit between the message's and the answer's, and a closed card that
+ *  was never opened has none of them on screen: the mark has to know. */
+export function occurrenceCards(row: unknown, needle: string): (number | null)[] {
+  const out: (number | null)[] = []
+  let card = -1
+  const visit = new Set<object>()
+  const walk = (value: unknown, inCard: number, depth: number): void => {
+    if (!value || typeof value !== 'object' || depth > 8 || visit.has(value)) return
+    visit.add(value)
+    if (Array.isArray(value)) {
+      for (const item of value) walk(item, inCard, depth + 1)
+      return
+    }
+    const v = value as Record<string, unknown>
+    if (v.kind === 'work-stretch') {
+      card++
+      const mine = card
+      for (const key of Object.keys(v)) walk(v[key], mine, depth + 1)
+      return
+    }
+    const text =
+      v.kind === 'user' && typeof v.text === 'string' && !v.withdrawn
+        ? (parseDelivery(v.text)?.body ?? v.text)
+        : v.kind === 'assistant' && typeof v.text === 'string'
+          ? v.text
+          : v.kind === 'error' && typeof v.message === 'string'
+            ? v.message
+            : null
+    if (text !== null) {
+      const n = occurrences(text.toLocaleLowerCase(), needle)
+      for (let i = 0; i < n; i++) out.push(inCard < 0 ? null : inCard)
+      return
+    }
+    if (v.kind === 'tool' || v.kind === 'permission') return
+    for (const key of Object.keys(v)) walk(v[key], inCard, depth + 1)
+  }
+  walk(row, -1, 0)
+  return out
+}
+
+/** Which card holds the `k`-th occurrence of `needle` in a row, or null. */
+export function cardHolding(row: unknown, needle: string, k: number): number | null {
+  return occurrenceCards(row, needle)[k] ?? null
+}
+
+/** The `k`-th occurrence's place among the words ON SCREEN in the row: the
+ *  occurrences before it that live in a closed card never opened (no body in
+ *  the document) are not there to count. `onScreen(card)` says whether a
+ *  card's words are in the document: open, or built once and closed since. */
+export function onScreenIndex(
+  where: readonly (number | null)[],
+  k: number,
+  onScreen: (card: number) => boolean
+): number {
+  let hidden = 0
+  for (let i = 0; i < k && i < where.length; i++) {
+    const card = where[i]
+    if (card !== null && !onScreen(card)) hidden++
+  }
+  return k - hidden
+}
+
 /** One match: its row, and which occurrence it is within that row. */
 export interface Match {
   row: number
@@ -265,8 +332,36 @@ export function useTranscriptSearch({
       if (currentMatch) {
         const rowEl = scroller.querySelector<HTMLElement>(`[data-row-index="${currentMatch.row}"]`)
         if (rowEl) {
+          // The words may be inside a closed card of the agent's working
+          // notes (WorkStretch): read off the row's data which card holds
+          // them, open that one, and let the marking run again once its body
+          // is on screen. Decided on the data, not on the ranges found: a
+          // card opened once keeps its body in the document, closed, and a
+          // range found there would mark words the reader cannot see. Then
+          // the place among the words on screen: a card never opened has
+          // none of its words there, so its occurrences before this one are
+          // not counted (the Terminal view's row is a whole turn).
+          const needle = settled.toLocaleLowerCase()
+          const where = occurrenceCards(rows[currentMatch.row], needle)
+          const cards = rowEl.querySelectorAll<HTMLDetailsElement>('details.stretch-card')
+          const holder = where[currentMatch.k] ?? null
+          const card = holder === null ? null : cards[holder]
+          if (card && !card.open) {
+            // The observer watches children and text, not attributes, and a
+            // card opened once keeps its body: mark again a beat later.
+            card.open = true
+            setTimeout(mark, 60)
+            return
+          }
           const inRow = findRanges(rowEl, settled, MESSAGE_TEXT)
-          currentRange = inRow[Math.min(currentMatch.k, inRow.length - 1)] ?? null
+          const at = onScreenIndex(
+            where,
+            currentMatch.k,
+            (index) =>
+              !!cards[index] &&
+              (cards[index].open || !!cards[index].querySelector('.stretch-steps'))
+          )
+          currentRange = inRow[Math.min(at, inRow.length - 1)] ?? null
         }
       }
       byPane.set(sessionId, { all, current: currentRange })

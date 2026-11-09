@@ -57,6 +57,7 @@ import {
   type OnboardingState
 } from '../shared/onboarding'
 import type { DigestRequest } from '../shared/exchange-digest'
+import type { WorkDigestRequest } from '../shared/work-digest'
 import type {
   ServerInstallProgress,
   ServerInstallResult,
@@ -1728,6 +1729,10 @@ const electronAPI = {
   // model call in main (src/main/exchange-digest.ts), answered as a result.
   exchangeDigest: (request: DigestRequest) => ipcRenderer.invoke('exchanges:digest', request),
   exchangeDigestsOf: (sessionId: string) => ipcRenderer.invoke('exchanges:digests-of', sessionId),
+  // The title of a card of the agent's working notes (PRDCT-4212), the same
+  // one-shot runner, filed under the tab beside the exchange digests.
+  workDigest: (request: WorkDigestRequest) => ipcRenderer.invoke('work:digest', request),
+  workDigestsOf: (sessionId: string) => ipcRenderer.invoke('work:digests-of', sessionId),
   // The GitHub pull request panel (plugins/github). Main runs the user's own
   // `gh`; every call answers with a GithubResult rather than throwing, so the
   // panel can tell "gh is missing" from "not signed in" from "gh said no".

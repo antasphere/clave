@@ -43,18 +43,16 @@ import { SenderChip } from './Delivery'
 import { DeliveryStack } from './DeliveryStack'
 import { parseDelivery } from '../../../src/shared/exchange-provenance'
 import { nextPermissionMode } from './permission-mode'
-import {
-  blockKey,
-  groupEntries,
-  visibleEntries,
-  type Block,
-  type ToolGroup as ToolRun
-} from './tools'
+import { groupEntries, visibleEntries, type ToolGroup as ToolRun } from './tools'
 import { ToolGroup } from './ToolGroup'
 import { ToolDisclosure } from './disclosure'
 import { ExchangeContext, digestMessages, indexExchanges, recentTimelines } from './exchanges'
-import { useTimelineDigests } from './digest'
+import { useStretchDigests, useTimelineDigests } from './digest'
 import { digestKey } from '../../../src/shared/exchange-digest'
+import { workDigestKey } from '../../../src/shared/work-digest'
+import { foldStretches, rowKey, stretchNotes, toolCount, type Row } from './stretches'
+import { WorkStretch } from './WorkStretch'
+import { StretchContext, recentStretches } from './stretch-context'
 import { useExchangeJump } from './jump'
 import { useSessionStore } from '../../../src/renderer/src/store/session-store'
 import { ApprovalRun, InlineQuestion, PermissionRow, PromptDock } from './PromptDock'
@@ -424,7 +422,7 @@ function TranscriptRow({
   rowKey
 }: {
   rowKey: string
-  block: Block
+  block: Row
   first: boolean
   arriving: boolean
   onError: (error: unknown) => void
@@ -436,17 +434,36 @@ function TranscriptRow({
       data-first={first ? 'true' : undefined}
       data-arrive={arrive ? 'true' : undefined}
     >
-      {block.kind === 'delivery-group' ? (
-        <DeliveryStack group={block} id={rowKey} />
-      ) : block.kind === 'tool-group' ? (
-        <ToolRow group={block} />
-      ) : block.kind === 'approval-group' ? (
-        <ApprovalRun group={block} id={rowKey} />
-      ) : (
-        <EntryRow entry={block} onError={onError} />
-      )}
+      <BlockView block={block} rowKey={rowKey} onError={onError} />
     </div>
   )
+}
+/** One block as this view draws it. A card of working notes draws the
+ *  blocks inside it through the same function, so a note reads as a note
+ *  and a run of tools opens as it does anywhere else. */
+function BlockView({
+  block,
+  rowKey: key,
+  onError
+}: {
+  block: Row
+  rowKey: string
+  onError: (error: unknown) => void
+}): React.JSX.Element {
+  if (block.kind === 'work-stretch')
+    return (
+      <WorkStretch
+        stretch={block}
+        id={key}
+        render={(inner, innerKey) => (
+          <BlockView key={innerKey} block={inner} rowKey={innerKey} onError={onError} />
+        )}
+      />
+    )
+  if (block.kind === 'delivery-group') return <DeliveryStack group={block} id={key} />
+  if (block.kind === 'tool-group') return <ToolRow group={block} />
+  if (block.kind === 'approval-group') return <ApprovalRun group={block} id={key} />
+  return <EntryRow entry={block} onError={onError} />
 }
 export function ChatView({ session, onState, visible = true }: ChatViewProps): React.JSX.Element {
   const [conversation, dispatch] = useReducer(reduceConversation, {
@@ -903,6 +920,11 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
   // a page of the past arriving in front must not shift a key, or every turn
   // below it would render as another and the column's arrival would replay on
   // the ones at the end. Memoised, so a keystroke rebuilds none of it.
+  // Then, when the reader wants it, the agent's working notes of every
+  // finished turn fold into one card (`foldStretches`, PRDCT-4212): the turn
+  // in progress is over once the conversation neither works nor waits.
+  const foldNotes = useSessionStore((s) => s.foldWorkNotes)
+  const turnOver = state !== 'working' && state !== 'blocked'
   const { blocks, liveCards, tail } = useMemo(() => {
     const entries = withServerPending(presentation.entries, remotePending, session.id)
     const ordinal = new Map<Entry, number>()
@@ -915,17 +937,17 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
         e.kind === 'permission' && live.has(e) && isInputRequest(e.request)
     )
     const floatingSet = new Set<Entry>(floating)
+    const grouped = groupEntries(visibleEntries(entries).filter((e) => !floatingSet.has(e)))
+    const rows: Row[] = foldNotes ? foldStretches(grouped, turnOver) : grouped
     return {
-      blocks: groupEntries(visibleEntries(entries).filter((e) => !floatingSet.has(e))).map(
-        (block) => ({
-          block,
-          key: blockKey(block, (entry) => ordinal.get(entry))
-        })
-      ),
+      blocks: rows.map((block) => ({
+        block,
+        key: rowKey(block, (entry) => ordinal.get(entry))
+      })),
       liveCards: live,
       tail: floating
     }
-  }, [presentation.entries, presentation.first, remotePending, session.id])
+  }, [presentation.entries, presentation.first, remotePending, session.id, foldNotes, turnOver])
   // The reader's open tool rows, kept across the rows' unmounts (`ToolDisclosure`).
   const [disclosure] = useState(() => new Map<string, boolean>())
   // What the reader typed into a question card, kept across the rows' unmounts.
@@ -975,6 +997,22 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
     [blocks, exchanges]
   )
   useTimelineDigests(session.id, digestTimelines, exchanges.launch)
+  // The cards of working notes: whose tab, which are titled (the latest),
+  // and the titles asked for by the view, filed by tab (digest.ts).
+  const stretchContext = useMemo(
+    () => ({ sessionId: session.id, recent: recentStretches(blocks), launch: exchanges.launch }),
+    [session.id, blocks, exchanges.launch]
+  )
+  const stretchDigests = useMemo(
+    () =>
+      blocks.flatMap(({ block, key }) => {
+        if (block.kind !== 'work-stretch' || !stretchContext.recent.has(key)) return []
+        const notes = stretchNotes(block)
+        return [{ key: workDigestKey(notes), notes, tools: toolCount(block) }]
+      }),
+    [blocks, stretchContext]
+  )
+  useStretchDigests(session.id, stretchDigests, exchanges.launch)
   // The mark is the agent at work, nothing else: it leaves with the state.
   const head = pastHead(past, conversation.entries.length, state === 'ended')
   const showMark = state === 'working'
@@ -1093,23 +1131,25 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
                 }}
               >
                 <ExchangeContext.Provider value={exchanges}>
-                  <TranscriptRows
-                    rows={blocks}
-                    settled={pastRead}
-                    scroll={transcript.scroll}
-                    reveal={reveal}
-                  >
-                    {({ block, key }, index, arriving) => (
-                      <TranscriptRow
-                        rowKey={key}
-                        key={key}
-                        block={block}
-                        first={index === 0}
-                        arriving={arriving}
-                        onError={report}
-                      />
-                    )}
-                  </TranscriptRows>
+                  <StretchContext.Provider value={stretchContext}>
+                    <TranscriptRows
+                      rows={blocks}
+                      settled={pastRead}
+                      scroll={transcript.scroll}
+                      reveal={reveal}
+                    >
+                      {({ block, key }, index, arriving) => (
+                        <TranscriptRow
+                          rowKey={key}
+                          key={key}
+                          block={block}
+                          first={index === 0}
+                          arriving={arriving}
+                          onError={report}
+                        />
+                      )}
+                    </TranscriptRows>
+                  </StretchContext.Provider>
                 </ExchangeContext.Provider>
                 {tail.length > 0 && (
                   <FormTail>

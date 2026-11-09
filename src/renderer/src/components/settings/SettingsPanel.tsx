@@ -335,6 +335,7 @@ function AppearanceSettings(): React.JSX.Element {
       </SettingsSection>
 
       <DensitySection />
+      <ConversationSection />
       <AgentMarkSection />
       <TreeSeparatorsSection />
       <SidebarWidgetsSection />
@@ -415,6 +416,27 @@ function DensitySection(): React.JSX.Element {
         </div>
         <TextSizeRow />
         <FontRow />
+      </SettingsCard>
+    </SettingsSection>
+  )
+}
+
+/** What the chat views fold away (PRDCT-4212): the agent's working notes,
+ *  the lines it writes between its tool runs on the way to an answer, into
+ *  one card once the turn is over. The toolbar's button flips the same
+ *  choice. Off, every line stays in the transcript at full size. */
+function ConversationSection(): React.JSX.Element {
+  const fold = useSessionStore((s) => s.foldWorkNotes)
+  const setFold = useSessionStore((s) => s.setFoldWorkNotes)
+  return (
+    <SettingsSection title="Conversation" description="How a long turn reads in the chat views.">
+      <SettingsCard>
+        <ToggleRow
+          label="Fold the agent's working notes"
+          description="Once a turn is over, the notes the agent wrote between its tool calls settle into one titled card. Its answer, its questions and its errors always stay in the transcript. Also on the toolbar."
+          checked={fold}
+          onChange={setFold}
+        />
       </SettingsCard>
     </SettingsSection>
   )
