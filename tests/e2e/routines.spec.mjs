@@ -1,7 +1,9 @@
 /**
  * Routines (ADR 0004): a `.clave` group schedules agent sessions the server
- * runs by itself; the run reports through `clave_routine_report`; the toolbar
- * carries the badge and the floating panel.
+ * runs by itself; the run reports through `clave_routine_report`. The toolbar
+ * carries ONE Routines button (PRDCT-4244) whose popover lists the routines in
+ * one section per machine; a row carries the routine's badge and opens its
+ * panel in the same popover.
  *
  * Real hidden Electron, a fixture `claude` binary that speaks stream-json and
  * calls the real Clave MCP endpoint its `--mcp-config` names, and the real
@@ -12,7 +14,7 @@
  *
  *  1. the catch-up fires once as declared (model, permissions off, the
  *     contract plugin, the first message), the fixture reports through the
- *     tool, the deck is written from the template with the data, the badge
+ *     tool, the deck is written from the template with the data, the row
  *     reads ok and the panel shows the headline; Dismiss puts the dot away;
  *  2. an occurrence another server claimed is not run here (machine scope);
  *  3. a run that ends without a report is failed, with the reason;
@@ -255,6 +257,46 @@ const runsOf = async (fixture, name) =>
   (await listRoutines(fixture)).routines.find((v) => v.routine.name === name)?.runs ?? []
 const ended = (run) => run && run.state !== 'running' && run.state !== 'waiting'
 
+// The one Routines button, its popover's list, and a routine's row in it.
+const LIST = '[data-testid="routines-list"]'
+const row = (win, name) =>
+  win.locator(`${LIST} [data-testid="routine-row"][data-routine="${name}"]`)
+const panelOf = (win, name) => win.locator(`[data-testid="routine-panel"][data-routine="${name}"]`)
+/** Show the list: open the popover, or go back from a panel shown in it.
+ *  Retried from a fresh click: a tab taking focus as it mounts can close the
+ *  popover while it animates in. */
+async function openList(win) {
+  const list = win.locator(LIST)
+  for (let attempt = 0; attempt < 10; attempt++) {
+    if (await list.isVisible()) return
+    const back = win.locator('[data-testid="routine-back"]')
+    if (await back.isVisible()) await back.click()
+    else await win.locator('[data-testid="routines-button"]').click()
+    if (
+      await list.waitFor({ timeout: 1000 }).then(
+        () => true,
+        () => false
+      )
+    )
+      return
+  }
+  await list.waitFor({ timeout: 5000 })
+}
+/** Open a routine's panel from its row. */
+async function openPanel(win, name) {
+  await openList(win)
+  await row(win, name).click()
+  const panel = panelOf(win, name)
+  await panel.waitFor({ timeout: 5000 })
+  return panel
+}
+/** Escape closes the popover; wait until it is gone before the next click. */
+async function closePopover(win) {
+  await win.keyboard.press('Escape')
+  await win.locator(LIST).waitFor({ state: 'hidden', timeout: 5000 })
+  await win.locator('[data-testid="routine-panel"]').waitFor({ state: 'hidden', timeout: 5000 })
+}
+
 export async function run(t) {
   seedFixture()
   seedWorkspaces(DIR, { workspaces: [WS], activeWorkspaceId: WS.id, fresh: true })
@@ -346,18 +388,17 @@ export async function run(t) {
       deckHtml
     )
 
-    // The badge: ok and unseen.
-    const button = win.locator('[data-testid="routine-button"][data-routine="Workspace health"]')
-    await until(async () => (await button.getAttribute('data-state')) === 'ok', { tries: 40 })
-    t.equal('the toolbar button reads ok', await button.getAttribute('data-state'), 'ok')
+    // The badge: ok and unseen, on the routine's row in the popover.
+    await openList(win)
+    const healthRow = row(win, 'Workspace health')
+    await until(async () => (await healthRow.getAttribute('data-state')) === 'ok', { tries: 40 })
+    t.equal('the Workspace health row reads ok', await healthRow.getAttribute('data-state'), 'ok')
     t.equal(
-      'the badge dot is there while unseen',
-      await button.locator('[data-testid="routine-dot"]').count(),
+      'the row carries the dot while the run is unseen',
+      await healthRow.locator('[data-testid="routine-row-dot"]').count(),
       1
     )
-    await button.click()
-    const panel = win.locator('[data-testid="routine-panel"][data-routine="Workspace health"]')
-    await panel.waitFor({ timeout: 5000 })
+    const panel = await openPanel(win, 'Workspace health')
     t.check(
       'the panel shows the headline (the envelope card, no viewer here)',
       (await panel.locator('[data-testid="routine-report-headline"]').textContent()) ===
@@ -372,12 +413,17 @@ export async function run(t) {
     // Dismiss and Open as a tab live in the panel's small menu, behind More.
     await panel.locator('[data-testid="routine-more"]').click()
     await panel.locator('[data-testid="routine-dismiss"]').click()
-    await until(async () => (await button.getAttribute('data-state')) === 'seen', { tries: 40 })
+    await openList(win)
+    await until(async () => (await healthRow.getAttribute('data-state')) === 'seen', {
+      tries: 40
+    })
+    t.equal('Dismiss puts the row back to seen', await healthRow.getAttribute('data-state'), 'seen')
     t.equal(
       'Dismiss puts the dot away',
-      await button.locator('[data-testid="routine-dot"]').count(),
+      await healthRow.locator('[data-testid="routine-row-dot"]').count(),
       0
     )
+    await openPanel(win, 'Workspace health')
 
     // ── 6. Discussion: the chat view on the run's conversation, in the panel ──
     await panel.locator('[data-testid="routine-tab-discussion"]').click()
@@ -406,7 +452,7 @@ export async function run(t) {
         .filter((e) => e.kind === 'spawn')
         .map((e) => ({ sid: e.sid, resume: e.resume }))
     )
-    await win.keyboard.press('Escape')
+    await closePopover(win)
 
     // ── 2. An occurrence another server claimed is not run here ──
     t.equal(
@@ -414,11 +460,10 @@ export async function run(t) {
       (await runsOf(fixture, 'Claimed elsewhere')).length,
       0
     )
+    await openList(win)
     t.equal(
-      'its button says it never ran',
-      await win
-        .locator('[data-testid="routine-button"][data-routine="Claimed elsewhere"]')
-        .getAttribute('data-state'),
+      'its row says it never ran',
+      await row(win, 'Claimed elsewhere').getAttribute('data-state'),
       'never'
     )
 
@@ -430,17 +475,13 @@ export async function run(t) {
       'team scope is not built yet'
     )
     t.equal(
-      'its button reads invalid',
-      await win
-        .locator('[data-testid="routine-button"][data-routine="Team job"]')
-        .getAttribute('data-state'),
+      'its row reads invalid',
+      await row(win, 'Team job').getAttribute('data-state'),
       'invalid'
     )
 
     // ── 3. A run that ends without a report is failed ──
-    await win.locator('[data-testid="routine-button"][data-routine="Silent"]').click()
-    const silentPanel = win.locator('[data-testid="routine-panel"][data-routine="Silent"]')
-    await silentPanel.waitFor({ timeout: 5000 })
+    const silentPanel = await openPanel(win, 'Silent')
     await silentPanel.locator('[data-testid="routine-run-again"]').click()
     const silent = await until(
       async () => {
@@ -452,11 +493,10 @@ export async function run(t) {
     t.equal('a run with no report is failed', silent?.state, 'failed')
     t.check('with the reason', /without a report/.test(silent?.reason ?? ''), silent?.reason)
     t.equal('a manual run is marked so', silent?.trigger, 'manual')
-    await win.keyboard.press('Escape')
+    await closePopover(win)
 
     // ── Open as a tab: an ordinary tab on the run's conversation, in this window ──
-    await button.click()
-    await panel.waitFor({ timeout: 5000 })
+    await openPanel(win, 'Workspace health')
     const rowsBefore = await win.locator('.sidebar-item').count()
     await panel.locator('[data-testid="routine-more"]').click()
     await panel.locator('[data-testid="routine-open-tab"]').click()
@@ -475,12 +515,12 @@ export async function run(t) {
       { tries: 60, gapMs: 250 }
     )
     t.check("the tab started the run's conversation", !!thirdSpawn, thirdSpawn)
-    await win.keyboard.press('Escape')
+    // Open as a tab closes the popover by itself; Escape would reach the tab.
+    await win.locator(LIST).waitFor({ state: 'hidden', timeout: 5000 })
+    await panel.waitFor({ state: 'hidden', timeout: 5000 })
 
     // ── 4. Invalid data is refused back with the errors; the corrected call lands ──
-    await win.locator('[data-testid="routine-button"][data-routine="Retry"]').click()
-    const retryPanel = win.locator('[data-testid="routine-panel"][data-routine="Retry"]')
-    await retryPanel.waitFor({ timeout: 5000 })
+    const retryPanel = await openPanel(win, 'Retry')
     await retryPanel.locator('[data-testid="routine-run-again"]').click()
     const retry = await until(
       async () => {
@@ -502,7 +542,7 @@ export async function run(t) {
       refusedText.slice(0, 300)
     )
     t.equal('the corrected report landed and the run is ok', retry?.state, 'ok')
-    await win.keyboard.press('Escape')
+    await closePopover(win)
   } finally {
     await app.close()
   }
