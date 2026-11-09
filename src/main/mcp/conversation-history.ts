@@ -157,6 +157,9 @@ export type ResumePlan =
       title: string
       model: string | null
       workspaceId: string | null
+      /** A Pi conversation's provider and thinking level, as the History knows them. */
+      piProvider: string | null
+      piThinking: string | null
     }
 
 export class ResumeRefused extends Error {}
@@ -169,7 +172,10 @@ export class ResumeRefused extends Error {}
 export async function planResume(
   lookups: HistoryLookups,
   conversationId: string,
-  dirExists: (path: string) => boolean
+  dirExists: (path: string) => boolean,
+  /** A directory the caller named: the conversation opens there, whatever
+   *  its transcript says (a directory moved or gone, round 1 F4). */
+  callerCwd?: string
 ): Promise<ResumePlan> {
   const id = conversationId.trim()
   if (!id) throw new ResumeRefused('resume names no conversation id.')
@@ -188,21 +194,114 @@ export async function planResume(
     throw new ResumeRefused(
       `The transcript of conversation "${id}" ("${entry.title}") is gone; there is nothing to resume.`
     )
-  if (!entry.cwd)
+  if (!callerCwd && !entry.cwd)
     throw new ResumeRefused(
       `Conversation "${id}" ("${entry.title}") names no working directory; it cannot be resumed. Pass cwd to open it there.`
     )
-  if (!dirExists(entry.cwd))
+  if (!callerCwd && !dirExists(entry.cwd))
     throw new ResumeRefused(
       `The working directory of conversation "${id}" ("${entry.title}"), ${entry.cwd}, no longer exists. Pass cwd to open it elsewhere.`
     )
   return {
     kind: 'start',
-    cwd: entry.cwd,
+    cwd: callerCwd || entry.cwd,
     provider: entry.provider as 'claude' | 'codex' | 'pi',
     title: entry.title,
     model: entry.model ?? null,
-    workspaceId: entry.workspaceId
+    workspaceId: entry.workspaceId,
+    piProvider: entry.agentProvider ?? null,
+    piThinking: entry.thinking ?? null
+  }
+}
+
+/** What `openResumed` asks of the host. */
+export interface ResumeOpenIo {
+  isDirectory(path: string): boolean
+  /** Whether a workspace id is registered, so a conversation's workspace is
+   *  named only when the open can land in it. */
+  isRegisteredWorkspace(id: string): boolean
+  /** The Resume the person's button makes, under the tab's own id. */
+  restart(sessionId: string): Promise<{ resumed: boolean }>
+  /** Shows the tab, as the dialog shows the one it found; a failure here
+   *  never undoes the answer. */
+  focus(sessionId: string): Promise<void>
+}
+
+/**
+ * `clave_open_session` with `resume`, the whole decision (round 1, E2: it
+ * lived in the tool's host and no test reached it): a live holder is focused
+ * and answered, never a second process; a stopped holder is resumed in place,
+ * which needs a tab identity as `clave_resume_session` does (round 1, F5);
+ * otherwise the open goes on with the conversation's own directory,
+ * provider, model, title and Pi settings filled in where the caller named
+ * none, and `resumeSessionId` for the spawn. The caller's `mode`, when it
+ * names one, must be the conversation's provider (round 1, F1: a default
+ * filled in by the schema is not a choice, so the schema fills none).
+ */
+export async function openResumed(
+  lookups: HistoryLookups,
+  p: Record<string, unknown>,
+  caller: string | undefined,
+  io: ResumeOpenIo
+): Promise<{ result: unknown } | { payload: Record<string, unknown> }> {
+  const resume = String(p.resume).trim()
+  if (p.server !== undefined)
+    throw new ResumeRefused(
+      'resume reopens a conversation of this Mac; omit server. A stopped tab on a Clave server is resumed with clave_resume_session.'
+    )
+  const callerCwd = typeof p.cwd === 'string' && p.cwd ? p.cwd : undefined
+  const plan = await planResume(lookups, resume, io.isDirectory, callerCwd)
+  if (plan.kind === 'open' || plan.kind === 'stopped') {
+    let resumed = false
+    if (plan.kind === 'stopped') {
+      if (!caller)
+        throw new ResumeRefused(
+          'clave_open_session with resume of a stopped tab must be called from inside a Clave agent tab — this request has no tab identity. clave_history says which tab holds the conversation.'
+        )
+      resumed = (await io.restart(plan.sessionId)).resumed
+    }
+    await io.focus(plan.sessionId).catch(() => {})
+    return {
+      result: {
+        sessionId: plan.sessionId,
+        groupId: null,
+        conversation: resume,
+        alreadyOpen: true,
+        resumed,
+        note:
+          plan.kind === 'open'
+            ? 'A tab already runs this conversation; it was focused and nothing was started.'
+            : 'A stopped tab held this conversation; it was resumed in place.'
+      }
+    }
+  }
+  const mode = typeof p.mode === 'string' ? p.mode : undefined
+  if (mode !== undefined && mode !== plan.provider)
+    throw new ResumeRefused(
+      `Conversation "${resume}" is ${plan.provider}'s; mode "${mode}" cannot resume it. Omit mode or pass "${plan.provider}".`
+    )
+  const workspace =
+    p.workspace === undefined && plan.workspaceId && io.isRegisteredWorkspace(plan.workspaceId)
+      ? { workspace: plan.workspaceId }
+      : {}
+  const pi =
+    plan.provider === 'pi'
+      ? {
+          ...(p.provider === undefined && plan.piProvider ? { provider: plan.piProvider } : {}),
+          ...(p.thinking === undefined && plan.piThinking ? { thinking: plan.piThinking } : {})
+        }
+      : {}
+  return {
+    payload: {
+      ...p,
+      mode: plan.provider,
+      cwd: plan.cwd,
+      ...(p.model === undefined && plan.model ? { model: plan.model } : {}),
+      ...(p.name === undefined ? { name: plan.title } : {}),
+      ...workspace,
+      ...pi,
+      resumeSessionId: resume
+    }
   }
 }
 

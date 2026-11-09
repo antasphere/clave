@@ -21,8 +21,20 @@
  * - the History then says which tab holds it (`open: { sessionId, alive }`),
  *   and a second resume of the same id answers that tab (`alreadyOpen`), with
  *   no second tab in the sidebar;
+ * - a tab whose CLI process ENDED still holds its conversation: the History
+ *   names it `open: { sessionId, alive: false }` (the restore listing leaves
+ *   out a hosted session whose process ended, so the tool reads those records
+ *   by id), and a resume of the conversation resumes THAT tab in place
+ *   (`alreadyOpen`, `resumed: true`), its CLI relaunched with `--resume <id>`,
+ *   with no second tab (round 1, F2);
  * - an id the History does not know, and an open with neither `cwd` nor
- *   `resume`, are refused in words.
+ *   `resume`, are refused in words;
+ * - a Codex conversation (a rollout seeded under CLAVE_CODEX_ROOT the way the
+ *   Codex CLI writes one) is a History row of provider `codex`, resumable, and
+ *   `clave_open_session { resume }` WITHOUT `mode` reopens it as a Codex tab
+ *   whose spawn carries the thread id; naming `mode: 'claude'` for it is
+ *   refused in words (round 1, F1: the schema used to default `mode` to
+ *   `claude`, so a Codex or Pi conversation could not be resumed at all).
  *
  * The spawn's evidence is read twice, at two depths. The terminal journal
  * (`spawnJournal`) carries the options the terminal manager received, so its
@@ -38,10 +50,14 @@
  * title, the resume needs a `cwd`, the spawn loses `resumeSessionId` on the
  * served road, the CLI starts without `--resume`, the History does not see the
  * new tab as the conversation's holder, a second resume starts a second tab,
- * or either refusal is missing.
+ * a tab whose process ended is not seen as the holder or a resume of its
+ * conversation opens a second tab instead of relaunching it, either refusal
+ * is missing, the Codex rollout is not a resumable `codex` row, a resume of
+ * it without `mode` errors or spawns no Codex tab on the thread, or a
+ * mismatched `mode` is not refused.
  *
- * Nothing here reaches Anthropic: `claude` on PATH is a stand-in that logs its
- * argv and waits; CLAVE_TRANSCRIPTS_ROOT, CLAVE_CODEX_ROOT and CLAVE_PI_ROOT
+ * Nothing here reaches Anthropic or OpenAI: `claude` and `codex` on PATH are
+ * stand-ins that log their argv and wait; CLAVE_TRANSCRIPTS_ROOT, CLAVE_CODEX_ROOT and CLAVE_PI_ROOT
  * point the History at fixture folders, never at the person's own stores.
  */
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
@@ -67,9 +83,13 @@ const TRANSCRIPTS = path.join(ROOT, 'transcripts')
 const CODEX = path.join(ROOT, 'codex-sessions')
 const PI = path.join(ROOT, 'pi-sessions')
 const ARGV_LOG = path.join(ROOT, 'argv.jsonl')
+const CODEX_ARGV_LOG = path.join(ROOT, 'codex-argv.jsonl')
 const CONVERSATION = '5e5e5e5e-0000-4000-8000-00000000a236'
 const UNKNOWN = '00000000-0000-4000-8000-00000000dead'
 const TITLE = 'Odoo accounting research'
+/** The Codex thread, and the first human message its row is titled by. */
+const CODEX_THREAD = '6c6c6c6c-0000-4000-8000-00000000c0de'
+const CODEX_TITLE = 'Draft the Peppol invoice export'
 const WS = {
   id: 'cdcdcdcd-0000-4000-8000-0000000004a6',
   name: 'History resume',
@@ -78,20 +98,24 @@ const WS = {
   createdAt: 1
 }
 
-/** Every start of the stand-in `claude`, oldest first. */
-const launches = () => {
+/** Every start of a stand-in, oldest first, from its argv log. */
+const readLog = (file) => {
   try {
-    return readFileSync(ARGV_LOG, 'utf8').trim().split('\n').filter(Boolean).map(JSON.parse)
+    return readFileSync(file, 'utf8').trim().split('\n').filter(Boolean).map(JSON.parse)
   } catch {
     return []
   }
 }
+/** Every start of the stand-in `claude`, oldest first. */
+const launches = () => readLog(ARGV_LOG)
+/** Every start of the stand-in `codex`, oldest first. */
+const codexLaunches = () => readLog(CODEX_ARGV_LOG)
 const argAfter = (argv, flag) => (argv.includes(flag) ? argv[argv.indexOf(flag) + 1] : null)
 const rowCount = (win, id) =>
   win.evaluate((sid) => document.querySelectorAll(`[data-sidebar-item-id="${sid}"]`).length, id)
 /** The History rows of the seeded conversation, from one `clave_history` answer. */
-const rowsOf = (payload) =>
-  (payload?.conversations ?? []).filter((r) => r.conversationId === CONVERSATION)
+const rowsOf = (payload, id = CONVERSATION) =>
+  (payload?.conversations ?? []).filter((r) => r.conversationId === id)
 const textOf = (rpc) => rpc?.result?.content?.find((c) => c.type === 'text')?.text ?? ''
 
 function writeFixtures() {
@@ -145,7 +169,52 @@ setInterval(() => {}, 1000);
 `,
     { mode: 0o755 }
   )
-  // A login shell that keeps the stand-in first on PATH.
+  // The Codex thread, where the Codex CLI keeps it: <root>/YYYY/MM/DD/
+  // rollout-<time>-<threadId>.jsonl. The `session_meta` head names the
+  // thread, its cwd and its start (`scanCodexHead`); the user message after
+  // it titles the row.
+  const day = path.join(CODEX, '2026', '11', '09')
+  mkdirSync(day, { recursive: true })
+  writeFileSync(
+    path.join(day, `rollout-2026-11-09T08-00-00-${CODEX_THREAD}.jsonl`),
+    [
+      {
+        timestamp: '2026-11-09T08:00:00.100Z',
+        type: 'session_meta',
+        payload: {
+          id: CODEX_THREAD,
+          timestamp: '2026-11-09T08:00:00.000Z',
+          cwd: ROOT,
+          originator: 'codex-tui',
+          thread_source: 'user'
+        }
+      },
+      {
+        timestamp: '2026-11-09T08:00:10.000Z',
+        type: 'response_item',
+        payload: {
+          type: 'message',
+          role: 'user',
+          content: [{ type: 'input_text', text: CODEX_TITLE }]
+        }
+      }
+    ]
+      .map((line) => JSON.stringify(line))
+      .join('\n') + '\n'
+  )
+  // The stand-in Codex CLI, the same shape: logs its argv and its tab, waits.
+  writeFileSync(
+    path.join(ROOT, 'bin', 'codex'),
+    `#!${process.execPath}
+const fs = require('node:fs');
+const argv = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(CODEX_ARGV_LOG)}, JSON.stringify({ pid: process.pid, tab: process.env.CLAVE_SESSION_ID ?? null, argv }) + '\\n');
+process.stdout.write('stand-in codex\\r\\n');
+setInterval(() => {}, 1000);
+`,
+    { mode: 0o755 }
+  )
+  // A login shell that keeps the stand-ins first on PATH.
   writeFileSync(
     path.join(ROOT, 'bin', 'sh'),
     `#!/bin/sh
@@ -255,6 +324,61 @@ export async function run(t) {
       1
     )
 
+    // ── e2. A tab whose process ended still holds it, and is resumed in place (F2) ──
+    // The stand-in's end is the pty's: the History sees the tab stopped once
+    // the exit is seen.
+    try {
+      if (started) process.kill(started.pid, 'SIGKILL')
+    } catch (error) {
+      if (error.code !== 'ESRCH') throw error
+    }
+    const stopped = await until(
+      async () => {
+        const r = rowsOf(toolPayload(await client.call('clave_history', { open: true })))
+        return r.length === 1 && r[0].open?.alive === false ? r : null
+      },
+      { tries: 60 }
+    )
+    t.check(
+      'once its CLI ended, the History still names the tab, stopped',
+      stopped?.[0]?.open?.sessionId === tab && stopped?.[0]?.open?.alive === false,
+      rowsOf(toolPayload(await client.call('clave_history', { open: true })))
+    )
+    const revived = await client.call('clave_open_session', { resume: CONVERSATION })
+    t.check(
+      'a resume of the stopped tab’s conversation answers',
+      !toolErrored(revived),
+      textOf(revived)
+    )
+    const revivedPayload = toolPayload(revived)
+    t.check('it answers alreadyOpen', revivedPayload?.alreadyOpen === true, revivedPayload)
+    t.equal('it resumed the tab', revivedPayload?.resumed, true)
+    t.equal('the same tab, in place', revivedPayload?.sessionId, tab)
+    const relaunched = await until(
+      () => {
+        const mine = launches().filter((l) => l.tab === tab)
+        return mine.length === 2 ? mine[1] : null
+      },
+      { tries: 60, gapMs: 250 }
+    )
+    t.check(
+      'the tab relaunched its CLI once',
+      !!relaunched,
+      launches().filter((l) => l.tab === tab)
+    )
+    t.equal(
+      'on the same conversation (--resume)',
+      argAfter(relaunched?.argv ?? [], '--resume'),
+      CONVERSATION
+    )
+    await new Promise((r) => setTimeout(r, 1000))
+    t.equal('the sidebar still has one row for the tab', await rowCount(win, tab), 1)
+    const aliveAgain = await until(async () => {
+      const r = rowsOf(toolPayload(await client.call('clave_history', { open: true })))
+      return r.length === 1 && r[0].open?.sessionId === tab && r[0].open?.alive === true ? r : null
+    })
+    t.check('the History names the tab alive again', !!aliveAgain)
+
     // ── f. An id the History does not know ──
     const unknown = await client.call('clave_open_session', { resume: UNKNOWN })
     t.check('an unknown conversation is refused', toolErrored(unknown), textOf(unknown))
@@ -264,10 +388,49 @@ export async function run(t) {
     const bare = await client.call('clave_open_session', {})
     t.check('an open with neither cwd nor resume is refused', toolErrored(bare), textOf(bare))
     t.check('because cwd is required', textOf(bare).includes('cwd is required'), textOf(bare))
+
+    // ── h. A Codex conversation resumes without naming `mode` (F1) ──
+    const codexListed = toolPayload(await client.call('clave_history', { provider: 'codex' }))
+    const codexRows = rowsOf(codexListed, CODEX_THREAD)
+    t.equal('the seeded Codex thread is one row of the History', codexRows.length, 1)
+    t.equal('it is Codex’s', codexRows[0]?.provider, 'codex')
+    t.equal('in the thread’s own directory', codexRows[0]?.cwd, ROOT)
+    t.equal('it is resumable', codexRows[0]?.resumable, true)
+    t.equal('no tab holds it yet', codexRows[0]?.open, null)
+
+    const wrongMode = await client.call('clave_open_session', {
+      resume: CODEX_THREAD,
+      mode: 'claude'
+    })
+    t.check('a resume of it as claude is refused', toolErrored(wrongMode), textOf(wrongMode))
+    t.check(
+      'in words that say the mode cannot resume it',
+      textOf(wrongMode).includes('cannot resume it'),
+      textOf(wrongMode)
+    )
+
+    const codexSpawns = spawnJournal(DIR)
+    const codexOpened = await client.call('clave_open_session', {
+      resume: CODEX_THREAD,
+      chat: false
+    })
+    t.check('a resume of it with no mode answers', !toolErrored(codexOpened), textOf(codexOpened))
+    const codexTab = toolPayload(codexOpened)?.sessionId
+    t.check(
+      'it answers a tab id, a new one',
+      typeof codexTab === 'string' && codexTab !== tab,
+      toolPayload(codexOpened)
+    )
+    const codexSpawn = await until(async () =>
+      (await codexSpawns()).find((s) => s.resumeSessionId === CODEX_THREAD)
+    )
+    t.check('the spawn carries the thread to resume', !!codexSpawn, await codexSpawns())
+    t.equal('as a Codex tab', codexSpawn?.codexMode, true)
+    t.equal('in the thread’s own directory', codexSpawn?.cwd, ROOT)
   } finally {
     if (app) await app.close()
     // Only the stand-ins this spec started are ours to kill, by PID.
-    for (const { pid } of launches()) {
+    for (const { pid } of [...launches(), ...codexLaunches()]) {
       try {
         process.kill(pid, 'SIGKILL')
       } catch (error) {

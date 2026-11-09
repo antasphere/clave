@@ -21,18 +21,32 @@
  * restore's start, so a stopped chat record there comes back as it always
  * did. Pinned here so the two roads stay distinguishable.
  *
+ * Part 3, a refused start on the shipped in-process road (round 1, F3): a
+ * dead Claude terminal record whose account is gone (no token for
+ * `claudeProfileId`) is offered by the restore prompt; Restore asks for its
+ * start and the spawn is refused before any process. The tab must stay in the
+ * sidebar with its title and its record, and its Resume, which used to fail
+ * with an unreadable `{ "id": … }` (the server knew no session of that id),
+ * must re-run the spawn from the record and say WHY it failed again, in the
+ * tab: `Resume failed: The selected Claude account is no longer available.`
+ *
  * Fails if: the chat or the terminal row is missing after the boot (the
  * refusal removing the tab again), a record was discarded, a restore prompt
  * is shown for the daemon's records, Resume launches no CLI or launches it
- * without `--resume`, or the separate server's restore loses the chat.
+ * without `--resume`, the separate server's restore loses the chat, the
+ * refused start takes the tab or its record away, or its Resume shows no
+ * reason or not the account's.
  * Nothing here reaches Anthropic: the daemon runs the Claude chat adapter on
- * the stream-json stand-in `fixtures/claude-stream-stub.mjs`.
+ * the stream-json stand-in `fixtures/claude-stream-stub.mjs`; part 3's spawn
+ * is refused before any process, and a stand-in `claude` first on PATH would
+ * catch (and the spec would fail on) any CLI started anyway.
  */
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import {
   REPO,
   launchApp,
+  persistedWindows,
   seedWorkspaces,
   seedTrustedRoots,
   seedSessionRecord,
@@ -47,6 +61,9 @@ const CHAT_CONVERSATION = '3afafb91-0000-4000-8000-0000000000c1'
 const TERM_ID = '7a1d0c3e-0000-4000-8000-00000000c4b2'
 const CHAT_TITLE = 'Odoo accounting research'
 const TERM_TITLE = 'Build log'
+const GONE_ID = '7a1d0c3e-0000-4000-8000-00000000c4c3'
+const GONE_CONVERSATION = '3afafb91-0000-4000-8000-0000000000c3'
+const GONE_TITLE = 'Account gone'
 
 const lines = (file) =>
   existsSync(file)
@@ -277,6 +294,135 @@ export async function run(t) {
       )
     } finally {
       await app.close()
+    }
+  }
+
+  // ── Part 3: a refused start on the in-process road keeps the tab, and Resume says why ──
+  {
+    const DIR = userDataDir('stopped-tabs-refused')
+    const ROOT = fixturePath('stopped-tabs-refused-root')
+    const CLI_LOG = path.join(ROOT, 'claude-argv.jsonl')
+    rmSync(DIR, { recursive: true, force: true })
+    rmSync(ROOT, { recursive: true, force: true })
+    mkdirSync(path.join(ROOT, 'bin'), { recursive: true })
+    // A guard, not a part of the road: the spawn is refused before any
+    // process, so this stand-in must never run; if it does, it says so.
+    writeFileSync(
+      path.join(ROOT, 'bin', 'claude'),
+      `#!${process.execPath}
+const fs = require('node:fs');
+const argv = process.argv.slice(2);
+if (argv.includes('-p')) process.exit(0);
+fs.appendFileSync(${JSON.stringify(CLI_LOG)}, JSON.stringify({ pid: process.pid, tab: process.env.CLAVE_SESSION_ID ?? null, argv }) + '\\n');
+setInterval(() => {}, 1000);
+`,
+      { mode: 0o755 }
+    )
+    writeFileSync(
+      path.join(ROOT, 'bin', 'sh'),
+      `#!/bin/sh
+export PATH='${ROOT}/bin':"$PATH"
+[ "$1" = '-l' ] && shift
+exec /bin/sh "$@"
+`,
+      { mode: 0o755 }
+    )
+    const env = { SHELL: path.join(ROOT, 'bin', 'sh'), PATH: `${ROOT}/bin:${process.env.PATH}` }
+    const WS = {
+      id: 'c4a70000-0000-4000-8000-000000000003',
+      name: 'Stopped tabs refused',
+      rootDir: ROOT,
+      profileFile: null,
+      createdAt: 1
+    }
+    seedWorkspaces(DIR, { workspaces: [WS], activeWorkspaceId: WS.id, fresh: true })
+    seedTrustedRoots(DIR, [ROOT])
+    let app = null
+    try {
+      // One launch to mint the window key the record is placed by.
+      const first = await launchApp(DIR, { server: 'in-process', env })
+      await first.app.close()
+      const key = persistedWindows(DIR)[0]?.key
+      t.check('the window persisted a layout key', !!key, persistedWindows(DIR))
+
+      // A Claude terminal whose account is gone: no token for its profile id.
+      seedSessionRecord(DIR, {
+        adapterId: 'pty',
+        transport: 'pty',
+        id: GONE_ID,
+        claudeSessionId: GONE_CONVERSATION,
+        cwd: ROOT,
+        folderName: path.basename(ROOT),
+        displayName: GONE_TITLE,
+        userRenamed: true,
+        claudeMode: true,
+        antigravityMode: false,
+        codexMode: false,
+        piMode: false,
+        claudeAgentsMode: false,
+        dangerousMode: false,
+        claudeProfileId: 'acct-gone-4236',
+        claudeProfileLabel: 'Gone',
+        workspaceId: WS.id,
+        windowKey: key
+      })
+      const recordFile = path.join(recordsRootOf(DIR), 'session-records', `${GONE_ID}.json`)
+
+      const second = await launchApp(DIR, { server: 'in-process', env, settleMs: 1500 })
+      app = second.app
+      const { win } = second
+      const restore = win.getByRole('button', { name: 'Restore', exact: true })
+      const prompted = await until(() => restore.isVisible().catch(() => false), { tries: 80 })
+      t.check('the dead record is offered for relaunch', !!prompted)
+      if (prompted) await restore.click()
+
+      const row = await until(async () => {
+        const text = await rowText(win, GONE_ID)
+        return text?.includes(GONE_TITLE) ? text : null
+      })
+      t.check('the refused tab is in the sidebar with its title', !!row, row)
+      // A moment for a refused start to have taken the row out, as it used to.
+      await win.waitForTimeout(1500)
+      t.check('and is still there a moment later', !!(await rowText(win, GONE_ID)))
+      t.check('its record was not discarded', existsSync(recordFile), recordFile)
+
+      // The tab's Resume re-runs the spawn, which is refused again: in words.
+      if (row) await win.locator(`[data-sidebar-item-id="${GONE_ID}"]`).first().click()
+      const resume = win.getByRole('button', { name: 'Resume', exact: true }).first()
+      const offered = await until(() => resume.isVisible().catch(() => false))
+      t.check('the opened tab offers Resume', offered === true)
+      if (offered) await resume.click()
+      const failure = await until(
+        () =>
+          win
+            .evaluate(
+              () => document.querySelector('[data-fleet-resume-error]')?.textContent ?? null
+            )
+            .catch(() => null),
+        { tries: 60 }
+      )
+      t.check('Resume says it failed, in the tab', !!failure, failure)
+      t.check(
+        'with the readable reason: the account is no longer available',
+        !!failure?.includes('no longer available'),
+        failure
+      )
+      t.check('and not an unreadable id payload', !failure?.includes('{'), failure)
+      t.check(
+        'the tab is still in the sidebar after the failed Resume',
+        !!(await rowText(win, GONE_ID))
+      )
+      t.check('its record is still there', existsSync(recordFile))
+      t.equal('no CLI was started for it', lines(CLI_LOG).length, 0)
+    } finally {
+      if (app) await app.close()
+      for (const { pid } of lines(CLI_LOG)) {
+        try {
+          process.kill(pid, 'SIGKILL')
+        } catch (error) {
+          if (error.code !== 'ESRCH') console.error('Stand-in cleanup failed', error)
+        }
+      }
     }
   }
 }

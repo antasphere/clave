@@ -39,7 +39,7 @@ import { serverClient } from './server-client'
 import { listHistory } from '../session-history/service'
 import {
   listConversations,
-  planResume,
+  openResumed,
   ResumeRefused,
   type HistoryLookups
 } from './conversation-history'
@@ -93,16 +93,16 @@ const INSTRUCTIONS = `You are running inside Clave, a Mac app that runs agent se
 
 Reach for a clave_* tool when:
 - the user will REVIEW or EDIT something you drafted (a document, a plan, an email) -> clave_open_side_panel opens it in an editor beside your tab, two panes; clave_side_panel reads it back when they are done; you send an email yourself, never from the panel. That is what "open it in the panel" means; clave_open_file is not.
-- they only need to READ a file -> clave_open_file (a tab; .html renders live).
+- they only need to READ a file -> clave_open_file (a tab).
 - a live page belongs to a group or a tab -> clave_set_group_view / clave_set_session_view.
 - work could run in parallel -> clave_open_session (a fresh agent tab or terminal, any directory, a prompt, a model) or clave_add_group_terminal (a saved command). clave_launch_group starts a pinned .clave template.
 - a PAST conversation ("reopen it", "what was I working on") -> clave_history lists them; clave_open_session with resume: <id> reopens one.
 - a secret -> clave_request_secret; any other value to type or pick -> clave_request_input, a form in the chat that outlives your turn: ask, end the turn; chat answers go into it via clave_input_set. Never ask in prose.
-- the user must copy something you produced -> clave_offer_copy (exact bytes).
+- the user must copy something you produced -> clave_offer_copy.
 - long work done -> clave_notify.
 - tabs must talk -> clave_send_to_session ("parent" reports back to the tab that opened yours; your own id logs a checkpoint) and clave_read_session (a tab's recent output).
 
-Also: clave_list, clave_create_group, clave_move_session, clave_rename, clave_focus, clave_close_session, clave_open_window, clave_switch_workspace. Pi tabs can be messaged and read, not call these tools.`
+Also: clave_list, clave_create_group, clave_move_session, clave_rename, clave_focus, clave_close_session, clave_open_window, clave_switch_workspace (only when they should look there). Pi tabs can be messaged and read, not call these tools.`
 
 let httpServer: http.Server | null = null
 let serverToken: string | null = null
@@ -598,7 +598,18 @@ async function openWindowFromTool(
 function historyLookups(api: Awaited<ReturnType<typeof serverClient.api>>): HistoryLookups {
   return {
     history: () => listHistory().entries,
-    records: () => api.sessions.listAdoptable(),
+    // The listing a window restores from leaves out a hosted session whose
+    // process has ended (`hostedListing`); such a tab still holds its
+    // conversation, stopped (round 1, F2), so the records of every session the
+    // host lists and the listing lacks are read by id and added.
+    records: async () => {
+      const listed = await api.sessions.listAdoptable()
+      const ids = new Set(listed.map((r) => r.id))
+      const missing = (await api.sessions.list()).map((s) => s.id).filter((id) => !ids.has(id))
+      if (missing.length === 0) return listed
+      const more = await api.sessions.listAdoptable(missing).catch(() => [])
+      return [...listed, ...more.filter((r) => !ids.has(r.id))]
+    },
     sessions: () => api.sessions.list(),
     workspaces: () => workspaceManager.getWorkspaces().map((w) => ({ id: w.id, name: w.name }))
   }
@@ -612,76 +623,28 @@ const isDirectory = (dir: string): boolean => {
   }
 }
 
-/**
- * `clave_open_session` with `resume` (PRDCT-4236): what the History dialog
- * does for a row, as a tool. A live tab that runs the conversation is focused
- * and answered, never a second process; a stopped tab that holds it is
- * resumed in place (the Resume the person's button makes); otherwise the
- * open goes on with the conversation's own directory, provider, model and
- * title filled in where the caller named none, and `resumeSessionId` for the
- * spawn. The refusals (unknown, transcript gone, no directory) are the
- * module's, in words.
- */
+/** `clave_open_session` with `resume` (PRDCT-4236): the decision is the
+ *  module's (`openResumed`), the host's facts come from here. */
 async function prepareResume(
   p: Record<string, unknown>,
   callerSessionId: string | undefined
 ): Promise<{ result: unknown } | { payload: Record<string, unknown> }> {
-  const resume = String(p.resume).trim()
-  if (p.server !== undefined)
-    throw new Error(
-      'resume reopens a conversation of this Mac; omit server. A stopped tab on a Clave server is resumed with clave_resume_session.'
-    )
   const api = await serverClient.api()
-  let plan
   try {
-    plan = await planResume(historyLookups(api), resume, isDirectory)
+    return await openResumed(historyLookups(api), p, callerSessionId, {
+      isDirectory,
+      isRegisteredWorkspace: (id) => workspaceManager.isRegistered(id),
+      restart: async (id) => {
+        const restarted = await api.sessions.restart(id, {}, false, undefined, true)
+        return { resumed: restarted.resumed }
+      },
+      focus: async (id) => {
+        await runCommand('focus', { sessionId: id }, callerSessionId)
+      }
+    })
   } catch (err) {
     if (err instanceof ResumeRefused) throw new Error(err.message)
     throw err
-  }
-  if (plan.kind === 'open' || plan.kind === 'stopped') {
-    let resumed = false
-    if (plan.kind === 'stopped') {
-      const restarted = await api.sessions.restart(plan.sessionId, {}, false, undefined, true)
-      resumed = restarted.resumed
-    }
-    // Shown, as the dialog shows the tab it found; a focus that fails (the
-    // tab's window gone) does not undo the answer.
-    await runCommand('focus', { sessionId: plan.sessionId }, callerSessionId)
-    return {
-      result: {
-        sessionId: plan.sessionId,
-        groupId: null,
-        conversation: resume,
-        alreadyOpen: true,
-        resumed,
-        note:
-          plan.kind === 'open'
-            ? 'A tab already runs this conversation; it was focused and nothing was started.'
-            : 'A stopped tab held this conversation; it was resumed in place.'
-      }
-    }
-  }
-  const mode = typeof p.mode === 'string' ? p.mode : undefined
-  if (mode !== undefined && mode !== plan.provider)
-    throw new Error(
-      `Conversation "${resume}" is ${plan.provider}'s; mode "${mode}" cannot resume it. Omit mode or pass "${plan.provider}".`
-    )
-  const cwd = typeof p.cwd === 'string' && p.cwd ? p.cwd : plan.cwd
-  const workspace =
-    p.workspace === undefined && plan.workspaceId && workspaceManager.isRegistered(plan.workspaceId)
-      ? { workspace: plan.workspaceId }
-      : {}
-  return {
-    payload: {
-      ...p,
-      mode: plan.provider,
-      cwd,
-      ...(p.model === undefined && plan.model ? { model: plan.model } : {}),
-      ...(p.name === undefined ? { name: plan.title } : {}),
-      ...workspace,
-      resumeSessionId: resume
-    }
   }
 }
 
@@ -926,9 +889,9 @@ function buildServer(callerSessionId: string | undefined): McpServer {
           // 'gemini' is kept as a deprecated alias (the Gemini CLI was retired
           // and folded into Antigravity); it maps to an antigravity session.
           .enum(['claude', 'antigravity', 'gemini', 'codex', 'pi', 'terminal'])
-          .default('claude')
+          .optional()
           .describe(
-            "Which agent CLI to start, or terminal for a plain shell. With resume, the conversation's own provider; another is refused."
+            "Which agent CLI to start, or terminal for a plain shell; claude when omitted. With resume, omit it: the conversation's own provider is used, and another is refused."
           ),
         groupId: z
           .string()

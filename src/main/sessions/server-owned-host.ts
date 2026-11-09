@@ -1,16 +1,11 @@
 import type { SessionHostService } from '@clave/server'
 import type { SidebarLayouts } from '@clave/server/sidebar-layouts'
 import { SERVER_LAYOUT_KEY } from '@clave/contract/sidebar'
-import type {
-  RestartedSession,
-  Session,
-  SessionRecord,
-  SpawnOptions
-} from '@clave/contract/sessions'
+import type { RestartedSession, Session, SessionRecord } from '@clave/contract/sessions'
 import type { SessionManager } from './session-manager'
 import { pageHistory } from './history'
 import { serverHistory } from './server-history'
-import { runtimeChoices } from './runtime-choices'
+import { resumeOptions } from './resume-options'
 
 export interface ServerOwnedHostOptions {
   host: SessionHostService
@@ -48,42 +43,7 @@ export function stoppedSession(record: SessionRecord): Session {
   }
 }
 
-/** An allowlist deliberately excludes initial commands, prompts and tmux adoption. */
-export function resumeOptions(record: SessionRecord): SpawnOptions {
-  // The mode, the model and the effort the chat was RUNNING on, not the ones
-  // it was launched with (PRDCT-4191): "Lane · Company AI keys" came back in
-  // Manual on opus after running with permissions skipped on another model.
-  const runtime = runtimeChoices(record)
-  return {
-    adoptSessionId: record.id,
-    resumeSessionId: record.codexThreadId ?? record.claudeSessionId,
-    claudeSessionId: record.claudeSessionId,
-    piSessionId: record.piSessionId,
-    claudeMode: record.claudeMode,
-    codexMode: record.codexMode,
-    antigravityMode: record.antigravityMode,
-    piMode: record.piMode,
-    claudeAgentsMode: record.claudeAgentsMode,
-    dangerousMode: runtime.dangerousMode,
-    model: runtime.model,
-    ...(runtime.permissionMode !== undefined ? { permissionMode: runtime.permissionMode } : {}),
-    ...(runtime.allowDangerous ? { allowDangerous: true } : {}),
-    ...(runtime.effort !== undefined ? { effort: runtime.effort } : {}),
-    launchProfileId: record.launchProfileId,
-    launchProfile: record.launchProfile,
-    piProvider: record.piProvider,
-    piThinking: record.piThinking,
-    configDir: record.configDir,
-    claudeProfileId: record.claudeProfileId,
-    claudeProfileLabel: record.claudeProfileLabel,
-    codexAccountId: record.codexAccountId,
-    codexAccountLabel: record.codexAccountLabel,
-    workspaceId: record.workspaceId,
-    link: record.link,
-    spawnedBy: record.spawnedBy,
-    openedBy: record.openedBy
-  }
-}
+export { resumeOptions }
 
 export function serverOwnedSessionHost(options: ServerOwnedHostOptions): {
   host: SessionHostService

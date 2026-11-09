@@ -350,9 +350,12 @@ describe('a restart on another account', () => {
     spawned(id)
     await restartSession(id, {}, 'w2')
     expect(mocks.spawn.mock.calls.at(-1)![1]).toMatchObject({ windowKey: 'w2' })
+    // A tab this process did not spawn and keeps no record of (PRDCT-4236:
+    // with a record, the Resume rebuilds the spawn from it instead).
     mocks.restartSpawn.mockReturnValue(null)
+    mocks.getSessionRecord.mockReturnValue(undefined)
     await expect(restartSession('other', {})).rejects.toThrow(
-      'This session cannot be restarted from here.'
+      'This session is not running and left no record to resume from.'
     )
   })
 })
@@ -365,6 +368,52 @@ describe('a Resume of a running tab is refused on this Mac too (PRDCT-4193, roun
       resumed: true
     })
   }
+  it('resumes a session this process never spawned from its record, and refuses one with no record (PRDCT-4236)', async () => {
+    const id = `life-${++sequence}`
+    windows()
+    mocks.restartSpawn.mockReturnValue(null)
+    mocks.getSessionRecord.mockReturnValue({
+      id,
+      cwd: '/work/app',
+      folderName: 'app',
+      claudeMode: true,
+      antigravityMode: false,
+      codexMode: false,
+      piMode: false,
+      claudeAgentsMode: false,
+      dangerousMode: true,
+      claudeSessionId: 'conv-1',
+      claudeProfileId: 'acct-gone',
+      displayName: 'Account gone',
+      userRenamed: true
+    })
+    spawned(id)
+    await expect(restartSession(id, { onlyIfStopped: true })).resolves.toMatchObject({
+      id,
+      resumed: true
+    })
+    const [cwd, options] = mocks.spawn.mock.calls.at(-1) as [string, PtySpawnOptions]
+    expect(cwd).toBe('/work/app')
+    expect(options).toMatchObject({
+      adoptSessionId: id,
+      resumeSessionId: 'conv-1',
+      claudeMode: true,
+      dangerousMode: true,
+      claudeProfileId: 'acct-gone'
+    })
+    // The account the caller names lays over the record's.
+    spawned(id)
+    await restartSession(id, { claudeProfileId: 'acct-2', claudeProfileLabel: 'Two' })
+    expect((mocks.spawn.mock.calls.at(-1) as [string, PtySpawnOptions])[1]).toMatchObject({
+      claudeProfileId: 'acct-2',
+      resumeSessionId: 'conv-1'
+    })
+    mocks.getSessionRecord.mockReturnValue(undefined)
+    await expect(restartSession(`life-${++sequence}`, {})).rejects.toThrow(
+      'This session is not running and left no record to resume from.'
+    )
+  })
+
   it('rejects with onlyIfStopped while the session runs, and restarts an ended one', async () => {
     const id = `life-${++sequence}`
     windows()

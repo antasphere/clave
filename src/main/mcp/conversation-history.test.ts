@@ -4,10 +4,12 @@ import type { HistoryListEntry } from '../session-history/service'
 import {
   holdersOf,
   listConversations,
+  openResumed,
   planResume,
   planResumeFromRecords,
   ResumeRefused,
-  type HistoryLookups
+  type HistoryLookups,
+  type ResumeOpenIo
 } from './conversation-history'
 
 /**
@@ -236,7 +238,36 @@ describe('planResume: what a resume does with a conversation', () => {
       provider: 'claude',
       title: 'Odoo accounting research',
       model: 'claude-opus-5-5',
-      workspaceId: 'ws1'
+      workspaceId: 'ws1',
+      piProvider: null,
+      piThinking: null
+    })
+  })
+
+  it('opens in the directory the caller names, whatever the transcript says (round 1, F4)', async () => {
+    const gone = lookups([entry({ claudeSessionId: 'c1', cwd: '/gone' })])
+    await expect(planResume(gone, 'c1', exists)).rejects.toThrow('no longer exists')
+    expect(await planResume(gone, 'c1', exists, '/work/odoo')).toMatchObject({
+      kind: 'start',
+      cwd: '/work/odoo'
+    })
+    const none = lookups([entry({ claudeSessionId: 'c1', cwd: '' })])
+    expect(await planResume(none, 'c1', exists, '/elsewhere')).toMatchObject({ cwd: '/elsewhere' })
+  })
+
+  it('carries a Pi conversation’s provider and thinking level', async () => {
+    const plan = await planResume(
+      lookups([
+        entry({ claudeSessionId: 'p1', provider: 'pi', agentProvider: 'openai', thinking: 'high' })
+      ]),
+      'p1',
+      exists
+    )
+    expect(plan).toMatchObject({
+      kind: 'start',
+      provider: 'pi',
+      piProvider: 'openai',
+      piThinking: 'high'
     })
   })
 
@@ -285,5 +316,134 @@ describe('planResumeFromRecords: a Clave server’s own records', () => {
       sessionId: 'old'
     })
     expect(planResumeFromRecords(records, sessions, 'none')).toBeNull()
+  })
+})
+
+/**
+ * The whole decision of `clave_open_session` with `resume` (round 1, E2: it
+ * lived in the tool's host and nothing reached it), on a fake host.
+ */
+describe('openResumed: what the open does with a resume', () => {
+  const io = (): ResumeOpenIo & { restarted: string[]; focused: string[] } => {
+    const restarted: string[] = []
+    const focused: string[] = []
+    return {
+      restarted,
+      focused,
+      isDirectory: (p) => p === '/work/odoo',
+      isRegisteredWorkspace: (id) => id === 'ws1',
+      restart: async (id) => {
+        restarted.push(id)
+        return { resumed: true }
+      },
+      focus: async (id) => {
+        focused.push(id)
+      }
+    }
+  }
+  const history = [
+    entry({ claudeSessionId: 'c1' }),
+    entry({ claudeSessionId: 'x1', provider: 'codex', title: 'A codex thread', model: null }),
+    entry({
+      claudeSessionId: 'p1',
+      provider: 'pi',
+      title: 'A pi talk',
+      agentProvider: 'openai',
+      thinking: 'high'
+    })
+  ]
+
+  it('a live holder is focused and answered, nothing restarted, no identity needed', async () => {
+    const h = io()
+    const out = await openResumed(
+      lookups(
+        history,
+        [record('tab', { claudeSessionId: 'c1', running: true })],
+        [session('tab', 'idle')]
+      ),
+      { resume: 'c1' },
+      undefined,
+      h
+    )
+    expect(out).toEqual({
+      result: {
+        sessionId: 'tab',
+        groupId: null,
+        conversation: 'c1',
+        alreadyOpen: true,
+        resumed: false,
+        note: 'A tab already runs this conversation; it was focused and nothing was started.'
+      }
+    })
+    expect(h.focused).toEqual(['tab'])
+    expect(h.restarted).toEqual([])
+  })
+
+  it('a stopped holder is resumed in place and focused; without a tab identity it is refused (F5)', async () => {
+    const h = io()
+    const stopped = lookups(history, [record('tab', { claudeSessionId: 'c1', running: false })])
+    await expect(openResumed(stopped, { resume: 'c1' }, undefined, h)).rejects.toThrow(
+      'no tab identity'
+    )
+    expect(h.restarted).toEqual([])
+    const out = await openResumed(stopped, { resume: 'c1' }, 'caller', h)
+    expect(out).toMatchObject({ result: { sessionId: 'tab', alreadyOpen: true, resumed: true } })
+    expect(h.restarted).toEqual(['tab'])
+    expect(h.focused).toEqual(['tab'])
+  })
+
+  it('a conversation nobody holds becomes a start with its own provider, directory, model and title (F1: no mode needed)', async () => {
+    const out = await openResumed(lookups(history), { resume: 'x1', chat: true }, 'caller', io())
+    expect(out).toEqual({
+      payload: {
+        resume: 'x1',
+        chat: true,
+        mode: 'codex',
+        cwd: '/work/odoo',
+        name: 'A codex thread',
+        workspace: 'ws1',
+        resumeSessionId: 'x1'
+      }
+    })
+    const pi = await openResumed(lookups(history), { resume: 'p1' }, 'caller', io())
+    expect(pi).toMatchObject({
+      payload: { mode: 'pi', provider: 'openai', thinking: 'high', resumeSessionId: 'p1' }
+    })
+  })
+
+  it('the caller’s mode, model, name, cwd and workspace win over the conversation’s; another provider is refused', async () => {
+    const out = await openResumed(
+      lookups(history),
+      {
+        resume: 'c1',
+        mode: 'claude',
+        model: 'opus',
+        name: 'Mine',
+        cwd: '/elsewhere',
+        workspace: 'w9'
+      },
+      'caller',
+      io()
+    )
+    expect(out).toMatchObject({
+      payload: { mode: 'claude', model: 'opus', name: 'Mine', cwd: '/elsewhere', workspace: 'w9' }
+    })
+    await expect(
+      openResumed(lookups(history), { resume: 'x1', mode: 'claude' }, 'caller', io())
+    ).rejects.toThrow('Conversation "x1" is codex\'s; mode "claude" cannot resume it.')
+    await expect(
+      openResumed(lookups(history), { resume: 'c1', server: 'studio' }, 'caller', io())
+    ).rejects.toThrow('omit server')
+  })
+
+  it('an unregistered workspace of the conversation is not named', async () => {
+    const out = await openResumed(
+      lookups([entry({ claudeSessionId: 'c1', workspaceId: 'ws-gone' })]),
+      { resume: 'c1' },
+      'caller',
+      io()
+    )
+    expect(out).toMatchObject({ payload: { cwd: '/work/odoo' } })
+    expect((out as { payload: Record<string, unknown> }).payload).not.toHaveProperty('workspace')
   })
 })

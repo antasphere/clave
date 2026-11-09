@@ -26,6 +26,7 @@ import { dropDraftShadow, getDraftShadow } from '../../shared/draft-shadow'
 import { forgetScreen, hasScreen, renderScreen, retainOutput } from './terminal-screen'
 import { typeIntoTerminal, type TypingOutcome } from './typing'
 import { forgetLineage, parentOf, setParent } from './lineage'
+import { resumeOptions } from './resume-options'
 import type { SessionScreen } from '@clave/contract/sessions'
 
 export type SessionInfoResult = {
@@ -263,11 +264,27 @@ export async function restartSession(
   const current = sessionManager.get(id)
   if (overrides.onlyIfStopped && current && current.state !== 'ended')
     throw new Error('This session is running; there is nothing to resume.')
-  const plan = ptyManager.restartSpawn(id, overrides)
-  if (!plan) throw new Error('This session cannot be restarted from here.')
+  const record = ptyManager.getSessionRecord(id)
+  // A session this process never spawned but whose record it keeps (a tab the
+  // restore placed stopped because its start was refused, PRDCT-4236 round 1
+  // F3) resumes from the record, as a Clave server's own Resume does: the
+  // same allowlist, the account the caller names laid over it. Until then the
+  // Resume of such a tab failed on a message naming nothing but its id.
+  const { resendRejected: _resend, onlyIfStopped: _only, ...requested } = overrides
+  void _resend
+  void _only
+  const plan =
+    ptyManager.restartSpawn(id, overrides) ??
+    (record
+      ? {
+          cwd: record.cwd,
+          options: { ...resumeOptions(record), ...requested } as PtySpawnOptions,
+          resumed: !!(record.codexThreadId ?? record.claudeSessionId ?? record.piSessionId)
+        }
+      : null)
+  if (!plan) throw new Error('This session is not running and left no record to resume from.')
   const windows = sessionWindows()
   const key = windowKey !== undefined ? windowKey : windows.windowOf(id)
-  const record = ptyManager.getSessionRecord(id)
   // The kill ends the old process, whose exit forgets what a dead tab
   // leaves behind (the parent link among them); the same tab comes back
   // under the same id, so its link is kept across (verifier round 1, F1).

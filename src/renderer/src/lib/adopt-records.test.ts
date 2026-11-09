@@ -262,6 +262,40 @@ describe('placeRecords', () => {
 })
 
 /**
+ * PRDCT-4236, round 1 F6: the re-home path (a tab or a group moved between
+ * windows, a closing window's hand-over) adopts a record the same way the
+ * boot does: a stopped record a Clave server owns is a stopped tab, and a
+ * start the server refuses leaves a stopped tab, never nothing.
+ */
+describe('adoptRecord on a stopped record (PRDCT-4236)', () => {
+  it('places a server-owned stopped record stopped, with no spawn', async () => {
+    const owned = {
+      ...record('moved'),
+      transport: 'events',
+      windowKey: 'server',
+      running: false,
+      displayName: 'Moved lane'
+    } as SessionRecord
+    expect(await adoptRecord(owned, null)).toBe('moved')
+    expect(spawned).toEqual([])
+    const tab = useSessionStore.getState().sessions.find((s) => s.id === 'moved')
+    expect(tab?.alive).toBe(false)
+    expect(tab?.name).toBe('Moved lane')
+    expect(tab?.restoring).toBeFalsy()
+  })
+
+  it('keeps a record whose spawn is refused, as a stopped tab', async () => {
+    const pending2 = adoptRecord({ ...record('refused'), displayName: 'Refused' }, null)
+    await flush()
+    pending.get('refused')!(false)
+    expect(await pending2).toBe('refused')
+    const tab = useSessionStore.getState().sessions.find((s) => s.id === 'refused')
+    expect(tab?.alive).toBe(false)
+    expect(tab?.name).toBe('Refused')
+  })
+})
+
+/**
  * PRDCT-4236: a record a Clave server owns (its records carry the server's
  * own layout key) and does not run is a stopped tab by the server's rule:
  * only an explicit Resume starts it, and a start asked for it is refused.

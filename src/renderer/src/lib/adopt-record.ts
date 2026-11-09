@@ -17,20 +17,28 @@ import { resolveHiddenOwner, serverOwnedStopped } from './boot-adoption'
  * level, never the target window's selected group, and never both.
  * Live tmux survivors reattach to the running process (scrollback intact via
  * the tmux repaint); dead records relaunch fresh in the same cwd (Claude
- * resuming via claudeSessionId). The original session id is preserved
- * (`adoptSessionId`) so MCP addressing, lifecycle-hook status and exchange
- * capture keep working across the move exactly as across an app restart.
- * Returns the new session id, or null on failure.
+ * resuming via claudeSessionId); a stopped record a Clave server owns, and a
+ * record whose start is refused, come in as stopped tabs (PRDCT-4236). The
+ * original session id is preserved (`adoptSessionId`) so MCP addressing,
+ * lifecycle-hook status and exchange capture keep working across the move
+ * exactly as across an app restart. Returns the session id.
  */
 export async function adoptRecord(
   s: SessionRecord,
   activeWorkspaceId: string | null,
   options: { focus?: boolean } = {}
 ): Promise<string | null> {
-  const spawned = await spawnFromRecord(s, activeWorkspaceId)
-  if (!spawned) return null
+  // A stopped record a Clave server owns is a stopped tab here as at boot
+  // (PRDCT-4236, round 1 F6): the server refuses to start it on a client's
+  // word, and a move must not lose it; a start refused for any other reason
+  // leaves a stopped tab too, never nothing.
+  const spawned = serverOwnedStopped(s)
+    ? { session: sessionFromRecord(s, activeWorkspaceId, null) }
+    : ((await spawnFromRecord(s, activeWorkspaceId)) ?? {
+        session: sessionFromRecord(s, activeWorkspaceId, null)
+      })
   useSessionStore.getState().adoptSessionInPlace(spawned.session, { focus: options.focus === true })
-  void seedAgentStatesFromKernel([spawned.session.id])
+  if (spawned.session.alive) void seedAgentStatesFromKernel([spawned.session.id])
   return spawned.session.id
 }
 

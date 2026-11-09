@@ -362,6 +362,12 @@ describe('clave_set_work and clave_hand_over on the window road', () => {
     expect(sessionsChangeWork).toHaveBeenCalledWith('caller', { type: 'offer', to: 'mate' })
   })
 
+  it("offers the caller's role to a tab it is not related to (PRDCT-4236, round 1 M24)", async () => {
+    const answer = await dispatch('handOver', { callerSessionId: 'caller', to: 'stranger' })
+    expect(answer).toMatchObject({ ok: true, result: { sessionId: 'caller' } })
+    expect(sessionsChangeWork).toHaveBeenCalledWith('caller', { type: 'offer', to: 'stranger' })
+  })
+
   it('refuses a hand over that both names a successor and accepts', async () => {
     const answer = await dispatch('handOver', {
       callerSessionId: 'caller',
