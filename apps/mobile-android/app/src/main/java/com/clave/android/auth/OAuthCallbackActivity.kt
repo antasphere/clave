@@ -3,6 +3,7 @@ package com.clave.android.auth
 import android.app.Activity
 import android.content.Intent
 import android.os.Bundle
+import com.clave.platform.auth.OAuthCallbacks
 
 /**
  * Where the browser lands after the sign-in (clave-android://oauth/callback?…): the
@@ -19,23 +20,5 @@ class OAuthCallbackActivity : Activity() {
                 .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP),
         )
         finish()
-    }
-}
-
-/** The one pending sign-in's mailbox: the browser's redirect, or null when dismissed. */
-object OAuthCallbacks {
-    private var pending: ((String?) -> Unit)? = null
-
-    @Synchronized
-    fun await(handler: (String?) -> Unit) {
-        pending?.invoke(null)
-        pending = handler
-    }
-
-    @Synchronized
-    fun deliver(redirect: String?) {
-        val handler = pending
-        pending = null
-        handler?.invoke(redirect)
     }
 }

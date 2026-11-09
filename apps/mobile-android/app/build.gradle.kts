@@ -63,6 +63,7 @@ dependencies {
     implementation(project(":core:notifications"))
     implementation(project(":core:state"))
     implementation(project(":ui"))
+    implementation(project(":platform"))
     val bom = platform(libs.compose.bom)
     implementation(bom)
     androidTestImplementation(bom)
