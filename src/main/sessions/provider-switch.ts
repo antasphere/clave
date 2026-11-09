@@ -20,7 +20,13 @@
  *   touched and where the full tape was written. Every other direction, and
  *   the fallback when the conversion is refused or the read-back fails.
  */
-import { readClaude, writeCodex, loadThread } from '@clave/session-bridge'
+import {
+  readClaude,
+  writeCodex,
+  loadThread,
+  SUPPORTED,
+  versionSupported
+} from '@clave/session-bridge'
 import type { ContinuedFrom, ProviderOverride } from '@clave/contract/sessions'
 import type { PtySpawnOptions } from './adapters/pty-backend'
 
@@ -173,5 +179,31 @@ export async function convertTranscriptToCodex(input: {
     return { ok: true, threadId: written.threadId, path: written.path }
   } catch (error) {
     return { ok: false, reason: error instanceof Error ? error.message : String(error) }
+  }
+}
+
+/** The road a move of a session to `adapterId` takes, as the popover says it
+ *  before Continue (`ProviderSwitchPlan` on the preload): the facts the host
+ *  gathered (the session's adapter, whether its transcript was found, the
+ *  installed Codex's version or null when it could not be run) against the
+ *  bridge's own pin. The handler gathers; this decides. */
+export function planRoad(facts: {
+  fromAdapterId: string
+  toAdapterId: string
+  transcriptFound: boolean
+  codexVersion: string | null
+}): {
+  from: { adapterId: string; provider: string }
+  to: { adapterId: string; provider: string }
+} & SwitchRoad {
+  const road = switchRoad({
+    ...facts,
+    codexSupported:
+      facts.codexVersion !== null && versionSupported(facts.codexVersion, SUPPORTED.codex)
+  })
+  return {
+    from: { adapterId: facts.fromAdapterId, provider: providerOf(facts.fromAdapterId) },
+    to: { adapterId: facts.toAdapterId, provider: providerOf(facts.toAdapterId) },
+    ...road
   }
 }

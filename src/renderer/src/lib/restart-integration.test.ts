@@ -29,7 +29,13 @@ const h = vi.hoisted(() => ({
     startSession: vi.fn()
   }
 }))
-vi.mock('../store/session-store', () => ({ useSessionStore: { getState: () => h.state } }))
+vi.mock('../store/session-store', () => ({
+  useSessionStore: {
+    getState: () => h.state,
+    setState: (update: (state: typeof h.state) => Partial<typeof h.state>) =>
+      Object.assign(h.state, update(h.state))
+  }
+}))
 vi.mock('../store/pinned-store', () => ({ usePinnedStore: { getState: () => ({}) } }))
 vi.mock('../store/workspace-store', () => ({ useWorkspaceStore: { getState: () => ({}) } }))
 vi.mock('./adopt-record', () => ({ adoptServerStartedTerminals: vi.fn() }))
@@ -163,4 +169,50 @@ it('an unrelated correlated operation applies while an own call is pending', asy
   await restartSessionProcess('s1')
   expect(h.state.applySessionRestart).toHaveBeenCalledTimes(2)
   expect(h.state.sessions[0].claudeProfileId).toBe('play')
+})
+
+it("a provider switch whose push lands first still writes the new provider's fields and the answer's conversation id (PRDCT-4300, verifier round 1 F2)", async () => {
+  h.state.sessions[0] = {
+    ...h.state.sessions[0],
+    claudeSessionId: 'OLD-CLAUDE-CONV',
+    claudeConfigDir: '/cfg/work'
+  } as never
+  h.api.restartSession.mockImplementation(async (_id, _options, requestId) => {
+    h.restarted({
+      id: 's1',
+      requestId,
+      resumed: true,
+      account: { codexAccountId: 'c1', codexAccountLabel: 'Codex 1' } as never
+    })
+    return { id: 's1', resumed: true, requestId, claudeSessionId: null, model: 'gpt-5.5' } as never
+  })
+  await restartSessionProcess('s1', {
+    overrides: { adapterId: 'codex-chat', model: 'gpt-5.5', resume: 't7', codexAccountId: 'c1' },
+    patch: {
+      codexAccountId: 'c1',
+      codexAccountLabel: 'Codex 1',
+      codexMode: true,
+      claudeMode: false,
+      launchProfileId: 'codex-chat',
+      model: 'gpt-5.5',
+      claudeProfileId: undefined,
+      claudeProfileLabel: undefined,
+      claudeConfigDir: undefined,
+      continuedFrom: { provider: 'claude', road: 'converted' }
+    }
+  })
+  // One remount (the push's), and the store holds the whole of the move.
+  expect(h.state.applySessionRestart).toHaveBeenCalledTimes(1)
+  expect(h.state.sessions[0]).toMatchObject({
+    codexMode: true,
+    claudeMode: false,
+    launchProfileId: 'codex-chat',
+    model: 'gpt-5.5',
+    codexAccountId: 'c1',
+    continuedFrom: { provider: 'claude', road: 'converted' }
+  })
+  const after = h.state.sessions[0] as Record<string, unknown>
+  expect(after.claudeSessionId).toBeNull()
+  expect(after.claudeProfileId).toBeUndefined()
+  expect(after.claudeConfigDir).toBeUndefined()
 })

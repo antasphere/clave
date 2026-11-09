@@ -359,11 +359,20 @@ export async function restartSessionProcess(
   // the account alone; what a provider switch changes besides (the family,
   // the model, the card's note) is written here without remounting again.
   if (!ownAnswerApplies(sessionId, requestId, result.requestId)) {
-    const rest = providerPatchOf(options.patch)
-    if (rest)
+    if (providerPatchOf(options.patch)) {
+      // The whole of what the answer-first road writes, the conversation id
+      // the answer names included (the push left the old provider's), the
+      // epoch untouched since the pane remounted on the push already.
+      const rest = {
+        claudeSessionId: result.claudeSessionId,
+        launchProfileId: result.launchProfileId,
+        model: result.model,
+        ...options.patch
+      }
       useSessionStore.setState((state) => ({
         sessions: state.sessions.map((s) => (s.id === sessionId ? { ...s, ...rest } : s))
       }))
+    }
     return { ok: true, resumed: result.resumed }
   }
   const current = useSessionStore.getState()

@@ -209,35 +209,41 @@ export interface HandoffExtras {
   budgetChars: number
 }
 
+/** The newest end of a text that does not fit, the cut said first. */
+function newestEnd(text: string, budget: number, tapePath: string): string {
+  const note = `## … the start of this is left out for room; the full conversation is in ${tapePath}\n\n`
+  return note + text.slice(-Math.max(0, budget - note.length))
+}
+
 /** The transcript cut to `budget` characters: the head (the title and the
  *  first turn) kept, then the newest turns that fit, the gap said where
- *  the oldest turns were. Whole when it fits. */
+ *  the oldest turns were. The newest turn is never dropped: when it alone
+ *  is bigger than the room, its newest end is kept and its cut said; a head
+ *  too big for the room is cut the same way. Whole when it fits. */
 export function cutTranscript(markdown: string, budget: number, tapePath: string): string {
   if (markdown.length <= budget) return markdown
   const turns = markdown.split(/\n(?=## )/)
-  if (turns.length < 3) {
-    // One speaker's long run: the newest end of it, the cut said first.
-    const note = `## … the start of the conversation left out for room; the full conversation is in ${tapePath}\n\n`
-    return note + markdown.slice(-Math.max(0, budget - note.length))
-  }
-  const head = turns.slice(0, 2).join('\n')
-  const rest = turns.slice(2)
+  if (turns.length < 3) return newestEnd(markdown, budget, tapePath)
   const gap = (n: number): string =>
-    `\n## … ${n} earlier turn${n === 1 ? '' : 's'} left out for room; the full conversation is in ${tapePath}\n`
-  let kept: string[] = []
-  let size = head.length + gap(rest.length).length
+    `## … ${n} earlier turn${n === 1 ? '' : 's'} left out for room; the full conversation is in ${tapePath}`
+  const rest = turns.slice(2)
+  const newest = rest[rest.length - 1]
+  let head = turns.slice(0, 2).join('\n')
+  // The head takes at most a third of the room, so the newest turn always has its share.
+  const headRoom = Math.floor(budget / 3)
+  if (head.length > headRoom) head = newestEnd(head, headRoom, tapePath)
+  const fixed = head.length + gap(rest.length).length + 2
+  const kept: string[] = []
+  let size = fixed
   for (let i = rest.length - 1; i >= 0; i--) {
-    const turn = rest[i]
-    if (size + turn.length + 1 > budget) break
-    kept.unshift(turn)
-    size += turn.length + 1
+    if (size + rest[i].length + 1 > budget) break
+    kept.unshift(rest[i])
+    size += rest[i].length + 1
   }
+  if (kept.length === 0) kept.push(newestEnd(newest, Math.max(0, budget - fixed), tapePath))
   const left = rest.length - kept.length
-  if (left === 0) return markdown
-  // The head alone over budget: what fits of the newest turn, the rest in the file.
-  if (kept.length === 0 && head.length > budget)
-    kept = [rest[rest.length - 1].slice(-Math.max(0, budget - gap(left).length))]
-  return [head, gap(left).trimEnd(), ...kept].join('\n')
+  if (left === 0) return [head, ...kept].join('\n')
+  return [head, gap(left), ...kept].join('\n')
 }
 
 /**

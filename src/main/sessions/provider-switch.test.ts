@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   continuedFrom,
   launchProfileFor,
+  planRoad,
   providerOf,
   providerSwitchOptions,
   switchRoad
@@ -161,5 +162,27 @@ describe("the restart's spawn rebuilt for another adapter (PRDCT-4300)", () => {
         launchProfileId: 'dev-echo-adapter'
       }
     )
+  })
+})
+
+describe('the plan the popover announces, from the facts the host gathered (verifier round 1, F8)', () => {
+  const facts = { fromAdapterId: 'claude-chat', toAdapterId: 'codex-chat', transcriptFound: true }
+  it('announces convert on the pinned Codex, naming the version', () => {
+    expect(planRoad({ ...facts, codexVersion: '0.167.3' })).toEqual({
+      from: { adapterId: 'claude-chat', provider: 'claude' },
+      to: { adapterId: 'codex-chat', provider: 'codex' },
+      road: 'convert',
+      codexVersion: '0.167.3'
+    })
+  })
+  it('announces the handoff for a Codex outside the pin, and for one that cannot be run', () => {
+    expect(planRoad({ ...facts, codexVersion: '0.170.0' })).toMatchObject({
+      road: 'handoff',
+      reason: expect.stringContaining('0.170.0')
+    })
+    expect(planRoad({ ...facts, codexVersion: null })).toMatchObject({
+      road: 'handoff',
+      reason: expect.stringContaining('could not be run')
+    })
   })
 })

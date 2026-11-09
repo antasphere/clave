@@ -33,13 +33,27 @@ export const CLI_WRAPPER_TAGS: readonly string[] = [
   '<local-command-caveat>',
   '<command-name>',
   '<task-notification>',
-  '<system-reminder>'
+  '<system-reminder>',
+  // The !-mode rows: the shell command the person ran from the composer
+  // and what it printed, written by the CLI as the person's turn.
+  '<bash-input>',
+  '<bash-stdout>',
+  '<bash-stderr>'
 ]
 
 /** Whether a text is one of the CLI's own rows, by its exact opening tag. */
 export function isCliWrapper(text: string): boolean {
   const head = text.trimStart()
   return CLI_WRAPPER_TAGS.some((tag) => head.startsWith(tag))
+}
+
+/** The `[Image]` and `[Document]` placeholder lines the bridge writes for an
+ *  attached file, dropped when the message holds other words; a message
+ *  that is only its placeholders keeps them, so its turn stays. */
+export function withoutImageLines(text: string): string {
+  const lines = text.split('\n')
+  const words = lines.filter((line) => !/^\[(Image|Document)\]$/.test(line.trim()))
+  return words.some((line) => line.trim()) ? words.join('\n') : text
 }
 
 export interface TranslateOptions {
@@ -53,14 +67,20 @@ export interface TranslateOptions {
  *  the chat leaves out. */
 function translate(event: BridgeEvent, options: TranslateOptions): SessionEvent | null {
   switch (event.type) {
-    case 'user_message':
+    case 'user_message': {
       if (options.wrappers === 'drop' && isCliWrapper(event.text)) return null
+      // The bridge reads an image as a `[Image]` line so an image-only
+      // message keeps its turn; beside the person's own words (Claude Code
+      // writes "[Image #1]" in the text itself) that line said nothing new,
+      // and the old replay never had it.
+      const text = withoutImageLines(event.text)
       return {
         type: 'user_message',
-        text: event.text,
+        text,
         ...(event.form !== undefined ? { form: event.form } : {}),
         ...(event.parent !== undefined ? { parent: event.parent } : {})
       }
+    }
     case 'assistant_text':
       return {
         type: 'assistant_text',

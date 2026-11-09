@@ -22,6 +22,7 @@ export function ProviderSwitch({
   landing,
   noteOffered,
   noteAgent,
+  working = false,
   busy,
   error,
   onContinue,
@@ -37,6 +38,8 @@ export function ProviderSwitch({
   noteOffered: boolean
   /** The current model's name, for the note's checkbox ("Have Opus 5.5 write…"). */
   noteAgent: string
+  /** The agent is working now: Continue cuts its turn, said here. */
+  working?: boolean
   /** What the move is doing now, or null when it waits on Continue. */
   busy: string | null
   error: string | null
@@ -101,10 +104,15 @@ export function ProviderSwitch({
             onChange={(event) => setNote(event.currentTarget.checked)}
           />
           <span>
-            Have {noteAgent} write a handoff note first, as one more turn here, and put it at the
-            top of the new conversation.
+            Have {noteAgent} write a handoff note first, as one more turn here; it goes with the
+            conversation, as its last words.
           </span>
         </label>
+      )}
+      {working && (
+        <p className="chat-prompt-detail chat-provider-switch-working">
+          {from} is working now: Continue stops its turn where it is.
+        </p>
       )}
       {error && (
         <p className="chat-prompt-detail chat-provider-switch-error" role="alert">

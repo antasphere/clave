@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { HistoryItem as BridgeHistoryItem } from '@clave/session-bridge/ir'
 import { SessionEventSchema } from '../../../shared/session-model'
-import { CLI_WRAPPER_TAGS, isCliWrapper, toHistoryItems } from './bridge-history'
+import { CLI_WRAPPER_TAGS, isCliWrapper, toHistoryItems, withoutImageLines } from './bridge-history'
 
 const said = (text: string, at?: number): BridgeHistoryItem => ({
   event: { type: 'user_message', text },
@@ -66,5 +66,34 @@ describe("the bridge's replay as the chat's history (PRDCT-4301)", () => {
     expect(isCliWrapper('<local-command-stdout-ish>')).toBe(false)
     expect(isCliWrapper('<b>bold</b>')).toBe(false)
     expect(isCliWrapper('Caveat: mine')).toBe(false)
+  })
+})
+
+describe('round 1 of the verifier: the !-mode rows and the image line', () => {
+  it('drops the shell rows of !-mode by their exact tag (F3)', () => {
+    const items = toHistoryItems(
+      [
+        said('<bash-input>git status</bash-input>'),
+        said('<bash-stdout>On branch main</bash-stdout>'),
+        said('<bash-stderr>fatal</bash-stderr>'),
+        said('<bash>is a word I typed</bash>')
+      ],
+      { wrappers: 'drop' }
+    ).map((i) => (i.event as { text: string }).text)
+    expect(items).toEqual(['<bash>is a word I typed</bash>'])
+  })
+  it('keeps a message that is only its image, and drops the [Image] line beside words (F4)', () => {
+    expect(withoutImageLines('[Image]')).toBe('[Image]')
+    expect(withoutImageLines('[Image]\n[Document]')).toBe('[Image]\n[Document]')
+    expect(withoutImageLines('look at this bug : [Image #1]\n[Image]')).toBe(
+      'look at this bug : [Image #1]'
+    )
+    expect(withoutImageLines('What is this?\n[Image]\nSecond thought.')).toBe(
+      'What is this?\nSecond thought.'
+    )
+    const items = toHistoryItems([said('pasted [Image #1]\n[Image]'), said('[Image]')]).map(
+      (i) => (i.event as { text: string }).text
+    )
+    expect(items).toEqual(['pasted [Image #1]', '[Image]'])
   })
 })

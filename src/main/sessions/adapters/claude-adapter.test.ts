@@ -1267,6 +1267,30 @@ it("keeps every message of the person on replay, and drops the CLI's own rows by
     'A'
   ])
 })
+it("learns the past's tool ids on replay, so a live frame naming one again emits no second call (PRDCT-4301, verifier round 1 F9)", () => {
+  translator.replay([
+    JSON.stringify({
+      type: 'assistant',
+      message: {
+        content: [{ type: 'tool_use', id: 't-past', name: 'Bash', input: { command: 'ls' } }]
+      }
+    })
+  ])
+  translator.line(
+    JSON.stringify({
+      type: 'assistant',
+      message: {
+        content: [
+          { type: 'tool_use', id: 't-past', name: 'Bash', input: { command: 'ls' } },
+          { type: 'tool_use', id: 't-new', name: 'Read', input: { file_path: '/x' } }
+        ]
+      }
+    })
+  )
+  expect(events.filter((e) => e.type === 'tool_call').map((e) => (e as { id: string }).id)).toEqual(
+    ['t-new']
+  )
+})
 it('dates each replayed event by its transcript line, and closes a dead call at the next message', () => {
   const at = (iso: string): number => Date.parse(iso)
   const items = translator.replay(

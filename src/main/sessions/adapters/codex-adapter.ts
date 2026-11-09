@@ -43,6 +43,8 @@ import { commandTitle } from '../../../shared/command-title'
 import type { McpConfigPort } from '../../ports/mcp-config'
 
 const text = (value: unknown): string => (typeof value === 'string' ? value : '')
+/** How long a model/list may take before the picker calls it unavailable. */
+const MODEL_LIST_TIMEOUT_MS = 5000
 /** The efforts a model/list row says its model takes, with Codex's gloss. */
 const codexEfforts = (row: Record<string, unknown>): { id: string; hint: string }[] =>
   (Array.isArray(row.supportedReasoningEfforts) ? row.supportedReasoningEfforts : []).flatMap(
@@ -924,8 +926,21 @@ export class CodexAdapter implements SessionAdapter {
         clientInfo: { name: 'clave_chat', title: 'Clave', version: '1.0.0' }
       })
       connection.notify('initialized')
-      const result = object(await connection.request('model/list', {}))
-      return codexModelOptions(Array.isArray(result.data) ? result.data : [])
+      // The same deadline as a session's list: an app-server that starts
+      // and never answers must not leave the menu on Loading… for good.
+      let timer: ReturnType<typeof setTimeout> | undefined
+      const deadline = new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error('Codex did not list its models in time')),
+          MODEL_LIST_TIMEOUT_MS
+        )
+      })
+      try {
+        const result = object(await Promise.race([connection.request('model/list', {}), deadline]))
+        return codexModelOptions(Array.isArray(result.data) ? result.data : [])
+      } finally {
+        clearTimeout(timer)
+      }
     } finally {
       if (!exited) await connection.close()
     }
@@ -936,7 +951,10 @@ export class CodexAdapter implements SessionAdapter {
     const listing = state.connection!.request('model/list', {})
     let timer: ReturnType<typeof setTimeout> | undefined
     const deadline = new Promise<never>((_, reject) => {
-      timer = setTimeout(() => reject(new Error('Codex did not list its models in time')), 5000)
+      timer = setTimeout(
+        () => reject(new Error('Codex did not list its models in time')),
+        MODEL_LIST_TIMEOUT_MS
+      )
     })
     try {
       const result = object(await Promise.race([listing, deadline]))

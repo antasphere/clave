@@ -714,6 +714,7 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
       cwd: session.cwd,
       model: exportSource.current.conversation.model
     }),
+    working: () => conversation.state === 'working',
     onError: report
   })
   const continuedFrom = useViewSessionStore(
@@ -1255,6 +1256,7 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
             landing={providerSwitch.state.landing}
             noteOffered={providerSwitch.state.noteOffered}
             noteAgent={noteAgentName(conversation.model, session.provider)}
+            working={state === 'working'}
             busy={providerSwitch.state.busy}
             error={providerSwitch.state.error}
             onContinue={(options) => void providerSwitch.confirm(options)}

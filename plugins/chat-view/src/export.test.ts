@@ -232,8 +232,70 @@ describe('cutTranscript on one long run of a single speaker', () => {
     expect(cut.length).toBeLessThanOrEqual(3000)
     expect(
       cut.startsWith(
-        '## … the start of the conversation left out for room; the full conversation is in /tape.md'
+        '## … the start of this is left out for room; the full conversation is in /tape.md'
       )
     ).toBe(true)
+  })
+})
+
+describe('the cut never drops the newest turn (verifier round 1, F1)', () => {
+  const turn = (i: number, size: number): Entry[] => [
+    {
+      kind: 'user' as const,
+      text: `question ${i} ${'q'.repeat(size)}`,
+      final: true,
+      at: at(11, i)
+    },
+    {
+      kind: 'assistant' as const,
+      text: `answer ${i} ${'a'.repeat(size)}`,
+      final: true,
+      at: at(11, i)
+    }
+  ]
+  it('keeps the newest end of a newest turn bigger than the room, and says it was cut', () => {
+    const entries = [...turn(0, 50), ...turn(1, 50), ...turn(2, 50), ...turn(3, 20_000)]
+    const md = transcriptMarkdown(entries, meta)
+    const cut = cutTranscript(md, 10_000, '/tape.md')
+    expect(cut.length).toBeLessThanOrEqual(10_000)
+    expect(cut).toContain('question 0 ')
+    expect(cut).toMatch(/## … the start of this is left out for room/)
+    expect(cut.trimEnd().endsWith('a'.repeat(200))).toBe(true)
+    expect(cut).not.toContain('question 1 ')
+  })
+  it('cuts a first turn too big for the room instead of keeping it whole', () => {
+    const entries = [...turn(0, 25_000), ...turn(1, 50), ...turn(2, 50)]
+    const md = transcriptMarkdown(entries, meta)
+    const cut = cutTranscript(md, 10_000, '/tape.md')
+    expect(cut.length).toBeLessThanOrEqual(10_000)
+    expect(cut).toContain('question 2 ')
+    expect(cut).toContain('answer 2 ')
+  })
+  it('a handoff whose last stretch alone exceeds the budget still carries its end', () => {
+    const entries: Entry[] = [
+      { kind: 'user', text: 'start', final: true, at: at(12, 0) },
+      { kind: 'assistant', text: 'ok', final: true, at: at(12, 0) },
+      { kind: 'user', text: 'run everything', final: true, at: at(12, 1) },
+      ...Array.from({ length: 120 }, (_, i) => ({
+        kind: 'tool' as const,
+        id: `t${i}`,
+        name: 'Bash',
+        input: { command: `step ${i}` },
+        output: `output ${i} ${'o'.repeat(3900)}`,
+        complete: true,
+        at: at(12, 2)
+      })),
+      { kind: 'assistant', text: 'THE LAST WORDS', final: true, at: at(12, 3) }
+    ]
+    const md = handoffMessage(entries, meta, {
+      from: 'Claude',
+      files: [],
+      diffStat: null,
+      tapePath: '/tape.md',
+      budgetChars: 100_000
+    })
+    expect(md.length).toBeLessThan(101_000)
+    expect(md).toContain('THE LAST WORDS')
+    expect(md).toContain('start')
   })
 })

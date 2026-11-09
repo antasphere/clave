@@ -21,7 +21,7 @@ import { app, ipcMain } from 'electron'
 import { execFile } from 'node:child_process'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { codexVersion, versionSupported, SUPPORTED } from '@clave/session-bridge'
+import { codexVersion } from '@clave/session-bridge'
 import type { ModelOption } from '../../shared/session-model'
 import type { ProviderChoice, ProviderSwitchPlan } from '../../preload/index.d'
 import { ptyManager, buildSpawnEnv, codexHomeForSpawn, getLoginShellEnv } from '../pty-manager'
@@ -34,8 +34,8 @@ import { findExecutable } from '../shell-launch'
 import {
   PROVIDER_LABELS,
   convertTranscriptToCodex,
-  providerOf,
-  switchRoad
+  planRoad,
+  providerOf
 } from '../sessions/provider-switch'
 
 /** The providers a tab can move to: the built-in chat adapters this build
@@ -120,18 +120,12 @@ export async function planProviderSwitch(
       ? findTranscript(session.claudeSessionId, session.cwd, session.configDir)
       : null
   const codex = adapterId === 'codex-chat' ? await installedCodex() : null
-  const road = switchRoad({
+  return planRoad({
     fromAdapterId: session.adapterId,
     toAdapterId: adapterId,
     transcriptFound: transcript !== null,
-    codexVersion: codex?.version ?? null,
-    codexSupported: codex ? versionSupported(codex.version, SUPPORTED.codex) : false
+    codexVersion: codex?.version ?? null
   })
-  return {
-    from: { adapterId: session.adapterId, provider: providerOf(session.adapterId) },
-    to: { adapterId, provider: providerOf(adapterId) },
-    ...road
-  }
 }
 
 /** The conversation written as a Codex thread in the target account's home
@@ -176,7 +170,8 @@ export async function writeHandoff(
   const session = sessionOf(sessionId)
   const dir = join(app.getPath('userData'), 'handoffs')
   mkdirSync(dir, { recursive: true, mode: 0o700 })
-  const path = join(dir, `${sessionId}.md`)
+  // One file per move: a second move of the same tab writes beside the first.
+  const path = join(dir, `${sessionId}-${new Date().toISOString().replace(/[:.]/g, '-')}.md`)
   writeFileSync(path, tape, { mode: 0o600 })
   const diffStat = await new Promise<string | null>((resolve) => {
     execFile(

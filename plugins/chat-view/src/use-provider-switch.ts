@@ -62,9 +62,14 @@ export function useProviderSwitch({
   session,
   source,
   meta,
+  working,
   onError
 }: {
   session: Session
+  /** Whether the agent is working now: a note cannot be asked of it mid-turn
+   *  (its answer would be the tail of the running turn), and Continue cuts
+   *  that turn, which the popover says. */
+  working: () => boolean
   /** The conversation as the view holds it and where its unread past starts,
    *  read when the move is made. */
   source: () => { conversation: Conversation; before: number | null }
@@ -84,12 +89,12 @@ export function useProviderSwitch({
         target,
         plan: null,
         landing: providerSwitchLanding(target),
-        noteOffered: stored ? canWriteHandoffNote(stored) : false,
+        noteOffered: stored ? canWriteHandoffNote(stored) && !working() : false,
         busy: null,
         error: null
       })
     },
-    [session.id]
+    [session.id, working]
   )
   // The road, asked once per target.
   useEffect(() => {

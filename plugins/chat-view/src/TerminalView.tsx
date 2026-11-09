@@ -540,6 +540,7 @@ export function TerminalView({
       cwd: session.cwd,
       model: switchSource.current.conversation.model
     }),
+    working: () => conversation.state === 'working',
     onError: report
   })
   const continuedFrom = useViewSessionStore(
@@ -1077,6 +1078,7 @@ export function TerminalView({
             landing={providerSwitch.state.landing}
             noteOffered={providerSwitch.state.noteOffered}
             noteAgent={noteAgentName(conversation.model, session.provider)}
+            working={state === 'working'}
             busy={providerSwitch.state.busy}
             error={providerSwitch.state.error}
             onContinue={(options) => void providerSwitch.confirm(options)}
