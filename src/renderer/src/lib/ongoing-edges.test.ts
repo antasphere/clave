@@ -27,7 +27,9 @@ import {
   endOngoing,
   keepPersonsView,
   openOngoing,
+  OngoingOpenRefused,
   OngoingStillOpening,
+  refusalNotice,
   returnToSidebar,
   WAIT_MS
 } from './ongoing-actions'
@@ -260,6 +262,20 @@ describe('R2-F4: End and Back wait for an open in flight', () => {
     release()
     await first
     expect(api.fleetStart).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('what the page says when End or Back is refused', () => {
+  it("says the refusal's own words, and the fallback for anything else", () => {
+    const busy = new OngoingStillOpening()
+    expect(busy).toBeInstanceOf(OngoingOpenRefused)
+    expect(refusalNotice(busy, 'fallback')).toBe(
+      'This conversation is still busy with another action. Try again in a moment.'
+    )
+    expect(refusalNotice(new OngoingOpenRefused('Cannot be brought over.'), 'fallback')).toBe(
+      'Cannot be brought over.'
+    )
+    expect(refusalNotice(new Error('boom'), 'fallback')).toBe('fallback')
   })
 })
 

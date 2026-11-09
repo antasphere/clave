@@ -17,7 +17,7 @@ import {
   endOngoing,
   entriesElsewhere,
   openOngoing,
-  OngoingOpenRefused,
+  refusalNotice,
   returnToSidebar,
   setOngoingNote
 } from '../../lib/ongoing-actions'
@@ -353,17 +353,13 @@ export function OngoingPage(): React.JSX.Element {
     setNotice(null)
     void openOngoing(entryId)
       .catch((err: unknown) => {
-        setNotice(
-          err instanceof OngoingOpenRefused ? err.message : 'This conversation could not be opened.'
-        )
+        setNotice(refusalNotice(err, 'This conversation could not be opened.'))
       })
       .finally(() => setOpening(null))
   }
 
   const refused = (err: unknown): void =>
-    setNotice(
-      err instanceof OngoingOpenRefused ? err.message : 'This conversation could not be changed.'
-    )
+    setNotice(refusalNotice(err, 'This conversation could not be changed.'))
 
   const waiting = rows.filter((r) => r.status === 'waiting').length
 

@@ -62,8 +62,11 @@ export function MessageTrail({ sessionId }: { sessionId: string }): ReactElement
 
   const refresh = useCallback((): void => {
     if (!cwd || !claudeSessionId || isRemoteKey(sessionId)) return
-    readTrail({ cwd, conversationId: claudeSessionId, piMode, claudeConfigDir })
-      .then((res) => setTurns(res.turns))
+    // The tab as it is now: the read takes every field it needs from it, the
+    // ones this render saw (the reasons to read again) on top.
+    const live = useSessionStore.getState().sessions.find((x) => x.id === sessionId)
+    readTrail({ ...live, cwd, claudeSessionId, piMode, claudeConfigDir })
+      ?.then((res) => setTurns(res.turns))
       // Best-effort: the trail just keeps what it last had.
       .catch(() => {})
   }, [cwd, claudeSessionId, piMode, claudeConfigDir, sessionId])

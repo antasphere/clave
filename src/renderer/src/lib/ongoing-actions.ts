@@ -248,12 +248,19 @@ export async function entriesElsewhere(entries: readonly OngoingEntry[]): Promis
 /** The reason an open was refused, worded for the page. */
 export class OngoingOpenRefused extends Error {}
 
-/** End or Back refused because the conversation is still opening after
- *  `WAIT_MS`: running beside the open could start a second agent. */
+/** End or Back refused because another action on the conversation (an
+ *  open, most often) is still running after `WAIT_MS`: running beside it
+ *  could start a second agent. */
 export class OngoingStillOpening extends OngoingOpenRefused {
   constructor() {
-    super('This conversation is still opening. Try again once it is open.')
+    super('This conversation is still busy with another action. Try again in a moment.')
   }
+}
+
+/** What the Ongoing page says when an action on a card fails: the refusal's
+ *  own words, else `fallback`. */
+export function refusalNotice(err: unknown, fallback: string): string {
+  return err instanceof OngoingOpenRefused ? err.message : fallback
 }
 
 async function waitForSession(id: string, ms = 4000): Promise<boolean> {
