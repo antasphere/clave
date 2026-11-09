@@ -23,6 +23,26 @@ describe('PendingModelSwitches', () => {
     expect(p.inFlight('s1', 'claude-fable-5-1', MODEL_SWITCH_WINDOW_MS + 1)).toBe(false)
     expect(p.inFlight('s1', 'claude-fable-5-1', MODEL_SWITCH_WINDOW_MS + 2)).toBe(false)
   })
+  it('remembers the model a window closed on without confirmation as refused, until the store shows a model or the tab is forgotten', () => {
+    const p = new PendingModelSwitches()
+    p.begin('s1', 'claude-opus-5-5', 0)
+    expect(p.refusedModel('s1')).toBeNull()
+    expect(p.inFlight('s1', 'claude-fable-5-1', MODEL_SWITCH_WINDOW_MS + 1)).toBe(false)
+    expect(p.refusedModel('s1')).toBe('claude-opus-5-5')
+    // A later switch to another model, confirmed: the refusal is forgotten.
+    p.begin('s1', 'claude-sonnet-5-5', MODEL_SWITCH_WINDOW_MS + 2)
+    expect(p.inFlight('s1', 'claude-sonnet-5-5', MODEL_SWITCH_WINDOW_MS + 3)).toBe(false)
+    expect(p.refusedModel('s1')).toBeNull()
+    // A confirmed switch never leaves a refusal behind.
+    p.begin('s2', 'claude-opus-5-5', 0)
+    expect(p.inFlight('s2', 'claude-opus-5-5', 1)).toBe(false)
+    expect(p.refusedModel('s2')).toBeNull()
+    p.begin('s3', 'claude-opus-5-5', 0)
+    p.inFlight('s3', 'claude-fable-5-1', MODEL_SWITCH_WINDOW_MS + 1)
+    p.forget('s3')
+    expect(p.refusedModel('s3')).toBeNull()
+  })
+
   it('keeps sessions apart and forgets on demand', () => {
     const p = new PendingModelSwitches()
     p.begin('s1', 'claude-opus-5-5', 0)
