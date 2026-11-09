@@ -41,7 +41,7 @@
  * is refused before any process, and a stand-in `claude` first on PATH would
  * catch (and the spec would fail on) any CLI started anyway.
  */
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import {
   REPO,
@@ -62,6 +62,27 @@ const TERM_ID = '7a1d0c3e-0000-4000-8000-00000000c4b2'
 const CHAT_TITLE = 'Odoo accounting research'
 const TERM_TITLE = 'Build log'
 const GONE_ID = '7a1d0c3e-0000-4000-8000-00000000c4c3'
+const GONE_TMUX = 'clave-stopped-tabs-refused-g0ne'
+const LATER_TOKEN = 'sk-ant-oat01-lane-token-for-the-e2e-run-0123456789abcdef'
+/** The usage read a token brings is answered here, never by Anthropic. */
+const stubUsageFetch = (app) =>
+  app.evaluate(() => {
+    const soon = String(Math.floor(Date.now() / 1000) + 3600)
+    globalThis.fetch = async () =>
+      new Response(JSON.stringify({ type: 'message', content: [] }), {
+        status: 200,
+        headers: {
+          'content-type': 'application/json',
+          'anthropic-ratelimit-unified-5h-utilization': '0.1',
+          'anthropic-ratelimit-unified-5h-reset': soon,
+          'anthropic-ratelimit-unified-5h-status': 'allowed',
+          'anthropic-ratelimit-unified-7d-utilization': '0.1',
+          'anthropic-ratelimit-unified-7d-reset': soon,
+          'anthropic-ratelimit-unified-7d-status': 'allowed',
+          'anthropic-ratelimit-unified-status': 'allowed'
+        }
+      })
+  })
 const GONE_CONVERSATION = '3afafb91-0000-4000-8000-0000000000c3'
 const GONE_TITLE = 'Account gone'
 
@@ -305,8 +326,9 @@ export async function run(t) {
     rmSync(DIR, { recursive: true, force: true })
     rmSync(ROOT, { recursive: true, force: true })
     mkdirSync(path.join(ROOT, 'bin'), { recursive: true })
-    // A guard, not a part of the road: the spawn is refused before any
-    // process, so this stand-in must never run; if it does, it says so.
+    // The stand-in CLI: it must not run while the account has no token (the
+    // spawn is refused before any process), and once the token is there it
+    // logs its argv and prints a mark the window's data listener can see.
     writeFileSync(
       path.join(ROOT, 'bin', 'claude'),
       `#!${process.execPath}
@@ -314,7 +336,7 @@ const fs = require('node:fs');
 const argv = process.argv.slice(2);
 if (argv.includes('-p')) process.exit(0);
 fs.appendFileSync(${JSON.stringify(CLI_LOG)}, JSON.stringify({ pid: process.pid, tab: process.env.CLAVE_SESSION_ID ?? null, argv }) + '\\n');
-setInterval(() => {}, 1000);
+setInterval(() => process.stdout.write('stand-in claude STANDIN-MARK\\r\\n'), 400);
 `,
       { mode: 0o755 }
     )
@@ -339,17 +361,28 @@ exec /bin/sh "$@"
     seedTrustedRoots(DIR, [ROOT])
     let app = null
     try {
-      // One launch to mint the window key the record is placed by.
+      // One launch to mint the window key the record is placed by, and the
+      // account the record will name: listed, with no token yet (the usage
+      // read a token brings is stubbed so nothing leaves this Mac).
       const first = await launchApp(DIR, { server: 'in-process', env })
+      await stubUsageFetch(first.app)
+      const account = await first.win.evaluate(() =>
+        window.electronAPI.claudeAccountAdd({ label: 'Later' })
+      )
+      await first.win.waitForTimeout(500)
       await first.app.close()
       const key = persistedWindows(DIR)[0]?.key
       t.check('the window persisted a layout key', !!key, persistedWindows(DIR))
+      t.check('an account with no token is listed', typeof account?.id === 'string', account)
 
-      // A Claude terminal whose account is gone: no token for its profile id.
+      // A Claude terminal on that account, its record keyed by its tmux name
+      // (the shape a terminal's record takes with tmux on, round 2 N-F2):
+      // the restore's start is refused, the account having no token.
       seedSessionRecord(DIR, {
         adapterId: 'pty',
         transport: 'pty',
         id: GONE_ID,
+        tmuxName: GONE_TMUX,
         claudeSessionId: GONE_CONVERSATION,
         cwd: ROOT,
         folderName: path.basename(ROOT),
@@ -361,16 +394,29 @@ exec /bin/sh "$@"
         piMode: false,
         claudeAgentsMode: false,
         dangerousMode: false,
-        claudeProfileId: 'acct-gone-4236',
-        claudeProfileLabel: 'Gone',
+        claudeProfileId: account.id,
+        claudeProfileLabel: 'Later',
         workspaceId: WS.id,
         windowKey: key
       })
-      const recordFile = path.join(recordsRootOf(DIR), 'session-records', `${GONE_ID}.json`)
+      const recordsDir = path.join(recordsRootOf(DIR), 'session-records')
+      const recordFile = path.join(recordsDir, `${GONE_TMUX}.json`)
+      /** Every record file carrying the tab's id, by name. */
+      const recordsOfTab = () =>
+        readdirSync(recordsDir)
+          .filter((f) => f.endsWith('.json'))
+          .filter((f) => {
+            try {
+              return JSON.parse(readFileSync(path.join(recordsDir, f), 'utf8')).id === GONE_ID
+            } catch {
+              return false
+            }
+          })
 
       const second = await launchApp(DIR, { server: 'in-process', env, settleMs: 1500 })
       app = second.app
       const { win } = second
+      await stubUsageFetch(app)
       const restore = win.getByRole('button', { name: 'Restore', exact: true })
       const prompted = await until(() => restore.isVisible().catch(() => false), { tries: 80 })
       t.check('the dead record is offered for relaunch', !!prompted)
@@ -414,6 +460,57 @@ exec /bin/sh "$@"
       )
       t.check('its record is still there', existsSync(recordFile))
       t.equal('no CLI was started for it', lines(CLI_LOG).length, 0)
+
+      // The account gets its token: Resume now succeeds, from the record
+      // (round 2, N-F1 and N-F2): the same tab, the CLI on the conversation,
+      // its output reaching the window that holds the tab.
+      const set = await win.evaluate(
+        ([id, token]) => window.electronAPI.claudeAccountSetToken(id, token),
+        [account.id, LATER_TOKEN]
+      )
+      t.check('the token is set on the account', set !== undefined, set)
+      await win.evaluate((id) => {
+        window.__laneData = ''
+        window.electronAPI.onSessionData(id, (d) => {
+          window.__laneData += d
+        })
+      }, GONE_ID)
+      const resumeAgain = win.getByRole('button', { name: 'Resume', exact: true }).first()
+      const offeredAgain = await until(() => resumeAgain.isVisible().catch(() => false))
+      t.check('Resume is offered again after the failure', offeredAgain === true)
+      if (offeredAgain) await resumeAgain.click()
+      const started = await until(() => lines(CLI_LOG).find((l) => l.tab === GONE_ID) ?? null, {
+        tries: 60
+      })
+      t.check('Resume started the CLI in the same tab', !!started, lines(CLI_LOG))
+      t.equal(
+        'on the conversation (--resume)',
+        started ? started.argv[started.argv.indexOf('--resume') + 1] : null,
+        GONE_CONVERSATION
+      )
+      const seen = await until(
+        async () =>
+          (await win.evaluate(() => window.__laneData ?? '')).includes('STANDIN-MARK')
+            ? true
+            : null,
+        { tries: 60 }
+      )
+      t.check('the CLI’s output reaches the window that holds the tab', seen === true)
+      t.check(
+        'the tab is alive',
+        (await win.evaluate(() => window.electronAPI.sessionsList())).find((s) => s.id === GONE_ID)
+          ?.state !== 'ended'
+      )
+      t.check('its row is still the one row', !!(await rowText(win, GONE_ID)))
+      const files = recordsOfTab()
+      t.equal('one record carries the tab', files.length, 1, files)
+      t.equal(
+        'and keeps the window key',
+        files[0]
+          ? JSON.parse(readFileSync(path.join(recordsDir, files[0]), 'utf8')).windowKey
+          : null,
+        key
+      )
     } finally {
       if (app) await app.close()
       for (const { pid } of lines(CLI_LOG)) {

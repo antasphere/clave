@@ -8,6 +8,7 @@ vi.mock('electron', () => {
   throw new Error('the lifecycle imported electron')
 })
 const mocks = vi.hoisted(() => ({
+  adoptable: [] as unknown[],
   loginShellEnvAsync: vi.fn(async () => ({}) as Record<string, string>),
   spawn: vi.fn(),
   kill: vi.fn<(id: string) => Promise<void>>(async () => {}),
@@ -39,6 +40,7 @@ vi.mock('../pty-manager', () => ({
       mocks.listeners.get(id)?.onExit(0)
     },
     getSessionRecord: mocks.getSessionRecord,
+    listAdoptableSessions: () => mocks.adoptable,
     setSessionDisplayName: mocks.setSessionDisplayName,
     setSessionViewRecord: mocks.setSessionViewRecord,
     getSession: (id: string) => (mocks.states.has(id) ? { id, alive: true } : undefined),
@@ -409,9 +411,50 @@ describe('a Resume of a running tab is refused on this Mac too (PRDCT-4193, roun
       resumeSessionId: 'conv-1'
     })
     mocks.getSessionRecord.mockReturnValue(undefined)
+    mocks.adoptable = []
     await expect(restartSession(`life-${++sequence}`, {})).rejects.toThrow(
       'This session is not running and left no record to resume from.'
     )
+  })
+
+  it('finds a record keyed by its tmux name, spawns under the window that placed it, and offers the tmux name (round 2, N-F1, N-F2, N-F5)', async () => {
+    const id = `life-${++sequence}`
+    windows()
+    mocks.restartSpawn.mockReturnValue(null)
+    mocks.getSessionRecord.mockReturnValue(undefined)
+    mocks.adoptable = [
+      {
+        id,
+        tmuxName: 'clave-root-abc123',
+        cwd: '/work/app',
+        folderName: 'app',
+        claudeMode: true,
+        antigravityMode: false,
+        codexMode: false,
+        piMode: false,
+        claudeAgentsMode: false,
+        dangerousMode: false,
+        claudeSessionId: 'conv-2',
+        claudeProfileId: 'acct-kept',
+        windowKey: 'w7',
+        displayName: 'Old tmux tab'
+      }
+    ]
+    spawned(id)
+    // An account field the caller leaves undefined never erases the record's.
+    await expect(
+      restartSession(id, { onlyIfStopped: true, claudeProfileId: undefined })
+    ).resolves.toMatchObject({ id, resumed: true })
+    const [cwd, options] = mocks.spawn.mock.calls.at(-1) as [string, PtySpawnOptions]
+    expect(cwd).toBe('/work/app')
+    expect(options).toMatchObject({
+      adoptSessionId: id,
+      adoptTmuxName: 'clave-root-abc123',
+      resumeSessionId: 'conv-2',
+      claudeProfileId: 'acct-kept',
+      windowKey: 'w7'
+    })
+    mocks.adoptable = []
   })
 
   it('rejects with onlyIfStopped while the session runs, and restarts an ended one', async () => {

@@ -16,7 +16,10 @@ export function resumeOptions(record: SessionRecord): SpawnOptions {
   const runtime = runtimeChoices(record)
   return {
     adoptSessionId: record.id,
-    resumeSessionId: record.codexThreadId ?? record.claudeSessionId,
+    // A Pi session resumes through `--session <id>` (the launch's
+    // `resumeSessionId`); `piSessionId` alone would start a fresh one under
+    // that id (round 2, N-F3).
+    resumeSessionId: record.codexThreadId ?? record.claudeSessionId ?? record.piSessionId,
     claudeSessionId: record.claudeSessionId,
     piSessionId: record.piSessionId,
     claudeMode: record.claudeMode,

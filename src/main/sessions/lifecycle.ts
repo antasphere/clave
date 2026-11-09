@@ -264,27 +264,43 @@ export async function restartSession(
   const current = sessionManager.get(id)
   if (overrides.onlyIfStopped && current && current.state !== 'ended')
     throw new Error('This session is running; there is nothing to resume.')
-  const record = ptyManager.getSessionRecord(id)
+  // The record by the session's id, else by its id among the adoptable ones:
+  // a terminal's record is keyed by its tmux name, which the by-id read does
+  // not find for a session this process never spawned (round 2, N-F2).
+  const record =
+    ptyManager.getSessionRecord(id) ?? ptyManager.listAdoptableSessions().find((r) => r.id === id)
   // A session this process never spawned but whose record it keeps (a tab the
   // restore placed stopped because its start was refused, PRDCT-4236 round 1
   // F3) resumes from the record, as a Clave server's own Resume does: the
-  // same allowlist, the account the caller names laid over it. Until then the
-  // Resume of such a tab failed on a message naming nothing but its id.
+  // same allowlist, the record's tmux name offered so a tmux respawn reuses
+  // it and the name carries over, the account the caller names laid over it
+  // (the fields it names, not the ones it leaves undefined, round 2 N-F5).
+  // Until then the Resume of such a tab failed on a message naming nothing
+  // but its id.
   const { resendRejected: _resend, onlyIfStopped: _only, ...requested } = overrides
   void _resend
   void _only
+  const named = Object.fromEntries(Object.entries(requested).filter(([, v]) => v !== undefined))
   const plan =
     ptyManager.restartSpawn(id, overrides) ??
     (record
       ? {
           cwd: record.cwd,
-          options: { ...resumeOptions(record), ...requested } as PtySpawnOptions,
+          options: {
+            ...resumeOptions(record),
+            ...(record.tmuxName ? { adoptTmuxName: record.tmuxName } : {}),
+            ...named
+          } as PtySpawnOptions,
           resumed: !!(record.codexThreadId ?? record.claudeSessionId ?? record.piSessionId)
         }
       : null)
   if (!plan) throw new Error('This session is not running and left no record to resume from.')
   const windows = sessionWindows()
-  const key = windowKey !== undefined ? windowKey : windows.windowOf(id)
+  // The window that holds the tab; for a session this process never spawned
+  // nothing is bound, and the record says which window placed it (round 2,
+  // N-F1: a Resume under no window ran the CLI with its output going nowhere).
+  const key =
+    windowKey !== undefined ? windowKey : (windows.windowOf(id) ?? record?.windowKey ?? null)
   // The kill ends the old process, whose exit forgets what a dead tab
   // leaves behind (the parent link among them); the same tab comes back
   // under the same id, so its link is kept across (verifier round 1, F1).

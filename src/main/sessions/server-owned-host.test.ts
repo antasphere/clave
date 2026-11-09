@@ -590,6 +590,18 @@ describe('resumeOptions carries what the chat was running on (PRDCT-4191, PRDCT-
     expect(resumeOptions(record).permissionMode).toBeUndefined()
   })
 
+  it('resumes a Pi session through its session id, as the launch wants it (round 2, N-F3)', () => {
+    const options = resumeOptions({
+      ...record,
+      claudeMode: false,
+      piMode: true,
+      claudeSessionId: undefined,
+      codexThreadId: undefined,
+      piSessionId: 'pi-77'
+    })
+    expect(options.resumeSessionId).toBe('pi-77')
+  })
+
   it('passes a well-formed effort and drops one that is not', () => {
     expect(resumeOptions({ ...record, effort: 'high' }).effort).toBe('high')
     expect(resumeOptions({ ...record, effort: 'HIGH; rm' }).effort).toBeUndefined()
