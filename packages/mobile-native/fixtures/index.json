@@ -46,6 +46,10 @@
     "routes.json": {
       "sha256": "a81d636de605bf584f0e1d9d639e3d7aae655849e4a6407df633d1d3a9b036ac",
       "bytes": 30865
+    },
+    "shapes.json": {
+      "sha256": "891d7a4b2f66955756b14bca94db47bfce181a8bc4d8ae8c4b9e852dfd271a31",
+      "bytes": 495656
     }
   }
 }

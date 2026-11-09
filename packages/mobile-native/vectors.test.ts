@@ -5,7 +5,9 @@
  * added, renamed or retyped in packages/contract, or a vector edited by
  * hand) fails here, named. Then every committed sample is decoded once more
  * through the schema it was exported from: a valid one must decode, an
- * invalid one must be refused, whatever the file says.
+ * invalid one must be refused, whatever the file says. shapes.json carries
+ * every schema as a JSON Schema, so a field added, dropped or made optional
+ * changes a committed file even when every sample still decodes.
  */
 import { readdirSync, readFileSync } from 'node:fs'
 import path from 'node:path'
@@ -14,6 +16,7 @@ import { describe, expect, it } from 'vitest'
 import {
   FIXTURES_DIR,
   INDEX_FILE,
+  SHAPES_FILE,
   buildVectors,
   timelinePageOrdered,
   type CommandVectors,
@@ -56,7 +59,7 @@ describe('the fixture vectors', () => {
     let valid = 0
     let invalid = 0
     for (const name of committedNames) {
-      if (name === INDEX_FILE || name === 'routes.json') continue
+      if (name === INDEX_FILE || name === SHAPES_FILE || name === 'routes.json') continue
       const data = JSON.parse(committed(name)) as {
         family: string
         shapes?: Record<string, ShapeVectors>
@@ -126,6 +129,26 @@ describe('the fixture vectors', () => {
     }
     expect(valid).toBeGreaterThan(150)
     expect(invalid).toBeGreaterThan(50)
+  })
+
+  it('describe every shape and command the exporter knows as a JSON Schema, required and optional told apart', () => {
+    const data = JSON.parse(committed(SHAPES_FILE)) as {
+      schemas: Record<
+        string,
+        Record<string, { required?: string[]; properties?: Record<string, unknown> }>
+      >
+    }
+    expect(Object.keys(data.schemas).sort()).toEqual(Object.keys(schemas).sort())
+    for (const [family, registry] of Object.entries(schemas))
+      expect(Object.keys(data.schemas[family]).sort(), family).toEqual(Object.keys(registry).sort())
+    // A shape with optional fields lists more properties than it requires;
+    // an optional field added to the contract lands among the properties
+    // and nowhere else, which is the change no sample-only file showed.
+    const session = data.schemas.sessions.Session
+    expect(session.required).toContain('id')
+    expect(Object.keys(session.properties ?? {}).length).toBeGreaterThan(
+      (session.required ?? []).length
+    )
   })
 
   it('keep the ordering rule of a timeline page apart from the contract, and true to the docs', () => {

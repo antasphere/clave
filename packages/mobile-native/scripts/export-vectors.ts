@@ -31,7 +31,7 @@ import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { Either, Schema, SchemaAST } from 'effect'
+import { Either, JSONSchema, Schema, SchemaAST } from 'effect'
 import { ClaveApi } from '@clave/contract/api'
 import * as Devices from '@clave/contract/devices'
 import { CONTRACT_VERSION } from '@clave/contract/env'
@@ -54,6 +54,8 @@ import {
 export const FIXTURES_DIR = 'packages/mobile-native/fixtures'
 export const GENERATOR = 'packages/mobile-native/scripts/export-vectors.ts'
 export const INDEX_FILE = 'index.json'
+/** Every shape and command the other files sample, as JSON Schema. */
+export const SHAPES_FILE = 'shapes.json'
 
 type AnySchema = Schema.Schema.AnyNoContext
 type Pairs = ReadonlyArray<readonly [name: string, sample: unknown]>
@@ -2269,6 +2271,29 @@ export function buildVectors(): Vectors {
     files.set(family.file, json(family.data))
     schemas[family.data.family as string] = family.schemas
   }
+  // Every shape and every command payload or success the families sample,
+  // as a JSON Schema read off the contract's own schema. A sample proves
+  // what the contract accepts today; this file says what the shape IS, so a
+  // field the contract adds, drops or makes optional changes the exported
+  // files even when every sample still decodes (the verifier's round 1, F7).
+  const shapes: Record<string, Record<string, unknown>> = {}
+  for (const [family, registry] of Object.entries(schemas)) {
+    shapes[family] = Object.fromEntries(
+      Object.entries(registry)
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([name, schema]) => [name, JSONSchema.make(schema)])
+    )
+  }
+  files.set(
+    SHAPES_FILE,
+    json({
+      ...header('shapes', [
+        'Every shape, command payload and command success the other files sample, as a JSON Schema (draft 7) made from the contract’s own schema: the properties, which of them are required, the literals, the nested shapes under $defs. A phone’s decoder is held to this, not only to the samples: a field the contract adds, drops or makes optional changes this file even when every sample still decodes.',
+        'Keyed by family, then by the name the other files use: a shape by its name, a command by <Command>.payload and <Command>.success.'
+      ]),
+      schemas: shapes
+    })
+  )
   const index = {
     $comment: `The fixture vectors both native phones test against, exported from the real contract by ${GENERATOR}; this index names every file with its hash. Do not edit.`,
     contract: CONTRACT_VERSION,
