@@ -28,6 +28,28 @@ const trimAnswers = (answers: Answers): Answers =>
     ])
   )
 
+/** A hosted form's answers as its card shows them (PRDCT-4210, verifier
+ *  round 2, Minor A): each question's default under the draft, a field the
+ *  person emptied (`''` in the draft) left out. What the agent reads on an
+ *  open form and what its submit approves. */
+const nonEmpty = (answers: Answers): Answers | undefined =>
+  Object.keys(answers).length ? answers : undefined
+const effectiveAnswers = (
+  questions: readonly { id?: string; question: string; default?: string }[],
+  draft: Answers | undefined
+): Answers => {
+  const out: Record<string, string | readonly string[]> = {}
+  for (const q of questions) {
+    const key = q.id ?? q.question
+    if (q.default !== undefined && q.default.trim()) out[key] = q.default.trim()
+  }
+  for (const [key, value] of Object.entries(draft ?? {})) {
+    if (typeof value === 'string' ? value === '' : value.length === 0) delete out[key]
+    else out[key] = value
+  }
+  return out
+}
+
 export type RequestInput = Omit<PendingRequest, 'id' | 'createdAt'>
 /** The prefix of the id a hosted request carries as its provider id. */
 export const HOSTED_REQUEST_PREFIX = 'clave:'
@@ -219,6 +241,11 @@ export class PendingRequests {
     if (entry.result.status !== 'pending')
       throw new RequestRejected({ code: 'closed', message: 'The request was already settled.' })
     const keys = new Set((entry.request.questions ?? []).map((q) => q.id ?? q.question))
+    const defaulted = new Set(
+      (entry.request.questions ?? [])
+        .filter((q) => q.default !== undefined && q.default.trim())
+        .map((q) => q.id ?? q.question)
+    )
     const answers = trimAnswers(input.answers)
     for (const key of Object.keys(answers))
       if (!keys.has(key) || !isQuestionAnswerKey(key))
@@ -230,8 +257,15 @@ export class PendingRequests {
     const typed = new Set(entry.typed)
     for (const [key, value] of Object.entries(answers)) {
       if (typeof value === 'string' ? value === '' : value.length === 0) {
-        delete next[key]
-        typed.delete(key)
+        // A field the person emptied over its default stays empty: the
+        // draft says so, or the default would read as their answer.
+        if (defaulted.has(key)) {
+          next[key] = ''
+          typed.add(key)
+        } else {
+          delete next[key]
+          typed.delete(key)
+        }
       } else {
         next[key] = value
         typed.add(key)
@@ -313,13 +347,16 @@ export class PendingRequests {
     const status = entry.result.status
     if (status === 'pending') {
       const { next, patch } = merge(entry.draft ?? {})
+      // What the submit approves is what the card shows: the defaults under
+      // the draft as it will stand.
+      const shown = effectiveAnswers(questions, next)
       if (input.submit) {
         const missing = questions.find(
-          (q) => answerProblem(q, own(next, q.id ?? q.question)) !== null
+          (q) => answerProblem(q, own(shown, q.id ?? q.question)) !== null
         )
         if (missing) {
           const key = missing.id ?? missing.question
-          const value = own(next, key)
+          const value = own(shown, key)
           const problem = answerProblem(missing, value)
           // A value that is there but does not fit is the person's typing
           // (the agent's own values are judged as they are set, above).
@@ -347,7 +384,11 @@ export class PendingRequests {
         entry.byAgent = true
         await this.resolve({
           requestId: entry.request.id,
-          response: { type: 'permission', optionId: 'answer', answers: entry.draft ?? {} }
+          response: {
+            type: 'permission',
+            optionId: 'answer',
+            answers: effectiveAnswers(questions, entry.draft)
+          }
         })
       }
       return this.resultAfter(input.requestId, input.sessionId)
@@ -424,11 +465,8 @@ export class PendingRequests {
       const answers =
         entry?.hosted && response?.type === 'permission' && response.optionId === 'answer'
           ? response.answers
-          : entry?.hosted &&
-              result.status === 'pending' &&
-              entry.draft &&
-              Object.keys(entry.draft).length
-            ? entry.draft
+          : entry?.hosted && result.status === 'pending'
+            ? nonEmpty(effectiveAnswers(entry.request.questions ?? [], entry.draft))
             : undefined
       return {
         requestId,

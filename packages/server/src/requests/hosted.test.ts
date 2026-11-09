@@ -629,3 +629,66 @@ describe("the person's typing in the form's draft", () => {
     requests.close()
   })
 })
+
+describe("a form's defaults are what the card shows (PRDCT-4210, verifier round 2, Minor A)", () => {
+  const withDefault = {
+    sessionId: 's1',
+    description: 'This machine.',
+    questions: [
+      { id: 'name', question: 'Your name', kind: 'text' as const, options: [] },
+      {
+        id: 'machine',
+        question: 'This machine',
+        kind: 'text' as const,
+        options: [],
+        default: 'mbp'
+      }
+    ]
+  }
+  it('the agent reads a default the card shows and its submit approves it', async () => {
+    const requests = new PendingRequests()
+    const request = requests.createHosted(withDefault)
+    expect(await requests.resultAfter(request.id, 's1')).toEqual({
+      requestId: request.id,
+      status: 'pending',
+      answers: { machine: 'mbp' }
+    })
+    // The draft a late view is handed holds no default: nothing lands as
+    // anyone's fill.
+    expect(requests.draftOf(request.id)).toEqual({})
+    const view = await requests.setAnswers({
+      requestId: request.id,
+      sessionId: 's1',
+      answers: { name: 'Luca' },
+      submit: true
+    })
+    expect(view.answers).toEqual({ name: 'Luca', machine: 'mbp' })
+    requests.close()
+  })
+  it('a default the person emptied stays empty, so the submit asks for it', async () => {
+    const requests = new PendingRequests()
+    const request = requests.createHosted(withDefault)
+    requests.setDraft({
+      requestId: request.id,
+      sessionId: 's1',
+      answers: { name: 'Luca', machine: '' }
+    })
+    expect((await requests.resultAfter(request.id, 's1')).answers).toEqual({ name: 'Luca' })
+    expect(requests.draftOf(request.id)).toEqual({ name: 'Luca', machine: '' })
+    await expect(
+      requests.setAnswers({ requestId: request.id, sessionId: 's1', answers: {}, submit: true })
+    ).rejects.toMatchObject({
+      code: 'invalid',
+      message: expect.stringMatching(/^"machine" is still unanswered/)
+    })
+    requests.setDraft({ requestId: request.id, sessionId: 's1', answers: { machine: 'studio' } })
+    const view = await requests.setAnswers({
+      requestId: request.id,
+      sessionId: 's1',
+      answers: {},
+      submit: true
+    })
+    expect(view.answers).toEqual({ name: 'Luca', machine: 'studio' })
+    requests.close()
+  })
+})

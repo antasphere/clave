@@ -442,14 +442,17 @@ describe('taking a message back', () => {
     // earlier fill of that field is no longer the draft's, so the agent
     // setting it again, even to the same value, reaches the card.
     const sent = reduceConversation(drafted, { typedSent: 'clave:1', answers: { login: 'luca-b' } })
-    expect(sent.entries[0]).toMatchObject({ draft: {}, typed: { login: 'luca-b' } })
+    expect(sent.entries[0]).toMatchObject({ typed: { login: 'luca-b' } })
+    expect((sent.entries[0] as { draft?: object }).draft).toEqual({})
     const again = reduceConversation(sent, {
       event: { type: 'permission_updated', id: 'clave:1', answers: { login: 'luca-a' } },
       at: 3
     })
-    expect(again.entries[0]).toMatchObject({ draft: { login: 'luca-a' }, typed: {} })
+    expect((again.entries[0] as { draft?: object }).draft).toEqual({ login: 'luca-a' })
+    expect((again.entries[0] as { typed?: object }).typed).toEqual({})
     const emptied = reduceConversation(sent, { typedSent: 'clave:1', answers: { login: '' } })
-    expect(emptied.entries[0]).toMatchObject({ draft: {}, typed: {} })
+    expect((emptied.entries[0] as { draft?: object }).draft).toEqual({})
+    expect((emptied.entries[0] as { typed?: object }).typed).toEqual({})
     // The approve, written to the agent as the reader's message, draws no
     // bubble: the record row says it. Every view is handed the answers.
     const message = [

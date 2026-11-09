@@ -357,6 +357,15 @@ export async function run(t) {
     await card.waitFor()
     assert.equal(await card.locator('.chat-prompt-step').innerText(), '1/3')
     assert.equal(await card.locator('#chat-field-name').inputValue(), 'Luca P')
+    // The agent's field on another step is shown too, from the server's
+    // draft (verifier round 2: the seeding was unpinned).
+    await card.getByRole('button', { name: 'Next', exact: true }).click()
+    await card.getByRole('button', { name: 'Next', exact: true }).click()
+    assert.equal(await card.locator('.chat-prompt-step').innerText(), '3/3')
+    assert.equal(await card.locator('#chat-field-when').inputValue(), '2026-11-17')
+    await card.getByRole('button', { name: 'Back', exact: true }).click()
+    await card.getByRole('button', { name: 'Back', exact: true }).click()
+    assert.equal(await card.locator('.chat-prompt-step').innerText(), '1/3')
     await card.locator('#chat-field-name').fill('Luca Q')
     const afterRemount = await until(async () => {
       const read = payload(await mcp.call('clave_input_result', { requestId: second.requestId }))
@@ -389,6 +398,23 @@ export async function run(t) {
         return read?.answers?.name === 'Luca P' ? true : null
       })
     )
+    // A word of the agent about another field leaves the person's typing
+    // where it is, on the card and in the draft (verifier round 2: the
+    // view's own record of what it sent was unpinned).
+    payload(
+      await mcp.call('clave_input_set', {
+        requestId: second.requestId,
+        answers: {},
+        notes: { when: 'that date is a Tuesday' }
+      })
+    )
+    await win.waitForTimeout(700)
+    assert.equal(await card.locator('#chat-field-name').inputValue(), 'Luca P')
+    assert.equal(
+      payload(await mcp.call('clave_input_result', { requestId: second.requestId }))?.answers?.name,
+      'Luca P'
+    )
+    t.check("an agent's word about another field leaves the person's typing as it is", true)
     // The agent approves it itself (the person said to go ahead): the card
     // collapses, no message is owed, the answers are the record's, the
     // person's correction among them.
