@@ -69,7 +69,12 @@ import {
 } from './deck'
 import { type LaunchFacts, REPORTING_AGENTS, resolveLaunch } from './launch'
 import { PublishFailure, SHARE_NAME_PREFIX, type RoutinePublisher } from './publisher'
-import { type RegistryWorkspace, type ServerIdentity, resolveRoutines } from './resolve'
+import {
+  type RegistryWorkspace,
+  type ServerIdentity,
+  resolveRoutines,
+  workspaceFilesOf
+} from './resolve'
 import { ON_TIME_MS, TICK_MS, decideTick, nextRunAt } from './scheduler'
 import { SYSTEM_PROMPT_LINE, firstMessage } from './skill'
 import { RoutinesStore } from './store'
@@ -200,6 +205,8 @@ export function createRoutineService(options: RoutineServiceOptions): RoutineSer
   let started = false
   let ticking: Promise<boolean> | null = null
   let refreshing: Promise<void> | null = null
+  /** The one pass queued behind a running refresh: many asks, one more pass. */
+  let again: Promise<void> | null = null
 
   const emit = (): void => {
     for (const listener of [...listeners]) {
@@ -244,7 +251,13 @@ export function createRoutineService(options: RoutineServiceOptions): RoutineSer
   async function refresh(): Promise<void> {
     // Asked while one runs: that one may have read a file before a change
     // landed, so a second pass follows it (verifier round 4, K1).
-    if (refreshing) return refreshing.then(() => refresh())
+    if (refreshing) {
+      again ??= refreshing.then(() => {
+        again = null
+        return refresh()
+      })
+      return again
+    }
     refreshing = (async () => {
       const workspaces = await options.workspaces()
       const resolved = await resolveRoutines(
@@ -713,13 +726,22 @@ export function createRoutineService(options: RoutineServiceOptions): RoutineSer
     )
   }
 
-  /** Whether a path, or any folder above it under the root, is a symbolic link. */
-  const isLink = (p: string): boolean => {
-    try {
-      return fs.lstatSync(p).isSymbolicLink()
-    } catch {
-      return false
+  /** Whether a path, or any folder above it up to the root, is a symbolic link. */
+  const throughLink = (root: string, file: string): boolean => {
+    const isLink = (p: string): boolean => {
+      try {
+        return fs.lstatSync(p).isSymbolicLink()
+      } catch {
+        return false
+      }
     }
+    const top = path.resolve(root)
+    let p = path.resolve(file)
+    while (p.startsWith(top) && p !== top) {
+      if (isLink(p)) return true
+      p = path.dirname(p)
+    }
+    return false
   }
 
   /** A single-group read as a group the writer takes: its `type` tag dropped. */
@@ -829,10 +851,22 @@ export function createRoutineService(options: RoutineServiceOptions): RoutineSer
       throw new Error(
         `${file} is outside the workspace ${workspace.name}: a routine moves into one of its files`
       )
-    const linked = isLink(file) || isLink(path.dirname(file))
-    if (linked)
+    if (throughLink(workspace.rootDir, file))
       throw new Error(
         `${file} goes through a link: a routine moves into a file of the workspace itself`
+      )
+    // Only a file the workspace reads: its profile file, or one its discovery
+    // finds. A routine moved anywhere else would run nowhere and be listed
+    // nowhere (verifier round 5, L1).
+    const profilePath =
+      workspace.profileFile ?? path.join(workspace.rootDir, '.clave', 'workspaces', 'default.clave')
+    const readFiles = new Set([
+      profilePath,
+      ...(await workspaceFilesOf(options.files, workspace)).map((e) => e.path)
+    ])
+    if (!readFiles.has(file))
+      throw new Error(
+        `${file} is not a file this workspace reads (its profile file is ${profilePath}; the others are the files its discovery finds): a routine moved there would run nowhere`
       )
     const read = await options.files.read(file, { rootDir: workspace.rootDir })
     // A file that is there and reads as nothing (it does not parse, or nobody
