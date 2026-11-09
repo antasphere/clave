@@ -54,6 +54,17 @@ export class CodexAppServer {
       this.stderr = (this.stderr + data).slice(-4096)
     })
     this.ended = new Promise((resolve) => {
+      // A spawn that fails (no such executable, no such cwd) emits `error` and
+      // never `close`: settle every caller with the reason instead of a timeout.
+      child.on('error', (error) => {
+        this.closed = true
+        for (const p of this.pending.values()) {
+          clearTimeout(p.timer)
+          p.reject(new Error(`Codex app-server could not start: ${error.message}`))
+        }
+        this.pending.clear()
+        resolve(1)
+      })
       child.on('close', (code) => {
         this.closed = true
         for (const p of this.pending.values()) {

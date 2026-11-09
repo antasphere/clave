@@ -102,10 +102,9 @@ describe.skipIf(!supported)(
         { codexHome: home, cwd }
       )
       const before = readFileSync(written.path, 'utf8')
-      const read = await readThread(written.threadId, {
-        codexHome: home,
-        cwd: join(home, 'elsewhere-' + Date.now())
-      })
+      const elsewhere = join(home, 'elsewhere')
+      mkdirSync(elsewhere)
+      const read = await readThread(written.threadId, { codexHome: home, cwd: elsewhere })
       expect(read.cwd).toBe(cwd)
       expect(read.turns).toHaveLength(9)
       expect(read.turns.map((t) => t.items.map((i) => i.type))).toEqual([
@@ -131,6 +130,18 @@ describe.skipIf(!supported)(
     }, 120_000)
   }
 )
+
+describe('the app-server client', () => {
+  it('settles a start that cannot spawn with the reason, instead of a timeout', async () => {
+    const missing = join(tmpdir(), 'session-bridge-no-such-dir-' + Date.now())
+    await expect(
+      readThread('t', { codexHome: missing, cwd: missing, timeoutMs: 5_000 })
+    ).rejects.toThrow(/could not start: spawn/)
+    await expect(
+      readThread('t', { codexHome: tmpdir(), bin: join(missing, 'codex'), timeoutMs: 5_000 })
+    ).rejects.toThrow(/could not start: spawn .*ENOENT/)
+  })
+})
 
 describe.skipIf(supported)('without a supported codex on PATH', () => {
   it('the resume test is skipped, not failed', () => {
