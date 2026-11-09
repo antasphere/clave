@@ -28,6 +28,28 @@ const trimAnswers = (answers: Answers): Answers =>
     ])
   )
 
+/** A hosted form's answers as its card shows them (PRDCT-4210, verifier
+ *  round 2, Minor A): each question's default under the draft, a field the
+ *  person emptied (`''` in the draft) left out. What the agent reads on an
+ *  open form and what its submit approves. */
+const nonEmpty = (answers: Answers): Answers | undefined =>
+  Object.keys(answers).length ? answers : undefined
+const effectiveAnswers = (
+  questions: readonly { id?: string; question: string; default?: string }[],
+  draft: Answers | undefined
+): Answers => {
+  const out: Record<string, string | readonly string[]> = {}
+  for (const q of questions) {
+    const key = q.id ?? q.question
+    if (q.default !== undefined && q.default.trim()) out[key] = q.default.trim()
+  }
+  for (const [key, value] of Object.entries(draft ?? {})) {
+    if (typeof value === 'string' ? value === '' : value.length === 0) delete out[key]
+    else out[key] = value
+  }
+  return out
+}
+
 export type RequestInput = Omit<PendingRequest, 'id' | 'createdAt'>
 /** The prefix of the id a hosted request carries as its provider id. */
 export const HOSTED_REQUEST_PREFIX = 'clave:'
@@ -69,6 +91,9 @@ interface Entry {
    *  what the person said (`setAnswers`). What the card shows and what the
    *  tool reads on a pending form. */
   draft?: Answers
+  /** The draft's fields the person typed last (PRDCT-4210), rather than the
+   *  agent: what a late view is handed as typed, never as the agent's fill. */
+  typed?: Set<string>
   /** A hosted form approved, then a field set again. */
   revised?: boolean
   /** The agent itself approved the form (`setAnswers` with `submit`). */
@@ -186,6 +211,69 @@ export class PendingRequests {
       ? structuredClone(entry.draft)
       : {}
   }
+  /** Which of an open hosted form's draft fields the person typed last
+   *  (PRDCT-4210); the rest the agent set. Empty for any other request. */
+  typedOf(id: string): ReadonlySet<string> {
+    const entry = this.entries.get(id)
+    return entry?.hosted && entry.result.status === 'pending' && entry.typed
+      ? new Set(entry.typed)
+      : new Set()
+  }
+  /**
+   * What the person typed into a form still open (PRDCT-4210): the card
+   * writes its fields as they change, so the draft holds them and the
+   * agent's read and its own submit see the person's values. Taken as typed,
+   * half-written or not: the kind rule judges an answer when the form is
+   * approved, by the person or by the agent's submit, never a keystroke. An
+   * emptied field leaves the draft. Nobody is told: the card that typed it
+   * already shows it, and the agent reads it when it asks. Refused on a form
+   * that is no longer open, a key the form does not ask, or a request that
+   * is not a hosted form of this session.
+   */
+  setDraft(input: { requestId: string; sessionId: string; answers: Answers }): void {
+    this.prune()
+    const entry = this.entries.get(input.requestId)
+    if (!entry || !entry.hosted || entry.request.sessionId !== input.sessionId)
+      throw new RequestRejected({
+        code: 'not_found',
+        message: 'No request belongs to this caller.'
+      })
+    if (entry.result.status !== 'pending')
+      throw new RequestRejected({ code: 'closed', message: 'The request was already settled.' })
+    const keys = new Set((entry.request.questions ?? []).map((q) => q.id ?? q.question))
+    const defaulted = new Set(
+      (entry.request.questions ?? [])
+        .filter((q) => q.default !== undefined && q.default.trim())
+        .map((q) => q.id ?? q.question)
+    )
+    const answers = trimAnswers(input.answers)
+    for (const key of Object.keys(answers))
+      if (!keys.has(key) || !isQuestionAnswerKey(key))
+        throw new RequestRejected({
+          code: 'invalid',
+          message: `No question "${key}" on this form.`
+        })
+    const next: Record<string, string | readonly string[]> = { ...entry.draft }
+    const typed = new Set(entry.typed)
+    for (const [key, value] of Object.entries(answers)) {
+      if (typeof value === 'string' ? value === '' : value.length === 0) {
+        // A field the person emptied over its default stays empty: the
+        // draft says so, or the default would read as their answer.
+        if (defaulted.has(key)) {
+          next[key] = ''
+          typed.add(key)
+        } else {
+          delete next[key]
+          typed.delete(key)
+        }
+      } else {
+        next[key] = value
+        typed.add(key)
+      }
+    }
+    entry.draft = next
+    entry.typed = typed
+  }
   /**
    * The agent writes to a form it asked (`clave_input_set`, PRDCT-4157):
    * each field judged by its question's kind, the same rule the card applies
@@ -238,14 +326,26 @@ export class PendingRequests {
         ? JSON.stringify([...a].sort()) === JSON.stringify([...b].sort())
         : JSON.stringify(a) === JSON.stringify(b)
     /** The answers as they will stand, and the patch the views are told. */
+    /** On an open form, a field with a default is cleared to an explicit
+     *  `''`: deleted, the default would come back under it while the card
+     *  shows it empty (verifier round 3). An approved form's answers carry
+     *  the defaults already, so a clear there drops the field. */
     const merge = (
-      current: Answers
+      current: Answers,
+      open = false
     ): { next: Answers; patch: Record<string, string | readonly string[]> } => {
       const next: Record<string, string | readonly string[]> = { ...current }
       const patch: Record<string, string | readonly string[]> = {}
       for (const [key, value] of Object.entries(answers)) {
         const before = own(current, key)
         if (cleared.has(key)) {
+          const question = byKey.get(key)
+          if (open && question?.default !== undefined && question.default.trim()) {
+            if (before === '') continue
+            next[key] = ''
+            patch[key] = ''
+            continue
+          }
           if (before === undefined) continue
           delete next[key]
           patch[key] = ''
@@ -258,20 +358,39 @@ export class PendingRequests {
     }
     const status = entry.result.status
     if (status === 'pending') {
-      const { next, patch } = merge(entry.draft ?? {})
+      const { next, patch } = merge(entry.draft ?? {}, true)
+      // What the submit approves is what the card shows: the defaults under
+      // the draft as it will stand.
+      const shown = effectiveAnswers(questions, next)
       if (input.submit) {
         const missing = questions.find(
-          (q) => answerProblem(q, own(next, q.id ?? q.question)) !== null
+          (q) => answerProblem(q, own(shown, q.id ?? q.question)) !== null
         )
-        if (missing)
+        if (missing) {
+          const key = missing.id ?? missing.question
+          const value = own(shown, key)
+          const problem = answerProblem(missing, value)
+          // A value that is there but does not fit is the person's typing
+          // (the agent's own values are judged as they are set, above).
+          const unanswered =
+            value === undefined || (typeof value === 'string' ? !value.trim() : !value.length)
+          // Whose value it is: the person's typing, or the form's own default
+          // (the agent's values are judged as they are set).
+          const whose = entry.typed?.has(key) ? 'as the person typed it' : "the form's default"
           throw new RequestRejected({
             code: 'invalid',
-            message: `"${missing.id ?? missing.question}" is still unanswered; set it, or let the person approve.`
+            message: unanswered
+              ? `"${key}" is still unanswered; set it, or let the person approve.`
+              : `"${key}": ${problem}, ${whose}; set it, or let the person approve.`
           })
+        }
       }
       const noted = Object.keys(notes).length > 0
       if (Object.keys(patch).length) {
         entry.draft = next
+        // A field the agent set speaks for the agent again, over the
+        // person's typing there (PRDCT-4210).
+        if (entry.typed) for (const key of Object.keys(patch)) entry.typed.delete(key)
         this.changed()
       }
       if (Object.keys(patch).length || noted)
@@ -280,7 +399,11 @@ export class PendingRequests {
         entry.byAgent = true
         await this.resolve({
           requestId: entry.request.id,
-          response: { type: 'permission', optionId: 'answer', answers: entry.draft ?? {} }
+          response: {
+            type: 'permission',
+            optionId: 'answer',
+            answers: effectiveAnswers(questions, entry.draft)
+          }
         })
       }
       return this.resultAfter(input.requestId, input.sessionId)
@@ -357,11 +480,8 @@ export class PendingRequests {
       const answers =
         entry?.hosted && response?.type === 'permission' && response.optionId === 'answer'
           ? response.answers
-          : entry?.hosted &&
-              result.status === 'pending' &&
-              entry.draft &&
-              Object.keys(entry.draft).length
-            ? entry.draft
+          : entry?.hosted && result.status === 'pending'
+            ? nonEmpty(effectiveAnswers(entry.request.questions ?? [], entry.draft))
             : undefined
       return {
         requestId,
@@ -429,12 +549,29 @@ export class PendingRequests {
         .map((entry) => structuredClone(entry.request))
     }
   }
-  native(sessionId: string, providerRequestId: string): PendingRequest | undefined {
+  /** The request a provider id names in a session: the pending one when
+   *  (or the one being answered) when there is one, else the latest settled one still kept for late reads.
+   *  A provider reuses its ids across a restart (Codex counts from "0"
+   *  again), so a settled record never hides the new process's question
+   *  (PRDCT-4179); `pendingOnly` asks for the live one alone. */
+  native(
+    sessionId: string,
+    providerRequestId: string,
+    options: { readonly pendingOnly?: boolean } = {}
+  ): PendingRequest | undefined {
     this.prune()
-    const entry = [...this.entries.values()].find(
-      (e) => e.request.sessionId === sessionId && e.request.providerRequestId === providerRequestId
-    )
-    return entry && structuredClone(entry.request)
+    let found: Entry | undefined
+    for (const entry of this.entries.values()) {
+      if (
+        entry.request.sessionId !== sessionId ||
+        entry.request.providerRequestId !== providerRequestId
+      )
+        continue
+      if (!isSettled(entry.result.status)) return structuredClone(entry.request)
+      if (!options.pendingOnly && (!found || entry.request.createdAt >= found.request.createdAt))
+        found = entry
+    }
+    return found && structuredClone(found.request)
   }
   subscribe(listener: (revision: number) => void): () => void {
     this.listeners.add(listener)

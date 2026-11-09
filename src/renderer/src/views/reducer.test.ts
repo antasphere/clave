@@ -426,6 +426,33 @@ describe('taking a message back', () => {
     })
     expect(drafted.entries[0]).toMatchObject({ draft: { login: 'luca-a' } })
     expect(drafted.entries[0]).not.toHaveProperty('answer')
+    // What the reader had typed, handed to a view that came late
+    // (PRDCT-4210): kept apart, never the agent's draft.
+    const typed = reduceConversation(drafted, {
+      event: { type: 'permission_updated', id: 'clave:1', answers: { name: 'mbp-b' }, typed: true },
+      at: 2
+    })
+    expect(typed.entries[0]).toMatchObject({
+      draft: { login: 'luca-a' },
+      typed: { name: 'mbp-b' }
+    })
+    expect(typed.entries[0]).not.toHaveProperty('answer')
+    expect(typed.entries).toHaveLength(drafted.entries.length)
+    // The reader's typing sent from this view (PRDCT-4210): the agent's
+    // earlier fill of that field is no longer the draft's, so the agent
+    // setting it again, even to the same value, reaches the card.
+    const sent = reduceConversation(drafted, { typedSent: 'clave:1', answers: { login: 'luca-b' } })
+    expect(sent.entries[0]).toMatchObject({ typed: { login: 'luca-b' } })
+    expect((sent.entries[0] as { draft?: object }).draft).toEqual({})
+    const again = reduceConversation(sent, {
+      event: { type: 'permission_updated', id: 'clave:1', answers: { login: 'luca-a' } },
+      at: 3
+    })
+    expect((again.entries[0] as { draft?: object }).draft).toEqual({ login: 'luca-a' })
+    expect((again.entries[0] as { typed?: object }).typed).toEqual({})
+    const emptied = reduceConversation(sent, { typedSent: 'clave:1', answers: { login: '' } })
+    expect((emptied.entries[0] as { draft?: object }).draft).toEqual({})
+    expect((emptied.entries[0] as { typed?: object }).typed).toEqual({})
     // The approve, written to the agent as the reader's message, draws no
     // bubble: the record row says it. Every view is handed the answers.
     const message = [
@@ -477,6 +504,17 @@ describe('taking a message back', () => {
       at: 3
     })
     expect((cleared.entries[0] as { answers?: object }).answers).toEqual({ login: 'luca-a' })
+    // Nor does typing sent from a view after the approval.
+    expect(reduceConversation(approved, { typedSent: id, answers: { name: 'other' } })).toBe(
+      approved
+    )
+    // Typing kept by the server never revises an approved form.
+    expect(
+      reduceConversation(approved, {
+        event: { type: 'permission_updated', id, answers: { name: 'other' }, typed: true },
+        at: 3
+      })
+    ).toBe(approved)
     // An update naming no entry changes nothing.
     expect(
       reduceConversation(approved, {

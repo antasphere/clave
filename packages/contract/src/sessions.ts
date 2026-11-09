@@ -131,6 +131,19 @@ export const PermissionResponse = Schema.Struct({
     })
   )
 })
+/** What the person typed into a form still open (PRDCT-4210), written by the
+ *  card as the fields change, debounced: the form's draft takes it, so the
+ *  agent's read and its own submit see the person's values. `id` is the
+ *  form's provider id; an emptied field is `''`. Never published back to the
+ *  views as the agent's fill; never reaches a provider. */
+export const PermissionDraft = Schema.Struct({
+  type: Schema.Literal('permission_draft'),
+  id: Schema.String,
+  answers: Schema.Record({
+    key: Schema.String,
+    value: Schema.Union(Schema.String, Schema.Array(Schema.String))
+  })
+})
 export const Interrupt = Schema.Struct({ type: Schema.Literal('interrupt') })
 export const SetModel = Schema.Struct({
   type: Schema.Literal('set_model'),
@@ -154,6 +167,7 @@ export const StopTask = Schema.Struct({
 export const SessionInput = Schema.Union(
   UserMessageInput,
   PermissionResponse,
+  PermissionDraft,
   Interrupt,
   SetModel,
   SetEffort,
@@ -175,6 +189,7 @@ export const SessionBytes = Schema.Struct({
 export const SessionWireInput = Schema.Union(
   UserMessage,
   PermissionResponse,
+  PermissionDraft,
   Interrupt,
   SetModel,
   SetEffort,
@@ -332,6 +347,10 @@ export const SessionEvent = Schema.Union(
       value: Schema.Union(Schema.String, Schema.Array(Schema.String))
     }),
     sent: Schema.optional(Schema.Boolean),
+    /** The fields are what the person typed (PRDCT-4210), handed to a view
+     *  that subscribes late so its card starts from them: never the agent's
+     *  fill, so nothing lands, flashes or says it was filled in. */
+    typed: Schema.optional(Schema.Boolean),
     /** The agent's word under a field it could not fill, by the question's key. */
     notes: Schema.optional(Schema.Record({ key: Schema.String, value: Schema.String }))
   }),

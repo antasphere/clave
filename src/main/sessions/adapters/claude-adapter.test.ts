@@ -275,6 +275,9 @@ it('uses the shared shell/profile/account path, writes NDJSON and keeps secrets 
     state: 'blocked'
   })
   adapter.write(handle, { type: 'permission_response', id: 'p', optionId: 'allow-once' })
+  // The person's typing into a form is the host's; the CLI never hears of it,
+  // and above all it is not taken for an interrupt (PRDCT-4210).
+  adapter.write(handle, { type: 'permission_draft', id: 'clave:f', answers: { name: 'x' } })
   adapter.write(handle, { type: 'interrupt' })
   const inputs = written(child)!
     .trim()
@@ -285,6 +288,7 @@ it('uses the shared shell/profile/account path, writes NDJSON and keeps secrets 
     response: { request_id: 'p', response: { behavior: 'allow', updatedInput: { x: 1 } } }
   })
   expect(inputs[3]).toMatchObject({ type: 'control_request', request: { subtype: 'interrupt' } })
+  expect(inputs).toHaveLength(4)
   child.emit('close', 7)
   expect(events.at(-1)).toEqual({ type: 'state_change', state: 'ended' })
   expect(exits).toEqual([7])

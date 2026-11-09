@@ -86,6 +86,10 @@ export type Entry =
        *  open: the fields the agent set from what the reader said, which the
        *  card shows as they land. */
       draft?: Record<string, string | string[]>
+      /** What the reader had typed into the open form, as the server holds
+       *  it (PRDCT-4210), handed to a view that came late: the card starts
+       *  from it, and nothing of it lands or reads as the agent's fill. */
+      typed?: Record<string, string | string[]>
       /** The form was approved, then a field was set again by the agent. */
       revised?: boolean
       /** The agent's word under a field it could not fill, by key; gone as
@@ -143,6 +147,11 @@ export type Action =
   | { sync: HistoryItem[] }
   /** The reader took their last message back before any answer to it. */
   | { withdraw: true }
+  /** The reader's typing into an open form was sent to its draft
+   *  (PRDCT-4210): the server now holds the reader's value in those fields,
+   *  so the agent's earlier fill there is no longer the draft's, and the
+   *  agent setting one again lands. */
+  | { typedSent: string; answers: Record<string, string | string[]> }
   /** The host refused this view's answer because it no longer holds the
    *  request: the card is retired without an answer. */
   | { retire: string }
@@ -268,6 +277,23 @@ export function reduceConversation(state: Conversation, action: Action): Convers
     return entries === state.entries
       ? state
       : { ...state, entries: relocateSettled(entries, action.retire, wasLive, Date.now()) }
+  }
+  if ('typedSent' in action) {
+    const index = state.entries.findLastIndex(
+      (e) => e.kind === 'permission' && e.request.id === action.typedSent
+    )
+    const entry = state.entries[index]
+    if (entry?.kind !== 'permission' || entry.answer || entry.answeredElsewhere) return state
+    const draft = { ...entry.draft }
+    const typed = { ...entry.typed }
+    for (const [key, value] of Object.entries(action.answers)) {
+      delete draft[key]
+      if (value === '' || (Array.isArray(value) && value.length === 0)) delete typed[key]
+      else typed[key] = value
+    }
+    const entries = [...state.entries]
+    entries[index] = { ...entry, draft, typed }
+    return { ...state, entries }
   }
   if ('withdraw' in action) {
     if (answeredSince(state.entries)) return state
@@ -402,6 +428,13 @@ export function reduceConversation(state: Conversation, action: Action): Convers
     const entry = state.entries[index]
     if (entry?.kind !== 'permission') return state
     const entries = [...state.entries]
+    if (event.typed) {
+      // The reader's own typing, kept by the server for this view: only an
+      // open form takes it, and never into the agent's draft (PRDCT-4210).
+      if (event.sent || entry.answer || entry.answeredElsewhere) return state
+      entries[index] = { ...entry, typed: { ...entry.typed, ...event.answers } }
+      return { ...state, entries }
+    }
     if (event.sent || entry.answer) {
       // An empty value clears the answer, as the server dropped it.
       const answers = { ...entry.answers }
@@ -430,9 +463,13 @@ export function reduceConversation(state: Conversation, action: Action): Convers
     for (const key of Object.keys(event.answers)) if (!event.notes?.[key]) delete notes[key]
     const { notes: _gone, ...rest } = entry
     void _gone
+    // A field the agent set speaks for the agent again, as on the server.
+    const typed = { ...entry.typed }
+    for (const key of Object.keys(event.answers)) delete typed[key]
     entries[index] = {
       ...rest,
       draft: { ...entry.draft, ...event.answers },
+      ...(entry.typed ? { typed } : {}),
       ...(Object.keys(notes).length ? { notes } : {})
     }
     return { ...state, entries }

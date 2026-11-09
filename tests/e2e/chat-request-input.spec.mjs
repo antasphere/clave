@@ -321,15 +321,110 @@ export async function run(t) {
     await card.getByRole('button', { name: 'Next', exact: true }).click()
     assert.equal(await card.locator('.chat-prompt-step').innerText(), '3/3')
     t.check('Next lands on a step the agent filled rather than skipping it', true)
+    // PRDCT-4210: the person retypes the name the agent set. A beat later
+    // the form's draft holds it, so the agent reads it; the card keeps it as
+    // typed and nothing lands on it as the agent's fill.
+    await card.locator('.chat-ask-field[data-folded="true"]').nth(0).locator('button').click()
+    assert.equal(await card.locator('.chat-prompt-step').innerText(), '1/3')
+    const flashes = await card.locator('.chat-ask-flash').count()
+    await card.locator('#chat-field-name').fill('Luca P')
+    const typedRead = await until(async () => {
+      const read = payload(await mcp.call('clave_input_result', { requestId: second.requestId }))
+      return read?.answers?.name === 'Luca P' ? read : null
+    })
+    assert.deepEqual(typedRead, {
+      requestId: second.requestId,
+      status: 'pending',
+      answers: { name: 'Luca P', when: '2026-11-17' }
+    })
+    await win.waitForTimeout(600)
+    assert.equal(await card.locator('#chat-field-name').inputValue(), 'Luca P')
+    assert.equal(
+      await card.locator('.chat-ask-flash').count(),
+      flashes,
+      "the person's own typing never lands as the agent's"
+    )
+    t.check("what the person types reaches the form's draft and the agent reads it", true)
+    // The view mounts again (the plugin off and on): the card starts from the
+    // server's draft, and the person typing one field leaves the agent's fill
+    // of another where it is (verifier round 1, Major 2).
+    await win.evaluate(() => window.electronAPI.pluginsDisable('clave.chat-view'))
+    await until(async () => ((await view.count()) === 0 ? true : null))
+    await win.evaluate(() =>
+      window.electronAPI.pluginsEnable('clave.chat-view', ['sessions.read', 'sessions.write'])
+    )
+    await view.locator('textarea:not(:disabled)').waitFor()
+    await card.waitFor()
+    assert.equal(await card.locator('.chat-prompt-step').innerText(), '1/3')
+    assert.equal(await card.locator('#chat-field-name').inputValue(), 'Luca P')
+    // The agent's field on another step is shown too, from the server's
+    // draft (verifier round 2: the seeding was unpinned).
+    await card.getByRole('button', { name: 'Next', exact: true }).click()
+    await card.getByRole('button', { name: 'Next', exact: true }).click()
+    assert.equal(await card.locator('.chat-prompt-step').innerText(), '3/3')
+    assert.equal(await card.locator('#chat-field-when').inputValue(), '2026-11-17')
+    await card.getByRole('button', { name: 'Back', exact: true }).click()
+    await card.getByRole('button', { name: 'Back', exact: true }).click()
+    assert.equal(await card.locator('.chat-prompt-step').innerText(), '1/3')
+    await card.locator('#chat-field-name').fill('Luca Q')
+    const afterRemount = await until(async () => {
+      const read = payload(await mcp.call('clave_input_result', { requestId: second.requestId }))
+      return read?.answers?.name === 'Luca Q' ? read : null
+    })
+    assert.deepEqual(afterRemount?.answers, { name: 'Luca Q', when: '2026-11-17' })
+    t.check("after the view mounts again, the person's typing keeps the agent's other fields", true)
+    // The person says the agent's first name was right after all: the agent
+    // sets it again, to the value it once set, and the card shows it, so the
+    // card and the draft agree (verifier round 1, Major 1).
+    payload(
+      await mcp.call('clave_input_set', { requestId: second.requestId, answers: { name: 'Luca' } })
+    )
+    assert.ok(
+      await until(async () => {
+        const text = await card.innerText()
+        return /Luca(?! [PQ])/.test(text) && !text.includes('Luca Q') ? true : null
+      }),
+      'the agent setting a field again lands over what the person typed'
+    )
+    t.check('the agent setting a field again, to its earlier value, lands on the card', true)
+    // And the person retypes it once more, the correction the agent approves.
+    if ((await card.locator('.chat-prompt-step').innerText()) !== '1/3')
+      await card.locator('.chat-ask-field[data-folded="true"]').nth(0).locator('button').click()
+    assert.equal(await card.locator('.chat-prompt-step').innerText(), '1/3')
+    await card.locator('#chat-field-name').fill('Luca P')
+    assert.ok(
+      await until(async () => {
+        const read = payload(await mcp.call('clave_input_result', { requestId: second.requestId }))
+        return read?.answers?.name === 'Luca P' ? true : null
+      })
+    )
+    // A word of the agent about another field leaves the person's typing
+    // where it is, on the card and in the draft (verifier round 2: the
+    // view's own record of what it sent was unpinned).
+    payload(
+      await mcp.call('clave_input_set', {
+        requestId: second.requestId,
+        answers: {},
+        notes: { when: 'that date is a Tuesday' }
+      })
+    )
+    await win.waitForTimeout(700)
+    assert.equal(await card.locator('#chat-field-name').inputValue(), 'Luca P')
+    assert.equal(
+      payload(await mcp.call('clave_input_result', { requestId: second.requestId }))?.answers?.name,
+      'Luca P'
+    )
+    t.check("an agent's word about another field leaves the person's typing as it is", true)
     // The agent approves it itself (the person said to go ahead): the card
-    // collapses, no message is owed, the answers are the record's.
+    // collapses, no message is owed, the answers are the record's, the
+    // person's correction among them.
     const submitted = payload(
       await mcp.call('clave_input_set', { requestId: second.requestId, answers: {}, submit: true })
     )
     assert.deepEqual(submitted, {
       requestId: second.requestId,
       status: 'completed',
-      answers: { name: 'Luca', when: '2026-11-17' }
+      answers: { name: 'Luca P', when: '2026-11-17' }
     })
     await until(async () => ((await card.count()) === 0 ? true : null))
     // The closed form stands where the open one did, at the end: the last
@@ -341,7 +436,11 @@ export async function run(t) {
     assert.match(await secondRow.innerText(), /Approved/i)
     assert.equal(await secondRow.locator('.chat-ask-field[data-folded="true"]').count(), 3)
     assert.match(await secondRow.innerText(), /2026-11-17/)
-    t.check("the agent's own approve closes the form into its record", true)
+    assert.match(await secondRow.innerText(), /Luca P/)
+    t.check(
+      "the agent's own approve closes the form into its record, with what the person typed",
+      true
+    )
     // A later correction: the record reads Revised with the new value, and
     // the tool reads it so.
     const revised = payload(

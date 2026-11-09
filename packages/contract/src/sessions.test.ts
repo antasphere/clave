@@ -60,6 +60,7 @@ const session = {
  *  other way round: the two copies of the model are one wire. */
 const inputs: unknown[] = [
   { type: 'user_message', text: 'hello' },
+  { type: 'permission_draft', id: 'clave:f', answers: { login: 'luca-b', projects: ['reb'] } },
   {
     type: 'user_message',
     text: 'see',
@@ -118,6 +119,7 @@ const inputs: unknown[] = [
 const rejectedInputs: unknown[] = [
   { type: 'set_effort', effort: '--dangerously' },
   { type: 'stop_task', taskId: '' },
+  { type: 'permission_draft', id: 'clave:f', answers: { login: 7 } },
   { type: 'user_message' },
   { type: 'nope' }
 ]
@@ -140,6 +142,7 @@ const events: unknown[] = [
   { type: 'permission_withdrawn', id: 'p' },
   { type: 'permission_updated', id: 'p', answers: { login: 'luca-a', projects: ['reb'] } },
   { type: 'permission_updated', id: 'p', answers: { login: 'luca-a' }, sent: true },
+  { type: 'permission_updated', id: 'p', answers: { login: 'luca-b' }, typed: true },
   { type: 'context_usage', used: 10, window: 200, parent: 'p' },
   { type: 'subagent_model', parent: 'p', model: 'sonnet' },
   { type: 'permission_mode', mode: 'default', modes: [{ id: 'default', label: 'Default' }] },
@@ -315,6 +318,11 @@ describe('the session stream on the wire', () => {
   it('a write is a typed input or bytes, nothing else', () => {
     expect(Either.isRight(decode(SessionWrite, { type: 'bytes', data: 'aGk=' }))).toBe(true)
     expect(Either.isRight(decode(SessionWrite, { type: 'interrupt' }))).toBe(true)
+    // The person's typing into a form rides the wire to a server's session
+    // (PRDCT-4210): the server's write route decodes it.
+    expect(
+      decode(SessionWrite, { type: 'permission_draft', id: 'clave:f', answers: { name: 'x' } })
+    ).toEqual(Either.right({ type: 'permission_draft', id: 'clave:f', answers: { name: 'x' } }))
     expect(Either.isLeft(decode(SessionWrite, { type: 'bytes', data: '***' }))).toBe(true)
     expect(Either.isLeft(decode(SessionWrite, new Uint8Array([1])))).toBe(true)
   })

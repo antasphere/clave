@@ -66,6 +66,10 @@ export interface CardMemory {
   applied: Values
   touched: Record<string, boolean>
   attempted: boolean
+  /** The fields as the server's draft holds them, as far as this card knows
+   *  (PRDCT-4210): what the agent set and what the reader's typing already
+   *  sent. The typing is sent as it differs from this, never the agent's. */
+  synced: Values
 }
 const memory = new Map<string, CardMemory>()
 export const recalled = (id: string): CardMemory =>
@@ -75,7 +79,8 @@ export const recalled = (id: string): CardMemory =>
     landed: {},
     applied: {},
     touched: {},
-    attempted: false
+    attempted: false,
+    synced: {}
   }
 /** Written on a change of state, never on a render: a second instance of
  *  the same card (a hidden view of the session) must not write its own

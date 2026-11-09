@@ -86,6 +86,13 @@ export const PermissionResponseSchema = z.object({
    *  by ", "). */
   answers: z.record(z.string(), z.union([z.string(), z.array(z.string())])).optional()
 })
+/** What the person typed into a form still open (PRDCT-4210): the form's
+ *  draft takes it; it never reaches a provider (packages/contract mirrors). */
+export const PermissionDraftSchema = z.object({
+  type: z.literal('permission_draft'),
+  id: z.string(),
+  answers: z.record(z.string(), z.union([z.string(), z.array(z.string())]))
+})
 /** The answers as a provider's wire takes them: one string per question, a
  *  hosted multi-select's labels joined by ", ". The adapters call this at
  *  their boundary; a hosted request's answers never reach a provider. */
@@ -156,6 +163,7 @@ export type AgentQuestion = z.infer<typeof AgentQuestionSchema>
 export const SessionInputSchema = z.discriminatedUnion('type', [
   UserMessageInputSchema,
   PermissionResponseSchema,
+  PermissionDraftSchema,
   InterruptSchema,
   SetModelSchema,
   SetEffortSchema,
@@ -312,6 +320,9 @@ export const SessionEventSchema = z.discriminatedUnion('type', [
     id: z.string(),
     answers: z.record(z.string(), z.union([z.string(), z.array(z.string())])),
     sent: z.boolean().optional(),
+    /** What the person typed, handed to a late view (PRDCT-4210): never the
+     *  agent's fill. */
+    typed: z.boolean().optional(),
     /** The agent's word under a field it could not fill, by the question's key. */
     notes: z.record(z.string(), z.string()).optional()
   }),

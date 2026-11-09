@@ -658,9 +658,11 @@ export function InlineQuestion({ entry }: { entry: PermissionEntry }): React.JSX
           remote={host.remote}
           drafts={host.drafts}
           draft={entry.draft}
+          typed={entry.typed}
           notes={entry.notes}
           working={host.working}
           onAnswer={host.answer}
+          onType={host.type}
         />
       ) : (
         <QuestionPrompt key={request.id} request={request} busy={busy} onAnswer={host.answer} />
