@@ -13,9 +13,13 @@ import { AnimatePresence, animate, motion, useMotionValue, useReducedMotion } fr
  * Three layers, each for a reason measured on 9 November 2026:
  *
  * - The FRAME is what the popover's positioning engine sizes: it takes the
- *   current page's measured size at once, so the engine places the popover
- *   once per page instead of chasing an animated size a frame late (that
- *   chase was a right edge that wobbled).
+ *   first page's measured size and keeps it, so the engine places the
+ *   popover once and never again (chasing an animated size, it moved a
+ *   frame late and the right edge wobbled; taking each page's size at once,
+ *   it moved a frame late and the surface flashed to the side for that
+ *   frame). The pages cap themselves to the space the popover publishes
+ *   (`--radix-popover-content-available-*`), so the engine has nothing to
+ *   recompute when a larger page overflows the frame.
  * - The SURFACE (the menu paper) hangs from the frame's top-right corner,
  *   the corner the popover keeps still under its button, and animates its
  *   size to the frame's through two motion values, explicit from the first
@@ -77,8 +81,8 @@ export function RoutinePages({
       const next = { width: rect.width, height: rect.height }
       const prev = last.current
       last.current = next
-      setFrame(next)
       if (!prev) {
+        setFrame(next)
         width.set(next.width)
         height.set(next.height)
         return
