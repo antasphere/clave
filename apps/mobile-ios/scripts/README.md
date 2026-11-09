@@ -51,6 +51,20 @@ things:
 - the seeded chat's timeline holds the nonce;
 - a new message written through the road gets the Echo adapter's reply within 15 s.
 
+## No real model call from a boot
+
+The daemon names every fresh Claude-mode chat by its first message with a one-shot of the
+Claude CLI under the machine's login, and polls the machine's Claude and Codex usage unless
+told not to. The stack starts the daemon with `--test-no-activate`, with `SHELL` pointing at
+a script that answers the daemon's own environment whatever it is asked (the daemon reads
+the login shell's environment with `$SHELL -lic 'env -0'`), and with a `PATH` led by a
+folder holding a `claude` and a `codex` stub that drain their input, print a fixed title and
+touch a marker under `stubs/markers/`. After the seed the boot asserts that the marker is
+there and that no new transcript under `~/.claude/projects` carries the title prompt, else
+it fails. `--prove-title-guard` boots with a `claude` stub that leaves no marker and expects
+the boot to fail at that guard: the proof the check can go red, made with the stub still in
+place, never by removing it.
+
 ## Everything is a fixture
 
 - The provider is `tests/e2e/fixtures/oidc-provider.mjs`. It is local and approves on

@@ -12,18 +12,21 @@
 //
 //   node apps/mobile-ios/scripts/fixture-stack.mjs [--server 47101] [--relay 47102]
 //        [--tmpdir /private/tmp/clave-native-a/stack] [--approve]
-//        [--self-check | --once]
+//        [--self-check | --once | --prove-title-guard]
 //
 // --approve approves every pending pairing as the owner (GET /devices every
 // second). --self-check proves the relay road end to end, prints PASS/FAIL
 // lines and exits. --once brings the stack up, prints it and tears it down.
-// Otherwise the stack runs until SIGINT/SIGTERM. The server's bearer token is
+// --prove-title-guard boots with a claude stub that leaves no marker and
+// expects the boot to fail at the title guard. Otherwise the stack runs until
+// SIGINT/SIGTERM. The server's bearer token is
 // written to <tmpdir>/owner-token (mode 0600) and nowhere else: never to
 // stdout, stack.json or a log. Children's output goes to <tmpdir>/logs/.
 //
 // Import `startStack(options)` to drive the stack from another script.
 import { spawn } from 'node:child_process'
-import { createWriteStream, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { createWriteStream, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { homedir } from 'node:os'
 import { randomBytes, randomUUID } from 'node:crypto'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -33,6 +36,9 @@ const HERE = path.dirname(fileURLToPath(import.meta.url))
 export const REPO = path.resolve(HERE, '..', '..', '..')
 const BUN = path.join(REPO, 'node_modules', '.bin', 'bun')
 const STEP_MS = 30_000
+/** The opening line of the daemon's own title prompt (packages/host/src/session-history/index.ts). */
+const TITLE_HELPER_MARKER = 'Generate a short 2-4 word title for this Claude Code terminal session'
+const TRANSCRIPTS = path.join(homedir(), '.claude', 'projects')
 
 export const DEFAULTS = {
   serverPort: 47101,
@@ -48,6 +54,72 @@ const OWNER = {
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+
+/**
+ * The daemon names every fresh Claude-mode chat by its first message with a
+ * one-shot of the Claude CLI, the Echo fixture included
+ * (packages/host/src/title-generator.ts), under the machine's own login, with
+ * the PATH of the login shell (`$SHELL -lic 'env -0'`). A fixture boot must
+ * never make that call. So the daemon gets a SHELL that answers the daemon's
+ * own environment whatever it is asked, and a PATH whose first folder holds a
+ * `claude` and a `codex` that drain their input, print a fixed title and touch
+ * a marker. A stub on the daemon's PATH alone is not enough: the login profile
+ * would put the real CLI back in front. `markerless` writes a claude that
+ * leaves no marker, which is how the guard below is proven red.
+ */
+function writeStubs(tmpdir, { markerless = false } = {}) {
+  const stubs = path.join(tmpdir, 'stubs')
+  const bin = path.join(stubs, 'bin')
+  const markers = path.join(stubs, 'markers')
+  for (const dir of [stubs, bin, markers]) mkdirSync(dir, { recursive: true, mode: 0o700 })
+  const shell = path.join(stubs, 'shell')
+  writeFileSync(
+    shell,
+    "#!/bin/sh\n# Answers the daemon's own environment, whatever arguments it is called with.\nexec /usr/bin/env -0\n",
+    { mode: 0o700 }
+  )
+  for (const name of ['claude', 'codex']) {
+    const touch = markerless && name === 'claude' ? '' : `touch "${markers}/${name}-$$"\n`
+    writeFileSync(
+      path.join(bin, name),
+      `#!/bin/sh\n# A stand-in for the real CLI: no model is ever called from a fixture boot.\ncat >/dev/null\n${touch}echo "fixture chat"\n`,
+      { mode: 0o700 }
+    )
+  }
+  return { shell, bin, markers }
+}
+
+/** Every transcript file under ~/.claude/projects, so a boot can tell a new one. */
+function transcriptSnapshot() {
+  const seen = new Set()
+  if (!existsSync(TRANSCRIPTS)) return seen
+  for (const dir of readdirSync(TRANSCRIPTS)) {
+    const full = path.join(TRANSCRIPTS, dir)
+    let entries
+    try {
+      if (!statSync(full).isDirectory()) continue
+      entries = readdirSync(full)
+    } catch {
+      continue
+    }
+    for (const name of entries) if (name.endsWith('.jsonl')) seen.add(path.join(full, name))
+  }
+  return seen
+}
+
+/** The transcripts that appeared since `before` and carry the title prompt. */
+function newTitleTranscripts(before) {
+  const out = []
+  for (const file of transcriptSnapshot()) {
+    if (before.has(file)) continue
+    try {
+      if (readFileSync(file, 'utf8').includes(TITLE_HELPER_MARKER)) out.push(file)
+    } catch {
+      /* gone already */
+    }
+  }
+  return out
+}
 
 /** One authenticated call to the server: JSON in, JSON out, a thrown error on a non-2xx. */
 export async function call(url, token, method, route, body) {
@@ -185,6 +257,7 @@ export async function startStack({
   relayPort = DEFAULTS.relayPort,
   tmpdir = DEFAULTS.tmpdir,
   approve = false,
+  markerlessStub = false,
   log = (line) => process.stdout.write(`fixture-stack: ${line}\n`)
 } = {}) {
   const startedAt = Date.now()
@@ -247,7 +320,10 @@ export async function startStack({
     }
     log(`relay up at ${relayUrl}`)
 
-    // 3. The server daemon, Echo on, pointed at the provider and the relay.
+    // 3. The server daemon, Echo on, pointed at the provider and the relay, its
+    // title calls caught by the stubs (never the real CLI).
+    const stubs = writeStubs(tmpdir, { markerless: markerlessStub })
+    const transcriptsBefore = transcriptSnapshot()
     server = startChild(
       'server',
       BUN,
@@ -259,13 +335,18 @@ export async function startStack({
         '--port',
         String(serverPort),
         '--dev-echo-adapter',
+        // The harness's own flag: no usage poll of the machine's Claude and
+        // Codex logins, no activation of anything a test did not ask for.
+        '--test-no-activate',
         '--relay',
         relayUrl
       ],
       {
         env: {
           CLAVE_ANTASPHERE_ISSUER: provider.issuer,
-          CLAVE_KEYCHAIN_FILE: path.join(serverDir, 'keychain.json')
+          CLAVE_KEYCHAIN_FILE: path.join(serverDir, 'keychain.json'),
+          SHELL: stubs.shell,
+          PATH: `${stubs.bin}:${process.env.PATH ?? '/usr/bin:/bin'}`
         },
         logsDir,
         secrets
@@ -355,6 +436,23 @@ export async function startStack({
     }
     log(`Echo chat ${session.id} seeded with ${nonce}`)
 
+    // 7b. The title guard: the daemon's title call reached the stub (its
+    // marker is there), and no new transcript carries the title prompt.
+    let titleMarker
+    try {
+      titleMarker = await until(
+        'the title call reaching the claude stub',
+        () => readdirSync(stubs.markers).find((name) => name.startsWith('claude-')) ?? null,
+        { ms: 20_000, gapMs: 200 }
+      )
+      const leaked = newTitleTranscripts(transcriptsBefore)
+      if (leaked.length)
+        throw new Error(`a real title call left a transcript: ${leaked.join(', ')}`)
+    } catch (err) {
+      throw fail('guard the title call', err, server)
+    }
+    log(`title guard: the title call reached the stub (${titleMarker}), no new transcript carries the title prompt`)
+
     // 8. The facts: the token to its own 0600 file, never anywhere else.
     const tokenFile = path.join(tmpdir, 'owner-token')
     writeFileSync(tokenFile, token, { mode: 0o600 })
@@ -368,7 +466,8 @@ export async function startStack({
       sessionId: session.id,
       nonce,
       scratch,
-      tokenFile
+      tokenFile,
+      titleMarker: path.join(stubs.markers, titleMarker)
     }
     writeFileSync(path.join(tmpdir, 'stack.json'), JSON.stringify(facts, null, 2) + '\n')
 
@@ -489,7 +588,8 @@ function parseArgs(argv) {
     tmpdir: path.resolve(value('tmpdir', DEFAULTS.tmpdir)),
     approve: argv.includes('--approve'),
     selfCheck: argv.includes('--self-check'),
-    once: argv.includes('--once')
+    once: argv.includes('--once'),
+    proveTitleGuard: argv.includes('--prove-title-guard')
   }
 }
 export { parseArgs as parseStackArgs }
@@ -522,6 +622,20 @@ if (isMain) {
   }
   process.on('SIGINT', () => void end(0))
   process.on('SIGTERM', () => void end(0))
+  if (options.proveTitleGuard) {
+    // The guard must go red when the stub leaves no marker. The stub still
+    // stands in for the CLI, so this proof makes no real call either.
+    try {
+      stack = await startStack({ ...options, markerlessStub: true })
+    } catch (err) {
+      const red = err.fixtureStep === 'guard the title call'
+      process.stdout.write(`${red ? 'PASS' : 'FAIL'} the title guard goes red when the claude stub leaves no marker (${err.message.split('\n')[0]})\n`)
+      process.exit(red ? 0 : 1)
+    }
+    await stack.stop()
+    process.stdout.write('FAIL the title guard stayed green with a markerless stub\n')
+    process.exit(1)
+  }
   try {
     stack = await startStack(options)
   } catch (err) {
