@@ -28,8 +28,15 @@ import type {
 } from '@clave/server'
 import type { WorkspaceFiles } from '@clave/server/workspace-files'
 import type {
+  ClaveFileReadResult,
+  ClaveFileWriteData,
+  ClaveFileWriteGroup
+} from '@clave/contract/workspace-files'
+import type {
   RoutineCreateInput,
   RoutineDeclaration,
+  RoutineMoveInput,
+  RoutineMoved,
   RoutinePatch,
   RoutineRun,
   RoutineRunTrigger,
@@ -46,8 +53,10 @@ import {
   CREATED_FILE,
   CreatedRoutinesStore,
   applyPatch,
+  copyDirSync,
   createdProblem,
   declareCreated,
+  freePageFolder,
   isCreatedKey
 } from './created'
 import {
@@ -692,14 +701,21 @@ export function createRoutineService(options: RoutineServiceOptions): RoutineSer
 
   /** Whether a routine of that name already lives in the workspace, on this
    *  server: a created one, or one a file declares (verifier round 1, F8). */
-  const nameTaken = (workspaceId: string, name: string, exceptId?: string): boolean => {
+  const nameTaken = (workspaceId: string, name: string): boolean => {
     const wanted = name.trim().toLowerCase()
-    return declarations.some(
-      (d) =>
-        d.workspaceId === workspaceId &&
-        d.name.toLowerCase() === wanted &&
-        !(exceptId && d.key === `created::${exceptId}`)
+    // The store itself first: it changes the moment a create lands, where
+    // the declarations follow the next refresh (verifier round 2, G2).
+    return (
+      created.all().some((r) => r.workspaceId === workspaceId && r.name.toLowerCase() === wanted) ||
+      declarations.some((d) => d.workspaceId === workspaceId && d.name.toLowerCase() === wanted)
     )
+  }
+
+  /** A single-group read as a group the writer takes: its `type` tag dropped. */
+  const groupOfSingle = (read: ClaveFileReadResult & { type: 'single' }): ClaveFileWriteGroup => {
+    const { type: _type, ...group } = read
+    void _type
+    return group
   }
 
   const viewOf = (id: string): RoutineView => {
@@ -978,7 +994,7 @@ export function createRoutineService(options: RoutineServiceOptions): RoutineSer
       const next = applyPatch(current, patch, workspace.rootDir)
       if (
         next.name.toLowerCase() !== current.name.toLowerCase() &&
-        nameTaken(workspace.id, next.name, current.id)
+        nameTaken(workspace.id, next.name)
       )
         throw new Error(`A routine named "${next.name}" already exists in ${workspace.name}`)
       refuseUnrunnable(next, workspace)
@@ -993,6 +1009,86 @@ export function createRoutineService(options: RoutineServiceOptions): RoutineSer
       store.forget(key)
       removeRoutineDecks(decksRoot, key)
       await refresh()
+    },
+    async moveToFile(key, input: RoutineMoveInput): Promise<RoutineMoved> {
+      const current = ownRoutine(key, 'move')
+      const d = declaration(key)!
+      const workspaces = await options.workspaces()
+      const workspace = workspaces.find((w) => w.id === current.workspaceId)
+      if (!workspace)
+        throw new Error(`Its workspace "${current.workspaceId}" is no longer registered here`)
+      const file = input.file
+        ? path.resolve(workspace.rootDir, input.file)
+        : (workspace.profileFile ??
+          path.join(workspace.rootDir, '.clave', 'workspaces', 'default.clave'))
+      const read = await options.files.read(file, { rootDir: workspace.rootDir })
+      // From here to the store's change nothing is awaited: a run cannot start
+      // between the check and the move, and a refused move changes nothing
+      // (verifier rounds 1 and 2, F1 and G1).
+      if (runningOf(key)) throw new Error(`"${d.name}" is running; wait for it to end`)
+      const groups: ClaveFileWriteGroup[] = read
+        ? read.type === 'multi'
+          ? read.groups.map((g) => ({ ...g }))
+          : [groupOfSingle(read)]
+        : []
+      const groupName = input.group?.trim() || (groups[0]?.name ?? 'Routines')
+      let at = groups.findIndex((g) => g.name.toLowerCase() === groupName.toLowerCase())
+      if (at < 0) {
+        groups.push({
+          name: groupName,
+          cwd: workspace.rootDir,
+          color: null,
+          sessions: [],
+          terminals: []
+        })
+        at = groups.length - 1
+      }
+      const group = groups[at]
+      if ((group.routines ?? []).some((r) => r.name.toLowerCase() === d.name.toLowerCase()))
+        throw new Error(
+          `The group "${group.name}" of ${file} already has a routine named "${d.name}"`
+        )
+      // The template under the root: the routine's own, else the built-in
+      // page copied to the next free folder, now that nothing can refuse.
+      let template = current.report?.template
+        ? path.resolve(workspace.rootDir, current.report.template)
+        : null
+      if (!template) {
+        if (!options.defaultTemplate) throw new Error('the built-in report page is missing')
+        template = freePageFolder(workspace.rootDir, d.name)
+        copyDirSync(options.defaultTemplate, template)
+      }
+      const written = {
+        name: d.name,
+        schedule: current.schedule,
+        prompt: current.prompt,
+        ...(current.skill ? { skill: current.skill } : {}),
+        cwd: current.cwd ?? workspace.rootDir,
+        ...current.launch,
+        ...(current.icon ? { icon: current.icon } : {}),
+        ...(current.color ? { color: current.color } : {}),
+        ...(current.catchUp === false ? { catchUp: false } : {}),
+        ...(current.timeoutMinutes !== undefined ? { timeoutMinutes: current.timeoutMinutes } : {}),
+        runsOn: options.identity().name,
+        report: {
+          template,
+          ...(current.report?.schema
+            ? { schema: path.resolve(workspace.rootDir, current.report.schema) }
+            : {}),
+          ...(current.report?.width !== undefined ? { width: current.report.width } : {}),
+          ...(current.report?.height !== undefined ? { height: current.report.height } : {}),
+          ...(current.report?.publish ? { publish: true } : {})
+        }
+      }
+      groups[at] = { ...group, routines: [...(group.routines ?? []), written] }
+      const data: ClaveFileWriteData =
+        read?.type === 'multi' || groups.length > 1 ? { groups } : { ...groups[0] }
+      options.files.write(file, data, workspace.rootDir)
+      created.remove(current.id)
+      store.forget(key)
+      removeRoutineDecks(decksRoot, key)
+      await refresh()
+      return { name: d.name, file, group: group.name, template, runsOn: written.runsOn }
     },
     async pause(key, paused) {
       const current = ownRoutine(key, paused ? 'pause' : 'resume')

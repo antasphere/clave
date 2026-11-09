@@ -16,17 +16,16 @@
  */
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { z } from 'zod'
-import * as fs from 'node:fs'
-import * as path from 'node:path'
 import type {
   RoutineCreateInput,
   RoutineDeclaration,
+  RoutineMoveInput,
+  RoutineMoved,
   RoutinePatch,
   RoutineRun,
   RoutineView,
   RoutinesListing
 } from '@clave/contract/routines'
-import type { ClaveFileReadResult, ClaveFileWriteData } from '@clave/contract/workspace-files'
 import { RUNS_EVERYWHERE } from '@clave/contract/server-name'
 
 export interface RoutineMachineWorkspace {
@@ -49,15 +48,9 @@ export interface RoutineMachine {
     delete(key: string): Promise<void>
     pause(key: string, paused: boolean): Promise<RoutineView>
     runNow(key: string): Promise<RoutineRun>
+    moveToFile(key: string, input: RoutineMoveInput): Promise<RoutineMoved>
   }
   readonly workspaces: () => Promise<ReadonlyArray<RoutineMachineWorkspace>>
-  /** The `.clave` files of that machine, for a move into a file; absent, no move. */
-  readonly files?: {
-    read(path: string, rootDir: string): Promise<ClaveFileReadResult | null>
-    write(path: string, data: ClaveFileWriteData, rootDir: string): Promise<void>
-    /** Copy a folder on that machine (the built-in report page into the workspace); absent on a remote. */
-    copyDir?(from: string, to: string): void
-  }
 }
 
 export interface RoutineToolDeps {
@@ -494,9 +487,9 @@ export interface MoveArgs {
 }
 
 /** A created routine written into a `.clave` file of its workspace with its
- *  machine as `runsOn`, then removed from the store, so it never exists
- *  twice. The built-in report page is copied into the workspace first, as a
- *  file routine must name a template under its root. */
+ *  machine as `runsOn`, and removed from the store, in one step on that
+ *  machine (`MoveRoutineToFile`), so it never exists twice and a refusal
+ *  changes nothing. */
 export async function moveRoutineToFileTool(
   deps: RoutineToolDeps,
   args: MoveArgs
@@ -508,126 +501,13 @@ export async function moveRoutineToFileTool(
     const d = view.routine
     if ((d.origin ?? 'file') !== 'created')
       throw new Error(`"${d.name}" already comes from ${d.file}: nothing to move.`)
-    if (!l.machine.files) throw new Error(`${l.machine.label} offers no file writes from here.`)
-    const ownName = l.listing?.server?.name
-    if (!ownName)
-      throw new Error(
-        `${l.machine.label} has not said its own name: the file cannot place the routine.`
-      )
-    const workspace = (await l.machine.workspaces()).find((w) => w.id === d.workspaceId)
-    if (!workspace) throw new Error(`Its workspace is no longer registered on ${l.machine.label}.`)
-    const file = args.file
-      ? path.resolve(workspace.rootDir, args.file)
-      : (workspace.profileFile ??
-        path.join(workspace.rootDir, '.clave', 'workspaces', 'default.clave'))
-    const current = await l.machine.files.read(file, workspace.rootDir)
-    const groups: Array<Omit<ClaveFileReadResult & { type: 'single' }, 'type'>> = current
-      ? current.type === 'multi'
-        ? [...current.groups]
-        : [withoutType(current)]
-      : []
-    const groupName = args.group?.trim() || (groups[0]?.name ?? 'Routines')
-    let group = groups.find((g) => lower(g.name) === lower(groupName))
-    if (!group) {
-      group = { name: groupName, cwd: workspace.rootDir, color: null, sessions: [], terminals: [] }
-      groups.push(group)
-    }
-    if ((group.routines ?? []).some((r) => lower(r.name) === lower(d.name)))
-      throw new Error(
-        `The group "${group.name}" of ${file} already has a routine named "${d.name}".`
-      )
-    // The template under the root: the routine's own, or the built-in page
-    // copied beside the file's other templates.
-    const relTo = (abs: string): string => path.relative(workspace.rootDir, abs)
-    let template = d.report.template
-    if (relTo(template).startsWith('..')) {
-      if (!l.machine.files.copyDir)
-        throw new Error(
-          `"${d.name}" uses the built-in report page, which a file cannot name on ${l.machine.label}: give it a template under the workspace first (update its report.template).`
-        )
-      const slug =
-        d.name
-          .toLowerCase()
-          .replace(/[^a-z0-9]+/g, '-')
-          .replace(/^-|-$/g, '') || 'routine'
-      // A folder of that name may be another routine's page: the next free one
-      // is taken, never an existing one (verifier round 1, F7).
-      const folderOf = (n: number): string =>
-        path.join(workspace.rootDir, '.clave', 'routines', n === 1 ? slug : `${slug}-${n}`)
-      let n = 1
-      while (fs.existsSync(folderOf(n))) n++
-      template = folderOf(n)
-      l.machine.files.copyDir(d.report.template, template)
-    }
-    const routine = {
-      name: d.name,
-      schedule: d.schedule,
-      // As written, the `@`-tokens kept (verifier round 1, F6).
-      prompt: d.promptTemplate ?? d.prompt,
-      ...(d.skill ? { skill: d.skill } : {}),
-      cwd: d.cwd,
-      ...d.launch,
-      ...(d.icon ? { icon: d.icon } : {}),
-      ...(d.color ? { color: d.color } : {}),
-      ...(d.catchUp === false ? { catchUp: false } : {}),
-      ...(d.timeoutMinutes !== 30 ? { timeoutMinutes: d.timeoutMinutes } : {}),
-      runsOn: ownName,
-      report: {
-        template,
-        ...(path.basename(d.report.schema) !== 'schema.json' ||
-        path.dirname(d.report.schema) !== d.report.template
-          ? { schema: d.report.schema }
-          : {}),
-        ...(d.report.width !== 560 ? { width: d.report.width } : {}),
-        ...(d.report.height !== 640 ? { height: d.report.height } : {}),
-        ...(d.report.publish ? { publish: true } : {})
-      }
-    }
-    const nextGroup = { ...group, routines: [...(group.routines ?? []), routine] }
-    const nextGroups = groups.map((g) => (g === group ? nextGroup : g))
-    const data: ClaveFileWriteData =
-      current && current.type === 'multi'
-        ? { groups: nextGroups }
-        : nextGroups.length === 1
-          ? { ...nextGroups[0] }
-          : { groups: nextGroups }
-    // The store first: a delete refused (a run in flight) leaves the file
-    // untouched, so the routine never exists twice (verifier round 1, F1). A
-    // write that then fails puts the routine back in the store, as it was.
-    await l.machine.routines.delete(d.key)
-    try {
-      await l.machine.files.write(file, data, workspace.rootDir)
-    } catch (error) {
-      await l.machine.routines
-        .create({
-          workspaceId: d.workspaceId,
-          name: d.name,
-          schedule: d.schedule,
-          prompt: d.promptTemplate ?? d.prompt,
-          ...(d.skill ? { skill: d.skill } : {}),
-          cwd: d.cwd,
-          launch: d.launch,
-          ...(d.icon ? { icon: d.icon } : {}),
-          ...(d.color ? { color: d.color } : {}),
-          catchUp: d.catchUp,
-          timeoutMinutes: d.timeoutMinutes,
-          report: {
-            ...(relTo(d.report.template).startsWith('..') ? {} : { template: d.report.template }),
-            ...(d.report.publish ? { publish: true } : {})
-          }
-        })
-        .catch(() => undefined)
-      throw new Error(
-        `The file could not be written (${error instanceof Error ? error.message : String(error)}); the routine stays in ${l.machine.label}’s store.`
-      )
-    }
+    const moved = await l.machine.routines.moveToFile(d.key, {
+      ...(args.file ? { file: args.file } : {}),
+      ...(args.group ? { group: args.group } : {})
+    })
     return {
       ok: true,
-      name: d.name,
-      file,
-      group: group.name,
-      runsOn: ownName,
-      template,
+      ...moved,
       machine: machineAnswer(l),
       note: 'The file is the routine’s home now; every machine that reads it lists it, and the one named runs it.'
     }
@@ -890,25 +770,5 @@ export function registerRoutineTools(server: McpServer, deps: RoutineToolDeps): 
 /** The one instructions line the MCP servers add for these tools. */
 export const ROUTINE_TOOLS_INSTRUCTION =
   '- a job on a schedule -> clave_routine_create (never cron or launchd); clave_routine_list shows what runs where.'
-
-/** A single-group read as a group: the read's `type` tag never reaches the writer. */
-function withoutType(
-  single: ClaveFileReadResult & { type: 'single' }
-): Omit<ClaveFileReadResult & { type: 'single' }, 'type'> {
-  const group = { ...single } as Partial<typeof single>
-  delete group.type
-  return group as Omit<typeof single, 'type'>
-}
-
-/** A folder copied on this machine, for the built-in page moved into a workspace. */
-export function copyDirSync(from: string, to: string): void {
-  fs.mkdirSync(to, { recursive: true })
-  for (const entry of fs.readdirSync(from, { withFileTypes: true })) {
-    const src = path.join(from, entry.name)
-    const dst = path.join(to, entry.name)
-    if (entry.isDirectory()) copyDirSync(src, dst)
-    else if (entry.isFile()) fs.copyFileSync(src, dst)
-  }
-}
 
 export type { RoutineDeclaration }

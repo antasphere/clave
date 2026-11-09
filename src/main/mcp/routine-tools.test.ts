@@ -1,7 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
-import { tmpdir } from 'node:os'
+import { describe, expect, it } from 'vitest'
 import type {
   RoutineCreateInput,
   RoutineDeclaration,
@@ -9,10 +6,8 @@ import type {
   RoutineView,
   RoutinesListing
 } from '@clave/contract/routines'
-import type { ClaveFileReadResult, ClaveFileWriteData } from '@clave/contract/workspace-files'
 import {
   type RoutineMachine,
-  copyDirSync,
   createRoutineTool,
   deleteRoutineTool,
   listRoutinesTool,
@@ -67,13 +62,8 @@ function machine(
   own: { id: string; name: string } | null,
   routines: RoutineView[],
   extra: Partial<RoutineMachine> & { fail?: string } = {}
-): RoutineMachine & {
-  calls: string[]
-  files: NonNullable<RoutineMachine['files']>
-  written: Record<string, ClaveFileWriteData>
-} {
+): RoutineMachine & { calls: string[] } {
   const calls: string[] = []
-  const written: Record<string, ClaveFileWriteData> = {}
   const listing = (): RoutinesListing => ({
     routines,
     viewer: { url: null, note: '' },
@@ -95,7 +85,6 @@ function machine(
     id,
     label,
     calls,
-    written,
     routines: {
       list: async () => {
         if (extra.fail) throw new Error(extra.fail)
@@ -138,6 +127,16 @@ function machine(
           deck: null,
           seen: false
         }
+      },
+      moveToFile: async (key, input) => {
+        calls.push(`move:${key}:${input.file ?? ''}:${input.group ?? ''}`)
+        return {
+          name: 'Morning digest',
+          file: `/root/${input.file ?? '.clave/workspaces/default.clave'}`,
+          group: input.group ?? 'Routines',
+          template: '/root/.clave/routines/morning-digest',
+          runsOn: own?.name ?? ''
+        }
       }
     },
     workspaces: async () => [
@@ -149,13 +148,6 @@ function machine(
       },
       { id: 'ws2', name: 'Other', rootDir: '/other', profileFile: null }
     ],
-    files: {
-      read: async (): Promise<ClaveFileReadResult | null> => null,
-      write: async (file, data) => {
-        written[file] = data
-      },
-      copyDir: () => {}
-    },
     ...extra
   }
 }
@@ -450,241 +442,45 @@ describe('update, delete, pause and run find the routine by its key', () => {
 })
 
 describe('clave_routine_move_to_file', () => {
-  let root: string
-  beforeEach(() => {
-    root = mkdtempSync(join(tmpdir(), 'move-'))
-  })
-  afterEach(() => rmSync(root, { recursive: true, force: true }))
-
-  const createdOn = (own: string, template: string, root: string): RoutineDeclaration =>
+  const createdOn = (own: string): RoutineDeclaration =>
     decl({
       key: 'created::a',
       origin: 'created',
       runsOn: own,
       file: '/data/routines-created.json',
-      rootDir: root,
-      cwd: root,
-      name: 'Morning digest',
-      launch: { model: 'm', dangerousMode: true },
-      icon: 'bolt',
-      report: {
-        template,
-        schema: join(template, 'schema.json'),
-        width: 560,
-        height: 640,
-        publish: true
-      }
+      name: 'Morning digest'
     })
 
-  it('writes the routine into the profile file’s first group with runsOn, copies the built-in page under the root, then deletes it from the store', async () => {
-    const builtIn = join(root, 'app', 'default-report')
-    mkdirSync(builtIn, { recursive: true })
-    writeFileSync(join(builtIn, 'index.html'), '<html/>')
-    writeFileSync(join(builtIn, 'schema.json'), '{}')
-    const ws = join(root, 'ws')
-    const profile = join(ws, '.clave', 'workspaces', 'default.clave')
-    const local = machine(
-      'local',
-      'This Mac',
-      { id: 'l', name: 'mac' },
-      [view(createdOn('mac', builtIn, ws))],
-      {
-        workspaces: async () => [{ id: 'ws', name: 'Work', rootDir: ws, profileFile: profile }]
-      }
-    )
-    local.files.read = async () => ({
-      type: 'multi',
-      groups: [
-        { name: 'Ops', cwd: ws, color: 'teal', sessions: [], terminals: [] },
-        { name: 'Other', cwd: ws, color: null, sessions: [], terminals: [] }
-      ]
-    })
-    local.files.copyDir = copyDirSync
-    const out = (await moveRoutineToFileTool(deps(local), { key: 'created::a' })) as Record<
-      string,
-      unknown
-    >
-    expect(out).toMatchObject({ ok: true, file: profile, group: 'Ops', runsOn: 'mac' })
-    const data = local.written[profile]
-    expect(data.groups).toHaveLength(2)
-    const routine = data.groups![0].routines![0]
-    expect(routine).toMatchObject({
-      name: 'Morning digest',
-      schedule: '30 8 * * 1-5',
-      runsOn: 'mac',
-      model: 'm',
-      dangerousMode: true,
-      icon: 'bolt',
-      cwd: ws,
-      report: { template: join(ws, '.clave', 'routines', 'morning-digest'), publish: true }
-    })
-    expect(routine).not.toHaveProperty('server')
-    expect(
-      readFileSync(join(ws, '.clave', 'routines', 'morning-digest', 'index.html'), 'utf8')
-    ).toBe('<html/>')
-    expect(local.calls).toEqual(['delete:created::a'])
-  })
-
-  it('deletes from the store before writing the file, keeps the prompt as written, and takes a free folder for the page', async () => {
-    const builtIn = join(root, 'app', 'default-report')
-    mkdirSync(builtIn, { recursive: true })
-    writeFileSync(join(builtIn, 'index.html'), '<html/>')
-    const ws = join(root, 'ws')
-    mkdirSync(join(ws, '.clave', 'routines', 'morning-digest'), { recursive: true })
-    writeFileSync(
-      join(ws, '.clave', 'routines', 'morning-digest', 'index.html'),
-      'someone else’s page'
-    )
-    const order: string[] = []
-    const created = { ...createdOn('mac', builtIn, ws), promptTemplate: 'Read @root_path now' }
-    const local = machine('local', 'This Mac', { id: 'l', name: 'mac' }, [view(created)], {
-      workspaces: async () => [{ id: 'ws', name: 'Work', rootDir: ws, profileFile: null }]
-    })
-    const write = local.files.write
-    local.files.write = async (file, data, rootDir) => {
-      order.push('write')
-      await write(file, data, rootDir)
-    }
-    const del = local.routines.delete
-    local.routines.delete = async (key) => {
-      order.push('delete')
-      await del(key)
-    }
-    local.files.copyDir = copyDirSync
-    const out = (await moveRoutineToFileTool(deps(local), { key: 'created::a' })) as Record<
-      string,
-      unknown
-    >
-    expect(order).toEqual(['delete', 'write'])
-    const file = join(ws, '.clave', 'workspaces', 'default.clave')
-    const routine = local.written[file].routines![0]
-    expect(routine.prompt).toBe('Read @root_path now')
-    expect(out.template).toBe(join(ws, '.clave', 'routines', 'morning-digest-2'))
-    expect(
-      readFileSync(join(ws, '.clave', 'routines', 'morning-digest-2', 'index.html'), 'utf8')
-    ).toBe('<html/>')
-    expect(
-      readFileSync(join(ws, '.clave', 'routines', 'morning-digest', 'index.html'), 'utf8')
-    ).toBe('someone else’s page')
-  })
-
-  it('a delete the machine refuses (a run in flight) leaves the file unwritten', async () => {
-    const ws = join(root, 'ws')
-    const tpl = join(ws, '.clave', 'routines', 'own')
-    mkdirSync(tpl, { recursive: true })
-    const local = machine(
-      'local',
-      'This Mac',
-      { id: 'l', name: 'mac' },
-      [view(createdOn('mac', tpl, ws))],
-      {
-        workspaces: async () => [{ id: 'ws', name: 'Work', rootDir: ws, profileFile: null }]
-      }
-    )
-    local.routines.delete = async () => {
-      throw new Error('"Morning digest" is running; wait for it to end')
-    }
-    await expect(moveRoutineToFileTool(deps(local), { key: 'created::a' })).rejects.toThrow(
-      /is running/
-    )
-    expect(Object.keys(local.written)).toEqual([])
-  })
-
-  it('a write that fails after the delete puts the routine back in the store and says so', async () => {
-    const ws = join(root, 'ws')
-    const tpl = join(ws, '.clave', 'routines', 'own')
-    mkdirSync(tpl, { recursive: true })
-    const local = machine(
-      'local',
-      'This Mac',
-      { id: 'l', name: 'mac' },
-      [view(createdOn('mac', tpl, ws))],
-      {
-        workspaces: async () => [{ id: 'ws', name: 'Work', rootDir: ws, profileFile: null }]
-      }
-    )
-    local.files.write = async () => {
-      throw new Error('EACCES')
-    }
-    await expect(moveRoutineToFileTool(deps(local), { key: 'created::a' })).rejects.toThrow(
-      /could not be written \(EACCES\); the routine stays in This Mac’s store/
-    )
-    expect(local.calls).toEqual(['delete:created::a', 'create:ws:Morning digest'])
-  })
-
-  it('an empty or single-group file gets the group named, or Routines', async () => {
-    const ws = join(root, 'ws')
-    const tpl = join(ws, '.clave', 'routines', 'own')
-    mkdirSync(tpl, { recursive: true })
-    const local = machine(
-      'local',
-      'This Mac',
-      { id: 'l', name: 'mac' },
-      [view(createdOn('mac', tpl, ws))],
-      {
-        workspaces: async () => [{ id: 'ws', name: 'Work', rootDir: ws, profileFile: null }]
-      }
-    )
+  it('asks the routine’s machine to move it, passing the file and the group, and answers the machine’s word', async () => {
+    const local = machine('local', 'This Mac', { id: 'l', name: 'mac' }, [view(createdOn('mac'))])
     const out = (await moveRoutineToFileTool(deps(local), {
       key: 'created::a',
-      group: 'Jobs'
+      file: '.clave/workspaces/romain.clave',
+      group: 'Ops'
     })) as Record<string, unknown>
-    const file = join(ws, '.clave', 'workspaces', 'default.clave')
-    expect(out).toMatchObject({ file, group: 'Jobs' })
-    expect(local.written[file]).toMatchObject({
-      name: 'Jobs',
-      routines: [{ name: 'Morning digest', report: { template: tpl } }]
+    expect(local.calls).toEqual(['move:created::a:.clave/workspaces/romain.clave:Ops'])
+    expect(out).toMatchObject({
+      ok: true,
+      name: 'Morning digest',
+      file: '/root/.clave/workspaces/romain.clave',
+      group: 'Ops',
+      runsOn: 'mac',
+      machine: { id: 'local', ownName: 'mac' }
     })
-    expect(local.written[file]).not.toHaveProperty('groups')
   })
 
-  it('refuses a file routine, a machine with no files, a built-in page on a remote, and a twin name', async () => {
-    const ws = join(root, 'ws')
+  it('refuses a routine a file declares before asking anything, and relays the machine’s refusal', async () => {
     const fileRoutine = machine('local', 'This Mac', { id: 'l', name: 'mac' }, [view(decl())])
     await expect(moveRoutineToFileTool(deps(fileRoutine), { key: decl().key })).rejects.toThrow(
       /already comes from/
     )
-    const remote = machine(
-      'srv-1',
-      'MacStudio',
-      { id: 's', name: 'studio' },
-      [view(createdOn('studio', '/app/default', ws))],
-      {
-        workspaces: async () => [{ id: 'ws', name: 'Work', rootDir: ws, profileFile: null }]
-      }
-    )
-    remote.files.copyDir = undefined
-    await expect(moveRoutineToFileTool(deps(remote), { key: 'created::a' })).rejects.toThrow(
-      /built-in report page, which a file cannot name on MacStudio/
-    )
-    const tpl = join(ws, '.clave', 'routines', 'own')
-    const twin = machine(
-      'local',
-      'This Mac',
-      { id: 'l', name: 'mac' },
-      [view(createdOn('mac', tpl, ws))],
-      {
-        workspaces: async () => [{ id: 'ws', name: 'Work', rootDir: ws, profileFile: null }]
-      }
-    )
-    twin.files.read = async () => ({
-      type: 'single',
-      name: 'Ops',
-      cwd: ws,
-      color: null,
-      sessions: [],
-      terminals: [],
-      routines: [{ name: 'morning digest', schedule: '0 0 * * *', prompt: 'x' }]
-    })
-    await expect(moveRoutineToFileTool(deps(twin), { key: 'created::a' })).rejects.toThrow(
-      /already has a routine named/
-    )
-    const noFiles = {
-      ...machine('local', 'This Mac', { id: 'l', name: 'mac' }, [view(createdOn('mac', tpl, ws))]),
-      files: undefined
+    expect(fileRoutine.calls).toEqual([])
+    const busy = machine('local', 'This Mac', { id: 'l', name: 'mac' }, [view(createdOn('mac'))])
+    busy.routines.moveToFile = async () => {
+      throw new Error('"Morning digest" is running; wait for it to end')
     }
-    await expect(moveRoutineToFileTool(deps(noFiles), { key: 'created::a' })).rejects.toThrow(
-      /offers no file writes/
+    await expect(moveRoutineToFileTool(deps(busy), { key: 'created::a' })).rejects.toThrow(
+      /is running/
     )
   })
 })

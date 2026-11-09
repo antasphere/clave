@@ -22,6 +22,8 @@ export type RoutinesListing = Contract.RoutinesListing
 export type RoutineView = Contract.RoutineView
 export type RoutineCreateInput = Contract.RoutineCreateInput
 export type RoutinePatch = Contract.RoutinePatch
+export type RoutineMoveInput = Contract.RoutineMoveInput
+export type RoutineMoved = Contract.RoutineMoved
 export type RoutineRun = Contract.RoutineRun
 export type RoutineStatus = Contract.RoutineStatus
 export type RoutinesEvent = Contract.RoutinesEvent
@@ -73,6 +75,8 @@ export interface RoutinesService {
   delete(key: string): Promise<void>
   /** A created routine held or released. */
   pause(key: string, paused: boolean): Promise<RoutineView>
+  /** A created routine written into a file of its workspace and removed from the store, in one step. */
+  moveToFile(key: string, input: RoutineMoveInput): Promise<RoutineMoved>
 }
 
 const NO_ROUTINES = new CapabilityUnavailable({
@@ -102,6 +106,7 @@ export class Routines extends Context.Tag('@clave/server/Routines')<Routines, Ro
     create: () => Promise.reject(NO_ROUTINES),
     update: () => Promise.reject(NO_ROUTINES),
     delete: () => Promise.reject(NO_ROUTINES),
-    pause: () => Promise.reject(NO_ROUTINES)
+    pause: () => Promise.reject(NO_ROUTINES),
+    moveToFile: () => Promise.reject(NO_ROUTINES)
   }
 }

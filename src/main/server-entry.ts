@@ -449,7 +449,6 @@ async function main(): Promise<void> {
         // PRDCT-4243: the routine tools on this server: its workspaces, its files, its name.
         routineTools: {
           workspaces: async () => (await standalone.settings.workspaces.load()).workspaces,
-          files: workspaceFilesInstance,
           ownName: () => serverName()
         },
         ...(sidebar && { sidebar }),

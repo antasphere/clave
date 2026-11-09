@@ -7,6 +7,7 @@ import {
   DismissRoutineRun,
   GetRoutineDeck,
   ListRoutines,
+  MoveRoutineToFile,
   OpenRoutineDiscussion,
   PauseRoutine,
   ReportRoutineRun,
@@ -26,3 +27,4 @@ export const routinesGroup = ApiGroup.make('routines')
   .add(HttpCqrs.commandEndpoint('update', '/routines/update', UpdateRoutine))
   .add(HttpCqrs.commandEndpoint('delete', '/routines/delete', DeleteRoutine))
   .add(HttpCqrs.commandEndpoint('pause', '/routines/pause', PauseRoutine))
+  .add(HttpCqrs.commandEndpoint('moveToFile', '/routines/move-to-file', MoveRoutineToFile))

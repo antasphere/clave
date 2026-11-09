@@ -14,6 +14,7 @@ import {
   DismissRoutineRun,
   GetRoutineDeck,
   ListRoutines,
+  MoveRoutineToFile,
   OpenRoutineDiscussion,
   PauseRoutine,
   ReportRoutineRun,
@@ -75,5 +76,13 @@ export const routineHandlers = [
   CommandHandler.make(CreateRoutine, (p) => call((r) => r.create(p))),
   CommandHandler.make(UpdateRoutine, (p) => call((r) => r.update(p.key, p.patch))),
   CommandHandler.make(DeleteRoutine, (p) => call((r) => r.delete(p.key))),
-  CommandHandler.make(PauseRoutine, (p) => call((r) => r.pause(p.key, p.paused)))
+  CommandHandler.make(PauseRoutine, (p) => call((r) => r.pause(p.key, p.paused))),
+  CommandHandler.make(MoveRoutineToFile, (p) =>
+    call((r) =>
+      r.moveToFile(p.key, {
+        ...(p.file !== undefined ? { file: p.file } : {}),
+        ...(p.group !== undefined ? { group: p.group } : {})
+      })
+    )
+  )
 ]

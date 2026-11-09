@@ -61,6 +61,33 @@ interface CreatedDocument {
   routines: CreatedRoutine[]
 }
 
+/** A folder copied on this machine: the built-in report page moved under a workspace. */
+export function copyDirSync(from: string, to: string): void {
+  fs.mkdirSync(to, { recursive: true })
+  for (const entry of fs.readdirSync(from, { withFileTypes: true })) {
+    const src = path.join(from, entry.name)
+    const dst = path.join(to, entry.name)
+    if (entry.isDirectory()) copyDirSync(src, dst)
+    else if (entry.isFile()) fs.copyFileSync(src, dst)
+  }
+}
+
+/** The next free folder for a routine's page under `.clave/routines`: its
+ *  name as a slug, then `-2`, `-3`, never an existing folder (another
+ *  routine's page). */
+export function freePageFolder(rootDir: string, name: string): string {
+  const slug =
+    name
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-|-$/g, '') || 'routine'
+  const folderOf = (n: number): string =>
+    path.join(rootDir, '.clave', 'routines', n === 1 ? slug : `${slug}-${n}`)
+  let n = 1
+  while (fs.existsSync(folderOf(n))) n++
+  return folderOf(n)
+}
+
 export const createdKey = (id: string): string => `${CREATED_KEY_PREFIX}${id}`
 export const isCreatedKey = (key: string): boolean => key.startsWith(CREATED_KEY_PREFIX)
 

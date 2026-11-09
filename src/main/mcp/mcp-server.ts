@@ -36,8 +36,7 @@ import { usageManager, type UsageError, type UsageLimits } from '../usage-manage
 import { codexUsageManager } from '../codex-usage'
 import { NOT_SERVED, type ServedShell, serveCommand } from './served-tools'
 import { serverClient } from './server-client'
-import { type RoutineMachine, copyDirSync, registerRoutineTools } from './routine-tools'
-import { workspaceFiles } from '../workspace-files'
+import { type RoutineMachine, registerRoutineTools } from './routine-tools'
 import {
   historyWithLiveLaunch,
   hostRecords,
@@ -771,18 +770,12 @@ async function routineMachines(): Promise<{
   release: () => Promise<void>
 }> {
   const api = await serverClient.api()
-  const files = workspaceFiles()
   const machines: RoutineMachine[] = [
     {
       id: 'local',
       label: 'This Mac',
       routines: api.routines,
-      workspaces: async () => workspaceManager.getWorkspaces(),
-      files: {
-        read: (file, rootDir) => files.read(file, { rootDir }),
-        write: async (file, data, rootDir) => files.write(file, data, rootDir),
-        copyDir: copyDirSync
-      }
+      workspaces: async () => workspaceManager.getWorkspaces()
     }
   ]
   const disposers: Array<() => Promise<void>> = []
@@ -807,14 +800,10 @@ async function routineMachines(): Promise<{
         update: async (key, patch) => (await client()).routines.update(key, patch),
         delete: async (key) => (await client()).routines.delete(key),
         pause: async (key, paused) => (await client()).routines.pause(key, paused),
-        runNow: async (key) => (await client()).routines.runNow(key)
+        runNow: async (key) => (await client()).routines.runNow(key),
+        moveToFile: async (key, input) => (await client()).routines.moveToFile(key, input)
       },
-      workspaces: async () => (await (await client()).settings.workspaces.load()).workspaces,
-      files: {
-        read: async (file, rootDir) => (await client()).workspaceFiles.read(file, { rootDir }),
-        write: async (file, data, rootDir) =>
-          (await client()).workspaceFiles.write(file, data, rootDir)
-      }
+      workspaces: async () => (await (await client()).settings.workspaces.load()).workspaces
     })
   }
   return {

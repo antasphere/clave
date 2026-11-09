@@ -9,6 +9,8 @@
  */
 import type {
   RoutineCreateInput,
+  RoutineMoveInput,
+  RoutineMoved,
   RoutinePatch,
   RoutineRun,
   RoutineStatus,
@@ -40,6 +42,7 @@ export interface RoutinesClient {
   readonly update: (key: string, patch: RoutinePatch) => Promise<RoutineView>
   readonly delete: (key: string) => Promise<void>
   readonly pause: (key: string, paused: boolean) => Promise<RoutineView>
+  readonly moveToFile: (key: string, input: RoutineMoveInput) => Promise<RoutineMoved>
 }
 
 export const routinesClient = (call: Call): RoutinesClient => ({
@@ -53,5 +56,6 @@ export const routinesClient = (call: Call): RoutinesClient => ({
   create: (input) => call((c) => c.routines.create({ payload: input })),
   update: (key, patch) => call((c) => c.routines.update({ payload: { key, patch } })),
   delete: (key) => call((c) => c.routines.delete({ payload: { key } })).then(() => undefined),
-  pause: (key, paused) => call((c) => c.routines.pause({ payload: { key, paused } }))
+  pause: (key, paused) => call((c) => c.routines.pause({ payload: { key, paused } })),
+  moveToFile: (key, input) => call((c) => c.routines.moveToFile({ payload: { key, ...input } }))
 })

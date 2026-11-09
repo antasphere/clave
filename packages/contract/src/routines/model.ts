@@ -346,6 +346,32 @@ export const PauseRoutine = Command.define('PauseRoutine', {
   failure: RoutineRefused
 })
 
+/** A created routine written into a `.clave` file of its workspace with
+ *  `runsOn` set to this server's own name, then removed from the store, in
+ *  one step on the server so it never exists twice (PRDCT-4243): refused
+ *  while a run is in flight, on a routine a file declares, on a group that
+ *  already holds the name. The built-in report page is copied under the
+ *  workspace first when the routine used it. */
+export const MoveRoutineToFile = Command.define('MoveRoutineToFile', {
+  payload: Schema.Struct({
+    key: Schema.String,
+    /** The `.clave` file, absolute or relative to the workspace root; the workspace's profile file by default. */
+    file: Schema.optional(Schema.String),
+    /** The group it joins; the file's first group by default, a group named Routines when the file is empty. */
+    group: Schema.optional(Schema.String)
+  }),
+  success: Schema.Struct({
+    name: Schema.String,
+    file: Schema.String,
+    group: Schema.String,
+    template: Schema.String,
+    runsOn: Schema.String
+  }),
+  failure: RoutineRefused
+})
+export type RoutineMoveInput = Omit<typeof MoveRoutineToFile.payload.Type, 'key'>
+export type RoutineMoved = typeof MoveRoutineToFile.success.Type
+
 // ---------------------------------------------------------------------------
 // Events: members of the server's one event union (`./events.ts`).
 // ---------------------------------------------------------------------------

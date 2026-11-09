@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { tmpdir } from 'node:os'
 import type { SessionHostService, StartInput } from '@clave/server'
@@ -1192,5 +1192,128 @@ describe('the routines a server creates in its own store (PRDCT-4242)', () => {
     const [listed] = gone.list().routines
     expect(listed.routine).toMatchObject({ origin: 'created', runsHere: false })
     expect(listed.routine.invalid).toMatch(/no longer registered/)
+  })
+})
+
+// ── PRDCT-4243: a created routine moved into a file, in one step on the server ──
+describe('a created routine moved into a file (verifier rounds 1 and 2, F1 and G1)', () => {
+  const tpl = (): string => join(root, '.clave', 'routines', 'ok')
+  const digest = (over: Record<string, unknown> = {}): Parameters<RoutineService['create']>[0] => ({
+    workspaceId: 'ws',
+    name: 'Morning digest',
+    schedule: '30 8 * * 1-5',
+    prompt: 'Read @root_path now',
+    launch: { model: 'm', dangerousMode: true },
+    icon: 'bolt',
+    ...over
+  })
+  const profile = (): string => join(root, '.clave', 'workspaces', 'default.clave')
+  const readFile = (): Record<string, unknown> => JSON.parse(readFileSync(profile(), 'utf8'))
+
+  it('writes the routine into the profile file’s group with runsOn, the prompt as typed and a copied page, and forgets it in the store', async () => {
+    const file = workspace([routine('FromFile')])
+    const host = fakeHost()
+    const storage = memory()
+    const service = await build(file, host, storage, { defaultTemplate: tpl() })
+    const view = await service.create(digest())
+    const run = await service.runNow(view.routine.key)
+    await service.report({
+      sessionId: 's1',
+      status: 'ok',
+      headline: 'h',
+      summary: 's',
+      data: { n: 1 }
+    })
+    host.emit('s1', { kind: 'event', event: { type: 'state_change', state: 'done' } })
+    const moved = await service.moveToFile(view.routine.key, {})
+    expect(moved).toEqual({
+      name: 'Morning digest',
+      file: profile(),
+      group: 'G',
+      template: join(root, '.clave', 'routines', 'morning-digest'),
+      runsOn: 'TestMac'
+    })
+    const written = readFile()
+    const routines = written.routines as Array<Record<string, unknown>>
+    expect(routines.map((r) => r.name)).toEqual(['FromFile', 'Morning digest'])
+    expect(routines[1]).toMatchObject({
+      runsOn: 'TestMac',
+      prompt: 'Read @root_path now',
+      model: 'm',
+      dangerousMode: true,
+      icon: 'bolt',
+      schedule: '30 8 * * 1-5',
+      report: { template: '.clave/routines/morning-digest' }
+    })
+    expect(routines[1]).not.toHaveProperty('server')
+    expect(existsSync(join(root, '.clave', 'routines', 'morning-digest', 'index.html'))).toBe(true)
+    // The store and the history: gone; the file's copy is listed, placed here, and runs.
+    await service.refresh()
+    const listed = service
+      .list()
+      .routines.map((v) => [v.routine.name, v.routine.origin, v.routine.runsHere])
+    expect(listed).toEqual([
+      ['FromFile', 'file', true],
+      ['Morning digest', 'file', true]
+    ])
+    expect(new RoutinesStore(storage).run(run.id)).toBeUndefined()
+  })
+
+  it('a move refused while a run is in flight changes nothing: no file written, no page copied, the routine kept', async () => {
+    const file = workspace([])
+    const host = fakeHost()
+    const service = await build(file, host, memory(), { defaultTemplate: tpl() })
+    const view = await service.create(digest())
+    await service.runNow(view.routine.key)
+    const before = readFileSync(profile(), 'utf8')
+    await expect(service.moveToFile(view.routine.key, {})).rejects.toThrow(/is running/)
+    expect(readFileSync(profile(), 'utf8')).toBe(before)
+    expect(existsSync(join(root, '.clave', 'routines', 'morning-digest'))).toBe(false)
+    expect(service.list().routines.map((v) => v.routine.origin)).toEqual(['created'])
+  })
+
+  it('takes the next free folder for the page, keeps a template of the routine’s own, refuses a taken name and a file’s routine', async () => {
+    const file = workspace([routine('FromFile')])
+    const service = await build(file, fakeHost(), memory(), { defaultTemplate: tpl() })
+    mkdirSync(join(root, '.clave', 'routines', 'morning-digest'), { recursive: true })
+    writeFileSync(
+      join(root, '.clave', 'routines', 'morning-digest', 'index.html'),
+      'someone else’s'
+    )
+    const a = await service.create(digest())
+    const movedA = await service.moveToFile(a.routine.key, { group: 'Jobs' })
+    expect(movedA.template).toBe(join(root, '.clave', 'routines', 'morning-digest-2'))
+    expect(
+      readFileSync(join(root, '.clave', 'routines', 'morning-digest', 'index.html'), 'utf8')
+    ).toBe('someone else’s')
+    expect((readFile().groups as Array<Record<string, unknown>>).map((g) => g.name)).toEqual([
+      'G',
+      'Jobs'
+    ])
+    await service.refresh()
+    // The same name again, into the same group: refused, the created one kept.
+    const b = await service
+      .create(digest({ name: 'Morning Digest', workspaceId: 'ws' }))
+      .catch((e: Error) => e)
+    expect(b).toBeInstanceOf(Error) // a name a file routine of the workspace holds (F8)
+    const own = await service.create(
+      digest({ name: 'Own page', report: { template: '.clave/routines/ok' } })
+    )
+    const movedOwn = await service.moveToFile(own.routine.key, { group: 'Jobs' })
+    expect(movedOwn.template).toBe(tpl())
+    await expect(service.moveToFile(key(file, 'FromFile'), {})).rejects.toThrow(
+      /edit the file to move/
+    )
+  })
+
+  it('two creates at once with one name land once (verifier round 2, G2)', async () => {
+    const file = workspace([])
+    const service = await build(file, fakeHost(), memory(), { defaultTemplate: tpl() })
+    const outcomes = await Promise.allSettled([
+      service.create(digest({ name: 'Race' })),
+      service.create(digest({ name: 'race' }))
+    ])
+    expect(outcomes.map((o) => o.status).sort()).toEqual(['fulfilled', 'rejected'])
+    expect(service.list().routines).toHaveLength(1)
   })
 })

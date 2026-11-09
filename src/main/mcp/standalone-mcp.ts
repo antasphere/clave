@@ -6,11 +6,9 @@ import type { Socket } from 'node:net'
 import { isAbsolute } from 'node:path'
 import { z } from 'zod'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
-import type { WorkspaceFiles } from '@clave/server/workspace-files'
 import {
   type RoutineMachineWorkspace,
   ROUTINE_TOOLS_INSTRUCTION,
-  copyDirSync,
   registerRoutineTools
 } from './routine-tools'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
@@ -71,7 +69,6 @@ export interface StandaloneMcpOptions {
   readonly routineTools?:
     | {
         readonly workspaces: () => Promise<ReadonlyArray<RoutineMachineWorkspace>>
-        readonly files: WorkspaceFiles
         readonly ownName: () => string
       }
     | undefined
@@ -742,14 +739,10 @@ function buildServer(
             update: (key, patch) => routines.update(key, patch),
             delete: (key) => routines.delete(key),
             pause: (key, paused) => routines.pause(key, paused),
-            runNow: (key) => routines.runNow(key)
+            runNow: (key) => routines.runNow(key),
+            moveToFile: (key, input) => routines.moveToFile(key, input)
           },
-          workspaces: routineTools.workspaces,
-          files: {
-            read: (file, rootDir) => routineTools.files.read(file, { rootDir }),
-            write: async (file, data, rootDir) => routineTools.files.write(file, data, rootDir),
-            copyDir: copyDirSync
-          }
+          workspaces: routineTools.workspaces
         }
       ]
     })

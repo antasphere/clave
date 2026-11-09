@@ -10,6 +10,8 @@ export {
   type RoutineView,
   type RoutineCreateInput,
   type RoutinePatch,
+  type RoutineMoveInput,
+  type RoutineMoved,
   type RoutineRun
 } from './port'
 export { routineHandlers } from './handlers'
