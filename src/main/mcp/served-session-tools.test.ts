@@ -709,6 +709,97 @@ describe('an account switch', () => {
       switched: true
     })
   })
+  it('moves a tab to the open account with the most of its week left, not the next in the ring', async () => {
+    const h = setup({ ...world(), switchMode: 'automatic' })
+    const week = (used: number): ServedPoolAccount['usage'] => {
+      const w = { kind: 'weekly_all', scope: null, usedPercentage: used, severity: 'normal' }
+      return { tightest: w, windows: [w] }
+    }
+    h.w.accounts.claude = [
+      { id: 'default', label: 'Default', usable: true, usage: week(97) },
+      { id: 'acc-2', label: 'Second', usable: true, usage: week(80) },
+      { id: 'acc-3', label: 'Third', usable: true, usage: week(10) }
+    ]
+    expect(await run(h, 'switchAccount', { sessionId: 'far', account: 'any' })).toMatchObject({
+      account: { id: 'acc-3' }
+    })
+  })
+  it('opens a tab on the account judged for the model it will run: a spent Fable week skips the account on Fable only', async () => {
+    const h = setup(world())
+    const week = { kind: 'weekly_all', scope: null, usedPercentage: 40, severity: 'normal' }
+    const fable = {
+      kind: 'weekly_scoped',
+      scope: 'Fable',
+      usedPercentage: 100,
+      severity: 'critical'
+    }
+    const open = { kind: 'weekly_all', scope: null, usedPercentage: 10, severity: 'normal' }
+    h.w.accounts.claude = [
+      {
+        id: 'default',
+        label: 'Default',
+        usable: true,
+        usage: { tightest: week, windows: [week, fable] }
+      },
+      { id: 'acc-2', label: 'Second', usable: true, usage: { tightest: open, windows: [open] } }
+    ]
+    h.w.selected.claude = 'default'
+    const chosen = (): string =>
+      (h.argsOf('sessions.start').at(-1) as { options: Record<string, string> }).options
+        .claudeProfileId
+    await run(h, 'openSession', { cwd: '/proj', mode: 'claude', model: 'claude-fable-5-1' })
+    expect(chosen()).toBe('acc-2')
+    await run(h, 'openSession', { cwd: '/proj', mode: 'claude', model: 'claude-opus-5-5' })
+    expect(chosen()).toBe('default')
+    await run(h, 'openSession', {
+      cwd: '/proj',
+      mode: 'claude',
+      model: 'claude-fable-5-1',
+      account: 'any'
+    })
+    expect(chosen()).toBe('acc-2')
+    await run(h, 'openSession', { cwd: '/proj', mode: 'claude' })
+    expect(chosen()).toBe('default')
+  })
+  it('judges a Codex tab for its model on a switch and an open: Spark’s bucket is a family', async () => {
+    const h = setup({ ...world(), switchMode: 'automatic' })
+    const week = { kind: 'weekly_all', scope: null, usedPercentage: 30, severity: 'normal' }
+    const spark = { kind: 'session', scope: 'Spark', usedPercentage: 100, severity: 'critical' }
+    const open = { kind: 'weekly_all', scope: null, usedPercentage: 10, severity: 'normal' }
+    const half = { kind: 'weekly_all', scope: null, usedPercentage: 50, severity: 'normal' }
+    // The tab leaves c2. Default is next in the ring and has the most of its
+    // week, but its Spark block is spent: a Spark tab must go past it to c3,
+    // a tab on another model takes it.
+    h.w.accounts.codex = [
+      {
+        id: 'default',
+        label: 'Default',
+        usable: true,
+        usage: { tightest: week, windows: [week, spark] }
+      },
+      { id: 'c2', label: 'Second', usable: true, usage: { tightest: open, windows: [open] } },
+      { id: 'c3', label: 'Third', usable: true, usage: { tightest: half, windows: [half] } }
+    ]
+    h.w.selected.codex = 'default'
+    h.w.sessions.push(session('cx'))
+    h.w.records.cx = record('cx', { claudeMode: false, codexMode: true, codexAccountId: 'c2' })
+    h.w.records.cx.model = 'gpt-5.3-codex-spark'
+    expect(await run(h, 'switchAccount', { sessionId: 'cx', account: 'any' })).toMatchObject({
+      account: { id: 'c3' }
+    })
+    h.w.records.cx.codexAccountId = 'c2'
+    h.w.records.cx.model = 'gpt-5.3-codex'
+    expect(await run(h, 'switchAccount', { sessionId: 'cx', account: 'any' })).toMatchObject({
+      account: { id: 'default' }
+    })
+    const chosen = (): string =>
+      (h.argsOf('sessions.start').at(-1) as { options: Record<string, string> }).options
+        .codexAccountId
+    await run(h, 'openSession', { cwd: '/proj', mode: 'codex', model: 'gpt-5.3-codex-spark' })
+    expect(chosen()).toBe('c2')
+    await run(h, 'openSession', { cwd: '/proj', mode: 'codex', model: 'gpt-5.3-codex' })
+    expect(chosen()).toBe('default')
+  })
   it('refuses what is not an account tab, an unknown account, and a pool with no headroom', async () => {
     const h = setup(world())
     await expect(run(h, 'switchAccount', { sessionId: 't1', account: 'any' })).rejects.toThrow(

@@ -17,9 +17,10 @@ import {
   headroomWindow,
   capLevel,
   capName,
+  capOutLabel,
+  capStatus,
   claudeUsageForModel
 } from '../../../src/renderer/src/store/usage-store'
-import { isExhausted } from '../../../src/renderer/src/lib/account-pool'
 import {
   accountProviderOf,
   sessionSwitchTargets,
@@ -60,16 +61,34 @@ export function AccountChip({ sessionId }: { sessionId: string }): React.JSX.Ele
   const clearFrame = useRef<number | null>(null)
   if (!host || !provider || !own) return null
 
-  const summary =
-    provider === 'codex' ? codexSummary : claudeUsageForModel(claudeSummary, host.model)
+  const summary = claudeUsageForModel(
+    provider === 'codex' ? codexSummary : claudeSummary,
+    host.model
+  )
   const w = headroomWindow(summary)
-  const exhausted = isExhausted(summary) || host.limitReported === true
+  // Out: the cap that stops THIS session, named ("Fable out"); a limit the
+  // CLI reported that the poll does not show yet reads "Out" alone, since
+  // the report carries no cap (PRDCT-4254).
+  const stopping = capStatus(summary)?.stopping ?? null
+  const exhausted = stopping !== null || host.limitReported === true
   const level = exhausted ? 'critical' : w ? capLevel(w) : 'unknown'
   const left = w ? Math.max(0, Math.round(100 - w.usedPercentage)) : null
-  const headroom = exhausted ? 'At limit' : left !== null ? `${left}% left` : null
+  const headroom = stopping
+    ? `${capName(stopping)} out`
+    : exhausted
+      ? 'Out'
+      : left !== null
+        ? `${left}% left`
+        : null
   const title = [
     own.label,
-    exhausted ? 'at its limit' : w && left !== null ? `${left}% of ${capName(w)} left` : null,
+    stopping
+      ? capOutLabel(stopping)
+      : exhausted
+        ? 'out, as its agent reported'
+        : w && left !== null
+          ? `${left}% of ${capName(w)} left`
+          : null,
     'switch account'
   ]
     .filter(Boolean)

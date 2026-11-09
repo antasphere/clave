@@ -194,10 +194,17 @@ export async function run(t) {
       'Work'
     )
     t.equal('the chip says Work is at its limit', await chip.getAttribute('data-level'), 'critical')
+    // The cap that stops this session, named: Work's 5-hour block is what the
+    // probe reports rejected (PRDCT-4254). Never a bare "At limit".
     t.equal(
-      'the chip reads "At limit"',
+      'the chip names the cap that is out, "5h out"',
       await chip.locator('.term-account-headroom').innerText(),
-      'At limit'
+      '5h out'
+    )
+    t.check(
+      'and its tooltip says when the cap comes back',
+      /5h out · back in /.test((await chip.locator('button').getAttribute('title')) ?? ''),
+      await chip.locator('button').getAttribute('title')
     )
 
     // ── The menu: Work's caps, then Play to move to ──
@@ -339,10 +346,11 @@ export async function run(t) {
       ))
     )
     t.check(
-      'Fable chip still reports its exhausted quota',
+      'Fable chip names its exhausted cap, "Fable out"',
       !!(await until(
-        async () => (await fableChip.locator('.term-account-headroom').innerText()) === 'At limit'
-      ))
+        async () => (await fableChip.locator('.term-account-headroom').innerText()) === 'Fable out'
+      )),
+      await fableChip.locator('.term-account-headroom').innerText()
     )
     t.equal(
       'Fable chip retains its warning level',

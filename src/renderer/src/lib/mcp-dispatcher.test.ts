@@ -29,12 +29,12 @@ import type { LaunchProfile, LaunchProfilePreferences } from '../../../shared/ag
    workspace's or global default's chat form, read from the Mac's own store. */
 
 const switchAccount = vi.hoisted(() => ({
-  restartSessionProcess: vi.fn(async (id: string) => ({ ok: id !== '', resumed: true }))
+  restartSessionProcess: vi.fn(async (id: string) => ({ ok: id !== '', resumed: true })),
+  resolveAccountRef: vi.fn(() => ({ id: 'default', label: 'Default' }))
 }))
 vi.mock('./switch-account', () => ({
   restartSessionProcess: switchAccount.restartSessionProcess,
-  resolveAccountForSpawn: () => ({ id: 'default', label: 'Default' }),
-  resolveAccountRef: () => ({ id: 'default', label: 'Default' }),
+  resolveAccountRef: switchAccount.resolveAccountRef,
   claudeProfileSpawnFields: () => ({}),
   codexAccountSpawnFields: () => ({ codexAccountId: 'default', codexAccountLabel: 'Default' }),
   sessionAccountExhausted: () => false,
@@ -861,5 +861,25 @@ describe('round 1: the window road refuses before resuming, and places by the pa
       usePairingStore.setState({ servers: {} } as never)
       useFleetStore.setState({ connections: [], statuses: {} } as never)
     }
+  })
+})
+
+describe('the account of a window-road open', () => {
+  it('is judged for the model the tab will run (PRDCT-4253)', async () => {
+    switchAccount.resolveAccountRef.mockClear()
+    await openSessionProgrammatically({ cwd: '/repo', mode: 'claude', model: 'claude-fable-5-1' })
+    expect(switchAccount.resolveAccountRef).toHaveBeenLastCalledWith(
+      'claude',
+      undefined,
+      'claude-fable-5-1'
+    )
+    await openSessionProgrammatically({ cwd: '/repo', mode: 'claude', account: 'Work' })
+    expect(switchAccount.resolveAccountRef).toHaveBeenLastCalledWith('claude', 'Work', undefined)
+    await openSessionProgrammatically({ cwd: '/repo', mode: 'codex', model: 'gpt-5.3-codex-spark' })
+    expect(switchAccount.resolveAccountRef).toHaveBeenLastCalledWith(
+      'codex',
+      undefined,
+      'gpt-5.3-codex-spark'
+    )
   })
 })

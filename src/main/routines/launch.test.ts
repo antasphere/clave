@@ -50,6 +50,42 @@ const routine = (
 })
 
 describe('resolveLaunch', () => {
+  it('judges the pool’s account for the model the routine runs: a spent Fable week skips the account on Fable only', () => {
+    const week = { kind: 'weekly_all', scope: null, usedPercentage: 40, severity: 'normal' }
+    const fable = {
+      kind: 'weekly_scoped',
+      scope: 'Fable',
+      usedPercentage: 100,
+      severity: 'critical'
+    }
+    const open = { kind: 'weekly_all', scope: null, usedPercentage: 10, severity: 'normal' }
+    const withUsage = facts({
+      accounts: (provider) =>
+        provider === 'claude'
+          ? [
+              {
+                id: 'default',
+                label: 'Default',
+                usable: true,
+                usage: { tightest: week, windows: [week, fable] }
+              },
+              {
+                id: 'acc-2',
+                label: 'Antasphere',
+                usable: true,
+                usage: { tightest: open, windows: [open] }
+              }
+            ]
+          : [{ id: 'default', label: 'Default', usable: true }]
+    })
+    const onFable = resolveLaunch(routine({ model: 'claude-fable-5-1' }), withUsage)
+    expect(onFable.ok && onFable.spawn.claudeProfileId).toBe('acc-2')
+    const onOpus = resolveLaunch(routine({ model: 'claude-opus-5-5' }), withUsage)
+    expect(onOpus.ok && onOpus.spawn.claudeProfileId).toBe('default')
+    const noModel = resolveLaunch(routine({}), withUsage)
+    expect(noModel.ok && noModel.spawn.claudeProfileId).toBe('default')
+  })
+
   it('falls back to the workspace defaults: a Claude chat on the workspace profile, the pool account', () => {
     const r = resolveLaunch(routine({}), facts())
     expect(r.ok).toBe(true)

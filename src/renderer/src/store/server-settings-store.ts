@@ -5,7 +5,7 @@ import type {
   LaunchProfilePreferences,
   LauncherFamily
 } from '../../../shared/agent-launch'
-import { tightestWindow, type AccountUsageSummary } from './usage-store'
+import { accountUsageFieldsOf, type AccountUsageSummary } from './usage-store'
 import { DEFAULT_CLAUDE_PROFILE_ID } from './claude-profile-store'
 import { DEFAULT_CODEX_ACCOUNT_ID } from './codex-account-store'
 import { useFleetStore } from './fleet-store'
@@ -140,8 +140,7 @@ export function summarizeUsageRead(
     return { ...previous, refreshing: false }
   return {
     status: 'ready',
-    tightest: tightestWindow(result.windows),
-    windows: result.windows,
+    ...accountUsageFieldsOf(result.windows),
     error: null,
     fetchedAt: result.fetchedAt,
     refreshing: false,

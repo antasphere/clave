@@ -50,11 +50,11 @@ export function UsageColumn({
       <TooltipContent side="top">
         <div className="font-medium">{w.label}</div>
         <div>
-          {pct}% used{full ? ' — limit reached' : ''}
+          {pct}% used{full ? ' · out' : ''}
         </div>
         {at && (
           <div className="text-text-tertiary">
-            Resets {at} ({inTime})
+            {full ? 'Back' : 'Resets'} {at} ({inTime})
           </div>
         )}
       </TooltipContent>

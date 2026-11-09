@@ -153,7 +153,7 @@ export function resolveLaunch(
   let account: string | null = null
   if (agent === 'claude' || agent === 'codex') {
     try {
-      const resolved = resolveAccountRef(facts, agent, p.account)
+      const resolved = resolveAccountRef(facts, agent, p.account, modes.model)
       accountFields = spawnFieldsOf(agent, resolved)
       account = resolved.label
     } catch (error) {
