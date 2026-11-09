@@ -254,6 +254,29 @@ describe('runAccountPolicy', () => {
     expect(lastProposal()).toBeNull()
   })
 
+  it('a write the host refuses releases the tab at once: the ladder is offered again (round 2, F4e)', async () => {
+    fake.mode = 'automatic'
+    fake.sessions = [chat({ limitReported: { scope: { family: 'Fable' } } })]
+    ;(window.electronAPI as { sessionsWrite: unknown }).sessionsWrite = async () => {
+      throw new Error('refused')
+    }
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {})
+    runAccountPolicy()
+    await flush()
+    error.mockRestore()
+    // The report was cleared with the refusal; the poll still says the cap is out.
+    fake.exhausted = true
+    fake.mode = 'propose'
+    runAccountPolicy()
+    expect(lastProposal()).toEqual({
+      reason: 'limit',
+      rungs: [
+        { kind: 'model', model: 'claude-opus-5-5', label: 'Opus 5.5' },
+        { kind: 'account', accountId: 'play', label: 'Play' }
+      ]
+    })
+  })
+
   it('automatic mode on the account setting restarts on the next account and resends', async () => {
     fake.mode = 'automatic'
     fake.onFamilyLimit = 'switch-account'

@@ -519,3 +519,16 @@ describe('restart correlation contract', () => {
     expect(flattenAnswers(undefined)).toBeUndefined()
   })
 })
+
+describe("a set_model's remember flag crosses both decoders (PRDCT-4302)", () => {
+  const input = { type: 'set_model', model: 'claude-opus-5-5', remember: false }
+  it('the Effect schema keeps remember: false, and an absent flag stays absent', () => {
+    const decode = Schema.decodeUnknownSync(SessionInput)
+    expect(decode(input)).toEqual(input)
+    expect('remember' in decode({ type: 'set_model', model: null })).toBe(false)
+  })
+  it('the zod schema keeps remember: false too', () => {
+    expect(ZodSessionInput.parse(input)).toEqual(input)
+    expect('remember' in ZodSessionInput.parse({ type: 'set_model', model: null })).toBe(false)
+  })
+})

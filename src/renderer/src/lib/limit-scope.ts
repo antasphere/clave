@@ -26,14 +26,15 @@ export function resolveLimitScope(
   view: AccountUsageSummary | undefined
 ): ResolvedScope {
   if (report?.scope === 'credits') return 'credits'
+  // A family is the scope only while every shared cap of the account is
+  // open, whether the CLI named it or the read did: a model of another
+  // family draws on the shared caps too (round 1, F2; round 2, F2b).
+  const sharedOut = view?.shared ? windowExhausted(view.shared) : false
   const named = report ? scopeFamily(report.scope) : null
-  if (named) return { family: named }
+  if (named) return sharedOut ? 'shared' : { family: named }
   if (view && isExhausted(view)) {
     // The one rule ranks the cap back LAST as the tightest, so a family cap
-    // out for the week sits above a 5-hour block out for two hours: a
-    // family is the scope only while every shared cap is open, since a
-    // model of another family draws on the shared caps too (round 1, F2).
-    const sharedOut = view.shared ? windowExhausted(view.shared) : false
+    // out for the week sits above a 5-hour block out for two hours.
     const family = view.tightest?.scope?.trim()
     return family && !sharedOut ? { family } : 'shared'
   }

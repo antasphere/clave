@@ -68,10 +68,22 @@ const account = (...out: string[]): AccountUsageSummary => ({
 })
 
 describe('resolveLimitScope', () => {
-  it('takes the family the report names, and the credits, whatever the read says', () => {
-    expect(resolveLimitScope({ scope: { family: 'Opus' } }, view(weekOut, [weekOut]))).toEqual({
+  it('takes the family the report names while the shared caps are open, and the credits whatever the read says', () => {
+    expect(resolveLimitScope({ scope: { family: 'Opus' } }, view(week, [week, opusOut]))).toEqual({
       family: 'Opus'
     })
+    expect(resolveLimitScope({ scope: { family: 'Opus' } }, undefined)).toEqual({ family: 'Opus' })
+    // The CLI named the Fable week, and the 5-hour block is out too: the
+    // account's, since Opus would hit the block (round 2, F2b).
+    expect(
+      resolveLimitScope(
+        { scope: { family: 'Fable' } },
+        realView([blockOutSoon, week, fableOutLater], 'claude-fable-5-1')
+      )
+    ).toBe('shared')
+    expect(
+      resolveLimitScope({ scope: { family: 'Opus' } }, view(weekOut, [weekOut], weekOut))
+    ).toBe('shared')
     expect(resolveLimitScope({ scope: 'credits' }, view(fableOut, [week, fableOut]))).toBe(
       'credits'
     )
