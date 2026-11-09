@@ -10,6 +10,8 @@ import {
 import { ptyManager } from '../pty-manager'
 import { isServerExternal } from '../server/endpoint'
 import { serverClient } from '../mcp/server-client'
+import { recordsWithStopped } from '../mcp/conversation-history'
+import { overlayLiveLaunch } from '../session-history/live-launch'
 
 /** The session's record for a ledger row's launch (PRDCT-4236): main's own,
  *  else, when the sessions live on a server of their own, the server's. */
@@ -32,7 +34,22 @@ export function registerHistoryHandlers(): void {
   ipcMain.on('history:stamp', (_event, row: unknown) => {
     void stampHistory(row, stampRecords)
   })
-  ipcMain.handle('history:list', () => listHistory())
+  // The dialog's read: the ledger's memory, the live record of every tab that
+  // still holds a conversation laid over it (round 5 F1 of PRDCT-4236); a
+  // host that cannot list its records answers the ledger alone.
+  ipcMain.handle('history:list', async () => {
+    const listed = listHistory()
+    try {
+      const api = await serverClient.api()
+      const records = await recordsWithStopped(
+        (ids) => api.sessions.listAdoptable(ids),
+        () => api.sessions.list()
+      )
+      return { ...listed, entries: overlayLiveLaunch(listed.entries, records) }
+    } catch {
+      return listed
+    }
+  })
   // The message trail's read: a live tab's conversation as turns.
   ipcMain.handle('history:conversation', (_event, request: unknown) => getConversation(request))
   ipcMain.handle('history:search', (event, request: unknown) =>

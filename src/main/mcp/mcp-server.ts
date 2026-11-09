@@ -37,6 +37,8 @@ import { codexUsageManager } from '../codex-usage'
 import { NOT_SERVED, type ServedShell, serveCommand } from './served-tools'
 import { serverClient } from './server-client'
 import { listHistory } from '../session-history/service'
+import { overlayLiveLaunch } from '../session-history/live-launch'
+import type { SessionRecord as SessionRecordWire } from '@clave/contract/sessions'
 import {
   listConversations,
   openResumed,
@@ -597,17 +599,20 @@ async function openWindowFromTool(
 /** The History's facts for the conversation tools (`conversation-history.ts`):
  *  the dialog's rows, the server's records and sessions, the workspaces. */
 function historyLookups(api: Awaited<ReturnType<typeof serverClient.api>>): HistoryLookups {
+  const records = (): Promise<readonly SessionRecordWire[]> =>
+    recordsWithStopped(
+      (ids) => api.sessions.listAdoptable(ids),
+      () => api.sessions.list()
+    )
   return {
-    history: () => listHistory().entries,
+    // The ledger's memory with the live record of every held conversation
+    // laid over it (round 5 F1): what the tab's own Resume reads.
+    history: async () => overlayLiveLaunch(listHistory().entries, await records()),
     // The listing a window restores from leaves out a hosted session whose
     // process has ended (`hostedListing`); such a tab still holds its
     // conversation, stopped (round 1, F2), so the records of every session the
     // host lists and the listing lacks are read by id and added.
-    records: () =>
-      recordsWithStopped(
-        (ids) => api.sessions.listAdoptable(ids),
-        () => api.sessions.list()
-      ),
+    records,
     sessions: () => api.sessions.list(),
     workspaces: () => workspaceManager.getWorkspaces().map((w) => ({ id: w.id, name: w.name }))
   }

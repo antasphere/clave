@@ -23,7 +23,7 @@ import { runtimeChoices } from '../../shared/runtime-choices'
 
 export interface HistoryLookups {
   /** The History dialog's rows: the ledger's conversations and the stores' transcripts. */
-  history(): HistoryListEntry[]
+  history(): HistoryListEntry[] | Promise<HistoryListEntry[]>
   /** The server's adoptable records, the sessions it runs marked `running`. */
   records(): Promise<readonly SessionRecord[]>
   /** The server's sessions, stopped records included, with their state. */
@@ -140,8 +140,7 @@ export async function listConversations(
   const names = new Map(workspaces.map((w) => [w.id, w.name]))
   const query = filter.query?.trim().toLowerCase()
   const provider = filter.provider?.trim().toLowerCase()
-  const rows = lookups
-    .history()
+  const rows = (await lookups.history())
     .filter((e) => !provider || e.provider === provider)
     .filter((e) => !filter.workspace || matchesWorkspace(e, filter.workspace, workspaces))
     .filter(
@@ -219,7 +218,7 @@ export async function planResume(
   const holder = holdersOf(records, sessions).get(id)
   if (holder?.alive) return { kind: 'open', sessionId: holder.sessionId }
   if (holder) return { kind: 'stopped', sessionId: holder.sessionId }
-  const entry = lookups.history().find((e) => e.claudeSessionId === id)
+  const entry = (await lookups.history()).find((e) => e.claudeSessionId === id)
   if (!entry)
     throw new ResumeRefused(
       `No conversation "${id}" in the History. clave_history lists the conversations and their ids.`

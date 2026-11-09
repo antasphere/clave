@@ -123,6 +123,15 @@ export interface StampRecordSource {
 
 /** How long a stamp waits on the server's record before writing without it. */
 export const STAMP_REMOTE_TIMEOUT_MS = 2_000
+/** After a server read timed out or failed, how long the stamps write
+ *  without asking again (round 5, V5-F2): a server that does not answer must
+ *  not cost every row of a boot its own wait. */
+export const STAMP_REMOTE_BACKOFF_MS = 30_000
+let remoteSilentUntil = 0
+/** For the tests: forget a server read's failure. */
+export function resetStampRemoteBackoff(): void {
+  remoteSilentUntil = 0
+}
 
 /** Stamps are written one after the other, so a row that waits on the
  *  server is never overtaken by a later row of the same tab. */
@@ -152,16 +161,22 @@ async function recordFor(
   } catch {
     // a record that cannot be read is a row without the launch's mode
   }
-  if (!source.remote) return null
+  if (!source.remote || Date.now() < remoteSilentUntil) return null
   let timer: ReturnType<typeof setTimeout> | undefined
   try {
-    return await Promise.race([
+    const answer = await Promise.race([
       source.remote(sessionId),
-      new Promise<null>((resolve) => {
-        timer = setTimeout(() => resolve(null), STAMP_REMOTE_TIMEOUT_MS)
+      new Promise<'timeout'>((resolve) => {
+        timer = setTimeout(() => resolve('timeout'), STAMP_REMOTE_TIMEOUT_MS)
       })
     ])
+    if (answer === 'timeout') {
+      remoteSilentUntil = Date.now() + STAMP_REMOTE_BACKOFF_MS
+      return null
+    }
+    return answer
   } catch {
+    remoteSilentUntil = Date.now() + STAMP_REMOTE_BACKOFF_MS
     return null
   } finally {
     if (timer) clearTimeout(timer)

@@ -12,7 +12,12 @@ import * as path from 'path'
 // The ledger's directory is read at the first stamp, after `dir` is made.
 vi.mock('electron', () => ({ app: { getPath: () => process.env.CLAVE_STAMP_TEST_DIR } }))
 
-import { stampHistory, type StampRecordSource } from './service'
+import {
+  STAMP_REMOTE_TIMEOUT_MS,
+  resetStampRemoteBackoff,
+  stampHistory,
+  type StampRecordSource
+} from './service'
 
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clave-stamp-test-'))
 process.env.CLAVE_STAMP_TEST_DIR = dir
@@ -103,5 +108,37 @@ describe('stampHistory enriches the row from the session record', () => {
     expect(last.map((r) => r.sessionId)).toEqual(['c', 'd'])
     expect(last[1]).not.toHaveProperty('permissionMode')
     expect(last[1]).toMatchObject({ dangerous: true })
+  })
+})
+
+describe('a server that does not answer (round 5, V5-F2)', () => {
+  it('writes the row without the record after the timeout, and asks no more for a while', async () => {
+    vi.useFakeTimers()
+    try {
+      resetStampRemoteBackoff()
+      let asked = 0
+      const source: StampRecordSource = {
+        local: () => null,
+        remote: () => {
+          asked++
+          return new Promise(() => {})
+        }
+      }
+      const before = written().length
+      const first = stampHistory(row('slow-1', { claudeSessionId: 'cc-slow-1' }), source)
+      await vi.advanceTimersByTimeAsync(STAMP_REMOTE_TIMEOUT_MS + 1)
+      await first
+      expect(written().length).toBe(before + 1)
+      expect(written().at(-1)).toMatchObject({ sessionId: 'slow-1', dangerous: true })
+      expect(written().at(-1)).not.toHaveProperty('permissionMode')
+      expect(asked).toBe(1)
+      // The next row writes at once: the server is left alone for a while.
+      await stampHistory(row('slow-2', { claudeSessionId: 'cc-slow-2' }), source)
+      expect(written().length).toBe(before + 2)
+      expect(asked).toBe(1)
+    } finally {
+      vi.useRealTimers()
+      resetStampRemoteBackoff()
+    }
   })
 })
