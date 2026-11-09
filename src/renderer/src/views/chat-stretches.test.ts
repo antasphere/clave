@@ -235,13 +235,7 @@ describe('foldStretches: the shape of a finished turn', () => {
       ],
       true
     )
-    expect(kinds(rows)).toEqual([
-      'user',
-      'work-stretch',
-      'assistant',
-      'work-stretch',
-      'assistant'
-    ])
+    expect(kinds(rows)).toEqual(['user', 'work-stretch', 'assistant', 'work-stretch', 'assistant'])
     const first = rows[2]
     expect(first.kind === 'assistant' && first.text).toBe('I fixed both errors.')
     expect(stretch(rows, 1).steps[0].note).toBeNull()
@@ -254,7 +248,12 @@ describe('foldStretches: the shape of a finished turn', () => {
 
   it('a turn that ended stays folded while the agent works again', () => {
     const rows = fold(
-      [...longTurn().slice(0, -1), assistant('I fixed both errors.', true), tool('bg'), assistant('Looking.')],
+      [
+        ...longTurn().slice(0, -1),
+        assistant('I fixed both errors.', true),
+        tool('bg'),
+        assistant('Looking.')
+      ],
       false
     )
     expect(kinds(rows)).toEqual(['user', 'work-stretch', 'assistant', 'tool-group', 'assistant'])
@@ -471,9 +470,12 @@ describe('the card’s facts', () => {
   })
 
   it('reads a note plain for the face: no fence, no marks, the first line for a title', () => {
-    const note = '```ts\nconst x = 1\n```\n\n## Quick check before I go on:\n\nShould I **drop** the `legacy` table?\n- yes\n- no'
+    const note =
+      '```ts\nconst x = 1\n```\n\n## Quick check before I go on:\n\nShould I **drop** the `legacy` table?\n- yes\n- no'
     expect(plainNote(note, true)).toBe('Quick check before I go on:')
-    expect(plainNote(note)).toBe('Quick check before I go on:\nShould I drop the legacy table?\nyes\nno')
+    expect(plainNote(note)).toBe(
+      'Quick check before I go on:\nShould I drop the legacy table?\nyes\nno'
+    )
     expect(plainNote('   ')).toBe('')
     expect(plainNote('See [the docs](https://x.y) and _this_, then 2*3*4 = 24.')).toBe(
       'See the docs and this, then 2*3*4 = 24.'

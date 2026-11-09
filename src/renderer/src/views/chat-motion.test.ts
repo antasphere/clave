@@ -93,7 +93,9 @@ describe('chat motion', () => {
     )
     for (const selector of ['.stretch-card::details-content', '.stretch-step', '.stretch-chevron'])
       expect(stretchReduced, `${selector} under reduced motion`).toMatch(
-        new RegExp(`${selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[^{]*\\{[^}]*transition:\\s*none`)
+        new RegExp(
+          `${selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[^{]*\\{[^}]*transition:\\s*none`
+        )
       )
     expect(reduced).toMatch(/transition-property:\s*opacity/)
     expect(reduced).toMatch(/@starting-style\s*\{[^}]*translate:\s*none/)

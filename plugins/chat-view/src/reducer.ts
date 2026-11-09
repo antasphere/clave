@@ -368,7 +368,8 @@ export function reduceConversation(state: Conversation, action: Action): Convers
       event.state === 'idle' || event.state === 'done' || event.state === 'ended'
         ? closeTurn(state.entries)
         : state.entries
-    if (!closed.some(touches)) return { ...state, entries: closed, state: event.state, run, exitCode }
+    if (!closed.some(touches))
+      return { ...state, entries: closed, state: event.state, run, exitCode }
     return {
       ...state,
       entries: closed.map((e) =>
