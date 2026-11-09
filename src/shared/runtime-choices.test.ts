@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { resumeLaunch, runtimeChoices } from './runtime-choices'
+import { resumeLaunch, runtimeChoices, launchModeFields } from './runtime-choices'
 
 // PRDCT-4191: "Lane · Company AI keys" came back from a Resume in Manual on
 // opus after it had run with permissions skipped on another model. The record
@@ -105,5 +105,53 @@ describe('resumeLaunch: one rule for every reopen from the History', () => {
       effort: 'high',
       accountId: 'a1'
     })
+  })
+})
+
+describe('launchModeFields: the mode and the effort an open names', () => {
+  it('passes a mode to a Claude agent short of bypass only, and the effort to Claude and Codex', () => {
+    const claude = { claudeMode: true, codexMode: false, dangerousMode: false }
+    expect(
+      launchModeFields({ ...claude, permissionMode: 'plan', effort: 'high', allowDangerous: true })
+    ).toEqual({ permissionMode: 'plan', allowDangerous: true, effort: 'high' })
+    expect(
+      launchModeFields({
+        ...claude,
+        dangerousMode: true,
+        permissionMode: 'plan',
+        effort: 'high',
+        allowDangerous: false
+      })
+    ).toEqual({ effort: 'high' })
+    // Codex takes the effort and never a mode (round 9, Z3b).
+    expect(
+      launchModeFields({
+        claudeMode: false,
+        codexMode: true,
+        dangerousMode: false,
+        permissionMode: 'plan',
+        effort: 'medium',
+        allowDangerous: false
+      })
+    ).toEqual({ effort: 'medium' })
+    expect(
+      launchModeFields({
+        claudeMode: false,
+        codexMode: false,
+        dangerousMode: false,
+        permissionMode: 'plan',
+        effort: 'high',
+        allowDangerous: false
+      })
+    ).toEqual({})
+    // Malformed values are dropped.
+    expect(
+      launchModeFields({
+        ...claude,
+        permissionMode: 'yolo',
+        effort: 'HIGH; rm',
+        allowDangerous: false
+      })
+    ).toEqual({})
   })
 })
