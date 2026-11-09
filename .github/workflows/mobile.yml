@@ -1,21 +1,61 @@
 name: Mobile
 
-# The gates of apps/mobile (Clave on the phone): typecheck, lint, the
-# unit tests, the JavaScript export for both platforms and the check that the
-# release bundle carries no developer connection. Linux is enough: nothing
-# here builds a native app (the simulator check, scripts/simulator-check.mjs,
-# runs on a Mac with Xcode and Maestro; docs/mobile.md says how).
+# The native phone apps (the native mobile wave of 9 November 2026) and what
+# they share. Three jobs:
+#
+#  - `shared`, on Linux: the fixture vectors, the generated assets and the
+#    fixture server of packages/mobile-native, which need no Mac: the vectors
+#    and assets tests hold the committed files to the contract and to the
+#    desktop's sources, and the fixture test boots this checkout's server as a
+#    daemon with the Echo adapter, a local relay and the local OpenID Connect
+#    provider, then runs the pairing proof against them.
+#  - `ios`, on macos-26 with Xcode 26.0.1 (build 17A400) pinned through
+#    DEVELOPER_DIR: the iOS app's own entry.
+#  - `android`, on Linux with Temurin JDK 21 and Gradle's cache: the Android
+#    app's own entry; the SDK platform and build tools the app pins are what
+#    its entry installs into the runner's ANDROID_HOME through sdkmanager.
+#
+# The entry of a native app is ONE executable file at the root of its folder,
+# `apps/mobile-ios/ci.sh` and `apps/mobile-android/ci.sh`, owned by the app
+# (lane A and lane B of the wave): the workflow runs `bash apps/mobile-<platform>/ci.sh`
+# from the repository root with the toolchain environment set (DEVELOPER_DIR
+# on the Mac; JAVA_HOME and ANDROID_HOME on Linux, sdkmanager on the PATH),
+# and the script's exit code is the verdict. The script builds and tests the
+# app and prints its counts; nothing here names a scheme, a module or a test
+# target, so a rename inside an app is no edit here. While an app folder is
+# absent, or holds no ci.sh, its job says so in one log line and passes: the
+# workflow landed before the apps did, and nothing in it needs them to exist.
 on:
   push:
-    branches: [dev]
+    branches: [mobile, dev]
     paths:
-      - 'apps/mobile/**'
+      - 'apps/mobile-ios/**'
+      - 'apps/mobile-android/**'
+      - 'packages/mobile-native/**'
+      - 'packages/contract/**'
+      - 'packages/server/**'
+      - 'packages/host/**'
+      - 'apps/server/**'
+      - 'apps/relay/**'
+      - 'packages/ui/src/tokens.css'
+      - 'tests/e2e/fixtures/oidc-provider.mjs'
+      - 'scripts/server-process.mjs'
       - 'package.json'
       - 'package-lock.json'
       - '.github/workflows/mobile.yml'
   pull_request:
     paths:
-      - 'apps/mobile/**'
+      - 'apps/mobile-ios/**'
+      - 'apps/mobile-android/**'
+      - 'packages/mobile-native/**'
+      - 'packages/contract/**'
+      - 'packages/server/**'
+      - 'packages/host/**'
+      - 'apps/server/**'
+      - 'apps/relay/**'
+      - 'packages/ui/src/tokens.css'
+      - 'tests/e2e/fixtures/oidc-provider.mjs'
+      - 'scripts/server-process.mjs'
       - 'package.json'
       - 'package-lock.json'
       - '.github/workflows/mobile.yml'
@@ -28,13 +68,10 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  mobile:
-    name: Typecheck, lint, unit tests, export
+  shared:
+    name: Vectors, assets and the fixture server (Linux)
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    defaults:
-      run:
-        working-directory: apps/mobile
     steps:
       - uses: actions/checkout@v4
 
@@ -43,36 +80,116 @@ jobs:
           node-version: '22'
           cache: npm
 
-      # The repository's one install, from the root (the workspaces share one
-      # lockfile); its postinstall rebuilds node-pty for the desktop, as
-      # checks.yml does, and the Bun the server tests want is the repository's own.
+      # The fixture server runs this checkout's server entry and the relay
+      # under Bun, the repository's own (the `bun` dev dependency, 1.4.1); the
+      # exporter of the vectors runs under it too. The action pins the same
+      # version for anything else that calls `bun`.
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: '1.4.1'
 
+      # One install from the root; its postinstall rebuilds node-pty for the
+      # desktop, as checks.yml does.
       - name: Install dependencies
-        working-directory: .
         run: npm ci
 
-      - name: Typecheck
-        run: npm run typecheck
+      - name: Structure
+        run: npm run check:structure
 
-      # The root ESLint config applies to the package (flat config, one tree).
-      - name: Lint
-        working-directory: .
-        run: npx eslint apps/mobile
+      - name: The vectors are what the contract exports today
+        run: npm run vectors:check --workspace @clave/mobile-native
 
-      - name: Unit tests
-        run: npm test
+      - name: The assets are what the desktop's sources generate today
+        run: npm run assets:check --workspace @clave/mobile-native
 
-      - name: Export the JavaScript for iOS and Android
-        env:
-          CI: '1'
-        run: npx expo export --platform ios --platform android --output-dir dist --no-bytecode
+      # The three tests of the package: the vectors decoded once more through
+      # their schemas, the assets held to their sources, and the fixture server
+      # booted on free ports with the pairing proof run against it.
+      - name: Vectors, assets and fixture tests
+        run: npx vitest run packages/mobile-native
 
-      # The developer connection must be absent from a release bundle; the
-      # check exports twice (development and release) and greps both.
-      - name: Release bundle carries no developer connection
-        env:
-          CI: '1'
-        run: node scripts/check-release-bundle.mjs --platform ios
+      - name: Lint and typecheck of the package
+        run: npx eslint packages/mobile-native && npm run typecheck:node
+
+  ios:
+    name: iOS app (Xcode 26.0.1, macOS 26)
+    runs-on: macos-26
+    timeout-minutes: 60
+    env:
+      # The runner image carries several Xcode releases; the app is built with
+      # the one the team runs (Xcode 26.0.1, Swift 6.2), by its path.
+      DEVELOPER_DIR: /Applications/Xcode_26.0.1.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: The toolchain
+        run: |
+          xcodebuild -version
+          swift --version
+
+      - name: Build and test the app through its own entry
+        run: |
+          if [ ! -f apps/mobile-ios/ci.sh ]; then
+            echo "apps/mobile-ios/ci.sh is absent: nothing to build yet, the job passes."
+            exit 0
+          fi
+          bash apps/mobile-ios/ci.sh
+
+      - name: Keep the test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-results-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            apps/mobile-ios/**/*.xcresult
+            apps/mobile-ios/build/reports/**
+          if-no-files-found: ignore
+          retention-days: 7
+
+  android:
+    name: Android app (JDK 21, Linux)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Is the app there
+        id: app
+        run: |
+          if [ -f apps/mobile-android/ci.sh ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "apps/mobile-android/ci.sh is absent: nothing to build yet, the job passes."
+          fi
+
+      - uses: actions/setup-java@v4
+        if: steps.app.outputs.present == 'true'
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - uses: gradle/actions/setup-gradle@v4
+        if: steps.app.outputs.present == 'true'
+
+      # ANDROID_HOME is the runner's SDK root; the app's entry installs the
+      # platform and the build tools it pins into it through sdkmanager, which
+      # is on the PATH here.
+      - name: Build and test the app through its own entry
+        if: steps.app.outputs.present == 'true'
+        run: |
+          export PATH="$ANDROID_HOME/cmdline-tools/latest/bin:$PATH"
+          java -version
+          bash apps/mobile-android/ci.sh
+
+      - name: Keep the test results
+        if: always() && steps.app.outputs.present == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-results-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            apps/mobile-android/**/build/reports/**
+            apps/mobile-android/**/build/test-results/**
+            apps/mobile-android/**/build/outputs/apk/debug/*.apk
+          if-no-files-found: ignore
+          retention-days: 7

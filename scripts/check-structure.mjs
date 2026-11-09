@@ -24,10 +24,33 @@ const required = [
   'apps/native/haptic/main.swift',
   'apps/native/mission-control/main.swift',
   'packages/host/src',
-  'packages/shared/src'
+  'packages/shared/src',
+  'packages/mobile-native/fixtures/index.json',
+  'packages/mobile-native/assets/tokens.json',
+  'packages/mobile-native/scripts/fixture-server.mjs'
 ]
 for (const file of required)
   assert(existsSync(path.join(root, file)), `Missing app/package home: ${file}`)
+
+// The native phone apps (the native mobile wave of 9 November 2026) are not
+// npm workspaces and hold no JavaScript: a SwiftUI project and a Gradle
+// project, each built and tested by one entry at its root, `ci.sh`, which
+// .github/workflows/mobile.yml runs. A folder that exists without the entry
+// would be skipped by the workflow in silence, so the guard requires it; a
+// package.json in one would mean a JavaScript toolchain crept into a native
+// app, which the decision brief forbids.
+const nativeApps = ['apps/mobile-ios', 'apps/mobile-android']
+for (const home of nativeApps) {
+  const directory = path.join(root, home)
+  if (!existsSync(directory)) continue
+  const entries = readdirSync(directory).filter((name) => name !== '.DS_Store')
+  if (entries.length === 0) continue
+  assert(existsSync(path.join(directory, 'ci.sh')), `Native app without its CI entry: ${home}/ci.sh`)
+  assert(
+    !existsSync(path.join(directory, 'package.json')),
+    `Native app carries a JavaScript manifest: ${home}/package.json`
+  )
+}
 // An existing checkout can retain ignored build output after tracked source moves.
 const legacyGenerated = [
   'src/renderer/src/assets/fonts/private',
