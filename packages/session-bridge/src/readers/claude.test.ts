@@ -7,6 +7,7 @@ import { findClaudeTranscript, readClaude, replayClaudeTranscript } from './clau
 
 const fixtures = join(import.meta.dirname, '..', '..', 'fixtures')
 const sample = join(fixtures, 'claude-transcript-sample.jsonl')
+const edges = join(fixtures, 'claude-transcript-edges.jsonl')
 const dirs: string[] = []
 afterEach(() => {
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true })
@@ -127,5 +128,57 @@ describe('reading a Claude Code transcript', () => {
     const noId = join(dir, 'noid.jsonl')
     writeFileSync(noId, JSON.stringify({ type: 'user', message: { role: 'user', content: 'hi' } }))
     expect(() => readClaude(noId)).toThrow(/no sessionId/)
+  })
+  it('keeps every message of the person: one opening with <, one that is only an image, one opening with Caveat: (verifier round 1, B1)', () => {
+    const events = readClaude(edges).items.map((i) => i.event)
+    const said = events
+      .filter((e) => e.type === 'user_message')
+      .map((e) => (e as { text: string }).text)
+    expect(said).toEqual([
+      'EDGE1 plain first message',
+      '<div>EDGE2 pasted html the person typed</div> what does this do?',
+      '[Image]',
+      'Caveat: EDGE4 the person really started with Caveat:',
+      'EDGE5 run something',
+      'EDGE6 typed before the result came',
+      'EDGE7 no answer to this one',
+      'EDGE8 multi edit please',
+      '[The form "Pick" was approved by the person]\nchoice: A\n(form clave:0123abcd-0123-4567-89ab-0123456789ab)'
+    ])
+    const form = events.find((e) => e.type === 'user_message' && 'form' in e)
+    expect(form).toMatchObject({ form: 'clave:0123abcd-0123-4567-89ab-0123456789ab' })
+    // Every answer follows its own question: no turn merged into the one before.
+    const sequence = events
+      .filter((e) => e.type === 'user_message' || e.type === 'assistant_text')
+      .map((e) => (e.type === 'user_message' ? 'U' : 'A'))
+      .join('')
+    expect(sequence).toBe('UAUAUAUAUUAUUUA')
+  })
+  it("reads a late tool result after the person's next message, in its own place", () => {
+    const events = readClaude(edges).items.map((i) => i.event)
+    const from = events.findIndex((e) => e.type === 'tool_call' && e.id === 'toolu_E5')
+    expect(events.slice(from, from + 4)).toEqual([
+      { type: 'tool_call', id: 'toolu_E5', name: 'Bash', input: { command: 'sleep 100' } },
+      { type: 'tool_result', id: 'toolu_E5', output: undefined },
+      { type: 'user_message', text: 'EDGE6 typed before the result came' },
+      {
+        type: 'tool_result',
+        id: 'toolu_E5',
+        output: [
+          { type: 'text', text: 'EDGE5 late output' },
+          { type: 'image', source: {} }
+        ],
+        error: true
+      }
+    ])
+  })
+  it("with injected: 'drop', reads as Clave's chat view does", () => {
+    const said = readClaude(edges, { injected: 'drop' })
+      .items.map((i) => i.event)
+      .filter((e) => e.type === 'user_message')
+      .map((e) => (e as { text: string }).text)
+    expect(said).not.toContain('<div>EDGE2 pasted html the person typed</div> what does this do?')
+    expect(said).not.toContain('Caveat: EDGE4 the person really started with Caveat:')
+    expect(said).toContain('[Image]')
   })
 })

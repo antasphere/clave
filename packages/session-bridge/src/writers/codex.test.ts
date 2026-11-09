@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readdirSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -6,10 +6,21 @@ import type { Session } from '../ir.ts'
 import { readClaude } from '../readers/claude.ts'
 import { readCodex } from '../readers/codex.ts'
 import { UnsupportedVersionError } from '../codex/version.ts'
-import { codexItemFor, codexRollout, outputText, writeCodex, type RolloutRow } from './codex.ts'
+import {
+  codexConfigModel,
+  codexItemFor,
+  codexRollout,
+  localStamp,
+  modelToolName,
+  outputText,
+  unifiedDiff,
+  writeCodex,
+  type RolloutRow
+} from './codex.ts'
 
 const fixtures = join(import.meta.dirname, '..', '..', 'fixtures')
 const sample = (): Session => readClaude(join(fixtures, 'claude-transcript-sample.jsonl'))
+const edges = (): Session => readClaude(join(fixtures, 'claude-transcript-edges.jsonl'))
 const payload = (row: RolloutRow): Record<string, unknown> => row.payload
 const items = (rows: RolloutRow[]): Record<string, unknown>[] =>
   rows
@@ -233,7 +244,9 @@ describe('mapping one call', () => {
     ).toMatchObject({
       type: 'FileChange',
       status: 'failed',
-      changes: { '/w/a': { type: 'update', unified_diff: '-x\n+y', move_path: null } }
+      changes: {
+        '/w/a': { type: 'update', unified_diff: '@@ -1,1 +1,1 @@\n-x\n+y', move_path: null }
+      }
     })
     expect(call('Read', { file_path: '/w/a' }, 'no such file', true)).toMatchObject({
       status: 'failed',
@@ -285,7 +298,8 @@ describe('leaving out what is not the conversation', () => {
       ]
     }
     const rollout = codexRollout(session, { threadId: 't', now: () => NOW })
-    expect(rollout.dropped).toEqual({ subagent: 2, unmatchedResult: 1, beforeFirstMessage: 1 })
+    // Both results with no call anywhere on the tape are unmatched, the one before the first message too.
+    expect(rollout.dropped).toEqual({ subagent: 2, unmatchedResult: 2, beforeFirstMessage: 0 })
     expect(JSON.stringify(rollout.rows)).not.toContain('the subagent brief')
     expect(JSON.stringify(rollout.rows)).not.toContain('the subagent finding')
     expect(items(rollout.rows).map((i) => i.type)).toEqual([
@@ -371,5 +385,194 @@ describe('writing the file', () => {
       /no message/
     )
     expect(readdirSync(home)).toEqual([])
+  })
+})
+
+describe('the findings of verifier round 1, pinned', () => {
+  const rollout = codexRollout(edges(), { threadId: 'edge', now: () => NOW })
+  const { rows } = rollout
+  const turnsOf = (): { turn: string; types: string[]; texts: string[] }[] =>
+    rows
+      .filter((r) => r.payload.type === 'task_started')
+      .map((start) => {
+        const own = rows.filter(
+          (r) => r.payload.type === 'item_completed' && r.payload.turn_id === start.payload.turn_id
+        )
+        return {
+          turn: String(start.payload.turn_id),
+          types: own.map((r) => String((r.payload.item as { type: string }).type)),
+          texts: own
+            .map((r) => r.payload.item as Record<string, unknown>)
+            .filter((i) => i.type === 'UserMessage')
+            .map((i) => (i.content as { text: string }[])[0].text)
+        }
+      })
+  it('writes one turn per message of the person, the <, image and Caveat: ones included (B1)', () => {
+    const turns = turnsOf()
+    expect(turns).toHaveLength(9)
+    expect(turns.map((t) => t.texts[0].replace(/^\[This conversation[^\]]*\]\n\n/, ''))).toEqual([
+      'EDGE1 plain first message',
+      '<div>EDGE2 pasted html the person typed</div> what does this do?',
+      '[Image]',
+      'Caveat: EDGE4 the person really started with Caveat:',
+      'EDGE5 run something',
+      'EDGE6 typed before the result came',
+      'EDGE7 no answer to this one',
+      'EDGE8 multi edit please',
+      '[The form "Pick" was approved by the person]\nchoice: A\n(form clave:0123abcd-0123-4567-89ab-0123456789ab)'
+    ])
+    expect(turns[1].types).toEqual(['UserMessage', 'AgentMessage'])
+    expect(turns[2].types).toEqual(['UserMessage', 'AgentMessage'])
+    expect(rollout.dropped).toEqual({ subagent: 0, unmatchedResult: 0, beforeFirstMessage: 0 })
+  })
+  it("pairs a result that landed after the person's next message with its call, in the call's turn (m3)", () => {
+    const turns = turnsOf()
+    expect(turns[4].types).toEqual(['UserMessage', 'CommandExecution'])
+    expect(turns[5].types).toEqual(['UserMessage', 'AgentMessage'])
+    const command = rows
+      .map((r) => r.payload.item as Record<string, unknown> | undefined)
+      .find((i) => i?.type === 'CommandExecution')!
+    expect(command).toMatchObject({
+      status: 'failed',
+      exit_code: 1,
+      aggregated_output: 'EDGE5 late output\n[Image]'
+    })
+    const output = rows.find(
+      (r) => r.payload.type === 'function_call_output' && r.payload.call_id === 'toolu_E5'
+    )!
+    expect(output.payload.output).toBe('EDGE5 late output\n[Image]')
+    expect(output.timestamp).toBe('2026-11-09T09:00:12.000Z')
+  })
+  it('closes a turn the person never got an answer to', () => {
+    const turns = turnsOf()
+    expect(turns[6].types).toEqual(['UserMessage'])
+    const complete = rows.filter((r) => r.payload.type === 'task_complete')
+    expect(
+      complete.some(
+        (r) => r.payload.last_agent_message === '' && r.payload.turn_id === turns[6].turn
+      )
+    ).toBe(true)
+  })
+  it('writes a multi-line Edit as one well-formed hunk (m2)', () => {
+    const change = rows
+      .map((r) => r.payload.item as Record<string, unknown> | undefined)
+      .find((i) => i?.type === 'FileChange')!
+    expect(change.changes).toEqual({
+      '/tmp/x.txt': {
+        type: 'update',
+        unified_diff: '@@ -1,2 +1,2 @@\n-line1\n-line2\n+new1\n+new2',
+        move_path: null
+      }
+    })
+    expect(unifiedDiff('', 'a\nb\n')).toBe('@@ -1,0 +1,2 @@\n+a\n+b')
+    expect(unifiedDiff('x', 'y')).toBe('@@ -1,1 +1,1 @@\n-x\n+y')
+  })
+  it('refuses a relative cwd before any row is made (M2)', () => {
+    expect(() => codexRollout(sample(), { cwd: '.' })).toThrow(/must be absolute/)
+    expect(() => codexRollout(sample(), { cwd: 'sub/dir' })).toThrow(/must be absolute/)
+  })
+  it("names the model the home's config.toml names, then the option, then gpt-5 (m1)", async () => {
+    const home = mkdtempSync(join(tmpdir(), 'session-bridge-home-'))
+    dirs.push(home)
+    expect(codexConfigModel(home)).toBeNull()
+    writeFileSync(
+      join(home, 'config.toml'),
+      'model = "gpt-5.6-sol"\nmodel_reasoning_effort = "high"\n\n[tui]\nmodel = "other"\n'
+    )
+    expect(codexConfigModel(home)).toBe('gpt-5.6-sol')
+    const written = await writeCodex(sample(), {
+      codexHome: home,
+      codexVersion: '0.167.0',
+      now: () => NOW
+    })
+    const context = written.rows.find((r) => r.type === 'turn_context')!
+    expect(context.payload.model).toBe('gpt-5.6-sol')
+    const chosen = codexRollout(sample(), { model: 'gpt-5.5', now: () => NOW }).rows.find(
+      (r) => r.type === 'turn_context'
+    )!
+    expect(chosen.payload.model).toBe('gpt-5.5')
+  })
+  it("keeps the model tape's function names within the API's alphabet and length, the item keeping the full name (G2)", () => {
+    const long = 'mcp__plugin_engineering_playwright__browser_take_screenshot_of_the_whole_page_now'
+    expect(long.length).toBeGreaterThan(64)
+    expect(modelToolName(long)).toHaveLength(64)
+    expect(modelToolName('clave/clave_focus')).toBe('clave_clave_focus')
+    expect(modelToolName('Bash')).toBe('Bash')
+    const session: Session = {
+      head: {
+        provider: 'claude',
+        id: 's',
+        model: null,
+        cwd: '/w',
+        cliVersion: null,
+        startedAt: NOW,
+        endedAt: NOW,
+        source: 'x'
+      },
+      items: [
+        { event: { type: 'user_message', text: 'go' }, at: NOW },
+        { event: { type: 'tool_call', id: 'c1', name: long, input: {} }, at: NOW },
+        { event: { type: 'tool_result', id: 'c1', output: 'ok' }, at: NOW }
+      ]
+    }
+    const { rows } = codexRollout(session, { threadId: 't', now: () => NOW })
+    expect(rows.find((r) => r.payload.type === 'function_call')!.payload.name).toBe(
+      modelToolName(long)
+    )
+    expect(items(rows)[1]).toMatchObject({
+      type: 'McpToolCall',
+      server: 'plugin_engineering_playwright',
+      tool: 'browser_take_screenshot_of_the_whole_page_now'
+    })
+  })
+  it('writes a Write that overwrote a file as an update, not an add (N2)', () => {
+    const call = (output: string): Record<string, unknown> =>
+      codexItemFor(
+        {
+          call: {
+            type: 'tool_call',
+            id: 'c',
+            name: 'Write',
+            input: { file_path: '/w/a.txt', content: 'new\n' }
+          },
+          result: { type: 'tool_result', id: 'c', output }
+        },
+        '/w'
+      )
+    expect(call('File created successfully at: /w/a.txt').changes).toEqual({
+      '/w/a.txt': { type: 'add', content: 'new\n' }
+    })
+    expect(call('The file /w/a.txt has been updated successfully.').changes).toEqual({
+      '/w/a.txt': { type: 'update', unified_diff: '@@ -1,0 +1,1 @@\n+new', move_path: null }
+    })
+  })
+  it("dates the turn_aborted at the interruption, and the thread id at the conversation's start (N1, N5)", () => {
+    const aborted = codexRollout(sample(), { now: () => NOW }).rows.find(
+      (r) => r.payload.type === 'turn_aborted'
+    )!
+    expect(aborted.payload.completed_at).toBe(
+      Math.floor(Date.parse('2026-11-09T10:01:03.000Z') / 1000)
+    )
+    expect(aborted.timestamp).toBe('2026-11-09T10:01:03.000Z')
+    const id = codexRollout(sample(), { now: () => NOW }).threadId
+    const ms = parseInt(id.replace(/-/g, '').slice(0, 12), 16)
+    expect(ms).toBe(Date.parse('2026-11-09T10:00:00.000Z'))
+  })
+  it("puts the file in the day folder of the machine's local time, as Codex does (G4)", () => {
+    const before = process.env.TZ
+    try {
+      process.env.TZ = 'Pacific/Kiritimati' // UTC+14, no daylight saving
+      const late = Date.parse('2026-11-09T23:30:00.000Z')
+      expect(localStamp(late)).toEqual({ dir: '2026/11/10', stamp: '2026-11-10T13-30-00' })
+      const session: Session = { ...sample(), head: { ...sample().head, startedAt: late } }
+      expect(codexRollout(session, { threadId: 't', now: () => NOW }).relativePath).toBe(
+        'sessions/2026/11/10/rollout-2026-11-10T13-30-00-t.jsonl'
+      )
+      process.env.TZ = 'Etc/UTC'
+      expect(localStamp(late).dir).toBe('2026/11/09')
+    } finally {
+      if (before === undefined) delete process.env.TZ
+      else process.env.TZ = before
+    }
   })
 })

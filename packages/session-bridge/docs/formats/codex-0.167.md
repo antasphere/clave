@@ -148,7 +148,10 @@ shape is the Responses API's and unchanged in 0.167):
 ## What could not be checked offline
 
 What the model does with a `function_call` whose `name` is a Claude tool (`Bash`,
-`Read`, `mcp__…`) rather than one of Codex's. Codex replays its own history across
+`Read`, `mcp__…`) rather than one of Codex's; the writer keeps the names within
+the API's alphabet and length (letters, digits, `_`, `-`, 64 characters), the rest
+is the model's. Whether a long Claude context (up to a million tokens) fits Codex's
+window (258,400 on gpt-5.6 here) on the first turn is the same question. Codex replays its own history across
 its tool renames (0.145 files name `update_plan` and `exec`; 0.167's tools differ),
 so a name outside the current tool set is expected to be accepted as history; the
 header on the first message says where the calls came from. Checking it means a

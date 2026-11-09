@@ -13,8 +13,8 @@
  * 0.167.0 source (`codex-rs/protocol/src/{items,protocol,models}.rs`) and
  * were checked by resuming written files through the real CLI.
  */
-import { existsSync, mkdirSync, renameSync, writeFileSync, readFileSync } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { existsSync, linkSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
+import { dirname, isAbsolute, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { uuidv7 } from '../ids.ts'
 import {
@@ -33,19 +33,22 @@ import {
 } from '../ir.ts'
 
 export interface CodexRolloutOptions {
-  /** The thread id to mint; a fresh UUIDv7 by default. */
+  /** The thread id to mint; by default a UUIDv7 dated at the conversation's
+   *  start, so the id, the file name and the day folder agree. */
   threadId?: string
-  /** The working directory the thread is recorded in; the session's by default. */
+  /** The working directory the thread is recorded in; the session's by
+   *  default. Codex refuses to restore a relative one, so must be absolute. */
   cwd?: string
   /** The model named in the thread's turn context (Codex shows it as the
-   *  thread's model until a resume names another). */
+   *  thread's model until a resume names another). `writeCodex` reads the
+   *  home's `config.toml` for it when the option is absent; `gpt-5` last. */
   model?: string
   /** The Codex version recorded as the file's writer (`cli_version`). */
   cliVersion?: string
   /** Prefix the first message with a note that the conversation was converted
    *  (its provider, model and date). On by default. */
   header?: boolean
-  /** The clock for rows the tape does not date. */
+  /** The clock for the header's date and for rows the tape does not date. */
   now?: () => number
 }
 
@@ -70,7 +73,7 @@ export interface CodexRollout {
 const iso = (ms: number): string => new Date(ms).toISOString()
 const pad = (n: number): string => String(n).padStart(2, '0')
 /** Codex names the file and its day folder in the machine's local time. */
-function localStamp(ms: number): { dir: string; stamp: string } {
+export function localStamp(ms: number): { dir: string; stamp: string } {
   const d = new Date(ms)
   const day = `${d.getFullYear()}/${pad(d.getMonth() + 1)}/${pad(d.getDate())}`
   const stamp = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}-${pad(d.getMinutes())}-${pad(d.getSeconds())}`
@@ -93,9 +96,31 @@ export function outputText(output: unknown): string {
   return JSON.stringify(output)
 }
 
+/** The smallest unified diff that says what was replaced: the old lines
+ *  removed, the new lines added, one hunk. */
+export function unifiedDiff(oldText: string, newText: string): string {
+  const oldLines = oldText === '' ? [] : oldText.replace(/\n$/, '').split('\n')
+  const newLines = newText === '' ? [] : newText.replace(/\n$/, '').split('\n')
+  return [
+    `@@ -1,${oldLines.length} +1,${newLines.length} @@`,
+    ...oldLines.map((l) => `-${l}`),
+    ...newLines.map((l) => `+${l}`)
+  ].join('\n')
+}
+
+/** A function name as the model's API takes it: letters, digits, `_` and
+ *  `-`, 64 characters at most. Claude's `mcp__server__tool` names can exceed
+ *  that; the item the person sees keeps the full name. */
+export function modelToolName(name: string): string {
+  const safe = name.replace(/[^A-Za-z0-9_-]/g, '_')
+  return (safe || 'tool').slice(0, 64)
+}
+
 interface Call {
   call: ToolCall
   result: ToolResult | null
+  /** When the result landed, when the tape says. */
+  resultAt?: number
 }
 
 /** The item Codex shows for a call the agent made in another CLI: its own
@@ -133,20 +158,29 @@ export function codexItemFor(call: Call, cwd: string): Record<string, unknown> {
       Object.assign(changes, input.changes)
     } else {
       const path = text(input.file_path) || text(input.notebook_path) || '(unknown file)'
-      if (name === 'Write') changes[path] = { type: 'add', content: text(input.content) }
-      else if (name === 'MultiEdit' && Array.isArray(input.edits))
+      if (name === 'Write') {
+        // Claude's Write answers "File created successfully" or "… has been
+        // updated successfully": the second overwrote a file.
+        const content = text(input.content)
+        changes[path] = /updated/i.test(output)
+          ? { type: 'update', unified_diff: unifiedDiff('', content), move_path: null }
+          : { type: 'add', content }
+      } else if (name === 'MultiEdit' && Array.isArray(input.edits))
         changes[path] = {
           type: 'update',
           unified_diff: input.edits
             .map(object)
-            .map((e) => `-${text(e.old_string)}\n+${text(e.new_string)}`)
+            .map((e) => unifiedDiff(text(e.old_string), text(e.new_string)))
             .join('\n'),
           move_path: null
         }
       else
         changes[path] = {
           type: 'update',
-          unified_diff: `-${text(input.old_string)}\n+${text(input.new_string) || text(input.new_source)}`,
+          unified_diff: unifiedDiff(
+            text(input.old_string),
+            text(input.new_string) || text(input.new_source)
+          ),
           move_path: null
         }
     }
@@ -197,10 +231,12 @@ export function conversionHeader(session: Session, when: number): string {
 /** The rows of a rollout for a session: pure, nothing touches the disk. */
 export function codexRollout(session: Session, options: CodexRolloutOptions = {}): CodexRollout {
   const now = options.now ?? Date.now
-  const threadId = options.threadId ?? uuidv7(now())
   const cwd = options.cwd ?? session.head.cwd
+  if (!isAbsolute(cwd))
+    throw new Error(`The thread's cwd must be absolute, Codex refuses to restore "${cwd}"`)
   const model = options.model ?? 'gpt-5'
   const started = session.head.startedAt ?? session.items.find((i) => i.at)?.at ?? now()
+  const threadId = options.threadId ?? uuidv7(started)
   const rows: RolloutRow[] = []
   let clock = started
   const push = (type: RolloutRow['type'], payload: Record<string, unknown>, at?: number): void => {
@@ -220,24 +256,46 @@ export function codexRollout(session: Session, options: CodexRolloutOptions = {}
     history_mode: 'paginated'
   })
 
-  // Turns: one per message of the person. Subagent events (`parent`) are
-  // another thread's; a result whose call was never seen has no home.
+  // Subagent events (`parent`) are another thread's. Calls are paired with
+  // their results over the WHOLE tape before anything is written: a result
+  // that landed after the person's next message belongs beside its call, and
+  // the model tape must never hold a call without its output. A result whose
+  // output is undefined is the reader's closing of an unanswered call, not a
+  // result; a real one later overrides it.
   const dropped = { subagent: 0, unmatchedResult: 0, beforeFirstMessage: 0 }
-  type Turn = { at: number; items: HistoryItem[]; interrupted: boolean }
-  const turns: Turn[] = []
-  for (const item of session.items) {
-    const event = item.event
-    if ('parent' in event && event.parent) {
+  const conversation = session.items.filter((item) => {
+    if ('parent' in item.event && item.event.parent) {
       dropped.subagent++
-      continue
+      return false
     }
+    return true
+  })
+  const calls = new Map<string, Call>()
+  for (const { event } of conversation)
+    if (event.type === 'tool_call') calls.set(event.id, { call: event, result: null })
+  for (const { event, at } of conversation)
+    if (event.type === 'tool_result') {
+      const call = calls.get(event.id)
+      if (!call) dropped.unmatchedResult++
+      else if (event.output !== undefined || call.result === null) {
+        call.result = event.output === undefined ? null : event
+        if (event.output !== undefined) call.resultAt = at
+      }
+    }
+
+  // Turns: one per message of the person.
+  type Turn = { at: number; items: HistoryItem[]; interruptedAt: number | null }
+  const turns: Turn[] = []
+  for (const item of conversation) {
+    const event = item.event
     if (event.type === 'user_message')
-      turns.push({ at: item.at ?? clock, items: [item], interrupted: false })
+      turns.push({ at: item.at ?? clock, items: [item], interruptedAt: null })
     else if (!turns.length) {
-      if (event.type !== 'session_meta' && event.type !== 'context_usage')
+      if (!['session_meta', 'context_usage', 'tool_result'].includes(event.type))
         dropped.beforeFirstMessage++
-    } else if (event.type === 'turn_interrupted') turns[turns.length - 1].interrupted = true
-    else turns[turns.length - 1].items.push(item)
+    } else if (event.type === 'turn_interrupted')
+      turns[turns.length - 1].interruptedAt = item.at ?? clock
+    else if (event.type !== 'tool_result') turns[turns.length - 1].items.push(item)
   }
 
   let first = true
@@ -278,19 +336,6 @@ export function codexRollout(session: Session, options: CodexRolloutOptions = {}
         },
         at
       )
-    // Calls are paired with their results before anything is written: the
-    // model tape must never hold a call without its output.
-    const calls = new Map<string, Call>()
-    for (const { event } of turn.items)
-      if (event.type === 'tool_call') calls.set(event.id, { call: event, result: null })
-    for (const { event } of turn.items)
-      if (event.type === 'tool_result') {
-        const call = calls.get(event.id)
-        // A result with no output is the reader's closing of a call the
-        // transcript never answered: no result, not an empty one.
-        if (call) call.result = event.output === undefined ? null : event
-        else dropped.unmatchedResult++
-      }
     const assistantTexts = turn.items.filter((i) => i.event.type === 'assistant_text')
     let lastAgentMessage = ''
     let n = 0
@@ -348,15 +393,13 @@ export function codexRollout(session: Session, options: CodexRolloutOptions = {}
           {
             type: 'function_call',
             id: `fc_${event.id}`,
-            name: event.name,
+            name: modelToolName(event.name),
             arguments: argumentsText,
             call_id: event.id
           },
           at
         )
-        const resultAt = call.result
-          ? (turn.items.find((i) => i.event === call.result)?.at ?? at)
-          : at
+        const resultAt = call.resultAt ?? at
         push(
           'response_item',
           {
@@ -370,17 +413,20 @@ export function codexRollout(session: Session, options: CodexRolloutOptions = {}
         )
         done(codexItemFor(call, cwd), resultAt)
       }
-      // tool_result rows are written beside their call; session_meta and
-      // context_usage are the source provider's own accounting.
+      // session_meta and context_usage are the source provider's own accounting.
     }
-    if (turn.interrupted)
-      push('event_msg', {
-        type: 'turn_aborted',
-        turn_id: turnId,
-        reason: 'interrupted',
-        started_at: seconds(turn.at),
-        completed_at: seconds(clock)
-      })
+    if (turn.interruptedAt !== null)
+      push(
+        'event_msg',
+        {
+          type: 'turn_aborted',
+          turn_id: turnId,
+          reason: 'interrupted',
+          started_at: seconds(turn.at),
+          completed_at: seconds(turn.interruptedAt)
+        },
+        turn.interruptedAt
+      )
     else
       push('event_msg', {
         type: 'task_complete',
@@ -400,6 +446,23 @@ export function codexRollout(session: Session, options: CodexRolloutOptions = {}
     turns: turns.length,
     dropped
   }
+}
+
+/** The model the home's `config.toml` names at its top level (`model = "…"`),
+ *  or null: the one TOML key this package reads, by a line match. */
+export function codexConfigModel(codexHome: string): string | null {
+  let toml: string
+  try {
+    toml = readFileSync(join(codexHome, 'config.toml'), 'utf8')
+  } catch {
+    return null
+  }
+  for (const line of toml.split('\n')) {
+    if (/^\s*\[/.test(line)) break
+    const match = /^\s*model\s*=\s*"([^"]+)"/.exec(line)
+    if (match) return match[1]
+  }
+  return null
 }
 
 export interface WriteCodexOptions extends CodexRolloutOptions {
@@ -429,15 +492,34 @@ export async function writeCodex(
   const version = options.codexVersion ?? (await codexVersion(options.bin))
   if (!versionSupported(version, SUPPORTED.codex))
     throw new UnsupportedVersionError('codex', version, SUPPORTED.codex)
-  const rollout = codexRollout(session, { ...options, cliVersion: options.cliVersion ?? version })
+  const rollout = codexRollout(session, {
+    ...options,
+    model: options.model ?? codexConfigModel(options.codexHome) ?? undefined,
+    cliVersion: options.cliVersion ?? version
+  })
   if (!rollout.turns)
     throw new Error('The session holds no message of the person: nothing to write')
   const path = join(options.codexHome, rollout.relativePath)
   if (existsSync(path)) throw new Error(`Refusing to overwrite an existing thread: ${path}`)
   mkdirSync(dirname(path), { recursive: true })
+  // Written whole beside its final name, then linked into place: a link
+  // refuses an existing target, so two writers cannot overwrite each other,
+  // and a failure leaves no half file behind.
   const tmp = `${path}.session-bridge-${process.pid}.tmp`
-  writeFileSync(tmp, rollout.rows.map((row) => JSON.stringify(row)).join('\n') + '\n')
-  renameSync(tmp, path)
+  try {
+    writeFileSync(tmp, rollout.rows.map((row) => JSON.stringify(row)).join('\n') + '\n')
+    linkSync(tmp, path)
+  } catch (error) {
+    try {
+      unlinkSync(tmp)
+    } catch {
+      // Nothing to remove.
+    }
+    throw error instanceof Error && 'code' in error && error.code === 'EEXIST'
+      ? new Error(`Refusing to overwrite an existing thread: ${path}`)
+      : error
+  }
+  unlinkSync(tmp)
   return { ...rollout, path, codexHome: options.codexHome, codexVersion: version }
 }
 

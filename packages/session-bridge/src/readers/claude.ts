@@ -8,7 +8,10 @@
  * `isSidechain: true`, an injected skill or context row `isMeta: true`.
  *
  * `replayClaudeTranscript` is a copy of Clave's `ClaudeStreamTranslator.replay`
- * (`src/main/sessions/adapters/claude-adapter.ts`) without its dependencies;
+ * (`src/main/sessions/adapters/claude-adapter.ts`) without its dependencies,
+ * with one difference a bridge needs: it keeps every text of the person's rows
+ * (Clave's view drops injected `<…>` blocks; `injected: 'drop'` restores that)
+ * and reads an image as `[Image]` so an image-only message keeps its turn;
  * `readClaude` wraps it with the session's head. The shapes were checked against
  * a Claude Code 2.1.319 transcript on 9 November 2026 (docs/formats/claude-code.md).
  */
@@ -34,14 +37,19 @@ function isInterruptNotice(value: unknown): boolean {
   return typeof value === 'string' && /^\[Request interrupted by user/.test(value.trim())
 }
 /** What the person actually typed: a slash command's name and arguments out of
- *  the CLI's markup, nothing of an injected `<…>` block or a `Caveat:` notice. */
-function spokenText(value: string): string {
+ *  the CLI's markup; everything else as written. With `injected: 'drop'`, a
+ *  text that opens with `<` (an injected `<system-reminder>`, a
+ *  `<task-notification>`, …) or with `Caveat:` is left out too, the rule
+ *  Clave's chat view reads a transcript with; a bridge keeps them, since the
+ *  model saw them, and a person's own message may well start with `<`. */
+function spokenText(value: string, injected: 'keep' | 'drop'): string {
   const command = /<command-name>([^<]*)<\/command-name>/.exec(value)
   if (command) {
     const args = /<command-args>([^<]*)<\/command-args>/.exec(value)?.[1] ?? ''
     return `${command[1].trim()} ${args.trim()}`.trim()
   }
-  if (value.trimStart().startsWith('<') || value.startsWith('Caveat:')) return ''
+  if (injected === 'drop' && (value.trimStart().startsWith('<') || value.startsWith('Caveat:')))
+    return ''
   return value
 }
 /** The tokens a call's context held: what it read, cached or not, and wrote. */
@@ -68,7 +76,17 @@ const blocks = (content: unknown): Record<string, unknown>[] =>
  *  have produced: subagent rows and injected context stay out, a call the
  *  transcript never answered is closed at the next message, and the context
  *  as it stood rides along so a resumed meter is not blank. */
-export function replayClaudeTranscript(lines: Iterable<string>): HistoryItem[] {
+export interface ReplayOptions {
+  /** `keep` (the default) carries every text the person's rows hold; `drop`
+   *  leaves out the injected `<…>` and `Caveat:` texts as Clave's view does. */
+  injected?: 'keep' | 'drop'
+}
+
+export function replayClaudeTranscript(
+  lines: Iterable<string>,
+  options: ReplayOptions = {}
+): HistoryItem[] {
+  const injected = options.injected ?? 'keep'
   const items: HistoryItem[] = []
   const open = new Set<string>()
   const tools = new Set<string>()
@@ -96,9 +114,12 @@ export function replayClaudeTranscript(lines: Iterable<string>): HistoryItem[] {
     if (frame.type === 'user') {
       if (typeof content === 'string') {
         if (isInterruptNotice(content)) push({ type: 'turn_interrupted' })
-        else if (spokenText(content)) push(userMessageOf(spokenText(content)))
+        else if (spokenText(content, injected)) push(userMessageOf(spokenText(content, injected)))
         continue
       }
+      // One message per row: its texts and its images together, so an
+      // image-only message still opens its turn, as `[Image]`.
+      const spoken: string[] = []
       for (const item of blocks(content)) {
         if (item.type === 'text' && isInterruptNotice(item.text)) {
           push({ type: 'turn_interrupted' })
@@ -111,10 +132,13 @@ export function replayClaudeTranscript(lines: Iterable<string>): HistoryItem[] {
             ...(item.is_error === true ? { error: true } : {})
           })
         } else if (item.type === 'text' && typeof item.text === 'string') {
-          const spoken = spokenText(item.text)
-          if (spoken) push(userMessageOf(spoken))
+          const text = spokenText(item.text, injected)
+          if (text) spoken.push(text)
+        } else if (item.type === 'image' || item.type === 'document') {
+          spoken.push(`[${item.type === 'image' ? 'Image' : 'Document'}]`)
         }
       }
+      if (spoken.length) push(userMessageOf(spoken.join('\n')))
     } else if (frame.type === 'assistant') {
       for (const item of blocks(content)) {
         if (item.type === 'text' && typeof item.text === 'string' && item.text.trim())
@@ -166,7 +190,7 @@ export function findClaudeTranscript(id: string, cwd: string, configDir?: string
 /** The session a transcript file holds. Refuses a file with no conversation
  *  row in it: an empty file, another provider's storage, or a shape this
  *  reader does not know, rather than returning an empty tape. */
-export function readClaude(transcriptPath: string): Session {
+export function readClaude(transcriptPath: string, options: ReplayOptions = {}): Session {
   const lines = readFileSync(transcriptPath, 'utf8').split('\n')
   let id: string | null = null
   let cwd: string | null = null
@@ -213,6 +237,6 @@ export function readClaude(transcriptPath: string): Session {
       endedAt,
       source: transcriptPath
     },
-    items: replayClaudeTranscript(lines)
+    items: replayClaudeTranscript(lines, options)
   }
 }

@@ -26,12 +26,13 @@ session-bridge convert --from claude --to codex <session id or transcript.jsonl>
 codex resume <the thread id it printed>
 
 session-bridge inspect <transcript or rollout>       # what the file is, what its tape holds
-session-bridge verify <thread id> [--codex-home <dir>] # resume it through the real Codex, print what came back
+session-bridge verify <thread id> [--codex-home <dir>] # read it back through the real Codex (thread/read: appends nothing, moves nothing)
 ```
 
 Options of `convert`: `--codex-home <dir>` (default `$CODEX_HOME` or `~/.codex`),
-`--claude-config-dir <dir>`, `--model <codex model>` named in the thread's context,
-`--no-header`, `--json`. Exit codes: 0 done, 1 an error, 2 usage, 3 a refusal
+`--cwd <dir>` (resolved to an absolute path; the transcript's own by default),
+`--claude-config-dir <dir>`, `--model <codex model>` named in the thread's context (the
+home's `config.toml` `model` by default, `gpt-5` last), `--no-header`, `--json`. Exit codes: 0 done, 1 an error, 2 usage, 3 a refusal
 (a Codex version outside the pin, a file the readers do not recognise).
 
 The CLI runs the TypeScript source directly on Node 22.6+ (type stripping), no
@@ -64,22 +65,31 @@ the gesture: `Bash` a **command execution**, `Edit`/`Write`/`MultiEdit`/`Noteboo
 a **file change**, everything else (`Read`, `Grep`, `Glob`, `Agent`, `WebFetch`, an
 `mcp__server__tool`, …) an **MCP tool call** under the server name `claude-code` (or
 the MCP server's own), so Codex renders it as history without a tool of its own
-matching. For the model, every call stays a `function_call` under its Claude name,
-paired with its output, or with a note when the transcript never answered it. The
-first message is prefixed with a header saying the conversation was converted from
-Claude Code, with the model and the date, so the agent and the reader both know.
+matching. For the model, every call stays a `function_call` under its Claude name
+(letters, digits, `_` and `-`, 64 characters at most, as the API takes it), paired
+with its output, or with a note when the transcript never answered it; a result that
+landed after the person's next message is written beside its call. The first message
+is prefixed with a header saying the conversation was converted from Claude Code,
+with the model and the date of the conversion, so the agent and the reader both know.
 
+Every message of the person is carried, including one that opens with `<` or with
+`Caveat:` (Clave's own chat view drops those as injected context; the reader's
+`injected: 'drop'` option restores that rule), and an image reads as `[Image]`.
 Left out, and counted in `written.dropped`: a subagent's own events (another
 thread's), a result whose call was never seen, and events before the first message.
-Not written at all: instructions, environment, reasoning, usage (Codex injects its
-own on resume; the rest is the source's own accounting).
+Left out by the reader: a subagent's rows (`isSidechain`) and the CLI's injected
+skill and context rows (`isMeta`). Not written at all: instructions, environment,
+reasoning, usage (Codex injects its own on resume; the rest is the source's own
+accounting).
 
 ## Refuses what it has not seen
 
 `writeCodex` runs `codex --version` first and refuses, before touching the disk, a
 version outside `SUPPORTED.codex` (`0.167.x` today) with an `UnsupportedVersionError`
 naming the version and the pin. A file the readers do not recognise is an
-`UnrecognisedTranscriptError`. An existing thread file is never overwritten.
+`UnrecognisedTranscriptError`. A relative cwd is refused (Codex cannot restore it).
+An existing thread file is never overwritten: the file is written whole beside its
+name and linked into place, which refuses an existing target.
 
 ## Layout
 
@@ -109,3 +119,7 @@ cleanly otherwise.
 - The Claude writer (Codex → Claude Code).
 - Images and attachments: a message's text is carried, its files are not.
 - Codex versions outside 0.167: the pin is the promise.
+- The first paid turn on a converted thread is unverified: whether the model's API
+  takes the Claude tool names in its history, and whether a long Claude context fits
+  Codex's window, can only be seen by spending a turn (`docs/formats/codex-0.167.md`,
+  last section).

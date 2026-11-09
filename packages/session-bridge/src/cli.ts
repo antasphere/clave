@@ -2,28 +2,32 @@
  * The command line:
  *
  *   session-bridge convert --from claude --to codex <id or transcript path> [--cwd <dir>]
- *                          [--codex-home <dir>] [--claude-config-dir <dir>] [--no-header] [--json]
+ *                          [--codex-home <dir>] [--claude-config-dir <dir>] [--model <codex model>]
+ *                          [--no-header] [--json]
  *   session-bridge inspect <file> [--json]
  *   session-bridge verify <thread id> [--codex-home <dir>] [--json]
  *
  * `convert` reads the conversation, checks the installed Codex against the
  * pin, writes the thread and prints the `codex resume` to run. `inspect` says
- * what a file is and what its tape holds. `verify` resumes a thread through
- * the real Codex on the given home and prints what came back.
+ * what a file is and what its tape holds. `verify` reads a thread back through
+ * the real Codex on the given home (`thread/read`, which appends nothing and
+ * moves nothing) and prints what came back.
  */
 import { parseArgs } from 'node:util'
 import { existsSync, readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { findClaudeTranscript, readClaude } from './readers/claude.ts'
 import { defaultCodexHome, readCodex } from './readers/codex.ts'
 import { writeCodex } from './writers/codex.ts'
-import { resumeThread } from './codex/app-server.ts'
+import { readThread } from './codex/app-server.ts'
 import { UnsupportedVersionError } from './codex/version.ts'
 import { UnrecognisedTranscriptError, object, type Session } from './ir.ts'
 
 const USAGE = `session-bridge: carry a coding-agent conversation from one CLI to another
 
   session-bridge convert --from claude --to codex <id or transcript path> [--cwd <dir>]
-                         [--codex-home <dir>] [--claude-config-dir <dir>] [--no-header] [--json]
+                         [--codex-home <dir>] [--claude-config-dir <dir>] [--model <codex model>]
+                         [--no-header] [--json]
   session-bridge inspect <file> [--json]
   session-bridge verify <thread id> [--codex-home <dir>] [--json]
 `
@@ -85,9 +89,10 @@ export async function main(
         )
         return 2
       }
+      const cwd = values.cwd === undefined ? undefined : resolve(values.cwd)
       const path = existsSync(ref)
         ? ref
-        : findClaudeTranscript(ref, values.cwd ?? process.cwd(), values['claude-config-dir'])
+        : findClaudeTranscript(ref, cwd ?? process.cwd(), values['claude-config-dir'])
       if (!path) {
         io.err(
           `No Claude transcript found for ${ref} (looked under ${values['claude-config-dir'] ?? '~/.claude'}/projects).`
@@ -97,7 +102,7 @@ export async function main(
       const session = readClaude(path)
       const written = await writeCodex(session, {
         codexHome: values['codex-home'] ?? defaultCodexHome(),
-        cwd: values.cwd ?? session.head.cwd,
+        cwd: cwd ?? session.head.cwd,
         model: values.model,
         header: !values['no-header']
       })
@@ -176,9 +181,9 @@ export async function main(
         io.err(USAGE)
         return 2
       }
-      const thread = await resumeThread(threadId, {
+      const thread = await readThread(threadId, {
         codexHome: values['codex-home'] ?? defaultCodexHome(),
-        cwd: values.cwd ?? process.cwd()
+        ...(values.cwd ? { cwd: resolve(values.cwd) } : {})
       })
       if (values.json) io.out(JSON.stringify(thread, null, 2))
       else {

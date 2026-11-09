@@ -34,12 +34,16 @@ The CLI's own bookkeeping rows sit between them and are not the conversation:
 
 ## What the reader does with it
 
-`replayClaudeTranscript` keeps the conversation and drops the rest: subagent and
-meta rows out; a slash command read back as `/name args`; an injected `<…>` block
-or a `Caveat:` notice dropped; an interruption notice as `turn_interrupted`; a tool
-call the transcript never answered closed with an undefined result at the next
-message; the context as it stood (the usage's four counts summed) as
-`context_usage` whenever it changes. `readClaude` adds the head: the session id,
+`replayClaudeTranscript` keeps the conversation and drops the CLI's bookkeeping:
+subagent (`isSidechain`) and meta (`isMeta`) rows out; a slash command read back as
+`/name args`; every other text of the person kept as written, a `<task-notification>`
+or a `Caveat:` notice included, since the model saw them and a person's own message
+may open with `<` (Clave's chat view drops those; `injected: 'drop'` restores that
+rule); an image block as `[Image]`, so an image-only message keeps its turn; an
+interruption notice as `turn_interrupted`; a tool call the transcript never answered
+closed with an undefined result at the next message (a real result that lands later
+still follows, and a writer pairs it); the context as it stood (the usage's four
+counts summed) as `context_usage` whenever it changes. `readClaude` adds the head: the session id,
 cwd, CLI version, the last assistant row's model, the first and last timestamps.
 
 `fixtures/claude-transcript-sample.jsonl` is a synthetic file in these shapes;

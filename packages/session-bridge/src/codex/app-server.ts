@@ -161,32 +161,54 @@ export interface ResumedThread {
   turns: ResumedTurn[]
 }
 
+function threadOf(result: unknown): ResumedThread {
+  const thread = ((result as Record<string, unknown>).thread ?? {}) as Record<string, unknown>
+  const turns = Array.isArray(thread.turns) ? (thread.turns as Record<string, unknown>[]) : []
+  return {
+    id: String(thread.id ?? ''),
+    historyMode: String(thread.historyMode ?? ''),
+    model: typeof thread.model === 'string' ? thread.model : null,
+    cwd: String(thread.cwd ?? ''),
+    preview: String(thread.preview ?? ''),
+    turns: turns.map((turn) => ({
+      id: String(turn.id ?? ''),
+      status: String(turn.status ?? ''),
+      items: Array.isArray(turn.items) ? (turn.items as Record<string, unknown>[]) : []
+    }))
+  }
+}
+
 /** Resume a thread through the real Codex on the given home and read its
- *  turns back; the server is closed before this returns. */
+ *  turns back; the server is closed before this returns. A resume is what a
+ *  person's `codex resume` does, and it writes: Codex appends its settings to
+ *  the file and, given a `cwd`, keeps it as the thread's from then on; leave
+ *  `cwd` unset to keep the thread's own. */
 export async function resumeThread(
   threadId: string,
   options: AppServerOptions
 ): Promise<ResumedThread> {
   const server = await CodexAppServer.start(options)
   try {
-    const result = (await server.request('thread/resume', {
-      threadId,
-      cwd: options.cwd
-    })) as Record<string, unknown>
-    const thread = (result.thread ?? {}) as Record<string, unknown>
-    const turns = Array.isArray(thread.turns) ? (thread.turns as Record<string, unknown>[]) : []
-    return {
-      id: String(thread.id ?? ''),
-      historyMode: String(thread.historyMode ?? ''),
-      model: typeof thread.model === 'string' ? thread.model : null,
-      cwd: String(thread.cwd ?? ''),
-      preview: String(thread.preview ?? ''),
-      turns: turns.map((turn) => ({
-        id: String(turn.id ?? ''),
-        status: String(turn.status ?? ''),
-        items: Array.isArray(turn.items) ? (turn.items as Record<string, unknown>[]) : []
-      }))
-    }
+    return threadOf(
+      await server.request('thread/resume', {
+        threadId,
+        ...(options.cwd ? { cwd: options.cwd } : {})
+      })
+    )
+  } finally {
+    await server.close()
+  }
+}
+
+/** Read a thread with its turns through the real Codex without resuming it:
+ *  nothing is appended to the file and its cwd stays as written. */
+export async function readThread(
+  threadId: string,
+  options: AppServerOptions
+): Promise<ResumedThread> {
+  const server = await CodexAppServer.start(options)
+  try {
+    return threadOf(await server.request('thread/read', { threadId, includeTurns: true }))
   } finally {
     await server.close()
   }

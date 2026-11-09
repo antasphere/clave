@@ -1,5 +1,10 @@
 export * from './ir.ts'
-export { readClaude, replayClaudeTranscript, findClaudeTranscript } from './readers/claude.ts'
+export {
+  readClaude,
+  replayClaudeTranscript,
+  findClaudeTranscript,
+  type ReplayOptions
+} from './readers/claude.ts'
 export {
   readCodex,
   replayCodexHistory,
@@ -11,7 +16,11 @@ export {
   codexRollout,
   codexItemFor,
   conversionHeader,
+  codexConfigModel,
+  localStamp,
+  modelToolName,
   outputText,
+  unifiedDiff,
   readRolloutRows,
   type CodexRollout,
   type CodexRolloutOptions,
@@ -27,5 +36,5 @@ export {
   codexVersion,
   assertCodexSupported
 } from './codex/version.ts'
-export { CodexAppServer, resumeThread, CodexRpcError } from './codex/app-server.ts'
+export { CodexAppServer, resumeThread, readThread, CodexRpcError } from './codex/app-server.ts'
 export { uuidv7 } from './ids.ts'

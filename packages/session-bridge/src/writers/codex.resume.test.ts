@@ -6,12 +6,12 @@
  * when no `codex` in the supported range is on PATH.
  */
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
 import { readClaude } from '../readers/claude.ts'
-import { resumeThread } from '../codex/app-server.ts'
+import { readThread, resumeThread } from '../codex/app-server.ts'
 import { SUPPORTED, versionSupported } from '../codex/version.ts'
 import { writeCodex } from './codex.ts'
 
@@ -90,6 +90,44 @@ describe.skipIf(!supported)(
       expect(thread.turns[1].items[1]).toMatchObject({ tool: 'Grep', status: 'failed' })
       // Codex rebuilt its own indexes from the one file the writer laid down.
       expect(existsSync(join(home, 'state_5.sqlite'))).toBe(true)
+    }, 120_000)
+
+    it('is read back without being changed: readThread appends no row and moves no cwd (M1)', async () => {
+      const home = mkdtempSync(join(tmpdir(), 'session-bridge-codex-home-'))
+      const cwd = join(home, 'workdir')
+      mkdirSync(cwd)
+      dirs.push(home)
+      const written = await writeCodex(
+        readClaude(join(fixtures, 'claude-transcript-edges.jsonl')),
+        { codexHome: home, cwd }
+      )
+      const before = readFileSync(written.path, 'utf8')
+      const read = await readThread(written.threadId, {
+        codexHome: home,
+        cwd: join(home, 'elsewhere-' + Date.now())
+      })
+      expect(read.cwd).toBe(cwd)
+      expect(read.turns).toHaveLength(9)
+      expect(read.turns.map((t) => t.items.map((i) => i.type))).toEqual([
+        ['userMessage', 'agentMessage'],
+        ['userMessage', 'agentMessage'],
+        ['userMessage', 'agentMessage'],
+        ['userMessage', 'agentMessage'],
+        ['userMessage', 'commandExecution'],
+        ['userMessage', 'agentMessage'],
+        ['userMessage'],
+        ['userMessage', 'fileChange'],
+        ['userMessage', 'agentMessage']
+      ])
+      expect((read.turns[2].items[0].content as { text: string }[])[0].text).toBe('[Image]')
+      expect(read.turns[4].items[1]).toMatchObject({
+        status: 'failed',
+        aggregatedOutput: 'EDGE5 late output\n[Image]'
+      })
+      expect(readFileSync(written.path, 'utf8')).toBe(before)
+      // A resume without a cwd keeps the thread's own too.
+      const resumed = await resumeThread(written.threadId, { codexHome: home })
+      expect(resumed.cwd).toBe(cwd)
     }, 120_000)
   }
 )

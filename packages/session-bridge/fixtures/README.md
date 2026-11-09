@@ -12,6 +12,18 @@
   blocks, a `Write`, a `Read`, a slash command in the CLI's markup, an interruption
   notice, an `isMeta` row, an `isSidechain` row and two bookkeeping rows. No real
   content.
+- `claude-transcript-edges.jsonl`: a SYNTHETIC transcript written by the lane's verifier
+  (round 1, 9 November 2026) for the edges: a message opening with `<`, an image-only
+  message, one opening with `Caveat:`, a tool result that lands after the person's next
+  message (with an image in it, and an error), a question never answered, a multi-line
+  Edit, a thinking-only answer, a hosted form's outcome. The reader and the writer tests
+  pin the round's findings on it.
+- `codex-app-server/`: copies of Clave's Codex app-server captures
+  (`src/main/sessions/fixtures/codex-app-server/`, redacted there, with their README):
+  the wire frames of the protocol the client in `src/codex/app-server.ts` speaks. Nothing
+  here reads them yet; they are the reference a future test of that client starts from.
+  Clave's `codex-glow-08ccc92.jsonl` is not copied: it is an end-to-end exchange capture
+  of the app, not a fixture of either reader.
 - `claude-stream-*.ndjson`: copies of Clave's Claude Code 2.1.278 stream-json captures
   (`src/main/sessions/fixtures/claude-stream/`, recorded 2026-09-19 and 2026-10-14,
   usernames redacted there): the CLI's stdout frames, whose `user` and `assistant`

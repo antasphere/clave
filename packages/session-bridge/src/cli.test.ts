@@ -1,4 +1,13 @@
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -67,5 +76,106 @@ describe('the command line', () => {
     expect(missing.err[0]).toMatch(/No Claude transcript found/)
     expect((await run([])).code).toBe(0)
     expect((await run(['bogus'])).code).toBe(2)
+  })
+  describe('convert, with a stand-in codex on PATH (verifier round 1, G1)', () => {
+    const env = { PATH: process.env.PATH, CODEX_HOME: process.env.CODEX_HOME }
+    afterEach(() => {
+      process.env.PATH = env.PATH
+      if (env.CODEX_HOME === undefined) delete process.env.CODEX_HOME
+      else process.env.CODEX_HOME = env.CODEX_HOME
+    })
+    const withFakeCodex = (version: string): string => {
+      const dir = mkdtempSync(join(tmpdir(), 'session-bridge-cli-'))
+      dirs.push(dir)
+      const bin = join(dir, 'bin')
+      mkdirSync(bin)
+      writeFileSync(join(bin, 'codex'), `#!/bin/sh\nprintf 'codex-cli ${version}\\n'\n`)
+      chmodSync(join(bin, 'codex'), 0o755)
+      process.env.PATH = `${bin}:${process.env.PATH}`
+      return dir
+    }
+    it('writes under --codex-home, never under CODEX_HOME or ~/.codex, and prints the resume to run', async () => {
+      const dir = withFakeCodex('0.167.0')
+      const flagHome = join(dir, 'flag-home')
+      const envHome = join(dir, 'env-home')
+      mkdirSync(envHome)
+      process.env.CODEX_HOME = envHome
+      const result = await run([
+        'convert',
+        '--from',
+        'claude',
+        '--to',
+        'codex',
+        join(fixtures, 'claude-transcript-sample.jsonl'),
+        '--codex-home',
+        flagHome,
+        '--cwd',
+        dir,
+        '--json'
+      ])
+      expect(result.code).toBe(0)
+      const written = JSON.parse(result.out.join('\n'))
+      expect(written.path.startsWith(flagHome)).toBe(true)
+      expect(existsSync(written.path)).toBe(true)
+      expect(readdirSync(envHome)).toEqual([])
+      expect(written.turns).toBe(3)
+      const plain = await run([
+        'convert',
+        '--from',
+        'claude',
+        '--to',
+        'codex',
+        join(fixtures, 'claude-transcript-sample.jsonl'),
+        '--codex-home',
+        flagHome,
+        '--cwd',
+        '.'
+      ])
+      expect(plain.code).toBe(0)
+      expect(plain.out.some((l) => /^Resume it with: codex resume [0-9a-f-]{36}$/.test(l))).toBe(
+        true
+      )
+      expect(plain.out.some((l) => l.includes(`CODEX_HOME=${flagHome}`))).toBe(true)
+    })
+    it('resolves a relative --cwd to an absolute path (M2)', async () => {
+      const dir = withFakeCodex('0.167.0')
+      const home = join(dir, 'home')
+      const result = await run([
+        'convert',
+        '--from',
+        'claude',
+        '--to',
+        'codex',
+        join(fixtures, 'claude-transcript-sample.jsonl'),
+        '--codex-home',
+        home,
+        '--cwd',
+        '.',
+        '--json'
+      ])
+      expect(result.code).toBe(0)
+      const written = JSON.parse(result.out.join('\n'))
+      const firstRow = JSON.parse(readFileSync(written.path, 'utf8').split('\n')[0])
+      expect(firstRow.payload.cwd).toBe(process.cwd())
+    })
+    it('refuses a codex outside the pin with exit code 3 and writes nothing (M12)', async () => {
+      const dir = withFakeCodex('0.168.0')
+      const home = join(dir, 'home')
+      const result = await run([
+        'convert',
+        '--from',
+        'claude',
+        '--to',
+        'codex',
+        join(fixtures, 'claude-transcript-sample.jsonl'),
+        '--codex-home',
+        home,
+        '--cwd',
+        dir
+      ])
+      expect(result.code).toBe(3)
+      expect(result.err[0]).toMatch(/0\.168\.0.*0\.167\.x.*nothing was written/)
+      expect(existsSync(home)).toBe(false)
+    })
   })
 })
