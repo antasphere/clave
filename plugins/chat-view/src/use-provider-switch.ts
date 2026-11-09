@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { AgentState, Session } from '../../../src/shared/session-model'
 import type { ProviderSwitchPlan } from '../../../src/preload/index.d'
 import { claudeModelName } from '../../../src/shared/claude-models'
@@ -110,10 +110,13 @@ export function useProviderSwitch({
   const asked = useViewSessionStore(
     (s) => s.sessions.find((x) => x.id === session.id)?.providerSwitchAsk ?? null
   )
+  const askedFlag = useRef<boolean | undefined>(undefined)
   useEffect(() => {
     if (!asked) return
     const ask = takeProviderSwitchAsk(session.id)
-    if (ask) begin({ ...ask, model: ask.model })
+    if (!ask) return
+    askedFlag.current = ask.resendRejected
+    begin({ adapterId: ask.adapterId, provider: ask.provider, label: ask.label, model: ask.model })
   }, [asked, session.id, begin])
   // The road, asked once per target.
   useEffect(() => {
@@ -133,6 +136,7 @@ export function useProviderSwitch({
   }, [session.id, state])
   const cancel = useCallback((): void => {
     settleProviderSwitchAsk(session.id, { cancelled: true })
+    askedFlag.current = undefined
     setState(null)
   }, [session.id])
   const confirm = useCallback(
@@ -166,8 +170,9 @@ export function useProviderSwitch({
           from: session.provider,
           target,
           road: plan.road,
-          // The move the limit caused carries the rejected message across (G7).
-          resendRejected: !!stored?.limitReported,
+          // The move the limit caused carries the rejected message across (G7):
+          // the card's word when it asked, else the report the tab holds.
+          resendRejected: askedFlag.current ?? !!stored?.limitReported,
           handoff: async () => {
             const entries = await wholeConversation(session.id, source())
             const head: TranscriptMeta = { ...meta(), agent: from, exportedAt: new Date() }
@@ -191,6 +196,7 @@ export function useProviderSwitch({
           }
         })
         settleProviderSwitchAsk(session.id, result)
+        askedFlag.current = undefined
         if (!result.ok) {
           // The refusal stays on screen here, in the popover (G6).
           setState((s) => (s ? { ...s, busy: null, error: result.error ?? 'The move failed.' } : s))

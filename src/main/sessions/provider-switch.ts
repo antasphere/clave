@@ -130,11 +130,11 @@ export function providerSwitchOptions(
     claudeSessionId: undefined,
     // The handoff is the fresh conversation's first message, as a launch's
     // prompt is: every chat adapter sends its launch prompt at ready. A
-    // resumed thread already holds the conversation and gets none. The
-    // message the cap rejected (`initialInput`, set by the restart when the
-    // move is the limit's doing) crosses the move once, as the new
-    // provider's first turn: after the converted history, or at the end of
-    // the handoff as what is to be answered now (integration round 2, G7).
+    // resumed thread already holds the conversation; what it gets, once, is
+    // the message a cap rejected when the limit policy made the move (the
+    // restart's `initialInput`, integration round 2, G7). The handoff tape
+    // already ends on that message, so it is never sent twice (lane E's
+    // reading, kept by lane D).
     initialPrompt: firstTurn(previous.initialInput?.text, target),
     initialInput: undefined,
     // The account the move lands on comes with the override's own account
@@ -147,18 +147,16 @@ export function providerSwitchOptions(
   }
 }
 
-/** The moved tab's first turn: the rejected message alone on a resumed
- *  thread; the handoff, with the rejected message under its own heading,
- *  on a fresh conversation; nothing when there is neither. */
+/** The moved tab's first turn (integration round 2, G7): the message the
+ *  cap rejected, once, on a resumed thread, after the converted history; the
+ *  handoff itself on a fresh conversation, whose tape already ends on that
+ *  message, so it is never sent twice; nothing when there is neither. */
 export function firstTurn(
   rejected: string | undefined,
   target: Pick<ProviderOverride, 'resume' | 'firstMessage'>
 ): string | undefined {
-  const message = rejected?.trim() ? rejected : undefined
-  if (target.resume !== undefined) return message
-  if (target.firstMessage === undefined) return message
-  if (message === undefined) return target.firstMessage
-  return `${target.firstMessage.trimEnd()}\n\n## The message the previous agent could not take, yours to answer now\n\n${message}\n`
+  if (target.resume === undefined) return target.firstMessage
+  return rejected?.trim() ? rejected : undefined
 }
 
 /** The note the restarted tab's first card reads. */

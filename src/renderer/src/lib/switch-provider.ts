@@ -138,8 +138,9 @@ export interface ProviderSwitchInput {
   /** The handoff message, built when the move takes that road: the chat view
    *  holds the conversation and writes it (`export.ts`, `handoffMessage`). */
   handoff: () => Promise<string>
-  /** The move is the limit's doing: the message the cap rejected crosses it
-   *  as the new provider's first turn (integration round 2, G7). */
+  /** The limit policy's move: the message the cap rejected goes once as the
+   *  new provider's first turn after the converted history (the handoff
+   *  tape already ends on it). Integration round 2, G7. */
   resendRejected?: boolean
 }
 
@@ -286,7 +287,8 @@ export function settleProviderSwitchAsk(
  *  target's first listed model is what the popover opens on. */
 export async function switchToProvider(
   sessionId: string,
-  adapterId: string
+  adapterId: string,
+  options: { resendRejected: boolean } = { resendRejected: false }
 ): Promise<ProviderSwitchResult | { cancelled: true }> {
   const session = sessionById(sessionId)
   if (!session) return { ok: false, resumed: false, error: 'No such session', road: 'handoff' }
@@ -300,7 +302,8 @@ export async function switchToProvider(
     provider:
       adapterId === 'codex-chat' ? 'codex' : adapterId === 'claude-chat' ? 'claude' : adapterId,
     label: target?.adapterId === adapterId ? target.label : adapterId,
-    model: { id: model.id, label: model.label }
+    model: { id: model.id, label: model.label },
+    resendRejected: options.resendRejected
   }
   return new Promise((resolve) => {
     pendingAsks.get(sessionId)?.({ cancelled: true })

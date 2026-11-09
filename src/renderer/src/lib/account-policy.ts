@@ -82,7 +82,15 @@ function accountLabelOf(session: Session, accountId: string): string {
  *  policy offers two rungs. */
 export interface ProviderSwitchRoad {
   targetFor(session: Session): { adapterId: string; label: string } | null
-  switchTo(sessionId: string, adapterId: string): Promise<unknown>
+  /** The move; `resendRejected` when the CLI's limit rejected a message:
+   *  the road carries it once as the new provider's first turn after the
+   *  converted history (integration round 2, G7), and this side closes the
+   *  report on the move and never resends it on the old tab. */
+  switchTo(
+    sessionId: string,
+    adapterId: string,
+    options: { resendRejected: boolean }
+  ): Promise<unknown>
 }
 
 let providerRoad: ProviderSwitchRoad | null = null
@@ -246,20 +254,23 @@ export function runAccountPolicy(): void {
   }
 }
 
-/** Take one rung of the proposal, by hand. */
+/** Take one rung of the proposal, by hand. While it moves, the proposal is
+ *  the rung taken alone, so the pane's notice names where the tab goes
+ *  (`Moving to Codex…`, integration round 2, F12). */
 export async function acceptRung(sessionId: string, rung: LimitRung): Promise<void> {
-  const session = useSessionStore.getState().sessions.find((s) => s.id === sessionId)
+  const store = useSessionStore.getState()
+  const session = store.sessions.find((s) => s.id === sessionId)
   if (!session?.accountProposal) return
   switching.add(sessionId)
+  store.setAccountProposal(sessionId, { reason: session.accountProposal.reason, rungs: [rung] })
+  const resendRejected = !!session.limitReported
   try {
     if (rung.kind === 'account') {
-      await switchSessionAccount(sessionId, rung.accountId, {
-        resendRejected: !!session.limitReported
-      })
+      await switchSessionAccount(sessionId, rung.accountId, { resendRejected })
     } else if (rung.kind === 'model') {
       await switchSessionModel(sessionId, rung.model)
     } else if (providerRoad) {
-      await providerRoad.switchTo(sessionId, rung.adapterId)
+      await providerRoad.switchTo(sessionId, rung.adapterId, { resendRejected })
     }
   } finally {
     settled(sessionId, { keepReport: rung.kind === 'model' })

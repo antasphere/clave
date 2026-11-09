@@ -76,7 +76,12 @@ vi.mock('./switch-account', () => ({
     return { ok: true, resumed: true }
   }
 }))
-import { acceptRung, runAccountPolicy, startAccountPolicy } from './account-policy'
+import {
+  acceptRung,
+  registerProviderSwitchRoad,
+  runAccountPolicy,
+  startAccountPolicy
+} from './account-policy'
 
 const w = (over: Record<string, unknown>): Record<string, unknown> => ({
   key: 'k',
@@ -428,6 +433,82 @@ describe('a Codex tab (integration round 1, F6, G4)', () => {
       reason: 'reported',
       rungs: [{ kind: 'account', accountId: 'play', label: 'play' }]
     })
+  })
+})
+
+describe('the provider rung (integration round 2, F12, G7)', () => {
+  it('names the move while it runs, carries the resend to the road once, and closes the report', async () => {
+    const calls: unknown[] = []
+    registerProviderSwitchRoad({
+      targetFor: () => ({ adapterId: 'codex-chat', label: 'Codex' }),
+      switchTo: async (id, adapterId, options) => {
+        calls.push([id, adapterId, options])
+        return { ok: true, resumed: true }
+      }
+    })
+    try {
+      fake.sessions = [chat()]
+      startAccountPolicy()
+      fake.limitListener!({ id: idOf(), report: { scope: { family: 'Fable' } } })
+      runAccountPolicy()
+      expect(lastProposal()).toMatchObject({
+        rungs: [
+          { kind: 'model' },
+          { kind: 'account' },
+          { kind: 'provider', adapterId: 'codex-chat', label: 'Codex' }
+        ]
+      })
+      const move = acceptRung(idOf(), { kind: 'provider', adapterId: 'codex-chat', label: 'Codex' })
+      // While it moves, the proposal is the rung taken alone: the notice reads "Moving to Codex…".
+      expect(lastProposal()).toEqual({
+        reason: 'reported',
+        rungs: [{ kind: 'provider', adapterId: 'codex-chat', label: 'Codex' }]
+      })
+      await move
+      expect(calls).toEqual([[idOf(), 'codex-chat', { resendRejected: true }]])
+      // The report is closed on the move: the old tab never resends it.
+      expect(lastReport()).toEqual([idOf(), null])
+      expect(lastProposal()).toBeNull()
+      expect(fake.writes).toEqual([])
+      expect(fake.switched).toEqual([])
+    } finally {
+      registerProviderSwitchRoad(null)
+    }
+  })
+
+  it('a move with no report open carries no resend', async () => {
+    const calls: unknown[] = []
+    registerProviderSwitchRoad({
+      targetFor: () => ({ adapterId: 'codex-chat', label: 'Codex' }),
+      switchTo: async (id, adapterId, options) => {
+        calls.push([id, adapterId, options])
+        return { ok: true, resumed: true }
+      }
+    })
+    try {
+      fake.exhausted = true
+      fake.sessions = [chat()]
+      runAccountPolicy()
+      await acceptRung(idOf(), { kind: 'provider', adapterId: 'codex-chat', label: 'Codex' })
+      expect(calls).toEqual([[idOf(), 'codex-chat', { resendRejected: false }]])
+    } finally {
+      registerProviderSwitchRoad(null)
+    }
+  })
+
+  it('the account rung taken by hand is the proposal while it moves too', async () => {
+    fake.sessions = [chat()]
+    startAccountPolicy()
+    fake.limitListener!({ id: idOf(), report: { scope: 'shared' } })
+    runAccountPolicy()
+    const move = acceptRung(idOf(), { kind: 'account', accountId: 'play', label: 'Play' })
+    expect(lastProposal()).toEqual({
+      reason: 'reported',
+      rungs: [{ kind: 'account', accountId: 'play', label: 'Play' }]
+    })
+    await move
+    expect(fake.switched).toEqual([[idOf(), 'play', { resendRejected: true }]])
+    expect(lastProposal()).toBeNull()
   })
 })
 

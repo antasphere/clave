@@ -284,7 +284,8 @@ describe("lane E's third rung: the road the limit policy takes (PRDCT-4300)", ()
         adapterId: 'codex-chat',
         provider: 'codex',
         label: 'Codex',
-        model: { id: 'gpt-5.5', label: 'GPT-5.5' }
+        model: { id: 'gpt-5.5', label: 'GPT-5.5' },
+        resendRejected: false
       })
     )
     // Nothing moved on the card's click alone.

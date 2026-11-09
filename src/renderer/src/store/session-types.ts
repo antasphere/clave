@@ -436,6 +436,8 @@ export interface Session {
     provider: string
     label: string
     model: { id: string; label: string }
+    /** The move is the limit's doing: the rejected message crosses it once. */
+    resendRejected?: boolean
   } | null
   /** True between the kill and the respawn of an account switch, so the
    *  exit is not announced as the session ending. */

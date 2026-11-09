@@ -48,7 +48,9 @@ vi.mock('../../store/usage-store', async (original) => {
 })
 import { AccountProposal } from './AccountProposal'
 
-const now = Date.now()
+// The render reads the real clock: half an hour of margin keeps "2d 5h" true
+// however long the file waits between collection and run on a loaded Mac.
+const now = Date.now() + 30 * 60_000
 const fableOut = {
   key: 'fable',
   label: 'Weekly · Fable',
