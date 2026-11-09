@@ -88,6 +88,8 @@ function windows(): {
   const memory = inMemorySessionWindows()
   const port: SessionWindowsPort = {
     workspaceOf: (key) => (key === 'w1' ? 'ws-1' : null),
+    isLive: (key) => key === 'w1' || key === 'w2' || key === 'w7',
+    primaryKey: () => 'w1',
     bind: (id, key) => {
       bound.push([id, key])
       memory.bind(id, key)
@@ -455,6 +457,30 @@ describe('a Resume of a running tab is refused on this Mac too (PRDCT-4193, roun
       windowKey: 'w7'
     })
     mocks.adoptable = []
+  })
+
+  it('a record naming a window that no longer exists resumes under the primary window (round 3, R3-F1)', async () => {
+    const id = `life-${++sequence}`
+    windows()
+    mocks.restartSpawn.mockReturnValue(null)
+    mocks.getSessionRecord.mockReturnValue({
+      id,
+      cwd: '/work/app',
+      folderName: 'app',
+      claudeMode: true,
+      antigravityMode: false,
+      codexMode: false,
+      piMode: false,
+      claudeAgentsMode: false,
+      dangerousMode: false,
+      claudeSessionId: 'conv-3',
+      windowKey: 'gone-window'
+    })
+    spawned(id)
+    await expect(restartSession(id, { onlyIfStopped: true })).resolves.toMatchObject({ id })
+    expect((mocks.spawn.mock.calls.at(-1) as [string, PtySpawnOptions])[1]).toMatchObject({
+      windowKey: 'w1'
+    })
   })
 
   it('rejects with onlyIfStopped while the session runs, and restarts an ended one', async () => {

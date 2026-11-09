@@ -67,6 +67,33 @@ const RESUMABLE = new Set<HistoryListEntry['provider']>(['claude', 'codex', 'pi'
 const DEFAULT_LIMIT = 50
 const MAX_LIMIT = 200
 
+/** How many ids one by-id records read carries: they travel in a query
+ *  string, and a Mac with hundreds of ended sessions must not overflow it
+ *  (round 2, N-F4). */
+export const RECORDS_BY_ID_CHUNK = 40
+
+/**
+ * The records the holders are read from: the listing a window restores from,
+ * plus, by id, the records of every session the host lists that the listing
+ * lacks (a hosted session whose process has ended is left out of the listing
+ * and still holds its conversation, round 1 F2), a chunk at a time. A read
+ * that fails is said, never swallowed: a quiet fallback would bring the
+ * duplicate tab back without a word.
+ */
+export async function recordsWithStopped(
+  listAdoptable: (ids?: ReadonlyArray<string>) => Promise<ReadonlyArray<SessionRecord>>,
+  list: () => Promise<ReadonlyArray<Session>>
+): Promise<readonly SessionRecord[]> {
+  const listed = await listAdoptable()
+  const ids = new Set(listed.map((r) => r.id))
+  const missing = (await list()).map((s) => s.id).filter((id) => !ids.has(id))
+  if (missing.length === 0) return listed
+  const more: SessionRecord[] = []
+  for (let at = 0; at < missing.length; at += RECORDS_BY_ID_CHUNK)
+    more.push(...(await listAdoptable(missing.slice(at, at + RECORDS_BY_ID_CHUNK))))
+  return [...listed, ...more.filter((r) => !ids.has(r.id))]
+}
+
 /** The tabs that hold a conversation, by its provider id, over the server's
  *  records and sessions: alive when the host runs it and its state is not
  *  ended, stopped otherwise. An alive holder wins over a stopped one. */

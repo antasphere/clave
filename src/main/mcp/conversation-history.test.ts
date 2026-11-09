@@ -5,6 +5,8 @@ import {
   holdersOf,
   listConversations,
   openResumed,
+  RECORDS_BY_ID_CHUNK,
+  recordsWithStopped,
   planResume,
   planResumeFromRecords,
   ResumeRefused,
@@ -445,5 +447,53 @@ describe('openResumed: what the open does with a resume', () => {
     )
     expect(out).toMatchObject({ payload: { cwd: '/work/odoo' } })
     expect((out as { payload: Record<string, unknown> }).payload).not.toHaveProperty('workspace')
+  })
+})
+
+describe('recordsWithStopped: the listing plus the stopped holders, by id, a chunk at a time', () => {
+  it('reads the ids the listing lacks in chunks and says a failed read (round 2, N-F4; round 3, R6 R7)', async () => {
+    const calls: Array<ReadonlyArray<string> | undefined> = []
+    const listed = [record('a', { claudeSessionId: 'c-a', running: true })]
+    const hosted = Array.from({ length: 2 * RECORDS_BY_ID_CHUNK + 10 }, (_, i) =>
+      session(`h${i}`, 'ended')
+    )
+    const out = await recordsWithStopped(
+      async (ids) => {
+        calls.push(ids)
+        if (!ids) return listed
+        return ids.map((id) => record(id, { claudeSessionId: `c-${id}`, running: true }))
+      },
+      async () => [session('a', 'idle'), ...hosted]
+    )
+    expect(calls[0]).toBeUndefined()
+    expect(calls.slice(1).map((c) => c?.length)).toEqual([
+      RECORDS_BY_ID_CHUNK,
+      RECORDS_BY_ID_CHUNK,
+      10
+    ])
+    expect(out.map((r) => r.id)).toEqual(['a', ...hosted.map((s) => s.id)])
+    await expect(
+      recordsWithStopped(
+        async (ids) => {
+          if (ids) throw new Error('the server did not answer')
+          return listed
+        },
+        async () => [session('a', 'idle'), session('h1', 'ended')]
+      )
+    ).rejects.toThrow('the server did not answer')
+  })
+
+  it('reads nothing more when the listing holds every session', async () => {
+    const calls: unknown[] = []
+    const listed = [record('a', { claudeSessionId: 'c-a', running: true })]
+    const out = await recordsWithStopped(
+      async (ids) => {
+        calls.push(ids)
+        return listed
+      },
+      async () => [session('a', 'idle')]
+    )
+    expect(calls).toEqual([undefined])
+    expect(out).toBe(listed)
   })
 })

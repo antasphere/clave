@@ -37,10 +37,10 @@ import { codexUsageManager } from '../codex-usage'
 import { NOT_SERVED, type ServedShell, serveCommand } from './served-tools'
 import { serverClient } from './server-client'
 import { listHistory } from '../session-history/service'
-import type { SessionRecord as SessionRecordWire } from '@clave/contract/sessions'
 import {
   listConversations,
   openResumed,
+  recordsWithStopped,
   ResumeRefused,
   type HistoryLookups
 } from './conversation-history'
@@ -603,18 +603,11 @@ function historyLookups(api: Awaited<ReturnType<typeof serverClient.api>>): Hist
     // process has ended (`hostedListing`); such a tab still holds its
     // conversation, stopped (round 1, F2), so the records of every session the
     // host lists and the listing lacks are read by id and added.
-    records: async () => {
-      const listed = await api.sessions.listAdoptable()
-      const ids = new Set(listed.map((r) => r.id))
-      const missing = (await api.sessions.list()).map((s) => s.id).filter((id) => !ids.has(id))
-      if (missing.length === 0) return listed
-      // By id, a few dozen at a time: the ids travel in the query string
-      // (round 2, N-F4), and a failed read is said rather than swallowed.
-      const more: SessionRecordWire[] = []
-      for (let at = 0; at < missing.length; at += 40)
-        more.push(...(await api.sessions.listAdoptable(missing.slice(at, at + 40))))
-      return [...listed, ...more.filter((r) => !ids.has(r.id))]
-    },
+    records: () =>
+      recordsWithStopped(
+        (ids) => api.sessions.listAdoptable(ids),
+        () => api.sessions.list()
+      ),
     sessions: () => api.sessions.list(),
     workspaces: () => workspaceManager.getWorkspaces().map((w) => ({ id: w.id, name: w.name }))
   }

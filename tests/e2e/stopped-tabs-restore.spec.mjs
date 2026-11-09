@@ -397,7 +397,9 @@ exec /bin/sh "$@"
         claudeProfileId: account.id,
         claudeProfileLabel: 'Later',
         workspaceId: WS.id,
-        windowKey: key
+        // A window that no longer exists: the restore places the orphan in
+        // the primary window, and the Resume must land there too (round 3).
+        windowKey: 'c4a70000-dead-4000-8000-00000000d00d'
       })
       const recordsDir = path.join(recordsRootOf(DIR), 'session-records')
       const recordFile = path.join(recordsDir, `${GONE_TMUX}.json`)
@@ -505,7 +507,7 @@ exec /bin/sh "$@"
       const files = recordsOfTab()
       t.equal('one record carries the tab', files.length, 1, files)
       t.equal(
-        'and keeps the window key',
+        'and names the live window that holds the tab',
         files[0]
           ? JSON.parse(readFileSync(path.join(recordsDir, files[0]), 'utf8')).windowKey
           : null,

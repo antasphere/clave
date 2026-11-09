@@ -299,8 +299,11 @@ export async function restartSession(
   // The window that holds the tab; for a session this process never spawned
   // nothing is bound, and the record says which window placed it (round 2,
   // N-F1: a Resume under no window ran the CLI with its output going nowhere).
-  const key =
-    windowKey !== undefined ? windowKey : (windows.windowOf(id) ?? record?.windowKey ?? null)
+  // A record naming a window that has since closed goes to the primary, where
+  // the restore places an orphan (round 3, R3-F1).
+  const recordKey =
+    record?.windowKey && windows.isLive(record.windowKey) ? record.windowKey : windows.primaryKey()
+  const key = windowKey !== undefined ? windowKey : (windows.windowOf(id) ?? recordKey)
   // The kill ends the old process, whose exit forgets what a dead tab
   // leaves behind (the parent link among them); the same tab comes back
   // under the same id, so its link is kept across (verifier round 1, F1).
