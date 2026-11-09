@@ -54,9 +54,10 @@ https alone. The Info.plist's loopback exception is merged into the Debug config
 only (`Config/Info-Debug.plist`), and the transport policy refuses plain http in a release
 build a second time.
 
-`bash ci.sh` from the repository root is the gate the mobile CI job runs on a macOS runner:
-the core's tests, the simulator build, the host tests and the launch smoke test.
-`CLAVE_IOS_SIMULATOR_UDID` names the simulator (on a shared Mac, name one you created).
+`bash apps/mobile-ios/ci.sh`, run from the repository root, is the gate the mobile CI job
+runs on a macOS runner: the core's tests, the simulator build, the host tests and the launch
+smoke test. `CLAVE_IOS_SIMULATOR_UDID` names the simulator (on a shared Mac, name one you
+created).
 
 ## The fixture check
 
@@ -70,7 +71,19 @@ node apps/mobile-ios/scripts/fixture-check.mjs --udid <udid>      # the UI tests
 ```
 
 Every result of the Echo adapter is a fixture result: it repeats what it is told and
-raises no request; no real agent provider runs.
+raises no request. The daemon itself is not a fixture, and two boots of this stack on
+9 November 2026 (11:18:58 and 11:19:54) let it make a real one-shot call of the Claude CLI
+under the machine's login, to name the seeded Echo chat by its first message, a fixture
+nonce: the daemon names every fresh Claude-mode chat that way, the Echo fixture included,
+and polls the machine's Claude and Codex usage unless told not to. Since then the stack
+starts the daemon with `--test-no-activate`, a shell stub that answers the daemon's own
+environment and a `claude` and `codex` stub on the front of its PATH that touch a marker,
+and every boot asserts that the title call reached the stub and left no transcript
+(`scripts/README.md`). Once lane C's product fix is on `mobile`, every fixture boot, the
+verifier's included, must first show the three enforced prerequisites pass: the title
+opt-out flag set, `--test-no-activate` with `--test-no-machine-usage` set, and the
+post-login recorder interlock green; the fixture refuses to boot otherwise and prints them.
+Until that fix is in, fixture boots that start a session, seed, write or launch are on hold.
 
 ## What a device install needs
 

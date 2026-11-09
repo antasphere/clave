@@ -65,10 +65,16 @@ it fails. `--prove-title-guard` boots with a `claude` stub that leaves no marker
 the boot to fail at that guard: the proof the check can go red, made with the stub still in
 place, never by removing it.
 
-## Everything is a fixture
+## What is a fixture, and what is not
 
 - The provider is `tests/e2e/fixtures/oidc-provider.mjs`. It is local and approves on
   sight. Nothing reaches account.antasphere.com.
-- The server runs only the Echo adapter (`--dev-echo-adapter`), which repeats what it is
-  told. No real agent provider ever runs.
+- The chats run the Echo adapter (`--dev-echo-adapter`), which repeats what it is told and
+  raises no request. The daemon around it is the real server entry: on 9 November 2026 two
+  boots (11:18:58 and 11:19:54) let it call the real Claude CLI once each to name the
+  seeded chat, which the guard above now stops; the daemon also polls the machine's usage
+  unless `--test-no-activate` (and, once lane C's fix is in, `--test-no-machine-usage`) says
+  not to. Until that fix is on `mobile`, boots that start a session are on hold, and from
+  then on every boot first shows the title opt-out, the no-activate flags and the post-login
+  recorder interlock pass.
 - The relay and the server are this checkout's own entries, run under the repository's Bun.
