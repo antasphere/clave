@@ -6,8 +6,8 @@ import Foundation
 /// or `["<issuer>",null]` when signed out, so the phone files an owner's
 /// records under the same name the prototype did.
 public func ownerNamespace(issuer: String, subject: String?) -> String {
-  let owner = subject.map { "{\"subject\":\(JSONValue.quote($0))}" } ?? "null"
-  let json = "[\(JSONValue.quote(issuer)),\(owner)]"
+  let owner = subject.map { "{\"subject\":\(JSValue.quote($0))}" } ?? "null"
+  let json = "[\(JSValue.quote(issuer)),\(owner)]"
   let digest = SHA256.hash(data: Data(json.utf8))
   return "clave.owner." + digest.map { String(format: "%02x", $0) }.joined()
 }

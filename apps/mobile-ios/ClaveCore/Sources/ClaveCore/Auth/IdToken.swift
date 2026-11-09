@@ -87,16 +87,16 @@ public struct ExpectedIdToken: Sendable {
 
 private func refuse(_ check: IdTokenRefusal) -> IdTokenRefused { IdTokenRefused(check: check) }
 
-private func segmentJSON(_ segment: Substring) throws -> [String: JSONValue] {
+private func segmentJSON(_ segment: Substring) throws -> [String: JSValue] {
   guard !segment.isEmpty,
     let bytes = try? Base64URL.decode(String(segment)),
     let text = String(data: bytes, encoding: .utf8),
-    case .object(let members)? = JSONValue.parse(text)
+    case .object(let members)? = JSValue.parse(text)
   else { throw refuse(.format) }
   return members
 }
 
-private func optionalString(_ value: JSONValue?) throws -> String? {
+private func optionalString(_ value: JSValue?) throws -> String? {
   guard let value else { return nil }
   guard let text = value.stringValue else { throw refuse(.format) }
   return text

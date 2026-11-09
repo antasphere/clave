@@ -118,7 +118,7 @@ public actor HubClient {
     guard let endpoint = metadata.registrationEndpoint else {
       throw HubError(kind: .registration, message: "The issuer registers no clients.")
     }
-    let body = JSONValue.object([
+    let body = JSValue.object([
       "client_name": .string(clientName),
       "type": .string("native"),
       "application_type": .string("native"),
@@ -233,7 +233,7 @@ public actor HubClient {
 
   private func request(
     _ method: String, _ urlString: String, body: String? = nil, contentType: String? = nil
-  ) async throws -> (Int, JSONValue?) {
+  ) async throws -> (Int, JSValue?) {
     guard onIssuer(urlString), let url = URL(string: urlString) else {
       throw HubError(kind: .invalidResponse, message: "A request would leave the issuer.")
     }
@@ -244,7 +244,7 @@ public actor HubClient {
     if let body { request.httpBody = Data(body.utf8) }
     request.timeoutInterval = Double(timeout.components.seconds) + Double(timeout.components.attoseconds) / 1e18
     let answer = try await send(request)
-    return (answer.status, JSONValue.parse(answer.body))
+    return (answer.status, JSValue.parse(answer.body))
   }
 
   /// One request under a whole-exchange deadline: URLSession's

@@ -87,8 +87,8 @@ public struct HubTokenStore: Sendable {
     self.secure = secure
   }
 
-  private func readJSON<T>(_ key: String, _ read: (JSONValue) -> T?) async throws -> T? {
-    guard let raw = try await secure.get(key), !raw.isEmpty, let json = JSONValue.parse(raw) else { return nil }
+  private func readJSON<T>(_ key: String, _ read: (JSValue) -> T?) async throws -> T? {
+    guard let raw = try await secure.get(key), !raw.isEmpty, let json = JSValue.parse(raw) else { return nil }
     return read(json)
   }
 
@@ -104,7 +104,7 @@ public struct HubTokenStore: Sendable {
 
   /// Keeps the registration.
   public func writeClient(_ client: StoredClient) async throws {
-    let json = JSONValue.object([
+    let json = JSValue.object([
       "issuer": .string(client.issuer), "clientId": .string(client.clientId),
       "registeredAt": .number(client.registeredAt),
     ])
@@ -135,13 +135,13 @@ public struct HubTokenStore: Sendable {
   /// Keeps the session.
   public func writeSession(_ session: StoredSession) async throws {
     let account = session.account
-    let json = JSONValue.object([
+    let json = JSValue.object([
       "issuer": .string(session.issuer),
       "clientId": .string(session.clientId),
       "account": .object([
         "subject": .string(account.subject),
-        "name": account.name.map(JSONValue.string) ?? .null,
-        "email": account.email.map(JSONValue.string) ?? .null,
+        "name": account.name.map(JSValue.string) ?? .null,
+        "email": account.email.map(JSValue.string) ?? .null,
         "emailVerified": .bool(account.emailVerified),
       ]),
       "signedInAt": .number(session.signedInAt),
@@ -187,7 +187,7 @@ public struct HubTokenStore: Sendable {
     }
   }
 
-  private static func readToken(_ json: JSONValue) -> StoredToken? {
+  private static func readToken(_ json: JSValue) -> StoredToken? {
     guard json.isObject, let token = json["token"]?.stringValue, !token.isEmpty,
       let expiresAt = json["expiresAt"]?.numberValue, expiresAt.isFinite
     else { return nil }
@@ -195,6 +195,6 @@ public struct HubTokenStore: Sendable {
   }
 
   private static func serialize(_ token: StoredToken) -> String {
-    JSONValue.object(["token": .string(token.token), "expiresAt": .number(token.expiresAt)]).serialized()
+    JSValue.object(["token": .string(token.token), "expiresAt": .number(token.expiresAt)]).serialized()
   }
 }

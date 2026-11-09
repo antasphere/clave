@@ -90,8 +90,8 @@ func queryFields(_ url: URL) -> [(String, String)] {
   WebURL.formDecode(URLComponents(url: url, resolvingAgainstBaseURL: false)?.percentEncodedQuery)
 }
 
-func makeIdToken(header: [String: JSONValue] = ["alg": .string("RS256"), "typ": .string("JWT")], payload: [String: JSONValue]) -> String {
-  let segment = { (value: [String: JSONValue]) in Base64URL.encode(Data(JSONValue.object(value).serialized().utf8)) }
+func makeIdToken(header: [String: JSValue] = ["alg": .string("RS256"), "typ": .string("JWT")], payload: [String: JSValue]) -> String {
+  let segment = { (value: [String: JSValue]) in Base64URL.encode(Data(JSValue.object(value).serialized().utf8)) }
   return "\(segment(header)).\(segment(payload)).\(Base64URL.encode([1, 2, 3, 4]))"
 }
 
@@ -119,7 +119,7 @@ actor FakeHub {
   var registrationStatus = 201
   var denyNext = false
   var callbackIss: String?
-  var tamper: [String: JSONValue] = [:]
+  var tamper: [String: JSValue] = [:]
   var refreshNetworkDown = false
   var exchangeEntered: Gate?
   var exchangeRelease: Gate?
@@ -136,7 +136,7 @@ actor FakeHub {
     let issuer = self.issuer
     await transport.onJSON(
       "GET", "\(issuer)/.well-known/openid-configuration",
-      JSONValue.object([
+      JSValue.object([
         "issuer": .string(issuer),
         "authorization_endpoint": .string("\(issuer)/authorize"),
         "token_endpoint": .string(tokenEndpoint ?? "\(issuer)/token"),
@@ -147,7 +147,7 @@ actor FakeHub {
     await transport.on("POST", "\(issuer)/token") { [unowned self] request in try await self.token(request) }
   }
 
-  private func json(_ status: Int, _ value: JSONValue) -> HTTPAnswer {
+  private func json(_ status: Int, _ value: JSValue) -> HTTPAnswer {
     HTTPAnswer(status: status, headers: ["content-type": "application/json"], body: Data(value.serialized().utf8))
   }
 
@@ -156,10 +156,10 @@ actor FakeHub {
     let clientId = "client-\(counter)"
     registered.append(clientId)
     knownClients.insert(clientId)
-    var answer: [String: JSONValue] = [
+    var answer: [String: JSValue] = [
       "client_id": .string(clientId),
       "token_endpoint_auth_method": .string("none"),
-      "grant_types": .array((grantTypesOverride ?? ["authorization_code", "refresh_token"]).map(JSONValue.string)),
+      "grant_types": .array((grantTypesOverride ?? ["authorization_code", "refresh_token"]).map(JSValue.string)),
     ]
     if confidentialNext {
       confidentialNext = false
@@ -214,7 +214,7 @@ actor FakeHub {
   private func issue(clientId: String, nonce: String?) -> HTTPAnswer {
     counter += 1
     let now = clock.now.timeIntervalSince1970.rounded(.down)
-    var payload: [String: JSONValue] = [
+    var payload: [String: JSValue] = [
       "iss": .string(issuer), "sub": .string(subject), "aud": .string(clientId),
       "exp": .number(now + idTTL), "iat": .number(now),
       "name": .string("Ada Example"), "email": .string("ada@example.test"), "email_verified": .bool(true),

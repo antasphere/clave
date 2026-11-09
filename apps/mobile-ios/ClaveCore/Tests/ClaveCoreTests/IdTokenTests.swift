@@ -2,18 +2,18 @@ import XCTest
 @testable import ClaveCore
 
 final class IdTokenTests: XCTestCase {
-  private let claims: [String: JSONValue] = [
+  private let claims: [String: JSValue] = [
     "iss": .string("https://hub.test"), "sub": .string("user-1"), "aud": .string("client-1"),
     "exp": .number(2_000_000_000), "iat": .number(1_900_000_000), "nonce": .string("n-1"),
     "name": .string("Ada"), "email": .string("ada@example.test"), "email_verified": .bool(true),
   ]
-  private let rs256: [String: JSONValue] = ["alg": .string("RS256"), "typ": .string("JWT")]
+  private let rs256: [String: JSValue] = ["alg": .string("RS256"), "typ": .string("JWT")]
 
-  private func token(_ header: [String: JSONValue]? = nil, _ changes: [String: JSONValue] = [:]) -> String {
+  private func token(_ header: [String: JSValue]? = nil, _ changes: [String: JSValue] = [:]) -> String {
     makeIdToken(header: header ?? rs256, payload: claims.merging(changes) { _, new in new })
   }
 
-  private func segment(_ value: JSONValue) -> String { Base64URL.encode(Data(value.serialized().utf8)) }
+  private func segment(_ value: JSValue) -> String { Base64URL.encode(Data(value.serialized().utf8)) }
 
   private func refusal(_ run: () throws -> Void) -> IdTokenRefusal? {
     do {

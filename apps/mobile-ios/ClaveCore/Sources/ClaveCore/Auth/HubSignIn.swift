@@ -85,7 +85,7 @@ public protocol AuthenticationSessionOpener: Sendable {
   func open(_ url: URL, callbackScheme: String) async throws -> URL?
 }
 
-private final class Session {
+private final class HubSession {
   let clientId: String
   let account: StoredAccount
   let signedInAt: Double
@@ -115,7 +115,7 @@ public actor HubSignIn {
   private let log: @Sendable (String, [String: String]) -> Void
 
   private var listeners: [UUID: AsyncStream<AuthStatus>.Continuation] = [:]
-  private var session: Session?
+  private var session: HubSession?
   private var clientId: String?
   private var lastFailure: AuthFailure?
   private var signingIn: Task<AuthStatus, Never>?
@@ -233,7 +233,7 @@ public actor HubSignIn {
         try await store.clearSession()
         return status()
       }
-      let restored = Session(
+      let restored = HubSession(
         clientId: stored.clientId, account: stored.account, signedInAt: stored.signedInAt,
         access: try await store.readAccessToken(), id: try await store.readIdToken(),
         refreshToken: try await store.readRefreshToken())
@@ -311,7 +311,7 @@ public actor HubSignIn {
       let claims = try decodeIdToken(idToken)
       try checkIdToken(claims, expected: ExpectedIdToken(issuer: issuer.origin, clientId: clientId, nonce: nonce, now: now()))
       if self.epoch != epoch { throw AuthError(.cancelled, "The sign-in was replaced.") }
-      let session = Session(
+      let session = HubSession(
         clientId: clientId, account: Self.account(of: claims), signedInAt: nowMs,
         access: StoredToken(token: tokens.accessToken, expiresAt: accessExpiry(tokens.expiresIn, claims)),
         id: StoredToken(token: idToken, expiresAt: claims.exp * 1000),
@@ -374,7 +374,7 @@ public actor HubSignIn {
 
   /// The refresh token first, so a crash after it loses nothing the hub
   /// still honours; then the rest.
-  private func persist(_ session: Session, issuer: IssuerConfig) async throws {
+  private func persist(_ session: HubSession, issuer: IssuerConfig) async throws {
     do {
       if let refreshToken = session.refreshToken { try await store.writeRefreshToken(refreshToken) }
       if let access = session.access { try await store.writeAccessToken(access) }
@@ -454,7 +454,7 @@ public actor HubSignIn {
     if epoch != self.epoch { throw AuthError(.cancelled, "The account changed.") }
   }
 
-  private func requireSession() throws -> Session {
+  private func requireSession() throws -> HubSession {
     guard let session else { throw AuthError(lastFailure ?? .expired, "Sign in with your Antasphere account.") }
     return session
   }
@@ -562,7 +562,7 @@ public actor HubSignIn {
   }
 
   /// Whether an answer that started under `epoch` for `session` may still land.
-  private func isCurrent(_ epoch: Int, _ session: Session) -> Bool {
+  private func isCurrent(_ epoch: Int, _ session: HubSession) -> Bool {
     guard epoch == self.epoch else { return false }
     return self.session === session
   }

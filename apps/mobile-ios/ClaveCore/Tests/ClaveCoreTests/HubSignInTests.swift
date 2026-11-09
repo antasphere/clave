@@ -162,7 +162,7 @@ final class HubSignInTests: XCTestCase {
   }
 
   func testAnIdTokenFailingItsChecksKeepsNothing() async {
-    let tampers: [[String: JSONValue]] = [
+    let tampers: [[String: JSValue]] = [
       ["iss": .string("https://evil.test")],
       ["aud": .string("another-client")],
       ["nonce": .string("stale")],

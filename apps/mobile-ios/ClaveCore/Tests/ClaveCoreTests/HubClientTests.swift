@@ -4,8 +4,8 @@ import XCTest
 final class HubClientTests: XCTestCase {
   private let issuer = IssuerConfig(origin: "https://hub.test", insecure: false)
 
-  private func metadata(_ changes: [String: JSONValue] = [:]) -> String {
-    JSONValue.object([
+  private func metadata(_ changes: [String: JSValue] = [:]) -> String {
+    JSValue.object([
       "issuer": .string("https://hub.test"),
       "authorization_endpoint": .string("https://hub.test/authorize"),
       "token_endpoint": .string("https://hub.test/token"),
@@ -40,7 +40,7 @@ final class HubClientTests: XCTestCase {
   }
 
   func testRefusesAnEndpointOffTheIssuerAndAnotherIssuer() async {
-    for changes: [String: JSONValue] in [
+    for changes: [String: JSValue] in [
       ["token_endpoint": .string("http://127.0.0.1:1/token")],
       ["authorization_endpoint": .string("https://evil.test/authorize")],
       ["userinfo_endpoint": .string("https://hub.test.evil/userinfo")],
@@ -53,7 +53,7 @@ final class HubClientTests: XCTestCase {
     let (other, _) = await client(metadata(["issuer": .string("https://evil.test")]))
     let result = await kind { _ = try await other.metadata() }
     XCTAssertEqual(result, .invalidResponse)
-    var missing = JSONValue.parse(metadata())!
+    var missing = JSValue.parse(metadata())!
     if case .object(var members) = missing {
       members.removeValue(forKey: "jwks_uri")
       missing = .object(members)
@@ -85,7 +85,7 @@ final class HubClientTests: XCTestCase {
       let sent = await transport.requests.last!
       XCTAssertEqual(sent.value(forHTTPHeaderField: "Content-Type"), "application/json")
       XCTAssertEqual(sent.timeoutInterval, 15)
-      let body = JSONValue.parse(sent.httpBody!)!
+      let body = JSValue.parse(sent.httpBody!)!
       XCTAssertEqual(body["client_name"], .string("Clave iOS"))
       XCTAssertEqual(body["type"], .string("native"))
       XCTAssertEqual(body["application_type"], .string("native"))

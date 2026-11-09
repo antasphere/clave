@@ -1,16 +1,16 @@
 import Foundation
 
-/// A parsed JSON document, typed the way JavaScript sees one, so the shape
+/// A parsed JSON document for the sign-in code, typed the way JavaScript sees one (the contract has its own public JSONValue), so the shape
 /// checks ported from the prototype (`typeof x === 'string'`, a boolean is
 /// not a number) read the same here. Serialization follows JSON.stringify's
 /// escaping, which the owner namespace hashes byte for byte.
-enum JSONValue: Equatable, Sendable, Decodable {
+enum JSValue: Equatable, Sendable, Decodable {
   case null
   case bool(Bool)
   case number(Double)
   case string(String)
-  case array([JSONValue])
-  case object([String: JSONValue])
+  case array([JSValue])
+  case object([String: JSValue])
 
   init(from decoder: any Decoder) throws {
     let container = try decoder.singleValueContainer()
@@ -22,22 +22,22 @@ enum JSONValue: Equatable, Sendable, Decodable {
       self = .number(value)
     } else if let value = try? container.decode(String.self) {
       self = .string(value)
-    } else if let value = try? container.decode([JSONValue].self) {
+    } else if let value = try? container.decode([JSValue].self) {
       self = .array(value)
     } else {
-      self = .object(try container.decode([String: JSONValue].self))
+      self = .object(try container.decode([String: JSValue].self))
     }
   }
 
   /// The document in the bytes, or nil when they are not JSON.
-  static func parse(_ data: Data) -> JSONValue? {
+  static func parse(_ data: Data) -> JSValue? {
     guard !data.isEmpty else { return nil }
-    return try? JSONDecoder().decode(JSONValue.self, from: data)
+    return try? JSONDecoder().decode(JSValue.self, from: data)
   }
 
-  static func parse(_ text: String) -> JSONValue? { parse(Data(text.utf8)) }
+  static func parse(_ text: String) -> JSValue? { parse(Data(text.utf8)) }
 
-  subscript(key: String) -> JSONValue? {
+  subscript(key: String) -> JSValue? {
     if case .object(let members) = self { return members[key] }
     return nil
   }
@@ -70,10 +70,10 @@ enum JSONValue: Equatable, Sendable, Decodable {
     case .number(let value):
       if value.isFinite, value == value.rounded(), abs(value) < 1e15 { return String(Int64(value)) }
       return value.isFinite ? "\(value)" : "null"
-    case .string(let value): return JSONValue.quote(value)
+    case .string(let value): return JSValue.quote(value)
     case .array(let items): return "[" + items.map { $0.serialized() }.joined(separator: ",") + "]"
     case .object(let members):
-      return "{" + members.keys.sorted().map { JSONValue.quote($0) + ":" + members[$0]!.serialized() }
+      return "{" + members.keys.sorted().map { JSValue.quote($0) + ":" + members[$0]!.serialized() }
         .joined(separator: ",") + "}"
     }
   }
