@@ -335,9 +335,11 @@ export async function startStack({
         '--port',
         String(serverPort),
         '--dev-echo-adapter',
-        // The harness's own flag: no usage poll of the machine's Claude and
-        // Codex logins, no activation of anything a test did not ask for.
+        // The harness's own flags: no activation of anything a test did not ask
+        // for, and no usage read of the machine's Claude and Codex logins (the
+        // second flag counts only beside the first, packages/host/src/test-mode.ts).
         '--test-no-activate',
+        '--test-no-machine-usage',
         '--relay',
         relayUrl
       ],

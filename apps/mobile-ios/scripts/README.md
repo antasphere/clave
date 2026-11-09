@@ -55,7 +55,8 @@ things:
 
 The daemon names every fresh Claude-mode chat by its first message with a one-shot of the
 Claude CLI under the machine's login, and polls the machine's Claude and Codex usage unless
-told not to. The stack starts the daemon with `--test-no-activate`, with `SHELL` pointing at
+told not to. The stack starts the daemon with `--test-no-activate` and `--test-no-machine-usage` (the
+second flag counts only beside the first, `packages/host/src/test-mode.ts`), with `SHELL` pointing at
 a script that answers the daemon's own environment whatever it is asked (the daemon reads
 the login shell's environment with `$SHELL -lic 'env -0'`), and with a `PATH` led by a
 folder holding a `claude` and a `codex` stub that drain their input, print a fixed title and
@@ -73,8 +74,7 @@ place, never by removing it.
   raises no request. The daemon around it is the real server entry: on 9 November 2026 two
   boots (11:18:58 and 11:19:54) let it call the real Claude CLI once each to name the
   seeded chat, which the guard above now stops; the daemon also polls the machine's usage
-  unless `--test-no-activate` (and, once lane C's fix is in, `--test-no-machine-usage`) says
-  not to. Until that fix is on `mobile`, boots that start a session are on hold, and from
+  unless `--test-no-activate` with `--test-no-machine-usage` says not to. Until that fix is on `mobile`, boots that start a session are on hold, and from
   then on every boot first shows the title opt-out, the no-activate flags and the post-login
   recorder interlock pass.
 - The relay and the server are this checkout's own entries, run under the repository's Bun.
