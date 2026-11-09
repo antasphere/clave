@@ -21,6 +21,9 @@ import {
   UPGRADE_NOW_WARNING
 } from '../../lib/server-connection-text'
 import { reportFleetError, useFleetStore } from '../../store/fleet-store'
+import { useRoutinesStore } from '../../store/routines-store'
+import { whenLabel } from '../../../../../plugins/routine-report/src/run-labels'
+import { describeCron } from '../../../../main/routines/cron'
 import { ServerCombineRow } from '../fleet/ServerCombineRow'
 import { useSessionStore, type SettingsSection as Section } from '../../store/session-store'
 import { useSettingsMachineStore } from '../../store/settings-machine-store'
@@ -398,6 +401,7 @@ function ServerRow({
         {error && <SettingsCallout tone="danger" inset role="alert" text={error} />}
         {connection.enabled && <ServerVersion id={connection.id} />}
         {connected && <ConnectedServerName id={connection.id} />}
+        {connected && <ServerRoutinesList id={connection.id} />}
         <ServerOverview
           key={`${connection.id}:${connected}`}
           id={connection.id}
@@ -406,6 +410,52 @@ function ServerRow({
         <ServerCombineRow id={connection.id} />
       </div>
     </div>
+  )
+}
+
+/** Everything a server runs, across all its workspaces (PRDCT-4244): the
+ *  routines of its own files and the ones created on it, each with its
+ *  workspace, its schedule and its next run. The question the workspace's
+ *  Routines popover does not answer: what is this machine doing? */
+function ServerRoutinesList({ id }: { id: string }): React.JSX.Element | null {
+  const listing = useRoutinesStore((s) => s.remote[id])
+  if (!listing) return null
+  const running = listing.routines.filter((v) => v.routine.runsHere !== false)
+  return (
+    <SettingsRow
+      label="Routines"
+      description={
+        running.length
+          ? `${running.length} routine${running.length === 1 ? '' : 's'} run on this server, across its workspaces.`
+          : 'No routine runs on this server.'
+      }
+    >
+      {running.length > 0 && (
+        <ul className="settings-list" data-testid="server-routines">
+          {running.map((v) => (
+            <li
+              key={v.routine.key}
+              className="settings-list-row"
+              data-routine={v.routine.name}
+              data-origin={v.routine.origin ?? 'file'}
+            >
+              <span className="settings-list-main">{v.routine.name}</span>
+              <span className="settings-list-meta">
+                {v.routine.workspaceName} ·{' '}
+                {v.routine.invalid
+                  ? 'cannot run'
+                  : v.routine.paused
+                    ? 'paused'
+                    : v.nextRunAt
+                      ? `next ${whenLabel(v.nextRunAt)}`
+                      : describeCron(v.routine.schedule)}
+                {(v.routine.origin ?? 'file') === 'created' ? ' · created here' : ''}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </SettingsRow>
   )
 }
 

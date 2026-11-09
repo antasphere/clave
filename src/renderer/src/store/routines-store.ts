@@ -7,7 +7,13 @@ import {
   type ServerPairings,
   type ServerVersionStatus
 } from '@clave/contract/fleet'
-import type { RoutineRun, RoutineView, RoutinesListing } from '@clave/contract/routines/model'
+import type {
+  RoutineCreateInput,
+  RoutinePatch,
+  RoutineRun,
+  RoutineView,
+  RoutinesListing
+} from '@clave/contract/routines/model'
 import { useFleetStore } from './fleet-store'
 import { usePairingStore } from './pairing-store'
 import { mergeRoutineSurfaces, type RoutineSurface } from '../components/routines/routine-servers'
@@ -43,6 +49,12 @@ interface RoutinesState {
     runId: string,
     mode: 'panel' | 'tab'
   ) => Promise<string | null>
+  // ── PRDCT-4242: the routines a machine keeps in its own store ──
+  /** A routine created on the surface's machine; throws the machine's refusal (the form shows it). */
+  create: (surface: RoutineTarget, input: RoutineCreateInput) => Promise<RoutineView>
+  update: (surface: RoutineTarget, key: string, patch: RoutinePatch) => Promise<RoutineView>
+  remove: (surface: RoutineTarget, key: string) => Promise<void>
+  pause: (surface: RoutineTarget, key: string, paused: boolean) => Promise<RoutineView | null>
 }
 
 /** What an act needs of a surface: the server it goes to. */
@@ -108,7 +120,30 @@ export const useRoutinesStore = create<RoutinesState>((set, get) => {
           : window.electronAPI.fleetRoutineDiscussion(surface.serverId, runId, mode)
       )
       return opened?.sessionId ?? null
-    }
+    },
+    // A create or an update is answered by a form: its refusal is the form's
+    // to show, so these throw rather than land on the panel's error line.
+    create: (surface, input) =>
+      isLocal(surface)
+        ? window.electronAPI.routinesCreate(input)
+        : window.electronAPI.fleetRoutineCreate(surface.serverId, input),
+    update: (surface, key, patch) =>
+      isLocal(surface)
+        ? window.electronAPI.routinesUpdate(key, patch)
+        : window.electronAPI.fleetRoutineUpdate(surface.serverId, key, patch),
+    remove: async (surface, key) => {
+      await act(() =>
+        isLocal(surface)
+          ? window.electronAPI.routinesDelete(key)
+          : window.electronAPI.fleetRoutineDelete(surface.serverId, key)
+      )
+    },
+    pause: (surface, key, paused) =>
+      act(() =>
+        isLocal(surface)
+          ? window.electronAPI.routinesPause(key, paused)
+          : window.electronAPI.fleetRoutinePause(surface.serverId, key, paused)
+      )
   }
 })
 

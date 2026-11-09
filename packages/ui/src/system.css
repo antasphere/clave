@@ -8269,6 +8269,182 @@ button.term-agent-model:focus-visible {
 .routine-head-sub::first-letter {
   text-transform: uppercase;
 }
+/* A short list inside a settings row (a server's routines, PRDCT-4244):
+   one line per entry, the name then its facts, no controls. */
+.settings-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--spacing) * 1);
+  min-width: 0;
+  max-width: calc(var(--spacing) * 90);
+  text-align: left;
+}
+.settings-list-row {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+.settings-list-main {
+  font-size: var(--control-text);
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.settings-list-meta {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* The Routines popover (PRDCT-4244): one list of the workspace's routines
+   in sections, one per machine; a row opens the routine's panel in place. */
+.routines-list {
+  width: calc(var(--spacing) * 90);
+  max-width: calc(var(--radix-popover-content-available-width, 100vw) - 12px);
+  max-height: calc(var(--radix-popover-content-available-height, 100vh) - 12px);
+  overflow-y: auto;
+  padding-bottom: calc(var(--spacing) * 2);
+  outline: none;
+}
+.routines-list-head {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--spacing) * 0.5);
+  padding: calc(var(--spacing) * 3.5) calc(var(--spacing) * 4) calc(var(--spacing) * 2);
+}
+.routines-section + .routines-section {
+  border-top: thin solid var(--border-subtle-color);
+  margin-top: calc(var(--spacing) * 1);
+  padding-top: calc(var(--spacing) * 1);
+}
+.routines-section-head {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--spacing) * 2);
+  min-height: var(--control-h-md);
+  padding: calc(var(--spacing) * 1) calc(var(--spacing) * 2) 0 calc(var(--spacing) * 4);
+}
+.routines-section-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  font-weight: var(--font-weight-medium);
+  letter-spacing: 0.02em;
+  color: var(--text-tertiary);
+}
+.routines-section-note {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--color-destructive);
+}
+.routines-section[data-kind='unknown'] .routines-section-note {
+  color: var(--color-status-waiting);
+}
+.routines-rows {
+  margin: 0;
+  padding: calc(var(--spacing) * 1) calc(var(--spacing) * 2);
+  list-style: none;
+}
+.routine-row {
+  min-height: calc(var(--control-h-md) + var(--spacing) * 3);
+  padding-block: calc(var(--spacing) * 1.5);
+}
+.routine-row-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: calc(var(--control-h-md) + var(--spacing) * 0.5);
+  height: calc(var(--control-h-md) + var(--spacing) * 0.5);
+  border-radius: var(--radius-lg);
+  background-color: var(--surface-100);
+}
+.routine-row-icon > svg {
+  width: calc(var(--spacing) * 4);
+  height: calc(var(--spacing) * 4);
+}
+.routine-row-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+.routine-row-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.routine-row-sub {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  font-weight: var(--font-weight-normal);
+  color: var(--text-tertiary);
+}
+.routine-row-sub::first-letter {
+  text-transform: uppercase;
+}
+.routine-row[data-state='invalid'] .routine-row-sub,
+.routine-row[data-state='unreachable'] .routine-row-sub {
+  color: var(--color-destructive);
+}
+.routines-empty {
+  padding: calc(var(--spacing) * 2) calc(var(--spacing) * 4) calc(var(--spacing) * 3);
+  font-size: var(--control-text-sm);
+  color: var(--text-tertiary);
+}
+/* The back chevron before the panel's mark, when the panel replaced the list. */
+.routine-back {
+  margin-left: calc(var(--spacing) * -1.5);
+}
+/* The form a section's “+” opens: the fields in a column, the acts at the foot. */
+.routine-form {
+  display: flex;
+  flex-direction: column;
+  width: calc(var(--spacing) * 100);
+  max-width: calc(var(--radix-popover-content-available-width, 100vw) - 12px);
+  max-height: calc(var(--radix-popover-content-available-height, 100vh) - 12px);
+}
+.routine-form-fields {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--spacing) * 3);
+  padding: calc(var(--spacing) * 1) calc(var(--spacing) * 4) calc(var(--spacing) * 3);
+  overflow-y: auto;
+}
+.routine-form-pair {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: calc(var(--spacing) * 3);
+}
+.routine-form-hint {
+  display: block;
+  margin-top: calc(var(--spacing) * 1);
+  font-size: 11px;
+  font-weight: var(--font-weight-normal);
+  color: var(--text-tertiary);
+}
+.routine-form-hint::first-letter {
+  text-transform: uppercase;
+}
+.routine-form-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: calc(var(--spacing) * 2);
+  padding: calc(var(--spacing) * 2.5) calc(var(--spacing) * 4) calc(var(--spacing) * 3.5);
+  border-top: thin solid var(--border-subtle-color);
+}
 /* One row: the tabs on the left, Run now and the small menu on the right. */
 .routine-nav {
   display: flex;
