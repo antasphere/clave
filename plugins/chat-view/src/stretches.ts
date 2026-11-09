@@ -123,7 +123,7 @@ export function plainNote(text: string, first = false): string {
       .replace(/(\*\*|__)(.+?)\1/g, '$2')
       // Emphasis opens at a word's start and closes at its end: `2*3*4` is
       // arithmetic and keeps its stars.
-      .replace(/(^|\s)[*_](\S(?:[^*_]*?\S)?)[*_](?=[\s.,;:!?)]|$)/g, '$1$2')
+      .replace(/(^|\s)([*_])(\S(?:[^*_]*?\S)?)\2(?=[\s.,;:!?)]|$)/g, '$1$3')
       .replace(/`([^`]*)`/g, '$1')
       .trim()
     if (!line) continue

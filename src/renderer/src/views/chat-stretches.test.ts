@@ -16,6 +16,11 @@ import {
   type Row,
   type WorkStretch
 } from '../../../../plugins/chat-view/src/stretches'
+import {
+  cardHolding,
+  occurrenceCards,
+  onScreenIndex
+} from '../../../../plugins/chat-view/src/search'
 
 /* The agent's working notes fold into one card once the turn is over
    (PRDCT-4212), decided on the turn's SHAPE and never on its words. Each
@@ -480,6 +485,8 @@ describe('the card’s facts', () => {
     expect(plainNote('See [the docs](https://x.y) and _this_, then 2*3*4 = 24.')).toBe(
       'See the docs and this, then 2*3*4 = 24.'
     )
+    // The same mark opens and closes an emphasis: a mismatched pair is left.
+    expect(plainNote('a *foo_ b')).toBe('a *foo_ b')
   })
 
   it('spans from the first note to the last tool', () => {
@@ -501,5 +508,43 @@ describe('the card’s facts', () => {
 
   it('folds nothing with no entries', () => {
     expect(foldStretches([], true)).toEqual([])
+  })
+})
+
+describe('Find over a row that holds cards', () => {
+  it('says which card holds each occurrence, the reader’s own words outside every card', () => {
+    const rows = fold([
+      user('zebra: go'),
+      ...step('zebra alpha.', 'a'),
+      ...step('Two.', 'b'),
+      ...step('Three.', 'c'),
+      question('q1', 'a'),
+      ...step('zebra beta.', 'd'),
+      ...step('Five.', 'e'),
+      ...step('Six.', 'f'),
+      assistant('zebra gamma and zebra delta.')
+    ])
+    // The Terminal view's row: the whole turn.
+    const row = { key: 'turn', rows: rows.map((block, i) => ({ key: String(i), block })) }
+    expect(occurrenceCards(row, 'zebra')).toEqual([null, 0, 1, null, null])
+    expect(cardHolding(row, 'zebra', 2)).toBe(1)
+    expect(cardHolding(row, 'zebra', 4)).toBeNull()
+    expect(cardHolding(row, 'zebra', 9)).toBeNull()
+    // A chat view row: one block.
+    expect(occurrenceCards({ key: 'x', block: rows[1] }, 'zebra')).toEqual([0])
+  })
+
+  it('places an occurrence among the words on screen, skipping cards never opened', () => {
+    const where = [null, 0, 1, null, null]
+    const closed = (): boolean => false
+    const open = (): boolean => true
+    // Both cards closed and never opened: the answer's words are the first on screen.
+    expect(onScreenIndex(where, 3, closed)).toBe(1)
+    expect(onScreenIndex(where, 4, closed)).toBe(2)
+    // Card 1 open, card 0 never opened: its one occurrence is skipped.
+    expect(onScreenIndex(where, 3, (card) => card === 1)).toBe(2)
+    // Everything on screen: the data order is the screen order.
+    expect(onScreenIndex(where, 4, open)).toBe(4)
+    expect(onScreenIndex(where, 0, closed)).toBe(0)
   })
 })

@@ -290,7 +290,7 @@ export async function run(t) {
         ...note('Going with the first option.'),
         ...note('Checks are green.'),
         ...note('Writing the summary.'),
-        { type: 'assistant_text', delta: 'Done with the other one.', final: true },
+        { type: 'assistant_text', delta: 'Done with the other one, summary written.', final: true },
         idle
       ])
       await until(async () => ((await cards.count()) === 3 ? true : null))
@@ -326,6 +326,65 @@ export async function run(t) {
         }
       )
 
+      // 5c. Find over a whole turn: a word in the answer and in a card never
+      // opened. The newest match is the answer's, marked without opening
+      // anything; the older one opens its card and is marked inside it. (In
+      // the Terminal view the turn is one row, where the card's words sit
+      // between the message's and the answer's.)
+      await view.locator('textarea').click()
+      await win.keyboard.press('Meta+f')
+      const field2 = win.locator('[data-pane-search] input')
+      await field2.waitFor()
+      await until(async () =>
+        (await field2.evaluate((el) => document.activeElement === el)) ? true : null
+      )
+      await field2.type('summary')
+      const placeOf = () =>
+        win.evaluate(() => {
+          const range = [...(CSS.highlights.get('pane-search-current') ?? [])][0]
+          const el = range?.startContainer?.parentElement ?? null
+          return {
+            count: document.querySelector('.pane-search-count')?.textContent ?? '',
+            words: range?.toString() ?? null,
+            inCard: el ? !!el.closest('.work-stretch') : null,
+            opened: [...document.querySelectorAll('.work-stretch details.stretch-card')].map(
+              (d) => d.open
+            )
+          }
+        })
+      const newestHit = await until(async () => {
+        const place = await placeOf()
+        return place.count === '1 of 2' && place.words ? place : null
+      }, 10000)
+      t.check(
+        `${mode}: the newest match, in the answer, is marked without opening the card before it`,
+        !!newestHit && newestHit.words === 'summary' && newestHit.inCard === false,
+        newestHit
+      )
+      await field2.press('Shift+Enter')
+      const older = await until(async () => {
+        const place = await placeOf()
+        return place.count === '2 of 2' && place.words && place.inCard ? place : null
+      }, 10000)
+      t.check(
+        `${mode}: the older match opens the card that holds it and is marked inside`,
+        !!older && older.words === 'summary' && older.inCard === true,
+        older
+      )
+      await field2.press('Escape')
+      // Close the card Find opened (the rows are virtualised, so find it by
+      // its state rather than its place), then back to the end.
+      const openedCard = view.locator('.work-stretch details.stretch-card[open] > .stretch-summary')
+      if (await openedCard.count()) await openedCard.first().click()
+      await until(async () =>
+        (await view.locator('.work-stretch details.stretch-card[open]').count()) === 0 ? true : null
+      )
+      await win.waitForTimeout(400)
+      await view.locator('.chat-scroll').evaluate((el) => {
+        el.scrollTop = el.scrollHeight
+      })
+      await win.waitForTimeout(400)
+
       // 5b. A message that arrives while the agent works ends nothing.
       await inject(fixture, record.id, [
         working,
@@ -336,9 +395,12 @@ export async function run(t) {
         ...note('Changing it.'),
         { type: 'user_message', text: 'and also rename the flag' }
       ])
+      await view.locator('.chat-scroll').evaluate((el) => {
+        el.scrollTop = el.scrollHeight
+      })
       await view
         .locator('.chat-turn[data-role="user"]', { hasText: 'and also rename the flag' })
-        .waitFor()
+        .waitFor({ state: 'attached' })
       await inject(fixture, record.id, [
         ...note('Noted, renaming too.'),
         ...note('Running the checks.'),

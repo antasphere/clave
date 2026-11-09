@@ -74,6 +74,10 @@ describe('chat motion', () => {
     // two cards read as one family.
     expect(block('.stretch-step')).toMatch(/grid-template-columns:[^;]*--stretch-rail/)
   })
+  it('a note that needs the reader is whole on the card’s face, never clamped', () => {
+    expect(block('.stretch-flag-words')).not.toMatch(/line-clamp|max-height|max-block-size/)
+    expect(block('.stretch-flag-words')).toMatch(/white-space:\s*pre-line/)
+  })
   it('a tool row reveals what it opens to, on every opening', () => {
     expect(chat).toMatch(/details\[open\] > \.chat-tool-panel \{[^}]*animation:\s*chat-reveal/)
   })
