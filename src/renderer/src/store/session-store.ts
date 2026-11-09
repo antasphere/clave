@@ -404,6 +404,11 @@ interface SessionState {
           | 'codexAccountLabel'
           | 'launchProfileId'
           | 'model'
+          // A restart onto another provider (PRDCT-4300) changes these too.
+          | 'claudeMode'
+          | 'codexMode'
+          | 'claudeAgentsMode'
+          | 'continuedFrom'
         >
       >
   ) => void

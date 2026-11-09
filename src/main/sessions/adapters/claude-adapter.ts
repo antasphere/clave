@@ -1420,6 +1420,28 @@ export class ClaudeAdapter implements SessionAdapter {
     if (!models.success) throw new Error('Claude did not list its models')
     return claudeModelOptions(models.data)
   }
+  /** The models the CLI offers with no session of it open (PRDCT-4300): the
+   *  menu's other-provider list. A short-lived process on the machine login
+   *  answers one initialize (no turn, no token) and is killed; the list is
+   *  the same whatever account a session would run on. */
+  async listModels(cwd: string): Promise<ModelOption[]> {
+    const handle = await this.spawn({
+      id: randomUUID(),
+      provider: this.provider,
+      adapterId: this.id,
+      transport: 'events',
+      cwd,
+      windowKey: '',
+      state: 'idle',
+      createdAt: Date.now(),
+      title: ''
+    })
+    try {
+      return await this.models(handle)
+    } finally {
+      await this.kill(handle)
+    }
+  }
   /** Which model the CLI's default is, asked of the session's own process at
    *  ready and announced as the session's model (PRDCT-4256): the fallback
    *  for a CLI whose settings answer names no model, since the account's

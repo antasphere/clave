@@ -1090,6 +1090,9 @@ export function FolioView({ session, onState, visible = true }: ChatViewProps): 
               model={conversation.model}
               disabled={closed}
               onSelect={(id) => void write({ type: 'set_model', model: id }).catch(report)}
+              provider={session.provider}
+              adapterId={session.adapterId}
+              cwd={session.cwd}
             />
             <EffortMenu
               sessionId={session.id}

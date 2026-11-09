@@ -39,6 +39,9 @@ import {
 import { PermissionModeMenu } from './PermissionModeMenu'
 import { ModelMenu } from './ModelMenu'
 import { EffortMenu } from './EffortMenu'
+import { ContinuedFromCard, ProviderSwitch } from './ProviderSwitch'
+import { noteAgentName, useProviderSwitch } from './use-provider-switch'
+import { providerLabel } from './models'
 import { SenderChip } from './Delivery'
 import { DeliveryStack } from './DeliveryStack'
 import { parseDelivery } from '../../../src/shared/exchange-provenance'
@@ -701,6 +704,21 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
       dispatch({ event: { type: 'error', message: String(error), fatal: false } }),
     []
   )
+  // A move of the tab to another provider (PRDCT-4300): the popover and the
+  // move, driven from the chip's menu.
+  const providerSwitch = useProviderSwitch({
+    session,
+    source: () => exportSource.current,
+    meta: () => ({
+      title: useViewSessionStore.getState().sessions.find((s) => s.id === session.id)?.name ?? '',
+      cwd: session.cwd,
+      model: exportSource.current.conversation.model
+    }),
+    onError: report
+  })
+  const continuedFrom = useViewSessionStore(
+    (s) => s.sessions.find((x) => x.id === session.id)?.continuedFrom
+  )
   // /resume, /mcp and /plugin are the local host's. Remote commands stay
   // with their owning agent; the native panels use this desktop's APIs.
   const hostPanels = session.provider === 'claude' && !isRemoteKey(session.id)
@@ -1114,6 +1132,12 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
                 text="Ask in plain words, or drop a file to show what you mean. The answer is written here as it comes."
               />
             )}
+            {continuedFrom && pastRead && (
+              <ContinuedFromCard
+                from={providerLabel(continuedFrom.provider)}
+                road={continuedFrom.road}
+              />
+            )}
             {/* Mounted from the start, empty or not: what it gains is told apart
                 from what it opened on by the rows it rendered before. */}
             <ToolDisclosure.Provider value={disclosure}>
@@ -1219,6 +1243,23 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
             sessionId={session.id}
             onClose={() => {
               setPanel(null)
+              textarea.current?.focus()
+            }}
+          />
+        )}
+        {providerSwitch.state && (
+          <ProviderSwitch
+            from={providerLabel(session.provider)}
+            target={providerSwitch.state.target}
+            plan={providerSwitch.state.plan}
+            landing={providerSwitch.state.landing}
+            noteOffered={providerSwitch.state.noteOffered}
+            noteAgent={noteAgentName(conversation.model, session.provider)}
+            busy={providerSwitch.state.busy}
+            error={providerSwitch.state.error}
+            onContinue={(options) => void providerSwitch.confirm(options)}
+            onClose={() => {
+              providerSwitch.cancel()
               textarea.current?.focus()
             }}
           />
@@ -1409,6 +1450,10 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
               model={conversation.model}
               disabled={closed}
               onSelect={(id) => void write({ type: 'set_model', model: id }).catch(report)}
+              provider={session.provider}
+              adapterId={session.adapterId}
+              cwd={session.cwd}
+              onSwitchProvider={isRemoteKey(session.id) ? undefined : providerSwitch.begin}
             />
             <EffortMenu
               sessionId={session.id}

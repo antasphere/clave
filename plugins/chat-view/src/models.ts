@@ -69,3 +69,18 @@ export const effortChoice = (
     efforts.find((e) => e.id === effort) ?? efforts.find((e) => e.id === option.defaultEffort)
   return { efforts, current }
 }
+/** How a provider reads on the chip and in the menu: the agent's name. */
+export const PROVIDER_LABELS: Record<string, string> = {
+  claude: 'Claude',
+  codex: 'Codex',
+  pi: 'Pi',
+  echo: 'Echo'
+}
+export const providerLabel = (provider: string): string => PROVIDER_LABELS[provider] ?? provider
+/** The chip reads the provider, then the model (PRDCT-4300): "Claude · Fable
+ *  5.1", "Codex · GPT-5.5". The model half is `modelChipLabel`'s. */
+export const providerChipLabel = (
+  provider: string,
+  model: string | null,
+  options: ModelOption[] | null
+): string => `${providerLabel(provider)} · ${modelChipLabel(model, options)}`

@@ -28,7 +28,7 @@ import {
   switchTargets,
   type PoolAccount
 } from './account-pool'
-import type { CodexAccount } from '../../../preload/index.d'
+import type { CodexAccount, RestartOverridesInput } from '../../../preload/index.d'
 import { abandonOwnRestart, beginOwnRestart, ownAnswerApplies } from './restart-ownership'
 
 /**
@@ -236,6 +236,31 @@ export interface SwitchResult {
   error?: string
 }
 
+/** The part of a restart's patch the served `session.restarted` push does
+ *  not carry: the provider switch's fields (PRDCT-4300). Null when the patch
+ *  holds none. */
+function providerPatchOf(
+  patch: Record<string, unknown> | undefined
+): Partial<
+  Pick<
+    Session,
+    'claudeMode' | 'codexMode' | 'claudeAgentsMode' | 'launchProfileId' | 'model' | 'continuedFrom'
+  >
+> | null {
+  if (!patch) return null
+  const keys = [
+    'claudeMode',
+    'codexMode',
+    'claudeAgentsMode',
+    'launchProfileId',
+    'model',
+    'continuedFrom'
+  ] as const
+  const rest: Record<string, unknown> = {}
+  for (const key of keys) if (key in patch) rest[key] = patch[key]
+  return Object.keys(rest).length ? (rest as ReturnType<typeof providerPatchOf>) : null
+}
+
 /**
  * Move a session to another account: main stops its process, spawns the
  * same thing again under the same id on the new account with the
@@ -280,7 +305,7 @@ export async function switchSessionAccount(
 export async function restartSessionProcess(
   sessionId: string,
   options: {
-    overrides?: Record<string, string | undefined>
+    overrides?: RestartOverridesInput
     resendRejected?: boolean
     /** A Resume, not a move: the host refuses it while the session runs. */
     onlyIfStopped?: boolean
@@ -292,6 +317,13 @@ export async function restartSessionProcess(
         | 'claudeConfigDir'
         | 'codexAccountId'
         | 'codexAccountLabel'
+        // A move to another provider (PRDCT-4300, `switch-provider.ts`).
+        | 'claudeMode'
+        | 'codexMode'
+        | 'claudeAgentsMode'
+        | 'launchProfileId'
+        | 'model'
+        | 'continuedFrom'
       >
     >
   } = {}
@@ -323,9 +355,17 @@ export async function restartSessionProcess(
     useSessionStore.getState().setSessionRestarting(sessionId, false)
     return { ok: false, resumed: false, error: result.error }
   }
-  // The push applied it already: the answer only reports.
-  if (!ownAnswerApplies(sessionId, requestId, result.requestId))
+  // The push applied it already: the answer only reports. The push knows
+  // the account alone; what a provider switch changes besides (the family,
+  // the model, the card's note) is written here without remounting again.
+  if (!ownAnswerApplies(sessionId, requestId, result.requestId)) {
+    const rest = providerPatchOf(options.patch)
+    if (rest)
+      useSessionStore.setState((state) => ({
+        sessions: state.sessions.map((s) => (s.id === sessionId ? { ...s, ...rest } : s))
+      }))
     return { ok: true, resumed: result.resumed }
+  }
   const current = useSessionStore.getState()
   current.applySessionRestart(sessionId, {
     claudeSessionId: result.claudeSessionId,

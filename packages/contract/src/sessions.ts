@@ -653,6 +653,16 @@ export const SessionRecordView = Schema.Struct({
 })
 export type SessionRecordView = typeof SessionRecordView.Type
 
+/** Where a restarted tab's conversation came from (PRDCT-4300): the provider
+ *  it ran on before the tab changed provider, and how it crossed, converted
+ *  into the new provider's own storage or carried as a handoff message. The
+ *  first card of the tab reads it; the record keeps it. */
+export const ContinuedFrom = Schema.Struct({
+  provider: Schema.String,
+  road: Schema.Literal('converted', 'handoff')
+})
+export type ContinuedFrom = typeof ContinuedFrom.Type
+
 /**
  * A session's persisted record: what survives a quit and what a window brings
  * a tab back from. The shell's `SessionRecord` (`src/main/sessions/adapters/
@@ -707,6 +717,8 @@ export const SessionRecord = Schema.Struct({
   /** The reasoning effort the chat was last running at, the same way. */
   effort: Schema.optional(Schema.String),
   work: Schema.optional(WorkAssignment),
+  /** The conversation came from another provider (PRDCT-4300). */
+  continuedFrom: Schema.optional(ContinuedFrom),
   live: Schema.optional(Schema.Boolean),
   running: Schema.optional(Schema.Boolean)
 })
@@ -866,6 +878,19 @@ export const AccountOverride = Schema.Struct({
   codexAccountLabel: Schema.optional(Schema.String)
 })
 export type AccountOverride = typeof AccountOverride.Type
+/** A restart that changes the tab's provider (PRDCT-4300): the adapter it
+ *  comes back on, the model, the conversation to resume there when one was
+ *  written in that provider's storage (a converted Codex thread), else the
+ *  first message to send on the fresh conversation (the handoff), and the
+ *  note the first card reads. Absent, the restart keeps its provider. */
+export const ProviderOverride = Schema.Struct({
+  adapterId: Schema.NonEmptyString,
+  model: Schema.optional(Schema.String),
+  resume: Schema.optional(Schema.String),
+  firstMessage: Schema.optional(Schema.String),
+  continuedFrom: Schema.optional(ContinuedFrom)
+})
+export type ProviderOverride = typeof ProviderOverride.Type
 /** Correlates one caller's answer and event; never a spawn override. */
 export const RestartRequestId = Schema.String.pipe(
   Schema.minLength(1),
@@ -892,7 +917,9 @@ export const RestartSession = Command.define('RestartSession', {
     resendRejected: Schema.optional(Schema.Boolean),
     /** A Resume, not a move: refused when the session is running, so a
      *  client reading a stale view never cuts a live turn (PRDCT-4193). */
-    onlyIfStopped: Schema.optional(Schema.Boolean)
+    onlyIfStopped: Schema.optional(Schema.Boolean),
+    /** The tab comes back on another provider (PRDCT-4300). */
+    provider: Schema.optional(ProviderOverride)
   }),
   success: RestartedSession,
   failure: Schema.Union(SessionNotFound, CapabilityUnavailable, SessionStartFailed)

@@ -109,6 +109,41 @@ export interface HistorySearchHit {
   excerpt: string
 }
 
+/** A chat provider a tab can be moved to (PRDCT-4300). */
+export interface ProviderChoice {
+  adapterId: string
+  /** The provider's own name (`claude`, `codex`, a plugin's id). */
+  provider: string
+  /** How the person reads it: Claude, Codex. */
+  label: string
+}
+/** The road a provider switch would take, said before Continue (PRDCT-4300). */
+export type ProviderSwitchPlan = {
+  from: { adapterId: string; provider: string }
+  to: { adapterId: string; provider: string }
+} & ({ road: 'convert'; codexVersion: string } | { road: 'handoff'; reason: string })
+/** What a restart may change about the tab: its account, the message the
+ *  limit rejected sent again, and (PRDCT-4300) the provider it comes back
+ *  on with what the conversation does there. */
+export interface RestartOverridesInput {
+  claudeProfileId?: string
+  claudeProfileLabel?: string
+  codexAccountId?: string
+  codexAccountLabel?: string
+  /** Send the message the limit rejected again on the new account. */
+  resendRejected?: boolean
+  /** A Resume, not a move: refused while the session runs (PRDCT-4193). */
+  onlyIfStopped?: boolean
+  /** The adapter the tab comes back on; absent keeps its provider. */
+  adapterId?: string
+  model?: string
+  /** The conversation to resume in the new provider's storage (a converted thread). */
+  resume?: string
+  /** The first message of the fresh conversation when nothing is resumed (the handoff). */
+  firstMessage?: string
+  continuedFrom?: { provider: string; road: 'converted' | 'handoff' }
+}
+
 export interface HistoryListEntry {
   source: 'ledger' | 'transcript'
   /** Which CLI's conversation this is; resume exists for claude only. */
@@ -461,6 +496,10 @@ export interface SessionRecord {
   /** Which wave or lane the tab works on, its role and its standing
    *  (PRDCT-4123). Absent = an ordinary tab. */
   work?: WorkAssignment
+  /** The conversation came from another provider (PRDCT-4300): which, and
+   *  whether it was converted into this provider's storage or carried as a
+   *  handoff message. */
+  continuedFrom?: { provider: string; road: 'converted' | 'handoff' }
   /** True → reattach to a still-running tmux session. False → the tmux server
    *  died (reboot) but the sidecar survived; re-spawn fresh (Claude resumes). */
   live?: boolean
@@ -706,6 +745,31 @@ export interface ElectronAPI extends FleetDesktopAPI {
    *  it; returns the updated record. */
   sessionsSetView: (id: string, viewId: string | null) => Promise<Session>
   sessionsModels: (id: string) => Promise<ModelOption[]>
+  // ── PRDCT-4300: provider then model, and the conversation moves ──
+  /** The chat providers this Mac can run a tab on: the built-in adapters
+   *  present in this build (Claude, Codex, the echo fixture when enabled). */
+  adaptersList: () => Promise<ProviderChoice[]>
+  /** A provider's models with no session of it open: asked of the CLI once
+   *  per boot (Claude's initialize on a short-lived process, Codex's
+   *  model/list on its app-server) and cached. */
+  adaptersModels: (adapterId: string, cwd: string) => Promise<ModelOption[]>
+  /** Which road a move of this tab to `adapterId` would take, before any
+   *  byte is written: convert through the session bridge, or a handoff
+   *  message, with the reason in the person's words. */
+  providerSwitchPlan: (sessionId: string, adapterId: string) => Promise<ProviderSwitchPlan>
+  /** Convert this tab's conversation into a Codex thread in the account's
+   *  home and read it back through the real Codex; refused with a reason
+   *  when the thread did not come back whole. */
+  providerSwitchConvert: (
+    sessionId: string,
+    target: { codexAccountId?: string; model?: string }
+  ) => Promise<{ ok: true; threadId: string } | { ok: false; reason: string }>
+  /** Write the full conversation beside the work (`<userData>/handoffs/<id>.md`)
+   *  and read the worktree's `git diff --stat`, for the handoff message. */
+  providerSwitchHandoff: (
+    sessionId: string,
+    tape: string
+  ) => Promise<{ path: string; diffStat: string | null }>
   sessionsCommands: (id: string) => Promise<CommandOption[]>
   /** One control request to the session's provider, from the closed set the
    *  native panels send (the MCP servers, the plugins); answers the provider's
@@ -1210,16 +1274,7 @@ export interface ElectronAPI extends FleetDesktopAPI {
    *  `resumed` false means it started fresh (nothing found to resume). */
   restartSession: (
     id: string,
-    overrides: {
-      claudeProfileId?: string
-      claudeProfileLabel?: string
-      codexAccountId?: string
-      codexAccountLabel?: string
-      /** Send the message the limit rejected again on the new account. */
-      resendRejected?: boolean
-      /** A Resume, not a move: refused while the session runs (PRDCT-4193). */
-      onlyIfStopped?: boolean
-    },
+    overrides: RestartOverridesInput,
     requestId?: string
   ) => Promise<(SessionInfo & { resumed: boolean; requestId?: string }) | { error: string }>
   getPiUsage: (range: PiUsageTotals['range']) => Promise<PiUsageTotals>

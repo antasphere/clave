@@ -44,6 +44,8 @@ function restartRuntime(
   }
 }
 import { sanitizeWork, type WorkAssignment } from '@clave/contract/work-rules'
+import type { ContinuedFrom } from '@clave/contract/sessions'
+import { providerSwitchOptions } from './sessions/provider-switch'
 import { codexRoot, findCodexThreadForSession, hasCodexRollout } from './session-history/codex'
 import { ptyAdapter } from './sessions/adapters/pty-adapter'
 import { ClaudeAdapter, findTranscript } from './sessions/adapters/claude-adapter'
@@ -138,6 +140,14 @@ export interface RestartOverrides {
   resendRejected?: boolean
   /** A Resume: refused while the session runs (PRDCT-4193). */
   onlyIfStopped?: boolean
+  /** The tab comes back on another provider (PRDCT-4300): the adapter, the
+   *  model, the thread to resume there or the first message to send, and
+   *  the note the first card reads (`sessions/provider-switch.ts`). */
+  adapterId?: string
+  model?: string
+  resume?: string
+  firstMessage?: string
+  continuedFrom?: ContinuedFrom
 }
 
 class PtyManager {
@@ -322,6 +332,9 @@ class PtyManager {
             resume,
             model: options?.model,
             effort,
+            // The echo fixture takes its launch prompt here; Claude's and
+            // Codex's come through their configure above.
+            ...(echo && options?.initialPrompt ? { initialPrompt: options.initialPrompt } : {}),
             permissionMode: options?.dangerousMode
               ? adapter.provider === 'codex'
                 ? 'never'
@@ -435,7 +448,12 @@ class PtyManager {
       ...(options?.permissionMode !== undefined ? { permissionMode: options.permissionMode } : {}),
       ...(options?.effort !== undefined ? { effort: options.effort } : {}),
       // Which work it does (PRDCT-4123): a restart's, else the record's.
-      work: sanitizeWork(options?.work) ?? sanitizeWork(previous?.work)
+      work: sanitizeWork(options?.work) ?? sanitizeWork(previous?.work),
+      // Where the conversation came from (PRDCT-4300): a restart's, else the
+      // record's, so a converted tab keeps its card across an account switch.
+      ...((options?.continuedFrom ?? previous?.continuedFrom)
+        ? { continuedFrom: options?.continuedFrom ?? previous?.continuedFrom }
+        : {})
     })
   }
 
@@ -571,10 +589,24 @@ class PtyManager {
     if (!spawn) return null
     const conversationId = this.conversationIdOf(id)
     const previous = spawn.options ?? {}
-    // `onlyIfStopped` is the lifecycle's precondition, never a spawn option.
-    const { resendRejected, onlyIfStopped: _onlyIfStopped, ...requested } = overrides
+    // `onlyIfStopped` is the lifecycle's precondition, never a spawn option;
+    // the provider fields are the switch's (below), never spread as strings.
+    const {
+      resendRejected,
+      onlyIfStopped: _onlyIfStopped,
+      adapterId,
+      model,
+      resume,
+      firstMessage,
+      continuedFrom: continued,
+      ...requested
+    } = overrides
     void _onlyIfStopped
     const account = accountOverrides(requested)
+    const record = ptyBackend.getSessionRecord(id)
+    // A move to another provider (PRDCT-4300): the same tab, the other
+    // adapter, the conversation converted there or carried as a message.
+    const switching = adapterId !== undefined && adapterId !== record?.adapterId
     const options: PtySpawnOptions = {
       ...previous,
       adoptSessionId: id,
@@ -605,7 +637,24 @@ class PtyManager {
       // (PRDCT-4191), from the record the provider's words were written to,
       // for the same reason: the spawn's options are the launch's.
       ...restartRuntime(ptyBackend.getSessionRecord(id), previous),
+      // Where the conversation came from, kept across every later restart
+      // (an account switch of a converted tab): the record's, read before
+      // the kill takes it.
+      ...(record?.continuedFrom ? { continuedFrom: record.continuedFrom } : {}),
       ...account
+    }
+    if (switching) {
+      return {
+        cwd: spawn.cwd,
+        options: providerSwitchOptions(options, {
+          adapterId,
+          model,
+          resume,
+          firstMessage,
+          continuedFrom: continued
+        }),
+        resumed: resume !== undefined
+      }
     }
     return { cwd: spawn.cwd, options, resumed: conversationId !== null }
   }

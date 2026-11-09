@@ -37,8 +37,46 @@ function code(text: string): string {
  * approval as the question and the answer. Messages taken back before any
  * answer are left out, as the transcript leaves them out on screen.
  */
-export function transcriptMarkdown(entries: Entry[], meta: TranscriptMeta): string {
+export interface TranscriptOptions {
+  /** Write what the tools of the LAST stretch returned (the runs since the
+   *  reader's last message), each output cut to `outputChars`: what another
+   *  agent taking the conversation over needs to see, where a reader's copy
+   *  needs only what was done (PRDCT-4300). */
+  lastStretchOutputs?: boolean
+  outputChars?: number
+}
+
+/** A tool's output as text, cut to `limit` characters with the cut said. */
+function outputText(output: unknown, limit: number): string {
+  const text =
+    typeof output === 'string'
+      ? output
+      : Array.isArray(output)
+        ? output
+            .map((block) =>
+              block &&
+              typeof block === 'object' &&
+              typeof (block as { text?: unknown }).text === 'string'
+                ? (block as { text: string }).text
+                : JSON.stringify(block)
+            )
+            .join('\n')
+        : output === undefined || output === null
+          ? ''
+          : JSON.stringify(output)
+  return text.length > limit
+    ? `${text.slice(0, limit)}\n… (${text.length - limit} more characters)`
+    : text
+}
+
+export function transcriptMarkdown(
+  entries: Entry[],
+  meta: TranscriptMeta,
+  options: TranscriptOptions = {}
+): string {
   const out: string[] = []
+  const lastUser = entries.findLastIndex((e) => e.kind === 'user' && !e.withdrawn)
+  const outputChars = options.outputChars ?? 4000
   out.push(`# ${meta.title.trim() || 'Session'}`)
   const facts = [
     meta.agent,
@@ -68,7 +106,8 @@ export function transcriptMarkdown(entries: Entry[], meta: TranscriptMeta): stri
     out.push(`- ${text}`)
   }
 
-  for (const entry of visibleEntries(entries)) {
+  const shown = visibleEntries(entries)
+  for (const entry of shown) {
     switch (entry.kind) {
       case 'user': {
         turn('user', entry.at)
@@ -91,6 +130,18 @@ export function transcriptMarkdown(entries: Entry[], meta: TranscriptMeta): stri
         const { label, target } = describeToolHead(entry)
         const what = target ? `${label} ${code(target)}` : label
         item(entry.failed ? `${what} _(failed)_` : what)
+        if (
+          options.lastStretchOutputs &&
+          entry.complete &&
+          entries.indexOf(entry) > lastUser &&
+          entry.output !== undefined
+        ) {
+          const text = outputText(entry.output, outputChars).trim()
+          if (text) {
+            inList = false
+            out.push('', '  ```', ...text.split('\n').map((line) => `  ${line}`), '  ```')
+          }
+        }
         break
       }
       case 'permission': {
@@ -128,4 +179,99 @@ export function transcriptFileName(title: string, exportedAt: Date): string {
       .trim()
       .slice(0, 80) || 'Session'
   return `${base} ${day(exportedAt)}.md`
+}
+
+/** The files the agent edited or created in this conversation, from its own
+ *  edit calls, each once, in the order first touched. */
+export function editedFiles(entries: Entry[]): string[] {
+  const files: string[] = []
+  for (const entry of entries) {
+    if (entry.kind !== 'tool') continue
+    const { kind, target } = describeToolHead(entry)
+    if (kind === 'edit' && target && !files.includes(target)) files.push(target)
+  }
+  return files
+}
+
+export interface HandoffExtras {
+  /** The provider the conversation ran on, as the reader names it (Claude). */
+  from: string
+  /** What the previous agent wrote for its successor, when it was asked. */
+  note?: string | null
+  files: string[]
+  /** `git diff --stat` of the worktree, null when the folder is no checkout. */
+  diffStat: string | null
+  /** Where the whole conversation was written beside the work. */
+  tapePath: string
+  /** The room the message may take, in characters, sized to the target
+   *  model's window; the transcript is cut from its oldest turns to fit,
+   *  the first message kept, the cut said. */
+  budgetChars: number
+}
+
+/** The transcript cut to `budget` characters: the head (the title and the
+ *  first turn) kept, then the newest turns that fit, the gap said where
+ *  the oldest turns were. Whole when it fits. */
+export function cutTranscript(markdown: string, budget: number, tapePath: string): string {
+  if (markdown.length <= budget) return markdown
+  const turns = markdown.split(/\n(?=## )/)
+  if (turns.length < 3) {
+    // One speaker's long run: the newest end of it, the cut said first.
+    const note = `## … the start of the conversation left out for room; the full conversation is in ${tapePath}\n\n`
+    return note + markdown.slice(-Math.max(0, budget - note.length))
+  }
+  const head = turns.slice(0, 2).join('\n')
+  const rest = turns.slice(2)
+  const gap = (n: number): string =>
+    `\n## … ${n} earlier turn${n === 1 ? '' : 's'} left out for room; the full conversation is in ${tapePath}\n`
+  let kept: string[] = []
+  let size = head.length + gap(rest.length).length
+  for (let i = rest.length - 1; i >= 0; i--) {
+    const turn = rest[i]
+    if (size + turn.length + 1 > budget) break
+    kept.unshift(turn)
+    size += turn.length + 1
+  }
+  const left = rest.length - kept.length
+  if (left === 0) return markdown
+  // The head alone over budget: what fits of the newest turn, the rest in the file.
+  if (kept.length === 0 && head.length > budget)
+    kept = [rest[rest.length - 1].slice(-Math.max(0, budget - gap(left).length))]
+  return [head, gap(left).trimEnd(), ...kept].join('\n')
+}
+
+/**
+ * The first message of a conversation that moves to another provider as a
+ * handoff (PRDCT-4300): who it comes from and what it is, the previous
+ * agent's note when one was written, the conversation as Markdown with the
+ * last stretch's tool outputs, the files the agent touched, the worktree's
+ * diff summary, and where the full tape is. Sized to `budgetChars`.
+ */
+export function handoffMessage(
+  entries: Entry[],
+  meta: TranscriptMeta,
+  extras: HandoffExtras
+): string {
+  const header = `Continued from ${extras.from} · handoff`
+  const intro = `This conversation ran on ${extras.from}${meta.cwd ? ` in ${code(meta.cwd)}` : ''} and moves to you here. You are reading a transcript of it, not continuing it: what ${extras.from} had in its working memory, the approvals it was granted and the live results of its earlier tool runs are not yours. The files it changed are on disk. Read, then carry on from where it stopped.`
+  const fixed: string[] = [`# ${header}`, '', intro]
+  if (extras.note?.trim())
+    fixed.push('', `## Handoff note from ${extras.from}`, '', extras.note.trim())
+  const tail: string[] = []
+  if (extras.files.length)
+    tail.push(
+      '',
+      '## Files edited or created in this conversation',
+      '',
+      ...extras.files.map((f) => `- ${code(f)}`)
+    )
+  if (extras.diffStat)
+    tail.push('', '## Working tree (git diff --stat)', '', '```', extras.diffStat, '```')
+  tail.push('', `The full conversation, tool outputs included, is in ${code(extras.tapePath)}.`)
+  const transcript = transcriptMarkdown(entries, meta, { lastStretchOutputs: true })
+    .replace(/^# .*\n\n[^\n]*\n/, '')
+    .trim()
+  const room = extras.budgetChars - fixed.join('\n').length - tail.join('\n').length - 40
+  const body = cutTranscript(transcript, Math.max(room, 2000), extras.tapePath)
+  return [...fixed, '', '## The conversation so far', '', body, ...tail].join('\n').trimEnd() + '\n'
 }

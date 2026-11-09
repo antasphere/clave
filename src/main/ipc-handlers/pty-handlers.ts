@@ -33,6 +33,7 @@ import { getPreference } from './clave-file-handlers'
 import { installSessionWindows } from '../sessions/windows'
 import { electronSessionWindows } from '../sessions/electron-windows'
 import { getSessionHost } from '../sessions/host'
+import type { ContinuedFrom } from '@clave/contract/sessions'
 import { type AdoptionScope, selectAdoptableRecords } from '../../shared/adoption-scope'
 
 export function registerPtyHandlers(): void {
@@ -115,10 +116,23 @@ export function registerPtyHandlers(): void {
         codexAccountLabel?: unknown
         resendRejected?: unknown
         onlyIfStopped?: unknown
+        adapterId?: unknown
+        model?: unknown
+        resume?: unknown
+        firstMessage?: unknown
+        continuedFrom?: unknown
       }
     ): Promise<(SessionInfoResult & { resumed: boolean }) | { error: string }> => {
       if (typeof id !== 'string') return { error: 'No session' }
       const str = (v: unknown): string | undefined => (typeof v === 'string' ? v : undefined)
+      // The provider switch's note (PRDCT-4300), taken only in its own shape.
+      const continuedFrom = ((v: unknown): ContinuedFrom | undefined => {
+        if (!v || typeof v !== 'object') return undefined
+        const { provider, road } = v as { provider?: unknown; road?: unknown }
+        return typeof provider === 'string' && (road === 'converted' || road === 'handoff')
+          ? { provider, road }
+          : undefined
+      })(overrides?.continuedFrom)
       const win = BrowserWindow.fromWebContents(_event.sender)
       // The restart itself is the lifecycle's (wave 4): the server's
       // `RestartSession` and this handler make the same one.
@@ -131,7 +145,12 @@ export function registerPtyHandlers(): void {
             codexAccountId: str(overrides?.codexAccountId),
             codexAccountLabel: str(overrides?.codexAccountLabel),
             resendRejected: overrides?.resendRejected === true,
-            onlyIfStopped: overrides?.onlyIfStopped === true
+            onlyIfStopped: overrides?.onlyIfStopped === true,
+            adapterId: str(overrides?.adapterId),
+            model: str(overrides?.model),
+            resume: str(overrides?.resume),
+            firstMessage: str(overrides?.firstMessage),
+            continuedFrom
           },
           win ? windowRegistry.getKeyForWindow(win.id) : null
         )

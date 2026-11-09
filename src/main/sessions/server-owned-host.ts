@@ -11,6 +11,8 @@ import type { SessionManager } from './session-manager'
 import { pageHistory } from './history'
 import { serverHistory } from './server-history'
 import { runtimeChoices } from './runtime-choices'
+import { providerSwitchOptions } from './provider-switch'
+import type { PtySpawnOptions } from './adapters/pty-backend'
 
 export interface ServerOwnedHostOptions {
   host: SessionHostService
@@ -273,7 +275,7 @@ export function serverOwnedSessionHost(options: ServerOwnedHostOptions): {
     changeWork: (id, change) => base.changeWork(id, change),
     // Releasing a client window is not a server lifecycle operation.
     release: () => ({ released: [], refused: [] }),
-    restart: (id, account, resendRejected, onlyIfStopped) => {
+    restart: (id, account, resendRejected, onlyIfStopped, provider) => {
       if (closing.has(id)) return Promise.reject(new Error('This session is closing'))
       // A Resume already in flight is joined, whoever asks second (round 5).
       const existing = pending.get(id)
@@ -295,7 +297,8 @@ export function serverOwnedSessionHost(options: ServerOwnedHostOptions): {
           // made ready here, as the stopped-record road below does. Until
           // round 6 nothing started a resumed chat whose CLI had exited
           // until a pane happened to bind (PRDCT-4191).
-          const result = await base.restart(id, account, resendRejected)
+          // The provider switch (PRDCT-4300) rides through to the lifecycle.
+          const result = await base.restart(id, account, resendRejected, undefined, provider)
           bind(id)
           if (base.get(id)?.transport === 'events') options.ready(id)
           return result
@@ -303,10 +306,19 @@ export function serverOwnedSessionHost(options: ServerOwnedHostOptions): {
         const record = recordOf(id)
         if (!record) throw new Error(`Unknown session: ${id}`)
         const spawn = resumeOptions(record)
+        // A stopped record moved to another provider (PRDCT-4300): the same
+        // rebuild of the spawn the lifecycle's restart makes.
+        const resumed = { ...spawn, ...account, tmuxMode: false }
         const result = await base.start({
           cwd: record.cwd,
           windowKey: SERVER_LAYOUT_KEY,
-          options: { ...spawn, ...account, tmuxMode: false }
+          options: provider
+            ? // The wire's spawn options mirror the shell's (records-contract.test.ts).
+              (providerSwitchOptions(
+                resumed as unknown as PtySpawnOptions,
+                provider
+              ) as unknown as typeof resumed)
+            : resumed
         })
         base.keepOnRecord(id, {
           name: {

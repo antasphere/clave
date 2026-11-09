@@ -328,7 +328,28 @@ export async function run(t) {
     )
     assert.equal(await win.getByRole('alert').count(), 0, 'and raises no error card')
     t.check('a request answered elsewhere leaves blocked, is marked, and goes dead', true)
+    // The menu is two levels (PRDCT-4300): the providers this host can run,
+    // the tab's own first and selected with its model as the hint, then
+    // that provider's models.
     await win.getByRole('button', { name: 'Model', exact: true }).click()
+    const providers = win.locator('.chat-model-provider')
+    await providers.first().waitFor()
+    assert.equal(
+      await providers.first().getAttribute('data-adapter'),
+      'echo',
+      "the tab's own provider is the first row"
+    )
+    assert.equal(await providers.first().getAttribute('data-selected'), 'true')
+    assert.ok(
+      await until(async () => (await providers.count()) >= 3),
+      'the other providers this host runs are listed (Claude and Codex at least)'
+    )
+    const listed = await providers.evaluateAll((rows) =>
+      rows.map((row) => row.getAttribute('data-adapter'))
+    )
+    assert.ok(listed.includes('claude-chat') && listed.includes('codex-chat'), listed.join(','))
+    t.check('the chip opens on the providers, the tab’s own first and selected', true)
+    await providers.first().click()
     await win.getByRole('menuitem', { name: /Echo 2/ }).click()
     assert.ok(
       await until(() =>
@@ -337,7 +358,7 @@ export async function run(t) {
         )
       )
     )
-    await win.locator('.chat-model-trigger').filter({ hasText: 'Echo 2' }).waitFor()
+    await win.locator('.chat-model-trigger').filter({ hasText: 'Echo · Echo 2' }).waitFor()
     t.check('model picker lists the adapter models and switches through the write IPC', true)
     // The switch reaches the sidebar's own store, not only the pane (PRDCT-4256):
     // main pushes the provider's word on the model, and the foot judges the

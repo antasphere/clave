@@ -212,6 +212,8 @@ function sessionFromRecord(
     claudeConfigDir: s.configDir,
     codexAccountId: s.codexAccountId,
     codexAccountLabel: s.codexAccountLabel,
+    // Where the conversation came from (PRDCT-4300), for the first card.
+    continuedFrom: s.continuedFrom,
     sessionType: 'local',
     workspaceId,
     view: s.view ? { ...s.view } : undefined,
@@ -463,6 +465,8 @@ function sessionOfRecord(s: SessionRecord, workspaceId: string | undefined): Ses
     claudeConfigDir: s.configDir,
     codexAccountId: s.codexAccountId,
     codexAccountLabel: s.codexAccountLabel,
+    // Where the conversation came from (PRDCT-4300), for the first card.
+    continuedFrom: s.continuedFrom,
     sessionType: 'local',
     workspaceId,
     view: s.view ? { ...s.view } : undefined,

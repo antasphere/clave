@@ -37,6 +37,9 @@ import {
 import { PermissionModeMenu } from './PermissionModeMenu'
 import { ModelMenu } from './ModelMenu'
 import { EffortMenu } from './EffortMenu'
+import { ContinuedFromCard, ProviderSwitch } from './ProviderSwitch'
+import { noteAgentName, useProviderSwitch } from './use-provider-switch'
+import { providerLabel } from './models'
 import { DeliveryStack } from './DeliveryStack'
 import { claudeContextWindow } from '../../../src/shared/claude-models'
 import { nextPermissionMode } from './permission-mode'
@@ -526,6 +529,22 @@ export function TerminalView({
       dispatch({ event: { type: 'error', message: String(error), fatal: false } }),
     []
   )
+  // A move of the tab to another provider (PRDCT-4300), from the chip's menu.
+  const switchSource = useRef({ conversation, before })
+  switchSource.current = { conversation, before }
+  const providerSwitch = useProviderSwitch({
+    session,
+    source: () => switchSource.current,
+    meta: () => ({
+      title: useViewSessionStore.getState().sessions.find((s) => s.id === session.id)?.name ?? '',
+      cwd: session.cwd,
+      model: switchSource.current.conversation.model
+    }),
+    onError: report
+  })
+  const continuedFrom = useViewSessionStore(
+    (s) => s.sessions.find((x) => x.id === session.id)?.continuedFrom
+  )
   // /resume, /mcp and /plugin are the local host's. Remote commands stay
   // with their owning agent; the native panels use this desktop's APIs.
   const hostPanels = session.provider === 'claude' && !isRemoteKey(session.id)
@@ -966,6 +985,12 @@ export function TerminalView({
                 text="Ask in plain words. Every step the agent takes is laid out here, in order, as it works."
               />
             )}
+            {continuedFrom && pastRead && (
+              <ContinuedFromCard
+                from={providerLabel(continuedFrom.provider)}
+                road={continuedFrom.road}
+              />
+            )}
             {/* Mounted from the start, empty or not: what it gains is told apart
                 from what it opened on by the rows it rendered before. */}
             <ToolDisclosure.Provider value={disclosure}>
@@ -1044,6 +1069,23 @@ export function TerminalView({
           ))}
       </div>
       <div className="chat-composer-wrap term-composer-wrap">
+        {providerSwitch.state && (
+          <ProviderSwitch
+            from={providerLabel(session.provider)}
+            target={providerSwitch.state.target}
+            plan={providerSwitch.state.plan}
+            landing={providerSwitch.state.landing}
+            noteOffered={providerSwitch.state.noteOffered}
+            noteAgent={noteAgentName(conversation.model, session.provider)}
+            busy={providerSwitch.state.busy}
+            error={providerSwitch.state.error}
+            onContinue={(options) => void providerSwitch.confirm(options)}
+            onClose={() => {
+              providerSwitch.cancel()
+              textarea.current?.focus()
+            }}
+          />
+        )}
         {panel === 'resume' && (
           <ResumePicker
             cwd={session.cwd}
@@ -1240,6 +1282,10 @@ export function TerminalView({
               model={conversation.model}
               disabled={closed}
               onSelect={(id) => void write({ type: 'set_model', model: id }).catch(report)}
+              provider={session.provider}
+              adapterId={session.adapterId}
+              cwd={session.cwd}
+              onSwitchProvider={isRemoteKey(session.id) ? undefined : providerSwitch.begin}
             />
           </span>
           <span className="term-model term-chip-next" data-fit-drop="6">

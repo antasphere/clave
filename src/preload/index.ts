@@ -24,7 +24,13 @@ import type { GitBatchProgress } from '../shared/git-batch'
 import type { GitRangeDirection } from '../shared/git-range'
 import type { MergeMethod, PullRef, ReviewEvent } from '../shared/github-pull'
 import type { WindowIdentity, Workspace, WorkspaceState } from '../shared/workspace-types'
-import type { PluginSecretPrompt, SessionInfo } from './index.d'
+import type {
+  PluginSecretPrompt,
+  ProviderChoice,
+  ProviderSwitchPlan,
+  RestartOverridesInput,
+  SessionInfo
+} from './index.d'
 import { createMethodRouter, type Endpoint } from '@clave/client/router'
 import { dualListener, workspaceStatePick, type WorkspaceStateFold } from './dual-listener'
 import { createReviewRelay, createWatchLedger } from './workspace-files-relay'
@@ -1005,6 +1011,24 @@ const electronAPI = {
     ipc: (id) => ipcRenderer.invoke('sessions:models', id),
     server: async ({ api }, id) => [...(await api.sessions.models(id))] as ModelOption[]
   }),
+  // ── PRDCT-4300: provider then model, and the conversation moves. These
+  // run on this Mac over IPC whatever server holds the sessions: the CLIs,
+  // the transcripts and the account homes are here. ──
+  adaptersList: (): Promise<ProviderChoice[]> => ipcRenderer.invoke('adapters:list'),
+  adaptersModels: (adapterId: string, cwd: string): Promise<ModelOption[]> =>
+    ipcRenderer.invoke('adapters:models', adapterId, cwd),
+  providerSwitchPlan: (sessionId: string, adapterId: string): Promise<ProviderSwitchPlan> =>
+    ipcRenderer.invoke('provider-switch:plan', sessionId, adapterId),
+  providerSwitchConvert: (
+    sessionId: string,
+    target: { codexAccountId?: string; model?: string }
+  ): Promise<{ ok: true; threadId: string } | { ok: false; reason: string }> =>
+    ipcRenderer.invoke('provider-switch:convert', sessionId, target),
+  providerSwitchHandoff: (
+    sessionId: string,
+    tape: string
+  ): Promise<{ path: string; diffStat: string | null }> =>
+    ipcRenderer.invoke('provider-switch:handoff', sessionId, tape),
   sessionsCommands: viaServer<[string], CommandOption[]>({
     ipc: (id) => ipcRenderer.invoke('sessions:commands', id),
     server: async ({ api }, id) => [...(await api.sessions.commands(id))] as CommandOption[]
@@ -2270,39 +2294,57 @@ const electronAPI = {
   // The server publishes `session.restarted` for the move too; the window
   // applies one or the other, never both (`lib/restart-ownership.ts`).
   restartSession: viaServer<
-    [
-      string,
-      {
-        claudeProfileId?: string
-        claudeProfileLabel?: string
-        codexAccountId?: string
-        codexAccountLabel?: string
-        /** Send the message the limit rejected again on the new account. */
-        resendRejected?: boolean
-        /** A Resume: refused while the session runs (PRDCT-4193). */
-        onlyIfStopped?: boolean
-      },
-      string | undefined
-    ],
+    [string, RestartOverridesInput, string | undefined],
     (SessionInfo & { resumed: boolean; requestId?: string }) | { error: string }
   >({
     ipc: (id, overrides) => ipcRenderer.invoke('pty:restart', id, overrides),
-    server: ({ api }, id, { resendRejected, onlyIfStopped, ...account }, requestId) =>
-      (onlyIfStopped === true
+    server: (
+      { api },
+      id,
+      {
+        resendRejected,
+        onlyIfStopped,
+        adapterId,
+        model,
+        resume,
+        firstMessage,
+        continuedFrom,
+        ...account
+      },
+      requestId
+    ) =>
+      // The provider switch (PRDCT-4300) rides the wire as its own object,
+      // carrying a field only when it is set.
+      (adapterId !== undefined
         ? api.sessions.restart(
             id,
-            // The wire's account carries a field only when it is set.
             Object.fromEntries(Object.entries(account).filter(([, v]) => typeof v === 'string')),
             resendRejected === true,
             requestId,
-            true
+            onlyIfStopped === true,
+            {
+              adapterId,
+              ...(model !== undefined && { model }),
+              ...(resume !== undefined && { resume }),
+              ...(firstMessage !== undefined && { firstMessage }),
+              ...(continuedFrom !== undefined && { continuedFrom })
+            }
           )
-        : api.sessions.restart(
-            id,
-            Object.fromEntries(Object.entries(account).filter(([, v]) => typeof v === 'string')),
-            resendRejected === true,
-            requestId
-          )
+        : onlyIfStopped === true
+          ? api.sessions.restart(
+              id,
+              // The wire's account carries a field only when it is set.
+              Object.fromEntries(Object.entries(account).filter(([, v]) => typeof v === 'string')),
+              resendRejected === true,
+              requestId,
+              true
+            )
+          : api.sessions.restart(
+              id,
+              Object.fromEntries(Object.entries(account).filter(([, v]) => typeof v === 'string')),
+              resendRejected === true,
+              requestId
+            )
       ).then(loose<SessionInfo & { resumed: boolean; requestId?: string }>)
   }),
   getPiUsage: viaServer<['today' | '7d' | '30d' | 'all'], PiUsageTotals>({

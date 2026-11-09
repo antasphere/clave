@@ -403,6 +403,10 @@ export interface Session {
   accountProposalDismissed?: string | null
   /** The CLI itself reported the account's limit (a chat stream event). */
   limitReported?: boolean
+  /** The conversation came from another provider (PRDCT-4300): which, and
+   *  whether it was converted into this provider's storage or carried as a
+   *  handoff message. On the record, so the first card survives a relaunch. */
+  continuedFrom?: { provider: string; road: 'converted' | 'handoff' }
   /** True between the kill and the respawn of an account switch, so the
    *  exit is not announced as the session ending. */
   restarting?: boolean
