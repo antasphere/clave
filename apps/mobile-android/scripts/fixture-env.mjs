@@ -14,22 +14,43 @@
 // bearer is in a mode-0600 file (tokenFile); no token is ever printed.
 // --check plays a phone over HTTP through the relay and exits 0 or 1.
 // --approve keeps running and approves every phone that asks to pair.
+// --dry-run runs the pre-boot checks alone, prints the daemon command it would
+// start, and exits 0 or 2: nothing is started, nothing in the folder is wiped.
 // Otherwise it keeps running until SIGINT/SIGTERM, which stops every child.
+//
+// No real agent, no real login, proven before and after the boot (the same
+// three checks lane C's fixture-server.mjs runs, the daemon's three flags in
+// its order). BEFORE anything starts (preBootChecks): the daemon argv carries
+// --no-titles --test-no-activate --test-no-machine-usage; the login environment,
+// read the way the daemon reads it (`$SHELL -lic 'env -0'` on the environment
+// the daemon will get), resolves `claude` and `codex` to the fixture's stubs;
+// no agent credential travels into the daemon. AFTER the daemon announces
+// itself and BEFORE anything is seeded (bootChecks): its discovery file says
+// titles "off", testFixtures true and machineUsage false, POST /e2e/evaluate
+// answers, and the SHELL and PATH inside the daemon resolve the two commands to
+// the stubs. One failed check refuses the boot (exit 2) before any chat.
+// --red-flags (drops --no-titles from the argv) and --red-interlock (a login
+// shell that puts the real PATH back) prove the pre-boot checks go red; they
+// run under --dry-run only, so a daemon is never started with a flag dropped.
 //
 // The issuer: the provider is bound on <issuer> itself, not behind a proxy.
 // Its discovery `issuer` and every token's `iss` are derived from the port it
 // listens on, and both the daemon (discovery metadata) and the pairing (`iss`)
 // compare them with the configured origin, so a forwarder on another port
 // would make every check fail.
-import { spawn } from 'node:child_process'
+import { execFileSync, spawn } from 'node:child_process'
 import { createHash, randomBytes } from 'node:crypto'
 import {
+  accessSync,
   chmodSync,
+  constants as fsConstants,
   existsSync,
   mkdirSync,
   readFileSync,
   readdirSync,
+  realpathSync,
   rmSync,
+  statSync,
   writeFileSync
 } from 'node:fs'
 import net from 'node:net'
@@ -74,40 +95,262 @@ const RELAY_PORT = portArg('relay', 47202)
 const ISSUER_PORT = portArg('issuer', 47203)
 const TMPDIR = path.resolve(arg('tmpdir', '/private/tmp/clave-native-b/fixture'))
 const CHECK = flag('check')
-const RED_STUB = flag('red-stub')
 const APPROVE = flag('approve')
+const DRY_RUN = flag('dry-run')
+const RED_FLAGS = flag('red-flags')
+const RED_INTERLOCK = flag('red-interlock')
+if ((RED_FLAGS || RED_INTERLOCK) && !DRY_RUN) {
+  process.stderr.write(
+    'fixture: --red-flags and --red-interlock prove the pre-boot checks and run under --dry-run only: a daemon is never started with a flag dropped\n'
+  )
+  process.exit(2)
+}
+
+/** The three flags that keep the daemon off every provider: `--no-titles` is its explicit
+ *  opt-out of the title one-shot, `--test-no-activate` stops the usage clock, and
+ *  `--test-no-machine-usage` keeps an explicit usage read off the machine login's keychain
+ *  (test-mode.ts needs both). Lane C's fixture-server.mjs passes the same three, in this order. */
+const DAEMON_FLAGS = ['--no-titles', '--test-no-activate', '--test-no-machine-usage']
+/** What never travels into the daemon: this shell's server, and this Mac's agent credentials. */
+const STRIPPED_KEYS = [
+  'CLAVE_SERVER_URL',
+  'CLAVE_SERVER_TOKEN',
+  'CLAUDECODE',
+  'ANTHROPIC_API_KEY',
+  'CLAUDE_CODE_OAUTH_TOKEN',
+  'OPENAI_API_KEY',
+  'CODEX_API_KEY',
+  'GEMINI_API_KEY',
+  'GOOGLE_API_KEY'
+]
 
 const RELAY_URL = `http://127.0.0.1:${RELAY_PORT}`
 const ISSUER_URL = `http://127.0.0.1:${ISSUER_PORT}`
 const SERVER_DATA = path.join(TMPDIR, 'server')
 
-/** A directory of agent stubs that exit 1, so the daemon's title generator never spawns a
- *  real agent under the person's login from the fixture environment. */
 /**
  * The fixture's own login environment, so no real agent ever runs from it. The daemon's
  * title generator spawns `claude -p` under the person's login on a chat's first message,
  * and takes its environment from `$SHELL -lic 'env -0'` (pty-backend.ts, getLoginShellEnv):
  * a stub on the daemon's PATH alone does not hold, since the person's login profile puts
  * the real CLI back ahead of it (three real calls left this Mac on 9 November 2026 before
- * this was understood). So SHELL is a script that ignores its arguments and prints the
- * daemon's own environment with `/usr/bin/env -0`, whose PATH starts with this directory,
- * where `claude` and `codex` are stubs that touch a marker and exit 1. The check asserts the
- * marker and that no new transcript carrying the title prompt appeared; `--red-stub` writes
- * stubs without the marker, which makes that step fail, the proof the step can go red.
+ * this was understood). So SHELL is a script of the fixture's that prints the daemon's own
+ * environment, whose PATH starts with this directory, where `claude` and `codex` are stubs
+ * that touch a marker and exit 1; CLAUDE_CONFIG_DIR and CODEX_HOME are empty folders here.
+ * With `--no-titles` nothing should ever call a stub: the check after the chat asserts no
+ * marker and no new transcript carrying the title prompt. The red proof of that step is a
+ * source mutation that keeps titles announced off while letting the call through (the
+ * verifier's), never a boot with a flag dropped.
  */
 function agentShims() {
   const dir = path.join(TMPDIR, 'shims')
   mkdirSync(dir, { recursive: true, mode: 0o700 })
-  writeFileSync(path.join(dir, 'shell'), '#!/bin/sh\n# The fixture login shell: whatever the arguments, print this process environment.\nexec /usr/bin/env -0\n', { mode: 0o755 })
-  for (const name of ['claude', 'codex']) {
-    const marker = RED_STUB ? '' : `touch "${dir}/called-${name}"\n`
-    writeFileSync(
-      path.join(dir, name),
-      `#!/bin/sh\n${marker}echo "fixture: no real agent runs here (${name} disabled)" >&2\nexit 1\n`,
-      { mode: 0o755 }
-    )
+  const claudeConfigDir = path.join(dir, 'claude-config')
+  const codexHome = path.join(dir, 'codex-home')
+  mkdirSync(claudeConfigDir, { recursive: true, mode: 0o700 })
+  mkdirSync(codexHome, { recursive: true, mode: 0o700 })
+  const write = (name, body) => {
+    const file = path.join(dir, name)
+    writeFileSync(file, body)
+    chmodSync(file, 0o755)
+    return file
   }
-  return dir
+  // The login shell: `$SHELL -lic 'env -0'` prints this environment; a `-c` command runs
+  // with /bin/sh. Under --red-interlock it puts the PATH the fixture was started with back,
+  // the way a real login profile does, so the interlock check must fail.
+  const shell = write(
+    'shell',
+    RED_INTERLOCK
+      ? `#!/bin/sh\n# RED: a login shell that restores the real PATH, as a login profile would.\nPATH='${(process.env.PATH ?? '').replace(/'/g, '')}' exec /usr/bin/env -0\n`
+      : [
+          '#!/bin/sh',
+          "# The fixture's stand-in for the daemon's login shell: the daemon reads its login",
+          "# environment through `$SHELL -lic 'env -0'`, and this environment is the fixture's own,",
+          '# its PATH starting with the stubs. A `-c` command runs with /bin/sh.',
+          'cmd=""',
+          'while [ $# -gt 0 ]; do',
+          '  case "$1" in',
+          '    -c) shift; cmd="$1" ;;',
+          '  esac',
+          '  shift',
+          'done',
+          'case "$cmd" in',
+          '  ""|"env -0") exec /usr/bin/env -0 ;;',
+          '  *) exec /bin/sh -c "$cmd" ;;',
+          'esac',
+          ''
+        ].join('\n')
+  )
+  // The stubs: never a real agent. Each touches a marker so the check after the chat can say
+  // whether anything called it at all (with --no-titles nothing should), and exits 1.
+  const stub = (name) =>
+    write(name, `#!/bin/sh\ntouch "${dir}/called-${name}"\necho "fixture: no real agent runs here (${name} disabled)" >&2\nexit 1\n`)
+  return { dir, shell, claude: stub('claude'), codex: stub('codex'), claudeConfigDir, codexHome }
+}
+
+/** Where `command` lives on `pathEnv`: the first directory holding an executable file of
+ *  that name, as the host's `findExecutable` looks. */
+function locateOnPath(command, pathEnv) {
+  for (const dir of (pathEnv ?? '').split(path.delimiter)) {
+    if (!dir) continue
+    const candidate = path.join(dir, command)
+    try {
+      accessSync(candidate, fsConstants.X_OK)
+      if (statSync(candidate).isFile()) return candidate
+    } catch {
+      /* not here */
+    }
+  }
+  return null
+}
+
+/** The login environment as the daemon reads it (pty-backend.ts, getLoginShellEnv):
+ *  `$SHELL -lic 'env -0'` with the daemon's own environment, parsed. */
+function loginShellEnvOf(shell, env) {
+  const output = execFileSync(shell, ['-lic', 'env -0'], { env, encoding: 'utf8', maxBuffer: 10 * 1024 * 1024 })
+  const parsed = {}
+  for (const entry of output.split('\0')) {
+    const i = entry.indexOf('=')
+    if (i > 0) parsed[entry.slice(0, i)] = entry.slice(i + 1)
+  }
+  return parsed
+}
+
+const samePath = (a, b) => {
+  try {
+    return realpathSync(a) === realpathSync(b)
+  } catch {
+    return false
+  }
+}
+
+/**
+ * The daemon's launch, built once and checked before it is used: the argv with the three
+ * flags, and the environment with the stubs first on PATH, the fixture's login shell, empty
+ * Claude and Codex homes of the fixture's own, the fixture issuer and the keychain FILE;
+ * this shell's server and this Mac's agent credentials stripped.
+ */
+function daemonLaunch() {
+  const shims = agentShims()
+  const env = { ...process.env }
+  for (const key of STRIPPED_KEYS) delete env[key]
+  env.PATH = `${shims.dir}${path.delimiter}${process.env.PATH ?? ''}`
+  env.SHELL = shims.shell
+  env.CLAUDE_CONFIG_DIR = shims.claudeConfigDir
+  env.CODEX_HOME = shims.codexHome
+  env.CLAVE_ANTASPHERE_ISSUER = ISSUER_URL
+  env.CLAVE_KEYCHAIN_FILE = path.join(SERVER_DATA, 'keychain.json')
+  const flags = RED_FLAGS ? DAEMON_FLAGS.filter((f) => f !== '--no-titles') : DAEMON_FLAGS
+  const args = [
+    path.join(REPO, 'apps', 'server', 'src', 'main.ts'),
+    '--data-dir',
+    SERVER_DATA,
+    '--daemon',
+    '--port',
+    String(SERVER_PORT),
+    '--dev-echo-adapter',
+    ...flags,
+    '--relay',
+    RELAY_URL
+  ]
+  return { shims, env, args }
+}
+
+/** One check line, the shape lane C prints: `check ok` or `check FAIL`, the name, the detail. */
+function checker(results) {
+  return async (name, fn) => {
+    try {
+      const detail = await fn()
+      results.push({ name, ok: true, detail: detail ?? null })
+      say(`check ok    ${name}${detail ? ` (${detail})` : ''}`)
+    } catch (error) {
+      results.push({ name, ok: false, detail: error?.message ?? String(error) })
+      say(`check FAIL  ${name}: ${error?.message ?? error}`)
+    }
+  }
+}
+const expectThat = (condition, message) => {
+  if (!condition) throw new Error(message)
+}
+
+/** A refusal to boot: exit 2, before any chat. */
+class RefusedBoot extends Error {
+  constructor(stage, failed) {
+    super(`the fixture refuses to boot, before any chat (${stage}): ${failed.map((c) => c.name).join('; ')}`)
+    this.code = 2
+  }
+}
+
+/**
+ * The checks that run BEFORE anything starts, on the launch the daemon will get: the
+ * effective flags, the post-login executable interlock, the stripped credentials.
+ */
+async function preBootChecks(launch) {
+  const results = []
+  const check = checker(results)
+  await check('the effective flags: the daemon argv carries --no-titles, --test-no-activate and --test-no-machine-usage', async () => {
+    const missing = DAEMON_FLAGS.filter((f) => !launch.args.includes(f))
+    expectThat(missing.length === 0, `missing ${missing.join(' ')} in: bun ${launch.args.join(' ')}`)
+    return DAEMON_FLAGS.join(' ')
+  })
+  await check(
+    "the post-login executable interlock: the daemon's SHELL is the fixture's and its login environment ($SHELL -lic 'env -0') resolves claude and codex to the fixture's stubs",
+    async () => {
+      expectThat(samePath(launch.env.SHELL, launch.shims.shell), `the daemon's SHELL would be ${launch.env.SHELL}`)
+      const login = loginShellEnvOf(launch.env.SHELL, launch.env)
+      const claude = locateOnPath('claude', login.PATH)
+      const codex = locateOnPath('codex', login.PATH)
+      expectThat(claude && samePath(claude, launch.shims.claude), `claude resolves to ${claude ?? 'nothing'} on the daemon's login PATH`)
+      expectThat(codex && samePath(codex, launch.shims.codex), `codex resolves to ${codex ?? 'nothing'} on the daemon's login PATH`)
+      return `claude and codex are the stubs under ${launch.shims.dir}; CLAUDE_CONFIG_DIR and CODEX_HOME are empty folders of the fixture`
+    }
+  )
+  await check('no agent credential travels into the daemon: this shell\'s server and the provider keys are absent from its environment', async () => {
+    const present = STRIPPED_KEYS.filter((key) => key in launch.env)
+    expectThat(present.length === 0, `${present.join(', ')} present`)
+    return `${STRIPPED_KEYS.length} keys stripped`
+  })
+  return results
+}
+
+/** A function run inside the daemon through its test fixture route (--test-no-activate). */
+async function evaluate(daemon, source) {
+  const answer = await client(daemon.url, daemon.token)('POST', '/e2e/evaluate', { source })
+  if (answer.status !== 200 || !answer.body?.ok)
+    throw new Error(`POST /e2e/evaluate answered ${answer.status}: ${JSON.stringify(answer.body ?? null).slice(0, 200)}`)
+  return answer.body.value
+}
+
+/**
+ * The checks that run AFTER the daemon announces itself and BEFORE anything is seeded:
+ * what the discovery file announces, and what the daemon's own process holds.
+ */
+async function bootChecks(daemon, launch) {
+  const results = []
+  const check = checker(results)
+  const discovery = daemon.discovery
+  await check('titles off: the daemon announces titles "off" (--no-titles)', async () => {
+    expectThat(discovery.titles === 'off', `the discovery file says titles ${JSON.stringify(discovery.titles ?? null)}`)
+    return 'titles: off'
+  })
+  await check('test fixtures on, machine usage off: the daemon announces testFixtures true and machineUsage false, and answers POST /e2e/evaluate', async () => {
+    expectThat(discovery.testFixtures === true, `testFixtures ${JSON.stringify(discovery.testFixtures ?? null)}`)
+    expectThat(discovery.machineUsage === false, `machineUsage ${JSON.stringify(discovery.machineUsage ?? null)}`)
+    const one = await evaluate(daemon, '() => 1')
+    expectThat(one === 1, `the fixture route answered ${JSON.stringify(one)}`)
+    return 'testFixtures: true, machineUsage: false, /e2e/evaluate answers'
+  })
+  await check("the stubs stand in: the daemon's own SHELL is the fixture's and its login environment resolves claude and codex to the stubs", async () => {
+    const inside = await evaluate(daemon, '() => ({ shell: process.env.SHELL, path: process.env.PATH })')
+    expectThat(samePath(inside.shell, launch.shims.shell), `the daemon's SHELL is ${inside.shell}`)
+    const login = loginShellEnvOf(inside.shell, { ...launch.env, PATH: inside.path })
+    const claude = locateOnPath('claude', login.PATH)
+    const codex = locateOnPath('codex', login.PATH)
+    expectThat(claude && samePath(claude, launch.shims.claude), `claude resolves to ${claude ?? 'nothing'} on the daemon's login PATH`)
+    expectThat(codex && samePath(codex, launch.shims.codex), `codex resolves to ${codex ?? 'nothing'} on the daemon's login PATH`)
+    return `claude and codex are the stubs under ${launch.shims.dir}`
+  })
+  return results
 }
 /** Where Claude Code keeps this checkout's transcripts: a real title call leaves one there. */
 const TRANSCRIPTS_DIR = path.join(os.homedir(), '.claude', 'projects', REPO.replace(/[/.]/g, '-'))
@@ -314,38 +557,10 @@ async function startRelay() {
   return run
 }
 
-async function startDaemon() {
+/** The daemon, started with the launch the pre-boot checks passed, and nothing else. */
+async function startDaemon(launch) {
   mkdirSync(SERVER_DATA, { recursive: true, mode: 0o700 })
-  const run = spawnBun(
-    'server',
-    [
-      path.join(REPO, 'apps', 'server', 'src', 'main.ts'),
-      '--data-dir',
-      SERVER_DATA,
-      '--daemon',
-      '--port',
-      String(SERVER_PORT),
-      '--dev-echo-adapter',
-      // The daemon polls the Claude and Codex usage windows with the machine login unless it is
-      // told it runs under a test: the fixture must never spend the person's quota.
-      '--test-no-activate',
-      '--relay',
-      RELAY_URL
-    ],
-    {
-      ...process.env,
-      // The daemon's title generator runs the real `claude -p` under the person's own login
-      // on a chat's first message, by name through the PATH (title-generator.ts, execFile).
-      // The fixture must never reach a real agent: a shim directory holding `claude` and
-      // `codex` stubs that exit 1 goes first on the PATH, so the title falls back to the
-      // default and nothing leaves the loopback. The Echo adapter runs in process and needs
-      // neither binary.
-      PATH: `${agentShims()}:${process.env.PATH ?? ''}`,
-      SHELL: path.join(TMPDIR, 'shims', 'shell'),
-      CLAVE_ANTASPHERE_ISSUER: ISSUER_URL,
-      CLAVE_KEYCHAIN_FILE: path.join(SERVER_DATA, 'keychain.json')
-    }
-  )
+  const run = spawnBun('server', launch.args, launch.env)
   const discoveryFile = path.join(SERVER_DATA, 'clave-server.json')
   const discovery = await until(async () => {
     if (run.child.exitCode !== null) throw new Error('exited')
@@ -358,7 +573,7 @@ async function startDaemon() {
   }, 60_000, 100)
   if (!discovery)
     throw new Error(`the daemon did not announce itself (exit ${run.child.exitCode})`)
-  return { ...run, url: discovery.url, token: discovery.token, serverId: discovery.serverId }
+  return { ...run, url: discovery.url, token: discovery.token, serverId: discovery.serverId, discovery }
 }
 
 // ── Step 2: the owner signs in on the daemon ────────────────────────────────
@@ -774,10 +989,12 @@ async function runCheck(env) {
     expect(refused, `GET /sessions answered ${last?.status} after the revocation`)
     return `revoke ${revoked.status}; GET /sessions 401`
   })
-  await step('the title generator hit the stub and no real agent ran', async () => {
-    const marker = path.join(TMPDIR, 'shims', 'called-claude')
-    const deadline = Date.now() + 20_000
-    while (!existsSync(marker) && Date.now() < deadline) await new Promise((r) => setTimeout(r, 500))
+  await step('no stub was called and no real agent ran: titles are off, the markers are absent, no new title transcript', async () => {
+    const called = ['claude', 'codex'].filter((name) => existsSync(path.join(TMPDIR, 'shims', `called-${name}`)))
+    expect(
+      called.length === 0,
+      `the daemon called the ${called.join(' and ')} stub${called.length > 1 ? 's' : ''}: a one-shot ran despite --no-titles`
+    )
     const fresh = [...listTranscripts()].filter((f) => !transcriptsBefore.has(f))
     const titled = fresh.filter((f) => {
       try {
@@ -786,9 +1003,8 @@ async function runCheck(env) {
         return false
       }
     })
-    if (!existsSync(marker)) throw new Error('the claude stub was never called: the title generator ran something else')
-    if (titled.length) throw new Error(`${titled.length} new transcript(s) carry the title prompt: a real agent ran`)
-    return `marker ${path.relative(TMPDIR, marker)}; ${fresh.length} new transcript(s), 0 with the title prompt`
+    expect(titled.length === 0, `${titled.length} new transcript(s) carry the title prompt: ${titled.join(', ')}`)
+    return 'no stub called, no title transcript'
   })
   return !failed
 }
@@ -817,13 +1033,26 @@ async function approveForever(owner) {
 
 async function main() {
   if (!existsSync(BUN)) throw new Error(`bun not found at ${BUN}`)
-  for (const port of [SERVER_PORT, RELAY_PORT, ISSUER_PORT])
-    if (await portBusy(port)) throw new Error(`port ${port} is in use on 127.0.0.1: stopping`)
-
-  // A fresh run: the folder's own contents only.
   mkdirSync(TMPDIR, { recursive: true, mode: 0o700 })
-  for (const entry of readdirSync(TMPDIR))
-    rmSync(path.join(TMPDIR, entry), { recursive: true, force: true })
+  if (!DRY_RUN) {
+    for (const port of [SERVER_PORT, RELAY_PORT, ISSUER_PORT])
+      if (await portBusy(port)) throw new Error(`port ${port} is in use on 127.0.0.1: stopping`)
+    // A fresh run: the folder's own contents only.
+    for (const entry of readdirSync(TMPDIR))
+      rmSync(path.join(TMPDIR, entry), { recursive: true, force: true })
+  }
+
+  // Before anything starts: the launch the daemon will get, checked.
+  const launch = daemonLaunch()
+  const pre = await preBootChecks(launch)
+  const preFailed = pre.filter((c) => !c.ok)
+  if (DRY_RUN) {
+    say(`dry run: would start the daemon as: bun ${launch.args.join(' ')}`)
+    say(`dry run: SHELL=${launch.env.SHELL} CLAUDE_CONFIG_DIR=${launch.env.CLAUDE_CONFIG_DIR} CODEX_HOME=${launch.env.CODEX_HOME}`)
+    say(preFailed.length ? 'dry run: the pre-boot checks FAILED; a boot would be refused (exit 2)' : 'dry run: the pre-boot checks passed; nothing was started')
+    return exitWith(preFailed.length ? 2 : 0)
+  }
+  if (preFailed.length) throw new RefusedBoot('pre-boot', preFailed)
 
   provider = await startProviderOn(ISSUER_PORT)
   if (provider.issuer !== ISSUER_URL)
@@ -833,10 +1062,15 @@ async function main() {
   const relayRun = await startRelay()
   note(`relay ${RELAY_URL}`)
 
-  const daemon = await startDaemon()
+  const daemon = await startDaemon(launch)
   note(`server ${daemon.url} (server id ${daemon.serverId ?? '?'})`)
   writeFileSync(TOKEN_FILE, daemon.token, { mode: 0o600 })
   chmodSync(TOKEN_FILE, 0o600)
+
+  // After the announcement, before any sign-in or chat: what the daemon says of itself.
+  const boot = await bootChecks(daemon, launch)
+  const bootFailed = boot.filter((c) => !c.ok)
+  if (bootFailed.length) throw new RefusedBoot('after the boot, before any chat', bootFailed)
   const owner = client(daemon.url, daemon.token)
 
   const signed = await signOwnerIn(owner)
@@ -893,6 +1127,6 @@ async function main() {
 
 main().catch((error) => {
   note(`error: ${error?.message ?? error}`)
-  void exitWith(1)
+  void exitWith(error?.code === 2 ? 2 : 1)
 })
 
