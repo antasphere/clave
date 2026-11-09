@@ -36,9 +36,14 @@ The Mac's `/usr/bin/java` is Apple's stub, Gradle is absent and the SDK under
 `~/Library/Android/sdk` has no `cmdline-tools`. Nothing global is written: the toolchain
 lives in a private folder (`TOOLCHAIN=~/.local/share/<your folder>/android-toolchain`).
 
+A JDK 21 is used read-only, never installed by this bootstrap: Homebrew's
+`/opt/homebrew/opt/openjdk@21` when the machine has it (a `brew install openjdk@21` is the
+reader's own, optional, global setup, outside this bootstrap), otherwise a pinned Temurin 21
+archive downloaded into `$TOOLCHAIN/jdk` with its published checksum verified before it is
+unpacked, and `JAVA_HOME` pointing at it.
+
 ```sh
-brew install openjdk@21                      # or any JDK 21; read-only afterwards
-export JAVA_HOME=/opt/homebrew/opt/openjdk@21
+export JAVA_HOME=/opt/homebrew/opt/openjdk@21   # or $TOOLCHAIN/jdk/<the pinned Temurin 21>
 # command-line tools 23.0, checksum from https://dl.google.com/android/repository/repository2-3.xml
 curl -L -o cmdline-tools.zip https://dl.google.com/android/repository/commandlinetools-mac_arm64-16111833_latest.zip
 echo "ad03dc49bfacfd52c110b14104ea548b8a07e830  cmdline-tools.zip" | shasum -a 1 -c -
