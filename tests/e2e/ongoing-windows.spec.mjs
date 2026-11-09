@@ -17,6 +17,11 @@ import {
 
 const DIR = userDataDir('ongoing-windows')
 const ROOT = fixturePath('ongoing-windows-root')
+// The stub speaks at its first start, as a real tab would before it is moved: its
+// transcript is what a resume needs (PRDCT-4208, F7: none means a fresh start).
+const TRANSCRIPTS = `${ROOT}/transcripts`
+const SPOKEN = `${TRANSCRIPTS}/stub`
+const TRANSCRIPTS_ENV = { CLAVE_TRANSCRIPTS_ROOT: TRANSCRIPTS }
 const BIN = `${ROOT}/bin`
 const STARTS = `${ROOT}/agent-starts.jsonl`
 const WS = {
@@ -42,7 +47,7 @@ function writeFixtures() {
   seedTrustedRoots(DIR, [ROOT])
   writeFileSync(
     `${BIN}/claude`,
-    `#!/bin/sh\nargs=$(printf '%s' "$*" | tr -d '"\\\\' | cut -c1-200)\necho '{"session":"'"$CLAVE_SESSION_ID"'","args":"'"$args"'"}' >> ${JSON.stringify(STARTS)}\nexec sleep 600\n`,
+    `#!/bin/sh\nargs=$(printf '%s' "$*" | tr -d '"\\\\' | cut -c1-200)\necho '{"session":"'"$CLAVE_SESSION_ID"'","args":"'"$args"'"}' >> ${JSON.stringify(STARTS)}\nsid=''; prev=''; for a in "$@"; do [ "$prev" = '--session-id' ] && sid="$a"; prev="$a"; done\n[ -n "$sid" ] && mkdir -p ${JSON.stringify(SPOKEN)} && echo '{"type":"user","message":{"content":"hello"}}' > ${JSON.stringify(SPOKEN)}/"$sid".jsonl\nexec sleep 600\n`,
     { mode: 0o755 }
   )
   writeFileSync(
@@ -66,7 +71,7 @@ function writeFixtures() {
 
 export async function run(t) {
   writeFixtures()
-  const { app, win } = await launchApp(DIR)
+  const { app, win } = await launchApp(DIR, { env: TRANSCRIPTS_ENV })
   try {
     const w2 = await openWindow(app, win, WS.id, { settleMs: 1500 })
     const ws = await windows(app)
@@ -104,9 +109,8 @@ export async function run(t) {
     const before = starts().length
     await win.click('[data-ongoing-card]')
     await win.waitForTimeout(2500)
-    const resumes = starts()
-      .slice(before)
-      .filter((x) => x.args.includes('--resume'))
+    // Every start counts, a fresh one as much as a resume: no agent may start here.
+    const resumes = starts().slice(before)
     t.check(
       'P5b opening it from window 1 does not start a second agent on the same conversation',
       resumes.length === 0,

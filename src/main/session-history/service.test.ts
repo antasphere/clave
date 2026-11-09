@@ -70,5 +70,8 @@ describe('the conversation read follows its account directory', () => {
     expect(conversationRoot('   ')).toBe(shared)
     expect(conversationRoot(42)).toBe(shared)
     expect(conversationRoot(undefined)).toBe(shared)
+    // As the spawn sets CLAUDE_CONFIG_DIR: never trimmed into another directory.
+    expect(conversationRoot(`${account} `)).toBe(path.join(`${account} `, 'projects'))
+    expect(conversationRoot(` ${account}`)).toBe(shared)
   })
 })

@@ -4,7 +4,8 @@
  * - F7: a resting conversation with no transcript starts fresh under its own id, not a failing resume;
  * - L1-L3: the lock the windows share around saving the list exists on the app's origin, and holds
  *   across two windows (the store falls back to unlocked saving where it is refused, so only this
- *   spec can tell that it is really held).
+ *   spec can tell that it is really held); L3 saves from window 2 inside window 1's hold;
+ * - E1: a tab another window ended (its move refused) leaves the window that holds it.
  */
 import { mkdirSync, readFileSync, rmSync, writeFileSync, existsSync } from 'node:fs'
 import path from 'node:path'
@@ -15,6 +16,8 @@ import {
   userDataDir,
   fixturePath,
   openWindow,
+  windows,
+  callMcpIn,
   until
 } from './harness.mjs'
 
@@ -182,18 +185,20 @@ export async function run(t) {
       { first, second }
     )
 
-    // L3: a save from window 2 while window 1 holds the lock lands after it, and is not lost.
+    // L3: a save from window 2 made while window 1 holds the lock (read done, write not yet)
+    // waits for it and is not lost. The hold outlasts the note's whole path through the UI.
     const hold = win.evaluate(
       () =>
         new Promise((resolve) => {
           navigator.locks.request('clave-ongoing-conversations', async () => {
+            const from = Date.now()
             const list = await window.electronAPI.preferencesGet('ongoingConversations')
-            await new Promise((r) => setTimeout(r, 1000))
+            await new Promise((r) => setTimeout(r, 6000))
             await window.electronAPI.preferencesSet('ongoingConversations', [
               ...list,
               { ...list.find((e) => e.id === 'acct'), id: 'from-window-1', name: 'From window 1' }
             ])
-            resolve(true)
+            resolve({ from, to: Date.now() })
           })
         })
     )
@@ -211,7 +216,8 @@ export async function run(t) {
       await w2.page.keyboard.press('Enter')
       noteWritten = true
     }
-    await hold
+    const noteAt = Date.now()
+    const held = await hold
     await w2.page.waitForTimeout(1500)
     const saved = await win.evaluate(() =>
       window.electronAPI.preferencesGet('ongoingConversations')
@@ -220,9 +226,42 @@ export async function run(t) {
     const acct = saved.find((e) => e.id === 'acct')
     t.check(
       "L3 a save from window 2 during window 1's hold keeps both changes",
-      noteWritten && ids.includes('from-window-1') && acct?.note === 'Call on Monday',
-      { noteWritten, ids, note: acct?.note }
+      noteWritten &&
+        noteAt < held.to &&
+        ids.includes('from-window-1') &&
+        acct?.note === 'Call on Monday',
+      { noteWritten, contended: noteAt < held.to, ids, note: acct?.note }
     )
+
+    // E1: window 1 stops a tab that window 2 holds (as End does when its move is refused) and
+    // says so on the windows' channel; window 2 drops the row instead of keeping it dead.
+    const ws = await windows(app)
+    const id2 = ws.find((w) => w.page === w2.page)?.id
+    const opened = await callMcpIn(app, id2, 'openSession', {
+      cwd: ROOT,
+      mode: 'claude',
+      profile: 'stub-claude',
+      name: 'Ended elsewhere'
+    })
+    const listed = await until(async () => {
+      const l = await callMcpIn(app, id2, 'list', {})
+      return l.sessions.some((x) => x.id === opened.sessionId) ? true : null
+    })
+    t.check('[setup] window 2 holds the tab', !!listed)
+    await win.evaluate(async (id) => {
+      await window.electronAPI.killSession(id)
+      const channel = new BroadcastChannel('clave-ongoing-conversations')
+      channel.postMessage({ ended: id })
+      channel.close()
+    }, opened.sessionId)
+    const gone = await until(
+      async () => {
+        const l = await callMcpIn(app, id2, 'list', {})
+        return l.sessions.some((x) => x.id === opened.sessionId) ? null : true
+      },
+      { tries: 20, gapMs: 250 }
+    )
+    t.check('E1 a tab another window ended leaves the window that held it', !!gone)
   } finally {
     await app.close()
   }

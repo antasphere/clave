@@ -97,8 +97,10 @@ export function transcriptsRoot(): string {
  *  the shared root. Only an absolute path counts; anything else is the
  *  shared root, so a stray value never points the read elsewhere. */
 export function conversationRoot(configDir: unknown): string {
-  if (typeof configDir === 'string' && configDir.trim() && path.isAbsolute(configDir.trim())) {
-    return path.join(configDir.trim(), 'projects')
+  // Taken as the spawn takes it (CLAUDE_CONFIG_DIR, untrimmed), so the read
+  // looks where Claude Code wrote.
+  if (typeof configDir === 'string' && path.isAbsolute(configDir)) {
+    return path.join(configDir, 'projects')
   }
   return transcriptsRoot()
 }

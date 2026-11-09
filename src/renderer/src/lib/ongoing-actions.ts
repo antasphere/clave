@@ -175,9 +175,9 @@ async function resumeEntry(entry: OngoingEntry, keepOngoing: boolean): Promise<s
 /** One action at a time per conversation: a second click (or a menu's click
  *  reaching the card under it) while a resume is starting must never start a
  *  second agent on the same conversation. A second open is dropped; an End
- *  or a Back (`wait`) runs once the action in flight is over (R2-F4), and
- *  after `WAIT_MS` at most, so an action that never answers cannot block
- *  the conversation until a reload. */
+ *  or a Back (`wait`) runs once the action in flight is over (R2-F4). It
+ *  never runs beside it: past `WAIT_MS` it is refused with a word for the
+ *  page, since the open may still land its tab. */
 const busy = new Map<string, Promise<unknown>>()
 export const WAIT_MS = 10_000
 async function exclusive<T>(
@@ -190,7 +190,7 @@ async function exclusive<T>(
   while (busy.has(entryId)) {
     if (!wait) return null
     const left = until - Date.now()
-    if (left <= 0) break
+    if (left <= 0) throw new OngoingStillOpening()
     await Promise.race([
       busy.get(entryId)!.catch(() => {}),
       new Promise((r) => setTimeout(r, left))
@@ -247,6 +247,14 @@ export async function entriesElsewhere(entries: readonly OngoingEntry[]): Promis
 
 /** The reason an open was refused, worded for the page. */
 export class OngoingOpenRefused extends Error {}
+
+/** End or Back refused because the conversation is still opening after
+ *  `WAIT_MS`: running beside the open could start a second agent. */
+export class OngoingStillOpening extends OngoingOpenRefused {
+  constructor() {
+    super('This conversation is still opening. Try again once it is open.')
+  }
+}
 
 async function waitForSession(id: string, ms = 4000): Promise<boolean> {
   const until = Date.now() + ms
@@ -336,9 +344,13 @@ export async function endOngoing(entryId: string): Promise<void> {
             view.restore()
           } else {
             view.restore()
-            await window.electronAPI.killSession(other.sessionId).catch(() => {})
-            // The window that holds it drops its row (R3-N1).
-            announceEnded(other.sessionId)
+            const stopped = await window.electronAPI
+              .killSession(other.sessionId)
+              .then(() => true)
+              .catch(() => false)
+            // The window that holds it drops its row (R3-N1); a tab that could
+            // not be stopped keeps its row there, since it still runs.
+            if (stopped) announceEnded(other.sessionId)
           }
         }
       }

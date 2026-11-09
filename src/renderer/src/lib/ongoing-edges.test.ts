@@ -27,7 +27,9 @@ import {
   endOngoing,
   keepPersonsView,
   openOngoing,
-  returnToSidebar
+  OngoingStillOpening,
+  returnToSidebar,
+  WAIT_MS
 } from './ongoing-actions'
 import { conversationConfigDir, type OngoingEntry } from './ongoing'
 import { resourceKey } from '@clave/contract/fleet'
@@ -137,6 +139,15 @@ describe('F7: a conversation with no transcript starts fresh under its own id', 
     expect(options.claudeSessionId).toBeUndefined()
   })
 
+  it('resumes it when the transcript read fails, rather than starting it over', async () => {
+    api.historyConversation.mockRejectedValueOnce(new Error('main is busy'))
+    await keep(entry())
+    await openOngoing('e1')
+    const options = api.fleetStart.mock.calls[0][2] as Record<string, unknown>
+    expect(options.resumeSessionId).toBe('conv-1')
+    expect(options.claudeSessionId).toBeUndefined()
+  })
+
   it("never reads this Mac for a server tab's conversation, and resumes it", async () => {
     await keep(entry({ sessionId: resourceKey('session', 'studio', 'tab-9') }))
     api.fleetStart.mockResolvedValueOnce({
@@ -196,6 +207,50 @@ describe('R2-F4: End and Back wait for an open in flight', () => {
     expect(api.fleetStart).toHaveBeenCalledTimes(1)
   })
 
+  it('refuses End and Back with a word once the open has run past the wait, never running beside it', async () => {
+    vi.useFakeTimers()
+    try {
+      await keep(entry())
+      const release = holdStart()
+      const opening = openOngoing('e1')
+      await vi.waitFor(() => expect(api.fleetStart).toHaveBeenCalledTimes(1))
+      const back = returnToSidebar('e1')
+      const end = endOngoing('e1')
+      const backSettled = back.catch((err: unknown) => err)
+      const endSettled = end.catch((err: unknown) => err)
+      await vi.advanceTimersByTimeAsync(WAIT_MS + 50)
+      expect(await backSettled).toBeInstanceOf(OngoingStillOpening)
+      expect(await endSettled).toBeInstanceOf(OngoingStillOpening)
+      expect(api.fleetStart).toHaveBeenCalledTimes(1)
+      expect(api.killSession).not.toHaveBeenCalled()
+      release()
+      await opening
+      // The open, still the one action, lands its tab hidden in Ongoing.
+      expect(useOngoingStore.getState().entries.map((e) => e.sessionId)).toEqual(['tab-new'])
+      // And the conversation takes actions again once it is open.
+      await endOngoing('e1')
+      expect(useOngoingStore.getState().entries).toEqual([])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('runs two waiters one after the other: a Back queued after an End finds it ended', async () => {
+    await keep(entry())
+    let fail!: (err: Error) => void
+    api.fleetStart.mockImplementationOnce(() => new Promise((_resolve, reject) => (fail = reject)))
+    const opening = openOngoing('e1')
+    await vi.waitFor(() => expect(api.fleetStart).toHaveBeenCalledTimes(1))
+    const end = endOngoing('e1')
+    const back = returnToSidebar('e1')
+    fail(new Error('could not start'))
+    await opening
+    await end
+    await back
+    expect(useOngoingStore.getState().entries).toEqual([])
+    expect(api.fleetStart).toHaveBeenCalledTimes(1)
+  })
+
   it('still drops a second open while the first is starting', async () => {
     await keep(entry())
     const release = holdStart()
@@ -231,6 +286,52 @@ describe('R3-N1: a tab End could not bring over leaves the window holding it', (
       await vi.waitFor(() => expect(heard).toContainEqual({ ended: 'tab-w2' }))
       expect(api.killSession).toHaveBeenCalledWith('tab-w2')
       expect(useOngoingStore.getState().entries).toEqual([])
+    } finally {
+      other.close()
+      stop()
+    }
+  })
+
+  it('tells no window when the tab could not be stopped, since it still runs', async () => {
+    await keep(entry({ sessionId: 'tab-w2' }))
+    api.listSessionRecords.mockResolvedValue([{ id: 'tab-w2', live: true, windowKey: 'w2' }])
+    api.windowMoveSessions.mockResolvedValue({ moved: [], refused: [] })
+    api.killSession.mockRejectedValueOnce(new Error('unreachable'))
+    const g2 = globalThis as unknown as {
+      addEventListener?: unknown
+      removeEventListener?: unknown
+    }
+    g2.addEventListener ??= () => {}
+    g2.removeEventListener ??= () => {}
+    const stop = startOngoingSync()
+    const other = new BroadcastChannel(ONGOING_LOCK)
+    const heard: unknown[] = []
+    other.onmessage = (event) => heard.push(event.data)
+    try {
+      await endOngoing('e1')
+      await new Promise((r) => setTimeout(r, 50))
+      expect(heard.some((m) => typeof m === 'object' && m !== null && 'ended' in m)).toBe(false)
+    } finally {
+      other.close()
+      stop()
+    }
+  })
+
+  it("hands another window's ended tab to the window's handler, and a plain change to none", async () => {
+    const g2 = globalThis as unknown as {
+      addEventListener?: unknown
+      removeEventListener?: unknown
+    }
+    g2.addEventListener ??= () => {}
+    g2.removeEventListener ??= () => {}
+    const onEnded = vi.fn()
+    const stop = startOngoingSync(onEnded)
+    const other = new BroadcastChannel(ONGOING_LOCK)
+    try {
+      other.postMessage('changed')
+      other.postMessage({ ended: 'tab-w2' })
+      await vi.waitFor(() => expect(onEnded).toHaveBeenCalledWith('tab-w2'))
+      expect(onEnded).toHaveBeenCalledTimes(1)
     } finally {
       other.close()
       stop()

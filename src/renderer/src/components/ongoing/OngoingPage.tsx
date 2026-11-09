@@ -167,12 +167,15 @@ function OngoingCard({
   row,
   now,
   opening,
-  onOpen
+  onOpen,
+  onRefused
 }: {
   row: OngoingRow
   now: number
   opening: boolean
   onOpen: () => void
+  /** End or Back could not run: the page says why. */
+  onRefused: (err: unknown) => void
 }): React.JSX.Element {
   const { entry, status, session } = row
   const turn = useLastTurn(row)
@@ -189,13 +192,13 @@ function OngoingCard({
     {
       label: 'Back to the sidebar',
       icon: <ArrowUturnLeftIcon className="w-3.5 h-3.5" />,
-      onClick: () => void returnToSidebar(entry.id)
+      onClick: () => void returnToSidebar(entry.id).catch(onRefused)
     },
     {
       label: 'End conversation',
       icon: <StopCircleIcon className="w-3.5 h-3.5" />,
       danger: true,
-      onClick: () => void endOngoing(entry.id)
+      onClick: () => void endOngoing(entry.id).catch(onRefused)
     }
   ]
 
@@ -357,6 +360,11 @@ export function OngoingPage(): React.JSX.Element {
       .finally(() => setOpening(null))
   }
 
+  const refused = (err: unknown): void =>
+    setNotice(
+      err instanceof OngoingOpenRefused ? err.message : 'This conversation could not be changed.'
+    )
+
   const waiting = rows.filter((r) => r.status === 'waiting').length
 
   return (
@@ -403,6 +411,7 @@ export function OngoingPage(): React.JSX.Element {
                 now={now}
                 opening={opening === row.entry.id}
                 onOpen={() => open(row.entry.id)}
+                onRefused={refused}
               />
             ))}
           </div>

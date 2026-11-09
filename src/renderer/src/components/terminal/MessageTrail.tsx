@@ -5,6 +5,7 @@ import { ChevronDownIcon, ChevronUpIcon } from '@heroicons/react/24/outline'
 import { useSessionStore } from '../../store/session-store'
 import { messageNeedle, scrollXtermToText } from '../../lib/terminal-scroll'
 import type { ConversationTurn } from '../../../../preload/index.d'
+import { readTrail } from '../../lib/trail-read'
 
 /**
  * The message trail: a floating box over a tab's terminal that answers "what
@@ -45,9 +46,8 @@ export function MessageTrail({ sessionId }: { sessionId: string }): ReactElement
 
   const cwd = session?.cwd
   const claudeSessionId = session?.claudeSessionId ?? session?.piSessionId ?? null
-  const provider = session?.piMode ? ('pi' as const) : ('claude' as const)
-  // A tab on its own account directory keeps its transcript there.
-  const configDir = session?.piMode ? undefined : session?.claudeConfigDir || undefined
+  const piMode = !!session?.piMode
+  const claudeConfigDir = session?.claudeConfigDir
   const agentState = session?.agentState
 
   // A /clear rotates the transcript id: the trail follows the new
@@ -62,12 +62,11 @@ export function MessageTrail({ sessionId }: { sessionId: string }): ReactElement
 
   const refresh = useCallback((): void => {
     if (!cwd || !claudeSessionId || isRemoteKey(sessionId)) return
-    window.electronAPI
-      .historyConversation(cwd, claudeSessionId, provider, configDir)
+    readTrail({ cwd, conversationId: claudeSessionId, piMode, claudeConfigDir })
       .then((res) => setTurns(res.turns))
       // Best-effort: the trail just keeps what it last had.
       .catch(() => {})
-  }, [cwd, claudeSessionId, provider, configDir, sessionId])
+  }, [cwd, claudeSessionId, piMode, claudeConfigDir, sessionId])
 
   useEffect(() => {
     refresh()
