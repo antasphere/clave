@@ -378,7 +378,7 @@ export async function run(t) {
     // the sidebar store still holds the model the provider last named (the
     // meta injected above). The composer stays enabled: a message written
     // after the switch runs on the new model.
-    await win
+    await view
       .locator('.chat-model-trigger[data-pending="true"]')
       .filter({ hasText: 'Echo 2' })
       .waitFor()
@@ -397,7 +397,9 @@ export async function run(t) {
       globalThis.__holdSwitch = false
       return globalThis.__releaseSwitch()
     })
-    await win
+    // The chat view's own chip: the Enclave and the Folio views are mounted
+    // hidden beside it, and every chip names the model from its first look.
+    await view
       .locator('.chat-model-trigger:not([data-pending])')
       .filter({ hasText: 'Echo 2' })
       .waitFor()
