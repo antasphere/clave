@@ -242,7 +242,9 @@ export function createRoutineService(options: RoutineServiceOptions): RoutineSer
   // ── The routines ──
 
   async function refresh(): Promise<void> {
-    if (refreshing) return refreshing
+    // Asked while one runs: that one may have read a file before a change
+    // landed, so a second pass follows it (verifier round 4, K1).
+    if (refreshing) return refreshing.then(() => refresh())
     refreshing = (async () => {
       const workspaces = await options.workspaces()
       const resolved = await resolveRoutines(
@@ -711,6 +713,15 @@ export function createRoutineService(options: RoutineServiceOptions): RoutineSer
     )
   }
 
+  /** Whether a path, or any folder above it under the root, is a symbolic link. */
+  const isLink = (p: string): boolean => {
+    try {
+      return fs.lstatSync(p).isSymbolicLink()
+    } catch {
+      return false
+    }
+  }
+
   /** A single-group read as a group the writer takes: its `type` tag dropped. */
   const groupOfSingle = (read: ClaveFileReadResult & { type: 'single' }): ClaveFileWriteGroup => {
     const { type: _type, ...group } = read
@@ -805,8 +816,24 @@ export function createRoutineService(options: RoutineServiceOptions): RoutineSer
       ? path.resolve(workspace.rootDir, input.file)
       : (workspace.profileFile ??
         path.join(workspace.rootDir, '.clave', 'workspaces', 'default.clave'))
+    if (current.paused)
+      throw new Error(
+        `"${d.name}" is paused: a file routine cannot be paused, so resume it first (it will run on its schedule from the file)`
+      )
     if (path.extname(file) !== '.clave')
       throw new Error(`${file} is not a .clave file: a routine moves into a workspace file`)
+    // Where the write lands: under the workspace root, through no link
+    // (verifier round 4, K3).
+    const rel = path.relative(workspace.rootDir, file)
+    if (rel.startsWith('..') || path.isAbsolute(rel))
+      throw new Error(
+        `${file} is outside the workspace ${workspace.name}: a routine moves into one of its files`
+      )
+    const linked = isLink(file) || isLink(path.dirname(file))
+    if (linked)
+      throw new Error(
+        `${file} goes through a link: a routine moves into a file of the workspace itself`
+      )
     const read = await options.files.read(file, { rootDir: workspace.rootDir })
     // A file that is there and reads as nothing (it does not parse, or nobody
     // trusted it) is never taken as empty and overwritten (verifier round 3, H1).

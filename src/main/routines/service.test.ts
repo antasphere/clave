@@ -6,6 +6,7 @@ import {
   readFileSync,
   readdirSync,
   rmSync,
+  symlinkSync,
   writeFileSync
 } from 'node:fs'
 import { dirname, join } from 'node:path'
@@ -1430,6 +1431,49 @@ describe('a created routine moved into a file (verifier rounds 1 and 2, F1 and G
     await second.pause(paused.routine.key, false)
     await second.tick()
     expect(host.starts).toHaveLength(1) // the one run of Morning digest above, nothing new
+  })
+
+  it('a move during an in-flight refresh is listed once the refresh ends (round 4, K1)', async () => {
+    const file = workspace([routine('Existing')])
+    const service = await build(file, fakeHost(), memory(), { defaultTemplate: tpl() })
+    const a = await service.create(digest({ name: 'Alpha' }))
+    const racing = service.refresh()
+    await service.moveToFile(a.routine.key, {})
+    await racing
+    expect(service.list().routines.map((v) => [v.routine.name, v.routine.origin])).toEqual([
+      ['Existing', 'file'],
+      ['Alpha', 'file']
+    ])
+  })
+
+  it('a paused routine is not moved: resume it first (round 4, K2)', async () => {
+    const file = workspace([])
+    const service = await build(file, fakeHost(), memory(), { defaultTemplate: tpl() })
+    const a = await service.create(digest())
+    await service.pause(a.routine.key, true)
+    await expect(service.moveToFile(a.routine.key, {})).rejects.toThrow(
+      /is paused: a file routine cannot be paused/
+    )
+    expect(service.list().routines[0].routine).toMatchObject({ origin: 'created', paused: true })
+  })
+
+  it('the target must sit under the workspace root and go through no link (round 4, K3)', async () => {
+    const file = workspace([])
+    const service = await build(file, fakeHost(), memory(), { defaultTemplate: tpl() })
+    const a = await service.create(digest())
+    const outside = join(root, '..', `outside-${Date.now()}.clave`)
+    await expect(service.moveToFile(a.routine.key, { file: outside })).rejects.toThrow(
+      /is outside the workspace/
+    )
+    expect(existsSync(outside)).toBe(false)
+    const victim = join(root, 'victim.txt')
+    const link = join(root, '.clave', 'workspaces', 'link.clave')
+    symlinkSync(victim, link)
+    await expect(service.moveToFile(a.routine.key, { file: link })).rejects.toThrow(
+      /goes through a link/
+    )
+    expect(existsSync(victim)).toBe(false)
+    expect(service.list().routines[0].routine.origin).toBe('created')
   })
 
   it('two creates at once with one name land once (verifier round 2, G2)', async () => {
