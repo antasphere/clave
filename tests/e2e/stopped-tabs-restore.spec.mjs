@@ -97,11 +97,15 @@ const terminalRecord = (root, ws) => ({
   workspaceId: ws
 })
 
+/** The row's text, read from the DOM without waiting for it (a locator's
+ *  textContent waits for the element, and a row that never comes would hold
+ *  every poll for the action timeout). */
 const rowText = (win, id) =>
   win
-    .locator(`[data-sidebar-item-id="${id}"]`)
-    .first()
-    .textContent()
+    .evaluate(
+      (sid) => document.querySelector(`[data-sidebar-item-id="${sid}"]`)?.textContent ?? null,
+      id
+    )
     .catch(() => null)
 
 export async function run(t) {
