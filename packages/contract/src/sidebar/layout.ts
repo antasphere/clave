@@ -22,8 +22,7 @@ import { Command, Query } from '@structure-ai/cqrs'
 import { CapabilityUnavailable } from '../errors'
 
 /** One shared layout on an independently managed server, independent of client windows. */
-import { SERVER_LAYOUT_KEY } from './ops'
-export { SERVER_LAYOUT_KEY }
+export { SERVER_LAYOUT_KEY } from './ops'
 
 /** A window's persisted key, the id alphabet the shell mints; it names a
  *  file, so nothing outside this alphabet is ever accepted. */

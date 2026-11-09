@@ -1,25 +1,27 @@
 /**
  * What the agent tools know of past conversations (PRDCT-4236): the rows of
  * the History dialog for `clave_history`, and how `clave_open_session` with a
- * `resume` finds the conversation it is asked to reopen. On 9 November 2026
- * Romain clicked eleven titles in the History dialog himself because no tool
- * could reopen a conversation from its transcript; the dialog's own rules
- * live here now, over injected lookups (the History service, the server's
- * records and sessions, the workspaces), so both tools answer as the dialog
- * does and a unit test reaches every rule on fakes.
+ * `resume` finds the conversation it is asked to reopen. The tools restate
+ * the dialog's rules (`SessionHistoryDialog`, `resumeHistoryEntry`) over the
+ * same History, through injected lookups (the History service, the server's
+ * records and sessions, the workspaces), so a unit test reaches every rule on
+ * fakes.
  *
- * The rules, the dialog's (`SessionHistoryDialog`, `resumeHistoryEntry`):
- * a conversation is resumable when its provider resumes (Claude, Codex and
- * Pi; Antigravity does not), its transcript is on disk and it names a working
- * directory; a conversation a LIVE tab already runs is never started again,
- * that tab is the answer; a conversation a STOPPED tab still holds is resumed
- * in that tab rather than beside it, so the sidebar never carries two tabs of
- * one conversation.
+ * The rules: a conversation is resumable when its provider resumes, its
+ * transcript is on disk and it names a working directory; a conversation a
+ * LIVE tab already runs is never started again, that tab is the answer; a
+ * conversation a STOPPED tab still holds is resumed in that tab rather than
+ * beside it, so the sidebar never carries two tabs of one conversation. The
+ * tool resumes Claude, Codex and Pi conversations, where the dialog resumes
+ * Claude and Pi only; Antigravity resumes on neither.
  */
 import type { Session, SessionRecord } from '@clave/contract/sessions'
 import type { HistoryListEntry } from '../session-history/service'
 import type { LedgerLaunch } from '../session-history/ledger'
-import { runtimeChoices } from '../../shared/runtime-choices'
+// The records read lives with the History (`live-launch.ts`), where the
+// dialog's read and the agent's share it; its tests reach it from here.
+export { RECORDS_BY_ID_CHUNK, recordsWithStopped } from '../session-history/live-launch'
+import { conversationIdOf, resumeLaunch } from '../../shared/runtime-choices'
 
 export interface HistoryLookups {
   /** The History dialog's rows: the ledger's conversations and the stores' transcripts. */
@@ -73,33 +75,6 @@ const RESUMABLE = new Set<HistoryListEntry['provider']>(['claude', 'codex', 'pi'
 const DEFAULT_LIMIT = 50
 const MAX_LIMIT = 200
 
-/** How many ids one by-id records read carries: they travel in a query
- *  string, and a Mac with hundreds of ended sessions must not overflow it
- *  (round 2, N-F4). */
-export const RECORDS_BY_ID_CHUNK = 40
-
-/**
- * The records the holders are read from: the listing a window restores from,
- * plus, by id, the records of every session the host lists that the listing
- * lacks (a hosted session whose process has ended is left out of the listing
- * and still holds its conversation, round 1 F2), a chunk at a time. A read
- * that fails is said, never swallowed: a quiet fallback would bring the
- * duplicate tab back without a word.
- */
-export async function recordsWithStopped(
-  listAdoptable: (ids?: ReadonlyArray<string>) => Promise<ReadonlyArray<SessionRecord>>,
-  list: () => Promise<ReadonlyArray<Session>>
-): Promise<readonly SessionRecord[]> {
-  const listed = await listAdoptable()
-  const ids = new Set(listed.map((r) => r.id))
-  const missing = (await list()).map((s) => s.id).filter((id) => !ids.has(id))
-  if (missing.length === 0) return listed
-  const more: SessionRecord[] = []
-  for (let at = 0; at < missing.length; at += RECORDS_BY_ID_CHUNK)
-    more.push(...(await listAdoptable(missing.slice(at, at + RECORDS_BY_ID_CHUNK))))
-  return [...listed, ...more.filter((r) => !ids.has(r.id))]
-}
-
 /** The tabs that hold a conversation, by its provider id, over the server's
  *  records and sessions: alive when the host runs it and its state is not
  *  ended, stopped otherwise. An alive holder wins over a stopped one. */
@@ -110,7 +85,7 @@ export function holdersOf(
   const state = new Map(sessions.map((s) => [s.id, s.state]))
   const out = new Map<string, { sessionId: string; alive: boolean }>()
   for (const r of records) {
-    const conversation = r.claudeSessionId ?? r.codexThreadId ?? r.piSessionId
+    const conversation = conversationIdOf(r)
     if (!conversation) continue
     const alive = r.running === true && state.get(r.id) !== 'ended'
     const known = out.get(conversation)
@@ -215,9 +190,8 @@ export async function planResume(
   const id = conversationId.trim()
   if (!id) throw new ResumeRefused('resume names no conversation id.')
   const [records, sessions] = await Promise.all([lookups.records(), lookups.sessions()])
-  const holder = holdersOf(records, sessions).get(id)
-  if (holder?.alive) return { kind: 'open', sessionId: holder.sessionId }
-  if (holder) return { kind: 'stopped', sessionId: holder.sessionId }
+  const held = planResumeFromRecords(records, sessions, id)
+  if (held) return held
   const entry = (await lookups.history()).find((e) => e.claudeSessionId === id)
   if (!entry)
     throw new ResumeRefused(
@@ -267,13 +241,12 @@ export interface ResumeOpenIo {
 }
 
 /**
- * The launch a resume defaults to (PRDCT-4236): what the ledger remembers,
- * under the Resume's own rule (`runtimeChoices`), the caller's every value
- * winning. A caller's `dangerous` decides bypass, and then no remembered
- * mode is passed; a caller's `permissionMode` likewise stands alone. An
- * account is named only when it still exists, else the pool picks, as
- * before. Claude takes the mode; Claude and Codex take bypass, the effort and
- * the account; Pi takes none of them.
+ * The launch a resume defaults to (PRDCT-4236): the shared rule
+ * (`resumeLaunch`) over what the ledger remembers, the caller's every value
+ * winning. A caller's `dangerous` or `permissionMode` decides the mode, and
+ * then neither bypass nor a remembered mode is filled in; bypass is filled in
+ * only when the ledger remembers a mode. An account is named only when it
+ * still exists, else the pool picks, as before.
  */
 export function resumeLaunchDefaults(
   plan: { provider: 'claude' | 'codex' | 'pi'; launch: LedgerLaunch | null },
@@ -283,27 +256,24 @@ export function resumeLaunchDefaults(
   const launch = plan.launch
   if (!launch || plan.provider === 'pi') return {}
   const callerChoseMode = p.dangerous !== undefined || p.permissionMode !== undefined
-  const choices = runtimeChoices({
-    dangerousMode: launch.dangerous === true,
-    permissionMode: launch.permissionMode,
-    effort: launch.effort
+  const defaults = resumeLaunch(plan.provider, launch, {
+    dangerous: p.dangerous,
+    permissionMode: p.permissionMode
   })
   const out: Record<string, unknown> = {}
-  if (!callerChoseMode) {
-    if (launch.dangerous !== undefined || launch.permissionMode !== undefined)
-      out.dangerous = choices.dangerousMode
-    if (plan.provider === 'claude' && choices.permissionMode) {
-      out.permissionMode = choices.permissionMode
-      if (choices.allowDangerous) out.allowDangerous = true
-    }
+  if (!callerChoseMode && (launch.dangerous !== undefined || launch.permissionMode !== undefined))
+    out.dangerous = defaults.dangerousMode
+  if (defaults.permissionMode) {
+    out.permissionMode = defaults.permissionMode
+    if (defaults.allowDangerous) out.allowDangerous = true
   }
-  if (p.effort === undefined && choices.effort) out.effort = choices.effort
+  if (p.effort === undefined && defaults.effort) out.effort = defaults.effort
   if (
     p.account === undefined &&
-    launch.accountId &&
-    isKnownAccount(plan.provider, launch.accountId)
+    defaults.accountId &&
+    isKnownAccount(plan.provider, defaults.accountId)
   )
-    out.account = launch.accountId
+    out.account = defaults.accountId
   return out
 }
 

@@ -16,7 +16,7 @@
  */
 import type { AccountOverride, Session } from '@clave/contract/sessions'
 import { pickAccount } from '../../shared/account-pool'
-import { spawnEffort, spawnPermissionMode } from '../../shared/runtime-choices'
+import { launchModeFields } from '../../shared/runtime-choices'
 import { historyLines } from '../../shared/history-text'
 import {
   type TargetHost,
@@ -442,8 +442,6 @@ async function openSession(ctx: Ctx, key: string, p: Payload): Promise<unknown> 
   const prompt = str(p.prompt)
   const provider = str(p.provider)
   const thinking = str(p.thinking)
-  const permissionMode = spawnPermissionMode(p.permissionMode)
-  const effort = spawnEffort(p.effort)
   let info: { id: string; folderName: string }
   try {
     info = await ctx.api.sessions.start({
@@ -465,11 +463,14 @@ async function openSession(ctx: Ctx, key: string, p: Payload): Promise<unknown> 
           : {}),
         // The mode and the effort to start at (PRDCT-4236): the caller's, or
         // the ones a resumed conversation last ran at. Bypass is the flag.
-        ...(claudeMode && !dangerousMode && permissionMode ? { permissionMode } : {}),
-        ...(claudeMode && !dangerousMode && permissionMode && p.allowDangerous === true
-          ? { allowDangerous: true }
-          : {}),
-        ...((claudeMode || codexMode) && effort ? { effort } : {}),
+        ...launchModeFields({
+          claudeMode,
+          codexMode,
+          dangerousMode,
+          permissionMode: p.permissionMode,
+          effort: p.effort,
+          allowDangerous: p.allowDangerous
+        }),
         ...(piMode && provider !== undefined ? { piProvider: provider } : {}),
         ...(piMode && thinking !== undefined ? { piThinking: thinking } : {}),
         ...(mode === 'terminal' && command ? { initialCommand: command } : {}),

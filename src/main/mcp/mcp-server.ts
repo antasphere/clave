@@ -36,17 +36,14 @@ import { usageManager, type UsageError, type UsageLimits } from '../usage-manage
 import { codexUsageManager } from '../codex-usage'
 import { NOT_SERVED, type ServedShell, serveCommand } from './served-tools'
 import { serverClient } from './server-client'
-import { listHistory } from '../session-history/service'
-import { restampSessionLaunch } from '../ipc-handlers/history-handlers'
-import { overlayLiveLaunch } from '../session-history/live-launch'
-import type { SessionRecord as SessionRecordWire } from '@clave/contract/sessions'
 import {
-  listConversations,
-  openResumed,
-  recordsWithStopped,
-  ResumeRefused,
-  type HistoryLookups
-} from './conversation-history'
+  historyWithLiveLaunch,
+  hostRecords,
+  restampSessionLaunch
+} from '../session-history/host-reads'
+import type { SessionRecord as SessionRecordWire } from '@clave/contract/sessions'
+import { listConversations, openResumed, type HistoryLookups } from './conversation-history'
+import { EFFORT_PATTERN, SPAWN_PERMISSION_MODES } from '../../shared/runtime-choices'
 import {
   BOOT_DECISION_WAIT_MS,
   getClaveServerEndpoint,
@@ -591,29 +588,20 @@ async function openWindowFromTool(
   return { windowId, workspaceId }
 }
 
-/** Run a renderer command and wrap the outcome as an MCP tool result. The
- *  target window is resolved first (§3.8): with several windows the sidebar
- *  state is partitioned by hosting, so the command runs where its subject —
- *  or its caller — lives. `caller` is the token-derived identity of the
- *  calling tab and drives the routing for EVERY tool; the payload's own
- *  `callerSessionId` (forwarded only by the identity-gated tools) is what the
- *  renderer handlers read, and is the fallback for a call with no `caller`. */
 /** The History's facts for the conversation tools (`conversation-history.ts`):
- *  the dialog's rows, the server's records and sessions, the workspaces. */
+ *  the dialog's rows, the server's records and sessions, the workspaces. The
+ *  records are read once per lookups, so one tool call reads the server once. */
 function historyLookups(api: Awaited<ReturnType<typeof serverClient.api>>): HistoryLookups {
-  const records = (): Promise<readonly SessionRecordWire[]> =>
-    recordsWithStopped(
-      (ids) => api.sessions.listAdoptable(ids),
-      () => api.sessions.list()
-    )
+  // The listing a window restores from leaves out a hosted session whose
+  // process has ended (`hostedListing`); such a tab still holds its
+  // conversation, stopped (round 1, F2), so the records of every session the
+  // host lists and the listing lacks are read by id and added.
+  let read: Promise<readonly SessionRecordWire[]> | null = null
+  const records = (): Promise<readonly SessionRecordWire[]> => (read ??= hostRecords(api))
   return {
     // The ledger's memory with the live record of every held conversation
     // laid over it (round 5 F1): what the tab's own Resume reads.
-    history: async () => overlayLiveLaunch(listHistory().entries, await records()),
-    // The listing a window restores from leaves out a hosted session whose
-    // process has ended (`hostedListing`); such a tab still holds its
-    // conversation, stopped (round 1, F2), so the records of every session the
-    // host lists and the listing lacks are read by id and added.
+    history: async () => (await historyWithLiveLaunch(api, records)).entries,
     records,
     sessions: () => api.sessions.list(),
     workspaces: () => workspaceManager.getWorkspaces().map((w) => ({ id: w.id, name: w.name }))
@@ -635,27 +623,29 @@ async function prepareResume(
   callerSessionId: string | undefined
 ): Promise<{ result: unknown } | { payload: Record<string, unknown> }> {
   const api = await serverClient.api()
-  try {
-    return await openResumed(historyLookups(api), p, callerSessionId, {
-      isDirectory,
-      isRegisteredWorkspace: (id) => workspaceManager.isRegistered(id),
-      isKnownAccount: (provider, id) =>
-        (provider === 'claude' ? claudeAccountsManager.get(id) : codexAccountsManager.get(id)) !==
-        undefined,
-      restart: async (id) => {
-        const restarted = await api.sessions.restart(id, {}, false, undefined, true)
-        return { resumed: restarted.resumed }
-      },
-      focus: async (id) => {
-        await runCommand('focus', { sessionId: id }, callerSessionId)
-      }
-    })
-  } catch (err) {
-    if (err instanceof ResumeRefused) throw new Error(err.message)
-    throw err
-  }
+  return openResumed(historyLookups(api), p, callerSessionId, {
+    isDirectory,
+    isRegisteredWorkspace: (id) => workspaceManager.isRegistered(id),
+    isKnownAccount: (provider, id) =>
+      (provider === 'claude' ? claudeAccountsManager.get(id) : codexAccountsManager.get(id)) !==
+      undefined,
+    restart: async (id) => {
+      const restarted = await api.sessions.restart(id, {}, false, undefined, true)
+      return { resumed: restarted.resumed }
+    },
+    focus: async (id) => {
+      await runCommand('focus', { sessionId: id }, callerSessionId)
+    }
+  })
 }
 
+/** Run a renderer command and wrap the outcome as an MCP tool result. The
+ *  target window is resolved first (§3.8): with several windows the sidebar
+ *  state is partitioned by hosting, so the command runs where its subject —
+ *  or its caller — lives. `caller` is the token-derived identity of the
+ *  calling tab and drives the routing for EVERY tool; the payload's own
+ *  `callerSessionId` (forwarded only by the identity-gated tools) is what the
+ *  renderer handlers read, and is the fallback for a call with no `caller`. */
 async function runCommand(command: string, payload: unknown, caller?: string): Promise<ToolResult> {
   try {
     let p = (payload ?? {}) as Record<string, unknown>
@@ -943,14 +933,14 @@ function buildServer(callerSessionId: string | undefined): McpServer {
             'Account (subscription) the new tab runs on: an account id or its exact name as set in Settings → Accounts ("default" is the machine login), or "any" for whichever account of the pool has headroom. claude and codex modes only. Omit to follow Settings → Accounts: the selected account, or the recommended account when enabled, moved along the pool when exhausted. Unknown names error with the list. clave_list reports each session\'s account.'
           ),
         permissionMode: z
-          .enum(['default', 'acceptEdits', 'plan', 'auto', 'dontAsk'])
+          .enum(SPAWN_PERMISSION_MODES)
           .optional()
           .describe(
             'The mode a Claude agent asks permission under, short of bypass (bypass is dangerous). claude mode only; ignored with dangerous: true. With resume, defaults to the mode the conversation last ran in.'
           ),
         effort: z
           .string()
-          .regex(/^[a-z][a-z0-9_-]{0,31}$/)
+          .regex(EFFORT_PATTERN)
           .optional()
           .describe(
             'The reasoning effort the agent starts at ("low", "medium", "high", "xhigh", "max"). claude and codex chats. With resume, defaults to the effort the conversation last ran at.'

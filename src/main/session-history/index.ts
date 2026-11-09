@@ -1,6 +1,7 @@
 import type { LedgerLaunch, LedgerRow } from './ledger'
 import { DIGEST_HELPER_MARKER } from '../../shared/exchange-digest'
 import { WORK_DIGEST_MARKER } from '../../shared/work-digest'
+import { LAUNCH_KEYS } from '../../shared/runtime-choices'
 
 /**
  * The fold: ledger rows (and, as a one-time seed, the exchange-capture
@@ -46,8 +47,6 @@ export interface HistoryEntry {
    *  Absent when no row ever carried one. */
   launch?: LedgerLaunch
 }
-
-const LAUNCH_KEYS = ['dangerous', 'permissionMode', 'effort', 'accountId', 'accountLabel'] as const
 
 /** A row's launch fields over the entry's: a field the row carries wins, a
  *  field it lacks keeps the earlier value. */

@@ -11,7 +11,8 @@ import type {
 } from '@clave/contract/sessions'
 import type { SessionStream } from '../../shared/session-model'
 import { standaloneSidebar } from '../server/standalone-sidebar'
-import { resumeOptions, serverOwnedSessionHost } from './server-owned-host'
+import { serverOwnedSessionHost } from './server-owned-host'
+import { resumeOptions } from './resume-options'
 
 type WireStateFrame = Extract<SessionStream, { kind: 'event' }>['event']
 const dirs: string[] = []

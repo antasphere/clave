@@ -48,7 +48,6 @@ import { ServerEvents } from '../events'
 const messageOf = (error: unknown): string =>
   error instanceof Error ? error.message : String(error)
 
-/** The record, or the declared failure for an id this host does not know. */
 /** Whether the host keeps a record of that id, running or not; false where
  *  it keeps none or cannot list them. */
 const recorded = (host: SessionHostService, id: string): boolean => {
@@ -59,6 +58,7 @@ const recorded = (host: SessionHostService, id: string): boolean => {
   }
 }
 
+/** The record, or the declared failure for an id this host does not know. */
 const known = (host: SessionHostService, id: string): Effect.Effect<Session, SessionNotFound> => {
   const session = host.get(id)
   return session ? Effect.succeed(session) : Effect.fail(new SessionNotFound({ id }))

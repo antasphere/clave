@@ -152,7 +152,7 @@ describe('restampLaunch: a closing tab’s launch written from its record (round
       row('closing-1', { claudeSessionId: 'cc-closing-1', groupId: 'g1', groupName: 'Work' })
     )
     const before = written().length
-    restampLaunch('closing-1', {
+    await restampLaunch('closing-1', {
       id: 'closing-1',
       cwd: '/tmp/proj',
       folderName: 'proj',
@@ -194,7 +194,7 @@ describe('restampLaunch: a closing tab’s launch written from its record (round
         ts: '2026-11-09T11:00:00.000Z'
       })
     )
-    restampLaunch('moved-1', {
+    await restampLaunch('moved-1', {
       id: 'moved-1',
       cwd: '/tmp/proj',
       folderName: 'proj',
@@ -215,9 +215,9 @@ describe('restampLaunch: a closing tab’s launch written from its record (round
     })
   })
 
-  it('writes nothing for a tab the ledger never saw', () => {
+  it('writes nothing for a tab the ledger never saw', async () => {
     const before = written().length
-    restampLaunch('never-seen', { id: 'never-seen', cwd: '/x', folderName: 'x' } as never)
+    await restampLaunch('never-seen', { id: 'never-seen', cwd: '/x', folderName: 'x' } as never)
     expect(written().length).toBe(before)
   })
 })

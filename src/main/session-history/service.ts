@@ -3,8 +3,7 @@ import { homedir } from 'os'
 import { app } from 'electron'
 import { CaptureStore } from '../exchange-capture/store'
 import { SessionLedger, normalizeLedgerRow, type LedgerRow } from './ledger'
-import { launchOfRecord } from './live-launch'
-import type { SessionRecord as RuntimeRecordLike } from '@clave/contract/sessions'
+import { launchOfRecord, type LaunchRecord } from './live-launch'
 import {
   captureEventsToRows,
   foldHistory,
@@ -108,12 +107,9 @@ export function conversationRoot(configDir: unknown): string {
 }
 
 /** What a session's record says of what it runs on: the mode and the effort
- *  the provider last reported, the model it was launched on. */
-export interface StampRecord {
-  readonly model?: string | undefined
-  readonly permissionMode?: string | undefined
-  readonly effort?: string | undefined
-}
+ *  the provider last reported, the model it was launched on, bypass and the
+ *  account (what `launchOfRecord` reads). */
+export type StampRecord = LaunchRecord
 
 /** Where the stamp reads a session's record (PRDCT-4236): main's own, and,
  *  when main keeps none (its sessions live on a server of their own), the
@@ -162,29 +158,34 @@ export function enrichLedgerRow(row: LedgerRow, record: StampRecord | null | und
  * written again, placed, with the record's launch. Nothing is written for a
  * tab the ledger never saw.
  */
-export function restampLaunch(sessionId: string, record: StampRecord & RuntimeRecordLike): void {
-  const latest = [...getLedger().readAll().rows].reverse().find((r) => r.sessionId === sessionId)
-  if (!latest) return
-  const row = normalizeLedgerRow({
-    ...latest,
-    kind: 'placed',
-    ts: new Date().toISOString(),
-    ...launchOfRecord(record)
-  })
-  if (row) getLedger().append(row)
+export function restampLaunch(sessionId: string, record: StampRecord): Promise<void> {
+  // Through the stamps' queue: a stamp of the same tab still waiting on the
+  // server never lands after the close's word.
+  const write = (): void => {
+    try {
+      const latest = [...getLedger().readAll().rows]
+        .reverse()
+        .find((r) => r.sessionId === sessionId)
+      if (!latest) return
+      const row = normalizeLedgerRow({
+        ...latest,
+        kind: 'placed',
+        ts: new Date().toISOString(),
+        ...launchOfRecord(record)
+      })
+      if (row) getLedger().append(row)
+    } catch (err) {
+      console.error('[session-history] failed to restamp the launch', err)
+    }
+  }
+  stampQueue = stampQueue.then(write, write)
+  return stampQueue
 }
 
-/** The record a stamp reads, with the server's timeout and backoff: for the
- *  restamp a close makes (PRDCT-4236, round 7), so a server that does not
- *  answer never holds a close for long. */
-export function recordForStamp(
-  sessionId: string,
-  source: StampRecordSource
-): Promise<StampRecord | null | undefined> {
-  return recordFor(sessionId, source)
-}
-
-async function recordFor(
+/** The record a stamp reads, main's own first, else the server's with a
+ *  timeout and a backoff, so a server that does not answer never holds a
+ *  stamp, or the restamp a close makes (PRDCT-4236, round 7), for long. */
+export async function recordFor(
   sessionId: string,
   source: StampRecordSource
 ): Promise<StampRecord | null | undefined> {

@@ -6,7 +6,7 @@
  * main's boot must reach no Effect module (`server/lazy-load.test.ts`).
  */
 import type { SessionRecord, SpawnOptions } from '@clave/contract/sessions'
-import { runtimeChoices } from './runtime-choices'
+import { conversationIdOf, runtimeChoices } from '../../shared/runtime-choices'
 
 /** An allowlist deliberately excludes initial commands, prompts and tmux adoption. */
 export function resumeOptions(record: SessionRecord): SpawnOptions {
@@ -19,7 +19,7 @@ export function resumeOptions(record: SessionRecord): SpawnOptions {
     // A Pi session resumes through `--session <id>` (the launch's
     // `resumeSessionId`); `piSessionId` alone would start a fresh one under
     // that id (round 2, N-F3).
-    resumeSessionId: record.codexThreadId ?? record.claudeSessionId ?? record.piSessionId,
+    resumeSessionId: conversationIdOf(record),
     claudeSessionId: record.claudeSessionId,
     piSessionId: record.piSessionId,
     claudeMode: record.claudeMode,

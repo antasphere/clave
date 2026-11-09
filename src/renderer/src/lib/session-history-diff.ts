@@ -1,7 +1,12 @@
 import type { Session, SessionGroup } from '../store/session-types'
 import { sessionMode, groupOfSession } from './exchange-capture'
 import type { HistoryLedgerRow, HistoryListEntry } from '../../../preload/index.d'
-import { runtimeChoices, type RuntimeChoices } from '../../../shared/runtime-choices'
+import {
+  accountOf,
+  LAUNCH_KEYS,
+  resumeLaunch,
+  type ResumeLaunch
+} from '../../../shared/runtime-choices'
 import { entryInGroup, type GroupRef } from '../../../shared/history-group-match'
 import { encodeProjectDir } from '../../../shared/project-dir'
 
@@ -63,19 +68,8 @@ export class SessionHistoryDiff {
       // the mode it moved to; a copy of the launch flag here would write
       // over it (PRDCT-4236, round 6). Main still adds the record's mode
       // where the record is there.
-      const {
-        dangerous: _d,
-        permissionMode: _m,
-        effort: _e,
-        accountId: _a,
-        accountLabel: _l,
-        ...placement
-      } = prev.row
-      void _d
-      void _m
-      void _e
-      void _a
-      void _l
+      const placement: HistoryLedgerRow = { ...prev.row }
+      for (const key of LAUNCH_KEYS) delete placement[key]
       this.send({ ...placement, kind: 'closed', ts: this.now() })
     }
   }
@@ -118,15 +112,6 @@ function identityRow(s: Session, group: SessionGroup | undefined, ts: string): H
   }
 }
 
-/** The account a tab runs on: its Codex account for a Codex tab, its Claude
- *  account otherwise; nothing when it names none (the pool's pick). */
-function accountOf(s: Session): { accountId?: string; accountLabel?: string } {
-  const id = s.codexMode ? s.codexAccountId : s.claudeProfileId
-  const label = s.codexMode ? s.codexAccountLabel : s.claudeProfileLabel
-  if (!id) return {}
-  return { accountId: id, ...(label ? { accountLabel: label } : {}) }
-}
-
 /** The placement identity as one string. NUL-separated (as an escape, never
  *  a raw byte — that made this file binary to git once): a space would let
  *  {group "a b", name "c"} and {group "a", name "b c"} collide. */
@@ -143,43 +128,31 @@ function keyOf(r: HistoryLedgerRow): string {
   ].join('\u0000')
 }
 
-/** The spawn fields of a reopen from the History (PRDCT-4236): the launch the
- *  ledger remembers, under the Resume's own rule (`runtimeChoices`). The
- *  person's explicit "skip permissions" wins over a launch without bypass,
- *  and then no mode short of bypass is passed. The account is named only
- *  when it still exists (`accountExists` answers with its current label);
- *  an unknown one falls back to the pool. Claude only: the History resumes
- *  nothing else that takes these flags. */
+/** The spawn fields of a reopen from the History (PRDCT-4236): the shared
+ *  rule (`resumeLaunch`), the person's explicit "skip permissions" winning
+ *  over the remembered mode. The account is named only when it still exists
+ *  (`accountLabel` answers with its current label); an unknown one falls back
+ *  to the pool. */
 export function historyResumeLaunch(
   entry: Pick<HistoryListEntry, 'provider' | 'model' | 'launch'>,
   dangerousMode: boolean,
   accountLabel: (provider: 'claude' | 'codex', id: string) => string | null
-): Pick<RuntimeChoices, 'dangerousMode' | 'permissionMode' | 'allowDangerous' | 'effort'> & {
+): Omit<ResumeLaunch, 'accountId'> & {
   claudeProfileId?: string
   claudeProfileLabel?: string
   codexAccountId?: string
   codexAccountLabel?: string
 } {
-  if (entry.provider !== 'claude' && entry.provider !== 'codex') return { dangerousMode: false }
-  const launch = entry.launch ?? {}
-  // Asked for bypass: the remembered mode short of it is not passed.
-  const choices: RuntimeChoices = runtimeChoices({
-    dangerousMode: dangerousMode || launch.dangerous === true,
-    permissionMode: dangerousMode ? undefined : launch.permissionMode,
-    effort: launch.effort
-  })
-  const out: ReturnType<typeof historyResumeLaunch> = {
-    dangerousMode: entry.provider === 'claude' && choices.dangerousMode
-  }
-  if (entry.provider === 'claude') {
-    if (choices.permissionMode) out.permissionMode = choices.permissionMode
-    if (choices.allowDangerous) out.allowDangerous = true
-  }
-  if (choices.effort) out.effort = choices.effort
-  const id = launch.accountId
-  const label = id ? accountLabel(entry.provider, id) : null
+  const { accountId: id, ...launch } = resumeLaunch(
+    entry.provider,
+    entry.launch,
+    dangerousMode ? { dangerous: true } : {}
+  )
+  const out: ReturnType<typeof historyResumeLaunch> = launch
+  const provider = entry.provider === 'codex' ? 'codex' : 'claude'
+  const label = id ? accountLabel(provider, id) : null
   if (id && label !== null) {
-    if (entry.provider === 'claude') {
+    if (provider === 'claude') {
       out.claudeProfileId = id
       out.claudeProfileLabel = label
     } else {

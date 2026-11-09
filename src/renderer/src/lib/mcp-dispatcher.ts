@@ -1,5 +1,5 @@
 import { workspaceForPath } from '../../../shared/workspace-types'
-import { spawnEffort, spawnPermissionMode } from '../../../shared/runtime-choices'
+import { launchModeFields } from '../../../shared/runtime-choices'
 import { LOCAL_SERVER_ID } from '@clave/contract/fleet'
 import { useFleetStore } from '../store/fleet-store'
 import { allWorkspaces } from '../store/workspace-store'
@@ -548,8 +548,6 @@ export async function openSessionProgrammatically(payload: {
     ...(claudeProfile ? claudeProfileSpawnFields(claudeProfile) : {}),
     ...(codexAccount ? codexAccountSpawnFields(codexAccount) : {})
   }
-  const permissionMode = spawnPermissionMode(payload.permissionMode)
-  const effort = spawnEffort(payload.effort)
   const info = await window.electronAPI.spawnSession(payload.cwd, {
     claudeMode,
     antigravityMode,
@@ -561,11 +559,14 @@ export async function openSessionProgrammatically(payload: {
     ...accountFields,
     ...(payload.resumeSessionId ? { resumeSessionId: payload.resumeSessionId } : {}),
     // The mode and the effort to start at (PRDCT-4236). Bypass is the flag.
-    ...(claudeMode && !dangerousMode && permissionMode ? { permissionMode } : {}),
-    ...(claudeMode && !dangerousMode && permissionMode && payload.allowDangerous === true
-      ? { allowDangerous: true }
-      : {}),
-    ...((claudeMode || codexMode) && effort ? { effort } : {}),
+    ...launchModeFields({
+      claudeMode,
+      codexMode,
+      dangerousMode,
+      permissionMode: payload.permissionMode,
+      effort: payload.effort,
+      allowDangerous: payload.allowDangerous
+    }),
     piProvider: piMode ? payload.provider : undefined,
     piThinking: piMode ? payload.thinking : undefined,
     initialCommand: mode === 'terminal' ? payload.command || undefined : undefined,
@@ -1137,7 +1138,7 @@ function resolveTargetSession(ref: string, callerSessionId: string | undefined):
   // related to the caller wins, else the first (round 3, C4).
   return (
     (callerSessionId && named.length > 1
-      ? named.find((s) => canReach(callerSessionId, s))
+      ? named.find((s) => isRelatedTo(callerSessionId, s))
       : undefined) ?? named[0]
   )
 }
@@ -1145,7 +1146,7 @@ function resolveTargetSession(ref: string, callerSessionId: string | undefined):
 /** Whether the caller is related to the target: itself, the tab that opened
  *  it, a tab it opened, a groupmate. Only the tie-break between tabs sharing a
  *  name reads it; any tab may be reached (PRDCT-4236). */
-function canReach(callerSessionId: string, target: Session): boolean {
+function isRelatedTo(callerSessionId: string, target: Session): boolean {
   if (callerSessionId === target.id) return true
   const state = useSessionStore.getState()
   const caller = state.sessions.find((s) => s.id === callerSessionId)
@@ -1168,11 +1169,11 @@ function canReach(callerSessionId: string, target: Session): boolean {
  */
 function requireCaller(
   callerSessionId: string | undefined,
-  verb: 'message' | 'read' | 'resume' | 'assign' | 'hand over to'
+  verb: 'message' | 'read' | 'resume'
 ): asserts callerSessionId is string {
   if (!callerSessionId) {
     throw new Error(
-      `${verb === 'message' ? 'clave_send_to_session' : verb === 'read' ? 'clave_read_session' : verb === 'resume' ? 'clave_resume_session' : verb === 'assign' ? 'clave_set_work' : 'clave_hand_over'} must be called from inside a Clave agent tab — this request has no tab identity.`
+      `${verb === 'message' ? 'clave_send_to_session' : verb === 'read' ? 'clave_read_session' : 'clave_resume_session'} must be called from inside a Clave agent tab — this request has no tab identity.`
     )
   }
 }
@@ -1191,7 +1192,6 @@ async function handleSetWork(payload: Record<string, unknown>): Promise<unknown>
     )
   const ref = typeof payload.sessionId === 'string' ? payload.sessionId : 'mine'
   const target = resolveTargetSession(ref === 'mine' ? caller : ref, caller)
-  requireCaller(caller, 'assign')
   const callerUnit = useSessionStore.getState().sessions.find((s) => s.id === caller)?.work?.unit
   const change = setWorkChange(payload, callerUnit)
   return workToolAnswer(target.id, await window.electronAPI.sessionsChangeWork(target.id, change))
@@ -1210,7 +1210,6 @@ async function handleHandOver(payload: Record<string, unknown>): Promise<unknown
       await window.electronAPI.sessionsChangeWork(caller, handOverChange(request))
     )
   const successor = resolveTargetSession(request.to, caller)
-  requireCaller(caller, 'hand over to')
   return workToolAnswer(
     caller,
     await window.electronAPI.sessionsChangeWork(caller, handOverChange(request, successor.id))

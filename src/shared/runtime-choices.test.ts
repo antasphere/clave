@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { runtimeChoices } from './runtime-choices'
+import { resumeLaunch, runtimeChoices } from './runtime-choices'
 
 // PRDCT-4191: "Lane · Company AI keys" came back from a Resume in Manual on
 // opus after it had run with permissions skipped on another model. The record
@@ -61,6 +61,49 @@ describe('bypass kept reachable (round 3, C5)', () => {
     // Still in bypass: the flag itself, nothing to allow.
     expect(runtimeChoices({ dangerousMode: true, permissionMode: 'bypassPermissions' })).toEqual({
       dangerousMode: true
+    })
+  })
+})
+
+// PRDCT-4236: the dialog's reopen and the agent's resume default to the same
+// remembered launch; the two copies had drifted on Codex's bypass.
+describe('resumeLaunch: one rule for every reopen from the History', () => {
+  const launch = { dangerous: true, permissionMode: 'plan', effort: 'high', accountId: 'a1' }
+
+  it('Claude takes bypass, the mode, the effort and the account', () => {
+    expect(resumeLaunch('claude', launch)).toEqual({
+      dangerousMode: false,
+      permissionMode: 'plan',
+      allowDangerous: true,
+      effort: 'high',
+      accountId: 'a1'
+    })
+  })
+
+  it('Codex takes bypass, the effort and the account, never a mode; Pi takes nothing', () => {
+    expect(resumeLaunch('codex', { dangerous: true, effort: 'high', accountId: 'a1' })).toEqual({
+      dangerousMode: true,
+      effort: 'high',
+      accountId: 'a1'
+    })
+    expect(resumeLaunch('codex', launch)).toEqual({
+      dangerousMode: false,
+      effort: 'high',
+      accountId: 'a1'
+    })
+    expect(resumeLaunch('pi', launch)).toEqual({ dangerousMode: false })
+  })
+
+  it('the caller’s dangerous or permissionMode wins, and no remembered mode is filled', () => {
+    expect(resumeLaunch('claude', launch, { dangerous: true })).toEqual({
+      dangerousMode: true,
+      effort: 'high',
+      accountId: 'a1'
+    })
+    expect(resumeLaunch('claude', launch, { permissionMode: 'acceptEdits' })).toEqual({
+      dangerousMode: false,
+      effort: 'high',
+      accountId: 'a1'
     })
   })
 })

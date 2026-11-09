@@ -43,8 +43,6 @@ export function stoppedSession(record: SessionRecord): Session {
   }
 }
 
-export { resumeOptions }
-
 export function serverOwnedSessionHost(options: ServerOwnedHostOptions): {
   host: SessionHostService
   close: () => void
@@ -282,7 +280,7 @@ export function serverOwnedSessionHost(options: ServerOwnedHostOptions): {
         )
         bind(id)
         if (base.get(id)?.transport === 'events') options.ready(id)
-        return { ...result, resumed: !!(spawn.resumeSessionId || spawn.piSessionId) }
+        return { ...result, resumed: !!spawn.resumeSessionId }
       }
       const work = resume().finally(() => {
         pending.delete(id)
