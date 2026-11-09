@@ -30,7 +30,9 @@ import { useLimitSentence } from './limit-words'
 function Probe({ host }: { host: Partial<Session> }): React.JSX.Element {
   return createElement('span', null, useLimitSentence(host as Session))
 }
-const now = Date.now()
+// The hook reads the real clock: half an hour of margin keeps "2d 5h" true
+// however long the file waits between collection and run on a loaded Mac.
+const now = Date.now() + 30 * 60_000
 const text = (host: Partial<Session>): string =>
   renderToStaticMarkup(createElement(Probe, { host })).replace(/<[^>]+>/g, '')
 
@@ -68,10 +70,10 @@ describe('useLimitSentence', () => {
       scope: null,
       usedPercentage: 100,
       severity: 'critical',
-      resetsAt: now + 3_600_000
+      resetsAt: now + 2 * 86_400_000 + 5 * 3_600_000
     }
     expect(
       text({ claudeProfileLabel: 'Work', limitReported: { scope: { family: 'Fable' } } })
-    ).toBe('Work is out on Overall, back in 1h.')
+    ).toBe('Work is out on Overall, back in 2d 5h.')
   })
 })

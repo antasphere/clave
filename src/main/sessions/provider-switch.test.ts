@@ -114,6 +114,35 @@ describe("the restart's spawn rebuilt for another adapter (PRDCT-4300)", () => {
     expect(options.allowDangerous).toBeUndefined()
     expect(options.launchProfile).toBeUndefined()
   })
+  it("carries the message a cap rejected as the resumed thread's first prompt, once, and never beside the handoff (integration round 2, G7)", () => {
+    const rejected = { type: 'user_message' as const, text: 'the question the cap refused' }
+    const resumed = providerSwitchOptions(
+      { ...previous, initialInput: rejected },
+      { adapterId: 'codex-chat', model: 'gpt-5.5', resume: 'thread-7' }
+    )
+    expect(resumed.initialPrompt).toBe('the question the cap refused')
+    expect(resumed.initialInput).toBeUndefined()
+    // No rejected message on the restart: the resumed thread gets no prompt.
+    expect(
+      providerSwitchOptions(previous, {
+        adapterId: 'codex-chat',
+        model: 'gpt-5.5',
+        resume: 'thread-7'
+      }).initialPrompt
+    ).toBeUndefined()
+    // The handoff road: the tape is the first message and ends on the question already.
+    const handed = providerSwitchOptions(
+      { ...previous, initialInput: rejected },
+      {
+        adapterId: 'codex-chat',
+        model: 'gpt-5.5',
+        firstMessage: '# Continued from Claude · handoff\n…'
+      }
+    )
+    expect(handed.initialPrompt).toBe('# Continued from Claude · handoff\n…')
+    expect(handed.initialInput).toBeUndefined()
+  })
+
   it('opens a fresh conversation on the handoff when nothing is resumed', () => {
     const options = providerSwitchOptions(previous, {
       adapterId: 'codex-chat',

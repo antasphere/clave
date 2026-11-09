@@ -130,8 +130,12 @@ export function providerSwitchOptions(
     claudeSessionId: undefined,
     // The handoff is the fresh conversation's first message, as a launch's
     // prompt is: every chat adapter sends its launch prompt at ready. A
-    // resumed thread already holds the conversation and gets none.
-    initialPrompt: target.resume === undefined ? target.firstMessage : undefined,
+    // resumed thread already holds the conversation; what it gets, once, is
+    // the message a cap rejected when the limit policy made the move (the
+    // restart's `initialInput`, integration round 2, G7), sent the same way
+    // since only the Claude adapter takes an input at ready. The handoff
+    // tape already ends on that message, so it is never sent twice.
+    initialPrompt: target.resume === undefined ? target.firstMessage : previous.initialInput?.text,
     initialInput: undefined,
     // The account the move lands on comes with the override's own account
     // fields; the other provider's are not the target's.

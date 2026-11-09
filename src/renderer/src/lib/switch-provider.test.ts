@@ -97,6 +97,7 @@ describe('switchSessionProvider', () => {
     })
     expect(handoff).not.toHaveBeenCalled()
     expect(h.restart).toHaveBeenCalledWith('s1', {
+      resendRejected: false,
       overrides: {
         codexAccountId: 'c1',
         codexAccountLabel: 'Codex 1',

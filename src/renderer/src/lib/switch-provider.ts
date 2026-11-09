@@ -137,6 +137,10 @@ export interface ProviderSwitchInput {
   /** The handoff message, built when the move takes that road: the chat view
    *  holds the conversation and writes it (`export.ts`, `handoffMessage`). */
   handoff: () => Promise<string>
+  /** The limit policy's move: the message the cap rejected goes once as the
+   *  new provider's first turn after the converted history (the handoff
+   *  tape already ends on it). Integration round 2, G7. */
+  resendRejected?: boolean
 }
 
 export type ProviderSwitchResult = SwitchResult & {
@@ -172,6 +176,7 @@ export async function switchSessionProvider(
   const codex = target.adapterId === 'codex-chat'
   const claude = target.adapterId === 'claude-chat'
   const result = await restartSessionProcess(sessionId, {
+    resendRejected: input.resendRejected === true,
     overrides: {
       ...landing.overrides,
       adapterId: target.adapterId,
@@ -275,7 +280,8 @@ export function historyMarkdown(items: readonly HistoryItem[], from: string): st
  *  host's history when the conversion is refused or does not apply. */
 export async function switchToProvider(
   sessionId: string,
-  adapterId: string
+  adapterId: string,
+  options: { resendRejected: boolean } = { resendRejected: false }
 ): Promise<ProviderSwitchResult> {
   const session = sessionById(sessionId)
   if (!session) return { ok: false, resumed: false, error: 'No such session', road: 'handoff' }
@@ -297,6 +303,7 @@ export async function switchToProvider(
     from,
     target,
     road: plan.road,
+    resendRejected: options.resendRejected,
     handoff: async () => {
       const items: HistoryItem[] = []
       let before: number | undefined
