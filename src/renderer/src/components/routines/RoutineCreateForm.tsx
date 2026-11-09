@@ -2,7 +2,14 @@ import { useMemo, useState } from 'react'
 import { ChevronLeftIcon } from '@heroicons/react/24/outline'
 import { IconButton } from '@clave/ui/components'
 import type { RoutineCreateInput, RoutinePatch } from '@clave/contract/routines/model'
-import { EMPTY_ROUTINE_FORM, type RoutineFormValues } from './routine-form-values'
+import {
+  accountChoices,
+  EMPTY_ROUTINE_FORM,
+  modelChoices,
+  type RoutineFormValues
+} from './routine-form-values'
+import { SettingsSelect } from '../settings/primitives'
+import { CLAUDE_MODELS } from '../../../../shared/claude-models'
 import { describeCron, parseCron } from '../../../../main/routines/cron'
 
 /**
@@ -11,7 +18,9 @@ import { describeCron, parseCron } from '../../../../main/routines/cron'
  * the built-in report page. The same form edits a created routine. The
  * machine's refusal (a folder that is not there, an account it does not
  * have, a schedule that does not parse) is shown under the fields, in the
- * machine's words; nothing is written until it accepts.
+ * machine's words; nothing is written until it accepts. The model and the
+ * account are picked, not typed: the models the app names, and the accounts
+ * of the machine the routine runs on.
  */
 const cronWords = (schedule: string): string | null => {
   try {
@@ -25,6 +34,7 @@ const cronWords = (schedule: string): string | null => {
 export function RoutineCreateForm({
   machine,
   workspace,
+  accounts,
   initial,
   onSubmit,
   onBack
@@ -33,6 +43,8 @@ export function RoutineCreateForm({
   machine: string
   /** The workspace it lives in, as the Mac names it. */
   workspace: { id: string; name: string; rootDir?: string }
+  /** The Claude accounts of that machine, by id and label. */
+  accounts: ReadonlyArray<{ id: string; label: string }>
   /** The routine edited; absent for a new one. */
   initial?: RoutineFormValues
   /** The create or the update; throws the machine's refusal. */
@@ -43,6 +55,16 @@ export function RoutineCreateForm({
   const [busy, setBusy] = useState(false)
   const [refusal, setRefusal] = useState<string | null>(null)
   const words = useMemo(() => cronWords(values.schedule), [values.schedule])
+  const models = useMemo(() => modelChoices(CLAUDE_MODELS, values.model), [values.model])
+  const accountList = useMemo(
+    () => accountChoices(accounts, values.account),
+    [accounts, values.account]
+  )
+  // A routine made by an agent may carry the account's id; the picker holds labels.
+  const accountValue =
+    values.account === 'any'
+      ? ''
+      : (accounts.find((a) => a.id === values.account)?.label ?? values.account)
   const ready = values.name.trim() && values.prompt.trim() && words !== null
   const set =
     (key: keyof RoutineFormValues) =>
@@ -144,26 +166,28 @@ export function RoutineCreateForm({
           />
         </label>
         <div className="routine-form-pair">
-          <label className="field-label">
+          <div className="field-label">
             Model
-            <input
-              className="input-field"
-              data-testid="routine-form-model"
+            <SettingsSelect
+              className="routine-form-select"
+              testId="routine-form-model"
+              ariaLabel="Model"
               value={values.model}
-              onChange={set('model')}
-              placeholder="Workspace default"
+              options={models}
+              onChange={(model) => setValues((v) => ({ ...v, model }))}
             />
-          </label>
-          <label className="field-label">
+          </div>
+          <div className="field-label">
             Account
-            <input
-              className="input-field"
-              data-testid="routine-form-account"
-              value={values.account}
-              onChange={set('account')}
-              placeholder="From the pool"
+            <SettingsSelect
+              className="routine-form-select"
+              testId="routine-form-account"
+              ariaLabel="Account"
+              value={accountValue}
+              options={accountList}
+              onChange={(account) => setValues((v) => ({ ...v, account }))}
             />
-          </label>
+          </div>
         </div>
         {refusal && (
           <div

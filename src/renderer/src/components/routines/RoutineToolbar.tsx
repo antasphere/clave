@@ -5,10 +5,13 @@ import { LOCAL_SERVER_ID, resourceKey } from '@clave/contract/fleet'
 import { useRoutineSurfaces, useRoutinesStore } from '../../store/routines-store'
 import { usePairingStore } from '../../store/pairing-store'
 import { useWorkspaceStore } from '../../store/workspace-store'
+import { useClaudeProfileStore } from '../../store/claude-profile-store'
+import { loadServerSettings, useServerSettingsStore } from '../../store/server-settings-store'
 import { getTerminalIconComponent } from '../ui/terminal-icons'
 import { resolveColorHex, type GroupTerminalIcon } from '../../store/session-types'
 import { RoutinePanel } from './RoutinePanel'
 import { RoutineCreateForm } from './RoutineCreateForm'
+import { RoutinePages } from './RoutinePages'
 import { valuesOf } from './routine-form-values'
 import { RunGlyph } from '../../../../../plugins/routine-report/src/RunGlyph'
 import { whenLabel } from '../../../../../plugins/routine-report/src/run-labels'
@@ -28,7 +31,9 @@ import { describeCron } from '../../../../main/routines/cron'
  * appears under each, the same name twice, which is the rule made visible.
  * A row opens the routine's panel in the same popover, a chevron brings the
  * list back; a section's “+” opens the form that creates a routine on that
- * machine, in this workspace.
+ * machine, in this workspace. The pages move as one box (`RoutinePages`):
+ * going deeper slides the next page in from the right, coming back from the
+ * left, and the box takes the size of the page that arrived.
  */
 type Page =
   | { kind: 'list' }
@@ -37,6 +42,8 @@ type Page =
   | { kind: 'edit'; id: string }
 
 const surfaceId = (s: RoutineSurface): string => `${s.serverId}::${s.view.routine.key}`
+const pageKey = (p: Page): string =>
+  p.kind === 'list' ? 'list' : p.kind === 'new' ? `new:${p.section.id}` : `${p.kind}:${p.id}`
 type IconOf = (s: RoutineSurface) => {
   Icon: ComponentType<{ className?: string }>
   color: string | undefined
@@ -51,8 +58,16 @@ export function RoutineToolbar(): React.JSX.Element | null {
   const workspaces = useWorkspaceStore((s) => s.workspaces)
   const serverWorkspaces = useWorkspaceStore((s) => s.serverWorkspaces)
   const pairings = usePairingStore((s) => s.servers)
+  const profiles = useClaudeProfileStore((s) => s.profiles)
+  const serverSettings = useServerSettingsStore((s) => s.byServer)
   const [open, setOpen] = useState(false)
-  const [page, setPage] = useState<Page>({ kind: 'list' })
+  const [nav, setNav] = useState<{ page: Page; direction: 1 | -1 }>({
+    page: { kind: 'list' },
+    direction: 1
+  })
+  const page = nav.page
+  /** Deeper (a row, a “+”, Edit) comes in from the right; back, from the left. */
+  const go = (next: Page, direction: 1 | -1): void => setNav({ page: next, direction })
   const shown = useMemo(
     () => surfaces.filter((s) => !activeWorkspaceId || s.workspaceId === activeWorkspaceId),
     [surfaces, activeWorkspaceId]
@@ -65,7 +80,7 @@ export function RoutineToolbar(): React.JSX.Element | null {
   // The popover opens on the list every time.
   const onOpenChange = (next: boolean): void => {
     setOpen(next)
-    if (!next) setPage({ kind: 'list' })
+    if (!next) setNav({ page: { kind: 'list' }, direction: 1 })
   }
   if (shown.length === 0 && !canCreateHere) return null
 
@@ -100,6 +115,15 @@ export function RoutineToolbar(): React.JSX.Element | null {
       name: remote?.name ?? workspaceName,
       ...(remote?.rootDir ? { rootDir: remote.rootDir } : {})
     }
+  }
+
+  /** The Claude accounts of a machine, for the form's picker: this Mac's own
+   *  list, or the server's as this Mac read it (asked for when the form opens). */
+  const accountsOn = (serverId: string): ReadonlyArray<{ id: string; label: string }> =>
+    serverId === LOCAL_SERVER_ID ? profiles : (serverSettings[serverId]?.claude ?? [])
+  const askAccountsOf = (serverId: string): void => {
+    if (serverId !== LOCAL_SERVER_ID && serverSettings[serverId]?.status !== 'ready')
+      void loadServerSettings(serverId)
   }
 
   // A routine the list no longer holds (deleted, its machine gone) shows the list again.
@@ -151,73 +175,87 @@ export function RoutineToolbar(): React.JSX.Element | null {
               ?.focus()
           }}
         >
-          {current && page.kind === 'routine' ? (
-            <RoutinePanel
-              surface={current}
-              icon={(() => {
-                const { Icon } = iconOf(current)
-                return <Icon />
-              })()}
-              color={iconOf(current).color}
-              onClose={() => setOpen(false)}
-              onBack={() => setPage({ kind: 'list' })}
-              onEdit={
-                current.view.routine.origin === 'created'
-                  ? () => setPage({ kind: 'edit', id: page.id })
-                  : undefined
-              }
-            />
-          ) : current && page.kind === 'edit' ? (
-            <RoutineCreateForm
-              machine={current.serverName}
-              workspace={{
-                id: current.view.routine.workspaceId,
-                name: current.view.routine.workspaceName
-              }}
-              initial={valuesOf(current.view)}
-              onSubmit={(patch) => update(current, current.view.routine.key, patch)}
-              onBack={() => setPage({ kind: 'routine', id: page.id })}
-            />
-          ) : page.kind === 'new' ? (
-            (() => {
-              const workspace = workspaceOn(page.section)
-              return workspace ? (
-                <RoutineCreateForm
-                  machine={page.section.title}
-                  workspace={workspace}
-                  onSubmit={(input) =>
-                    create(
-                      { serverId: page.section.serverId },
-                      input as Parameters<typeof create>[1]
-                    )
-                  }
-                  onBack={() => setPage({ kind: 'list' })}
-                />
-              ) : null
-            })()
-          ) : (
-            <RoutineList
-              sections={sections}
-              workspaceName={workspaceName}
-              localSection={
-                sections.some((s) => s.kind === 'here')
-                  ? null
-                  : {
-                      id: LOCAL_SERVER_ID,
-                      kind: 'here',
-                      title: localTitle,
-                      note: null,
-                      serverId: LOCAL_SERVER_ID,
-                      canCreate: true,
-                      surfaces: []
+          <RoutinePages
+            page={current || page.kind === 'new' ? pageKey(page) : 'list'}
+            direction={nav.direction}
+          >
+            {current && page.kind === 'routine' ? (
+              <RoutinePanel
+                surface={current}
+                icon={(() => {
+                  const { Icon } = iconOf(current)
+                  return <Icon />
+                })()}
+                color={iconOf(current).color}
+                onClose={() => setOpen(false)}
+                onBack={() => go({ kind: 'list' }, -1)}
+                onEdit={
+                  current.view.routine.origin === 'created'
+                    ? () => {
+                        askAccountsOf(current.serverId)
+                        go({ kind: 'edit', id: page.id }, 1)
+                      }
+                    : undefined
+                }
+              />
+            ) : current && page.kind === 'edit' ? (
+              <RoutineCreateForm
+                machine={current.serverName}
+                workspace={{
+                  id: current.view.routine.workspaceId,
+                  name: current.view.routine.workspaceName
+                }}
+                accounts={accountsOn(current.serverId)}
+                initial={valuesOf(current.view)}
+                onSubmit={(patch) => update(current, current.view.routine.key, patch)}
+                onBack={() => go({ kind: 'routine', id: page.id }, -1)}
+              />
+            ) : page.kind === 'new' ? (
+              (() => {
+                const workspace = workspaceOn(page.section)
+                return workspace ? (
+                  <RoutineCreateForm
+                    machine={page.section.title}
+                    workspace={workspace}
+                    accounts={accountsOn(page.section.serverId)}
+                    onSubmit={(input) =>
+                      create(
+                        { serverId: page.section.serverId },
+                        input as Parameters<typeof create>[1]
+                      )
                     }
-              }
-              canCreateOn={(section) => section.canCreate && workspaceOn(section) !== null}
-              onOpen={(s) => setPage({ kind: 'routine', id: surfaceId(s) })}
-              onNew={(section) => setPage({ kind: 'new', section })}
-              iconOf={iconOf}
-            />
-          )}
+                    onBack={() => go({ kind: 'list' }, -1)}
+                  />
+                ) : null
+              })()
+            ) : (
+              <RoutineList
+                sections={sections}
+                workspaceName={workspaceName}
+                count={shown.length}
+                localSection={
+                  sections.some((s) => s.kind === 'here')
+                    ? null
+                    : {
+                        id: LOCAL_SERVER_ID,
+                        kind: 'here',
+                        title: localTitle,
+                        note: null,
+                        serverId: LOCAL_SERVER_ID,
+                        canCreate: true,
+                        surfaces: []
+                      }
+                }
+                canCreateOn={(section) => section.canCreate && workspaceOn(section) !== null}
+                onOpen={(s) => go({ kind: 'routine', id: surfaceId(s) }, 1)}
+                onNew={(section) => {
+                  askAccountsOf(section.serverId)
+                  go({ kind: 'new', section }, 1)
+                }}
+                iconOf={iconOf}
+              />
+            )}
+          </RoutinePages>
         </PopoverContent>
       </Popover>
       <div className="w-px h-3.5 bg-border-subtle mx-0.5 flex-shrink-0" />
@@ -230,6 +268,7 @@ function RoutineList({
   sections,
   localSection,
   workspaceName,
+  count,
   canCreateOn,
   onOpen,
   onNew,
@@ -239,6 +278,8 @@ function RoutineList({
   /** This Mac's section when no routine runs here yet: shown empty, so a routine can be made. */
   localSection: RoutineSection | null
   workspaceName: string
+  /** How many routines the workspace has, across every machine. */
+  count: number
   canCreateOn: (section: RoutineSection) => boolean
   onOpen: (surface: RoutineSurface) => void
   onNew: (section: RoutineSection) => void
@@ -247,9 +288,18 @@ function RoutineList({
   const all = localSection ? [localSection, ...sections] : sections
   return (
     <div className="routines-list" data-testid="routines-list" tabIndex={-1}>
-      <div className="routines-list-head">
-        <span className="routine-head-title">Routines</span>
-        <span className="routine-head-sub">{workspaceName}</span>
+      <div className="routine-head routines-list-head">
+        <span className="routine-mark" aria-hidden="true">
+          <ClockIcon />
+        </span>
+        <div className="routine-head-text">
+          <span className="routine-head-title">Routines</span>
+          <span className="routine-head-sub">
+            {count === 0
+              ? workspaceName
+              : `${workspaceName} · ${count} routine${count === 1 ? '' : 's'}`}
+          </span>
+        </div>
       </div>
       {all.map((section) => (
         <section
