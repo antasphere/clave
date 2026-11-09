@@ -26,6 +26,7 @@ import { isChatProfileRef } from '../../../shared/open-session-modes'
 import { scopeFamily } from '../../../shared/limit-report'
 import { decideAccountAction, ladderKey, type Rung } from './account-policy-rule'
 import { modelRungFor, resolveLimitScope } from './limit-scope'
+import { PendingModelSwitches } from './model-switch-pending'
 export {
   decideAccountAction,
   ladderKey,
@@ -92,6 +93,8 @@ export function registerProviderSwitchRoad(road: ProviderSwitchRoad | null): voi
 }
 
 const switching = new Set<string>()
+/** The model switches written and not yet confirmed by the provider. */
+const pendingModels = new PendingModelSwitches()
 
 function labelled(session: Session, rungs: Rung[]): LimitRung[] {
   return rungs.map((rung) => {
@@ -122,7 +125,13 @@ function settled(sessionId: string): void {
  *  the message the cap rejected goes again on the new model from main, while
  *  the report is open there (`pty-manager.ts`). */
 async function switchSessionModel(sessionId: string, model: string): Promise<void> {
-  await window.electronAPI.sessionsWrite(sessionId, { type: 'set_model', model })
+  pendingModels.begin(sessionId, model)
+  try {
+    await window.electronAPI.sessionsWrite(sessionId, { type: 'set_model', model })
+  } catch (error) {
+    pendingModels.forget(sessionId)
+    throw error
+  }
 }
 
 /** One pass over every local Claude and Codex tab. Exported for the tests. */
@@ -155,7 +164,12 @@ export function runAccountPolicy(): void {
       alive: session.alive,
       accountPinned: session.accountPinned === true,
       modelPinned: session.modelPinned === true,
-      restarting: session.restarting === true || switching.has(session.id),
+      // A move in flight, an account's restart or a model switch the
+      // provider has not confirmed yet, holds the policy off the tab.
+      restarting:
+        session.restarting === true ||
+        switching.has(session.id) ||
+        pendingModels.inFlight(session.id, session.model),
       atLimit,
       reported,
       working: session.alive && isWorking(session),
