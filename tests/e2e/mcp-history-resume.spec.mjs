@@ -65,7 +65,7 @@
  * stand-ins that log their argv and wait; CLAVE_TRANSCRIPTS_ROOT, CLAVE_CODEX_ROOT and CLAVE_PI_ROOT
  * point the History at fixture folders, never at the person's own stores.
  */
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import {
   launchApp,
@@ -77,6 +77,7 @@ import {
   toolPayload,
   toolErrored,
   spawnJournal,
+  recordsRootOf,
   until,
   userDataDir,
   fixturePath
@@ -478,6 +479,83 @@ export async function run(t) {
     )
     t.check('its spawn resumes the conversation', !!relaunchSpawn, await relaunchSpawns())
     t.equal('in bypass, as it was last launched', relaunchSpawn?.dangerousMode, true)
+
+    // ── j. A conversation that left bypass for plan comes back in plan after its tab is closed (round 6, V6-F1) ──
+    // The provider's mode report writes the record; here the record is written
+    // as the report would write it, then the tab is closed by the agent: the
+    // ledger must have learnt the mode before the record went.
+    const planTab = toolPayload(plain)?.sessionId
+    t.check(
+      'the bypass tab reopened in step i is the one to switch',
+      typeof planTab === 'string',
+      toolPayload(plain)
+    )
+    // A terminal's record is keyed by its tmux name, so it is found by its id.
+    const recordsDir = path.join(recordsRootOf(DIR), 'session-records')
+    const recordOfTab = () => {
+      try {
+        return readdirSync(recordsDir)
+          .filter((f) => f.endsWith('.json'))
+          .map((f) => path.join(recordsDir, f))
+          .find((file) => {
+            try {
+              return JSON.parse(readFileSync(file, 'utf8')).id === planTab
+            } catch {
+              return false
+            }
+          })
+      } catch {
+        return undefined
+      }
+    }
+    const planRecord = await until(() => recordOfTab() ?? null, { tries: 60 })
+    t.check('the reopened tab has its record', !!planRecord, recordsDir)
+    if (planRecord) {
+      const record = JSON.parse(readFileSync(planRecord, 'utf8'))
+      writeFileSync(
+        planRecord,
+        JSON.stringify({ ...record, permissionMode: 'plan', effort: 'high' })
+      )
+    }
+    const afterSwitch = await closeAndWait(planTab)
+    t.check('closed after the switch, the History row is free', !!afterSwitch, afterSwitch)
+    t.check(
+      'and remembers plan, bypass off, effort high',
+      afterSwitch?.launch?.permissionMode === 'plan' &&
+        afterSwitch?.launch?.dangerous === false &&
+        afterSwitch?.launch?.effort === 'high',
+      afterSwitch?.launch
+    )
+    const planSpawns = spawnJournal(DIR)
+    const planAgain = await client.call('clave_open_session', { resume: CONVERSATION, chat: false })
+    t.check('a resume naming no mode answers', !toolErrored(planAgain), textOf(planAgain))
+    const planSpawn = await until(async () =>
+      (await planSpawns()).find((s) => s.resumeSessionId === CONVERSATION)
+    )
+    t.check('its spawn has bypass off', !!planSpawn && planSpawn.dangerousMode === false, planSpawn)
+    // The journal keeps the spawn's flags, not its mode: the CLI's own argv
+    // says it, once the pane mounts and the stand-in starts.
+    const planTabAgain = toolPayload(planAgain)?.sessionId
+    const planDrawn = await until(async () =>
+      (await rowCount(win, planTabAgain)) === 1 ? true : null
+    )
+    t.check('the reopened tab has its row', planDrawn === true)
+    if (planDrawn) await win.click(`[data-sidebar-item-id="${planTabAgain}"]`)
+    const planLaunch = await until(() => launches().find((l) => l.tab === planTabAgain) ?? null, {
+      tries: 60
+    })
+    t.check('its CLI starts', !!planLaunch, launches())
+    t.equal(
+      'in plan (--permission-mode plan)',
+      argAfter(planLaunch?.argv ?? [], '--permission-mode'),
+      'plan'
+    )
+    t.equal('at effort high (--effort high)', argAfter(planLaunch?.argv ?? [], '--effort'), 'high')
+    t.check(
+      'and not in bypass',
+      !!planLaunch && !planLaunch.argv.includes('--dangerously-skip-permissions'),
+      planLaunch?.argv
+    )
   } finally {
     if (app) await app.close()
     // Only the stand-ins this spec started are ours to kill, by PID.

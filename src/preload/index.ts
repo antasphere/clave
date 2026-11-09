@@ -1616,6 +1616,8 @@ const electronAPI = {
   // Session history (PRDCT-1738): the ledger row is fire-and-forget like the
   // capture above; the list is the dialog's one read.
   historyStamp: (row: unknown) => ipcRenderer.send('history:stamp', row),
+  // A closing tab's launch into the ledger while its record is still there (PRDCT-4236).
+  historyRestamp: (sessionId: string) => ipcRenderer.invoke('history:restamp', sessionId),
   historyList: () => ipcRenderer.invoke('history:list'),
   historyConversation: (
     cwd: string,

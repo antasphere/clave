@@ -3,6 +3,8 @@ import { homedir } from 'os'
 import { app } from 'electron'
 import { CaptureStore } from '../exchange-capture/store'
 import { SessionLedger, normalizeLedgerRow, type LedgerRow } from './ledger'
+import { launchOfRecord } from './live-launch'
+import type { SessionRecord as RuntimeRecordLike } from '@clave/contract/sessions'
 import {
   captureEventsToRows,
   foldHistory,
@@ -149,6 +151,27 @@ export function enrichLedgerRow(row: LedgerRow, record: StampRecord | null | und
       ...(row.model === null && record.model ? { model: record.model } : {})
     }) ?? row
   )
+}
+
+/**
+ * The ledger told what a tab runs on NOW, from its record, before the record
+ * goes (PRDCT-4236, round 6 F1): a chat that left bypass for plan stamps no
+ * row of its own, and a close deletes the record the History's live overlay
+ * reads, so a reopen after the close went back to the launch. Called on the
+ * close roads with the record still there: the latest row of the tab is
+ * written again, placed, with the record's launch. Nothing is written for a
+ * tab the ledger never saw.
+ */
+export function restampLaunch(sessionId: string, record: StampRecord & RuntimeRecordLike): void {
+  const latest = [...getLedger().readAll().rows].reverse().find((r) => r.sessionId === sessionId)
+  if (!latest) return
+  const row = normalizeLedgerRow({
+    ...latest,
+    kind: 'placed',
+    ts: new Date().toISOString(),
+    ...launchOfRecord(record)
+  })
+  if (row) getLedger().append(row)
 }
 
 async function recordFor(

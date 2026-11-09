@@ -57,7 +57,26 @@ export class SessionHistoryDiff {
     for (const [id, prev] of this.stamped) {
       if (seen.has(id)) continue
       this.stamped.delete(id)
-      this.send({ ...prev.row, kind: 'closed', ts: this.now() })
+      // The closed row is the placement's last word, not the launch's: the
+      // launch the renderer knows is the flag the tab started with, and a
+      // row stamped from the record at the close (`historyRestamp`) knows
+      // the mode it moved to; a copy of the launch flag here would write
+      // over it (PRDCT-4236, round 6). Main still adds the record's mode
+      // where the record is there.
+      const {
+        dangerous: _d,
+        permissionMode: _m,
+        effort: _e,
+        accountId: _a,
+        accountLabel: _l,
+        ...placement
+      } = prev.row
+      void _d
+      void _m
+      void _e
+      void _a
+      void _l
+      this.send({ ...placement, kind: 'closed', ts: this.now() })
     }
   }
 

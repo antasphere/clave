@@ -968,6 +968,9 @@ export interface ElectronAPI extends FleetDesktopAPI {
   /** Session history (PRDCT-1738). A ledger row per placement change,
    *  fire-and-forget; the folded list for the dialog. */
   historyStamp: (row: HistoryLedgerRow) => void
+  /** The ledger told what a closing tab runs on, from its record, before the
+   *  record goes (PRDCT-4236): awaited before the kill, never a reason to fail it. */
+  historyRestamp: (sessionId: string) => Promise<void>
   historyList: () => Promise<{ entries: HistoryListEntry[]; skippedLines: number }>
   /** The message trail's read: a live tab's conversation as turns.
    *  `configDir` is the tab's own account directory, when it ran with one:

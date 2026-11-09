@@ -3,6 +3,7 @@ import {
   cancelSearch,
   getConversation,
   listHistory,
+  restampLaunch,
   searchHistory,
   stampHistory,
   type StampRecordSource
@@ -24,6 +25,18 @@ const stampRecords: StampRecordSource = {
   }
 }
 
+/** The ledger told what a tab runs on before its record goes (PRDCT-4236,
+ *  round 6): main's record, else the server's. Never throws: a close must
+ *  not wait on, or fail because of, the History. */
+export async function restampSessionLaunch(sessionId: string): Promise<void> {
+  try {
+    const record = stampRecords.local(sessionId) ?? (await stampRecords.remote?.(sessionId)) ?? null
+    if (record) restampLaunch(sessionId, record as Parameters<typeof restampLaunch>[1])
+  } catch (err) {
+    console.error('[session-history] failed to restamp the launch', err)
+  }
+}
+
 /** Session-history IPC (PRDCT-1738). `history:stamp` is fire-and-forget
  *  (`send`, not `invoke`): the renderer writes a ledger row whenever a tab's
  *  placement changes and must never wait on, or fail because of, the disk.
@@ -34,6 +47,10 @@ export function registerHistoryHandlers(): void {
   ipcMain.on('history:stamp', (_event, row: unknown) => {
     void stampHistory(row, stampRecords)
   })
+  // The renderer's close, before the kill: the tab's launch as it runs now.
+  ipcMain.handle('history:restamp', (_event, sessionId: unknown) =>
+    typeof sessionId === 'string' ? restampSessionLaunch(sessionId) : Promise.resolve()
+  )
   // The dialog's read: the ledger's memory, the live record of every tab that
   // still holds a conversation laid over it (round 5 F1 of PRDCT-4236); a
   // host that cannot list its records answers the ledger alone.

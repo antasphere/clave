@@ -37,6 +37,7 @@ import { codexUsageManager } from '../codex-usage'
 import { NOT_SERVED, type ServedShell, serveCommand } from './served-tools'
 import { serverClient } from './server-client'
 import { listHistory } from '../session-history/service'
+import { restampSessionLaunch } from '../ipc-handlers/history-handlers'
 import { overlayLiveLaunch } from '../session-history/live-launch'
 import type { SessionRecord as SessionRecordWire } from '@clave/contract/sessions'
 import {
@@ -495,6 +496,7 @@ const servedShell: ServedShell<NonNullable<BrowserWindowLike>> = {
   startPty: (id, cols, rows) => ptyManager.start(id, cols, rows),
   awaitRehomed: (ids) => awaitRehomed(ids),
   captureTabClosed: (payload) => captureTabClosed(payload),
+  historyRestamp: (sessionId) => restampSessionLaunch(sessionId),
   windowsListing: (callerWin) => windowsListing(callerWin),
   mintTerminalId: () => `term-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
   sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),

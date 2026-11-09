@@ -107,7 +107,12 @@ describe('SessionHistoryDiff', () => {
     expect(rows).toHaveLength(2)
     expect(rows[1]).toMatchObject({ accountId: 'acc-2', accountLabel: 'Two' })
     diff.apply({ sessions: [], groups: [], displayOrder: [] })
-    expect(rows[2]).toMatchObject({ kind: 'closed', dangerous: true, accountId: 'acc-2' })
+    // The closed row is the placement's word alone: the launch it would copy
+    // is the flag the tab started with, and a row the close stamped from the
+    // record knows better (round 6 of the verifier).
+    expect(rows[2]).toMatchObject({ kind: 'closed' })
+    expect(rows[2]).not.toHaveProperty('dangerous')
+    expect(rows[2]).not.toHaveProperty('accountId')
 
     const codex = harness()
     codex.diff.apply({

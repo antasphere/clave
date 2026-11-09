@@ -15,6 +15,7 @@ vi.mock('electron', () => ({ app: { getPath: () => process.env.CLAVE_STAMP_TEST_
 import {
   STAMP_REMOTE_TIMEOUT_MS,
   resetStampRemoteBackoff,
+  restampLaunch,
   stampHistory,
   type StampRecordSource
 } from './service'
@@ -49,6 +50,8 @@ const row = (sessionId: string, over: Record<string, unknown> = {}): Record<stri
   dangerous: true,
   ...over
 })
+
+const stamp = (r: Record<string, unknown>): Promise<void> => stampHistory(r)
 
 afterAll(() => {
   fs.rmSync(dir, { recursive: true, force: true })
@@ -140,5 +143,47 @@ describe('a server that does not answer (round 5, V5-F2)', () => {
       vi.useRealTimers()
       resetStampRemoteBackoff()
     }
+  })
+})
+
+describe('restampLaunch: a closing tab’s launch written from its record (round 6, V6-F1)', () => {
+  it('writes the tab’s latest row again, placed, with the record’s mode, effort and account', async () => {
+    await stamp(
+      row('closing-1', { claudeSessionId: 'cc-closing-1', groupId: 'g1', groupName: 'Work' })
+    )
+    const before = written().length
+    restampLaunch('closing-1', {
+      id: 'closing-1',
+      cwd: '/tmp/proj',
+      folderName: 'proj',
+      claudeMode: true,
+      antigravityMode: false,
+      codexMode: false,
+      piMode: false,
+      claudeAgentsMode: false,
+      dangerousMode: true,
+      permissionMode: 'plan',
+      effort: 'high',
+      claudeProfileId: 'acct-9',
+      claudeProfileLabel: 'Anthropic'
+    } as never)
+    expect(written().length).toBe(before + 1)
+    expect(written().at(-1)).toMatchObject({
+      kind: 'placed',
+      sessionId: 'closing-1',
+      groupId: 'g1',
+      groupName: 'Work',
+      dangerous: false,
+      permissionMode: 'plan',
+      effort: 'high',
+      accountId: 'acct-9',
+      accountLabel: 'Anthropic'
+    })
+  })
+
+  it('writes nothing for a tab the ledger never saw', () => {
+    const before = written().length
+    restampLaunch('never-seen', { id: 'never-seen', cwd: '/x', folderName: 'x' } as never)
+    expect(written().length).toBe(before)
   })
 })

@@ -785,6 +785,10 @@ export function Sidebar(): React.JSX.Element {
       const current = useSessionStore.getState()
       const session = current.sessions.find((s) => s.id === sessionId)
       if (session) emitTabClosed(session, current.groups, 'user', null)
+      // The History remembers what the tab ran on, read from its record
+      // before the kill deletes it (PRDCT-4236); never a reason not to close.
+      if (!isRemoteKey(sessionId))
+        await window.electronAPI.historyRestamp?.(sessionId).catch(() => {})
       try {
         await window.electronAPI.killSession(sessionId)
       } catch {
