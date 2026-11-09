@@ -123,6 +123,17 @@ export function readServerDiscovery(dataDir) {
   }
 }
 
+/** The budgets of every child started here: how long it has to print its
+ *  announcement line (`timeoutMs` by default), the grace the rejection
+ *  waits after SIGKILL for a child that never did, and how long `stop()`
+ *  waits after SIGTERM before SIGKILL (`killAfterMs` by default). A test
+ *  that boots a child through this script derives its own timeout from
+ *  these, never from Vitest's default (scripts/server-process.test.mjs);
+ *  scripts/server-process-budgets.test.mjs proves them real on fakes. */
+export const ANNOUNCE_TIMEOUT_MS = 15_000
+export const ANNOUNCE_KILL_GRACE_MS = 2_000
+export const STOP_KILL_AFTER_MS = 5_000
+
 /**
  * Start a child and resolve its first stdout line, parsed as JSON and
  * checked to carry the `fields` named. Rejects when it exits first, stays
@@ -150,7 +161,7 @@ function startAnnouncing({ what, cmd, args, cwd, env, timeoutMs, fields }) {
         if (value instanceof Error) value.pid = child.pid
         const finish = () => fn(value)
         if (child.exitCode !== null || child.signalCode !== null) return finish()
-        const grace = setTimeout(finish, 2_000)
+        const grace = setTimeout(finish, ANNOUNCE_KILL_GRACE_MS)
         child.once('exit', () => {
           clearTimeout(grace)
           finish()
@@ -227,8 +238,8 @@ function stopChild(child, killAfterMs) {
 export async function startTerminalProcess({
   repo,
   port = 0,
-  timeoutMs = 15_000,
-  killAfterMs = 5_000,
+  timeoutMs = ANNOUNCE_TIMEOUT_MS,
+  killAfterMs = STOP_KILL_AFTER_MS,
   env = process.env
 }) {
   const { cmd, args } = terminalProcessCommand({ repo, port })
@@ -272,8 +283,8 @@ export async function startServerProcess({
   repo,
   dataDir,
   port = 0,
-  timeoutMs = 15_000,
-  killAfterMs = 5_000,
+  timeoutMs = ANNOUNCE_TIMEOUT_MS,
+  killAfterMs = STOP_KILL_AFTER_MS,
   env = process.env,
   terminals = 'sidecar',
   args: extraArgs = []
