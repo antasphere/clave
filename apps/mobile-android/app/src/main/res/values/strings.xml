@@ -3,4 +3,5 @@
     <string name="app_name">Clave</string>
     <string name="notification_channel_name">Clave</string>
     <string name="notification_channel_description">Questions, permissions and finished sessions from your Clave machines.</string>
+    <string name="notification_open_to_answer">Open Clave to answer</string>
 </resources>

@@ -25,13 +25,14 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
-            <!-- A notification's deep link to a conversation or a request: clave-android://chat/<machine>/<session> -->
+            <!-- A notification's deep link to a conversation, a request, a machine's workspaces or Machines: clave-android://chat/<machine>/<session> -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="${oauthScheme}" android:host="chat" />
                 <data android:scheme="${oauthScheme}" android:host="requests" />
+                <data android:scheme="${oauthScheme}" android:host="workspaces" />
                 <data android:scheme="${oauthScheme}" android:host="machines" />
             </intent-filter>
         </activity>

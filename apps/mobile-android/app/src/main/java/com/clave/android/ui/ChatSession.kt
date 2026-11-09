@@ -1,0 +1,306 @@
+package com.clave.android.ui
+
+import android.net.Uri
+import com.clave.android.OwnerSession
+import com.clave.core.chat.Admission
+import com.clave.core.chat.AdmissionContext
+import com.clave.core.chat.AttachmentJson
+import com.clave.core.chat.MAX_TRANSFER_BYTES
+import com.clave.core.chat.NO_FILES_ROUTE
+import com.clave.core.chat.PickedKind
+import com.clave.core.chat.SendOutcome
+import com.clave.core.chat.admit
+import com.clave.core.chat.attachmentDraftKey
+import com.clave.core.chat.discardUnknownSend
+import com.clave.core.chat.labelled
+import com.clave.core.contract.Attachment
+import com.clave.core.contract.FileAttachment
+import com.clave.core.contract.FileDelivery
+import com.clave.core.transport.ServerError
+import com.clave.core.transport.messageOf
+import com.clave.platform.files.ContentFiles
+import kotlin.coroutines.cancellation.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+
+/** The sentence an attachment that could not be read or uploaded shows. */
+const val ATTACH_FAILED: String = "The file could not be attached. Try again."
+
+/** How long the composer's text waits before it is written to the draft store. */
+const val DRAFT_DEBOUNCE_MS: Long = 300
+
+/**
+ * One open conversation's composer and subscription, the prototype's ChatScreen rules on
+ * the core's store: the draft and the attachment draft kept on the device until a send
+ * lands, never sent by themselves; a send of unknown outcome shown as a choice (send again
+ * under a NEW id, which may duplicate, or discard) and nothing sent meanwhile; a new send
+ * while one is unknown discards the unknown one first. [open] subscribes and [close] lets
+ * go, around the screen's life.
+ */
+class ChatSession(
+    private val owner: OwnerSession,
+    val machineId: String,
+    val sessionId: String,
+    private val files: ContentFiles,
+    private val scope: CoroutineScope,
+    /** Whether this machine's server is still believed to have the files route. */
+    private val filesRouteOf: (machineId: String) -> Boolean,
+    /** The machine answered that it has no files route. */
+    private val markNoFilesRoute: (machineId: String) -> Unit,
+) {
+    private val _state = MutableStateFlow(ChatSessionState(filesRoute = filesRouteOf(machineId)))
+    val state: StateFlow<ChatSessionState> = _state.asStateFlow()
+
+    private val store get() = owner.store
+    private val drafts get() = owner.services.drafts
+    private val delivery get() = owner.services.delivery
+    private val attachmentKey = attachmentDraftKey(machineId, sessionId)
+
+    @Volatile private var opened = false
+    @Volatile private var closed = false
+    private var closeChat: (() -> Unit)? = null
+    private var offMarks: (() -> Unit)? = null
+    private var draftWrite: Job? = null
+    private val attaching = Mutex()
+
+    /** Subscribes to the conversation and reads back the draft, the attachments, the mark and the unknown send. */
+    fun open() {
+        if (opened) return
+        opened = true
+        offMarks = delivery.marks.subscribe { scope.launch { readDelivery() } }
+        scope.launch {
+            val text = drafts.get(machineId, sessionId)
+            val restored = owner.kv.get(attachmentKey)?.let(::decodeAttachments).orEmpty()
+            _state.update { it.copy(draft = if (it.draft.isEmpty()) text else it.draft, attachments = restored) }
+            readDelivery()
+        }
+        scope.launch {
+            if (store.state.value.machines.none { it.id == machineId }) store.loadMachines()
+            if (closed) return@launch
+            // Not cancellable once begun: the store's subscription is let go by the close it answers.
+            val close = try {
+                store.openChat(machineId, sessionId)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                _state.update { it.copy(error = messageOf(e)) }
+                return@launch
+            }
+            if (closed) close() else closeChat = close
+            readCapabilities()
+        }
+    }
+
+    /** Leaves the conversation: the subscription released, the pending draft written. */
+    fun close() {
+        if (closed) return
+        closed = true
+        offMarks?.invoke()
+        closeChat?.invoke()
+        closeChat = null
+        val text = _state.value.draft
+        draftWrite?.cancel()
+        scope.launch { drafts.set(machineId, sessionId, text) }
+    }
+
+    private suspend fun readCapabilities() {
+        try {
+            val capabilities = store.connect(machineId).client.sessions.capabilities(sessionId)
+            _state.update { it.copy(imagesSupported = capabilities.images) }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            // Unknown capabilities: pictures go as files, which every provider reads.
+        }
+    }
+
+    private suspend fun readDelivery() {
+        val mark = delivery.marks.get(machineId, sessionId)
+        val unknown = delivery.sends.forSession(machineId, sessionId).lastOrNull()
+        _state.update { it.copy(deliveryMark = mark, unknownSend = unknown) }
+    }
+
+    /** The composer's text: shown at once, written to the draft store after a pause. */
+    fun setDraft(text: String) {
+        _state.update { it.copy(draft = text) }
+        draftWrite?.cancel()
+        draftWrite = scope.launch {
+            delay(DRAFT_DEBOUNCE_MS)
+            drafts.set(machineId, sessionId, text)
+        }
+    }
+
+    /** A sentence for the composer from outside the session (a picker the platform refused). */
+    fun showError(text: String) {
+        _state.update { it.copy(error = text) }
+    }
+
+    /** Opens or folds a transcript block. */
+    fun toggle(blockKey: String) {
+        _state.update { it.copy(expanded = if (blockKey in it.expanded) it.expanded - blockKey else it.expanded + blockKey) }
+    }
+
+    /**
+     * Sends the draft and its attachments under a new id. A pending unknown send of this
+     * conversation is discarded first, as the prototype does. Sent clears the draft (when it
+     * is still the text sent) and the attachment draft; Rejected and Failed keep both and say
+     * why; Unknown shows the choice and sends nothing more.
+     */
+    fun send() {
+        val current = _state.value
+        if ((current.draft.isBlank() && current.attachments.isEmpty()) || current.sending || current.attaching) return
+        _state.update { it.copy(sending = true, error = null) }
+        scope.launch {
+            val text = current.draft
+            val attachments = current.attachments
+            try {
+                current.unknownSend?.let { discardUnknownSend(machineId, sessionId, it.clientMessageId, delivery.sends, delivery.marks) }
+                // The store clears the draft only when the stored one is the text sent.
+                draftWrite?.cancel()
+                drafts.set(machineId, sessionId, text)
+                when (val outcome = store.send(machineId, sessionId, text, attachments = attachments)) {
+                    is SendOutcome.Sent -> {
+                        owner.kv.remove(attachmentKey)
+                        _state.update {
+                            it.copy(
+                                draft = if (it.draft == text) "" else it.draft,
+                                attachments = if (it.attachments == attachments) emptyList() else it.attachments,
+                                error = null,
+                            )
+                        }
+                        if (_state.value.draft.isEmpty()) drafts.clear(machineId, sessionId)
+                    }
+                    // The rejection's mark says why above the draft, and stays through a restart.
+                    is SendOutcome.Rejected -> Unit
+                    is SendOutcome.Failed -> _state.update { it.copy(error = outcome.reason) }
+                    is SendOutcome.Unknown -> Unit
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                _state.update { it.copy(error = messageOf(e)) }
+            } finally {
+                readDelivery()
+                _state.update { it.copy(sending = false) }
+            }
+        }
+    }
+
+    /** "Send again (may duplicate)": the same draft as a new send under a new id. */
+    fun resend() = send()
+
+    /** "Discard": the unknown send leaves the ledger, the mark is cleared, the draft and the attachments go. */
+    fun discard() {
+        val unknown = _state.value.unknownSend
+        scope.launch {
+            if (unknown != null) discardUnknownSend(machineId, sessionId, unknown.clientMessageId, delivery.sends, delivery.marks)
+            delivery.marks.clear(machineId, sessionId)
+            draftWrite?.cancel()
+            drafts.clear(machineId, sessionId)
+            owner.kv.remove(attachmentKey)
+            _state.update { it.copy(draft = "", attachments = emptyList(), error = null) }
+            readDelivery()
+        }
+    }
+
+    /** Stops the agent's turn. */
+    fun interrupt() {
+        scope.launch {
+            val outcome = store.interrupt(machineId, sessionId)
+            if (!outcome.ok) _state.update { it.copy(error = outcome.error) }
+        }
+    }
+
+    /** Answers a permission or a question shown in the transcript. */
+    fun answer(requestId: String, optionId: String, answers: Map<String, String>?) {
+        scope.launch {
+            val outcome = store.answerInChat(machineId, sessionId, requestId, optionId, answers?.takeIf { it.isNotEmpty() })
+            if (!outcome.ok) _state.update { it.copy(error = outcome.error) }
+        }
+    }
+
+    /** Asks for the page before the oldest shown. */
+    fun loadOlder() {
+        scope.launch { store.loadOlder(machineId, sessionId) }
+    }
+
+    /**
+     * Adds a picked file: described, admitted by the core's rules (a refusal is said, a note
+     * kept), read under the files route's ceiling and uploaded through the machine's prepare
+     * route, then labelled after what the message holds and kept in the attachment draft. A
+     * server without the files route says so once and takes no more files for that machine.
+     */
+    fun attach(uri: Uri, kindHint: PickedKind?) {
+        scope.launch {
+            attaching.withLock {
+                _state.update { it.copy(attaching = true, error = null) }
+                try {
+                    _state.update { it.copy(error = attachOne(uri, kindHint)) }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Exception) {
+                    _state.update { it.copy(error = ATTACH_FAILED) }
+                } finally {
+                    _state.update { it.copy(attaching = false) }
+                }
+            }
+        }
+    }
+
+    /** One file; answers the sentence to show, null when it went without one. */
+    private suspend fun attachOne(uri: Uri, kindHint: PickedKind?): String? {
+        val file = files.describe(uri, kindHint) ?: return ATTACH_FAILED
+        val current = _state.value
+        val context = AdmissionContext(
+            count = current.attachments.size,
+            imageBytes = current.attachments.filterIsInstance<FileAttachment>().filter { it.delivery == FileDelivery.Image }.sumOf { it.size },
+            imagesSupported = current.imagesSupported,
+            filesRoute = filesRouteOf(machineId),
+        )
+        val admitted = when (val admission = admit(file, context)) {
+            is Admission.Refused -> return admission.reason
+            is Admission.Admitted -> admission
+        }
+        val base64 = files.readBase64(uri, MAX_TRANSFER_BYTES) ?: return ATTACH_FAILED
+        val record = try {
+            store.connect(machineId).client.attachments.prepareUpload(sessionId, file.name, base64, admitted.image)
+        } catch (e: ServerError) {
+            if (e.capabilityUnavailable || e.status == 404) {
+                markNoFilesRoute(machineId)
+                _state.update { it.copy(filesRoute = false) }
+                return NO_FILES_ROUTE
+            }
+            return ATTACH_FAILED
+        }
+        val next = _state.value.attachments.let { it + labelled(record, it) }
+        owner.kv.set(attachmentKey, AttachmentJson.encodeList(next))
+        _state.update { it.copy(attachments = next) }
+        return admitted.note
+    }
+
+    /** Removes the chip at [index] from the message and from the attachment draft. */
+    fun removeAttachment(index: Int) {
+        val next = _state.value.attachments.filterIndexed { i, _ -> i != index }
+        _state.update { it.copy(attachments = next) }
+        scope.launch {
+            if (next.isEmpty()) owner.kv.remove(attachmentKey) else owner.kv.set(attachmentKey, AttachmentJson.encodeList(next))
+        }
+    }
+}
+
+/** The attachment draft as stored; an unreadable one is no attachment. */
+private fun decodeAttachments(raw: String): List<Attachment> = try {
+    (Json.parseToJsonElement(raw) as? JsonArray)?.mapNotNull(AttachmentJson::decode).orEmpty()
+} catch (_: Exception) {
+    emptyList()
+}
