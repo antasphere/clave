@@ -25,17 +25,21 @@
 // rewrites a reused folder: it works in a fresh one.
 //
 // Every boot runs five checks and refuses (exit 2) unless all pass, printing
-// them first. Before any process starts: (1) the daemon's command carries
-// --no-titles, --test-no-activate and --test-no-machine-usage; (2) the
-// environment handed to the daemon is built from an allowlist, its SHELL is
-// the stack's stub, the first folder of its PATH holds the claude and codex
-// recorders, and CLAUDE_CONFIG_DIR and CODEX_HOME are empty folders the stack
-// made. After the daemon announces itself and before anything is seeded:
+// them first. Before any process starts: (1) the daemon's command starts Bun
+// with --no-env-file before the entry (Bun loads .env files from its working
+// directory otherwise) and carries --no-titles, --test-no-activate and
+// --test-no-machine-usage; (2) the environment handed to the daemon is built
+// from an allowlist, its SHELL is the stack's stub, which prints a FIXED
+// environment the stack wrote (never the environment of any process), the
+// first folder of its PATH holds the claude and codex recorders, and
+// CLAUDE_CONFIG_DIR and CODEX_HOME are empty folders the stack made. After
+// the daemon announces itself and before anything is seeded:
 // (3) its discovery file says titles "off", testMode true and machineUsage
 // false; (4) read INSIDE the daemon through its test route (POST
 // /e2e/evaluate, packages/server/src/fixtures/route.ts): its cached login
 // environment (getLoginShellEnv) resolves claude and codex to the recorders
-// and names the empty folders, and the one-shot launch the title path builds
+// and names the empty folders, the sorted keys of its process.env equal the
+// allowlist plus the stack's own, and the one-shot launch the title path builds
 // (buildOneShotLaunch over launchProfileManager.resolveClaudeCli) has the
 // recorder's canonical path as its file and exactly --version as its
 // arguments, a wrapper or a foreign path refused without starting anything;
@@ -64,16 +68,16 @@
 // refused before the seed with nothing started; --prove-recorder-read
 // missing|unreadable removes or replaces the owned recorder log while the
 // stack runs and expects the watch to latch a failure; --prove-title-guard
-// plants one line in the recorder log while the stack runs and expects the
-// watch to stop the daemon. Otherwise the stack runs until SIGINT/SIGTERM.
+// runs the claude RECORDER itself with -p while the stack runs (never a CLI),
+// so a foreign line lands in the log, and expects the watch to stop the
+// daemon. Otherwise the stack runs until SIGINT/SIGTERM.
 // The server's bearer token is written to <tmpdir>/owner-token (mode 0600)
 // and nowhere else: never to stdout, stack.json or a log. Children's output
 // goes to <tmpdir>/logs/.
 //
 // Import `startStack(options)` to drive the stack from another script.
-import { spawn } from 'node:child_process'
+import { execFileSync, spawn } from 'node:child_process'
 import {
-  appendFileSync,
   createWriteStream,
   existsSync,
   lstatSync,
@@ -253,8 +257,10 @@ export function dryRunFolder(tmpdir) {
  * the PATH of the login shell (`$SHELL -lic 'env -0'`), unless `--no-titles`
  * says not to. A fixture boot must never make that call, flag or no flag. So
  * the daemon gets a SHELL, a script named `zsh` under <tmpdir>/stubs, that
- * prints the daemon's own environment whatever it is asked and runs a `-c`
- * command with /bin/sh; a PATH whose first folder holds `claude` and `codex`
+ * prints a FIXED environment the stack wrote into it at boot (the allowlist
+ * plus the stack's own variables, the same the daemon is started with), never
+ * the environment of any process, and runs a `-c` command with /bin/sh; a
+ * PATH whose first folder holds `claude` and `codex`
  * RECORDERS, each appending one line (the time, the command, its first two
  * arguments, never the stdin) to <tmpdir>/stubs/recorder.log, the claude one
  * answering `--version` with a fixed line and a one-shot with a fixed title;
@@ -263,7 +269,7 @@ export function dryRunFolder(tmpdir) {
  * PATH alone is not enough: the login profile would put the real CLI back in
  * front. The log is removed at every boot.
  */
-function writeStubs(tmpdir) {
+function writeStubs(tmpdir, { issuer, serverDir }) {
   const dir = path.join(tmpdir, 'stubs')
   const bin = path.join(dir, 'bin')
   const claudeConfigDir = path.join(dir, 'claude-config')
@@ -276,11 +282,19 @@ function writeStubs(tmpdir) {
     writeFileSync(file, lines.join('\n') + '\n', { mode: 0o700 })
     return file
   }
-  const shell = write(path.join(dir, 'zsh'), [
+  const shell = path.join(dir, 'zsh')
+  const env = daemonEnv({ issuer, serverDir, bin, shell, claudeConfigDir, codexHome })
+  const quote = (s) => `'${String(s).replace(/'/g, `'\\''`)}'`
+  const envBlock = Object.keys(env)
+    .sort()
+    .map((key) => quote(`${key}=${env[key]}`))
+    .join(' ')
+  write(shell, [
     '#!/bin/sh',
-    "# The daemon's login shell, stood in for: the daemon reads its login environment",
-    "# through `$SHELL -lic 'env -0'`, and this environment is the fixture's own, its",
-    '# PATH starting with the recorders. A `-c` command runs with /bin/sh.',
+    "# The daemon's login shell, stood in for. The daemon reads its login environment",
+    "# through `$SHELL -lic 'env -0'`; this script prints a FIXED environment the stack",
+    "# wrote into it at boot (the allowlist plus the stack's own variables), never the",
+    '# environment of any process. A `-c` command runs with /bin/sh.',
     'cmd=""',
     'while [ $# -gt 0 ]; do',
     '  case "$1" in',
@@ -289,7 +303,7 @@ function writeStubs(tmpdir) {
     '  shift',
     'done',
     'case "$cmd" in',
-    '  ""|"env -0") exec /usr/bin/env -0 ;;',
+    `  ""|"env -0") printf '%s\\0' ${envBlock} ;;`,
     '  *) exec /bin/sh -c "$cmd" ;;',
     'esac'
   ])
@@ -314,7 +328,7 @@ function writeStubs(tmpdir) {
     record('codex'),
     'exit 0'
   ])
-  return { dir, bin, shell, claude, codex, log, claudeConfigDir, codexHome }
+  return { dir, bin, shell, claude, codex, log, claudeConfigDir, codexHome, env, envBlock }
 }
 
 /** The recorder log's lines; `null` when the file is absent; a throw when it cannot be read. */
@@ -430,6 +444,9 @@ function childEnv(extra = {}) {
 /** The daemon's command: this checkout's server entry under Bun, Echo on, the three flags. */
 export function daemonArgs({ serverDir, serverPort, relayUrl }) {
   return [
+    // Bun loads .env, .env.<NODE_ENV> and .env.local from its working directory
+    // unless told not to: the daemon gets exactly the environment it is handed.
+    '--no-env-file',
     path.join(REPO, 'apps', 'server', 'src', 'main.ts'),
     '--data-dir',
     serverDir,
@@ -445,15 +462,17 @@ export function daemonArgs({ serverDir, serverPort, relayUrl }) {
 
 /** The daemon's own environment: the allowlist, the issuer, a keychain FILE
  *  under its data folder, the stub as its login shell, the recorders first on
- *  PATH, the empty Claude config folder and Codex home. */
-export function daemonEnv({ issuer, serverDir, stubs }) {
+ *  PATH, the empty Claude config folder and Codex home. The same values are
+ *  written into the stub shell, so the login environment the daemon reads is
+ *  this one and no process's. */
+export function daemonEnv({ issuer, serverDir, bin, shell, claudeConfigDir, codexHome }) {
   return childEnv({
-    PATH: `${stubs.bin}${path.delimiter}${process.env.PATH ?? '/usr/bin:/bin'}`,
-    SHELL: stubs.shell,
+    PATH: `${bin}${path.delimiter}${process.env.PATH ?? '/usr/bin:/bin'}`,
+    SHELL: shell,
     CLAVE_ANTASPHERE_ISSUER: issuer,
     CLAVE_KEYCHAIN_FILE: path.join(serverDir, 'keychain.json'),
-    CLAUDE_CONFIG_DIR: stubs.claudeConfigDir,
-    CODEX_HOME: stubs.codexHome
+    CLAUDE_CONFIG_DIR: claudeConfigDir,
+    CODEX_HOME: codexHome
   })
 }
 
@@ -491,11 +510,17 @@ export async function preBootChecks({ args, env, stubs, log }) {
   await runCheck(
     results,
     log,
-    'the daemon command carries --no-titles, --test-no-activate, --test-no-machine-usage and --dev-echo-adapter',
+    'the daemon command starts Bun with --no-env-file before the entry and carries --no-titles, --test-no-activate, --test-no-machine-usage and --dev-echo-adapter',
     () => {
+      expect(
+        args[0] === '--no-env-file' &&
+          typeof args[1] === 'string' &&
+          args[1].endsWith(path.join('apps', 'server', 'src', 'main.ts')),
+        `the command does not start with --no-env-file and the server entry: ${JSON.stringify(args.slice(0, 2))}`
+      )
       const missing = [...DAEMON_FLAGS, '--dev-echo-adapter'].filter((flag) => !args.includes(flag))
       expect(missing.length === 0, `missing ${missing.join(', ')}`)
-      return `flags: ${DAEMON_FLAGS.join(' ')}`
+      return `--no-env-file, then the entry; flags: ${DAEMON_FLAGS.join(' ')}`
     }
   )
   await runCheck(
@@ -507,6 +532,11 @@ export async function preBootChecks({ args, env, stubs, log }) {
       const stray = Object.keys(env).filter((key) => !allowed.has(key))
       expect(stray.length === 0, `the environment carries ${stray.join(', ')}`)
       expect(same(env.SHELL, stubs.shell), `SHELL is ${env.SHELL}`)
+      const script = readFileSync(stubs.shell, 'utf8')
+      expect(
+        script.includes(`printf '%s\\0' ${stubs.envBlock} ;;`) && !script.includes('/usr/bin/env'),
+        'the stub shell does not print the fixed environment the stack wrote, or still echoes a live one'
+      )
       const first = (env.PATH ?? '').split(path.delimiter)[0]
       expect(same(first, stubs.bin), `the first folder of PATH is ${first}`)
       expect(
@@ -526,7 +556,7 @@ export async function preBootChecks({ args, env, stubs, log }) {
         same(env.CODEX_HOME, stubs.codexHome) && filesUnder(stubs.codexHome).length === 0,
         `CODEX_HOME is ${env.CODEX_HOME ?? 'unset'} or not empty`
       )
-      return `${Object.keys(env).length} variables, all allowlisted or the stack's; claude and codex are the recorders under ${stubs.bin}`
+      return `${Object.keys(env).length} variables, all allowlisted or the stack's, the same written into the stub shell; claude and codex are the recorders under ${stubs.bin}`
     }
   )
   return results
@@ -551,7 +581,7 @@ export function insideFactsSource() {
     const backend = await import(${JSON.stringify(PTY_BACKEND)})
     const login = backend.getLoginShellEnv()
     const cached = { PATH: login.PATH ?? null, SHELL: login.SHELL ?? null, CLAUDE_CONFIG_DIR: login.CLAUDE_CONFIG_DIR ?? null, CODEX_HOME: login.CODEX_HOME ?? null, keys: Object.keys(login).length }
-    const base = { shell: process.env.SHELL ?? null, userShell: backend.getUserShell(), cached }
+    const base = { shell: process.env.SHELL ?? null, userShell: backend.getUserShell(), cached, envKeys: Object.keys(process.env).sort() }
     const hooks = globalThis.__claveE2E?.titles
     if (hooks && typeof hooks.launch === 'function' && typeof hooks.locate === 'function') {
       const launch = await hooks.launch()
@@ -647,8 +677,17 @@ export async function evaluateInside(serverUrl, token, source, arg) {
 }
 
 /** What the inside read must show, checked against the stubs by canonical path; the probe is not run yet. */
-export function assertInside(inside, stubs) {
+export function assertInside(inside, stubs, expectedEnvKeys = null) {
   expect(same(inside.shell, stubs.shell), `the daemon's SHELL is ${inside.shell}`)
+  if (expectedEnvKeys) {
+    const got = Array.isArray(inside.envKeys) ? inside.envKeys : []
+    const extra = got.filter((k) => !expectedEnvKeys.includes(k))
+    const missing = expectedEnvKeys.filter((k) => !got.includes(k))
+    expect(
+      extra.length === 0 && missing.length === 0,
+      `the daemon's process.env keys differ from the allowlist plus the stack's own: extra [${extra.join(', ')}], missing [${missing.join(', ')}]`
+    )
+  }
   expect(same(inside.userShell, stubs.shell), `the daemon's login shell is ${inside.userShell}`)
   expect(
     same(inside.located?.claude, stubs.claude),
@@ -706,7 +745,7 @@ export function assertInside(inside, stubs) {
     same(locateOnPath('claude', inside.oneShot.PATH), stubs.claude),
     `claude on the one-shot's PATH is ${locateOnPath('claude', inside.oneShot.PATH) ?? 'nothing'}`
   )
-  return `road ${inside.road}; SHELL ${path.basename(inside.shell)} under stubs; the daemon's own locate and its one-shot both name ${path.relative(stubs.dir, inside.oneShot.file)} by canonical path`
+  return `road ${inside.road}; ${Array.isArray(inside.envKeys) ? inside.envKeys.length : '?'} environment keys, exactly the allowlist plus the stack's own; SHELL ${path.basename(inside.shell)} under stubs; the daemon's own locate and its one-shot both name ${path.relative(stubs.dir, inside.oneShot.file)} by canonical path`
 }
 
 /** What the executed probe must show: run, the recorder's answer, and exactly one line in the log. */
@@ -927,6 +966,7 @@ export async function startStack({
       'relay',
       BUN,
       [
+        '--no-env-file',
         path.join(REPO, 'apps', 'relay', 'src', 'main.ts'),
         '--port',
         String(relayPort),
@@ -953,9 +993,9 @@ export async function startStack({
     // naming no tab, the recorders catching any CLI call it makes anyway. The
     // two pre-boot checks run first, on the very command and environment the
     // daemon gets; one failing stops the boot before the daemon exists.
-    stubs = writeStubs(tmpdir)
+    stubs = writeStubs(tmpdir, { issuer: provider.issuer, serverDir })
     const args = daemonArgs({ serverDir, serverPort, relayUrl })
-    const env = daemonEnv({ issuer: provider.issuer, serverDir, stubs })
+    const env = stubs.env
     log(`daemon command: ${daemonCommandLine(args)}`)
     const preBoot = await preBootChecks({ args, env, stubs, log })
     if (preBoot.some((c) => !c.ok))
@@ -1037,7 +1077,7 @@ export async function startStack({
           }
           log(`inside read doctored for a proof: ${JSON.stringify(injectInside)}`)
         }
-        return assertInside(inside, stubs)
+        return assertInside(inside, stubs, Object.keys(env).sort())
       }
     )
     if (!fourth.ok)
@@ -1213,6 +1253,7 @@ export async function startStack({
         answer: probe.stdout.trim()
       },
       recorderLog: stubs.log,
+      recorderClaude: stubs.claude,
       recorderBaseline: baseline.lines
     }
     writeFileSync(path.join(tmpdir, 'stack.json'), JSON.stringify(facts, null, 2) + '\n')
@@ -1527,17 +1568,16 @@ if (isMain) {
         : `dry run in ${place.folder}, made and marked for the boot`
     )
     const serverDir = path.join(options.tmpdir, 'server')
-    const stubs = writeStubs(place.folder)
+    const stubs = writeStubs(place.folder, {
+      issuer: 'http://127.0.0.1:<the free port the provider binds at boot>',
+      serverDir
+    })
     const args = daemonArgs({
       serverDir,
       serverPort: options.serverPort,
       relayUrl: `http://127.0.0.1:${options.relayPort}`
     })
-    const env = daemonEnv({
-      issuer: 'http://127.0.0.1:<the free port the provider binds at boot>',
-      serverDir,
-      stubs
-    })
+    const env = stubs.env
     log(`dry run: nothing starts; the daemon command a boot runs is: ${daemonCommandLine(args)}`)
     const results = await preBootChecks({ args, env, stubs, log })
     log(
@@ -1624,15 +1664,19 @@ if (isMain) {
     // Every flag kept; the stack comes up, one line is planted in the
     // recorder log while it runs, and the watch must stop the daemon.
     await proof('the stack comes up for the recorder watch proof', options, null)
-    appendFileSync(
-      stack.recorderLog,
-      `${new Date().toISOString()} claude -p (planted by --prove-title-guard)\n`
-    )
+    // The claude RECORDER itself, run with -p the way a one-shot would be, never
+    // a CLI: it drains the prompt, answers the fixed title and writes its line.
+    const answer = execFileSync(stack.recorderClaude, ['-p'], {
+      input: 'a foreign one-shot, planted by --prove-title-guard\n',
+      env: { PATH: '/usr/bin:/bin' },
+      encoding: 'utf8'
+    })
     const who = await Promise.race([stack.died, sleep(WATCH_MS * 10).then(() => 'nobody')])
     const left = await stack.stop()
-    const red = who === 'recorder' && left.length > 0
+    const red =
+      who === 'recorder' && left.length > 0 && left.some((l) => /recorded: .* claude -p/.test(l))
     process.stdout.write(
-      `${red ? 'PASS' : 'FAIL'} the recorder watch stops the daemon on a recorded CLI call while the stack runs (died: ${who}; ${left.join(' | ')})\n`
+      `${red ? 'PASS' : 'FAIL'} the recorder watch stops the daemon when the claude recorder is run with -p while the stack runs (the recorder answered ${JSON.stringify(answer.trim())}; died: ${who}; ${left.join(' | ')})\n`
     )
     process.exit(red ? 0 : 1)
   }
