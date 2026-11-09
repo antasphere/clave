@@ -13,7 +13,7 @@ set -euo pipefail
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 cd "$HERE"
 
-COMPILE_SDK=36
+COMPILE_SDK=37
 BUILD_TOOLS=36.0.0
 
 : "${ANDROID_HOME:?ANDROID_HOME must point at an SDK root with cmdline-tools}"

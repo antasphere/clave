@@ -9,7 +9,7 @@ plugins {
 }
 android {
     namespace = "com.clave.android"
-    compileSdk = 36
+    compileSdk = 37
     buildToolsVersion = "36.0.0"
     defaultConfig {
         // Never the React Native prototype's com.clave.app.mobile, never the Mac's
