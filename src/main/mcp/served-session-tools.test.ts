@@ -766,6 +766,10 @@ describe('an account switch', () => {
     const week = { kind: 'weekly_all', scope: null, usedPercentage: 30, severity: 'normal' }
     const spark = { kind: 'session', scope: 'Spark', usedPercentage: 100, severity: 'critical' }
     const open = { kind: 'weekly_all', scope: null, usedPercentage: 10, severity: 'normal' }
+    const half = { kind: 'weekly_all', scope: null, usedPercentage: 50, severity: 'normal' }
+    // The tab leaves c2. Default is next in the ring and has the most of its
+    // week, but its Spark block is spent: a Spark tab must go past it to c3,
+    // a tab on another model takes it.
     h.w.accounts.codex = [
       {
         id: 'default',
@@ -773,29 +777,21 @@ describe('an account switch', () => {
         usable: true,
         usage: { tightest: week, windows: [week, spark] }
       },
-      { id: 'c2', label: 'Second', usable: true, usage: { tightest: open, windows: [open] } }
+      { id: 'c2', label: 'Second', usable: true, usage: { tightest: open, windows: [open] } },
+      { id: 'c3', label: 'Third', usable: true, usage: { tightest: half, windows: [half] } }
     ]
     h.w.selected.codex = 'default'
     h.w.sessions.push(session('cx'))
-    h.w.records.cx = record('cx', { claudeMode: false, codexMode: true, codexAccountId: 'default' })
+    h.w.records.cx = record('cx', { claudeMode: false, codexMode: true, codexAccountId: 'c2' })
     h.w.records.cx.model = 'gpt-5.3-codex-spark'
     expect(await run(h, 'switchAccount', { sessionId: 'cx', account: 'any' })).toMatchObject({
-      account: { id: 'c2' }
+      account: { id: 'c3' }
     })
-    // With the only other account out on its week, a Spark tab still has
-    // nowhere to go, and a tab on another model moves there regardless of
-    // Spark (the week is open on default, so the move is the pool's ring).
-    h.w.accounts.codex[1] = {
-      ...h.w.accounts.codex[1],
-      usage: {
-        tightest: { ...open, usedPercentage: 97 },
-        windows: [{ ...open, usedPercentage: 97 }]
-      }
-    }
-    await expect(run(h, 'switchAccount', { sessionId: 'cx', account: 'any' })).rejects.toThrow(
-      'No other account of this provider has headroom'
-    )
-    h.w.accounts.codex[1] = { ...h.w.accounts.codex[1], usage: { tightest: open, windows: [open] } }
+    h.w.records.cx.codexAccountId = 'c2'
+    h.w.records.cx.model = 'gpt-5.3-codex'
+    expect(await run(h, 'switchAccount', { sessionId: 'cx', account: 'any' })).toMatchObject({
+      account: { id: 'default' }
+    })
     const chosen = (): string =>
       (h.argsOf('sessions.start').at(-1) as { options: Record<string, string> }).options
         .codexAccountId

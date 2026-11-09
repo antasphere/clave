@@ -5,6 +5,7 @@ import {
   formatReset,
   usageProviderForSession,
   headroomLabel,
+  headroomWindow,
   accountUsageFieldsOf,
   claudeUsageForModel,
   capOutLabel,
@@ -184,6 +185,31 @@ describe('headroomLabel', () => {
     expect(
       headroomLabel({ status: 'ready', tightest: busy, windows: [busy, overall], error: null })
     ).toBe('60% left · 5h')
+  })
+  it('never hands the line to a tied Overall when the tightest is the cap out that binds', () => {
+    // Fable out for 5d, Overall out for 4d, both at 100% critical: the
+    // session is stopped by Fable, and the foot must say so like the chip.
+    const overallOut = w({
+      key: 'seven_day',
+      kind: 'weekly_all',
+      usedPercentage: 100,
+      severity: 'critical',
+      resetsAt: 4_000
+    })
+    const fableOut = w({
+      key: 'fable',
+      kind: 'weekly_scoped',
+      scope: 'Fable',
+      usedPercentage: 100,
+      severity: 'critical',
+      resetsAt: 5_000
+    })
+    const onFable = claudeUsageForModel(
+      { status: 'ready', error: null, ...accountUsageFieldsOf([overallOut, fableOut]) },
+      'fable'
+    )
+    expect(onFable?.tightest).toBe(fableOut)
+    expect(headroomWindow(onFable)).toBe(fableOut)
   })
   it('says nothing before a read, or after a failed one', () => {
     expect(headroomLabel(undefined)).toBeNull()

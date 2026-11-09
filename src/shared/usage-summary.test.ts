@@ -175,9 +175,16 @@ describe('tightestOf, the one rule for the pool and the readouts', () => {
     })
     const onFable = usageSummaryForModel(usageSummaryOf({ windows: [weekOut, fableOut] }), 'fable')!
     expect(onFable.tightest).toBe(weekOut)
-    // A cap out with no reset known ranks after those with one.
+    // A cap out with no reset known ranks after those with one, from either
+    // side of the list.
     const unknown = { ...fable, resetsAt: null }
     expect(usageSummaryOf({ windows: [weekOut, unknown] })!.tightest).toBe(weekOut)
+    expect(
+      usageSummaryForModel(usageSummaryOf({ windows: [unknown, weekOut] }), 'fable')!.tightest
+    ).toBe(weekOut)
+    expect(
+      usageSummaryForModel(usageSummaryOf({ windows: [weekOut, unknown] }), 'fable')!.tightest
+    ).toBe(weekOut)
     expect(usageSummaryForModel(usageSummaryOf({ windows: [unknown] }), 'fable')!.tightest).toBe(
       unknown
     )

@@ -390,13 +390,16 @@ export function capName(w: UsageWindow): string {
   return w.label
 }
 
-/** The cap a headroom line names: the tightest, except that a cap tied with
- *  it at the same whole percent gives way to the all-models weekly one, so an
- *  untouched account reads "100% left · Overall" rather than naming
- *  whichever window the service happened to list first. */
+/** The cap a headroom line names: the tightest, except that an OPEN cap
+ *  tied with it at the same whole percent gives way to the all-models
+ *  weekly one, so an untouched account reads "100% left · Overall" rather
+ *  than naming whichever window the service happened to list first. */
 export function headroomWindow(summary: AccountUsageSummary | undefined): UsageWindow | null {
   const tightest = summary?.tightest
   if (!tightest) return null
+  // A cap that is out is the line, whatever ties with it: the one rule made
+  // it the cap that binds, and the chip and the notice name it.
+  if (windowExhausted(tightest)) return tightest
   const overall = summary.windows?.find((w) => w.kind === 'weekly_all')
   if (
     overall &&
