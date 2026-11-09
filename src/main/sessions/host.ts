@@ -145,9 +145,11 @@ export function createSessionHost(deps: SessionHostDeps): SessionHostService {
       if (value.type === 'set_model') {
         // The composer's pick is the next chat's default too. Remembered only
         // once the session took the switch: a refused name throws before this.
+        // A move the policy makes at a cap says `remember: false` (PRDCT-4302):
+        // Opus at the Fable cap is this tab's way on, not the person's pick.
         manager.write(id, value)
         const adapterId = manager.get(id)?.adapterId
-        if (adapterId) rememberChatModel(adapterId, value.model)
+        if (adapterId && value.remember !== false) rememberChatModel(adapterId, value.model)
         return
       }
       if (value.type === 'set_effort') {

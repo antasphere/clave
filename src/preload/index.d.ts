@@ -56,6 +56,7 @@ import type {
   WorkspaceState
 } from '../shared/workspace-types'
 import type { DownloadProgress, ReleaseNote, UpdaterState } from '../shared/updater-types'
+import type { LimitReport } from '../shared/limit-report'
 import type { AgentUpdateId, AgentUpdatesState } from '../shared/agent-updates'
 import type { GitRangeDirection } from '../shared/git-range'
 import type {
@@ -915,7 +916,11 @@ export interface ElectronAPI extends FleetDesktopAPI {
   ) => () => void
   onSessionData: (id: string, callback: (data: string) => void) => () => void
   onSessionExit: (id: string, callback: (exitCode: number) => void) => () => void
-  onSessionLimitReported: (callback: (sessionId: string) => void) => () => void
+  /** A chat session's CLI reported its account's limit and which cap it hit
+   *  (ADR 0002, PRDCT-4302); both transports. */
+  onSessionLimitReported: (
+    callback: (payload: { id: string; report: LimitReport }) => void
+  ) => () => void
   onSessionAutoTitle: (sessionId: string, callback: (title: string) => void) => () => void
   onPlanDetected: (sessionId: string, callback: (planPath: string) => void) => () => void
   onClearDetected: (

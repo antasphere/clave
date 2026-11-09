@@ -111,7 +111,11 @@ export const InterruptSchema = z.object({ type: z.literal('interrupt') })
 /** Switch the session's model; null asks the provider for its own default. */
 export const SetModelSchema = z.object({
   type: z.literal('set_model'),
-  model: z.string().nullable()
+  model: z.string().nullable(),
+  /** Whether the pick becomes the next chat's default (the composer's pick
+   *  does; a move the policy makes at a cap does not, PRDCT-4302). Absent
+   *  means yes. */
+  remember: z.boolean().optional()
 })
 export type SetModel = z.infer<typeof SetModelSchema>
 /** Switch how hard the session's model thinks: one of the levels its

@@ -1644,9 +1644,8 @@ async function handleSwitchAccount(payload: {
   }
   if (effectiveSwitchMode(session) === 'propose') {
     state.setAccountProposal(session.id, {
-      accountId: target.id,
-      label: target.label,
-      reason: 'reported'
+      reason: 'reported',
+      rungs: [{ kind: 'account', accountId: target.id, label: target.label }]
     })
     return {
       sessionId: session.id,

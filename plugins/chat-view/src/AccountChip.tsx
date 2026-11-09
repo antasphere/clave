@@ -70,7 +70,7 @@ export function AccountChip({ sessionId }: { sessionId: string }): React.JSX.Ele
   // CLI reported that the poll does not show yet reads "Out" alone, since
   // the report carries no cap (PRDCT-4254).
   const stopping = capStatus(summary)?.stopping ?? null
-  const exhausted = stopping !== null || host.limitReported === true
+  const exhausted = stopping !== null || !!host.limitReported
   const level = exhausted ? 'critical' : w ? capLevel(w) : 'unknown'
   const left = w ? Math.max(0, Math.round(100 - w.usedPercentage)) : null
   const headroom = stopping

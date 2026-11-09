@@ -181,6 +181,16 @@ export async function run(t) {
       proposalText
     )
     t.check('and never "At limit" nor "Limit reached"', !/limit/i.test(proposalText), proposalText)
+    // PRDCT-4302: a family's cap offers a model of the same account before
+    // the account rung, but only to a chat, which takes a set_model on the
+    // live process; this tab runs a terminal profile, whose model is the
+    // CLI's own, so it is offered the account rung alone.
+    t.check(
+      'a terminal tab is offered the account rung alone, no model it cannot take',
+      !/Continue on/.test(proposalText) &&
+        (await proposal.first().getAttribute('data-model-proposal')) === null,
+      proposalText
+    )
 
     // ── The Switch account rows: the open account by what is left ──
     const row = win.locator('.sidebar-item', { hasText: 'Fable on Work' }).first()

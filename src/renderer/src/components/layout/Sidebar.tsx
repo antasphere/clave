@@ -93,6 +93,7 @@ import {
   PlayIcon,
   ArrowsRightLeftIcon,
   MapPinIcon,
+  CpuChipIcon,
   BoltIcon,
   FolderIcon,
   ShieldExclamationIcon,
@@ -1337,6 +1338,14 @@ export function Sidebar(): React.JSX.Element {
           label: pinned ? 'Unpin from this account' : 'Pin to this account',
           icon: <MapPinIcon className="w-3.5 h-3.5" />,
           onClick: () => useSessionStore.getState().setAccountPinned(sessionId, !pinned)
+        })
+        // Kept on its model (PRDCT-4302): a family's cap out never has the
+        // policy change this tab's model; it falls to the account rung.
+        const modelPinned = session.modelPinned === true
+        items.push({
+          label: modelPinned ? 'Let the model change at limit' : 'Keep on this model',
+          icon: <CpuChipIcon className="w-3.5 h-3.5" />,
+          onClick: () => useSessionStore.getState().setModelPinned(sessionId, !modelPinned)
         })
         const automatic = effectiveSwitchMode(session) === 'automatic'
         items.push({
