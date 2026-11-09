@@ -40,7 +40,7 @@ import { PermissionModeMenu } from './PermissionModeMenu'
 import { ModelMenu } from './ModelMenu'
 import { EffortMenu } from './EffortMenu'
 import { ContinuedFromCard, ProviderSwitch } from './ProviderSwitch'
-import { noteAgentName, useProviderSwitch } from './use-provider-switch'
+import { midTurn, noteAgentName, useProviderSwitch } from './use-provider-switch'
 import { providerLabel } from './models'
 import { SenderChip } from './Delivery'
 import { DeliveryStack } from './DeliveryStack'
@@ -714,7 +714,7 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
       cwd: session.cwd,
       model: exportSource.current.conversation.model
     }),
-    working: () => conversation.state === 'working',
+    working: () => midTurn(conversation.state),
     onError: report
   })
   const continuedFrom = useViewSessionStore(
@@ -1256,7 +1256,7 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
             landing={providerSwitch.state.landing}
             noteOffered={providerSwitch.state.noteOffered}
             noteAgent={noteAgentName(conversation.model, session.provider)}
-            working={state === 'working'}
+            working={midTurn(state)}
             busy={providerSwitch.state.busy}
             error={providerSwitch.state.error}
             onContinue={(options) => void providerSwitch.confirm(options)}

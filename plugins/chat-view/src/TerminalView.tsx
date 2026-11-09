@@ -38,7 +38,7 @@ import { PermissionModeMenu } from './PermissionModeMenu'
 import { ModelMenu } from './ModelMenu'
 import { EffortMenu } from './EffortMenu'
 import { ContinuedFromCard, ProviderSwitch } from './ProviderSwitch'
-import { noteAgentName, useProviderSwitch } from './use-provider-switch'
+import { midTurn, noteAgentName, useProviderSwitch } from './use-provider-switch'
 import { providerLabel } from './models'
 import { DeliveryStack } from './DeliveryStack'
 import { claudeContextWindow } from '../../../src/shared/claude-models'
@@ -540,7 +540,7 @@ export function TerminalView({
       cwd: session.cwd,
       model: switchSource.current.conversation.model
     }),
-    working: () => conversation.state === 'working',
+    working: () => midTurn(conversation.state),
     onError: report
   })
   const continuedFrom = useViewSessionStore(
@@ -1078,7 +1078,7 @@ export function TerminalView({
             landing={providerSwitch.state.landing}
             noteOffered={providerSwitch.state.noteOffered}
             noteAgent={noteAgentName(conversation.model, session.provider)}
-            working={state === 'working'}
+            working={midTurn(state)}
             busy={providerSwitch.state.busy}
             error={providerSwitch.state.error}
             onContinue={(options) => void providerSwitch.confirm(options)}

@@ -232,7 +232,7 @@ describe('cutTranscript on one long run of a single speaker', () => {
     expect(cut.length).toBeLessThanOrEqual(3000)
     expect(
       cut.startsWith(
-        '## … the start of this is left out for room; the full conversation is in /tape.md'
+        '## You · 10:00\n\n## … the start of this is left out for room; the full conversation is in /tape.md'
       )
     ).toBe(true)
   })
@@ -297,5 +297,41 @@ describe('the cut never drops the newest turn (verifier round 1, F1)', () => {
     expect(md.length).toBeLessThan(101_000)
     expect(md).toContain('THE LAST WORDS')
     expect(md).toContain('start')
+  })
+})
+
+describe('round 2 of the verifier: the title survives a head cut, the tail has a ceiling, a tiny room', () => {
+  it('keeps the first line of a head that is cut (R4)', () => {
+    const md =
+      '# My title\n\n## You · 10:00\n\n' +
+      'x'.repeat(5000) +
+      '\n\n## Claude · 10:01\n\nok\n\n## You · 10:02\n\nlast'
+    const cut = cutTranscript(md, 1500, '/tape.md')
+    expect(cut.startsWith('# My title\n\n')).toBe(true)
+    expect(cut).toContain('last')
+    expect(cut.length).toBeLessThanOrEqual(1500)
+  })
+  it('a room smaller than the note holds the note alone, cut (R5)', () => {
+    const md = '## You · 10:00\n\n' + 'x'.repeat(6000)
+    expect(cutTranscript(md, 300, '/tape.md').length).toBeLessThanOrEqual(300)
+    expect(cutTranscript(md, 30, '/tape.md').length).toBeLessThanOrEqual(30)
+  })
+  it('caps the files list and the diff summary so the tail never breaks the budget (R6)', () => {
+    const entries: Entry[] = [
+      { kind: 'user', text: 'go', final: true, at: at(13, 0) },
+      { kind: 'assistant', text: 'done', final: true, at: at(13, 1) }
+    ]
+    const md = handoffMessage(entries, meta, {
+      from: 'Claude',
+      files: Array.from({ length: 250 }, (_, i) => `/work/file-${i}.ts`),
+      diffStat: 'line\n'.repeat(5000),
+      tapePath: '/tape.md',
+      budgetChars: 20_000
+    })
+    expect(md.length).toBeLessThan(20_000)
+    expect(md).toContain('/work/file-99.ts')
+    expect(md).not.toContain('/work/file-100.ts')
+    expect(md).toContain('… and 150 more, in the full conversation')
+    expect(md).toContain('more characters)')
   })
 })

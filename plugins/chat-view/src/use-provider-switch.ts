@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import type { Session } from '../../../src/shared/session-model'
+import type { AgentState, Session } from '../../../src/shared/session-model'
 import type { ProviderSwitchPlan } from '../../../src/preload/index.d'
 import { claudeContextWindow, claudeModelName } from '../../../src/shared/claude-models'
 import {
@@ -40,6 +40,16 @@ export async function wholeConversation(
   }
   return whole.entries
 }
+
+/** Whether the agent is in the middle of a turn: working, or held on a
+ *  permission prompt (the reducer counts both as mid-turn). A note asked
+ *  then would come back as the tail of that turn (verifier round 1 F5,
+ *  round 2 R1). */
+export const midTurn = (state: AgentState): boolean => state === 'working' || state === 'blocked'
+
+/** Whether the note the person ticked is asked at Continue: only while the
+ *  agent is idle NOW, not when the popover opened (verifier round 2 R2). */
+export const noteToAsk = (ticked: boolean, working: boolean): boolean => ticked && !working
 
 export interface ProviderSwitchState {
   target: ProviderPick
@@ -120,9 +130,13 @@ export function useProviderSwitch({
       const from = providerLabel(session.provider)
       try {
         let noteText: string | null = null
-        if (note) {
+        if (noteToAsk(note, working())) {
           setState((s) => (s ? { ...s, busy: `Asking ${from} for a handoff note…` } : s))
           noteText = await requestHandoffNote(session.id)
+        } else if (note) {
+          onError(
+            `The handoff note was skipped: ${from} was in the middle of a turn when you pressed Continue.`
+          )
         }
         setState((s) =>
           s
@@ -174,7 +188,7 @@ export function useProviderSwitch({
         setState((s) => (s ? { ...s, busy: null, error: String(error) } : s))
       }
     },
-    [state, session.id, session.provider, source, meta, onError]
+    [state, session.id, session.provider, source, meta, working, onError]
   )
   return { state, begin, cancel, confirm }
 }

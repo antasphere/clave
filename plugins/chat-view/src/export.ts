@@ -193,6 +193,11 @@ export function editedFiles(entries: Entry[]): string[] {
   return files
 }
 
+/** The most files the handoff lists and the most characters of `git diff
+ *  --stat` it carries; the rest is in the full conversation on disk. */
+export const MAX_HANDOFF_FILES = 100
+export const MAX_HANDOFF_DIFF_CHARS = 4000
+
 export interface HandoffExtras {
   /** The provider the conversation ran on, as the reader names it (Claude). */
   from: string
@@ -212,7 +217,20 @@ export interface HandoffExtras {
 /** The newest end of a text that does not fit, the cut said first. */
 function newestEnd(text: string, budget: number, tapePath: string): string {
   const note = `## … the start of this is left out for room; the full conversation is in ${tapePath}\n\n`
-  return note + text.slice(-Math.max(0, budget - note.length))
+  // A room smaller than the note itself holds the note alone, cut.
+  if (budget <= note.length) return note.slice(0, Math.max(0, budget))
+  return note + text.slice(-(budget - note.length))
+}
+
+/** A head too big for its room: its first line (the title, or the first
+ *  speaker's heading) kept, then the newest end of the rest, so the reader
+ *  still knows whose conversation this is (verifier round 2 R4). */
+function headCut(head: string, room: number, tapePath: string): string {
+  const firstLine = head.split('\n', 1)[0]
+  const rest = head.slice(firstLine.length).replace(/^\n+/, '')
+  const keep = `${firstLine}\n\n`
+  if (keep.length >= room) return newestEnd(head, room, tapePath)
+  return keep + newestEnd(rest, room - keep.length, tapePath)
 }
 
 /** The transcript cut to `budget` characters: the head (the title and the
@@ -223,7 +241,7 @@ function newestEnd(text: string, budget: number, tapePath: string): string {
 export function cutTranscript(markdown: string, budget: number, tapePath: string): string {
   if (markdown.length <= budget) return markdown
   const turns = markdown.split(/\n(?=## )/)
-  if (turns.length < 3) return newestEnd(markdown, budget, tapePath)
+  if (turns.length < 3) return headCut(markdown, budget, tapePath)
   const gap = (n: number): string =>
     `## … ${n} earlier turn${n === 1 ? '' : 's'} left out for room; the full conversation is in ${tapePath}`
   const rest = turns.slice(2)
@@ -231,7 +249,7 @@ export function cutTranscript(markdown: string, budget: number, tapePath: string
   let head = turns.slice(0, 2).join('\n')
   // The head takes at most a third of the room, so the newest turn always has its share.
   const headRoom = Math.floor(budget / 3)
-  if (head.length > headRoom) head = newestEnd(head, headRoom, tapePath)
+  if (head.length > headRoom) head = headCut(head, headRoom, tapePath)
   const fixed = head.length + gap(rest.length).length + 2
   const kept: string[] = []
   let size = fixed
@@ -263,16 +281,27 @@ export function handoffMessage(
   const fixed: string[] = [`# ${header}`, '', intro]
   if (extras.note?.trim())
     fixed.push('', `## Handoff note from ${extras.from}`, '', extras.note.trim())
+  // The tail has its own ceiling, so a huge diff summary or file list can
+  // never push the message past its budget (verifier round 2 R6).
   const tail: string[] = []
-  if (extras.files.length)
+  const files = extras.files.slice(0, MAX_HANDOFF_FILES)
+  if (extras.files.length) {
     tail.push(
       '',
       '## Files edited or created in this conversation',
       '',
-      ...extras.files.map((f) => `- ${code(f)}`)
+      ...files.map((f) => `- ${code(f)}`)
     )
-  if (extras.diffStat)
-    tail.push('', '## Working tree (git diff --stat)', '', '```', extras.diffStat, '```')
+    if (extras.files.length > files.length)
+      tail.push(`- … and ${extras.files.length - files.length} more, in the full conversation`)
+  }
+  if (extras.diffStat) {
+    const stat =
+      extras.diffStat.length > MAX_HANDOFF_DIFF_CHARS
+        ? `${extras.diffStat.slice(0, MAX_HANDOFF_DIFF_CHARS)}\n… (${extras.diffStat.length - MAX_HANDOFF_DIFF_CHARS} more characters)`
+        : extras.diffStat
+    tail.push('', '## Working tree (git diff --stat)', '', '```', stat, '```')
+  }
   tail.push('', `The full conversation, tool outputs included, is in ${code(extras.tapePath)}.`)
   const transcript = transcriptMarkdown(entries, meta, { lastStretchOutputs: true })
     .replace(/^# .*\n\n[^\n]*\n/, '')
