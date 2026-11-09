@@ -22,8 +22,8 @@ describe('limitOutLabel', () => {
     )
     expect(limitOutLabel({ scope: { family: 'Opus' } }, null, now)).toBe('Opus out')
   })
-  it('says the credits, or the bare word with the return when one is known', () => {
-    expect(limitOutLabel({ scope: 'credits' }, null, now)).toBe('Out of credits')
+  it('says the bare word for the credits or an unnamed refusal, with the return when one is known', () => {
+    expect(limitOutLabel({ scope: 'credits' }, null, now)).toBe('Out')
     expect(limitOutLabel({ scope: 'shared', resetsAt: now + 3_600_000 }, null, now)).toBe(
       'Out · back in 1h'
     )

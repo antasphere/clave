@@ -19,6 +19,7 @@ export function limitOutLabel(
   const back = report.resetsAt ? formatResetIn(report.resetsAt, now) : null
   const family = scopeFamily(report.scope)
   if (family) return back ? `${family} out · back ${back}` : `${family} out`
-  if (report.scope === 'credits') return 'Out of credits'
+  // The credits, the shared caps or an unnamed refusal: the account is out;
+  // "out of usage credits" is retired (ADR 0002).
   return back ? `Out · back ${back}` : 'Out'
 }

@@ -5,9 +5,9 @@ import { capName, formatResetIn } from '../../../src/renderer/src/store/usage-st
 /** The ended notice's first sentence, pure (PRDCT-4254, PRDCT-4302): "Work is
  *  out on Fable, back in 2d 5h." when the cap that stopped the conversation
  *  is known from the poll's read; from the CLI's own report before the read
- *  lands ("Work is out on Fable, back in 2d 5h." from the family and the
- *  return it named, "Work is out of credits." for the org's credits);
- *  "Work is out, as its agent reported." when the report said no more. */
+ *  lands, when it named a family ("Work is out on Fable, back in 2d 5h.");
+ *  "Work is out, as its agent reported." otherwise, the credits included:
+ *  the words "out of usage credits" are retired (ADR 0002). */
 export function limitSentence(
   account: string,
   stopping: UsageWindow | null,
@@ -23,6 +23,5 @@ export function limitSentence(
     const back = report?.resetsAt ? formatResetIn(report.resetsAt, now) : null
     return `${account} is out on ${family}${back ? `, back ${back}` : ''}.`
   }
-  if (report?.scope === 'credits') return `${account} is out of credits.`
   return `${account} is out, as its agent reported.`
 }

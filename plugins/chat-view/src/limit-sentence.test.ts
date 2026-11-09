@@ -36,8 +36,10 @@ describe('limitSentence', () => {
       'Work is out on Opus.'
     )
   })
-  it("says the credits when the CLI's reply was the org's, and the report alone otherwise", () => {
-    expect(limitSentence('Work', null, { scope: 'credits' }, now)).toBe('Work is out of credits.')
+  it('says the account is out as its agent reported when the report names no family, the credits included', () => {
+    expect(limitSentence('Work', null, { scope: 'credits' }, now)).toBe(
+      'Work is out, as its agent reported.'
+    )
     expect(limitSentence('team@antasphere.com', null, null, now)).toBe(
       'team@antasphere.com is out, as its agent reported.'
     )
