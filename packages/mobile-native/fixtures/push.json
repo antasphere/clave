@@ -1,0 +1,281 @@
+{
+  "$comment": "Generated from the real contract by packages/mobile-native/scripts/export-vectors.ts. Do not edit: run `npm run vectors --workspace @clave/mobile-native`; vectors.test.ts fails when this file no longer matches the contract.",
+  "family": "push",
+  "contract": 1,
+  "notes": [
+    "One WebSocket per client on the server’s listener at PUSH_PATH (through the relay, <relay>/m/<machineId>/push): the client says hello with its token within HELLO_TIMEOUT_MS, the server answers welcome or closes with a code below; then the client subscribes to sessions by id.",
+    "A `request` frame is a view request for a desktop window; a device session never receives one. A tag a phone does not know is ignored, never a failure: the contract may add a frame later.",
+    "CLOSE_DEVICE_REVOKED (devices.json) is the code a phone’s socket gets when its session is revoked."
+  ],
+  "constants": {
+    "PUSH_PATH": "/push",
+    "PUSH_PROTOCOL": 1,
+    "HELLO_TIMEOUT_MS": 5000,
+    "CLOSE_UNAUTHORIZED": 4001,
+    "CLOSE_MALFORMED": 4002,
+    "CLOSE_HELLO_TIMEOUT": 4008,
+    "CLOSE_SERVER_STOPPING": 4010,
+    "CLOSE_DEVICE_REVOKED": 4011
+  },
+  "literals": {
+    "ClientFrameTag": [
+      "hello",
+      "subscribe",
+      "unsubscribe",
+      "ping"
+    ],
+    "ServerFrameTag": [
+      "welcome",
+      "subscribed",
+      "unsubscribed",
+      "stream",
+      "exit",
+      "event",
+      "error",
+      "pong",
+      "request"
+    ]
+  },
+  "shapes": {
+    "ClientFrame": {
+      "valid": [
+        {
+          "name": "hello, the client named",
+          "wire": {
+            "_tag": "hello",
+            "token": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+            "client": "clave-ios/0.1.0"
+          }
+        },
+        {
+          "name": "hello without a client name",
+          "wire": {
+            "_tag": "hello",
+            "token": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+          }
+        },
+        {
+          "name": "subscribe",
+          "wire": {
+            "_tag": "subscribe",
+            "sessionId": "s1"
+          }
+        },
+        {
+          "name": "unsubscribe",
+          "wire": {
+            "_tag": "unsubscribe",
+            "sessionId": "s1"
+          }
+        },
+        {
+          "name": "ping",
+          "wire": {
+            "_tag": "ping"
+          }
+        }
+      ],
+      "invalid": [
+        {
+          "name": "hello without a token",
+          "wire": {
+            "_tag": "hello",
+            "client": "clave-ios/0.1.0"
+          },
+          "because": "token is required"
+        },
+        {
+          "name": "subscribe without a session",
+          "wire": {
+            "_tag": "subscribe"
+          },
+          "because": "sessionId is required"
+        },
+        {
+          "name": "an unknown tag",
+          "wire": {
+            "_tag": "shout"
+          },
+          "because": "_tag is one of the four"
+        }
+      ]
+    },
+    "ServerFrame": {
+      "valid": [
+        {
+          "name": "welcome with the server’s version",
+          "wire": {
+            "_tag": "welcome",
+            "serverId": "srv-1",
+            "protocol": 1,
+            "version": "2.4.0"
+          }
+        },
+        {
+          "name": "welcome from an older server",
+          "wire": {
+            "_tag": "welcome",
+            "serverId": "srv-1",
+            "protocol": 1
+          }
+        },
+        {
+          "name": "subscribed",
+          "wire": {
+            "_tag": "subscribed",
+            "sessionId": "s1",
+            "session": {
+              "id": "s1",
+              "provider": "claude",
+              "transport": "events",
+              "cwd": "/tmp/scratch",
+              "windowKey": "server",
+              "groupId": "g1",
+              "workspaceId": "ws1",
+              "state": "working",
+              "createdAt": 1730000000000,
+              "adapterId": "claude-chat",
+              "title": "A chat",
+              "viewId": "clave.chat/chat"
+            }
+          }
+        },
+        {
+          "name": "unsubscribed",
+          "wire": {
+            "_tag": "unsubscribed",
+            "sessionId": "s1"
+          }
+        },
+        {
+          "name": "a streamed event with its position",
+          "wire": {
+            "_tag": "stream",
+            "sessionId": "s1",
+            "stream": {
+              "kind": "event",
+              "event": {
+                "type": "user_message",
+                "text": "a",
+                "clientMessageId": "message-123"
+              },
+              "position": {
+                "generation": "adoption",
+                "sequence": 4
+              }
+            }
+          }
+        },
+        {
+          "name": "a streamed event without a position",
+          "wire": {
+            "_tag": "stream",
+            "sessionId": "s1",
+            "stream": {
+              "kind": "event",
+              "event": {
+                "type": "assistant_text",
+                "delta": "hel",
+                "final": false
+              }
+            }
+          }
+        },
+        {
+          "name": "streamed terminal bytes",
+          "wire": {
+            "_tag": "stream",
+            "sessionId": "s1",
+            "stream": {
+              "kind": "pty",
+              "data": "aGk="
+            }
+          }
+        },
+        {
+          "name": "exit",
+          "wire": {
+            "_tag": "exit",
+            "sessionId": "s1",
+            "code": 0
+          }
+        },
+        {
+          "name": "a server event",
+          "wire": {
+            "_tag": "event",
+            "id": "e1",
+            "seq": 4,
+            "at": 2,
+            "event": {
+              "_tag": "session.state_changed",
+              "id": "s1",
+              "state": "done"
+            }
+          }
+        },
+        {
+          "name": "an error about a session",
+          "wire": {
+            "_tag": "error",
+            "sessionId": "s1",
+            "message": "Unknown session"
+          }
+        },
+        {
+          "name": "an error about a frame",
+          "wire": {
+            "_tag": "error",
+            "message": "Malformed frame"
+          }
+        },
+        {
+          "name": "pong",
+          "wire": {
+            "_tag": "pong"
+          }
+        },
+        {
+          "name": "a view request, for a desktop window and never a phone",
+          "wire": {
+            "_tag": "request",
+            "requestId": "vr-1",
+            "windowKey": "main",
+            "command": "sidebar:read",
+            "payload": {}
+          }
+        }
+      ],
+      "invalid": [
+        {
+          "name": "welcome with another protocol",
+          "wire": {
+            "_tag": "welcome",
+            "serverId": "srv-1",
+            "protocol": 2
+          },
+          "because": "protocol is 1"
+        },
+        {
+          "name": "terminal bytes that are not base64",
+          "wire": {
+            "_tag": "stream",
+            "sessionId": "s1",
+            "stream": {
+              "kind": "pty",
+              "data": "***"
+            }
+          },
+          "because": "data is base64"
+        },
+        {
+          "name": "an unknown tag",
+          "wire": {
+            "_tag": "something-new"
+          },
+          "because": "_tag is one of the frames; a phone ignores it"
+        }
+      ]
+    }
+  }
+}

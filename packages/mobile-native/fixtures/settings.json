@@ -1,0 +1,393 @@
+{
+  "$comment": "Generated from the real contract by packages/mobile-native/scripts/export-vectors.ts. Do not edit: run `npm run vectors --workspace @clave/mobile-native`; vectors.test.ts fails when this file no longer matches the contract.",
+  "family": "settings",
+  "contract": 1,
+  "notes": [
+    "The two settings reads a phone makes: GET /launch-profiles and GET /workspaces. Every other settings route refuses a device session.",
+    "The chat profiles are the ones to offer on a phone; the terminal built-ins are the Mac’s own constant and are not listed by the server."
+  ],
+  "literals": {
+    "LauncherFamily": [
+      "claude",
+      "antigravity",
+      "codex",
+      "pi"
+    ],
+    "PiThinkingLevel": [
+      "off",
+      "minimal",
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max"
+    ]
+  },
+  "shapes": {
+    "LaunchProfileView": {
+      "valid": [
+        {
+          "name": "a built-in chat variant",
+          "wire": {
+            "id": "claude-chat",
+            "name": "Claude (chat)",
+            "family": "claude",
+            "command": [
+              "claude"
+            ],
+            "additionalArgs": [],
+            "builtIn": true,
+            "sourceProfileId": "claude"
+          }
+        },
+        {
+          "name": "a Pi profile with its provider, model and thinking level",
+          "wire": {
+            "id": "pi-x",
+            "name": "Pi",
+            "family": "pi",
+            "command": [
+              "pi"
+            ],
+            "additionalArgs": [
+              "--x"
+            ],
+            "pi": {
+              "provider": "openai",
+              "model": "gpt",
+              "thinking": "high"
+            }
+          }
+        }
+      ],
+      "invalid": [
+        {
+          "name": "an unknown family",
+          "wire": {
+            "id": "claude-chat",
+            "name": "Claude (chat)",
+            "family": "gemini",
+            "command": [
+              "claude"
+            ],
+            "additionalArgs": [],
+            "builtIn": true,
+            "sourceProfileId": "claude"
+          },
+          "because": "family is claude, antigravity, codex or pi"
+        },
+        {
+          "name": "a command that is not a list",
+          "wire": {
+            "id": "claude-chat",
+            "name": "Claude (chat)",
+            "family": "claude",
+            "command": "claude",
+            "additionalArgs": [],
+            "builtIn": true,
+            "sourceProfileId": "claude"
+          },
+          "because": "command is an array of strings"
+        }
+      ]
+    },
+    "LaunchProfilePreferencesView": {
+      "valid": [
+        {
+          "name": "two profiles, a global default and a workspace override",
+          "wire": {
+            "version": 1,
+            "customProfiles": [
+              {
+                "id": "claude-chat",
+                "name": "Claude (chat)",
+                "family": "claude",
+                "command": [
+                  "claude"
+                ],
+                "additionalArgs": [],
+                "builtIn": true,
+                "sourceProfileId": "claude"
+              },
+              {
+                "id": "pi-x",
+                "name": "Pi",
+                "family": "pi",
+                "command": [
+                  "pi"
+                ],
+                "additionalArgs": [
+                  "--x"
+                ],
+                "pi": {
+                  "provider": "openai",
+                  "model": "gpt",
+                  "thinking": "high"
+                }
+              }
+            ],
+            "globalDefaults": {
+              "claude": "claude-chat"
+            },
+            "workspaceOverrides": {
+              "ws1": {
+                "codex": "codex-chat"
+              }
+            }
+          }
+        }
+      ],
+      "invalid": [
+        {
+          "name": "a version the contract does not know",
+          "wire": {
+            "version": 2,
+            "customProfiles": [
+              {
+                "id": "claude-chat",
+                "name": "Claude (chat)",
+                "family": "claude",
+                "command": [
+                  "claude"
+                ],
+                "additionalArgs": [],
+                "builtIn": true,
+                "sourceProfileId": "claude"
+              },
+              {
+                "id": "pi-x",
+                "name": "Pi",
+                "family": "pi",
+                "command": [
+                  "pi"
+                ],
+                "additionalArgs": [
+                  "--x"
+                ],
+                "pi": {
+                  "provider": "openai",
+                  "model": "gpt",
+                  "thinking": "high"
+                }
+              }
+            ],
+            "globalDefaults": {
+              "claude": "claude-chat"
+            },
+            "workspaceOverrides": {
+              "ws1": {
+                "codex": "codex-chat"
+              }
+            }
+          },
+          "because": "version is 1"
+        }
+      ]
+    },
+    "WorkspaceView": {
+      "valid": [
+        {
+          "name": "a bare workspace",
+          "wire": {
+            "id": "ws1",
+            "name": "scratch",
+            "rootDir": "/tmp/scratch",
+            "profileFile": null,
+            "createdAt": 1
+          }
+        },
+        {
+          "name": "a workspace with a profile file",
+          "wire": {
+            "id": "ws2",
+            "name": "Site",
+            "rootDir": "/tmp/site",
+            "profileFile": "/tmp/site/.clave/workspaces/default.clave",
+            "createdAt": 1
+          }
+        }
+      ],
+      "invalid": [
+        {
+          "name": "a workspace without profileFile",
+          "wire": {
+            "id": "ws1",
+            "name": "scratch",
+            "rootDir": "/tmp/scratch",
+            "createdAt": 1
+          },
+          "because": "profileFile is a string or null"
+        }
+      ]
+    },
+    "WorkspaceStateView": {
+      "valid": [
+        {
+          "name": "one workspace, its pins opaque",
+          "wire": {
+            "version": 1,
+            "workspaces": [
+              {
+                "id": "ws1",
+                "name": "scratch",
+                "rootDir": "/tmp/scratch",
+                "profileFile": null,
+                "createdAt": 1
+              }
+            ],
+            "lastActiveWorkspaceId": "ws1",
+            "activeWorkspaceId": null,
+            "pins": [
+              {
+                "anything": true
+              }
+            ],
+            "pinsMigrated": true,
+            "revision": 3,
+            "instance": "i-1"
+          }
+        }
+      ],
+      "invalid": [
+        {
+          "name": "a version the contract does not know",
+          "wire": {
+            "version": 2,
+            "workspaces": [
+              {
+                "id": "ws1",
+                "name": "scratch",
+                "rootDir": "/tmp/scratch",
+                "profileFile": null,
+                "createdAt": 1
+              }
+            ],
+            "lastActiveWorkspaceId": "ws1",
+            "activeWorkspaceId": null,
+            "pins": [
+              {
+                "anything": true
+              }
+            ],
+            "pinsMigrated": true,
+            "revision": 3,
+            "instance": "i-1"
+          },
+          "because": "version is 1"
+        },
+        {
+          "name": "pins that are not a list",
+          "wire": {
+            "version": 1,
+            "workspaces": [
+              {
+                "id": "ws1",
+                "name": "scratch",
+                "rootDir": "/tmp/scratch",
+                "profileFile": null,
+                "createdAt": 1
+              }
+            ],
+            "lastActiveWorkspaceId": "ws1",
+            "activeWorkspaceId": null,
+            "pins": {},
+            "pinsMigrated": true,
+            "revision": 3,
+            "instance": "i-1"
+          },
+          "because": "pins is an array"
+        }
+      ]
+    }
+  },
+  "commands": {
+    "ListLaunchProfiles": {
+      "payload": [
+        {
+          "name": "the profiles",
+          "wire": {}
+        }
+      ],
+      "success": [
+        {
+          "name": "two profiles, a global default and a workspace override",
+          "wire": {
+            "version": 1,
+            "customProfiles": [
+              {
+                "id": "claude-chat",
+                "name": "Claude (chat)",
+                "family": "claude",
+                "command": [
+                  "claude"
+                ],
+                "additionalArgs": [],
+                "builtIn": true,
+                "sourceProfileId": "claude"
+              },
+              {
+                "id": "pi-x",
+                "name": "Pi",
+                "family": "pi",
+                "command": [
+                  "pi"
+                ],
+                "additionalArgs": [
+                  "--x"
+                ],
+                "pi": {
+                  "provider": "openai",
+                  "model": "gpt",
+                  "thinking": "high"
+                }
+              }
+            ],
+            "globalDefaults": {
+              "claude": "claude-chat"
+            },
+            "workspaceOverrides": {
+              "ws1": {
+                "codex": "codex-chat"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "LoadWorkspaceState": {
+      "payload": [
+        {
+          "name": "the registry",
+          "wire": {}
+        }
+      ],
+      "success": [
+        {
+          "name": "one workspace, its pins opaque",
+          "wire": {
+            "version": 1,
+            "workspaces": [
+              {
+                "id": "ws1",
+                "name": "scratch",
+                "rootDir": "/tmp/scratch",
+                "profileFile": null,
+                "createdAt": 1
+              }
+            ],
+            "lastActiveWorkspaceId": "ws1",
+            "activeWorkspaceId": null,
+            "pins": [
+              {
+                "anything": true
+              }
+            ],
+            "pinsMigrated": true,
+            "revision": 3,
+            "instance": "i-1"
+          }
+        }
+      ]
+    }
+  }
+}

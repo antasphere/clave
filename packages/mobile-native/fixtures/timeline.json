@@ -1,0 +1,594 @@
+{
+  "$comment": "Generated from the real contract by packages/mobile-native/scripts/export-vectors.ts. Do not edit: run `npm run vectors --workspace @clave/mobile-native`; vectors.test.ts fails when this file no longer matches the contract.",
+  "family": "timeline",
+  "contract": 1,
+  "notes": [
+    "GET /sessions/timeline answers the ordered history: identity is the position (a generation and a sequence), never the text; a new generation needs a new snapshot.",
+    "The `ordering` block is the phone’s rule (docs/mobile-timeline.md), not the contract’s: the contract accepts every page in it, the phone refuses the four under `refused`."
+  ],
+  "shapes": {
+    "SessionPosition": {
+      "valid": [
+        {
+          "name": "a position",
+          "wire": {
+            "generation": "adoption",
+            "sequence": 4
+          }
+        },
+        {
+          "name": "the empty snapshot’s position",
+          "wire": {
+            "generation": "g",
+            "sequence": 0
+          }
+        }
+      ],
+      "invalid": [
+        {
+          "name": "an empty generation",
+          "wire": {
+            "generation": "",
+            "sequence": 1
+          },
+          "because": "generation is a non-empty string"
+        },
+        {
+          "name": "a negative sequence",
+          "wire": {
+            "generation": "g",
+            "sequence": -1
+          },
+          "because": "sequence is 0 or more"
+        },
+        {
+          "name": "a fractional sequence",
+          "wire": {
+            "generation": "g",
+            "sequence": 0.5
+          },
+          "because": "sequence is an integer"
+        },
+        {
+          "name": "a sequence beyond the safe integers",
+          "wire": {
+            "generation": "g",
+            "sequence": 9007199254740992
+          },
+          "because": "sequence is a safe integer"
+        },
+        {
+          "name": "a missing sequence",
+          "wire": {
+            "generation": "g"
+          },
+          "because": "sequence is required"
+        }
+      ]
+    },
+    "TimelineItem": {
+      "valid": [
+        {
+          "name": "an item with its time",
+          "wire": {
+            "event": {
+              "type": "user_message",
+              "text": "a",
+              "clientMessageId": "message-123"
+            },
+            "at": 1,
+            "position": {
+              "generation": "adoption",
+              "sequence": 4
+            }
+          }
+        },
+        {
+          "name": "an item without a time",
+          "wire": {
+            "event": {
+              "type": "user_message",
+              "text": "a",
+              "clientMessageId": "message-123"
+            },
+            "position": {
+              "generation": "adoption",
+              "sequence": 4
+            }
+          }
+        }
+      ]
+    },
+    "TimelinePage": {
+      "valid": [
+        {
+          "name": "a snapshot with two items and an older page before it",
+          "wire": {
+            "items": [
+              {
+                "event": {
+                  "type": "user_message",
+                  "text": "a",
+                  "clientMessageId": "message-123"
+                },
+                "at": 1,
+                "position": {
+                  "generation": "adoption",
+                  "sequence": 3
+                }
+              },
+              {
+                "event": {
+                  "type": "assistant_text",
+                  "delta": "a",
+                  "final": true
+                },
+                "position": {
+                  "generation": "adoption",
+                  "sequence": 4
+                }
+              }
+            ],
+            "before": 2,
+            "cursor": {
+              "generation": "adoption",
+              "sequence": 4
+            },
+            "truncated": false
+          }
+        },
+        {
+          "name": "an older page, the last one",
+          "wire": {
+            "items": [
+              {
+                "event": {
+                  "type": "user_message",
+                  "text": "a",
+                  "clientMessageId": "message-123"
+                },
+                "at": 1,
+                "position": {
+                  "generation": "adoption",
+                  "sequence": 3
+                }
+              },
+              {
+                "event": {
+                  "type": "assistant_text",
+                  "delta": "a",
+                  "final": true
+                },
+                "position": {
+                  "generation": "adoption",
+                  "sequence": 4
+                }
+              }
+            ],
+            "before": null,
+            "cursor": {
+              "generation": "adoption",
+              "sequence": 4
+            },
+            "truncated": false
+          }
+        },
+        {
+          "name": "the empty snapshot",
+          "wire": {
+            "items": [],
+            "before": null,
+            "cursor": {
+              "generation": "g",
+              "sequence": 0
+            },
+            "truncated": false
+          }
+        },
+        {
+          "name": "a truncated snapshot",
+          "wire": {
+            "items": [
+              {
+                "event": {
+                  "type": "user_message",
+                  "text": "a",
+                  "clientMessageId": "message-123"
+                },
+                "at": 1,
+                "position": {
+                  "generation": "adoption",
+                  "sequence": 3
+                }
+              },
+              {
+                "event": {
+                  "type": "assistant_text",
+                  "delta": "a",
+                  "final": true
+                },
+                "position": {
+                  "generation": "adoption",
+                  "sequence": 4
+                }
+              }
+            ],
+            "before": 2,
+            "cursor": {
+              "generation": "adoption",
+              "sequence": 4
+            },
+            "truncated": true
+          }
+        }
+      ],
+      "invalid": [
+        {
+          "name": "a page without truncated",
+          "wire": {
+            "items": [],
+            "before": null,
+            "cursor": {
+              "generation": "adoption",
+              "sequence": 4
+            }
+          },
+          "because": "truncated is required"
+        },
+        {
+          "name": "a page without a cursor",
+          "wire": {
+            "items": [],
+            "before": null,
+            "truncated": false
+          },
+          "because": "cursor is required"
+        },
+        {
+          "name": "an item without a position",
+          "wire": {
+            "items": [
+              {
+                "event": {
+                  "type": "user_message",
+                  "text": "a",
+                  "clientMessageId": "message-123"
+                }
+              }
+            ],
+            "before": null,
+            "cursor": {
+              "generation": "adoption",
+              "sequence": 4
+            },
+            "truncated": false
+          },
+          "because": "position is required"
+        },
+        {
+          "name": "a negative before",
+          "wire": {
+            "items": [
+              {
+                "event": {
+                  "type": "user_message",
+                  "text": "a",
+                  "clientMessageId": "message-123"
+                },
+                "position": {
+                  "generation": "adoption",
+                  "sequence": 3
+                },
+                "at": 1
+              },
+              {
+                "event": {
+                  "type": "assistant_text",
+                  "delta": "a",
+                  "final": true
+                },
+                "position": {
+                  "generation": "adoption",
+                  "sequence": 4
+                }
+              }
+            ],
+            "before": -1,
+            "cursor": {
+              "generation": "adoption",
+              "sequence": 4
+            },
+            "truncated": false
+          },
+          "because": "before is a sequence or null"
+        }
+      ]
+    }
+  },
+  "ordering": {
+    "rule": "docs/mobile-timeline.md: every item is in the cursor’s generation, sequences strictly increase, none is above the cursor; a page that breaks this is dropped and a fresh snapshot taken. The contract accepts these pages; the rule is the phone’s.",
+    "accepted": [
+      {
+        "name": "a snapshot with two items and its cursor",
+        "wire": {
+          "items": [
+            {
+              "event": {
+                "type": "user_message",
+                "text": "a",
+                "clientMessageId": "message-123"
+              },
+              "at": 1,
+              "position": {
+                "generation": "adoption",
+                "sequence": 3
+              }
+            },
+            {
+              "event": {
+                "type": "assistant_text",
+                "delta": "a",
+                "final": true
+              },
+              "position": {
+                "generation": "adoption",
+                "sequence": 4
+              }
+            }
+          ],
+          "before": 2,
+          "cursor": {
+            "generation": "adoption",
+            "sequence": 4
+          },
+          "truncated": false
+        }
+      },
+      {
+        "name": "the empty snapshot",
+        "wire": {
+          "items": [],
+          "before": null,
+          "cursor": {
+            "generation": "g",
+            "sequence": 0
+          },
+          "truncated": false
+        }
+      }
+    ],
+    "refused": [
+      {
+        "name": "a page mixing generations",
+        "wire": {
+          "items": [
+            {
+              "event": {
+                "type": "user_message",
+                "text": "a"
+              },
+              "position": {
+                "generation": "old",
+                "sequence": 3
+              }
+            },
+            {
+              "event": {
+                "type": "user_message",
+                "text": "a"
+              },
+              "position": {
+                "generation": "adoption",
+                "sequence": 4
+              }
+            }
+          ],
+          "before": null,
+          "cursor": {
+            "generation": "adoption",
+            "sequence": 4
+          },
+          "truncated": false
+        }
+      },
+      {
+        "name": "reversed positions",
+        "wire": {
+          "items": [
+            {
+              "event": {
+                "type": "user_message",
+                "text": "a"
+              },
+              "position": {
+                "generation": "adoption",
+                "sequence": 4
+              }
+            },
+            {
+              "event": {
+                "type": "user_message",
+                "text": "a"
+              },
+              "position": {
+                "generation": "adoption",
+                "sequence": 3
+              }
+            }
+          ],
+          "before": null,
+          "cursor": {
+            "generation": "adoption",
+            "sequence": 4
+          },
+          "truncated": false
+        }
+      },
+      {
+        "name": "a repeated position",
+        "wire": {
+          "items": [
+            {
+              "event": {
+                "type": "user_message",
+                "text": "a"
+              },
+              "position": {
+                "generation": "adoption",
+                "sequence": 4
+              }
+            },
+            {
+              "event": {
+                "type": "user_message",
+                "text": "a"
+              },
+              "position": {
+                "generation": "adoption",
+                "sequence": 4
+              }
+            }
+          ],
+          "before": null,
+          "cursor": {
+            "generation": "adoption",
+            "sequence": 4
+          },
+          "truncated": false
+        }
+      },
+      {
+        "name": "a position above the cursor",
+        "wire": {
+          "items": [
+            {
+              "event": {
+                "type": "user_message",
+                "text": "a"
+              },
+              "position": {
+                "generation": "adoption",
+                "sequence": 5
+              }
+            }
+          ],
+          "before": null,
+          "cursor": {
+            "generation": "adoption",
+            "sequence": 4
+          },
+          "truncated": false
+        }
+      }
+    ]
+  },
+  "commands": {
+    "GetSessionTimeline": {
+      "payload": [
+        {
+          "name": "the snapshot",
+          "wire": {
+            "id": "s1"
+          }
+        },
+        {
+          "name": "an older page, the numbers as query strings",
+          "wire": {
+            "id": "s1",
+            "before": "4",
+            "limit": "200"
+          }
+        }
+      ],
+      "invalidPayload": [
+        {
+          "name": "a limit of zero",
+          "wire": {
+            "id": "s1",
+            "limit": "0"
+          },
+          "because": "limit is 1 to 2000"
+        },
+        {
+          "name": "a limit above 2000",
+          "wire": {
+            "id": "s1",
+            "limit": "2001"
+          },
+          "because": "limit is 1 to 2000"
+        },
+        {
+          "name": "a negative before",
+          "wire": {
+            "id": "s1",
+            "before": "-1"
+          },
+          "because": "before is 0 or more"
+        }
+      ],
+      "success": [
+        {
+          "name": "the snapshot",
+          "wire": {
+            "items": [
+              {
+                "event": {
+                  "type": "user_message",
+                  "text": "a",
+                  "clientMessageId": "message-123"
+                },
+                "at": 1,
+                "position": {
+                  "generation": "adoption",
+                  "sequence": 3
+                }
+              },
+              {
+                "event": {
+                  "type": "assistant_text",
+                  "delta": "a",
+                  "final": true
+                },
+                "position": {
+                  "generation": "adoption",
+                  "sequence": 4
+                }
+              }
+            ],
+            "before": 2,
+            "cursor": {
+              "generation": "adoption",
+              "sequence": 4
+            },
+            "truncated": false
+          }
+        }
+      ],
+      "failures": [
+        {
+          "tag": "SessionNotFound",
+          "wire": {
+            "id": "s1",
+            "_tag": "SessionNotFound"
+          }
+        },
+        {
+          "tag": "CapabilityUnavailable",
+          "wire": {
+            "capability": "timeline",
+            "message": "This server keeps no ordered history.",
+            "_tag": "CapabilityUnavailable"
+          }
+        },
+        {
+          "tag": "TimelineReadFailed",
+          "wire": {
+            "id": "s1",
+            "message": "The transcript could not be read.",
+            "_tag": "TimelineReadFailed"
+          }
+        }
+      ]
+    }
+  }
+}

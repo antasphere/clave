@@ -1,0 +1,1399 @@
+{
+  "$comment": "Generated from the real contract by packages/mobile-native/scripts/export-vectors.ts. Do not edit: run `npm run vectors --workspace @clave/mobile-native`; vectors.test.ts fails when this file no longer matches the contract.",
+  "family": "sessions",
+  "contract": 1,
+  "notes": [
+    "The session record, what a session streams, the history page, and the commands a phone sends on /sessions/*; the ordered timeline is timeline.json.",
+    "A failure travels as a 422 whose body is the encoded tagged error under `failures`; a 401 is the token refused and carries no body a client reads.",
+    "The clientMessageId a phone mints is 8 to 64 characters of letters, digits, dot, underscore, colon and dash; a second write with the same id writes nothing and answers the first write."
+  ],
+  "literals": {
+    "AgentState": [
+      "idle",
+      "working",
+      "blocked",
+      "done",
+      "ended"
+    ],
+    "Transport": [
+      "pty",
+      "events"
+    ],
+    "WriteStatus": [
+      "accepted",
+      "pending",
+      "rejected",
+      "absent",
+      "unknown"
+    ],
+    "WriteAnswerStatus": [
+      "accepted",
+      "pending"
+    ]
+  },
+  "constants": {
+    "MAX_ATTACHMENTS": 10
+  },
+  "shapes": {
+    "Session": {
+      "valid": [
+        {
+          "name": "minimal",
+          "wire": {
+            "id": "s1",
+            "provider": "claude",
+            "transport": "events",
+            "cwd": "/tmp/scratch",
+            "windowKey": "server",
+            "state": "working",
+            "createdAt": 1730000000000,
+            "adapterId": "claude-chat",
+            "title": "A chat"
+          }
+        },
+        {
+          "name": "with a group, a workspace stamp and a view",
+          "wire": {
+            "id": "s1",
+            "provider": "claude",
+            "transport": "events",
+            "cwd": "/tmp/scratch",
+            "windowKey": "server",
+            "groupId": "g1",
+            "workspaceId": "ws1",
+            "state": "working",
+            "createdAt": 1730000000000,
+            "adapterId": "claude-chat",
+            "title": "A chat",
+            "viewId": "clave.chat/chat"
+          }
+        }
+      ],
+      "invalid": [
+        {
+          "name": "an unknown agent state",
+          "wire": {
+            "id": "s1",
+            "provider": "claude",
+            "transport": "events",
+            "cwd": "/tmp/scratch",
+            "windowKey": "server",
+            "state": "waiting",
+            "createdAt": 1730000000000,
+            "adapterId": "claude-chat",
+            "title": "A chat"
+          },
+          "because": "state is not an agent state"
+        },
+        {
+          "name": "a missing id",
+          "wire": {
+            "provider": "claude",
+            "transport": "events",
+            "cwd": "/tmp/scratch",
+            "windowKey": "server",
+            "state": "working",
+            "createdAt": 1730000000000,
+            "adapterId": "claude-chat",
+            "title": "A chat"
+          },
+          "because": "id is required"
+        },
+        {
+          "name": "an empty id",
+          "wire": {
+            "id": "",
+            "provider": "claude",
+            "transport": "events",
+            "cwd": "/tmp/scratch",
+            "windowKey": "server",
+            "state": "working",
+            "createdAt": 1730000000000,
+            "adapterId": "claude-chat",
+            "title": "A chat"
+          },
+          "because": "id is a non-empty string"
+        },
+        {
+          "name": "a textual createdAt",
+          "wire": {
+            "id": "s1",
+            "provider": "claude",
+            "transport": "events",
+            "cwd": "/tmp/scratch",
+            "windowKey": "server",
+            "state": "working",
+            "createdAt": "yesterday",
+            "adapterId": "claude-chat",
+            "title": "A chat"
+          },
+          "because": "createdAt is a number"
+        },
+        {
+          "name": "a numeric workspace stamp",
+          "wire": {
+            "id": "s1",
+            "provider": "claude",
+            "transport": "events",
+            "cwd": "/tmp/scratch",
+            "windowKey": "server",
+            "state": "working",
+            "createdAt": 1730000000000,
+            "adapterId": "claude-chat",
+            "title": "A chat",
+            "workspaceId": 7
+          },
+          "because": "workspaceId is a string"
+        },
+        {
+          "name": "a null workspace stamp",
+          "wire": {
+            "id": "s1",
+            "provider": "claude",
+            "transport": "events",
+            "cwd": "/tmp/scratch",
+            "windowKey": "server",
+            "state": "working",
+            "createdAt": 1730000000000,
+            "adapterId": "claude-chat",
+            "title": "A chat",
+            "workspaceId": null
+          },
+          "because": "workspaceId is absent or a string"
+        },
+        {
+          "name": "an unknown transport",
+          "wire": {
+            "id": "s1",
+            "provider": "claude",
+            "transport": "ws",
+            "cwd": "/tmp/scratch",
+            "windowKey": "server",
+            "state": "working",
+            "createdAt": 1730000000000,
+            "adapterId": "claude-chat",
+            "title": "A chat"
+          },
+          "because": "transport is pty or events"
+        }
+      ]
+    },
+    "SessionEvent": {
+      "valid": [
+        {
+          "name": "user_message",
+          "wire": {
+            "type": "user_message",
+            "text": "hello"
+          }
+        },
+        {
+          "name": "user_message with attachments",
+          "wire": {
+            "type": "user_message",
+            "text": "see [Image #1]",
+            "attachments": [
+              {
+                "id": "a1",
+                "label": "Image #1",
+                "path": "/tmp/a.png",
+                "name": "a.png",
+                "mimeType": "image/png",
+                "size": 12,
+                "delivery": "image"
+              },
+              {
+                "id": "a2",
+                "delivery": "session",
+                "sessionId": "s2",
+                "name": "Other",
+                "agent": "claude",
+                "cwd": "/x"
+              }
+            ]
+          }
+        },
+        {
+          "name": "user_message with a client message id",
+          "wire": {
+            "type": "user_message",
+            "text": "hi",
+            "clientMessageId": "m-0123456789abcdef"
+          }
+        },
+        {
+          "name": "user_message of a subagent",
+          "wire": {
+            "type": "user_message",
+            "text": "subagent brief",
+            "parent": "parent"
+          }
+        },
+        {
+          "name": "assistant_text delta",
+          "wire": {
+            "type": "assistant_text",
+            "delta": "hel",
+            "final": false
+          }
+        },
+        {
+          "name": "assistant_text final of a subagent",
+          "wire": {
+            "type": "assistant_text",
+            "delta": "subagent answer",
+            "final": true,
+            "parent": "parent"
+          }
+        },
+        {
+          "name": "tool_call",
+          "wire": {
+            "type": "tool_call",
+            "id": "t1",
+            "name": "Read",
+            "input": {
+              "path": "/x"
+            },
+            "parent": "p"
+          }
+        },
+        {
+          "name": "tool_result",
+          "wire": {
+            "type": "tool_result",
+            "id": "t1",
+            "output": "ok",
+            "error": false
+          }
+        },
+        {
+          "name": "tool_result of a subagent",
+          "wire": {
+            "type": "tool_result",
+            "id": "sub",
+            "output": "ok",
+            "parent": "parent"
+          }
+        },
+        {
+          "name": "permission_withdrawn",
+          "wire": {
+            "type": "permission_withdrawn",
+            "id": "retired"
+          }
+        },
+        {
+          "name": "permission_request with questions",
+          "wire": {
+            "type": "permission_request",
+            "id": "r1",
+            "description": "Run it?",
+            "options": [
+              {
+                "id": "allow-once",
+                "label": "Allow"
+              },
+              {
+                "id": "deny",
+                "label": "Deny"
+              }
+            ],
+            "toolName": "Bash",
+            "input": {
+              "command": "ls"
+            },
+            "detail": "ls",
+            "questions": [
+              {
+                "id": "q1",
+                "question": "Which?",
+                "header": "Pick",
+                "options": [
+                  {
+                    "label": "A",
+                    "description": "a"
+                  },
+                  {
+                    "label": "B"
+                  }
+                ],
+                "multiSelect": true
+              }
+            ]
+          }
+        },
+        {
+          "name": "state_change",
+          "wire": {
+            "type": "state_change",
+            "state": "blocked"
+          }
+        },
+        {
+          "name": "session_meta",
+          "wire": {
+            "type": "session_meta",
+            "model": "claude-opus-5-5",
+            "providerSessionId": null
+          }
+        },
+        {
+          "name": "effort",
+          "wire": {
+            "type": "effort",
+            "effort": "high"
+          }
+        },
+        {
+          "name": "error",
+          "wire": {
+            "type": "error",
+            "message": "boom",
+            "fatal": true
+          }
+        },
+        {
+          "name": "turn_interrupted",
+          "wire": {
+            "type": "turn_interrupted"
+          }
+        },
+        {
+          "name": "context_usage",
+          "wire": {
+            "type": "context_usage",
+            "used": 10,
+            "window": 200,
+            "parent": "p"
+          }
+        },
+        {
+          "name": "subagent_model",
+          "wire": {
+            "type": "subagent_model",
+            "parent": "p",
+            "model": "m"
+          }
+        },
+        {
+          "name": "permission_mode",
+          "wire": {
+            "type": "permission_mode",
+            "mode": "default",
+            "modes": [
+              {
+                "id": "default",
+                "label": "Default"
+              }
+            ]
+          }
+        },
+        {
+          "name": "background_tasks",
+          "wire": {
+            "type": "background_tasks",
+            "tasks": [
+              {
+                "id": "b1",
+                "kind": "shell",
+                "description": "d",
+                "command": "echo example",
+                "startedAt": 1,
+                "outputFile": "/o"
+              }
+            ]
+          }
+        },
+        {
+          "name": "provider_event",
+          "wire": {
+            "type": "provider_event",
+            "provider": "codex",
+            "payload": {
+              "any": 1
+            }
+          }
+        }
+      ],
+      "invalid": [
+        {
+          "name": "an unknown event type",
+          "wire": {
+            "type": "no_such_event"
+          },
+          "because": "type is one of the event types"
+        },
+        {
+          "name": "a state_change to an unknown state",
+          "wire": {
+            "type": "state_change",
+            "state": "paused"
+          },
+          "because": "state is an agent state"
+        },
+        {
+          "name": "an assistant_text without final",
+          "wire": {
+            "type": "assistant_text",
+            "delta": "x"
+          },
+          "because": "final is required"
+        },
+        {
+          "name": "a user_message with a short client message id",
+          "wire": {
+            "type": "user_message",
+            "text": "hi",
+            "clientMessageId": "m-1"
+          },
+          "because": "clientMessageId is 8 to 64 characters"
+        },
+        {
+          "name": "a user_message with eleven attachments",
+          "wire": {
+            "type": "user_message",
+            "text": "x",
+            "attachments": [
+              {
+                "id": "a0",
+                "label": "Image #1",
+                "path": "/tmp/a.png",
+                "name": "a.png",
+                "mimeType": "image/png",
+                "size": 12,
+                "delivery": "image"
+              },
+              {
+                "id": "a1",
+                "label": "Image #1",
+                "path": "/tmp/a.png",
+                "name": "a.png",
+                "mimeType": "image/png",
+                "size": 12,
+                "delivery": "image"
+              },
+              {
+                "id": "a2",
+                "label": "Image #1",
+                "path": "/tmp/a.png",
+                "name": "a.png",
+                "mimeType": "image/png",
+                "size": 12,
+                "delivery": "image"
+              },
+              {
+                "id": "a3",
+                "label": "Image #1",
+                "path": "/tmp/a.png",
+                "name": "a.png",
+                "mimeType": "image/png",
+                "size": 12,
+                "delivery": "image"
+              },
+              {
+                "id": "a4",
+                "label": "Image #1",
+                "path": "/tmp/a.png",
+                "name": "a.png",
+                "mimeType": "image/png",
+                "size": 12,
+                "delivery": "image"
+              },
+              {
+                "id": "a5",
+                "label": "Image #1",
+                "path": "/tmp/a.png",
+                "name": "a.png",
+                "mimeType": "image/png",
+                "size": 12,
+                "delivery": "image"
+              },
+              {
+                "id": "a6",
+                "label": "Image #1",
+                "path": "/tmp/a.png",
+                "name": "a.png",
+                "mimeType": "image/png",
+                "size": 12,
+                "delivery": "image"
+              },
+              {
+                "id": "a7",
+                "label": "Image #1",
+                "path": "/tmp/a.png",
+                "name": "a.png",
+                "mimeType": "image/png",
+                "size": 12,
+                "delivery": "image"
+              },
+              {
+                "id": "a8",
+                "label": "Image #1",
+                "path": "/tmp/a.png",
+                "name": "a.png",
+                "mimeType": "image/png",
+                "size": 12,
+                "delivery": "image"
+              },
+              {
+                "id": "a9",
+                "label": "Image #1",
+                "path": "/tmp/a.png",
+                "name": "a.png",
+                "mimeType": "image/png",
+                "size": 12,
+                "delivery": "image"
+              },
+              {
+                "id": "a10",
+                "label": "Image #1",
+                "path": "/tmp/a.png",
+                "name": "a.png",
+                "mimeType": "image/png",
+                "size": 12,
+                "delivery": "image"
+              }
+            ]
+          },
+          "because": "at most 10 attachments"
+        },
+        {
+          "name": "a tool_call without a name",
+          "wire": {
+            "type": "tool_call",
+            "id": "t1",
+            "input": {}
+          },
+          "because": "name is required"
+        },
+        {
+          "name": "a permission_request without options",
+          "wire": {
+            "type": "permission_request",
+            "id": "r1",
+            "description": "Run it?"
+          },
+          "because": "options is required"
+        }
+      ]
+    },
+    "HistoryPage": {
+      "valid": [
+        {
+          "name": "a page with an older page before it",
+          "wire": {
+            "items": [
+              {
+                "event": {
+                  "type": "user_message",
+                  "text": "hello"
+                },
+                "at": 0
+              },
+              {
+                "event": {
+                  "type": "user_message",
+                  "text": "see [Image #1]",
+                  "attachments": [
+                    {
+                      "id": "a1",
+                      "label": "Image #1",
+                      "path": "/tmp/a.png",
+                      "name": "a.png",
+                      "mimeType": "image/png",
+                      "size": 12,
+                      "delivery": "image"
+                    },
+                    {
+                      "id": "a2",
+                      "delivery": "session",
+                      "sessionId": "s2",
+                      "name": "Other",
+                      "agent": "claude",
+                      "cwd": "/x"
+                    }
+                  ]
+                },
+                "at": 1
+              },
+              {
+                "event": {
+                  "type": "user_message",
+                  "text": "hi",
+                  "clientMessageId": "m-0123456789abcdef"
+                },
+                "at": 2
+              }
+            ],
+            "before": 12
+          }
+        },
+        {
+          "name": "the last page",
+          "wire": {
+            "items": [],
+            "before": null
+          }
+        }
+      ],
+      "invalid": [
+        {
+          "name": "a page without before",
+          "wire": {
+            "items": []
+          },
+          "because": "before is a number or null"
+        },
+        {
+          "name": "items that are not a list",
+          "wire": {
+            "items": "x",
+            "before": null
+          },
+          "because": "items is an array"
+        }
+      ]
+    },
+    "SessionInfo": {
+      "valid": [
+        {
+          "name": "a started chat",
+          "wire": {
+            "id": "s9",
+            "cwd": "/tmp/scratch",
+            "folderName": "scratch",
+            "alive": true,
+            "claudeSessionId": null,
+            "piSessionId": null,
+            "launchProfileId": "claude-chat",
+            "model": "m"
+          }
+        },
+        {
+          "name": "a session that is not alive",
+          "wire": {
+            "id": "s9",
+            "cwd": "/tmp/scratch",
+            "folderName": "scratch",
+            "alive": false,
+            "claudeSessionId": null,
+            "piSessionId": null
+          }
+        }
+      ],
+      "invalid": [
+        {
+          "name": "a textual alive",
+          "wire": {
+            "id": "s9",
+            "cwd": "/tmp/scratch",
+            "folderName": "scratch",
+            "alive": "yes",
+            "claudeSessionId": null,
+            "piSessionId": null,
+            "launchProfileId": "claude-chat",
+            "model": "m"
+          },
+          "because": "alive is a boolean"
+        }
+      ]
+    },
+    "SessionStream": {
+      "valid": [
+        {
+          "name": "an event with its position",
+          "wire": {
+            "kind": "event",
+            "event": {
+              "type": "user_message",
+              "text": "a",
+              "clientMessageId": "message-123"
+            },
+            "position": {
+              "generation": "adoption",
+              "sequence": 4
+            }
+          }
+        },
+        {
+          "name": "an event without a position",
+          "wire": {
+            "kind": "event",
+            "event": {
+              "type": "assistant_text",
+              "delta": "hel",
+              "final": false
+            }
+          }
+        },
+        {
+          "name": "terminal bytes, base64 on the wire",
+          "wire": {
+            "kind": "pty",
+            "data": "aGk="
+          }
+        }
+      ],
+      "invalid": [
+        {
+          "name": "terminal bytes that are not base64",
+          "wire": {
+            "kind": "pty",
+            "data": "***"
+          },
+          "because": "data is base64"
+        }
+      ]
+    },
+    "SessionCapabilities": {
+      "valid": [
+        {
+          "name": "images accepted",
+          "wire": {
+            "images": true
+          }
+        },
+        {
+          "name": "images refused",
+          "wire": {
+            "images": false
+          }
+        }
+      ]
+    },
+    "WriteAnswer": {
+      "valid": [
+        {
+          "name": "accepted",
+          "wire": {
+            "status": "accepted",
+            "at": 1730000000000
+          }
+        },
+        {
+          "name": "pending",
+          "wire": {
+            "status": "pending"
+          }
+        }
+      ],
+      "invalid": [
+        {
+          "name": "an unknown status",
+          "wire": {
+            "status": "done"
+          },
+          "because": "status is accepted or pending"
+        }
+      ]
+    },
+    "WriteStatusView": {
+      "valid": [
+        {
+          "name": "accepted",
+          "wire": {
+            "status": "accepted",
+            "at": 1730000000000
+          }
+        },
+        {
+          "name": "pending",
+          "wire": {
+            "status": "pending"
+          }
+        },
+        {
+          "name": "rejected",
+          "wire": {
+            "status": "rejected",
+            "reason": "The provider refused the message."
+          }
+        },
+        {
+          "name": "absent",
+          "wire": {
+            "status": "absent"
+          }
+        },
+        {
+          "name": "unknown",
+          "wire": {
+            "status": "unknown"
+          }
+        }
+      ],
+      "invalid": [
+        {
+          "name": "an unknown status",
+          "wire": {
+            "status": "lost"
+          },
+          "because": "status is one of the write statuses"
+        }
+      ]
+    }
+  },
+  "commands": {
+    "ListSessions": {
+      "payload": [
+        {
+          "name": "every session",
+          "wire": {}
+        },
+        {
+          "name": "the sessions of one window",
+          "wire": {
+            "windowKey": "server"
+          }
+        }
+      ],
+      "success": [
+        {
+          "name": "two sessions",
+          "wire": [
+            {
+              "id": "s1",
+              "provider": "claude",
+              "transport": "events",
+              "cwd": "/tmp/scratch",
+              "windowKey": "server",
+              "state": "working",
+              "createdAt": 1730000000000,
+              "adapterId": "claude-chat",
+              "title": "A chat"
+            },
+            {
+              "id": "s1",
+              "provider": "claude",
+              "transport": "events",
+              "cwd": "/tmp/scratch",
+              "windowKey": "server",
+              "groupId": "g1",
+              "workspaceId": "ws1",
+              "state": "working",
+              "createdAt": 1730000000000,
+              "adapterId": "claude-chat",
+              "title": "A chat",
+              "viewId": "clave.chat/chat"
+            }
+          ]
+        }
+      ],
+      "failures": [
+        {
+          "tag": "CapabilityUnavailable",
+          "wire": {
+            "capability": "sessions",
+            "message": "This server runs no sessions.",
+            "_tag": "CapabilityUnavailable"
+          }
+        }
+      ]
+    },
+    "GetSession": {
+      "payload": [
+        {
+          "name": "by id",
+          "wire": {
+            "id": "s1"
+          }
+        }
+      ],
+      "success": [
+        {
+          "name": "the session",
+          "wire": {
+            "id": "s1",
+            "provider": "claude",
+            "transport": "events",
+            "cwd": "/tmp/scratch",
+            "windowKey": "server",
+            "groupId": "g1",
+            "workspaceId": "ws1",
+            "state": "working",
+            "createdAt": 1730000000000,
+            "adapterId": "claude-chat",
+            "title": "A chat",
+            "viewId": "clave.chat/chat"
+          }
+        }
+      ],
+      "failures": [
+        {
+          "tag": "SessionNotFound",
+          "wire": {
+            "id": "s1",
+            "_tag": "SessionNotFound"
+          }
+        }
+      ]
+    },
+    "StartSession": {
+      "payload": [
+        {
+          "name": "an Echo chat on the fixture server",
+          "wire": {
+            "cwd": "/tmp/scratch",
+            "options": {
+              "claudeMode": true,
+              "launchProfileId": "dev-echo-adapter",
+              "workspaceId": "ws1"
+            }
+          }
+        },
+        {
+          "name": "a chat from a saved profile, its definition carried",
+          "wire": {
+            "cwd": "/tmp/scratch",
+            "options": {
+              "claudeMode": true,
+              "launchProfileId": "claude-chat",
+              "launchProfile": {
+                "id": "claude-chat",
+                "name": "Claude (chat)",
+                "family": "claude",
+                "command": [
+                  "claude"
+                ],
+                "additionalArgs": [],
+                "builtIn": true,
+                "sourceProfileId": "claude"
+              },
+              "workspaceId": "ws1"
+            }
+          }
+        },
+        {
+          "name": "a bare start",
+          "wire": {
+            "cwd": "/tmp/scratch"
+          }
+        }
+      ],
+      "invalidPayload": [
+        {
+          "name": "no cwd",
+          "wire": {
+            "options": {}
+          },
+          "because": "cwd is required"
+        },
+        {
+          "name": "a permission mode the contract does not know",
+          "wire": {
+            "cwd": "/tmp/scratch",
+            "options": {
+              "permissionMode": "yolo"
+            }
+          },
+          "because": "permissionMode is default, acceptEdits or plan"
+        }
+      ],
+      "success": [
+        {
+          "name": "the started session",
+          "wire": {
+            "id": "s9",
+            "cwd": "/tmp/scratch",
+            "folderName": "scratch",
+            "alive": true,
+            "claudeSessionId": null,
+            "piSessionId": null,
+            "launchProfileId": "claude-chat",
+            "model": "m"
+          }
+        }
+      ],
+      "failures": [
+        {
+          "tag": "CapabilityUnavailable",
+          "wire": {
+            "capability": "terminals",
+            "message": "This server runs no terminal process.",
+            "_tag": "CapabilityUnavailable"
+          }
+        },
+        {
+          "tag": "SessionStartFailed",
+          "wire": {
+            "message": "Program \"claude\" was not found",
+            "_tag": "SessionStartFailed"
+          }
+        }
+      ]
+    },
+    "StopSession": {
+      "payload": [
+        {
+          "name": "by id",
+          "wire": {
+            "id": "s1"
+          }
+        }
+      ],
+      "failures": [
+        {
+          "tag": "SessionStopFailed",
+          "wire": {
+            "id": "s1",
+            "message": "kill ESRCH",
+            "_tag": "SessionStopFailed"
+          }
+        }
+      ]
+    },
+    "WriteSession": {
+      "payload": [
+        {
+          "name": "a message with the id the phone minted",
+          "wire": {
+            "id": "s1",
+            "input": {
+              "type": "user_message",
+              "text": "hi",
+              "clientMessageId": "m-0123456789abcdef"
+            }
+          }
+        },
+        {
+          "name": "a message with prepared attachments",
+          "wire": {
+            "id": "s1",
+            "input": {
+              "type": "user_message",
+              "text": "see [Image #1]",
+              "attachments": [
+                {
+                  "id": "a1",
+                  "label": "Image #1",
+                  "path": "/tmp/a.png",
+                  "name": "a.png",
+                  "mimeType": "image/png",
+                  "size": 12,
+                  "delivery": "image"
+                }
+              ],
+              "clientMessageId": "m-0123456789abcdef"
+            }
+          }
+        },
+        {
+          "name": "a permission response with answers",
+          "wire": {
+            "id": "s1",
+            "input": {
+              "type": "permission_response",
+              "id": "r1",
+              "optionId": "answer",
+              "answers": {
+                "q1": "A, B"
+              }
+            }
+          }
+        },
+        {
+          "name": "an interrupt",
+          "wire": {
+            "id": "s1",
+            "input": {
+              "type": "interrupt"
+            }
+          }
+        },
+        {
+          "name": "a model change",
+          "wire": {
+            "id": "s1",
+            "input": {
+              "type": "set_model",
+              "model": "echo-2"
+            }
+          }
+        },
+        {
+          "name": "an effort change",
+          "wire": {
+            "id": "s1",
+            "input": {
+              "type": "set_effort",
+              "effort": "high"
+            }
+          }
+        },
+        {
+          "name": "a permission mode change",
+          "wire": {
+            "id": "s1",
+            "input": {
+              "type": "set_permission_mode",
+              "mode": "default"
+            }
+          }
+        },
+        {
+          "name": "a stopped background task",
+          "wire": {
+            "id": "s1",
+            "input": {
+              "type": "stop_task",
+              "taskId": "b1"
+            }
+          }
+        }
+      ],
+      "invalidPayload": [
+        {
+          "name": "a short client message id",
+          "wire": {
+            "id": "s1",
+            "input": {
+              "type": "user_message",
+              "text": "hi",
+              "clientMessageId": "short"
+            }
+          },
+          "because": "clientMessageId is 8 to 64 characters"
+        },
+        {
+          "name": "an unknown input type",
+          "wire": {
+            "id": "s1",
+            "input": {
+              "type": "shout",
+              "text": "HI"
+            }
+          },
+          "because": "type is one of the inputs"
+        },
+        {
+          "name": "an effort with a capital",
+          "wire": {
+            "id": "s1",
+            "input": {
+              "type": "set_effort",
+              "effort": "High"
+            }
+          },
+          "because": "effort is a short lowercase word"
+        }
+      ],
+      "success": [
+        {
+          "name": "accepted",
+          "wire": {
+            "status": "accepted",
+            "at": 1730000000000
+          }
+        },
+        {
+          "name": "pending",
+          "wire": {
+            "status": "pending"
+          }
+        }
+      ],
+      "failures": [
+        {
+          "tag": "SessionNotFound",
+          "wire": {
+            "id": "s1",
+            "_tag": "SessionNotFound"
+          }
+        },
+        {
+          "tag": "SessionWriteRefused",
+          "wire": {
+            "id": "s1",
+            "message": "The provider refused the message.",
+            "_tag": "SessionWriteRefused"
+          }
+        },
+        {
+          "tag": "SessionWriteUnknown",
+          "wire": {
+            "id": "s1",
+            "clientMessageId": "m-0123456789abcdef",
+            "message": "The server cannot tell whether the message arrived.",
+            "_tag": "SessionWriteUnknown"
+          }
+        }
+      ]
+    },
+    "GetSessionCapabilities": {
+      "payload": [
+        {
+          "name": "by id",
+          "wire": {
+            "id": "s1"
+          }
+        }
+      ],
+      "success": [
+        {
+          "name": "images accepted",
+          "wire": {
+            "images": true
+          }
+        }
+      ],
+      "failures": [
+        {
+          "tag": "SessionNotFound",
+          "wire": {
+            "id": "s1",
+            "_tag": "SessionNotFound"
+          }
+        }
+      ]
+    },
+    "GetSessionHistory": {
+      "payload": [
+        {
+          "name": "the newest page",
+          "wire": {
+            "id": "s1"
+          }
+        },
+        {
+          "name": "an older page, the numbers as query strings",
+          "wire": {
+            "id": "s1",
+            "before": "12",
+            "limit": "200"
+          }
+        }
+      ],
+      "invalidPayload": [
+        {
+          "name": "a negative before",
+          "wire": {
+            "id": "s1",
+            "before": "-1"
+          },
+          "because": "before is a non-negative integer"
+        },
+        {
+          "name": "a limit that is not a number",
+          "wire": {
+            "id": "s1",
+            "limit": "x"
+          },
+          "because": "limit is a number"
+        }
+      ],
+      "success": [
+        {
+          "name": "the last page",
+          "wire": {
+            "items": [],
+            "before": null
+          }
+        }
+      ],
+      "failures": [
+        {
+          "tag": "SessionNotFound",
+          "wire": {
+            "id": "s1",
+            "_tag": "SessionNotFound"
+          }
+        }
+      ]
+    },
+    "GetSessionWriteStatus": {
+      "payload": [
+        {
+          "name": "by session and client message id",
+          "wire": {
+            "id": "s1",
+            "clientMessageId": "m-0123456789abcdef"
+          }
+        }
+      ],
+      "invalidPayload": [
+        {
+          "name": "a short client message id",
+          "wire": {
+            "id": "s1",
+            "clientMessageId": "m-1"
+          },
+          "because": "clientMessageId is 8 to 64 characters"
+        }
+      ],
+      "success": [
+        {
+          "name": "accepted",
+          "wire": {
+            "status": "accepted",
+            "at": 1730000000000
+          }
+        },
+        {
+          "name": "absent",
+          "wire": {
+            "status": "absent"
+          }
+        },
+        {
+          "name": "unknown",
+          "wire": {
+            "status": "unknown"
+          }
+        }
+      ]
+    },
+    "RestartSession": {
+      "payload": [
+        {
+          "name": "on the same account",
+          "wire": {
+            "id": "s1",
+            "account": {}
+          }
+        },
+        {
+          "name": "with a request id",
+          "wire": {
+            "id": "s1",
+            "account": {},
+            "requestId": "restart-1"
+          }
+        }
+      ],
+      "success": [
+        {
+          "name": "the restarted session, its conversation resumed",
+          "wire": {
+            "requestId": "restart-1",
+            "id": "s9",
+            "cwd": "/tmp/scratch",
+            "folderName": "scratch",
+            "alive": true,
+            "claudeSessionId": null,
+            "piSessionId": null,
+            "launchProfileId": "claude-chat",
+            "model": "m",
+            "resumed": true
+          }
+        }
+      ],
+      "failures": [
+        {
+          "tag": "SessionNotFound",
+          "wire": {
+            "id": "s1",
+            "_tag": "SessionNotFound"
+          }
+        },
+        {
+          "tag": "SessionStartFailed",
+          "wire": {
+            "message": "This host did not spawn the session.",
+            "_tag": "SessionStartFailed"
+          }
+        }
+      ]
+    }
+  }
+}

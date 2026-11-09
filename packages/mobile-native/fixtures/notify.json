@@ -1,0 +1,338 @@
+{
+  "$comment": "Generated from the real contract by packages/mobile-native/scripts/export-vectors.ts. Do not edit: run `npm run vectors --workspace @clave/mobile-native`; vectors.test.ts fails when this file no longer matches the contract.",
+  "family": "notify",
+  "contract": 1,
+  "notes": [
+    "What a paired phone receives through APNs or FCM when an agent needs the person: one payload per category, its keys closed to NOTIFICATION_PAYLOAD_KEYS, never a secret value, a token or an answer.",
+    "iOS reads the action category as aps.category, Android as categoryId in the data map beside the payload’s keys (NOTIFICATION_DATA_KEYS).",
+    "GET /notify/status and POST /notify/test are the owner’s routes; a phone never calls them."
+  ],
+  "literals": {
+    "NotificationCategory": [
+      "question",
+      "permission",
+      "secret",
+      "finished",
+      "failed",
+      "account_limit",
+      "test"
+    ],
+    "NotificationAction": [
+      "allow",
+      "deny",
+      "reply",
+      "open"
+    ],
+    "PushPlatform": [
+      "ios",
+      "android"
+    ],
+    "SendOutcome": [
+      "sent",
+      "gone",
+      "failed"
+    ]
+  },
+  "constants": {
+    "NOTIFICATION_PAYLOAD_KEYS": [
+      "category",
+      "serverId",
+      "serverName",
+      "sessionId",
+      "sessionTitle",
+      "workspaceName",
+      "requestId",
+      "text",
+      "actions"
+    ],
+    "NOTIFICATION_DATA_KEYS": [
+      "category",
+      "serverId",
+      "serverName",
+      "sessionId",
+      "sessionTitle",
+      "workspaceName",
+      "requestId",
+      "text",
+      "actions",
+      "categoryId"
+    ],
+    "categoryIds": {
+      "question": "clave.question",
+      "permission": "clave.permission",
+      "secret": "clave.secret",
+      "finished": "clave.finished",
+      "failed": "clave.failed",
+      "account_limit": "clave.account_limit",
+      "test": "clave.test"
+    }
+  },
+  "shapes": {
+    "NotificationPayload": {
+      "valid": [
+        {
+          "name": "a question",
+          "wire": {
+            "category": "question",
+            "serverId": "srv-1",
+            "serverName": "Fixture Mac",
+            "sessionId": "s1",
+            "sessionTitle": "A chat",
+            "workspaceName": "scratch",
+            "requestId": "req-1",
+            "text": "Which branch do we ship from?",
+            "actions": [
+              "reply",
+              "open"
+            ]
+          }
+        },
+        {
+          "name": "a permission",
+          "wire": {
+            "category": "permission",
+            "serverId": "srv-1",
+            "serverName": "Fixture Mac",
+            "sessionId": "s1",
+            "sessionTitle": "A chat",
+            "workspaceName": "scratch",
+            "requestId": "req-2",
+            "text": "Run `ls`?",
+            "actions": [
+              "allow",
+              "deny",
+              "open"
+            ]
+          }
+        },
+        {
+          "name": "a secret asked",
+          "wire": {
+            "category": "secret",
+            "serverId": "srv-1",
+            "serverName": "Fixture Mac",
+            "sessionId": "s1",
+            "sessionTitle": "A chat",
+            "workspaceName": "scratch",
+            "requestId": "req-3",
+            "text": "The API key for the service",
+            "actions": [
+              "open"
+            ]
+          }
+        },
+        {
+          "name": "a session finished",
+          "wire": {
+            "category": "finished",
+            "serverId": "srv-1",
+            "serverName": "Fixture Mac",
+            "sessionId": "s1",
+            "sessionTitle": "A chat",
+            "workspaceName": "scratch",
+            "text": "A chat finished",
+            "actions": [
+              "open"
+            ]
+          }
+        },
+        {
+          "name": "a session failed",
+          "wire": {
+            "category": "failed",
+            "serverId": "srv-1",
+            "serverName": "Fixture Mac",
+            "sessionId": "s1",
+            "sessionTitle": "A chat",
+            "workspaceName": "scratch",
+            "text": "A chat failed",
+            "actions": [
+              "open"
+            ]
+          }
+        },
+        {
+          "name": "an account near its limit",
+          "wire": {
+            "category": "account_limit",
+            "serverId": "srv-1",
+            "serverName": "Fixture Mac",
+            "sessionId": "",
+            "sessionTitle": "",
+            "text": "Claude (machine login): 5% left of the 5h window",
+            "actions": [
+              "open"
+            ]
+          }
+        },
+        {
+          "name": "a test push",
+          "wire": {
+            "category": "test",
+            "serverId": "srv-1",
+            "serverName": "Fixture Mac",
+            "sessionId": "s1",
+            "sessionTitle": "A chat",
+            "workspaceName": "scratch",
+            "text": "A test notification from Fixture Mac",
+            "actions": [
+              "open"
+            ]
+          }
+        }
+      ],
+      "invalid": [
+        {
+          "name": "an unknown category",
+          "wire": {
+            "category": "news",
+            "serverId": "srv-1",
+            "serverName": "Fixture Mac",
+            "sessionId": "s1",
+            "sessionTitle": "A chat",
+            "workspaceName": "scratch",
+            "text": "x",
+            "actions": [
+              "open"
+            ]
+          },
+          "because": "category is one of the seven"
+        },
+        {
+          "name": "an unknown action",
+          "wire": {
+            "category": "question",
+            "serverId": "srv-1",
+            "serverName": "Fixture Mac",
+            "sessionId": "s1",
+            "sessionTitle": "A chat",
+            "workspaceName": "scratch",
+            "text": "x",
+            "actions": [
+              "snooze"
+            ]
+          },
+          "because": "actions are allow, deny, reply or open"
+        },
+        {
+          "name": "a payload without text",
+          "wire": {
+            "category": "finished",
+            "serverId": "srv-1",
+            "serverName": "Fixture Mac",
+            "sessionId": "s1",
+            "sessionTitle": "A chat",
+            "actions": [
+              "open"
+            ]
+          },
+          "because": "text is required"
+        }
+      ]
+    },
+    "NotifyStatus": {
+      "valid": [
+        {
+          "name": "the recording fake standing in for both transports",
+          "wire": {
+            "transports": {
+              "ios": true,
+              "android": true
+            },
+            "fake": true,
+            "targets": 1,
+            "serverName": "Fixture Mac"
+          }
+        }
+      ]
+    },
+    "SendResultView": {
+      "valid": [
+        {
+          "name": "sent",
+          "wire": {
+            "outcome": "sent"
+          }
+        },
+        {
+          "name": "gone",
+          "wire": {
+            "outcome": "gone"
+          }
+        },
+        {
+          "name": "failed",
+          "wire": {
+            "outcome": "failed",
+            "reason": "BadDeviceToken"
+          }
+        }
+      ]
+    }
+  },
+  "owner": {
+    "GetNotifyStatus": {
+      "payload": [
+        {
+          "name": "the status",
+          "wire": {}
+        }
+      ],
+      "success": [
+        {
+          "name": "the recording fake standing in for both transports",
+          "wire": {
+            "transports": {
+              "ios": true,
+              "android": true
+            },
+            "fake": true,
+            "targets": 1,
+            "serverName": "Fixture Mac"
+          }
+        }
+      ],
+      "failures": [
+        {
+          "tag": "CapabilityUnavailable",
+          "wire": {
+            "capability": "notify",
+            "message": "This server sends no notifications.",
+            "_tag": "CapabilityUnavailable"
+          }
+        }
+      ]
+    },
+    "SendTestNotification": {
+      "payload": [
+        {
+          "name": "to one phone",
+          "wire": {
+            "deviceId": "dev-1"
+          }
+        }
+      ],
+      "success": [
+        {
+          "name": "sent to an iPhone",
+          "wire": {
+            "deviceId": "dev-1",
+            "platform": "ios",
+            "result": {
+              "outcome": "sent"
+            }
+          }
+        }
+      ],
+      "failures": [
+        {
+          "tag": "PushTargetNotFound",
+          "wire": {
+            "deviceId": "dev-1",
+            "_tag": "PushTargetNotFound"
+          }
+        }
+      ]
+    }
+  }
+}

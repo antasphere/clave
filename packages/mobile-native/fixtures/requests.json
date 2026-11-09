@@ -1,0 +1,567 @@
+{
+  "$comment": "Generated from the real contract by packages/mobile-native/scripts/export-vectors.ts. Do not edit: run `npm run vectors --workspace @clave/mobile-native`; vectors.test.ts fails when this file no longer matches the contract.",
+  "family": "requests",
+  "contract": 1,
+  "notes": [
+    "GET /requests/pending lists what agents are waiting on; POST /requests/resolve answers one. A server without the requests port answers CapabilityUnavailable and the chat’s own permission cards answer through POST /sessions/write instead.",
+    "A secret’s value travels in the resolve body and nowhere else; the snapshot never carries one."
+  ],
+  "literals": {
+    "RequestKind": [
+      "permission",
+      "clarification",
+      "secret"
+    ],
+    "RequestRejectedCode": [
+      "invalid",
+      "not_found",
+      "capacity",
+      "closed"
+    ]
+  },
+  "shapes": {
+    "PendingRequest": {
+      "valid": [
+        {
+          "name": "a clarification with a native question",
+          "wire": {
+            "id": "req-1",
+            "sessionId": "s1",
+            "kind": "clarification",
+            "description": "A question",
+            "createdAt": 1,
+            "providerRequestId": "native-1",
+            "options": [
+              {
+                "id": "answer",
+                "label": "Answer"
+              }
+            ],
+            "questions": [
+              {
+                "id": "q",
+                "question": "Which?",
+                "options": [
+                  {
+                    "label": "A"
+                  }
+                ],
+                "multiSelect": false
+              }
+            ],
+            "secretQuestions": [
+              "q"
+            ],
+            "toolName": "AskUserQuestion",
+            "detail": "d",
+            "input": {
+              "x": 1
+            }
+          }
+        },
+        {
+          "name": "a permission with options",
+          "wire": {
+            "id": "req-2",
+            "sessionId": "s1",
+            "kind": "permission",
+            "description": "Run `ls`?",
+            "createdAt": 2,
+            "options": [
+              {
+                "id": "allow-once",
+                "label": "Allow"
+              },
+              {
+                "id": "deny",
+                "label": "Deny"
+              }
+            ],
+            "toolName": "Bash",
+            "input": {
+              "command": "ls"
+            }
+          }
+        },
+        {
+          "name": "a secret going to an env file",
+          "wire": {
+            "id": "req-3",
+            "sessionId": "s1",
+            "kind": "secret",
+            "description": "The API key for the service",
+            "createdAt": 3,
+            "action": {
+              "type": "env-file",
+              "file": "/tmp/.env",
+              "key": "SERVICE_KEY"
+            }
+          }
+        },
+        {
+          "name": "a secret handed to a command",
+          "wire": {
+            "id": "req-4",
+            "sessionId": "s1",
+            "kind": "secret",
+            "description": "The API key for the service",
+            "createdAt": 3,
+            "action": {
+              "type": "run",
+              "command": "service login --token",
+              "cwd": "/tmp/scratch",
+              "envVar": "TOKEN"
+            }
+          }
+        }
+      ],
+      "invalid": [
+        {
+          "name": "an unknown kind",
+          "wire": {
+            "id": "req-2",
+            "sessionId": "s1",
+            "kind": "other",
+            "description": "Run `ls`?",
+            "createdAt": 2,
+            "options": [
+              {
+                "id": "allow-once",
+                "label": "Allow"
+              },
+              {
+                "id": "deny",
+                "label": "Deny"
+              }
+            ],
+            "toolName": "Bash",
+            "input": {
+              "command": "ls"
+            }
+          },
+          "because": "kind is permission, clarification or secret"
+        },
+        {
+          "name": "an empty description",
+          "wire": {
+            "id": "req-2",
+            "sessionId": "s1",
+            "kind": "permission",
+            "description": "",
+            "createdAt": 2,
+            "options": [
+              {
+                "id": "allow-once",
+                "label": "Allow"
+              },
+              {
+                "id": "deny",
+                "label": "Deny"
+              }
+            ],
+            "toolName": "Bash",
+            "input": {
+              "command": "ls"
+            }
+          },
+          "because": "description is 1 to 16384 characters"
+        },
+        {
+          "name": "an unknown action type",
+          "wire": {
+            "id": "req-3",
+            "sessionId": "s1",
+            "kind": "secret",
+            "description": "The API key for the service",
+            "createdAt": 3,
+            "action": {
+              "type": "exec",
+              "file": "/x",
+              "key": "K"
+            }
+          },
+          "because": "action is run or env-file"
+        },
+        {
+          "name": "a run action with a lowercase variable",
+          "wire": {
+            "id": "req-4",
+            "sessionId": "s1",
+            "kind": "secret",
+            "description": "The API key for the service",
+            "createdAt": 3,
+            "action": {
+              "type": "run",
+              "command": "service login --token",
+              "cwd": "/tmp/scratch",
+              "envVar": "token"
+            }
+          },
+          "because": "envVar is an uppercase identifier"
+        }
+      ]
+    },
+    "RequestSnapshot": {
+      "valid": [
+        {
+          "name": "two pending requests",
+          "wire": {
+            "revision": 2,
+            "pending": [
+              {
+                "id": "req-1",
+                "sessionId": "s1",
+                "kind": "clarification",
+                "description": "A question",
+                "createdAt": 1,
+                "providerRequestId": "native-1",
+                "options": [
+                  {
+                    "id": "answer",
+                    "label": "Answer"
+                  }
+                ],
+                "questions": [
+                  {
+                    "id": "q",
+                    "question": "Which?",
+                    "options": [
+                      {
+                        "label": "A"
+                      }
+                    ],
+                    "multiSelect": false
+                  }
+                ],
+                "secretQuestions": [
+                  "q"
+                ],
+                "toolName": "AskUserQuestion",
+                "detail": "d",
+                "input": {
+                  "x": 1
+                }
+              },
+              {
+                "id": "req-2",
+                "sessionId": "s1",
+                "kind": "permission",
+                "description": "Run `ls`?",
+                "createdAt": 2,
+                "options": [
+                  {
+                    "id": "allow-once",
+                    "label": "Allow"
+                  },
+                  {
+                    "id": "deny",
+                    "label": "Deny"
+                  }
+                ],
+                "toolName": "Bash",
+                "input": {
+                  "command": "ls"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "nothing pending",
+          "wire": {
+            "revision": 0,
+            "pending": []
+          }
+        }
+      ]
+    },
+    "RequestResponse": {
+      "valid": [
+        {
+          "name": "a permission answered by an option",
+          "wire": {
+            "type": "permission",
+            "optionId": "allow-once"
+          }
+        },
+        {
+          "name": "a native question answered as a permission",
+          "wire": {
+            "type": "permission",
+            "optionId": "answer",
+            "answers": {
+              "q": "A"
+            }
+          }
+        },
+        {
+          "name": "a clarification",
+          "wire": {
+            "type": "clarification",
+            "answers": {
+              "q": "A"
+            }
+          }
+        },
+        {
+          "name": "a secret",
+          "wire": {
+            "type": "secret",
+            "value": "shh"
+          }
+        },
+        {
+          "name": "a dismissal",
+          "wire": {
+            "type": "dismiss"
+          }
+        }
+      ],
+      "invalid": [
+        {
+          "name": "an unknown type",
+          "wire": {
+            "type": "approve"
+          },
+          "because": "type is permission, clarification, secret or dismiss"
+        },
+        {
+          "name": "an empty secret",
+          "wire": {
+            "type": "secret",
+            "value": ""
+          },
+          "because": "value is 1 to 16384 characters"
+        },
+        {
+          "name": "a clarification without answers",
+          "wire": {
+            "type": "clarification"
+          },
+          "because": "answers is required"
+        }
+      ]
+    }
+  },
+  "commands": {
+    "ListPendingRequests": {
+      "payload": [
+        {
+          "name": "everything pending",
+          "wire": {}
+        }
+      ],
+      "success": [
+        {
+          "name": "two pending requests",
+          "wire": {
+            "revision": 2,
+            "pending": [
+              {
+                "id": "req-1",
+                "sessionId": "s1",
+                "kind": "clarification",
+                "description": "A question",
+                "createdAt": 1,
+                "providerRequestId": "native-1",
+                "options": [
+                  {
+                    "id": "answer",
+                    "label": "Answer"
+                  }
+                ],
+                "questions": [
+                  {
+                    "id": "q",
+                    "question": "Which?",
+                    "options": [
+                      {
+                        "label": "A"
+                      }
+                    ],
+                    "multiSelect": false
+                  }
+                ],
+                "secretQuestions": [
+                  "q"
+                ],
+                "toolName": "AskUserQuestion",
+                "detail": "d",
+                "input": {
+                  "x": 1
+                }
+              },
+              {
+                "id": "req-2",
+                "sessionId": "s1",
+                "kind": "permission",
+                "description": "Run `ls`?",
+                "createdAt": 2,
+                "options": [
+                  {
+                    "id": "allow-once",
+                    "label": "Allow"
+                  },
+                  {
+                    "id": "deny",
+                    "label": "Deny"
+                  }
+                ],
+                "toolName": "Bash",
+                "input": {
+                  "command": "ls"
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "failures": [
+        {
+          "tag": "CapabilityUnavailable",
+          "wire": {
+            "capability": "requests",
+            "message": "This server holds no requests.",
+            "_tag": "CapabilityUnavailable"
+          }
+        }
+      ]
+    },
+    "ResolvePendingRequest": {
+      "payload": [
+        {
+          "name": "a permission answered by an option",
+          "wire": {
+            "requestId": "req-1",
+            "response": {
+              "type": "permission",
+              "optionId": "allow-once"
+            }
+          }
+        },
+        {
+          "name": "a native question answered as a permission",
+          "wire": {
+            "requestId": "req-1",
+            "response": {
+              "type": "permission",
+              "optionId": "answer",
+              "answers": {
+                "q": "A"
+              }
+            }
+          }
+        },
+        {
+          "name": "a clarification",
+          "wire": {
+            "requestId": "req-1",
+            "response": {
+              "type": "clarification",
+              "answers": {
+                "q": "A"
+              }
+            }
+          }
+        },
+        {
+          "name": "a secret",
+          "wire": {
+            "requestId": "req-1",
+            "response": {
+              "type": "secret",
+              "value": "shh"
+            }
+          }
+        },
+        {
+          "name": "a dismissal",
+          "wire": {
+            "requestId": "req-1",
+            "response": {
+              "type": "dismiss"
+            }
+          }
+        }
+      ],
+      "invalidPayload": [
+        {
+          "name": "an empty request id",
+          "wire": {
+            "requestId": "",
+            "response": {
+              "type": "dismiss"
+            }
+          },
+          "because": "requestId is 1 to 256 characters"
+        },
+        {
+          "name": "an unknown response",
+          "wire": {
+            "requestId": "req-1",
+            "response": {
+              "type": "approve"
+            }
+          },
+          "because": "response is one of the four"
+        }
+      ],
+      "success": [
+        {
+          "name": "accepted",
+          "wire": {
+            "accepted": true
+          }
+        },
+        {
+          "name": "not accepted",
+          "wire": {
+            "accepted": false
+          }
+        }
+      ],
+      "failures": [
+        {
+          "tag": "RequestRejected",
+          "wire": {
+            "code": "invalid",
+            "message": "The request was rejected (invalid).",
+            "_tag": "RequestRejected"
+          }
+        },
+        {
+          "tag": "RequestRejected",
+          "wire": {
+            "code": "not_found",
+            "message": "The request was rejected (not_found).",
+            "_tag": "RequestRejected"
+          }
+        },
+        {
+          "tag": "RequestRejected",
+          "wire": {
+            "code": "capacity",
+            "message": "The request was rejected (capacity).",
+            "_tag": "RequestRejected"
+          }
+        },
+        {
+          "tag": "RequestRejected",
+          "wire": {
+            "code": "closed",
+            "message": "The request was rejected (closed).",
+            "_tag": "RequestRejected"
+          }
+        },
+        {
+          "tag": "CapabilityUnavailable",
+          "wire": {
+            "capability": "requests",
+            "message": "This server holds no requests.",
+            "_tag": "CapabilityUnavailable"
+          }
+        }
+      ]
+    }
+  }
+}
