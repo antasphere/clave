@@ -16,7 +16,7 @@
 // --approve keeps running and approves every phone that asks to pair.
 // --dry-run runs the pre-boot checks alone, prints the daemon command it would
 // start, and exits 0 or 2: nothing is started; it proves the pre-boot checks and,
-// under --mutate recorder-*, the recorder guard's one look, nothing else (not
+// under --mutate recorder-* or decoy-line, the recorder guard's one look, nothing else (not
 // the boot checks, not the guard's continuous watch).
 // Otherwise it keeps running until SIGINT/SIGTERM, which stops every child.
 //
@@ -113,9 +113,16 @@ const PHONE = { name: 'fixture check phone', platform: 'android', appVersion: '0
 
 // ── Arguments ───────────────────────────────────────────────────────────────
 
+/** The value after `--<name>`; a value that is itself a flag (`--tmpdir --dry-run`) is no value. */
 function arg(name, fallback) {
   const i = process.argv.indexOf(`--${name}`)
-  return i >= 0 && i + 1 < process.argv.length ? process.argv[i + 1] : fallback
+  if (i < 0 || i + 1 >= process.argv.length) return fallback
+  const value = process.argv[i + 1]
+  if (value.startsWith('--')) {
+    process.stderr.write(`fixture: --${name} needs a value and was followed by ${value}: refusing\n`)
+    process.exit(2)
+  }
+  return value
 }
 const flag = (name) => process.argv.includes(`--${name}`)
 function portArg(name, fallback) {
@@ -227,7 +234,8 @@ function markerOf(dir) {
   if (parsed?.owner !== MARKER_OWNER) return { present: true, ours: false, why: `${MARKER_NAME} names another owner (${JSON.stringify(parsed?.owner ?? null)})` }
   if (parsed?.folder !== realpathSync(dir)) return { present: true, ours: false, why: `${MARKER_NAME} claims another folder (${JSON.stringify(parsed?.folder ?? null)})` }
   const pid = Number(parsed?.pid)
-  if (Number.isInteger(pid) && pid > 0 && pid !== process.pid && alive(pid)) {
+  if (!Number.isInteger(pid) || pid <= 0) return { present: true, ours: false, why: `${MARKER_NAME} names no claiming pid: not written by this fixture` }
+  if (pid !== process.pid && alive(pid)) {
     return { present: true, ours: false, why: `${MARKER_NAME} was claimed by a fixture run that is still alive (pid ${pid}, band ${JSON.stringify(parsed?.band ?? null)})` }
   }
   return { present: true, ours: true }
@@ -511,7 +519,17 @@ function daemonLaunch() {
     '--relay',
     RELAY_URL
   ]
-  return { shims, env, args }
+  const relayArgs = [
+    '--no-env-file',
+    path.join(REPO, 'apps', 'relay', 'src', 'main.ts'),
+    '--port',
+    String(RELAY_PORT),
+    '--data-dir',
+    RELAY_DATA,
+    '--issuer',
+    ISSUER_URL
+  ]
+  return { shims, env, args, relayArgs }
 }
 
 /** The key NAMES a Bun process sees under [env] with .env loading off: a probe, never values. */
@@ -561,11 +579,16 @@ async function preBootChecks(launch) {
     const missing = DAEMON_FLAGS.filter((f) => !launch.args.includes(f))
     expectThat(missing.length === 0, `missing ${missing.join(' ')} in: bun ${launch.args.join(' ')}`)
     expectThat(launch.args[0] === '--no-env-file', `the argv does not start with --no-env-file: bun ${launch.args.join(' ')}`)
-    return `--no-env-file ${DAEMON_FLAGS.join(' ')}`
+    expectThat(launch.relayArgs[0] === '--no-env-file', `the relay's argv does not start with --no-env-file: bun ${launch.relayArgs.join(' ')}`)
+    return `--no-env-file ${DAEMON_FLAGS.join(' ')}; the relay under --no-env-file too`
   })
   await check(
     "the daemon's environment is the allowlist and the fixture's keys, with empty Claude and Codex homes of the fixture's own",
     async () => {
+      expectThat(
+        JSON.stringify([...ENV_ALLOWLIST].sort()) === JSON.stringify([...ENV_ALLOWLIST_FROZEN]),
+        `the allowlist was widened or narrowed: ${[...ENV_ALLOWLIST].sort().join(' ')} against the frozen ${[...ENV_ALLOWLIST_FROZEN].join(' ')}`
+      )
       const allowed = new Set([...ENV_ALLOWLIST_FROZEN, ...ENV_FIXTURE_KEYS])
       const stray = Object.keys(launch.env).filter((key) => !allowed.has(key))
       expectThat(stray.length === 0, `keys outside the frozen allowlist: ${stray.join(', ')}`)
@@ -574,7 +597,7 @@ async function preBootChecks(launch) {
       const expected = Object.keys(launch.env).sort()
       const extra = seen.filter((k) => !expected.includes(k))
       const lost = expected.filter((k) => !seen.includes(k))
-      expectThat(extra.length === 0 && lost.length === 0, `a Bun child sees ${extra.length ? `extra keys ${extra.join(', ')}` : ''}${extra.length && lost.length ? ' and ' : ''}${lost.length ? `misses ${lost.join(', ')}` : ''}`)
+      expectThat(extra.length === 0 && lost.length === 0, `a Bun child ${extra.length ? `sees extra keys ${extra.join(', ')}` : ''}${extra.length && lost.length ? ' and ' : ''}${lost.length ? `misses ${lost.join(', ')}` : ''}`)
       for (const key of ENV_FIXTURE_KEYS) expectThat(typeof launch.env[key] === 'string' && launch.env[key] !== '', `${key} is not set`)
       for (const [name, home] of [['CLAUDE_CONFIG_DIR', launch.shims.claudeConfigDir], ['CODEX_HOME', launch.shims.codexHome]]) {
         expectThat(launch.env[name] === home, `${name} is ${launch.env[name]}, not the fixture's`)
@@ -718,7 +741,7 @@ async function bootChecks(daemon, launch) {
     }
   )
   await check(
-    "the title one-shot's launch, as the production resolver answers it inside the daemon, is the recorder by canonical path and found on a PATH led by the recorders; nothing is executed",
+    "the title one-shot's launch, as the production resolver answers it inside the daemon, is the recorder by canonical path and found on a PATH led by the recorders; no agent CLI is executed",
     async () => {
       expectThat(hooks !== null, 'no hooks')
       const launch = hooks.launch
@@ -867,6 +890,7 @@ let LAUNCH = null
 
 async function exitWith(code) {
   await stopAll()
+  if (DRY_RUN && SHIMS_ROOT !== null) rmSync(SHIMS_ROOT, { recursive: true, force: true })
   if (LAUNCH !== null && !DRY_RUN) {
     const last = recorderVerdict(LAUNCH.shims)
     if (last !== null) latchRecorderFailure(last)
@@ -993,21 +1017,9 @@ async function startProviderOn(port) {
 
 async function startRelay(launch) {
   mkdirSync(RELAY_DATA, { recursive: true, mode: 0o700 })
-  const run = spawnBun(
-    'relay',
-    [
-      '--no-env-file',
-      path.join(REPO, 'apps', 'relay', 'src', 'main.ts'),
-      '--port',
-      String(RELAY_PORT),
-      '--data-dir',
-      RELAY_DATA,
-      '--issuer',
-      ISSUER_URL
-    ],
-    // The relay runs no agent; it still gets the fixture's sanitized environment, nothing of the shell's.
-    launch.env
-  )
+  // The relay runs no agent; it still gets the launch's argv (checked before the boot) and the
+  // fixture's sanitized environment, nothing of the shell's.
+  const run = spawnBun('relay', launch.relayArgs, launch.env)
   const url = await until(async () => {
     if (run.child.exitCode !== null) throw new Error('exited')
     for (const line of run.stdoutLines) {
