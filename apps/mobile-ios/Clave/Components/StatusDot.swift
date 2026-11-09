@@ -1,3 +1,4 @@
+import ClaveCore
 import SwiftUI
 
 /// The session states the sidebar's dot tells apart.
@@ -49,6 +50,19 @@ struct StatusDot: View {
     case .ready: theme.colors.statusReady
     case .waiting: theme.colors.statusWaiting
     case .inactive: theme.colors.statusInactive
+    }
+  }
+}
+
+
+extension StatusKind {
+  /// The dot of a session's status as the core reads it.
+  nonisolated init(_ status: SessionStatus) {
+    switch status {
+    case .working: self = .working
+    case .ready: self = .ready
+    case .waiting: self = .waiting
+    case .inactive: self = .inactive
     }
   }
 }

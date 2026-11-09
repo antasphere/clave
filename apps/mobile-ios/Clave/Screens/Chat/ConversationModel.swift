@@ -53,7 +53,11 @@ final class ConversationModel {
   var filesRoute = true
 
   private let client: ClaveServerClient
+  /// The push client, for the subscriptions and the socket's start; its frames come through `events`.
   private let push: PushClient
+  /// A fresh stream of the push channel's frames. The client's own stream has one reader, the
+  /// machine's connection, which fans the frames out to every screen that asks.
+  private let events: @MainActor () -> AsyncStream<PushEvent>
   private let now: @Sendable () -> Date
   private let drafts: Drafts
   private let attachmentDrafts: AttachmentDrafts
@@ -73,6 +77,7 @@ final class ConversationModel {
     session: Session,
     client: ClaveServerClient,
     push: PushClient,
+    events: @escaping @MainActor () -> AsyncStream<PushEvent>,
     store: any KeyValueStore,
     now: @escaping @Sendable () -> Date = { Date() }
   ) {
@@ -81,6 +86,7 @@ final class ConversationModel {
     self.title = session.title
     self.client = client
     self.push = push
+    self.events = events
     self.now = now
     let milliseconds: @Sendable () -> Double = { now().timeIntervalSince1970 * 1000 }
     drafts = Drafts(store: store)
@@ -127,7 +133,7 @@ final class ConversationModel {
     dropped = false
 
     // Subscribed before the socket opens, so the first frame of the first socket is heard.
-    let events = PushEventFanout.shared(for: push).stream()
+    let events = self.events()
     let states = await sync.states()
     let marks = await delivery.marks.changes()
     tasks.append(Task { [weak self] in

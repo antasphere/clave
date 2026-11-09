@@ -25,33 +25,16 @@ struct RootView: View {
       PairingScreen(model: model, machineId: machineId)
     case .appearance:
       AppearanceScreen(store: model.appearance)
-    case .workspaces:
-      PlaceholderScreen(title: "Workspaces", identifier: "placeholder.workspaces")
-    case .sessions:
-      PlaceholderScreen(title: "Sessions", identifier: "placeholder.sessions")
-    case .chat:
-      PlaceholderScreen(title: "Conversation", identifier: "placeholder.chat")
-    case .requests:
-      PlaceholderScreen(title: "Requests", identifier: "placeholder.requests")
-    case .launch:
-      PlaceholderScreen(title: "New session", identifier: "placeholder.launch")
+    case .workspaces(let machineId):
+      WorkspacesScreen(model: model, machineId: machineId)
+    case .sessions(let machineId, let workspaceId):
+      SessionsScreen(model: model, machineId: machineId, workspaceId: workspaceId)
+    case .chat(let machineId, let sessionId):
+      ChatRoute(model: model, machineId: machineId, sessionId: sessionId)
+    case .requests(let machineId):
+      RequestsScreen(model: model, machineId: machineId)
+    case .launch(let machineId, let workspaceId):
+      LaunchScreen(model: model, machineId: machineId, workspaceId: workspaceId)
     }
-  }
-}
-
-/// A screen another part of the app fills in later.
-struct PlaceholderScreen: View {
-  let title: String
-  let identifier: String
-
-  @Environment(\.claveTheme) private var theme
-
-  var body: some View {
-    EmptyState(icon: .wrench, title: "Coming next", text: "\(title) is the next screen to be built.")
-      .accessibilityIdentifier(identifier)
-      .frame(maxWidth: .infinity, maxHeight: .infinity)
-      .background(theme.colors.surface0)
-      .navigationTitle(title)
-      .navigationBarTitleDisplayMode(.inline)
   }
 }

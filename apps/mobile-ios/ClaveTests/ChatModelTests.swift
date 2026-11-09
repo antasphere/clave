@@ -233,7 +233,10 @@ final class ChatModelTests: XCTestCase {
 
   private func makeModel() throws -> ConversationModel {
     let client = try ClaveServerClient(baseURL: "https://fake.invalid", bearer: { "device-token" }, transport: server)
-    let model = ConversationModel(machineId: "m1", session: session, client: client, push: push, store: store)
+    let push: PushClient = self.push
+    let model = ConversationModel(
+      machineId: "m1", session: session, client: client, push: push,
+      events: { TestPushFanout.shared(for: push).stream() }, store: store)
     models.append(model)
     return model
   }

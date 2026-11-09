@@ -52,6 +52,9 @@ nonisolated struct NotificationResponseInput: Sendable {
   /// The signed-in owner's machines; nil when nobody is signed in.
   private(set) var machines: MachinesModel?
   private(set) var connections: [String: MachineConnection] = [:]
+  /// The open conversations, by "<machineId>/<sessionId>": one model per conversation, kept while
+  /// its machine's connection lives, so going back and in again keeps the draft and the transcript.
+  private(set) var conversations: [String: ConversationModel] = [:]
   var path: [Route] = []
   /// A sentence for the Machines screen when a notification could not go further.
   var notice: String?
@@ -189,10 +192,43 @@ nonisolated struct NotificationResponseInput: Sendable {
     connection.onUnpaired = { [weak self] _ in
       Task { await self?.machines?.refresh() }
     }
-    connections[machineId]?.stop()
+    if let previous = connections[machineId] {
+      previous.stop()
+      dropConversations(of: machineId)
+    }
     connections[machineId] = connection
     await connection.start()
     return connection
+  }
+
+  /// The conversation of a session on a machine, made on first use over that machine's
+  /// connection and reused after; nil when the machine has no such session.
+  func conversation(for machineId: String, sessionId: String, in connection: MachineConnection) async -> ConversationModel? {
+    let key = Self.conversationKey(machineId, sessionId)
+    if let existing = conversations[key] { return existing }
+    var found = connection.sessions.first { $0.id == sessionId }
+    if found == nil { found = try? await connection.client.sessions.get(sessionId) }
+    guard let session = found else { return nil }
+    // Made while the session was read: the first one stays.
+    if let existing = conversations[key] { return existing }
+    let model = ConversationModel(
+      machineId: machineId, session: session, client: connection.client, push: connection.push,
+      events: { connection.events() }, store: connection.ownerKeyValueStore)
+    // A conversation never outlives its connection: one made over a connection already replaced is not kept.
+    if connections[machineId] === connection { conversations[key] = model }
+    return model
+  }
+
+  nonisolated static func conversationKey(_ machineId: String, _ sessionId: String) -> String {
+    "\(machineId)/\(sessionId)"
+  }
+
+  private func dropConversations(of machineId: String) {
+    let prefix = "\(machineId)/"
+    for key in conversations.keys where key.hasPrefix(prefix) {
+      conversations[key]?.disappear()
+      conversations[key] = nil
+    }
   }
 
   // MARK: notifications
@@ -281,6 +317,8 @@ nonisolated struct NotificationResponseInput: Sendable {
   private func ownerChanged(_ namespace: String?) {
     for connection in connections.values { connection.stop() }
     connections = [:]
+    for conversation in conversations.values { conversation.disappear() }
+    conversations = [:]
     if let inbox { Task { await inbox.close() } }
     inbox = nil
     pushRegistry = nil
@@ -305,6 +343,7 @@ nonisolated struct NotificationResponseInput: Sendable {
     model.onForget = { [weak self] id in
       self?.connections[id]?.stop()
       self?.connections[id] = nil
+      self?.dropConversations(of: id)
     }
     model.onPaired = { [weak self] _ in
       guard let self else { return }

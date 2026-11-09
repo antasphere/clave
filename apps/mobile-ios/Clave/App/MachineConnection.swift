@@ -32,6 +32,8 @@ import Observation
   private(set) var requests: [PendingRequest] = []
   /// The last call that failed, as the server or the network said it.
   private(set) var lastError: String?
+  /// The server keeps no request list (`CapabilityUnavailable` on the read); cleared by a read that succeeds.
+  private(set) var requestsUnavailable = false
 
   /// The machine's name for a title: the listing's, else the pairing's.
   var name: String { machine?.name ?? record.map { $0.serverName.isEmpty ? machineId : $0.serverName } ?? machineId }
@@ -156,9 +158,18 @@ import Observation
   }
 
   func reloadRequests() async {
-    if let snapshot = await call({ try await $0.requests.pending() }) {
+    var unavailable = false
+    let snapshot = await call({ try await $0.requests.pending() }) { error in
+      // A server without the list is not a failure to show everywhere: the Requests screen says it.
+      unavailable = (error as? ServerError)?.capabilityUnavailable == true
+      return unavailable
+    }
+    if let snapshot {
+      requestsUnavailable = false
       requestsRevision = snapshot.revision
       requests = snapshot.pending
+    } else if unavailable {
+      requestsUnavailable = true
     }
   }
 
@@ -195,14 +206,17 @@ import Observation
 
   // MARK: internals
 
-  private func call<T: Sendable>(_ run: @Sendable (ClaveServerClient) async throws -> T) async -> T? {
+  /// One read; `handled` may take a failure for itself, else it is noted as the last error.
+  private func call<T: Sendable>(
+    _ run: @Sendable (ClaveServerClient) async throws -> T, handled: (Error) -> Bool = { _ in false }
+  ) async -> T? {
     guard !stopped else { return nil }
     do {
       let value = try await run(client)
       if case .offline = state, !sawDisconnect { state = .connected }
       return value
     } catch {
-      noteFailure(error)
+      if !handled(error) { noteFailure(error) }
       return nil
     }
   }

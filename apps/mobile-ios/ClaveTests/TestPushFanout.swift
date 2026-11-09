@@ -1,21 +1,22 @@
 import ClaveCore
 import Foundation
 
-/// One reader of a push client's event stream, shared by every screen that listens to it.
+/// The tests' one reader of a push client's event stream, standing in for the fan-out the app's
+/// `MachineConnection` does (`events()`), for a conversation built without a connection.
 ///
 /// `PushClient.events` is a single AsyncStream: two readers split its frames between them, and a
 /// reader whose task is cancelled finishes the stream for everyone after it. A chat that is left
 /// and opened again would then hear nothing. So the stream is read once, by a task nobody
 /// cancels, and each listener gets its own stream it may drop whenever it likes.
 @MainActor
-final class PushEventFanout {
-  private static var hubs: [ObjectIdentifier: PushEventFanout] = [:]
+final class TestPushFanout {
+  private static var hubs: [ObjectIdentifier: TestPushFanout] = [:]
 
   /// The fan-out of this client, made on first use and kept until the client's stream ends.
-  static func shared(for push: PushClient) -> PushEventFanout {
+  static func shared(for push: PushClient) -> TestPushFanout {
     let key = ObjectIdentifier(push)
     if let hub = hubs[key] { return hub }
-    let hub = PushEventFanout(push: push)
+    let hub = TestPushFanout(push: push)
     hubs[key] = hub
     return hub
   }
