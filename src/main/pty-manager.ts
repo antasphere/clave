@@ -16,6 +16,8 @@ import {
   type PtySpawnOptions
 } from './sessions/adapters/pty-backend'
 import { lineageOf } from './sessions/lineage'
+import { limitReportOf } from './sessions/limit-report'
+import { scopeFamily, type LimitReport } from '../shared/limit-report'
 import { runtimeChoices } from './sessions/runtime-choices'
 
 /** The runtime choices a restart carries (PRDCT-4191): the record's, which
@@ -81,52 +83,10 @@ sessionManager.registerAdapter(codexAdapter)
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
-/** The notices the CLI writes itself, in the model's place, when the account
- *  cannot take the turn: out of credits, the cap of the org or the seat, the
- *  usage limit of the plan. Read on a `<synthetic>` reply only. */
-const CLAUDE_LIMIT_NOTICE =
-  /out of usage credits|out of usage\b|usage credit cap|usage limit|hit your limit|limit reached/i
-
-/**
- * Whether a provider's own frame says the account is out (ADR 0002): Claude's
- * `rate_limit_event` with a rejected status or the synthetic reply it writes
- * in the model's place ("You're out of usage credits…") — the CLI in `-p`
- * mode ends its process right after that reply, and the reply is the only
- * word some limits get; Codex's `account/rateLimits/updated` at the cap or
- * with a reached type. Pure, for the tests; every other frame is nothing.
- */
-export function providerEventReportsLimit(provider: string, payload: unknown): boolean {
-  if (!payload || typeof payload !== 'object') return false
-  const p = payload as Record<string, unknown>
-  if (provider === 'claude') {
-    if (p.type === 'assistant') {
-      const message = p.message as Record<string, unknown> | undefined
-      if (message?.model !== '<synthetic>' || !Array.isArray(message.content)) return false
-      return message.content.some(
-        (block) =>
-          !!block &&
-          typeof block === 'object' &&
-          (block as Record<string, unknown>).type === 'text' &&
-          CLAUDE_LIMIT_NOTICE.test(String((block as Record<string, unknown>).text ?? ''))
-      )
-    }
-    if (p.type !== 'rate_limit_event') return false
-    const info = p.rate_limit_info as Record<string, unknown> | undefined
-    return info?.status === 'rejected'
-  }
-  if (provider === 'codex') {
-    if (p.method !== 'account/rateLimits/updated') return false
-    const params = p.params as Record<string, unknown> | undefined
-    const limits = params?.rateLimits as Record<string, unknown> | undefined
-    if (!limits) return false
-    if (limits.rateLimitReachedType) return true
-    for (const slot of ['primary', 'secondary']) {
-      const w = limits[slot] as Record<string, unknown> | undefined
-      if (w && typeof w.usedPercent === 'number' && w.usedPercent >= 95) return true
-    }
-  }
-  return false
-}
+/** The CLI's own word on its account's limit moved to `sessions/limit-report.ts`
+ *  (PRDCT-4302), where it reads WHICH cap was hit; re-exported for the callers
+ *  that only ask whether it was. */
+export { limitReportOf, providerEventReportsLimit } from './sessions/limit-report'
 
 /** What a restart on another account changes: the account fields, and
  *  whether the message the limit rejected goes again on the new account. */
@@ -148,13 +108,20 @@ class PtyManager {
   private spawns = new Map<string, { cwd: string; options?: PtySpawnOptions }>()
   /** A Codex chat session's thread, from the app-server's own meta. */
   private codexThreads = new Map<string, string>()
-  private limitListeners = new Set<(sessionId: string) => void>()
+  private limitListeners = new Set<(sessionId: string, report: LimitReport) => void>()
+  /** The limit report still open on a session (ADR 0002, PRDCT-4302): set
+   *  when the CLI reports a FAMILY's cap, cleared when the message it
+   *  rejected goes again on another model, when a restart resends it, or
+   *  when the person writes something else. While it is open, the next
+   *  model the provider confirms resends that one message. */
+  private openFamilyReports = new Map<string, UserMessageInput>()
   /** The message a chat session's account rejected, kept from the CLI's own
    *  report to the restart that resends it on the next account. */
   private rejected = new Map<string, UserMessageInput>()
 
-  /** A chat session's CLI reported its account's limit (ADR 0002). */
-  onLimitReported(listener: (sessionId: string) => void): () => void {
+  /** A chat session's CLI reported its account's limit (ADR 0002), and which
+   *  cap it hit (PRDCT-4302). */
+  onLimitReported(listener: (sessionId: string, report: LimitReport) => void): () => void {
     this.limitListeners.add(listener)
     return () => this.limitListeners.delete(listener)
   }
@@ -453,6 +420,7 @@ class PtyManager {
         // nothing, so it never erases a model already known here.
         const session = this.eventSessions.get(id)
         if (session && stream.event.model) {
+          const changed = session.model !== stream.event.model
           session.model = stream.event.model
           // On the record too (PRDCT-4191): a Resume relaunches on it.
           ptyBackend.setSessionRuntime(id, { model: stream.event.model })
@@ -460,6 +428,11 @@ class PtyManager {
           // the launch model for the tab's whole life, so its foot judged the
           // caps by a model the chat had long left.
           sessionModelChanged(id, stream.event.model)
+          // A family's cap rejected a turn and the model changed (the policy's
+          // model rung, or the person from the chip): the message the cap
+          // rejected goes again on the new model, once, while the report is
+          // still open and the message is still the person's last (PRDCT-4302).
+          if (changed) this.resendOnModelChange(id)
         }
         // The thread the app-server opened: what a restart resumes.
         if (sessionManager.get(id)?.adapterId === 'codex-chat' && stream.event.providerSessionId) {
@@ -475,14 +448,17 @@ class PtyManager {
         else if (stream.event.type === 'effort')
           ptyBackend.setSessionRuntime(id, { effort: stream.event.effort })
       }
-      if (
-        stream.kind === 'event' &&
-        stream.event.type === 'provider_event' &&
-        providerEventReportsLimit(stream.event.provider, stream.event.payload)
-      ) {
-        const last = claudeAdapter.lastUserMessage(id)
-        if (last) this.rejected.set(id, last)
-        for (const listener of this.limitListeners) listener(id)
+      if (stream.kind === 'event' && stream.event.type === 'provider_event') {
+        const report = limitReportOf(stream.event.provider, stream.event.payload)
+        if (report) {
+          const last = claudeAdapter.lastUserMessage(id)
+          if (last) this.rejected.set(id, last)
+          // A family's cap: the way on is another model of the same account,
+          // and the message it rejected is owed on that model.
+          if (last && scopeFamily(report.scope)) this.openFamilyReports.set(id, last)
+          else this.openFamilyReports.delete(id)
+          for (const listener of this.limitListeners) listener(id, report)
+        }
       }
       if (stream.kind === 'pty') onData(decoder.decode(stream.data, { stream: true }))
     })
@@ -495,6 +471,23 @@ class PtyManager {
       stopStream()
       stopExit()
     })
+  }
+
+  /** The message a FAMILY's cap rejected goes again on the model the provider
+   *  just confirmed (PRDCT-4302), once, while that report is still open on the
+   *  session and the message is still the person's last: the CLI's own advice
+   *  was to switch model, and the question was never answered. A report on
+   *  the shared caps or the credits opens nothing here (the account rung's
+   *  restart resends through `initialInput`), and a hand switch with no open
+   *  report never resends. */
+  private resendOnModelChange(id: string): void {
+    const owed = this.openFamilyReports.get(id)
+    if (!owed) return
+    this.openFamilyReports.delete(id)
+    if (claudeAdapter.lastUserMessage(id) !== owed) return
+    if (!sessionManager.get(id)) return
+    sessionManager.write(id, owed)
+    this.rejected.delete(id)
   }
 
   start(id: string, cols: number, rows: number): void {
@@ -529,6 +522,7 @@ class PtyManager {
       this.spawns.delete(id)
       this.codexThreads.delete(id)
       this.rejected.delete(id)
+      this.openFamilyReports.delete(id)
       // Copy offers are surfaced in the tab's own header: once the tab is
       // gone they are unreachable, so their values leave memory with it.
       dismissSessionOffers(id)
@@ -569,6 +563,8 @@ class PtyManager {
   ): { cwd: string; options: PtySpawnOptions; resumed: boolean } | null {
     const spawn = this.spawns.get(id)
     if (!spawn) return null
+    // A restart closes the report: the resend, when one is owed, rides it.
+    this.openFamilyReports.delete(id)
     const conversationId = this.conversationIdOf(id)
     const previous = spawn.options ?? {}
     // `onlyIfStopped` is the lifecycle's precondition, never a spawn option.

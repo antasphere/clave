@@ -5,6 +5,7 @@ import { useFleetStore } from '../store/fleet-store'
 import { claudeProfileSpawnFields } from '../store/claude-profile-store'
 import { codexAccountSpawnFields } from '../store/codex-account-store'
 import { accountForLaunch } from './switch-account'
+import { rememberedLaunchModel } from './launch-model'
 import { getActiveWorkspaceId, getWorkspaceById, workspaceServer } from '../store/workspace-store'
 import { pickServerFolder } from '../store/server-folder-store'
 import { clearLaunchNotice, showLaunchNotice } from '../store/launch-notice-store'
@@ -266,10 +267,26 @@ async function launchSessionNow(req: LaunchRequest): Promise<string | null> {
     req.initialPrompt && agentAcceptsPrompt(req.setup) ? req.initialPrompt : undefined
 
   // The account is the pool's answer (ADR 0002): the one asked for while it
-  // has headroom, else the next one along. Claude and Codex alike.
+  // has headroom, else the next one along. Claude and Codex alike, each
+  // judged for the model the launch will run (PRDCT-4302): a chat starts on
+  // the model last picked in its composer, so an account with its Fable week
+  // spent still takes a launch on Opus.
   const isClaudeSession = modes.claudeMode || modes.claudeAgentsMode
-  const profile = isClaudeSession ? accountForLaunch('claude', req.setup?.claudeProfileId) : null
-  const codexAccount = modes.codexMode ? accountForLaunch('codex', req.setup?.codexAccountId) : null
+  const launchWorkspaceId = req.workspaceId ?? getActiveWorkspaceId()
+  const [claudeModel, codexModel] = await Promise.all([
+    isClaudeSession
+      ? rememberedLaunchModel('claude', req.setup?.launchProfileId, launchWorkspaceId)
+      : undefined,
+    modes.codexMode
+      ? rememberedLaunchModel('codex', req.setup?.launchProfileId, launchWorkspaceId)
+      : undefined
+  ])
+  const profile = isClaudeSession
+    ? accountForLaunch('claude', req.setup?.claudeProfileId, claudeModel)
+    : null
+  const codexAccount = modes.codexMode
+    ? accountForLaunch('codex', req.setup?.codexAccountId, codexModel)
+    : null
   if (
     req.exactProfile &&
     ((profile && profile.id !== req.setup?.claudeProfileId) ||

@@ -33,6 +33,9 @@ import type {
   ExtensionsSection,
   SessionType
 } from './session-types'
+import type { LimitProposal } from './session-types'
+import { ladderKey } from '../lib/account-policy-rule'
+import { sameScope, type LimitReport } from '../../../shared/limit-report'
 import {
   PANEL_ROOTS,
   resolveDensity,
@@ -412,13 +415,13 @@ interface SessionState {
   setSessionModel: (id: string, model: string) => void
   /** The policy's knobs and its proposal on a session (ADR 0002). */
   setAccountPinned: (id: string, pinned: boolean) => void
+  setModelPinned: (id: string, pinned: boolean) => void
   setAccountSwitchMode: (id: string, mode: 'propose' | 'automatic' | null) => void
-  setAccountProposal: (
-    id: string,
-    proposal: { accountId: string; label: string; reason: 'limit' | 'reported' } | null
-  ) => void
-  setAccountProposalDismissed: (id: string, accountId: string | null) => void
-  setLimitReported: (id: string, reported: boolean) => void
+  setAccountProposal: (id: string, proposal: LimitProposal | null) => void
+  /** The ladder the user put away, by `ladderKey`; null clears it. */
+  setAccountProposalDismissed: (id: string, ladder: string | null) => void
+  /** The CLI's report, with the cap it hit; null when the report is answered. */
+  setLimitReported: (id: string, report: LimitReport | null) => void
   setSessionActivity: (id: string, status: ActivityStatus) => void
   setAgentState: (id: string, state: import('./session-types').AgentRunState) => void
   setBackgroundTaskCount: (id: string, count: number, agents?: number) => void
@@ -2029,6 +2032,17 @@ export const useSessionStore = create<SessionState>((set) => ({
       )
     })),
 
+  // The proposal is taken down with the pin and raised again by the policy
+  // without the model rung, the same way the account pin does.
+  setModelPinned: (id, pinned) =>
+    set((state) => ({
+      sessions: state.sessions.map((s) =>
+        s.id === id
+          ? { ...s, modelPinned: pinned, ...(pinned ? { accountProposal: null } : {}) }
+          : s
+      )
+    })),
+
   setAccountSwitchMode: (id, mode) =>
     set((state) => ({
       sessions: state.sessions.map((s) =>
@@ -2040,29 +2054,42 @@ export const useSessionStore = create<SessionState>((set) => ({
     set((state) => {
       const session = state.sessions.find((s) => s.id === id)
       if (!session) return state
+      const held = session.accountProposal ?? null
       const same =
-        (session.accountProposal ?? null) === proposal ||
-        (session.accountProposal?.accountId === proposal?.accountId &&
-          session.accountProposal?.reason === proposal?.reason)
+        held === proposal ||
+        (held !== null &&
+          proposal !== null &&
+          held.reason === proposal.reason &&
+          ladderKey(held.rungs) === ladderKey(proposal.rungs) &&
+          held.rungs.every((rung, i) => rung.label === proposal.rungs[i]?.label))
       if (same) return state
       return {
         sessions: state.sessions.map((s) => (s.id === id ? { ...s, accountProposal: proposal } : s))
       }
     }),
 
-  setAccountProposalDismissed: (id, accountId) =>
+  setAccountProposalDismissed: (id, ladder) =>
     set((state) => ({
       sessions: state.sessions.map((s) =>
-        s.id === id ? { ...s, accountProposalDismissed: accountId } : s
+        s.id === id ? { ...s, accountProposalDismissed: ladder } : s
       )
     })),
 
-  setLimitReported: (id, reported) =>
+  setLimitReported: (id, report) =>
     set((state) => {
       const session = state.sessions.find((s) => s.id === id)
-      if (!session || (session.limitReported ?? false) === reported) return state
+      if (!session) return state
+      const held = session.limitReported ?? null
+      if (held === report) return state
+      if (
+        held !== null &&
+        report !== null &&
+        sameScope(held.scope, report.scope) &&
+        held.resetsAt === report.resetsAt
+      )
+        return state
       return {
-        sessions: state.sessions.map((s) => (s.id === id ? { ...s, limitReported: reported } : s))
+        sessions: state.sessions.map((s) => (s.id === id ? { ...s, limitReported: report } : s))
       }
     }),
 

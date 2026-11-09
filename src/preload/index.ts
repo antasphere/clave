@@ -14,6 +14,7 @@ import type {
 import type { AttachmentPreview, AttachmentSource, FileAttachment } from '../shared/attachments'
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import type { UpdaterState } from '../shared/updater-types'
+import type { LimitReport } from '../shared/limit-report'
 import type { AgentUpdateId, AgentUpdatesState } from '../shared/agent-updates'
 import type {
   LaunchProfile,
@@ -1495,10 +1496,20 @@ const electronAPI = {
         onSessionEvent(push, 'session.plan_detected', sessionId, (event) => callback(event.path))
     ),
 
-  // A chat session's CLI reported its account's limit (ADR 0002): the policy
-  // reads the account and proposes or makes the move.
-  onSessionLimitReported: (callback: (sessionId: string) => void) =>
-    createIpcListener<[string]>('session:limit-reported', callback),
+  // A chat session's CLI reported its account's limit and which cap it hit
+  // (ADR 0002, PRDCT-4302): the policy resolves the scope against the
+  // account's read and offers a model, an account or a provider. Both
+  // transports, as the model change (`session.model_changed`) above.
+  onSessionLimitReported: viaServerEvent<
+    'session.limit_reported',
+    { id: string; report: LimitReport }
+  >('session:limit-reported', 'session.limit_reported', (event) => ({
+    id: event.id,
+    report:
+      event.resetsAt !== undefined
+        ? { scope: event.scope, resetsAt: event.resetsAt }
+        : { scope: event.scope }
+  })),
   onClearDetected: (sessionId: string, callback: (newClaudeSessionId: string | null) => void) =>
     onBothTransports(
       createIpcListener<[string | null]>(`session:clear-detected:${sessionId}`, callback),

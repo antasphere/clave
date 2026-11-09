@@ -5,6 +5,7 @@ import type { SessionGroup, Session, PinnedGroup } from './session-types'
 const mocks = vi.hoisted(() => ({
   launch: vi.fn(),
   resolveAccount: vi.fn(),
+  launchModel: vi.fn<(provider: string) => Promise<string | undefined>>(async () => undefined),
   state: {
     groups: [] as SessionGroup[],
     sessions: [] as Session[],
@@ -17,6 +18,7 @@ const mocks = vi.hoisted(() => ({
 }))
 vi.mock('../lib/launch-session', () => ({ launchSession: mocks.launch }))
 vi.mock('../lib/switch-account', () => ({ resolveAccountRef: mocks.resolveAccount }))
+vi.mock('../lib/launch-model', () => ({ rememberedLaunchModel: mocks.launchModel }))
 vi.mock('./claude-profile-store', () => ({ getClaudeProfile: vi.fn() }))
 vi.mock('./codex-account-store', () => ({ getCodexAccount: vi.fn() }))
 vi.mock('./session-store', () => ({
@@ -241,4 +243,39 @@ it('continues after a failed server launch and groups only successful sessions',
     workspaceId
   )
   log.mockRestore()
+})
+
+it("judges a pinned session's account for the model its chat will run (PRDCT-4302), the server pin never", async () => {
+  const localWorkspace = 'local-ws'
+  workspace.useWorkspaceStore.setState({
+    activeWorkspaceId: localWorkspace,
+    workspaces: [
+      { id: localWorkspace, name: 'Local', rootDir: '/repo', profileFile: null, createdAt: 1 }
+    ],
+    serverWorkspaces: {}
+  })
+  mocks.launchModel.mockImplementation(async (provider: string) =>
+    provider === 'claude' ? 'claude-opus-5-5' : undefined
+  )
+  mocks.resolveAccount.mockReturnValue({ id: 'work', label: 'Work' })
+  ;(window.electronAPI.spawnSession as ReturnType<typeof vi.fn>).mockImplementation(
+    async (cwd: string) => ({ id: `s-${Math.random()}`, cwd, folderName: 'project', alive: true })
+  )
+  const p: PinnedGroup = {
+    ...pin(),
+    workspaceId: localWorkspace,
+    filePath: '/repo/default.clave',
+    rootDir: '/repo',
+    sessions: [
+      { ...pin().sessions[0], codexMode: false, claudeMode: true, account: 'Work' },
+      { ...pin().sessions[0], account: 'Codex work' }
+    ]
+  }
+  pinned.usePinnedStore.setState({ pinnedGroups: [p] })
+  await pinned.togglePinnedGroup('pin')
+  expect(mocks.launchModel).toHaveBeenCalledWith('claude', undefined, localWorkspace)
+  expect(mocks.launchModel).toHaveBeenCalledWith('codex', undefined, localWorkspace)
+  expect(mocks.resolveAccount).toHaveBeenCalledWith('claude', 'Work', 'claude-opus-5-5')
+  expect(mocks.resolveAccount).toHaveBeenCalledWith('codex', 'Codex work', undefined)
+  expect(mocks.launch).not.toHaveBeenCalled()
 })

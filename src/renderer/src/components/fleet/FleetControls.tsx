@@ -290,7 +290,7 @@ export function FleetResume({
   const alive = useSessionStore((s) => s.sessions.find((v) => v.id === sessionId)?.alive)
   const drawing = useSessionStore((s) => {
     const session = s.sessions.find((v) => v.id === sessionId)
-    return session?.restarting !== true && session?.limitReported !== true
+    return session?.restarting !== true && !session?.limitReported
   })
   const status = useFleetStore((s) => s.statuses[ownerOf(sessionId)]?.state)
   const [busy, setBusy] = useState(false)

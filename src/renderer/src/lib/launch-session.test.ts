@@ -15,6 +15,8 @@ const f = vi.hoisted(() => ({
   notice: vi.fn(),
   focusedSessionId: null as string | null,
   accountId: null as string | null,
+  accountCalls: [] as [string, string | undefined, string | undefined][],
+  launchModel: vi.fn(async () => undefined as string | undefined),
   activeWorkspaceId: 'workspace' as string | null,
   workspaces: new Map<string, { id: string; rootDir: string }>(),
   statuses: {} as Record<string, { state: string }>
@@ -50,8 +52,12 @@ vi.mock('../store/codex-account-store', () => ({
   codexAccountSpawnFields: (p: { id: string }) => ({ codexAccountId: p.id })
 }))
 vi.mock('./switch-account', () => ({
-  accountForLaunch: (_provider: string, id: string) => ({ id: f.accountId ?? id })
+  accountForLaunch: (provider: string, id: string, model?: string) => {
+    f.accountCalls.push([provider, id, model])
+    return { id: f.accountId ?? id }
+  }
 }))
+vi.mock('./launch-model', () => ({ rememberedLaunchModel: f.launchModel }))
 vi.mock('../store/workspace-store', () => ({
   getActiveWorkspaceId: () => f.activeWorkspaceId,
   getWorkspaceById: (id: string) => f.workspaces.get(id) ?? null,
@@ -69,6 +75,9 @@ afterEach(() => {
   vi.resetAllMocks()
   vi.unstubAllGlobals()
   f.accountId = null
+  f.accountCalls = []
+  f.launchModel.mockReset()
+  f.launchModel.mockResolvedValue(undefined)
   f.focusedSessionId = null
   f.activeWorkspaceId = 'workspace'
   f.workspaces.clear()
@@ -214,6 +223,33 @@ describe('launchSession acknowledgement and opt-in errors', () => {
       expect(f.add).not.toHaveBeenCalled()
     }
   )
+
+  it("judges the account for the model the launch will run (PRDCT-4302): the launcher's account button and the keyboard pass their chat's remembered model", async () => {
+    vi.stubGlobal('window', { electronAPI: { spawnSession: f.spawn } })
+    f.spawn.mockResolvedValue({
+      id: 'new',
+      cwd: '/private/triage',
+      folderName: 'triage',
+      alive: true
+    })
+    f.launchModel.mockResolvedValue('gpt-5.5')
+    await launchSession({ ...request, throwOnError: true })
+    // The model is read for the launch's profile in the launch's workspace.
+    expect(f.launchModel).toHaveBeenCalledWith('codex', 'codex-work', 'capture-workspace')
+    expect(f.accountCalls).toEqual([['codex', 'work', 'gpt-5.5']])
+  })
+
+  it('judges a launch whose model this Mac cannot know on the shared caps alone', async () => {
+    vi.stubGlobal('window', { electronAPI: { spawnSession: f.spawn } })
+    f.spawn.mockResolvedValue({
+      id: 'new',
+      cwd: '/private/triage',
+      folderName: 'triage',
+      alive: true
+    })
+    await launchSession({ ...request, throwOnError: true })
+    expect(f.accountCalls).toEqual([['codex', 'work', undefined]])
+  })
 
   it('rejects a different account from the existing pool helper before any spawn', async () => {
     vi.stubGlobal('window', {

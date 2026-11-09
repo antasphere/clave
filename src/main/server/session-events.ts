@@ -15,6 +15,7 @@
  */
 import type { ServerEvent } from '@clave/contract/events'
 import type { SessionManager } from '../sessions/session-manager'
+import type { LimitReport } from '../../shared/limit-report'
 import { sessionWindows } from '../sessions/windows'
 
 type Publisher = (event: ServerEvent) => Promise<void>
@@ -84,6 +85,19 @@ export function sessionModelChanged(id: string, model: string): void {
   if (publisher)
     void publisher({ _tag: 'session.model_changed', id, model }).catch((error) =>
       console.error('[clave-server] session.model_changed not published', error)
+    )
+}
+
+/** The session's CLI reported its account's limit, and which cap it hit
+ *  (ADR 0002, PRDCT-4302). Both transports, from this one source, the way the
+ *  model change goes: the window's IPC channel at once and the server's push
+ *  channel when one publishes; the window takes exactly one of them. */
+export function sessionLimitReported(id: string, report: LimitReport): void {
+  const windows = sessionWindows()
+  windows.send(windows.windowOf(id), 'session:limit-reported', { id, report })
+  if (publisher)
+    void publisher({ _tag: 'session.limit_reported', id, ...report }).catch((error) =>
+      console.error('[clave-server] session.limit_reported not published', error)
     )
 }
 

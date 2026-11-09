@@ -1,3 +1,4 @@
+import type { LimitReport } from '../../../shared/limit-report'
 import type { WorkAssignment } from '@clave/contract/work-rules'
 
 /**
@@ -10,6 +11,21 @@ import type { WorkAssignment } from '@clave/contract/work-rules'
  * moment a name is added here, and `theme-palettes.test.ts` walks this list to
  * hold the other two honest.
  */
+/** One way on after a limit (ADR 0002, PRDCT-4302): another model of the same
+ *  account, another account, or another provider. */
+export type LimitRung =
+  | { kind: 'model'; model: string; label: string }
+  | { kind: 'account'; accountId: string; label: string }
+  | { kind: 'provider'; adapterId: string; label: string }
+
+/** What the policy proposes on a tab at its limit: the rungs in order, the
+ *  first the one automatic mode takes; `reason` whether the poll or the CLI
+ *  said so. A rung's key and a ladder's are `account-policy-rule.ts`'s. */
+export interface LimitProposal {
+  reason: 'limit' | 'reported'
+  rungs: LimitRung[]
+}
+
 export const THEMES = ['dark', 'charcoal', 'light', 'coffee'] as const
 
 export type Theme = (typeof THEMES)[number]
@@ -393,16 +409,21 @@ export interface Session {
   /** Pinned to its account (ADR 0002): never moved by the policy, never
    *  proposed a move; the menu can still switch it by hand. Session-lifetime. */
   accountPinned?: boolean
+  /** Pinned to its model (PRDCT-4302): a family's cap never has the policy
+   *  change the model of this tab, it falls to the account rung. Session-lifetime. */
+  modelPinned?: boolean
   /** This session's own switching mode, over the workspace's. */
   accountSwitchMode?: 'propose' | 'automatic'
-  /** The move the policy proposes (or, in automatic mode, will make once the
-   *  agent is idle): the account to go to. Null = nothing proposed. */
-  accountProposal?: { accountId: string; label: string; reason: 'limit' | 'reported' } | null
-  /** The proposal the user dismissed, by account, so it is not re-raised
-   *  until the account changes. */
+  /** The way on the policy proposes (or, in automatic mode, will take once
+   *  the agent is idle): the rungs in order, the first the one automatic
+   *  mode takes. Null = nothing proposed. */
+  accountProposal?: LimitProposal | null
+  /** The proposal the user dismissed, by the key of its ladder
+   *  (`ladderKey`), so it is not re-raised until the rungs change. */
   accountProposalDismissed?: string | null
-  /** The CLI itself reported the account's limit (a chat stream event). */
-  limitReported?: boolean
+  /** The CLI itself reported the account's limit (a chat stream event), with
+   *  the cap it hit (PRDCT-4302). Null or absent: no report open. */
+  limitReported?: LimitReport | null
   /** True between the kill and the respawn of an account switch, so the
    *  exit is not announced as the session ending. */
   restarting?: boolean
