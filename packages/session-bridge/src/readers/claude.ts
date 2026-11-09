@@ -157,10 +157,12 @@ export function replayClaudeTranscript(
       const tokens = contextTokens(message.usage)
       if (tokens > 0 && tokens !== used) {
         used = tokens
+        const model = typeof message.model === 'string' ? message.model : null
         push({
           type: 'context_usage',
           used,
-          window: claudeContextWindow(typeof message.model === 'string' ? message.model : null)
+          window: claudeContextWindow(model),
+          ...(model ? { model } : {})
         })
       }
     }

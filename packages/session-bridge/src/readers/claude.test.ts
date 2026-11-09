@@ -34,7 +34,7 @@ describe('reading a Claude Code transcript', () => {
         type: 'user_message',
         text: 'List the files here, then write hello.txt with the word hello.'
       },
-      { type: 'context_usage', used: 1242, window: null },
+      { type: 'context_usage', used: 1242, window: null, model: 'claude-opus-5-5' },
       { type: 'assistant_text', delta: 'Listing the folder first.', final: true },
       {
         type: 'tool_call',
@@ -49,7 +49,7 @@ describe('reading a Claude Code transcript', () => {
         name: 'Write',
         input: { file_path: '/Users/example/project/hello.txt', content: 'hello\n' }
       },
-      { type: 'context_usage', used: 1562, window: null },
+      { type: 'context_usage', used: 1562, window: null, model: 'claude-opus-5-5' },
       {
         type: 'tool_result',
         id: 'toolu_02',
@@ -90,7 +90,7 @@ describe('reading a Claude Code transcript', () => {
       replayClaudeTranscript(lines('claude-stream-real-turn.ndjson')).map((i) => i.event)
     ).toEqual([
       { type: 'assistant_text', delta: 'CLAVE_OK', final: true },
-      { type: 'context_usage', used: expect.any(Number), window: null }
+      { type: 'context_usage', used: expect.any(Number), window: null, model: 'claude-opus-5' }
     ])
     const denied = replayClaudeTranscript(lines('claude-stream-permission-turn.ndjson')).map(
       (i) => i.event

@@ -75,6 +75,10 @@ export interface ContextUsage {
   type: 'context_usage'
   used: number
   window: number | null
+  /** The model id the frame that carried this usage named, when it did: a
+   *  consumer that knows a model's window by name (Clave's table) reads it
+   *  where the reader itself leaves `window` null. */
+  model?: string
   parent?: string
 }
 

@@ -22,7 +22,6 @@ import {
   type SessionControl,
   flattenAnswers
 } from '../../../shared/session-model'
-import { formMessageMarker } from '../../../shared/form-message'
 import { buildAgentArgv, claudeProfilePermissions } from '../../../shared/agent-launch'
 import { isValidModelName } from '../../../shared/model-name'
 import { effortLabel, isValidEffort } from '../../../shared/effort'
@@ -55,6 +54,8 @@ import {
   type PtySpawnOptions
 } from './pty-backend'
 import { NdjsonLines } from './ndjson'
+import { replayClaudeTranscript } from '@clave/session-bridge/readers/claude'
+import { toHistoryItems } from './bridge-history'
 import { commandTitle } from '../../../shared/command-title'
 
 const object = z.record(z.string(), z.unknown())
@@ -150,30 +151,11 @@ export const HOST_COMMANDS: CommandOption[] = [
   { name: 'mcp', description: 'Manage MCP servers', insert: '/mcp' },
   { name: 'plugin', description: 'Manage plugins', insert: '/plugin' }
 ]
-/** What a transcript's human line says, the way the reader typed it: a slash
- *  command as "/name args", the CLI's own wrappers (command output, caveats,
- *  reminders) as nothing. */
 /** The CLI's own acknowledgement of an interrupt, written into the
  *  conversation as a user text block: "[Request interrupted by user]", or
  *  "[Request interrupted by user for tool use]" when a tool was running. */
-/** A user message read back from the transcript: a form's outcome the host
- *  wrote (PRDCT-4157) keeps its marker, so the view folds it into the form's
- *  record as it did live, never a bubble of the person. */
-function userMessageOf(text: string): Extract<SessionEvent, { type: 'user_message' }> {
-  const form = formMessageMarker(text)
-  return { type: 'user_message', text, ...(form && { form }) }
-}
 function isInterruptNotice(text: unknown): boolean {
   return typeof text === 'string' && /^\[Request interrupted by user/.test(text.trim())
-}
-function spokenText(text: string): string {
-  const command = /<command-name>([^<]*)<\/command-name>/.exec(text)
-  if (command) {
-    const args = /<command-args>([^<]*)<\/command-args>/.exec(text)?.[1] ?? ''
-    return `${command[1].trim()} ${args.trim()}`.trim()
-  }
-  if (text.trimStart().startsWith('<') || text.startsWith('Caveat:')) return ''
-  return text
 }
 /** Where Claude Code keeps a conversation: `<root>/<cwd, dashed>/<id>.jsonl`,
  *  else wherever in the root a file of that id is (the cwd may have moved). */
@@ -547,93 +529,13 @@ export class ClaudeStreamTranslator {
    *  live turn would have produced, each with the moment the transcript gives
    *  it: the CLI resumes it without repeating it, so a view would otherwise
    *  open on an empty page. Returned, never streamed: a view asks for it a page
-   *  at a time (`sessions:history`), the newest first. Subagent lines, meta
-   *  lines and the CLI's own wrappers stay out; a call the transcript never
-   *  answered is closed, not left spinning. */
+   *  at a time (`sessions:history`), the newest first. The reader is the
+   *  session bridge's (PRDCT-4301, `bridge-history.ts` says what the chat
+   *  keeps for itself); the past's tool ids are learnt here, so a live frame
+   *  that names one again is not emitted twice. */
   replay(lines: Iterable<string>): HistoryItem[] {
-    const items: HistoryItem[] = []
-    const open = new Set<string>()
-    const close = (): void => {
-      for (const id of open) items.push({ event: { type: 'tool_result', id, output: undefined } })
-      open.clear()
-    }
-    const block = z.object({ type: z.string() }).passthrough()
-    let used = 0
-    for (const line of lines) {
-      let frame: Record<string, unknown>
-      try {
-        frame = object.parse(JSON.parse(line))
-      } catch {
-        continue
-      }
-      if (frame.isSidechain === true || frame.isMeta === true) continue
-      const content = object.safeParse(frame.message).data?.content
-      const time = typeof frame.timestamp === 'string' ? Date.parse(frame.timestamp) : NaN
-      const push = (event: SessionEvent): void => {
-        // The reader spoke again: whatever the turn before left unanswered is
-        // over. Closed here rather than at the end of the transcript, so a
-        // call that never got its result does not tie every later turn to it
-        // and a page can still begin at each of them.
-        if (event.type === 'user_message') close()
-        items.push(Number.isFinite(time) ? { event, at: time } : { event })
-      }
-      if (frame.type === 'user') {
-        if (typeof content === 'string') {
-          if (isInterruptNotice(content)) push({ type: 'turn_interrupted' })
-          else if (spokenText(content)) push(userMessageOf(spokenText(content)))
-          continue
-        }
-        for (const item of z.array(block).catch([]).parse(content)) {
-          if (item.type === 'text' && isInterruptNotice(item.text)) {
-            push({ type: 'turn_interrupted' })
-          } else if (item.type === 'tool_result' && typeof item.tool_use_id === 'string') {
-            open.delete(item.tool_use_id)
-            push({
-              type: 'tool_result',
-              id: item.tool_use_id,
-              output: item.content,
-              ...(item.is_error === true ? { error: true } : {})
-            })
-          } else if (item.type === 'text' && typeof item.text === 'string') {
-            const text = spokenText(item.text)
-            if (text) push(userMessageOf(text))
-          }
-        }
-      } else if (frame.type === 'assistant') {
-        for (const item of z.array(block).catch([]).parse(content)) {
-          if (item.type === 'text' && typeof item.text === 'string' && item.text.trim())
-            push({ type: 'assistant_text', delta: item.text, final: true })
-          else if (
-            item.type === 'tool_use' &&
-            typeof item.id === 'string' &&
-            !this.tools.has(item.id)
-          ) {
-            this.tools.add(item.id)
-            open.add(item.id)
-            push({
-              type: 'tool_call',
-              id: item.id,
-              name: typeof item.name === 'string' ? item.name : 'Tool',
-              input: item.input
-            })
-          }
-        }
-        // The context as it stood, so a resumed session's meter is not blank
-        // until its next answer. A live turn's result names the window; until
-        // then the model the transcript's own frame names says it.
-        const message = object.safeParse(frame.message).data
-        const tokens = contextTokens(message?.usage)
-        if (tokens > 0 && tokens !== used) {
-          used = tokens
-          push({
-            type: 'context_usage',
-            used,
-            window: claudeContextWindow(typeof message?.model === 'string' ? message.model : null)
-          })
-        }
-      }
-    }
-    close()
+    const items = toHistoryItems(replayClaudeTranscript(lines), { wrappers: 'drop' })
+    for (const { event } of items) if (event.type === 'tool_call') this.tools.add(event.id)
     return items
   }
   line(line: string): void {

@@ -1228,6 +1228,45 @@ it('replays a resumed transcript as the events a live turn would have produced',
   ])
   for (const event of replayed) expect(SessionEventSchema.safeParse(event).success).toBe(true)
 })
+it("keeps every message of the person on replay, and drops the CLI's own rows by their exact tag (PRDCT-4301)", () => {
+  const user = (content: unknown): string =>
+    JSON.stringify({ type: 'user', message: { role: 'user', content } })
+  const answer = (text: string): string =>
+    JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text }] } })
+  const replayed = translator
+    .replay([
+      user('<div>pasted html the person typed</div> what does this do?'),
+      answer('A block.'),
+      user([{ type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'AA' } }]),
+      answer('A picture.'),
+      user('Caveat: the person really started with Caveat:'),
+      answer('Noted.'),
+      user('<local-command-stdout>ok</local-command-stdout>'),
+      user('<local-command-stderr>oops</local-command-stderr>'),
+      user('<task-notification>a background task ended</task-notification>'),
+      user('<system-reminder>injected without the meta mark</system-reminder>'),
+      user('<3 you'),
+      answer('Likewise.')
+    ])
+    .map((item) => item.event)
+  // Each message of the person opens its own turn: the old rule dropped a
+  // text by its first character, and the next answer merged into the turn
+  // before (lane C's verifier, round 1, B1).
+  expect(
+    replayed.map((e) =>
+      e.type === 'user_message' ? `U:${e.text}` : e.type === 'assistant_text' ? 'A' : e.type
+    )
+  ).toEqual([
+    'U:<div>pasted html the person typed</div> what does this do?',
+    'A',
+    'U:[Image]',
+    'A',
+    'U:Caveat: the person really started with Caveat:',
+    'A',
+    'U:<3 you',
+    'A'
+  ])
+})
 it('dates each replayed event by its transcript line, and closes a dead call at the next message', () => {
   const at = (iso: string): number => Date.parse(iso)
   const items = translator.replay(

@@ -16,6 +16,9 @@ const BUNDLED_SOURCE = [
   '@clave/contract',
   '@clave/server',
   '@clave/client',
+  // The session bridge publishes its TypeScript source too (PRDCT-4301): the
+  // adapters' transcript readers are its readers, bundled into main.
+  '@clave/session-bridge',
   '@structure-ai/client',
   '@structure-ai/config',
   '@structure-ai/cqrs',
