@@ -17,6 +17,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.KeyboardType
 import com.clave.android.AppServices
 import com.clave.android.ui.ClaveViewModel
@@ -75,14 +77,22 @@ fun DeveloperScreen(services: AppServices, viewModel: ClaveViewModel, onBack: ()
                     onValueChange = { url = it },
                     placeholder = "http://127.0.0.1:47201",
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.fillMaxWidth().semantics { contentDescription = "Server address" },
                 )
                 BasicText("Server token", style = label)
                 // A plain field, not a masked one: the token is the developer's own local server's,
                 // and an automated check types into it; this screen exists in development builds only.
-                ClaveTextField(value = token, onValueChange = { token = it }, modifier = Modifier.fillMaxWidth())
+                ClaveTextField(
+                    value = token,
+                    onValueChange = { token = it },
+                    modifier = Modifier.fillMaxWidth().semantics { contentDescription = "Server token" },
+                )
                 BasicText("Name", style = label)
-                ClaveTextField(value = name, onValueChange = { name = it }, modifier = Modifier.fillMaxWidth())
+                ClaveTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    modifier = Modifier.fillMaxWidth().semantics { contentDescription = "Name" },
+                )
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                     ClaveButton(
                         label = if (busy) "Connecting…" else "Connect",
