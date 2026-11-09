@@ -18,6 +18,7 @@ import type {
 } from '@clave/server'
 import type { SessionStream } from '../../../shared/src/session-model'
 import type { AccountUsageManager } from '../usage-manager'
+import type { TitleGenerationTestHooks } from '../title-generator'
 import { TEST_NO_ACTIVATE } from '../test-mode'
 
 export interface E2eHooks {
@@ -52,10 +53,11 @@ export interface E2eHooks {
   // phones under `--push-fake` (`packages/server/src/notify/credentials.ts`),
   // installed by whichever entry runs the server ──
   notify: NotifyE2eHooks
-  /** The native mobile wave: the title opt-out of `packages/host/src/title-generator.ts`,
-   *  for the fixture's mutation that lets a one-shot through while the daemon
-   *  still announces titles off, so its recorder is what catches the call. */
-  titles: { enable(): void; disable(reason: string): void; disabled(): string | null }
+  /** The native mobile wave: the title opt-out and the one-shot's resolver of
+   *  `packages/host/src/title-generator.ts`, for the fixture's checks from
+   *  inside the daemon and for its mutation that lets a one-shot through while
+   *  the daemon still announces titles off, so its recorder catches the call. */
+  titles: TitleGenerationTestHooks
   // ── later lanes add theirs here ──
 }
 

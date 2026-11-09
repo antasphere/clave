@@ -17,6 +17,7 @@ import {
 } from './sessions/adapters/pty-backend'
 import { launchProfileManager } from './launch-profile-manager'
 import { buildOneShotLaunch, type OneShotLaunch } from './claude-one-shot'
+import { findExecutable } from './shell-launch'
 import { TITLE_HELPER_MARKER } from './session-history'
 import { sessionCleared, sessionPlanDetected, sessionTitleChanged } from './server/session-events'
 
@@ -104,6 +105,42 @@ export function enableTitleGenerationForTests(): void {
 /** The terminal sessions being watched for their first message (test seam). */
 export function watchedTitleSessionsForTests(): number {
   return sessions.size
+}
+
+/** What a title one-shot would start right now, resolved the way a real one
+ *  is (this process's cached login environment, the one-shot's own locate),
+ *  for a fixture to read from inside the process: the executable, its
+ *  arguments and the PATH it was found on, never the environment itself. */
+export async function resolveTitleLaunchForTests(
+  context: TitleLaunchContext = {}
+): Promise<{ file: string; args: readonly string[]; pathEnv: string | undefined }> {
+  const launch = await titleLaunch(context)
+  return { file: launch.file, args: launch.args, pathEnv: launch.env.PATH }
+}
+
+/** Where `command` lives on this process's cached login PATH, as a one-shot locates it. */
+export function locateOnLoginPathForTests(command: string): string | null {
+  return findExecutable(command, getLoginShellEnv().PATH)
+}
+
+export interface TitleGenerationTestHooks {
+  enable(): void
+  disable(reason: string): void
+  disabled(): string | null
+  launch(): Promise<{ file: string; args: readonly string[]; pathEnv: string | undefined }>
+  locate(command: string): string | null
+}
+
+/** The seams a daemon in test mode puts on `__claveE2E.titles`: the opt-out
+ *  turned, and the resolver asked, from inside the process. */
+export function titleGenerationTestHooks(): TitleGenerationTestHooks {
+  return {
+    enable: enableTitleGenerationForTests,
+    disable: disableTitleGeneration,
+    disabled: titleGenerationDisabled,
+    launch: () => resolveTitleLaunchForTests(),
+    locate: locateOnLoginPathForTests
+  }
 }
 
 /** The one-shot CLI children running right now, and the ones `cancelAll`

@@ -133,8 +133,8 @@ import {
 import { TEST_NO_ACTIVATE, TEST_NO_MACHINE_USAGE } from '../../../packages/host/src/test-mode'
 import {
   disableTitleGeneration,
-  enableTitleGenerationForTests,
-  titleGenerationDisabled
+  titleGenerationDisabled,
+  titleGenerationTestHooks
 } from '../../../packages/host/src/title-generator'
 // ── Wave 5, lane C: the plugins, this server's own service (packages/host/src/plugins/standalone-plugins.ts) ──
 import { standalonePlugins } from '../../../packages/host/src/plugins/standalone-plugins'
@@ -230,16 +230,11 @@ async function main(): Promise<void> {
     disableTitleGeneration('--no-titles')
     log('titles: off (--no-titles), no tab is named by a one-shot')
   }
-  // Under `--test-no-activate` only: the fixture's mutation re-opens the
-  // titles in a running daemon that still announces them off, so that its
-  // recorder, and not the announcement, is what catches the one-shot.
-  installE2eHooks({
-    titles: {
-      enable: enableTitleGenerationForTests,
-      disable: disableTitleGeneration,
-      disabled: titleGenerationDisabled
-    }
-  })
+  // Under `--test-no-activate` only: the fixture asks the one-shot's resolver
+  // from inside this process, and its mutation re-opens the titles in a
+  // running daemon that still announces them off, so that its recorder, and
+  // not the announcement, is what catches the one-shot.
+  installE2eHooks({ titles: titleGenerationTestHooks() })
 
   // ── Wave 6, lane B: the login shell's environment, read while the rest starts (PRDCT-3527) ──
   // tmux, Claude and Codex are found on its PATH, and a read made when first
