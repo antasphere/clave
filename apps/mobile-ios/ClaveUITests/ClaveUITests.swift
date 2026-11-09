@@ -5,6 +5,6 @@ final class ClaveUITests: XCTestCase {
   func testLaunches() {
     let app = XCUIApplication()
     app.launch()
-    XCTAssertTrue(app.staticTexts["app.placeholder"].waitForExistence(timeout: 10))
+    XCTAssertTrue(app.staticTexts["Machines"].waitForExistence(timeout: 10))
   }
 }
