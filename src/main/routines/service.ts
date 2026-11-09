@@ -28,10 +28,13 @@ import type {
 } from '@clave/server'
 import type { WorkspaceFiles } from '@clave/server/workspace-files'
 import type {
+  RoutineCreateInput,
   RoutineDeclaration,
+  RoutinePatch,
   RoutineRun,
   RoutineRunTrigger,
   RoutineStatus,
+  RoutineView,
   RoutinesListing
 } from '@clave/contract/routines'
 import type { SpawnOptions } from '@clave/contract/sessions'
@@ -39,6 +42,14 @@ import type { SessionStream } from '@clave/contract/sessions'
 import type { StoragePort } from '../ports/storage'
 import { Viewer, type ViewerOptions } from '../../../plugins/analytics/src/viewer'
 import { Claims } from './claims'
+import {
+  CREATED_FILE,
+  CreatedRoutinesStore,
+  applyPatch,
+  createdProblem,
+  declareCreated,
+  isCreatedKey
+} from './created'
 import {
   DECKS_DIR,
   type DeckEnvelope,
@@ -99,6 +110,10 @@ export interface RoutineServiceOptions {
   /** The Slideless publisher for routines whose report says `publish: true`
    *  (PRDCT-4149); absent or `false`, such a run carries why nothing was published. */
   readonly publisher?: RoutinePublisher | false
+  /** The built-in report page a created routine gets when it names no
+   *  template (PRDCT-4242): the app's `resources/routines/default-report`.
+   *  Absent, a created routine must name a template of its own. */
+  readonly defaultTemplate?: string
   /** The viewer: the login shell's environment the CLI is found in; `false` for no viewer (tests). */
   readonly viewer?:
     | { env: () => Promise<Record<string, string>>; spawn?: ViewerOptions['spawn'] }
@@ -156,6 +171,8 @@ export function createRoutineService(options: RoutineServiceOptions): RoutineSer
   const now = options.now ?? ((): number => Date.now())
   const log = options.log ?? ((): void => {})
   const store = new RoutinesStore(options.storage, now)
+  const created = new CreatedRoutinesStore(options.storage, now)
+  const createdFile = path.join(options.dataDir, CREATED_FILE)
   const claims = new Claims({
     holder: options.holder,
     now,
@@ -225,7 +242,18 @@ export function createRoutineService(options: RoutineServiceOptions): RoutineSer
         undefined,
         options.identity()
       )
-      declarations = resolved.declarations
+      // The routines this server keeps in its own store (PRDCT-4242), after
+      // the files': the same shape, a key no file can take.
+      const identity = options.identity()
+      const ownRoutines = created.all().map((routine) =>
+        declareCreated(routine, {
+          file: createdFile,
+          workspace: workspaces.find((w) => w.id === routine.workspaceId),
+          identity,
+          defaultTemplate: options.defaultTemplate ?? ''
+        })
+      )
+      declarations = [...resolved.declarations, ...ownRoutines]
       const liveKeys = new Set(declarations.map((d) => d.key))
       for (const d of declarations) store.seen(d.key)
       for (const key of store.prune(liveKeys)) removeRoutineDecks(decksRoot, key)
@@ -568,9 +596,10 @@ export function createRoutineService(options: RoutineServiceOptions): RoutineSer
       let changed = false
       const at = now()
       for (const d of declarations) {
-        // Pinned to another server (PRDCT-4149): listed, its next occurrence
-        // shown, and never considered here, so the server it names runs it alone.
-        if (d.runsHere === false) continue
+        // Placed on another server (PRDCT-4149) or nowhere (PRDCT-4241):
+        // listed, its next occurrence shown, and never considered here. A
+        // created routine on hold (PRDCT-4242) waits the same way.
+        if (d.runsHere === false || d.paused) continue
         const state = store.seen(d.key)
         const decision = decideTick({
           schedule: d.schedule,
@@ -624,6 +653,48 @@ export function createRoutineService(options: RoutineServiceOptions): RoutineSer
   }
 
   // ── The port ──
+
+  // ── The store of created routines (PRDCT-4242): what a create or an update may not do ──
+
+  /** The created routine a key names; a file's routine is refused with where to edit it. */
+  function ownRoutine(key: string, verb: string): NonNullable<ReturnType<typeof created.byKey>> {
+    const d = declaration(key)
+    if (!d) throw new Error(`No routine "${key}" is declared on this server`)
+    const own = created.byKey(key)
+    if (!own || !isCreatedKey(key))
+      throw new Error(`"${d.name}" comes from ${d.file}: edit the file to ${verb} it`)
+    return own
+  }
+
+  /** A routine that could never run is refused now, not at its first occurrence. */
+  function refuseUnrunnable(
+    routine: Parameters<typeof createdProblem>[0] & {
+      launch: RoutineDeclaration['launch']
+      workspaceId: string
+    },
+    workspace: RegistryWorkspace
+  ): void {
+    const problem = createdProblem(routine, workspace.rootDir, options.defaultTemplate ?? '')
+    if (problem) throw new Error(problem)
+    const resolved = resolveLaunch(
+      { launch: routine.launch, workspaceId: routine.workspaceId, name: routine.name },
+      options.facts
+    )
+    if (!resolved.ok) throw new Error(resolved.reason)
+    if (!REPORTING_AGENTS.has(resolved.agent))
+      throw new Error(`this agent cannot report: ${resolved.agent} has no Clave tools`)
+  }
+
+  const viewOf = (id: string): RoutineView => {
+    const key = `created::${id}`
+    const routine = declaration(key)
+    if (!routine) throw new Error(`The routine was stored but is not listed: ${key}`)
+    return {
+      routine,
+      nextRunAt: nextRunAt(routine.schedule, routine.invalid, now()),
+      runs: store.state(key)?.runs ?? []
+    }
+  }
 
   const service: RoutineService = {
     declarations: () => declarations,
@@ -722,6 +793,7 @@ export function createRoutineService(options: RoutineServiceOptions): RoutineSer
         throw new Error(
           `"${d.name}" runs on ${d.runsOn ?? 'another server'}, not on ${options.identity().name}: ask that server to run it`
         )
+      if (d.paused) throw new Error(`"${d.name}" is paused: resume it to run it`)
       if (runningOf(key)) throw new Error(`"${d.name}" is running; wait for it to end`)
       if (claimsProblem)
         throw new Error(
@@ -848,6 +920,81 @@ export function createRoutineService(options: RoutineServiceOptions): RoutineSer
         emit()
       }
       return { sessionId: info.id }
+    },
+    // ── PRDCT-4242: the routines this server keeps in its own store ──
+    async create(input: RoutineCreateInput) {
+      const workspaces = await options.workspaces()
+      const workspace = workspaces.find((w) => w.id === input.workspaceId)
+      if (!workspace)
+        throw new Error(`No workspace "${input.workspaceId}" is registered on this server`)
+      const name = input.name.trim()
+      if (!name) throw new Error('A routine needs a name')
+      if (
+        created
+          .all()
+          .some(
+            (r) => r.workspaceId === workspace.id && r.name.toLowerCase() === name.toLowerCase()
+          )
+      )
+        throw new Error(
+          `A routine named "${name}" already exists in ${workspace.name}: pick another name or update it`
+        )
+      const candidate = {
+        workspaceId: workspace.id,
+        name,
+        schedule: input.schedule.trim(),
+        prompt: input.prompt,
+        ...(input.skill?.trim() ? { skill: input.skill.trim() } : {}),
+        cwd: path.resolve(workspace.rootDir, input.cwd ?? '.'),
+        launch: input.launch ?? {},
+        ...(input.icon ? { icon: input.icon } : {}),
+        ...(input.color ? { color: input.color } : {}),
+        ...(input.catchUp !== undefined ? { catchUp: input.catchUp } : {}),
+        ...(input.timeoutMinutes !== undefined ? { timeoutMinutes: input.timeoutMinutes } : {}),
+        ...(input.report ? { report: input.report } : {})
+      }
+      refuseUnrunnable(candidate, workspace)
+      const stored = created.add(candidate)
+      await refresh()
+      return viewOf(stored.id)
+    },
+    async update(key, patch: RoutinePatch) {
+      const current = ownRoutine(key, 'update')
+      const workspaces = await options.workspaces()
+      const workspace = workspaces.find((w) => w.id === current.workspaceId)
+      if (!workspace)
+        throw new Error(`Its workspace "${current.workspaceId}" is no longer registered here`)
+      const next = applyPatch(current, patch, workspace.rootDir)
+      if (
+        next.name.toLowerCase() !== current.name.toLowerCase() &&
+        created
+          .all()
+          .some(
+            (r) =>
+              r.id !== current.id &&
+              r.workspaceId === workspace.id &&
+              r.name.toLowerCase() === next.name.toLowerCase()
+          )
+      )
+        throw new Error(`A routine named "${next.name}" already exists in ${workspace.name}`)
+      refuseUnrunnable(next, workspace)
+      created.replace(next)
+      await refresh()
+      return viewOf(current.id)
+    },
+    async delete(key) {
+      const current = ownRoutine(key, 'delete')
+      if (runningOf(key)) throw new Error(`"${current.name}" is running; wait for it to end`)
+      created.remove(current.id)
+      store.forget(key)
+      removeRoutineDecks(decksRoot, key)
+      await refresh()
+    },
+    async pause(key, paused) {
+      const current = ownRoutine(key, paused ? 'pause' : 'resume')
+      created.replace({ ...current, paused })
+      await refresh()
+      return viewOf(current.id)
     },
     subscribe(listener) {
       listeners.add(listener)

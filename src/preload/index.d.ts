@@ -1014,6 +1014,19 @@ export interface ElectronAPI extends FleetDesktopAPI {
   routinesDismiss: (runId: string) => Promise<void>
   /** The run's conversation continued: in the panel (the session re-homed to this window) or as a tab (a new session this window places). */
   routinesOpenDiscussion: (runId: string, mode: 'panel' | 'tab') => Promise<{ sessionId: string }>
+  // ── PRDCT-4242: the routines the server keeps in its own store ──
+  routinesCreate: (
+    input: import('@clave/contract/routines/model').RoutineCreateInput
+  ) => Promise<import('@clave/contract/routines/model').RoutineView>
+  routinesUpdate: (
+    key: string,
+    patch: import('@clave/contract/routines/model').RoutinePatch
+  ) => Promise<import('@clave/contract/routines/model').RoutineView>
+  routinesDelete: (key: string) => Promise<void>
+  routinesPause: (
+    key: string,
+    paused: boolean
+  ) => Promise<import('@clave/contract/routines/model').RoutineView>
   /** This Mac's own name as a server (PRDCT-4241): what a routine's runsOn places it by. */
   routinesOwnName: () => Promise<string>
   /** Set this Mac's own name as a server; answers the name in force. */

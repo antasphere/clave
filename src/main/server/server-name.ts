@@ -78,8 +78,7 @@ export function ownServerName(
   dir: string,
   sources: Omit<ServerNameSources, 'stored'>
 ): OwnServerName {
-  const read = (): string =>
-    resolveServerName({ ...sources, stored: readStoredServerName(dir) })
+  const read = (): string => resolveServerName({ ...sources, stored: readStoredServerName(dir) })
   const own = read as OwnServerName
   own.set = (name: string): string => {
     writeStoredServerName(dir, name.trim())

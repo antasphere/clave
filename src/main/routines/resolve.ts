@@ -70,9 +70,7 @@ export type Placement =
   | { kind: 'missing' }
   | { kind: 'legacy'; server: string }
 
-export function placementOf(
-  routine: Pick<ClaveRoutine, 'runsOn' | 'server'>
-): Placement {
+export function placementOf(routine: Pick<ClaveRoutine, 'runsOn' | 'server'>): Placement {
   const wanted = routine.runsOn?.trim() ?? ''
   if (wanted.toLowerCase() === EVERY) return { kind: 'every' }
   if (wanted) return { kind: 'machine', name: wanted }
@@ -201,14 +199,8 @@ export function declare(
     ),
     scope: scope === 'team' ? 'team' : 'machine',
     runsOn:
-      placement.kind === 'every'
-        ? EVERY
-        : placement.kind === 'machine'
-          ? placement.name
-          : null,
-    runsHere: context.identity
-      ? runsOn(placement, context.identity)
-      : placement.kind === 'every',
+      placement.kind === 'every' ? EVERY : placement.kind === 'machine' ? placement.name : null,
+    runsHere: context.identity ? runsOn(placement, context.identity) : placement.kind === 'every',
     origin: 'file',
     report,
     invalid: reasons.length ? reasons.join('; ') : null

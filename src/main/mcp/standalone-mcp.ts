@@ -6,6 +6,13 @@ import type { Socket } from 'node:net'
 import { isAbsolute } from 'node:path'
 import { z } from 'zod'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
+import type { WorkspaceFiles } from '@clave/server/workspace-files'
+import {
+  type RoutineMachineWorkspace,
+  ROUTINE_TOOLS_INSTRUCTION,
+  copyDirSync,
+  registerRoutineTools
+} from './routine-tools'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import type { AgentTokensService, RoutinesService, SessionHostService } from '@clave/server'
 import { RoutineReportRefusal } from '../routines/service'
@@ -59,6 +66,15 @@ export interface StandaloneMcpOptions {
   readonly createHosted?: ((input: HostedRequestInput) => PendingRequest) | undefined
   /** ADR 0004: the routines this server schedules; absent, the report tool says so. */
   readonly routines?: RoutinesService | undefined
+  /** PRDCT-4243: what the routine tools need of this server beside its scheduler:
+   *  its workspaces, its `.clave` files, its own name. Absent, the tools are not registered. */
+  readonly routineTools?:
+    | {
+        readonly workspaces: () => Promise<ReadonlyArray<RoutineMachineWorkspace>>
+        readonly files: WorkspaceFiles
+        readonly ownName: () => string
+      }
+    | undefined
   readonly executeSecret: (action: SecretAction, value: string) => Promise<void>
   /** The daemon's one sidebar, where the groups live; absent, the group tools
    *  say this server keeps none. */
@@ -197,7 +213,8 @@ function buildServer(
     { name: 'clave-server', version: '1' },
     {
       instructions:
-        'Your Clave tools run on this server without a desktop. Ask the person for a plain value, a choice, a file, a link to open or a small form with clave_request_input (a form in their chat that lives across your turns; fill it from what they say with clave_input_set; clave_input_result reads it), for approval with clave_request_approval, for a secret with clave_request_secret. Calls return a requestId. Poll clave_request_result or clave_secret_result while pending; clients can answer later. Secret values and action output are never returned. Delegate work to a new tab with clave_open_session, then message it with clave_send_to_session (target "parent" to report back to the tab that opened yours; "mine" logs a checkpoint, typed nowhere), read it with clave_read_session, resume a stopped one with clave_resume_session and close it with clave_close_session; clave_create_group, clave_move_session and clave_rename organize the tabs. Sessions and paths are server-local.'
+        'Your Clave tools run on this server without a desktop. Ask the person for a plain value, a choice, a file, a link to open or a small form with clave_request_input (a form in their chat that lives across your turns; fill it from what they say with clave_input_set; clave_input_result reads it), for approval with clave_request_approval, for a secret with clave_request_secret. Calls return a requestId. Poll clave_request_result or clave_secret_result while pending; clients can answer later. Secret values and action output are never returned. Delegate work to a new tab with clave_open_session, then message it with clave_send_to_session (target "parent" to report back to the tab that opened yours; "mine" logs a checkpoint, typed nowhere), read it with clave_read_session, resume a stopped one with clave_resume_session and close it with clave_close_session; clave_create_group, clave_move_session and clave_rename organize the tabs. Sessions and paths are server-local. ' +
+        ROUTINE_TOOLS_INSTRUCTION.slice(2)
     }
   )
   server.registerTool(
@@ -711,6 +728,32 @@ function buildServer(
       }
     }
   )
+  // ── PRDCT-4243: the routine tools, over this server alone ──
+  if (options.routines && options.routineTools) {
+    const { routines, routineTools } = options
+    registerRoutineTools(server, {
+      machines: async () => [
+        {
+          id: 'local',
+          label: routineTools.ownName(),
+          routines: {
+            list: async () => routines.list(),
+            create: (input) => routines.create(input),
+            update: (key, patch) => routines.update(key, patch),
+            delete: (key) => routines.delete(key),
+            pause: (key, paused) => routines.pause(key, paused),
+            runNow: (key) => routines.runNow(key)
+          },
+          workspaces: routineTools.workspaces,
+          files: {
+            read: (file, rootDir) => routineTools.files.read(file, { rootDir }),
+            write: async (file, data, rootDir) => routineTools.files.write(file, data, rootDir),
+            copyDir: copyDirSync
+          }
+        }
+      ]
+    })
+  }
   return server
 }
 

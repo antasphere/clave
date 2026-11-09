@@ -203,7 +203,11 @@ describe('mergeRoutineSurfaces', () => {
         knownNames: { s1: 'romains-mac-studio' }
       })
     )
-    expect(heard[0]).toMatchObject({ serverName: 'MacStudio', reachable: false, problem: 'offline' })
+    expect(heard[0]).toMatchObject({
+      serverName: 'MacStudio',
+      reachable: false,
+      problem: 'offline'
+    })
   })
 
   it('a routine that says nowhere it runs stays a local, invalid surface', () => {

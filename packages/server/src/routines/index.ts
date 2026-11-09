@@ -7,6 +7,9 @@ export {
   type RoutinesEvent,
   type RoutineReportInput,
   type RoutinesListing,
+  type RoutineView,
+  type RoutineCreateInput,
+  type RoutinePatch,
   type RoutineRun
 } from './port'
 export { routineHandlers } from './handlers'

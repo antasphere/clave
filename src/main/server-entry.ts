@@ -81,7 +81,7 @@ import { createRoutineService } from './routines/service'
 import { SlidelessPublisher } from './routines/publisher'
 import { ownServerName } from './server/server-name'
 import { launchFactsFromManagers } from './routines/facts'
-import { contractPluginDir } from './routines/skill'
+import { contractPluginDir, defaultReportDir } from './routines/skill'
 import { claudeAccountsManager } from './claude-accounts'
 import { codexAccountsManager } from './codex-accounts'
 import { usageManager } from './usage-manager'
@@ -363,6 +363,7 @@ async function main(): Promise<void> {
     ...(TEST_NO_ACTIVATE ? { claimsDir: path.join(dataDir, 'routine-claims') } : {}),
     holder: `clave-server:${process.pid}`,
     pluginDir: contractPluginDir(path.resolve(__dirname, '..', '..', 'resources')),
+    defaultTemplate: defaultReportDir(path.resolve(__dirname, '..', '..', 'resources')),
     identity: () => ({ id: identity?.serverId ?? listeningServerId ?? '', name: serverName() }),
     publisher: TEST_NO_ACTIVATE
       ? false
@@ -435,6 +436,12 @@ async function main(): Promise<void> {
         requests,
         createHosted: requestHost.createHosted,
         routines,
+        // PRDCT-4243: the routine tools on this server: its workspaces, its files, its name.
+        routineTools: {
+          workspaces: async () => (await standalone.settings.workspaces.load()).workspaces,
+          files: workspaceFilesInstance,
+          ownName: () => serverName()
+        },
         ...(sidebar && { sidebar }),
         // An agent's profile must belong to the mode it opens (a chat or
         // plugin profile, or one of this server's custom profiles).

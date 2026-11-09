@@ -32,9 +32,9 @@ describe('a server’s own name (PRDCT-4241)', () => {
     expect(resolveServerName({ stored: null, flag: 'flagged', env: 'fromenv', hostname })).toBe(
       'flagged'
     )
-    expect(
-      resolveServerName({ stored: 'Studio', flag: 'flagged', env: 'fromenv', hostname })
-    ).toBe('Studio')
+    expect(resolveServerName({ stored: 'Studio', flag: 'flagged', env: 'fromenv', hostname })).toBe(
+      'Studio'
+    )
   })
 
   it('passes over a value the rule refuses: spaces, the reserved word, nothing', () => {

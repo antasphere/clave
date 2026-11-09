@@ -55,7 +55,12 @@ export function decideServerVersion(input: DecideInput): ServerVersionDecision {
   if (server.kind === 'missing')
     return { kind: 'manual', ...base, command: manualUpgradeCommand(appVersion) }
   const { version, installRef, upgrade, name } = server.info
-  const known = { ...base, serverVersion: version, installRef, ...(name ? { serverName: name } : {}) }
+  const known = {
+    ...base,
+    serverVersion: version,
+    installRef,
+    ...(name ? { serverName: name } : {})
+  }
   if (!upgrade.supported)
     return {
       kind: 'unsupported',

@@ -13,4 +13,8 @@ export const RoutinesLive = HttpApiBuilder.group(ClaveApi, 'routines', (handlers
     .handle('dismiss', HttpCqrs.command(R.DismissRoutineRun))
     .handle('report', HttpCqrs.command(R.ReportRoutineRun))
     .handle('discussion', HttpCqrs.command(R.OpenRoutineDiscussion))
+    .handle('create', HttpCqrs.command(R.CreateRoutine))
+    .handle('update', HttpCqrs.command(R.UpdateRoutine))
+    .handle('delete', HttpCqrs.command(R.DeleteRoutine))
+    .handle('pause', HttpCqrs.command(R.PauseRoutine))
 )

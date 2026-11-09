@@ -36,6 +36,8 @@ import { usageManager, type UsageError, type UsageLimits } from '../usage-manage
 import { codexUsageManager } from '../codex-usage'
 import { NOT_SERVED, type ServedShell, serveCommand } from './served-tools'
 import { serverClient } from './server-client'
+import { type RoutineMachine, copyDirSync, registerRoutineTools } from './routine-tools'
+import { workspaceFiles } from '../workspace-files'
 import {
   historyWithLiveLaunch,
   hostRecords,
@@ -90,7 +92,7 @@ const MCP_PATH = '/mcp'
 // 2026-09-08, when this block ran to 4242 chars and half the tools were unreachable.
 // KEEP THIS STRING UNDER 2000 CHARACTERS, and put the tool an agent must not miss
 // near the top. Anything longer belongs in a tool description, not here.
-const INSTRUCTIONS = `You are running inside Clave, a Mac app that runs agent sessions as tabs in sidebar groups. You are one of those tabs. Tabs and groups belong to a WORKSPACE (a root folder) and live in the WINDOW they were opened in; address any tab by session id or name. What you open lands in your own window unless you pass window or workspace. Pass "mine" as a sessionId or groupId to mean your own.
+const INSTRUCTIONS = `You are running inside Clave, a Mac app that runs agent sessions as tabs in sidebar groups. You are one of those tabs. Tabs and groups belong to a WORKSPACE (a root folder) and to the WINDOW they were opened in; address a tab by id or name. What you open lands in your window unless you pass window or workspace. Pass "mine" as a sessionId or groupId to mean your own.
 
 Reach for a clave_* tool when:
 - the user will REVIEW or EDIT something you drafted (a document, a plan, an email) -> clave_open_side_panel opens it in an editor beside your tab, two panes; clave_side_panel reads it back when they are done; you send an email yourself, never from the panel. That is what "open it in the panel" means; clave_open_file is not.
@@ -101,6 +103,7 @@ Reach for a clave_* tool when:
 - a secret -> clave_request_secret; any other value to type or pick -> clave_request_input, a form in the chat that outlives your turn: ask, end the turn; chat answers go into it via clave_input_set. Never ask in prose.
 - the user must copy something you produced -> clave_offer_copy.
 - long work done -> clave_notify.
+- a job on a schedule -> clave_routine_create (never cron or launchd); clave_routine_list shows what runs where.
 - tabs must talk -> clave_send_to_session ("parent" reports back to the tab that opened yours; your own id logs a checkpoint) and clave_read_session (a tab's recent output).
 
 Also: clave_list, clave_create_group, clave_move_session, clave_rename, clave_focus, clave_close_session, clave_open_window, clave_switch_workspace (only when they should look there). Pi tabs can be messaged and read, not call these tools.`
@@ -758,11 +761,94 @@ async function runCommand(command: string, payload: unknown, caller?: string): P
  * `callerSessionId` is derived server-side from the caller's per-session token
  * (see authenticate) — it identifies which tab is calling and can't be forged.
  */
+/** The machines the routine tools reach from this Mac (PRDCT-4243): this
+ *  Mac's own server through the shell's client, and every saved connection
+ *  that is enabled through a client of main's own, disposed once the tool
+ *  is done. A connection that does not answer is listed as unreachable by
+ *  the tools, never a thrown call. */
+async function routineMachines(): Promise<{
+  machines: RoutineMachine[]
+  release: () => Promise<void>
+}> {
+  const api = await serverClient.api()
+  const files = workspaceFiles()
+  const machines: RoutineMachine[] = [
+    {
+      id: 'local',
+      label: 'This Mac',
+      routines: api.routines,
+      workspaces: async () => workspaceManager.getWorkspaces(),
+      files: {
+        read: (file, rootDir) => files.read(file, { rootDir }),
+        write: async (file, data, rootDir) => files.write(file, data, rootDir),
+        copyDir: copyDirSync
+      }
+    }
+  ]
+  const disposers: Array<() => Promise<void>> = []
+  const registry = serverConnectionRegistry()
+  for (const connection of registry.list()) {
+    if (!connection.enabled) continue
+    let remote: Promise<import('../../../packages/client/src/api').ClaveApiClient> | null = null
+    const client = (): Promise<import('../../../packages/client/src/api').ClaveApiClient> =>
+      (remote ??= (async () => {
+        const endpoint = await registry.endpoint(connection.id)
+        const { createApiClient } = await import('../../../packages/client/src/api')
+        const made = createApiClient(endpoint)
+        disposers.push(() => made.dispose())
+        return made
+      })())
+    machines.push({
+      id: connection.id,
+      label: connection.name,
+      routines: {
+        list: async () => (await client()).routines.list(),
+        create: async (input) => (await client()).routines.create(input),
+        update: async (key, patch) => (await client()).routines.update(key, patch),
+        delete: async (key) => (await client()).routines.delete(key),
+        pause: async (key, paused) => (await client()).routines.pause(key, paused),
+        runNow: async (key) => (await client()).routines.runNow(key)
+      },
+      workspaces: async () => (await (await client()).settings.workspaces.load()).workspaces,
+      files: {
+        read: async (file, rootDir) => (await client()).workspaceFiles.read(file, { rootDir }),
+        write: async (file, data, rootDir) =>
+          (await client()).workspaceFiles.write(file, data, rootDir)
+      }
+    })
+  }
+  return {
+    machines,
+    release: async () => {
+      await Promise.all(disposers.map((dispose) => dispose().catch(() => undefined)))
+    }
+  }
+}
+
 function buildServer(callerSessionId: string | undefined): McpServer {
   const server = new McpServer(
     { name: 'clave', version: app.getVersion() },
     { instructions: INSTRUCTIONS }
   )
+  // ── PRDCT-4243: the routine tools, over this Mac and every connected server ──
+  {
+    let open: Awaited<ReturnType<typeof routineMachines>> | null = null
+    registerRoutineTools(server, {
+      machines: async () => {
+        open = await routineMachines()
+        return open.machines
+      },
+      release: async () => {
+        const current = open
+        open = null
+        await current?.release()
+      },
+      callerWorkspaceId: () =>
+        callerSessionId
+          ? (ptyManager.getSessionRecord(callerSessionId)?.workspaceId ?? undefined)
+          : undefined
+    })
+  }
   // Every tool routes on the authenticated caller (rule 3 needs it even for
   // tools whose payload does not carry callerSessionId, e.g. focus/rename/
   // switchWorkspace — otherwise they silently fall to the primary window).

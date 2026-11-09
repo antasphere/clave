@@ -187,8 +187,10 @@ describe('the version sync behind the fleet IPC (issue #266)', () => {
       results: () => (calls.push('results'), []),
       refreshServer: async (id: string) => (calls.push(`one:${id}`), []),
       upgradeNow: async (id: string) => (calls.push(`now:${id}`), { serverId: id } as never),
-      rename: async (id: string, name: string) =>
-        (calls.push(`rename:${id}:${name}`), { serverId: id, serverName: name } as never)
+      rename: async (id: string, name: string) => (
+        calls.push(`rename:${id}:${name}`),
+        { serverId: id, serverName: name } as never
+      )
     }
     registerServerHandlers(registry, { versionSync: sync })
     expect(calls).toEqual(['start'])

@@ -19,6 +19,9 @@ import type * as Contract from '@clave/contract/routines'
 import type { Unsubscribe } from '../sessions/port'
 
 export type RoutinesListing = Contract.RoutinesListing
+export type RoutineView = Contract.RoutineView
+export type RoutineCreateInput = Contract.RoutineCreateInput
+export type RoutinePatch = Contract.RoutinePatch
 export type RoutineRun = Contract.RoutineRun
 export type RoutineStatus = Contract.RoutineStatus
 export type RoutinesEvent = Contract.RoutinesEvent
@@ -61,6 +64,15 @@ export interface RoutinesService {
   ): Promise<{ sessionId: string }>
   /** Every change: the routines, their next occurrence, their runs. */
   subscribe(listener: (event: RoutinesEvent) => void): Unsubscribe
+  // ── PRDCT-4242: the routines this server keeps in its own store ──
+  /** A routine created here, in one of this server's workspaces; throws when it could never run. */
+  create(input: RoutineCreateInput): Promise<RoutineView>
+  /** A created routine changed; throws on a routine a file declares. */
+  update(key: string, patch: RoutinePatch): Promise<RoutineView>
+  /** A created routine removed with its runs; throws on a routine a file declares. */
+  delete(key: string): Promise<void>
+  /** A created routine held or released. */
+  pause(key: string, paused: boolean): Promise<RoutineView>
 }
 
 const NO_ROUTINES = new CapabilityUnavailable({
@@ -86,6 +98,10 @@ export class Routines extends Context.Tag('@clave/server/Routines')<Routines, Ro
     },
     report: () => Promise.reject(NO_ROUTINES),
     openDiscussion: () => Promise.reject(NO_ROUTINES),
-    subscribe: () => () => {}
+    subscribe: () => () => {},
+    create: () => Promise.reject(NO_ROUTINES),
+    update: () => Promise.reject(NO_ROUTINES),
+    delete: () => Promise.reject(NO_ROUTINES),
+    pause: () => Promise.reject(NO_ROUTINES)
   }
 }

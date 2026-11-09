@@ -269,6 +269,81 @@ export const OpenRoutineDiscussion = Command.define('OpenRoutineDiscussion', {
 })
 
 // ---------------------------------------------------------------------------
+// Created routines (PRDCT-4242): the ones a server keeps in its own store,
+// made over the API or by an agent tool, beside the ones its files declare.
+// ---------------------------------------------------------------------------
+
+/** The report of a created routine: a template folder under the workspace
+ *  root, or none for the built-in default page the app ships. */
+export const RoutineReportInput = Schema.Struct({
+  template: Schema.optional(Schema.String),
+  schema: Schema.optional(Schema.String),
+  width: Schema.optional(Schema.Number),
+  height: Schema.optional(Schema.Number),
+  publish: Schema.optional(Schema.Boolean)
+})
+export type RoutineReportInput = typeof RoutineReportInput.Type
+
+const createdFields = {
+  name: Schema.String,
+  /** Five cron fields, the server machine's local time. */
+  schedule: Schema.String,
+  /** The job, raw: the `@`-tokens are substituted at run time. */
+  prompt: Schema.String,
+  skill: Schema.optional(Schema.String),
+  /** Absolute, or relative to the workspace root; the workspace root when absent. */
+  cwd: Schema.optional(Schema.String),
+  launch: Schema.optional(RoutineLaunch),
+  icon: Schema.optional(Schema.String),
+  color: Schema.optional(Schema.String),
+  catchUp: Schema.optional(Schema.Boolean),
+  timeoutMinutes: Schema.optional(Schema.Number),
+  report: Schema.optional(RoutineReportInput)
+}
+
+/** What creates a routine on this server, in one of its workspaces. It runs
+ *  on this server alone: no `runsOn` is taken, none is needed. */
+export const RoutineCreateInput = Schema.Struct({
+  workspaceId: Schema.String,
+  ...createdFields
+})
+export type RoutineCreateInput = typeof RoutineCreateInput.Type
+
+/** What changes on a created routine: any of its fields but its workspace. */
+export const RoutinePatch = Schema.partial(Schema.Struct(createdFields))
+export type RoutinePatch = typeof RoutinePatch.Type
+
+/** A routine created in this server's store; refused when it could never
+ *  run (an unknown workspace, a folder that is not there, an account or a
+ *  profile this server does not have, a schedule that does not parse). */
+export const CreateRoutine = Command.define('CreateRoutine', {
+  payload: RoutineCreateInput,
+  success: RoutineView,
+  failure: RoutineRefused
+})
+
+/** A created routine changed; refused on a routine a file declares. */
+export const UpdateRoutine = Command.define('UpdateRoutine', {
+  payload: Schema.Struct({ key: Schema.String, patch: RoutinePatch }),
+  success: RoutineView,
+  failure: RoutineRefused
+})
+
+/** A created routine removed, its runs and decks with it; refused on a file's. */
+export const DeleteRoutine = Command.define('DeleteRoutine', {
+  payload: Schema.Struct({ key: Schema.String }),
+  success: Schema.Void,
+  failure: RoutineRefused
+})
+
+/** A created routine put on hold or taken off it: listed, never ticked while paused. */
+export const PauseRoutine = Command.define('PauseRoutine', {
+  payload: Schema.Struct({ key: Schema.String, paused: Schema.Boolean }),
+  success: RoutineView,
+  failure: RoutineRefused
+})
+
+// ---------------------------------------------------------------------------
 // Events: members of the server's one event union (`./events.ts`).
 // ---------------------------------------------------------------------------
 

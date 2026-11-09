@@ -31,7 +31,7 @@ import { waitForMcpRuntime } from '../mcp/mcp-runtime'
 import { launchFactsFromManagers } from './facts'
 import { SlidelessPublisher } from './publisher'
 import { createRoutineService, type RoutineService } from './service'
-import { contractPluginDir } from './skill'
+import { contractPluginDir, defaultReportDir } from './skill'
 import { claveServerId, ownServerName, setOwnServerName } from '../server/clave-server'
 
 let service: RoutineService | null = null
@@ -70,6 +70,7 @@ export function shellRoutines(): RoutineService {
     ...(TEST_NO_ACTIVATE ? { claimsDir: join(userData, 'routine-claims') } : {}),
     holder: `clave-shell:${process.pid}`,
     pluginDir: contractPluginDir(resourcesDir()),
+    defaultTemplate: defaultReportDir(resourcesDir()),
     // This Mac, as a routine's `server` field may name it (PRDCT-4149): the
     // in-process server's id once it listens, and the machine's own name
     // unless the environment gives one (the e2e harness does).
@@ -117,6 +118,23 @@ export function installRoutinesIpc(routines: RoutinesService | null): void {
     'routines:discussion',
     async (_event, runId: string, windowKey: string, mode: 'panel' | 'tab') =>
       routines ? await routines.openDiscussion(runId, windowKey, mode) : elsewhere()
+  )
+  // PRDCT-4242: the routines this Mac's own server keeps in its store.
+  ipcMain.handle(
+    'routines:create',
+    async (_event, input: Parameters<RoutinesService['create']>[0]) =>
+      routines ? await routines.create(input) : elsewhere()
+  )
+  ipcMain.handle(
+    'routines:update',
+    async (_event, key: string, patch: Parameters<RoutinesService['update']>[1]) =>
+      routines ? await routines.update(key, patch) : elsewhere()
+  )
+  ipcMain.handle('routines:delete', async (_event, key: string) =>
+    routines ? await routines.delete(key) : elsewhere()
+  )
+  ipcMain.handle('routines:pause', async (_event, key: string, paused: boolean) =>
+    routines ? await routines.pause(key, paused) : elsewhere()
   )
   // PRDCT-4241: this Mac's own name as a server, read and set from Settings.
   ipcMain.handle('routines:own-name', () => ownServerName())

@@ -18,7 +18,13 @@ import type {
 } from './index.d'
 import type { LaunchProfile, LauncherFamily } from '../shared/agent-launch'
 import type { InputKind } from '@clave/contract/input-kinds'
-import type { RoutineRun, RoutinesListing } from '@clave/contract/routines/model'
+import type {
+  RoutineCreateInput,
+  RoutinePatch,
+  RoutineRun,
+  RoutineView,
+  RoutinesListing
+} from '@clave/contract/routines/model'
 
 export interface FleetSnapshot {
   serverId: string
@@ -149,6 +155,11 @@ export interface FleetDesktopAPI {
   ): Promise<{ sessionId: string }>
   /** A run's filled deck page, read over the server's API. */
   fleetRoutineDeck(serverId: string, runId: string): Promise<{ html: string }>
+  // ── PRDCT-4242: the routines a connected server keeps in its own store ──
+  fleetRoutineCreate(serverId: string, input: RoutineCreateInput): Promise<RoutineView>
+  fleetRoutineUpdate(serverId: string, key: string, patch: RoutinePatch): Promise<RoutineView>
+  fleetRoutineDelete(serverId: string, key: string): Promise<void>
+  fleetRoutinePause(serverId: string, key: string, paused: boolean): Promise<RoutineView>
   /** A server's routines at each connect and each `routines.changed`; a read
    *  that fails publishes nothing, so the last listing stands. */
   onFleetRoutines(callback: (update: FleetRoutines) => void): () => void

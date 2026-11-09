@@ -1716,6 +1716,31 @@ const electronAPI = {
       return api.routines.openDiscussion(runId, identity?.windowKey ?? '', mode)
     }
   }),
+  // PRDCT-4242: the routines the server keeps in its own store.
+  routinesCreate: viaServer<
+    [import('@clave/contract/routines/model').RoutineCreateInput],
+    import('@clave/contract/routines/model').RoutineView
+  >({
+    ipc: (input) => ipcRenderer.invoke('routines:create', input),
+    server: ({ api }, input) => api.routines.create(input)
+  }),
+  routinesUpdate: viaServer<
+    [string, import('@clave/contract/routines/model').RoutinePatch],
+    import('@clave/contract/routines/model').RoutineView
+  >({
+    ipc: (key, patch) => ipcRenderer.invoke('routines:update', key, patch),
+    server: ({ api }, key, patch) => api.routines.update(key, patch)
+  }),
+  routinesDelete: viaServer<[string], void>({
+    ipc: (key) => ipcRenderer.invoke('routines:delete', key),
+    server: ({ api }, key) => api.routines.delete(key)
+  }),
+  routinesPause: viaServer<[string, boolean], import('@clave/contract/routines/model').RoutineView>(
+    {
+      ipc: (key, paused) => ipcRenderer.invoke('routines:pause', key, paused),
+      server: ({ api }, key, paused) => api.routines.pause(key, paused)
+    }
+  ),
   // PRDCT-4241: this Mac's own name as a server, the shell's to keep.
   routinesOwnName: () => ipcRenderer.invoke('routines:own-name'),
   routinesSetOwnName: (name: string) => ipcRenderer.invoke('routines:set-own-name', name),
