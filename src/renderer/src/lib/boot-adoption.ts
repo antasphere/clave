@@ -1,5 +1,5 @@
 import type { SessionRecord } from '../../../preload/index.d'
-import { SERVER_LAYOUT_KEY } from '@clave/contract/sidebar/layout'
+import { SERVER_LAYOUT_KEY } from '@clave/contract/sidebar/ops'
 import { savedLayoutSessionIds, type SavedLayoutLike } from '../../../shared/adoption-scope'
 
 /**

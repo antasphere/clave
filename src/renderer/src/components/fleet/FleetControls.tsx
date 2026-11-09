@@ -306,13 +306,18 @@ export function FleetResume({
     setWasAlive(alive)
     if (alive && failure !== null) setFailure(null)
   }
-  if (!isRemoteKey(sessionId)) return null
-  if (status !== 'connected')
+  // A tab of a connected server waits for its connection; a tab of this Mac
+  // (the app's own server, a daemon it is attached to) needs none: every
+  // stopped tab offers Resume (PRDCT-4236), since a restart brings back a
+  // tab the restore placed stopped as it brings back a tab whose process
+  // ended on its own.
+  const remote = isRemoteKey(sessionId)
+  if (remote && status !== 'connected')
     return <span className="text-xs text-text-secondary">{status ?? 'Connecting'}</span>
-  if (alive) return null
+  if (alive !== false) return null
   // The connection's word stays in the header; the button is the pane's,
-  // while the pane draws it (round 5).
-  if (drawnInPane && drawing) return null
+  // while the pane draws it (round 5). Only a server tab's pane draws one.
+  if (remote && drawnInPane && drawing) return null
   return (
     <>
       {failure ? (
@@ -335,7 +340,7 @@ export function FleetResume({
             .restartSession(sessionId, { onlyIfStopped: true })
             .then(async (result) => {
               if ('error' in result) throw new Error(result.error)
-              await window.electronAPI.fleetSnapshot(ownerOf(sessionId))
+              if (remote) await window.electronAPI.fleetSnapshot(ownerOf(sessionId))
             })
             .catch((error: unknown) => {
               // The server said no (or did not answer): the tab is not

@@ -11,6 +11,11 @@
  * is taken in. Both came from the renderer's `lib/`, tests and all, when the
  * sidebar moved to the server (PRDCT-3241).
  */
+/** The layout key of a Clave server's own sidebar, the one every record it
+ *  owns is stamped with (`SERVER_LAYOUT_KEY` of `./layout` re-exports it):
+ *  here so a browser page reads it without the schemas (PRDCT-4236). */
+export const SERVER_LAYOUT_KEY = 'server'
+
 export { moveLayoutItems, type MovePosition, type OpsGroup, type OpsLayout } from './ops-move'
 export {
   absorbLayout,
