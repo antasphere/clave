@@ -117,19 +117,26 @@ adb -s emulator-5562 reverse tcp:47201 tcp:47201 && adb -s emulator-5562 reverse
 ```
 
 The daemon runs with `--no-titles --test-no-activate --test-no-machine-usage`, so it names no
-chat with a real agent, runs no usage clock and reads no machine login. The runner proves
-that stance twice and refuses to boot otherwise (exit 2): before anything starts, the three
-flags are in the daemon's argv, its login environment (read as the daemon reads it, `$SHELL
--lic 'env -0'`) resolves `claude` and `codex` to the fixture's stubs, and no agent credential
-is in its environment; after the daemon announces itself and before any sign-in or chat, its
-discovery file says `titles: "off"`, `testMode: true` and `machineUsage: false`. `--dry-run`
-runs the first set alone and starts nothing. The shared fixture lane C ships
-(`packages/mobile-native/scripts/fixture-server.mjs`) runs the same three checks.
-
-In the app (debug build), Machines → the account: the issuer `http://127.0.0.1:47203`, the
-relay `http://127.0.0.1:47202`; sign in (the fixture provider approves on sight), pair with
-the machine the fixture signed in, approve it on the fixture's side (`--check` does, or
-`POST /devices/approve` with the server's token), open the scratch workspace's Echo chat.
+chat with a real agent, runs no usage clock and reads no machine login. The runner proves that
+stance three times and refuses to boot otherwise (exit 2). Before anything starts: the three
+flags are in the daemon's argv; its environment is an allowlist of the shell's keys plus the
+fixture's own (the recorders first on PATH, the fixture's login shell as SHELL, empty Claude and
+Codex homes); its login environment, read as the daemon reads it (`$SHELL -lic 'env -0'`),
+resolves `claude` and `codex` to the fixture's recorders; and the recorder itself, run with
+`--version`, writes one line to the fixture's own log. After the daemon announces itself and
+before any sign-in or chat, inside the daemon through its test route: the discovery file says
+`titles: "off"`, `testMode: true` and `machineUsage: false`, and the title module's own test
+hooks (`__claveE2E.titles`) say the opt-out is `--no-titles`, locate both commands on the cached
+login PATH to the recorders, and answer the one-shot's launch as the recorder by canonical path;
+nothing is executed. For the whole run, in every mode, the recorder log is watched: a line that
+is not the self-test's, or a log gone missing, unreadable or truncated, stops everything with
+exit 3. The run folder is the runner's own (a marker it wrote; anything else is refused
+untouched). `--dry-run` runs the pre-boot checks alone, reads the run folder only and starts
+nothing; `--dry-run --mutate recorder-removed|recorder-unreadable|recorder-truncated` shows the
+guard latch; `--dry-run --red-flags|--red-interlock` shows two pre-boot checks go red; the
+daemon-side faults (`--mutate divergent-cache|wrong-resolver`, and the positive control
+`decoy-on-process-path`) run under `--check` only. The shared fixture lane C ships
+(`packages/mobile-native/scripts/fixture-server.mjs`) runs the same three boot checks.
 
 ## What a release APK needs, named apart
 
