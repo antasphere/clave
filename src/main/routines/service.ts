@@ -252,10 +252,14 @@ export function createRoutineService(options: RoutineServiceOptions): RoutineSer
     // Asked while one runs: that one may have read a file before a change
     // landed, so a second pass follows it (verifier round 4, K1).
     if (refreshing) {
-      again ??= refreshing.then(() => {
-        again = null
-        return refresh()
-      })
+      // Whatever the running pass's outcome: a failed one must not leave this
+      // promise rejected for every later ask (verifier round 6, M3).
+      again ??= refreshing
+        .catch(() => undefined)
+        .then(() => {
+          again = null
+          return refresh()
+        })
       return again
     }
     refreshing = (async () => {
@@ -834,39 +838,24 @@ export function createRoutineService(options: RoutineServiceOptions): RoutineSer
     const workspace = workspaces.find((w) => w.id === current.workspaceId)
     if (!workspace)
       throw new Error(`Its workspace "${current.workspaceId}" is no longer registered here`)
-    const file = input.file
-      ? path.resolve(workspace.rootDir, input.file)
-      : (workspace.profileFile ??
-        path.join(workspace.rootDir, '.clave', 'workspaces', 'default.clave'))
     if (current.paused)
       throw new Error(
         `"${d.name}" is paused: a file routine cannot be paused, so resume it first (it will run on its schedule from the file)`
       )
-    if (path.extname(file) !== '.clave')
-      throw new Error(`${file} is not a .clave file: a routine moves into a workspace file`)
-    // Where the write lands: under the workspace root, through no link
-    // (verifier round 4, K3).
-    const rel = path.relative(workspace.rootDir, file)
-    if (rel.startsWith('..') || path.isAbsolute(rel))
-      throw new Error(
-        `${file} is outside the workspace ${workspace.name}: a routine moves into one of its files`
-      )
+    // The target is the one file the scheduler reads as this workspace's
+    // profile (its registered one, else the discovered one), read against the
+    // workspace root like the scheduler reads it; a move into any other file
+    // would write paths against the wrong root or shadow the file the
+    // workspace reads (verifier round 6, M1 and M2). With no file at all, the
+    // default one is made, which the discovery then finds.
+    const entries = await workspaceFilesOf(options.files, workspace)
+    const file =
+      entries[0]?.path ??
+      workspace.profileFile ??
+      path.join(workspace.rootDir, '.clave', 'workspaces', 'default.clave')
     if (throughLink(workspace.rootDir, file))
       throw new Error(
         `${file} goes through a link: a routine moves into a file of the workspace itself`
-      )
-    // Only a file the workspace reads: its profile file, or one its discovery
-    // finds. A routine moved anywhere else would run nowhere and be listed
-    // nowhere (verifier round 5, L1).
-    const profilePath =
-      workspace.profileFile ?? path.join(workspace.rootDir, '.clave', 'workspaces', 'default.clave')
-    const readFiles = new Set([
-      profilePath,
-      ...(await workspaceFilesOf(options.files, workspace)).map((e) => e.path)
-    ])
-    if (!readFiles.has(file))
-      throw new Error(
-        `${file} is not a file this workspace reads (its profile file is ${profilePath}; the others are the files its discovery finds): a routine moved there would run nowhere`
       )
     const read = await options.files.read(file, { rootDir: workspace.rootDir })
     // A file that is there and reads as nothing (it does not parse, or nobody

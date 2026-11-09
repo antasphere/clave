@@ -1315,28 +1315,6 @@ describe('a created routine moved into a file (verifier rounds 1 and 2, F1 and G
     )
   })
 
-  it('refuses a target that is not a .clave file, or one that is there and cannot be read, and overwrites nothing (round 3, H1)', async () => {
-    const file = workspace([])
-    const service = await build(file, fakeHost(), memory(), { defaultTemplate: tpl() })
-    const view = await service.create(digest())
-    const notes = join(root, 'notes.txt')
-    writeFileSync(notes, 'my precious notes')
-    await expect(service.moveToFile(view.routine.key, { file: notes })).rejects.toThrow(
-      /is not a .clave file/
-    )
-    expect(readFileSync(notes, 'utf8')).toBe('my precious notes')
-    const broken = join(root, '.clave', 'workspaces', 'broken.clave')
-    writeFileSync(broken, '{"groups": [,]}')
-    // Not the profile file, so refused as a file the workspace does not read;
-    // were it the profile, refused as unreadable. Either way, untouched.
-    await expect(service.moveToFile(view.routine.key, { file: broken })).rejects.toThrow(
-      /cannot be read as a workspace file|is not a file this workspace reads/
-    )
-    expect(readFileSync(broken, 'utf8')).toBe('{"groups": [,]}')
-    expect(service.list().routines.map((v) => v.routine.origin)).toEqual(['created'])
-    expect(existsSync(join(root, '.clave', 'routines', 'morning-digest'))).toBe(false)
-  })
-
   it('two moves into one file at once both land, one after the other (round 3, H2)', async () => {
     const file = workspace([])
     const service = await build(file, fakeHost(), memory(), { defaultTemplate: tpl() })
@@ -1370,20 +1348,6 @@ describe('a created routine moved into a file (verifier rounds 1 and 2, F1 and G
     const listed = service.list().routines.filter((v) => v.routine.name === 'Alpha')
     // Moved: in the file once, listed once as a file's; deleted: nowhere.
     expect(inFile ? listed.map((v) => v.routine.origin) : listed).toEqual(inFile ? ['file'] : [])
-  })
-
-  it('a write that fails leaves the routine in the store and no copied page behind (round 3, H4)', async () => {
-    const file = workspace([])
-    const service = await build(file, fakeHost(), memory(), { defaultTemplate: tpl() })
-    const view = await service.create(digest())
-    // The file's folder made unwritable by being a file itself.
-    const dir = join(root, '.clave', 'workspaces', 'blocked')
-    writeFileSync(dir, 'not a folder')
-    await expect(
-      service.moveToFile(view.routine.key, { file: join(dir, 'x.clave') })
-    ).rejects.toThrow()
-    expect(service.list().routines.map((v) => v.routine.origin)).toEqual(['created'])
-    expect(existsSync(join(root, '.clave', 'routines', 'morning-digest'))).toBe(false)
   })
 
   it('a rewrite keeps a legacy server value another routine still says, and a one-group multi file stays multi (round 3, H5 and R7)', async () => {
@@ -1459,60 +1423,120 @@ describe('a created routine moved into a file (verifier rounds 1 and 2, F1 and G
     expect(service.list().routines[0].routine).toMatchObject({ origin: 'created', paused: true })
   })
 
-  it('the target must sit under the workspace root and go through no link (round 4, K3)', async () => {
+  it('the profile file that cannot be read is refused, nothing overwritten (round 3, H1)', async () => {
     const file = workspace([])
     const service = await build(file, fakeHost(), memory(), { defaultTemplate: tpl() })
-    const a = await service.create(digest())
-    const outside = join(root, '..', `outside-${Date.now()}.clave`)
-    await expect(service.moveToFile(a.routine.key, { file: outside })).rejects.toThrow(
-      /is outside the workspace/
+    const view = await service.create(digest())
+    writeFileSync(file, '{"groups": [,]}')
+    await expect(service.moveToFile(view.routine.key, {})).rejects.toThrow(
+      /cannot be read as a workspace file/
     )
-    expect(existsSync(outside)).toBe(false)
-    const victim = join(root, 'victim.txt')
-    const link = join(root, '.clave', 'workspaces', 'link.clave')
-    symlinkSync(victim, link)
-    await expect(service.moveToFile(a.routine.key, { file: link })).rejects.toThrow(
-      /goes through a link/
-    )
-    expect(existsSync(victim)).toBe(false)
-    expect(service.list().routines[0].routine.origin).toBe('created')
+    expect(readFileSync(file, 'utf8')).toBe('{"groups": [,]}')
+    expect(service.list().routines.map((v) => v.routine.origin)).toEqual(['created'])
+    expect(existsSync(join(root, '.clave', 'routines', 'morning-digest'))).toBe(false)
   })
 
-  it('a move goes only into a file the workspace reads: its profile file, or one its discovery finds (round 5, L1)', async () => {
+  it('a write that fails leaves the routine in the store and no copied page behind (round 3, H4)', async () => {
+    // The registered profile sits where no folder can be made: under a file.
+    const blocked = join(root, '.clave', 'workspaces', 'blocked')
+    mkdirSync(join(root, '.clave', 'workspaces'), { recursive: true })
+    writeFileSync(blocked, 'not a folder')
     const file = workspace([])
-    const service = await build(file, fakeHost(), memory(), { defaultTemplate: tpl() })
-    const a = await service.create(digest({ name: 'Alpha' }))
-    await expect(service.moveToFile(a.routine.key, { file: 'docs/extra.clave' })).rejects.toThrow(
-      /is not a file this workspace reads/
-    )
-    expect(existsSync(join(root, 'docs', 'extra.clave'))).toBe(false)
-    expect(service.list().routines.map((v) => [v.routine.name, v.routine.origin])).toEqual([
-      ['Alpha', 'created']
-    ])
-    const moved = await service.moveToFile(a.routine.key, {
-      file: '.clave/workspaces/default.clave'
+    const service = await build(file, fakeHost(), memory(), {
+      defaultTemplate: tpl(),
+      workspaces: async () => [
+        { id: 'ws', name: 'W', rootDir: root, profileFile: join(blocked, 'x.clave') }
+      ]
     })
-    expect(moved.file).toBe(file)
-    expect(service.list().routines.map((v) => [v.routine.name, v.routine.origin])).toEqual([
-      ['Alpha', 'file']
-    ])
+    const view = await service.create(digest())
+    await expect(service.moveToFile(view.routine.key, {})).rejects.toThrow()
+    expect(service.list().routines.map((v) => v.routine.origin)).toEqual(['created'])
+    expect(existsSync(join(root, '.clave', 'routines', 'morning-digest'))).toBe(false)
   })
 
-  it('a link anywhere above the target, up to the root, refuses the move (round 5, L2)', async () => {
-    const file = workspace([])
-    const service = await build(file, fakeHost(), memory(), { defaultTemplate: tpl() })
-    const a = await service.create(digest({ name: 'Alpha' }))
+  it('a profile reached through a link is refused (rounds 4 and 5, K3 and L2)', async () => {
     const elsewhere = mkdtempSync(join(tmpdir(), 'elsewhere-'))
     try {
+      const file = workspace([])
       symlinkSync(elsewhere, join(root, 'linkdir'))
-      await expect(
-        service.moveToFile(a.routine.key, { file: 'linkdir/sub/x.clave' })
-      ).rejects.toThrow(/goes through a link/)
+      const service = await build(file, fakeHost(), memory(), {
+        defaultTemplate: tpl(),
+        workspaces: async () => [
+          {
+            id: 'ws',
+            name: 'W',
+            rootDir: root,
+            profileFile: join(root, 'linkdir', 'sub', 'x.clave')
+          }
+        ]
+      })
+      const a = await service.create(digest({ name: 'Alpha' }))
+      await expect(service.moveToFile(a.routine.key, {})).rejects.toThrow(/goes through a link/)
       expect(existsSync(join(elsewhere, 'sub', 'x.clave'))).toBe(false)
       expect(service.list().routines[0].routine.origin).toBe('created')
     } finally {
       rmSync(elsewhere, { recursive: true, force: true })
     }
+  })
+
+  it('with no registered profile, the move lands in the file the scheduler discovers, never in a new default one (round 6, M2)', async () => {
+    const romain = join(root, '.clave', 'workspaces', 'romain.clave')
+    mkdirSync(join(root, '.clave', 'workspaces'), { recursive: true })
+    mkdirSync(tpl(), { recursive: true })
+    writeFileSync(join(tpl(), 'index.html'), INDEX)
+    writeFileSync(join(tpl(), 'schema.json'), '{"type":"object"}')
+    writeFileSync(
+      romain,
+      JSON.stringify({
+        name: 'G',
+        cwd: '.',
+        sessions: [],
+        terminals: [],
+        routines: [routine('Mine')]
+      })
+    )
+    const service = await build(romain, fakeHost(), memory(), {
+      defaultTemplate: tpl(),
+      workspaces: async () => [{ id: 'ws', name: 'W', rootDir: root, profileFile: null }]
+    })
+    expect(service.list().routines.map((v) => v.routine.name)).toEqual(['Mine'])
+    const a = await service.create(digest({ name: 'Alpha' }))
+    const moved = await service.moveToFile(a.routine.key, {})
+    expect(moved.file).toBe(romain)
+    expect(existsSync(join(root, '.clave', 'workspaces', 'default.clave'))).toBe(false)
+    expect(service.list().routines.map((v) => [v.routine.name, v.routine.origin])).toEqual([
+      ['Mine', 'file'],
+      ['Alpha', 'file']
+    ])
+  })
+
+  it('one failed refresh does not poison the extra pass: later moves land and answer ok (round 6, M3)', async () => {
+    const file = workspace([])
+    let fail = false
+    const service = await build(file, fakeHost(), memory(), {
+      defaultTemplate: tpl(),
+      workspaces: async () => {
+        if (fail) throw new Error('settings unreadable')
+        await new Promise((resolve) => setTimeout(resolve, 10))
+        return [{ id: 'ws', name: 'W', rootDir: root, profileFile: file }]
+      }
+    })
+    const a = await service.create(digest({ name: 'Alpha' }))
+    const b = await service.create(digest({ name: 'Beta' }))
+    fail = true
+    const failing = service.refresh()
+    const overlapping = service.refresh()
+    await expect(failing).rejects.toThrow(/settings unreadable/)
+    await expect(overlapping).rejects.toThrow(/settings unreadable/)
+    fail = false
+    const racing = service.refresh()
+    await service.moveToFile(a.routine.key, {})
+    await racing
+    await service.moveToFile(b.routine.key, {})
+    expect(service.list().routines.map((v) => [v.routine.name, v.routine.origin])).toEqual([
+      ['Alpha', 'file'],
+      ['Beta', 'file']
+    ])
   })
 
   it('many refreshes asked during one cost one more pass, not one each (round 5, L3)', async () => {

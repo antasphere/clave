@@ -78,11 +78,6 @@ export const routineHandlers = [
   CommandHandler.make(DeleteRoutine, (p) => call((r) => r.delete(p.key))),
   CommandHandler.make(PauseRoutine, (p) => call((r) => r.pause(p.key, p.paused))),
   CommandHandler.make(MoveRoutineToFile, (p) =>
-    call((r) =>
-      r.moveToFile(p.key, {
-        ...(p.file !== undefined ? { file: p.file } : {}),
-        ...(p.group !== undefined ? { group: p.group } : {})
-      })
-    )
+    call((r) => r.moveToFile(p.key, { ...(p.group !== undefined ? { group: p.group } : {}) }))
   )
 ]

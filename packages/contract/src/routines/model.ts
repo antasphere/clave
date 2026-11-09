@@ -349,15 +349,16 @@ export const PauseRoutine = Command.define('PauseRoutine', {
 /** A created routine written into a `.clave` file of its workspace with
  *  `runsOn` set to this server's own name, then removed from the store, in
  *  one step on the server so it never exists twice (PRDCT-4243): refused
- *  while a run is in flight, on a routine a file declares, on a group that
- *  already holds the name. The built-in report page is copied under the
+ *  while a run is in flight, on a paused routine, on a routine a file
+ *  declares, on a group that already holds the name. The built-in report page is copied under the
  *  workspace first when the routine used it. */
 export const MoveRoutineToFile = Command.define('MoveRoutineToFile', {
   payload: Schema.Struct({
     key: Schema.String,
-    /** The `.clave` file, absolute or relative to the workspace root; the workspace's profile file by default. */
-    file: Schema.optional(Schema.String),
-    /** The group it joins; the file's first group by default, a group named Routines when the file is empty. */
+    /** The group it joins in the workspace's profile file (the one the
+     *  scheduler reads); the file's first group by default, a group named
+     *  Routines when the file is empty. The file is never chosen: a move
+     *  into any other file would run nowhere or shadow the profile. */
     group: Schema.optional(Schema.String)
   }),
   success: Schema.Struct({

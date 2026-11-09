@@ -480,9 +480,7 @@ export async function runRoutineTool(
 export interface MoveArgs {
   key: string
   machine?: string
-  /** The `.clave` file, absolute or relative to the workspace root; the workspace's profile file by default. */
-  file?: string
-  /** The group the routine joins; a group named `Routines` is made when none is named and none exists. */
+  /** The group the routine joins in the workspace's profile file; a group named `Routines` is made when none is named and none exists. */
   group?: string
 }
 
@@ -502,7 +500,6 @@ export async function moveRoutineToFileTool(
     if ((d.origin ?? 'file') !== 'created')
       throw new Error(`"${d.name}" already comes from ${d.file}: nothing to move.`)
     const moved = await l.machine.routines.moveToFile(d.key, {
-      ...(args.file ? { file: args.file } : {}),
       ...(args.group ? { group: args.group } : {})
     })
     return {
@@ -737,17 +734,10 @@ export function registerRoutineTools(server: McpServer, deps: RoutineToolDeps): 
     'clave_routine_move_to_file',
     {
       description:
-        "Make a created routine a shared one: write it into a .clave file of its workspace with runsOn set to its machine's own name, then remove it from the machine's store, so it exists once. The built-in report page is copied under the workspace first. Use it when a routine you made for yourself should be reviewed and versioned with the team's files.",
+        "Make a created routine a shared one: write it into the workspace's profile .clave file (the one the machine's scheduler reads) with runsOn set to its machine's own name, then remove it from the machine's store, so it exists once. The built-in report page is copied under the workspace first. Refused while the routine runs or is paused. Use it when a routine you made for yourself should be reviewed and versioned with the team's files.",
       inputSchema: {
         key: z.string().min(1).max(500),
         machine: machineArg,
-        file: z
-          .string()
-          .max(1000)
-          .optional()
-          .describe(
-            "The .clave file, absolute or under the workspace root; the workspace's profile file by default"
-          ),
         group: z
           .string()
           .max(120)

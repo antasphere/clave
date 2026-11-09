@@ -129,10 +129,10 @@ function machine(
         }
       },
       moveToFile: async (key, input) => {
-        calls.push(`move:${key}:${input.file ?? ''}:${input.group ?? ''}`)
+        calls.push(`move:${key}:${input.group ?? ''}`)
         return {
           name: 'Morning digest',
-          file: `/root/${input.file ?? '.clave/workspaces/default.clave'}`,
+          file: '/root/.clave/workspaces/default.clave',
           group: input.group ?? 'Routines',
           template: '/root/.clave/routines/morning-digest',
           runsOn: own?.name ?? ''
@@ -455,14 +455,13 @@ describe('clave_routine_move_to_file', () => {
     const local = machine('local', 'This Mac', { id: 'l', name: 'mac' }, [view(createdOn('mac'))])
     const out = (await moveRoutineToFileTool(deps(local), {
       key: 'created::a',
-      file: '.clave/workspaces/romain.clave',
       group: 'Ops'
     })) as Record<string, unknown>
-    expect(local.calls).toEqual(['move:created::a:.clave/workspaces/romain.clave:Ops'])
+    expect(local.calls).toEqual(['move:created::a:Ops'])
     expect(out).toMatchObject({
       ok: true,
       name: 'Morning digest',
-      file: '/root/.clave/workspaces/romain.clave',
+      file: '/root/.clave/workspaces/default.clave',
       group: 'Ops',
       runsOn: 'mac',
       machine: { id: 'local', ownName: 'mac' }
