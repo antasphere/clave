@@ -292,13 +292,20 @@ function RoutineList({
                 const badge = routineBadge(view, s)
                 const { Icon, color } = iconOf(s)
                 const last = view.runs[0]
+                // A routine nobody reachable runs promises no next run.
                 const sub = view.routine.invalid
                   ? 'Cannot run'
-                  : view.routine.paused
-                    ? 'Paused'
-                    : view.nextRunAt
-                      ? `next ${whenLabel(view.nextRunAt)}`
-                      : describeCron(view.routine.schedule)
+                  : badge.state === 'unreachable'
+                    ? s.problem === 'unknown'
+                      ? 'No machine runs it'
+                      : s.problem === 'absent'
+                        ? `${s.serverName} does not read this file`
+                        : `${s.serverName} is not connected`
+                    : view.routine.paused
+                      ? 'Paused'
+                      : view.nextRunAt
+                        ? `next ${whenLabel(view.nextRunAt)}`
+                        : describeCron(view.routine.schedule)
                 return (
                   <li key={surfaceId(s)}>
                     <button
