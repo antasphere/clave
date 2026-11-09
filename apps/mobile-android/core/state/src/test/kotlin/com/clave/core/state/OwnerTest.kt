@@ -1,0 +1,314 @@
+package com.clave.core.state
+
+import com.clave.core.auth.AuthError
+import com.clave.core.auth.DEFAULT_ISSUER
+import com.clave.core.auth.HubSignIn
+import com.clave.core.auth.HubTokenStore
+import com.clave.core.auth.SignInDeps
+import com.clave.core.auth.StoredAccount
+import com.clave.core.auth.StoredClient
+import com.clave.core.auth.StoredSession
+import com.clave.core.auth.StoredToken
+import com.clave.core.chat.Drafts
+import com.clave.core.contract.DeviceDescription
+import com.clave.core.contract.DevicePlatform
+import com.clave.core.contract.MachinePlatform
+import com.clave.core.devices.BuildKind
+import com.clave.core.devices.Credential
+import com.clave.core.devices.EnrollmentRecord
+import com.clave.core.devices.EnrollmentRecords
+import com.clave.core.devices.Machine
+import com.clave.core.devices.PairingState
+import com.clave.core.notifications.DeviceToken
+import com.clave.core.notifications.TokenRegistration
+import com.clave.core.ports.HttpFailure
+import com.clave.core.ports.HttpPort
+import com.clave.core.ports.JvmCrypto
+import com.clave.core.ports.MemorySecureStore
+import com.clave.core.transport.OkHttpPort
+import java.util.concurrent.CopyOnWriteArrayList
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.runBlocking
+import okhttp3.OkHttpClient
+import org.junit.After
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertNotSame
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
+import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
+import org.junit.Test
+
+/** The owner-scoped stores and services (account.ts, beta.ts): what one account writes is
+ *  never what the next one reads. */
+class OwnerTest {
+    private val clock = TestClock()
+    private val http = OkHttpClient()
+    private val port = OkHttpPort(http)
+    private val machine = FakeMachine()
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private val rawKv = SyncKv()
+    private val rawSecure = SyncSecure()
+    private val device = DeviceDescription("Test phone", DevicePlatform.Android, "0.1.0")
+
+    @After
+    fun stop() {
+        scope.cancel()
+        machine.close()
+    }
+
+    /** A hub login restored from the store, as after a boot: no network, the tokens valid
+     *  for an hour on the test's clock. */
+    private suspend fun signedIn(subject: String): HubSignIn {
+        val secure = MemorySecureStore()
+        val store = HubTokenStore(secure)
+        store.writeClient(StoredClient(DEFAULT_ISSUER, "client-$subject", 0))
+        store.writeSession(StoredSession(DEFAULT_ISSUER, "client-$subject", StoredAccount(subject, null, null, true), 0))
+        store.writeAccessToken(StoredToken("access-$subject", clock.nowMs + 3_600_000))
+        store.writeIdToken(StoredToken("id-$subject", clock.nowMs + 3_600_000))
+        store.writeRefreshToken("refresh-$subject")
+        val offline = HttpPort { throw HttpFailure.Network() }
+        val auth = HubSignIn(SignInDeps(null, offline, secure, JvmCrypto, { _, _ -> null }, clock))
+        auth.restore()
+        assertEquals(subject, auth.status().account?.subject)
+        return auth
+    }
+
+    private suspend fun storesOf(auth: HubSignIn) = ownerStores(auth.status(), rawKv, rawSecure, JvmCrypto)
+
+    private fun services(auth: HubSignIn, stores: OwnerStores, granted: Boolean = true, defaultRelay: String = "https://relay.default.example") = OwnerServices(
+        auth = auth,
+        stores = stores,
+        http = port,
+        build = BuildKind.Development,
+        device = device,
+        defaultRelayUrl = defaultRelay,
+        pushTokens = { DeviceToken("android", "fcm-token") },
+        permission = { granted },
+        clock = clock,
+        sleep = { delay(10) },
+    )
+
+    private val fixture: Machine
+        get() = Machine("m1", "Mac", MachinePlatform.Macos, "2.4.0", true, null, machine.base, "${machine.base}/push")
+
+    /** The enrollment routes: a ticket, then pending until [approve] completes. */
+    private fun enrollment(approve: CompletableDeferred<Unit>) {
+        machine.handler = { call ->
+            when {
+                call.line == "POST /devices/pair" -> answer(200, """{"pairingId":"p1","expiresAt":${clock.nowMs + 600_000}}""")
+                call.line == "GET /devices/pair" ->
+                    if (approve.isCompleted) answer(200, """{"status":"approved","deviceSession":{"token":"device-session","deviceId":"d1","serverId":"srv","serverName":"Mac"}}""")
+                    else answer(200, """{"status":"pending"}""")
+                call.path.startsWith("/devices/me/push-token") -> answer(200, "{}")
+                else -> answer(404, "{}")
+            }
+        }
+    }
+
+    private fun credentialKeys(): List<String> = rawSecure.map.keys.filter { it.contains("clave.credential.") }
+
+    @Test
+    fun `owner isolation two subjects never share a draft, a credential, a relay url or a pairing record`() = runBlocking {
+        val authA = signedIn("sub-a")
+        val authB = signedIn("sub-b")
+        val a = storesOf(authA)
+        val b = storesOf(authB)
+        assertNotEquals(a.namespace, b.namespace)
+        assertNotSame(a.pushWork, b.pushWork)
+        // The push work is per namespace and process-wide: the same owner gets the same lock.
+        assertSame(a.pushWork, storesOf(authA).pushWork)
+
+        Drafts(a.kv).set("m1", "s1", "A's words")
+        assertEquals("", Drafts(b.kv).get("m1", "s1"))
+
+        val servicesA = services(authA, a)
+        val servicesB = services(authB, b)
+        servicesA.setRelayUrl("https://relay-a.example/")
+        assertEquals("https://relay-a.example", servicesA.relayUrl())
+        assertEquals("https://relay.default.example", servicesB.relayUrl())
+
+        val approve = CompletableDeferred(Unit)
+        enrollment(approve)
+        val paired = servicesA.pair(fixture, {}, { false })
+        assertTrue(paired is PairingState.Approved)
+        assertEquals(Credential(machine.base, "device-session"), a.credentials.get("m1"))
+        assertEquals("m1", a.credentials.mainMachineId())
+        assertNull(b.credentials.get("m1"))
+        assertNull(b.credentials.mainMachineId())
+        assertEquals(listOf("m1"), EnrollmentRecords(a.kv).list().map { it.machineId })
+        assertEquals(emptyList<EnrollmentRecord>(), EnrollmentRecords(b.kv).list())
+        // B's services see none of A's machines and none of A's pairings.
+        assertEquals(emptyList<TokenRegistration>(), servicesB.syncPushTokens())
+        assertEquals(TokenRegistration.Failed("Pair this phone first."), servicesB.registerPush("m1"))
+        // Every key either owner wrote sits under its own namespace.
+        for (key in rawKv.map.keys + rawSecure.map.keys) {
+            assertTrue(key, key.startsWith(a.namespace) || key.startsWith(b.namespace))
+        }
+    }
+
+    @Test
+    fun `owner isolation after sign-out a write the old owner started lands nowhere the new owner reads`() = runBlocking {
+        val authA = signedIn("sub-a")
+        val a = storesOf(authA)
+        val servicesA = services(authA, a)
+        val approve = CompletableDeferred<Unit>()
+        enrollment(approve)
+
+        // The approval's credential write is held mid-flight while the owner signs out.
+        val writing = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        rawSecure.beforeSet = { key ->
+            if (key.startsWith(a.namespace) && key.contains("clave.credential.") && !writing.isCompleted) {
+                writing.complete(Unit)
+                release.await()
+            }
+        }
+        val states = CopyOnWriteArrayList<PairingState>()
+        val pairing = scope.async { servicesA.pair(fixture, { states += it }, { false }) }
+        until { states.any { it is PairingState.Waiting } }
+        approve.complete(Unit)
+        writing.await()
+        // Undispatched: the sign-out has begun (closing set, waiting on the owner's queue) when this returns.
+        val signOut = scope.async(start = CoroutineStart.UNDISPATCHED) { servicesA.signOut() }
+        // The hub login stays until the queue drains.
+        assertEquals("sub-a", authA.status().account?.subject)
+        release.complete(Unit)
+        assertEquals(PairingState.Cancelled, pairing.await())
+        signOut.await()
+        assertNull(authA.status().account)
+
+        // The next owner signs in: nothing of the old owner's approval is anywhere it reads.
+        val authB = signedIn("sub-b")
+        val b = storesOf(authB)
+        assertNull(b.credentials.get("m1"))
+        assertEquals(emptyList<EnrollmentRecord>(), EnrollmentRecords(b.kv).list())
+        // Nor under the old owner: the write was rolled back, not left behind.
+        assertNull(a.credentials.get("m1"))
+        assertEquals(emptyList<EnrollmentRecord>(), EnrollmentRecords(a.kv).list())
+        assertEquals(emptyList<String>(), credentialKeys())
+
+        // The old owner's services start nothing after the sign-out.
+        try {
+            servicesA.setRelayUrl("https://relay-late.example")
+            fail("a write after the sign-out must be refused")
+        } catch (e: AuthError) {
+            assertEquals("The account is signing out.", e.message)
+        }
+        assertNull(a.kv.get(RELAY_URL_KEY))
+        assertNull(b.kv.get(RELAY_URL_KEY))
+        assertEquals(TokenRegistration.Failed("The account is signing out."), servicesA.registerPush("m1"))
+        assertEquals(emptyList<TokenRegistration>(), servicesA.syncPushTokens())
+    }
+
+    @Test
+    fun `owner isolation the guard stops old work once the hub login changed under it`() = runBlocking {
+        val authA = signedIn("sub-a")
+        val a = storesOf(authA)
+        val servicesA = services(authA, a)
+        // Signed out elsewhere (another screen, an expiry): the epoch moved.
+        authA.signOut()
+        try {
+            servicesA.setRelayUrl("https://relay-late.example")
+            fail("old work must stop once the account changed")
+        } catch (e: AuthError) {
+            assertEquals("The account changed.", e.message)
+        }
+        assertNull(a.kv.get(RELAY_URL_KEY))
+        assertEquals(emptyList<Machine>(), servicesA.source.list())
+    }
+
+    @Test
+    fun `the machines come from the relay, and from the cache only when the relay is out of reach`() = runBlocking {
+        val auth = signedIn("sub-a")
+        val servicesA = services(auth, storesOf(auth), defaultRelay = "")
+        var status = 200
+        machine.handler = { call ->
+            if (call.rawPath == "/machines") {
+                if (status == 200) answer(200, """{"machines":[{"id":"r1","name":"Relay Mac","platform":"macos","version":"2.4.0","online":true,"lastSeen":5,"direct":[]}]}""")
+                else answer(status, "{}")
+            } else answer(404, "{}")
+        }
+        try {
+            servicesA.source.list()
+            fail("no relay address yet")
+        } catch (e: IllegalStateException) {
+            assertEquals("Enter the team relay address to see your machines.", e.message)
+        }
+        servicesA.kv.set(RELAY_URL_KEY, machine.base)
+        val listed = servicesA.source.list()
+        assertEquals(listOf("r1"), listed.map { it.id })
+        assertTrue(listed.single().online)
+        assertEquals("${machine.base}/m/r1", listed.single().baseUrl)
+
+        status = 503
+        val cached = servicesA.source.list()
+        assertEquals(listOf("r1"), cached.map { it.id })
+        assertFalse(cached.single().online)
+        assertEquals(listed.single().copy(online = false), cached.single())
+
+        status = 401
+        try {
+            servicesA.source.list()
+            fail("a refusal is never papered over by the cache")
+        } catch (e: Exception) {
+            assertEquals("The relay refused the sign-in.", e.message)
+        }
+    }
+
+    @Test
+    fun `a new relay moves the road generation, clears the push registrations and forgets every pairing`() = runBlocking {
+        val auth = signedIn("sub-a")
+        val a = storesOf(auth)
+        val servicesA = services(auth, a)
+        enrollment(CompletableDeferred(Unit))
+        servicesA.setRelayUrl(machine.base)
+        assertTrue(servicesA.pair(fixture, {}, { false }) is PairingState.Approved)
+        assertEquals(TokenRegistration.Registered("fcm-token"), servicesA.registerPush("m1"))
+        assertEquals(TokenRegistration.Unchanged, servicesA.registerPush("m1"))
+        val push = machine.calls.single { it.path == "/devices/me/push-token" }
+        assertEquals(json("""{"token":"fcm-token","platform":"android"}"""), json(push.body))
+        a.kv.set(MACHINES_CACHE_KEY, "[]")
+
+        val generation = a.pushWork.roadGeneration
+        // The same relay again changes nothing.
+        servicesA.setRelayUrl("${machine.base}/")
+        assertEquals(generation, a.pushWork.roadGeneration)
+        assertEquals(Credential(machine.base, "device-session"), a.credentials.get("m1"))
+
+        try {
+            servicesA.setRelayUrl("https://relay.example/team?x=1")
+            fail("a path or a query is refused")
+        } catch (e: IllegalArgumentException) {
+            assertEquals("Enter the team relay origin without a path or query.", e.message)
+        }
+        val cleanup = servicesA.setRelayUrl("https://relay-b.example")
+        assertEquals(generation + 1, a.pushWork.roadGeneration)
+        assertEquals(0, cleanup.pending)
+        assertEquals(1, machine.count("POST /devices/me/push-token/clear"))
+        assertNull(a.credentials.get("m1"))
+        assertEquals(emptyList<EnrollmentRecord>(), servicesA.records.list())
+        assertNull(a.kv.get(MACHINES_CACHE_KEY))
+        assertEquals("https://relay-b.example", servicesA.relayUrl())
+    }
+
+    @Test
+    fun `notifications off is said as such, never as a failure of the machine`() = runBlocking {
+        val auth = signedIn("sub-a")
+        val a = storesOf(auth)
+        enrollment(CompletableDeferred(Unit))
+        val servicesA = services(auth, a, granted = false)
+        assertTrue(servicesA.pair(fixture, {}, { false }) is PairingState.Approved)
+        assertEquals(TokenRegistration.Unsupported("Notifications are off for Clave."), servicesA.registerPush("m1"))
+        assertEquals(0, machine.count("POST /devices/me/push-token"))
+    }
+}
