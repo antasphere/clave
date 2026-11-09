@@ -836,6 +836,9 @@ export class CodexAdapter implements SessionAdapter {
     if (value.type === 'set_permission_mode')
       throw new Error('Codex chat does not offer permission modes')
     if (value.type === 'stop_task') throw new Error('Codex chat cannot stop one background task')
+    // The person's typing into a form is the host's (request-aware-host.ts),
+    // never a provider's (PRDCT-4210).
+    if (value.type === 'permission_draft') return
     const prompt = providerPrompt(value)
     state.emitter.emit('stream', { kind: 'event', event: userMessageEvent(value) })
     state.turnRequest = (state.turnRequest ?? Promise.resolve())

@@ -59,4 +59,29 @@ describe('routineBadge', () => {
       dot: null
     })
   })
+  it('a routine whose server is not connected reads unreachable, over any run state', () => {
+    const away = { runsOn: 'server' as const, reachable: false }
+    for (const runs of [[], [run('running')], [run('failed')], [run('ok', true)]])
+      expect(routineBadge({ routine: valid, runs }, away)).toEqual({
+        state: 'unreachable',
+        working: false,
+        dot: 'invalid'
+      })
+  })
+  it('an invalid declaration still beats an unreachable server', () => {
+    expect(
+      routineBadge(
+        { routine: { invalid: 'bad cron' }, runs: [] },
+        { runsOn: 'server', reachable: false }
+      )
+    ).toMatchObject({ state: 'invalid' })
+  })
+  it('a routine on a connected server reads its runs as usual', () => {
+    expect(
+      routineBadge(
+        { routine: valid, runs: [run('running')] },
+        { runsOn: 'server', reachable: true }
+      )
+    ).toMatchObject({ state: 'running', working: true })
+  })
 })

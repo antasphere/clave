@@ -515,3 +515,232 @@ describe('hosted requests', () => {
     requests.close()
   })
 })
+
+/* PRDCT-4210: what the person types into the card reaches the form's draft,
+   so the agent's read and its own submit see the person's values. */
+describe("the person's typing in the form's draft", () => {
+  it('the person corrects a field the agent set; the agent submits on their word and approves the correction', async () => {
+    const requests = new PendingRequests()
+    const request = requests.createHosted(onboarding)
+    const updated = vi.fn()
+    requests.onUpdated(updated)
+    await requests.setAnswers({
+      requestId: request.id,
+      sessionId: 's1',
+      answers: { email: 'luca@antasphere.com', login: 'luca-a' }
+    })
+    updated.mockClear()
+    requests.setDraft({ requestId: request.id, sessionId: 's1', answers: { login: ' luca-b ' } })
+    // Nobody is told: the card that typed it shows it already.
+    expect(updated).not.toHaveBeenCalled()
+    expect(await requests.resultAfter(request.id, 's1')).toEqual({
+      requestId: request.id,
+      status: 'pending',
+      answers: { email: 'luca@antasphere.com', login: 'luca-b' }
+    })
+    expect([...requests.typedOf(request.id)]).toEqual(['login'])
+    const view = await requests.setAnswers({
+      requestId: request.id,
+      sessionId: 's1',
+      answers: {},
+      submit: true
+    })
+    expect(view).toEqual({
+      requestId: request.id,
+      status: 'completed',
+      answers: { email: 'luca@antasphere.com', login: 'luca-b' }
+    })
+    requests.close()
+  })
+
+  it('a field the agent sets again speaks for the agent; an emptied field leaves the draft', async () => {
+    const requests = new PendingRequests()
+    const request = requests.createHosted(onboarding)
+    requests.setDraft({
+      requestId: request.id,
+      sessionId: 's1',
+      answers: { login: 'luca-b', projects: ['reb'] }
+    })
+    expect([...requests.typedOf(request.id)].sort()).toEqual(['login', 'projects'])
+    await requests.setAnswers({
+      requestId: request.id,
+      sessionId: 's1',
+      answers: { login: 'luca-c' }
+    })
+    expect([...requests.typedOf(request.id)]).toEqual(['projects'])
+    requests.setDraft({ requestId: request.id, sessionId: 's1', answers: { projects: [] } })
+    expect(requests.draftOf(request.id)).toEqual({ login: 'luca-c' })
+    expect([...requests.typedOf(request.id)]).toEqual([])
+    requests.close()
+  })
+
+  it("the agent's submit judges the person's half-typed value and says it is theirs", async () => {
+    const requests = new PendingRequests()
+    const request = requests.createHosted(onboarding)
+    requests.setDraft({
+      requestId: request.id,
+      sessionId: 's1',
+      answers: { email: 'luca@antasph', login: 'luca-a' }
+    })
+    await expect(
+      requests.setAnswers({ requestId: request.id, sessionId: 's1', answers: {}, submit: true })
+    ).rejects.toMatchObject({
+      code: 'invalid',
+      message: expect.stringMatching(/^"email": .*as the person typed it/)
+    })
+    expect((await requests.resultAfter(request.id, 's1')).status).toBe('pending')
+    requests.close()
+  })
+
+  it('is refused on a settled form, another session, a key the form does not ask, or a native request', async () => {
+    const requests = new PendingRequests()
+    const request = requests.createHosted(onboarding)
+    expect(() =>
+      requests.setDraft({ requestId: request.id, sessionId: 's2', answers: { login: 'x' } })
+    ).toThrow(expect.objectContaining({ code: 'not_found' }))
+    expect(() =>
+      requests.setDraft({ requestId: request.id, sessionId: 's1', answers: { nope: 'x' } })
+    ).toThrow(expect.objectContaining({ code: 'invalid' }))
+    expect(() =>
+      requests.setDraft({
+        requestId: request.id,
+        sessionId: 's1',
+        answers: JSON.parse('{"__proto__":"x"}')
+      })
+    ).toThrow(expect.objectContaining({ code: 'invalid' }))
+    const native = requests.create({
+      sessionId: 's1',
+      kind: 'permission',
+      providerRequestId: 'n1',
+      description: 'Run?',
+      options: [{ id: 'allow', label: 'Allow' }]
+    })
+    expect(() => requests.setDraft({ requestId: native.id, sessionId: 's1', answers: {} })).toThrow(
+      expect.objectContaining({ code: 'not_found' })
+    )
+    await requests.resolve({
+      requestId: request.id,
+      response: { type: 'permission', optionId: 'deny' }
+    })
+    expect(() =>
+      requests.setDraft({ requestId: request.id, sessionId: 's1', answers: { login: 'x' } })
+    ).toThrow(expect.objectContaining({ code: 'closed' }))
+    expect(requests.draftOf(request.id)).toEqual({})
+    requests.close()
+  })
+})
+
+describe("a form's defaults are what the card shows (PRDCT-4210, verifier round 2, Minor A)", () => {
+  const withDefault = {
+    sessionId: 's1',
+    description: 'This machine.',
+    questions: [
+      { id: 'name', question: 'Your name', kind: 'text' as const, options: [] },
+      {
+        id: 'machine',
+        question: 'This machine',
+        kind: 'text' as const,
+        options: [],
+        default: 'mbp'
+      }
+    ]
+  }
+  it('the agent reads a default the card shows and its submit approves it', async () => {
+    const requests = new PendingRequests()
+    const request = requests.createHosted(withDefault)
+    expect(await requests.resultAfter(request.id, 's1')).toEqual({
+      requestId: request.id,
+      status: 'pending',
+      answers: { machine: 'mbp' }
+    })
+    // The draft a late view is handed holds no default: nothing lands as
+    // anyone's fill.
+    expect(requests.draftOf(request.id)).toEqual({})
+    const view = await requests.setAnswers({
+      requestId: request.id,
+      sessionId: 's1',
+      answers: { name: 'Luca' },
+      submit: true
+    })
+    expect(view.answers).toEqual({ name: 'Luca', machine: 'mbp' })
+    requests.close()
+  })
+  it('the agent clearing a field with a default leaves it empty, as the card shows it (verifier round 3)', async () => {
+    const requests = new PendingRequests()
+    const optional = {
+      ...withDefault,
+      questions: [withDefault.questions[0], { ...withDefault.questions[1], optional: true }]
+    }
+    const request = requests.createHosted(optional)
+    const updated = vi.fn()
+    requests.onUpdated(updated)
+    await requests.setAnswers({
+      requestId: request.id,
+      sessionId: 's1',
+      answers: { machine: 'studio' }
+    })
+    await requests.setAnswers({ requestId: request.id, sessionId: 's1', answers: { machine: '' } })
+    expect(updated.mock.calls.at(-1)?.[1]).toEqual({ machine: '' })
+    expect((await requests.resultAfter(request.id, 's1')).answers).toBeUndefined()
+    // Cleared before anything was set there: the shown default goes too.
+    const other = requests.createHosted(optional)
+    await requests.setAnswers({ requestId: other.id, sessionId: 's1', answers: { machine: '' } })
+    expect((await requests.resultAfter(other.id, 's1')).answers).toBeUndefined()
+    // And the agent's submit approves it empty, as the card shows it.
+    const approved = await requests.setAnswers({
+      requestId: request.id,
+      sessionId: 's1',
+      answers: { name: 'Luca' },
+      submit: true
+    })
+    expect(approved.answers).toEqual({ name: 'Luca' })
+    requests.close()
+  })
+  it('a default is trimmed, and one that does not fit is said to be the form’s own', async () => {
+    const requests = new PendingRequests()
+    const padded = requests.createHosted({
+      ...withDefault,
+      questions: [{ ...withDefault.questions[1], default: ' mbp ' }]
+    })
+    expect((await requests.resultAfter(padded.id, 's1')).answers).toEqual({ machine: 'mbp' })
+    const misfit = requests.createHosted({
+      sessionId: 's1',
+      description: 'Mail.',
+      questions: [
+        { id: 'mail', question: 'E-mail', kind: 'email' as const, options: [], default: 'nope' }
+      ]
+    })
+    await expect(
+      requests.setAnswers({ requestId: misfit.id, sessionId: 's1', answers: {}, submit: true })
+    ).rejects.toMatchObject({ message: expect.stringMatching(/^"mail": .*the form's default/) })
+    requests.close()
+  })
+  it('a default the person emptied stays empty, so the submit asks for it', async () => {
+    const requests = new PendingRequests()
+    const request = requests.createHosted(withDefault)
+    requests.setDraft({
+      requestId: request.id,
+      sessionId: 's1',
+      answers: { name: 'Luca', machine: '' }
+    })
+    expect((await requests.resultAfter(request.id, 's1')).answers).toEqual({ name: 'Luca' })
+    expect(requests.draftOf(request.id)).toEqual({ name: 'Luca', machine: '' })
+    // The emptying is the person's: a late view is handed it as typed.
+    expect([...requests.typedOf(request.id)].sort()).toEqual(['machine', 'name'])
+    await expect(
+      requests.setAnswers({ requestId: request.id, sessionId: 's1', answers: {}, submit: true })
+    ).rejects.toMatchObject({
+      code: 'invalid',
+      message: expect.stringMatching(/^"machine" is still unanswered/)
+    })
+    requests.setDraft({ requestId: request.id, sessionId: 's1', answers: { machine: 'studio' } })
+    const view = await requests.setAnswers({
+      requestId: request.id,
+      sessionId: 's1',
+      answers: {},
+      submit: true
+    })
+    expect(view.answers).toEqual({ name: 'Luca', machine: 'studio' })
+    requests.close()
+  })
+})

@@ -1,11 +1,14 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { tmpdir } from 'node:os'
 import type { SessionHostService, StartInput } from '@clave/server'
+import type { RoutineRun } from '@clave/contract/routines'
 import type { Session, SessionInfo, SessionStream } from '@clave/contract/sessions'
 import { WorkspaceFiles, memoryWorkspaceFilesStorage } from '@clave/server/workspace-files'
+import { DECKS_DIR, MAX_TEMPLATE_BYTES, escapeForScript } from './deck'
 import type { LaunchFacts } from './launch'
+import { PublishFailure, type PublishInput, type PublishOutcome } from './publisher'
 import {
   RoutineReportRefusal,
   createRoutineService,
@@ -178,6 +181,7 @@ async function build(
     sessions: host,
     files,
     workspaces: async () => [{ id: 'ws', name: 'W', rootDir: root, profileFile: file }],
+    identity: () => ({ id: 'server-test', name: 'TestMac' }),
     facts,
     storage,
     dataDir: join(root, 'data'),
@@ -460,5 +464,514 @@ describe('the agents that can report (round 2, gap)', () => {
     expect(run.state).toBe('failed')
     expect(run.reason).toContain('cannot report')
     expect(host.starts).toEqual([])
+  })
+})
+
+/** An hourly schedule whose latest occurrence is about thirty minutes old, and
+ *  a store whose clock last considered it hours ago: a due catch-up at the
+ *  next tick (the same seed as the catch-up test above). */
+function dueHourly(
+  file: string,
+  name: string,
+  storage = memory()
+): {
+  schedule: string
+  storage: ReturnType<typeof memory>
+} {
+  const schedule = `${(new Date().getMinutes() + 30) % 60} * * * *`
+  new RoutinesStore(storage).considered(key(file, name), Date.now() - 3 * 3_600_000, schedule)
+  return { schedule, storage }
+}
+
+describe('a routine pinned to a server (PRDCT-4149)', () => {
+  it('is listed on another server and never run there, by the tick or by Run now', async () => {
+    const schedule = `${(new Date().getMinutes() + 30) % 60} * * * *`
+    const file = workspace([routine('Nightly', { server: 'Studio', schedule })])
+    const { storage } = dueHourly(file, 'Nightly')
+    const host = fakeHost()
+    const service = await build(file, host, storage)
+    await service.tick()
+    expect(host.starts).toEqual([])
+    const listed = service.list().routines[0]
+    expect(listed.routine).toMatchObject({ server: 'Studio', runsHere: false })
+    expect(listed.runs).toEqual([])
+    expect(listed.nextRunAt).toEqual(expect.any(Number))
+    const refused = service.runNow(key(file, 'Nightly'))
+    await expect(refused).rejects.toThrow(/Studio/)
+    await expect(refused).rejects.toThrow(/TestMac/)
+    expect(host.starts).toEqual([])
+  })
+
+  it('runs on the server it names, whatever the case of the name', async () => {
+    const schedule = `${(new Date().getMinutes() + 30) % 60} * * * *`
+    const file = workspace([routine('Nightly', { server: 'testmac', schedule })])
+    const { storage } = dueHourly(file, 'Nightly')
+    const host = fakeHost()
+    const service = await build(file, host, storage)
+    await service.tick()
+    expect(host.starts).toHaveLength(1)
+    expect(service.list().routines[0].routine.runsHere).toBe(true)
+    expect(service.list().routines[0].runs[0].trigger).toBe('catch-up')
+  })
+
+  it('runs on a server named by its id under another identity', async () => {
+    const file = workspace([routine('Nightly', { server: 'srv-42' })])
+    const host = fakeHost()
+    const service = await build(file, host, memory(), {
+      identity: () => ({ id: 'srv-42', name: 'Studio' })
+    })
+    const run = await service.runNow(key(file, 'Nightly'))
+    expect(run.state).toBe('running')
+    expect(service.list().server).toEqual({ id: 'srv-42', name: 'Studio' })
+  })
+
+  it('answers the server it lists from', async () => {
+    const file = workspace([routine('Health')])
+    const service = await build(file, fakeHost())
+    expect(service.list().server).toEqual({ id: 'server-test', name: 'TestMac' })
+  })
+})
+
+describe('the deck read over the API (PRDCT-4149)', () => {
+  it('answers the filled page of a reported run, and refuses a run with no deck', async () => {
+    const host = fakeHost()
+    const file = workspace([routine('Health')])
+    const service = await build(file, host)
+    const run = await service.runNow(key(file, 'Health'))
+    const headline = 'all good </script> here'
+    await service.report({ sessionId: 's1', status: 'ok', headline, summary: 's', data: { n: 1 } })
+    host.emit('s1', { kind: 'event', event: { type: 'state_change', state: 'done' } })
+    const { html } = await service.deck(run.id)
+    const block = html.slice(html.indexOf('id="slideless-data"'), html.lastIndexOf('</script>'))
+    expect(block).toContain(escapeForScript(JSON.stringify(headline)))
+    expect(block).not.toContain(headline)
+
+    await expect(service.deck('no-such-run')).rejects.toThrow(/no-such-run/)
+
+    const bare = await service.runNow(key(file, 'Health'))
+    host.emit('s2', { kind: 'event', event: { type: 'state_change', state: 'done' } })
+    expect(service.list().routines[0].runs[0]).toMatchObject({ id: bare.id, deck: null })
+    await expect(service.deck(bare.id)).rejects.toThrow(/no deck/)
+  })
+})
+
+describe('the publish to Slideless (PRDCT-4149)', () => {
+  /** A publisher that records what it is asked and answers a new version each time. */
+  function fakePublisher(fail?: string): {
+    inputs: PublishInput[]
+    publish: (input: PublishInput) => Promise<PublishOutcome>
+  } {
+    const inputs: PublishInput[] = []
+    return {
+      inputs,
+      publish: async (input) => {
+        inputs.push(input)
+        if (fail) throw new PublishFailure(fail)
+        const share = { tokenId: 'tok', url: 'https://s.example/d' }
+        return {
+          deckId: 'deck-1',
+          version: inputs.length,
+          url: share.url,
+          state: { deckId: 'deck-1', share },
+          shareError: null
+        }
+      }
+    }
+  }
+
+  const published = routine('Health', {
+    report: { template: '.clave/routines/ok', publish: true }
+  })
+
+  async function reportedRun(
+    service: RoutineService,
+    host: ReturnType<typeof fakeHost>,
+    file: string,
+    sessionId: string
+  ): Promise<string> {
+    const run = await service.runNow(key(file, 'Health'))
+    await service.report({ sessionId, status: 'ok', headline: 'h', summary: 's', data: { n: 1 } })
+    host.emit(sessionId, { kind: 'event', event: { type: 'state_change', state: 'done' } })
+    return run.id
+  }
+
+  const runOf = (service: RoutineService, id: string): RoutineRun =>
+    service.list().routines[0].runs.find((r) => r.id === id)!
+
+  it('pushes each run once, from its deck folder, under the routine name, with the kept state', async () => {
+    const host = fakeHost()
+    const file = workspace([published])
+    const publisher = fakePublisher()
+    const service = await build(file, host, memory(), { publisher })
+    const first = await reportedRun(service, host, file, 's1')
+    await vi.waitFor(() => expect(runOf(service, first).published).toBeDefined())
+    expect(publisher.inputs).toHaveLength(1)
+    const deck = runOf(service, first).deck!
+    expect(publisher.inputs[0]).toMatchObject({
+      folder: dirname(join(root, 'data', DECKS_DIR, deck)),
+      title: 'Health',
+      state: null
+    })
+    expect(runOf(service, first)).toMatchObject({
+      state: 'ok',
+      published: { deckId: 'deck-1', version: 1, url: 'https://s.example/d' },
+      publishError: null
+    })
+
+    const second = await reportedRun(service, host, file, 's2')
+    await vi.waitFor(() => expect(runOf(service, second).published).toBeDefined())
+    expect(publisher.inputs).toHaveLength(2)
+    expect(publisher.inputs[1].state).toEqual({
+      deckId: 'deck-1',
+      share: { tokenId: 'tok', url: 'https://s.example/d' }
+    })
+    expect(runOf(service, second).published?.version).toBe(2)
+  })
+
+  it('writes why on the run when the publish fails, and leaves the run ok', async () => {
+    const host = fakeHost()
+    const file = workspace([published])
+    const service = await build(file, host, memory(), { publisher: fakePublisher('x') })
+    const id = await reportedRun(service, host, file, 's1')
+    await vi.waitFor(() => expect(runOf(service, id).publishError).toBe('x'))
+    expect(runOf(service, id).state).toBe('ok')
+    expect(runOf(service, id).published).toBeUndefined()
+  })
+
+  it('says no publisher runs in this process when the server has none', async () => {
+    for (const publisher of [false as const, undefined]) {
+      const host = fakeHost()
+      const file = workspace([published])
+      const service = await build(file, host, memory(), { publisher })
+      const id = await reportedRun(service, host, file, 's1')
+      await vi.waitFor(() =>
+        expect(runOf(service, id).publishError).toMatch(/no Slideless publisher/)
+      )
+      expect(runOf(service, id).state).toBe('ok')
+    }
+  })
+
+  const report = (service: RoutineService, sessionId: string, headline: string): Promise<unknown> =>
+    service.report({ sessionId, status: 'ok', headline, summary: 's', data: { n: 1 } })
+  const done = (host: ReturnType<typeof fakeHost>, sessionId: string): void =>
+    host.emit(sessionId, { kind: 'event', event: { type: 'state_change', state: 'done' } })
+
+  it('one run reported twice is published once, from its last deck (round 1, Minor 2)', async () => {
+    const host = fakeHost()
+    const file = workspace([published])
+    const publisher = fakePublisher()
+    const service = await build(file, host, memory(), { publisher })
+    const run = await service.runNow(key(file, 'Health'))
+    await report(service, 's1', 'first')
+    const firstDeck = runOf(service, run.id).deck
+    await report(service, 's1', 'second')
+    // The correction rewrites the deck in place: same path, its content the last.
+    expect(runOf(service, run.id).deck).toBe(firstDeck)
+    done(host, 's1')
+    await vi.waitFor(() => expect(runOf(service, run.id).published).toBeDefined())
+    // Settle any stray publish a report might still have queued.
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(publisher.inputs).toHaveLength(1)
+    expect(publisher.inputs[0].folder).toBe(dirname(join(root, 'data', DECKS_DIR, firstDeck!)))
+    expect(runOf(service, run.id)).toMatchObject({
+      headline: 'second',
+      published: { version: 1 }
+    })
+  })
+
+  it('publishes nothing before the run ends', async () => {
+    const host = fakeHost()
+    const file = workspace([published])
+    const publisher = fakePublisher()
+    const service = await build(file, host, memory(), { publisher })
+    await service.runNow(key(file, 'Health'))
+    await report(service, 's1', 'h')
+    await new Promise((resolve) => setTimeout(resolve, 30))
+    expect(publisher.inputs).toHaveLength(0)
+    done(host, 's1')
+    await vi.waitFor(() => expect(publisher.inputs).toHaveLength(1))
+  })
+
+  it('pushes one run at a time per routine, the second with the first one’s outcome (Gap 3)', async () => {
+    const host = fakeHost()
+    const file = workspace([published])
+    const states: PublishInput['state'][] = []
+    const share = { tokenId: 'tok', url: 'https://s.example/d' }
+    const publisher = {
+      publish: async (input: PublishInput): Promise<PublishOutcome> => {
+        states.push(input.state)
+        // Slow enough that the second run ends while the first push is on the wire.
+        await new Promise((resolve) => setTimeout(resolve, 60))
+        return {
+          deckId: 'deck-1',
+          version: states.length,
+          url: share.url,
+          state: { deckId: 'deck-1', share },
+          shareError: null
+        }
+      }
+    }
+    const service = await build(file, host, memory(), { publisher })
+    const first = await reportedRun(service, host, file, 's1')
+    const second = await reportedRun(service, host, file, 's2')
+    await vi.waitFor(() => {
+      expect(runOf(service, first).published).toBeDefined()
+      expect(runOf(service, second).published).toBeDefined()
+    })
+    // Had both pushed at once, both would have seen no deck and made two.
+    expect(states).toEqual([null, { deckId: 'deck-1', share }])
+  })
+
+  it('never writes the share URL on a log line, only on the run (Gap 4)', async () => {
+    const lines: string[] = []
+    const log = (_level: 'info' | 'warn', message: string): void => void lines.push(message)
+    const url = 'https://s.example/d/SECRET'
+    const host = fakeHost()
+    const file = workspace([published])
+    const publisher = {
+      publish: async (): Promise<PublishOutcome> => ({
+        deckId: 'deck-1',
+        version: 1,
+        url,
+        state: { deckId: 'deck-1', share: { tokenId: 'tok', url } },
+        shareError: null
+      })
+    }
+    const service = await build(file, host, memory(), { publisher, log })
+    const id = await reportedRun(service, host, file, 's1')
+    await vi.waitFor(() => expect(runOf(service, id).published?.url).toBe(url))
+    expect(lines.length).toBeGreaterThan(0)
+    for (const line of lines) expect(line).not.toContain('SECRET')
+
+    // A failing publish: its reason on the run carries no URL either.
+    const failingHost = fakeHost()
+    const failing = await build(file, failingHost, memory(), {
+      publisher: fakePublisher('refused'),
+      log
+    })
+    const failed = await reportedRun(failing, failingHost, file, 's1')
+    await vi.waitFor(() => expect(runOf(failing, failed).publishError).toBe('refused'))
+    expect(runOf(failing, failed).publishError).not.toContain('SECRET')
+    for (const line of lines) expect(line).not.toContain('SECRET')
+  })
+
+  it('publishes at the next start a run that reported and was cut off by the stop (round 2, Minor 1)', async () => {
+    const host = fakeHost()
+    const file = workspace([published])
+    const storage = memory()
+    const first = await build(file, host, storage, { publisher: fakePublisher() })
+    const run = await first.runNow(key(file, 'Health'))
+    await first.report({
+      sessionId: 's1',
+      status: 'ok',
+      headline: 'h',
+      summary: 's',
+      data: { n: 1 }
+    })
+    // No end: the server stops here. The next life marks the run failed and
+    // finds its deck with nothing published.
+    await first.close()
+    const publisher = fakePublisher()
+    const second = await build(file, fakeHost(), storage, { publisher })
+    await second.start()
+    await vi.waitFor(() => expect(runOf(second, run.id).published).toBeDefined())
+    expect(publisher.inputs).toHaveLength(1)
+    expect(runOf(second, run.id)).toMatchObject({ state: 'failed', published: { version: 1 } })
+    // A third life publishes it no second time: the SAME publisher counts.
+    const third = await build(file, fakeHost(), storage, { publisher })
+    await third.start()
+    await new Promise((resolve) => setTimeout(resolve, 30))
+    expect(publisher.inputs).toHaveLength(1)
+    expect(runOf(third, run.id).published?.version).toBe(1)
+  })
+
+  it('publishes at a start only the runs that start ended, oldest first, and never a routine turning publishing on (round 3)', async () => {
+    const storage = memory()
+    const host = fakeHost()
+    // Three runs recorded while the routine did not publish: adopting the
+    // feature must not push that history.
+    const quiet = await build(workspace([routine('Health')]), host, storage)
+    for (const sid of ['s1', 's2', 's3']) {
+      const run = await quiet.runNow(key(quiet.list().routines[0].routine.file, 'Health'))
+      await quiet.report({
+        sessionId: sid,
+        status: 'ok',
+        headline: sid,
+        summary: 's',
+        data: { n: 1 }
+      })
+      host.emit(sid, { kind: 'event', event: { type: 'state_change', state: 'done' } })
+      expect(runOf(quiet, run.id).deck).toBeTruthy()
+    }
+    await quiet.close()
+    const publisher = fakePublisher()
+    const file = workspace([published])
+    const adopting = await build(file, fakeHost(), storage, { publisher })
+    await adopting.start()
+    await new Promise((resolve) => setTimeout(resolve, 30))
+    expect(publisher.inputs).toEqual([])
+
+    // Two runs reported and cut off by the stop, the older first on Slideless;
+    // a run whose publish already failed is not retried at a start.
+    const live = fakeHost()
+    const cutOff = await build(file, live, storage, { publisher: fakePublisher('refused') })
+    const first = await cutOff.runNow(key(file, 'Health'))
+    await cutOff.report({
+      sessionId: 's1',
+      status: 'ok',
+      headline: 'first',
+      summary: 's',
+      data: { n: 1 }
+    })
+    await new Promise((resolve) => setTimeout(resolve, 5))
+    const second = await cutOff.runNow(key(file, 'Health')).catch(() => null)
+    // One run at a time per routine: the second run waits for the first to end,
+    // so it is refused here; the first alone is the run the stop cuts off.
+    expect(second).toBeNull()
+    await cutOff.close()
+    const next = fakePublisher()
+    const restarted = await build(file, fakeHost(), storage, { publisher: next })
+    await restarted.start()
+    await vi.waitFor(() => expect(runOf(restarted, first.id).published).toBeDefined())
+    expect(next.inputs).toHaveLength(1)
+    // Its publish now on the record, a further start pushes nothing more.
+    const again = fakePublisher()
+    const later = await build(file, fakeHost(), storage, { publisher: again })
+    await later.start()
+    await new Promise((resolve) => setTimeout(resolve, 30))
+    expect(again.inputs).toEqual([])
+  })
+
+  it('a run whose publish failed is not retried at the next start (round 3, Gap)', async () => {
+    const storage = memory()
+    const host = fakeHost()
+    const file = workspace([published])
+    const failing = await build(file, host, storage, { publisher: fakePublisher('refused') })
+    const id = await reportedRun(failing, host, file, 's1')
+    await vi.waitFor(() => expect(runOf(failing, id).publishError).toBe('refused'))
+    await failing.close()
+    const publisher = fakePublisher()
+    const next = await build(file, fakeHost(), storage, { publisher })
+    await next.start()
+    await new Promise((resolve) => setTimeout(resolve, 30))
+    expect(publisher.inputs).toEqual([])
+  })
+
+  it('a run cut off is not published at a start on a server the routine no longer names (round 3, Note 2)', async () => {
+    const storage = memory()
+    const host = fakeHost()
+    const file = workspace([published])
+    const before = await build(file, host, storage, { publisher: fakePublisher() })
+    await before.runNow(key(file, 'Health'))
+    await before.report({
+      sessionId: 's1',
+      status: 'ok',
+      headline: 'h',
+      summary: 's',
+      data: { n: 1 }
+    })
+    await before.close()
+    const publisher = fakePublisher()
+    // The same file now pins the routine to another server: this server no
+    // longer runs it, and the run it cut off is not its to publish.
+    const pinnedFile = workspace([{ ...published, server: 'Studio' }])
+    const pinnedAway = await build(pinnedFile, fakeHost(), storage, { publisher })
+    await pinnedAway.start()
+    await new Promise((resolve) => setTimeout(resolve, 30))
+    expect(publisher.inputs).toEqual([])
+  })
+
+  it('a run interrupted after its report keeps the report and publishes once (round 2, Note 1)', async () => {
+    const host = fakeHost()
+    const file = workspace([published])
+    const publisher = fakePublisher()
+    const service = await build(file, host, memory(), { publisher })
+    const run = await service.runNow(key(file, 'Health'))
+    await service.report({
+      sessionId: 's1',
+      status: 'attention',
+      headline: 'h',
+      summary: 's',
+      data: { n: 1 }
+    })
+    host.emit('s1', { kind: 'event', event: { type: 'turn_interrupted' } })
+    host.emit('s1', { kind: 'event', event: { type: 'state_change', state: 'done' } })
+    await vi.waitFor(() => expect(runOf(service, run.id).published).toBeDefined())
+    expect(runOf(service, run.id).state).toBe('attention')
+    expect(publisher.inputs).toHaveLength(1)
+  })
+
+  it('never calls the publisher for a routine that does not publish', async () => {
+    const host = fakeHost()
+    const file = workspace([routine('Health')])
+    const publisher = fakePublisher()
+    const service = await build(file, host, memory(), { publisher })
+    const id = await reportedRun(service, host, file, 's1')
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(publisher.inputs).toEqual([])
+    expect(runOf(service, id).publishError).toBeUndefined()
+    expect(runOf(service, id).published).toBeUndefined()
+  })
+})
+
+describe('the deck read is confined and bounded (Gap 1)', () => {
+  /** A run ended with a deck, its service, and the storage it records into. */
+  async function endedRun(): Promise<{
+    file: string
+    runId: string
+    deck: string
+    storage: ReturnType<typeof memory>
+  }> {
+    const host = fakeHost()
+    const file = workspace([routine('Health')])
+    const storage = memory()
+    const service = await build(file, host, storage)
+    const run = await service.runNow(key(file, 'Health'))
+    await service.report({
+      sessionId: 's1',
+      status: 'ok',
+      headline: 'h',
+      summary: 's',
+      data: { n: 1 }
+    })
+    host.emit('s1', { kind: 'event', event: { type: 'state_change', state: 'done' } })
+    const deck = service.list().routines[0].runs[0].deck!
+    expect(deck).toEqual(expect.any(String))
+    return { file, runId: run.id, deck, storage }
+  }
+
+  /** The record edited by hand, as a tampered or corrupted `routines.json` would be. */
+  function rewriteDeck(storage: ReturnType<typeof memory>, runId: string, deck: string): void {
+    const doc = JSON.parse(storage.docs.get(STORE_FILE)!) as {
+      routines: Record<string, { runs: Array<{ id: string; deck: string | null }> }>
+    }
+    for (const state of Object.values(doc.routines))
+      for (const run of state.runs) if (run.id === runId) run.deck = deck
+    storage.docs.set(STORE_FILE, JSON.stringify(doc))
+  }
+
+  it('refuses a recorded deck path that leaves the decks folder, and never answers its text', async () => {
+    const { file, runId, storage } = await endedRun()
+    // Two levels above the decks root (`<root>/data/decks`): `<root>/outside.html`.
+    writeFileSync(join(root, 'outside.html'), 'TOP-SECRET')
+    for (const escape of ['../../outside.html', '/etc/hosts']) {
+      rewriteDeck(storage, runId, escape)
+      // A new service reads the record afresh (the store caches what it read).
+      const service = await build(file, fakeHost(), storage)
+      const answer = service.deck(runId)
+      await expect(answer).rejects.toThrow(/decks folder/)
+      const outcome = await answer.then(
+        (r) => JSON.stringify(r),
+        (e: unknown) => String(e)
+      )
+      expect(outcome).not.toContain('TOP-SECRET')
+    }
+  })
+
+  it('refuses a deck page larger than 5 MiB', async () => {
+    const { file, runId, deck, storage } = await endedRun()
+    writeFileSync(join(root, 'data', DECKS_DIR, deck), 'x'.repeat(MAX_TEMPLATE_BYTES + 1))
+    const service = await build(file, fakeHost(), storage)
+    await expect(service.deck(runId)).rejects.toThrow(/5 MiB/)
   })
 })

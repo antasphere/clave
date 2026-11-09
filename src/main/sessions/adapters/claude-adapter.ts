@@ -1324,6 +1324,9 @@ export class ClaudeAdapter implements SessionAdapter {
     if (raw instanceof Uint8Array)
       throw new Error('Claude events adapter accepts SessionInput, not raw bytes')
     const input = SessionInputSchema.parse(raw)
+    // The person's typing into a form is the host's (request-aware-host.ts),
+    // never the CLI's; the chain below ends in an interrupt (PRDCT-4210).
+    if (input.type === 'permission_draft') return
     const live = this.live(handle)
     if (live.ended) throw new Error('Claude session has ended')
     if (input.type === 'set_model' && input.model !== null && !isValidModelName(input.model))

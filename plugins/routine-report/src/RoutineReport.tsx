@@ -21,12 +21,18 @@ export function RoutineReport({
   run,
   viewerUrl,
   viewerNote,
+  deckUrl,
   ready = true
 }: {
   view: RoutineView | undefined
   run: RoutineRun | undefined
   viewerUrl: string | null
   viewerNote: string
+  /** The deck's page itself, when the host resolved it (a connected server's
+   *  run, cached on this Mac, PRDCT-4149): used instead of the viewer's URL.
+   *  null while it loads or when it could not be read, the envelope shown
+   *  with `viewerNote`; undefined for a deck the viewer serves. */
+  deckUrl?: string | null
   /** Whether the host has settled (its own motion done): the deck's web view
    *  is mounted only then, the veil standing in before. */
   ready?: boolean
@@ -44,8 +50,13 @@ export function RoutineReport({
       </div>
     )
   }
-  if (run.deck && viewerUrl) {
-    const src = `${viewerUrl.replace(/\/$/, '')}/${run.deck}`
+  const src =
+    deckUrl !== undefined
+      ? deckUrl
+      : run.deck && viewerUrl
+        ? `${viewerUrl.replace(/\/$/, '')}/${run.deck}`
+        : null
+  if (run.deck && src) {
     return (
       <DeckGuest key={src} src={src} title={run.headline ?? view?.routine.name} ready={ready} />
     )
@@ -101,7 +112,7 @@ export function RoutineReport({
           <MarkdownRenderer content={run.summary} />
         </div>
       )}
-      {run.deck && !viewerUrl && (
+      {run.deck && !src && (
         <p className="text-xs text-text-tertiary" data-testid="routine-report-viewer-note">
           {viewerNote}
         </p>

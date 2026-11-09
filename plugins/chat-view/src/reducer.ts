@@ -15,6 +15,12 @@ export type Entry =
       kind: 'user'
       text: string
       final: boolean
+      /** The message arrived while the turn before it was still going, the
+       *  agent working or waiting on a permission (Claude takes one mid-turn
+       *  and queues it; another tab's message lands the same way): it did not
+       *  end that turn. The fold of the agent's working notes reads it
+       *  (stretches.ts, PRDCT-4212). */
+      midTurn?: boolean
       at: number
       attachments?: Attachment[]
       /* The reader stopped the turn this message started, so the agent never
@@ -26,7 +32,18 @@ export type Entry =
          answer to it arrives after all. */
       withdrawn?: boolean
     }
-  | { kind: 'assistant'; text: string; final: boolean; at: number }
+  | {
+      kind: 'assistant'
+      text: string
+      final: boolean
+      at: number
+      /** The turn ended on these words: the kernel went idle, done or ended
+       *  with them as the agent's last. The agent may carry on later without
+       *  a new message (a background task reporting back), and the fold of
+       *  its working notes must not take these words for a note then
+       *  (stretches.ts, PRDCT-4212). */
+      closes?: boolean
+    }
   | {
       kind: 'tool'
       id: string
@@ -69,6 +86,10 @@ export type Entry =
        *  open: the fields the agent set from what the reader said, which the
        *  card shows as they land. */
       draft?: Record<string, string | string[]>
+      /** What the reader had typed into the open form, as the server holds
+       *  it (PRDCT-4210), handed to a view that came late: the card starts
+       *  from it, and nothing of it lands or reads as the agent's fill. */
+      typed?: Record<string, string | string[]>
       /** The form was approved, then a field was set again by the agent. */
       revised?: boolean
       /** The agent's word under a field it could not fill, by key; gone as
@@ -126,6 +147,11 @@ export type Action =
   | { sync: HistoryItem[] }
   /** The reader took their last message back before any answer to it. */
   | { withdraw: true }
+  /** The reader's typing into an open form was sent to its draft
+   *  (PRDCT-4210): the server now holds the reader's value in those fields,
+   *  so the agent's earlier fill there is no longer the draft's, and the
+   *  agent setting one again lands. */
+  | { typedSent: string; answers: Record<string, string | string[]> }
   /** The host refused this view's answer because it no longer holds the
    *  request: the card is retired without an answer. */
   | { retire: string }
@@ -170,6 +196,18 @@ function settle(entries: Entry[], matches: (request: Permission) => boolean): En
   return entries.some(touches)
     ? entries.map((e) => (touches(e) ? { ...e, answeredElsewhere: true, abandoned: true } : e))
     : entries
+}
+/** The entries with the agent's last words marked as the ones the turn
+ *  ended on (`closes`), when they are not yet; the same array otherwise. */
+function closeTurn(entries: Entry[]): Entry[] {
+  // Words, never an empty entry (a closing frame that opened nothing): the
+  // views filter those out, and a mark on one would cut the turn nowhere.
+  const index = entries.findLastIndex((e) => e.kind === 'assistant' && e.text.trim() !== '')
+  const last = entries[index]
+  if (last?.kind !== 'assistant' || last.closes) return entries
+  const next = [...entries]
+  next[index] = { ...last, closes: true }
+  return next
 }
 const isSettled = (e: Extract<Entry, { kind: 'permission' }>): boolean =>
   e.answer !== undefined || e.answeredElsewhere === true
@@ -240,6 +278,23 @@ export function reduceConversation(state: Conversation, action: Action): Convers
       ? state
       : { ...state, entries: relocateSettled(entries, action.retire, wasLive, Date.now()) }
   }
+  if ('typedSent' in action) {
+    const index = state.entries.findLastIndex(
+      (e) => e.kind === 'permission' && e.request.id === action.typedSent
+    )
+    const entry = state.entries[index]
+    if (entry?.kind !== 'permission' || entry.answer || entry.answeredElsewhere) return state
+    const draft = { ...entry.draft }
+    const typed = { ...entry.typed }
+    for (const [key, value] of Object.entries(action.answers)) {
+      delete draft[key]
+      if (value === '' || (Array.isArray(value) && value.length === 0)) delete typed[key]
+      else typed[key] = value
+    }
+    const entries = [...state.entries]
+    entries[index] = { ...entry, draft, typed }
+    return { ...state, entries }
+  }
   if ('withdraw' in action) {
     if (answeredSince(state.entries)) return state
     const last = state.entries.findLastIndex((e) => e.kind === 'user')
@@ -255,7 +310,14 @@ export function reduceConversation(state: Conversation, action: Action): Convers
     // kernel's word on the stream (and the subscribe's answer), and a
     // replayed page may hold a fatal error or a blocked request of a process
     // that is no longer the one running (PRDCT-4191).
-    const synced = action.sync.reduce(reduceConversation, { ...state, entries: [], first: 0 })
+    // Replayed from rest: a transcript carries no state changes, and a replay
+    // read under the live `working` would mark every message as mid-turn.
+    const synced = action.sync.reduce(reduceConversation, {
+      ...state,
+      entries: [],
+      first: 0,
+      state: 'idle'
+    })
     return { ...synced, state: state.state, run: state.run, exitCode: state.exitCode }
   }
   if ('prepend' in action) {
@@ -327,10 +389,16 @@ export function reduceConversation(state: Conversation, action: Action): Convers
     // subscribe's answer does: a process that ended with (exit 1) and came
     // back must not show that code again when the new run ends.
     const exitCode = event.state === 'ended' ? state.exitCode : undefined
-    if (!state.entries.some(touches)) return { ...state, state: event.state, run, exitCode }
+    // The turn ended: its last words are marked as the ones it ended on.
+    const closed =
+      event.state === 'idle' || event.state === 'done' || event.state === 'ended'
+        ? closeTurn(state.entries)
+        : state.entries
+    if (!closed.some(touches))
+      return { ...state, entries: closed, state: event.state, run, exitCode }
     return {
       ...state,
-      entries: state.entries.map((e) =>
+      entries: closed.map((e) =>
         touches(e) ? { ...e, answeredElsewhere: marks ? true : undefined } : e
       ),
       state: event.state,
@@ -360,6 +428,13 @@ export function reduceConversation(state: Conversation, action: Action): Convers
     const entry = state.entries[index]
     if (entry?.kind !== 'permission') return state
     const entries = [...state.entries]
+    if (event.typed) {
+      // The reader's own typing, kept by the server for this view: only an
+      // open form takes it, and never into the agent's draft (PRDCT-4210).
+      if (event.sent || entry.answer || entry.answeredElsewhere) return state
+      entries[index] = { ...entry, typed: { ...entry.typed, ...event.answers } }
+      return { ...state, entries }
+    }
     if (event.sent || entry.answer) {
       // An empty value clears the answer, as the server dropped it.
       const answers = { ...entry.answers }
@@ -388,9 +463,13 @@ export function reduceConversation(state: Conversation, action: Action): Convers
     for (const key of Object.keys(event.answers)) if (!event.notes?.[key]) delete notes[key]
     const { notes: _gone, ...rest } = entry
     void _gone
+    // A field the agent set speaks for the agent again, as on the server.
+    const typed = { ...entry.typed }
+    for (const key of Object.keys(event.answers)) delete typed[key]
     entries[index] = {
       ...rest,
       draft: { ...entry.draft, ...event.answers },
+      ...(entry.typed ? { typed } : {}),
       ...(Object.keys(notes).length ? { notes } : {})
     }
     return { ...state, entries }
@@ -412,7 +491,9 @@ export function reduceConversation(state: Conversation, action: Action): Convers
         text: event.text,
         final: true,
         at,
-        ...(event.attachments?.length ? { attachments: event.attachments } : {})
+        ...(event.attachments?.length ? { attachments: event.attachments } : {}),
+        // Sent while the turn before was still going: it did not end it.
+        ...(state.state === 'working' || state.state === 'blocked' ? { midTurn: true } : {})
       })
       break
     case 'assistant_text': {

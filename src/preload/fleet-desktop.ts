@@ -17,6 +17,7 @@ import type { SessionWrite } from '@clave/contract/sessions'
 import type { AttachmentSource as FileAttachmentSource } from '@clave/contract/files'
 import type { GitStatusResult as WireGitStatus, GitWatchSubscription } from '@clave/contract/git'
 import type { ServerEvent } from '@clave/contract/events'
+import type { RoutinesListing } from '@clave/contract/routines/model'
 import type { SessionEvent, SessionStream, SessionInput } from '../shared/session-model'
 import { isFileAttachment, type AttachmentSource, type FileAttachment } from '../shared/attachments'
 import { BUILT_IN_LAUNCH_PROFILES } from '../shared/agent-launch'
@@ -28,6 +29,7 @@ import type {
   FleetSettingsEvent,
   FleetSnapshot,
   FleetRequests,
+  FleetRoutines,
   FleetWorkspaces
 } from './fleet-types'
 
@@ -355,6 +357,38 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
     if (tag === 'sidebar.layout_changed' || tag.startsWith('session.')) refresh(serverId)
     if (value.event._tag === 'workspaces.state_changed')
       publishWorkspaces(serverId, value.event.workspaces as Workspace[], value.event)
+  })
+  // ── PRDCT-4149: the routines a connected server runs ─────────────────────
+  // Read at each connect and at each `routines.changed` it pushes, and
+  // published to the window, which merges them with its own server's. A read
+  // that fails publishes nothing: a server that runs no routines answers
+  // `CapabilityUnavailable`, a server gone answers nothing, and the window
+  // keeps the last listing and reads reachability from the fleet statuses.
+  // Only the newest read of a server publishes, so two reads crossing on the
+  // wire never put an older listing over a newer one.
+  const routinesListeners = new Set<(update: FleetRoutines) => void>()
+  const routineReads = new Map<string, number>()
+  const readRoutines = async (serverId: string): Promise<RoutinesListing> => {
+    const ticket = (routineReads.get(serverId) ?? 0) + 1
+    routineReads.set(serverId, ticket)
+    const listing = await (await backing(serverId)).api.routines.list()
+    // The same guard as a snapshot's: a connection removed or disabled while
+    // the read was on the wire publishes nothing for it.
+    if (
+      routineReads.get(serverId) === ticket &&
+      connections.some((c) => c.id === serverId && c.enabled)
+    )
+      for (const listener of routinesListeners) listener({ serverId, listing })
+    return listing
+  }
+  const publishRoutines = (serverId: string): void => {
+    void readRoutines(serverId).catch(noop)
+  }
+  fleet.onStatus((status) => {
+    if (status.state === 'connected') publishRoutines(status.serverId)
+  })
+  fleet.onEvent(({ serverId, value }) => {
+    if (value.event._tag === 'routines.changed') publishRoutines(serverId)
   })
   let savedRead: Promise<SavedServerConnection[]> | null = null
   let watchingChanges = false
@@ -1187,6 +1221,32 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
       workspaceListeners.add(callback)
       return () => {
         workspaceListeners.delete(callback)
+      }
+    },
+    // ── PRDCT-4149: a connected server's routines, each act routed to it by id ──
+    fleetRoutines: readRoutines,
+    fleetRoutineRunNow: async (serverId, key) => (await backing(serverId)).api.routines.runNow(key),
+    fleetRoutineDismiss: async (serverId, runId) =>
+      (await backing(serverId)).api.routines.dismiss(runId),
+    fleetRoutineDiscussion: async (serverId, runId, mode) => {
+      // The window the discussion lands in: this one, by its persisted key,
+      // as the local bridge's `routinesOpenDiscussion` names it.
+      const identity = (await ports.invoke('window:identity')) as { windowKey?: string } | null
+      const b = await backing(serverId)
+      const { sessionId } = await b.api.routines.openDiscussion(
+        runId,
+        identity?.windowKey ?? '',
+        mode
+      )
+      // The session is the server's now: the next snapshot lists it here.
+      refresh(serverId)
+      return { sessionId: key(serverId, sessionId) }
+    },
+    fleetRoutineDeck: async (serverId, runId) => (await backing(serverId)).api.routines.deck(runId),
+    onFleetRoutines: (callback) => {
+      routinesListeners.add(callback)
+      return () => {
+        routinesListeners.delete(callback)
       }
     },
     // ── Issue #266: main reads the servers' versions, never this window ──

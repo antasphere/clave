@@ -54,15 +54,16 @@ export class ServerInfoPort extends Context.Tag('@clave/server/ServerInfo')<
     },
     subscribe: () => () => {}
   }
-  /** A server the app runs: the app's version, and no upgrade of its own. */
-  static appRun(version: string): ServerInfoService {
+  /** A server the app runs: the app's version, and no upgrade of its own;
+   *  `name` is the server's own name (PRDCT-4149) when the entry knows it. */
+  static appRun(version: string, name?: string): ServerInfoService {
     const upgrade: ServerUpgradeStatus = {
       supported: false,
       reason: APP_RUN_REASON,
       state: 'idle'
     }
     return {
-      info: () => ({ version, installRef: null, upgrade }),
+      info: () => ({ version, installRef: null, upgrade, ...(name ? { name } : {}) }),
       requestUpgrade: () => {
         throw new CapabilityUnavailable({ capability: 'server-upgrade', message: APP_RUN_REASON })
       },

@@ -8,6 +8,7 @@ import * as R from '@clave/contract/routines'
 export const RoutinesLive = HttpApiBuilder.group(ClaveApi, 'routines', (handlers) =>
   handlers
     .handle('list', HttpCqrs.query(R.ListRoutines))
+    .handle('deck', HttpCqrs.query(R.GetRoutineDeck))
     .handle('runNow', HttpCqrs.command(R.RunRoutineNow))
     .handle('dismiss', HttpCqrs.command(R.DismissRoutineRun))
     .handle('report', HttpCqrs.command(R.ReportRoutineRun))

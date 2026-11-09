@@ -3209,8 +3209,8 @@ button.extension-card:hover {
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  width: 1.25rem;
-  height: 1.25rem;
+  width: var(--control-h-xs);
+  height: var(--control-h-xs);
   border-radius: var(--radius-control);
   color: var(--text-tertiary);
 }
@@ -6752,6 +6752,370 @@ button.exchange-part-who:hover {
 }
 /* A little more air between one exchange and the next: under the last answer,
    over the next question. Each exchange is one virtualised row. */
+/* ── The agent's working notes, folded (WorkStretch.tsx, PRDCT-4212) ──
+   Once a turn is over, the notes the agent wrote between its tool runs fold
+   into one card: a drawing of a sheet of notes folding into one line, the
+   title the digest read (the first note's first line until it lands), the
+   counts under it, and, when a note needs the reader, that note on the face
+   in a breath of accent. Open, a rail of steps as the exchange timeline's:
+   one node per note, what the agent said and then what it did. The notes
+   inside read smaller and quieter than the answer outside the card. A card
+   that has just folded settles in (data-fresh); one scrolled back into view
+   mounts still. Tokens only, as the whole conversation block. */
+.work-stretch {
+  --stretch-rail: calc(var(--spacing) * 4.5);
+  --stretch-node: calc(var(--spacing) * 2.5);
+  --stretch-ink: color-mix(in oklab, var(--text-primary) 16%, transparent);
+  display: flex;
+  flex-direction: column;
+  align-self: stretch;
+  min-width: 0;
+}
+.terminal-view .work-stretch {
+  font-size: calc(var(--text-sm) + var(--spacing) / 4);
+}
+/* Just folded under the reader's eyes: it settles in, the forms' arrival. */
+.work-stretch[data-fresh] {
+  transition:
+    opacity calc(var(--default-transition-duration) * 2) var(--ease-out-expo),
+    translate calc(var(--default-transition-duration) * 3) var(--ease-out-settle);
+  @starting-style {
+    opacity: 0;
+    translate: 0 calc(var(--spacing) * 2);
+  }
+}
+.stretch-card {
+  min-width: 0;
+  border: thin solid transparent;
+  border-radius: var(--radius-lg);
+  interpolate-size: allow-keywords;
+  transition:
+    background-color var(--default-transition-duration),
+    border-color var(--default-transition-duration),
+    box-shadow calc(var(--default-transition-duration) * 2) var(--ease-out-expo);
+}
+.stretch-card:hover {
+  background-color: color-mix(in oklab, var(--surface-100) 70%, transparent);
+}
+.stretch-card[open] {
+  border-color: var(--border-subtle-color);
+  background-color: var(--surface-100);
+  box-shadow: var(--raised-shadow);
+}
+.stretch-summary {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--spacing) * 2.5);
+  padding: calc(var(--spacing) * 2) calc(var(--spacing) * 3);
+  list-style: none;
+  cursor: pointer;
+  border-radius: inherit;
+  outline: none;
+}
+.stretch-summary::-webkit-details-marker {
+  display: none;
+}
+.stretch-summary:focus-visible {
+  outline: thin solid var(--color-accent);
+  outline-offset: calc(var(--spacing) / -2);
+}
+.stretch-drawing {
+  flex-shrink: 0;
+  align-self: flex-start;
+  inline-size: calc(var(--spacing) * 9);
+  block-size: calc(var(--spacing) * 7.5);
+}
+.stretch-words {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: calc(var(--spacing) / 4);
+  min-width: 0;
+  line-height: 1.35;
+}
+.stretch-eyebrow {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+}
+/* The title: the first note's first line, then the digest's title landing
+   over it, settling in; both read with the ink of the transcript once read. */
+.stretch-title {
+  display: grid;
+  min-width: 0;
+  color: var(--text-secondary);
+}
+.stretch-title[data-read],
+.stretch-card[open] .stretch-title {
+  color: var(--term-ink, var(--text-primary));
+}
+.stretch-title-words {
+  grid-area: 1 / 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transition:
+    opacity calc(var(--default-transition-duration) * 2) var(--ease-out-expo),
+    translate calc(var(--default-transition-duration) * 3) var(--ease-out-settle);
+  @starting-style {
+    opacity: 0;
+    translate: 0 calc(var(--spacing) / 2);
+  }
+}
+/* While the digest reads, the counts shimmer, as the exchange digest's line does. */
+.work-stretch[data-digest='reading'] .stretch-eyebrow {
+  background-image: linear-gradient(
+    90deg,
+    var(--text-tertiary) 0 40%,
+    color-mix(in oklch, var(--text-tertiary) 20%, transparent) 50%,
+    var(--text-tertiary) 60% 100%
+  );
+  background-size: 250% 100%;
+  background-clip: text;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+  animation: term-shimmer calc(var(--default-transition-duration) * 12) linear infinite;
+}
+/* A note needs the reader: verbatim on the face, the ringed marker beside
+   it in its own column, on a breath of accent. */
+.stretch-flag {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  column-gap: calc(var(--spacing) * 2);
+  align-items: start;
+  width: fit-content;
+  max-width: 100%;
+  margin-top: calc(var(--spacing) / 2);
+  padding: calc(var(--spacing) * 1.25) calc(var(--spacing) * 2.5) calc(var(--spacing) * 1.25)
+    calc(var(--spacing) * 2);
+  border-radius: var(--radius-lg);
+  background-color: color-mix(in oklab, var(--color-accent) 7%, transparent);
+  font-size: var(--text-sm);
+  line-height: 1.45;
+  white-space: normal;
+  color: var(--term-ink, var(--text-primary));
+  transition:
+    opacity calc(var(--default-transition-duration) * 2) var(--ease-out-expo),
+    translate calc(var(--default-transition-duration) * 3) var(--ease-out-settle);
+  @starting-style {
+    opacity: 0;
+    translate: 0 calc(var(--spacing) * 1.5);
+  }
+}
+.stretch-flag-mark {
+  --size: calc(var(--spacing) * 3.5);
+  inline-size: var(--size);
+  block-size: var(--size);
+  margin-top: calc((1lh - var(--size)) / 2);
+}
+/* The note whole, its lines kept: a note that needs the reader is never cut. */
+.stretch-flag-words {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  white-space: pre-line;
+}
+.stretch-chevron {
+  flex-shrink: 0;
+  inline-size: var(--chat-glyph);
+  block-size: var(--chat-glyph);
+  color: var(--text-tertiary);
+  transition: rotate calc(var(--default-transition-duration) * 2) var(--ease-out-expo);
+}
+.stretch-card[open] .stretch-chevron {
+  rotate: 180deg;
+}
+/* Opening: the height glides, the steps rise in one after another. */
+.stretch-card::details-content {
+  block-size: 0;
+  overflow: clip;
+  transition:
+    block-size calc(var(--default-transition-duration) * 2) var(--ease-out-expo),
+    content-visibility calc(var(--default-transition-duration) * 2) allow-discrete;
+}
+.stretch-card[open]::details-content {
+  block-size: auto;
+}
+.stretch-body {
+  padding: 0 calc(var(--spacing) * 3) calc(var(--spacing) * 3);
+}
+.stretch-steps {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.stretch-step {
+  position: relative;
+  display: grid;
+  grid-template-columns: calc(var(--stretch-rail) * 2) minmax(0, 1fr);
+  padding-bottom: calc(var(--spacing) * 2.5);
+  opacity: 0;
+  translate: 0 calc(var(--spacing) * -1);
+  transition:
+    opacity calc(var(--default-transition-duration) * 2) var(--ease-out-expo),
+    translate calc(var(--default-transition-duration) * 3) var(--ease-out-settle);
+  transition-delay: calc(var(--default-transition-duration) * 0.35 * var(--stretch-i, 0));
+}
+.stretch-card[open] .stretch-step {
+  opacity: 1;
+  translate: 0 0;
+}
+/* The rail, one segment per step, ending at the last step's node. */
+.stretch-step::before {
+  content: '';
+  position: absolute;
+  left: var(--stretch-rail);
+  top: 0;
+  bottom: 0;
+  border-left: thin solid var(--stretch-ink);
+}
+.stretch-step:first-child::before {
+  top: calc(var(--spacing) * 2 + 0.5lh);
+}
+.stretch-step:last-child::before {
+  bottom: auto;
+  height: calc(var(--spacing) * 2 + 0.5lh);
+}
+.stretch-step:only-child::before {
+  display: none;
+}
+/* The node: the drawings' ringed dot, hollow for a step with no words. */
+.stretch-node {
+  position: relative;
+  z-index: 1;
+  justify-self: center;
+  inline-size: var(--stretch-node);
+  block-size: var(--stretch-node);
+  margin-top: calc(var(--spacing) * 2 + 0.5lh - var(--stretch-node) / 2);
+  border: thin solid color-mix(in oklab, var(--text-primary) 42%, transparent);
+  border-radius: var(--radius-full);
+  background:
+    radial-gradient(
+      circle,
+      color-mix(in oklab, var(--text-primary) 70%, transparent) 0 32%,
+      transparent 36%
+    ),
+    var(--surface-100);
+  transition: border-color var(--default-transition-duration);
+}
+.stretch-step[data-silent] .stretch-node {
+  background: var(--surface-100);
+}
+.stretch-step[data-needs-you] .stretch-node {
+  border-color: var(--color-accent);
+  background:
+    radial-gradient(circle, var(--color-accent) 0 32%, transparent 36%), var(--surface-100);
+}
+.stretch-step-body {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--spacing) * 1.5);
+  min-width: 0;
+}
+/* Inside the card the notes are what they are, notes: smaller and quieter
+   than the answer outside; the flagged one keeps the transcript's ink. The
+   line under a turn (when, copy) is the transcript's, not a note's. */
+.stretch-step-body .chat-turn-wrap[data-side='start'] .chat-turn {
+  font-size: calc(var(--text-sm) - var(--spacing) / 4);
+  color: var(--text-secondary);
+}
+.stretch-step[data-needs-you] .chat-turn-wrap[data-side='start'] .chat-turn {
+  color: var(--term-ink, var(--text-primary));
+}
+.stretch-step-body .chat-turn-meta {
+  display: none;
+}
+/* The drawing's accent means one of two things: the digest reading now (the
+   fold line travelling, the landing dot breathing) or a note that needs the
+   reader (the landing dot). Otherwise it rests in the plain ink. */
+.stretch-drawing .stretch-fold {
+  stroke: color-mix(in oklab, var(--ink) 45%, transparent);
+  stroke-width: 1.2;
+  stroke-dasharray: 1;
+  stroke-dashoffset: 0;
+  transition:
+    stroke calc(var(--default-transition-duration) * 2) var(--ease-out-expo),
+    stroke-width calc(var(--default-transition-duration) * 2) var(--ease-out-expo);
+}
+.stretch-drawing .stretch-land {
+  fill: color-mix(in oklab, var(--ink) 60%, transparent);
+  transform-box: fill-box;
+  transform-origin: center;
+  transition: fill calc(var(--default-transition-duration) * 2) var(--ease-out-expo);
+}
+.stretch-drawing .stretch-note {
+  transform-box: fill-box;
+  transform-origin: left center;
+}
+.work-stretch[data-digest='reading'] .stretch-drawing .stretch-fold {
+  stroke: var(--color-accent);
+  stroke-width: 1.7;
+}
+.work-stretch:is([data-digest='reading'], [data-needs-you]) .stretch-drawing .stretch-land {
+  fill: var(--color-accent);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .work-stretch[data-digest='reading'] .stretch-drawing .stretch-fold {
+    stroke-dasharray: 0.35 0.65;
+    animation: exchange-travel calc(var(--default-transition-duration) * 8) linear infinite;
+  }
+  .work-stretch[data-digest='reading'] .stretch-drawing .stretch-land {
+    animation: exchange-breathe calc(var(--default-transition-duration) * 8) ease-in-out infinite;
+  }
+  .work-stretch[data-digest-fresh] .stretch-drawing .stretch-land {
+    animation: exchange-land calc(var(--default-transition-duration) * 3) var(--ease-out-settle)
+      both;
+  }
+  /* Fresh: the notes write themselves onto the sheet one under the other,
+     then the fold line draws out to the dot and the dot lands. */
+  .work-stretch[data-fresh] .stretch-drawing .stretch-note {
+    animation: stretch-note calc(var(--default-transition-duration) * 3) var(--ease-out-expo) both;
+  }
+  .work-stretch[data-fresh] .stretch-drawing .stretch-note:nth-child(3) {
+    animation-delay: calc(var(--default-transition-duration) * 0.6);
+  }
+  .work-stretch[data-fresh] .stretch-drawing .stretch-note:nth-child(4) {
+    animation-delay: calc(var(--default-transition-duration) * 1.2);
+  }
+  .work-stretch[data-fresh] .stretch-drawing .stretch-note:nth-child(5) {
+    animation-delay: calc(var(--default-transition-duration) * 1.8);
+  }
+  .work-stretch[data-fresh]:not([data-digest='reading']) .stretch-drawing .stretch-fold {
+    animation: exchange-arc calc(var(--default-transition-duration) * 5) var(--ease-out-expo)
+      calc(var(--default-transition-duration) * 2) both;
+  }
+  .work-stretch[data-fresh]:not([data-digest='reading']) .stretch-drawing .stretch-land {
+    animation: exchange-land calc(var(--default-transition-duration) * 3) var(--ease-out-settle)
+      calc(var(--default-transition-duration) * 6) both;
+  }
+}
+@keyframes stretch-note {
+  from {
+    opacity: 0;
+    scale: 0.4 1;
+  }
+}
+/* Reduced motion: the card, the title and the flag keep their fades and lose
+   their travel in the conversation's own reduced-motion block below; what
+   moves here stops. */
+@media (prefers-reduced-motion: reduce) {
+  .stretch-card,
+  .stretch-card::details-content,
+  .stretch-step,
+  .stretch-chevron {
+    transition: none;
+  }
+  .stretch-drawing .stretch-fold,
+  .stretch-drawing .stretch-land,
+  .stretch-drawing .stretch-note,
+  .work-stretch[data-digest='reading'] .stretch-eyebrow {
+    animation: none;
+  }
+}
+
 .terminal-view .chat-row:not([data-first]) {
   padding-top: calc(var(--spacing) * 9);
 }
@@ -7664,6 +8028,9 @@ button.term-agent-model:focus-visible {
   .chat-row[data-arrive] .term-turn > *,
   .chat-prompt,
   .chat-composer-files .chat-attachment,
+  .work-stretch[data-fresh],
+  .stretch-title-words,
+  .stretch-flag,
   .chat-drop-overlay {
     transition-property: opacity;
     @starting-style {

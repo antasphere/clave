@@ -10,6 +10,7 @@ import { Effect } from 'effect'
 import { CommandHandler, QueryHandler } from '@structure-ai/cqrs'
 import {
   DismissRoutineRun,
+  GetRoutineDeck,
   ListRoutines,
   OpenRoutineDiscussion,
   ReportRoutineRun,
@@ -36,6 +37,7 @@ export const routineHandlers = [
   QueryHandler.make(ListRoutines, () =>
     Effect.flatMap(Routines, (routines) => Effect.promise(async () => await routines.list()))
   ),
+  QueryHandler.make(GetRoutineDeck, (p) => call((r) => r.deck(p.runId))),
   CommandHandler.make(RunRoutineNow, (p) => call((r) => r.runNow(p.key))),
   CommandHandler.make(DismissRoutineRun, (p) => call((r) => r.dismiss(p.runId))),
   CommandHandler.make(ReportRoutineRun, (p) =>

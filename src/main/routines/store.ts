@@ -21,6 +21,15 @@ export interface RoutineState {
   firstSeenAt: number
   lastSeenAt: number
   runs: RoutineRun[]
+  /** The routine's deck on Slideless (PRDCT-4149): one deck per routine, a
+   *  version per run, and the one named share link minted for it (a bearer
+   *  URL, kept here under the server's own data and nowhere else). */
+  publish?: RoutinePublishState | null
+}
+
+export interface RoutinePublishState {
+  deckId: string
+  share: { tokenId: string; url: string } | null
 }
 
 export interface RoutinesDocument {
@@ -150,6 +159,16 @@ export class RoutinesStore {
     }
     if (gone.length) this.save()
     return gone
+  }
+
+  publishState(key: string): RoutinePublishState | null {
+    return this.load().routines[key]?.publish ?? null
+  }
+
+  setPublishState(key: string, state: RoutinePublishState | null): void {
+    const current = this.seen(key)
+    current.publish = state
+    this.save()
   }
 
   viewerPort(): number | null {

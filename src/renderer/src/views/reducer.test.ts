@@ -210,10 +210,9 @@ describe('conversation stream', () => {
     expect(next.entries).toEqual(state.entries)
   })
   it('keeps the entries array when a state_change changes nothing in it', () => {
-    const state = run([
-      { type: 'assistant_text', delta: 'hello', final: true },
-      { type: 'tool_call', id: 't', name: 'Read', input: {} }
-    ])
+    // No words of the agent here: an idle, done or ended would otherwise mark
+    // its last words as the ones the turn ended on (PRDCT-4212, below).
+    const state = run([{ type: 'tool_call', id: 't', name: 'Read', input: {} }])
     for (const word of ['working', 'done', 'idle', 'blocked', 'ended'] as const) {
       const next = reduceConversation(state, { event: { type: 'state_change', state: word } })
       expect(next.state).toBe(word)
@@ -427,6 +426,33 @@ describe('taking a message back', () => {
     })
     expect(drafted.entries[0]).toMatchObject({ draft: { login: 'luca-a' } })
     expect(drafted.entries[0]).not.toHaveProperty('answer')
+    // What the reader had typed, handed to a view that came late
+    // (PRDCT-4210): kept apart, never the agent's draft.
+    const typed = reduceConversation(drafted, {
+      event: { type: 'permission_updated', id: 'clave:1', answers: { name: 'mbp-b' }, typed: true },
+      at: 2
+    })
+    expect(typed.entries[0]).toMatchObject({
+      draft: { login: 'luca-a' },
+      typed: { name: 'mbp-b' }
+    })
+    expect(typed.entries[0]).not.toHaveProperty('answer')
+    expect(typed.entries).toHaveLength(drafted.entries.length)
+    // The reader's typing sent from this view (PRDCT-4210): the agent's
+    // earlier fill of that field is no longer the draft's, so the agent
+    // setting it again, even to the same value, reaches the card.
+    const sent = reduceConversation(drafted, { typedSent: 'clave:1', answers: { login: 'luca-b' } })
+    expect(sent.entries[0]).toMatchObject({ typed: { login: 'luca-b' } })
+    expect((sent.entries[0] as { draft?: object }).draft).toEqual({})
+    const again = reduceConversation(sent, {
+      event: { type: 'permission_updated', id: 'clave:1', answers: { login: 'luca-a' } },
+      at: 3
+    })
+    expect((again.entries[0] as { draft?: object }).draft).toEqual({ login: 'luca-a' })
+    expect((again.entries[0] as { typed?: object }).typed).toEqual({})
+    const emptied = reduceConversation(sent, { typedSent: 'clave:1', answers: { login: '' } })
+    expect((emptied.entries[0] as { draft?: object }).draft).toEqual({})
+    expect((emptied.entries[0] as { typed?: object }).typed).toEqual({})
     // The approve, written to the agent as the reader's message, draws no
     // bubble: the record row says it. Every view is handed the answers.
     const message = [
@@ -478,6 +504,17 @@ describe('taking a message back', () => {
       at: 3
     })
     expect((cleared.entries[0] as { answers?: object }).answers).toEqual({ login: 'luca-a' })
+    // Nor does typing sent from a view after the approval.
+    expect(reduceConversation(approved, { typedSent: id, answers: { name: 'other' } })).toBe(
+      approved
+    )
+    // Typing kept by the server never revises an approved form.
+    expect(
+      reduceConversation(approved, {
+        event: { type: 'permission_updated', id, answers: { name: 'other' }, typed: true },
+        at: 3
+      })
+    ).toBe(approved)
     // An update naming no entry changes nothing.
     expect(
       reduceConversation(approved, {
@@ -844,5 +881,95 @@ describe('the run is ordered within one connection to the host (round 1, C2 and 
     expect(
       reduceConversation(dead, { event: { type: 'state_change', state: 'ended', run: 1 } }).exitCode
     ).toBe(7)
+  })
+})
+
+describe('the turn’s shape, for the fold of the agent’s working notes (PRDCT-4212)', () => {
+  it('marks words, never an empty closing entry, and a replay carries no mid-turn marks', () => {
+    const at = 1000
+    const emptyTail = [
+      { type: 'user_message', text: 'go' },
+      { type: 'state_change', state: 'working' },
+      { type: 'assistant_text', delta: 'Done.', final: true },
+      { type: 'tool_call', id: 't', name: 'Read', input: {} },
+      { type: 'assistant_text', delta: '', final: false },
+      { type: 'state_change', state: 'idle' }
+    ].reduce((s, event) => reduceConversation(s, { event: event as never, at }), emptyConversation)
+    const words = emptyTail.entries.filter((e) => e.kind === 'assistant')
+    expect(words.map((e) => e.kind === 'assistant' && [e.text, !!e.closes])).toEqual([
+      ['Done.', true],
+      ['', false]
+    ])
+    const working = reduceConversation(emptyConversation, {
+      event: { type: 'state_change', state: 'working' },
+      at
+    })
+    const synced = reduceConversation(working, {
+      sync: [
+        { event: { type: 'user_message', text: 'one' }, at },
+        { event: { type: 'assistant_text', delta: 'a', final: true }, at },
+        { event: { type: 'user_message', text: 'two' }, at }
+      ] as never
+    })
+    expect(synced.state).toBe('working')
+    expect(
+      synced.entries.filter((e) => e.kind === 'user').map((e) => e.kind === 'user' && e.midTurn)
+    ).toEqual([undefined, undefined])
+  })
+
+  const at = 1000
+  const turn = (state: Conversation = emptyConversation): Conversation =>
+    [
+      { type: 'user_message', text: 'go' },
+      { type: 'state_change', state: 'working' },
+      { type: 'assistant_text', delta: 'Looking.', final: true },
+      { type: 'tool_call', id: 't1', name: 'Read', input: {} },
+      { type: 'tool_result', id: 't1', output: 'ok' },
+      { type: 'assistant_text', delta: 'Done.', final: true }
+    ].reduce((s, event) => reduceConversation(s, { event: event as never, at }), state)
+
+  it('marks the agent’s last words as the ones the turn ended on when the kernel goes idle, done or ended', () => {
+    for (const end of ['idle', 'done', 'ended'] as const) {
+      const ended = reduceConversation(turn(), { event: { type: 'state_change', state: end }, at })
+      const words = ended.entries.filter((e) => e.kind === 'assistant')
+      expect(
+        words.map((e) => e.kind === 'assistant' && !!e.closes),
+        end
+      ).toEqual([false, true])
+    }
+  })
+
+  it('marks nothing on working or blocked, and marks the same words only once', () => {
+    const working = turn()
+    expect(working.entries.some((e) => e.kind === 'assistant' && e.closes)).toBe(false)
+    const blocked = reduceConversation(working, {
+      event: { type: 'state_change', state: 'blocked' },
+      at
+    })
+    expect(blocked.entries.some((e) => e.kind === 'assistant' && e.closes)).toBe(false)
+    const once = reduceConversation(working, { event: { type: 'state_change', state: 'idle' }, at })
+    const twice = reduceConversation(once, { event: { type: 'state_change', state: 'idle' }, at })
+    expect(twice.entries).toBe(once.entries)
+  })
+
+  it('a message sent while the agent works or waits on a permission is marked mid-turn; one sent while it rests is not', () => {
+    const mid = reduceConversation(turn(), {
+      event: { type: 'user_message', text: 'and also this' },
+      at
+    })
+    const sent = mid.entries.at(-1)
+    expect(sent?.kind === 'user' && sent.midTurn).toBe(true)
+    const blocked = reduceConversation(
+      reduceConversation(turn(), { event: { type: 'state_change', state: 'blocked' }, at }),
+      { event: { type: 'user_message', text: 'while it waits' }, at }
+    )
+    const waited = blocked.entries.at(-1)
+    expect(waited?.kind === 'user' && waited.midTurn).toBe(true)
+    const rested = reduceConversation(
+      reduceConversation(turn(), { event: { type: 'state_change', state: 'idle' }, at }),
+      { event: { type: 'user_message', text: 'next' }, at }
+    )
+    const next = rested.entries.at(-1)
+    expect(next?.kind === 'user' && next.midTurn).toBeUndefined()
   })
 })

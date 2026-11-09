@@ -284,6 +284,33 @@ describe('server native requests without clients', () => {
     ).rejects.toMatchObject({ _tag: 'RequestRejected', code: 'closed' })
     expect(f.write).not.toHaveBeenCalled()
   })
+  it('answers a question the restarted process asks again under the old id (PRDCT-4179)', async () => {
+    const f = fixture({ now: () => 0 })
+    const ask = { ...permission, id: '0' }
+    const answer = (): Promise<void> =>
+      f.host.write(session.id, { type: 'permission_response', id: '0', optionId: 'allow-once' })
+    f.emit(ask)
+    // The same question said twice by the live process is still one record.
+    f.emit(ask)
+    expect(f.requests.snapshot().pending).toHaveLength(1)
+    // The restart cancels the old process's question (the base host of the
+    // fixture runs no sessions and refuses after the cancel, as above).
+    await expect(f.host.restart(session.id, {}, false)).rejects.toThrow()
+    expect(f.requests.snapshot().pending).toEqual([])
+    // The new process counts its ids from the start again.
+    f.emit(ask)
+    expect(f.requests.snapshot().pending.map((r) => r.providerRequestId)).toEqual(['0'])
+    await answer()
+    expect(f.write).toHaveBeenCalledTimes(1)
+    expect(f.write).toHaveBeenCalledWith(session.id, {
+      type: 'permission_response',
+      id: '0',
+      optionId: 'allow-once'
+    })
+    // Answered, it is settled like any other: a second answer is refused.
+    await expect(answer()).rejects.toMatchObject({ _tag: 'RequestRejected', code: 'closed' })
+    expect(f.write).toHaveBeenCalledTimes(1)
+  })
   it('removes native Codex requests resolved by the provider itself', () => {
     const f = fixture()
     f.emit({ ...permission, id: JSON.stringify(7) })
@@ -367,6 +394,79 @@ describe('hosted requests on the native road', () => {
       }
     }
   }
+
+  it("the person's typing goes to the form's draft, never the provider, and a late view is handed it apart from the agent's (PRDCT-4210)", async () => {
+    const f = hostedFixture()
+    const request = f.createHosted({
+      ...onboarding,
+      questions: [
+        ...onboarding.questions,
+        { id: 'machine', question: 'This machine', kind: 'text' as const, options: [] }
+      ]
+    })
+    const form = request.providerRequestId!
+    await f.port.setAnswers({
+      requestId: request.id,
+      sessionId: session.id,
+      answers: { email: 'luca@antasphere.com', machine: 'mbp-a' }
+    })
+    const told = f.published.length
+    await f.host.write(session.id, {
+      type: 'permission_draft',
+      id: form,
+      answers: { machine: 'mbp-b' }
+    })
+    expect(f.write).not.toHaveBeenCalled()
+    expect(f.published).toHaveLength(told)
+    expect(await f.port.resultAfter(request.id, session.id, 0)).toMatchObject({
+      status: 'pending',
+      answers: { email: 'luca@antasphere.com', machine: 'mbp-b' }
+    })
+    const late: SessionEvent[] = []
+    f.host.subscribe(session.id, (value) => {
+      if (value.kind === 'event') late.push(value.event)
+    })
+    expect(late.map((e) => e.type)).toEqual([
+      'permission_request',
+      'permission_updated',
+      'permission_updated'
+    ])
+    expect(late[1]).toEqual({
+      type: 'permission_updated',
+      id: form,
+      answers: { email: 'luca@antasphere.com' }
+    })
+    expect(late[2]).toEqual({
+      type: 'permission_updated',
+      id: form,
+      answers: { machine: 'mbp-b' },
+      typed: true
+    })
+    // The agent submits on the person's word: the person's value is approved.
+    await f.port.setAnswers({
+      requestId: request.id,
+      sessionId: session.id,
+      answers: {},
+      submit: true
+    })
+    expect(await f.port.resultAfter(request.id, session.id, 0)).toMatchObject({
+      status: 'completed',
+      answers: { email: 'luca@antasphere.com', machine: 'mbp-b' }
+    })
+    // A settled form, or a provider's own request, takes no typing.
+    await expect(
+      f.host.write(session.id, { type: 'permission_draft', id: form, answers: { machine: 'x' } })
+    ).rejects.toMatchObject({ _tag: 'RequestRejected', code: 'not_found' })
+    f.emit(permission)
+    await expect(
+      f.host.write(session.id, { type: 'permission_draft', id: permission.id, answers: {} })
+    ).rejects.toMatchObject({ _tag: 'RequestRejected', code: 'not_found' })
+    expect(f.write).not.toHaveBeenCalledWith(
+      session.id,
+      expect.objectContaining({ type: 'permission_draft' })
+    )
+    f.requests.close()
+  })
 
   it('publishes the request as a question into the stream and marks the session waiting', () => {
     const f = hostedFixture()

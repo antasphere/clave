@@ -57,6 +57,7 @@ import {
   type OnboardingState
 } from '../shared/onboarding'
 import type { DigestRequest } from '../shared/exchange-digest'
+import type { WorkDigestRequest } from '../shared/work-digest'
 import type {
   ServerInstallProgress,
   ServerInstallResult,
@@ -1611,8 +1612,12 @@ const electronAPI = {
   // capture above; the list is the dialog's one read.
   historyStamp: (row: unknown) => ipcRenderer.send('history:stamp', row),
   historyList: () => ipcRenderer.invoke('history:list'),
-  historyConversation: (cwd: string, claudeSessionId: string, provider?: 'claude' | 'pi') =>
-    ipcRenderer.invoke('history:conversation', { cwd, claudeSessionId, provider }),
+  historyConversation: (
+    cwd: string,
+    claudeSessionId: string,
+    provider?: 'claude' | 'pi',
+    configDir?: string
+  ) => ipcRenderer.invoke('history:conversation', { cwd, claudeSessionId, provider, configDir }),
   scrollSessionToText: (id: string, needle: string, fromBottom: number) =>
     ipcRenderer.invoke('session:scroll-to-text', id, needle, fromBottom),
   historySearch: (request: {
@@ -1692,6 +1697,8 @@ const electronAPI = {
       'routines.changed',
       () => null
     )(callback),
+  routinesCacheRemoteDeck: (serverId: string, runId: string, html: string) =>
+    ipcRenderer.invoke('routines:cache-remote-deck', serverId, runId, html),
   copyOfferList: () => ipcRenderer.invoke('copy-offer:list'),
 
   copyOfferCopy: (id: string) => ipcRenderer.invoke('copy-offer:copy', id),
@@ -1726,6 +1733,10 @@ const electronAPI = {
   // model call in main (src/main/exchange-digest.ts), answered as a result.
   exchangeDigest: (request: DigestRequest) => ipcRenderer.invoke('exchanges:digest', request),
   exchangeDigestsOf: (sessionId: string) => ipcRenderer.invoke('exchanges:digests-of', sessionId),
+  // The title of a card of the agent's working notes (PRDCT-4212), the same
+  // one-shot runner, filed under the tab beside the exchange digests.
+  workDigest: (request: WorkDigestRequest) => ipcRenderer.invoke('work:digest', request),
+  workDigestsOf: (sessionId: string) => ipcRenderer.invoke('work:digests-of', sessionId),
   // The GitHub pull request panel (plugins/github). Main runs the user's own
   // `gh`; every call answers with a GithubResult rather than throwing, so the
   // panel can tell "gh is missing" from "not signed in" from "gh said no".

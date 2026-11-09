@@ -13,6 +13,8 @@ import type { Call } from './call'
 export interface RoutinesClient {
   readonly list: () => Promise<RoutinesListing>
   readonly runNow: (key: string) => Promise<RoutineRun>
+  /** A run's filled deck page (PRDCT-4149), for a Mac that cannot reach the server's viewer. */
+  readonly deck: (runId: string) => Promise<{ html: string }>
   readonly dismiss: (runId: string) => Promise<void>
   readonly report: (input: {
     sessionId: string
@@ -31,6 +33,7 @@ export interface RoutinesClient {
 export const routinesClient = (call: Call): RoutinesClient => ({
   list: () => call((c) => c.routines.list({ payload: {} })),
   runNow: (key) => call((c) => c.routines.runNow({ payload: { key } })),
+  deck: (runId) => call((c) => c.routines.deck({ payload: { runId } })),
   dismiss: (runId) => call((c) => c.routines.dismiss({ payload: { runId } })).then(() => undefined),
   report: (input) => call((c) => c.routines.report({ payload: input })),
   openDiscussion: (runId, windowKey, mode) =>

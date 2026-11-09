@@ -12,12 +12,12 @@ import { useSessionStore } from '../../store/session-store'
 import { useWorkspaceStore, getWorkspaceById } from '../../store/workspace-store'
 import { ContextMenu, type ContextMenuItem } from '../ui/ContextMenu'
 import { useNow } from '../../lib/use-now'
-import { relativeTime, type OngoingStatus } from '../../lib/ongoing'
+import { conversationConfigDir, relativeTime, type OngoingStatus } from '../../lib/ongoing'
 import {
   endOngoing,
   entriesElsewhere,
   openOngoing,
-  OngoingOpenRefused,
+  refusalNotice,
   returnToSidebar,
   setOngoingNote
 } from '../../lib/ongoing-actions'
@@ -64,12 +64,13 @@ interface LastTurn {
 function useLastTurn(row: OngoingRow): LastTurn | null | undefined {
   const [turn, setTurn] = useState<LastTurn | null | undefined>(undefined)
   const { cwd, conversationId, provider } = row.entry
+  const configDir = conversationConfigDir(row.entry, row.session)
   const pulse = `${row.status}:${row.session?.agentState ?? ''}`
   const read = window.electronAPI?.historyConversation
   useEffect(() => {
     if (!read) return
     let live = true
-    read(cwd, conversationId, provider)
+    read(cwd, conversationId, provider, configDir)
       .then((res) => {
         if (!live) return
         const last = res.exists ? res.turns[res.turns.length - 1] : undefined
@@ -89,7 +90,7 @@ function useLastTurn(row: OngoingRow): LastTurn | null | undefined {
     return () => {
       live = false
     }
-  }, [read, cwd, conversationId, provider, pulse])
+  }, [read, cwd, conversationId, provider, configDir, pulse])
   return turn
 }
 
@@ -166,12 +167,15 @@ function OngoingCard({
   row,
   now,
   opening,
-  onOpen
+  onOpen,
+  onRefused
 }: {
   row: OngoingRow
   now: number
   opening: boolean
   onOpen: () => void
+  /** End or Back could not run: the page says why. */
+  onRefused: (err: unknown) => void
 }): React.JSX.Element {
   const { entry, status, session } = row
   const turn = useLastTurn(row)
@@ -188,13 +192,13 @@ function OngoingCard({
     {
       label: 'Back to the sidebar',
       icon: <ArrowUturnLeftIcon className="w-3.5 h-3.5" />,
-      onClick: () => void returnToSidebar(entry.id)
+      onClick: () => void returnToSidebar(entry.id).catch(onRefused)
     },
     {
       label: 'End conversation',
       icon: <StopCircleIcon className="w-3.5 h-3.5" />,
       danger: true,
-      onClick: () => void endOngoing(entry.id)
+      onClick: () => void endOngoing(entry.id).catch(onRefused)
     }
   ]
 
@@ -349,12 +353,13 @@ export function OngoingPage(): React.JSX.Element {
     setNotice(null)
     void openOngoing(entryId)
       .catch((err: unknown) => {
-        setNotice(
-          err instanceof OngoingOpenRefused ? err.message : 'This conversation could not be opened.'
-        )
+        setNotice(refusalNotice(err, 'This conversation could not be opened.'))
       })
       .finally(() => setOpening(null))
   }
+
+  const refused = (err: unknown): void =>
+    setNotice(refusalNotice(err, 'This conversation could not be changed.'))
 
   const waiting = rows.filter((r) => r.status === 'waiting').length
 
@@ -402,6 +407,7 @@ export function OngoingPage(): React.JSX.Element {
                 now={now}
                 opening={opening === row.entry.id}
                 onOpen={() => open(row.entry.id)}
+                onRefused={refused}
               />
             ))}
           </div>

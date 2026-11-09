@@ -654,6 +654,7 @@ import type {
   OnboardingState
 } from '../shared/onboarding'
 import type { DigestDone, DigestRequest, DigestResult } from '../shared/exchange-digest'
+import type { WorkDigestDone, WorkDigestRequest, WorkDigestResult } from '../shared/work-digest'
 import type {
   ServerInstallProgress,
   ServerInstallResult,
@@ -947,11 +948,14 @@ export interface ElectronAPI extends FleetDesktopAPI {
    *  fire-and-forget; the folded list for the dialog. */
   historyStamp: (row: HistoryLedgerRow) => void
   historyList: () => Promise<{ entries: HistoryListEntry[]; skippedLines: number }>
-  /** The message trail's read: a live tab's conversation as turns. */
+  /** The message trail's read: a live tab's conversation as turns.
+   *  `configDir` is the tab's own account directory, when it ran with one:
+   *  its transcript lives there rather than under `~/.claude`. */
   historyConversation: (
     cwd: string,
     claudeSessionId: string,
-    provider?: 'claude' | 'pi'
+    provider?: 'claude' | 'pi',
+    configDir?: string
   ) => Promise<{ exists: boolean; turns: ConversationTurn[] }>
   /** Click-to-scroll: tmux-backed tabs are driven in main (`tmux: true`);
    *  plain ones answer `tmux: false` and the caller scans xterm's buffer. */
@@ -987,6 +991,13 @@ export interface ElectronAPI extends FleetDesktopAPI {
   /** The run's conversation continued: in the panel (the session re-homed to this window) or as a tab (a new session this window places). */
   routinesOpenDiscussion: (runId: string, mode: 'panel' | 'tab') => Promise<{ sessionId: string }>
   onRoutinesChanged: (callback: () => void) => () => void
+  /** A connected server's run deck written under this Mac's user data and
+   *  registered with the preview protocol (PRDCT-4149): its `clave-preview://` URL. */
+  routinesCacheRemoteDeck: (
+    serverId: string,
+    runId: string,
+    html: string
+  ) => Promise<{ url: string }>
   copyOfferList: () => Promise<CopyOfferView[]>
   copyOfferCopy: (id: string) => Promise<CopyOfferView>
   copyOfferDismiss: (id: string) => Promise<void>
@@ -1016,6 +1027,11 @@ export interface ElectronAPI extends FleetDesktopAPI {
   exchangeDigest: (request: DigestRequest) => Promise<DigestResult>
   /** Every digest already read for a tab, by the key of its messages. */
   exchangeDigestsOf: (sessionId: string) => Promise<Record<string, DigestDone>>
+  /** The title of a card of the agent's working notes, and whether a note
+   *  needs the reader (PRDCT-4212). A failure is a result, never a rejection. */
+  workDigest: (request: WorkDigestRequest) => Promise<WorkDigestResult>
+  /** Every work digest already read for a tab, by the key of its notes. */
+  workDigestsOf: (sessionId: string) => Promise<Record<string, WorkDigestDone>>
   /** The GitHub pull request panel's reads and writes, through the user's own
    *  `gh`. A failure is a result, never a rejection: the panel names the kind. */
   githubPull: (ref: PullRef) => Promise<GithubResult<PullRequestView>>

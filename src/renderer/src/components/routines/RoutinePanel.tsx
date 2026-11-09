@@ -10,6 +10,7 @@ import {
 } from '@heroicons/react/24/outline'
 import { IconButton } from '@clave/ui/components'
 import { AnimatePresence, motion } from 'framer-motion'
+import { LOCAL_SERVER_ID } from '@clave/contract/fleet'
 import type { RoutineRun, RoutineView } from '@clave/contract/routines/model'
 import type { Session } from '../../../../shared/session-model'
 import { ChatView } from '../../../../../plugins/chat-view/src/ChatView'
@@ -29,6 +30,8 @@ import { TroubleNote } from '../../../../../plugins/routine-report/src/RoutineTr
 import { invalidTrouble, storeTrouble } from '../../../../../plugins/routine-report/src/trouble'
 import { claudeModelName } from '../../../../shared/claude-models'
 import { useRoutinesStore } from '../../store/routines-store'
+import { useSessionStore } from '../../store/session-store'
+import type { RoutineSurface } from './routine-servers'
 import { rememberTab, rememberedTab, type PanelTab } from './panel-tab'
 import { adoptServerStartedSessions } from '../../lib/adopt-record'
 import { describeCron } from '../../../../main/routines/cron'
@@ -47,20 +50,28 @@ type Tab = PanelTab
  * name, the schedule in words) and one row: the tabs, Run now, and a small
  * menu for the two rarer acts (Open as a tab, Dismiss). Nothing repeats what
  * the deck already says.
+ *
+ * A routine a connected server runs (PRDCT-4149) is the same panel over that
+ * server's view: every act goes to that server, the deck is read over its API
+ * and cached on this Mac (its loopback viewer is not reachable from here), and
+ * the discussion is a session of that server, listed in this window once its
+ * snapshot is read.
  */
 export function RoutinePanel({
-  view,
+  surface,
   icon,
   color,
   onClose
 }: {
-  view: RoutineView
+  surface: RoutineSurface
   /** The routine's toolbar glyph, drawn again on the title's tile. */
   icon?: ReactNode
   /** The ink the toolbar draws the glyph in. */
   color?: string
   onClose: () => void
 }): React.JSX.Element {
+  const view = surface.view
+  const remote = surface.serverId !== LOCAL_SERVER_ID
   const viewer = useRoutinesStore((s) => s.viewer)
   const error = useRoutinesStore((s) => s.error)
   const runNow = useRoutinesStore((s) => s.runNow)
@@ -110,14 +121,57 @@ export function RoutinePanel({
   const running = view.runs.some((r) => r.state === 'running' || r.state === 'waiting')
   const next = view.nextRunAt ? whenLabel(view.nextRunAt) : null
 
+  // A server's run deck: read once per run over the server's API, written
+  // under this Mac's user data and served by the preview protocol. While it
+  // loads, or when it could not be read, the report shows its envelope with a
+  // note in the viewer's place.
+  const [deckUrls, setDeckUrls] = useState<ReadonlyMap<string, string>>(() => new Map())
+  const [deckErrors, setDeckErrors] = useState<ReadonlyMap<string, string>>(() => new Map())
+  const deckAsked = useRef(new Set<string>())
+  useEffect(() => {
+    if (!remote || !run?.deck || deckAsked.current.has(run.id)) return
+    deckAsked.current.add(run.id)
+    const runId = run.id
+    const serverId = surface.serverId
+    void (async () => {
+      try {
+        const { html } = await window.electronAPI.fleetRoutineDeck(serverId, runId)
+        const { url } = await window.electronAPI.routinesCacheRemoteDeck(serverId, runId, html)
+        setDeckUrls((m) => new Map(m).set(runId, url))
+      } catch (error) {
+        const why = error instanceof Error ? error.message : String(error)
+        setDeckErrors((m) => new Map(m).set(runId, why))
+      }
+    })()
+  }, [remote, run?.id, run?.deck, surface.serverId])
+  const deckUrl = remote ? ((run && deckUrls.get(run.id)) ?? null) : undefined
+  const deckError = remote && run ? deckErrors.get(run.id) : undefined
+  const reportNote = !remote
+    ? viewer.note
+    : deckError
+      ? `The report could not be read from ${surface.serverName}: ${deckError}`
+      : `Reading the report from ${surface.serverName}…`
+
+  // A server's session reaches this window's list with that server's next
+  // snapshot: read it now rather than wait for the push.
+  const readServer = async (): Promise<void> => {
+    if (!remote) return
+    try {
+      await window.electronAPI.fleetSnapshot(surface.serverId)
+    } catch {
+      /* the push brings it */
+    }
+  }
+
   const showDiscussion = async (): Promise<void> => {
     if (!run) return
     setTab('discussion')
     if (discussion) return
     setOpening(true)
     try {
-      const sessionId = await openDiscussion(run.id, 'panel')
+      const sessionId = await openDiscussion(surface, run.id, 'panel')
       if (!sessionId) return
+      await readServer()
       // The server re-homed the session to this window: it is listed here now.
       const session = (await window.electronAPI.sessionsList()).find((s) => s.id === sessionId)
       if (session) setDiscussion(session)
@@ -150,8 +204,20 @@ export function RoutinePanel({
   const openAsTab = async (): Promise<void> => {
     setMenuOpen(false)
     if (!run) return
-    const sessionId = await openDiscussion(run.id, 'tab')
+    const sessionId = await openDiscussion(surface, run.id, 'tab')
     if (!sessionId) return
+    if (remote) {
+      // A server's session is placed by its snapshot, as a tab started on a
+      // server is (`launch-session.ts`): read it, then focus the tab.
+      await readServer()
+      useSessionStore.setState({
+        selectedSessionIds: [sessionId],
+        focusedSessionId: sessionId,
+        activeView: 'terminals'
+      })
+      onClose()
+      return
+    }
     // The server started the session on this window; the window takes it in
     // as a focused tab, the way it takes in a tab an agent opened through the
     // server (round 1, F3: nothing placed it before).
@@ -208,6 +274,7 @@ export function RoutinePanel({
             {view.routine.invalid
               ? 'Cannot run'
               : `${describeCron(view.routine.schedule)}${next ? ` · next ${next}` : ''}`}
+            {surface.runsOn === 'server' ? ` · on ${surface.serverName}` : ''}
           </span>
         </div>
       </div>
@@ -223,9 +290,15 @@ export function RoutinePanel({
             className="panel-icon-btn"
             data-testid="routine-run-again"
             aria-label="Run now"
-            disabled={running || !!view.routine.invalid}
-            tooltip={running ? 'A run is in flight' : 'Run now'}
-            onClick={() => void runNow(view.routine.key)}
+            disabled={running || !!view.routine.invalid || !surface.reachable}
+            tooltip={
+              !surface.reachable
+                ? `Runs on ${surface.serverName}, not connected`
+                : running
+                  ? 'A run is in flight'
+                  : 'Run now'
+            }
+            onClick={() => void runNow(surface, view.routine.key)}
           >
             <ArrowPathIcon className="w-4 h-4" />
           </IconButton>
@@ -259,7 +332,7 @@ export function RoutinePanel({
                 disabled={!run || run.seen}
                 onClick={() => {
                   setMenuOpen(false)
-                  if (run) void dismiss(run.id)
+                  if (run) void dismiss(surface, run.id)
                 }}
               >
                 <CheckIcon className="menu-glyph" />
@@ -307,24 +380,28 @@ export function RoutinePanel({
           body. Inside the report body a change of run cross-fades too. */}
       <div className="routine-stage">
         <Body active={tab === 'report'} kind="report">
-          <AnimatePresence initial={false}>
-            <motion.div
-              key={run?.id ?? 'none'}
-              className="routine-body"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0, transition: { duration: 0.12, ease: 'easeOut' } }}
-              transition={{ duration: 0.16, ease: [0.2, 0, 0, 1] }}
-            >
-              <RoutineReport
-                view={view}
-                run={run}
-                viewerUrl={viewer.url}
-                viewerNote={viewer.note}
-                ready={settled}
-              />
-            </motion.div>
-          </AnimatePresence>
+          <div className="relative flex-1 min-h-0">
+            <AnimatePresence initial={false}>
+              <motion.div
+                key={run?.id ?? 'none'}
+                className="routine-body"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0, transition: { duration: 0.12, ease: 'easeOut' } }}
+                transition={{ duration: 0.16, ease: [0.2, 0, 0, 1] }}
+              >
+                <RoutineReport
+                  view={view}
+                  run={run}
+                  viewerUrl={remote ? null : viewer.url}
+                  viewerNote={reportNote}
+                  deckUrl={deckUrl}
+                  ready={settled}
+                />
+              </motion.div>
+            </AnimatePresence>
+          </div>
+          {run && (run.published?.url || run.publishError) && <PublishedRow run={run} />}
         </Body>
         <Body active={tab === 'discussion'} kind="discussion">
           {discussion ? (
@@ -383,6 +460,30 @@ function Body({
     >
       {children}
     </motion.div>
+  )
+}
+
+/** Under the report: the run's deck on Slideless when the routine publishes,
+ *  or why it was not published; the run itself stands either way. */
+function PublishedRow({ run }: { run: RoutineRun }): React.JSX.Element {
+  const url = run.published?.url
+  return (
+    <div className="flex items-center gap-2 px-4 py-2 border-t border-border-subtle flex-shrink-0">
+      {url ? (
+        <button
+          className="btn-secondary btn-compact"
+          data-testid="routine-open-slideless"
+          onClick={() => void window.electronAPI.openExternal(url)}
+        >
+          <ArrowTopRightOnSquareIcon className="w-3.5 h-3.5" />
+          Open on Slideless
+        </button>
+      ) : (
+        <span className="text-xs text-text-tertiary truncate" data-testid="routine-publish-error">
+          Not published to Slideless: {run.publishError}
+        </span>
+      )}
+    </div>
   )
 }
 

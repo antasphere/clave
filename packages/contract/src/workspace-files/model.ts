@@ -85,7 +85,10 @@ export const ClaveRoutineReport = Schema.Struct({
   template: Schema.String,
   schema: Schema.optional(Schema.String),
   width: Schema.optional(Schema.Number),
-  height: Schema.optional(Schema.Number)
+  height: Schema.optional(Schema.Number),
+  /** Every run's deck pushed to the workspace's Slideless as a new version of
+   *  one deck per routine, by the server that runs it (PRDCT-4149). */
+  publish: Schema.optional(Schema.Boolean)
 })
 
 /** A routine (ADR 0004): a prompt the server runs on a cron schedule in a
@@ -106,6 +109,10 @@ export const ClaveRoutine = Schema.Struct({
   catchUp: Schema.optional(Schema.Boolean),
   timeoutMinutes: Schema.optional(Schema.Number),
   scope: Schema.optional(Schema.String),
+  /** The Clave server that runs this routine, by the server's own name or
+   *  its id (PRDCT-4149); every other server lists it and never runs it.
+   *  Absent, whichever server reads the file runs it. */
+  server: Schema.optional(Schema.String),
   report: Schema.optional(ClaveRoutineReport)
 })
 export type ClaveRoutine = typeof ClaveRoutine.Type
