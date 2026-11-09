@@ -76,8 +76,7 @@ public func permissionResponse(_ request: PendingRequest?, allow: Bool) -> Reque
   .permission(optionId: permissionOptionId(request?.options, allow: allow), answers: nil)
 }
 
-/// The key a question's answer is filed under, as the server reads it.
-public func questionKey(_ question: AgentQuestion) -> String { question.id ?? question.question }
+// The key a question's answer is filed under is `questionKey(_:)` of Requests/Answers.swift.
 
 /// A typed reply to the one question of a request, keyed by its answer key;
 /// nil when the request asks several questions or none, which the app answers.
