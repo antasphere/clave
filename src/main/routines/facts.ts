@@ -24,6 +24,8 @@ export interface FactsManagers {
   readonly launchProfiles: { getPreferences(): LaunchProfilePreferences }
   /** A preference by key; absent in a process with no preference store. */
   readonly preference?: (key: string) => unknown
+  /** The model a launch naming none will run (`rememberedSpawnModel`). */
+  readonly launchModel?: LaunchFacts['launchModel']
 }
 
 const summaryOf = (read: unknown): ServedPoolAccount['usage'] =>
@@ -34,6 +36,7 @@ const summaryOf = (read: unknown): ServedPoolAccount['usage'] =>
 export function launchFactsFromManagers(m: FactsManagers): LaunchFacts {
   return {
     preferences: () => m.launchProfiles.getPreferences(),
+    ...(m.launchModel ? { launchModel: m.launchModel } : {}),
     accounts: (provider: AccountProvider): ServedPoolAccount[] =>
       provider === 'codex'
         ? m.codexAccounts.list().map((a) => ({

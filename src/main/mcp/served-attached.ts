@@ -122,6 +122,10 @@ export async function attachedShell<W extends ToolWindow>(
       profiles
         ? chatDefaultFor(profiles, family, workspaceId)
         : base.chatDefault(family, workspaceId),
-    pins: () => pins ?? base.pins()
+    pins: () => pins ?? base.pins(),
+    // The model a chat starts on is the SERVER's remembered one, a preference
+    // its API does not serve: this Mac's own would judge the account by the
+    // wrong model, so the pick falls back to the shared caps (PRDCT-4253).
+    launchModel: () => undefined
   }
 }

@@ -78,7 +78,11 @@ beforeEach(() => {
     alive: true,
     launchProfileId: options.launchProfileId
   }))
-  globals.window.electronAPI = { spawnSession, captureTabSpawn: vi.fn() }
+  globals.window.electronAPI = {
+    spawnSession,
+    captureTabSpawn: vi.fn(),
+    preferencesGet: vi.fn(async () => undefined)
+  }
 })
 afterEach(() => {
   globals.window.electronAPI = {}
@@ -943,5 +947,62 @@ describe('the account of a window-road open', () => {
       undefined,
       'gpt-5.3-codex-spark'
     )
+  })
+  it('with no model named, is judged for the chat model main will start it on', async () => {
+    // Main starts a chat that names no model on the one last picked in a chat
+    // composer of its adapter (`pty-manager.ts`); the account must be judged
+    // for that one, or a spent Fable week lands a Fable tab on it.
+    globals.window.electronAPI.preferencesGet = vi.fn(async (key: string) =>
+      key === 'chatModels'
+        ? { 'claude-chat': 'claude-fable-5-1', 'codex-chat': 'gpt-5.5' }
+        : undefined
+    )
+    const base = preferences({})
+    useLaunchProfileStore.setState({
+      preferences: {
+        ...base,
+        customProfiles: [
+          ...base.customProfiles,
+          {
+            id: 'claude-chat',
+            name: 'Claude (chat)',
+            family: 'claude',
+            command: ['claude'],
+            additionalArgs: [],
+            builtIn: true
+          }
+        ]
+      },
+      loaded: true
+    })
+    switchAccount.resolveAccountRef.mockClear()
+    await openSessionProgrammatically({ cwd: '/repo', mode: 'claude', chat: true })
+    expect(switchAccount.resolveAccountRef).toHaveBeenLastCalledWith(
+      'claude',
+      undefined,
+      'claude-fable-5-1'
+    )
+    expect(spawned().model).toBeUndefined()
+    await openSessionProgrammatically({ cwd: '/repo', mode: 'codex', chat: true })
+    expect(switchAccount.resolveAccountRef).toHaveBeenLastCalledWith('codex', undefined, 'gpt-5.5')
+    // A named model wins; a resumed conversation keeps its own, unknown here.
+    await openSessionProgrammatically({
+      cwd: '/repo',
+      mode: 'claude',
+      chat: true,
+      model: 'claude-opus-5-5'
+    })
+    expect(switchAccount.resolveAccountRef).toHaveBeenLastCalledWith(
+      'claude',
+      undefined,
+      'claude-opus-5-5'
+    )
+    await openSessionProgrammatically({
+      cwd: '/repo',
+      mode: 'claude',
+      chat: true,
+      resumeSessionId: '11111111-1111-4111-8111-111111111111'
+    })
+    expect(switchAccount.resolveAccountRef).toHaveBeenLastCalledWith('claude', undefined, undefined)
   })
 })

@@ -5,9 +5,9 @@
 // week at 38% and the Fable cap spent, the shape Romain saw on 9 November
 // 2026 when every account-level readout said "at limit".
 //
-// What this spec does NOT assert yet: the foot following a model switch made
-// from the chip. The sidebar store learns a model change from lane B's push
-// (PRDCT-4256); until it lands, a tab's model is the one it was opened on.
+// The foot following a model switch made from the chip (main's push of the
+// model the CLI applied, PRDCT-4256) is asserted by the unit test beside the
+// component (`SidebarFooter.test.tsx`): this spec starts no real CLI to confirm one.
 //
 // Pinned to the in-process server (`server: 'in-process'`): the quota it shows
 // comes from a read stubbed on the shell's settings source

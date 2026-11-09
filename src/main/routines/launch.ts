@@ -45,6 +45,14 @@ const THINKING: ReadonlySet<string> = new Set<PiThinkingLevel>([
 export interface LaunchFacts extends AccountFacts {
   /** The launch profile preferences this server runs on (the chat default and the custom profiles). */
   preferences(): LaunchProfilePreferences
+  /** The model a launch naming none will run once spawned (main's
+   *  `rememberedSpawnModel`), which its account is judged by (PRDCT-4253);
+   *  absent or undefined when the process cannot know it. */
+  launchModel?(
+    family: 'claude' | 'codex',
+    launchProfileId: string | undefined,
+    workspaceId: string | undefined
+  ): string | undefined
 }
 
 export type ResolvedLaunch =
@@ -153,7 +161,10 @@ export function resolveLaunch(
   let account: string | null = null
   if (agent === 'claude' || agent === 'codex') {
     try {
-      const resolved = resolveAccountRef(facts, agent, p.account, modes.model)
+      // A routine naming no model runs the one main remembers for its chat:
+      // the account is judged for that one, never on the shared caps alone.
+      const model = modes.model ?? facts.launchModel?.(agent, launchProfileId, routine.workspaceId)
+      const resolved = resolveAccountRef(facts, agent, p.account, model)
       accountFields = spawnFieldsOf(agent, resolved)
       account = resolved.label
     } catch (error) {
