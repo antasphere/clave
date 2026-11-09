@@ -29,7 +29,7 @@ struct ThemeGallery: View {
 
           SectionTitle("Status")
           HStack(spacing: Theme.space(4)) {
-            ForEach(AgentState.allCases, id: \.self) { state in
+            ForEach(StatusKind.allCases, id: \.self) { state in
               HStack(spacing: Theme.space(1.5)) {
                 StatusDot(state)
                 Text(state.label)

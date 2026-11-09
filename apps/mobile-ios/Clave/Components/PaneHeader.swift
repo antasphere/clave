@@ -6,12 +6,12 @@ import SwiftUI
 struct PaneHeader<Trailing: View>: View {
   let title: String
   var subtitle: String?
-  var status: AgentState?
+  var status: StatusKind?
   @ViewBuilder var trailing: Trailing
 
   @Environment(\.claveTheme) private var theme
 
-  init(_ title: String, subtitle: String? = nil, status: AgentState? = nil, @ViewBuilder trailing: () -> Trailing) {
+  init(_ title: String, subtitle: String? = nil, status: StatusKind? = nil, @ViewBuilder trailing: () -> Trailing) {
     self.title = title
     self.subtitle = subtitle
     self.status = status
@@ -48,7 +48,7 @@ struct PaneHeader<Trailing: View>: View {
 }
 
 extension PaneHeader where Trailing == EmptyView {
-  init(_ title: String, subtitle: String? = nil, status: AgentState? = nil) {
+  init(_ title: String, subtitle: String? = nil, status: StatusKind? = nil) {
     self.init(title, subtitle: subtitle, status: status) { EmptyView() }
   }
 }

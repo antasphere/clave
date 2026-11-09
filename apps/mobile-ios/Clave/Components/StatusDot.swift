@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// The session states the sidebar's dot tells apart.
-nonisolated enum AgentState: String, CaseIterable, Sendable {
+nonisolated enum StatusKind: String, CaseIterable, Sendable {
   case working, ready, waiting, inactive
 
   var label: String {
@@ -17,14 +17,14 @@ nonisolated enum AgentState: String, CaseIterable, Sendable {
 /// `.pane-status-dot`: a session's state in the shared status inks. Working
 /// breathes as it does on the desktop, unless the person asked for less motion.
 struct StatusDot: View {
-  let state: AgentState
+  let state: StatusKind
   var size: CGFloat = 8
 
   @Environment(\.claveTheme) private var theme
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
   @State private var dimmed = false
 
-  init(_ state: AgentState, size: CGFloat = 8) {
+  init(_ state: StatusKind, size: CGFloat = 8) {
     self.state = state
     self.size = size
   }
