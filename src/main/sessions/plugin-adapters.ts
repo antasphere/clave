@@ -7,7 +7,8 @@ import {
   type CommandOption,
   type ModelOption,
   type SessionEvent,
-  type SessionInput
+  type SessionInput,
+  flattenAnswers
 } from '../../shared/session-model'
 import { pluginFile, type PluginRecord } from '../plugins/plugin-store'
 import { sessionManager } from './session-manager'
@@ -223,7 +224,7 @@ class PluginSessionAdapter implements SessionAdapter {
           instance.respond({
             id,
             optionId: value.optionId,
-            ...(value.answers ? { answers: value.answers } : {})
+            ...(value.answers ? { answers: flattenAnswers(value.answers) } : {})
           })
         )
         return

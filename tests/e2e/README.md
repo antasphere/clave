@@ -23,10 +23,12 @@ order, then the shard index. Each shard runs its specs in the original order;
 `--list` prints the selected filenames without importing specs.
 Empty shards are valid, but an empty selection before sharding is an error.
 
-`shard-durations.json` contains placement hints from the three complete runs
-linked in that file (all 196 specs at the aebb75ea tree). Each hint is the median per-spec duration, rounded to
-seconds with a minimum of 1. New or renamed specs use the explicit 14-second
-fallback, the median of those hints. Removed specs' hints add no work. Missing
+`shard-durations.json` contains placement hints from three complete runs at
+`fd4c7ee7`, linked in that file. Each of the 199 hints is the median per-spec
+duration, rounded to seconds with a minimum of 1. The runs contain early-ended
+samples for renderer-responsiveness and chat-turn-foot; the profile retains
+them and makes no assertion-coverage equivalence claim. New or renamed specs
+use the explicit 14-second fallback, the median of those hints. Removed specs' hints add no work. Missing
 or malformed hint data and nonpositive or nonnumeric values fail explicitly.
 Update hints from complete comparable runs; do not use the current run's
 reports or host data. The runner and aggregate read the same checked-in file

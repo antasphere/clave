@@ -64,6 +64,7 @@ export const CLIPBOARD_SPECS = new Set([
   'chat-turn-copy.spec.mjs',
   'copy-contents.spec.mjs',
   'copy-session-id.spec.mjs',
+  'session-menu.spec.mjs',
   'triage-ui.spec.mjs'
 ])
 export function selectShard(specs, { index, total }, hints = durationHints) {

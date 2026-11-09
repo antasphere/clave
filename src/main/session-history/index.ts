@@ -1,5 +1,6 @@
 import type { LedgerRow } from './ledger'
 import { DIGEST_HELPER_MARKER } from '../../shared/exchange-digest'
+import { WORK_DIGEST_MARKER } from '../../shared/work-digest'
 
 /**
  * The fold: ledger rows (and, as a one-time seed, the exchange-capture
@@ -162,8 +163,12 @@ export const TITLE_HELPER_MARKER =
 export function isTitleHelperConversation(lastPrompt: string | null): boolean {
   if (lastPrompt === null) return false
   const prompt = lastPrompt.trimStart()
-  // The exchange digest's one-shots too (src/main/exchange-digest.ts).
-  return prompt.startsWith(TITLE_HELPER_MARKER) || prompt.startsWith(DIGEST_HELPER_MARKER)
+  // The exchange and work digests' one-shots too (src/main/exchange-digest.ts).
+  return (
+    prompt.startsWith(TITLE_HELPER_MARKER) ||
+    prompt.startsWith(DIGEST_HELPER_MARKER) ||
+    prompt.startsWith(WORK_DIGEST_MARKER)
+  )
 }
 
 /** The transcripts the ledger does not know: every stem in the store's index

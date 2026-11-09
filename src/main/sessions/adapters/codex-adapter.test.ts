@@ -375,6 +375,18 @@ describe('Codex adapter lifecycle', () => {
     await adapter.kill(next)
   })
 
+  it("takes no turn for the person's typing into a form, the host's alone (PRDCT-4210)", async () => {
+    const { adapter, connection } = fake()
+    const handle = await adapter.spawn(spec)
+    const events: unknown[] = []
+    adapter.on(handle, 'stream', (e) => events.push(e))
+    adapter.write(handle, { type: 'permission_draft', id: 'clave:f', answers: { name: 'x' } })
+    await tick()
+    expect(connection.request).not.toHaveBeenCalledWith('turn/start', expect.anything())
+    expect(JSON.stringify(events)).not.toContain('user_message')
+    await adapter.kill(handle)
+  })
+
   it('defers startup for subscribers, sends model/resume safely, interrupts, and exits in order', async () => {
     const { adapter, connection, connect } = fake()
     const handle = await adapter.spawn({

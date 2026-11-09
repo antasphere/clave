@@ -1714,6 +1714,86 @@ canvas[data-orb-state] {
   margin-top: var(--menu-row-gap);
 }
 
+/* The pane header's session menu (views/SessionMenu.tsx): the views as
+   drawn tiles, then the transcript and session rows. Wide enough for three
+   tiles side by side and a row's hint beside its label. */
+.session-menu {
+  width: 288px;
+}
+.view-tiles {
+  display: grid;
+  grid-template-columns: repeat(var(--view-tiles, 3), minmax(0, 1fr));
+  gap: 4px;
+  padding: 0 4px 4px;
+}
+/* A tile: the drawing on a paper card, the view's name under it. Hover is the
+   menu row's fill; the view on screen rings its card in the accent, the one
+   place the accent goes, as in the drawing inside it. */
+.view-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 5px;
+  padding: 5px 5px 4px;
+  border-radius: var(--control-radius);
+  font-size: 12px;
+  font-weight: var(--font-weight-medium);
+  color: var(--text-secondary);
+  text-align: center;
+  outline: none;
+  user-select: none;
+  cursor: pointer;
+  transition:
+    color 150ms,
+    background-color 150ms;
+}
+.view-tile:hover,
+.view-tile[data-highlighted] {
+  background-color: var(--surface-100);
+  color: var(--text-primary);
+}
+.view-tile[data-selected='true'] {
+  color: var(--text-primary);
+}
+.view-tile-art {
+  display: block;
+  padding: 4px;
+  border-radius: var(--radius-md);
+  background-color: var(--surface-0);
+  box-shadow: 0 0 0 0.5px var(--edge-color);
+  transition: box-shadow 150ms;
+}
+.view-tile[data-selected='true'] .view-tile-art {
+  box-shadow: 0 0 0 1.5px var(--color-accent);
+}
+.view-tile-art .view-drawing {
+  width: 100%;
+  height: auto;
+}
+.view-tile-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* A row's word on what it just did ("Copied", "Saved", "Failed"), where its
+   hint sits; the check says it to the eye before the menu closes. */
+.session-menu-note {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+.session-menu-note[data-tone='done'] {
+  color: var(--color-status-ready, var(--text-secondary));
+}
+.session-menu-note[data-tone='failed'] {
+  color: var(--color-destructive);
+}
+.session-menu-failure {
+  padding: 2px 8px 6px;
+  font-size: 11px;
+  color: var(--color-destructive);
+}
+
 /* Hairline between menu sections, inset so it reads as a break in the list
    rather than a border cutting the surface. */
 .menu-sep {
@@ -1993,8 +2073,7 @@ canvas[data-orb-state] {
 }
 .orb-swatch[data-selected='true'] {
   color: var(--text-primary);
-  box-shadow:
-    0 0 0 1.5px var(--color-accent);
+  box-shadow: 0 0 0 1.5px var(--color-accent);
 }
 .orb-swatch-label {
   font-size: 11px;
@@ -2836,8 +2915,7 @@ canvas[data-orb-state] {
 /* Chosen: the accent edge drawn twice as firm as a focus ring, and no halo —
    a selection is a state that stays, a focus ring is a place that moves. */
 .theme-swatch[data-selected='true'] {
-  box-shadow:
-    0 0 0 1.5px var(--color-accent);
+  box-shadow: 0 0 0 1.5px var(--color-accent);
 }
 .theme-swatch-preview {
   padding: 0.75rem;
@@ -3131,8 +3209,8 @@ button.extension-card:hover {
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  width: 1.25rem;
-  height: 1.25rem;
+  width: var(--control-h-xs);
+  height: var(--control-h-xs);
   border-radius: var(--radius-control);
   color: var(--text-tertiary);
 }
@@ -3171,36 +3249,44 @@ button.extension-card:hover {
 }
 /* The transcript runs right down to the composer and fades out over its
    last stretch instead of stopping on a hard edge: the ground's own colour
-   laid over the foot of the transcript, from clear to whole. A gradient over
-   it, NOT a mask on the scroller: a masked scroller is repainted on every
-   frame of a scroll, and the scroll stuttered with one (7 November 2026).
-   Above the rows, under the jump-to-end control; it takes no pointer. The
-   column's own foot padding is taller than the fade, so the last line sits
-   clear of it once the reader is at the end. */
+   laid over the foot of the transcript. A gradient over it, NOT a mask on the
+   scroller: a masked scroller is repainted on every frame of a scroll, and
+   the scroll stuttered with one (7 November 2026). Above the rows, under the
+   jump-to-end control; it takes no pointer. The column's own foot padding is
+   taller than the fade, so the last line sits clear of it once the reader is
+   at the end.
+
+   The curve (8 November 2026): never whole, and not symmetric. It stops at
+   88% at the composer, so the last line still shows through, falls steeply
+   to about a third over the stretch nearest the composer, then thins out
+   over a long tail. The cosine S it replaced went to 100% and read as a wall
+   painted over the text. Shared by every transcript view (Chat, Enclave,
+   Folio's desk in lab/folio.css) through --transcript-fade-image. */
+:root {
+  --transcript-fade: calc(var(--spacing) * 9);
+  --transcript-fade-image: linear-gradient(
+    to bottom,
+    transparent,
+    color-mix(in srgb, var(--surface-0) 3%, transparent) 20%,
+    color-mix(in srgb, var(--surface-0) 9%, transparent) 40%,
+    color-mix(in srgb, var(--surface-0) 16%, transparent) 55%,
+    color-mix(in srgb, var(--surface-0) 26%, transparent) 68%,
+    color-mix(in srgb, var(--surface-0) 38%, transparent) 78%,
+    color-mix(in srgb, var(--surface-0) 55%, transparent) 86%,
+    color-mix(in srgb, var(--surface-0) 73%, transparent) 93%,
+    color-mix(in srgb, var(--surface-0) 88%, transparent)
+  );
+}
 .chat-transcript::after {
-  --chat-fade: calc(var(--spacing) * 7);
   content: '';
   position: absolute;
   z-index: 5;
   left: 0;
   right: 0;
   bottom: 0;
-  height: var(--chat-fade);
+  height: var(--transcript-fade);
   pointer-events: none;
-  /* A cosine ease over eight steps: no visible edge where the fade begins,
-     none where it ends, and no banding between. */
-  background-image: linear-gradient(
-    to bottom,
-    transparent,
-    color-mix(in srgb, var(--surface-0) 4%, transparent) 12.5%,
-    color-mix(in srgb, var(--surface-0) 15%, transparent) 25%,
-    color-mix(in srgb, var(--surface-0) 31%, transparent) 37.5%,
-    color-mix(in srgb, var(--surface-0) 50%, transparent) 50%,
-    color-mix(in srgb, var(--surface-0) 69%, transparent) 62.5%,
-    color-mix(in srgb, var(--surface-0) 85%, transparent) 75%,
-    color-mix(in srgb, var(--surface-0) 96%, transparent) 87.5%,
-    var(--surface-0)
-  );
+  background-image: var(--transcript-fade-image);
 }
 /* The way back down. The transcript follows the stream only while the reader
    is at its end (`useTranscriptEnd`); one who scrolled up to re-read is left
@@ -4340,6 +4426,690 @@ details[open] > .chat-tool-row .chat-tool-chevron,
 .chat-prompt-option .chat-prompt-key {
   color: var(--text-tertiary);
 }
+/* ── The question card, inline (PRDCT-4157) ──
+   A question the agent asks is answered where it asked it: in the agent's own
+   column, under its words, with no box around it. At its head a drawing in
+   the chat's hand and the agent's sentence; then the fields down a rail, one
+   seat per field, the accent running down the rail as far as the field the
+   reader is on and all the way once every answer fits (the one place the
+   accent goes); then Skip and Send. The fields are the paper's controls
+   (tokens.css "Paper"); their height, the buttons' height, the air between
+   fields and the inset come from the density tokens (--ask-*), so the card
+   reads as the chrome around it at every preset. Answered, the card gives way
+   to its record. The dock above the composer keeps a tool to allow. */
+.chat-turn-wrap > .chat-prompt[data-inline='true'],
+.chat-row .chat-prompt[data-inline='true'],
+.chat-form-tail .chat-prompt[data-inline='true'] {
+  align-self: stretch;
+  width: 100%;
+  max-width: 100%;
+  margin: 0;
+  padding: var(--ask-pad) var(--spacing) calc(var(--ask-pad) * 0.5);
+  border: 0;
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+  gap: var(--ask-gap);
+}
+.chat-prompt[data-inline='true']:focus-within {
+  border: 0;
+  box-shadow: none;
+}
+.chat-prompt[data-inline='true'] .chat-prompt-body {
+  gap: var(--ask-gap);
+}
+/* The head: the drawing, and the words beside it. */
+.chat-ask-head {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--ask-gap) * 1.25);
+}
+.chat-ask-head .ask-drawing--ask {
+  flex-shrink: 0;
+  width: calc(var(--ask-field-h) * 3.4);
+  height: auto;
+}
+.chat-ask-words {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--spacing) * 1.5);
+  min-width: 0;
+  flex: 1;
+}
+.chat-prompt-eyebrow {
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.chat-prompt-ask {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: var(--text-base);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+/* The rail: a hairline down the left, a seat per field, the accent drawn
+   down it to --ask-progress (measured by the card) and eased there. */
+.chat-ask-fields {
+  --ask-rail-x: calc(var(--spacing) * 2.5);
+  --ask-seat: calc(var(--spacing) * 4);
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--ask-gap);
+  margin: 0;
+  padding: 0 0 0 calc(var(--ask-rail-x) * 2 + var(--ask-seat));
+  list-style: none;
+}
+.chat-ask-fields::before,
+.chat-ask-fields::after {
+  content: '';
+  position: absolute;
+  left: calc(var(--ask-rail-x) + var(--ask-seat) / 2 - 0.5px);
+  top: calc(var(--spacing) * 2);
+  width: 1px;
+  border-radius: 1px;
+}
+.chat-ask-fields::before {
+  bottom: calc(var(--spacing) * 2);
+  background-color: color-mix(in oklab, var(--text-primary) 18%, transparent);
+}
+.chat-ask-fields::after {
+  height: max(0px, calc(var(--ask-progress, 0px) - var(--spacing) * 2));
+  background-color: var(--color-accent);
+  transition: height calc(var(--default-transition-duration) * 3) var(--ease-out-expo);
+}
+.chat-ask-field {
+  position: relative;
+}
+.chat-ask-seat {
+  position: absolute;
+  left: calc(var(--ask-rail-x) * -1 - var(--ask-seat));
+  top: calc(var(--spacing) * 0.75);
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--ask-seat);
+  height: var(--ask-seat);
+  border-radius: var(--radius-full);
+  background-color: var(--surface-0);
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--text-primary) 30%, transparent);
+  color: var(--color-action-foreground);
+  transition:
+    background-color var(--default-transition-duration),
+    box-shadow var(--default-transition-duration),
+    scale calc(var(--default-transition-duration) * 2) var(--ease-out-expo);
+}
+.chat-ask-seat::after {
+  content: '';
+  width: calc(var(--spacing) * 1.5);
+  height: calc(var(--spacing) * 1.5);
+  border-radius: var(--radius-full);
+  background-color: color-mix(in oklab, var(--text-primary) 35%, transparent);
+  transition:
+    background-color var(--default-transition-duration),
+    scale calc(var(--default-transition-duration) * 2) var(--ease-out-expo);
+}
+.chat-ask-field[data-state='active'] .chat-ask-seat {
+  box-shadow: inset 0 0 0 1px var(--color-accent);
+}
+.chat-ask-field[data-state='active'] .chat-ask-seat::after {
+  background-color: var(--color-accent);
+  scale: 1.25;
+}
+.chat-ask-field[data-state='problem'] .chat-ask-seat {
+  box-shadow: inset 0 0 0 1px var(--color-destructive);
+}
+.chat-ask-field[data-state='problem'] .chat-ask-seat::after {
+  background-color: var(--color-destructive);
+}
+.chat-ask-field[data-state='done'] .chat-ask-seat {
+  background-color: var(--text-primary);
+  box-shadow: inset 0 0 0 1px var(--text-primary);
+}
+.chat-ask-field[data-state='done'] .chat-ask-seat::after {
+  display: none;
+}
+.chat-ask-seat svg {
+  width: calc(var(--spacing) * 2.5);
+  height: calc(var(--spacing) * 2.5);
+  stroke-width: 2.5;
+  color: var(--surface-0);
+}
+/* Each field comes in a beat after the one above it, from a touch below. */
+@media (prefers-reduced-motion: no-preference) {
+  .chat-ask-field {
+    animation: chat-ask-field-in 560ms var(--ease-out-expo) backwards;
+    animation-delay: calc(120ms + var(--i, 0) * 80ms);
+  }
+  .chat-ask-field[data-state='active'] .chat-ask-seat {
+    animation: chat-ask-seat-pulse 1200ms var(--ease-out-expo) 1;
+  }
+}
+@keyframes chat-ask-field-in {
+  from {
+    opacity: 0;
+    translate: 0 calc(var(--spacing) * 1.5);
+  }
+}
+/* A field the agent set from what the reader said: the seat's tick draws
+   itself, and the field flashes once as the value lands. */
+.chat-ask-flash {
+  position: absolute;
+  inset: calc(var(--spacing) * -1) calc(var(--spacing) * -1.5);
+  z-index: 0;
+  pointer-events: none;
+  border-radius: var(--radius-control);
+  background-color: color-mix(in oklab, var(--color-accent) 14%, transparent);
+  opacity: 0;
+}
+.chat-ask-field > .chat-field-wrap {
+  position: relative;
+  z-index: 1;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .chat-ask-flash {
+    animation: chat-ask-flash 900ms var(--ease-out-expo) 1;
+  }
+  .chat-ask-field[data-state='done'] .chat-ask-seat svg {
+    animation: chat-ask-tick 360ms var(--ease-out-expo) 1;
+  }
+}
+@keyframes chat-ask-flash {
+  0% {
+    opacity: 0;
+  }
+  18% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+@keyframes chat-ask-tick {
+  from {
+    scale: 0.4;
+    opacity: 0;
+  }
+}
+/* A step already answered, folded into one line above the live question:
+   the question in the label's voice, what was said in the reader's; a click
+   reopens it. */
+.chat-ask-folded {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: calc(var(--spacing) * 2);
+  row-gap: calc(var(--spacing) * 0.5);
+  width: 100%;
+  min-height: var(--ask-seat);
+  padding: calc(var(--spacing) * 0.5) 0;
+  border: 0;
+  background: none;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: var(--text-sm);
+  text-align: left;
+  cursor: pointer;
+}
+.chat-ask-folded:hover .chat-ask-folded-answer {
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+}
+.chat-ask-folded-question {
+  color: var(--text-tertiary);
+}
+.chat-ask-folded-answer {
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+}
+.chat-ask-field[data-state='problem'] .chat-ask-folded-answer {
+  color: var(--color-destructive);
+}
+/* The agent filled the form from what the reader said. */
+.chat-ask-note {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+}
+/* The rows of the steps layout stand still: a step that closes folds its
+   field away (the open box shrinks and fades) and its answer line in; a
+   step reopened does the reverse. Both boxes are always there, one of them
+   shut. */
+.chat-ask-fold,
+.chat-ask-open {
+  display: grid;
+  transition:
+    grid-template-rows 480ms var(--ease-out-expo),
+    opacity 320ms var(--ease-out-expo),
+    visibility 0s linear 480ms;
+}
+.chat-ask-fold > div,
+.chat-ask-open > div {
+  min-height: 0;
+  overflow: hidden;
+}
+/* Room for the field's focus ring while the box is open, given back as it
+   folds; the clip is what lets the box shut. */
+.chat-ask-open > div {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--spacing) * 1.5);
+  padding: 6px;
+  margin: -6px;
+  transition:
+    padding 480ms var(--ease-out-expo),
+    margin 480ms var(--ease-out-expo);
+}
+.chat-ask-fold {
+  grid-template-rows: 0fr;
+  opacity: 0;
+  visibility: hidden;
+}
+.chat-ask-open {
+  grid-template-rows: 1fr;
+  opacity: 1;
+  visibility: visible;
+  transition-delay: 0s, 0s, 0s;
+  /* A row that arrives grows from shut, as the one above folds. */
+  @starting-style {
+    grid-template-rows: 0fr;
+    opacity: 0;
+  }
+}
+.chat-ask-field[data-folded='true'] .chat-ask-fold {
+  grid-template-rows: 1fr;
+  opacity: 1;
+  visibility: visible;
+  transition-delay: 120ms, 160ms, 0s;
+}
+.chat-ask-field[data-folded='true'] .chat-ask-open {
+  grid-template-rows: 0fr;
+  opacity: 0;
+  visibility: hidden;
+}
+.chat-ask-field[data-folded='true'] .chat-ask-open > div {
+  padding: 0;
+  margin: 0;
+}
+/* The step that arrives: its label, its hint and its field come in one after
+   the other, from a touch below. */
+@media (prefers-reduced-motion: no-preference) {
+  .chat-ask-open .chat-field-wrap > * {
+    animation: chat-ask-child-in 540ms var(--ease-out-expo) backwards;
+  }
+  .chat-ask-open .chat-field-wrap > :nth-child(1) {
+    animation-delay: 120ms;
+  }
+  .chat-ask-open .chat-field-wrap > :nth-child(2) {
+    animation-delay: 210ms;
+  }
+  .chat-ask-open .chat-field-wrap > :nth-child(3) {
+    animation-delay: 300ms;
+  }
+  .chat-ask-open .chat-field-wrap > :nth-child(n + 4) {
+    animation-delay: 380ms;
+  }
+}
+@keyframes chat-ask-child-in {
+  from {
+    opacity: 0;
+    translate: 0 calc(var(--spacing) * 1.5);
+  }
+}
+/* The agent is reading what the person wrote: the seat of the step they are
+   on turns while it does. */
+.chat-ask-field[data-working='true'] .chat-ask-seat::before {
+  content: '';
+  position: absolute;
+  inset: -3px;
+  border-radius: var(--radius-full);
+  border: 1.5px solid color-mix(in oklab, var(--color-accent) 25%, transparent);
+  border-top-color: var(--color-accent);
+  animation: chat-ask-spin 900ms linear infinite;
+}
+@keyframes chat-ask-spin {
+  to {
+    rotate: 360deg;
+  }
+}
+/* The agent's word under a field it could not fill from what was said. */
+.chat-field-note {
+  font-size: var(--text-xs);
+  color: var(--color-accent);
+  line-height: 1.45;
+}
+/* The form once closed: the status beside the eyebrow, every step folded. */
+.chat-ask-status {
+  font-size: var(--text-xs);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+.chat-ask-status[data-status='approved'] {
+  color: var(--color-accent);
+}
+.chat-prompt-body[data-closed='true'] .chat-ask-folded {
+  cursor: default;
+}
+.chat-prompt-body[data-closed='true'] .chat-ask-folded:hover .chat-ask-folded-answer {
+  text-decoration: none;
+}
+.chat-prompt-body[data-closed='true'] .chat-ask-folded[data-static='true'] {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: calc(var(--spacing) * 2);
+  row-gap: calc(var(--spacing) * 0.5);
+  min-height: var(--ask-seat);
+  padding: calc(var(--spacing) * 0.5) 0;
+  font-size: var(--text-sm);
+}
+.chat-permission-row[data-form='closed'] {
+  display: block;
+  padding: 0;
+  color: inherit;
+  font-size: inherit;
+}
+/* The form that floats at the end of the conversation while it is open. */
+.chat-form-tail {
+  padding-top: calc(var(--spacing) * 5);
+  will-change: transform;
+}
+@keyframes chat-ask-seat-pulse {
+  0% {
+    box-shadow:
+      inset 0 0 0 1px var(--color-accent),
+      0 0 0 0 color-mix(in srgb, var(--color-accent) 40%, transparent);
+  }
+  100% {
+    box-shadow:
+      inset 0 0 0 1px var(--color-accent),
+      0 0 0 10px color-mix(in srgb, var(--color-accent) 0%, transparent);
+  }
+}
+.chat-field-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--spacing) * 1.5);
+  min-width: 0;
+}
+.chat-field-label {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: calc(var(--spacing) * 1.5);
+  color: var(--text-primary);
+  font-size: var(--text-sm);
+}
+.chat-field-label .chat-prompt-hint {
+  margin-left: 0;
+}
+.chat-field-hint {
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+  line-height: 1.45;
+}
+.chat-field {
+  width: 100%;
+  min-height: var(--ask-field-h);
+  padding: 0 calc(var(--control-px) * 1.75);
+  border: 0;
+  border-radius: var(--radius-control);
+  background-color: var(--control-surface);
+  box-shadow: var(--field-shadow);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: var(--text-sm);
+  line-height: 1.5;
+  outline: none;
+  transition:
+    box-shadow 150ms,
+    background-color 150ms;
+}
+.chat-field::placeholder {
+  color: var(--text-tertiary);
+}
+.chat-field:focus {
+  box-shadow: var(--focus-ring);
+}
+.chat-field[aria-invalid='true'] {
+  box-shadow:
+    0 0 0 1px var(--color-destructive),
+    0 0 0 4px color-mix(in srgb, var(--color-destructive) 18%, transparent);
+}
+.chat-field:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.chat-field--long {
+  min-height: calc(var(--ask-field-h) * 2.4);
+  max-height: calc(var(--spacing) * 60);
+  padding: calc(var(--spacing) * 2) calc(var(--control-px) * 1.75);
+  resize: none;
+  field-sizing: content;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.chat-field[type='date']::-webkit-calendar-picker-indicator {
+  opacity: 0.6;
+  cursor: pointer;
+}
+.chat-field-row {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--spacing) * 2);
+}
+.chat-field-row .chat-field {
+  flex: 1;
+  min-width: 0;
+}
+/* The card's buttons: a press is a wash of the ink (--key-wash), the verb
+   is the ink itself; both one density step taller than a row's control. */
+.chat-ask-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: calc(var(--spacing) * 2);
+  padding-top: calc(var(--spacing) * 0.5);
+}
+.chat-ask-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--control-gap);
+  height: var(--ask-btn-h);
+  padding: 0 calc(var(--control-px) * 2.25);
+  border: 0;
+  border-radius: var(--radius-control);
+  background-color: var(--key-wash);
+  color: var(--text-primary);
+  font-size: var(--control-text);
+  font-weight: var(--font-weight-medium);
+  white-space: nowrap;
+  transition:
+    background-color var(--default-transition-duration),
+    scale var(--default-transition-duration) var(--ease-out-expo);
+}
+.chat-ask-btn:hover {
+  background-color: var(--key-wash-strong);
+}
+.chat-ask-btn:active:not(:disabled) {
+  scale: 0.97;
+}
+.chat-ask-btn[data-primary='true'] {
+  background-color: var(--color-action);
+  color: var(--color-action-foreground);
+  padding: 0 calc(var(--control-px) * 2.75);
+}
+.chat-ask-btn[data-primary='true']:hover {
+  background-color: var(--color-action-hover);
+}
+.chat-ask-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  scale: none;
+}
+.chat-ask-btn svg,
+.chat-prompt-btn svg {
+  width: var(--chat-glyph);
+  height: var(--chat-glyph);
+  flex-shrink: 0;
+}
+.chat-field-problem {
+  font-size: var(--text-xs);
+  color: var(--color-destructive);
+  line-height: 1.45;
+}
+.chat-field-ok {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(var(--spacing) * 1.5);
+  height: var(--ask-btn-h);
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+}
+.chat-field-ok svg {
+  width: var(--chat-glyph);
+  height: var(--chat-glyph);
+  color: var(--color-status-ready);
+}
+/* A link to open and come back from: the drawing, the address, two steps. */
+.chat-link {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--spacing) * 3.5);
+  padding: calc(var(--spacing) * 2.5) calc(var(--spacing) * 3);
+  border-radius: var(--radius-xl);
+  background-color: color-mix(in oklab, var(--surface-100) 60%, transparent);
+}
+.chat-link .ask-drawing {
+  flex-shrink: 0;
+  width: calc(var(--ask-field-h) * 3);
+  height: auto;
+}
+.chat-link-body {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--spacing) * 2);
+  min-width: 0;
+}
+.chat-link-host {
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+.chat-link-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: calc(var(--spacing) * 2);
+}
+.chat-link .chat-prompt-btn {
+  height: var(--ask-btn-h);
+  padding: 0 calc(var(--control-px) * 2);
+  font-size: var(--control-text);
+  border: 0;
+  background-color: var(--key-wash);
+}
+.chat-link .chat-prompt-btn:hover {
+  background-color: var(--key-wash-strong);
+}
+.chat-link .chat-prompt-btn[data-primary='true'] {
+  background-color: var(--color-action);
+  color: var(--color-action-foreground);
+}
+.chat-link[data-done='true'] .ask-drawing .ln--c {
+  stroke: color-mix(in oklab, var(--ink) 45%, transparent);
+}
+/* The record of a form once answered: each question, and what was said,
+   arriving where the card stood. */
+.chat-permission-row[data-kind='question'][data-state='answered'] {
+  transition:
+    opacity calc(var(--default-transition-duration) * 2) var(--ease-out-expo),
+    translate calc(var(--default-transition-duration) * 2) var(--ease-out-expo);
+  @starting-style {
+    opacity: 0;
+    translate: 0 calc(var(--spacing) * -1);
+  }
+}
+.chat-permission-answers {
+  display: flex;
+  flex-direction: column;
+  flex-basis: 100%;
+  gap: calc(var(--spacing) * 0.75);
+  margin: calc(var(--spacing) * 0.5) 0 0;
+  min-width: 0;
+}
+.chat-permission-answer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: calc(var(--spacing) * 1.5);
+  min-width: 0;
+}
+.chat-permission-answer dt {
+  color: var(--text-tertiary);
+}
+.chat-permission-answer dd {
+  margin: 0;
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+/* The native question drawn inline: its options take the rail's left room
+   and the same air as the card's fields. */
+.chat-prompt[data-inline='true'] .chat-prompt-options {
+  gap: calc(var(--spacing) * 0.5);
+}
+.chat-prompt[data-inline='true'] .chat-prompt-option {
+  min-height: var(--ask-field-h);
+}
+/* The way down when a question waits at the end of the transcript and the
+   reader is up it: the arrow's place and material, widened to say what waits. */
+.chat-waiting {
+  position: absolute;
+  bottom: calc(var(--spacing) * 3);
+  left: 0;
+  right: 0;
+  z-index: 10;
+  display: inline-flex;
+  align-items: center;
+  gap: calc(var(--spacing) * 1.5);
+  width: fit-content;
+  height: var(--control-h-md);
+  margin-inline: auto;
+  padding: 0 calc(var(--control-px) * 1.5);
+  border-radius: var(--radius-full);
+  background-color: var(--surface-raised);
+  box-shadow:
+    0 0 0 0.5px var(--edge-color),
+    var(--raised-shadow);
+  color: var(--text-primary);
+  font-size: var(--text-xs);
+  white-space: nowrap;
+  transition:
+    background-color var(--default-transition-duration),
+    scale var(--default-transition-duration) var(--ease-out-expo);
+}
+.chat-waiting:hover {
+  background-color: var(--surface-100);
+}
+.chat-waiting:active {
+  scale: 0.97;
+}
+.chat-waiting svg {
+  width: var(--chat-glyph);
+  height: var(--chat-glyph);
+  flex-shrink: 0;
+}
+.chat-waiting svg:first-child {
+  color: var(--color-accent);
+}
 .chat-permission-input pre {
   margin-top: 0;
 }
@@ -4609,6 +5379,14 @@ details[open] > .chat-approval-items {
   padding: 0 calc(var(--spacing) * 6) calc(var(--spacing) * 3);
 }
 .chat-composer {
+  /* Above the transcript's fade (.chat-transcript::after, z-index 5): the
+     hairline and the lift are a box-shadow, and the half pixel of it above
+     the box lies over the fade's last, solid stretch, which painted over it
+     and cut the composer's top edge. Lifted on the form alone, not on its
+     wrapper, so the slash menu above keeps its own stacking beside the
+     jump-to-end control. */
+  position: relative;
+  z-index: 6;
   display: flex;
   align-items: flex-end;
   gap: calc(var(--spacing) * 2);
@@ -5974,6 +6752,370 @@ button.exchange-part-who:hover {
 }
 /* A little more air between one exchange and the next: under the last answer,
    over the next question. Each exchange is one virtualised row. */
+/* ── The agent's working notes, folded (WorkStretch.tsx, PRDCT-4212) ──
+   Once a turn is over, the notes the agent wrote between its tool runs fold
+   into one card: a drawing of a sheet of notes folding into one line, the
+   title the digest read (the first note's first line until it lands), the
+   counts under it, and, when a note needs the reader, that note on the face
+   in a breath of accent. Open, a rail of steps as the exchange timeline's:
+   one node per note, what the agent said and then what it did. The notes
+   inside read smaller and quieter than the answer outside the card. A card
+   that has just folded settles in (data-fresh); one scrolled back into view
+   mounts still. Tokens only, as the whole conversation block. */
+.work-stretch {
+  --stretch-rail: calc(var(--spacing) * 4.5);
+  --stretch-node: calc(var(--spacing) * 2.5);
+  --stretch-ink: color-mix(in oklab, var(--text-primary) 16%, transparent);
+  display: flex;
+  flex-direction: column;
+  align-self: stretch;
+  min-width: 0;
+}
+.terminal-view .work-stretch {
+  font-size: calc(var(--text-sm) + var(--spacing) / 4);
+}
+/* Just folded under the reader's eyes: it settles in, the forms' arrival. */
+.work-stretch[data-fresh] {
+  transition:
+    opacity calc(var(--default-transition-duration) * 2) var(--ease-out-expo),
+    translate calc(var(--default-transition-duration) * 3) var(--ease-out-settle);
+  @starting-style {
+    opacity: 0;
+    translate: 0 calc(var(--spacing) * 2);
+  }
+}
+.stretch-card {
+  min-width: 0;
+  border: thin solid transparent;
+  border-radius: var(--radius-lg);
+  interpolate-size: allow-keywords;
+  transition:
+    background-color var(--default-transition-duration),
+    border-color var(--default-transition-duration),
+    box-shadow calc(var(--default-transition-duration) * 2) var(--ease-out-expo);
+}
+.stretch-card:hover {
+  background-color: color-mix(in oklab, var(--surface-100) 70%, transparent);
+}
+.stretch-card[open] {
+  border-color: var(--border-subtle-color);
+  background-color: var(--surface-100);
+  box-shadow: var(--raised-shadow);
+}
+.stretch-summary {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--spacing) * 2.5);
+  padding: calc(var(--spacing) * 2) calc(var(--spacing) * 3);
+  list-style: none;
+  cursor: pointer;
+  border-radius: inherit;
+  outline: none;
+}
+.stretch-summary::-webkit-details-marker {
+  display: none;
+}
+.stretch-summary:focus-visible {
+  outline: thin solid var(--color-accent);
+  outline-offset: calc(var(--spacing) / -2);
+}
+.stretch-drawing {
+  flex-shrink: 0;
+  align-self: flex-start;
+  inline-size: calc(var(--spacing) * 9);
+  block-size: calc(var(--spacing) * 7.5);
+}
+.stretch-words {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: calc(var(--spacing) / 4);
+  min-width: 0;
+  line-height: 1.35;
+}
+.stretch-eyebrow {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+}
+/* The title: the first note's first line, then the digest's title landing
+   over it, settling in; both read with the ink of the transcript once read. */
+.stretch-title {
+  display: grid;
+  min-width: 0;
+  color: var(--text-secondary);
+}
+.stretch-title[data-read],
+.stretch-card[open] .stretch-title {
+  color: var(--term-ink, var(--text-primary));
+}
+.stretch-title-words {
+  grid-area: 1 / 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transition:
+    opacity calc(var(--default-transition-duration) * 2) var(--ease-out-expo),
+    translate calc(var(--default-transition-duration) * 3) var(--ease-out-settle);
+  @starting-style {
+    opacity: 0;
+    translate: 0 calc(var(--spacing) / 2);
+  }
+}
+/* While the digest reads, the counts shimmer, as the exchange digest's line does. */
+.work-stretch[data-digest='reading'] .stretch-eyebrow {
+  background-image: linear-gradient(
+    90deg,
+    var(--text-tertiary) 0 40%,
+    color-mix(in oklch, var(--text-tertiary) 20%, transparent) 50%,
+    var(--text-tertiary) 60% 100%
+  );
+  background-size: 250% 100%;
+  background-clip: text;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+  animation: term-shimmer calc(var(--default-transition-duration) * 12) linear infinite;
+}
+/* A note needs the reader: verbatim on the face, the ringed marker beside
+   it in its own column, on a breath of accent. */
+.stretch-flag {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  column-gap: calc(var(--spacing) * 2);
+  align-items: start;
+  width: fit-content;
+  max-width: 100%;
+  margin-top: calc(var(--spacing) / 2);
+  padding: calc(var(--spacing) * 1.25) calc(var(--spacing) * 2.5) calc(var(--spacing) * 1.25)
+    calc(var(--spacing) * 2);
+  border-radius: var(--radius-lg);
+  background-color: color-mix(in oklab, var(--color-accent) 7%, transparent);
+  font-size: var(--text-sm);
+  line-height: 1.45;
+  white-space: normal;
+  color: var(--term-ink, var(--text-primary));
+  transition:
+    opacity calc(var(--default-transition-duration) * 2) var(--ease-out-expo),
+    translate calc(var(--default-transition-duration) * 3) var(--ease-out-settle);
+  @starting-style {
+    opacity: 0;
+    translate: 0 calc(var(--spacing) * 1.5);
+  }
+}
+.stretch-flag-mark {
+  --size: calc(var(--spacing) * 3.5);
+  inline-size: var(--size);
+  block-size: var(--size);
+  margin-top: calc((1lh - var(--size)) / 2);
+}
+/* The note whole, its lines kept: a note that needs the reader is never cut. */
+.stretch-flag-words {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  white-space: pre-line;
+}
+.stretch-chevron {
+  flex-shrink: 0;
+  inline-size: var(--chat-glyph);
+  block-size: var(--chat-glyph);
+  color: var(--text-tertiary);
+  transition: rotate calc(var(--default-transition-duration) * 2) var(--ease-out-expo);
+}
+.stretch-card[open] .stretch-chevron {
+  rotate: 180deg;
+}
+/* Opening: the height glides, the steps rise in one after another. */
+.stretch-card::details-content {
+  block-size: 0;
+  overflow: clip;
+  transition:
+    block-size calc(var(--default-transition-duration) * 2) var(--ease-out-expo),
+    content-visibility calc(var(--default-transition-duration) * 2) allow-discrete;
+}
+.stretch-card[open]::details-content {
+  block-size: auto;
+}
+.stretch-body {
+  padding: 0 calc(var(--spacing) * 3) calc(var(--spacing) * 3);
+}
+.stretch-steps {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.stretch-step {
+  position: relative;
+  display: grid;
+  grid-template-columns: calc(var(--stretch-rail) * 2) minmax(0, 1fr);
+  padding-bottom: calc(var(--spacing) * 2.5);
+  opacity: 0;
+  translate: 0 calc(var(--spacing) * -1);
+  transition:
+    opacity calc(var(--default-transition-duration) * 2) var(--ease-out-expo),
+    translate calc(var(--default-transition-duration) * 3) var(--ease-out-settle);
+  transition-delay: calc(var(--default-transition-duration) * 0.35 * var(--stretch-i, 0));
+}
+.stretch-card[open] .stretch-step {
+  opacity: 1;
+  translate: 0 0;
+}
+/* The rail, one segment per step, ending at the last step's node. */
+.stretch-step::before {
+  content: '';
+  position: absolute;
+  left: var(--stretch-rail);
+  top: 0;
+  bottom: 0;
+  border-left: thin solid var(--stretch-ink);
+}
+.stretch-step:first-child::before {
+  top: calc(var(--spacing) * 2 + 0.5lh);
+}
+.stretch-step:last-child::before {
+  bottom: auto;
+  height: calc(var(--spacing) * 2 + 0.5lh);
+}
+.stretch-step:only-child::before {
+  display: none;
+}
+/* The node: the drawings' ringed dot, hollow for a step with no words. */
+.stretch-node {
+  position: relative;
+  z-index: 1;
+  justify-self: center;
+  inline-size: var(--stretch-node);
+  block-size: var(--stretch-node);
+  margin-top: calc(var(--spacing) * 2 + 0.5lh - var(--stretch-node) / 2);
+  border: thin solid color-mix(in oklab, var(--text-primary) 42%, transparent);
+  border-radius: var(--radius-full);
+  background:
+    radial-gradient(
+      circle,
+      color-mix(in oklab, var(--text-primary) 70%, transparent) 0 32%,
+      transparent 36%
+    ),
+    var(--surface-100);
+  transition: border-color var(--default-transition-duration);
+}
+.stretch-step[data-silent] .stretch-node {
+  background: var(--surface-100);
+}
+.stretch-step[data-needs-you] .stretch-node {
+  border-color: var(--color-accent);
+  background:
+    radial-gradient(circle, var(--color-accent) 0 32%, transparent 36%), var(--surface-100);
+}
+.stretch-step-body {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--spacing) * 1.5);
+  min-width: 0;
+}
+/* Inside the card the notes are what they are, notes: smaller and quieter
+   than the answer outside; the flagged one keeps the transcript's ink. The
+   line under a turn (when, copy) is the transcript's, not a note's. */
+.stretch-step-body .chat-turn-wrap[data-side='start'] .chat-turn {
+  font-size: calc(var(--text-sm) - var(--spacing) / 4);
+  color: var(--text-secondary);
+}
+.stretch-step[data-needs-you] .chat-turn-wrap[data-side='start'] .chat-turn {
+  color: var(--term-ink, var(--text-primary));
+}
+.stretch-step-body .chat-turn-meta {
+  display: none;
+}
+/* The drawing's accent means one of two things: the digest reading now (the
+   fold line travelling, the landing dot breathing) or a note that needs the
+   reader (the landing dot). Otherwise it rests in the plain ink. */
+.stretch-drawing .stretch-fold {
+  stroke: color-mix(in oklab, var(--ink) 45%, transparent);
+  stroke-width: 1.2;
+  stroke-dasharray: 1;
+  stroke-dashoffset: 0;
+  transition:
+    stroke calc(var(--default-transition-duration) * 2) var(--ease-out-expo),
+    stroke-width calc(var(--default-transition-duration) * 2) var(--ease-out-expo);
+}
+.stretch-drawing .stretch-land {
+  fill: color-mix(in oklab, var(--ink) 60%, transparent);
+  transform-box: fill-box;
+  transform-origin: center;
+  transition: fill calc(var(--default-transition-duration) * 2) var(--ease-out-expo);
+}
+.stretch-drawing .stretch-note {
+  transform-box: fill-box;
+  transform-origin: left center;
+}
+.work-stretch[data-digest='reading'] .stretch-drawing .stretch-fold {
+  stroke: var(--color-accent);
+  stroke-width: 1.7;
+}
+.work-stretch:is([data-digest='reading'], [data-needs-you]) .stretch-drawing .stretch-land {
+  fill: var(--color-accent);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .work-stretch[data-digest='reading'] .stretch-drawing .stretch-fold {
+    stroke-dasharray: 0.35 0.65;
+    animation: exchange-travel calc(var(--default-transition-duration) * 8) linear infinite;
+  }
+  .work-stretch[data-digest='reading'] .stretch-drawing .stretch-land {
+    animation: exchange-breathe calc(var(--default-transition-duration) * 8) ease-in-out infinite;
+  }
+  .work-stretch[data-digest-fresh] .stretch-drawing .stretch-land {
+    animation: exchange-land calc(var(--default-transition-duration) * 3) var(--ease-out-settle)
+      both;
+  }
+  /* Fresh: the notes write themselves onto the sheet one under the other,
+     then the fold line draws out to the dot and the dot lands. */
+  .work-stretch[data-fresh] .stretch-drawing .stretch-note {
+    animation: stretch-note calc(var(--default-transition-duration) * 3) var(--ease-out-expo) both;
+  }
+  .work-stretch[data-fresh] .stretch-drawing .stretch-note:nth-child(3) {
+    animation-delay: calc(var(--default-transition-duration) * 0.6);
+  }
+  .work-stretch[data-fresh] .stretch-drawing .stretch-note:nth-child(4) {
+    animation-delay: calc(var(--default-transition-duration) * 1.2);
+  }
+  .work-stretch[data-fresh] .stretch-drawing .stretch-note:nth-child(5) {
+    animation-delay: calc(var(--default-transition-duration) * 1.8);
+  }
+  .work-stretch[data-fresh]:not([data-digest='reading']) .stretch-drawing .stretch-fold {
+    animation: exchange-arc calc(var(--default-transition-duration) * 5) var(--ease-out-expo)
+      calc(var(--default-transition-duration) * 2) both;
+  }
+  .work-stretch[data-fresh]:not([data-digest='reading']) .stretch-drawing .stretch-land {
+    animation: exchange-land calc(var(--default-transition-duration) * 3) var(--ease-out-settle)
+      calc(var(--default-transition-duration) * 6) both;
+  }
+}
+@keyframes stretch-note {
+  from {
+    opacity: 0;
+    scale: 0.4 1;
+  }
+}
+/* Reduced motion: the card, the title and the flag keep their fades and lose
+   their travel in the conversation's own reduced-motion block below; what
+   moves here stops. */
+@media (prefers-reduced-motion: reduce) {
+  .stretch-card,
+  .stretch-card::details-content,
+  .stretch-step,
+  .stretch-chevron {
+    transition: none;
+  }
+  .stretch-drawing .stretch-fold,
+  .stretch-drawing .stretch-land,
+  .stretch-drawing .stretch-note,
+  .work-stretch[data-digest='reading'] .stretch-eyebrow {
+    animation: none;
+  }
+}
+
 .terminal-view .chat-row:not([data-first]) {
   padding-top: calc(var(--spacing) * 9);
 }
@@ -6141,6 +7283,8 @@ button.exchange-part-who:hover {
    a glyph. Both levels open and close by animating their height. */
 .terminal-view {
   interpolate-size: allow-keywords;
+  /* An ease-in-out (cubic): the smoothest open and close for a height. */
+  --term-disclosure-ease: cubic-bezier(0.65, 0, 0.35, 1);
 }
 .term-tools,
 .term-call {
@@ -6153,26 +7297,24 @@ button.exchange-part-who:hover {
   block-size: 0;
   overflow: clip;
   opacity: 0;
-  /* Closing: it swells a touch before it folds (an ease-in-back), the
-     closing's bounce; a height cannot go below zero, so the give is taken at
-     the start rather than the end. */
+  /* Both ways the height eases in and out — starts soft, lands soft, never
+     runs past its mark: no spring, no bounce. Closing is a touch quicker. */
   transition:
-    block-size calc(var(--default-transition-duration) * 1.75) cubic-bezier(0.36, 0, 0.66, -0.3),
-    opacity calc(var(--default-transition-duration) * 1.75) var(--ease-out-expo),
+    block-size calc(var(--default-transition-duration) * 1.75) var(--term-disclosure-ease),
+    opacity calc(var(--default-transition-duration) * 1.75) var(--term-disclosure-ease),
     content-visibility calc(var(--default-transition-duration) * 1.75) allow-discrete;
 }
 .term-tools[open]::details-content,
 .term-call[open]::details-content {
   block-size: auto;
   opacity: 1;
-  /* Opening: a spring that runs a few percent past the height and settles
-     back, the small bounce. Declared on the open state, so it is the opening's
-     curve; the closed state above carries the closing's. */
+  /* Opening: the same ease-in-out, a little longer. Declared on the open
+     state, so it is the opening's timing; the closed state above carries the
+     closing's. */
   transition:
-    block-size calc(var(--default-transition-duration) * 2.5)
-      linear(0, 0.21 7%, 0.57 16%, 0.86 27%, 1.03 38%, 1.07 46%, 1.05 55%, 1.01 67%, 0.995 80%, 1),
-    opacity var(--default-transition-duration) var(--ease-out-expo),
-    content-visibility calc(var(--default-transition-duration) * 2.5) allow-discrete;
+    block-size calc(var(--default-transition-duration) * 2.25) var(--term-disclosure-ease),
+    opacity calc(var(--default-transition-duration) * 2.25) var(--term-disclosure-ease),
+    content-visibility calc(var(--default-transition-duration) * 2.25) allow-discrete;
 }
 .term-tools-row,
 .term-call-row {
@@ -6886,6 +8028,9 @@ button.term-agent-model:focus-visible {
   .chat-row[data-arrive] .term-turn > *,
   .chat-prompt,
   .chat-composer-files .chat-attachment,
+  .work-stretch[data-fresh],
+  .stretch-title-words,
+  .stretch-flag,
   .chat-drop-overlay {
     transition-property: opacity;
     @starting-style {

@@ -58,3 +58,54 @@ export function withServerPending(
       : entry
   )
 }
+
+/** The entries a question card is drawn for (PRDCT-4157): one per request
+ *  still waiting, on its LATEST entry. A provider's request id names no one
+ *  request across processes (Codex numbers from zero again), so an earlier
+ *  entry under the same id, a dead process's question or a replayed duplicate,
+ *  stays a muted row, never a second live card. A server session's live
+ *  requests are the server's own records for that session, nothing the view
+ *  read off its stream; a local session's are its unanswered entries. */
+export function liveQuestionCards(
+  entries: readonly Entry[],
+  pending: readonly FleetPendingRequest[] | undefined,
+  sessionId: string
+): Set<Entry> {
+  const server = pending
+    ? new Set(
+        pending
+          .filter((r) => r.sessionId === sessionId && r.providerRequestId !== undefined)
+          .map((r) => r.providerRequestId as string)
+      )
+    : null
+  const live = new Set<Entry>()
+  const seen = new Set<string>()
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const entry = entries[i]
+    if (entry.kind !== 'permission') continue
+    const id = entry.request.id
+    // The latest entry under an id speaks for it, answered or not: an older
+    // one never comes back to life once the latest is settled.
+    if (seen.has(id)) continue
+    seen.add(id)
+    if (entry.answer || entry.answeredElsewhere) continue
+    if (server && !server.has(id)) continue
+    live.add(entry)
+  }
+  return live
+}
+
+/** The server's record a card of `sessionId` answers: by the server's own
+ *  key (the dock) or by the provider's id the stream carried (a card inline),
+ *  and always that session's. A provider's id names no one request across
+ *  sessions (Codex numbers from zero per process), so a lookup without the
+ *  session could settle another session's request with this person's answer. */
+export function remoteRequestFor(
+  pending: readonly FleetPendingRequest[] | undefined,
+  sessionId: string,
+  id: string
+): FleetPendingRequest | undefined {
+  return pending?.find(
+    (r) => r.sessionId === sessionId && (r.id === id || r.providerRequestId === id)
+  )
+}

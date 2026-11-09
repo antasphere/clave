@@ -17,6 +17,8 @@ import type {
   UsageError
 } from './index.d'
 import type { LaunchProfile, LauncherFamily } from '../shared/agent-launch'
+import type { InputKind } from '@clave/contract/input-kinds'
+import type { RoutineRun, RoutinesListing } from '@clave/contract/routines/model'
 
 export interface FleetSnapshot {
   serverId: string
@@ -33,6 +35,12 @@ export interface FleetRequests {
 export interface FleetWorkspaces {
   serverId: string
   workspaces: Workspace[]
+}
+/** A connected server's routines, as it lists them (PRDCT-4149): its own
+ *  identity in `listing.server`, each run as that server recorded it. */
+export interface FleetRoutines {
+  serverId: string
+  listing: RoutinesListing
 }
 /** One change of a server's settings, as its push socket announced it. */
 export type FleetSettingsEvent = { serverId: string } & (
@@ -125,6 +133,23 @@ export interface FleetDesktopAPI {
   ): Promise<LaunchProfilePreferences>
   /** A server's settings as they change, from its live push socket: delivered while the connection is open; a page reads the lists again when the server (re)connects. */
   onFleetSettingsEvent(callback: (event: FleetSettingsEvent) => void): () => void
+  // ── PRDCT-4149: the routines a connected server runs, read and driven from the Mac ──
+  /** The server's routines read now; the listing is also published to `onFleetRoutines`. */
+  fleetRoutines(serverId: string): Promise<RoutinesListing>
+  fleetRoutineRunNow(serverId: string, key: string): Promise<RoutineRun>
+  fleetRoutineDismiss(serverId: string, runId: string): Promise<void>
+  /** A run's discussion opened on the server for this window; the answered
+   *  `sessionId` is the session's remote key. */
+  fleetRoutineDiscussion(
+    serverId: string,
+    runId: string,
+    mode: 'panel' | 'tab'
+  ): Promise<{ sessionId: string }>
+  /** A run's filled deck page, read over the server's API. */
+  fleetRoutineDeck(serverId: string, runId: string): Promise<{ html: string }>
+  /** A server's routines at each connect and each `routines.changed`; a read
+   *  that fails publishes nothing, so the last listing stands. */
+  onFleetRoutines(callback: (update: FleetRoutines) => void): () => void
 }
 
 /** Secret-free request projection for contextBridge; no server runtime dependencies. */
@@ -142,6 +167,16 @@ export interface FleetPendingRequest {
     header?: string
     options: readonly { label: string; description?: string }[]
     multiSelect?: boolean
+    /** A hosted input request's question (PRDCT-4157); see the contract's `input-kinds.ts`. */
+    kind?: InputKind
+    hint?: string
+    placeholder?: string
+    default?: string
+    optional?: boolean
+    url?: string
+    confirm?: string
+    min?: number
+    max?: number
   }[]
   secretQuestions?: readonly string[]
   toolName?: string
@@ -152,7 +187,7 @@ export interface FleetPendingRequest {
     | { type: 'env-file'; file: string; key: string }
 }
 export type FleetRequestResponse =
-  | { type: 'permission'; optionId: string; answers?: Record<string, string> }
-  | { type: 'clarification'; answers: Record<string, string> }
+  | { type: 'permission'; optionId: string; answers?: Record<string, string | string[]> }
+  | { type: 'clarification'; answers: Record<string, string | string[]> }
   | { type: 'secret'; value: string }
   | { type: 'dismiss' }

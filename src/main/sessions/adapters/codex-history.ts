@@ -1,4 +1,5 @@
 import type { HistoryItem, SessionEvent } from '../../../shared/session-model'
+import { formMessageMarker } from '../../../shared/form-message'
 import { object } from './codex-app-server'
 
 const text = (value: unknown): string => (typeof value === 'string' ? value : '')
@@ -17,6 +18,13 @@ const contentText = (value: unknown): string =>
 /** Rollouts contain both model messages and UI items. Prefer the UI items
  * within each turn: they omit injected instructions and expand tool batches
  * into the commands the user saw. Older turns have only response_item rows. */
+/** A user message read back: a form's outcome the host wrote (PRDCT-4157)
+ *  keeps its marker, so the view folds it into the form's record, never a
+ *  bubble of the person. */
+function userMessageOf(text: string): Extract<SessionEvent, { type: 'user_message' }> {
+  const form = formMessageMarker(text)
+  return { type: 'user_message', text, ...(form && { form }) }
+}
 export function replayCodexHistory(lines: Iterable<string>): HistoryItem[] {
   let turn = ''
   const modern = new Set<string>()
@@ -79,7 +87,7 @@ export function replayCodexHistory(lines: Iterable<string>): HistoryItem[] {
         if (id) seen.add(key)
         if (item.type === 'UserMessage') {
           const message = contentText(item.content)
-          if (message) push({ type: 'user_message', text: message })
+          if (message) push(userMessageOf(message))
         } else if (item.type === 'AgentMessage') {
           const message = contentText(item.content) || text(item.text)
           if (message) push({ type: 'assistant_text', delta: message, final: true })
@@ -125,7 +133,7 @@ export function replayCodexHistory(lines: Iterable<string>): HistoryItem[] {
           )
         )
           continue
-        push({ type: 'user_message', text: message })
+        push(userMessageOf(message))
       } else if (payload.role === 'assistant') {
         push({ type: 'assistant_text', delta: message, final: true })
       }

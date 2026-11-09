@@ -11,8 +11,9 @@ import type {
 } from '@clave/contract/sessions'
 import type { SessionStream } from '../../shared/session-model'
 import { standaloneSidebar } from '../server/standalone-sidebar'
-import { serverOwnedSessionHost } from './server-owned-host'
+import { resumeOptions, serverOwnedSessionHost } from './server-owned-host'
 
+type WireStateFrame = Extract<SessionStream, { kind: 'event' }>['event']
 const dirs: string[] = []
 afterEach(() => dirs.splice(0).forEach((dir) => rmSync(dir, { recursive: true, force: true })))
 const directory = (): string => {
@@ -61,7 +62,10 @@ const session: Session = {
   title: 'Kept title'
 }
 
-function fixture(dataDir = directory()): {
+function fixture(
+  dataDir = directory(),
+  extra: { currentState?: (id: string) => WireStateFrame | undefined } = {}
+): {
   host: SessionHostService
   close: () => void
   dataDir: string
@@ -124,6 +128,7 @@ function fixture(dataDir = directory()): {
     dataDir,
     sidebar,
     ready,
+    ...(extra.currentState ? { currentState: extra.currentState } : {}),
     subscribeAll: (fn) => {
       stream = fn
       return () => {
@@ -492,5 +497,206 @@ describe('live server-retained history', () => {
     } finally {
       f.close()
     }
+  })
+})
+
+describe('the state a subscriber binds to (PRDCT-4191)', () => {
+  // A server chat tab stayed "Session ended" after the server resumed it: the
+  // pane seeds its state from the list it read at mount, and a resumed chat
+  // starts idle, a state nothing publishes. The host now tells it at bind.
+  const frames = (received: WireStream[]): unknown[] =>
+    received.flatMap((value) =>
+      value.kind === 'event' && value.event.type === 'state_change' ? [value.event] : []
+    )
+
+  it('tells a subscriber of a live session its current state, with the run', async () => {
+    const currentState = vi.fn(
+      (): WireStateFrame => ({ type: 'state_change', state: 'working', run: 3 })
+    )
+    const f = fixture(directory(), { currentState })
+    const started = await f.host.start({ cwd: '/repo' })
+    const received: WireStream[] = []
+    const off = f.host.subscribe(started.id, (value) => received.push(value))
+    expect(currentState).toHaveBeenCalledWith(started.id)
+    expect(frames(received)).toEqual([{ type: 'state_change', state: 'working', run: 3 }])
+    off()
+    f.close()
+  })
+
+  it('tells a stopped record ended, with no run, after its saved terminal', () => {
+    const currentState = vi.fn()
+    const f = fixture(directory(), { currentState })
+    f.emit(record.id, { kind: 'pty', data: Buffer.from('saved screen') })
+    const received: WireStream[] = []
+    const off = f.host.subscribe(record.id, (value) => received.push(value))
+    expect(received).toHaveLength(2)
+    expect(received[0].kind).toBe('pty')
+    expect(received[1]).toEqual({ kind: 'event', event: { type: 'state_change', state: 'ended' } })
+    // Nothing runs, so there is no live state to ask for.
+    expect(currentState).not.toHaveBeenCalled()
+    off()
+    f.close()
+  })
+
+  it('tells the already-bound subscriber the new process state when a Resume binds it', async () => {
+    const f = fixture(directory(), {
+      currentState: (id) =>
+        f.live.has(id) ? { type: 'state_change', state: 'idle', run: 2 } : undefined
+    })
+    const received: WireStream[] = []
+    const off = f.host.subscribe(record.id, (value) => received.push(value))
+    expect(frames(received)).toEqual([{ type: 'state_change', state: 'ended' }])
+    await f.host.restart(record.id, {}, false)
+    // The pane learns the chat is idle again, under the run that resumed it.
+    expect(frames(received)).toEqual([
+      { type: 'state_change', state: 'ended' },
+      { type: 'state_change', state: 'idle', run: 2 }
+    ])
+    off()
+    f.close()
+  })
+
+  it('tells nothing of a live session when no currentState is given, as before', async () => {
+    const f = fixture()
+    const started = await f.host.start({ cwd: '/repo' })
+    const received: WireStream[] = []
+    const off = f.host.subscribe(started.id, (value) => received.push(value))
+    expect(frames(received)).toEqual([])
+    off()
+    f.close()
+  })
+})
+
+describe('resumeOptions carries what the chat was running on (PRDCT-4191, PRDCT-4192)', () => {
+  it('carries the opener, so "parent" and the reach rule survive a Resume', () => {
+    const opener = '9e3a0b11-0000-4000-8000-0000000000bb'
+    expect(resumeOptions({ ...record, openedBy: opener }).openedBy).toBe(opener)
+  })
+
+  it('turns a reported bypass into dangerousMode with no permissionMode', () => {
+    const options = resumeOptions({ ...record, permissionMode: 'bypassPermissions' })
+    expect(options.dangerousMode).toBe(true)
+    expect(options.permissionMode).toBeUndefined()
+  })
+
+  it('passes a reported plan mode and leaves the launch bypass off', () => {
+    const options = resumeOptions({ ...record, dangerousMode: true, permissionMode: 'plan' })
+    expect(options).toMatchObject({ dangerousMode: false, permissionMode: 'plan' })
+  })
+
+  it('keeps the record dangerousMode when no mode was reported', () => {
+    expect(resumeOptions({ ...record, dangerousMode: true }).dangerousMode).toBe(true)
+    expect(resumeOptions(record).dangerousMode).toBe(false)
+    expect(resumeOptions(record).permissionMode).toBeUndefined()
+  })
+
+  it('passes a well-formed effort and drops one that is not', () => {
+    expect(resumeOptions({ ...record, effort: 'high' }).effort).toBe('high')
+    expect(resumeOptions({ ...record, effort: 'HIGH; rm' }).effort).toBeUndefined()
+    expect('effort' in resumeOptions({ ...record, effort: 'HIGH; rm' })).toBe(false)
+  })
+})
+
+describe('a Resume of a running session is refused on the server (round 3, C2)', () => {
+  it('rejects with onlyIfStopped and restarts nothing; a move without it still restarts', async () => {
+    const f = fixture()
+    const started = await f.host.start({ cwd: '/repo' })
+    const restart = vi.fn(async () => ({
+      id: started.id,
+      cwd: '/repo',
+      folderName: 'repo',
+      alive: true,
+      claudeSessionId: null,
+      piSessionId: null,
+      resumed: true
+    }))
+    ;(f.base as unknown as { restart: typeof restart }).restart = restart
+    await expect(f.host.restart(started.id, {}, false, true)).rejects.toThrow(
+      'This session is running; there is nothing to resume.'
+    )
+    expect(restart).not.toHaveBeenCalled()
+    await f.host.restart(started.id, {}, false)
+    expect(restart).toHaveBeenCalledTimes(1)
+    // A stopped record resumes with the precondition as without it.
+    const resumed = await f.host.restart(record.id, {}, false, true)
+    expect(resumed.id).toBe(record.id)
+    f.close()
+  })
+})
+
+describe('a chat whose CLI exited on its own resumes (round 5, major 1)', () => {
+  it('is held by the manager in state ended, and a Resume with onlyIfStopped goes through', async () => {
+    const f = fixture()
+    const started = await f.host.start({ cwd: '/repo' })
+    // The process ended by itself: the entry stays, in state ended.
+    f.live.set(started.id, { ...f.live.get(started.id)!, state: 'ended' })
+    const restart = vi.fn(async () => ({
+      id: started.id,
+      cwd: '/repo',
+      folderName: 'repo',
+      alive: true,
+      claudeSessionId: null,
+      piSessionId: null,
+      resumed: true
+    }))
+    ;(f.base as unknown as { restart: typeof restart }).restart = restart
+    await expect(f.host.restart(started.id, {}, false, true)).resolves.toMatchObject({
+      id: started.id
+    })
+    expect(restart).toHaveBeenCalledTimes(1)
+    f.close()
+  })
+  it('joins a Resume already in flight instead of refusing it', async () => {
+    const f = fixture()
+    const first = f.host.restart(record.id, {}, false, true)
+    const second = f.host.restart(record.id, {}, false, true)
+    expect(second).toBe(first)
+    await first
+    f.close()
+  })
+})
+
+describe('a Resume of a chat the host still holds binds and readies the new process (round 6)', () => {
+  it('rebinds the subscribers and makes the new process ready, as the record road does', async () => {
+    // The state told at bind is the LIVE entry's at that moment: a bind made
+    // before the restart would tell the held entry's `ended` and bind the
+    // subscribers to a process the restart then replaces (round 7, R4).
+    const f = fixture(directory(), {
+      currentState: (id) => {
+        const live = f.live.get(id)
+        return live ? { type: 'state_change', state: live.state, run: 2 } : undefined
+      }
+    })
+    const started = await f.host.start({ cwd: '/repo' })
+    const received: WireStream[] = []
+    f.host.subscribe(started.id, (value) => received.push(value))
+    f.live.set(started.id, { ...f.live.get(started.id)!, state: 'ended' })
+    const restart = vi.fn(async () => {
+      // The new process: a new entry under the same id.
+      f.live.set(started.id, { ...session, id: started.id, state: 'idle' })
+      return {
+        id: started.id,
+        cwd: '/repo',
+        folderName: 'repo',
+        alive: true,
+        claudeSessionId: null,
+        piSessionId: null,
+        resumed: true
+      }
+    })
+    ;(f.base as unknown as { restart: typeof restart }).restart = restart
+    const readyBefore = f.ready.mock.calls.length
+    const subscribesBefore = (f.base.subscribe as ReturnType<typeof vi.fn>).mock.calls.length
+    await f.host.restart(started.id, {}, false, true)
+    expect(f.ready.mock.calls.length).toBe(readyBefore + 1)
+    expect((f.base.subscribe as ReturnType<typeof vi.fn>).mock.calls.length).toBe(
+      subscribesBefore + 1
+    )
+    // The already-bound subscriber hears the new process's state.
+    expect(received.at(-1)).toEqual({
+      kind: 'event',
+      event: { type: 'state_change', state: 'idle', run: 2 }
+    })
+    f.close()
   })
 })

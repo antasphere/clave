@@ -92,6 +92,19 @@ export function transcriptsRoot(): string {
   return process.env.CLAVE_TRANSCRIPTS_ROOT || path.join(homedir(), '.claude', 'projects')
 }
 
+/** Where a Claude conversation's transcript lives: under its tab's own
+ *  account directory (`CLAUDE_CONFIG_DIR`) when the tab ran with one, else
+ *  the shared root. Only an absolute path counts; anything else is the
+ *  shared root, so a stray value never points the read elsewhere. */
+export function conversationRoot(configDir: unknown): string {
+  // Taken as the spawn takes it (CLAUDE_CONFIG_DIR, untrimmed), so the read
+  // looks where Claude Code wrote.
+  if (typeof configDir === 'string' && path.isAbsolute(configDir)) {
+    return path.join(configDir, 'projects')
+  }
+  return transcriptsRoot()
+}
+
 /** Validate, then append. The one place a row enters the ledger. */
 export function stampHistory(input: unknown): void {
   const row = normalizeLedgerRow(input)
@@ -269,7 +282,12 @@ function firstLine(text: string | null): string | null {
  *  transcript, fold what was appended since the last call. `locateTranscript`
  *  validates the id alphabet, so a traversal string resolves to nothing. */
 export function getConversation(input: unknown): { exists: boolean; turns: ConversationTurn[] } {
-  const r = input as { cwd?: unknown; claudeSessionId?: unknown; provider?: unknown } | null
+  const r = input as {
+    cwd?: unknown
+    claudeSessionId?: unknown
+    provider?: unknown
+    configDir?: unknown
+  } | null
   const cwd = typeof r?.cwd === 'string' ? r.cwd : null
   const claudeSessionId = typeof r?.claudeSessionId === 'string' ? r.claudeSessionId : null
   if (!cwd || !claudeSessionId) return { exists: false, turns: [] }
@@ -284,7 +302,7 @@ export function getConversation(input: unknown): { exists: boolean; turns: Conve
       if (file) pathById.set(claudeSessionId, file)
     }
   } else {
-    file = locateTranscript(transcriptsRoot(), cwd, claudeSessionId)
+    file = locateTranscript(conversationRoot(r?.configDir), cwd, claudeSessionId)
   }
   return conversations.read(file)
 }

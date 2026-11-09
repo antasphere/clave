@@ -134,13 +134,13 @@ require('node:readline').createInterface({input:process.stdin}).on('line', line 
     const chooseView = async (id, title) => {
       const trigger = win
         .locator(`section.chat-host[data-session-id="${id}"]`)
-        .getByRole('button', { name: 'Change view', exact: true })
+        .getByRole('button', { name: 'Session menu', exact: true })
       await trigger.click()
       const menu = await trigger.getAttribute('aria-controls')
       assert.ok(menu)
       await win
         .locator(`[id="${menu}"]`)
-        .getByRole('menuitem', { name: title, exact: true })
+        .getByRole('menuitemradio', { name: title, exact: true })
         .click()
     }
     console.log(

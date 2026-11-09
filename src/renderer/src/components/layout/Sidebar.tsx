@@ -60,6 +60,10 @@ import { GroupPickerDialog } from '../session/GroupPickerDialog'
 import { useHistoryStore } from '../../store/history-store'
 import { useSidebarDnd } from '../../hooks/use-sidebar-dnd'
 import { SidebarFooter, UpdateBanner } from './SidebarFooter'
+import { OngoingShelf } from '../ongoing/OngoingShelf'
+import { useOngoingStore } from '../../store/ongoing-store'
+import { ongoingSessionIds } from '../../lib/ongoing'
+import { canMoveToOngoing, moveToOngoing } from '../../lib/ongoing-actions'
 import { accountSpawnFields, accountSessionFields } from '../../store/claude-profile-store'
 import { primeClaudeAccountsUsage, primeCodexAccountsUsage } from '../../store/usage-store'
 import { codexAccountSessionFields } from '../../store/codex-account-store'
@@ -96,7 +100,8 @@ import {
   MagnifyingGlassIcon,
   WindowIcon,
   ArrowTopRightOnSquareIcon,
-  GlobeAltIcon
+  GlobeAltIcon,
+  ChatBubbleLeftEllipsisIcon
 } from '@heroicons/react/24/outline'
 
 // The height of a tab menu's account header with its usage bars, its
@@ -425,8 +430,16 @@ export function Sidebar(): React.JSX.Element {
   // terminal's shell, a session view's serving process. They must never render
   // as rows: the displayOrder path never contains them, but the no-order
   // fallback and the search catch-all enumerate `sessions` directly.
+  // The ongoing conversations' tabs (PRDCT-4190) are hidden the same way:
+  // they keep their place in their group and in the order, and the page the
+  // foot opens is where they are read.
+  const ongoingEntries = useOngoingStore((s) => s.entries)
+  const ongoingIds = useMemo(
+    () => ongoingSessionIds(ongoingEntries, sessions),
+    [ongoingEntries, sessions]
+  )
   const linkedHiddenIds = useMemo(() => {
-    const ids = new Set<string>()
+    const ids = new Set<string>(ongoingIds)
     for (const g of groups) {
       for (const t of g.terminals) if (t.sessionId) ids.add(t.sessionId)
     }
@@ -434,7 +447,7 @@ export function Sidebar(): React.JSX.Element {
       if (s.view?.serverSessionId) ids.add(s.view.serverSessionId)
     }
     return ids
-  }, [groups, sessions])
+  }, [groups, sessions, ongoingIds])
 
   // The groups the switcher offers, in list order. Built from the store with the
   // same predicates the list applies, NOT from displayItems: that goes null the
@@ -610,7 +623,11 @@ export function Sidebar(): React.JSX.Element {
         if (item === null) return false
         if (item.type === 'session') {
           const session = sessions.find((s) => s.id === item.sessionId)
-          return !!session && inActiveWorkspace(session, activeWorkspaceId)
+          return (
+            !!session &&
+            !linkedHiddenIds.has(session.id) &&
+            inActiveWorkspace(session, activeWorkspaceId)
+          )
         }
         if (item.type === 'fileTab') {
           const file = fileTabs.find((f) => f.id === item.fileTabId)
@@ -1362,6 +1379,26 @@ export function Sidebar(): React.JSX.Element {
           onClick: () => createGroup(state.selectedSessionIds)
         })
       }
+      // A long-lived conversation, out of the sidebar (PRDCT-4190): the
+      // selection when the row is part of it, else this row alone; only the
+      // tabs whose conversation can come back after a reboot.
+      {
+        const pool = state.selectedSessionIds.includes(sessionId)
+          ? state.selectedSessionIds
+          : [sessionId]
+        const movable = pool.filter((id) =>
+          canMoveToOngoing(state.sessions.find((s) => s.id === id))
+        )
+        if (movable.length > 0) {
+          items.push({
+            label: movable.length > 1 ? `Move ${movable.length} to Ongoing` : 'Move to Ongoing',
+            icon: <ChatBubbleLeftEllipsisIcon className="w-3.5 h-3.5" />,
+            onClick: () => {
+              moveToOngoing(movable)
+            }
+          })
+        }
+      }
       // The plugins' entries are the menu's last section, above Delete; the window entries
       // that arrive a beat later go before them, with the app's own.
       const pluginItems = pluginActionMenuItems('session', sessionId)
@@ -1602,8 +1639,12 @@ export function Sidebar(): React.JSX.Element {
   const handleGroupClick = useCallback(
     (groupId: string, modifiers: { metaKey: boolean; shiftKey: boolean }) => {
       const state = useSessionStore.getState()
-      const group = state.groups.find((g) => g.id === groupId)
-      if (!group) return
+      const found = state.groups.find((g) => g.id === groupId)
+      if (!found) return
+      // The header selects the rows it shows: an ongoing conversation hidden
+      // in the group (PRDCT-4190) is never put in the pane by it.
+      const hidden = ongoingSessionIds(useOngoingStore.getState().entries, state.sessions)
+      const group = { ...found, sessionIds: found.sessionIds.filter((id) => !hidden.has(id)) }
       if (modifiers.metaKey) {
         // Cmd+Click: toggle all sessions in group
         const allSelected = group.sessionIds.every((id) => state.selectedSessionIds.includes(id))
@@ -1930,7 +1971,10 @@ export function Sidebar(): React.JSX.Element {
                           group.sessionIds.every((id) => selectedSessionIds.includes(id))
                         const groupColorHex = resolveColorHex(group.color)
                         const rowIds = group.sessionIds.filter(
-                          (id) => !subagents.rootById.has(id) && !work.folded.has(id)
+                          (id) =>
+                            !subagents.rootById.has(id) &&
+                            !work.folded.has(id) &&
+                            !ongoingIds.has(id)
                         )
                         const railEmpty = rowIds.length === 0
                         return (
@@ -2178,9 +2222,11 @@ export function Sidebar(): React.JSX.Element {
                                         data-group-id={group.id}
                                       >
                                         {group.sessionIds.length
-                                          ? group.sessionIds.some((id) => work.folded.has(id))
-                                            ? 'Shown with their wave or lane'
-                                            : 'Subagents shown with their parent'
+                                          ? group.sessionIds.some((id) => ongoingIds.has(id))
+                                            ? 'Kept in Ongoing'
+                                            : group.sessionIds.some((id) => work.folded.has(id))
+                                              ? 'Shown with their wave or lane'
+                                              : 'Subagents shown with their parent'
                                           : 'No sessions'}
                                       </div>
                                     )}
@@ -2238,6 +2284,10 @@ export function Sidebar(): React.JSX.Element {
       {/* Announcements — above the foot panel. The feedback card joins them
           while it is still expanded; once collapsed it lives on as an icon
           inside the foot panel rather than as a row of its own. */}
+      {/* The ongoing conversations (PRDCT-4190): one card, only when there are. */}
+      <div className="flex-shrink-0 px-2 has-[>button]:pb-1.5">
+        <OngoingShelf />
+      </div>
       <div className="flex-shrink-0 px-2 has-[>div]:pb-2 space-y-1">
         <TelemetryNoticeBanner />
         <WhatsNewBanner />

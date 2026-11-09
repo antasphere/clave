@@ -23,11 +23,14 @@ const routine: RoutineDeclaration = {
   catchUp: true,
   timeoutMinutes: 30,
   scope: 'machine',
+  server: null,
+  runsHere: true,
   report: {
     template: '/w/.clave/routines/workspace-health',
     schema: '/w/.clave/routines/workspace-health/schema.json',
     width: 560,
-    height: 640
+    height: 640,
+    publish: false
   },
   invalid: null
 }

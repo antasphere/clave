@@ -1,4 +1,5 @@
 import { EventEmitter } from 'node:events'
+import { lazyTerminalPorts } from '../../ports/terminals'
 import {
   SessionInputSchema,
   userMessageEvent,
@@ -52,7 +53,17 @@ export class EchoAdapter implements SessionAdapter {
   }
 
   async spawn(spec: SpawnSpec): Promise<SessionHandle> {
-    return this.prepare(spec)
+    const handle = this.prepare(spec)
+    // The echo session has the agent tools a Claude session has: its own
+    // `--mcp-config` with a per-tab token, so a spec can call the Clave tools
+    // AS this tab (clave_request_input and its card, PRDCT-4157). Nothing
+    // reads the file here; the token's owner is this session.
+    try {
+      lazyTerminalPorts.mcpConfig.write(spec.id)
+    } catch {
+      // A manager with no terminal ports installed (a unit test): no tools, as before.
+    }
+    return handle
   }
 
   async attach(id: string): Promise<SessionHandle> {
@@ -130,6 +141,11 @@ export class EchoAdapter implements SessionAdapter {
     const emitter = this.handles.get(handle.id)
     if (!emitter) return
     this.handles.delete(handle.id)
+    try {
+      lazyTerminalPorts.mcpConfig.remove(handle.id)
+    } catch {
+      /* no ports installed */
+    }
     emitter.emit('exit', 0)
     emitter.removeAllListeners()
   }

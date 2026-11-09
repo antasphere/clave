@@ -33,16 +33,16 @@ const expectedGates = new Map([
   ['Gate, MCP sessions on connected servers', 'node tests/e2e/run.mjs mcp-fleet-sessions']
 ])
 const gatePartitions = new Map([
-  ['Gate, actual renderer and native view module audit', '1'],
-  ['Gate, the packaged app loads what its bundles require', '2'],
-  ['Gate, the terminal process from the built bundle', '3'],
+  ['Gate, actual renderer and native view module audit', '3'],
+  ['Gate, the packaged app loads what its bundles require', '1'],
+  ['Gate, the terminal process from the built bundle', '5'],
   ['Gate, the server spec with the server in-process', '1'],
   ['Gate, the server spec with the server attached', '5'],
-  ['Gate, the server spec with the server separate', '4'],
-  ['Gate, the Antasphere sign-in on the three servers', '2'],
+  ['Gate, the server spec with the server separate', '2'],
+  ['Gate, the Antasphere sign-in on the three servers', '4'],
   ["Gate, connected servers follow the app's version", '4'],
   ['Gate, full Markdown client, native lifecycle and responsiveness', '3'],
-  ['Gate, MCP sessions on connected servers', '5']
+  ['Gate, MCP sessions on connected servers', '2']
 ])
 
 describe('the required CI check cannot silently lose execution', () => {

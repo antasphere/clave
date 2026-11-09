@@ -203,11 +203,14 @@ export async function warmResource({ win, fixture, records, cycle, controller })
   await frames(win)
   const host = win.locator(`.chat-host[data-session-id="${id}"]`)
   const choose = async (kind) => {
-    const wanted = kind === 'chat' ? 'View: Chat' : 'View: Terminal'
-    if ((await host.getByLabel('Change view', { exact: true }).getAttribute('title')) !== wanted) {
-      await host.getByLabel('Change view', { exact: true }).click()
+    const wanted = kind === 'chat' ? 'Chat' : 'Enclave'
+    if (
+      (await host.getByLabel('Session menu', { exact: true }).getAttribute('data-view-title')) !==
+      wanted
+    ) {
+      await host.getByLabel('Session menu', { exact: true }).click()
       await win
-        .getByRole('menuitem', { name: kind === 'chat' ? 'Chat' : 'Enclave', exact: true })
+        .getByRole('menuitemradio', { name: kind === 'chat' ? 'Chat' : 'Enclave', exact: true })
         .click()
       await win.getByRole('menu').waitFor({ state: 'hidden' })
     }

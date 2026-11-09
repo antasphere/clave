@@ -99,9 +99,9 @@ export async function run(t) {
       })
     )
     const choose = async (kind) => {
-      await host.getByLabel('Change view', { exact: true }).click()
+      await host.getByLabel('Session menu', { exact: true }).click()
       await win
-        .getByRole('menuitem', { name: kind === 'chat' ? 'Chat' : 'Enclave', exact: true })
+        .getByRole('menuitemradio', { name: kind === 'chat' ? 'Chat' : 'Enclave', exact: true })
         .click()
       await win.getByRole('menu').waitFor({ state: 'hidden' })
       await view(kind).getByRole('textbox', { name: 'Message', exact: true }).waitFor()
@@ -315,9 +315,12 @@ export async function run(t) {
     console.log(
       JSON.stringify({ metric: 'permission-stream-to-dom', ms: control.painted - control.arrived })
     )
-    assert.ok(
+    // Keep a slow permission visible as FAIL, then exercise the independent
+    // metadata and transcript checks too. The gate still exits nonzero.
+    t.check(
+      'permission rendering bypasses the text deadline',
       control.painted - control.arrived < 75,
-      `permission rendering bypasses the text deadline: ${JSON.stringify(control)}`
+      control
     )
     await view('chat')
       .getByText('Pending control text latest control text', { exact: true })
@@ -370,10 +373,10 @@ export async function run(t) {
     const chooseGuard = async (kind) => {
       await win
         .locator(`.chat-host[data-session-id="${guardId}"]`)
-        .getByLabel('Change view', { exact: true })
+        .getByLabel('Session menu', { exact: true })
         .click()
       await win
-        .getByRole('menuitem', { name: kind === 'chat' ? 'Chat' : 'Enclave', exact: true })
+        .getByRole('menuitemradio', { name: kind === 'chat' ? 'Chat' : 'Enclave', exact: true })
         .click()
       await win.getByRole('menu').waitFor({ state: 'hidden' })
       await win

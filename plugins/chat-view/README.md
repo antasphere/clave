@@ -85,6 +85,25 @@ calls no longer count into the run the conversation is on, as they did until
 transcript replay carries nothing of a subagent (sidechains are skipped), so a
 resumed session's finished agents have no log.
 
+The agent's WORKING NOTES — the short lines it writes between its tool runs on
+the way to an answer — fold into ONE CARD once the turn is over (`src/stretches.ts`
+decides, `src/WorkStretch.tsx` draws, PRDCT-4212). The rule reads the turn's
+SHAPE and never its words (the 5 November lesson above): a note is an assistant
+line followed by work in the same turn; a tool run and a permission the agent
+asked for a tool (allowed, refused, left by a stop) are work and fold; a question
+the agent asked, a form and an error are boundaries that stay in the transcript,
+the notes on each side folding into their own cards; the last words of the turn
+never fold; nothing folds while the conversation works or waits; three notes at
+least. The card's face carries the counts and a title read by a one-shot Haiku
+call (`src/shared/work-digest.ts`, run and filed by `src/main/exchange-digest.ts`
+beside the exchange digests, asked for the conversation's latest cards only); a
+note the read flags as needing the reader is shown verbatim on the face, in
+accent, and its step is marked inside. The read may only RAISE visibility, never
+hide. Open, the card is a rail of steps drawn with the view's own rows. The
+preference (`foldWorkNotes`, Settings → Appearance → Conversation, and the
+toolbar button) is the host's; off, the transcript reads as before.
+`tests/e2e/chat-work-stretch.spec.mjs` holds it on the real app, in both views.
+
 A RUN of tool calls — everything between two messages — is one row saying what
 the agent did, counted by kind ("Read 3 files · Ran 1 command"), with a loader
 while any call is in flight and the failure count beside it. It opens to one item

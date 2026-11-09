@@ -1,5 +1,6 @@
 import { publicQuestionAnswers } from '../../../src/renderer/src/lib/question-identity'
 import { bindFleetCatchup } from './fleet-sync'
+import { bindReconnectReset } from './reconnect'
 import { useFleetStore } from '../../../src/renderer/src/store/fleet-store'
 import { parseResourceKey } from '@clave/contract/fleet'
 import {
@@ -11,10 +12,12 @@ import { memo, useCallback, useEffect, useMemo, useReducer, useRef, useState } f
 import ReactMarkdown, { type Components } from 'react-markdown'
 import { createEntryMarkdownPlugins } from './markdown-append'
 import {
+  ArrowDownIcon,
   ArrowUpIcon,
   CheckIcon,
   ClipboardDocumentIcon,
   PaperClipIcon,
+  QuestionMarkCircleIcon,
   StopIcon,
   XMarkIcon
 } from '@heroicons/react/24/outline'
@@ -40,23 +43,31 @@ import { SenderChip } from './Delivery'
 import { DeliveryStack } from './DeliveryStack'
 import { parseDelivery } from '../../../src/shared/exchange-provenance'
 import { nextPermissionMode } from './permission-mode'
-import {
-  blockKey,
-  groupEntries,
-  visibleEntries,
-  type Block,
-  type ToolGroup as ToolRun
-} from './tools'
+import { groupEntries, visibleEntries, type ToolGroup as ToolRun } from './tools'
 import { ToolGroup } from './ToolGroup'
 import { ToolDisclosure } from './disclosure'
 import { ExchangeContext, digestMessages, indexExchanges, recentTimelines } from './exchanges'
-import { useTimelineDigests } from './digest'
+import { useStretchDigests, useTimelineDigests } from './digest'
 import { digestKey } from '../../../src/shared/exchange-digest'
+import { workDigestKey } from '../../../src/shared/work-digest'
+import { foldStretches, rowKey, stretchNotes, toolCount, type Row } from './stretches'
+import { WorkStretch } from './WorkStretch'
+import { StretchContext, recentStretches } from './stretch-context'
 import { useExchangeJump } from './jump'
 import { useSessionStore } from '../../../src/renderer/src/store/session-store'
-import { ApprovalRun, PermissionRow, PromptDock } from './PromptDock'
+import { ApprovalRun, InlineQuestion, PermissionRow, PromptDock } from './PromptDock'
+import { FormTail } from './FormTail'
+import { isInputRequest } from './input-request'
+import { isQuestion } from './approvals'
+import { QuestionContext, typingWriter } from './question-context'
+import type { Values } from './input-request'
 import { refusedAnswer } from './refused-answer'
-import { serverDock, withServerPending } from './server-requests'
+import {
+  liveQuestionCards,
+  remoteRequestFor,
+  serverDock,
+  withServerPending
+} from './server-requests'
 import { continueList } from './lists'
 import { ResumePicker } from './ResumePicker'
 import { McpPanel } from './McpPanel'
@@ -98,7 +109,10 @@ import {
 } from '../../../src/shared/attachments'
 import { useComposerAttachments } from './composer-attachments'
 import { DropDrawing } from './DropDrawing'
+import { transcriptMarkdown } from './export'
+import { registerTranscriptExporter } from '../../../src/renderer/src/views/transcript-export'
 import { ViewEmpty } from './EmptyDrawing'
+import { ServerEnded } from './ServerEnded'
 import {
   failureText,
   pathForMessage,
@@ -373,7 +387,12 @@ const EntryRow = memo(function EntryRow({
         <TurnMeta at={entry.at} text={entry.text} />
       </div>
     )
-  if (entry.kind === 'permission') return <PermissionRow entry={entry} />
+  if (entry.kind === 'permission')
+    return isQuestion(entry.request) && !entry.answer && !entry.answeredElsewhere ? (
+      <InlineQuestion entry={entry} />
+    ) : (
+      <PermissionRow entry={entry} />
+    )
   if (entry.kind === 'error')
     return (
       <div className="chat-notice" data-tone="error" role="alert">
@@ -403,7 +422,7 @@ function TranscriptRow({
   rowKey
 }: {
   rowKey: string
-  block: Block
+  block: Row
   first: boolean
   arriving: boolean
   onError: (error: unknown) => void
@@ -415,17 +434,36 @@ function TranscriptRow({
       data-first={first ? 'true' : undefined}
       data-arrive={arrive ? 'true' : undefined}
     >
-      {block.kind === 'delivery-group' ? (
-        <DeliveryStack group={block} id={rowKey} />
-      ) : block.kind === 'tool-group' ? (
-        <ToolRow group={block} />
-      ) : block.kind === 'approval-group' ? (
-        <ApprovalRun group={block} id={rowKey} />
-      ) : (
-        <EntryRow entry={block} onError={onError} />
-      )}
+      <BlockView block={block} rowKey={rowKey} onError={onError} />
     </div>
   )
+}
+/** One block as this view draws it. A card of working notes draws the
+ *  blocks inside it through the same function, so a note reads as a note
+ *  and a run of tools opens as it does anywhere else. */
+function BlockView({
+  block,
+  rowKey: key,
+  onError
+}: {
+  block: Row
+  rowKey: string
+  onError: (error: unknown) => void
+}): React.JSX.Element {
+  if (block.kind === 'work-stretch')
+    return (
+      <WorkStretch
+        stretch={block}
+        id={key}
+        render={(inner, innerKey) => (
+          <BlockView key={innerKey} block={inner} rowKey={innerKey} onError={onError} />
+        )}
+      />
+    )
+  if (block.kind === 'delivery-group') return <DeliveryStack group={block} id={key} />
+  if (block.kind === 'tool-group') return <ToolRow group={block} />
+  if (block.kind === 'approval-group') return <ApprovalRun group={block} id={key} />
+  return <EntryRow entry={block} onError={onError} />
 }
 export function ChatView({ session, onState, visible = true }: ChatViewProps): React.JSX.Element {
   const [conversation, dispatch] = useReducer(reduceConversation, {
@@ -491,6 +529,10 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
   const [slashDismissed, setSlashDismissed] = useState<string | null>(null)
   useEffect(() => {
     let live = true
+    // A server's connection coming back may be to a server that counts its
+    // runs from 1 again: the run heard so far is forgotten first, bound
+    // ahead of every frame (PRDCT-4191, `reconnect.ts`).
+    const stopReconnect = bindReconnectReset(session.id, () => dispatch({ reconnected: true }))
     const catchup = bindFleetCatchup(session.id, (page) => {
       if (!live) return
       dispatch({ sync: page.items })
@@ -525,8 +567,20 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
     let stopConnected: () => void = () => {}
     void window.electronAPI
       .sessionsSubscribe(session.id)
-      .then(() => {
+      .then((current) => {
         if (!live) return
+        // The host's own word on the session, now (PRDCT-4191): the seed
+        // above is the list the pane read at mount, a copy a server restart
+        // and a Resume leave stale (a remounted pane read `ended` while the
+        // server had the chat back, and the composer refused to type). A
+        // live word is taken as it is; an end is taken once the record
+        // confirms it, as an end heard on the stream is.
+        const word = {
+          state: current.state,
+          ...(current.run !== undefined ? { run: current.run } : {})
+        }
+        if (word.state === 'ended') confirmed(() => dispatch({ session: word }))
+        else dispatch({ session: word })
         setReady(true)
         // Asked once subscribed, when the adapter has read the transcript;
         // whatever streamed meanwhile is newer and stays after it. A read
@@ -574,6 +628,7 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
       .catch(() => {})
     return () => {
       live = false
+      stopReconnect()
       catchup.close()
       pastReader.current?.stop()
       pastReader.current = null
@@ -608,6 +663,34 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
     visible && before !== null,
     fetchEarlier,
     presentation.entries
+  )
+  // The whole conversation for the pane header's menu (copy, save as
+  // Markdown): what this view holds, with every older page of the past read in
+  // front of it first, so a long conversation is copied whole and not from
+  // where the reader happened to scroll. Read from a ref, so the exporter
+  // registered once per session always sees the entries as they are now.
+  const exportSource = useRef({ conversation, before })
+  exportSource.current = { conversation, before }
+  useEffect(
+    () =>
+      registerTranscriptExporter(session.id, async () => {
+        let { conversation: whole, before: cursor } = exportSource.current
+        while (cursor !== null) {
+          const page = await window.electronAPI.sessionsHistory(session.id, cursor, 2000)
+          whole = reduceConversation(whole, { prepend: page.items })
+          // A cursor that does not move would ask the same page forever.
+          cursor = page.before !== null && page.before < cursor ? page.before : null
+        }
+        const record = useViewSessionStore.getState().sessions.find((s) => s.id === session.id)
+        return transcriptMarkdown(whole.entries, {
+          title: record?.name ?? session.title,
+          agent: AGENT_NAMES[session.provider] ?? session.provider,
+          cwd: session.cwd,
+          model: whole.model,
+          exportedAt: new Date()
+        })
+      }),
+    [session.id, session.title, session.provider, session.cwd]
   )
   const write = async (input: SessionInput): Promise<void> => {
     await window.electronAPI.sessionsWrite(session.id, input)
@@ -679,7 +762,7 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
   const answer = async (
     id: string,
     optionId: string,
-    answers?: Record<string, string>
+    answers?: Record<string, string | string[]>
   ): Promise<void> => {
     setPending((current) => [...current, id])
     try {
@@ -687,9 +770,11 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
         // The dock's id is the server's request key: the answer settles that
         // one record, and one already settled (on another Mac, or dropped by
         // the provider) is refused rather than recorded.
-        const request = remotePending?.find((r) => r.id === id)
+        // The dock names the server's key; a card inline names the provider's
+        // id the stream carried. Either settles the one record.
+        const request = remoteRequestFor(remotePending, session.id, id)
         if (!request?.providerRequestId) throw new Error('This request is no longer waiting.')
-        const { accepted } = await window.electronAPI.fleetResolve(id, {
+        const { accepted } = await window.electronAPI.fleetResolve(request.id, {
           type: 'permission',
           optionId,
           ...(answers ? { answers } : {})
@@ -835,17 +920,38 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
   // a page of the past arriving in front must not shift a key, or every turn
   // below it would render as another and the column's arrival would replay on
   // the ones at the end. Memoised, so a keystroke rebuilds none of it.
-  const blocks = useMemo(() => {
+  // Then, when the reader wants it, the agent's working notes of every
+  // finished turn fold into one card (`foldStretches`, PRDCT-4212): the turn
+  // in progress is over once the conversation neither works nor waits.
+  const foldNotes = useSessionStore((s) => s.foldWorkNotes)
+  const turnOver = state !== 'working' && state !== 'blocked'
+  const { blocks, liveCards, tail } = useMemo(() => {
     const entries = withServerPending(presentation.entries, remotePending, session.id)
     const ordinal = new Map<Entry, number>()
     entries.forEach((entry, i) => ordinal.set(entry, presentation.first + i))
-    return groupEntries(visibleEntries(entries)).map((block) => ({
-      block,
-      key: blockKey(block, (entry) => ordinal.get(entry))
-    }))
-  }, [presentation.entries, presentation.first, remotePending, session.id])
+    const live = liveQuestionCards(entries, remotePending, session.id)
+    // A form the agent asked floats at the end while it is open (FormTail):
+    // out of the rows, drawn after them.
+    const floating = entries.filter(
+      (e): e is Extract<Entry, { kind: 'permission' }> =>
+        e.kind === 'permission' && live.has(e) && isInputRequest(e.request)
+    )
+    const floatingSet = new Set<Entry>(floating)
+    const grouped = groupEntries(visibleEntries(entries).filter((e) => !floatingSet.has(e)))
+    const rows: Row[] = foldNotes ? foldStretches(grouped, turnOver) : grouped
+    return {
+      blocks: rows.map((block) => ({
+        block,
+        key: rowKey(block, (entry) => ordinal.get(entry))
+      })),
+      liveCards: live,
+      tail: floating
+    }
+  }, [presentation.entries, presentation.first, remotePending, session.id, foldNotes, turnOver])
   // The reader's open tool rows, kept across the rows' unmounts (`ToolDisclosure`).
   const [disclosure] = useState(() => new Map<string, boolean>())
+  // What the reader typed into a question card, kept across the rows' unmounts.
+  const [questionDrafts] = useState(() => new Map<string, Values>())
   // Each message from another tab with what this session sent that tab
   // around it, for the exchange timeline's cards (`indexExchanges`).
   // The digest runs the agent the tab runs, on its account: the store's
@@ -891,6 +997,22 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
     [blocks, exchanges]
   )
   useTimelineDigests(session.id, digestTimelines, exchanges.launch)
+  // The cards of working notes: whose tab, which are titled (the latest),
+  // and the titles asked for by the view, filed by tab (digest.ts).
+  const stretchContext = useMemo(
+    () => ({ sessionId: session.id, recent: recentStretches(blocks), launch: exchanges.launch }),
+    [session.id, blocks, exchanges.launch]
+  )
+  const stretchDigests = useMemo(
+    () =>
+      blocks.flatMap(({ block, key }) => {
+        if (block.kind !== 'work-stretch' || !stretchContext.recent.has(key)) return []
+        const notes = stretchNotes(block)
+        return [{ key: workDigestKey(notes), notes, tools: toolCount(block) }]
+      }),
+    [blocks, stretchContext]
+  )
+  useStretchDigests(session.id, stretchDigests, exchanges.launch)
   // The mark is the agent at work, nothing else: it leaves with the state.
   const head = pastHead(past, conversation.entries.length, state === 'ended')
   const showMark = state === 'working'
@@ -994,25 +1116,52 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
             {/* Mounted from the start, empty or not: what it gains is told apart
                 from what it opened on by the rows it rendered before. */}
             <ToolDisclosure.Provider value={disclosure}>
-              <ExchangeContext.Provider value={exchanges}>
-                <TranscriptRows
-                  rows={blocks}
-                  settled={pastRead}
-                  scroll={transcript.scroll}
-                  reveal={reveal}
-                >
-                  {({ block, key }, index, arriving) => (
-                    <TranscriptRow
-                      rowKey={key}
-                      key={key}
-                      block={block}
-                      first={index === 0}
-                      arriving={arriving}
-                      onError={report}
-                    />
-                  )}
-                </TranscriptRows>
-              </ExchangeContext.Provider>
+              <QuestionContext.Provider
+                // PRDCT-4157: how a question card drawn in the transcript
+                // answers: the view's own path, so a card inline and the
+                // dock's say the same thing to the same host.
+                value={{
+                  answer,
+                  busy: (id) => !ready || state === 'ended' || pending.includes(id),
+                  agent: AGENT_NAMES[session.provider] ?? 'the agent',
+                  remote: isRemoteKey(session.id),
+                  live: (entry) => liveCards.has(entry),
+                  drafts: questionDrafts,
+                  working: state === 'working',
+                  // PRDCT-4210: the reader's typing reaches the form's draft
+                  // by the same write, on this Mac or the session's server.
+                  type: typingWriter(dispatch, write)
+                }}
+              >
+                <ExchangeContext.Provider value={exchanges}>
+                  <StretchContext.Provider value={stretchContext}>
+                    <TranscriptRows
+                      rows={blocks}
+                      settled={pastRead}
+                      scroll={transcript.scroll}
+                      reveal={reveal}
+                    >
+                      {({ block, key }, index, arriving) => (
+                        <TranscriptRow
+                          rowKey={key}
+                          key={key}
+                          block={block}
+                          first={index === 0}
+                          arriving={arriving}
+                          onError={report}
+                        />
+                      )}
+                    </TranscriptRows>
+                  </StretchContext.Provider>
+                </ExchangeContext.Provider>
+                {tail.length > 0 && (
+                  <FormTail>
+                    {tail.map((entry) => (
+                      <InlineQuestion key={entry.request.id} entry={entry} />
+                    ))}
+                  </FormTail>
+                )}
+              </QuestionContext.Provider>
             </ToolDisclosure.Provider>
             {showMark && <ProviderMark provider={session.provider} />}
             {state === 'ended' && (
@@ -1021,7 +1170,24 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
           </div>
         </div>
         {jump.status ? <JumpPill status={jump.status} /> : earlier.loading && <EarlierLoading />}
-        {transcript.away && <JumpToEnd onClick={transcript.jump} />}
+        {transcript.away &&
+          (waitingOn.some(isQuestion) ? (
+            // A question arrived while the reader was up the transcript: the
+            // card is at its end, inline (PRDCT-4157), so the way down says
+            // what waits there, in place of the bare arrow.
+            <button
+              type="button"
+              className="chat-waiting"
+              onClick={transcript.jump}
+              aria-label="Scroll to the question"
+            >
+              <QuestionMarkCircleIcon />
+              {AGENT_NAMES[session.provider] ?? 'The agent'} asks a question
+              <ArrowDownIcon />
+            </button>
+          ) : (
+            <JumpToEnd onClick={transcript.jump} />
+          ))}
       </div>
       <div className="chat-composer-wrap">
         {panel === 'resume' && (
@@ -1060,7 +1226,11 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
           // Only /resume hides the dock; MCP and plugin panels keep pending
           // prompts in sight. A server's session answers in this same dock, by
           // the server's own request key (server-requests.ts).
-          requests={panel === 'resume' ? [] : waitingOn}
+          // A question is answered where the agent asked it, inline in the
+          // transcript (InlineQuestion); the dock keeps what it always held
+          // best, a tool to allow, in reach above the composer.
+          requests={panel === 'resume' ? [] : waitingOn.filter((r) => !isQuestion(r))}
+          remote={isRemoteKey(session.id)}
           agent={AGENT_NAMES[session.provider] ?? 'the agent'}
           busy={(id) => !ready || state === 'ended' || pending.includes(id)}
           onAnswer={(id, optionId, answers) => void answer(id, optionId, answers)}
@@ -1287,6 +1457,13 @@ export function EndedNotice({
   const limit = host?.limitReported === true
   const proposal = host?.accountProposal ?? null
   const account = host?.claudeProfileLabel ?? host?.codexAccountLabel ?? 'This account'
+  // A chat on a Clave server draws its own state, Resume included, and keeps
+  // drawing it while its own Resume runs (so its failure, if any, is kept);
+  // the credit states below stay the shell's words (PRDCT-4191, round 5).
+  if (isRemoteKey(sessionId) && !limit)
+    return (
+      <ServerEnded sessionId={sessionId} exitCode={exitCode} moving={host?.restarting === true} />
+    )
   if (host?.restarting) {
     return (
       <div className="chat-notice" role="status" data-chat-ended="moving">

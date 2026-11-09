@@ -160,15 +160,19 @@ export function createSessionHost(deps: SessionHostDeps): SessionHostService {
       // A chat tab is named by its first message, and this is where that
       // message is first seen in main; the title comes back as a server event
       // (or on `session:auto-title:<id>` to the tab's window without a server).
-      titleGenerator.notifyChatMessage(id, value.text, windowOf(id))
+      // A form's outcome written to the agent (PRDCT-4157) is nobody's first
+      // words: it names no tab.
+      if (!value.form) titleGenerator.notifyChatMessage(id, value.text, windowOf(id))
       // A user message's prepared prompt is main's to build, from the attachment
       // records and the files they name, never the caller's to supply: the
       // files are read here, at send time, against the adapter's capabilities,
       // and a failure rejects the write so the composer keeps its draft.
+      const form = value.form ? { form: value.form } : {}
       const attachments = value.attachments?.length ? value.attachments : undefined
-      if (!attachments) return manager.write(id, { type: 'user_message', text: value.text })
+      if (!attachments)
+        return manager.write(id, { type: 'user_message', text: value.text, ...form })
       const prepared = await preparePrompt(value.text, attachments, manager.capabilities(id).images)
-      manager.write(id, { type: 'user_message', text: value.text, attachments, prepared })
+      manager.write(id, { type: 'user_message', text: value.text, attachments, prepared, ...form })
     },
     resize: (id, cols, rows) => {
       if (!manager.get(id)) throw new Error(`Unknown session: ${id}`)
@@ -268,7 +272,8 @@ export function createSessionHost(deps: SessionHostDeps): SessionHostService {
       }
       return typeIntoSession(id, text)
     },
-    restart: (id, account, resendRejected) => restartSession(id, { ...account, resendRejected })
+    restart: (id, account, resendRejected, onlyIfStopped) =>
+      restartSession(id, { ...account, resendRejected, onlyIfStopped })
   }
   return host
 }

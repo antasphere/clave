@@ -3,6 +3,7 @@ import type { HistoryItem, SessionEvent } from '../../../../src/shared/session-m
 import { isRemoteKey, ownerOf } from '../../../../src/renderer/src/lib/fleet-identity'
 import { endIsCurrent } from '../../../../src/renderer/src/views/session-end'
 import { bindFleetCatchup } from '../fleet-sync'
+import { bindReconnectReset } from '../reconnect'
 import { emptyConversation, reduceConversation, type Action, type Conversation } from '../reducer'
 import { emptyStatus, reduceStatus, type TerminalStatus } from '../terminal-status'
 import { foldSubagents, noSubagents, reduceSubagents, type SubagentLogs } from '../subagents'
@@ -54,6 +55,10 @@ export function useConversation(
   const pastReader = useRef<PastReader | null>(null)
   useEffect(() => {
     let live = true
+    // A server's connection coming back may be to a server that counts its
+    // runs from 1 again: the run heard so far is forgotten first, bound
+    // ahead of every frame (PRDCT-4191, `reconnect.ts`).
+    const stopReconnect = bindReconnectReset(sessionId, () => dispatch({ reconnected: true }))
     const catchup = bindFleetCatchup(sessionId, (page) => {
       if (!live) return
       dispatch({ sync: page.items })
@@ -85,8 +90,16 @@ export function useConversation(
     let stopConnected: () => void = () => {}
     void window.electronAPI
       .sessionsSubscribe(sessionId)
-      .then(() => {
+      .then((current) => {
         if (!live) return
+        // The host's own word on the session, over the seed read at mount
+        // (PRDCT-4191), as the chat view takes it.
+        const word = {
+          state: current.state,
+          ...(current.run !== undefined ? { run: current.run } : {})
+        }
+        if (word.state === 'ended') confirmed(() => dispatch({ session: word }))
+        else dispatch({ session: word })
         setReady(true)
         pastReader.current = readPast(() => window.electronAPI.sessionsHistory(sessionId), {
           read: (page) => {
@@ -123,6 +136,7 @@ export function useConversation(
       .catch(() => {})
     return () => {
       live = false
+      stopReconnect()
       catchup.close()
       pastReader.current?.stop()
       pastReader.current = null

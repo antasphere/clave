@@ -22,6 +22,8 @@
  * and nothing of the session host's graph (the PTY backend and its native
  * modules), which the boot owns.
  */
+import { hostname } from 'node:os'
+import { defaultServerName } from '../routines/resolve'
 import type { EmbeddedServer, ServerPorts } from '@clave/server'
 import { type SessionManager, sessionManager } from '../sessions/session-manager'
 import {
@@ -73,7 +75,7 @@ async function start(options: StartOptions): Promise<ClaveServerEndpoint> {
   const server = await startEmbedded({
     ports: {
       ...(options.appVersion !== undefined && {
-        serverInfo: ServerInfoPort.appRun(options.appVersion)
+        serverInfo: ServerInfoPort.appRun(options.appVersion, ownServerName())
       }),
       ...ports
     },
@@ -87,6 +89,18 @@ async function start(options: StartOptions): Promise<ClaveServerEndpoint> {
   setServerEventPublisher((event) => server.publish(event))
   stopStates = publishSessionStates(manager, (event) => server.publish(event))
   return endpoint
+}
+
+/** The in-process server's id while it runs (PRDCT-4149): what a routine's
+ *  `server` field may name this Mac by, beside its own name. */
+export function claveServerId(): string | null {
+  return running?.serverId ?? null
+}
+
+/** This Mac's own name as a server (PRDCT-4149): the environment's when the
+ *  harness gives one, else the first label of the machine's hostname. */
+export function ownServerName(): string {
+  return process.env.CLAVE_SERVER_NAME?.trim() || defaultServerName(hostname())
 }
 
 export async function stopClaveServer(): Promise<void> {

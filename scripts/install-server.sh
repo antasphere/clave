@@ -56,6 +56,8 @@ Options:
                      PATH, saved on the first install)
   --name NAME        Service name, for several servers on one machine
                      (default clave-server)
+  --server-name NAME The server's own name, what a .clave routine's "server" field
+                     names it by (default: the first label of this machine's hostname)
   --repo URL         Git repository (default https://github.com/antasphere/clave.git)
   --force            Rebuild and restart even when the release is already current
   --no-service       Build and switch the release only; print the command to run
@@ -68,7 +70,7 @@ EOF
 }
 
 NAME=clave-server
-OPT_REF='' OPT_HOST='' OPT_PORT='' OPT_DATA_DIR='' OPT_TOKEN_FILE='' OPT_PATH='' OPT_REPO=''
+OPT_REF='' OPT_HOST='' OPT_PORT='' OPT_DATA_DIR='' OPT_TOKEN_FILE='' OPT_PATH='' OPT_REPO='' OPT_SERVER_NAME=''
 FORCE=0
 SERVICE=1
 
@@ -83,6 +85,7 @@ while [[ $# -gt 0 ]]; do
     --token-file) need_value "$@"; OPT_TOKEN_FILE="$2"; shift 2 ;;
     --path)       need_value "$@"; OPT_PATH="$2"; shift 2 ;;
     --name)       need_value "$@"; NAME="$2"; shift 2 ;;
+    --server-name) need_value "$@"; OPT_SERVER_NAME="$2"; shift 2 ;;
     --repo)       need_value "$@"; OPT_REPO="$2"; shift 2 ;;
     --force)      FORCE=1; shift ;;
     --no-service) SERVICE=0; shift ;;
@@ -112,6 +115,9 @@ CLAVE_DATA_DIR="$HOME/.local/share/$NAME"
 CLAVE_TOKEN_FILE=''
 CLAVE_PATH="$PATH"
 CLAVE_REPO=https://github.com/antasphere/clave.git
+# Not CLAVE_SERVER_NAME: that is the variable the server itself reads, and an
+# exported one in this shell would reach every child of the install.
+CLAVE_OWN_SERVER_NAME=''
 CLAVE_URL=''   # where the release that last ran answered; not an option
 FIRST_INSTALL=1
 if [[ -f "$CONFIG_FILE" ]]; then
@@ -126,10 +132,13 @@ fi
 [[ -n "$OPT_TOKEN_FILE" ]] && CLAVE_TOKEN_FILE="$OPT_TOKEN_FILE"
 [[ -n "$OPT_PATH" ]] && CLAVE_PATH="$OPT_PATH"
 [[ -n "$OPT_REPO" ]] && CLAVE_REPO="$OPT_REPO"
+[[ -n "$OPT_SERVER_NAME" ]] && CLAVE_OWN_SERVER_NAME="$OPT_SERVER_NAME"
 
 [[ "$CLAVE_PORT" =~ ^[0-9]+$ && "$CLAVE_PORT" -ge 1 && "$CLAVE_PORT" -le 65535 ]] \
   || fail invalid-options "--port must be between 1 and 65535"
 [[ "$CLAVE_DATA_DIR" = /* ]] || fail invalid-options "--data-dir must be an absolute path"
+[[ -z "$CLAVE_OWN_SERVER_NAME" || "$CLAVE_OWN_SERVER_NAME" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$ ]] \
+  || fail invalid-options "--server-name must be letters, digits, dots, underscores and dashes, up to 63"
 if [[ -n "$CLAVE_TOKEN_FILE" ]]; then
   [[ "$CLAVE_TOKEN_FILE" = /* ]] || fail invalid-options "--token-file must be an absolute path"
   [[ -f "$CLAVE_TOKEN_FILE" ]] || fail token-file-missing "No token file at $CLAVE_TOKEN_FILE"
@@ -298,6 +307,7 @@ save_options() {
     printf 'CLAVE_TOKEN_FILE=%q\n' "$CLAVE_TOKEN_FILE"
     printf 'CLAVE_PATH=%q\n' "$CLAVE_PATH"
     printf 'CLAVE_REPO=%q\n' "$CLAVE_REPO"
+    printf 'CLAVE_OWN_SERVER_NAME=%q\n' "$CLAVE_OWN_SERVER_NAME"
     printf 'CLAVE_URL=%q\n' "$SERVER_URL"
   } > "$CONFIG_FILE.tmp"
   chmod 600 "$CONFIG_FILE.tmp"
@@ -317,6 +327,9 @@ ARGS=(
   --node "$NODE"
 )
 [[ -n "$CLAVE_TOKEN_FILE" ]] && ARGS+=(--token-file "$CLAVE_TOKEN_FILE")
+# The name a .clave routine's "server" field pins it to; without it the server
+# answers to the first label of the machine's hostname.
+[[ -n "$CLAVE_OWN_SERVER_NAME" ]] && ARGS+=(--server-name "$CLAVE_OWN_SERVER_NAME")
 # The version the server reports, from the release tag: a beta's package.json
 # carries the stable version it was cut from. A branch has no version of its own.
 if [[ "$REF" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then

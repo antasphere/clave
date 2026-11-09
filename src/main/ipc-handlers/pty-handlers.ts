@@ -114,6 +114,7 @@ export function registerPtyHandlers(): void {
         codexAccountId?: unknown
         codexAccountLabel?: unknown
         resendRejected?: unknown
+        onlyIfStopped?: unknown
       }
     ): Promise<(SessionInfoResult & { resumed: boolean }) | { error: string }> => {
       if (typeof id !== 'string') return { error: 'No session' }
@@ -129,13 +130,18 @@ export function registerPtyHandlers(): void {
             claudeProfileLabel: str(overrides?.claudeProfileLabel),
             codexAccountId: str(overrides?.codexAccountId),
             codexAccountLabel: str(overrides?.codexAccountLabel),
-            resendRejected: overrides?.resendRejected === true
+            resendRejected: overrides?.resendRejected === true,
+            onlyIfStopped: overrides?.onlyIfStopped === true
           },
           win ? windowRegistry.getKeyForWindow(win.id) : null
         )
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
-        if (message === 'This session cannot be restarted from here.') return { error: message }
+        if (
+          message === 'This session cannot be restarted from here.' ||
+          message === 'This session is running; there is nothing to resume.'
+        )
+          return { error: message }
         throw error
       }
     }

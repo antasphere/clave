@@ -17,7 +17,8 @@ import {
   type SessionEvent,
   type HistoryItem,
   type ModelOption,
-  type CommandOption
+  type CommandOption,
+  flattenAnswers
 } from '../../../shared/session-model'
 import type {
   SessionAdapter,
@@ -794,7 +795,12 @@ export class CodexAdapter implements SessionAdapter {
     if (state.ended || state.closing) throw new Error('Codex session has ended')
     if (value.type === 'permission_response') {
       if (!state.connection) throw new Error('Codex has no pending approval')
-      state.translator.answer(value.id, value.optionId, state.connection, value.answers)
+      state.translator.answer(
+        value.id,
+        value.optionId,
+        state.connection,
+        flattenAnswers(value.answers)
+      )
       return
     }
     if (value.type === 'interrupt') {
@@ -830,6 +836,9 @@ export class CodexAdapter implements SessionAdapter {
     if (value.type === 'set_permission_mode')
       throw new Error('Codex chat does not offer permission modes')
     if (value.type === 'stop_task') throw new Error('Codex chat cannot stop one background task')
+    // The person's typing into a form is the host's (request-aware-host.ts),
+    // never a provider's (PRDCT-4210).
+    if (value.type === 'permission_draft') return
     const prompt = providerPrompt(value)
     state.emitter.emit('stream', { kind: 'event', event: userMessageEvent(value) })
     state.turnRequest = (state.turnRequest ?? Promise.resolve())

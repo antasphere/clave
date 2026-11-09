@@ -3,6 +3,7 @@
 import { ApiGroup, HttpCqrs } from '@structure-ai/http'
 import {
   DismissRoutineRun,
+  GetRoutineDeck,
   ListRoutines,
   OpenRoutineDiscussion,
   ReportRoutineRun,
@@ -11,6 +12,7 @@ import {
 
 export const routinesGroup = ApiGroup.make('routines')
   .add(HttpCqrs.queryEndpoint('list', '/routines', ListRoutines))
+  .add(HttpCqrs.queryEndpoint('deck', '/routines/deck', GetRoutineDeck))
   .add(HttpCqrs.commandEndpoint('runNow', '/routines/run-now', RunRoutineNow))
   .add(HttpCqrs.commandEndpoint('dismiss', '/routines/dismiss', DismissRoutineRun))
   .add(HttpCqrs.commandEndpoint('report', '/routines/report', ReportRoutineRun))

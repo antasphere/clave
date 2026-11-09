@@ -7,13 +7,16 @@ import {
 } from '../../../src/renderer/src/lib/fleet-identity'
 import { parseResourceKey } from '@clave/contract/fleet'
 import { bindFleetCatchup } from './fleet-sync'
+import { bindReconnectReset } from './reconnect'
 /** The Terminal view: a third reading of a session, started as a copy of
  *  `ChatView` and diverging from it on purpose. Shares its props with Chat. */
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react'
 import {
+  ArrowDownIcon,
   ArrowUpIcon,
   MapPinIcon,
   PaperClipIcon,
+  QuestionMarkCircleIcon,
   StopIcon,
   XMarkIcon
 } from '@heroicons/react/24/outline'
@@ -48,16 +51,31 @@ import { ContextMeter } from './TerminalStatus'
 import { WorkCards } from './WorkCards'
 import { AccountChip } from './AccountChip'
 import { useQuestionHeight } from './question-height'
-import { blockKey, groupEntries, visibleEntries, type Block } from './tools'
+import { groupEntries, visibleEntries } from './tools'
 import { ToolDisclosure } from './disclosure'
 import { ExchangeContext, digestMessages, indexExchanges, recentTimelines } from './exchanges'
-import { useTimelineDigests } from './digest'
+import { useStretchDigests, useTimelineDigests } from './digest'
 import { digestKey } from '../../../src/shared/exchange-digest'
+import { workDigestKey } from '../../../src/shared/work-digest'
+import { foldStretches, rowKey, stretchNotes, toolCount, type Row } from './stretches'
+import { WorkStretch } from './WorkStretch'
+import { StretchContext, recentStretches } from './stretch-context'
 import { useExchangeJump } from './jump'
 import { useSessionStore } from '../../../src/renderer/src/store/session-store'
 import { ApprovalRun, PromptDock } from './PromptDock'
+import { isQuestion } from './approvals'
+import { QuestionContext, typingWriter } from './question-context'
+import type { Values } from './input-request'
 import { refusedAnswer } from './refused-answer'
-import { serverDock, withServerPending } from './server-requests'
+import { FormTail } from './FormTail'
+import { InlineQuestion } from './PromptDock'
+import { isInputRequest } from './input-request'
+import {
+  liveQuestionCards,
+  remoteRequestFor,
+  serverDock,
+  withServerPending
+} from './server-requests'
 import { continueList } from './lists'
 import { ResumePicker } from './ResumePicker'
 import { McpPanel } from './McpPanel'
@@ -250,7 +268,7 @@ const PIN_KEY = 'clave-terminal-pin-questions'
 /** What a click lands on when it means something other than "type here". */
 const INTERACTIVE =
   'a, button, input, textarea, select, summary, label, [role="button"], [role="menuitem"], [role="menu"], [role="dialog"], [role="separator"], [contenteditable="true"]'
-type TurnRows = { key: string; block: Block }[]
+type TurnRows = { key: string; block: Row }[]
 /** One exchange as the virtualiser mounts it: the section stays whole inside
  *  its row, so the pinned question stays sticky within its own exchange. An
  *  exchange the column gained at its end arrives (`TranscriptRows`), and so
@@ -277,20 +295,48 @@ function TerminalTurn({
       data-arrive={arrive ? 'true' : undefined}
     >
       <section className="term-turn">
-        {rows.map(({ block, key }) =>
-          block.kind === 'delivery-group' ? (
-            <DeliveryStack key={key} group={block} id={key} />
-          ) : block.kind === 'tool-group' ? (
-            <ToolRow key={key} group={block} live={key === liveRun} />
-          ) : block.kind === 'approval-group' ? (
-            <ApprovalRun key={key} id={key} group={block} />
-          ) : (
-            <EntryRow key={key} entry={block} onError={onError} />
-          )
-        )}
+        {rows.map(({ block, key }) => (
+          <TermBlock key={key} block={block} rowKey={key} liveRun={liveRun} onError={onError} />
+        ))}
       </section>
     </div>
   )
+}
+/** One block as this view draws it. A card of working notes draws the
+ *  blocks inside it through the same function, so a note reads as a note
+ *  and a run of tools opens as it does anywhere else; nothing inside a
+ *  folded card is the run in flight, since its turn is over. */
+function TermBlock({
+  block,
+  rowKey: key,
+  liveRun,
+  onError
+}: {
+  block: Row
+  rowKey: string
+  liveRun: string | undefined
+  onError: (error: unknown) => void
+}): React.JSX.Element {
+  if (block.kind === 'work-stretch')
+    return (
+      <WorkStretch
+        stretch={block}
+        id={key}
+        render={(inner, innerKey) => (
+          <TermBlock
+            key={innerKey}
+            block={inner}
+            rowKey={innerKey}
+            liveRun={undefined}
+            onError={onError}
+          />
+        )}
+      />
+    )
+  if (block.kind === 'delivery-group') return <DeliveryStack group={block} id={key} />
+  if (block.kind === 'tool-group') return <ToolRow group={block} live={key === liveRun} />
+  if (block.kind === 'approval-group') return <ApprovalRun id={key} group={block} />
+  return <EntryRow entry={block} onError={onError} />
 }
 export function TerminalView({
   session,
@@ -357,6 +403,10 @@ export function TerminalView({
   const [slashDismissed, setSlashDismissed] = useState<string | null>(null)
   useEffect(() => {
     let live = true
+    // A server's connection coming back may be to a server that counts its
+    // runs from 1 again: the run heard so far is forgotten first, bound
+    // ahead of every frame (PRDCT-4191, `reconnect.ts`).
+    const stopReconnect = bindReconnectReset(session.id, () => dispatch({ reconnected: true }))
     const catchup = bindFleetCatchup(session.id, (page) => {
       if (!live) return
       dispatch({ sync: page.items })
@@ -390,8 +440,17 @@ export function TerminalView({
     )
     void window.electronAPI
       .sessionsSubscribe(session.id)
-      .then(() => {
-        if (live) setReady(true)
+      .then((current) => {
+        if (!live) return
+        // The host's own word on the session, over the seed read at mount
+        // (PRDCT-4191), as the chat view takes it.
+        const word = {
+          state: current.state,
+          ...(current.run !== undefined ? { run: current.run } : {})
+        }
+        if (word.state === 'ended') confirmed(() => dispatch({ session: word }))
+        else dispatch({ session: word })
+        setReady(true)
         // Asked once subscribed, when the adapter has read the transcript;
         // whatever streamed meanwhile is newer and stays after it. A host
         // without the call rejects inside the chain and shows no past.
@@ -423,6 +482,7 @@ export function TerminalView({
       .catch(() => {})
     return () => {
       live = false
+      stopReconnect()
       catchup.close()
       stop()
       stopExit()
@@ -527,7 +587,7 @@ export function TerminalView({
   const answer = async (
     id: string,
     optionId: string,
-    answers?: Record<string, string>
+    answers?: Record<string, string | string[]>
   ): Promise<void> => {
     setPending((current) => [...current, id])
     try {
@@ -535,9 +595,11 @@ export function TerminalView({
         // The dock's id is the server's request key: the answer settles that
         // one record, and one already settled (on another Mac, or dropped by
         // the provider) is refused rather than recorded.
-        const request = remotePending?.find((r) => r.id === id)
+        // The dock names the server's key; a card inline names the provider's
+        // id the stream carried. Either settles the one record.
+        const request = remoteRequestFor(remotePending, session.id, id)
         if (!request?.providerRequestId) throw new Error('This request is no longer waiting.')
-        const { accepted } = await window.electronAPI.fleetResolve(id, {
+        const { accepted } = await window.electronAPI.fleetResolve(request.id, {
           type: 'permission',
           optionId,
           ...(answers ? { answers } : {})
@@ -685,15 +747,31 @@ export function TerminalView({
   // a page of the past arriving in front must not shift a key, or every turn
   // below it would render as another and the column's arrival would replay on
   // the ones at the end. Memoised, so a keystroke rebuilds none of it.
-  const blocks = useMemo(() => {
+  // Then, when the reader wants it, the agent's working notes of every
+  // finished turn fold into one card (`foldStretches`, PRDCT-4212): the turn
+  // in progress is over once the conversation neither works nor waits.
+  const foldNotes = useSessionStore((s) => s.foldWorkNotes)
+  const turnOver = state !== 'working' && state !== 'blocked'
+  const { blocks, liveCards, tail } = useMemo(() => {
     const entries = withServerPending(presentation.entries, remotePending, session.id)
     const ordinal = new Map<Entry, number>()
     entries.forEach((entry, i) => ordinal.set(entry, presentation.first + i))
-    return groupEntries(visibleEntries(entries)).map((block) => ({
+    const live = liveQuestionCards(entries, remotePending, session.id)
+    // A form the agent asked floats at the end while it is open (FormTail):
+    // out of the rows, drawn after them.
+    const floating = entries.filter(
+      (e): e is Extract<Entry, { kind: 'permission' }> =>
+        e.kind === 'permission' && live.has(e) && isInputRequest(e.request)
+    )
+    const floatingSet = new Set<Entry>(floating)
+    const grouped = groupEntries(visibleEntries(entries).filter((e) => !floatingSet.has(e)))
+    const rows: Row[] = foldNotes ? foldStretches(grouped, turnOver) : grouped
+    const built = rows.map((block) => ({
       block,
-      key: blockKey(block, (entry) => ordinal.get(entry))
+      key: rowKey(block, (entry) => ordinal.get(entry))
     }))
-  }, [presentation.entries, presentation.first, remotePending, session.id])
+    return { blocks: built, liveCards: live, tail: floating }
+  }, [presentation.entries, presentation.first, remotePending, session.id, foldNotes, turnOver])
   // One section per exchange: the reader's message and everything answering
   // it, so a pinned question is carried off by its own section's end.
   const turns = useMemo(() => {
@@ -707,6 +785,8 @@ export function TerminalView({
   }, [blocks])
   // The reader's open tool rows, kept across the rows' unmounts (`ToolDisclosure`).
   const [disclosure] = useState(() => new Map<string, boolean>())
+  // What the reader typed into a question card, kept across the rows' unmounts.
+  const [questionDrafts] = useState(() => new Map<string, Values>())
   // Each message from another tab with what this session sent that tab
   // around it, for the exchange timeline's cards (`indexExchanges`).
   // The digest runs the agent the tab runs, on its account: the store's
@@ -752,6 +832,22 @@ export function TerminalView({
     [blocks, exchanges]
   )
   useTimelineDigests(session.id, digestTimelines, exchanges.launch)
+  // The cards of working notes: whose tab, which are titled (the latest),
+  // and the titles asked for by the view, filed by tab (digest.ts).
+  const stretchContext = useMemo(
+    () => ({ sessionId: session.id, recent: recentStretches(blocks), launch: exchanges.launch }),
+    [session.id, blocks, exchanges.launch]
+  )
+  const stretchDigests = useMemo(
+    () =>
+      blocks.flatMap(({ block, key }) => {
+        if (block.kind !== 'work-stretch' || !stretchContext.recent.has(key)) return []
+        const notes = stretchNotes(block)
+        return [{ key: workDigestKey(notes), notes, tools: toolCount(block) }]
+      }),
+    [blocks, stretchContext]
+  )
+  useStretchDigests(session.id, stretchDigests, exchanges.launch)
   const [pinQuestions, setPinQuestions] = useState(() => localStorage.getItem(PIN_KEY) !== 'off')
   const togglePin = (): void =>
     setPinQuestions((value) => {
@@ -872,26 +968,53 @@ export function TerminalView({
             {/* Mounted from the start, empty or not: what it gains is told apart
                 from what it opened on by the rows it rendered before. */}
             <ToolDisclosure.Provider value={disclosure}>
-              <ExchangeContext.Provider value={exchanges}>
-                <TranscriptRows
-                  rows={turns}
-                  settled={pastRead}
-                  scroll={transcript.scroll}
-                  reveal={reveal}
-                  holdAbove={pinQuestions}
-                >
-                  {(turn, index, arriving) => (
-                    <TerminalTurn
-                      key={turn.key}
-                      rows={turn.rows}
-                      first={index === 0}
-                      arriving={arriving}
-                      liveRun={liveRun}
-                      onError={report}
-                    />
-                  )}
-                </TranscriptRows>
-              </ExchangeContext.Provider>
+              <QuestionContext.Provider
+                // PRDCT-4157: how a question card drawn in the transcript
+                // answers: the view's own path, so a card inline and the
+                // dock's say the same thing to the same host.
+                value={{
+                  answer,
+                  busy: (id) => !ready || state === 'ended' || pending.includes(id),
+                  agent: AGENT_NAMES[session.provider] ?? 'the agent',
+                  remote: isRemoteKey(session.id),
+                  live: (entry) => liveCards.has(entry),
+                  drafts: questionDrafts,
+                  working: state === 'working',
+                  // PRDCT-4210: the reader's typing reaches the form's draft
+                  // by the same write, on this Mac or the session's server.
+                  type: typingWriter(dispatch, write)
+                }}
+              >
+                <ExchangeContext.Provider value={exchanges}>
+                  <StretchContext.Provider value={stretchContext}>
+                    <TranscriptRows
+                      rows={turns}
+                      settled={pastRead}
+                      scroll={transcript.scroll}
+                      reveal={reveal}
+                      holdAbove={pinQuestions}
+                    >
+                      {(turn, index, arriving) => (
+                        <TerminalTurn
+                          key={turn.key}
+                          rows={turn.rows}
+                          first={index === 0}
+                          arriving={arriving}
+                          liveRun={liveRun}
+                          onError={report}
+                        />
+                      )}
+                    </TranscriptRows>
+                  </StretchContext.Provider>
+                </ExchangeContext.Provider>
+                {tail.length > 0 && (
+                  <FormTail>
+                    {tail.map((entry) => (
+                      <InlineQuestion key={entry.request.id} entry={entry} />
+                    ))}
+                  </FormTail>
+                )}
+              </QuestionContext.Provider>
             </ToolDisclosure.Provider>
             {showMark && <ProviderMark provider={session.provider} />}
             {state === 'ended' && (
@@ -900,7 +1023,24 @@ export function TerminalView({
           </div>
         </div>
         {jump.status ? <JumpPill status={jump.status} /> : earlier.loading && <EarlierLoading />}
-        {transcript.away && <JumpToEnd onClick={transcript.jump} />}
+        {transcript.away &&
+          (waitingOn.some(isQuestion) ? (
+            // A question arrived while the reader was up the transcript: the
+            // card is at its end, inline (PRDCT-4157), so the way down says
+            // what waits there, in place of the bare arrow.
+            <button
+              type="button"
+              className="chat-waiting"
+              onClick={transcript.jump}
+              aria-label="Scroll to the question"
+            >
+              <QuestionMarkCircleIcon />
+              {AGENT_NAMES[session.provider] ?? 'The agent'} asks a question
+              <ArrowDownIcon />
+            </button>
+          ) : (
+            <JumpToEnd onClick={transcript.jump} />
+          ))}
       </div>
       <div className="chat-composer-wrap term-composer-wrap">
         {panel === 'resume' && (
@@ -939,7 +1079,11 @@ export function TerminalView({
           // Only /resume hides the dock; MCP and plugin panels keep pending
           // prompts in sight. A server's session answers in this same dock, by
           // the server's own request key (server-requests.ts).
-          requests={panel === 'resume' ? [] : waitingOn}
+          // A question is answered where the agent asked it, inline in the
+          // transcript (InlineQuestion); the dock keeps what it always held
+          // best, a tool to allow, in reach above the composer.
+          requests={panel === 'resume' ? [] : waitingOn.filter((r) => !isQuestion(r))}
+          remote={isRemoteKey(session.id)}
           agent={AGENT_NAMES[session.provider] ?? 'the agent'}
           busy={(id) => !ready || state === 'ended' || pending.includes(id)}
           onAnswer={(id, optionId, answers) => void answer(id, optionId, answers)}

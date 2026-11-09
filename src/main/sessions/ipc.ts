@@ -12,6 +12,7 @@ import type { SessionWrite } from '@clave/contract/sessions'
 import { windowRegistry } from '../window-registry'
 import { hasServerEventPublisher } from '../server/session-events'
 import { getSessionHost } from './host'
+import { lineageParents } from './lineage'
 
 let registered = false
 /** Second consumers have independent subscriptions; destroying their window
@@ -47,6 +48,9 @@ export function registerSessionIpc(): void {
     const key = win && windowRegistry.getKeyForWindow(win.id)
     return key ? getSessionHost().list(key) : []
   })
+  // Which tab opened which (PRDCT-4193): the window's reach rule reads it
+  // after a reload, its own memory of the opens gone with the page.
+  ipcMain.handle('lineage:parents', () => lineageParents())
   ipcMain.handle('sessions:subscribe', (event, id: string) => {
     if (typeof id !== 'string' || !sessionManager.get(id)) throw new Error('Unknown session')
     const sender = event.sender
