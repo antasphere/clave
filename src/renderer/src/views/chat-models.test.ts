@@ -3,9 +3,10 @@ import type { ModelOption } from '../../../shared/session-model'
 import {
   claudeContextWindow,
   claudeModelName,
+  claudeVersion,
+  earlierClaudeIds,
   findClaudeModel,
-  isDefaultClaudeAlias,
-  isEarlierClaudeModel
+  isDefaultClaudeAlias
 } from '../../../shared/claude-models'
 import {
   MODEL_PENDING,
@@ -80,19 +81,56 @@ it('folds the earlier versions of a family under one row, every id still a row (
   expect(earlier[0].hint).toBe('Earlier version')
   // A session on the earlier version still finds its own row.
   expect(currentOption('claude-fable-5[1m]', options)).toBe(earlier[0])
-  // The table decides: the first listed of a family is its newest.
-  expect(isEarlierClaudeModel('claude-fable-5[1m]')).toBe(true)
-  expect(isEarlierClaudeModel('claude-fable-5')).toBe(true)
-  expect(isEarlierClaudeModel('claude-fable-5-1[1m]')).toBe(false)
-  expect(isEarlierClaudeModel('fable')).toBe(false)
-  expect(isEarlierClaudeModel('claude-opus-6')).toBe(false)
-  expect(isEarlierClaudeModel(null)).toBe(false)
   // A provider that lists no versions folds nothing.
   const codex: ModelOption[] = [
     { id: 'gpt-5.5', label: 'GPT-5.5' },
     { id: 'gpt-5.5-codex', label: 'GPT-5.5 Codex' }
   ]
   expect(foldModelOptions(codex)).toEqual({ current: codex, earlier: [] })
+})
+
+it('decides the newest of a family over the list as given, not over the table (round 1, Major 2)', () => {
+  // The ids' own shape: family and version.
+  expect(claudeVersion('claude-opus-4-8')).toEqual({ family: 'opus', version: 408 })
+  expect(claudeVersion('claude-haiku-4-5-20251001')).toEqual({ family: 'haiku', version: 405 })
+  expect(claudeVersion('claude-fable-5-1[1m]')).toEqual({ family: 'fable', version: 501 })
+  expect(claudeVersion('claude-sonnet-5')).toEqual({ family: 'sonnet', version: 500 })
+  expect(claudeVersion('fable')).toBeNull()
+  expect(claudeVersion('gpt-5.5')).toBeNull()
+  expect(claudeVersion(null)).toBeNull()
+  // A version the table does not know (Haiku 5.5) is the newest over the
+  // table's Haiku 4.5; the newest of each family and the shapeless ids never fold.
+  const ids = [
+    'claude-opus-5-5',
+    'claude-fable-5-1',
+    'claude-fable-5',
+    'claude-sonnet-5-5',
+    'claude-haiku-4-5-20251001',
+    'claude-haiku-5-5',
+    'claude-opus-4-8',
+    'claude-sonnet-5',
+    'opus',
+    'gpt-5.5'
+  ]
+  expect([...earlierClaudeIds(ids)]).toEqual([
+    'claude-fable-5',
+    'claude-haiku-4-5-20251001',
+    'claude-opus-4-8',
+    'claude-sonnet-5'
+  ])
+  // A family listed once has nothing earlier.
+  expect(earlierClaudeIds(['claude-opus-4-8'])).toEqual(new Set())
+  // The fold reads each row's model (`resolved`), so an alias row folds by
+  // what it stands for, and a row the table knows folds under a CLI-only newer one.
+  const rows: ModelOption[] = [
+    { id: 'claude-haiku-4-5-20251001', label: 'Haiku 4.5', resolved: 'claude-haiku-4-5-20251001' },
+    { id: 'haiku', label: 'Haiku 5.5', resolved: 'claude-haiku-5-5' },
+    { id: 'claude-opus-4-8', label: 'Opus 4.8', resolved: 'claude-opus-4-8' },
+    { id: 'claude-opus-5-5', label: 'Opus 5.5', resolved: 'claude-opus-5-5' }
+  ]
+  const folded = foldModelOptions(rows)
+  expect(folded.current.map((o) => o.label)).toEqual(['Haiku 5.5', 'Opus 5.5'])
+  expect(folded.earlier.map((o) => o.label)).toEqual(['Haiku 4.5', 'Opus 4.8'])
 })
 
 it('reads any Claude id as its name, a new one from its own shape', () => {

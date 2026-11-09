@@ -57,6 +57,7 @@ import {
   resolvedDefaultModel
 } from './claude-adapter'
 import { formMessage } from '../../../shared/form-message'
+import { foldModelOptions } from '../../../../plugins/chat-view/src/models'
 
 /** What the adapter wrote to the CLI since the last read, without the
  *  get_settings reads it makes at ready and after every confirmed switch to
@@ -2055,6 +2056,140 @@ describe('the default resolved at ready (PRDCT-4256)', () => {
     expect(requests(child)).toEqual([])
     child.emit('close', 0)
     await adapter.kill(handle)
+  })
+
+  it('the settings answer at ready names the model the session runs on, and the account default then says nothing (round 1, Major 1)', async () => {
+    // A user whose settings say `sonnet`: the CLI's `default` row still
+    // resolves to Opus 5.5 (the account's default), while get_settings
+    // applies the setting. The settings answer is the CLI's own word.
+    const { adapter, handle, child } = await readied()
+    const raw = (child.stdin.read() as Buffer)
+      .toString()
+      .trim()
+      .split('\n')
+      .map((l) => JSON.parse(l))
+    const settings = raw.find((f) => f.request?.subtype === 'get_settings')
+    const resolution = raw.find((f) => f.request?.subtype === 'initialize')
+    expect(settings).toBeTruthy()
+    expect(resolution).toBeTruthy()
+    child.stdout.write(
+      JSON.stringify({
+        type: 'control_response',
+        response: {
+          subtype: 'success',
+          request_id: settings.request_id,
+          response: { applied: { model: 'claude-sonnet-5-5', effort: 'medium' } }
+        }
+      }) + '\n'
+    )
+    expect(metas()).toEqual([null, 'claude-sonnet-5-5'])
+    expect(events.at(-1)).toEqual({ type: 'effort', effort: 'medium' })
+    answer(child, resolution.request_id, DEFAULT_LIST)
+    await new Promise((resolve) => setImmediate(resolve))
+    expect(metas()).toEqual([null, 'claude-sonnet-5-5'])
+    child.emit('close', 0)
+    await adapter.kill(handle)
+  })
+
+  it('a settings answer naming no model, the alias, or a name no launch takes announces nothing', async () => {
+    for (const applied of [{ effort: 'high' }, { model: 'default' }, { model: 'x; rm -rf' }, {}]) {
+      events.length = 0
+      vi.clearAllMocks()
+      const { adapter, handle, child } = await readied()
+      const raw = (child.stdin.read() as Buffer)
+        .toString()
+        .trim()
+        .split('\n')
+        .map((l) => JSON.parse(l))
+      const settings = raw.find((f) => f.request?.subtype === 'get_settings')
+      child.stdout.write(
+        JSON.stringify({
+          type: 'control_response',
+          response: { subtype: 'success', request_id: settings.request_id, response: { applied } }
+        }) + '\n'
+      )
+      expect(metas()).toEqual([null])
+      child.emit('close', 0)
+      await adapter.kill(handle)
+    }
+  })
+
+  it('the real CLI list (2.1.319) makes a menu of the newest of each family, the elders folded, the default glossed on its row (round 1, Major 2)', () => {
+    const real = JSON.parse(
+      readFileSync(
+        new URL('../fixtures/claude-stream/initialize-models-2.1.319.json', import.meta.url),
+        'utf8'
+      )
+    )
+    const options = claudeModelOptions(real)
+    expect(options.find((o) => o.id === 'default')).toBeUndefined()
+    const { current, earlier } = foldModelOptions(options)
+    expect(current.map((o) => o.label)).toEqual([
+      'Opus 5.5',
+      'Fable 5.1',
+      'Sonnet 5.5',
+      'Haiku 5.5'
+    ])
+    expect(earlier.map((o) => o.label)).toEqual([
+      'Fable 5',
+      'Haiku 4.5',
+      'Sonnet 5',
+      'Opus 5',
+      'Opus 4.8',
+      'Opus 4.7',
+      'Opus 4.6',
+      'Sonnet 4.6'
+    ])
+    expect(current.map((o) => o.hint)).toEqual([
+      'Default · Best for everyday, complex tasks',
+      'For your toughest challenges',
+      'Most efficient for simpler tasks',
+      'Fastest for quick answers'
+    ])
+    for (const option of earlier) expect(option.hint).toBe('Earlier version')
+    // Every listed id is still a row somewhere, so a .clave or a routine
+    // naming claude-opus-4-6 launches it and finds it selected.
+    expect(options.map((o) => o.id)).toContain('claude-opus-4-6')
+    expect(options.map((o) => o.id)).toContain('claude-fable-5[1m]')
+  })
+
+  it('glosses the default on a row the table does not know, and reads the default entry wherever the CLI lists it (round 1 gaps)', () => {
+    // The CLI's default moved to a model shipped after the table was edited.
+    const moved = claudeModelOptions([
+      { value: 'opus', displayName: 'Opus', resolvedModel: 'claude-opus-5-5' },
+      {
+        value: 'default',
+        displayName: 'Default',
+        description: 'Opus 6 · Newest',
+        resolvedModel: 'claude-opus-6',
+        supportedEffortLevels: ['low', 'high']
+      },
+      { value: 'claude-opus-6', displayName: 'Opus 6', resolvedModel: 'claude-opus-6' }
+    ])
+    const opus6 = moved.find((o) => o.id === 'claude-opus-6')
+    expect(opus6?.hint).toBe('Default · Newest')
+    expect(moved.find((o) => o.id === 'claude-opus-5-5')?.hint).toBe('Earlier version')
+    // The default's row takes the default's levels when the version lists none of its own.
+    const levels = claudeModelOptions([
+      { value: 'opus', displayName: 'Opus', resolvedModel: 'claude-opus-5-5' },
+      {
+        value: 'default',
+        displayName: 'Default',
+        resolvedModel: 'claude-opus-5-5',
+        supportedEffortLevels: ['low', 'high']
+      }
+    ])
+    expect(levels.find((o) => o.id === 'claude-opus-5-5')?.efforts?.map((e) => e.id)).toEqual([
+      'low',
+      'high'
+    ])
+    // The default entry is read wherever it sits, never the first row by position.
+    expect(
+      resolvedDefaultModel([
+        { value: 'fable', displayName: 'Fable', resolvedModel: 'claude-fable-5-1' },
+        { value: 'default', displayName: 'Default', resolvedModel: 'claude-opus-5-5' }
+      ])
+    ).toBe('claude-opus-5-5')
   })
 
   it('reads which model a list makes the default', () => {

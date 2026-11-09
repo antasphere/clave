@@ -12,9 +12,14 @@ import { preferencesManager } from '../preferences-manager'
  * that is (PRDCT-4256): the alias is never stored, since a chat launched on
  * `--model default` read "Default" for good.
  */
+/** The Claude adapter's `default` alias; another adapter's model may carry
+ *  the word as a name of its own. */
+const isProviderDefault = (adapterId: string, model: string): boolean =>
+  adapterId === 'claude-chat' && isDefaultClaudeAlias(model)
+
 export function rememberChatModel(adapterId: string, model: string | null): void {
   const models = { ...preferencesManager.get('chatModels') }
-  if (model === null || isDefaultClaudeAlias(model)) delete models[adapterId]
+  if (model === null || isProviderDefault(adapterId, model)) delete models[adapterId]
   else if (isValidModelName(model)) models[adapterId] = model
   else return
   preferencesManager.set('chatModels', models)
@@ -25,7 +30,9 @@ export function rememberChatModel(adapterId: string, model: string | null): void
 export function rememberedChatModel(adapterId: string): string | undefined {
   const model = preferencesManager.get('chatModels')[adapterId]
   // The file is the user's to edit: a value that would not pass a launch is ignored.
-  return typeof model === 'string' && isValidModelName(model) && !isDefaultClaudeAlias(model)
+  return typeof model === 'string' &&
+    isValidModelName(model) &&
+    !isProviderDefault(adapterId, model)
     ? model
     : undefined
 }

@@ -79,4 +79,7 @@ it('never remembers the CLI’s `default` alias, and reads one stored before as 
   prefs.chatModels = { 'claude-chat': 'default', 'codex-chat': 'gpt-5.5' }
   expect(rememberedChatModel('claude-chat')).toBeUndefined()
   expect(rememberedChatModel('codex-chat')).toBe('gpt-5.5')
+  // The alias is the Claude CLI's: another adapter may name a model so.
+  rememberChatModel('echo', 'default')
+  expect(rememberedChatModel('echo')).toBe('default')
 })

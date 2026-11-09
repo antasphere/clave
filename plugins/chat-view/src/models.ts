@@ -1,5 +1,5 @@
 import type { EffortOption, ModelOption } from '../../../src/shared/session-model'
-import { claudeModelName, isEarlierClaudeModel } from '../../../src/shared/claude-models'
+import { claudeModelName, earlierClaudeIds } from '../../../src/shared/claude-models'
 
 // The provider may report a dated id (claude-haiku-4-5-20251001) or one with
 // its context size (claude-fable-5-1[1m]) where the menu lists the plain one.
@@ -39,13 +39,19 @@ export const modelChipLabel = (model: string | null, options: ModelOption[] | nu
 /** The menu in two parts (PRDCT-4257): the newest version of each family and
  *  everything else the provider offers, then the earlier versions under one
  *  row, every id still a row somewhere so a session on Fable 5 finds its own.
- *  A provider that lists no versions (Codex, the echo fixture) folds nothing. */
+ *  Decided over the list as given, by each row's model (`resolved`, else its
+ *  id): a provider that lists no versions (Codex, the echo fixture) folds
+ *  nothing. */
 export const foldModelOptions = (
   options: ModelOption[]
-): { current: ModelOption[]; earlier: ModelOption[] } => ({
-  current: options.filter((option) => !isEarlierClaudeModel(option.id)),
-  earlier: options.filter((option) => isEarlierClaudeModel(option.id))
-})
+): { current: ModelOption[]; earlier: ModelOption[] } => {
+  const keyOf = (option: ModelOption): string => option.resolved ?? option.id
+  const earlier = earlierClaudeIds(options.map(keyOf))
+  return {
+    current: options.filter((option) => !earlier.has(keyOf(option))),
+    earlier: options.filter((option) => earlier.has(keyOf(option)))
+  }
+}
 /** What the effort chip offers for the model the session is on: that
  *  model's levels, and the one to mark — the level the provider reported
  *  while the model lists it, else the model's own default, else none marked.
