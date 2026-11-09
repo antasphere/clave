@@ -267,7 +267,7 @@ export async function run(t) {
       await inject(fixture, record.id, [
         working,
         { type: 'user_message', text: 'now the other one' },
-        ...note('Reading the second report.'),
+        ...note('Reading the second report summary.'),
         ...note('Comparing with dev.'),
         {
           type: 'permission_request',
@@ -290,7 +290,11 @@ export async function run(t) {
         ...note('Going with the first option.'),
         ...note('Checks are green.'),
         ...note('Writing the summary.'),
-        { type: 'assistant_text', delta: 'Done with the other one, summary written.', final: true },
+        {
+          type: 'assistant_text',
+          delta: 'Done with the other one, summary written; summary mailed.',
+          final: true
+        },
         idle
       ])
       await until(async () => ((await cards.count()) === 3 ? true : null))
@@ -326,11 +330,18 @@ export async function run(t) {
         }
       )
 
-      // 5c. Find over a whole turn: a word in the answer and in a card never
-      // opened. The newest match is the answer's, marked without opening
-      // anything; the older one opens its card and is marked inside it. (In
-      // the Terminal view the turn is one row, where the card's words sit
-      // between the message's and the answer's.)
+      // 5c. Find over a whole turn, walking older (Enter; Shift+Enter walks
+      // newer): the word is in a card the
+      // reader opened and closed (its body built), in a card never opened,
+      // and twice in the answer. The two answer matches are marked in place
+      // without opening anything (the built card's words count as on screen,
+      // the unopened card's do not); the older ones open their card and are
+      // marked inside. In the Terminal view the turn is one row.
+      const openCards = view.locator('.work-stretch details.stretch-card[open] > .stretch-summary')
+      while (await openCards.count()) await openCards.first().click()
+      await until(async () =>
+        (await view.locator('.work-stretch details.stretch-card[open]').count()) === 0 ? true : null
+      )
       await view.locator('textarea').click()
       await win.keyboard.press('Meta+f')
       const field2 = win.locator('[data-pane-search] input')
@@ -346,36 +357,54 @@ export async function run(t) {
           return {
             count: document.querySelector('.pane-search-count')?.textContent ?? '',
             words: range?.toString() ?? null,
+            after: range
+              ? range.endContainer.textContent.slice(range.endOffset, range.endOffset + 8)
+              : null,
             inCard: el ? !!el.closest('.work-stretch') : null,
-            opened: [...document.querySelectorAll('.work-stretch details.stretch-card')].map(
-              (d) => d.open
-            )
+            opened: document.querySelectorAll('.work-stretch details.stretch-card[open]').length
           }
         })
-      const newestHit = await until(async () => {
-        const place = await placeOf()
-        return place.count === '1 of 2' && place.words ? place : null
-      }, 10000)
+      // The count moves at once and the mark follows a beat later (the card
+      // it opens, a beat after that): a step settles before it is read.
+      const step = async (count) => {
+        await win.waitForTimeout(700)
+        return until(async () => {
+          const place = await placeOf()
+          return place.count === count && place.words === 'summary' ? place : null
+        }, 10000)
+      }
+      const walk = [await step('1 of 4')]
+      await field2.press('Enter')
+      walk.push(await step('2 of 4'))
+      await field2.press('Enter')
+      walk.push(await step('3 of 4'))
+      await field2.press('Enter')
+      walk.push(await step('4 of 4'))
       t.check(
-        `${mode}: the newest match, in the answer, is marked without opening the card before it`,
-        !!newestHit && newestHit.words === 'summary' && newestHit.inCard === false,
-        newestHit
+        `${mode}: the two answer matches are marked in place, the right word each, with no card opened`,
+        !!walk[0] &&
+          walk[0].after.startsWith(' mailed') &&
+          walk[0].inCard === false &&
+          walk[0].opened === 0 &&
+          !!walk[1] &&
+          walk[1].after.startsWith(' written') &&
+          walk[1].inCard === false &&
+          walk[1].opened === 0,
+        walk.slice(0, 2)
       )
-      await field2.press('Shift+Enter')
-      const older = await until(async () => {
-        const place = await placeOf()
-        return place.count === '2 of 2' && place.words && place.inCard ? place : null
-      }, 10000)
       t.check(
-        `${mode}: the older match opens the card that holds it and is marked inside`,
-        !!older && older.words === 'summary' && older.inCard === true,
-        older
+        `${mode}: the older matches open the card never opened, then the one the reader had closed, and are marked inside`,
+        !!walk[2] &&
+          walk[2].inCard === true &&
+          walk[2].opened === 1 &&
+          !!walk[3] &&
+          walk[3].inCard === true &&
+          walk[3].opened === 2,
+        walk.slice(2)
       )
       await field2.press('Escape')
-      // Close the card Find opened (the rows are virtualised, so find it by
-      // its state rather than its place), then back to the end.
-      const openedCard = view.locator('.work-stretch details.stretch-card[open] > .stretch-summary')
-      if (await openedCard.count()) await openedCard.first().click()
+      // Close what Find opened, then back to the end of the transcript.
+      while (await openCards.count()) await openCards.first().click()
       await until(async () =>
         (await view.locator('.work-stretch details.stretch-card[open]').count()) === 0 ? true : null
       )

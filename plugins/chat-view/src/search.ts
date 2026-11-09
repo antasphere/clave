@@ -357,10 +357,11 @@ export function useTranscriptSearch({
           const at = onScreenIndex(
             where,
             currentMatch.k,
-            (index) => !!cards[index] && (cards[index].open || !!cards[index].querySelector('.stretch-steps'))
+            (index) =>
+              !!cards[index] &&
+              (cards[index].open || !!cards[index].querySelector('.stretch-steps'))
           )
           currentRange = inRow[Math.min(at, inRow.length - 1)] ?? null
-
         }
       }
       byPane.set(sessionId, { all, current: currentRange })
