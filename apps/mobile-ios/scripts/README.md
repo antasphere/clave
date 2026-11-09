@@ -9,7 +9,7 @@ Debug and absent from Release; `--prove-red` shows the check fails when the guar
 ## The fixture stack
 
 ```sh
-node apps/mobile-ios/scripts/fixture-stack.mjs [--approve] [--dry-run | --self-check | --once | --prove-tmpdir-guard | --prove-env-guard | --prove-prerequisites | --prove-inside cache|resolver|args|probe | --prove-recorder-read missing|unreadable | --prove-title-guard]
+node apps/mobile-ios/scripts/fixture-stack.mjs [--approve] [--dry-run | --self-check | --once | --prove-tmpdir-guard | --prove-env-guard stray|no-env-file|live-stub | --prove-prerequisites | --prove-inside keys|cache|resolver|args|probe | --prove-recorder-read missing|unreadable | --prove-title-guard recorder|folder]
 node apps/mobile-ios/scripts/fixture-check.mjs --udid <simulator udid> [--only <xcodebuild -only-testing value>]
 ```
 
@@ -86,10 +86,10 @@ environment is built from an allowlist (`HOME`, `USER`, `LOGNAME`, `TMPDIR`, `LA
 `LC_ALL`, `LC_CTYPE`, `TERM`) plus what the stack sets: `SHELL`, a script named `zsh` under
 `stubs/` that prints a FIXED environment the stack wrote into it at boot, the very same
 variables, never the environment of any process (the daemon reads its login environment with
-`$SHELL -lic 'env -0'`), and runs a `-c` command with /bin/sh; `PATH`,
-led by `stubs/bin`, where `claude` and `codex` are recorders that append one line (the time,
-the command, its first two arguments, never the stdin) to `stubs/recorder.log`, the `claude`
-one answering `--version` with `claude fixture-recorder` and a one-shot with a fixed title;
+`$SHELL -lic 'env -0'`), and runs a `-c` command with /bin/sh; `PATH`, led by `stubs/bin`,
+where `claude` and `codex` are recorders that append one line (the time, the command, its
+first two arguments, never the stdin) to `stubs/recorder.log`, the `claude` one answering
+`--version` with `claude fixture-recorder` and a one-shot with a fixed title;
 `CLAUDE_CONFIG_DIR` and `CODEX_HOME`, two empty folders beside them; the issuer and the
 keychain file. Bun is started with `--no-env-file` before every entry (the daemon's and the
 relay's), since it loads `.env`, `.env.<NODE_ENV>` and `.env.local` from its working directory
@@ -99,17 +99,17 @@ environment, written once into the daemon and once into its stub shell, and two 
 credential folders; the fourth check reads the sorted keys of the daemon's `process.env` from
 inside and requires them equal to that set.
 
-Five checks, printed first, every boot; one failing stops the boot with exit 2:
+Six checks, printed first, every boot; one failing stops the boot with exit 2:
 
-1. before the daemon starts (the provider and the relay are already up), the daemon's command
-   starts Bun with `--no-env-file` before the
-   entry and carries the three flags and `--dev-echo-adapter` (`preBootChecks` in
-   `fixture-stack.mjs`);
-2. before the daemon starts, the environment handed to the daemon is the allowlist plus
-   the stack's own variables, its `SHELL` the stub whose text prints exactly those variables
-   and echoes no live environment, the first folder of its `PATH` the recorders',
-   `CLAUDE_CONFIG_DIR` and `CODEX_HOME` the empty folders (`preBootChecks`; no shell is run
-   for it);
+0. before the relay and the daemon start (the provider is in-process), the relay's command
+   starts Bun with `--no-env-file` before its entry and names the loopback issuer
+   (`preBootChecks` in `fixture-stack.mjs`);
+1. at the same moment, the daemon's command starts Bun with `--no-env-file` before the entry
+   and carries the three flags and `--dev-echo-adapter`;
+2. at the same moment, the environment handed to the daemon is the allowlist plus the stack's
+   own variables, its `SHELL` the stub whose text prints exactly those variables and echoes no
+   live environment, the first folder of its `PATH` the recorders', `CLAUDE_CONFIG_DIR` and
+   `CODEX_HOME` the empty folders (no shell is run for it);
 3. after the daemon has announced itself and before anything is seeded, its discovery file
    (`clave-server.json`) says `titles: "off"`, `testMode: true` and `machineUsage: false`
    (`startStack`, step 3b);
@@ -136,28 +136,35 @@ Five checks, printed first, every boot; one failing stops the boot with exit 2:
    watch starts here and covers the sign-in, the seed and everything after.
 
 From the probe to the stop, the recorders and the two folders are read every half second
-(`startStack`, steps 3e and 7b, `inspect`): a line beyond the baseline, a file in a folder, a
-log that lost the probe's line, is missing or cannot be read, or a folder that is missing, a
-symlink or unreadable (a read that fails is a failure, never "no calls" or "empty") stops the
-daemon, latches the problem through the cleanup and the step under way, and ends the run with
-exit 2, in every mode (the long run `fixture-check.mjs` uses, `--once`, `--self-check`). Nothing under `~/.claude` or any other
-folder of this Mac is read: the evidence is the stack's own recorder log and its own two
-folders.
+(`startStack`, steps 3e and 7b, `inspect`): a line beyond the baseline, any entry in a folder
+(an empty sub-folder included), a log that lost the probe's line, is missing or cannot be
+read, or a folder that is missing, a symlink or unreadable (a read that fails is a failure,
+never "no calls" or "empty") stops the daemon, latches the problem through the cleanup and
+the step under way, and ends the run with exit 2, in every mode (the long run
+`fixture-check.mjs` uses, `--once`, `--self-check`); a signal during the boot stops the
+children already started and exits 2 when that last read saw a problem. Nothing under
+`~/.claude` or any other folder of this Mac is read: the evidence is the stack's own recorder
+log and its own two folders.
 
 Proofs that the checks go red, every flag kept so no boot ever runs with wrong flags, and only
-the stack's own files touched: `--prove-tmpdir-guard` starts nothing; `--prove-env-guard` starts
-nothing and hands the second check an environment with one stray variable, which must be refused
-with the key named and never its value; `--prove-prerequisites`
-hands the third check a discovery read saying `titles: "on"`; `--prove-inside cache` hands the
-fourth a cached login `PATH` without the recorders, `--prove-inside resolver` a one-shot whose
-file is not the recorder, `--prove-inside args` arguments other than `--version`, each refused
-before the probe, and `--prove-inside probe` hands the daemon a wrong expected canonical path,
-which it refuses to run, nothing started; `--prove-recorder-read missing|unreadable` removes or
-replaces the owned recorder log while the stack runs and expects the watch to latch a failure;
-`--prove-title-guard` runs the `claude` recorder itself with `-p` while the stack runs (never a
-CLI), so a foreign line lands in the recorder log, and expects the watch to stop the daemon. That a real title call reaches the recorder rather than the CLI was
-shown on 9 November 2026 at 11:29 and 11:30, before `--no-titles` existed; after lane C's
-fixture is on `mobile`, its `--mutate drop-title-opt-out` is the verifier's knob for that proof.
+the stack's own files touched: `--prove-tmpdir-guard` starts nothing; `--prove-env-guard
+stray|no-env-file|live-stub` starts nothing and hands the pre-boot checks one thing wrong (a
+stray variable, the daemon's command without `--no-env-file`, a stub shell echoing a live
+environment), expecting exactly that check red and the others green, the key named and never
+its value; `--prove-prerequisites` hands the third check a discovery read saying
+`titles: "on"`; `--prove-inside keys` hands the fourth one stray key in the daemon's
+environment, `--prove-inside cache` a cached login `PATH` without the recorders,
+`--prove-inside resolver` a one-shot that would start another executable and `--prove-inside
+args` arguments other than `--version`, each refused before the probe, and `--prove-inside
+probe` hands the daemon a wrong expected canonical path, which it refuses to run, nothing
+started; `--prove-recorder-read missing|unreadable` removes or replaces the owned recorder log
+while the stack runs and expects the watch to latch a failure; `--prove-title-guard recorder`
+runs the `claude` recorder itself with `-p` while the stack runs (never a CLI), so a foreign
+line lands in the recorder log, and `--prove-title-guard folder` plants one file in the owned
+Claude config folder; the watch must stop the daemon either way. That a real title call
+reaches the recorder rather than the CLI was shown on 9 November 2026 at 11:29 and 11:30,
+before `--no-titles` existed; after lane C's fixture is on `mobile`, its `--mutate
+drop-title-opt-out` is the verifier's knob for that proof.
 
 ## What is a fixture, and what is not
 
