@@ -86,17 +86,34 @@ export function usageWindowsForModel<W extends PoolUsageWindow>(
   })
 }
 
+/** The window about to stop a view, ONE rule for the pool and the readouts:
+ *  a cap that is out (`windowExhausted`) ranks above every open one, so a
+ *  view is exhausted exactly when one of its caps is; among caps out, the
+ *  one that comes back LAST binds (a Fable week back in 1d under a whole
+ *  week back in 4d stops the session for 4d), a cap with no reset known
+ *  after those with one; then the service's severity, then the percent
+ *  used. */
 export function tightestOf<W extends PoolUsageWindow>(windows: ReadonlyArray<W>): W | null {
   let best: W | null = null
   for (const w of windows) {
-    if (!best) best = w
-    else {
-      const a = rank[w.severity ?? 'normal'] ?? 0
-      const b = rank[best.severity ?? 'normal'] ?? 0
-      if (a > b || (a === b && w.usedPercentage > best.usedPercentage)) best = w
-    }
+    if (!best || tighter(w, best)) best = w
   }
   return best
+}
+
+function tighter(w: PoolUsageWindow, than: PoolUsageWindow): boolean {
+  const outW = windowExhausted(w)
+  const outT = windowExhausted(than)
+  if (outW !== outT) return outW
+  if (outW) {
+    const backW = w.resetsAt ?? Number.NEGATIVE_INFINITY
+    const backT = than.resetsAt ?? Number.NEGATIVE_INFINITY
+    if (backW !== backT) return backW > backT
+  }
+  const a = rank[w.severity ?? 'normal'] ?? 0
+  const b = rank[than.severity ?? 'normal'] ?? 0
+  if (a !== b) return a > b
+  return w.usedPercentage > than.usedPercentage
 }
 
 /** One entry per family the read names, the tighter window when a read

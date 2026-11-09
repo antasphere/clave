@@ -761,6 +761,49 @@ describe('an account switch', () => {
     await run(h, 'openSession', { cwd: '/proj', mode: 'claude' })
     expect(chosen()).toBe('default')
   })
+  it('judges a Codex tab for its model on a switch and an open: Spark’s bucket is a family', async () => {
+    const h = setup({ ...world(), switchMode: 'automatic' })
+    const week = { kind: 'weekly_all', scope: null, usedPercentage: 30, severity: 'normal' }
+    const spark = { kind: 'session', scope: 'Spark', usedPercentage: 100, severity: 'critical' }
+    const open = { kind: 'weekly_all', scope: null, usedPercentage: 10, severity: 'normal' }
+    h.w.accounts.codex = [
+      {
+        id: 'default',
+        label: 'Default',
+        usable: true,
+        usage: { tightest: week, windows: [week, spark] }
+      },
+      { id: 'c2', label: 'Second', usable: true, usage: { tightest: open, windows: [open] } }
+    ]
+    h.w.selected.codex = 'default'
+    h.w.sessions.push(session('cx'))
+    h.w.records.cx = record('cx', { claudeMode: false, codexMode: true, codexAccountId: 'default' })
+    h.w.records.cx.model = 'gpt-5.3-codex-spark'
+    expect(await run(h, 'switchAccount', { sessionId: 'cx', account: 'any' })).toMatchObject({
+      account: { id: 'c2' }
+    })
+    // With the only other account out on its week, a Spark tab still has
+    // nowhere to go, and a tab on another model moves there regardless of
+    // Spark (the week is open on default, so the move is the pool's ring).
+    h.w.accounts.codex[1] = {
+      ...h.w.accounts.codex[1],
+      usage: {
+        tightest: { ...open, usedPercentage: 97 },
+        windows: [{ ...open, usedPercentage: 97 }]
+      }
+    }
+    await expect(run(h, 'switchAccount', { sessionId: 'cx', account: 'any' })).rejects.toThrow(
+      'No other account of this provider has headroom'
+    )
+    h.w.accounts.codex[1] = { ...h.w.accounts.codex[1], usage: { tightest: open, windows: [open] } }
+    const chosen = (): string =>
+      (h.argsOf('sessions.start').at(-1) as { options: Record<string, string> }).options
+        .codexAccountId
+    await run(h, 'openSession', { cwd: '/proj', mode: 'codex', model: 'gpt-5.3-codex-spark' })
+    expect(chosen()).toBe('c2')
+    await run(h, 'openSession', { cwd: '/proj', mode: 'codex', model: 'gpt-5.3-codex' })
+    expect(chosen()).toBe('default')
+  })
   it('refuses what is not an account tab, an unknown account, and a pool with no headroom', async () => {
     const h = setup(world())
     await expect(run(h, 'switchAccount', { sessionId: 't1', account: 'any' })).rejects.toThrow(

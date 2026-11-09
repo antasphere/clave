@@ -25,7 +25,28 @@ const facts: AccountFacts = {
   selectedAccountId: () => 'default'
 }
 
+const codexWeek = { kind: 'weekly_all', scope: null, usedPercentage: 30, severity: 'normal' }
+const sparkBlock = { kind: 'session', scope: 'Spark', usedPercentage: 100, severity: 'critical' }
+const codexFacts: AccountFacts = {
+  accounts: () => [
+    {
+      id: 'default',
+      label: 'Default',
+      usable: true,
+      usage: { tightest: codexWeek, windows: [codexWeek, sparkBlock] }
+    },
+    { id: 'spare', label: 'Spare', usable: true, usage: { tightest: open, windows: [open] } }
+  ],
+  selectedAccountId: () => 'default'
+}
+
 describe('the served launch picks its account for its model', () => {
+  it('judges a Codex account for its model buckets: Spark out skips it on Spark only', () => {
+    expect(accountForLaunch(codexFacts, 'codex', 'gpt-5.3-codex-spark').id).toBe('spare')
+    expect(accountForLaunch(codexFacts, 'codex', 'gpt-5.3-codex').id).toBe('default')
+    expect(accountForLaunch(codexFacts, 'codex').id).toBe('default')
+    expect(resolveAccountRef(codexFacts, 'codex', 'any', 'gpt-5.3-codex-spark').id).toBe('spare')
+  })
   it('keeps the selected account for Opus and no model, skips it for Fable', () => {
     expect(accountForLaunch(facts, 'claude', 'claude-opus-5-5').id).toBe('default')
     expect(accountForLaunch(facts, 'claude').id).toBe('default')

@@ -55,6 +55,30 @@ export async function run(t) {
         ...(options?.model ? { model: options.model } : {})
       }))
       const week = Date.now() + 3 * 24 * 3600 * 1000
+      // Codex: the week at 30%, the Spark bucket's 5-hour block spent.
+      settings.usage.readCodex = async () => ({
+        windows: [
+          {
+            key: 'codex-week',
+            label: 'Weekly · all models',
+            kind: 'weekly_all',
+            scope: null,
+            usedPercentage: 30,
+            resetsAt: week,
+            severity: 'normal'
+          },
+          {
+            key: 'spark-5h',
+            label: 'Spark · 5h',
+            kind: 'session',
+            scope: 'Spark',
+            usedPercentage: 100,
+            resetsAt: Date.now() + 2 * 3600 * 1000,
+            severity: 'critical'
+          }
+        ],
+        fetchedAt: Date.now()
+      })
       settings.usage.readClaude = async () => ({
         windows: [
           {
@@ -159,6 +183,35 @@ export async function run(t) {
     // ── Back to the Fable tab: the foot follows the focus ──
     await callMcp(app, 'focus', { sessionId: fable.sessionId })
     t.check('focusing the Fable tab again brings the Fable cap back', await capIs('Fable'))
+
+    // ── Codex: Spark's bucket is a family; a tab on another model reads the week ──
+    const codexFoot = () => win.locator('.sidebar-footer-line[data-usage-provider="codex"]')
+    const codexCapIs = async (cap) =>
+      !!(await until(async () => (await codexFoot().getAttribute('data-usage-cap')) === cap))
+    const codexText = async () =>
+      ((await codexFoot().textContent()) ?? '').replace(/\s+/g, ' ').trim()
+    const spark = await callMcp(app, 'openSession', {
+      cwd: ROOT,
+      mode: 'codex',
+      name: 'On Spark',
+      model: 'gpt-5.3-codex-spark'
+    })
+    await callMcp(app, 'focus', { sessionId: spark.sessionId })
+    t.check('a Codex tab on Spark shows the Spark bucket', await codexCapIs('Spark'))
+    t.check(
+      'and says it is out, and when it comes back',
+      /^Spark out · back in /.test(await codexText()),
+      await codexText()
+    )
+    const codex = await callMcp(app, 'openSession', {
+      cwd: ROOT,
+      mode: 'codex',
+      name: 'On Codex',
+      model: 'gpt-5.3-codex'
+    })
+    await callMcp(app, 'focus', { sessionId: codex.sessionId })
+    t.check('a Codex tab on another model shows the shared week', await codexCapIs('Overall'))
+    t.check('with 70% left', /70% left/.test(await codexText()), await codexText())
 
     t.equal('no renderer exceptions', errors.length, 0)
   } finally {

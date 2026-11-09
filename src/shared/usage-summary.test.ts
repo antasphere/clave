@@ -156,6 +156,40 @@ describe('a family is any window with a scope, whatever its kind', () => {
   })
 })
 
+describe('tightestOf, the one rule for the pool and the readouts', () => {
+  it('ranks a cap that is out above every open one, whatever their severities', () => {
+    // 96% used at normal severity is out (4% left); 50% at warning is not.
+    const block = w({ kind: 'session', usedPercentage: 50, severity: 'warning' })
+    const week = w({ kind: 'weekly_all', usedPercentage: 96, severity: 'normal' })
+    const account = usageSummaryOf({ windows: [block, week] })!
+    expect(account.tightest).toBe(week)
+    expect(isExhausted(account)).toBe(true)
+  })
+  it('among caps out, the one that comes back last binds', () => {
+    const fableOut = { ...fable, resetsAt: 1_000 }
+    const weekOut = w({
+      kind: 'weekly_all',
+      usedPercentage: 97,
+      severity: 'warning',
+      resetsAt: 4_000
+    })
+    const onFable = usageSummaryForModel(usageSummaryOf({ windows: [weekOut, fableOut] }), 'fable')!
+    expect(onFable.tightest).toBe(weekOut)
+    // A cap out with no reset known ranks after those with one.
+    const unknown = { ...fable, resetsAt: null }
+    expect(usageSummaryOf({ windows: [weekOut, unknown] })!.tightest).toBe(weekOut)
+    expect(usageSummaryForModel(usageSummaryOf({ windows: [unknown] }), 'fable')!.tightest).toBe(
+      unknown
+    )
+  })
+  it('keeps the service’s severity, then the percent used, among open caps', () => {
+    const a = w({ kind: 'session', usedPercentage: 80, severity: 'normal' })
+    const b = w({ kind: 'weekly_all', usedPercentage: 40, severity: 'warning' })
+    const c = w({ kind: 'weekly_all', usedPercentage: 55, severity: 'warning' })
+    expect(usageSummaryOf({ windows: [a, b, c] })!.tightest).toBe(c)
+  })
+})
+
 describe('scopedCapsOf', () => {
   it('keeps the tighter of two windows the read carries for one family', () => {
     const loose = w({ kind: 'weekly_scoped', scope: 'Fable', usedPercentage: 30 })

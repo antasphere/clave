@@ -152,6 +152,45 @@ describe('the launch picks its account for the model it will run', () => {
     })
     expect(nextAccountFor(session('opus'))).toBe('third')
   })
+  it('judges a Codex launch and a Codex move for the model too: Spark’s bucket is a family', () => {
+    useCodexAccountStore.setState({
+      accounts: [
+        { id: 'default', label: 'Default', kind: 'chatgpt', hasCredential: true },
+        { id: 'spare', label: 'Spare', kind: 'chatgpt', hasCredential: true }
+      ],
+      selectedAccountId: 'default'
+    })
+    const week = { ...windows[0], key: 'week', usedPercentage: 30 }
+    const spark = {
+      ...windows[1],
+      key: 'spark',
+      kind: 'session',
+      scope: 'Spark',
+      label: 'Spark 5h'
+    }
+    const open = { ...windows[0], key: 'open', usedPercentage: 10 }
+    useCodexAccountsUsage.setState({
+      byAccount: {
+        default: { status: 'ready', error: null, windows: [week, spark], tightest: week },
+        spare: { status: 'ready', error: null, windows: [open], tightest: open }
+      }
+    })
+    expect(accountForLaunch('codex', undefined, 'gpt-5.3-codex-spark').id).toBe('spare')
+    expect(accountForLaunch('codex', undefined, 'gpt-5.3-codex').id).toBe('default')
+    expect(accountForLaunch('codex').id).toBe('default')
+    const onSpark = {
+      ...session('gpt-5.3-codex-spark'),
+      claudeMode: false,
+      codexMode: true,
+      codexAccountId: 'default'
+    }
+    expect(nextAccountFor(onSpark)).toBe('spare')
+    expect(sessionSwitchTargets(onSpark).find((t) => t.id === 'spare')?.suggested).toBe(true)
+    useCodexAccountStore.setState({
+      accounts: [{ id: 'default', label: 'Default', kind: 'chatgpt', hasCredential: true }],
+      selectedAccountId: 'default'
+    })
+  })
   it('skips an account whose SHARED cap is out for every model', () => {
     const spare = { ...originalProfiles[0], id: 'spare', label: 'Spare', hasToken: true }
     useClaudeProfileStore.setState({

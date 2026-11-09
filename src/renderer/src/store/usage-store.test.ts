@@ -111,6 +111,15 @@ describe('tightestWindow', () => {
     ])
     expect(picked?.key).toBe('urgent')
   })
+  it('takes a cap that is out over every open one, so the pool and the line agree', () => {
+    // 96% used at normal severity has 4% left: out. The pool skips the
+    // account, and the line says the same cap is out.
+    const picked = tightestWindow([
+      w({ key: 'block', kind: 'session', usedPercentage: 50, severity: 'warning' }),
+      w({ key: 'week', kind: 'weekly_all', usedPercentage: 96, severity: 'normal' })
+    ])
+    expect(picked?.key).toBe('week')
+  })
 
   it('falls back to the percentage within one severity', () => {
     const picked = tightestWindow([
@@ -261,32 +270,91 @@ describe('the one vocabulary for a cap that is out', () => {
     )
     expect(capOutLabel({ ...fable, resetsAt: null })).toBe('Fable out')
   })
-  it('names every cap of the view that is out, the stopping one first', () => {
-    // The 5-hour block out for 2h AND the week out for 2d 5h: naming the
-    // block alone would say the account is back in 2h.
+  it('names every cap of the view that is out, the one back last first', () => {
+    // The 5-hour block out for 2h AND the week out for 2d 5h: the account is
+    // out for 2d 5h, so the week is the stopping cap, and both are named.
     const blockOut = { ...block, usedPercentage: 100, severity: 'critical' as const }
     const weekOut = { ...overall, usedPercentage: 97, severity: 'warning' as const }
     const status = capStatus(
       { status: 'ready', error: null, ...accountUsageFieldsOf([blockOut, weekOut, fable]) },
       { now }
     )!
-    expect(status.stopping).toBe(blockOut)
+    expect(status.stopping).toBe(weekOut)
+    expect(status.exhausted).toBe(true)
+    // Then the others out in the read's order, the family that is out last.
     expect(status.out).toEqual([
-      '5h out · back in 2h',
       'Overall out · back in 2d 5h',
+      '5h out · back in 2h',
       'Fable out · back in 3d'
     ])
     expect(status.headroom).toBeNull()
-    // A session on Fable with the week out behind it names both, once each.
+    // A session on Fable (back in 3d) with the week out behind it (2d 5h):
+    // Fable binds, both are named, the chip and the notice say Fable.
     const account = {
       status: 'ready' as const,
       error: null,
       ...accountUsageFieldsOf([weekOut, fable])
     }
-    expect(capStatus(claudeUsageForModel(account, 'fable'), { now })!.out).toEqual([
-      'Fable out · back in 3d',
-      'Overall out · back in 2d 5h'
-    ])
+    const onFable = capStatus(claudeUsageForModel(account, 'fable'), { now })!
+    expect(onFable.stopping).toBe(fable)
+    expect(onFable.out).toEqual(['Fable out · back in 3d', 'Overall out · back in 2d 5h'])
+    // The other way round: Fable back in 1d under a week out for 2d 5h, the
+    // week binds and the session's stopping cap is Overall.
+    const fableSoon = { ...fable, resetsAt: now + DAY }
+    const weekBinds = capStatus(
+      claudeUsageForModel(
+        { status: 'ready', error: null, ...accountUsageFieldsOf([weekOut, fableSoon]) },
+        'fable'
+      ),
+      { now }
+    )!
+    expect(weekBinds.stopping).toBe(weekOut)
+    expect(weekBinds.out).toEqual(['Overall out · back in 2d 5h', 'Fable out · back in 1d'])
+  })
+  it('names a family once when two of its windows are out, back when the later one is', () => {
+    // Codex's Spark bucket: its 5-hour block out for 2h and its week out for 5d.
+    const codexWeek = w({ key: 'week', kind: 'weekly_all', usedPercentage: 30 })
+    const sparkBlock = w({
+      key: 'spark-5h',
+      kind: 'session',
+      scope: 'Spark',
+      usedPercentage: 100,
+      severity: 'critical',
+      resetsAt: now + 2 * H
+    })
+    const sparkWeek = w({
+      key: 'spark-7d',
+      kind: 'weekly_scoped',
+      scope: 'Spark',
+      usedPercentage: 99,
+      resetsAt: now + 5 * DAY
+    })
+    const account = {
+      status: 'ready' as const,
+      error: null,
+      ...accountUsageFieldsOf([codexWeek, sparkBlock, sparkWeek])
+    }
+    expect(capStatusLine(account, { now })).toBe('70% left · Overall · Spark out · back in 5d')
+    const onSpark = capStatus(claudeUsageForModel(account, 'gpt-5.3-codex-spark'), { now })!
+    expect(onSpark.stopping).toBe(sparkWeek)
+    expect(onSpark.out).toEqual(['Spark out · back in 5d'])
+  })
+  it('never names a cap out while the pool treats the view as open', () => {
+    const block = w({ key: 'block', kind: 'session', usedPercentage: 50, severity: 'warning' })
+    const week = w({
+      key: 'week',
+      kind: 'weekly_all',
+      usedPercentage: 96,
+      severity: 'normal',
+      resetsAt: now + 4 * DAY
+    })
+    const account = {
+      status: 'ready' as const,
+      error: null,
+      ...accountUsageFieldsOf([block, week])
+    }
+    expect(isExhausted(account)).toBe(true)
+    expect(capStatusLine(account, { now })).toBe('Overall out · back in 4d')
   })
   it('names the families that are out even when the read has no shared cap', () => {
     const familiesOnly = { status: 'ready' as const, error: null, ...accountUsageFieldsOf([fable]) }

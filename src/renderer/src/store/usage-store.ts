@@ -278,24 +278,14 @@ export function usageForModel(
 /** The name the session view had when only Claude had families. */
 export const claudeUsageForModel = usageForModel
 
-/** Select by service severity, then utilization. Without a session context,
- * consider every reported window for the account overview. */
+/** The window about to stop a view, the shared rule (`tightestOf`): a cap
+ * that is out first, the one back last among those, then the service's
+ * severity, then utilization. With a model, over that model's caps. */
 export function tightestWindow(
   windows: UsageWindow[],
   context?: { model?: string }
 ): UsageWindow | null {
-  const rank = { normal: 0, warning: 1, critical: 2 }
-  let best: UsageWindow | null = null
-  for (const w of context ? claudeModelWindows(windows, context.model) : windows) {
-    if (!best) {
-      best = w
-      continue
-    }
-    const a = rank[w.severity ?? 'normal']
-    const b = rank[best.severity ?? 'normal']
-    if (a > b || (a === b && w.usedPercentage > best.usedPercentage)) best = w
-  }
-  return best
+  return tightestOf(context ? claudeModelWindows(windows, context.model) : windows)
 }
 
 /** The short name for a cap — what a one-line readout has room for. The
@@ -474,19 +464,19 @@ export function capStatus(
   // whole, and still has families to name.
   if (!summary.tightest && !summary.scoped?.length) return null
   const exhausted = isExhausted(summary)
+  // The stopping cap is the view's tightest, which the one rule makes the
+  // cap out that comes back last; the others out follow in the read's
+  // order, one entry per name with its latest return (Codex's Spark block
+  // and Spark week both out read "Spark out" once, back when the week is).
   const stopping = exhausted ? summary.tightest : null
-  // Every cap of the view that is out: the stopping one first, then the
-  // others in the read's order, a shared cap out behind the stopping one
-  // included (a 5-hour block out for 2h with the week out for 4d names both).
   const windows = summary.windows ?? (summary.tightest ? [summary.tightest] : [])
-  const outWindows = [
-    ...(stopping ? [stopping] : []),
-    ...windows.filter((w) => w !== stopping && windowExhausted(w))
-  ]
-  for (const cap of summary.scoped ?? []) {
-    if (cap.exhausted && !outWindows.includes(cap.window)) outWindows.push(cap.window)
+  const byName = new Map<string, UsageWindow>()
+  for (const w of [...(stopping ? [stopping] : []), ...windows]) {
+    if (!windowExhausted(w)) continue
+    const held = byName.get(capName(w))
+    if (!held || (w.resetsAt ?? -1) > (held.resetsAt ?? -1)) byName.set(capName(w), w)
   }
-  const out = outWindows.map((w) => capOutLabel(w, words))
+  const out = [...byName.values()].map((w) => capOutLabel(w, words))
   // The shared headroom: the tightest shared cap while it is open. A session
   // view whose family cap is out still says what the account has left.
   const shared = summary.shared === undefined ? summary.tightest : summary.shared
