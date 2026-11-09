@@ -1132,6 +1132,7 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
                   // by the same write, on this Mac or the session's server.
                   // A form settled meanwhile refuses it: nothing to tell.
                   type: (id, answers) => {
+                    dispatch({ typedSent: id, answers })
                     void write({ type: 'permission_draft', id, answers }).catch(() => {})
                   }
                 }}

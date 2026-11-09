@@ -345,6 +345,50 @@ export async function run(t) {
       "the person's own typing never lands as the agent's"
     )
     t.check("what the person types reaches the form's draft and the agent reads it", true)
+    // The view mounts again (the plugin off and on): the card starts from the
+    // server's draft, and the person typing one field leaves the agent's fill
+    // of another where it is (verifier round 1, Major 2).
+    await win.evaluate(() => window.electronAPI.pluginsDisable('clave.chat-view'))
+    await until(async () => ((await view.count()) === 0 ? true : null))
+    await win.evaluate(() =>
+      window.electronAPI.pluginsEnable('clave.chat-view', ['sessions.read', 'sessions.write'])
+    )
+    await view.locator('textarea:not(:disabled)').waitFor()
+    await card.waitFor()
+    assert.equal(await card.locator('.chat-prompt-step').innerText(), '1/3')
+    assert.equal(await card.locator('#chat-field-name').inputValue(), 'Luca P')
+    await card.locator('#chat-field-name').fill('Luca Q')
+    const afterRemount = await until(async () => {
+      const read = payload(await mcp.call('clave_input_result', { requestId: second.requestId }))
+      return read?.answers?.name === 'Luca Q' ? read : null
+    })
+    assert.deepEqual(afterRemount?.answers, { name: 'Luca Q', when: '2026-11-17' })
+    t.check("after the view mounts again, the person's typing keeps the agent's other fields", true)
+    // The person says the agent's first name was right after all: the agent
+    // sets it again, to the value it once set, and the card shows it, so the
+    // card and the draft agree (verifier round 1, Major 1).
+    payload(
+      await mcp.call('clave_input_set', { requestId: second.requestId, answers: { name: 'Luca' } })
+    )
+    assert.ok(
+      await until(async () => {
+        const text = await card.innerText()
+        return /Luca(?! [PQ])/.test(text) && !text.includes('Luca Q') ? true : null
+      }),
+      'the agent setting a field again lands over what the person typed'
+    )
+    t.check('the agent setting a field again, to its earlier value, lands on the card', true)
+    // And the person retypes it once more, the correction the agent approves.
+    if ((await card.locator('.chat-prompt-step').innerText()) !== '1/3')
+      await card.locator('.chat-ask-field[data-folded="true"]').nth(0).locator('button').click()
+    assert.equal(await card.locator('.chat-prompt-step').innerText(), '1/3')
+    await card.locator('#chat-field-name').fill('Luca P')
+    assert.ok(
+      await until(async () => {
+        const read = payload(await mcp.call('clave_input_result', { requestId: second.requestId }))
+        return read?.answers?.name === 'Luca P' ? true : null
+      })
+    )
     // The agent approves it itself (the person said to go ahead): the card
     // collapses, no message is owed, the answers are the record's, the
     // person's correction among them.

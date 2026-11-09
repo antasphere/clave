@@ -318,6 +318,11 @@ describe('the session stream on the wire', () => {
   it('a write is a typed input or bytes, nothing else', () => {
     expect(Either.isRight(decode(SessionWrite, { type: 'bytes', data: 'aGk=' }))).toBe(true)
     expect(Either.isRight(decode(SessionWrite, { type: 'interrupt' }))).toBe(true)
+    // The person's typing into a form rides the wire to a server's session
+    // (PRDCT-4210): the server's write route decodes it.
+    expect(
+      decode(SessionWrite, { type: 'permission_draft', id: 'clave:f', answers: { name: 'x' } })
+    ).toEqual(Either.right({ type: 'permission_draft', id: 'clave:f', answers: { name: 'x' } }))
     expect(Either.isLeft(decode(SessionWrite, { type: 'bytes', data: '***' }))).toBe(true)
     expect(Either.isLeft(decode(SessionWrite, new Uint8Array([1])))).toBe(true)
   })

@@ -357,6 +357,11 @@ export async function run(t) {
     await inject(fixture, record.id, [{ type: 'state_change', state: 'working' }])
     await view.locator('.chat-provider-mark[data-state="working"]').waitFor()
     t.check('the mark leaves when the agent stops and returns when it works again', true)
+    // The kernel's own word moves the dot both ways: the injected states
+    // above already left it clear, so it is set waiting first (verifier
+    // round 1, Minor 6: without this the clear proved nothing).
+    await kernelState(app, record.id, 'blocked')
+    assert.ok(await until(async () => (await waitingDot.count()) === 1))
     await kernelState(app, record.id, 'working')
     assert.ok(await until(async () => (await waitingDot.count()) === 0))
     await win.getByRole('button', { name: 'Interrupt', exact: true }).click()

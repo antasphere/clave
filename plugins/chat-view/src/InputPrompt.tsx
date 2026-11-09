@@ -426,10 +426,13 @@ export function InputPrompt({
   const meta = inputRequestMeta(request.input)
   const questions = request.questions ?? []
   const keys = questions.map(questionKey)
+  // A card with nothing of its view's own (a view mounted again) starts from
+  // what the server's draft holds: the agent's fields, then the reader's
+  // typing over them (verifier round 1, Major 2).
   const [values, setValues] = useState<Values>(() =>
     drafts?.get(request.id)
       ? initialValues(request, drafts)
-      : { ...initialValues(request, drafts), ...typed }
+      : { ...initialValues(request, drafts), ...draft, ...typed }
   )
   const [kept] = useState(() => recalled(request.id))
   const [touched, setTouchedState] = useState<Record<string, boolean>>(kept.touched)
@@ -498,23 +501,35 @@ export function InputPrompt({
   // the last change, the fields that differ from what the server holds
   // (`synced`), so a field the agent set is never sent back as typed. An
   // answer or a skip carries every value itself and drops what is waiting;
-  // a card that unmounts sends it at once.
+  // a card that unmounts sends it at once. Only the fields the reader edited
+  // since the last send go (`dirty`): a field the card shows otherwise, a
+  // default or one a remount left empty, is never sent over the agent's
+  // (verifier round 1, Major 2).
   const synced = useRef<Values>({ ...typed, ...kept.synced })
+  const dirty = useRef(new Set<string>())
   const typing = useRef<ReturnType<typeof setTimeout> | null>(null)
   const flush = (): void => {
     if (typing.current) clearTimeout(typing.current)
     typing.current = null
+    const edited = [...dirty.current]
+    dirty.current.clear()
     if (!onType) return
     const wire = answersOf(questions, valuesRef.current)
     const patch: Record<string, string | string[]> = {}
-    for (const key of keys) {
+    for (const key of edited) {
       const value = wire[key] ?? ''
       if (JSON.stringify(value) !== JSON.stringify(own(synced.current, key) ?? ''))
         patch[key] = value
     }
     if (!Object.keys(patch).length) return
     synced.current = { ...synced.current, ...patch }
-    remember(request.id, { synced: synced.current })
+    // The server now holds the reader's value there, so the agent setting
+    // the field again, to the value it once set, is a change the card must
+    // show (verifier round 1, Major 1).
+    const forgotten = { ...applied.current }
+    for (const key of Object.keys(patch)) delete forgotten[key]
+    applied.current = forgotten
+    remember(request.id, { synced: synced.current, applied: applied.current })
     onType(request.id, patch)
   }
   const flushRef = useRef(flush)
@@ -530,6 +545,7 @@ export function InputPrompt({
   const dropTyping = (): void => {
     if (typing.current) clearTimeout(typing.current)
     typing.current = null
+    dirty.current.clear()
   }
   const set = (key: string, value: InputAnswer): void => {
     if (notes?.[key]) setDismissed((current) => ({ ...current, [key]: notes[key] }))
@@ -539,6 +555,7 @@ export function InputPrompt({
       return next
     })
     if (!onType) return
+    dirty.current.add(key)
     if (typing.current) clearTimeout(typing.current)
     typing.current = setTimeout(() => flushRef.current(), TYPING_SYNC_MS)
   }
