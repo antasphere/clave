@@ -9,7 +9,7 @@
 // beside the work. Pinned to the in-process server for the same reason as
 // chat-account-switch (the stubbed settings source).
 import assert from 'node:assert/strict'
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import {
   launchApp,
@@ -288,11 +288,17 @@ export async function run(t) {
     const listed = (await callMcp(app, 'list', {})).sessions.find((s) => s.id === id)
     t.check('the tab keeps its id and its name', !!listed && listed.name === 'Moving', listed)
     const userData = await app.evaluate(({ app }) => app.getPath('userData'))
-    const tape = path.join(userData, 'handoffs', `${id}.md`)
+    // One tape per move: `handoffs/<id>-<timestamp>.md`.
+    const tapes = (
+      existsSync(path.join(userData, 'handoffs'))
+        ? readdirSync(path.join(userData, 'handoffs'))
+        : []
+    ).filter((name) => name.startsWith(`${id}-`) && name.endsWith('.md'))
+    const tape = tapes[0] && path.join(userData, 'handoffs', tapes[0])
     t.check(
       'the full conversation was written beside the work',
-      existsSync(tape) && readFileSync(tape, 'utf8').includes('first question'),
-      tape
+      tapes.length === 1 && readFileSync(tape, 'utf8').includes('first question'),
+      tapes
     )
     t.check('no renderer error during the run', errors.length === 0, errors)
   } finally {
