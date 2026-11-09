@@ -1,4 +1,5 @@
 import type { SessionRecord } from '../../../preload/index.d'
+import { SERVER_LAYOUT_KEY } from '@clave/contract/sidebar/layout'
 import { savedLayoutSessionIds, type SavedLayoutLike } from '../../../shared/adoption-scope'
 
 /**
@@ -25,6 +26,24 @@ export interface BootRecordLike {
   live?: boolean
   link?: SessionRecord['link']
   transport?: SessionRecord['transport']
+  /** The window the record is stamped with; a Clave server stamps its own
+   *  records with its layout key (PRDCT-4236). */
+  windowKey?: string
+  /** Whether the host runs the session now. */
+  running?: boolean
+}
+
+/**
+ * A record a Clave server owns and does not run (PRDCT-4236): the server's
+ * records carry its own layout key, and its rule is that only an explicit
+ * Resume starts a stopped session; a start asked for it on a client's word
+ * is refused ("Recover a tab's identity, never its process"). Such a record
+ * is a stopped TAB from the start: placed with its name and in its group,
+ * never spawned by the restore, never offered behind the restore prompt (no
+ * process would start on a yes), and Resume is its way back.
+ */
+export function serverOwnedStopped(r: Pick<BootRecordLike, 'windowKey' | 'running'>): boolean {
+  return r.windowKey === SERVER_LAYOUT_KEY && r.running !== true
 }
 
 export interface BootPlan<R extends BootRecordLike> {
@@ -58,7 +77,10 @@ export function planBootAdoption<R extends BootRecordLike>(records: R[]): BootPl
   for (const r of records) {
     const kind = r.link?.kind
     if (!kind) {
-      ;(r.live || r.transport === 'events' ? plan.liveTabs : plan.deadTabs).push(r)
+      ;(r.live || r.transport === 'events' || serverOwnedStopped(r)
+        ? plan.liveTabs
+        : plan.deadTabs
+      ).push(r)
       continue
     }
     // A routine's run (ADR 0004) is the server's: it starts, watches and

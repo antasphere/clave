@@ -4,7 +4,7 @@
  * (`clave-owner:session:<serverId>:<id>`) and by its exact name, and answers
  * the recent output the owning server keeps. On the fleet harness: one
  * standalone server, one Mac, a Claude tab on the Mac as the caller (its own
- * token is what gives the read a tab identity and the reach rule a parent).
+ * token is what gives the read a tab identity and "parent" its meaning).
  *
  * Fails if: the read of the returned key or of the name says no such
  * session (what 7 November 2026 showed), or the text read is not what the
@@ -84,7 +84,8 @@ export async function run(t) {
     )
     t.check('and reads the same output', !!byName?.text?.includes(marker))
 
-    // A tab nobody related opened stays out of reach, on a server as here.
+    // Any tab may read any tab (PRDCT-4236), but a call with no tab identity
+    // is refused, on a server as here.
     const sharedToken = JSON.parse(
       (await import('node:fs')).readFileSync(`${mac.dir}/mcp-server.json`, 'utf-8')
     ).token

@@ -43,10 +43,11 @@ import {
   type TargetHost,
   readAnswer,
   resolveTarget,
-  assertCanReach,
+  requireCaller,
   resumeTarget,
   sendToTarget
 } from './session-targets'
+import { planResumeFromRecords } from './conversation-history'
 
 export interface StandaloneMcpOptions {
   readonly sessions: SessionHostService
@@ -341,7 +342,7 @@ function buildServer(
     'clave_open_session',
     {
       description:
-        'Open a new tab on this server: a Claude or Codex agent (in the chat view unless chat is false), an Antigravity or Pi agent, or a plain terminal, in an absolute directory, with an optional model, name, first prompt and group. Returns the new sessionId; the tab is linked to its caller, so clave_list reports its parentId and clave_send_to_session and clave_read_session reach it.',
+        'Open a new tab on this server: a Claude or Codex agent (in the chat view unless chat is false), an Antigravity or Pi agent, or a plain terminal, in an absolute directory, with an optional model, name, first prompt and group. With resume, the new tab continues a PAST conversation by its id. Returns the new sessionId; the tab is linked to its caller, so clave_list reports its parentId and clave_send_to_session and clave_read_session reach it.',
       inputSchema: {
         attachToParent: z
           .boolean()
@@ -349,7 +350,21 @@ function buildServer(
           .describe(
             'Nest the new tab under the calling session in the sidebar (default false). Use true for execution helpers and verifiers; false for lane leads and successors. The caller remains the messaging parent either way while the server is running. Without a caller, the tab stays separate.'
           ),
-        cwd: z.string().min(1).describe('Absolute path of the working directory'),
+        cwd: z
+          .string()
+          .min(1)
+          .optional()
+          .describe(
+            'Absolute path of the working directory. Required unless resume names a conversation a tab of this server still holds.'
+          ),
+        resume: z
+          .string()
+          .min(1)
+          .max(200)
+          .optional()
+          .describe(
+            'Reopen a PAST conversation by its id (a Claude session id, a Codex thread id or a Pi session id): the new agent tab continues it, in cwd. A tab of this server that already runs the conversation is answered as it is (alreadyOpen: true), nothing started; a stopped tab that still holds it is resumed in place. This server keeps no History of its own: a conversation it never held needs cwd, and starts fresh on the id when no transcript is found there. Agent modes only.'
+          ),
         mode: z.enum(['claude', 'codex', 'antigravity', 'gemini', 'pi', 'terminal']).optional(),
         model: z.string().min(1).max(256).optional(),
         name: z.string().min(1).max(255).optional().describe('Display name for the new tab'),
@@ -379,11 +394,51 @@ function buildServer(
         throw new Error(
           `${unsupported.join(', ')} ${unsupported.length > 1 ? 'are' : 'is'} not available on a standalone server.`
         )
+      const mode = args.mode ?? 'claude'
+      const resume = args.resume?.trim()
+      if (resume !== undefined) {
+        // A past conversation (PRDCT-4236): a tab of this server that holds
+        // it is the answer, live as it is, stopped resumed in place; nothing
+        // starts a second process on one conversation.
+        let records: readonly SessionRecord[] = []
+        try {
+          records = sessions.listAdoptableRecords()
+        } catch {
+          // A host with no records keeps nothing to find.
+        }
+        const held = planResumeFromRecords(records, sessions.list(), resume)
+        if (held) {
+          let resumed = false
+          if (held.kind === 'stopped') {
+            const restarted = await sessions.restart(held.sessionId, {}, false, true)
+            resumed = restarted.resumed
+          }
+          return text({
+            sessionId: held.sessionId,
+            groupId: null,
+            workspaceId: records.find((r) => r.id === held.sessionId)?.workspaceId ?? null,
+            conversation: resume,
+            alreadyOpen: true,
+            resumed,
+            note:
+              held.kind === 'open'
+                ? 'A tab of this server already runs this conversation; nothing was started.'
+                : 'A stopped tab of this server held this conversation; it was resumed in place.'
+          })
+        }
+        if (mode === 'terminal')
+          throw new Error(
+            'resume continues an agent conversation: pass an agent mode, not terminal.'
+          )
+      }
+      if (args.cwd === undefined)
+        throw new Error(
+          'cwd is required unless resume names a conversation a tab of this server still holds.'
+        )
       if (!isAbsolute(args.cwd)) throw new Error('cwd must be an absolute path.')
       const directory = await stat(args.cwd).catch(() => undefined)
       if (!directory?.isDirectory()) throw new Error(`no such directory: ${args.cwd}`)
       const groupId = args.groupId === undefined ? null : knownGroup(args.groupId)
-      const mode = args.mode ?? 'claude'
       const { claudeMode, antigravityMode, codexMode, piMode, dangerousMode, model, family } =
         resolveSpawnModes({
           mode,
@@ -428,12 +483,13 @@ function buildServer(
           dangerousMode,
           ...(model !== undefined ? { model } : {}),
           ...(launchProfileId !== undefined ? { launchProfileId } : {}),
+          ...(resume !== undefined ? { resumeSessionId: resume } : {}),
           ...(terminal && args.command ? { initialCommand: args.command } : {}),
           autoExecute: terminal && !!args.command,
           ...(!terminal && args.prompt ? { initialPrompt: args.prompt } : {}),
           ...(args.attachToParent ? { spawnedBy: sessionId } : {}),
           // The opener, nested or not, on the record (PRDCT-4192): what
-          // "parent" and the reach rule read once this server restarted.
+          // "parent" and the name tie-break read once this server restarted.
           openedBy: sessionId,
           ...(workspaceId !== undefined ? { workspaceId } : {})
         }
@@ -545,7 +601,7 @@ function buildServer(
     'clave_read_session',
     {
       description:
-        'Read the recent output of a tab on this server without interrupting it: the last lines of a terminal, the recent history of a chat. Target by session id, exact tab name, "parent" (the tab whose agent opened yours) or "mine". Only a tab you can reach: the one that opened yours, a tab you opened, or a tab in your group.',
+        'Read the recent output of a tab on this server without interrupting it: the last lines of a terminal, the recent history of a chat. Target by session id, exact tab name, "parent" (the tab whose agent opened yours) or "mine". Any tab of this server can be read. Read a tab first to learn what it is doing; message it only when you need it to act, never to report progress to a tab that did not ask: an unasked message becomes that agent\'s next instruction.',
       inputSchema: {
         sessionId: z.string().default('mine'),
         lines: z.number().int().min(1).max(500).default(100)
@@ -556,7 +612,7 @@ function buildServer(
         targetHost,
         args.sessionId === 'mine' ? sessionId : args.sessionId
       )
-      await assertCanReach(targetHost, target, 'read')
+      requireCaller(targetHost, 'read')
       if (target.transport === 'pty') {
         const screen = await sessions.screen(target.id, args.lines)
         return text(readAnswer(targetHost, target, screen.lines))
@@ -574,7 +630,7 @@ function buildServer(
     'clave_send_to_session',
     {
       description:
-        'Send a message to another agent tab on this server: the text is typed into that tab\'s input under a provenance header naming your tab, then submitted. Target by session id, exact tab name or "parent" (the tab whose agent opened yours). Addressed to your OWN tab ("mine", your own id or name) it is a CHECKPOINT: nothing is typed anywhere, the note is only taken for the record. Refused for plain terminals (typed text would run as a shell command) and for tabs you cannot reach (the one that opened yours, tabs you opened, tabs in your group). A tab that has ended is refused unless resume is true, which resumes it first (clave_resume_session) and then delivers.',
+        'Send a message to another agent tab on this server: the text is typed into that tab\'s input under a provenance header naming your tab, then submitted. Target by session id, exact tab name or "parent" (the tab whose agent opened yours). Addressed to your OWN tab ("mine", your own id or name) it is a CHECKPOINT: nothing is typed anywhere, the note is only taken for the record. Any tab of this server can be messaged; read it first with clave_read_session to learn what it is doing, and message it only when you need it to act, never to report progress to a tab that did not ask: an unasked message becomes that agent\'s next instruction. Refused for plain terminals (typed text would run as a shell command). A tab that has ended is refused unless resume is true, which resumes it first (clave_resume_session) and then delivers.',
       inputSchema: {
         sessionId: z.string(),
         message: boundedText,
@@ -608,7 +664,7 @@ function buildServer(
     'clave_resume_session',
     {
       description:
-        'Resume a stopped tab on this server ("resume the tab", "bring the lane back"): the same tab, its agent started again under the same id with its conversation resumed where the provider can, on the model and in the permission mode it was last running. Only a tab you can reach; a running tab is refused.',
+        'Resume a stopped tab on this server ("resume the tab", "bring the lane back"): the same tab, its agent started again under the same id with its conversation resumed where the provider can, on the model and in the permission mode it was last running. Any tab of this server can be resumed; a running tab is refused. Read a tab first with clave_read_session to learn what it is doing.',
       inputSchema: {
         sessionId: z.string().describe('Target: a session id, an exact tab name, or "parent"')
       }

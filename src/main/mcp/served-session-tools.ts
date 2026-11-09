@@ -14,18 +14,16 @@
  * switch, and the showing of a hidden group, are the window's work still:
  * the tool answers `NOT_SERVED` and the caller sends it to the window.
  */
-import type { LayoutSnapshot } from '@clave/contract/sidebar'
 import type { AccountOverride, Session } from '@clave/contract/sessions'
 import { pickAccount } from '../../shared/account-pool'
 import { historyLines } from '../../shared/history-text'
 import {
   type TargetHost,
-  assertCanReach,
   checkpointCapture,
   findTarget,
-  isRelated as relatedOn,
   isServerTabRef,
   readAnswer,
+  requireCaller,
   resolveTarget as resolveOn,
   sendToTarget
 } from './session-targets'
@@ -103,23 +101,6 @@ function targetHost(ctx: Ctx, key: string): TargetHost {
     parentOf: (id) => parentOfSession(ctx, id),
     groups: async () => (await allLayouts(ctx, key)).flatMap((l) => l.groups)
   }
-}
-
-/** Whether two tabs are related for the agent tools' reach: the same tab, one
- *  opened the other, or they share a group (its terminals included). The one
- *  rule the messaging tools and the work tools (`served-work-tools.ts`) share. */
-export function isRelated(
-  ctx: Ctx,
-  layouts: readonly LayoutSnapshot[],
-  caller: string,
-  targetId: string
-): boolean {
-  return relatedOn(
-    { parentOf: (id) => parentOfSession(ctx, id) },
-    layouts.flatMap((l) => l.groups),
-    caller,
-    targetId
-  )
 }
 
 // ── The tools ──
@@ -212,7 +193,7 @@ async function readSession(ctx: Ctx, key: string, p: Payload): Promise<unknown |
   const host = targetHost(ctx, key)
   const target = ref === 'parent' ? await resolveOn(host, ref) : await findTarget(host, ref)
   if (!target) return NOT_SERVED
-  await assertCanReach(host, target, 'read')
+  requireCaller(host, 'read')
   const requested = Math.min(Math.max(typeof p.lines === 'number' ? p.lines : 100, 1), 500)
   // A chat has no screen: its recent history, one line per thing said or
   // done, under the same envelope (PRDCT-4199).
@@ -474,6 +455,11 @@ async function openSession(ctx: Ctx, key: string, p: Payload): Promise<unknown> 
         ...(model !== undefined ? { model } : {}),
         ...(launchProfileId !== undefined ? { launchProfileId } : {}),
         ...accountFields,
+        // A past conversation reopened (PRDCT-4236): the History's id, for
+        // the spawn's --resume (Claude), resume (Codex) or --session (Pi).
+        ...(str(p.resumeSessionId) !== undefined
+          ? { resumeSessionId: str(p.resumeSessionId) }
+          : {}),
         ...(piMode && provider !== undefined ? { piProvider: provider } : {}),
         ...(piMode && thinking !== undefined ? { piThinking: thinking } : {}),
         ...(mode === 'terminal' && command ? { initialCommand: command } : {}),
@@ -486,7 +472,7 @@ async function openSession(ctx: Ctx, key: string, p: Payload): Promise<unknown> 
           ? { spawnedBy: ctx.callerSessionId }
           : {}),
         // The opener, nested or not, on the record (PRDCT-4192): what the
-        // reach rule reads once this process's memory of the open is gone.
+        // name tie-break read once this process's memory of the open is gone.
         ...(ctx.callerSessionId ? { openedBy: ctx.callerSessionId } : {})
       }
     })

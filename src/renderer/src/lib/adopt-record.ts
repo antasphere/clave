@@ -2,7 +2,7 @@ import type { SessionRecord } from '../../../preload/index.d'
 import { useSessionStore, inActiveWorkspace } from '../store/session-store'
 import { useWorkspaceStore } from '../store/workspace-store'
 import type { Session, SessionViewConfig } from '../store/session-types'
-import { resolveHiddenOwner } from './boot-adoption'
+import { resolveHiddenOwner, serverOwnedStopped } from './boot-adoption'
 
 /**
  * Bring one persisted session record back as a live tab in THIS window's
@@ -46,8 +46,13 @@ export const RESTORE_CONCURRENCY = 6
  * sidebar shows the person's tabs in their groups at once, before any process
  * is reattached. Then the records are spawned a few at a time, and each tab
  * takes what its spawn answers (alive, the model, the conversation) and loses
- * the mark, so its pane mounts; a record whose spawn fails leaves the store
- * again, as an adoption that fails always did. Where a tab lands is the
+ * the mark, so its pane mounts; a record whose spawn the server refuses stays
+ * as a STOPPED tab (PRDCT-4236: until then it left the store again, as an
+ * adoption that fails always did, and on a Clave server, which refuses to
+ * start any stopped record on a client's word, every chat left the sidebar at
+ * every boot). A record the server owns and does not run is placed stopped
+ * from the start, and no spawn is asked for it (`serverOwnedStopped`). Where
+ * a tab lands is the
  * layout's business (`adoptSessionInPlace`), so the order the spawns answer
  * in moves nothing, and a spawn that hangs holds back only itself. The first
  * tab placed takes focus when `focusFirst` says so (the restore's rule: only
@@ -71,13 +76,17 @@ export function placeRecords(
     const tab =
       s.running === true
         ? sessionOfRecord(s, s.workspaceId ?? activeWorkspaceId ?? undefined)
-        : { ...sessionFromRecord(s, activeWorkspaceId, null), restoring: true }
+        : serverOwnedStopped(s)
+          ? sessionFromRecord(s, activeWorkspaceId, null)
+          : { ...sessionFromRecord(s, activeWorkspaceId, null), restoring: true }
     useSessionStore.getState().adoptSessionInPlace(tab, { focus })
     focus = false
     placed.push(tab.id)
     if (s.running === true) attachedIds.push(s.id)
   }
-  const pending = records.filter((s) => s.running !== true && placed.includes(s.id))
+  const pending = records.filter(
+    (s) => s.running !== true && !serverOwnedStopped(s) && placed.includes(s.id)
+  )
   let next = 0
   const worker = async (): Promise<void> => {
     while (next < pending.length) {
@@ -93,14 +102,18 @@ export function placeRecords(
       if (spawned && spawned.session.id === s.id) {
         settleRestored(spawned.session)
         attachedIds.push(s.id)
-      } else {
-        // Failed (logged by the spawn), or answered under another id: the
-        // placeholder goes; a session under another id is a tab of its own.
+      } else if (spawned) {
+        // Answered under another id: the placeholder goes; a session under
+        // another id is a tab of its own.
         useSessionStore.getState().removeSessionForRehome(s.id)
-        if (spawned) {
-          useSessionStore.getState().adoptSessionInPlace(spawned.session)
-          attachedIds.push(spawned.session.id)
-        }
+        useSessionStore.getState().adoptSessionInPlace(spawned.session)
+        attachedIds.push(spawned.session.id)
+      } else {
+        // Refused (logged by the spawn): the tab stays, stopped, with its
+        // name and its place, and Resume is the way back (PRDCT-4236). A
+        // start never removes a tab: a tab that vanishes hides the refusal,
+        // a stopped tab shows it.
+        settleStopped(s.id)
       }
     }
   }
@@ -110,6 +123,17 @@ export function placeRecords(
     return attachedIds
   })
   return { placed, attached }
+}
+
+/** A restored tab whose start was refused settles as a stopped tab: its row
+ *  stays where the restore placed it, its pane mounts when it is shown and
+ *  reads the end, and Resume brings it back (PRDCT-4236). */
+function settleStopped(id: string): void {
+  useSessionStore.setState((state) => ({
+    sessions: state.sessions.map((s) =>
+      s.id === id && s.restoring ? { ...s, alive: false, restoring: false } : s
+    )
+  }))
 }
 
 /** A restored tab takes what its spawn answered, keeping what the person did

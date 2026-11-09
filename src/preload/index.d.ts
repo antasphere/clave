@@ -451,7 +451,7 @@ export interface SessionRecord {
   /** The tab whose agent opened this one: the boot restore folds it under
    *  that parent again and `"parent"` still reaches it. Absent = a user's tab. */
   spawnedBy?: string
-  /** The same tab, nested under it or not (PRDCT-4192): what the reach rule
+  /** The same tab, nested under it or not (PRDCT-4192): what the name tie-break
    *  reads after a restart. Absent = a user's tab. */
   openedBy?: string
   /** The permission mode and the effort the chat was last running in, as the
@@ -694,7 +694,7 @@ export interface ElectronAPI extends FleetDesktopAPI {
   sessionsList: () => Promise<Session[]>
   /** Which tab opened which, as main keeps it across a window reload
    *  (`sessions/lineage.ts`, PRDCT-4193): child session id or key → opener
-   *  id. The window's reach rule reads it after a reload, when its own
+   *  id. The window's name tie-break reads it after a reload, when its own
    *  memory of the opens is gone. */
   lineageParents: () => Promise<Record<string, string>>
   /** Register stream/exit listeners first, then await this before writing. */

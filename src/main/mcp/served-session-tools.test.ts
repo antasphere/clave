@@ -349,22 +349,19 @@ describe('who may reach whom', () => {
     },
     parents: { child: 'caller', caller: 'parent' }
   })
-  it('reads a tab it opened, the tab that opened it, and a group mate; refuses a stranger', async () => {
+  it('reads a tab it opened, the tab that opened it, a group mate and a stranger (PRDCT-4236)', async () => {
     const h = setup(world())
-    for (const target of ['child', 'parent', 'mate', 'caller']) {
+    for (const target of ['child', 'parent', 'mate', 'caller', 'stranger']) {
       const out = (await run(h, 'readSession', { sessionId: target })) as { sessionId: string }
       expect(out.sessionId).toBe(target)
     }
-    await expect(run(h, 'readSession', { sessionId: 'stranger' })).rejects.toThrow(
-      'Refusing to read tab "Far away": it is not related to yours. You can only reach the tab that opened yours ("parent"), tabs you opened, or tabs in the same group. Put both tabs in one group to allow this.'
-    )
     await expect(
       run(h, 'readSession', { sessionId: 'child' }, { callerSessionId: undefined })
     ).rejects.toThrow(
       'clave_read_session must be called from inside a Clave agent tab — this request has no tab identity.'
     )
   })
-  it('reads its own group’s terminal, not another group’s; sending to it stays refused', async () => {
+  it('reads its own group’s terminal and another group’s; sending to one stays refused', async () => {
     const terminal = (id: string, sessionId: string | null): SidebarGroup['terminals'][number] => ({
       ...{ id, command: 'npm run dev', commandMode: 'auto' as const, color: 'green' },
       sessionId
@@ -390,17 +387,24 @@ describe('who may reach whom', () => {
     expect((await run(h, 'readSession', { sessionId: 'dev' })) as object).toMatchObject({
       sessionId: 'dev'
     })
-    await expect(run(h, 'readSession', { sessionId: 'far-dev' })).rejects.toThrow('not related')
+    expect((await run(h, 'readSession', { sessionId: 'far-dev' })) as object).toMatchObject({
+      sessionId: 'far-dev'
+    })
     await expect(run(h, 'sendToSession', { sessionId: 'dev', message: 'hi' })).rejects.toThrow(
       'Refusing to send to a plain terminal'
     )
+    await expect(run(h, 'sendToSession', { sessionId: 'far-dev', message: 'hi' })).rejects.toThrow(
+      'Refusing to send to a plain terminal'
+    )
   })
-  it('a tab reaches itself even outside any group', async () => {
+  it('a tab reaches itself and any other tab outside any group', async () => {
     const h = setup({ ...world(), layouts: [layout('wA', [])] })
     expect((await run(h, 'readSession', { sessionId: 'caller' })) as object).toMatchObject({
       sessionId: 'caller'
     })
-    await expect(run(h, 'readSession', { sessionId: 'mate' })).rejects.toThrow('not related')
+    expect((await run(h, 'readSession', { sessionId: 'mate' })) as object).toMatchObject({
+      sessionId: 'mate'
+    })
   })
   it('resolves "parent" from the lineage and a name from the records, the routed window first', async () => {
     const h = setup(world())
@@ -427,7 +431,7 @@ describe('who may reach whom', () => {
       'This session has no live parent'
     )
   })
-  it('after a restart, reads "parent" and the reach from the records (#259)', async () => {
+  it('after a restart, reads "parent" from the records (#259), and any other tab', async () => {
     // Main's lineage is memory, empty after a restart; the records still say.
     const h = setup({
       ...world(),
@@ -447,7 +451,9 @@ describe('who may reach whom', () => {
     expect((await run(h, 'readSession', { sessionId: 'child' })) as object).toMatchObject({
       sessionId: 'child'
     })
-    await expect(run(h, 'readSession', { sessionId: 'stranger' })).rejects.toThrow('not related')
+    expect((await run(h, 'readSession', { sessionId: 'stranger' })) as object).toMatchObject({
+      sessionId: 'stranger'
+    })
     // A parent that is gone stays gone: the record names it, no session answers.
     h.w.sessions = h.w.sessions.filter((s) => s.id !== 'parent')
     await expect(run(h, 'readSession', { sessionId: 'parent' })).rejects.toThrow(
@@ -456,7 +462,7 @@ describe('who may reach whom', () => {
   })
   it('after a restart, reads the opener of a tab opened unnested from its record (PRDCT-4192)', async () => {
     // A tab opened without attachToParent carries no spawnedBy: before
-    // `openedBy`, the reach it had died with main's memory of the open.
+    // `openedBy`, its "parent" died with main's memory of the open.
     const h = setup({
       ...world(),
       layouts: [layout('wA', [])],
@@ -482,7 +488,9 @@ describe('who may reach whom', () => {
     expect((await run(h, 'readSession', { sessionId: 'child' })) as object).toMatchObject({
       sessionId: 'child'
     })
-    await expect(run(h, 'readSession', { sessionId: 'stranger' })).rejects.toThrow('not related')
+    expect((await run(h, 'readSession', { sessionId: 'stranger' })) as object).toMatchObject({
+      sessionId: 'stranger'
+    })
   })
   it('answers the screen as the window did, and says when a tab has none', async () => {
     const h = setup(world())
@@ -555,7 +563,7 @@ describe('a message typed into a tab', () => {
       })
     ])
   })
-  it('refuses a plain terminal, a menu tab, an ended tab and a stranger, typing nothing', async () => {
+  it('refuses a plain terminal, a menu tab and an ended tab, typing nothing; a stranger is messaged', async () => {
     const h = setup(world())
     await expect(run(h, 'sendToSession', { sessionId: 'term', message: 'x' })).rejects.toThrow(
       'Refusing to send to a plain terminal'
@@ -569,13 +577,15 @@ describe('a message typed into a tab', () => {
     await expect(run(h, 'sendToSession', { sessionId: 'gone', message: 'x' })).rejects.toThrow(
       'Session "Gone" has ended'
     )
-    h.w.sessions.push(session('stranger'))
-    h.w.records.stranger = record('stranger')
-    await expect(run(h, 'sendToSession', { sessionId: 'stranger', message: 'x' })).rejects.toThrow(
-      'Refusing to message tab "name-stranger"'
-    )
     expect(h.argsOf('sessions.type')).toEqual([])
     expect(h.argsOf('captureMessage')).toEqual([])
+    // PRDCT-4236: a tab nothing relates to the caller is messaged like any other.
+    h.w.sessions.push(session('stranger'))
+    h.w.records.stranger = record('stranger')
+    expect(
+      (await run(h, 'sendToSession', { sessionId: 'stranger', message: 'x' })) as object
+    ).toMatchObject({ delivered: true, sessionId: 'stranger' })
+    expect(h.argsOf('sessions.type').map((a) => (a as unknown[])[0])).toEqual(['stranger'])
   })
   it('hands a name no tab of this host carries back to the window (PRDCT-4193)', async () => {
     // The window may know it as a tab of a Clave server; this host has none.
@@ -1019,6 +1029,15 @@ describe('opening a session', () => {
       'Unknown Claude account "Third"'
     )
     expect(h.argsOf('sessions.start')).toEqual([])
+  })
+  it('a past conversation reopened carries its id to the start, and only then (PRDCT-4236)', async () => {
+    const h = setup(world())
+    const options = (n: number): Record<string, unknown> =>
+      (h.argsOf('sessions.start')[n] as { options: Record<string, unknown> }).options
+    await run(h, 'openSession', { cwd: '/proj', mode: 'claude', resumeSessionId: 'abc' })
+    expect(options(0).resumeSessionId).toBe('abc')
+    await run(h, 'openSession', { cwd: '/proj', mode: 'claude' })
+    expect(options(1)).not.toHaveProperty('resumeSessionId')
   })
   it('with no window to mount a pane, kicks the process at a plain size', async () => {
     const h = setup({ ...world(), windows: [] })

@@ -142,6 +142,12 @@ describe('clave_open_session on the window road', () => {
     })
     expect(spawned()).toMatchObject({ launchProfileId: 'codex-chat', dangerousMode: true })
   })
+  it('a past conversation reopened carries its id to the spawn, and only then (PRDCT-4236)', async () => {
+    await openSessionProgrammatically({ cwd: '/repo', mode: 'claude', resumeSessionId: 'abc' })
+    expect(spawned().resumeSessionId).toBe('abc')
+    await openSessionProgrammatically({ cwd: '/repo', mode: 'claude' })
+    expect(spawned()).not.toHaveProperty('resumeSessionId')
+  })
   it('refuses a terminal profile beside chat, and leaves a terminal open untouched by the chat rule', async () => {
     useLaunchProfileStore.setState({
       preferences: preferences({ globalDefaults: { codex: 'yolo' } }),
@@ -317,14 +323,21 @@ describe('clave_set_work and clave_hand_over on the window road', () => {
     })
   })
 
-  it('refuses to assign a tab the caller is not related to, before any change', async () => {
+  it('assigns a tab the caller is not related to (PRDCT-4236)', async () => {
     const answer = await dispatch('setWork', {
       callerSessionId: 'caller',
       sessionId: 'stranger',
       role: 'verifier'
     })
+    expect(answer.ok).toBe(true)
+    expect(sessionsChangeWork).toHaveBeenCalledTimes(1)
+    expect(sessionsChangeWork.mock.calls[0][0]).toBe('stranger')
+  })
+
+  it('refuses a work change with no tab identity, before any change', async () => {
+    const answer = await dispatch('setWork', { sessionId: 'stranger', role: 'verifier' })
     expect(answer.ok).toBe(false)
-    expect(answer.error).toMatch(/not related to yours/)
+    expect(answer.error).toMatch(/no tab identity/)
     expect(sessionsChangeWork).not.toHaveBeenCalled()
   })
 
@@ -478,14 +491,26 @@ describe('resume and reach on the window road (PRDCT-4193)', () => {
     expect(fleetSnapshot).toHaveBeenCalledWith('srv')
   })
 
-  it('refuses to resume a tab the caller is not related to', async () => {
+  it('resumes a tab the caller is not related to (PRDCT-4236)', async () => {
     useSessionStore.setState({ sessions: [agent('r-lead'), agent('r-other', { alive: false })] })
     const answer = await dispatch('resumeSession', {
       callerSessionId: 'r-lead',
       sessionId: 'r-other'
     })
-    expect(answer.ok).toBe(false)
-    expect(answer.error).toMatch(/Refusing to resume tab "r-other"/)
+    expect(answer).toMatchObject({ ok: true, result: { resumed: true, sessionId: 'r-other' } })
+    expect(switchAccount.restartSessionProcess).toHaveBeenCalledWith('r-other', {
+      onlyIfStopped: true
+    })
+  })
+
+  it('refuses a resume with no tab identity, and restarts nothing', async () => {
+    useSessionStore.setState({ sessions: [agent('r-lead'), agent('r-other', { alive: false })] })
+    const answer = await dispatch('resumeSession', { sessionId: 'r-other' })
+    expect(answer).toMatchObject({
+      ok: false,
+      error:
+        'clave_resume_session must be called from inside a Clave agent tab — this request has no tab identity.'
+    })
     expect(switchAccount.restartSessionProcess).not.toHaveBeenCalled()
   })
 
@@ -530,17 +555,23 @@ describe('resume and reach on the window road (PRDCT-4193)', () => {
     )
   })
 
-  it('keeps the reach to a tab main remembers the caller opened, after a window reload', async () => {
+  it('reaches a tab before and after a window reload, and never without a tab identity', async () => {
     // A reloaded window: no live messaging link, no spawnedBy or openedBy on
-    // the child; only main's lineage knows who opened it.
+    // the child; only main's lineage knows who opened it. Since PRDCT-4236
+    // the lineage no longer decides the reach: the send goes through either way.
     useSessionStore.setState({ sessions: [agent('l-lead'), agent('l-child')] })
     const before = await dispatch('sendToSession', {
       callerSessionId: 'l-lead',
       sessionId: 'l-child',
       message: 'status?'
     })
-    expect(before.ok).toBe(false)
-    expect(before.error).toMatch(/not related to yours/)
+    expect(before).toMatchObject({ ok: true, result: { delivered: true, sessionId: 'l-child' } })
+    const anonymous = await dispatch('sendToSession', { sessionId: 'l-child', message: 'status?' })
+    expect(anonymous).toMatchObject({
+      ok: false,
+      error:
+        'clave_send_to_session must be called from inside a Clave agent tab — this request has no tab identity.'
+    })
     const after = await dispatch(
       'sendToSession',
       { callerSessionId: 'l-lead', sessionId: 'l-child', message: 'status?' },

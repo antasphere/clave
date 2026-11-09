@@ -1,7 +1,7 @@
 /**
  * Which tab opened which (wave 4, PRDCT-3377): the parent link an agent
  * needs to answer "parent" in `clave_send_to_session` and
- * `clave_read_session`, and the relationship the reach rule reads. Kept in
+ * `clave_read_session`, and the relationship the name tie-break reads. Kept in
  * the memory of the process that serves the tools, as the window kept it
  * in its store: set when an agent's `clave_open_session` starts a tab,
  * forgotten when the tab's process ends.

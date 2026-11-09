@@ -169,13 +169,52 @@ describe('placeRecords', () => {
     expect(restoring()).toEqual([])
   })
 
-  it('removes the row of a record whose spawn fails, and settles the rest', async () => {
-    const { attached } = placeRecords([record('bad'), record('good')], null)
+  /**
+   * PRDCT-4236: a start the server refuses used to take the tab out of the
+   * store (and the history ledger wrote it closed), so on a daemon, which
+   * refuses to start any stopped record on a client's word, every chat left
+   * the sidebar at every boot. The row stays as a stopped tab now: its name,
+   * its place, Resume as the way back; nothing is killed, nothing discarded.
+   */
+  it('keeps the row of a record whose spawn is refused, as a stopped tab, and settles the rest', async () => {
+    useSessionStore.setState({
+      groups: [
+        {
+          id: 'g',
+          name: 'Work',
+          sessionIds: ['bad', 'good'],
+          collapsed: false,
+          cwd: null,
+          terminals: []
+        } as unknown as SessionGroup
+      ]
+    })
+    const { attached } = placeRecords(
+      [{ ...record('bad'), displayName: 'Odoo research' }, record('good')],
+      null
+    )
     await flush()
     pending.get('bad')!(false)
     pending.get('good')!(true)
     expect(await attached).toEqual(['good'])
-    expect(ids()).toEqual(['good'])
+    expect(ids().sort()).toEqual(['bad', 'good'])
+    const bad = useSessionStore.getState().sessions.find((s) => s.id === 'bad')
+    expect(bad?.alive).toBe(false)
+    expect(bad?.restoring).toBeFalsy()
+    expect(bad?.name).toBe('Odoo research')
+    expect(useSessionStore.getState().groups[0].sessionIds).toEqual(['bad', 'good'])
+    expect(killed).toEqual([])
+  })
+
+  it('a chat whose spawn is refused is stopped and settled: its pane mounts when shown and reads the end', async () => {
+    const chat = { ...record('chat'), transport: 'events' } as SessionRecord
+    const { attached } = placeRecords([chat], null)
+    await flush()
+    pending.get('chat')!(false)
+    await attached
+    const tab = useSessionStore.getState().sessions.find((s) => s.id === 'chat')
+    expect(tab?.alive).toBe(false)
+    expect(tab?.restoring).toBeFalsy()
   })
 
   it('a chat that is not running comes back dormant; a live one does not', async () => {
@@ -219,6 +258,78 @@ describe('placeRecords', () => {
     expect(await attached).toEqual(['kept'])
     expect(killed).toEqual(['closed'])
     expect(ids()).toEqual(['kept'])
+  })
+})
+
+/**
+ * PRDCT-4236: a record a Clave server owns (its records carry the server's
+ * own layout key) and does not run is a stopped tab by the server's rule:
+ * only an explicit Resume starts it, and a start asked for it is refused.
+ * The restore places it stopped, with its name and in its group, and asks
+ * for no spawn; a running one is taken in as before.
+ */
+describe('a stopped record the server owns (PRDCT-4236)', () => {
+  const owned = (id: string, extra: Partial<SessionRecord> = {}): SessionRecord =>
+    ({
+      ...record(id),
+      transport: 'events',
+      windowKey: 'server',
+      running: false,
+      live: false,
+      displayName: `Lane · ${id}`,
+      ...extra
+    }) as SessionRecord
+
+  it('is placed stopped, with its name and in its group, and no spawn is asked', async () => {
+    useSessionStore.setState({
+      groups: [
+        {
+          id: 'g',
+          name: 'Server work',
+          sessionIds: ['chat'],
+          collapsed: false,
+          cwd: null,
+          terminals: []
+        } as unknown as SessionGroup
+      ]
+    })
+    const { placed, attached } = placeRecords([owned('chat')], null)
+    expect(placed).toEqual(['chat'])
+    expect(await attached).toEqual([])
+    expect(spawned).toEqual([])
+    const tab = useSessionStore.getState().sessions.find((s) => s.id === 'chat')
+    expect(tab?.alive).toBe(false)
+    expect(tab?.restoring).toBeFalsy()
+    expect(tab?.name).toBe('Lane · chat')
+    expect(tab?.claudeMode).toBe(true)
+    expect(useSessionStore.getState().groups[0].sessionIds).toEqual(['chat'])
+    expect(killed).toEqual([])
+  })
+
+  it('a stopped terminal of the server is placed stopped the same way', async () => {
+    const term = owned('term', { transport: 'pty', claudeMode: false })
+    const { attached } = placeRecords([term], null)
+    expect(await attached).toEqual([])
+    expect(spawned).toEqual([])
+    const tab = useSessionStore.getState().sessions.find((s) => s.id === 'term')
+    expect(tab?.alive).toBe(false)
+    expect(tab?.claudeMode).toBe(false)
+  })
+
+  it('a record the server runs is taken in live, as before', async () => {
+    const { attached } = placeRecords([owned('live', { running: true, live: true })], null)
+    expect(await attached).toEqual(['live'])
+    expect(spawned).toEqual([])
+    expect(useSessionStore.getState().sessions.find((s) => s.id === 'live')?.alive).toBe(true)
+  })
+
+  it('a stopped record of this Mac still spawns, as before', async () => {
+    const mine = { ...record('mine'), transport: 'events', windowKey: 'w1' } as SessionRecord
+    const { attached } = placeRecords([mine], null)
+    await flush()
+    expect(spawned).toEqual(['mine'])
+    pending.get('mine')!(true)
+    expect(await attached).toEqual(['mine'])
   })
 })
 
