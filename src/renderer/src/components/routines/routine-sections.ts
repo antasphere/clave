@@ -14,7 +14,7 @@ import type { RoutineSurface } from './routine-servers'
  * of its own, titled by the placement and marked away or unknown. Pure:
  * the toolbar renders what this decides.
  */
-export type SectionKind = 'here' | 'server' | 'away' | 'unknown'
+export type SectionKind = 'here' | 'server' | 'away' | 'absent' | 'unknown'
 
 export interface RoutineSection {
   /** Stable across renders: the server id, or the placement for an away section. */
@@ -55,13 +55,21 @@ export function sectionsOf(
             ? 'server'
             : s.problem === 'unknown'
               ? 'unknown'
-              : 'away'
+              : s.problem === 'absent'
+                ? 'absent'
+                : 'away'
       section = {
         id,
         kind,
         title: kind === 'here' ? localName : s.serverName,
         note:
-          kind === 'away' ? 'Not connected' : kind === 'unknown' ? 'No machine by that name' : null,
+          kind === 'away'
+            ? 'Not connected'
+            : kind === 'absent'
+              ? 'Does not read this file'
+              : kind === 'unknown'
+                ? 'No machine by that name'
+                : null,
         serverId: s.reachable ? s.serverId : LOCAL_SERVER_ID,
         canCreate: kind === 'here' || kind === 'server',
         surfaces: []
@@ -70,7 +78,7 @@ export function sectionsOf(
     }
     section.surfaces.push(s)
   }
-  const order: Record<SectionKind, number> = { here: 0, server: 1, away: 2, unknown: 3 }
+  const order: Record<SectionKind, number> = { here: 0, server: 1, away: 2, absent: 3, unknown: 4 }
   return [...byId.values()].sort(
     (a, b) => order[a.kind] - order[b.kind] || a.title.localeCompare(b.title)
   )

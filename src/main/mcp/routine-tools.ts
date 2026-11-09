@@ -186,6 +186,24 @@ const knownMachine = (runsOn: string, listed: ReadonlyArray<Listed>): boolean =>
       (l.listing.server.id === runsOn.trim() || lower(l.listing.server.name) === lower(runsOn))
   )
 
+/** Whether the machine a routine is placed on lists that routine itself
+ *  (the same name in the same workspace, run there): then the owner's row
+ *  stands and this machine's twin is dropped. */
+const ownerLists = (d: RoutineDeclaration, listed: ReadonlyArray<Listed>): boolean =>
+  listed.some(
+    (l) =>
+      l.listing?.server &&
+      d.runsOn &&
+      (l.listing.server.id === d.runsOn.trim() ||
+        lower(l.listing.server.name) === lower(d.runsOn)) &&
+      l.listing.routines.some(
+        (v) =>
+          v.routine.runsHere !== false &&
+          lower(v.routine.name) === lower(d.name) &&
+          lower(v.routine.workspaceName) === lower(d.workspaceName)
+      )
+  )
+
 export interface RoutineListAnswer {
   routines: RoutineRow[]
   machines: Array<{
@@ -220,8 +238,12 @@ export function rowsOf(
       const problems: string[] = []
       if (d.invalid) problems.push(d.invalid)
       if (d.runsHere === false && d.runsOn && lower(d.runsOn) !== RUNS_EVERYWHERE) {
-        if (knownMachine(d.runsOn, listed)) continue
-        problems.push(`runs on "${d.runsOn}", a machine none of the reachable servers answers to`)
+        if (ownerLists(d, listed)) continue
+        problems.push(
+          knownMachine(d.runsOn, listed)
+            ? `runs on "${d.runsOn}", which does not list it: that machine does not read this file`
+            : `runs on "${d.runsOn}", a machine none of the reachable servers answers to`
+        )
       }
       rows.push(rowOf(view, l, problems))
     }

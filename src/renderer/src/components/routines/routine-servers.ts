@@ -31,11 +31,13 @@ export interface RoutineSurface {
    *  own name or id as written, or null when it says nothing (it is then
    *  invalid and runs nowhere). */
   placement: string | null
-  /** A routine placed on a machine this Mac cannot reach: `offline` when the
-   *  name is a server saved here (by its connection label or a name heard
-   *  from it), `unknown` when no machine this Mac knows answers to it; null
-   *  for a routine that runs here or on a connected server. */
-  problem: 'offline' | 'unknown' | null
+  /** A routine placed on a machine that does not run it from here: `offline`
+   *  when the name is a server saved here (by its connection label or a name
+   *  heard from it) that is away, `absent` when that server is connected but
+   *  lists no such routine (it does not read this file), `unknown` when no
+   *  machine this Mac knows answers to the name; null for a routine that runs
+   *  here or on a connected server that lists it. */
+  problem: 'offline' | 'absent' | 'unknown' | null
 }
 
 export interface RoutineSurfacesInput {
@@ -203,7 +205,7 @@ export function mergeRoutineSurfaces(input: RoutineSurfacesInput): RoutineSurfac
       reachable: false,
       workspaceId: decl.workspaceId,
       placement,
-      problem: saved ? 'offline' : 'unknown'
+      problem: owner && connected.has(owner) ? 'absent' : saved ? 'offline' : 'unknown'
     })
   }
 

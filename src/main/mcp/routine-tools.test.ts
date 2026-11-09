@@ -277,6 +277,23 @@ describe('clave_routine_list', () => {
     })
   })
 
+  it('keeps a placed routine whose owner is reachable but does not list it, saying the file is not read there', async () => {
+    const pinned = decl({ runsOn: 'studio', runsHere: false })
+    const local = machine('local', 'This Mac', { id: 'l', name: 'mac' }, [view(pinned)])
+    const studio = machine('srv-1', 'MacStudio', { id: 's', name: 'studio' }, [
+      view(decl({ name: 'Other' }))
+    ])
+    const out = await listRoutinesTool(deps(local, studio), {})
+    expect(out.routines.map((r) => [r.machine.id, r.name, r.problems])).toEqual([
+      [
+        'local',
+        'Health',
+        ['runs on "studio", which does not list it: that machine does not read this file']
+      ],
+      ['srv-1', 'Other', []]
+    ])
+  })
+
   it('filters by workspace and by machine', async () => {
     const local = machine('local', 'This Mac', { id: 'l', name: 'mac' }, [
       view(decl({ workspaceId: 'ws' })),

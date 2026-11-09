@@ -107,6 +107,22 @@ describe('the sections of the Routines popover (PRDCT-4244)', () => {
     expect(sections[4].id).toBe('away:ghost-server')
   })
 
+  it('a connected machine that does not read the file gets its own section, saying so', () => {
+    const absent = surface({
+      view: view(decl({ name: 'Elsewhere', runsOn: 'box' })),
+      serverName: 'Box',
+      runsOn: 'server',
+      reachable: false,
+      problem: 'absent'
+    })
+    expect(sectionsOf([absent])[0]).toMatchObject({
+      kind: 'absent',
+      title: 'Box',
+      note: 'Does not read this file',
+      canCreate: false
+    })
+  })
+
   it('a routine on every machine appears under each machine that lists it', () => {
     const mine = surface({ view: view(decl()) })
     const theirs = surface({

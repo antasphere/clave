@@ -210,6 +210,21 @@ describe('mergeRoutineSurfaces', () => {
     })
   })
 
+  it('a connected owner that lists no such routine (it does not read the file) is marked absent, not offline', () => {
+    const mine = decl({ rootDir: MAC, runsOn: 'box', runsHere: false })
+    const out = mergeRoutineSurfaces(
+      input({
+        local: listing('l', 'Mac', [view(mine)]),
+        remote: { s1: listing('s1', 'box', [view(decl({ rootDir: BOX, name: 'Other' }))]) },
+        connected: new Set(['s1'])
+      })
+    )
+    expect(out.map((o) => [o.view.routine.name, o.problem, o.reachable, o.serverName])).toEqual([
+      ['Digest', 'absent', false, 'box'],
+      ['Other', null, true, 'box']
+    ])
+  })
+
   it('a routine that says nowhere it runs stays a local, invalid surface', () => {
     const mine = decl({ rootDir: MAC, runsOn: null, runsHere: false, invalid: 'say where it runs' })
     const out = mergeRoutineSurfaces(input({ local: listing('l', 'Mac', [view(mine)]) }))
