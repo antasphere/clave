@@ -12,8 +12,10 @@ describe('typingWriter', () => {
       order.push('write')
       throw new Error('settled')
     })
-    typingWriter(dispatch, write)('clave:f', { name: 'Luca P' })
-    await Promise.resolve()
+    // The refusal never reaches the caller: the send settles quietly.
+    await expect(
+      typingWriter(dispatch, write)('clave:f', { name: 'Luca P' })
+    ).resolves.toBeUndefined()
     expect(dispatch).toHaveBeenCalledWith({ typedSent: 'clave:f', answers: { name: 'Luca P' } })
     expect(write).toHaveBeenCalledWith({
       type: 'permission_draft',

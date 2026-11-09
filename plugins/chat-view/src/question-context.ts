@@ -48,9 +48,9 @@ export function typingWriter(
     id: string
     answers: Record<string, string | string[]>
   }) => Promise<void>
-): (id: string, answers: Record<string, string | string[]>) => void {
+): (id: string, answers: Record<string, string | string[]>) => Promise<void> {
   return (id, answers) => {
     dispatch({ typedSent: id, answers })
-    void write({ type: 'permission_draft', id, answers }).catch(() => {})
+    return write({ type: 'permission_draft', id, answers }).catch(() => {})
   }
 }
