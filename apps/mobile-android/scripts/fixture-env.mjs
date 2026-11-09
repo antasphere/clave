@@ -15,35 +15,45 @@
 // --check plays a phone over HTTP through the relay and exits 0 or 1.
 // --approve keeps running and approves every phone that asks to pair.
 // --dry-run runs the pre-boot checks alone, prints the daemon command it would
-// start, and exits 0 or 2: nothing is started; it proves the pre-boot checks and
-// nothing else (not the boot checks, not the recorder's guard).
+// start, and exits 0 or 2: nothing is started; it proves the pre-boot checks and,
+// under --mutate recorder-*, the recorder guard's one look, nothing else (not
+// the boot checks, not the guard's continuous watch).
 // Otherwise it keeps running until SIGINT/SIGTERM, which stops every child.
 //
-// The run folder (--tmpdir) is the fixture's own: a folder it created, marked
-// with `.clave-fixture`, a regular file naming this script as the owner and the
-// folder's real path as the one claimed. An existing folder without that marker
-// (or with a symlinked or foreign one), a symlink or a plain file is refused
-// untouched (exit 2); an owned folder is emptied at each real run. A dry run only
-// reads the folder and builds its shims in a scratch folder of its own.
+// The run folder (--tmpdir, mandatory, never defaulted) is the fixture's own: an
+// absent or empty folder is claimed with `.clave-fixture`, a regular file naming
+// this script as the owner, the folder's real path, the band and the claiming pid.
+// A non-empty folder without that marker, a symlinked or foreign marker, a marker
+// whose pid is still alive, a symlink, a plain file or a folder that cannot be
+// inspected is refused untouched (exit 2); an owned folder is emptied at each real
+// run. A dry run only reads the folder and builds its shims in a scratch folder.
 //
 // No real agent, no real login, proven before and after the boot and watched
-// for the whole run. BEFORE anything starts (preBootChecks): the daemon argv
-// carries --no-titles --test-no-activate --test-no-machine-usage; its environment
-// is built from an allowlist (the fixture's own keys over a few of the shell's)
-// with the recorders first on PATH, the fixture's login shell as SHELL and empty
-// Claude and Codex homes of the fixture's own; the login environment, read the
-// way the daemon reads it (`$SHELL -lic 'env -0'` on that environment), resolves
-// `claude` and `codex` to the recorders. AFTER the daemon announces itself and
+// for the whole run. Every child of the fixture (the daemon, the relay, the
+// recorder self-test, the Bun probe) runs under one sanitized environment: the
+// fixture's own keys over a frozen allowlist of the shell's, and Bun's automatic
+// .env loading off (--no-env-file). BEFORE anything starts (preBootChecks): the
+// daemon argv carries --no-env-file and --no-titles --test-no-activate
+// --test-no-machine-usage; the key NAMES a Bun process sees under that environment
+// (a probe printing names, never values) are exactly the launch's; the recorders
+// are first on PATH, the fixture's login shell stand-in is SHELL and the Claude and
+// Codex homes are empty folders of the fixture's own; the login environment, read
+// the way the daemon reads it (`$SHELL -lic 'env -0'`), resolves `claude` and
+// `codex` to the recorders. The stand-in prints a fixture-authored environment
+// (written into it when the launch was built), never the one it is run in. AFTER
+// the daemon announces itself and
 // BEFORE anything is seeded (bootChecks, each inside the daemon's own process
 // through POST /e2e/evaluate): its discovery file says titles "off", testMode
 // true and machineUsage false; the title module's own test hooks (#354,
 // `__claveE2E.titles`) say the opt-out is --no-titles, locate claude and codex
 // on the daemon's cached login PATH to the recorders, and answer the one-shot's
 // launch as the production resolver builds it, compared with the recorder by
-// canonical path; nothing is executed inside the daemon. The recorder's own
-// self-test runs BEFORE the boot, by the fixture itself (`claude --version` on
-// the recorder, never a CLI), so the log exists and holds that one line from
-// the start. One failed check refuses the
+// canonical path, and the key NAMES of the daemon's own environment, read inside
+// it, are exactly the launch's; no agent CLI is executed inside the daemon (the
+// hooks may read a cold login cache, which runs the fixture's stand-in once). The
+// recorder's own self-test runs BEFORE the boot, by the fixture itself (`claude
+// --version` on the recorder, never a CLI), so the log exists and holds that one
+// line from the start. One failed check refuses the
 // boot (exit 2) before any chat. From the daemon's start to the exit, in every
 // mode, the recorder log is watched: a line that is not the boot check's probe
 // stops everything with exit 3. The checked run's last step reads the same log
@@ -58,9 +68,11 @@
 // decoy-on-process-path is a positive control (the daemon's own PATH led by
 // the decoy, the cache intact): a resolver reading the cache still answers the
 // recorder and the checks pass. --mutate recorder-removed|recorder-unreadable|
-// recorder-truncated damage the fixture's own recorder log after the checks,
-// under --check or --dry-run, and the guard must latch each (exit 3); the real
-// CLI is never involved in any of them.
+// recorder-truncated damage the fixture's own recorder log after the checks, and
+// --mutate recorder-foreign-line|decoy-line write a non-probe line through the
+// fixture's own recorder or its decoy (`-p`, never a CLI), all under --check or
+// --dry-run; the guard must latch each (exit 3). --check and --dry-run together
+// are refused.
 import { execFileSync, spawn } from 'node:child_process'
 import { createHash, randomBytes } from 'node:crypto'
 import {
@@ -118,7 +130,12 @@ function portArg(name, fallback) {
 const SERVER_PORT = portArg('server', 47201)
 const RELAY_PORT = portArg('relay', 47202)
 const ISSUER_PORT = portArg('issuer', 47203)
-const TMPDIR = path.resolve(arg('tmpdir', '/private/tmp/clave-native-b/fixture'))
+const TMPDIR_ARG = arg('tmpdir', null)
+if (!TMPDIR_ARG) {
+  process.stderr.write('fixture: --tmpdir <folder> is required (a run folder of this fixture, never a default): refusing\n')
+  process.exit(2)
+}
+const TMPDIR = path.resolve(TMPDIR_ARG)
 const CHECK = flag('check')
 const APPROVE = flag('approve')
 const DRY_RUN = flag('dry-run')
@@ -129,7 +146,7 @@ const MUTATE = arg('mutate', null)
  *  faults and the positive control run inside the daemon under --check; the three recorder-file
  *  faults damage the fixture's own log and run under --check or --dry-run. */
 const DAEMON_MUTATIONS = ['divergent-cache', 'wrong-resolver', 'decoy-on-process-path']
-const RECORDER_MUTATIONS = ['recorder-removed', 'recorder-unreadable', 'recorder-truncated']
+const RECORDER_MUTATIONS = ['recorder-removed', 'recorder-unreadable', 'recorder-truncated', 'recorder-foreign-line', 'decoy-line']
 const MUTATIONS = [...DAEMON_MUTATIONS, ...RECORDER_MUTATIONS]
 if ((RED_FLAGS || RED_INTERLOCK) && !DRY_RUN) {
   process.stderr.write(
@@ -137,12 +154,16 @@ if ((RED_FLAGS || RED_INTERLOCK) && !DRY_RUN) {
   )
   process.exit(2)
 }
+if (CHECK && DRY_RUN) {
+  process.stderr.write('fixture: --check and --dry-run together mean nothing: one boots and proves, the other starts nothing\n')
+  process.exit(2)
+}
 if (MUTATE !== null) {
   const known = MUTATIONS.includes(MUTATE)
-  const allowed = known && !APPROVE && (CHECK || (DRY_RUN && RECORDER_MUTATIONS.includes(MUTATE)))
+  const allowed = known && !APPROVE && (DAEMON_MUTATIONS.includes(MUTATE) ? CHECK : CHECK || DRY_RUN)
   if (!allowed) {
     process.stderr.write(
-      `fixture: --mutate takes ${MUTATIONS.join(', ')}; the daemon faults run under --check only, the recorder-file faults under --check or --dry-run, none under --approve\n`
+      `fixture: --mutate takes ${MUTATIONS.join(', ')}; the daemon faults run under --check only, the recorder faults under --check or --dry-run, none under --approve\n`
     )
     process.exit(2)
   }
@@ -160,6 +181,9 @@ const DAEMON_FLAGS = ['--no-titles', '--test-no-activate', '--test-no-machine-us
 const DISCOVERY = { titles: 'titles', testMode: 'testMode', machineUsage: 'machineUsage' }
 /** What the daemon's environment may carry of this shell's: nothing else travels. */
 const ENV_ALLOWLIST = ['HOME', 'USER', 'LOGNAME', 'TMPDIR', 'LANG', 'LC_ALL', 'LC_CTYPE', 'TERM', 'TZ']
+/** The same nine names, frozen apart for the check to compare against: an edit of the list
+ *  above alone fails the check rather than widening it. */
+const ENV_ALLOWLIST_FROZEN = Object.freeze(['HOME', 'LANG', 'LC_ALL', 'LC_CTYPE', 'LOGNAME', 'TERM', 'TMPDIR', 'TZ', 'USER'])
 /** What the fixture sets itself. */
 const ENV_FIXTURE_KEYS = ['PATH', 'SHELL', 'CLAUDE_CONFIG_DIR', 'CODEX_HOME', 'CLAVE_ANTASPHERE_ISSUER', 'CLAVE_KEYCHAIN_FILE']
 /** The daemon's login-environment module, imported inside its own process by one negative only
@@ -202,7 +226,21 @@ function markerOf(dir) {
   }
   if (parsed?.owner !== MARKER_OWNER) return { present: true, ours: false, why: `${MARKER_NAME} names another owner (${JSON.stringify(parsed?.owner ?? null)})` }
   if (parsed?.folder !== realpathSync(dir)) return { present: true, ours: false, why: `${MARKER_NAME} claims another folder (${JSON.stringify(parsed?.folder ?? null)})` }
+  const pid = Number(parsed?.pid)
+  if (Number.isInteger(pid) && pid > 0 && pid !== process.pid && alive(pid)) {
+    return { present: true, ours: false, why: `${MARKER_NAME} was claimed by a fixture run that is still alive (pid ${pid}, band ${JSON.stringify(parsed?.band ?? null)})` }
+  }
   return { present: true, ours: true }
+}
+
+/** Whether a process with [pid] exists (a signal of 0 is a question, never a kill). */
+function alive(pid) {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (error) {
+    return error?.code === 'EPERM'
+  }
 }
 
 function claimRunFolder() {
@@ -212,14 +250,22 @@ function claimRunFolder() {
   let state
   try {
     state = lstatSync(TMPDIR)
-  } catch {
+  } catch (error) {
+    if (error?.code !== 'ENOENT') {
+      throw new RefusedBoot('the run folder', [{ name: `${TMPDIR} cannot be inspected (${error?.code ?? error}); nothing was touched` }])
+    }
     state = null
   }
   if (state !== null) {
     if (state.isSymbolicLink() || !state.isDirectory()) {
       throw new RefusedBoot('the run folder', [{ name: `${TMPDIR} is not a plain directory; nothing was touched` }])
     }
-    const entries = readdirSync(TMPDIR)
+    let entries
+    try {
+      entries = readdirSync(TMPDIR)
+    } catch (error) {
+      throw new RefusedBoot('the run folder', [{ name: `${TMPDIR} cannot be listed (${error?.code ?? error}); nothing was touched` }])
+    }
     if (entries.length > 0) {
       const marker = markerOf(TMPDIR)
       if (!marker.present) {
@@ -245,7 +291,7 @@ function claimRunFolder() {
   }
   writeFileSync(
     path.join(TMPDIR, MARKER_NAME),
-    JSON.stringify({ owner: MARKER_OWNER, folder: realpathSync(TMPDIR), claimedAt: new Date().toISOString(), pid: process.pid }) + '\n',
+    JSON.stringify({ owner: MARKER_OWNER, folder: realpathSync(TMPDIR), band: [SERVER_PORT, RELAY_PORT, ISSUER_PORT], claimedAt: new Date().toISOString(), pid: process.pid }) + '\n',
     { mode: 0o600 }
   )
 }
@@ -275,18 +321,37 @@ function shimsRoot() {
  * second, decoy recorder (decoy/claude, decoy.log) sits off every PATH: the negatives put it
  * ahead inside the daemon, so a wrong resolution lands on it and never on the real CLI.
  */
-function agentShims() {
+function shimPaths() {
   const dir = path.join(shimsRoot(), 'shims')
-  mkdirSync(dir, { recursive: true, mode: 0o700 })
-  const log = path.join(dir, 'recorder.log')
-  const decoyDir = path.join(dir, 'decoy')
-  const decoyLog = path.join(dir, 'decoy.log')
-  mkdirSync(decoyDir, { recursive: true, mode: 0o700 })
-  rmSync(log, { force: true })
-  rmSync(decoyLog, { force: true })
-  const claudeConfigDir = path.join(dir, 'claude-config')
-  const codexHome = path.join(dir, 'codex-home')
-  for (const home of [claudeConfigDir, codexHome]) {
+  return {
+    dir,
+    shell: path.join(dir, 'shell'),
+    claude: path.join(dir, 'claude'),
+    codex: path.join(dir, 'codex'),
+    log: path.join(dir, 'recorder.log'),
+    decoyDir: path.join(dir, 'decoy'),
+    decoy: path.join(dir, 'decoy', 'claude'),
+    decoyLog: path.join(dir, 'decoy.log'),
+    claudeConfigDir: path.join(dir, 'claude-config'),
+    codexHome: path.join(dir, 'codex-home')
+  }
+}
+
+/** A value for a single-quoted shell literal. */
+const shellQuote = (value) => `'${String(value).replace(/'/g, `'\\''`)}'`
+
+/**
+ * Writes the stand-ins. The login shell prints the environment given here, the daemon's own
+ * as the fixture built it, written into the script at this moment: never the environment of
+ * the process that runs the script. Under --red-interlock its PATH is the real one without
+ * the recorders, as a real login profile would put it back.
+ */
+function writeShims(shims, env) {
+  mkdirSync(shims.dir, { recursive: true, mode: 0o700 })
+  mkdirSync(shims.decoyDir, { recursive: true, mode: 0o700 })
+  rmSync(shims.log, { force: true })
+  rmSync(shims.decoyLog, { force: true })
+  for (const home of [shims.claudeConfigDir, shims.codexHome]) {
     rmSync(home, { recursive: true, force: true })
     mkdirSync(home, { recursive: true, mode: 0o700 })
   }
@@ -295,32 +360,32 @@ function agentShims() {
     chmodSync(file, 0o755)
     return file
   }
-  // The login shell: `$SHELL -lic 'env -0'` prints this environment; a `-c` command runs
-  // with /bin/sh. Under --red-interlock it puts the PATH the fixture was started with back,
-  // the way a real login profile does, so the interlock check must fail.
-  const shell = write(
-    path.join(dir, 'shell'),
-    RED_INTERLOCK
-      ? `#!/bin/sh\n# RED: a login shell that restores the real PATH, as a login profile would.\nPATH='${(process.env.PATH ?? '').replace(/'/g, '')}' exec /usr/bin/env -0\n`
-      : [
-          '#!/bin/sh',
-          "# The fixture's stand-in for the daemon's login shell: the daemon reads its login",
-          "# environment through `$SHELL -lic 'env -0'`, and this environment is the fixture's own,",
-          '# its PATH starting with the recorders. A `-c` command runs with /bin/sh.',
-          'cmd=""',
-          'while [ $# -gt 0 ]; do',
-          '  case "$1" in',
-          '    -c) shift; cmd="$1" ;;',
-          '  esac',
-          '  shift',
-          'done',
-          'case "$cmd" in',
-          '  ""|"env -0") exec /usr/bin/env -0 ;;',
-          '  *) exec /bin/sh -c "$cmd" ;;',
-          'esac',
-          ''
-        ].join('\n')
+  const printed = { ...env }
+  if (RED_INTERLOCK) printed.PATH = process.env.PATH ?? ''
+  const literals = Object.entries(printed).map(([k, v]) => shellQuote(`${k}=${v}`)).join(' ')
+  write(
+    shims.shell,
+    [
+      '#!/bin/sh',
+      "# The fixture's stand-in for the daemon's login shell. The daemon reads its login environment",
+      "# through `$SHELL -lic 'env -0'`; this script answers with the environment the fixture wrote",
+      '# into it when it built the launch, never the environment it is run in. A separate `-c <cmd>`',
+      '# runs that command with /bin/sh; combined flags (-lic) print the environment whatever follows.',
+      'cmd=""',
+      'while [ $# -gt 0 ]; do',
+      '  case "$1" in',
+      '    -c) shift; cmd="$1" ;;',
+      '  esac',
+      '  shift',
+      'done',
+      'if [ -n "$cmd" ] && [ "$cmd" != "env -0" ]; then exec /bin/sh -c "$cmd"; fi',
+      `exec printf '%s\\0' ${literals}`,
+      ''
+    ].join('\n')
   )
+  // The recorders: never a real agent. One line per invocation (the time, the command, its first
+  // two arguments, never the stdin); `--version` answers a fixed line; a one-shot (-p) drains its
+  // stdin and exits 1, so a daemon that asked anyway gets nothing.
   const recorder = (name, file, into) =>
     write(
       file,
@@ -328,9 +393,9 @@ function agentShims() {
         '#!/bin/sh',
         `# The fixture's recorder for the ${name} CLI: never a real agent, never the machine login.`,
         '# One line per invocation (the time, the command, its first two arguments, never the stdin).',
-        `printf '%s %s %s %s\\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${name}" "$1" "$2" >> '${into}'`,
+        `printf '%s %s %s %s\\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${name}" "$1" "$2" >> ${shellQuote(into)}`,
         'case " $* " in',
-        `  *" --version "*) printf '%s\\n' '${RECORDER_VERSION}'; exit 0 ;;`,
+        `  *" --version "*) printf '%s\\n' ${shellQuote(RECORDER_VERSION)}; exit 0 ;;`,
         '  *" -p "*|*" --print "*) cat >/dev/null ;;',
         'esac',
         `echo "fixture: no real agent runs here (${name} disabled)" >&2`,
@@ -338,18 +403,10 @@ function agentShims() {
         ''
       ].join('\n')
     )
-  return {
-    dir,
-    shell,
-    claude: recorder('claude', path.join(dir, 'claude'), log),
-    codex: recorder('codex', path.join(dir, 'codex'), log),
-    log,
-    decoyDir,
-    decoy: recorder('claude', path.join(decoyDir, 'claude'), decoyLog),
-    decoyLog,
-    claudeConfigDir,
-    codexHome
-  }
+  recorder('claude', shims.claude, shims.log)
+  recorder('codex', shims.codex, shims.log)
+  recorder('claude', shims.decoy, shims.decoyLog)
+  return shims
 }
 
 /**
@@ -376,7 +433,7 @@ function readRecorder(file) {
 function recorderLines(file) {
   return readRecorder(file).lines
 }
-const isProbe = (line) => / claude --version /.test(line + ' ')
+const isProbe = (line) => /^\S+ claude --version ?$/.test(line)
 
 /** A recorder failure, latched: once set, no later success and no cleanup can bring the exit code
  *  under 3. `exitWith` reads it. */
@@ -429,7 +486,7 @@ const samePath = (a, b) => {
  * environment travels: not its server, not its agent credentials, not its config homes.
  */
 function daemonLaunch() {
-  const shims = agentShims()
+  const shims = shimPaths()
   const env = {}
   for (const key of ENV_ALLOWLIST) if (process.env[key] !== undefined) env[key] = process.env[key]
   env.PATH = `${shims.dir}${path.delimiter}${process.env.PATH ?? ''}`
@@ -438,8 +495,11 @@ function daemonLaunch() {
   env.CODEX_HOME = shims.codexHome
   env.CLAVE_ANTASPHERE_ISSUER = ISSUER_URL
   env.CLAVE_KEYCHAIN_FILE = path.join(SERVER_DATA, 'keychain.json')
+  writeShims(shims, env)
   const flags = RED_FLAGS ? DAEMON_FLAGS.filter((f) => f !== '--no-titles') : DAEMON_FLAGS
   const args = [
+    // Bun's own flag first: no automatic .env file of the repository root reaches the daemon.
+    '--no-env-file',
     path.join(REPO, 'apps', 'server', 'src', 'main.ts'),
     '--data-dir',
     SERVER_DATA,
@@ -452,6 +512,16 @@ function daemonLaunch() {
     RELAY_URL
   ]
   return { shims, env, args }
+}
+
+/** The key NAMES a Bun process sees under [env] with .env loading off: a probe, never values. */
+function bunEnvKeys(env) {
+  const output = execFileSync(
+    BUN,
+    ['--no-env-file', '-e', 'console.log(JSON.stringify(Object.keys(process.env).sort()))'],
+    { cwd: REPO, env, encoding: 'utf8', timeout: 20_000, stdio: ['ignore', 'pipe', 'ignore'] }
+  )
+  return JSON.parse(output.trim().split('\n').pop())
 }
 
 /** One check line, the shape lane C prints: `check ok` or `check FAIL`, the name, the detail. */
@@ -487,17 +557,24 @@ class RefusedBoot extends Error {
 async function preBootChecks(launch) {
   const results = []
   const check = checker(results)
-  await check('the effective flags: the daemon argv carries --no-titles, --test-no-activate and --test-no-machine-usage', async () => {
+  await check('the effective flags: the daemon argv carries --no-titles, --test-no-activate and --test-no-machine-usage, after Bun\'s --no-env-file', async () => {
     const missing = DAEMON_FLAGS.filter((f) => !launch.args.includes(f))
     expectThat(missing.length === 0, `missing ${missing.join(' ')} in: bun ${launch.args.join(' ')}`)
-    return DAEMON_FLAGS.join(' ')
+    expectThat(launch.args[0] === '--no-env-file', `the argv does not start with --no-env-file: bun ${launch.args.join(' ')}`)
+    return `--no-env-file ${DAEMON_FLAGS.join(' ')}`
   })
   await check(
     "the daemon's environment is the allowlist and the fixture's keys, with empty Claude and Codex homes of the fixture's own",
     async () => {
-      const allowed = new Set([...ENV_ALLOWLIST, ...ENV_FIXTURE_KEYS])
+      const allowed = new Set([...ENV_ALLOWLIST_FROZEN, ...ENV_FIXTURE_KEYS])
       const stray = Object.keys(launch.env).filter((key) => !allowed.has(key))
-      expectThat(stray.length === 0, `keys outside the allowlist: ${stray.join(', ')}`)
+      expectThat(stray.length === 0, `keys outside the frozen allowlist: ${stray.join(', ')}`)
+      // What a Bun process really sees under this environment with .env loading off: the names.
+      const seen = bunEnvKeys(launch.env)
+      const expected = Object.keys(launch.env).sort()
+      const extra = seen.filter((k) => !expected.includes(k))
+      const lost = expected.filter((k) => !seen.includes(k))
+      expectThat(extra.length === 0 && lost.length === 0, `a Bun child sees ${extra.length ? `extra keys ${extra.join(', ')}` : ''}${extra.length && lost.length ? ' and ' : ''}${lost.length ? `misses ${lost.join(', ')}` : ''}`)
       for (const key of ENV_FIXTURE_KEYS) expectThat(typeof launch.env[key] === 'string' && launch.env[key] !== '', `${key} is not set`)
       for (const [name, home] of [['CLAUDE_CONFIG_DIR', launch.shims.claudeConfigDir], ['CODEX_HOME', launch.shims.codexHome]]) {
         expectThat(launch.env[name] === home, `${name} is ${launch.env[name]}, not the fixture's`)
@@ -505,8 +582,8 @@ async function preBootChecks(launch) {
         const entries = readdirSync(home)
         expectThat(entries.length === 0, `${home} holds ${entries.length} entr${entries.length === 1 ? 'y' : 'ies'}`)
       }
-      const kept = ENV_ALLOWLIST.filter((key) => key in launch.env)
-      return `${Object.keys(launch.env).length} keys: ${kept.join(' ')} of this shell, the ${ENV_FIXTURE_KEYS.length} of the fixture; both homes empty`
+      const kept = ENV_ALLOWLIST_FROZEN.filter((key) => key in launch.env)
+      return `${Object.keys(launch.env).length} keys: ${kept.join(' ')} of this shell, the ${ENV_FIXTURE_KEYS.length} of the fixture; a Bun child under --no-env-file sees exactly those names; both homes empty`
     }
   )
   await check(
@@ -615,6 +692,14 @@ async function bootChecks(daemon, launch) {
     const mutated = await evaluate(daemon, PATH_PREFIX_SOURCE, { ptyBackend: PTY_BACKEND, where: 'process', decoy: shims.decoyDir, on: true })
     say(`mutation  decoy-on-process-path (a positive control): the daemon's own PATH now starts with the decoy (${mutated.split(':')[0]}) while the cached login PATH is intact; a resolver reading the cache still answers the recorder, so the checks are expected to pass`)
   }
+  await check("the daemon's own environment, read inside it, carries exactly the launch's key names", async () => {
+    const keys = await evaluate(daemon, '() => Object.keys(process.env).sort()')
+    const expected = Object.keys(launch.env).sort()
+    const extra = keys.filter((k) => !expected.includes(k))
+    const lost = expected.filter((k) => !keys.includes(k))
+    expectThat(extra.length === 0 && lost.length === 0, `the daemon sees ${extra.length ? `extra keys ${extra.join(', ')}` : ''}${extra.length && lost.length ? ' and ' : ''}${lost.length ? `misses ${lost.join(', ')}` : ''}`)
+    return `${keys.length} keys, the launch's`
+  })
   let hooks = null
   await check("the daemon carries the title module's test hooks (__claveE2E.titles, #354) and its opt-out says --no-titles", async () => {
     hooks = await evaluate(daemon, HOOKS_SOURCE, {})
@@ -698,8 +783,23 @@ let probesIssued = 0
 /** The negatives on the owned files, applied after the checks (under --check, after the boot
  *  checks; under --dry-run, after the pre-boot checks): the recorder log removed, made unreadable,
  *  or truncated to nothing. The guard must latch each, the real CLI never involved. */
-function mutateRecorderFiles(shims) {
+function mutateRecorderFiles(shims, env) {
+  const invoke = (file) => {
+    try {
+      execFileSync(file, ['-p'], { input: '', env, stdio: ['pipe', 'ignore', 'ignore'], timeout: 5000 })
+    } catch {
+      /* the recorder exits 1 on purpose */
+    }
+  }
   switch (MUTATE) {
+    case 'recorder-foreign-line':
+      invoke(shims.claude)
+      say("mutation  recorder-foreign-line: the fixture's own recorder was invoked with -p (never a CLI): one non-probe line in the recorder log")
+      break
+    case 'decoy-line':
+      invoke(shims.decoy)
+      say("mutation  decoy-line: the decoy recorder was invoked with -p (never a CLI): one line in the decoy log")
+      break
     case 'recorder-removed':
       rmSync(shims.log, { force: true })
       say('mutation  recorder-removed: the recorder log was removed after the recorder self-test')
@@ -762,8 +862,15 @@ function stopAll() {
   return stopping
 }
 
+/** The launch of this run, once built: the exit takes a last look at its recorders. */
+let LAUNCH = null
+
 async function exitWith(code) {
   await stopAll()
+  if (LAUNCH !== null && !DRY_RUN) {
+    const last = recorderVerdict(LAUNCH.shims)
+    if (last !== null) latchRecorderFailure(last)
+  }
   if (recorderFailure !== null) {
     note(`recorder failure latched: ${recorderFailure}`)
     process.exit(Math.max(code, 3))
@@ -884,11 +991,12 @@ async function startProviderOn(port) {
   }
 }
 
-async function startRelay() {
+async function startRelay(launch) {
   mkdirSync(RELAY_DATA, { recursive: true, mode: 0o700 })
   const run = spawnBun(
     'relay',
     [
+      '--no-env-file',
       path.join(REPO, 'apps', 'relay', 'src', 'main.ts'),
       '--port',
       String(RELAY_PORT),
@@ -897,7 +1005,8 @@ async function startRelay() {
       '--issuer',
       ISSUER_URL
     ],
-    { ...process.env }
+    // The relay runs no agent; it still gets the fixture's sanitized environment, nothing of the shell's.
+    launch.env
   )
   const url = await until(async () => {
     if (run.child.exitCode !== null) throw new Error('exited')
@@ -1398,6 +1507,7 @@ async function main() {
 
   // Before anything starts: the launch the daemon will get, checked.
   const launch = daemonLaunch()
+  LAUNCH = launch
   const pre = await preBootChecks(launch)
   const preFailed = pre.filter((c) => !c.ok)
   if (DRY_RUN) {
@@ -1405,7 +1515,7 @@ async function main() {
     say(`dry run: SHELL=${launch.env.SHELL} CLAUDE_CONFIG_DIR=${launch.env.CLAUDE_CONFIG_DIR} CODEX_HOME=${launch.env.CODEX_HOME}`)
     say(preFailed.length ? 'dry run: the pre-boot checks FAILED; a boot would be refused (exit 2)' : 'dry run: the pre-boot checks passed; nothing was started (the boot checks run only on a boot)')
     if (MUTATE !== null) {
-      mutateRecorderFiles(launch.shims)
+      mutateRecorderFiles(launch.shims, launch.env)
       const verdict = recorderVerdict(launch.shims)
       if (verdict !== null) latchRecorderFailure(verdict)
       say(verdict !== null ? `dry run: the recorder guard's one look latched: ${verdict} (exit 3)` : 'dry run: the recorder guard saw nothing wrong after the mutation: the negative did NOT go red')
@@ -1421,7 +1531,7 @@ async function main() {
     throw new Error(`the provider's issuer is ${provider.issuer}, not ${ISSUER_URL}`)
   note(`issuer ${provider.issuer}`)
 
-  const relayRun = await startRelay()
+  const relayRun = await startRelay(launch)
   note(`relay ${RELAY_URL}`)
 
   const daemon = await startDaemon(launch)
@@ -1435,7 +1545,7 @@ async function main() {
   const boot = await bootChecks(daemon, launch)
   const bootFailed = boot.filter((c) => !c.ok)
   if (bootFailed.length) throw new RefusedBoot('after the boot, before any chat', bootFailed)
-  mutateRecorderFiles(launch.shims)
+  mutateRecorderFiles(launch.shims, launch.env)
   const owner = client(daemon.url, daemon.token)
 
   const signed = await signOwnerIn(owner)
