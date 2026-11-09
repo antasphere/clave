@@ -8,8 +8,8 @@ import SwiftUI
 
 /// What a row may ask the conversation to do.
 struct ChatActions {
-  var answer: (PermissionCard, String, [String: String]?) async -> Void = { _, _, _ in }
-  var openDocument: (DocumentCard) async throws -> FileText = { _ in
+  var answer: @MainActor (PermissionCard, String, [String: String]?) async -> Void = { _, _, _ in }
+  var openDocument: @MainActor (DocumentCard) async throws -> FileText = { _ in
     throw ServerError(.protocol, "Documents cannot be read here.")
   }
 }
@@ -385,7 +385,7 @@ struct ApprovalRunView: View {
 /// A document the agent presented for review: read here, edited on the Mac.
 struct DocumentCardView: View {
   let call: ToolCall
-  let open: (DocumentCard) async throws -> FileText
+  let open: @MainActor (DocumentCard) async throws -> FileText
 
   @Environment(\.claveTheme) private var theme
   @State private var reading = false
@@ -429,7 +429,7 @@ struct DocumentCardView: View {
 /// The file's text, read from the Mac when the sheet opens.
 struct DocumentSheet: View {
   let card: DocumentCard
-  let open: (DocumentCard) async throws -> FileText
+  let open: @MainActor (DocumentCard) async throws -> FileText
 
   @Environment(\.claveTheme) private var theme
   @Environment(\.dismiss) private var dismiss
@@ -493,7 +493,7 @@ struct DocumentSheet: View {
 /// A permission the agent asked for: what, the options, the questions; or how it was settled.
 struct PermissionCardView: View {
   let card: PermissionCard
-  let answer: (PermissionCard, String, [String: String]?) async -> Void
+  let answer: @MainActor (PermissionCard, String, [String: String]?) async -> Void
   /// The canonical keys of the questions whose answers are secrets.
   var secretKeys: Set<String> = []
 

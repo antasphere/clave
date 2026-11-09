@@ -20,7 +20,7 @@ import Observation
   /// Called with the new namespace when the signed-in person changes (nil: signed out).
   @ObservationIgnored var onOwnerChange: ((String?) -> Void)?
   /// Runs before the hub's login is forgotten, while the owner's credentials still work.
-  @ObservationIgnored var beforeSignOut: (() async -> Void)?
+  @ObservationIgnored var beforeSignOut: (@MainActor () async -> Void)?
 
   init(environment: AppEnvironment) {
     secureStore = environment.secureStore

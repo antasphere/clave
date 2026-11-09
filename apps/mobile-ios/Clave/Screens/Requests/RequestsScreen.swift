@@ -114,7 +114,7 @@ struct RequestCard: View {
   let notice: String?
   /// Answered elsewhere: the card stays to say so, without its form.
   let isSettled: Bool
-  let resolve: (RequestResponse) async -> Void
+  let resolve: @MainActor (RequestResponse) async -> Void
 
   @Environment(\.claveTheme) private var theme
   @State private var replies: [String: QuestionReply] = [:]

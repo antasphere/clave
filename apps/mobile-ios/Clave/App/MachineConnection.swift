@@ -40,7 +40,7 @@ import Observation
 
   /// Called after every foreground resume and every reconnection, for the
   /// conversations to catch up on what they missed.
-  @ObservationIgnored var onResume: [() async -> Void] = []
+  @ObservationIgnored var onResume: [@MainActor () async -> Void] = []
   /// Told when the machine stopped accepting this phone.
   @ObservationIgnored var onUnpaired: ((String) -> Void)?
 
