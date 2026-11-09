@@ -26,7 +26,7 @@
 // the daemon will get), resolves `claude` and `codex` to the fixture's stubs;
 // no agent credential travels into the daemon. AFTER the daemon announces
 // itself and BEFORE anything is seeded (bootChecks): its discovery file says
-// titles "off", testFixtures true and machineUsage false, POST /e2e/evaluate
+// titles "off", testMode true and machineUsage false, POST /e2e/evaluate
 // answers, and the SHELL and PATH inside the daemon resolve the two commands to
 // the stubs. One failed check refuses the boot (exit 2) before any chat.
 // --red-flags (drops --no-titles from the argv) and --red-interlock (a login
@@ -112,9 +112,10 @@ if ((RED_FLAGS || RED_INTERLOCK) && !DRY_RUN) {
  *  (test-mode.ts needs both). Lane C's fixture-server.mjs passes the same three, in this order. */
 const DAEMON_FLAGS = ['--no-titles', '--test-no-activate', '--test-no-machine-usage']
 /** The discovery file's three announcements (clave-server.json), read by name from here only:
- *  lane C renames the second (its name collides with a guard counting that key in the
- *  server's main.ts), and the rename is this one line once the final name is announced. */
-const DISCOVERY = { titles: 'titles', testFixtures: 'testFixtures', machineUsage: 'machineUsage' }
+ *  `titles` ("off" under --no-titles), `testMode` (true under --test-no-activate; lane C's
+ *  name, since `testFixtures` collided with a guard counting that key in the server's main.ts)
+ *  and `machineUsage` (false under --test-no-machine-usage). */
+const DISCOVERY = { titles: 'titles', testMode: 'testMode', machineUsage: 'machineUsage' }
 /** What never travels into the daemon: this shell's server, and this Mac's agent credentials. */
 const STRIPPED_KEYS = [
   'CLAVE_SERVER_URL',
@@ -337,12 +338,12 @@ async function bootChecks(daemon, launch) {
     expectThat(discovery[DISCOVERY.titles] === 'off', `the discovery file says ${DISCOVERY.titles} ${JSON.stringify(discovery[DISCOVERY.titles] ?? null)}`)
     return 'titles: off'
   })
-  await check('test fixtures on, machine usage off: the daemon announces testFixtures true and machineUsage false, and answers POST /e2e/evaluate', async () => {
-    expectThat(discovery[DISCOVERY.testFixtures] === true, `${DISCOVERY.testFixtures} ${JSON.stringify(discovery[DISCOVERY.testFixtures] ?? null)}`)
+  await check('test mode on, machine usage off: the daemon announces testMode true and machineUsage false, and answers POST /e2e/evaluate', async () => {
+    expectThat(discovery[DISCOVERY.testMode] === true, `${DISCOVERY.testMode} ${JSON.stringify(discovery[DISCOVERY.testMode] ?? null)}`)
     expectThat(discovery[DISCOVERY.machineUsage] === false, `${DISCOVERY.machineUsage} ${JSON.stringify(discovery[DISCOVERY.machineUsage] ?? null)}`)
     const one = await evaluate(daemon, '() => 1')
     expectThat(one === 1, `the fixture route answered ${JSON.stringify(one)}`)
-    return 'testFixtures: true, machineUsage: false, /e2e/evaluate answers'
+    return 'testMode: true, machineUsage: false, /e2e/evaluate answers'
   })
   await check("the stubs stand in: the daemon's own SHELL is the fixture's and its login environment resolves claude and codex to the stubs", async () => {
     const inside = await evaluate(daemon, '() => ({ shell: process.env.SHELL, path: process.env.PATH })')

@@ -122,7 +122,7 @@ that stance twice and refuses to boot otherwise (exit 2): before anything starts
 flags are in the daemon's argv, its login environment (read as the daemon reads it, `$SHELL
 -lic 'env -0'`) resolves `claude` and `codex` to the fixture's stubs, and no agent credential
 is in its environment; after the daemon announces itself and before any sign-in or chat, its
-discovery file says `titles: "off"`, `testFixtures: true` and `machineUsage: false`. `--dry-run`
+discovery file says `titles: "off"`, `testMode: true` and `machineUsage: false`. `--dry-run`
 runs the first set alone and starts nothing. The shared fixture lane C ships
 (`packages/mobile-native/scripts/fixture-server.mjs`) runs the same three checks.
 
