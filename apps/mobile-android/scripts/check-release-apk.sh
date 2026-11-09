@@ -36,10 +36,14 @@ else
   say "check-release-apk: ok · no fake, developer connection or test double among $total classes"
 fi
 
-# 2. The network security config: no cleartext allowance, no domain exception.
-config=$("$AAPT2" dump xmltree --file res/xml/network_security_config.xml "$APK" 2>/dev/null || true)
+# 2. The network security config: no cleartext allowance, no domain exception. A release build
+#    shortens resource file names (res/8G.xml), so the file is found through the resource table,
+#    which maps xml/network_security_config to its path; the plain path is the fallback.
+config_path=$("$AAPT2" dump resources "$APK" 2>/dev/null | awk '/ xml\/network_security_config$/ {found=1; next} found && /\(file\)/ {print $3; exit}')
+[ -n "$config_path" ] || config_path=res/xml/network_security_config.xml
+config=$("$AAPT2" dump xmltree --file "$config_path" "$APK" 2>/dev/null || true)
 if [ -z "$config" ]; then
-  say "check-release-apk: FAIL · the APK carries no res/xml/network_security_config.xml"; failed=1
+  say "check-release-apk: FAIL · the APK carries no network security config (looked for xml/network_security_config at $config_path)"; failed=1
 else
   if printf '%s\n' "$config" | grep -qE 'cleartextTrafficPermitted[^=]*=true'; then
     say "check-release-apk: FAIL · the network security config permits cleartext traffic"; failed=1
@@ -47,7 +51,7 @@ else
   if printf '%s\n' "$config" | grep -qE 'E: domain(-config)? '; then
     say "check-release-apk: FAIL · the network security config carries a domain exception"; failed=1
   fi
-  [ $failed -eq 0 ] && say "check-release-apk: ok · network security config: no cleartext, no domain exception"
+  [ $failed -eq 0 ] && say "check-release-apk: ok · network security config ($config_path): no cleartext, no domain exception"
 fi
 
 # 3. The manifest: the release application id, not debuggable.
