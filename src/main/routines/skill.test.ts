@@ -23,7 +23,7 @@ const routine: RoutineDeclaration = {
   catchUp: true,
   timeoutMinutes: 30,
   scope: 'machine',
-  server: null,
+  runsOn: 'every',
   runsHere: true,
   report: {
     template: '/w/.clave/routines/workspace-health',

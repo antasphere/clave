@@ -23,7 +23,7 @@
  * modules), which the boot owns.
  */
 import { hostname } from 'node:os'
-import { defaultServerName } from '../routines/resolve'
+import { type OwnServerName, ownServerName as keptServerName } from './server-name'
 import type { EmbeddedServer, ServerPorts } from '@clave/server'
 import { type SessionManager, sessionManager } from '../sessions/session-manager'
 import {
@@ -53,6 +53,10 @@ export interface StartOptions {
    *  updates with the app (`ServerInfoPort.appRun`), built here, after the
    *  server package has loaded. */
   appVersion?: string
+  /** Where this Mac keeps the name it answers to as a server (PRDCT-4241):
+   *  the app's user data. Absent (tests), the name is the environment's or
+   *  the hostname's and cannot be set. */
+  dataDir?: string
 }
 
 /** Start the server once; a second call, concurrent or later, answers the
@@ -71,11 +75,16 @@ export function startClaveServer(options: StartOptions): Promise<ClaveServerEndp
 async function start(options: StartOptions): Promise<ClaveServerEndpoint> {
   const manager = options.manager ?? sessionManager
   const { ports } = options
+  if (options.dataDir) configureOwnServerName(options.dataDir)
   const { startEmbedded, ServerInfoPort } = await import('@clave/server')
   const server = await startEmbedded({
     ports: {
       ...(options.appVersion !== undefined && {
-        serverInfo: ServerInfoPort.appRun(options.appVersion, ownServerName())
+        serverInfo: ServerInfoPort.appRun(
+          options.appVersion,
+          () => ownServerName(),
+          options.dataDir ? (name) => setOwnServerName(name) : undefined
+        )
       }),
       ...ports
     },
@@ -97,10 +106,34 @@ export function claveServerId(): string | null {
   return running?.serverId ?? null
 }
 
-/** This Mac's own name as a server (PRDCT-4149): the environment's when the
- *  harness gives one, else the first label of the machine's hostname. */
+let kept: OwnServerName | null = null
+const sources = (): { env: string | null; hostname: string } => ({
+  env: process.env.CLAVE_SERVER_NAME ?? null,
+  hostname: hostname()
+})
+
+/** Where this Mac keeps the name it answers to as a server; set once at boot. */
+export function configureOwnServerName(dataDir: string): void {
+  kept = keptServerName(dataDir, sources())
+}
+
+/** This Mac's own name as a server (PRDCT-4149, PRDCT-4241): the one stored
+ *  from Settings when there is one, else the environment's when the harness
+ *  gives one, else the first label of the machine's hostname. */
 export function ownServerName(): string {
-  return process.env.CLAVE_SERVER_NAME?.trim() || defaultServerName(hostname())
+  if (kept) return kept()
+  const { env, hostname: host } = sources()
+  return env?.trim() || defaultServerName(host)
+}
+
+/** The name set from Settings, stored under the app's data; answers the name now in force. */
+export function setOwnServerName(name: string): string {
+  if (!kept) throw new Error('This Mac keeps no server name of its own in this process')
+  return kept.set(name)
+}
+
+function defaultServerName(host: string): string {
+  return host.trim().split('.')[0]?.trim() || 'clave-server'
 }
 
 export async function stopClaveServer(): Promise<void> {

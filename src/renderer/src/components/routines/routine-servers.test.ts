@@ -30,8 +30,9 @@ const decl = (over: Partial<RoutineDeclaration> & { rootDir: string }): RoutineD
   catchUp: false,
   timeoutMinutes: 30,
   scope: 'machine',
-  server: null,
+  runsOn: 'every',
   runsHere: true,
+  origin: 'file',
   report: { template: '/t', schema: '/s', width: 400, height: 300, publish: false },
   invalid: null,
   ...over
@@ -76,14 +77,15 @@ describe('mergeRoutineSurfaces', () => {
         runsOn: 'here',
         reachable: true,
         workspaceId: 'mac-ws',
-        pinnedTo: null
+        placement: 'every',
+        problem: null
       }
     ])
   })
 
   it('a pinned local routine surfaces as the connected owner’s view, under the local workspace', () => {
-    const mine = decl({ rootDir: MAC, workspaceId: 'mac-ws', server: 'Box', runsHere: false })
-    const theirs = view(decl({ rootDir: BOX, workspaceId: 'box-raw', server: 'Box' }))
+    const mine = decl({ rootDir: MAC, workspaceId: 'mac-ws', runsOn: 'Box', runsHere: false })
+    const theirs = view(decl({ rootDir: BOX, workspaceId: 'box-raw', runsOn: 'Box' }))
     const out = mergeRoutineSurfaces(
       input({
         local: listing('local-id', 'Mac', [view(mine)]),
@@ -99,12 +101,13 @@ describe('mergeRoutineSurfaces', () => {
       runsOn: 'server',
       reachable: true,
       workspaceId: 'mac-ws',
-      pinnedTo: 'Box'
+      placement: 'Box',
+      problem: null
     })
   })
 
   it('a pin may name the server by its id', () => {
-    const mine = decl({ rootDir: MAC, server: ' s1 ', runsHere: false })
+    const mine = decl({ rootDir: MAC, runsOn: ' s1 ', runsHere: false })
     const theirs = view(decl({ rootDir: BOX }))
     const out = mergeRoutineSurfaces(
       input({
@@ -117,7 +120,7 @@ describe('mergeRoutineSurfaces', () => {
   })
 
   it('a pinned routine whose owner is known but disconnected keeps the local view, unreachable', () => {
-    const mine = decl({ rootDir: MAC, workspaceId: 'mac-ws', server: 'box', runsHere: false })
+    const mine = decl({ rootDir: MAC, workspaceId: 'mac-ws', runsOn: 'box', runsHere: false })
     const theirs = view(decl({ rootDir: BOX }))
     const out = mergeRoutineSurfaces(
       input({
@@ -134,13 +137,14 @@ describe('mergeRoutineSurfaces', () => {
         runsOn: 'server',
         reachable: false,
         workspaceId: 'mac-ws',
-        pinnedTo: 'box'
+        placement: 'box',
+        problem: 'offline'
       }
     ])
   })
 
   it('a pinned routine the connected owner does not list (no twin) stays the local view, unreachable', () => {
-    const mine = decl({ rootDir: MAC, server: 'Box', runsHere: false })
+    const mine = decl({ rootDir: MAC, runsOn: 'Box', runsHere: false })
     const other = view(decl({ rootDir: BOX, name: 'Something else' }))
     const out = mergeRoutineSurfaces(
       input({
@@ -155,7 +159,7 @@ describe('mergeRoutineSurfaces', () => {
   })
 
   it('a server whose listing is unknown but whose saved connection name matches the pin gives the surface that name', () => {
-    const mine = decl({ rootDir: MAC, server: 'build box', runsHere: false })
+    const mine = decl({ rootDir: MAC, runsOn: 'build box', runsHere: false })
     const out = mergeRoutineSurfaces(
       input({
         local: listing('l', 'Mac', [view(mine)]),
@@ -165,18 +169,72 @@ describe('mergeRoutineSurfaces', () => {
     expect(out[0]).toMatchObject({
       serverName: 'Build Box',
       reachable: false,
-      pinnedTo: 'build box'
+      placement: 'build box',
+      problem: 'offline'
     })
   })
 
-  it('a pin nothing on this Mac knows is named as written', () => {
-    const mine = decl({ rootDir: MAC, server: 'nowhere', runsHere: false })
+  it('a placement nothing on this Mac knows is named as written, and marked unknown', () => {
+    const mine = decl({ rootDir: MAC, runsOn: 'nowhere', runsHere: false })
     const out = mergeRoutineSurfaces(input({ local: listing('l', 'Mac', [view(mine)]) }))
     expect(out[0]).toMatchObject({
       serverName: 'nowhere',
       reachable: false,
-      serverId: LOCAL_SERVER_ID
+      serverId: LOCAL_SERVER_ID,
+      placement: 'nowhere',
+      problem: 'unknown'
     })
+  })
+
+  it('a placement on a saved server that is away is marked offline, by its label or the name last heard', () => {
+    const byLabel = decl({ rootDir: MAC, runsOn: 'Studio', runsHere: false })
+    const out = mergeRoutineSurfaces(
+      input({
+        local: listing('l', 'Mac', [view(byLabel)]),
+        connectionNames: { s1: 'Studio' }
+      })
+    )
+    expect(out[0]).toMatchObject({ serverName: 'Studio', reachable: false, problem: 'offline' })
+    const byOwnName = decl({ rootDir: MAC, runsOn: 'romains-mac-studio', runsHere: false })
+    const heard = mergeRoutineSurfaces(
+      input({
+        local: listing('l', 'Mac', [view(byOwnName)]),
+        connectionNames: { s1: 'MacStudio' },
+        knownNames: { s1: 'romains-mac-studio' }
+      })
+    )
+    expect(heard[0]).toMatchObject({ serverName: 'MacStudio', reachable: false, problem: 'offline' })
+  })
+
+  it('a routine that says nowhere it runs stays a local, invalid surface', () => {
+    const mine = decl({ rootDir: MAC, runsOn: null, runsHere: false, invalid: 'say where it runs' })
+    const out = mergeRoutineSurfaces(input({ local: listing('l', 'Mac', [view(mine)]) }))
+    expect(out[0]).toMatchObject({
+      serverId: LOCAL_SERVER_ID,
+      runsOn: 'here',
+      reachable: true,
+      placement: null,
+      problem: null
+    })
+  })
+
+  it('a routine on every machine surfaces once per machine that lists it', () => {
+    const mine = decl({ rootDir: MAC, workspaceId: 'mac-ws', runsOn: 'every' })
+    const theirs = view(decl({ rootDir: BOX, workspaceId: 'raw-ws', runsOn: 'every' }))
+    const out = mergeRoutineSurfaces(
+      input({
+        local: listing('l', 'Mac', [view(mine)]),
+        remote: { s1: listing('s1', 'Box', [theirs]) },
+        connected: new Set(['s1']),
+        pairings: {
+          s1: { combine: true, color: '#f00', pairs: { 'raw-ws': 'mac-ws' }, declined: [] }
+        }
+      })
+    )
+    expect(out.map((o) => [o.serverId, o.workspaceId, o.placement])).toEqual([
+      [LOCAL_SERVER_ID, 'mac-ws', 'every'],
+      ['s1', 'mac-ws', 'every']
+    ])
   })
 
   it('a server routine shows under the paired Mac workspace when the pairing combines', () => {
@@ -198,7 +256,8 @@ describe('mergeRoutineSurfaces', () => {
         runsOn: 'server',
         reachable: true,
         workspaceId: 'mac-ws',
-        pinnedTo: null
+        placement: 'every',
+        problem: null
       }
     ])
   })
@@ -221,7 +280,7 @@ describe('mergeRoutineSurfaces', () => {
   })
 
   it('a server routine that server does not run gives no surface', () => {
-    const elsewhere = view(decl({ rootDir: BOX, server: 'other', runsHere: false }))
+    const elsewhere = view(decl({ rootDir: BOX, runsOn: 'other', runsHere: false }))
     const out = mergeRoutineSurfaces(
       input({ remote: { s1: listing('s1', 'Box', [elsewhere]) }, connected: new Set(['s1']) })
     )
@@ -243,7 +302,7 @@ describe('mergeRoutineSurfaces', () => {
 
   it('orders local first, then servers by id, and never shows a routine twice', () => {
     const here = decl({ rootDir: MAC, name: 'Here' })
-    const pinned = decl({ rootDir: MAC, name: 'Pinned', server: 'A', runsHere: false })
+    const pinned = decl({ rootDir: MAC, name: 'Pinned', runsOn: 'A', runsHere: false })
     const aPinned = view(decl({ rootDir: BOX, name: 'Pinned' }))
     const aOwn = view(decl({ rootDir: BOX, name: 'A own' }))
     const bOwn = view(decl({ rootDir: BOX, name: 'B own' }))
@@ -268,9 +327,9 @@ describe('mergeRoutineSurfaces', () => {
 
 describe('one server, two saved connections (round 1)', () => {
   it('two listings answering to one name: the connected one is the pinned routine’s surface (Gap 5)', () => {
-    const mine = decl({ rootDir: MAC, workspaceId: 'mac-ws', server: 'studio', runsHere: false })
-    const twinA = view(decl({ rootDir: BOX, server: 'studio' }))
-    const twinB = view(decl({ rootDir: `${BOX}-b`, server: 'studio' }))
+    const mine = decl({ rootDir: MAC, workspaceId: 'mac-ws', runsOn: 'studio', runsHere: false })
+    const twinA = view(decl({ rootDir: BOX, runsOn: 'studio' }))
+    const twinB = view(decl({ rootDir: `${BOX}-b`, runsOn: 'studio' }))
     const remote = {
       a: listing('srv-a', 'studio', [twinA]),
       b: listing('srv-b', 'studio', [twinB])

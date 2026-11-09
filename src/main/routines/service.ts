@@ -720,7 +720,7 @@ export function createRoutineService(options: RoutineServiceOptions): RoutineSer
       if (d.invalid) throw new Error(`"${d.name}" cannot run: ${d.invalid}`)
       if (d.runsHere === false)
         throw new Error(
-          `"${d.name}" runs on ${d.server ?? 'another server'}, not on ${options.identity().name}: ask that server to run it`
+          `"${d.name}" runs on ${d.runsOn ?? 'another server'}, not on ${options.identity().name}: ask that server to run it`
         )
       if (runningOf(key)) throw new Error(`"${d.name}" is running; wait for it to end`)
       if (claimsProblem)

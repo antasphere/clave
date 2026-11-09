@@ -1036,19 +1036,27 @@ describe('discovery', () => {
   })
 })
 
-// PRDCT-4149: a routine names the server that runs it and may publish its
+// PRDCT-4241: a routine says where it runs (`runsOn`) and may publish its
 // deck. The parser keeps only well-formed values (a non-empty string, a real
 // boolean) and the writer carries them back verbatim, so a file read and
-// written by the toolbar keeps its pin and its publish.
-describe("a routine's server and publish, read and written", () => {
+// written by the toolbar keeps its placement and its publish. The field
+// `runsOn` replaced, `server`, is still read (the scheduler refuses it by
+// name) and never written.
+describe("a routine's placement and publish, read and written", () => {
   const dir = '/w'
   const base = { name: 'Nightly', schedule: '0 3 * * *', prompt: 'go' }
   const report = { template: '.clave/routines/ok' }
 
-  it('reads the server trimmed and drops one that is not a string', () => {
+  it('reads runsOn trimmed and drops one that is not a string', () => {
+    expect(resolveRoutine({ ...base, runsOn: '  Studio ' }, dir)?.runsOn).toBe('Studio')
+    expect(resolveRoutine({ ...base, runsOn: 'every' }, dir)?.runsOn).toBe('every')
+    expect(resolveRoutine({ ...base, runsOn: 42 }, dir)).not.toHaveProperty('runsOn')
+    expect(resolveRoutine({ ...base, runsOn: '   ' }, dir)).not.toHaveProperty('runsOn')
+  })
+
+  it('still reads the legacy server field, trimmed, so the scheduler can refuse it by name', () => {
     expect(resolveRoutine({ ...base, server: '  Studio ' }, dir)?.server).toBe('Studio')
     expect(resolveRoutine({ ...base, server: 42 }, dir)).not.toHaveProperty('server')
-    expect(resolveRoutine({ ...base, server: '   ' }, dir)).not.toHaveProperty('server')
   })
 
   it('reads report.publish only when it is a boolean', () => {
@@ -1064,14 +1072,15 @@ describe("a routine's server and publish, read and written", () => {
     )
   })
 
-  it('writes the server and report.publish back as read', () => {
+  it('writes runsOn and report.publish back as read, and never the legacy server field', () => {
     const read = resolveRoutine(
-      { ...base, server: 'Studio', report: { ...report, publish: true } },
+      { ...base, runsOn: 'Studio', server: 'Old', report: { ...report, publish: true } },
       dir
     )!
     const written = serializeRoutine(read, (abs) => (abs ? abs.replace('/w/', '') : ''))
-    expect(written.server).toBe('Studio')
+    expect(written.runsOn).toBe('Studio')
+    expect(written).not.toHaveProperty('server')
     expect(written.report).toEqual({ template: '.clave/routines/ok', publish: true })
-    expect(resolveRoutine(written, dir)).toEqual(read)
+    expect(resolveRoutine(written, dir)).toEqual({ ...read, server: undefined })
   })
 })

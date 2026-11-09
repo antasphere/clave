@@ -87,15 +87,24 @@ export const RoutineDeclaration = Schema.Struct({
   catchUp: Schema.Boolean,
   timeoutMinutes: Schema.Number,
   scope: RoutineScope,
-  /** The server that runs this routine, as the file names it (its own name
-   *  or its id), null when whichever server reads the file runs it. */
-  server: Schema.optional(Schema.NullOr(Schema.String)),
-  /** Whether THIS server runs it: true with no `server` named or when the
-   *  name or id is this server's; false for a routine pinned elsewhere,
-   *  which is listed, its next occurrence shown, and never run here.
+  /** Where the routine runs, as declared (PRDCT-4241): `every` (once on
+   *  every machine that reads the file), or a server's own name or id as
+   *  written; null when the declaration says neither (it is then `invalid`
+   *  and runs nowhere). A created routine (`origin: created`) runs on the
+   *  server that stores it and carries that server's own name here. */
+  runsOn: Schema.optional(Schema.NullOr(Schema.String)),
+  /** Whether THIS server runs it: true for `every` or when the name or id
+   *  is this server's; false for a routine placed elsewhere (listed, its
+   *  next occurrence shown, never run here) and for one that says nothing.
    *  Both optional on the wire (an older server sends neither): a reader
    *  takes a missing `runsHere` as true, what such a server did. */
   runsHere: Schema.optional(Schema.Boolean),
+  /** Where the declaration comes from (PRDCT-4242): a `.clave` file on this
+   *  server's disk, or the server's own store of created routines. Absent
+   *  on the wire from an older server: a reader takes it as `file`. */
+  origin: Schema.optional(Schema.Literal('file', 'created')),
+  /** A created routine put on hold: listed, never ticked, Run now refused. */
+  paused: Schema.optional(Schema.Boolean),
   report: RoutineReportSpec,
   /** Why this routine can never run as declared (an unknown scope, a
    *  schedule that does not parse, a template outside the file's folder):

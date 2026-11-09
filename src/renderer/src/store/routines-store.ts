@@ -4,7 +4,8 @@ import {
   LOCAL_SERVER_ID,
   type SavedServerConnection,
   type ServerConnectionStatus,
-  type ServerPairings
+  type ServerPairings,
+  type ServerVersionStatus
 } from '@clave/contract/fleet'
 import type { RoutineRun, RoutineView, RoutinesListing } from '@clave/contract/routines/model'
 import { useFleetStore } from './fleet-store'
@@ -173,14 +174,21 @@ export function surfacesOf(
   routines: Pick<RoutinesState, 'local' | 'remote'>,
   connections: readonly SavedServerConnection[],
   statuses: Record<string, ServerConnectionStatus>,
-  pairings: ServerPairings['servers']
+  pairings: ServerPairings['servers'],
+  versions: Record<string, ServerVersionStatus> = {}
 ): RoutineSurface[] {
   const saved = new Set(connections.map((c) => c.id))
+  // A saved server's own name, as the version sync last heard it: what
+  // tells a server that is away from a name nobody has (PRDCT-4241).
+  const knownNames: Record<string, string> = {}
+  for (const [id, status] of Object.entries(versions))
+    if (saved.has(id) && status.serverName) knownNames[id] = status.serverName
   return mergeRoutineSurfaces({
     local: routines.local,
     remote: Object.fromEntries(Object.entries(routines.remote).filter(([id]) => saved.has(id))),
     connected: connectedIds(statuses),
     connectionNames: Object.fromEntries(connections.map((c) => [c.id, c.name])),
+    knownNames,
     pairings
   })
 }
@@ -192,9 +200,10 @@ export function useRoutineSurfaces(): RoutineSurface[] {
   const connections = useFleetStore((s) => s.connections)
   const statuses = useFleetStore((s) => s.statuses)
   const pairings = usePairingStore((s) => s.servers)
+  const versions = useFleetStore((s) => s.versions)
   return useMemo(
-    () => surfacesOf({ local, remote }, connections, statuses, pairings),
-    [local, remote, connections, statuses, pairings]
+    () => surfacesOf({ local, remote }, connections, statuses, pairings, versions),
+    [local, remote, connections, statuses, pairings, versions]
   )
 }
 

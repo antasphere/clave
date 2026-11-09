@@ -79,7 +79,7 @@ import { standaloneSettingsSource } from './settings/standalone-source'
 import * as os from 'node:os'
 import { createRoutineService } from './routines/service'
 import { SlidelessPublisher } from './routines/publisher'
-import { defaultServerName } from './routines/resolve'
+import { ownServerName } from './server/server-name'
 import { launchFactsFromManagers } from './routines/facts'
 import { contractPluginDir } from './routines/skill'
 import { claudeAccountsManager } from './claude-accounts'
@@ -177,10 +177,13 @@ async function main(): Promise<void> {
   // ── PRDCT-4149: this server's own name, what a routine's `server` field names it by ──
   // `--server-name` (the install script's option) else the machine's hostname
   // first label only; the id is the daemon's stable one, or the listener's once up.
-  const serverName =
-    arg('server-name')?.trim() ||
-    process.env.CLAVE_SERVER_NAME?.trim() ||
-    defaultServerName(os.hostname())
+  // PRDCT-4241: a name set from Settings is stored under --data-dir and wins
+  // over the flag and the environment from then on (`server/server-name.ts`).
+  const serverName = ownServerName(dataDir, {
+    flag: arg('server-name') ?? null,
+    env: process.env.CLAVE_SERVER_NAME ?? null,
+    hostname: os.hostname()
+  })
   let listeningServerId: string | null = null
 
   const log = (line: string): void => {
@@ -332,7 +335,8 @@ async function main(): Promise<void> {
       runner: scriptRunner({ dataDir, name: 'reason' in facts ? 'clave-server' : facts.name }),
       activity: sessionActivity(sessionManager),
       idleMs: upgradeIdleMs(process.argv.slice(2), TEST_NO_ACTIVATE),
-      name: serverName
+      name: serverName,
+      setName: (name) => serverName.set(name)
     })
   }
   // ── Wave 3, lane A: the `.clave` files of this machine, their trust store under `--data-dir` ──
@@ -359,7 +363,7 @@ async function main(): Promise<void> {
     ...(TEST_NO_ACTIVATE ? { claimsDir: path.join(dataDir, 'routine-claims') } : {}),
     holder: `clave-server:${process.pid}`,
     pluginDir: contractPluginDir(path.resolve(__dirname, '..', '..', 'resources')),
-    identity: () => ({ id: identity?.serverId ?? listeningServerId ?? '', name: serverName }),
+    identity: () => ({ id: identity?.serverId ?? listeningServerId ?? '', name: serverName() }),
     publisher: TEST_NO_ACTIVATE
       ? false
       : new SlidelessPublisher({
@@ -410,7 +414,8 @@ async function main(): Promise<void> {
       // progress published to every attached client (server/git-port.ts).
       git: serverGitPort(),
       // ── Issue #266: the server domain ──
-      serverInfo: selfUpgrade ?? ServerInfoPort.appRun(version, serverName)
+      serverInfo:
+        selfUpgrade ?? ServerInfoPort.appRun(version, serverName, (name) => serverName.set(name))
     },
     port,
     host: config.host,

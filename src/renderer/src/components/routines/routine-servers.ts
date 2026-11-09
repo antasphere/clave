@@ -27,8 +27,15 @@ export interface RoutineSurface {
   reachable: boolean
   /** The workspace id the toolbar filters by. */
   workspaceId: string
-  /** The routine's `server` field as written; null when whichever server reads the file runs it. */
-  pinnedTo: string | null
+  /** Where the declaration says it runs (PRDCT-4241): `every`, a machine's
+   *  own name or id as written, or null when it says nothing (it is then
+   *  invalid and runs nowhere). */
+  placement: string | null
+  /** A routine placed on a machine this Mac cannot reach: `offline` when the
+   *  name is a server saved here (by its connection label or a name heard
+   *  from it), `unknown` when no machine this Mac knows answers to it; null
+   *  for a routine that runs here or on a connected server. */
+  problem: 'offline' | 'unknown' | null
 }
 
 export interface RoutineSurfacesInput {
@@ -39,6 +46,10 @@ export interface RoutineSurfacesInput {
   connected: ReadonlySet<string>
   /** Server id → the Mac's saved name for the connection. */
   connectionNames: Record<string, string>
+  /** Server id → the server's own name, as the version sync last read it
+   *  (`ServerVersionStatus.serverName`): what tells a saved server that is
+   *  away from a name nobody has. */
+  knownNames?: Record<string, string>
   pairings: ServerPairings['servers']
 }
 
@@ -87,6 +98,7 @@ export function dedupeByIdentity(
 
 export function mergeRoutineSurfaces(input: RoutineSurfacesInput): RoutineSurface[] {
   const { local, remote, connected, connectionNames, pairings } = input
+  const knownNames = input.knownNames ?? {}
   const surfaces: RoutineSurface[] = []
   const placed = new Set<string>()
   const add = (surface: RoutineSurface): void => {
@@ -99,14 +111,15 @@ export function mergeRoutineSurfaces(input: RoutineSurfacesInput): RoutineSurfac
   // Note 1) answers with one identity: its routines surface once, through
   // the connection that is up, else the first saved.
   const serverIds = dedupeByIdentity(remote, connected)
-  // The remote views a pinned local routine took over: surfaced once, under
-  // the local workspace, and never again as a remote routine of their own.
+  // The remote views a local routine placed on a server took over: surfaced
+  // once, under the local workspace, and never again as a remote routine of
+  // their own.
   const consumed = new Set<string>()
 
-  // The server a pin names, by its id or its own name; a connected one wins
-  // when two listings answer to the same name.
-  const ownerOf = (pin: string): string | null => {
-    const wanted = pin.trim()
+  // The server a placement names, by its id or its own name; a connected one
+  // wins when two listings answer to the same name.
+  const ownerOf = (name: string): string | null => {
+    const wanted = name.trim()
     const lower = wanted.toLowerCase()
     const matches = serverIds.filter((id) => {
       const server = remote[id].server
@@ -114,9 +127,20 @@ export function mergeRoutineSurfaces(input: RoutineSurfacesInput): RoutineSurfac
     })
     return matches.find((id) => connected.has(id)) ?? matches[0] ?? null
   }
+  // A saved server that answers to the name, by its connection label or the
+  // own name last heard from it, whether or not it is up right now.
+  const savedOf = (name: string): string | null => {
+    const lower = name.trim().toLowerCase()
+    for (const [id, label] of Object.entries(connectionNames))
+      if (label.trim().toLowerCase() === lower || id === name.trim()) return id
+    for (const [id, own] of Object.entries(knownNames))
+      if (own.trim().toLowerCase() === lower) return id
+    return null
+  }
 
   for (const view of local?.routines ?? []) {
     const decl = view.routine
+    const placement = decl.runsOn ?? null
     if (runsThere(view)) {
       add({
         view,
@@ -125,12 +149,27 @@ export function mergeRoutineSurfaces(input: RoutineSurfacesInput): RoutineSurfac
         runsOn: 'here',
         reachable: true,
         workspaceId: decl.workspaceId,
-        pinnedTo: decl.server ?? null
+        placement,
+        problem: null
       })
       continue
     }
-    const pin = decl.server ?? ''
-    const owner = ownerOf(pin)
+    // Placed nowhere (no runsOn, or the field it replaced): listed here as
+    // invalid, with the reason the declaration carries; no server to look for.
+    if (!placement) {
+      add({
+        view,
+        serverId: LOCAL_SERVER_ID,
+        serverName: local?.server?.name ?? 'This Mac',
+        runsOn: 'here',
+        reachable: true,
+        workspaceId: decl.workspaceId,
+        placement: null,
+        problem: null
+      })
+      continue
+    }
+    const owner = ownerOf(placement)
     const id = relId(decl)
     const twin = owner
       ? remote[owner].routines.find((v) => runsThere(v) && relId(v.routine) === id)
@@ -146,22 +185,25 @@ export function mergeRoutineSurfaces(input: RoutineSurfacesInput): RoutineSurfac
         runsOn: 'server',
         reachable: true,
         workspaceId: decl.workspaceId,
-        pinnedTo: decl.server ?? null
+        placement,
+        problem: null
       })
       continue
     }
-    const lower = pin.trim().toLowerCase()
-    const savedName = Object.values(connectionNames).find(
-      (name) => name.trim().toLowerCase() === lower
-    )
+    const saved = owner ?? savedOf(placement)
     add({
       view,
       serverId: LOCAL_SERVER_ID,
-      serverName: owner ? listingName(remote[owner], owner, connectionNames) : (savedName ?? pin),
+      serverName: owner
+        ? listingName(remote[owner], owner, connectionNames)
+        : saved
+          ? (connectionNames[saved] ?? knownNames[saved] ?? placement)
+          : placement,
       runsOn: 'server',
       reachable: false,
       workspaceId: decl.workspaceId,
-      pinnedTo: decl.server ?? null
+      placement,
+      problem: saved ? 'offline' : 'unknown'
     })
   }
 
@@ -180,7 +222,8 @@ export function mergeRoutineSurfaces(input: RoutineSurfacesInput): RoutineSurfac
         runsOn: 'server',
         reachable: connected.has(serverId),
         workspaceId: paired ?? resourceKey('workspace', serverId, decl.workspaceId),
-        pinnedTo: decl.server ?? null
+        placement: decl.runsOn ?? null,
+        problem: null
       })
     }
   }

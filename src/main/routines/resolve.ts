@@ -17,6 +17,7 @@ import type { WorkspaceFiles } from '@clave/server/workspace-files'
 import { substituteTokens } from '../../shared/prompt-tokens'
 import { parseCron } from './cron'
 import { checkTemplate } from './deck'
+import { RUNS_EVERYWHERE as EVERY } from '@clave/contract/server-name'
 
 export const DEFAULT_TIMEOUT_MINUTES = 30
 /** A week: above it a JavaScript timer overflows and fires at once (round 1, F5). */
@@ -51,30 +52,59 @@ export function routineKey(file: string, name: string): string {
   return `${file}::${name}`
 }
 
-/** A server as a routine's `server` field may name it (PRDCT-4149): its
+/** A server as a routine's `runsOn` field may name it (PRDCT-4149): its
  *  stable id and its own name (the machine's hostname unless given one). */
 export interface ServerIdentity {
   readonly id: string
   readonly name: string
 }
 
-/** Whether a server runs a routine: every routine with no `server`, and a
- *  pinned one whose name (case-insensitive, trimmed) or id is this server's.
- *  Pure, so the rule has tests of its own. */
-export function runsOn(server: string | null | undefined, identity: ServerIdentity): boolean {
-  if (!server) return true
-  const wanted = server.trim()
-  if (!wanted) return true
+export { RUNS_EVERYWHERE } from '@clave/contract/server-name'
+
+/** Where a declaration says it runs (PRDCT-4241): on every machine, on one
+ *  machine by its own name or id, nowhere because it says nothing, or
+ *  nowhere because it still says `server`, the field `runsOn` replaced. */
+export type Placement =
+  | { kind: 'every' }
+  | { kind: 'machine'; name: string }
+  | { kind: 'missing' }
+  | { kind: 'legacy'; server: string }
+
+export function placementOf(
+  routine: Pick<ClaveRoutine, 'runsOn' | 'server'>
+): Placement {
+  const wanted = routine.runsOn?.trim() ?? ''
+  if (wanted.toLowerCase() === EVERY) return { kind: 'every' }
+  if (wanted) return { kind: 'machine', name: wanted }
+  const legacy = routine.server?.trim() ?? ''
+  if (legacy) return { kind: 'legacy', server: legacy }
+  return { kind: 'missing' }
+}
+
+/** Why a placement can never run, in the words the badge shows; null when it can. */
+export function placementProblem(placement: Placement): string | null {
+  switch (placement.kind) {
+    case 'missing':
+      return 'say where it runs: runsOn, a machine\u2019s own name or id, or "every"'
+    case 'legacy':
+      return `"server" is no longer read: write runsOn: "${placement.server}"`
+    default:
+      return null
+  }
+}
+
+/** Whether a server runs a routine: every routine placed on `every`, and
+ *  one placed on a machine whose name (case-insensitive, trimmed) or id is
+ *  this server's. A routine that says nothing runs nowhere. Pure, so the
+ *  rule has tests of its own. */
+export function runsOn(placement: Placement, identity: ServerIdentity): boolean {
+  if (placement.kind === 'every') return true
+  if (placement.kind !== 'machine') return false
+  const wanted = placement.name
   return wanted === identity.id || wanted.toLowerCase() === identity.name.trim().toLowerCase()
 }
 
-/** The machine's own name, the default a server answers to: the first label
- *  of its hostname, without the domain a network appends (`.local` on a Mac,
- *  `.home` or `.lan` from a router), lower-cased by whoever compares it. */
-export function defaultServerName(hostname: string): string {
-  const label = hostname.trim().split('.')[0]?.trim() ?? ''
-  return label || 'clave-server'
-}
+export { defaultServerName } from '../server/server-name'
 
 /** One routine of one group, as the scheduler sees it. Pure. */
 export function declare(
@@ -86,8 +116,8 @@ export function declare(
     workspace: RegistryWorkspace
     /** Whether the template folder is usable; checked on disk by the caller. */
     template: (template: string, root: string) => { ok: true } | { ok: false; reason: string }
-    /** The server reading the file: decides `runsHere` for a pinned routine.
-     *  Absent (a reader with no identity), only an unpinned routine runs. */
+    /** The server reading the file: decides `runsHere` for a routine placed
+     *  on a machine. Absent (a reader with no identity), only `every` runs. */
     identity?: ServerIdentity
   }
 ): RoutineDeclaration {
@@ -104,6 +134,9 @@ export function declare(
   } catch (error) {
     reasons.push(`the schedule does not parse: ${(error as Error).message}`)
   }
+  const placement = placementOf(routine)
+  const placementTrouble = placementProblem(placement)
+  if (placementTrouble) reasons.push(placementTrouble)
   const scope = routine.scope ?? 'machine'
   if (scope === 'team') reasons.push('team scope is not built yet')
   else if (scope !== 'machine') reasons.push(`scope "${scope}" is not machine or team`)
@@ -167,8 +200,16 @@ export function declare(
       MAX_TIMEOUT_MINUTES
     ),
     scope: scope === 'team' ? 'team' : 'machine',
-    server: routine.server?.trim() || null,
-    runsHere: context.identity ? runsOn(routine.server, context.identity) : !routine.server?.trim(),
+    runsOn:
+      placement.kind === 'every'
+        ? EVERY
+        : placement.kind === 'machine'
+          ? placement.name
+          : null,
+    runsHere: context.identity
+      ? runsOn(placement, context.identity)
+      : placement.kind === 'every',
+    origin: 'file',
     report,
     invalid: reasons.length ? reasons.join('; ') : null
   }

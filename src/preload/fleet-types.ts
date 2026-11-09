@@ -105,6 +105,8 @@ export interface FleetDesktopAPI {
   fleetServerVersions(refresh?: boolean): Promise<ServerVersionStatus[]>
   /** Upgrade the server to this app's version now, without waiting for idle. */
   fleetUpgradeServer(serverId: string): Promise<ServerVersionStatus>
+  /** The server's own name set from this Mac (PRDCT-4241); its status read again. */
+  fleetSetServerName(serverId: string, name: string): Promise<ServerVersionStatus>
   /** Every decision main publishes, for all enabled servers at once. */
   onFleetServerVersions(callback: (statuses: ServerVersionStatus[]) => void): () => void
   // ── Lane B (server wave): a server's accounts, usage and profiles, read and followed from the Mac ──

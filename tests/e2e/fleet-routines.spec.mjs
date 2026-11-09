@@ -94,7 +94,7 @@ const CLAVE_DOC = {
       routines: [
         {
           name: PINNED,
-          server: 'studio',
+          runsOn: 'studio',
           schedule: HOURLY,
           prompt: 'ROUTINE-MODE:ok Check the machine at @root_path.',
           // The built-in Claude, so the daemon runs the fixture `claude` on its
@@ -108,6 +108,7 @@ const CLAVE_DOC = {
         },
         {
           name: LOCAL,
+          runsOn: 'every',
           schedule: NEVER,
           prompt: 'ROUTINE-MODE:ok Local.',
           model: 'fixture-model',

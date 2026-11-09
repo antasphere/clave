@@ -1716,6 +1716,9 @@ const electronAPI = {
       return api.routines.openDiscussion(runId, identity?.windowKey ?? '', mode)
     }
   }),
+  // PRDCT-4241: this Mac's own name as a server, the shell's to keep.
+  routinesOwnName: () => ipcRenderer.invoke('routines:own-name'),
+  routinesSetOwnName: (name: string) => ipcRenderer.invoke('routines:set-own-name', name),
   onRoutinesChanged: (callback: () => void) =>
     viaServerEvent<'routines.changed', null>(
       'routines:changed',

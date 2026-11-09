@@ -107,6 +107,7 @@ const routine = (name, mode, extra = {}) => ({
   icon: 'shield',
   color: 'teal',
   report: { template: '.clave/routines/health', width: 500, height: 400 },
+  runsOn: 'every',
   ...extra
 })
 

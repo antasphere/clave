@@ -37,6 +37,7 @@ import {
 // with, live in modules of their own with no Effect in them, so main's boot
 // can apply them without loading Effect.
 export { isReleaseTag, isReleaseVersion } from './release-version'
+export { RUNS_EVERYWHERE, SERVER_NAME_RULE, isServerName } from './server-name'
 export {
   SERVER_UPGRADE_FAILURE_CODES,
   SERVER_UPGRADE_PHASES,
@@ -103,6 +104,12 @@ export const ServerInfo = Schema.Struct({
 })
 export type ServerInfo = typeof ServerInfo.Type
 
+/** The name asked for is not one a server may be called (`server-name.ts`). */
+export class InvalidServerName extends Schema.TaggedError<InvalidServerName>()(
+  'InvalidServerName',
+  { message: Schema.NonEmptyString }
+) {}
+
 /** The version asked for is not one a release tag can name. */
 export class InvalidUpgradeVersion extends Schema.TaggedError<InvalidUpgradeVersion>()(
   'InvalidUpgradeVersion',
@@ -125,6 +132,17 @@ export const RequestServerUpgrade = Command.define('RequestServerUpgrade', {
 })
 export type ServerUpgradeRequest = typeof RequestServerUpgrade.payload.Type
 
+/** The server's own name set from a Mac (PRDCT-4241): what a routine's
+ *  `runsOn` places it by. Stored by the server in its own data, so it wins
+ *  over the install script's flag and the environment from then on, and
+ *  outlives an upgrade. Answers the server's info with the new name; a
+ *  server with no store behind its port is `CapabilityUnavailable`. */
+export const SetServerName = Command.define('SetServerName', {
+  payload: Schema.Struct({ name: Schema.String }),
+  success: ServerInfo,
+  failure: Schema.Union(CapabilityUnavailable, InvalidServerName)
+})
+
 export const ServerUpgradeEvent = Schema.TaggedStruct('server.upgrade_changed', {
   status: ServerUpgradeStatus
 })
@@ -133,3 +151,4 @@ export type ServerUpgradeEvent = typeof ServerUpgradeEvent.Type
 export const serverInfoGroup = ApiGroup.make('server')
   .add(HttpCqrs.queryEndpoint('info', '/server/info', GetServerInfo))
   .add(HttpCqrs.commandEndpoint('upgrade', '/server/upgrade', RequestServerUpgrade))
+  .add(HttpCqrs.commandEndpoint('name', '/server/name', SetServerName))

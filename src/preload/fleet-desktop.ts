@@ -1254,6 +1254,8 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
       (await ports.invoke(FLEET_IPC.versions, refresh === true)) as ServerVersionStatus[],
     fleetUpgradeServer: async (serverId) =>
       (await ports.invoke(FLEET_IPC.upgradeNow, serverId)) as ServerVersionStatus,
+    fleetSetServerName: async (serverId, name) =>
+      (await ports.invoke(FLEET_IPC.setServerName, serverId, name)) as ServerVersionStatus,
     onFleetServerVersions: (callback) => ports.versions?.(callback) ?? noop
   }
   type LaunchSettings = Awaited<ReturnType<FleetDesktopAPI['fleetLaunchSettings']>>

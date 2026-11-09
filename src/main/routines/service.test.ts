@@ -58,6 +58,7 @@ const routine = (name: string, extra: Record<string, unknown> = {}): Record<stri
   schedule: '0 0 31 2 *',
   prompt: 'do it',
   report: { template: '.clave/routines/ok' },
+  runsOn: 'every',
   ...extra
 })
 
@@ -486,14 +487,14 @@ function dueHourly(
 describe('a routine pinned to a server (PRDCT-4149)', () => {
   it('is listed on another server and never run there, by the tick or by Run now', async () => {
     const schedule = `${(new Date().getMinutes() + 30) % 60} * * * *`
-    const file = workspace([routine('Nightly', { server: 'Studio', schedule })])
+    const file = workspace([routine('Nightly', { runsOn: 'Studio', schedule })])
     const { storage } = dueHourly(file, 'Nightly')
     const host = fakeHost()
     const service = await build(file, host, storage)
     await service.tick()
     expect(host.starts).toEqual([])
     const listed = service.list().routines[0]
-    expect(listed.routine).toMatchObject({ server: 'Studio', runsHere: false })
+    expect(listed.routine).toMatchObject({ runsOn: 'Studio', runsHere: false })
     expect(listed.runs).toEqual([])
     expect(listed.nextRunAt).toEqual(expect.any(Number))
     const refused = service.runNow(key(file, 'Nightly'))
@@ -504,7 +505,7 @@ describe('a routine pinned to a server (PRDCT-4149)', () => {
 
   it('runs on the server it names, whatever the case of the name', async () => {
     const schedule = `${(new Date().getMinutes() + 30) % 60} * * * *`
-    const file = workspace([routine('Nightly', { server: 'testmac', schedule })])
+    const file = workspace([routine('Nightly', { runsOn: 'testmac', schedule })])
     const { storage } = dueHourly(file, 'Nightly')
     const host = fakeHost()
     const service = await build(file, host, storage)
@@ -515,7 +516,7 @@ describe('a routine pinned to a server (PRDCT-4149)', () => {
   })
 
   it('runs on a server named by its id under another identity', async () => {
-    const file = workspace([routine('Nightly', { server: 'srv-42' })])
+    const file = workspace([routine('Nightly', { runsOn: 'srv-42' })])
     const host = fakeHost()
     const service = await build(file, host, memory(), {
       identity: () => ({ id: 'srv-42', name: 'Studio' })
@@ -874,7 +875,7 @@ describe('the publish to Slideless (PRDCT-4149)', () => {
     const publisher = fakePublisher()
     // The same file now pins the routine to another server: this server no
     // longer runs it, and the run it cut off is not its to publish.
-    const pinnedFile = workspace([{ ...published, server: 'Studio' }])
+    const pinnedFile = workspace([{ ...published, runsOn: 'Studio' }])
     const pinnedAway = await build(pinnedFile, fakeHost(), storage, { publisher })
     await pinnedAway.start()
     await new Promise((resolve) => setTimeout(resolve, 30))

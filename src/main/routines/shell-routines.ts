@@ -32,7 +32,7 @@ import { launchFactsFromManagers } from './facts'
 import { SlidelessPublisher } from './publisher'
 import { createRoutineService, type RoutineService } from './service'
 import { contractPluginDir } from './skill'
-import { claveServerId, ownServerName } from '../server/clave-server'
+import { claveServerId, ownServerName, setOwnServerName } from '../server/clave-server'
 
 let service: RoutineService | null = null
 
@@ -118,5 +118,12 @@ export function installRoutinesIpc(routines: RoutinesService | null): void {
     async (_event, runId: string, windowKey: string, mode: 'panel' | 'tab') =>
       routines ? await routines.openDiscussion(runId, windowKey, mode) : elsewhere()
   )
+  // PRDCT-4241: this Mac's own name as a server, read and set from Settings.
+  ipcMain.handle('routines:own-name', () => ownServerName())
+  ipcMain.handle('routines:set-own-name', (_event, name: string) => {
+    const next = setOwnServerName(name)
+    broadcastToAllWindows('routines:changed', { _tag: 'routines.changed' })
+    return next
+  })
   routines?.subscribe((event) => broadcastToAllWindows('routines:changed', event))
 }
