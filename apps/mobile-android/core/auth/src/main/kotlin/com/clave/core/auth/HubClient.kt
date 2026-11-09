@@ -239,4 +239,4 @@ internal fun JsonElement?.stringOrNull(): String? = (this as? JsonPrimitive)?.ta
 
 /** application/x-www-form-urlencoded, as URLSearchParams writes it. */
 internal fun formEncode(form: Map<String, String>): String =
-    form.entries.joinToString("&") { (k, v) -> "${URLEncoder.encode(k, Charsets.UTF_8)}=${URLEncoder.encode(v, Charsets.UTF_8)}" }
+    form.entries.joinToString("&") { (k, v) -> "${URLEncoder.encode(k, Charsets.UTF_8.name())}=${URLEncoder.encode(v, Charsets.UTF_8.name())}" }

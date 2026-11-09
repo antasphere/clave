@@ -6,9 +6,10 @@
 # ANDROID_HOME holding the SDK command-line tools (the hosted runners do), and the
 # network. It installs exactly what the project pins (the platform and the build tools
 # named below, the same numbers as app/build.gradle.kts) through sdkmanager into the
-# runner's own ANDROID_HOME, then runs every JVM test and assembles the debug APK. The
-# instrumented tests and the fixture check need an emulator and run on a Mac by hand
-# (README.md); nothing here claims them.
+# runner's own ANDROID_HOME, then runs every JVM test and Lint on the Android modules, and
+# assembles the debug and the (unsigned) release APK. The instrumented tests and the
+# fixture check need an emulator and run on a Mac by hand (README.md); nothing here
+# claims them.
 set -euo pipefail
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 cd "$HERE"
@@ -28,8 +29,8 @@ echo "ci.sh: installed platforms;android-${COMPILE_SDK} build-tools;${BUILD_TOOL
 export ANDROID_SDK_ROOT="$ANDROID_HOME"
 chmod +x ./gradlew
 
-echo "ci.sh: JVM unit tests of every module, then the debug and the (unsigned) release APK"
-./gradlew --no-daemon --console=plain test assembleDebug assembleRelease
+echo "ci.sh: JVM unit tests of every module, Lint on the Android modules (NewApi against minSdk 26 among its checks), then the debug and the (unsigned) release APK"
+./gradlew --no-daemon --console=plain test :app:lintDebug :ui:lintDebug :platform:lintDebug assembleDebug assembleRelease
 echo "ci.sh: the release APK carries no fake, no developer connection, no cleartext allowance"
 bash scripts/check-release-apk.sh app/build/outputs/apk/release/app-release-unsigned.apk
 

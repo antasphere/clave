@@ -1,5 +1,6 @@
 package com.clave.platform.push
 
+import android.Manifest
 import android.app.Activity
 import android.app.Notification
 import android.app.NotificationChannel
@@ -8,12 +9,14 @@ import android.app.PendingIntent
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.app.RemoteInput
+import androidx.core.content.ContextCompat
 import com.clave.core.contract.NotificationAction
 import com.clave.core.contract.NotificationCategory
 import com.clave.core.contract.NotificationPayload
@@ -96,7 +99,7 @@ class ClaveNotifications(
     private var channelReady = false
 
     fun ensureChannel() {
-        if (channelReady || Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+        if (channelReady) return
         val manager = context.getSystemService(NotificationManager::class.java)
         if (manager.getNotificationChannel(channelId) == null) {
             val channel = NotificationChannel(channelId, channelName, NotificationManager.IMPORTANCE_HIGH)
@@ -130,6 +133,10 @@ class ClaveNotifications(
         ensureChannel()
         val manager = NotificationManagerCompat.from(context)
         if (!manager.areNotificationsEnabled()) return
+        // Android 13 and later: posting needs the runtime permission; without it nothing is shown.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) return
         try {
             manager.notify(payload.serverId, idOf(payload, requestId), notification)
         } catch (_: SecurityException) {

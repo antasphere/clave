@@ -5,6 +5,7 @@ import android.app.Notification
 import android.app.NotificationManager
 import android.content.Intent
 import android.net.Uri
+import android.os.Build
 import android.os.SystemClock
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
@@ -345,7 +346,11 @@ class AppEvidenceTest {
         screenshot("link-requests.png")
 
         // A real notification, through the app's own poster: one, with the session's title, then cancelled.
-        instrumentation.uiAutomation.grantRuntimePermission(targetContext.packageName, Manifest.permission.POST_NOTIFICATIONS)
+        // The runtime permission exists from Android 13; older systems post without one, and
+        // UiAutomation.grantRuntimePermission itself only exists from Android 9 (API 28).
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            instrumentation.uiAutomation.grantRuntimePermission(targetContext.packageName, Manifest.permission.POST_NOTIFICATIONS)
+        }
         val payload = NotificationPayload(
             category = NotificationCategory.Finished,
             serverId = "stand-in",

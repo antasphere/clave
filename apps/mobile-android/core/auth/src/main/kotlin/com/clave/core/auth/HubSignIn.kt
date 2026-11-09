@@ -587,6 +587,6 @@ private fun queryParams(rawQuery: String?): List<Pair<String, String>> {
         val eq = part.indexOf('=')
         val name = if (eq < 0) part else part.substring(0, eq)
         val value = if (eq < 0) "" else part.substring(eq + 1)
-        URLDecoder.decode(name, Charsets.UTF_8) to URLDecoder.decode(value, Charsets.UTF_8)
+        URLDecoder.decode(name, Charsets.UTF_8.name()) to URLDecoder.decode(value, Charsets.UTF_8.name())
     }
 }

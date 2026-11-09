@@ -264,7 +264,7 @@ class FakeIssuer(private val clock: () -> Long) : AutoCloseable {
             back["code"] = code
         }
         val location = redirect + (if ('?' in redirect) "&" else "?") +
-            back.entries.joinToString("&") { (k, v) -> "$k=${URLEncoder.encode(v, Charsets.UTF_8)}" }
+            back.entries.joinToString("&") { (k, v) -> "$k=${URLEncoder.encode(v, Charsets.UTF_8.name())}" }
         return MockResponse().setResponseCode(302).addHeader("Location", location)
     }
 
@@ -407,7 +407,7 @@ class FakeIssuer(private val clock: () -> Long) : AutoCloseable {
             val eq = part.indexOf('=')
             val name = if (eq < 0) part else part.substring(0, eq)
             val value = if (eq < 0) "" else part.substring(eq + 1)
-            URLDecoder.decode(name, Charsets.UTF_8) to URLDecoder.decode(value, Charsets.UTF_8)
+            URLDecoder.decode(name, Charsets.UTF_8.name()) to URLDecoder.decode(value, Charsets.UTF_8.name())
         }
     }
 }

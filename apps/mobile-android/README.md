@@ -90,6 +90,34 @@ on that emulator:
 ./gradlew :platform:connectedDebugAndroidTest :ui:connectedDebugAndroidTest :app:connectedDebugAndroidTest
 ```
 
+The lowest supported Android is 8.0 (minSdk 26), and the app runs there too, on a second
+virtual device from the API 26 image installed into the private SDK (`sdkmanager --install
+"system-images;android-26;google_apis;arm64-v8a"`, checksum in the toolchain notes):
+
+```sh
+"$ANDROID_HOME/cmdline-tools/latest/bin/avdmanager" create avd -n clave-native-b-min \
+  -k "system-images;android-26;google_apis;arm64-v8a" -d medium_phone
+"$ANDROID_HOME/emulator/emulator" -avd clave-native-b-min -port 5566 &                 # serial emulator-5566
+adb -s emulator-5566 install -r app/build/outputs/apk/debug/app-debug.apk
+ANDROID_SERIAL=emulator-5566 ./gradlew :platform:connectedDebugAndroidTest :ui:connectedDebugAndroidTest :app:connectedDebugAndroidTest
+```
+
+On Android 8.0 that run found that a conversation's history never loaded. The history query was
+built with `URLEncoder.encode(String, Charset)`, a Java 10 overload Android has only from API 33,
+and threw `NoSuchMethodError` there; the unit tests on JDK 21 and the Android 16 device had both
+passed it. The sign-in's token request (`HubClient.formEncode`) and its callback parsing
+(`HubSignIn.queryParams`) used the same overloads, `URLEncoder.encode` and
+`URLDecoder.decode(String, Charset)`, found by reading the source and not observed. All five
+calls now use the overloads that take the charset's name, which Android has had since API 1.
+
+Two safeguards stand in front of that kind of defect, and neither proves Android compatibility.
+The pure JVM modules compile with `-Xjdk-release=1.8` (the rule in the root `build.gradle.kts`),
+so Kotlin sees only the Java 8 API of the JDK it compiles with and a Java 9+ call fails to
+compile; Kotlin does not promise that ceiling on every JDK distribution, and a Java 8 API that
+Android 8.0 lacks still compiles. Android Lint runs on `app`, `ui` and `platform` in `ci.sh`,
+`NewApi` against minSdk 26 among its checks. The evidence is the instrumented suites, run on both
+virtual devices, API 26 and API 36.
+
 The modules: `core/*` are pure JVM (the contract mirror, the sign-in, the transport, the
 conversation logic, the devices, the notifications, the state store), `ui` is the design
 system and the screens (stateless, state classes and callbacks), `platform` holds the

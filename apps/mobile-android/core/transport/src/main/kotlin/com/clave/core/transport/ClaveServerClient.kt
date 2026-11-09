@@ -300,7 +300,7 @@ public class ClaveServerClient(
         }
 
         /** The query string as URLSearchParams writes it (form encoding). */
-        private fun encode(value: String): String = URLEncoder.encode(value, Charsets.UTF_8)
+        private fun encode(value: String): String = URLEncoder.encode(value, Charsets.UTF_8.name())
 
         /** Milliseconds as the TypeScript sentence printed them: 10 s, 0.1 s. */
         internal fun secondsOf(ms: Long): String =
