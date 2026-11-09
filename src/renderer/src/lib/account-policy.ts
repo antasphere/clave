@@ -95,6 +95,11 @@ export function registerProviderSwitchRoad(road: ProviderSwitchRoad | null): voi
 const switching = new Set<string>()
 /** The model switches written and not yet confirmed by the provider. */
 const pendingModels = new PendingModelSwitches()
+/** The model each open report arrived on: a model change since, by the
+ *  policy's rung or the person from the chip, is the way on taken, and
+ *  closes the report in the window as main closes its own (integration
+ *  round 1, F3). */
+const reportedOn = new Map<string, string | undefined>()
 
 function labelled(session: Session, rungs: Rung[]): LimitRung[] {
   return rungs.map((rung) => {
@@ -112,12 +117,29 @@ function labelled(session: Session, rungs: Rung[]): LimitRung[] {
   })
 }
 
-/** Clear what a move answered: the proposal and the CLI's report. */
-function settled(sessionId: string): void {
+/** Clear what a move answered: the proposal, and the CLI's report unless
+ *  the move is a model switch the provider has not confirmed yet. The
+ *  report then closes when the model change lands (`closedByModelChange`),
+ *  and stays open if the CLI refuses the switch, so the account rung that
+ *  follows still resends the rejected message (integration round 1, F4). */
+function settled(sessionId: string, options: { keepReport?: boolean } = {}): void {
   switching.delete(sessionId)
   const current = useSessionStore.getState()
   current.setAccountProposal(sessionId, null)
-  current.setLimitReported(sessionId, null)
+  if (!options.keepReport) {
+    current.setLimitReported(sessionId, null)
+    reportedOn.delete(sessionId)
+    pendingModels.forget(sessionId)
+  }
+}
+
+/** The tab runs another model than the one its open report arrived on: the
+ *  way on was taken, by the policy or by hand, and main has resent the
+ *  rejected message on it. The report and whatever it proposed are closed. */
+function closedByModelChange(session: Session): boolean {
+  if (!reportedOn.has(session.id)) return false
+  const on = reportedOn.get(session.id)
+  return on !== undefined && session.model !== undefined && session.model !== on
 }
 
 /** The model rung: `set_model` on the live session, no restart. The CLI's
@@ -144,6 +166,13 @@ export function runAccountPolicy(): void {
     const provider = accountProviderOf(session)
     if (!provider) continue
     const report = session.limitReported ?? null
+    if (report && closedByModelChange(session)) {
+      store.setLimitReported(session.id, null)
+      store.setAccountProposal(session.id, null)
+      reportedOn.delete(session.id)
+      pendingModels.forget(session.id)
+      continue
+    }
     const reported = report !== null
     const view = sessionAccountUsage(session)
     const atLimit = reported || (session.alive && sessionAccountExhausted(session))
@@ -156,22 +185,29 @@ export function runAccountPolicy(): void {
     if (!atLimit) continue
     const scope = resolveLimitScope(report, view)
     const family = scopeFamily(scope)
+    // Settled first: a window that closed without the model records the
+    // refusal the rung below must not repeat.
+    const switchInFlight = pendingModels.inFlight(session.id, session.model)
     // The model rung reads the ACCOUNT's view: every family's cap, not the
     // session's own alone. Only a chat can take `set_model`: a terminal CLI's
     // model is its own, so a terminal tab is offered the account rung.
+    // The rung comes from the Claude model table: a Codex tab has no model
+    // rung yet (integration round 1, F6 and G4). A model the CLI refused
+    // while this report was open is not offered again.
     const accountView = accountsUsageFor(provider)[sessionAccountId(session, provider)]
+    const candidate =
+      family && provider === 'claude' && isChatSession(session, provider)
+        ? modelRungFor(family, accountView)
+        : null
     const nextModel =
-      family && isChatSession(session, provider) ? modelRungFor(family, accountView) : null
+      candidate && pendingModels.refusedModel(session.id) === candidate ? null : candidate
     const action = decideAccountAction({
       alive: session.alive,
       accountPinned: session.accountPinned === true,
       modelPinned: session.modelPinned === true,
       // A move in flight, an account's restart or a model switch the
       // provider has not confirmed yet, holds the policy off the tab.
-      restarting:
-        session.restarting === true ||
-        switching.has(session.id) ||
-        pendingModels.inFlight(session.id, session.model),
+      restarting: session.restarting === true || switching.has(session.id) || switchInFlight,
       atLimit,
       reported,
       working: session.alive && isWorking(session),
@@ -205,7 +241,7 @@ export function runAccountPolicy(): void {
       })
       void switchSessionModel(session.id, action.model)
         .catch((error) => console.error('Model switch at limit failed:', error))
-        .finally(() => settled(session.id))
+        .finally(() => settled(session.id, { keepReport: true }))
     }
   }
 }
@@ -226,7 +262,7 @@ export async function acceptRung(sessionId: string, rung: LimitRung): Promise<vo
       await providerRoad.switchTo(sessionId, rung.adapterId)
     }
   } finally {
-    settled(sessionId)
+    settled(sessionId, { keepReport: rung.kind === 'model' })
   }
 }
 
@@ -283,13 +319,14 @@ export function startAccountPolicy(): void {
   })
   window.electronAPI?.onSessionLimitReported?.(({ id, report }) => {
     const store = useSessionStore.getState()
-    if (!store.sessions.some((s) => s.id === id)) return
+    const session = store.sessions.find((s) => s.id === id)
+    if (!session) return
     store.setLimitReported(id, report)
+    reportedOn.set(id, session.model)
     // The poll may not have seen it yet: read the account now. The read is
     // what settles a report the CLI typed as a plain week (`limit-scope.ts`).
-    const session = store.sessions.find((s) => s.id === id)
-    const provider = session ? accountProviderOf(session) : null
-    if (session && provider) {
+    const provider = accountProviderOf(session)
+    if (provider) {
       const accountId = sessionAccountId(session, provider)
       if (provider === 'codex') {
         void window.electronAPI.getCodexUsageLimits(accountId, { force: true })

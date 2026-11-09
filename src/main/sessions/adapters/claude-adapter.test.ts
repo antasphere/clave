@@ -921,6 +921,33 @@ it.each(['sonnet', 'opus[1m]', 'claude-opus-5-5[1m]'])(
     await adapter.kill(handle)
   }
 )
+it('a refused set_model says why and names no model: the session keeps the one it ran (PRDCT-4302, integration round 1, G3)', async () => {
+  const child = Object.assign(new EventEmitter(), {
+    stdin: new PassThrough(),
+    stdout: new PassThrough(),
+    stderr: new PassThrough()
+  })
+  mock.spawn.mockReturnValue(child)
+  const adapter = new ClaudeAdapter()
+  const handle = await adapter.spawn(spec)
+  adapter.on(handle, 'stream', (s) => {
+    if (s.kind === 'event') events.push(s.event)
+  })
+  adapter.write(handle, { type: 'set_model', model: 'claude-opus-5-5' })
+  const request = JSON.parse(written(child)!)
+  const before = events.length
+  child.stdout.write(
+    JSON.stringify({
+      type: 'control_response',
+      response: { subtype: 'error', request_id: request.request_id, error: 'no such model here' }
+    }) + '\n'
+  )
+  const after = events.slice(before)
+  expect(after).toEqual([{ type: 'error', message: 'no such model here', fatal: false }])
+  expect(after.some((e) => e.type === 'session_meta')).toBe(false)
+  child.emit('close', 0)
+  await adapter.kill(handle)
+})
 it('switches the permission mode the way Shift+Tab does, and says why the CLI refused', async () => {
   const child = Object.assign(new EventEmitter(), {
     stdin: new PassThrough(),

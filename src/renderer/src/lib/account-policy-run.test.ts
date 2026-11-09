@@ -66,7 +66,7 @@ vi.mock('../store/account-policy-store', () => ({
   effectiveFamilyLimitRule: () => fake.onFamilyLimit
 }))
 vi.mock('./switch-account', () => ({
-  accountProviderOf: (s: Session) => (s.claudeMode ? 'claude' : null),
+  accountProviderOf: (s: Session) => (s.claudeMode ? 'claude' : s.codexMode ? 'codex' : null),
   nextAccountFor: () => fake.next,
   sessionAccountExhausted: () => fake.exhausted,
   sessionAccountId: () => 'work',
@@ -229,15 +229,18 @@ describe('runAccountPolicy', () => {
     })
   })
 
-  it('automatic mode writes set_model once, not remembered, clears the report, and holds until the provider confirms (round 1, W2, F3, F4)', async () => {
+  it('automatic mode writes set_model once, not remembered, keeps the report until the provider confirms, and holds meanwhile (round 1, W2, F3, F4)', async () => {
     fake.mode = 'automatic'
-    fake.sessions = [chat({ limitReported: { scope: 'shared' } })]
+    fake.sessions = [chat()]
+    startAccountPolicy()
+    fake.limitListener!({ id: idOf(), report: { scope: 'shared' } })
     runAccountPolicy()
     await flush()
     expect(fake.writes).toEqual([
       [idOf(), { type: 'set_model', model: 'claude-opus-5-5', remember: false }]
     ])
-    expect(lastReport()).toEqual([idOf(), null])
+    // The report stays open until the model change lands (integration round 1, F4).
+    expect(fake.sessions[0].limitReported).toEqual({ scope: 'shared' })
     expect(lastProposal()).toBeNull()
     // The store still shows Fable and the view still reads out: the policy
     // runs again and writes nothing more.
@@ -246,11 +249,12 @@ describe('runAccountPolicy', () => {
     await Promise.resolve()
     expect(fake.writes).toHaveLength(1)
     expect(lastProposal()).toBeNull()
-    // The provider confirmed: the store shows Opus, the view is open, nothing proposed.
+    // The provider confirmed: the store shows Opus, the report closes, nothing proposed.
     fake.sessions[0].model = 'claude-opus-5-5'
     fake.exhausted = false
     runAccountPolicy()
     expect(fake.writes).toHaveLength(1)
+    expect(lastReport()).toEqual([idOf(), null])
     expect(lastProposal()).toBeNull()
   })
 
@@ -264,12 +268,12 @@ describe('runAccountPolicy', () => {
     runAccountPolicy()
     await flush()
     error.mockRestore()
-    // The report was cleared with the refusal; the poll still says the cap is out.
+    // The report stays open (nothing was switched); the ladder is offered again at once.
     fake.exhausted = true
     fake.mode = 'propose'
     runAccountPolicy()
     expect(lastProposal()).toEqual({
-      reason: 'limit',
+      reason: 'reported',
       rungs: [
         { kind: 'model', model: 'claude-opus-5-5', label: 'Opus 5.5' },
         { kind: 'account', accountId: 'play', label: 'Play' }
@@ -302,27 +306,157 @@ describe('runAccountPolicy', () => {
   })
 })
 
-describe('acceptRung', () => {
-  it('the model rung writes set_model, not remembered, and settles the proposal and the report (round 1, W4)', async () => {
+describe('the report closes with the model change, stays open on a refusal (integration round 1, F3, F4)', () => {
+  const arrive = (report: unknown): void => {
+    startAccountPolicy()
+    fake.limitListener!({ id: idOf(), report })
+  }
+
+  it('a model switch made from the chip closes the report and the card, and nothing moves', () => {
+    fake.sessions = [chat()]
+    arrive({ scope: { family: 'Fable' } })
+    runAccountPolicy()
+    expect(lastProposal()).toMatchObject({ reason: 'reported' })
+    // The person picked Opus from the chip: the store learns the model from the push.
+    fake.sessions[0].model = 'claude-opus-5-5'
+    fake.mode = 'automatic'
+    runAccountPolicy()
+    expect(lastReport()).toEqual([idOf(), null])
+    expect(lastProposal()).toBeNull()
+    expect(fake.writes).toEqual([])
+    expect(fake.switched).toEqual([])
+    // The same model pushed again changes nothing.
+    runAccountPolicy()
+    expect(fake.writes).toEqual([])
+  })
+
+  it("the policy's own model rung keeps the report until the provider confirms, then closes it", async () => {
+    fake.mode = 'automatic'
+    fake.sessions = [chat()]
+    arrive({ scope: { family: 'Fable' } })
+    runAccountPolicy()
+    await flush()
+    expect(fake.writes).toHaveLength(1)
+    expect(lastProposal()).toBeNull()
+    // The write resolved; the report is still open on the tab.
+    expect(fake.sessions[0].limitReported).toEqual({ scope: { family: 'Fable' } })
+    fake.sessions[0].model = 'claude-opus-5-5'
+    runAccountPolicy()
+    expect(lastReport()).toEqual([idOf(), null])
+    expect(fake.switched).toEqual([])
+  })
+
+  it('a refused model rung falls to the account rung once its window closes, the rejected message still resent', async () => {
+    vi.useFakeTimers()
+    try {
+      vi.setSystemTime(1_000_000)
+      fake.mode = 'automatic'
+      fake.sessions = [chat()]
+      arrive({ scope: { family: 'Fable' } })
+      runAccountPolicy()
+      await vi.runAllTimersAsync()
+      expect(fake.writes).toHaveLength(1)
+      // Nothing confirmed: the store still shows Fable, the report is open,
+      // the policy holds while the window is open.
+      fake.exhausted = true
+      runAccountPolicy()
+      expect(fake.writes).toHaveLength(1)
+      expect(fake.switched).toEqual([])
+      vi.setSystemTime(1_000_000 + 16_000)
+      runAccountPolicy()
+      await vi.runAllTimersAsync()
+      // The refused model is not offered again; the account rung carries the message.
+      expect(fake.writes).toHaveLength(1)
+      expect(fake.switched).toEqual([[idOf(), 'play', { resendRejected: true }]])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('in propose mode the ladder after a refusal offers the account alone, reason reported', async () => {
+    vi.useFakeTimers()
+    try {
+      vi.setSystemTime(2_000_000)
+      fake.sessions = [chat()]
+      arrive({ scope: { family: 'Fable' } })
+      runAccountPolicy()
+      await acceptRung(idOf(), { kind: 'model', model: 'claude-opus-5-5', label: 'Opus 5.5' })
+      expect(fake.writes).toHaveLength(1)
+      expect(lastProposal()).toBeNull()
+      fake.exhausted = true
+      vi.setSystemTime(2_000_000 + 16_000)
+      runAccountPolicy()
+      expect(lastProposal()).toEqual({
+        reason: 'reported',
+        rungs: [{ kind: 'account', accountId: 'play', label: 'Play' }]
+      })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+})
+
+describe('a Codex tab (integration round 1, F6, G4)', () => {
+  it("a Spark bucket's cap offers the account rung alone: the model table is Claude's", () => {
+    fake.account = {
+      ...accountView(),
+      scoped: [
+        { family: 'Spark', window: w({ scope: 'Spark', usedPercentage: 100 }), exhausted: true }
+      ]
+    } as unknown as AccountUsageSummary
     fake.sessions = [
       chat({
-        limitReported: { scope: { family: 'Fable' } },
+        claudeMode: false,
+        codexMode: true,
+        launchProfileId: 'codex-chat',
+        model: 'gpt-5.5-spark'
+      })
+    ]
+    startAccountPolicy()
+    fake.limitListener!({ id: idOf(), report: { scope: { family: 'Spark' } } })
+    runAccountPolicy()
+    expect(lastProposal()).toEqual({
+      reason: 'reported',
+      rungs: [{ kind: 'account', accountId: 'play', label: 'play' }]
+    })
+    expect(fake.writes).toEqual([])
+    // Even a family the Claude table knows, named on a Codex tab, offers no Claude model.
+    fake.sessions = [chat({ claudeMode: false, codexMode: true, launchProfileId: 'codex-chat' })]
+    fake.limitListener!({ id: idOf(), report: { scope: { family: 'Fable' } } })
+    runAccountPolicy()
+    expect(lastProposal()).toEqual({
+      reason: 'reported',
+      rungs: [{ kind: 'account', accountId: 'play', label: 'play' }]
+    })
+  })
+})
+
+describe('acceptRung', () => {
+  it('the model rung writes set_model, not remembered, settles the proposal, and the report closes with the model change (round 1, W4)', async () => {
+    fake.sessions = [
+      chat({
         accountProposal: {
           reason: 'reported',
           rungs: [{ kind: 'model', model: 'claude-opus-5-5', label: 'Opus 5.5' }]
         }
       })
     ]
+    startAccountPolicy()
+    fake.limitListener!({ id: idOf(), report: { scope: { family: 'Fable' } } })
     await acceptRung(idOf(), { kind: 'model', model: 'claude-opus-5-5', label: 'Opus 5.5' })
     expect(fake.writes).toEqual([
       [idOf(), { type: 'set_model', model: 'claude-opus-5-5', remember: false }]
     ])
     expect(lastProposal()).toBeNull()
-    expect(lastReport()).toEqual([idOf(), null])
+    expect(fake.sessions[0].limitReported).toEqual({ scope: { family: 'Fable' } })
     // The card the person clicked does not come back while the switch is in flight.
     fake.exhausted = true
     runAccountPolicy()
     expect(lastProposal()).toBeNull()
+    // The provider confirmed: the report closes.
+    fake.sessions[0].model = 'claude-opus-5-5'
+    runAccountPolicy()
+    expect(lastReport()).toEqual([idOf(), null])
   })
 
   it('the account rung restarts the tab on that account, resending when the CLI reported', async () => {

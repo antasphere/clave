@@ -161,10 +161,16 @@ describe('limitReportOf, Codex and the rest', () => {
     method: 'account/rateLimits/updated',
     params: { rateLimits }
   })
-  it("reads Codex's rate-limit update at the cap or with a reached type as a shared cap", () => {
+  it("reads Codex's rate-limit update at the cap or with a reached type: the general allowance is shared", () => {
     expect(limitReportOf('codex', frame({ primary: { usedPercent: 96 } }))).toEqual({
       scope: 'shared'
     })
+    expect(
+      limitReportOf(
+        'codex',
+        frame({ limitId: 'codex', primary: { usedPercent: 96, resetsAt: 1789227620 } })
+      )
+    ).toEqual({ scope: 'shared', resetsAt: 1789227620000 })
     expect(
       limitReportOf(
         'codex',
@@ -178,6 +184,58 @@ describe('limitReportOf, Codex and the rest', () => {
       )
     ).toBeNull()
     expect(limitReportOf('codex', { method: 'thread/started', params: {} })).toBeNull()
+  })
+
+  it("names a Codex bucket's family the way the usage read does: its limitName, else its id (integration round 1, F7)", () => {
+    // The legacy single bucket carrying its name.
+    expect(
+      limitReportOf(
+        'codex',
+        frame({ limitId: 'spark', limitName: 'Spark', primary: { usedPercent: 100 } })
+      )
+    ).toEqual({ scope: { family: 'Spark' } })
+    expect(
+      limitReportOf('codex', frame({ limitId: 'spark', primary: { usedPercent: 100 } }))
+    ).toEqual({
+      scope: { family: 'spark' }
+    })
+    // The multi-bucket shape: the first bucket at its cap names the scope.
+    const multi = (byId: unknown): unknown => ({
+      method: 'account/rateLimits/updated',
+      params: { rateLimitsByLimitId: byId, rateLimits: { primary: { usedPercent: 10 } } }
+    })
+    expect(
+      limitReportOf(
+        'codex',
+        multi({
+          codex: { primary: { usedPercent: 40 }, secondary: { usedPercent: 20 } },
+          spark: {
+            limitName: 'Spark',
+            primary: { usedPercent: 20 },
+            secondary: { usedPercent: 97, resetsAt: 1789227620 }
+          }
+        })
+      )
+    ).toEqual({ scope: { family: 'Spark' }, resetsAt: 1789227620000 })
+    expect(
+      limitReportOf(
+        'codex',
+        multi({
+          codex: { rateLimitReachedType: 'weekly', primary: { usedPercent: 40 } },
+          spark: { limitName: 'Spark', primary: { usedPercent: 10 } }
+        })
+      )
+    ).toEqual({ scope: 'shared' })
+    // Nothing at its cap in any bucket: nothing.
+    expect(
+      limitReportOf(
+        'codex',
+        multi({
+          codex: { primary: { usedPercent: 40 } },
+          spark: { limitName: 'Spark', primary: { usedPercent: 50 } }
+        })
+      )
+    ).toBeNull()
   })
 
   it('is nothing for another provider, or a frame that is not an object', () => {
