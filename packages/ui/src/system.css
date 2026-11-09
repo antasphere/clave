@@ -8312,17 +8312,25 @@ button.term-agent-model:focus-visible {
   padding-bottom: calc(var(--spacing) * 2);
   outline: none;
 }
-/* The pages of the popover as one box: it follows the current page's size
-   (inline, animated by RoutinePages) and clips the page sliding out. */
-.routines-pages {
+/* The pages of the popover as one box (RoutinePages): the frame takes the
+   current page's size at once, so the popover is positioned once per page;
+   the surface inside animates to that size from the frame's top-right
+   corner, the one the popover keeps still, and clips the page sliding out.
+   Both pages hang from that same corner, so the leaving one stays put while
+   the box grows past it. */
+.routines-frame {
   position: relative;
-  display: flex;
-  justify-content: flex-end;
-  align-items: flex-start;
+}
+.routines-surface {
+  position: absolute;
+  top: 0;
+  right: 0;
   overflow: hidden;
 }
 .routines-page {
-  flex-shrink: 0;
+  position: absolute;
+  top: 0;
+  right: 0;
   width: max-content;
   max-width: 100vw;
 }

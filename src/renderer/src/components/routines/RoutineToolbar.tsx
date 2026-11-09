@@ -164,7 +164,7 @@ export function RoutineToolbar(): React.JSX.Element | null {
           side="bottom"
           align="end"
           sideOffset={8}
-          className="p-0 overflow-hidden"
+          surface={false}
           onFocusOutside={(e) => e.preventDefault()}
           onOpenAutoFocus={(e) => {
             e.preventDefault()
