@@ -1012,17 +1012,14 @@ function cliEfforts(model: CliModel | undefined): Pick<ModelOption, 'efforts'> {
   const efforts = levels.filter(isValidEffort).map((id) => ({ id, label: effortLabel(id) }))
   return efforts.length ? { efforts } : {}
 }
-/** The efforts of a row from the first listed source that speaks: a version
- *  or alias that says it takes none (`supportsEffort: false`) is final, one
- *  that lists levels gives them, one that says nothing yields to the next. */
+/** The efforts of a row from the first source the CLI lists: an entry that
+ *  names this very model (its version row, else its alias, else the default
+ *  entry when the row is the default's) is the word on it, levels or none;
+ *  only a model the CLI lists under none of those takes its family's. The real
+ *  CLI lists Haiku 4.5 with no levels and `supportsEffort` unset, and it takes
+ *  none: yielding past a listed entry gave it its family's five (round 2). */
 function effortsFrom(...sources: (CliModel | undefined)[]): Pick<ModelOption, 'efforts'> {
-  for (const source of sources) {
-    if (!source) continue
-    if (source.supportsEffort === false) return {}
-    const efforts = cliEfforts(source)
-    if (efforts.efforts) return efforts
-  }
-  return {}
+  return cliEfforts(sources.find((source) => source !== undefined))
 }
 /** The CLI's list made the menu (PRDCT-4257): every listed version under its
  *  own name, the family's gloss on its newest ("Best for everyday, complex

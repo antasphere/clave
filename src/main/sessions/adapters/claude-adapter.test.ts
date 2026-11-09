@@ -2147,6 +2147,16 @@ describe('the default resolved at ready (PRDCT-4256)', () => {
       'Fastest for quick answers'
     ])
     for (const option of earlier) expect(option.hint).toBe('Earlier version')
+    // Haiku 4.5 is listed with no levels and takes none (the CLI applies no
+    // effort to it): the effort chip must not offer its family's five (round 2).
+    expect(earlier.find((o) => o.label === 'Haiku 4.5')).not.toHaveProperty('efforts')
+    expect(current.find((o) => o.label === 'Haiku 5.5')?.efforts?.map((e) => e.id)).toEqual([
+      'low',
+      'medium',
+      'high',
+      'xhigh',
+      'max'
+    ])
     // Every listed id is still a row somewhere, so a .clave or a routine
     // naming claude-opus-4-6 launches it and finds it selected.
     expect(options.map((o) => o.id)).toContain('claude-opus-4-6')
@@ -2169,20 +2179,33 @@ describe('the default resolved at ready (PRDCT-4256)', () => {
     const opus6 = moved.find((o) => o.id === 'claude-opus-6')
     expect(opus6?.hint).toBe('Default · Newest')
     expect(moved.find((o) => o.id === 'claude-opus-5-5')?.hint).toBe('Earlier version')
-    // The default's row takes the default's levels when the version lists none of its own.
+    // The default's row takes the default entry's levels when the CLI lists
+    // the model under no version and no alias of its own.
     const levels = claudeModelOptions([
-      { value: 'opus', displayName: 'Opus', resolvedModel: 'claude-opus-5-5' },
       {
         value: 'default',
         displayName: 'Default',
         resolvedModel: 'claude-opus-5-5',
         supportedEffortLevels: ['low', 'high']
-      }
+      },
+      { value: 'fable', displayName: 'Fable', resolvedModel: 'claude-fable-5-1' }
     ])
     expect(levels.find((o) => o.id === 'claude-opus-5-5')?.efforts?.map((e) => e.id)).toEqual([
       'low',
       'high'
     ])
+    // A listed version is the word on itself, levels or none: an alias row
+    // never speaks for a version the CLI lists apart (round 2, Haiku 4.5).
+    const listed = claudeModelOptions([
+      {
+        value: 'default',
+        displayName: 'Default',
+        resolvedModel: 'claude-opus-5-5',
+        supportedEffortLevels: ['low', 'high']
+      },
+      { value: 'opus', displayName: 'Opus', resolvedModel: 'claude-opus-5-5' }
+    ])
+    expect(listed.find((o) => o.id === 'claude-opus-5-5')).not.toHaveProperty('efforts')
     // The default entry is read wherever it sits, never the first row by position.
     expect(
       resolvedDefaultModel([
