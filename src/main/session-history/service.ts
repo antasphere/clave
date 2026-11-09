@@ -174,6 +174,16 @@ export function restampLaunch(sessionId: string, record: StampRecord & RuntimeRe
   if (row) getLedger().append(row)
 }
 
+/** The record a stamp reads, with the server's timeout and backoff: for the
+ *  restamp a close makes (PRDCT-4236, round 7), so a server that does not
+ *  answer never holds a close for long. */
+export function recordForStamp(
+  sessionId: string,
+  source: StampRecordSource
+): Promise<StampRecord | null | undefined> {
+  return recordFor(sessionId, source)
+}
+
 async function recordFor(
   sessionId: string,
   source: StampRecordSource

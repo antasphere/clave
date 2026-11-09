@@ -77,6 +77,7 @@ import {
   toolPayload,
   toolErrored,
   spawnJournal,
+  callMcp,
   recordsRootOf,
   until,
   userDataDir,
@@ -517,7 +518,14 @@ export async function run(t) {
         JSON.stringify({ ...record, permissionMode: 'plan', effort: 'high' })
       )
     }
-    const afterSwitch = await closeAndWait(planTab)
+    // Closed the way the person closes (the window's road through the
+    // preload's kill, which every close button and key takes), not the
+    // agent's (round 7, V7-F1).
+    await callMcp(app, 'closeSession', { sessionId: planTab })
+    const afterSwitch = await until(async () => {
+      const r = rowsOf(toolPayload(await client.call('clave_history', {})))
+      return r.length === 1 && r[0].open === null ? r[0] : null
+    })
     t.check('closed after the switch, the History row is free', !!afterSwitch, afterSwitch)
     t.check(
       'and remembers plan, bypass off, effort high',
@@ -555,6 +563,38 @@ export async function run(t) {
       'and not in bypass',
       !!planLaunch && !planLaunch.argv.includes('--dangerously-skip-permissions'),
       planLaunch?.argv
+    )
+
+    // ── k. The agent's own close road remembers the mode too ──
+    const editsRecord = await until(() => {
+      try {
+        return (
+          readdirSync(recordsDir)
+            .filter((f) => f.endsWith('.json'))
+            .map((f) => path.join(recordsDir, f))
+            .find((file) => {
+              try {
+                return JSON.parse(readFileSync(file, 'utf8')).id === planTabAgain
+              } catch {
+                return false
+              }
+            }) ?? null
+        )
+      } catch {
+        return null
+      }
+    })
+    t.check('the plan tab has its record', !!editsRecord, recordsDir)
+    if (editsRecord) {
+      const record = JSON.parse(readFileSync(editsRecord, 'utf8'))
+      writeFileSync(editsRecord, JSON.stringify({ ...record, permissionMode: 'acceptEdits' }))
+    }
+    const afterEdits = await closeAndWait(planTabAgain)
+    t.check(
+      'closed by the agent after a second switch, the History remembers acceptEdits',
+      afterEdits?.launch?.permissionMode === 'acceptEdits' &&
+        afterEdits?.launch?.dangerous === false,
+      afterEdits?.launch
     )
   } finally {
     if (app) await app.close()

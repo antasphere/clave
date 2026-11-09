@@ -3,6 +3,7 @@ import {
   cancelSearch,
   getConversation,
   listHistory,
+  recordForStamp,
   restampLaunch,
   searchHistory,
   stampHistory,
@@ -30,7 +31,7 @@ const stampRecords: StampRecordSource = {
  *  not wait on, or fail because of, the History. */
 export async function restampSessionLaunch(sessionId: string): Promise<void> {
   try {
-    const record = stampRecords.local(sessionId) ?? (await stampRecords.remote?.(sessionId)) ?? null
+    const record = await recordForStamp(sessionId, stampRecords)
     if (record) restampLaunch(sessionId, record as Parameters<typeof restampLaunch>[1])
   } catch (err) {
     console.error('[session-history] failed to restamp the launch', err)

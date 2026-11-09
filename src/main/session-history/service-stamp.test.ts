@@ -181,6 +181,40 @@ describe('restampLaunch: a closing tab’s launch written from its record (round
     })
   })
 
+  it('copies the tab’s LATEST row, not its first (round 7, V7-F2)', async () => {
+    await stamp(
+      row('moved-1', { claudeSessionId: 'cc-moved-1', name: 'first name', groupId: 'g1' })
+    )
+    await stamp(
+      row('moved-1', {
+        claudeSessionId: 'cc-moved-1',
+        name: 'second name',
+        groupId: 'g2',
+        groupName: 'Later',
+        ts: '2026-11-09T11:00:00.000Z'
+      })
+    )
+    restampLaunch('moved-1', {
+      id: 'moved-1',
+      cwd: '/tmp/proj',
+      folderName: 'proj',
+      claudeMode: true,
+      antigravityMode: false,
+      codexMode: false,
+      piMode: false,
+      claudeAgentsMode: false,
+      dangerousMode: false,
+      permissionMode: 'acceptEdits'
+    } as never)
+    expect(written().at(-1)).toMatchObject({
+      sessionId: 'moved-1',
+      name: 'second name',
+      groupId: 'g2',
+      groupName: 'Later',
+      permissionMode: 'acceptEdits'
+    })
+  })
+
   it('writes nothing for a tab the ledger never saw', () => {
     const before = written().length
     restampLaunch('never-seen', { id: 'never-seen', cwd: '/x', folderName: 'x' } as never)
