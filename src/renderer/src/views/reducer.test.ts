@@ -973,3 +973,57 @@ describe('the turn’s shape, for the fold of the agent’s working notes (PRDCT
     expect(next?.kind === 'user' && next.midTurn).toBeUndefined()
   })
 })
+
+describe('a model picked from the chip (PRDCT-4273)', () => {
+  const onOpus: Conversation = reduceConversation(emptyConversation, {
+    event: { type: 'session_meta', model: 'claude-opus-5-5', providerSessionId: null },
+    at: 1
+  })
+  it('shows at once, and the provider naming it confirms it', () => {
+    const picked = reduceConversation(onOpus, { pickModel: 'claude-fable-5-1[1m]' })
+    expect(picked.pendingModel).toBe('claude-fable-5-1[1m]')
+    expect(picked.model).toBe('claude-opus-5-5')
+    // The switch's own echo names the id picked.
+    const echoed = reduceConversation(picked, {
+      event: { type: 'session_meta', model: 'claude-fable-5-1[1m]', providerSessionId: null },
+      at: 2
+    })
+    expect(echoed).toMatchObject({ model: 'claude-fable-5-1[1m]', pendingModel: null })
+    // The settings read after it names the resolution, suffix dropped: the same model.
+    const resolved = reduceConversation(picked, {
+      event: { type: 'session_meta', model: 'claude-fable-5-1', providerSessionId: null },
+      at: 2
+    })
+    expect(resolved).toMatchObject({ model: 'claude-fable-5-1', pendingModel: null })
+  })
+  it('keeps the pick over a word naming another model, which a read answered out of order can carry', () => {
+    const picked = reduceConversation(onOpus, { pickModel: 'claude-haiku-5-5' })
+    const stale = reduceConversation(picked, {
+      event: { type: 'session_meta', model: 'claude-opus-5-5', providerSessionId: null },
+      at: 2
+    })
+    expect(stale).toMatchObject({ model: 'claude-opus-5-5', pendingModel: 'claude-haiku-5-5' })
+    const nothing = reduceConversation(picked, {
+      event: { type: 'session_meta', model: null, providerSessionId: null },
+      at: 2
+    })
+    expect(nothing.pendingModel).toBe('claude-haiku-5-5')
+  })
+  it('a refusal reverts the chip to the model the session is on, the reason in the transcript', () => {
+    const picked = reduceConversation(onOpus, { pickModel: 'claude-haiku-5-5' })
+    const refused = reduceConversation(picked, {
+      event: {
+        type: 'error',
+        message: 'Claude refused to switch to claude-haiku-5-5',
+        fatal: false
+      },
+      at: 2
+    })
+    expect(refused.pendingModel).toBeNull()
+    expect(refused.model).toBe('claude-opus-5-5')
+    expect(refused.entries.at(-1)).toMatchObject({ kind: 'error' })
+    expect(refused.state).toBe(onOpus.state)
+    // A session that ends mid-switch shows no pick either.
+    expect(reduceConversation(picked, { exit: 0 }).pendingModel).toBeNull()
+  })
+})

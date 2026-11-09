@@ -407,6 +407,9 @@ interface SessionState {
         >
       >
   ) => void
+  /** The model the session runs on, as its provider said it (PRDCT-4256):
+   *  written at launch and here, never derived in the window. */
+  setSessionModel: (id: string, model: string) => void
   /** The policy's knobs and its proposal on a session (ADR 0002). */
   setAccountPinned: (id: string, pinned: boolean) => void
   setAccountSwitchMode: (id: string, mode: 'propose' | 'automatic' | null) => void
@@ -2010,6 +2013,13 @@ export const useSessionStore = create<SessionState>((set) => ({
     if (pendingLayout?.failed) settlePendingLayout(pendingLayout, null)
   },
 
+  setSessionModel: (id, model) =>
+    set((state) =>
+      state.sessions.some((s) => s.id === id && s.model !== model)
+        ? { sessions: state.sessions.map((s) => (s.id === id ? { ...s, model } : s)) }
+        : state
+    ),
+
   setAccountPinned: (id, pinned) =>
     set((state) => ({
       sessions: state.sessions.map((s) =>
@@ -2571,3 +2581,19 @@ useSessionStore.subscribe((state) => {
     persistSidebarLayout(state)
   }
 })
+
+declare global {
+  interface Window {
+    /**
+     * E2E seam (PRDCT-4256): the session store, so a spec can read what the
+     * sidebar judges a session by (its `model` after a switch from the chip)
+     * instead of inferring it from a rendering. Gated on the test flag, so
+     * this handle does not exist in a user's app.
+     */
+    __claveSessionStoreForTests?: typeof useSessionStore
+  }
+}
+
+if (typeof window !== 'undefined' && window.__claveTestMode) {
+  window.__claveSessionStoreForTests = useSessionStore
+}

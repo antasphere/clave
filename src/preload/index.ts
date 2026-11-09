@@ -1434,6 +1434,14 @@ const electronAPI = {
     onServerEventOf('session.typed', (event) => callback({ id: event.id, from: event.from })),
   onSessionRestarting: (callback: (payload: { id: string }) => void) =>
     onServerEventOf('session.restarting', (event) => callback({ id: event.id })),
+  // PRDCT-4256: the model a session runs on, as its provider said it. Main
+  // sends it on both transports (`server/session-events.ts`), and the window
+  // hears one: IPC until the push socket is welcomed, push from then on.
+  onSessionModelChanged: viaServerEvent<'session.model_changed', { id: string; model: string }>(
+    'session:model-changed',
+    'session.model_changed',
+    (event) => ({ id: event.id, model: event.model })
+  ),
   onSessionRestarted: (
     callback: (payload: {
       id: string

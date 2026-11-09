@@ -71,6 +71,22 @@ export function sessionPlanDetected(id: string, path: string, windowKey: string 
   )
 }
 
+/** The session runs on `model` now (PRDCT-4256): the provider's own word,
+ *  as `pty-manager` writes it to the record. Sent on BOTH transports from
+ *  this one source, unlike the news above: the window's IPC channel at once
+ *  (the session's window, by key) and the server's push channel when one
+ *  publishes, and the window takes exactly one of them (the preload's dual
+ *  listener, IPC until its push socket is welcomed, push from then on), so a
+ *  switch made in a window's first seconds reaches its sidebar store too. */
+export function sessionModelChanged(id: string, model: string): void {
+  const windows = sessionWindows()
+  windows.send(windows.windowOf(id), 'session:model-changed', { id, model })
+  if (publisher)
+    void publisher({ _tag: 'session.model_changed', id, model }).catch((error) =>
+      console.error('[clave-server] session.model_changed not published', error)
+    )
+}
+
 /** The conversation was cleared; the tab follows `providerSessionId` now. */
 export function sessionCleared(
   id: string,
