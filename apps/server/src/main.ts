@@ -15,9 +15,11 @@
  * chat is otherwise named by a `claude -p` one-shot under the machine's
  * login (`packages/host/src/title-generator.ts`). Off by default; the app
  * never passes it. The discovery file says `titles: "off"` when it is on,
- * beside `testFixtures` (`--test-no-activate`, which also stops the usage
- * clock) and `machineUsage` (false under `--test-no-machine-usage`), so a
- * fixture can read what this server will and will not reach.
+ * beside `testMode` (`--test-no-activate`, which also stops the usage clock
+ * and turns the test fixture route on) and `machineUsage` (false under
+ * `--test-no-machine-usage`), so a fixture can read what this server will
+ * and will not reach. Under the test flag the title opt-out is also on the
+ * test hooks (`__claveE2E.titles`), for the fixture's own mutation.
  *
  * `--app-version <semver>` is the version this server reports (issue #266):
  * the release's own, since a beta's package.json carries the stable version
@@ -131,6 +133,7 @@ import {
 import { TEST_NO_ACTIVATE, TEST_NO_MACHINE_USAGE } from '../../../packages/host/src/test-mode'
 import {
   disableTitleGeneration,
+  enableTitleGenerationForTests,
   titleGenerationDisabled
 } from '../../../packages/host/src/title-generator'
 // ── Wave 5, lane C: the plugins, this server's own service (packages/host/src/plugins/standalone-plugins.ts) ──
@@ -227,6 +230,16 @@ async function main(): Promise<void> {
     disableTitleGeneration('--no-titles')
     log('titles: off (--no-titles), no tab is named by a one-shot')
   }
+  // Under `--test-no-activate` only: the fixture's mutation re-opens the
+  // titles in a running daemon that still announces them off, so that its
+  // recorder, and not the announcement, is what catches the one-shot.
+  installE2eHooks({
+    titles: {
+      enable: enableTitleGenerationForTests,
+      disable: disableTitleGeneration,
+      disabled: titleGenerationDisabled
+    }
+  })
 
   // ── Wave 6, lane B: the login shell's environment, read while the rest starts (PRDCT-3527) ──
   // tmux, Claude and Codex are found on its PATH, and a read made when first
@@ -540,10 +553,10 @@ async function main(): Promise<void> {
           ok: true,
           pid: process.pid,
           // What this server will not reach, for a fixture to read (the
-          // native mobile wave): titles off, the test fixtures on, the
-          // machine login's usage read off.
+          // native mobile wave): titles off, the test mode on (the fixture
+          // route, no usage clock), the machine login's usage read off.
           titles: titleGenerationDisabled() ? 'off' : 'on',
-          testFixtures: TEST_NO_ACTIVATE,
+          testMode: TEST_NO_ACTIVATE,
           machineUsage: !TEST_NO_MACHINE_USAGE,
           terminals: terminalState?.address ?? terminalsAddress ?? null,
           terminalProcessPid: terminalState?.pid ?? null,
