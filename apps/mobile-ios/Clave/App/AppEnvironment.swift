@@ -12,6 +12,12 @@ nonisolated struct LaunchOptions: Equatable, Sendable {
   var relayOverride: String?
   /// The in-process fake answers every call: no socket, no browser.
   var usesUITestFake: Bool
+  #if DEBUG
+    /// A URL the launch hands to the app as if the platform had opened it (`CLAVE_IOS_OPEN_URL`).
+    var openURL: URL? = nil
+    /// The fake asks for the notification permission like a real launch, for a test that pushes.
+    var uiTestFakeAsksForNotifications = false
+  #endif
 
   static let release = LaunchOptions(buildKind: .release, issuerOverride: nil, relayOverride: nil, usesUITestFake: false)
 
@@ -19,6 +25,8 @@ nonisolated struct LaunchOptions: Equatable, Sendable {
     static let uiTestFakeArgument = "--ui-test-fake"
     static let issuerVariable = "CLAVE_IOS_ISSUER"
     static let relayVariable = "CLAVE_IOS_RELAY"
+    static let openURLVariable = "CLAVE_IOS_OPEN_URL"
+    static let uiTestNotificationsArgument = "--ui-test-notifications"
 
     /// The options a launch with this environment and these arguments gets.
     /// `isDebug: false` is how a test proves a release-like build reads none of it.
@@ -32,7 +40,9 @@ nonisolated struct LaunchOptions: Equatable, Sendable {
         buildKind: .development,
         issuerOverride: value(issuerVariable),
         relayOverride: value(relayVariable),
-        usesUITestFake: arguments.contains(uiTestFakeArgument))
+        usesUITestFake: arguments.contains(uiTestFakeArgument),
+        openURL: value(openURLVariable).flatMap(URL.init(string:)),
+        uiTestFakeAsksForNotifications: arguments.contains(uiTestNotificationsArgument))
     }
   #endif
 
@@ -63,15 +73,21 @@ struct AppEnvironment: Sendable {
   let usesRemoteNotifications: Bool
   /// The defaults the appearance is kept in.
   let appearanceDefaults: UserDefaults
+  #if DEBUG
+    /// A URL the launch opens once it has read the sign-in, as `CLAVE_IOS_OPEN_URL` named it.
+    var openURLAtLaunch: URL?
+  #endif
   /// True when the developer connection is offered (a development build).
   var offersDeveloperConnection: Bool { buildKind == .development }
 
   /// The environment of this process.
   static func live(_ options: LaunchOptions = .current()) -> AppEnvironment {
     #if DEBUG
-      if options.usesUITestFake { return uiTestFake() }
+      if options.usesUITestFake {
+        return uiTestFake(asksForNotifications: options.uiTestFakeAsksForNotifications).opening(options.openURL)
+      }
     #endif
-    return AppEnvironment(
+    let live = AppEnvironment(
       buildKind: options.buildKind,
       issuer: options.issuerOverride,
       relayOverride: options.relayOverride,
@@ -82,6 +98,11 @@ struct AppEnvironment: Sendable {
       opener: WebAuthenticationOpener(),
       usesRemoteNotifications: true,
       appearanceDefaults: .standard)
+    #if DEBUG
+      return live.opening(options.openURL)
+    #else
+      return live
+    #endif
   }
 
   /// The pieces given by hand, for a test.
@@ -103,8 +124,16 @@ struct AppEnvironment: Sendable {
   }
 
   #if DEBUG
+    /// The same environment with a URL to open at launch.
+    func opening(_ url: URL?) -> AppEnvironment {
+      var copy = self
+      copy.openURLAtLaunch = url
+      return copy
+    }
+
     /// Every call answered in process, every store in memory: a UI test starts clean each launch.
-    static func uiTestFake() -> AppEnvironment {
+    /// `asksForNotifications` lets a test that pushes get the permission alert and an APNs token.
+    static func uiTestFake(asksForNotifications: Bool = false) -> AppEnvironment {
       let server = UITestFakeServer()
       let defaults = UserDefaults(suiteName: "clave.ui-test-fake") ?? .standard
       defaults.removePersistentDomain(forName: "clave.ui-test-fake")
@@ -117,7 +146,7 @@ struct AppEnvironment: Sendable {
         secureStore: InMemorySecureStore(),
         keyValueStore: InMemoryKeyValueStore(),
         opener: UITestFakeOpener(),
-        usesRemoteNotifications: false,
+        usesRemoteNotifications: asksForNotifications,
         appearanceDefaults: defaults)
     }
   #endif

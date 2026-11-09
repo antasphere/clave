@@ -33,7 +33,8 @@ extension XCTestCase {
   @MainActor
   @discardableResult
   func signInAndPair(_ app: XCUIApplication = XCUIApplication()) -> XCUIApplication {
-    app.launchArguments = ["--ui-test-fake"]
+    // Arguments the caller set (a text size, the notification permission) stay beside the fake's.
+    if !app.launchArguments.contains("--ui-test-fake") { app.launchArguments.append("--ui-test-fake") }
     app.launch()
     signIn(app)
 

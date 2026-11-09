@@ -22,11 +22,13 @@ final class ChatFlowTests: XCTestCase {
     return app
   }
 
+  /// A turn by its identifier's prefix and its words: the person's turn is one element whose label
+  /// holds them, the agent's a group of its drawn blocks, one of which holds them.
   @MainActor
   private func element(_ app: XCUIApplication, identifierPrefix prefix: String, labelContaining text: String) -> XCUIElement {
-    app.descendants(matching: .any)
-      .matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label CONTAINS %@", prefix, text))
-      .firstMatch
+    let words = NSPredicate(format: "label CONTAINS %@", text)
+    let turns = app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH %@", prefix))
+    return prefix == "chat.assistant." ? turns.containing(words).firstMatch : turns.matching(words).firstMatch
   }
 
   @MainActor

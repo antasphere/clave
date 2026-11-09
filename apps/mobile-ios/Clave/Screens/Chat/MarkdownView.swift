@@ -227,6 +227,7 @@ private struct RenderedBlockView: View {
         .frame(maxWidth: .infinity, maxHeight: 320, alignment: .leading)
         .clipShape(RoundedRectangle(cornerRadius: Theme.radius.lg, style: .continuous))
         .accessibilityLabel(alt.isEmpty ? "Image" : alt)
+        .accessibilityIdentifier("chat.markdown.image")
         if !alt.isEmpty {
           Text(alt)
             .font(.geist(Theme.text.xs, relativeTo: .caption))
@@ -276,6 +277,7 @@ struct CodeBlockView: View {
     .accessibilityElement(children: .ignore)
     .accessibilityLabel(language.map { "Code, \($0)" } ?? "Code")
     .accessibilityValue(String(text.characters))
+    .accessibilityIdentifier("chat.markdown.code")
   }
 }
 
@@ -307,6 +309,8 @@ struct TableBlockView: View {
       }
       .padding(.vertical, Theme.space(1))
     }
+    .accessibilityElement(children: .contain)
+    .accessibilityIdentifier("chat.markdown.table")
   }
 
   private func alignment(_ column: Int) -> HorizontalAlignment {

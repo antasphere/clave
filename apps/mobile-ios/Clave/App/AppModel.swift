@@ -85,6 +85,10 @@ nonisolated struct NotificationResponseInput: Sendable {
   func start() async {
     guard !starting else { return }
     starting = true
+    #if DEBUG
+      // A development launch may name a URL to open, as if the platform had opened the app with it.
+      if launchURL == nil, let url = environment.openURLAtLaunch { launchURL = url }
+    #endif
     // The owner read back here is set up by the launch itself, below.
     await account.restore()
     started = true

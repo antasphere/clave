@@ -181,9 +181,10 @@ struct AssistantTurnView: View {
   let turn: AssistantTurn
 
   var body: some View {
+    // Each drawn block is an element of its own (the heading, the paragraphs and their links, the
+    // code, the table's cells, the image), so VoiceOver reads the prose and never its Markdown source.
     MarkdownView(text: turn.text)
-      .accessibilityElement(children: .combine)
-      .accessibilityLabel(turn.text)
+      .accessibilityElement(children: .contain)
       .accessibilityIdentifier("chat.assistant.\(turn.ordinal)")
   }
 }

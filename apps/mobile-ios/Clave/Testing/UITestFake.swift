@@ -23,6 +23,32 @@
     static let workspaceId = "scratch"
     static let generation = "g_fake"
     static let forbiddenSentence = "A phone may not do this."
+    /// A message starting with this is answered only after an interrupt, or after 20 s.
+    static let slowPrefix = "slow:"
+    /// A message of exactly this closes every socket and refuses new ones for `offlineSeconds`.
+    static let offlineCommand = "offline:"
+    /// Long enough for a UI test to come back to the state line before the push client's backoff
+    /// reaches a socket the fake accepts again.
+    static let offlineSeconds = 5.0
+    /// The last seeded reply: GitHub-flavoured Markdown, its image a data: URL so nothing is fetched.
+    static let markdownReply = """
+      ## Evidence heading
+
+      A paragraph with a [link to Clave](https://example.com/clave).
+
+      ```swift
+      let greeting = "hello"
+      let count = 3
+      print(greeting, count)
+      ```
+
+      | Name | Value |
+      | --- | --- |
+      | alpha | 1 |
+      | beta | 2 |
+
+      ![A tiny strip](data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAACCAIAAADej8umAAAAPklEQVR42mPQqDhhUnHAoWKHT8WGiIoVKRULCipm1FRM6KjomFLRsKCiYk1FwY6KjCMVCRcqIu5UBDCQqgEANIkwweYaurwAAAAASUVORK5CYII=)
+      """
 
     private let lock = NSLock()
     private var pairingReads = 0
@@ -31,6 +57,11 @@
     private var sequence = UITestFakeServer.seeded.count
     private var eventSeq = 0.0
     private var sockets: [UITestFakeSocket] = []
+    /// The reply a `slow:` message holds back until an interrupt arrives, or 20 s pass.
+    private var heldReply: (id: Int, text: String)?
+    private var heldCount = 0
+    /// Until when a new socket's hello is answered by closing it (after an `offline:` message).
+    private var refusingUntil: Date?
 
     private func locked<T>(_ run: () -> T) -> T {
       lock.lock()
@@ -183,8 +214,18 @@
         broadcast(event: .requestsChanged(revision: revision))
         return json(["accepted": true])
       case ("POST", "/sessions/write"):
+        if Self.writtenType(body) == "interrupt" {
+          releaseHeldReply()
+          return json(["status": "accepted", "at": now])
+        }
         let text = Self.writtenText(body)
-        echo(text)
+        if text == Self.offlineCommand {
+          dropSockets()
+        } else if text.hasPrefix(Self.slowPrefix) {
+          hold(text)
+        } else {
+          echo(text)
+        }
         return json(["status": "accepted", "at": now])
       default:
         return json(["message": Self.forbiddenSentence], status: 403)
@@ -199,6 +240,15 @@
 
     func close(_ socket: UITestFakeSocket) {
       locked { sockets.removeAll { $0 === socket } }
+    }
+
+    /// Whether this frame is a hello the fake refuses by closing the socket: for `offlineSeconds`
+    /// after an `offline:` message, the machine is gone.
+    func refuses(_ text: String) -> Bool {
+      guard let frame = (try? JSONSerialization.jsonObject(with: Data(text.utf8))) as? [String: Any],
+        frame["_tag"] as? String == "hello"
+      else { return false }
+      return locked { refusingUntil.map { Date() < $0 } ?? false }
     }
 
     /// The answer to one frame the phone sent on a socket.
@@ -227,7 +277,12 @@
 
     /// A write comes back as the stream would carry it: the person's message, then Echo's reply.
     private func echo(_ text: String) {
-      for event in [SessionEvent.userMessage(UserMessage(text: text)), .assistantText(delta: text, final: true, parent: nil)] {
+      stream([.userMessage(UserMessage(text: text)), .assistantText(delta: text, final: true, parent: nil)])
+    }
+
+    /// The session's next events on its stream, each at the next position of the one generation.
+    private func stream(_ events: [SessionEvent]) {
+      for event in events {
         let position = locked { () -> Int in
           sequence += 1
           return sequence
@@ -235,6 +290,40 @@
         let stream = SessionStream.event(event, position: SessionPosition(generation: Self.generation, sequence: position))
         send(Self.frame(["_tag": "stream", "sessionId": Self.sessionId, "stream": Self.object(stream)]))
       }
+    }
+
+    /// A `slow:` message: the person's message at once, the agent working, and the reply held
+    /// until an interrupt arrives or 20 s pass.
+    private func hold(_ text: String) {
+      let id = locked { () -> Int in
+        heldCount += 1
+        heldReply = (heldCount, text)
+        return heldCount
+      }
+      stream([.userMessage(UserMessage(text: text)), .stateChange(.working)])
+      broadcast(event: .sessionStateChanged(id: Self.sessionId, state: .working))
+      DispatchQueue.global().asyncAfter(deadline: .now() + 20) { [weak self] in self?.releaseHeldReply(id) }
+    }
+
+    /// The held reply streamed now and the agent idle again; `id` releases only that hold.
+    private func releaseHeldReply(_ id: Int? = nil) {
+      let held = locked { () -> (id: Int, text: String)? in
+        guard let held = heldReply, id == nil || held.id == id else { return nil }
+        heldReply = nil
+        return held
+      }
+      guard let held else { return }
+      stream([.assistantText(delta: held.text, final: true, parent: nil), .stateChange(.idle)])
+      broadcast(event: .sessionStateChanged(id: Self.sessionId, state: .idle))
+    }
+
+    /// An `offline:` message: every open socket closed by the machine, and new ones refused for a while.
+    private func dropSockets() {
+      let open = locked { () -> [UITestFakeSocket] in
+        refusingUntil = Date().addingTimeInterval(Self.offlineSeconds)
+        return sockets
+      }
+      for socket in open { socket.close(code: 1001, reason: "The fake machine went away.") }
     }
 
     private func broadcast(event: ServerEvent) {
@@ -260,13 +349,15 @@
         workspaceId: workspaceId, state: .idle, createdAt: 0, adapterId: "echo", title: "Seeded chat")
     }
 
-    /// The seeded conversation: the person's message, Echo's reply, and one completed tool call
-    /// (a read of the workspace's README) for the transcript's tool card.
+    /// The seeded conversation: the person's message, Echo's reply, one completed tool call
+    /// (a read of the workspace's README) for the transcript's tool card, and a final reply in
+    /// GitHub-flavoured Markdown (a heading, a link, a fenced block, a table and an image).
     static let seeded: [SessionEvent] = [
       .userMessage(UserMessage(text: "seeded-fake")),
       .assistantText(delta: "seeded-fake", final: true, parent: nil),
       .toolCall(id: "t_fake", name: "Read", input: .object(["file_path": .string("/fake/scratch/README.md")]), parent: nil),
       .toolResult(id: "t_fake", output: .string("# Scratch"), error: false, parent: nil),
+      .assistantText(delta: markdownReply, final: true, parent: nil),
     ]
 
     static func clarification() -> PendingRequest {
@@ -288,6 +379,13 @@
     private static func field(_ name: String, of body: Data?) -> String? {
       guard let body, let object = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any] else { return nil }
       return object[name] as? String
+    }
+
+    private static func writtenType(_ body: Data?) -> String? {
+      guard let body, let object = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any],
+        let input = object["input"] as? [String: Any]
+      else { return nil }
+      return input["type"] as? String
     }
 
     private static func writtenText(_ body: Data?) -> String {
@@ -352,12 +450,18 @@
     private var inbox: [WebSocketMessage] = []
     private var waiter: CheckedContinuation<WebSocketMessage, Never>?
     private var closed = false
+    private var closeCode = 1000
+    private var closeReason = ""
 
     init(server: UITestFakeServer) {
       self.server = server
     }
 
     func send(_ text: String) async throws {
+      if server.refuses(text) {
+        close(code: 1001, reason: "The fake machine is not answering.")
+        return
+      }
       for reply in server.reply(to: text) { deliver(.text(reply)) }
     }
 
@@ -369,8 +473,9 @@
           lock.unlock()
           continuation.resume(returning: next)
         } else if closed {
+          let (code, reason) = (closeCode, closeReason)
           lock.unlock()
-          continuation.resume(returning: .closed(code: 1000, reason: ""))
+          continuation.resume(returning: .closed(code: code, reason: reason))
         } else {
           waiter = continuation
           lock.unlock()
@@ -391,13 +496,20 @@
     }
 
     func close(code: Int) {
+      close(code: code, reason: "")
+    }
+
+    /// Closed by either end: a pending receive answers the close, later ones too.
+    func close(code: Int, reason: String) {
       lock.lock()
       closed = true
+      closeCode = code
+      closeReason = reason
       let waiter = self.waiter
       self.waiter = nil
       lock.unlock()
       server.close(self)
-      waiter?.resume(returning: .closed(code: code, reason: ""))
+      waiter?.resume(returning: .closed(code: code, reason: reason))
     }
   }
 

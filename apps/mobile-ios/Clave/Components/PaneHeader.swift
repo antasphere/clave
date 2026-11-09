@@ -27,6 +27,7 @@ struct PaneHeader<Trailing: View>: View {
           .foregroundStyle(theme.colors.textPrimary)
           .lineLimit(1)
           .accessibilityAddTraits(.isHeader)
+          .accessibilityIdentifier("pane.title")
         if let subtitle {
           Text(subtitle)
             .font(.geist(Theme.text.sm, relativeTo: .subheadline))
