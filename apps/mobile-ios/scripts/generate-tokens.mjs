@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+/* eslint-disable @typescript-eslint/explicit-function-return-type -- plain JS, run by node */
 // The iPhone app's colour roles, read from the desktop's own token file
 // (packages/ui/src/tokens.css) rather than restated by hand, so a token the
 // desktop changes cannot drift silently on the phone. A port of the React
@@ -201,9 +202,13 @@ function renderSwift(tokens) {
   const roleKeys = [...Object.keys(THEME_ROLES), 'rule']
   const sharedKeys = Object.keys(SHARED_ROLES)
   const L = []
-  L.push('// Generated from packages/ui/src/tokens.css by apps/mobile-ios/scripts/generate-tokens.mjs.')
+  L.push(
+    '// Generated from packages/ui/src/tokens.css by apps/mobile-ios/scripts/generate-tokens.mjs.'
+  )
   L.push('// Do not edit: run `node scripts/generate-tokens.mjs` in apps/mobile-ios to rewrite it;')
-  L.push('// `node scripts/generate-tokens.mjs --check` fails when it no longer matches the stylesheet.')
+  L.push(
+    '// `node scripts/generate-tokens.mjs --check` fails when it no longer matches the stylesheet.'
+  )
   L.push('')
   L.push('nonisolated public enum ThemeName: String, CaseIterable, Codable, Sendable {')
   L.push(`  case ${THEME_NAMES.join(', ')}`)
@@ -242,7 +247,7 @@ function renderSwift(tokens) {
   })
   L.push(')')
   L.push('')
-  L.push('/// The desktop\'s `font-medium`.')
+  L.push("/// The desktop's `font-medium`.")
   L.push(`nonisolated public let fontWeightMedium = ${tokens.fontWeightMedium}`)
   L.push('')
   return L.join('\n')

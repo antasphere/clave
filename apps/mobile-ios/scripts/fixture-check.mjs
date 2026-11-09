@@ -105,7 +105,7 @@ async function main() {
     stack = await startStack({ ...options, approve: true })
   } catch (err) {
     process.stderr.write(`fixture-check: ${err.message}\n`)
-    process.exit(1)
+    process.exit(err.exitCode ?? 1)
   }
   for (const line of factLines(stack)) log(line)
 

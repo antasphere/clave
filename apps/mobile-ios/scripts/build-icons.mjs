@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+/* eslint-disable @typescript-eslint/explicit-function-return-type -- plain JS, run by node */
 // The iPhone app's icons are the desktop's: Heroicons 24/outline, read out of
 // the very @heroicons/react modules the renderer imports, plus the provider
 // marks of apps/desktop/src/renderer/src/components/icons/cli-logos.tsx. Each
@@ -152,7 +153,7 @@ const lines = [
   'nonisolated public enum IconName: String, CaseIterable, Sendable {',
   ...names.map((n) => `  case ${caseName(n)} = "${n}"`),
   '',
-  '  /// The image set inside the catalog\'s namespaced Icons folder.',
+  "  /// The image set inside the catalog's namespaced Icons folder.",
   '  public var assetName: String { "Icons/\\(rawValue)" }',
   '}',
   ''

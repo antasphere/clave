@@ -12,7 +12,7 @@
 //
 //   node apps/mobile-ios/scripts/fixture-stack.mjs [--server 47101] [--relay 47102]
 //        [--tmpdir /private/tmp/clave-native-a/stack] [--approve]
-//        [--dry-run | --self-check | --once | --prove-tmpdir-guard | --prove-prerequisites
+//        [--dry-run | --self-check | --once | --prove-tmpdir-guard | --prove-env-guard | --prove-prerequisites
 //         | --prove-inside cache|resolver|args|probe | --prove-recorder-read missing|unreadable
 //         | --prove-title-guard]
 //
@@ -25,7 +25,8 @@
 // rewrites a reused folder: it works in a fresh one.
 //
 // Every boot runs five checks and refuses (exit 2) unless all pass, printing
-// them first. Before any process starts: (1) the daemon's command starts Bun
+// them first. Before the daemon starts (the provider and the relay are already
+// up): (1) the daemon's command starts Bun
 // with --no-env-file before the entry (Bun loads .env files from its working
 // directory otherwise) and carries --no-titles, --test-no-activate and
 // --test-no-machine-usage; (2) the environment handed to the daemon is built
@@ -59,8 +60,11 @@
 // lines and exits. --once brings the stack up, prints it and tears it down.
 // The proofs keep every flag (never a wrong-flags boot) and touch the
 // stack's own files alone: --prove-tmpdir-guard starts nothing and shows the
-// three refusals with their sentinels intact, an owned folder reused and a
-// dry run leaving a reused folder alone; --prove-prerequisites hands check 3
+// refusals (no marker, another owner, an inexact owner id, a symlink marker, a
+// symlink run root) with their sentinels intact, an owned folder reused as the
+// same folder and a dry run leaving a reused folder alone; --prove-env-guard
+// starts nothing and shows the second pre-boot check red on one stray
+// variable, the key named and never its value; --prove-prerequisites hands check 3
 // a discovery read saying titles "on"; --prove-inside cache|resolver|args
 // hands check 4 a cached PATH without the recorders, a one-shot whose file is
 // not the recorder, or arguments other than --version, and --prove-inside
@@ -178,6 +182,10 @@ const OWNER = {
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+/** One word for /bin/sh, single-quoted, a quote inside it escaped. */
+const shQuote = (s) => `'${String(s).replace(/'/g, `'\\''`)}'`
+/** The stop of a boot still under way, for a signal that arrives before the stack is up. */
+let inFlightStop = null
 
 /** An error that names the step it failed and the exit code the process ends with. */
 function fail(step, err, child, exitCode = 1) {
@@ -284,10 +292,9 @@ function writeStubs(tmpdir, { issuer, serverDir }) {
   }
   const shell = path.join(dir, 'zsh')
   const env = daemonEnv({ issuer, serverDir, bin, shell, claudeConfigDir, codexHome })
-  const quote = (s) => `'${String(s).replace(/'/g, `'\\''`)}'`
   const envBlock = Object.keys(env)
     .sort()
-    .map((key) => quote(`${key}=${env[key]}`))
+    .map((key) => shQuote(`${key}=${env[key]}`))
     .join(' ')
   write(shell, [
     '#!/bin/sh',
@@ -308,7 +315,7 @@ function writeStubs(tmpdir, { issuer, serverDir }) {
     'esac'
   ])
   const record = (name) =>
-    `printf '%s %s %s %s\\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${name}" "$1" "$2" >> '${log}'`
+    `printf '%s %s %s %s\\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${name}" "$1" "$2" >> ${shQuote(log)}`
   const claude = write(path.join(bin, 'claude'), [
     '#!/bin/sh',
     '# The recorder for the claude CLI: never a real agent, never the machine login.',
@@ -344,8 +351,9 @@ export function readRecorder(stubs) {
   return readFileSync(stubs.log, 'utf8').split('\n').filter(Boolean)
 }
 
-/** Every file under `folder`, relative, however deep; empty when the folder is.
- *  A folder that is missing, a symlink or unreadable throws: never "empty". */
+/** Every entry under `folder`, relative, however deep (a sub-folder as `name/`);
+ *  empty when the folder is. A folder that is missing, a symlink or unreadable
+ *  throws: never "empty". */
 function filesUnder(folder) {
   const info = lstatSync(folder)
   if (info.isSymbolicLink()) throw new Error(`${folder} is a symlink`)
@@ -354,8 +362,11 @@ function filesUnder(folder) {
   const walk = (dir, prefix) => {
     for (const entry of readdirSync(dir, { withFileTypes: true })) {
       const rel = prefix ? `${prefix}/${entry.name}` : entry.name
-      if (entry.isDirectory()) walk(path.join(dir, entry.name), rel)
-      else out.push(rel)
+      if (entry.isDirectory()) {
+        // An empty folder is an entry too: something made it.
+        out.push(`${rel}/`)
+        walk(path.join(dir, entry.name), rel)
+      } else out.push(rel)
     }
   }
   walk(folder, '')
@@ -518,9 +529,19 @@ export async function preBootChecks({ args, env, stubs, log }) {
           args[1].endsWith(path.join('apps', 'server', 'src', 'main.ts')),
         `the command does not start with --no-env-file and the server entry: ${JSON.stringify(args.slice(0, 2))}`
       )
-      const missing = [...DAEMON_FLAGS, '--dev-echo-adapter'].filter((flag) => !args.includes(flag))
+      const literal = [
+        '--no-titles',
+        '--test-no-activate',
+        '--test-no-machine-usage',
+        '--dev-echo-adapter'
+      ]
+      const missing = literal.filter((flag) => !args.includes(flag))
       expect(missing.length === 0, `missing ${missing.join(', ')}`)
-      return `--no-env-file, then the entry; flags: ${DAEMON_FLAGS.join(' ')}`
+      expect(
+        DAEMON_FLAGS.length === 3 && DAEMON_FLAGS.every((flag, i) => flag === literal[i]),
+        `DAEMON_FLAGS drifted from the three flags: ${JSON.stringify(DAEMON_FLAGS)}`
+      )
+      return `--no-env-file, then the entry; flags: ${literal.join(' ')}`
     }
   )
   await runCheck(
@@ -714,7 +735,10 @@ export function assertInside(inside, stubs, expectedEnvKeys = null) {
     `the cached CODEX_HOME is ${inside.cached.CODEX_HOME}`
   )
   if (inside.road === 'hooks') {
-    expect(inside.titlesDisabled !== null, 'the title hooks say titles are on')
+    expect(
+      typeof inside.titlesDisabled === 'string' && inside.titlesDisabled.length > 0,
+      `the title hooks say titles are on (disabled() answered ${JSON.stringify(inside.titlesDisabled)})`
+    )
     expect(
       Array.isArray(inside.oneShot.args) && ['-p', '--print'].includes(inside.oneShot.args[0]),
       `the one-shot's arguments start with ${JSON.stringify(inside.oneShot.args?.[0])}: a wrapper token before the one-shot's own`
@@ -943,6 +967,7 @@ export async function startStack({
   const stop = async () => {
     if (stopped) return latched ?? []
     stopped = true
+    inFlightStop = null
     if (watch) clearInterval(watch)
     if (approver) approver.stop()
     if (server) await server.stop()
@@ -952,6 +977,7 @@ export async function startStack({
     return stubs && baseline ? problemsOf(inspect(stubs, baseline)) : []
   }
 
+  inFlightStop = stop
   try {
     // 1. The provider.
     try {
@@ -1262,6 +1288,7 @@ export async function startStack({
 
     const readyMs = Date.now() - startedAt
     log(`stack ready in ${(readyMs / 1000).toFixed(1)} s`)
+    inFlightStop = null
 
     return {
       ...facts,
@@ -1282,13 +1309,15 @@ export async function startStack({
       ])
     }
   } catch (err) {
-    await stop()
-    // A problem the watch latched outranks the step it broke: the run ends on it, exit 2.
-    if (latched && err.fixtureStep !== 'read the recorders')
+    // The stop reads the recorders one last time: a problem seen there, or one
+    // the watch latched, outranks the step it broke; the run ends on it, exit 2.
+    const left = await stop()
+    const problems = latched ?? (left.length ? left : null)
+    if (problems && err.fixtureStep !== 'read the recorders')
       throw fail(
         'read the recorders',
         new Error(
-          `${latched.join(' | ')} (while: ${err.fixtureStep ?? err.message.split('\n')[0]})`
+          `${problems.join(' | ')} (while: ${err.fixtureStep ?? err.message.split('\n')[0]})`
         ),
         null,
         CHECK_FAILED_EXIT
@@ -1398,6 +1427,7 @@ function parseArgs(argv) {
     once: argv.includes('--once'),
     dryRun: argv.includes('--dry-run'),
     proveTmpdirGuard: argv.includes('--prove-tmpdir-guard'),
+    proveEnvGuard: argv.includes('--prove-env-guard'),
     provePrerequisites: argv.includes('--prove-prerequisites'),
     proveInside: argv.includes('--prove-inside') ? value('prove-inside', 'resolver') : null,
     proveRecorderRead: argv.includes('--prove-recorder-read')
@@ -1457,9 +1487,7 @@ export function proveTmpdirGuard(write = (line) => process.stdout.write(line + '
       report(false, `${what} was accepted`)
     } catch (err) {
       report(
-        err.fixtureStep === 'prepare the run folder' &&
-          err.exitCode === CHECK_FAILED_EXIT &&
-          intact(),
+        err.fixtureStep === 'prepare the run folder' && err.exitCode === 2 && intact(),
         `${what} is refused (exit ${err.exitCode}) and its sentinel is intact: ${err.message.split('\n')[0]}`
       )
     }
@@ -1478,8 +1506,11 @@ export function proveTmpdirGuard(write = (line) => process.stdout.write(line + '
       symlinkSync(path.join(dir, 'real-marker'), path.join(dir, OWNER_MARKER))
     })
   )
+  // The folder behind the link is the stack's own, so the refusal can only come
+  // from the root being a symlink, never from a missing marker.
   const target = mkdtempSync(path.join(os.tmpdir(), 'clave-fixture-guard-target-'))
   made.push(target)
+  writeFileSync(path.join(target, OWNER_MARKER), `${OWNER_ID}\n`)
   writeFileSync(path.join(target, 'sentinel.txt'), 'behind the link\n')
   const link = `${target}-link`
   symlinkSync(target, link)
@@ -1490,23 +1521,37 @@ export function proveTmpdirGuard(write = (line) => process.stdout.write(line + '
   } catch (err) {
     report(
       err.fixtureStep === 'prepare the run folder' &&
-        err.exitCode === CHECK_FAILED_EXIT &&
+        err.exitCode === 2 &&
+        /is a symlink; the run folder must be a real folder/.test(err.message) &&
         existsSync(path.join(target, 'sentinel.txt')),
-      `a run root that is a symlink is refused (exit ${err.exitCode}) and the folder behind it is intact: ${err.message.split('\n')[0]}`
+      `a run root that is a symlink to an owned folder is refused (exit ${err.exitCode}) for being a symlink, and the folder behind it is intact: ${err.message.split('\n')[0]}`
+    )
+  }
+  for (const [label, content] of [
+    ['two newlines', `${OWNER_ID}\n\n`],
+    ['no newline', OWNER_ID],
+    ['a leading space', ` ${OWNER_ID}\n`],
+    ['a CRLF line end', `${OWNER_ID}\r\n`]
+  ]) {
+    refused(
+      `a folder whose marker holds the owner id with ${label}`,
+      folderWith('inexact', (dir) => writeFileSync(path.join(dir, OWNER_MARKER), content))
     )
   }
   const owned = mkdtempSync(path.join(os.tmpdir(), 'clave-fixture-guard-owned-'))
   made.push(owned)
   try {
     prepareRunFolder(owned)
+    const identity = statSync(owned).ino
     writeFileSync(path.join(owned, 'leftover.txt'), 'from a previous run\n')
     prepareRunFolder(owned)
     const entries = readdirSync(owned)
     report(
       entries.length === 1 &&
         entries[0] === OWNER_MARKER &&
-        readFileSync(path.join(owned, OWNER_MARKER), 'utf8') === `${OWNER_ID}\n`,
-      `a folder of the stack's own is emptied and reused, its marker a regular file holding the owner id (entries after: ${entries.join(', ')})`
+        readFileSync(path.join(owned, OWNER_MARKER), 'utf8') === `${OWNER_ID}\n` &&
+        statSync(owned).ino === identity,
+      `a folder of the stack's own is emptied and reused as the same folder (same inode), its marker a regular file holding the owner id (entries after: ${entries.join(', ')})`
     )
     writeFileSync(path.join(owned, 'leftover.txt'), 'from a previous run\n')
     const dry = dryRunFolder(owned)
@@ -1535,6 +1580,7 @@ if (isMain) {
     ending = true
     let left = []
     if (stack) left = await stack.stop()
+    else if (inFlightStop) await inFlightStop()
     if (left.length) {
       process.stdout.write(
         `fixture-stack: the recorders or the credential folders were not silent: ${left.join(' | ')}\n`
@@ -1549,6 +1595,31 @@ if (isMain) {
   const log = (line) => process.stdout.write(`fixture-stack: ${line}\n`)
   if (options.proveTmpdirGuard) {
     process.exit(proveTmpdirGuard() ? 0 : 1)
+  }
+  if (options.proveEnvGuard) {
+    // No boot: the second pre-boot check is handed the daemon's environment with
+    // one stray variable added, and must fail naming that key and nothing else.
+    const place = dryRunFolder(options.tmpdir)
+    const serverDir = path.join(options.tmpdir, 'server')
+    const stubs = writeStubs(place.folder, { issuer: 'http://127.0.0.1:0', serverDir })
+    const args = daemonArgs({
+      serverDir,
+      serverPort: options.serverPort,
+      relayUrl: `http://127.0.0.1:${options.relayPort}`
+    })
+    const env = { ...stubs.env, CLAVE_FIXTURE_STRAY_KEY: 'a value that must never be printed' }
+    const results = await preBootChecks({ args, env, stubs, log })
+    if (place.fresh) rmSync(place.folder, { recursive: true, force: true })
+    const second = results[1]
+    const red =
+      second &&
+      !second.ok &&
+      /CLAVE_FIXTURE_STRAY_KEY/.test(second.detail) &&
+      !/never be printed/.test(second.detail)
+    process.stdout.write(
+      `${red ? 'PASS' : 'FAIL'} the second pre-boot check goes red on one stray variable in the daemon's environment, naming the key and never its value (${second?.detail ?? 'no result'})\n`
+    )
+    process.exit(red ? 0 : 1)
   }
   if (options.dryRun) {
     // The two pre-boot checks on the very command and environment a boot would

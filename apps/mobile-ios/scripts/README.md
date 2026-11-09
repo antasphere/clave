@@ -9,7 +9,7 @@ Debug and absent from Release; `--prove-red` shows the check fails when the guar
 ## The fixture stack
 
 ```sh
-node apps/mobile-ios/scripts/fixture-stack.mjs [--approve] [--dry-run | --self-check | --once | --prove-tmpdir-guard | --prove-prerequisites | --prove-inside cache|resolver|args|probe | --prove-recorder-read missing|unreadable | --prove-title-guard]
+node apps/mobile-ios/scripts/fixture-stack.mjs [--approve] [--dry-run | --self-check | --once | --prove-tmpdir-guard | --prove-env-guard | --prove-prerequisites | --prove-inside cache|resolver|args|probe | --prove-recorder-read missing|unreadable | --prove-title-guard]
 node apps/mobile-ios/scripts/fixture-check.mjs --udid <simulator udid> [--only <xcodebuild -only-testing value>]
 ```
 
@@ -41,8 +41,10 @@ that does not exist or is empty becomes one. A folder that exists, holds anythin
 marker, a marker that is a symlink (read with `lstat`, never followed), a marker naming
 another owner, or a run root that is itself a symlink is refused before a single entry is
 touched, and nothing ever removes the folder itself or anything above it. A dry run never rewrites a reused folder: when the folder exists it
-works in a fresh sibling it removes at the end. `--prove-tmpdir-guard` shows the three refusals
-with their sentinels intact, an owned folder emptied and reused, and a dry run leaving a reused
+works in a fresh sibling it removes at the end. `--prove-tmpdir-guard` shows the refusals (no
+marker, another owner, the owner id with an extra newline, no newline, a leading space or a
+CRLF line end, a symlink marker, a symlink run root to an owned folder) with their sentinels
+intact, an owned folder emptied and reused as the same folder, and a dry run leaving a reused
 folder alone.
 
 ```
@@ -99,10 +101,11 @@ inside and requires them equal to that set.
 
 Five checks, printed first, every boot; one failing stops the boot with exit 2:
 
-1. before any process starts, the daemon's command starts Bun with `--no-env-file` before the
+1. before the daemon starts (the provider and the relay are already up), the daemon's command
+   starts Bun with `--no-env-file` before the
    entry and carries the three flags and `--dev-echo-adapter` (`preBootChecks` in
    `fixture-stack.mjs`);
-2. before any process starts, the environment handed to the daemon is the allowlist plus
+2. before the daemon starts, the environment handed to the daemon is the allowlist plus
    the stack's own variables, its `SHELL` the stub whose text prints exactly those variables
    and echoes no live environment, the first folder of its `PATH` the recorders',
    `CLAUDE_CONFIG_DIR` and `CODEX_HOME` the empty folders (`preBootChecks`; no shell is run
@@ -142,7 +145,9 @@ folder of this Mac is read: the evidence is the stack's own recorder log and its
 folders.
 
 Proofs that the checks go red, every flag kept so no boot ever runs with wrong flags, and only
-the stack's own files touched: `--prove-tmpdir-guard` starts nothing; `--prove-prerequisites`
+the stack's own files touched: `--prove-tmpdir-guard` starts nothing; `--prove-env-guard` starts
+nothing and hands the second check an environment with one stray variable, which must be refused
+with the key named and never its value; `--prove-prerequisites`
 hands the third check a discovery read saying `titles: "on"`; `--prove-inside cache` hands the
 fourth a cached login `PATH` without the recorders, `--prove-inside resolver` a one-shot whose
 file is not the recorder, `--prove-inside args` arguments other than `--version`, each refused
