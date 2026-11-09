@@ -7283,6 +7283,8 @@ button.exchange-part-who:hover {
    a glyph. Both levels open and close by animating their height. */
 .terminal-view {
   interpolate-size: allow-keywords;
+  /* An ease-in-out (cubic): the smoothest open and close for a height. */
+  --term-disclosure-ease: cubic-bezier(0.65, 0, 0.35, 1);
 }
 .term-tools,
 .term-call {
@@ -7295,26 +7297,24 @@ button.exchange-part-who:hover {
   block-size: 0;
   overflow: clip;
   opacity: 0;
-  /* Closing: it swells a touch before it folds (an ease-in-back), the
-     closing's bounce; a height cannot go below zero, so the give is taken at
-     the start rather than the end. */
+  /* Both ways the height eases in and out — starts soft, lands soft, never
+     runs past its mark: no spring, no bounce. Closing is a touch quicker. */
   transition:
-    block-size calc(var(--default-transition-duration) * 1.75) cubic-bezier(0.36, 0, 0.66, -0.3),
-    opacity calc(var(--default-transition-duration) * 1.75) var(--ease-out-expo),
+    block-size calc(var(--default-transition-duration) * 1.75) var(--term-disclosure-ease),
+    opacity calc(var(--default-transition-duration) * 1.75) var(--term-disclosure-ease),
     content-visibility calc(var(--default-transition-duration) * 1.75) allow-discrete;
 }
 .term-tools[open]::details-content,
 .term-call[open]::details-content {
   block-size: auto;
   opacity: 1;
-  /* Opening: a spring that runs a few percent past the height and settles
-     back, the small bounce. Declared on the open state, so it is the opening's
-     curve; the closed state above carries the closing's. */
+  /* Opening: the same ease-in-out, a little longer. Declared on the open
+     state, so it is the opening's timing; the closed state above carries the
+     closing's. */
   transition:
-    block-size calc(var(--default-transition-duration) * 2.5)
-      linear(0, 0.21 7%, 0.57 16%, 0.86 27%, 1.03 38%, 1.07 46%, 1.05 55%, 1.01 67%, 0.995 80%, 1),
-    opacity var(--default-transition-duration) var(--ease-out-expo),
-    content-visibility calc(var(--default-transition-duration) * 2.5) allow-discrete;
+    block-size calc(var(--default-transition-duration) * 2.25) var(--term-disclosure-ease),
+    opacity calc(var(--default-transition-duration) * 2.25) var(--term-disclosure-ease),
+    content-visibility calc(var(--default-transition-duration) * 2.25) allow-discrete;
 }
 .term-tools-row,
 .term-call-row {
