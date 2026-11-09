@@ -8316,9 +8316,13 @@ button.term-agent-model:focus-visible {
    (inline, animated by RoutinePages) and clips the page sliding out. */
 .routines-pages {
   position: relative;
+  display: flex;
+  justify-content: flex-end;
+  align-items: flex-start;
   overflow: hidden;
 }
 .routines-page {
+  flex-shrink: 0;
   width: max-content;
   max-width: 100vw;
 }
