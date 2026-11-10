@@ -68,10 +68,12 @@ import { accountSpawnFields, accountSessionFields } from '../../store/claude-pro
 import { primeClaudeAccountsUsage, primeCodexAccountsUsage } from '../../store/usage-store'
 import { codexAccountSessionFields } from '../../store/codex-account-store'
 import {
-  sessionSwitchTargets,
   accountProviderOf,
   switchModeLabel,
-  switchSessionAccount
+  sessionSwitchMenu,
+  whenSessionAccountsRead,
+  switchSessionAccount,
+  type SwitchTarget
 } from '../../lib/switch-account'
 import { AccountMenuHeader } from './AccountMenuHeader'
 import { AccountSwitchRow, AccountUsagePreview } from './AccountSwitchMenu'
@@ -1302,6 +1304,12 @@ export function Sidebar(): React.JSX.Element {
       // A Claude session says which account it runs on, and how much of that
       // account is left, at the top of its menu: the one place to look when a
       // window runs out and the question is "which subscription is this on".
+      // A Switch account entry waiting on its server's accounts (below).
+      let pendingSwitch: {
+        entry: ContextMenuItem
+        session: NonNullable<typeof session>
+        rowsOf: (targets: SwitchTarget[]) => ContextMenuItem[]
+      } | null = null
       const header =
         session && accountProviderOf(session) ? (
           <AccountMenuHeader session={session} chart />
@@ -1313,24 +1321,36 @@ export function Sidebar(): React.JSX.Element {
       // on it with the conversation resumed (ADR 0002). Only for a live tab:
       // a dead one has Resume.
       if (session?.alive && accountProviderOf(session)) {
-        const targets = sessionSwitchTargets(session)
-        if (targets.length > 0) {
-          items.push({
+        // A tab on a server whose accounts are not read yet still offers the
+        // entry, with a loading row that fills in while the menu is open
+        // (PRDCT-4328); the read is asked below, once the menu is up.
+        const menu = sessionSwitchMenu(session)
+        const rowsOf = (targets: SwitchTarget[]): ContextMenuItem[] =>
+          targets.length > 0
+            ? targets.map((target) => ({
+                label: target.label,
+                content: <AccountSwitchRow target={target} />,
+                preview: <AccountUsagePreview target={target} />,
+                onClick: () =>
+                  void switchSessionAccount(sessionId, target.id).then((result) => {
+                    // A refused move used to vanish here: the menu closed and
+                    // nothing said why the tab stayed where it was.
+                    if (!result.ok) console.error('Account switch failed:', result.error)
+                  })
+              }))
+            : [{ label: 'No other account on this server', disabled: true, onClick: () => {} }]
+        if (menu.state === 'loading' || menu.targets.length > 0) {
+          const entry: ContextMenuItem = {
             label: 'Switch account',
             icon: <ArrowsRightLeftIcon className="w-3.5 h-3.5" />,
             onClick: () => {},
-            submenu: targets.map((target) => ({
-              label: target.label,
-              content: <AccountSwitchRow target={target} />,
-              preview: <AccountUsagePreview target={target} />,
-              onClick: () =>
-                void switchSessionAccount(sessionId, target.id).then((result) => {
-                  // A refused move used to vanish here: the menu closed and
-                  // nothing said why the tab stayed where it was.
-                  if (!result.ok) console.error('Account switch failed:', result.error)
-                })
-            }))
-          })
+            submenu:
+              menu.state === 'loading'
+                ? [{ label: 'Reading the server’s accounts…', disabled: true, onClick: () => {} }]
+                : rowsOf(menu.targets)
+          }
+          items.push(entry)
+          if (menu.state === 'loading') pendingSwitch = { entry, session, rowsOf }
         }
         // The policy's knobs on this tab: pinned to its account (never moved,
         // never proposed), and its own mode over the workspace's. A tab on a
@@ -1431,6 +1451,31 @@ export function Sidebar(): React.JSX.Element {
       // The account header with its chart is a fixed height: the menu rises
       // by it so the chart sits above the cursor, the first item under it.
       setContextMenu({ x, y, items, header, headerLift: header ? ACCOUNT_HEADER_LIFT : 0 })
+      // The server's accounts, read while the menu is open: the entry's rows
+      // are filled in place (the entry object is shared with the window
+      // entries' update below, so neither undoes the other).
+      if (pendingSwitch) {
+        const { entry, session: pending, rowsOf } = pendingSwitch
+        void whenSessionAccountsRead(pending).then(() => {
+          const now = useSessionStore.getState().sessions.find((s) => s.id === pending.id)
+          const after = now ? sessionSwitchMenu(now) : null
+          entry.submenu =
+            after?.state === 'ready'
+              ? rowsOf(after.targets)
+              : [
+                  {
+                    label: 'The server’s accounts could not be read',
+                    disabled: true,
+                    onClick: () => {}
+                  }
+                ]
+          setContextMenu((current) =>
+            current && current.x === x && current.y === y
+              ? { ...current, items: [...current.items] }
+              : current
+          )
+        })
+      }
       // The window entries arrive a beat later (main is asked which windows
       // exist); the menu re-renders in place with them appended.
       if (session?.alive) {

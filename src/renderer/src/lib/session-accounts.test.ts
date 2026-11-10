@@ -15,6 +15,8 @@ import {
 import {
   nextAccountFor,
   landingForSession,
+  sessionSwitchMenu,
+  whenSessionAccountsRead,
   resolveSessionAccountRef,
   switchSessionAccount,
   sessionAccountExhausted,
@@ -298,6 +300,38 @@ describe('a server’s list is known by the accounts it answered, not by its pro
       pending: true,
       removed: false
     })
+  })
+})
+
+describe('the tab menu’s Switch account on a server not read yet', () => {
+  it('is loading, then holds the server’s other accounts once the read lands', async () => {
+    const tab = serverTab('srv-one', '3@example.com')
+    expect(sessionSwitchMenu(tab)).toEqual({ state: 'loading' })
+    // The read the menu waits on: the server answers its two accounts.
+    vi.stubGlobal('window', {
+      electronAPI: {
+        fleetAccounts: vi.fn(async () => ({
+          claude: serverEntry().claude,
+          codex: [],
+          migrated: []
+        })),
+        fleetLaunchSettings: vi.fn(async () => ({ profiles: null })),
+        fleetUsageSnapshot: vi.fn(async () => ({})),
+        fleetUsage: vi.fn(async () => ({ error: 'x' }))
+      }
+    })
+    await import('../store/server-settings-store')
+    await whenSessionAccountsRead(tab)
+    const after = sessionSwitchMenu(tab)
+    expect(after.state).toBe('ready')
+    expect(after.state === 'ready' && after.targets.map((t) => t.id).sort()).toEqual([
+      'default',
+      'srv-two'
+    ])
+  })
+
+  it('a tab on this Mac is never loading', () => {
+    expect(sessionSwitchMenu(localTab('default')).state).toBe('ready')
   })
 })
 

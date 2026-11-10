@@ -1,4 +1,6 @@
 import { LOCAL_SERVER_ID } from '@clave/contract/fleet'
+import { ownerOf } from './fleet-identity'
+import { serverSettingsReady } from '../store/server-settings-state'
 import { useAccountPolicyStore } from '../store/account-policy-store'
 import { useSessionStore, type Session } from '../store/session-store'
 import {
@@ -260,6 +262,26 @@ export function sessionSwitchTargets(session: Session): SwitchTarget[] {
       }
     ]
   })
+}
+
+/** What a tab's Switch account submenu holds now: the targets, or `loading`
+ *  while the tab's server has not answered its account list (the item is
+ *  shown with a loading row and fills in, PRDCT-4328). */
+export function sessionSwitchMenu(
+  session: Session
+): { state: 'loading' } | { state: 'ready'; targets: SwitchTarget[] } {
+  const provider = accountProviderOf(session)
+  if (!provider) return { state: 'ready', targets: [] }
+  if (!sessionAccountView(session, provider).known) return { state: 'loading' }
+  return { state: 'ready', targets: sessionSwitchTargets(session) }
+}
+
+/** Resolves once the tab's owner has answered its account list (or the read
+ *  failed): at once for a tab on this Mac. */
+export async function whenSessionAccountsRead(session: Session): Promise<void> {
+  const owner = ownerOf(session.id)
+  if (owner === LOCAL_SERVER_ID) return
+  await serverSettingsReady(owner)
 }
 
 /** The pool's next account for a session leaving the one it is on. Null
