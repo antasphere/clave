@@ -333,8 +333,14 @@ class AppEvidenceTest {
         rule.onNodeWithContentDescription("Message").performTextInput("now it lands")
         rule.onNodeWithContentDescription("Send message").performClick()
         // The stand-in answers the follow-up with "pong" once its write is accepted: the reply on
-        // screen is what shows the next send landed.
-        waitForText("pong")
+        // screen is what shows the next send landed. It timed out twice (round 3's run, and on
+        // Android 8.0 at 8c2a043d), cause not established: a timeout says what the screen showed
+        // and how many writes the stand-in had.
+        try {
+            waitForText("pong")
+        } catch (e: ComposeTimeoutException) {
+            throw AssertionError("no reply to the follow-up send; writes ${requests("POST /sessions/write").size}; the screen: ${rule.onRoot(useUnmergedTree = true).printToString()}", e)
+        }
         rule.waitForIdle()
         assertEquals("the next send is one more write: ${requests("POST /sessions/write").map { it.body }}", 2, requests("POST /sessions/write").size)
         assertEquals("now it lands", JSONObject(requests("POST /sessions/write").last().body).getJSONObject("input").getString("text"))
