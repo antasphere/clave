@@ -145,6 +145,13 @@ class OwnerTest {
         assertEquals("m1", a.credentials.mainMachineId())
         assertNull(b.credentials.get("m1"))
         assertNull(b.credentials.mainMachineId())
+        // The credential and the main machine sit in the platform's protected store under A's
+        // namespace; the plain store holds neither a credential key nor the bearer.
+        assertEquals(listOf("${a.namespace}.clave.credential.m1"), credentialKeys())
+        assertTrue(rawSecure.map.getValue("${a.namespace}.clave.credential.m1").contains("device-session"))
+        assertEquals("m1", rawSecure.map["${a.namespace}.clave.main-machine"])
+        assertTrue(rawKv.map.keys.toString(), rawKv.map.keys.none { it.contains("credential") || it.contains("main-machine") })
+        assertTrue(rawKv.map.values.none { it.contains("device-session") })
         assertEquals(listOf("m1"), EnrollmentRecords(a.kv).list().map { it.machineId })
         assertEquals(emptyList<EnrollmentRecord>(), EnrollmentRecords(b.kv).list())
         // B's services see none of A's machines and none of A's pairings.
