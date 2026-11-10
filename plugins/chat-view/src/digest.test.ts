@@ -16,7 +16,11 @@ import {
  */
 type Answer =
   | { ok: true; title: string }
-  | { ok: false; error: string; reason?: 'limit' | 'outdated' | 'unknown-session' }
+  | {
+      ok: false
+      error: string
+      reason?: 'limit' | 'timeout' | 'outdated' | 'unknown-session' | 'disabled' | 'failed'
+    }
 
 let answers: Answer[] = []
 const read = vi.fn((): Promise<Answer> => Promise.resolve(answers.shift()!))
@@ -63,7 +67,7 @@ describe('a digest that could not be read', () => {
     const d = digests()
     const item = { key: 'k', payload: 'notes' }
     d.useStore.getState().file('s', {})
-    answers.push({ ok: false, error: 'boom' })
+    answers.push({ ok: false, error: 'boom', reason: 'timeout' })
     d.view('s', [item], {})
     await vi.advanceTimersByTimeAsync(DIGEST_SETTLE_MS)
     await flush()
@@ -127,7 +131,7 @@ describe('a digest that could not be read', () => {
     expect(d.useStore.getState().states['s|k']).toMatchObject({ state: 'done', fresh: true })
   })
 
-  for (const reason of ['outdated', 'unknown-session'] as const)
+  for (const reason of ['outdated', 'unknown-session', 'disabled', 'failed'] as const)
     it(`a failure no ask can mend (${reason}) is not asked again, by the view or by Ask again`, async () => {
       const d = digests()
       const item = { key: 'k', payload: 'notes' }
@@ -154,7 +158,17 @@ describe('a digest that could not be read', () => {
       'Not read: too many are being read; ask again in a moment.'
     )
     expect(digestFailureLine('outdated', 'work')).toBe('No title: this server needs an update.')
-    expect(canAskAgain('busy')).toBe(true)
-    expect(canAskAgain('limit')).toBe(true)
+    for (const reason of [
+      'timeout',
+      'limit',
+      'auth',
+      'unreadable',
+      'cancelled',
+      'unanswered',
+      'busy'
+    ] as const)
+      expect(canAskAgain(reason)).toBe(true)
+    for (const reason of ['disabled', 'failed', 'outdated', 'unknown-session', undefined] as const)
+      expect(canAskAgain(reason)).toBe(false)
   })
 })

@@ -50,10 +50,24 @@ export const DIGEST_RETRY_AFTER_MS = 60_000
 /** Why a read failed, as the card says it. */
 export type DigestFailure = DigestFailureReason | 'unanswered'
 
-/** Whether asking again can change anything: not for a server that needs an
- *  update, nor for a tab the server no longer has. */
+/** The failures asking again can change: a passing state of the account,
+ *  the model, the server or the queue. Not a server that needs an update, a
+ *  tab the server no longer has, a helper switched off (the line says where
+ *  to switch it on), nor a request the server refused as invalid or under
+ *  another key (`failed`): asking again would send the same thing. */
+const ASK_AGAIN: ReadonlySet<DigestFailure> = new Set<DigestFailure>([
+  'timeout',
+  'limit',
+  'auth',
+  'unreadable',
+  'cancelled',
+  'unanswered',
+  'busy'
+])
+
+/** Whether asking again can change anything (`ASK_AGAIN`). */
 export function canAskAgain(reason: DigestFailure | undefined): boolean {
-  return reason !== 'outdated' && reason !== 'unknown-session'
+  return reason !== undefined && ASK_AGAIN.has(reason)
 }
 
 /** What a card says while a read runs past the view's patience. */
