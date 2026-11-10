@@ -2,7 +2,8 @@
 # The release APK reaches the real API and nothing else: no in-process fake, no developer
 # connection, no test double in its dex, no WebView and no JavaScript engine, no plain-http
 # allowance and no trust anchor but the system's in its network security config, the release
-# application id and no debuggable flag. The fakes behind the UI tests
+# application id, no debuggable flag, and no backup or device-to-device transfer of the app's
+# data. The fakes behind the UI tests
 # live in the androidTest and debug source sets; this check is what keeps them there. Each
 # rule is shown red on a release APK built with what it refuses (the lane's record names
 # those runs).
@@ -153,6 +154,46 @@ if found '^application-debuggable' "$WORK/badging.txt" || found 'debuggable[^=]*
   fail "the manifest is debuggable"
 else
   say "check-release-apk: ok · not debuggable"
+fi
+
+# 5. Nothing leaves the phone: allowBackup false, and the data extraction rules the manifest
+#    names (read from Android 12, where allowBackup no longer stops a device-to-device
+#    transfer) include nothing and exclude every domain from the cloud backup and from the
+#    device transfer. The rules file is found through the resource table by the id the
+#    manifest gives it.
+backup_ok=1
+if ! found ':allowBackup\(0x[0-9a-f]+\)=false' "$WORK/manifest.txt"; then
+  fail "the manifest does not set allowBackup to false"; backup_ok=0
+fi
+rules_id=$(sed -n 's/.*:dataExtractionRules(0x[0-9a-f]*)=@\(0x[0-9a-f]*\).*/\1/p' "$WORK/manifest.txt")
+rules_path=""
+[ -z "$rules_id" ] || rules_path=$(awk -v id="$rules_id" '$1 == "resource" && $2 == id {found=1; next} found && /\(file\)/ {print $3; exit}' "$WORK/resources.txt")
+if [ -z "$rules_path" ]; then
+  fail "the manifest names no data extraction rules: from Android 12 a device-to-device transfer copies the app's data"; backup_ok=0
+else
+  dump "$WORK/rules.txt" "$AAPT2" dump xmltree --file "$rules_path" "$APK"
+  awk 'function flush() { if (ex && path == ".") seen[sec "/" dom] = 1; ex = 0; dom = ""; path = "" }
+    /E: cloud-backup/ { flush(); sec = "cloud-backup"; next }
+    /E: device-transfer/ { flush(); sec = "device-transfer"; next }
+    /E: include/ { flush(); print sec ": an include"; next }
+    /E: exclude/ { flush(); ex = 1; next }
+    /E: / { flush(); next }
+    ex && /A: domain="/ { split($0, a, "\""); dom = a[2] }
+    ex && /A: path="/ { split($0, a, "\""); path = a[2] }
+    END {
+      flush()
+      n = split("root file database sharedpref external device_root device_file device_database device_sharedpref", d, " ")
+      split("cloud-backup device-transfer", s, " ")
+      for (j = 1; j <= 2; j++) for (i = 1; i <= n; i++) if (!((s[j] "/" d[i]) in seen)) print s[j] ": the " d[i] " domain is not excluded"
+    }' "$WORK/rules.txt" > "$WORK/rules-offending.txt"
+  if [ -s "$WORK/rules-offending.txt" ]; then
+    fail "the data extraction rules ($rules_path) let the app's data leave the phone:"
+    sed 's/^/  /' "$WORK/rules-offending.txt"
+    backup_ok=0
+  fi
+fi
+if [ $backup_ok -eq 1 ]; then
+  say "check-release-apk: ok · no backup and no device transfer (allowBackup false; $rules_path excludes every domain from both)"
 fi
 
 if [ $failed -eq 0 ]; then say "check-release-apk: passed"; else say "check-release-apk: FAILED"; fi
