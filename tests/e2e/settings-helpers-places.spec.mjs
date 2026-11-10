@@ -1,36 +1,48 @@
 import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { sidebarRows, until, fixturePath } from './harness.mjs'
+import { serverMode, sidebarRows, until, fixturePath } from './harness.mjs'
 import { openChat } from './chat-view.spec.mjs'
 
-// One preference governs every helper, whichever process runs it (PRDCT-4330,
-// fix round 1). With the server separate (the packaged default), tab titles
-// run in the server child while exchange digests and commit messages run in
-// main; in-process all three run in main. This Mac's preference is written
-// the way the page writes it (`helperSet`), and for each of the three helpers
-// a picked model reaches the spawned arguments and "off" asks nothing of the
-// CLI. A stub `claude` on the PATH records each call; nothing reaches a model.
-// CLAVE_E2E_DIGEST_RUNNER=1 sends the digests through the runner rather than
-// the harness's canned reply.
+// Where this Mac's helpers run, and on what (PRDCT-4330, fix round 2). With a
+// server behind the window (the separate child, the packaged default) every
+// helper of this Mac runs on that server, with its preference and its
+// accounts, and main runs none; in-process main is the server and runs them.
+// For the five helpers (a tab title, an exchange digest, a work-card title, a
+// commit message, a push summary): a picked model reaches the arguments, an
+// account added through Settings after boot and picked for them reaches the
+// CLI as its token, and "off" asks nothing of the CLI. A stub `claude` on the
+// PATH records each call, its token and the chain of processes above it;
+// nothing reaches a model. CLAVE_E2E_DIGEST_RUNNER=1 sends the digests through
+// the runner rather than the harness's canned reply.
 
 const BIN = fixturePath('helpers-places-bin')
 const REPO = fixturePath('helpers-places-repo')
 const LOG = `${BIN}/claude-calls.ndjson`
 const TITLE = 'named by the stub'
-const DIGEST = JSON.stringify({ needs_you: false, message: null, summary: 'All quiet.' })
+const TOKEN = `sk-ant-oat01-${'h'.repeat(80)}`
 const calls = () =>
   existsSync(LOG)
     ? readFileSync(LOG, 'utf8').trim().split('\n').filter(Boolean).map(JSON.parse)
     : []
-const kindOf = (call) =>
-  call.prompt.includes('Clave exchange digest')
-    ? 'digest'
-    : call.prompt.includes('Clave git helper')
-      ? 'git'
-      : 'title'
+const kindOf = (call) => {
+  if (call.prompt.includes('Clave exchange digest')) return 'exchange-digest'
+  if (call.prompt.includes('Clave work digest')) return 'work-digest'
+  if (call.argv.join(' ').includes('pushed together')) return 'push-summary'
+  if (call.prompt.includes('Clave git helper')) return 'commit-message'
+  return 'tab-title'
+}
 const callsOf = (kind) => calls().filter((call) => kindOf(call) === kind)
 
+const MODELS = {
+  'tab-title': 'sonnet',
+  'exchange-digest': 'opus',
+  'work-digest': 'sonnet',
+  'commit-message': 'opus',
+  'push-summary': 'sonnet'
+}
+
 export async function run(t) {
+  const mode = serverMode()
   rmSync(BIN, { recursive: true, force: true })
   rmSync(REPO, { recursive: true, force: true })
   mkdirSync(BIN, { recursive: true })
@@ -44,11 +56,23 @@ export async function run(t) {
     `${BIN}/claude`,
     `#!${process.execPath}
 const fs = require('node:fs');
+const { execFileSync } = require('node:child_process');
+const chain = [];
+let pid = process.ppid;
+for (let i = 0; i < 8 && pid > 1; i++) {
+  chain.push(pid);
+  try { pid = Number(execFileSync('/bin/ps', ['-o', 'ppid=', '-p', String(pid)]).toString().trim()); } catch { break; }
+}
 let prompt = '';
 process.stdin.on('data', (chunk) => { prompt += chunk; });
 process.stdin.on('end', () => {
-  fs.appendFileSync(${JSON.stringify(LOG)}, JSON.stringify({ argv: process.argv.slice(2), prompt }) + '\\n');
-  const reply = prompt.includes('Clave exchange digest') ? ${JSON.stringify(DIGEST)}
+  fs.appendFileSync(${JSON.stringify(LOG)}, JSON.stringify({
+    argv: process.argv.slice(2), prompt, token: process.env.CLAUDE_CODE_OAUTH_TOKEN ?? null, chain
+  }) + '\\n');
+  const argv = process.argv.slice(2).join(' ');
+  const reply = prompt.includes('Clave exchange digest') ? '{"needs_you": false, "message": null, "summary": "All quiet."}'
+    : prompt.includes('Clave work digest') ? '{"title": "Read the files", "needs_you": false, "note": null}'
+    : argv.includes('pushed together') ? 'Push title\\nPush description'
     : prompt.includes('Clave git helper') ? 'feat: stub message'
     : ${JSON.stringify(TITLE)};
   process.stdout.write(reply + '\\n');
@@ -65,39 +89,92 @@ process.stdin.on('end', () => {
     PATH: `${BIN}:${process.env.PATH}`,
     CLAVE_E2E_DIGEST_RUNNER: '1'
   })
-  const { win, record } = fixture
+  const { app, win, record } = fixture
   const set = (id, patch) =>
     win.evaluate(
       ([helperId, change]) => window.electronAPI.helperSet(helperId, change),
       [id, patch]
     )
-  let key = 0
-  const digest = () =>
-    win.evaluate(
-      ([sessionId, k]) =>
-        window.electronAPI.exchangeDigest({
-          sessionId,
-          key: k,
-          launch: {},
-          messages: [{ from: 'Verifier', text: 'VERIFY-ACK: starting the review now.' }]
-        }),
-      [record.id, `helpers-places-${++key}`]
-    )
-  const commitMessage = () =>
-    win.evaluate(async (cwd) => {
+  // The keys the window computes (`digestKey`, `workDigestKey`), which the
+  // server checks against what is sent. Each call reads new words, so none
+  // is answered from a digest filed earlier.
+  const hashOf = (value) => {
+    const text = JSON.stringify(value)
+    let hash = 0x811c9dc5
+    for (let i = 0; i < text.length; i++) {
+      hash ^= text.charCodeAt(i)
+      hash = Math.imul(hash, 0x01000193)
+    }
+    return (hash >>> 0).toString(36)
+  }
+  let round = 0
+  const exchange = () => {
+    const messages = [{ from: 'Verifier', text: `VERIFY-ACK: review round ${++round}.` }]
+    return win.evaluate((request) => window.electronAPI.exchangeDigest(request), {
+      sessionId: record.id,
+      key: `${messages.length}-${hashOf(messages)}`,
+      launch: {},
+      messages
+    })
+  }
+  const work = () => {
+    const notes = ['Reading the files', `Running the tests, round ${++round}`]
+    return win.evaluate((request) => window.electronAPI.workDigest(request), {
+      sessionId: record.id,
+      key: `work-${notes.length}-${hashOf(notes)}`,
+      launch: {},
+      notes,
+      tools: 2
+    })
+  }
+  const attempt = (run) =>
+    win.evaluate(async (which) => {
       try {
-        return { ok: await window.electronAPI.gitGenerateCommitMessage(cwd) }
+        return which.kind === 'commit'
+          ? { ok: await window.electronAPI.gitGenerateCommitMessage(which.cwd) }
+          : { ok: await window.electronAPI.gitSummarizePush(which.cwd, ['feat: a'], '1 file') }
       } catch (error) {
         return { error: String(error?.message ?? error) }
       }
-    }, REPO)
-  const modelOf = (call) => call?.argv.slice(0, 3).join(' ')
+    }, run)
+  const commit = () => attempt({ kind: 'commit', cwd: REPO })
+  const push = () => attempt({ kind: 'push', cwd: REPO })
+
+  // Who may spawn a helper: main's pid, and the server child's in separate mode.
+  const mainPid = await app.evaluate(() => process.pid)
+  const serverPid = await app.evaluate(({ app: electronApp }) => {
+    const fs = process.getBuiltinModule('fs')
+    const path = process.getBuiltinModule('path')
+    const file = path.join(electronApp.getPath('userData'), 'clave-server.json')
+    return fs.existsSync(file)
+      ? (JSON.parse(fs.readFileSync(file, 'utf-8')).serverPid ?? null)
+      : null
+  })
+  const ranIn = (call) => call.chain.find((pid) => pid === mainPid || pid === serverPid)
 
   try {
-    // ── A model picked for each reaches the spawned call ──
-    await set('tab-title', { model: 'sonnet' })
-    await set('exchange-digest', { model: 'opus' })
-    await set('commit-message', { model: 'sonnet' })
+    t.check(
+      `${mode}: the server child is known when separate`,
+      mode !== 'separate' || typeof serverPid === 'number',
+      { serverPid }
+    )
+    // ── An account added through Settings after boot, picked for every helper ──
+    const account = await win.evaluate(async (token) => {
+      const added = await window.electronAPI.claudeAccountAdd({ label: 'Helpers after boot' })
+      await window.electronAPI.claudeAccountSetToken(added.id, token)
+      return added.id
+    }, TOKEN)
+    for (const [id, model] of Object.entries(MODELS))
+      await set(id, { model, account: { kind: 'account', accountId: account } })
+    const listed = await win.evaluate(() => window.electronAPI.helpersList())
+    t.check(
+      'the page lists the five on their picked model and account',
+      Object.entries(MODELS).every(([id, model]) => {
+        const row = listed.find((h) => h.id === id)
+        return row?.model === model && row?.account?.accountId === account && !row.accountRemoved
+      }),
+      listed
+    )
 
     const input = win.getByRole('textbox', { name: 'Message', exact: true })
     await input.fill('please name this tab from the model picked for titles')
@@ -107,42 +184,55 @@ process.stdin.on('end', () => {
       await until(async () => (await sidebarRows(win)).some((row) => row.includes(TITLE))),
       await sidebarRows(win)
     )
-    t.equal('the title ran on the picked model', modelOf(callsOf('title')[0]), '-p --model sonnet')
+    const read = await exchange()
+    t.check('the exchange digest answered', read?.ok === true, {
+      read,
+      calls: callsOf('exchange-digest').length
+    })
+    const titled = await work()
+    t.check('the work-card title answered', titled?.ok === true, titled)
+    const message = await commit()
+    t.check('the commit message answered', message.ok === 'feat: stub message', message)
+    const summary = await push()
+    t.check('the push summary answered', summary.ok?.title === 'Push title', summary)
 
-    const read = await digest()
-    t.check('the exchange digest answered', read?.ok === true, read)
-    t.equal(
-      'the exchange digest ran on the picked model',
-      modelOf(callsOf('digest')[0]),
-      '-p --model opus'
-    )
-
-    const written = await commitMessage()
-    t.check('the commit message answered', written.ok === 'feat: stub message', written)
-    t.equal(
-      'the commit message ran on the picked model',
-      modelOf(callsOf('git')[0]),
-      '-p --model sonnet'
-    )
-
-    // ── Off: nothing is asked of the CLI, and each says so ──
-    for (const id of ['tab-title', 'exchange-digest', 'commit-message'])
-      await set(id, { enabled: false })
-    const before = calls().length
-
-    const off = await digest()
+    for (const [id, model] of Object.entries(MODELS)) {
+      const [call] = callsOf(id)
+      t.equal(`${id}: on the picked model`, call?.argv.slice(0, 3).join(' '), `-p --model ${model}`)
+      t.check(`${id}: on the account added after boot`, call?.token === TOKEN, {
+        token: call?.token ? `${call.token.slice(0, 16)}…` : call?.token
+      })
+      t.equal(
+        `${id}: run by ${mode === 'separate' ? 'the server child, never main' : 'main'}`,
+        call && ranIn(call),
+        mode === 'separate' ? serverPid : mainPid
+      )
+    }
     t.check(
-      'an exchange digest switched off says so',
-      off?.ok === false && off.reason === 'disabled',
-      off
+      `${mode}: no helper call at all was spawned by ${mode === 'separate' ? 'main' : 'another process'}`,
+      calls().every((call) => ranIn(call) === (mode === 'separate' ? serverPid : mainPid)),
+      calls().map((call) => [kindOf(call), ranIn(call)])
     )
-    const noMessage = await commitMessage()
+
+    // ── Off: nothing is asked of the CLI ──
+    for (const id of Object.keys(MODELS)) await set(id, { enabled: false })
+    const before = calls().length
+    const offRead = await exchange()
+    t.check('an exchange digest switched off says so', offRead?.reason === 'disabled', offRead)
+    const offWork = await work()
+    t.check('a work-card title switched off says so', offWork?.reason === 'disabled', offWork)
+    const offCommit = await commit()
     t.check(
       'a commit message switched off says so',
-      /Switched off in Settings › Helpers \(Commit messages\)/.test(noMessage.error ?? ''),
-      noMessage
+      /Switched off in Settings › Helpers \(Commit messages\)/.test(offCommit.error ?? ''),
+      offCommit
     )
-
+    const offPush = await push()
+    t.check(
+      'a push summary switched off says so',
+      /Switched off in Settings › Helpers \(Push summaries\)/.test(offPush.error ?? ''),
+      offPush
+    )
     const ids = (await win.evaluate(() => window.electronAPI.sessionsList())).map((s) => s.id)
     await win.locator('.launcher-split .launcher-btn').click()
     await until(async () =>

@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   exposed: new Map<string, unknown>(),
   invoke: vi.fn(),
   endpoint: null as { url: string; token: string; mode?: string } | null,
+  external: false,
   server: [] as Array<{ method: string; args: unknown[] }>
 }))
 vi.mock('electron', () => ({
@@ -49,13 +50,16 @@ vi.mock('@clave/client/node', () => ({
 }))
 
 let api: ElectronAPI
-async function load(endpoint: typeof mocks.endpoint): Promise<void> {
+const EXTERNAL = 'server:external'
+async function load(endpoint: typeof mocks.endpoint, external: boolean): Promise<void> {
   vi.resetModules()
   mocks.exposed.clear()
   mocks.server.length = 0
   mocks.endpoint = endpoint
+  mocks.external = external
   mocks.invoke.mockReset().mockImplementation(async (channel: string) => {
     if (channel === 'server:endpoint') return mocks.endpoint
+    if (channel === EXTERNAL) return mocks.external
     if (channel === 'server:fleet:list') return []
     if (channel === 'git:generate-commit-message') return 'feat: from main'
     if (channel === 'git:summarize-push') return { title: 'From main', description: 'd' }
@@ -70,8 +74,8 @@ const ipcGit = (): unknown[][] =>
 describe("this Mac's git one-shots", () => {
   beforeEach(() => mocks.invoke.mockReset())
 
-  it('with a server behind the window, run on it and never in main', async () => {
-    await load({ url: 'http://127.0.0.1:1', token: 't', mode: 'separate' })
+  it('with a server of its own behind the window, run on it and never in main', async () => {
+    await load({ url: 'http://127.0.0.1:1', token: 't', mode: 'attached' }, true)
     await expect(api.gitGenerateCommitMessage('/repo')).resolves.toBe('feat: from the server')
     await expect(api.gitSummarizePush('/repo', ['a'], '1 file')).resolves.toEqual({
       title: 'From the server',
@@ -84,8 +88,8 @@ describe("this Mac's git one-shots", () => {
     expect(ipcGit()).toEqual([])
   })
 
-  it('with no server behind the window (in-process), run in main', async () => {
-    await load(null)
+  it('in-process (a server inside main, with no git service), run in main', async () => {
+    await load({ url: 'http://127.0.0.1:1', token: 't', mode: 'in-process' }, false)
     await expect(api.gitGenerateCommitMessage('/repo')).resolves.toBe('feat: from main')
     await expect(api.gitSummarizePush('/repo', ['a'], '1 file')).resolves.toMatchObject({
       title: 'From main'
@@ -95,5 +99,13 @@ describe("this Mac's git one-shots", () => {
       ['git:summarize-push', '/repo', ['a'], '1 file']
     ])
     expect(mocks.server).toEqual([])
+  })
+})
+
+describe('a server of its own that cannot be reached', () => {
+  it('refuses rather than run the helper in main', async () => {
+    await load(null, true)
+    await expect(api.gitGenerateCommitMessage('/repo')).rejects.toThrow(/not reachable/)
+    expect(ipcGit()).toEqual([])
   })
 })

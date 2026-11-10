@@ -496,6 +496,34 @@ void Promise.resolve()
 // server road.
 void serverMode()
 const terminalChains = new Map<string, Promise<void>>()
+/**
+ * Where this Mac's helpers run (PRDCT-4330): on the server process behind the
+ * window when there is one (the separate child or an attached daemon, set at
+ * boot: `IPC_SERVER_EXTERNAL`), which owns the helpers' preference and the
+ * accounts; in main only when the server runs inside it (the in-process
+ * server has no git service, so `viaServer` would not do). With a server of
+ * its own that cannot be reached, the call is refused rather than run in
+ * main, which keeps no preference.
+ */
+let serverExternal: Promise<boolean> | null = null
+const viaHelperHost =
+  <A extends unknown[], R>(route: {
+    ipc: (...args: A) => Promise<R>
+    server: (backing: Backing, ...args: A) => Promise<R>
+  }) =>
+  async (...args: A): Promise<R> => {
+    serverExternal ??= Promise.resolve(ipcRenderer.invoke(IPC_SERVER_EXTERNAL)).then(
+      (external) => external === true,
+      () => {
+        serverExternal = null
+        return false
+      }
+    )
+    if (!(await serverExternal)) return route.ipc(...args)
+    const backing = await serverRouter.backing()
+    if (!backing) throw new Error("Clave's server is not reachable: this Mac's helpers run there.")
+    return route.server(backing, ...args)
+  }
 const viaAttachedServer =
   <A extends unknown[]>(route: {
     ipc: (...args: A) => void
@@ -2498,7 +2526,7 @@ const electronAPI = {
   // The git panel's two one-shots run where this Mac's helpers run
   // (PRDCT-4330): on the server behind the window when there is one (it owns
   // the helpers' preference and the accounts), in main when it runs in-process.
-  gitGenerateCommitMessage: viaServer<[string], string>({
+  gitGenerateCommitMessage: viaHelperHost<[string], string>({
     ipc: (cwd) => ipcRenderer.invoke('git:generate-commit-message', cwd),
     server: ({ api }, cwd) => api.git.generateCommitMessage(cwd)
   }),
@@ -2509,7 +2537,10 @@ const electronAPI = {
   onGitBatchProgress: (callback: (progress: GitBatchProgress) => void) =>
     createIpcListener<[GitBatchProgress]>('git:batch-progress', callback),
   gitJourney: (cwd: string, maxCount?: number) => ipcRenderer.invoke('git:journey', cwd, maxCount),
-  gitSummarizePush: viaServer<[string, string[], string], { title: string; description: string }>({
+  gitSummarizePush: viaHelperHost<
+    [string, string[], string],
+    { title: string; description: string }
+  >({
     ipc: (cwd, commitMessages, diffStats) =>
       ipcRenderer.invoke('git:summarize-push', cwd, commitMessages, diffStats),
     server: async ({ api }, cwd, commitMessages, diffStats) => ({
