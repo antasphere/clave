@@ -14,12 +14,24 @@ import {
 import {
   nextAccountFor,
   resolveSessionAccountRef,
+  switchSessionAccount,
   sessionAccountExhausted,
   sessionAccountUsage,
   sessionSwitchTargets
 } from './switch-account'
 
-vi.mock('../store/session-store', () => ({ useSessionStore: {} }))
+const held = vi.hoisted(() => ({ sessions: [] as unknown[] }))
+vi.mock('../store/session-store', () => ({
+  useSessionStore: {
+    getState: () => ({
+      sessions: held.sessions,
+      activeView: 'terminals',
+      selectedSessionIds: held.sessions.map((s) => (s as { id: string }).id),
+      setSessionRestarting: () => {},
+      applySessionRestart: () => {}
+    })
+  }
+}))
 
 const week = (used: number, fetchedAt = Date.now()): AccountUsageSummary => {
   const w = {
@@ -194,6 +206,40 @@ describe('the accounts of a session come from its owner', () => {
       }
     })
     expect(sessionOwnAccount(tab, 'claude').pending).toBe(true)
+  })
+})
+
+describe('the switch of a server tab', () => {
+  it('restarts the tab on an account of the SERVER, by the server’s id and label', async () => {
+    useClaudeProfileStore.setState({
+      profiles: [...originalProfiles, token('srv-two', 'A Mac account with the same id')]
+    })
+    useServerSettingsStore.setState({ byServer: { [SERVER]: serverEntry() } })
+    const tab = serverTab('srv-one', '3@example.com')
+    held.sessions = [tab]
+    const restartSession = vi.fn(async () => ({
+      ok: true,
+      resumed: true,
+      claudeSessionId: 'c',
+      requestId: 'r'
+    }))
+    vi.stubGlobal('window', { electronAPI: { restartSession, startSession: vi.fn() } })
+    vi.stubGlobal('crypto', { randomUUID: () => 'r' })
+    const result = await switchSessionAccount(tab.id, 'srv-two')
+    expect(result.ok).toBe(true)
+    expect(restartSession).toHaveBeenCalledWith(
+      tab.id,
+      expect.objectContaining({ claudeProfileId: 'srv-two', claudeProfileLabel: '4@example.com' }),
+      'r'
+    )
+    // An id only this Mac holds is refused, never sent to the server.
+    useClaudeProfileStore.setState({
+      profiles: [...originalProfiles, token('mac-only', 'Spare')]
+    })
+    restartSession.mockClear()
+    expect((await switchSessionAccount(tab.id, 'mac-only')).ok).toBe(false)
+    expect(restartSession).not.toHaveBeenCalled()
+    held.sessions = []
   })
 })
 
