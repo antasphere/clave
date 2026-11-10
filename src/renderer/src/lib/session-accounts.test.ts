@@ -14,6 +14,7 @@ import {
 } from './session-accounts'
 import {
   nextAccountFor,
+  landingForSession,
   resolveSessionAccountRef,
   switchSessionAccount,
   sessionAccountExhausted,
@@ -181,6 +182,31 @@ describe('the accounts of a session come from its owner', () => {
     expect(sessionOwnAccount({ id: 'l', claudeProfileId: 'gone' }, 'claude').label).toBe(
       'Removed account'
     )
+  })
+
+  it('a provider move of a server tab lands in the server’s pool, never this Mac’s', () => {
+    useClaudeProfileStore.setState({
+      profiles: [...originalProfiles, token('mac-spare', 'Spare')]
+    })
+    useClaudeAccountsUsage.setState({ byAccount: { default: week(10), 'mac-spare': week(10) } })
+    useServerSettingsStore.setState({
+      byServer: {
+        [SERVER]: serverEntry({
+          usage: {
+            claude: { default: week(98), 'srv-one': week(97), 'srv-two': week(10) },
+            codex: {}
+          }
+        })
+      }
+    })
+    const landing = landingForSession(serverTab('srv-one'), 'claude', 'claude-opus-5-5')
+    expect(landing?.account).toMatchObject({ id: 'srv-two', label: '4@example.com' })
+    expect(landing?.summary?.tightest?.usedPercentage).toBe(10)
+    // Unread server: nowhere to land.
+    useServerSettingsStore.setState({ byServer: {} })
+    expect(landingForSession(serverTab('srv-one'), 'claude')).toBeNull()
+    // This Mac's tab: this Mac's pool.
+    expect(landingForSession(localTab('default'), 'claude')?.account.id).toBe('default')
   })
 
   it('a server account gone from the server’s list reads removed, with its label', () => {

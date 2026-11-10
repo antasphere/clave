@@ -104,6 +104,36 @@ export function accountForLaunch(
   return provider === 'codex' ? getCodexAccount(id) : getClaudeProfile(id)
 }
 
+/** Where a tab lands when it moves to another provider (PRDCT-4300): the
+ *  pool's pick for the target's model in the tab's OWNER's pool, and that
+ *  account's usage seen for the model. A tab on a server lands on an account
+ *  of that server, never on one of this Mac's (PRDCT-4328); null while the
+ *  server's list is not read yet. No session: this Mac's pool. */
+export function landingForSession(
+  session: { id: string } | undefined,
+  provider: AccountProvider,
+  model?: string
+): { account: { id: string; label: string }; summary: AccountUsageSummary | undefined } | null {
+  const view = session ? sessionAccountView(session, provider) : null
+  if (!view || !view.remote) {
+    const account =
+      provider === 'codex'
+        ? accountForLaunch('codex', undefined, model)
+        : accountForLaunch('claude', undefined, model)
+    const usage = ownerAccountView(LOCAL_SERVER_ID, provider).usage[account.id]
+    return { account, summary: claudeUsageForModel(usage, model) }
+  }
+  if (!view.known) return null
+  const id = pickAccount({
+    accounts: poolOf(view),
+    usage: viewUsageForModel(view, model),
+    preferredId: 'default'
+  })
+  const account = view.accounts.find((a) => a.id === id)
+  if (!account) return null
+  return { account, summary: claudeUsageForModel(view.usage[id], model) }
+}
+
 /** An account named by an agent or a `.clave` file: an id, a label, or
  *  "any" for the pool's pick. Throws with the names that exist. */
 export function resolveAccountRef(

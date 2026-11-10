@@ -33,9 +33,7 @@ const ALLOWED: Record<string, string> = {
   'src/renderer/src/lib/launch-session.ts': 'a launch on this Mac',
   'src/renderer/src/store/pinned-store.ts': 'a .clave launch on this Mac',
   'src/renderer/src/store/triage-store.ts': 'a launch on this Mac',
-  'src/renderer/src/lib/session-history.ts': 'a resume from this Mac’s history',
-  'src/renderer/src/lib/switch-provider.ts':
-    'the provider switch picks among this Mac’s accounts (a server tab: not this task)'
+  'src/renderer/src/lib/session-history.ts': 'a resume from this Mac’s history'
 }
 
 function files(dir: string): string[] {
