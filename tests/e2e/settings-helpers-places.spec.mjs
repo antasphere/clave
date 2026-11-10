@@ -214,9 +214,49 @@ process.stdin.on('end', () => {
       calls().map((call) => [kindOf(call), ranIn(call)])
     )
 
+    // ── Sync all writes its commit message where the helpers run ──
+    const syncAll = async (file) => {
+      writeFileSync(`${REPO}/${file}`, `${file}\n`)
+      const [result] = await win.evaluate((repo) => window.electronAPI.gitMagicSync([repo]), REPO)
+      return result
+    }
+    const commitsIn = () =>
+      Number(
+        execFileSync('git', ['-C', REPO, 'rev-list', '--count', '--all']).toString().trim() || 0
+      )
+    const beforeSync = calls().length
+    const synced = await syncAll('b.txt')
+    const syncCall = calls()
+      .slice(beforeSync)
+      .find((call) => kindOf(call) === 'commit-message')
+    t.check(
+      'Sync all generated and committed (the push has no remote to go to)',
+      synced?.actions?.includes('generated') && synced.actions.includes('committed'),
+      synced
+    )
+    t.equal(
+      'Sync all wrote its message on the picked model',
+      syncCall?.argv.slice(0, 3).join(' '),
+      '-p --model opus'
+    )
+    t.equal(
+      `Sync all's message was written by ${mode === 'separate' ? 'the server child, never main' : 'main'}`,
+      syncCall && ranIn(syncCall),
+      mode === 'separate' ? serverPid : mainPid
+    )
+
     // ── Off: nothing is asked of the CLI ──
     for (const id of Object.keys(MODELS)) await set(id, { enabled: false })
     const before = calls().length
+    const commitsBefore = commitsIn()
+    const offSync = await syncAll('c.txt')
+    t.check(
+      'Sync all with commit messages off stops with words: staged, nothing committed',
+      JSON.stringify(offSync?.actions) === '["staged"]' &&
+        /Switched off in Settings › Helpers \(Commit messages\)/.test(offSync?.error ?? '') &&
+        commitsIn() === commitsBefore,
+      offSync
+    )
     const offRead = await exchange()
     t.check('an exchange digest switched off says so', offRead?.reason === 'disabled', offRead)
     const offWork = await work()
@@ -253,6 +293,48 @@ process.stdin.on('end', () => {
     )
     await new Promise((resolve) => setTimeout(resolve, 1000))
     t.equal('nothing was asked of the CLI while they were off', calls().length - before, 0)
+
+    // ── The server child gone: main still runs nothing ──
+    if (mode === 'separate') {
+      for (const id of Object.keys(MODELS)) await set(id, { enabled: true })
+      const beforeKill = calls().length
+      process.kill(serverPid, 'SIGKILL')
+      await until(() => {
+        try {
+          process.kill(serverPid, 0)
+          return false
+        } catch {
+          return true
+        }
+      })
+      const afterKill = {
+        exchange: await exchange().catch((error) => ({ error: String(error?.message ?? error) })),
+        work: await work().catch((error) => ({ error: String(error?.message ?? error) })),
+        commit: await commit(),
+        push: await push(),
+        sync: await syncAll('d.txt')
+      }
+      t.check(
+        'the git panel says the silent server in plain words, no address',
+        afterKill.commit.error === "Clave's server did not answer. Try again in a moment." &&
+          !JSON.stringify([afterKill.commit, afterKill.push, afterKill.sync]).includes('127.0.0.1'),
+        afterKill
+      )
+      t.check(
+        'Sync all stops with the same words, nothing committed',
+        afterKill.sync?.error === "Clave's server did not answer. Try again in a moment.",
+        afterKill.sync
+      )
+      await new Promise((resolve) => setTimeout(resolve, 1000))
+      const spawned = calls()
+        .slice(beforeKill)
+        .map((call) => ({ kind: kindOf(call), ranIn: ranIn(call), chain: call.chain, mainPid }))
+      t.check(
+        'with the server child gone, no helper was spawned at all, main included',
+        spawned.length === 0,
+        spawned
+      )
+    }
   } finally {
     await fixture.close()
     rmSync(BIN, { recursive: true, force: true })
