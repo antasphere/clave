@@ -76,19 +76,25 @@ struct MachinesScreen: View {
       default:
         if let person = account.person {
           HStack(spacing: Theme.space(3)) {
-            Icon(.userCircle, size: 24).foregroundStyle(theme.colors.textTertiary)
-            VStack(alignment: .leading, spacing: Theme.space(0.5)) {
-              Text(person.name ?? person.email ?? "Your Antasphere account")
-                .font(.geist(Theme.text.sm, relativeTo: .body))
-                .foregroundStyle(theme.colors.textPrimary)
-                .accessibilityIdentifier("machines.account.name")
-              if let email = person.email, person.name != nil {
-                Text(email)
-                  .font(.geist(Theme.text.xs, weight: .regular, relativeTo: .caption))
-                  .foregroundStyle(theme.colors.textSecondary)
+            // Who is signed in, as one element: VoiceOver reads a sentence, the email its value.
+            HStack(spacing: Theme.space(3)) {
+              Icon(.userCircle, size: 24).foregroundStyle(theme.colors.textTertiary)
+              VStack(alignment: .leading, spacing: Theme.space(0.5)) {
+                Text(person.name ?? person.email ?? "Your Antasphere account")
+                  .font(.geist(Theme.text.sm, relativeTo: .body))
+                  .foregroundStyle(theme.colors.textPrimary)
+                if let email = person.email, person.name != nil {
+                  Text(email)
+                    .font(.geist(Theme.text.xs, weight: .regular, relativeTo: .caption))
+                    .foregroundStyle(theme.colors.textSecondary)
+                }
               }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("Signed in as \(person.name ?? person.email ?? "your Antasphere account")")
+            .accessibilityValue(person.name != nil ? (person.email ?? "") : "")
+            .accessibilityIdentifier("machines.account.name")
             Button("Sign out") { Task { await model.account.signOut() } }
               .buttonStyle(.clave(.secondary, size: .small))
               .accessibilityIdentifier("machines.signout")

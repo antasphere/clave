@@ -24,8 +24,12 @@ extension XCTestCase {
     let signIn = app.buttons["machines.signin"]
     XCTAssertTrue(signIn.waitForExistence(timeout: 10))
     signIn.tap()
-    // The fake opener answers the browser's redirect itself: no sheet appears.
-    XCTAssertTrue(app.staticTexts["Fake Person"].waitForExistence(timeout: 10))
+    // The fake opener answers the browser's redirect itself: no sheet appears. The account row
+    // is one element that says who is signed in.
+    let account = element(app, "machines.account.name")
+    XCTAssertTrue(account.waitForExistence(timeout: 10))
+    XCTAssertEqual(account.label, "Signed in as Fake Person")
+    XCTAssertEqual(account.value as? String, "fake.person@example.com")
     XCTAssertTrue(app.buttons["machines.signout"].exists)
   }
 

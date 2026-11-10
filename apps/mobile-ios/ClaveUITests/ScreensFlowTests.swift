@@ -42,7 +42,8 @@ final class ScreensFlowTests: XCTestCase {
     XCTAssertTrue(app.staticTexts["Which file should Echo read?"].exists)
     let option = app.buttons["chat.permission.r_fake.question.0.option.0"]
     XCTAssertTrue(option.exists)
-    XCTAssertEqual(option.label, "README.md")
+    XCTAssertEqual(option.label, "Option 1 of 1")
+    XCTAssertEqual(option.value as? String, "README.md")
     option.tap()
     expectation(for: NSPredicate(format: "isSelected == true"), evaluatedWith: option)
     waitForExpectations(timeout: 5)

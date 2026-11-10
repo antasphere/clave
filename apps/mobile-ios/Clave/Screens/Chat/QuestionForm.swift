@@ -64,7 +64,10 @@ struct QuestionForm: View {
         }
         .buttonStyle(.plain)
         .accessibilityIdentifier("chat.permission.\(requestId).question.\(index).option.\(optionIndex)")
-        .accessibilityLabel(option.label)
+        // The agent's own words may be a file name or a command: the label says which option it
+        // is, the value says the words.
+        .accessibilityLabel("Option \(optionIndex + 1) of \(question.options.count)")
+        .accessibilityValue(option.label)
         .accessibilityHint(option.description ?? "")
         .accessibilityAddTraits(picked ? .isSelected : [])
       }

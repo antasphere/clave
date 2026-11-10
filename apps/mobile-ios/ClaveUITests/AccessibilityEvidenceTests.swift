@@ -26,7 +26,6 @@ final class AccessibilityEvidenceTests: XCTestCase {
       "Text clipped | A standalone server on this Mac or network, by address and token. This build only.",
       "Text clipped | machines.signout",
       "Text clipped | machines.online.m_fake",
-      "Label not human-readable | fake.person@example.com",
     ],
     .workspaces: [
       "Dynamic Type font sizes are partially unsupported | WORKSPACES",
@@ -44,7 +43,6 @@ final class AccessibilityEvidenceTests: XCTestCase {
       "Text clipped | Read · /fake/scratch/README.md",
     ],
     .requests: [
-      "Label not human-readable | chat.permission.r_fake.question.0.option.0",
     ],
   ]) { $0.union($1) }
 
