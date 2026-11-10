@@ -506,6 +506,20 @@ describe('the quit ends every helper (PRDCT-3375)', () => {
     }
   })
 
+  it('a job waiting for its account token when cancelAll runs spawns nothing', async () => {
+    let release!: (token: string) => void
+    mocks.getToken.mockImplementationOnce(
+      () => new Promise<string>((resolve) => (release = resolve)) as unknown as string
+    )
+    const done = runHelper(helper(), 'x', { claudeProfileId: 'slow' })
+    await ticks()
+    expect(release).toBeTypeOf('function')
+    cancelAll()
+    release('sk-ant-oat01-slow')
+    await expect(done).resolves.toMatchObject({ ok: false, reason: 'cancelled' })
+    expect(mocks.execFile).not.toHaveBeenCalled()
+  })
+
   it('cancelAll leaves the door open; shutdown shuts it', async () => {
     const h = helper()
     cancelAll()

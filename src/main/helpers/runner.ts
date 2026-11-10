@@ -226,7 +226,7 @@ async function execute(job: Job): Promise<HelperOutcome<unknown>> {
       | { ok: true; stdout: string }
       | { ok: false; reason: HelperFailureReason; detail: string }
     try {
-      stdout = await spawnOnce(job, config)
+      stdout = await spawnOnce(job, config, born)
     } catch (error) {
       // The launch refused before any child: an account removed under the
       // tab is the usual one. Not worth a retry.
@@ -259,7 +259,8 @@ async function execute(job: Job): Promise<HelperOutcome<unknown>> {
 
 async function spawnOnce(
   job: Job,
-  config: HelperConfig
+  config: HelperConfig,
+  born: number
 ): Promise<
   { ok: true; stdout: string } | { ok: false; reason: HelperFailureReason; detail: string }
 > {
@@ -282,7 +283,9 @@ async function spawnOnce(
     },
     userShell: getUserShell()
   })
-  if (closed) return failure('cancelled', 'Clave is quitting')
+  // The account's token is read across an await: a `cancelAll` (or the
+  // quit) in between must not be followed by a child nothing would signal.
+  if (closed || generation !== born) return failure('cancelled', 'Cancelled')
   const prompt = definition.buildPrompt(job.input)
   return new Promise((resolve) => {
     // execFile calls back once; held to it, so a slot is never freed twice.
