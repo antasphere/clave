@@ -218,10 +218,10 @@ describe("the host reads a digest on its own record's launch (PRDCT-4327)", () =
         messages: [{ from: 'x', text: 'y' }],
         ...clientLaunch
       } as Parameters<typeof host.exchangeDigest>[0])
-    ).resolves.toEqual({ ok: false, error: UNKNOWN_SESSION_ERROR, reason: 'failed' })
+    ).resolves.toEqual({ ok: false, error: UNKNOWN_SESSION_ERROR, reason: 'unknown-session' })
     await expect(
       host.workDigest({ sessionId: 'nobody', key: 'w-h3', notes: ['a'], tools: 0 })
-    ).resolves.toMatchObject({ ok: false, reason: 'failed' })
+    ).resolves.toMatchObject({ ok: false, reason: 'unknown-session' })
     await ticks()
     expect(mocks.calls).toHaveLength(0)
   })

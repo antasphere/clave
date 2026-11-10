@@ -1,5 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { DIGEST_RETRY_AFTER_MS, DIGEST_SETTLE_MS, createDigests, digestFailureLine } from './digest'
+import {
+  DIGEST_GIVE_UP_MS,
+  DIGEST_RETRY_AFTER_MS,
+  DIGEST_SETTLE_MS,
+  canAskAgain,
+  createDigests,
+  digestFailureLine
+} from './digest'
 
 /**
  * A digest that could not be read (PRDCT-4327): the card's state carries the
@@ -7,7 +14,9 @@ import { DIGEST_RETRY_AFTER_MS, DIGEST_SETTLE_MS, createDigests, digestFailureLi
  * again" asks at once, and a view asking after DIGEST_RETRY_AFTER_MS re-asks
  * it on its own. A failure is no longer final for the run of the app.
  */
-type Answer = { ok: true; title: string } | { ok: false; error: string; reason?: 'limit' }
+type Answer =
+  | { ok: true; title: string }
+  | { ok: false; error: string; reason?: 'limit' | 'outdated' | 'unknown-session' }
 
 let answers: Answer[] = []
 const read = vi.fn((): Promise<Answer> => Promise.resolve(answers.shift()!))
@@ -101,5 +110,51 @@ describe('a digest that could not be read', () => {
     expect(digestFailureLine('disabled', 'work')).toBe(
       'No title: titles are switched off in Settings.'
     )
+  })
+
+  it("the view's own patience is not a failure: the card says it is taking long and the late answer lands", async () => {
+    let answer: (value: Answer) => void = () => {}
+    const d = createDigests<string, { ok: true; title: string }>({
+      filed: () => Promise.resolve({}),
+      read: () => new Promise<Answer>((resolve) => (answer = resolve))
+    })
+    d.useStore.getState().file('s', {})
+    d.view('s', [{ key: 'k', payload: '' }], {})
+    await vi.advanceTimersByTimeAsync(DIGEST_SETTLE_MS + DIGEST_GIVE_UP_MS)
+    expect(d.useStore.getState().states['s|k']).toEqual({ state: 'reading', slow: true })
+    answer({ ok: true, title: 'Late' })
+    await flush()
+    expect(d.useStore.getState().states['s|k']).toMatchObject({ state: 'done', fresh: true })
+  })
+
+  for (const reason of ['outdated', 'unknown-session'] as const)
+    it(`a failure no ask can mend (${reason}) is not asked again, by the view or by Ask again`, async () => {
+      const d = digests()
+      const item = { key: 'k', payload: 'notes' }
+      d.useStore.getState().file('s', {})
+      answers.push({ ok: false, error: 'x', reason })
+      d.view('s', [item], {})
+      await vi.advanceTimersByTimeAsync(DIGEST_SETTLE_MS)
+      await flush()
+      expect(d.useStore.getState().states['s|k']).toMatchObject({ state: 'failed', reason })
+      expect(canAskAgain(reason)).toBe(false)
+      d.retry('s', 'k')
+      await vi.advanceTimersByTimeAsync(DIGEST_RETRY_AFTER_MS)
+      d.view('s', [item], {})
+      await vi.advanceTimersByTimeAsync(DIGEST_SETTLE_MS)
+      expect(read).toHaveBeenCalledTimes(1)
+    })
+
+  it('says the three host and client cases apart', () => {
+    expect(digestFailureLine('outdated')).toBe('Not read: this server needs an update.')
+    expect(digestFailureLine('unknown-session')).toBe(
+      'Not read: the server no longer has this tab.'
+    )
+    expect(digestFailureLine('busy')).toBe(
+      'Not read: too many are being read; ask again in a moment.'
+    )
+    expect(digestFailureLine('outdated', 'work')).toBe('No title: this server needs an update.')
+    expect(canAskAgain('busy')).toBe(true)
+    expect(canAskAgain('limit')).toBe(true)
   })
 })

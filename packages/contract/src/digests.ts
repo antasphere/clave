@@ -30,7 +30,12 @@ export const DIGEST_FAILURE_REASONS = [
   'unreadable',
   'cancelled',
   'disabled',
-  'failed'
+  'failed',
+  // The host's and the client's own (PRDCT-4327): no record of the tab, too
+  // many reads waiting for it, a server without the digests.
+  'unknown-session',
+  'busy',
+  'outdated'
 ] as const
 export type DigestFailureReason = (typeof DIGEST_FAILURE_REASONS)[number]
 const isReason = (value: unknown): value is DigestFailureReason =>

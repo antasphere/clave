@@ -266,7 +266,11 @@ export function hostDigests(recordOf: DigestRecordOf): HostDigests {
     exchangeDigest: (request) => {
       const launch = launchOf(request.sessionId)
       if (!launch)
-        return Promise.resolve({ ok: false, error: UNKNOWN_SESSION_ERROR, reason: 'failed' })
+        return Promise.resolve({
+          ok: false,
+          error: UNKNOWN_SESSION_ERROR,
+          reason: 'unknown-session'
+        })
       return requestDigest({
         sessionId: request.sessionId,
         key: request.key,
@@ -278,7 +282,11 @@ export function hostDigests(recordOf: DigestRecordOf): HostDigests {
     workDigest: (request) => {
       const launch = launchOf(request.sessionId)
       if (!launch)
-        return Promise.resolve({ ok: false, error: UNKNOWN_SESSION_ERROR, reason: 'failed' })
+        return Promise.resolve({
+          ok: false,
+          error: UNKNOWN_SESSION_ERROR,
+          reason: 'unknown-session'
+        })
       return requestWorkDigest({
         sessionId: request.sessionId,
         key: request.key,

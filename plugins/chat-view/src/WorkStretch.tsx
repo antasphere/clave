@@ -3,7 +3,7 @@ import { ChevronDownIcon } from '@heroicons/react/24/outline'
 import { workDigestKey } from '../../../src/shared/work-digest'
 import { useDisclosure } from './disclosure'
 import { retryWorkDigest, useWorkDigestState } from './digest'
-import { DigestUnread } from './DeliveryStack'
+import { DigestSlow, DigestUnread } from './DeliveryStack'
 import {
   countsLabel,
   noteCount,
@@ -106,6 +106,7 @@ export function WorkStretch({
                 {title || 'The agent worked'}
               </span>
             </span>
+            {digest.state === 'reading' && digest.slow && <DigestSlow />}
             {digest.state === 'failed' && (
               <DigestUnread
                 reason={digest.reason}

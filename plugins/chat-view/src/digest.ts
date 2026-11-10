@@ -7,7 +7,7 @@ import type {
   DigestResult
 } from '../../../src/shared/exchange-digest'
 import type { WorkDigestDone, WorkDigestResult } from '../../../src/shared/work-digest'
-import type { HelperFailureReason } from '../../../src/shared/helper-prompt'
+import type { DigestFailureReason } from '../../../src/shared/exchange-digest'
 
 /**
  * The one-shot digests on the view's side. Main reads them and files them by
@@ -27,24 +27,37 @@ import type { HelperFailureReason } from '../../../src/shared/helper-prompt'
  *  - a digest not filed yet is asked for once its card has held still for
  *    DIGEST_SETTLE_MS, and goes on to the end whatever the reader does, so it
  *    is filed even if they left;
- *  - a card stops saying it reads after DIGEST_GIVE_UP_MS;
+ *  - a read still going after DIGEST_GIVE_UP_MS says it is taking long, and
+ *    its answer still lands when it comes: the view's patience is not a
+ *    failure of the read;
  *  - a read that failed says so on its card, with the class of the reason
  *    (`digestFailureLine`), and is not final (PRDCT-4327): the card's "Ask
  *    again" asks at once, and a view that asks again (a remount, the tab
- *    reopened) re-asks a failure older than DIGEST_RETRY_AFTER_MS.
+ *    reopened) re-asks a failure older than DIGEST_RETRY_AFTER_MS. A failure
+ *    no ask can mend (the server needs an update, it no longer has the tab)
+ *    offers no "Ask again" and is not re-asked (`canAskAgain`).
  */
 
 /** How long a card must hold still before its digest is asked for: a burst
  *  of messages is read once, at its end, not once per message. */
 export const DIGEST_SETTLE_MS = 2500
-/** How long a digest may be read before the card stops saying so. */
+/** How long a digest may be read before the card says it is taking long. */
 export const DIGEST_GIVE_UP_MS = 90_000
 /** How old a failure must be before a view asking again re-asks it on its
  *  own: a failing account is not asked once per render. */
 export const DIGEST_RETRY_AFTER_MS = 60_000
 
 /** Why a read failed, as the card says it. */
-export type DigestFailure = HelperFailureReason | 'unanswered'
+export type DigestFailure = DigestFailureReason | 'unanswered'
+
+/** Whether asking again can change anything: not for a server that needs an
+ *  update, nor for a tab the server no longer has. */
+export function canAskAgain(reason: DigestFailure | undefined): boolean {
+  return reason !== 'outdated' && reason !== 'unknown-session'
+}
+
+/** What a card says while a read runs past the view's patience. */
+export const DIGEST_SLOW_LINE = 'Still reading: this is taking long.'
 
 /** Which card a line is for: a timeline's digest, or a work card's title. */
 export type DigestCard = 'exchange' | 'work'
@@ -64,6 +77,12 @@ function failureWords(reason: DigestFailure | undefined): string {
       return 'the answer could not be used.'
     case 'unanswered':
       return 'the server did not answer.'
+    case 'outdated':
+      return 'this server needs an update.'
+    case 'unknown-session':
+      return 'the server no longer has this tab.'
+    case 'busy':
+      return 'too many are being read; ask again in a moment.'
     default:
       return 'something went wrong.'
   }
@@ -86,7 +105,8 @@ export type DigestStateOf<Done> =
   /** Not read, and not to be: an older card (`Exchanges.recent`). */
   | { state: 'off' }
   | { state: 'waiting' }
-  | { state: 'reading' }
+  /** `slow`: past DIGEST_GIVE_UP_MS, still waiting for the answer. */
+  | { state: 'reading'; slow?: true }
   /** `fresh`: read while the reader was here, rather than found filed. */
   | { state: 'done'; result: Done; fresh?: boolean }
   /** `at`: when it failed, so a view asking again knows a stale failure. */
@@ -119,7 +139,7 @@ export function createDigests<Payload, Done>(api: {
     launch: DigestLaunch,
     payload: Payload
   ) =>
-    | Promise<{ ok: true } | { ok: false; error: string; reason?: HelperFailureReason }>
+    | Promise<{ ok: true } | { ok: false; error: string; reason?: DigestFailureReason }>
     | undefined
 }): {
   useStore: UseBoundStore<StoreApi<DigestStore<Done>>>
@@ -176,7 +196,11 @@ export function createDigests<Payload, Done>(api: {
     const state = store.states[id]
     if (
       state &&
-      !(state.state === 'failed' && (now || Date.now() - state.at >= DIGEST_RETRY_AFTER_MS))
+      !(
+        state.state === 'failed' &&
+        canAskAgain(state.reason) &&
+        (now || Date.now() - state.at >= DIGEST_RETRY_AFTER_MS)
+      )
     )
       return
     asked.set(id, { item, launch })
@@ -197,8 +221,8 @@ export function createDigests<Payload, Done>(api: {
         }
         useStore.getState().set(id, { state: 'reading' })
         const giveUp = setTimeout(() => {
-          if (useStore.getState().states[id]?.state === 'reading')
-            useStore.getState().set(id, failed('timeout'))
+          if (asks.get(id) === generation && useStore.getState().states[id]?.state === 'reading')
+            useStore.getState().set(id, { state: 'reading', slow: true })
         }, DIGEST_GIVE_UP_MS)
         void call
           .catch((error: unknown) => ({

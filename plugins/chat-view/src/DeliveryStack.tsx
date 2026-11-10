@@ -8,6 +8,8 @@ import { digestMessages, gist, useExchange, useExchanges, type ExchangeSide } fr
 import { digestKey } from '../../../src/shared/exchange-digest'
 import {
   digestFailureLine,
+  DIGEST_SLOW_LINE,
+  canAskAgain,
   retryDigest,
   useDigestState,
   type DigestCard,
@@ -69,7 +71,9 @@ export function DeliveryStack({
           </span>
           <span className="exchange-digest" aria-live="polite">
             <span className="exchange-digest-inner">
-              {digest.state === 'reading' ? (
+              {digest.state === 'reading' && digest.slow ? (
+                <DigestSlow />
+              ) : digest.state === 'reading' ? (
                 <span className="exchange-digest-reading">Reading what matters for you…</span>
               ) : done ? (
                 <DigestLine
@@ -115,18 +119,29 @@ export function DigestUnread({
   return (
     <span className="digest-unread" data-reason={reason ?? 'failed'}>
       <span className="digest-unread-words">{digestFailureLine(reason, card)}</span>
-      <button
-        type="button"
-        className="digest-unread-retry"
-        onClick={(event) => {
-          // Inside a card's summary: ask, never toggle the card.
-          event.preventDefault()
-          event.stopPropagation()
-          onRetry()
-        }}
-      >
-        Ask again
-      </button>
+      {canAskAgain(reason) && (
+        <button
+          type="button"
+          className="digest-unread-retry"
+          onClick={(event) => {
+            // Inside a card's summary: ask, never toggle the card.
+            event.preventDefault()
+            event.stopPropagation()
+            onRetry()
+          }}
+        >
+          Ask again
+        </button>
+      )}
+    </span>
+  )
+}
+
+/** A read past the view's patience: it says so, and the answer still lands. */
+export function DigestSlow(): React.JSX.Element {
+  return (
+    <span className="digest-unread" data-slow="">
+      <span className="digest-unread-words">{DIGEST_SLOW_LINE}</span>
     </span>
   )
 }
