@@ -21,7 +21,7 @@ public struct ReconnectPorts: Sendable {
   public var now: @Sendable () -> Double
   public var refreshRequests: @Sendable (_ machineId: String) async throws -> Void
   public var refreshHistory: @Sendable (_ machineId: String, _ sessionId: String) async throws -> Void
-  /// Clears the attachment draft a landed send carried.
+  /// Takes the files a landed send carried off its conversation's attachment draft.
   public var clearAttachments: (@Sendable (UnknownSend) async throws -> Void)?
   /// A send the composer is still driving: the pass leaves it to the composer.
   public var isActive: (@Sendable (UnknownSend) async -> Bool)?
@@ -206,9 +206,10 @@ private final class PassStep: @unchecked Sendable {
   func stop() { lock.withLock { halted = true } }
 }
 
-/// The ledger, the draft and the mark after one send's outcome: sent clears all three (the draft
-/// only when it is still the text sent); rejected leaves the ledger and marks the reason; unknown
-/// stays in the ledger, marked; failed waits for the next pass.
+/// The ledger, the draft and the mark after one send's outcome: sent takes the send out of the
+/// ledger, keeps in the draft only what was added after the text sent, takes the files it carried
+/// off the attachment draft and clears the mark; rejected leaves the ledger and marks the reason;
+/// unknown stays in the ledger, marked; failed waits for the next pass.
 public func settleSend(
   _ send: UnknownSend,
   _ outcome: SendOutcome,
@@ -221,9 +222,9 @@ public func settleSend(
   switch outcome {
   case .sent:
     try await sends.remove(send.clientMessageId)
-    if try await drafts.get(send.machineId, send.sessionId) == (send.draftText ?? send.text) {
-      try await drafts.clear(send.machineId, send.sessionId)
-    }
+    let stored = try await drafts.get(send.machineId, send.sessionId)
+    let kept = draftAfterDelivery(stored, sent: send.draftText ?? send.text)
+    if kept != stored { try await drafts.set(send.machineId, send.sessionId, kept) }
     try await clearAttachments?(send)
     try await marks.clear(send.machineId, send.sessionId)
   case .rejected(_, let reason):
@@ -455,7 +456,7 @@ public actor DeliveryController {
     defer { active.remove(send.clientMessageId) }
     let attachments = attachmentDrafts
     try await settleSend(send, outcome, sends: sends, marks: marks, drafts: drafts, now: now, clearAttachments: { send in
-      try await attachments.clearIfUnchanged(send.machineId, send.sessionId, sent: send.attachments ?? [])
+      try await attachments.removeSent(send.machineId, send.sessionId, files: send.files ?? [])
     })
     if case .failed = outcome {
       try await sends.remove(send.clientMessageId)
@@ -484,7 +485,7 @@ public actor DeliveryController {
       status: status, write: write, sleep: sleep, now: now,
       refreshRequests: refreshRequests, refreshHistory: refreshHistory,
       clearAttachments: { send in
-        try await attachments.clearIfUnchanged(send.machineId, send.sessionId, sent: send.attachments ?? [])
+        try await attachments.removeSent(send.machineId, send.sessionId, files: send.files ?? [])
       },
       isActive: { [weak self] send in await self?.isActive(send.clientMessageId) ?? false },
       claim: { [weak self] send in await self?.claimForPass(send) ?? false },

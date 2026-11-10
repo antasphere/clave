@@ -386,6 +386,54 @@ final class DeliveryRestartTests: XCTestCase {
 
   // MARK: - A send such a pass delivers: what the composer keeps
 
+  /// N1a: text appended to the kept draft and a second file picked after the unknown send; the pass
+  /// (no choice made) delivers the send: the composer keeps exactly what was added since.
+  func testWhenAPassDeliversTheSendOnlyTheTextAndTheFileAddedSinceStay() async throws {
+    let model = try makeModel()
+    await model.appear()
+    model.attach(try file("first.txt"))
+    let text = "The first message."
+    let old = await unknownSend(model, text)
+    model.attach(try file("second.txt"))
+    model.draft = text + " And a second thought."
+    await model.flushDraft()
+    server.answerStatus(.answer("absent"), for: old)
+    let asked = try await addSentinel()
+    await dropSocket()
+    await passFinished(asked)
+    await until("the bar gone") { model.deliveryMark == nil }
+    XCTAssertEqual(server.kept, [old])
+    XCTAssertEqual(model.draft.trimmingCharacters(in: .whitespaces), "And a second thought.", "only the added text stays")
+    XCTAssertEqual(model.pendingFiles.map(\.name), ["second.txt"], "only the file picked since stays")
+  }
+
+  /// N1b: the same, the screen closed while the pass delivers, then the controller recreated over a
+  /// copy of the store.
+  func testWhatWasAddedSinceTheSendStaysAfterTheScreenClosesAndTheControllerIsRecreated() async throws {
+    let model = try makeModel(keep: false)
+    await model.appear()
+    model.attach(try file("first-b.txt"))
+    let text = "The first message, b."
+    let old = await unknownSend(model, text)
+    model.attach(try file("second-b.txt"))
+    model.draft = text + " And a second thought, b."
+    await model.flushDraft()
+    server.answerStatus(.held, for: old)
+    let asked = try await addSentinel()
+    await dropSocket()
+    await until("the pass holds at the old id's status read") { server.isHoldingStatus(of: old) }
+    model.disappear()
+    server.answerStatus(.answer("absent"), for: old)
+    server.answerHeldStatus(of: old, .answer("absent"))
+    await passFinished(asked)
+    await modelledRestart()
+    let restarted = try makeModel()
+    await restarted.appear()
+    XCTAssertEqual(server.kept, [old])
+    XCTAssertEqual(restarted.draft.trimmingCharacters(in: .whitespaces), "And a second thought, b.", "only the added text stays")
+    XCTAssertEqual(restarted.pendingFiles.map(\.name), ["second-b.txt"], "only the file picked since stays")
+  }
+
   /// N1c: nothing added after the unknown send: the delivered draft and file both leave, and the
   /// field stays empty after the controller is recreated.
   func testWithNothingAddedSinceTheSendTheFieldEmptiesAndStaysEmptyAfterTheControllerIsRecreated() async throws {

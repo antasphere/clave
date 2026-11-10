@@ -625,25 +625,27 @@ final class DeliveryRaceTests: XCTestCase {
     XCTAssertTrue(y.canSend, "and Send is there for it")
   }
 
-  /// t6b: the person types while the composer resyncs after a delivery (it has read the draft the
-  /// settle cleared, and its read of the picked files is held): what they typed stays.
-  func testTextTypedWhileTheComposerResyncsStays() async throws {
+  /// t6b: the person types while a pass settles the delivery of the conversation's send (the
+  /// settle has kept the draft, and its read of the picked files is held): what they typed stays
+  /// once the composer follows the delivery. The composer's resync reads no store: it applies the
+  /// delivery rule to the field itself, so the settle's read is the one left to type through.
+  func testTextTypedWhileThePassSettlesTheDeliveryStays() async throws {
     let x = try makeModel("s1")
     let y = try makeModel("s2", hearsPush: false)
     await x.appear()
     await y.appear()
     let old = await unknownSend(y, "Y's message.")
     server.answerStatus(.answer("absent"), for: old)
-    // The settle reads Y's picked files once; the resync's read after it is held.
-    await store.holdReads(attachmentDraftKey("m1", "s2"), skipping: 1)
+    // The settle reads Y's picked files once, after the draft: that read is held.
+    await store.holdReads(attachmentDraftKey("m1", "s2"), skipping: 0)
     let asked = try await addSentinel()
     await dropSocket()
-    await eventually("the resync holds at its read of the picked files") { await store.readsWaiting == 1 }
-    y.draft = "Typed during the resync."
+    await eventually("the settle holds at its read of the picked files") { await store.readsWaiting == 1 }
+    y.draft = "Typed during the settle."
     await store.releaseReads()
     await passFinished(asked)
     await until("Y says it was delivered") { y.deliveryNotice != nil }
-    XCTAssertEqual(y.draft, "Typed during the resync.", "what the person typed stays")
+    XCTAssertEqual(y.draft, "Typed during the settle.", "what the person typed stays")
     XCTAssertTrue(y.canSend)
   }
 }

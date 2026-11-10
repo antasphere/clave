@@ -21,13 +21,16 @@ public struct UnknownSend: Codable, Sendable, Equatable {
   /// The draft as the person left it (untrimmed), when it differs from the text sent.
   public let draftText: String?
   public let attachments: [Attachment]?
+  /// The files the person picked for the message, so a delivery takes exactly these off the
+  /// composer's attachment draft and files picked since stay.
+  public let files: [PickedFile]?
   /// The person's choice on the bar (discard, send again), written before anything waits for the
   /// send, so a choice whose action ended before it could take the send out is still found.
   public let choice: PendingChoice?
 
   public init(
     machineId: String, sessionId: String, clientMessageId: String, text: String, at: Double, draftText: String? = nil,
-    attachments: [Attachment]? = nil, choice: PendingChoice? = nil
+    attachments: [Attachment]? = nil, files: [PickedFile]? = nil, choice: PendingChoice? = nil
   ) {
     self.machineId = machineId
     self.sessionId = sessionId
@@ -36,6 +39,7 @@ public struct UnknownSend: Codable, Sendable, Equatable {
     self.at = at
     self.draftText = draftText
     self.attachments = attachments
+    self.files = files
     self.choice = choice
   }
 
@@ -49,6 +53,7 @@ public struct UnknownSend: Codable, Sendable, Equatable {
     at = (try? c.decodeIfPresent("at", Double.self)) ?? 0
     draftText = try? c.decodeIfPresent("draftText", String.self)
     attachments = try? c.decodeIfPresent("attachments", [Attachment].self)
+    files = try? c.decodeIfPresent("files", [PickedFile].self)
     // A choice this build cannot read is no choice: the send is asked about as before.
     choice = try? c.decodeIfPresent("choice", PendingChoice.self)
   }
@@ -62,6 +67,7 @@ public struct UnknownSend: Codable, Sendable, Equatable {
     try c.encode(at, key: "at")
     try c.encodeIfPresent(draftText, key: "draftText")
     try c.encodeIfPresent(attachments, key: "attachments")
+    try c.encodeIfPresent(files, key: "files")
     try c.encodeIfPresent(choice, key: "choice")
   }
 
@@ -69,7 +75,7 @@ public struct UnknownSend: Codable, Sendable, Equatable {
   public func with(choice: PendingChoice?) -> UnknownSend {
     UnknownSend(
       machineId: machineId, sessionId: sessionId, clientMessageId: clientMessageId, text: text, at: at,
-      draftText: draftText, attachments: attachments, choice: choice)
+      draftText: draftText, attachments: attachments, files: files, choice: choice)
   }
 }
 

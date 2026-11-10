@@ -1,6 +1,11 @@
 import XCTest
 @testable import ClaveCore
 
+/// A file as the picker hands it over, under the app's own folder by default.
+private func picked(_ name: String, at uri: String? = nil, mimeType: String = "text/plain", kind: PickedKind = .file) -> PickedFile {
+  PickedFile(uri: uri ?? "file:///picked/\(name)", name: name, mimeType: mimeType, size: 12, kind: kind)
+}
+
 final class ChatDraftsTests: XCTestCase {
   func testDraftsSurviveANewInstanceOverTheSameStorePerMachineAndSession() async throws {
     let store = InMemoryKeyValueStore()
@@ -30,22 +35,113 @@ final class ChatDraftsTests: XCTestCase {
     XCTAssertEqual(cleared, "")
   }
 
-  func testAttachmentDraftsKeepTheListAndClearOnlyTheOneSent() async throws {
+  func testAttachmentDraftsKeepTheListAndADeliveryTakesOffOnlyTheFilesItCarried() async throws {
     let store = InMemoryKeyValueStore()
     let drafts = AttachmentDrafts(store: store)
-    let one = Attachment.file(FileAttachment(id: "f-1", label: "Image #1", path: "/a.png", name: "a.png", mimeType: "image/png", size: 3, delivery: .image))
-    let two = Attachment.file(FileAttachment(id: "f-2", label: "File #1", path: "/b.txt", name: "b.txt", mimeType: "text/plain", size: 3, delivery: .reference))
+    let one = picked("a.png", mimeType: "image/png", kind: .image)
+    let two = picked("b.txt")
     try await drafts.set("m", "s", [one])
     let kept = try await AttachmentDrafts(store: store).get("m", "s")
     XCTAssertEqual(kept, [one])
     try await drafts.set("m", "s", [one, two])
-    try await drafts.clearIfUnchanged("m", "s", sent: [one])
-    let afterMismatch = try await drafts.get("m", "s")
-    XCTAssertEqual(afterMismatch, [one, two])
-    try await drafts.clearIfUnchanged("m", "s", sent: [one, two])
+    try await drafts.removeSent("m", "s", files: [one])
+    let afterOne = try await drafts.get("m", "s")
+    XCTAssertEqual(afterOne, [two], "the file picked since stays")
+    try await drafts.removeSent("m", "s", files: [two])
     let values = await store.values
     XCTAssertNil(values[attachmentDraftKey("m", "s")])
     XCTAssertEqual(attachmentDraftKey("m", "s"), "clave.attachment-draft:m:s")
+  }
+
+  /// A delivery names the files it carried by their address: a file picked again since under the
+  /// same name stays, and the one sent goes even if the record describes it otherwise.
+  func testADeliveryTakesItsFilesOffByTheirAddress() async throws {
+    let drafts = AttachmentDrafts(store: InMemoryKeyValueStore())
+    let sent = picked("notes.txt", at: "file:///picked/1-notes.txt")
+    let again = picked("notes.txt", at: "file:///picked/2-notes.txt")
+    try await drafts.set("m", "s", [sent, again])
+    try await drafts.set("m", "other", [sent])
+    let described = PickedFile(uri: sent.uri, name: "renamed.txt", mimeType: "text/plain", size: 99, kind: .file)
+    try await drafts.removeSent("m", "s", files: [described])
+    let kept = try await drafts.get("m", "s")
+    XCTAssertEqual(kept, [again])
+    let other = try await drafts.get("m", "other")
+    XCTAssertEqual(other, [sent], "another conversation's list is untouched")
+  }
+
+  /// The list goes from the store with the last file a delivery takes off, and a delivery over no
+  /// list writes nothing.
+  func testTheListLeavesTheStoreWithTheLastFileADeliveryTakesOff() async throws {
+    let store = InMemoryKeyValueStore()
+    let drafts = AttachmentDrafts(store: store)
+    let file = picked("only.txt")
+    try await drafts.set("m", "s", [file])
+    try await drafts.removeSent("m", "s", files: [file])
+    var values = await store.values
+    XCTAssertNil(values[attachmentDraftKey("m", "s")], "the key is removed")
+    try await drafts.removeSent("m", "s", files: [file])
+    values = await store.values
+    XCTAssertTrue(values.isEmpty, "nothing written")
+  }
+
+  /// A composer's save made while a delivery's read-modify-write of the list is held between its
+  /// read and its write is kept: the two run one after the other, the delivery first.
+  func testASaveMadeWhileADeliveryTakesItsFilesOffIsKept() async throws {
+    let store = ReadHoldingStore()
+    let drafts = AttachmentDrafts(store: store)
+    let a = picked("a.txt"), b = picked("b.txt"), c = picked("c.txt")
+    try await drafts.set("m", "s", [a, b])
+    await store.holdNextRead(of: attachmentDraftKey("m", "s"))
+    let delivery = Task { try await drafts.removeSent("m", "s", files: [a]) }
+    await eventually("the delivery holds between its read and its write") { await store.waiting == 1 }
+    let save = Task { try await drafts.set("m", "s", [b, c]) }
+    // The save is issued while the delivery is held.
+    try await Task.sleep(nanoseconds: 100_000_000)
+    await store.release()
+    try await delivery.value
+    try await save.value
+    let kept = try await drafts.get("m", "s")
+    XCTAssertEqual(kept, [b, c], "the save made meanwhile is kept")
+  }
+
+  // MARK: - What a delivery leaves in the field
+
+  func testAFieldThatIsStillTheTextSentIsEmptyAfterTheDelivery() {
+    XCTAssertEqual(draftAfterDelivery("Please add a test.", sent: "Please add a test."), "")
+  }
+
+  func testTextAddedAfterTheTextSentStaysWithoutTheSpaceBeforeIt() {
+    XCTAssertEqual(draftAfterDelivery("Please add a test. addition", sent: "Please add a test."), "addition")
+  }
+
+  func testALineAddedAfterTheTextSentStaysWithoutTheLineBreak() {
+    XCTAssertEqual(draftAfterDelivery("Please add a test.\nnew line", sent: "Please add a test."), "new line")
+  }
+
+  func testAFieldThatNoLongerStartsWithTheTextSentStaysAsItIs() {
+    XCTAssertEqual(draftAfterDelivery("A new thought.", sent: "Please add a test."), "A new thought.")
+  }
+
+  /// No text of the field was sent (files alone): everything in it was added since, as typed.
+  func testWithNoTextSentTheFieldStaysAsItIs() {
+    XCTAssertEqual(draftAfterDelivery("  typed since", sent: ""), "  typed since")
+    XCTAssertEqual(draftAfterDelivery("", sent: ""), "")
+  }
+
+  /// A send keeps the files the person picked for it, under "files" with the picker's own keys; a
+  /// list this build cannot read is none.
+  func testASendKeepsThePickedFilesItCarriedAndAnUnreadableListIsNone() throws {
+    let file = picked("a.txt")
+    XCTAssertEqual(
+      try encodeStored(file),
+      #"{"kind":"file","mimeType":"text/plain","name":"a.txt","size":12,"uri":"file:///picked/a.txt"}"#)
+    let send = UnknownSend(machineId: "m", sessionId: "s", clientMessageId: "message-files", text: "t", at: 1, files: [file])
+    let stored = try encodeStored(send)
+    XCTAssertEqual(try JSONDecoder().decode(UnknownSend.self, from: Data(stored.utf8)), send)
+    let unreadable = #"{"machineId":"m","sessionId":"s","clientMessageId":"message-files","text":"t","at":1,"files":[{"uri":1}]}"#
+    let read = try JSONDecoder().decode(UnknownSend.self, from: Data(unreadable.utf8))
+    XCTAssertNil(read.files)
+    XCTAssertEqual(read.clientMessageId, "message-files", "the send is still one to ask about")
   }
 
   func testTwoOwnersDraftsAndLedgersNeverCollideOverOneSharedStore() async throws {
@@ -56,7 +152,7 @@ final class ChatDraftsTests: XCTestCase {
     let ownerB = OwnerScopedKeyValueStore(base: base, namespace: namespaceB)
     let send = UnknownSend(machineId: "m", sessionId: "s", clientMessageId: "message-a", text: "from A", at: 1)
     let mark = DeliveryMark(kind: .unknown, clientMessageId: "message-a", reason: "r", at: 1)
-    let file = Attachment.file(FileAttachment(id: "f", path: "/a", name: "a", mimeType: "text/plain", size: 1, delivery: .reference))
+    let file = PickedFile(uri: "file:///a", name: "a", mimeType: "text/plain", size: 1, kind: .file)
 
     try await Drafts(store: ownerA).set("m", "s", "A's draft")
     try await UnknownSends(store: ownerA).add(send)

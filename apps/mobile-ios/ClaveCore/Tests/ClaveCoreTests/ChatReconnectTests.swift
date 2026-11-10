@@ -80,6 +80,22 @@ final class ChatReconnectTests: XCTestCase {
     XCTAssertEqual(draft, "new draft")
   }
 
+  /// A delivery keeps in the draft exactly what the person added after the text sent: the text
+  /// sent leaves, with the line break that set the addition apart.
+  func testADeliverySettledKeepsInTheDraftOnlyWhatWasAddedSinceTheSend() async throws {
+    let h = try await harness()
+    try await h.drafts.set("m-1", "s-1", "hello\nand one more thing")
+    try await settleSend(
+      send, .sent(clientMessageId: send.clientMessageId, reconciled: true), sends: h.sends, marks: h.marks, drafts: h.drafts,
+      now: { 0 })
+    let draft = try await h.drafts.get("m-1", "s-1")
+    XCTAssertEqual(draft, "and one more thing", "only what was added stays")
+    let stored = await h.kv.values[draftKey("m-1", "s-1")]
+    XCTAssertEqual(stored, "and one more thing", "and that is what the store keeps")
+    let list = try await h.sends.list()
+    XCTAssertEqual(list, [])
+  }
+
   func testPendingWaitsWithBackoffUpToTheBudgetThenMarksUnknown() async throws {
     let h = try await harness()
     h.statuses.value = [WriteStatus(status: .pending)]

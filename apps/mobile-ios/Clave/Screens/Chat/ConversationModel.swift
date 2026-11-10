@@ -36,8 +36,15 @@ final class ConversationModel {
     }
   }
 
-  /// Files picked for the next message, admitted by the attachment policy.
-  private(set) var pendingFiles: [PickedFile] = []
+  /// Files picked for the next message, admitted by the attachment policy; kept on the device on
+  /// every change, like the draft.
+  private(set) var pendingFiles: [PickedFile] = [] {
+    didSet {
+      guard pendingFiles != oldValue, !restoringFiles else { return }
+      filesTouched = true
+      saveFiles(pendingFiles)
+    }
+  }
   /// What the composer says about the last pick: a refusal, or how a file will travel.
   private(set) var attachNotice: String?
   /// What the composer shows above a draft whose last send did not land.
@@ -74,8 +81,10 @@ final class ConversationModel {
   private var draftTouched = false
   private var restoringDraft = false
   private var draftSave: Task<Void, Never>?
+  private var filesTouched = false
+  private var restoringFiles = false
+  private var filesSave: Task<Void, Never>?
   private var dropped = false
-  private var pickedImages: [String: Bool] = [:]
   /// What the send of unknown outcome the bar names carried, so its later delivery clears only that.
   private var carried: Carried?
   /// The sends this model is settling itself right now (its own send, a choice on the bar): a mark
@@ -180,6 +189,7 @@ final class ConversationModel {
     })
 
     await loadDraft()
+    await loadFiles()
     await refreshMark()
     await push.start()
     if capabilities == nil {
@@ -278,9 +288,32 @@ final class ConversationModel {
     }
   }
 
-  /// Waits until every draft edit so far is on the device.
+  /// Waits until every edit of the draft and of the picked files so far is on the device.
   func flushDraft() async {
     await draftSave?.value
+    await filesSave?.value
+  }
+
+  private func loadFiles() async {
+    let stored = (try? await attachmentDrafts.get(machineId, sessionId)) ?? []
+    // What the person picked or removed while the read was in flight wins over what the store held.
+    if !filesTouched {
+      restoringFiles = true
+      pendingFiles = stored
+      restoringFiles = false
+    }
+  }
+
+  private func saveFiles(_ files: [PickedFile]) {
+    let previous = filesSave
+    let attachmentDrafts = self.attachmentDrafts
+    let machineId = self.machineId
+    let sessionId = self.sessionId
+    // Chained so the store sees the changes in the order they were made.
+    filesSave = Task {
+      await previous?.value
+      try? await attachmentDrafts.set(machineId, sessionId, files)
+    }
   }
 
   // MARK: - Attachments
@@ -288,17 +321,18 @@ final class ConversationModel {
   /// Puts picked files on the next message, each through the attachment policy; a refusal is
   /// said in the composer and the file left out.
   func attach(_ files: [PickedFile]) {
+    let imagesSupported = capabilities?.images ?? false
     for file in files {
+      // A picked file travels as a picture by the policy's own rule, so a list read back from the
+      // device needs nothing beside it.
       let imageBytes = pendingFiles.reduce(0) { sum, picked in
-        pickedImages[picked.uri] == true ? sum + (picked.size ?? 0) : sum
+        imageMimeTypes.contains(picked.mimeType) && imagesSupported ? sum + (picked.size ?? 0) : sum
       }
       let context = AdmissionContext(
-        count: pendingFiles.count, imageBytes: imageBytes,
-        imagesSupported: capabilities?.images ?? false, filesRoute: filesRoute)
+        count: pendingFiles.count, imageBytes: imageBytes, imagesSupported: imagesSupported, filesRoute: filesRoute)
       switch admit(file, context) {
-      case .accepted(let image, let note):
+      case .accepted(_, let note):
         pendingFiles.append(file)
-        pickedImages[file.uri] = image
         attachNotice = note
       case .refused(let reason):
         attachNotice = reason
@@ -311,8 +345,7 @@ final class ConversationModel {
   /// Takes a picked file off the next message.
   func removeFile(at index: Int) {
     guard pendingFiles.indices.contains(index) else { return }
-    let removed = pendingFiles.remove(at: index)
-    pickedImages.removeValue(forKey: removed.uri)
+    pendingFiles.remove(at: index)
     attachNotice = nil
   }
 
@@ -374,7 +407,7 @@ final class ConversationModel {
     let record = UnknownSend(
       machineId: machineId, sessionId: sessionId, clientMessageId: clientMessageId, text: message.text,
       at: milliseconds, draftText: draftText == message.text ? nil : draftText,
-      attachments: records.isEmpty ? nil : records)
+      attachments: records.isEmpty ? nil : records, files: picked.isEmpty ? nil : picked)
     // The draft must be on the device before the ledger compares against it.
     await flushDraft()
     settlingHere.insert(clientMessageId)
@@ -396,10 +429,11 @@ final class ConversationModel {
 
     switch outcome {
     case .sent:
-      // Only what was sent is cleared: text typed during the send stays.
-      if draft == draftText { draft = "" }
-      pendingFiles = []
-      pickedImages = [:]
+      // Only what was sent is cleared: text typed and files picked during the send stay, as the
+      // settle left them on the device.
+      let kept = draftAfterDelivery(draft, sent: draftText)
+      if kept != draft { draft = kept }
+      pendingFiles.removeAll { file in picked.contains { $0.uri == file.uri } }
       attachNotice = nil
     case .rejected(_, let reason), .failed(_, let reason):
       sendError = reason
@@ -517,25 +551,19 @@ final class ConversationModel {
     // The send's first mark wakes this read while the send is still out; a send of this model
     // that records what it carried meanwhile, its picked files with it, keeps that record.
     guard carried?.clientMessageId != clientMessageId else { return }
-    carried = Carried(clientMessageId: clientMessageId, draftText: record.draftText ?? record.text, files: [])
+    carried = Carried(clientMessageId: clientMessageId, draftText: record.draftText ?? record.text, files: record.files ?? [])
   }
 
-  /// After a send was delivered: the field and the picked files follow the stores, which the
-  /// settle cleared when they still held what was sent. Either is cleared here only when the store
-  /// is empty and it still equals what the send carried, so anything typed or picked since stays,
-  /// and a draft the settle kept is never cleared.
+  /// After a send was delivered: the field keeps only what was added after the text sent, and the
+  /// picked files lose the ones the send carried, so anything typed or picked since stays. Both are
+  /// saved as they change, as the settle did to the stores.
   private func resync(_ clientMessageId: String) async {
-    let storedDraft = (try? await drafts.get(machineId, sessionId)) ?? ""
-    let storedFiles = (try? await attachmentDrafts.get(machineId, sessionId)) ?? []
     guard let sent = carried, sent.clientMessageId == clientMessageId else { return }
-    if storedDraft.isEmpty, !draft.isEmpty, draft == sent.draftText {
-      draft = ""
-    }
-    if storedFiles.isEmpty, !pendingFiles.isEmpty, pendingFiles == sent.files {
-      pendingFiles = []
-      pickedImages = [:]
-      attachNotice = nil
-    }
+    let kept = draftAfterDelivery(draft, sent: sent.draftText)
+    if kept != draft { draft = kept }
+    let before = pendingFiles
+    pendingFiles.removeAll { file in sent.files.contains { $0.uri == file.uri } }
+    if pendingFiles != before, pendingFiles.isEmpty { attachNotice = nil }
     carried = nil
   }
 

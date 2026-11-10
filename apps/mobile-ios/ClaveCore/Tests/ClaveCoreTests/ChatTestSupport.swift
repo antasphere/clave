@@ -66,3 +66,41 @@ final class Box<T>: @unchecked Sendable {
     return change(&stored)
   }
 }
+
+/// A key-value store that, once told, holds the next read of one key after the value was read,
+/// until released: a read-modify-write held there writes back what it read before.
+actor ReadHoldingStore: KeyValueStore {
+  private let inner: any KeyValueStore
+  private var holding: String?
+  private var held: [CheckedContinuation<Void, Never>] = []
+  /// Every key read, in order.
+  private(set) var reads: [String] = []
+
+  init(_ inner: any KeyValueStore = InMemoryKeyValueStore()) {
+    self.inner = inner
+  }
+
+  /// Holds the next read of `key`, once.
+  func holdNextRead(of key: String) { holding = key }
+  /// How many reads wait.
+  var waiting: Int { held.count }
+  /// Lets the waiting reads go on.
+  func release() {
+    let waiting = held
+    held = []
+    for read in waiting { read.resume() }
+  }
+
+  func get(_ key: String) async throws -> String? {
+    reads.append(key)
+    let value = try await inner.get(key)
+    if key == holding {
+      holding = nil
+      await withCheckedContinuation { held.append($0) }
+    }
+    return value
+  }
+
+  func set(_ key: String, _ value: String) async throws { try await inner.set(key, value) }
+  func remove(_ key: String) async throws { try await inner.remove(key) }
+}

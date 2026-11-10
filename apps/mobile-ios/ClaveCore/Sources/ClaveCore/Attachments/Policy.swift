@@ -20,12 +20,13 @@ public let maxTotalImageBytes = 20 * 1024 * 1024
 public let imageMimeTypes: Set<String> = ["image/png", "image/jpeg", "image/gif", "image/webp"]
 
 /// What the picker says a file is.
-public enum PickedKind: String, Sendable, Equatable {
+public enum PickedKind: String, Codable, Sendable, Equatable {
   case image, video, file
 }
 
-/// A file the platform's picker handed over, before anything is read.
-public struct PickedFile: Sendable, Equatable {
+/// A file the platform's picker handed over, before anything is read; kept as the composer's draft
+/// under the keys uri, name, mimeType, size and kind.
+public struct PickedFile: Codable, Sendable, Equatable {
   public var uri: String
   public var name: String
   public var mimeType: String
