@@ -396,6 +396,22 @@ describe('openResumed: what the open does with a resume', () => {
     expect(h.focused).toEqual(['tab'])
   })
 
+  it('an account named with resume never moves the tab that holds the conversation: a pinned tab stays put (PRDCT-4328)', async () => {
+    const h = io()
+    const stopped = lookups(history, [record('tab', { claudeSessionId: 'c1', running: false })])
+    // The holder is resumed in place on the account it runs on: the restart
+    // takes the tab's id alone, so `account` cannot reach it, pinned or not.
+    const out = await openResumed(stopped, { resume: 'c1', account: 'Play' }, 'caller', h)
+    expect(out).toMatchObject({ result: { sessionId: 'tab', alreadyOpen: true, resumed: true } })
+    expect(out).not.toHaveProperty('payload')
+    expect(h.restarted).toEqual(['tab'])
+    // A tab on a Clave server is not this Mac's History's: refused, never
+    // reopened elsewhere on another account.
+    await expect(
+      openResumed(stopped, { resume: 'c1', server: 'srv-b', account: 'Play' }, 'caller', h)
+    ).rejects.toThrow(/omit server/)
+  })
+
   it('a conversation nobody holds becomes a start with its own provider, directory, model and title (F1: no mode needed)', async () => {
     const out = await openResumed(lookups(history), { resume: 'x1', chat: true }, 'caller', io())
     expect(out).toEqual({
