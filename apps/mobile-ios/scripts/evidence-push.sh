@@ -58,7 +58,10 @@ cat > "$dir/requests.json" <<'JSON'
 }
 JSON
 
-rm -f "$dir"/ready-* "$dir"/sent-*
+# An earlier run's markers go first. (N) lets a pattern match nothing: under zsh's default
+# NOMATCH an unmatched pattern fails the whole rm, so a stale ready-* would survive beside an
+# absent sent-*.
+rm -f -- "$dir"/ready-*(N) "$dir"/sent-*(N)
 for name in chat requests; do
   waited=0
   until [[ -f "$dir/ready-$name" ]]; do
