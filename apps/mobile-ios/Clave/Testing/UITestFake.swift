@@ -68,7 +68,9 @@
     private var pairingReads = 0
     private var requestsPending = true
     private var requestsRevision = 1.0
-    private var sequence = UITestFakeServer.seeded.count
+    /// What the seeded chat's timeline holds: the evidence, or 300 turns for a timing test.
+    private let seededEvents: [SessionEvent]
+    private var sequence: Int
     private var eventSeq = 0.0
     private var sockets: [UITestFakeSocket] = []
     /// The reply a `slow:` message holds back until an interrupt arrives, or 20 s pass.
@@ -87,6 +89,12 @@
     private var kept: [TimelineItem] = []
 
     private enum UnknownWrite { case unreadable, absent, landed }
+
+    /// The fake with its seeded chat: the evidence, or with `longChat` the 300 turns.
+    init(longChat: Bool = false) {
+      seededEvents = longChat ? Self.longChat : Self.seeded
+      sequence = seededEvents.count
+    }
 
     private func locked<T>(_ run: () -> T) -> T {
       lock.lock()
@@ -223,7 +231,7 @@
       case ("GET", "/sessions/timeline"):
         return encoded(timeline())
       case ("GET", "/sessions/history"):
-        return encoded(HistoryPage(items: Self.seeded.map { HistoryItem(event: $0, at: 0) }, before: nil))
+        return encoded(HistoryPage(items: seededEvents.map { HistoryItem(event: $0, at: 0) }, before: nil))
       case ("GET", "/sessions/capabilities"):
         return json(["images": false])
       case ("GET", "/sessions/writes"):
@@ -481,6 +489,13 @@
       .toolResult(id: "t_failed", output: .string("make: *** [check] Error 1"), error: true, parent: nil),
     ]
 
+    /// 300 turns, the person's and Echo's in turn, the last one Echo's: ordinal 299.
+    static let longChat: [SessionEvent] = (0..<300).map { index in
+      index.isMultiple(of: 2)
+        ? .userMessage(UserMessage(text: "Turn \(index + 1), from the person."))
+        : .assistantText(delta: "Turn \(index + 1), from Echo.", final: true, parent: nil)
+    }
+
     static func clarification() -> PendingRequest {
       PendingRequest(
         id: "r_fake", sessionId: sessionId, kind: .clarification, description: "Echo has a question.", createdAt: 0,
@@ -492,7 +507,7 @@
     private func timeline() -> TimelinePage {
       let (top, extra) = locked { (sequence, kept) }
       return TimelinePage(
-        items: Self.seeded.enumerated().map { index, event in
+        items: seededEvents.enumerated().map { index, event in
           TimelineItem(event: event, at: 0, position: SessionPosition(generation: Self.generation, sequence: index + 1))
         } + extra, before: nil, cursor: SessionPosition(generation: Self.generation, sequence: top), truncated: false)
     }

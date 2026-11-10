@@ -165,6 +165,40 @@ final class ChatEvidenceTests: XCTestCase {
     XCTAssertTrue(overBox.isWithin(3, of: ground), "Above the person's turn at \(aboveTop) is \(overBox), not the ground \(ground)")
   }
 
+  // MARK: a long conversation
+
+  /// How long a 300-turn conversation takes to open at its last turn: from the tap on its row to
+  /// the last turn's existence, in three cold launches. The three figures are written to
+  /// chat/long-chat-open.txt before any is judged. Each run must stay under 5 s: a bound far above
+  /// the figures, so that a loaded Mac cannot redden it, which still catches an open that is no
+  /// longer quick.
+  @MainActor
+  func testA300TurnConversationOpensAtItsLastTurn() {
+    var figures: [String] = []
+    var slow: [String] = []
+    for run in 1...3 {
+      let app = XCUIApplication()
+      app.launchArguments = ["--ui-test-fake", "--ui-test-long-chat"]
+      signInAndPair(app)
+      app.buttons["workspaces.row.scratch"].tap()
+      let row = app.buttons["sessions.row.s_fake"]
+      XCTAssertTrue(row.waitForExistence(timeout: 10))
+      let last = element(app, "chat.assistant.299")
+      let start = Date()
+      row.tap()
+      // Asked query after query rather than waited for, so the figure is as fine as one query.
+      var appeared = false
+      repeat { appeared = last.exists } while !appeared && Date().timeIntervalSince(start) < 20
+      let elapsed = Date().timeIntervalSince(start)
+      let figure = String(format: "run %d: %.3f s", run, elapsed) + (appeared ? "" : ", the 300th turn never appeared")
+      figures.append(figure)
+      if !appeared || elapsed >= 5 { slow.append(figure) }
+      app.terminate()
+    }
+    keepText(figures.joined(separator: "\n") + "\n", topic: "chat", name: "long-chat-open.txt")
+    XCTAssertTrue(slow.isEmpty, "Not open at its 300th turn within 5 s: \(slow.joined(separator: "; "))")
+  }
+
   // MARK: E: the composer
 
   @MainActor

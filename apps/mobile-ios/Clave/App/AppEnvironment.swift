@@ -17,6 +17,9 @@ nonisolated struct LaunchOptions: Equatable, Sendable {
     var openURL: URL? = nil
     /// The fake asks for the notification permission like a real launch, for a test that pushes.
     var uiTestFakeAsksForNotifications = false
+    /// The fake's seeded chat holds 300 alternating turns instead of its evidence, for a test that
+    /// times the transcript's open.
+    var uiTestFakeLongChat = false
   #endif
 
   static let release = LaunchOptions(buildKind: .release, issuerOverride: nil, relayOverride: nil, usesUITestFake: false)
@@ -27,6 +30,7 @@ nonisolated struct LaunchOptions: Equatable, Sendable {
     static let relayVariable = "CLAVE_IOS_RELAY"
     static let openURLVariable = "CLAVE_IOS_OPEN_URL"
     static let uiTestNotificationsArgument = "--ui-test-notifications"
+    static let uiTestLongChatArgument = "--ui-test-long-chat"
 
     /// The options a launch with this environment and these arguments gets.
     /// `isDebug: false` is how a test proves a release-like build reads none of it.
@@ -42,7 +46,8 @@ nonisolated struct LaunchOptions: Equatable, Sendable {
         relayOverride: value(relayVariable),
         usesUITestFake: arguments.contains(uiTestFakeArgument),
         openURL: value(openURLVariable).flatMap(URL.init(string:)),
-        uiTestFakeAsksForNotifications: arguments.contains(uiTestNotificationsArgument))
+        uiTestFakeAsksForNotifications: arguments.contains(uiTestNotificationsArgument),
+        uiTestFakeLongChat: arguments.contains(uiTestLongChatArgument))
     }
   #endif
 
@@ -84,7 +89,8 @@ struct AppEnvironment: Sendable {
   static func live(_ options: LaunchOptions = .current()) -> AppEnvironment {
     #if DEBUG
       if options.usesUITestFake {
-        return uiTestFake(asksForNotifications: options.uiTestFakeAsksForNotifications).opening(options.openURL)
+        return uiTestFake(asksForNotifications: options.uiTestFakeAsksForNotifications, longChat: options.uiTestFakeLongChat)
+          .opening(options.openURL)
       }
     #endif
     let live = AppEnvironment(
@@ -132,9 +138,10 @@ struct AppEnvironment: Sendable {
     }
 
     /// Every call answered in process, every store in memory: a UI test starts clean each launch.
-    /// `asksForNotifications` lets a test that pushes get the permission alert and an APNs token.
-    static func uiTestFake(asksForNotifications: Bool = false) -> AppEnvironment {
-      let server = UITestFakeServer()
+    /// `asksForNotifications` lets a test that pushes get the permission alert and an APNs token;
+    /// `longChat` seeds the chat with 300 turns.
+    static func uiTestFake(asksForNotifications: Bool = false, longChat: Bool = false) -> AppEnvironment {
+      let server = UITestFakeServer(longChat: longChat)
       let defaults = UserDefaults(suiteName: "clave.ui-test-fake") ?? .standard
       defaults.removePersistentDomain(forName: "clave.ui-test-fake")
       return AppEnvironment(
