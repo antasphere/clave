@@ -219,30 +219,38 @@ struct ToolRunCard: View {
   let tools: [ToolCall]
 
   @Environment(\.claveTheme) private var theme
+  @Environment(\.dynamicTypeSize) private var dynamicTypeSize
   @State private var open = false
   @ScaledMetric(relativeTo: .body) private var glyph: CGFloat = Theme.chatGlyph
+
+  /// How the run stands goes beside the summary, or under it at an accessibility text size, so
+  /// that "1 failed" is never cut one letter per line between the summary and the chevron.
+  static func stateUnderSummary(at size: DynamicTypeSize) -> Bool { size.isAccessibilitySize }
 
   var body: some View {
     let status = groupStatus(tools)
     let failures = failureCount(tools)
     let summary = toolGroupSummary(tools)
+    let under = Self.stateUnderSummary(at: dynamicTypeSize)
     VStack(alignment: .leading, spacing: Theme.space(2)) {
       Button {
         open.toggle()
       } label: {
-        HStack(spacing: Theme.space(2)) {
+        HStack(alignment: under ? .top : .center, spacing: Theme.space(2)) {
           Icon(toolIcon(groupKind(tools)), size: glyph)
             .foregroundStyle(theme.colors.textTertiary)
-          Text(summary)
-            .font(.geist(Theme.codeSize, relativeTo: .callout))
-            .foregroundStyle(theme.colors.textSecondary)
-            .fixedSize(horizontal: false, vertical: true)
-            .frame(maxWidth: .infinity, alignment: .leading)
-          if status == .running {
-            ProgressView().controlSize(.small)
+          VStack(alignment: .leading, spacing: Theme.space(1)) {
+            Text(summary)
+              .font(.geist(Theme.codeSize, relativeTo: .callout))
+              .foregroundStyle(theme.colors.textSecondary)
+              .fixedSize(horizontal: false, vertical: true)
+            if under, status == .running || failures > 0 {
+              HStack(spacing: Theme.space(2)) { state(status, failures) }
+            }
           }
-          if failures > 0 {
-            ToneLine(failures == 1 ? "1 failed" : "\(failures) failed", tone: .error)
+          .frame(maxWidth: .infinity, alignment: .leading)
+          if !under {
+            state(status, failures)
           }
           Icon(open ? .chevronDown : .chevronRight, size: glyph)
             .foregroundStyle(theme.colors.textTertiary)
@@ -264,6 +272,17 @@ struct ToolRunCard: View {
         }
         .padding(.leading, glyph + Theme.space(2))
       }
+    }
+  }
+
+  /// A spinner while the run goes on, and its failures in words.
+  @ViewBuilder
+  private func state(_ status: GroupStatus, _ failures: Int) -> some View {
+    if status == .running {
+      ProgressView().controlSize(.small)
+    }
+    if failures > 0 {
+      ToneLine(failures == 1 ? "1 failed" : "\(failures) failed", tone: .error)
     }
   }
 

@@ -1,4 +1,5 @@
 import ClaveCore
+import SwiftUI
 import XCTest
 @testable import Clave
 
@@ -183,6 +184,16 @@ final class ScreensTests: XCTestCase {
     XCTAssertEqual(offline.reason, "Fake Mac is offline.")
     XCTAssertFalse(offline.isError)
     XCTAssertTrue(MachineStateLine.describe(.unpaired(reason: "Pair it again.")).isError)
+  }
+
+  /// A tool run's state goes under its summary at every accessibility text size and stays beside
+  /// it below them: beside it at the largest size, "1 failed" was cut into "1", "faile" and "d".
+  func testAToolRunsStateGoesUnderItsSummaryAtTheAccessibilitySizes() {
+    for size in DynamicTypeSize.allCases {
+      XCTAssertEqual(ToolRunCard.stateUnderSummary(at: size), size.isAccessibilitySize, "\(size)")
+    }
+    XCTAssertTrue(ToolRunCard.stateUnderSummary(at: .accessibility1))
+    XCTAssertFalse(ToolRunCard.stateUnderSummary(at: .xxxLarge))
   }
 }
 
