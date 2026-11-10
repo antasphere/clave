@@ -366,6 +366,9 @@ describe('routed reaches the server a key names; refused never does', () => {
     ['subscriber', [F]],
     ['plugin', 'view', S],
     [{ path: F }],
+    // A request object naming its session (the digests, PRDCT-4327): the
+    // server must be handed the bare id of the key inside it.
+    [{ sessionId: S, key: 'k', launch: {}, messages: [], notes: [], tools: 0 }],
     ['/srv/a', { link: { kind: 'group-terminal', groupId: G, terminalId: 't' } }],
     [S, null],
     [{ path: resourceKey('file', 'x', ATTACHMENT) }]
