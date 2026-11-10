@@ -128,9 +128,8 @@ describe('every member of the exposed API declares where it runs for a server ta
     expect(silent).toEqual([])
   })
 
-  it('the four digest members stay local until PRDCT-4327 routes them', () => {
+  it('the four digest members go to the server a tab runs on (PRDCT-4327)', () => {
     for (const name of ['exchangeDigest', 'exchangeDigestsOf', 'workDigest', 'workDigestsOf'])
-      expect(API_PLACEMENT[name]).toMatchObject({ placement: 'local', wrongForServerTab: true })
-    expect(API_PLACEMENT.exchangeDigest.why).toContain('PRDCT-4327')
+      expect(API_PLACEMENT[name]).toEqual({ placement: 'routed' })
   })
 })
