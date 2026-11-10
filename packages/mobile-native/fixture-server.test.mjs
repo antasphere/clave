@@ -51,6 +51,7 @@ import {
   keychainFileOf,
   recorderLines,
   releaseTmuxFolder,
+  runCommand,
   shellStandsIn,
   startDaemon,
   superviseFixture,
@@ -776,20 +777,23 @@ describe("the daemon's start and the checks asked of the daemon itself", () => {
       const problem = tmuxTmpdirProblem(handed.TMUX_TMPDIR)
       expect(problem, what).not.toBeNull()
       // /usr/bin/false stands where Bun would: nothing could announce itself even past the guard.
-      await expect(
-        startDaemon({
-          bun: '/usr/bin/false',
-          port: 0,
-          dataDir: serverDir,
-          tokenFile: path.join(serverDir, 'token'),
-          relay: 'http://127.0.0.1:9',
-          env: handed,
-          flags: DAEMON_FLAGS,
-          log: () => {},
-          timeoutMs: 2_000
-        }),
-        what
-      ).rejects.toThrow(`refused to start the daemon: ${problem}`)
+      const refused = await startDaemon({
+        bun: '/usr/bin/false',
+        port: 0,
+        dataDir: serverDir,
+        tokenFile: path.join(serverDir, 'token'),
+        relay: 'http://127.0.0.1:9',
+        env: handed,
+        flags: DAEMON_FLAGS,
+        log: () => {},
+        timeoutMs: 2_000
+      }).then(
+        () => null,
+        (error) => error
+      )
+      expect(refused?.message, what).toBe(`refused to start the daemon: ${problem}`)
+      // A refused boot, which the command exits 2 on.
+      expect(refused?.refusedBoot, what).toBe(true)
       expect(existsSync(serverDir), what).toBe(false)
     }
   })
@@ -921,6 +925,14 @@ describe("the CLI's way out", () => {
       out: (text) => run.written.push(text),
       log: () => {}
     })
+    /** The whole command's hooks: `start` stands for the boot. */
+    run.cli = (start, prove) => ({
+      ...run.io(prove),
+      start,
+      off: (signal, handler) => {
+        if (run.handlers[signal] === handler) delete run.handlers[signal]
+      }
+    })
     return run
   }
   const turn = () => new Promise((resolve) => setImmediate(resolve))
@@ -1034,6 +1046,100 @@ describe("the CLI's way out", () => {
     await turn()
     expect(caught.codes).toEqual([3])
     expect(caught.stops).toBe(1)
+  })
+
+  it('the command under --check proves the fixture it started and writes its summary, the line or under --json the object with every check, then exits with the verdict', async () => {
+    for (const json of [false, true]) {
+      const run = supervised()
+      const done = runCommand(
+        { check: true, json },
+        run.cli(async () => run.fixture)
+      )
+      await turn()
+      await turn()
+      if (json) {
+        const printed = JSON.parse(run.written.join(''))
+        expect(printed.checks).toEqual([{ ok: true }, { ok: true }])
+        expect(printed.CLAVE_FIXTURE_SERVER_URL).toBe('http://127.0.0.1:9')
+      } else expect(run.written).toEqual(['2 checks, 0 failed\n'])
+      run.finish()
+      await done
+      expect(run.codes, `json ${json}`).toEqual([0])
+      expect(run.stops).toBe(1)
+    }
+  })
+
+  it('a SIGINT or a SIGTERM during the boot is kept until the boot ends: the fixture that came up is stopped before anything is proven or printed, exit 130 or 143 under --check and 0 running', async () => {
+    for (const check of [true, false])
+      for (const [signal, code] of Object.entries(INTERRUPTED_CHECK_EXIT)) {
+        const run = supervised()
+        let proved = 0
+        const done = runCommand(
+          { check },
+          run.cli(
+            async () => {
+              run.handlers[signal]()
+              await turn()
+              return run.fixture
+            },
+            async () => {
+              proved += 1
+              return [{ ok: true }]
+            }
+          )
+        )
+        await turn()
+        await turn()
+        const what = `${signal}, check ${check}`
+        expect(run.stops, what).toBe(1)
+        expect(proved, what).toBe(0)
+        expect(run.written, what).toEqual([])
+        run.finish()
+        await done
+        expect(run.codes, what).toEqual([check ? code : 0])
+      }
+  })
+
+  it('a refused run folder, refused checks and the daemon start refusing its TMUX_TMPDIR exit 2, each with its line; any other failure of the boot is thrown on, for the exit 1', async () => {
+    for (const [error, line] of [
+      [
+        Object.assign(new Error('not the fixture folder'), { refusedFolder: true }),
+        'refused: the run folder\n'
+      ],
+      [
+        Object.assign(new Error('refused before the daemon'), {
+          checks: [{ ok: true }, { ok: false }]
+        }),
+        'refused to boot: 1 of 2 checks failed\n'
+      ],
+      [
+        Object.assign(new Error('refused to start the daemon: TMUX_TMPDIR is unset or empty'), {
+          refusedBoot: true
+        }),
+        "refused to boot: the daemon's TMUX_TMPDIR\n"
+      ]
+    ]) {
+      const run = supervised()
+      await runCommand(
+        {},
+        run.cli(async () => {
+          throw error
+        })
+      )
+      expect(run.written, error.message).toEqual([line])
+      expect(run.codes, error.message).toEqual([2])
+      expect(run.stops).toBe(0)
+    }
+    const run = supervised()
+    await expect(
+      runCommand(
+        {},
+        run.cli(async () => {
+          throw new Error('no bun here')
+        })
+      )
+    ).rejects.toThrow('no bun here')
+    expect(run.codes).toEqual([])
   })
 })
 
