@@ -387,6 +387,72 @@ class SendGuardTest {
         assertEquals("the discarded send is never written again", listOf(id(1), id(2), id(2)), writtenIds())
     }
 
+    @Test
+    fun `a Discard cancelled while it waits for the pass is carried through, and no later pass delivers the send`() = guarded {
+        lostSend()
+        routes(write = { answer(200, """{"status":"accepted"}""") }, status = { asked, call -> if (asked == id(1)) machine.hold(call) else answer(200, """{"status":"accepted"}""") })
+        machine.welcome = true
+        machine.closePeers()
+        until(20_000) { machine.held.size == 1 }
+        val discard = scope.async { store.discardUnknown(machineId, "s1", id(1)) }
+        delay(500)
+        // The screen closes while the discard waits for the pass.
+        discard.cancel()
+        machine.respond(0, answer(200, """{"status":"absent"}"""))
+        until(what = "the cancelled discard to be carried through") { runBlocking { sends.list().isEmpty() } }
+        reconnect()
+        assertEquals("never written after the press, nor by a later pass", listOf(id(1)), writtenIds())
+        assertNull(marks.get(machineId, "s1"))
+    }
+
+    @Test
+    fun `Discard while the server answers pending stops the pass's polling at once`() = guarded {
+        lostSend()
+        routes(write = { answer(200, """{"status":"accepted"}""") }, status = { asked, call ->
+            if (asked == id(1) && machine.held.isEmpty()) machine.hold(call) else answer(200, """{"status":"pending"}""")
+        })
+        machine.welcome = true
+        machine.closePeers()
+        until(20_000) { machine.held.size == 1 }
+        val asked = askedIds().count { it == id(1) }
+        val discard = scope.async { store.discardUnknown(machineId, "s1", id(1)) }
+        delay(500)
+        machine.respond(0, answer(200, """{"status":"pending"}"""))
+        assertEquals(DeliveryController.DiscardResult.Discarded, awaitGate("the discard", discard))
+        assertEquals("no question about it after the press", asked, askedIds().count { it == id(1) })
+        assertEquals(listOf(id(1)), writtenIds())
+    }
+
+    @Test
+    fun `a completion whose answer was lost releases its claim, so a later Discard discards`() = guarded {
+        lostSend()
+        routes(write = { answer(504, "{}") }, status = { _, _ -> answer(200, """{"status":"absent"}""") })
+        reconnect()
+        assertEquals("the same id completed once, its answer lost", listOf(id(1), id(1)), writtenIds())
+        assertEquals(DeliveryController.DiscardResult.Discarded, store.discardUnknown(machineId, "s1", id(1)))
+        assertEquals(emptyList<String>(), sends.list().map { it.clientMessageId })
+    }
+
+    @Test
+    fun `Send again on a send no longer waiting sends nothing and says so`() = guarded {
+        lostSend()
+        assertEquals(DeliveryController.DiscardResult.Discarded, store.discardUnknown(machineId, "s1", id(1)))
+        assertEquals(SendOutcome.Failed(id(1), NOTHING_WAITING), store.resend(machineId, "s1", id(1), "hello"))
+        assertEquals(listOf(id(1)), writtenIds())
+        assertEquals(1, minted.get())
+    }
+
+    @Test
+    fun `Send again on a send the server refused sends nothing and says the refusal`() = guarded {
+        lostSend()
+        routes(write = { answer(200, """{"status":"accepted"}""") }, status = { _, _ -> answer(200, """{"status":"rejected","reason":"The session is closed."}""") })
+        reconnect()
+        val again = store.resend(machineId, "s1", id(1), "hello")
+        assertTrue("$again", again is SendOutcome.Rejected && again.clientMessageId == id(1))
+        assertEquals(listOf(id(1)), writtenIds())
+        assertEquals(1, minted.get())
+    }
+
     private companion object {
         const val SENTINEL = "m-ffffffffffffffffffffffff"
     }

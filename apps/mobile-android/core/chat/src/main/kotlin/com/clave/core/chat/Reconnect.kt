@@ -21,12 +21,14 @@ import com.clave.core.contract.WriteStatus
 import com.clave.core.ports.Clock
 import com.clave.core.ports.KeyValueStore
 import com.clave.core.ports.SystemClock
+import java.util.concurrent.ConcurrentHashMap
+import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import java.util.concurrent.ConcurrentHashMap
-import kotlin.coroutines.cancellation.CancellationException
+import kotlinx.coroutines.withContext
 
 data class ReconnectPorts(
     val sends: UnknownSends,
@@ -267,7 +269,14 @@ class DeliveryController(
     suspend fun discard(machineId: String, sessionId: String, clientMessageId: String): DiscardResult {
         if (inFlight(clientMessageId)) return DiscardResult.InFlight
         if (decisions.putIfAbsent(clientMessageId, Decision.Discarded) == Decision.Completing) return DiscardResult.BeingCompleted
-        return passLock(machineId).withLock {
+        // Once decided, the discard is carried through even when its caller is cancelled meanwhile (a
+        // screen closing): a decision left behind would make every pass skip the send, and the first
+        // pass after a restart deliver the message the person discarded.
+        return withContext(NonCancellable) { discardDecided(machineId, sessionId, clientMessageId) }
+    }
+
+    private suspend fun discardDecided(machineId: String, sessionId: String, clientMessageId: String): DiscardResult =
+        passLock(machineId).withLock {
             try {
                 when {
                     inFlight(clientMessageId) -> DiscardResult.InFlight
@@ -286,7 +295,6 @@ class DeliveryController(
                 decisions.remove(clientMessageId, Decision.Discarded)
             }
         }
-    }
 
     /** The attachment draft goes only when it is still the records sent. */
     private val clearAttachments: suspend (UnknownSend) -> Unit = { send ->
