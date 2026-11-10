@@ -169,7 +169,8 @@ untouched). `--dry-run` runs the pre-boot checks alone, reads the run folder onl
 nothing; `--dry-run --mutate recorder-removed|recorder-unreadable|recorder-truncated` shows the
 guard latch, and so does `--dry-run --mutate recorder-foreign-line|decoy-line`;
 `--dry-run --red-flags|--red-interlock` shows two pre-boot checks go red; the daemon-side faults
-(`--mutate divergent-cache|wrong-resolver|env-extra|env-home`, and the positive control
+(`--mutate divergent-cache|wrong-resolver|env-extra|env-home|tmux-root-mode|tmux-client-mode`,
+and the positive control
 `decoy-on-process-path`) run under `--check` only. The shared fixture lane C ships
 (`packages/mobile-native/scripts/fixture-server.mjs`) runs the same three boot checks.
 
@@ -185,7 +186,12 @@ person's server; `--tmpdir` is therefore a real path (under `/private/tmp`, not 
 tmux server found under that folder at the stop is stopped through its exact socket. After the
 boot and before any chat, the daemon's own HOME, SHELL, Claude and Codex homes, keychain file,
 `TMUX_TMPDIR` (in its cached login environment too), first PATH entry and `os.homedir()` are
-read inside it and compared with the launch's, and any difference refuses the boot (exit 2).
+read inside it and compared with the launch's, and any difference refuses the boot (exit 2). Then,
+still before any chat, the tmux folder is checked again: still the run's own, and, when tmux
+resolves on the daemon's PATH, holding the folder tmux makes for its socket (`t/tmux-<uid>`), so
+the daemon's startup query went to the run's own socket. That narrows the pre-boot check; it
+cannot see a same-user process remove and restore the folder before that first query. The empty
+`t/tmux-<uid>` folder stays after the stop and goes with the run folder at the next claim.
 
 ## What a release APK needs, named apart
 

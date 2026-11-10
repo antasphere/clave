@@ -85,6 +85,10 @@
 // own environment) and --mutate env-home (the daemon's own HOME moved to another
 // path inside the run folder) run under --check only, inside the daemon, and the
 // in-daemon environment checks must refuse them (exit 2) with nothing seeded.
+// --mutate tmux-root-mode and tmux-client-mode (the run's tmux folder, or the folder
+// the daemon's tmux client made in it, set to mode 750 AFTER the daemon started; never a
+// folder removed or unset) run under --check only, and the post-start tmux check must
+// refuse them (exit 2) with nothing seeded.
 // --mutate recorder-removed|recorder-unreadable|
 // recorder-truncated damage the fixture's own recorder log after the checks, and
 // --mutate recorder-foreign-line|decoy-line write a non-probe line through the
@@ -177,7 +181,9 @@ const DAEMON_MUTATIONS = [
   'wrong-resolver',
   'decoy-on-process-path',
   'env-extra',
-  'env-home'
+  'env-home',
+  'tmux-root-mode',
+  'tmux-client-mode'
 ]
 const RECORDER_MUTATIONS = ['recorder-removed', 'recorder-unreadable', 'recorder-truncated', 'recorder-foreign-line', 'decoy-line']
 const MUTATIONS = [...DAEMON_MUTATIONS, ...RECORDER_MUTATIONS]
@@ -967,6 +973,54 @@ async function bootChecks(daemon, launch) {
       return rows.map(([name, value]) => `${name} ${value}`).join(', ')
     }
   )
+  if (MUTATE === 'tmux-root-mode' || MUTATE === 'tmux-client-mode') {
+    // A metadata fault made AFTER the daemon started (its startup query has already run in the
+    // run's own folder): never a folder removed, emptied or unset, before or after.
+    const target = MUTATE === 'tmux-root-mode' ? TMUX_DIR : tmuxBaseOf(TMUX_DIR)
+    if (MUTATE === 'tmux-client-mode')
+      await until(async () => lstatIfThere(target) !== null, 5_000, 100)
+    chmodSync(target, 0o750)
+    say(
+      `mutation  ${MUTATE}: ${target} is now mode 750, after the daemon started; the tmux folder check must refuse it`
+    )
+  }
+  // After the daemon started and before anything is seeded: the run's tmux folder is still its own,
+  // and when tmux resolves on the daemon's PATH, the folder tmux makes for its socket is in it, the
+  // user's and closed to others, so the daemon's startup query went to the run's own socket. It
+  // cannot tell whether a same-user process removed the folder before that first query and
+  // restored it after; it narrows what the pre-boot check left open, nothing more.
+  await check(
+    "the run's tmux folder after the daemon started: still the run's own, and the folder its tmux client makes for the socket is in it (when tmux resolves on the daemon's PATH)",
+    async () => {
+      const root = lstatIfThere(TMUX_DIR)
+      expectThat(
+        root !== null && root.isDirectory() && !root.isSymbolicLink(),
+        `${TMUX_DIR} is no longer a plain folder`
+      )
+      expectThat(realpathSync(TMUX_DIR) === TMUX_DIR, `${TMUX_DIR} no longer resolves to itself`)
+      expectThat(root.uid === process.getuid(), `${TMUX_DIR} belongs to uid ${root.uid}`)
+      expectThat(
+        (root.mode & 0o777) === 0o700,
+        `${TMUX_DIR} has mode ${(root.mode & 0o777).toString(8)}, not 700`
+      )
+      const tmux = locateOnPath('tmux', launch.env.PATH)
+      if (tmux === null)
+        return `${TMUX_DIR} still the run's own; no tmux on the daemon's PATH, so no client folder to require`
+      const base = tmuxBaseOf(TMUX_DIR)
+      const made = await until(async () => lstatIfThere(base), 5_000, 100)
+      expectThat(
+        made !== null,
+        `no ${base} 5 s after the daemon started: its tmux client did not make its folder in the run's own`
+      )
+      expectThat(made.isDirectory() && !made.isSymbolicLink(), `${base} is not a plain folder`)
+      expectThat(made.uid === process.getuid(), `${base} belongs to uid ${made.uid}`)
+      expectThat(
+        (made.mode & 0o077) === 0,
+        `${base} has mode ${(made.mode & 0o777).toString(8)}, open to others`
+      )
+      return `${TMUX_DIR} still the run's own (mode 700); ${base} made by the daemon's tmux client, the user's, mode ${(made.mode & 0o777).toString(8)}`
+    }
+  )
   if (MUTATE === 'divergent-cache') {
     const mutated = await evaluate(daemon, PATH_PREFIX_SOURCE, { ptyBackend: PTY_BACKEND, where: 'cache', decoy: shims.decoyDir, on: true })
     say(`mutation  divergent-cache: the daemon's cached login PATH now starts with the decoy (${mutated.split(':')[0]}); the resolver must answer the decoy and the check must refuse`)
@@ -1214,7 +1268,10 @@ async function stopRunTmux() {
       `the run's tmux folder cannot be read (${error?.code ?? error?.message ?? error}); no tmux command was run`
     )
   }
-  if (sockets.length === 0) return note(`tmux: no server socket under the run's own ${TMUX_DIR}`)
+  if (sockets.length === 0)
+    return note(
+      `tmux: no server socket under the run's own ${TMUX_DIR}; the empty folder its client made stays, removed with the run folder at the next claim`
+    )
   // The tmux the daemon resolves: the first on its PATH, which its login shell stand-in prints too.
   const tmux = locateOnPath('tmux', LAUNCH?.env.PATH)
   const left = []
