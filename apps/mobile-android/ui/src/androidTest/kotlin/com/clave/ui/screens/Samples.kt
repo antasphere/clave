@@ -20,7 +20,6 @@ import com.clave.core.contract.Transport
 import com.clave.core.contract.WorkspaceView
 import com.clave.core.devices.Machine
 import com.clave.core.devices.PairingState
-import com.clave.ui.theme.Appearance
 import com.clave.ui.theme.Reachability
 import com.clave.ui.theme.SessionStatus
 
@@ -150,7 +149,7 @@ object Samples {
         The next build is planned for Thursday.
     """.trimIndent()
 
-    fun chat() = ChatScreenState(
+    fun chat(reply: String = this.reply) = ChatScreenState(
         title = "Fix the parser",
         machineName = "Studio",
         provider = "claude",
@@ -195,5 +194,4 @@ object Samples {
         now = now,
     )
 
-    val appearance = Appearance.Dark
 }

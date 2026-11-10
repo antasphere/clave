@@ -6,6 +6,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Density
 import androidx.test.platform.app.InstrumentationRegistry
+import com.clave.ui.theme.Appearance
 import com.clave.ui.theme.ClaveTheme
 import com.clave.ui.theme.ThemeName
 import java.io.File
@@ -30,20 +31,29 @@ fun Screen.title(): String = when (this) {
  * but the chat's [onLink], which a test passes to see which URL a link opened.
  */
 @Composable
-fun EvidenceScreen(which: Screen, theme: ThemeName, fontScale: Float, onLink: (String) -> Unit = {}) {
+fun EvidenceScreen(
+    which: Screen,
+    theme: ThemeName,
+    fontScale: Float,
+    onLink: (String) -> Unit = {},
+    chatReply: String = Samples.reply,
+) {
     ClaveTheme(theme) {
         if (fontScale != 1f) {
             CompositionLocalProvider(LocalDensity provides Density(LocalDensity.current.density, fontScale)) {
-                Painted(which, onLink)
+                Painted(which, theme, onLink, chatReply)
             }
         } else {
-            Painted(which, onLink)
+            Painted(which, theme, onLink, chatReply)
         }
     }
 }
 
+/** The appearance a person picked to see [theme]: the Appearance screen shows it selected. */
+fun appearanceOf(theme: ThemeName): Appearance = Appearance.entries.single { it.id == theme.id }
+
 @Composable
-private fun Painted(which: Screen, onLink: (String) -> Unit) {
+private fun Painted(which: Screen, theme: ThemeName, onLink: (String) -> Unit, chatReply: String) {
     when (which) {
         Screen.Machines -> MachinesScreen(
             state = Samples.machines(),
@@ -59,13 +69,14 @@ private fun Painted(which: Screen, onLink: (String) -> Unit) {
         Screen.Launch -> LaunchScreen(Samples.launch(), onStart = {}, onBack = {})
         Screen.Requests -> RequestsScreen(Samples.requests(), onResolve = { _, _ -> }, onRefresh = {}, onBack = {})
         Screen.Chat -> ChatScreen(
-            state = Samples.chat(),
+            state = Samples.chat(chatReply),
             onBack = {}, onRequests = {}, onLoadOlder = {}, onTextChange = {},
             onSend = {}, onStop = {}, onPickPhotos = {}, onTakePhoto = {}, onPickDocuments = {},
             onRemoveAttachment = {}, onAnswer = { _, _, _ -> }, onToggle = {},
             onResend = {}, onDiscard = {}, onLink = onLink,
         )
-        Screen.Appearance -> AppearanceScreen(Samples.appearance, onAppearance = {}, onBack = {})
+        // The picker shows the appearance of the theme it is painted in, as the app passes the current one.
+        Screen.Appearance -> AppearanceScreen(appearanceOf(theme), onAppearance = {}, onBack = {})
     }
 }
 

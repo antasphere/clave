@@ -8,12 +8,15 @@ import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.captureToImage
+import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.ComposeContentTestRule
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onRoot
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import com.clave.ui.theme.Appearance
 import com.clave.ui.theme.ThemeName
+import org.junit.Assert.assertEquals
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -45,6 +48,14 @@ class ThemesEvidenceTest {
             screen = which
             rule.waitForIdle()
             rule.assertTitleShown(which.title())
+            if (which == Screen.Appearance) {
+                // Exactly the painted theme's appearance is selected, and no other.
+                val chosen = appearanceOf(theme)
+                for (option in Appearance.entries) {
+                    val marked = rule.onAllNodes(hasContentDescription("${option.label}, selected"), useUnmergedTree = true).fetchSemanticsNodes().size
+                    assertEquals("${option.label} marked selected while painting $theme", if (option == chosen) 1 else 0, marked)
+                }
+            }
             val shot = rule.onRoot().captureToImage().asAndroidBitmap()
             writeEvidence("${theme.id}-${which.name.lowercase()}", shot)
         }

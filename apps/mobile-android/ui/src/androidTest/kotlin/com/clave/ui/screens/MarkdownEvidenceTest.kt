@@ -1,5 +1,9 @@
 package com.clave.ui.screens
 
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Paint
+import android.net.Uri
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsNode
@@ -7,21 +11,26 @@ import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.captureToImage
+import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.v2.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performScrollToNode
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.platform.app.InstrumentationRegistry
+import com.clave.ui.theme.Metrics
 import com.clave.ui.theme.ThemeName
+import java.io.File
+import kotlin.math.abs
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
-import java.io.File
 
 /**
  * GitHub-flavoured Markdown in the chat: the agent's reply holds a heading, a link, a fenced
@@ -114,4 +123,54 @@ class MarkdownEvidenceTest {
 
     @Test
     fun theReplyInLight() = theReplyIn(ThemeName.Light)
+
+    /**
+     * An image decoded and drawn, not its fallback: a chart this test draws itself, written to the
+     * test app's cache and read by Coil from that file, no network. Loaded, the image takes its own
+     * height instead of the placeholder's, and its bars' colour is on the screen; the unreachable
+     * image beside it keeps its placeholder.
+     */
+    private fun theDecodedImageIn(theme: ThemeName) {
+        val file = File(InstrumentationRegistry.getInstrumentation().targetContext.cacheDir, "evidence-build-times.png")
+        val chart = Bitmap.createBitmap(640, 360, Bitmap.Config.ARGB_8888)
+        Canvas(chart).apply {
+            drawColor(android.graphics.Color.WHITE)
+            val bar = Paint().apply { color = BAR }
+            listOf(120f, 200f, 90f, 260f, 170f).forEachIndexed { i, h -> drawRect(60f + i * 110f, 320f - h, 140f + i * 110f, 320f, bar) }
+        }
+        file.outputStream().use { chart.compress(Bitmap.CompressFormat.PNG, 100, it) }
+        val reply = listOf(
+            "The build times of the week, as a chart:",
+            "![build times](${Uri.fromFile(file)})",
+            "And the dashboard, out of reach here:",
+            "![the dashboard](https://example.invalid/dashboard.png)",
+        ).joinToString("\n\n")
+        rule.setContent { EvidenceScreen(Screen.Chat, theme, 1f, chatReply = reply) }
+        val placeholderPx = with(rule.density) { Metrics.imagePlaceholderHeight.toPx() }
+        rule.onNodeWithTag("chat-transcript").performScrollToNode(hasContentDescription("build times"))
+        rule.waitUntil("the local chart decoded and drawn at its own height", 10_000) {
+            val nodes = rule.onAllNodesWithContentDescription("build times", useUnmergedTree = true).fetchSemanticsNodes()
+            nodes.isNotEmpty() && nodes.all { abs(it.boundsInRoot.height - placeholderPx) > 1f }
+        }
+        rule.waitForIdle()
+        val shot = rule.onRoot().captureToImage().asAndroidBitmap()
+        val pixels = IntArray(shot.width * shot.height)
+        shot.getPixels(pixels, 0, shot.width, 0, 0, shot.width, shot.height)
+        val barPixels = pixels.count { it == BAR }
+        assertTrue("the chart's bars are on the screen: $barPixels pixels of their colour", barPixels > 2_000)
+        rule.onNodeWithContentDescription("the dashboard", useUnmergedTree = true).assertExists()
+        writeEvidence("gfm-image-${theme.id}", shot)
+        File(writeEvidenceDir(), "gfm-image-${theme.id}.txt").writeText("chart: file ${file.name}, bar colour pixels on screen = $barPixels, placeholder height px = $placeholderPx\n")
+    }
+
+    @Test
+    fun aDecodedImageInDark() = theDecodedImageIn(ThemeName.Dark)
+
+    @Test
+    fun aDecodedImageInLight() = theDecodedImageIn(ThemeName.Light)
+
+    private companion object {
+        /** The chart's bars: a teal none of the four themes uses. */
+        const val BAR = 0xFF00897B.toInt()
+    }
 }
