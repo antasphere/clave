@@ -101,6 +101,7 @@ import { eventsProfile, launchProfileManager } from './launch-profile-manager'
 import { rememberedSpawnModel } from './sessions/spawn-model'
 import { chatDefaultFor } from '../shared/open-session-modes'
 import { ptyManager, loginShellEnvAsync, getUserShell, getLoginShellEnv } from './pty-manager'
+import { hostDigests } from './exchange-digest'
 import { TEST_NO_ACTIVATE } from './test-mode'
 // ── Wave 5, lane C: the plugins, this server's own service (plugins/standalone-plugins.ts) ──
 import { standalonePlugins } from './plugins/standalone-plugins'
@@ -413,6 +414,9 @@ async function main(): Promise<void> {
       workspaceFiles: workspaceFilesInstance,
       // ── ADR 0004: the routines ──
       routines,
+      // ── PRDCT-4327: the digests a client asks for, read on this server's
+      // own record of the session, filed in its data folder ──
+      digests: hostDigests((id) => ptyManager.getSessionRecord(id)),
       // ── Wave 4, lane C: the agent tokens, resolved for the attached shell ──
       // A desktop may still announce its own endpoint for old servers. This
       // server owns its endpoint and never points local providers at a Mac.

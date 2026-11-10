@@ -7,6 +7,8 @@ import { DIGEST_TIMEOUT_MS, exchangeDigestHelper, workDigestHelper } from './hel
 import {
   parseDigestReply,
   type DigestDone,
+  type DigestLaunch,
+  type DigestMessage,
   type DigestRequest,
   type DigestResult
 } from '../shared/exchange-digest'
@@ -220,8 +222,17 @@ export function launchFromRecord(record: DigestLaunchRecord): DigestLaunch {
 }
 
 /** What a client sends: the digest's subject, never its launch. */
-export type HostDigestRequest = Omit<DigestRequest, 'launch'>
-export type HostWorkDigestRequest = Omit<WorkDigestRequest, 'launch'>
+export interface HostDigestRequest {
+  sessionId: string
+  key: string
+  messages: readonly DigestMessage[]
+}
+export interface HostWorkDigestRequest {
+  sessionId: string
+  key: string
+  notes: readonly string[]
+  tools: number
+}
 
 export interface HostDigests {
   exchangeDigest: (request: HostDigestRequest) => Promise<DigestResult>
@@ -247,7 +258,7 @@ export function hostDigests(recordOf: DigestRecordOf): HostDigests {
       return requestDigest({
         sessionId: request.sessionId,
         key: request.key,
-        messages: request.messages,
+        messages: [...request.messages],
         launch
       })
     },
@@ -259,7 +270,7 @@ export function hostDigests(recordOf: DigestRecordOf): HostDigests {
       return requestWorkDigest({
         sessionId: request.sessionId,
         key: request.key,
-        notes: request.notes,
+        notes: [...request.notes],
         tools: request.tools,
         launch
       })

@@ -61,6 +61,8 @@ import { gitGroup } from './git'
 import { serverInfoGroup } from './server-info'
 // ── ADR 0004: the routines (`routines.ts`) ──
 import { routinesGroup } from './routines/api'
+// ── PRDCT-4327: the digests read by the server a tab runs on (`digests.ts`) ──
+import { digestsGroup } from './digests'
 
 // ── Sessions (lane A) ──
 export const sessionsGroup = ApiGroup.make('sessions')
@@ -147,6 +149,8 @@ export { gitGroup }
 export { serverInfoGroup }
 // ── ADR 0004: the routines ──
 export { routinesGroup }
+// ── PRDCT-4327: the digests ──
+export { digestsGroup }
 
 // ── Lane B: terminals ──
 
@@ -170,6 +174,8 @@ export const ClaveApi = Api.make('clave')
   .add(serverInfoGroup)
   // ── ADR 0004: the routines ──
   .add(routinesGroup)
+  // ── PRDCT-4327: the digests ──
+  .add(digestsGroup)
   .add(Health.group)
   .pipe(annotate({ title: 'Clave', version: '1', description: "Clave's server API" }))
 export type ClaveApi = typeof ClaveApi

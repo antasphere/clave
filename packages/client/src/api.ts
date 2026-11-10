@@ -31,6 +31,8 @@ import { gitClient, type GitClient } from './git'
 import { serverInfoClient, type ServerInfoClient } from './server-info'
 // ── ADR 0004: the routines ──
 import { routinesClient, type RoutinesClient } from './routines'
+// ── PRDCT-4327: the digests ──
+import { digestsClient, type DigestsClient } from './digests'
 
 export interface ApiClientOptions {
   readonly url: string
@@ -85,6 +87,8 @@ export interface ClaveApiClient {
   readonly server: ServerInfoClient
   // ── ADR 0004: the routines (`./routines.ts`) ──
   readonly routines: RoutinesClient
+  // ── PRDCT-4327: the digests (`./digests.ts`) ──
+  readonly digests: DigestsClient
   // ── Lane B: terminals ──
   readonly health: {
     readonly live: () => Promise<boolean>
@@ -167,6 +171,8 @@ export function createApiClient(options: ApiClientOptions): ClaveApiClient {
     server: serverInfoClient(call, options.url),
     // ── ADR 0004: the routines ──
     routines: routinesClient(call),
+    // ── PRDCT-4327: the digests ──
+    digests: digestsClient(call, patientCall),
     health: {
       live: () => call((c) => c.health.live()).then((answer) => answer.status === 'live')
     },

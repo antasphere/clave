@@ -71,6 +71,8 @@ import { FilesLive } from './files/api'
 import { GitLive } from './git/api'
 // ── ADR 0004: the routines (`routines/api.ts`) ──
 import { RoutinesLive } from './routines/api'
+// ── PRDCT-4327: the digests ──
+import { DigestsLive } from './digests/api'
 // ── Issue #266: the server's version and its self-upgrade ──
 import { GetServerInfo, RequestServerUpgrade, SetServerName } from '@clave/contract/server-info'
 import {
@@ -253,6 +255,8 @@ export const ApiLive = HttpApiBuilder.api(ClaveApi).pipe(
       ServerInfoLive,
       // ── ADR 0004: the routines ──
       RoutinesLive,
+      // ── PRDCT-4327: the digests ──
+      DigestsLive,
       HealthLive
     )
   )
