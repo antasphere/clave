@@ -85,8 +85,11 @@ struct AppEnvironment: Sendable {
   /// True when the developer connection is offered (a development build).
   var offersDeveloperConnection: Bool { buildKind == .development }
 
-  /// The environment of this process.
-  static func live(_ options: LaunchOptions = .current()) -> AppEnvironment {
+  /// The environment of this process. The live store's Keychain service is named from
+  /// `bundleIdentifier` (storageNames), this build's own unless a test names another.
+  static func live(
+    _ options: LaunchOptions = .current(), bundleIdentifier: String? = Bundle.main.bundleIdentifier
+  ) -> AppEnvironment {
     #if DEBUG
       if options.usesUITestFake {
         return uiTestFake(asksForNotifications: options.uiTestFakeAsksForNotifications, longChat: options.uiTestFakeLongChat)
@@ -99,7 +102,7 @@ struct AppEnvironment: Sendable {
       relayOverride: options.relayOverride,
       transport: URLSessionTransport(),
       webSocketTransport: URLSessionWebSocketTransport(),
-      secureStore: KeychainSecureStore(service: storageNames(bundleIdentifier: Bundle.main.bundleIdentifier).keychainService),
+      secureStore: KeychainSecureStore(service: storageNames(bundleIdentifier: bundleIdentifier).keychainService),
       keyValueStore: FileKeyValueStore(directory: applicationSupportDirectory()),
       opener: WebAuthenticationOpener(),
       usesRemoteNotifications: true,

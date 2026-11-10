@@ -7,7 +7,10 @@ builds Debug and Release for the simulator and reads both binaries with `strings
 development-only markers must be in Debug and absent from Release, a binary that is not
 there fails the check rather than reading as one without markers, and each app must carry its
 own identifier (Debug `com.clave.ios.dev`, Release `com.clave.ios`, so the two never share a
-container or a Keychain service); `--prove-red` shows the check fails when the guard is off.
+container or a Keychain service). The Release binary must also lack `com.clave.ios.dev.credentials`,
+the Debug install's Keychain service: the live store names its service from the identifier at
+run time, so only a name written in by hand puts it in a binary. `--prove-red` shows the check
+fails when the guard is off.
 `prove-ci-gate.sh` (bash, from `apps/mobile-ios`) runs `ci.sh` in a scratch folder with
 stand-ins for swift, xcodebuild and xcrun, and proves three things: the gate exits non-zero,
 without printing `ci: green`, when the core's tests, the build, the tests or the release

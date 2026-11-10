@@ -73,6 +73,12 @@ binary_strings() {
 # is named from the identifier).
 DEBUG_ID="com.clave.ios.dev"
 RELEASE_ID="com.clave.ios"
+# The Debug install's Keychain service. The live store names its service from the bundle
+# identifier at run time, so no build holds the whole name as one string: a Release binary that
+# does was handed the Debug name by hand, and its install would file its items under the Debug
+# install's service (found twice in such a mutant's binary on 10 November 2026, never in the real
+# one). Checked in Release only.
+DEBUG_SERVICE="com.clave.ios.dev.credentials"
 
 # The bundle identifier a build wrote into its app's Info.plist; empty when there is none.
 bundle_id() {
@@ -123,6 +129,12 @@ for marker in "${MARKERS[@]}"; do
     echo "PASS release lacks $marker"
   fi
 done
+if grep -qF -- "$DEBUG_SERVICE" <<<"$release_text"; then
+  echo "FAIL release has $DEBUG_SERVICE"
+  release_failed=1
+else
+  echo "PASS release lacks $DEBUG_SERVICE"
+fi
 
 if [ $PROVE_RED -eq 1 ]; then
   missed=0
