@@ -6,8 +6,10 @@
 # Four steps: the core package's tests on the Mac (fast, no simulator), the
 # app built for a simulator, the app's host tests plus the launch smoke test
 # and the shell's flow on that simulator, and the release-binary check (a
-# Release build that must carry none of the development-only code). The simulator is the first available iPhone of the
-# newest iOS runtime the runner has; CLAVE_IOS_SIMULATOR_UDID overrides it.
+# Release build that must carry none of the development-only code). The
+# simulator is the first iPhone on the newest iOS that `xcodebuild
+# -showdestinations` lists for the scheme, so the runner's own runtimes decide
+# and no version is written here; CLAVE_IOS_SIMULATOR_UDID overrides it.
 # The fixture check (scripts/fixture-check.mjs) needs the repository's Bun
 # and a booted simulator for minutes and stays a gate run by hand on a Mac.
 set -euo pipefail
@@ -34,29 +36,53 @@ rm -f "$log"
 
 UDID="${CLAVE_IOS_SIMULATOR_UDID:-}"
 if [ -z "$UDID" ]; then
-  # The newest iOS runtime this Xcode's simulator SDK can run (a newer runtime a
-  # later Xcode installed beside it would fail the build), its first iPhone.
-  SDK="$(xcrun --sdk iphonesimulator --show-sdk-version)"
-  UDID="$(xcrun simctl list devices available -j | python3 -c '
-import json, re, sys
-sdk = tuple(int(part) for part in sys.argv[1].split(".")[:2])
-data = json.load(sys.stdin)["devices"]
+  # Xcode names the destinations it can build and test the scheme on; a runtime
+  # it cannot use is listed under "Ineligible destinations", or not at all. The
+  # pick reads only the available ones: the first iPhone on the newest iOS, never
+  # a placeholder such as "Any iOS Simulator Device".
+  log="$(step_log)"
+  status=0
+  xcodebuild -project Clave.xcodeproj -scheme Clave -showdestinations >"$log" 2>&1 || status=$?
+  if [ "$status" -ne 0 ]; then
+    tail -5 "$log"
+    echo "ci: xcodebuild -showdestinations exited $status (log: $log)"
+    exit "$status"
+  fi
+  status=0
+  UDID="$(python3 -c '
+import re, sys
 best = None
-for runtime, devices in data.items():
-    match = re.search(r"iOS-(\d+)-(\d+)", runtime)
-    if not match:
-        continue
-    version = (int(match.group(1)), int(match.group(2)))
-    if version > sdk:
-        continue
-    for device in devices:
-        if device.get("isAvailable") and device["name"].startswith("iPhone"):
-            if best is None or version > best[0]:
-                best = (version, device["udid"], device["name"], runtime)
+available = False
+with open(sys.argv[1], encoding="utf-8", errors="replace") as listing:
+    for line in listing:
+        if "Available destinations for" in line:
+            available = True
+            continue
+        if "Ineligible destinations for" in line:
+            available = False
+            continue
+        if not available or "platform:iOS Simulator," not in line:
+            continue
+        ident = re.search(r"\bid:([^,}\s]+)", line)
+        system = re.search(r"\bOS:(\d+(?:\.\d+)*)", line)
+        name = re.search(r"\bname:(.*?)\s*\}\s*$", line)
+        if not (ident and system and name) or "placeholder" in ident.group(1):
+            continue
+        if not name.group(1).startswith("iPhone"):
+            continue
+        version = tuple(int(part) for part in system.group(1).split("."))
+        if best is None or version > best[0]:
+            best = (version, ident.group(1), name.group(1), system.group(1))
 if best is None:
-    sys.exit("no available iPhone simulator on a runtime this Xcode can run")
+    sys.exit("ci: no iPhone simulator among the destinations xcodebuild lists for the Clave scheme")
+sys.stderr.write("ci: picked %s, iOS %s\n" % (best[2], best[3]))
 print(best[1])
-' "$SDK")"
+' "$log")" || status=$?
+  if [ "$status" -ne 0 ]; then
+    echo "ci: the destinations xcodebuild listed are in $log"
+    exit "$status"
+  fi
+  rm -f "$log"
 fi
 echo "ci: simulator $UDID"
 DERIVED="${CLAVE_IOS_DERIVED_DATA:-$PWD/DerivedData}"

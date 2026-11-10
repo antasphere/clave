@@ -13,11 +13,15 @@ stand-ins for swift, xcodebuild and xcrun, and proves three things: the gate exi
 without printing `ci: green`, when the core's tests, the build, the tests or the release
 check fail; the real `check-release-binary.sh`, reading the binaries the xcodebuild stand-in
 writes, passes a clean Release output and fails one carrying a development-only marker, one
-missing altogether and one carrying the Debug build's identifier; and with no simulator named, the gate fails on a runner with no
-iPhone and skips a runtime newer than the Xcode's simulator SDK. `--against <file>` and
-`--release-check <file>` run the scenarios on other copies: the copies at df0332c9 read green
-with no Release output and pick the newer runtime, and the ci.sh at ca3f0f35 read green on a
-failed build and on failed tests.
+missing altogether and one carrying the Debug build's identifier; and with no simulator
+named, in the shape reported for the hosted macos-26 runner on 10 November 2026 (Xcode
+26.0.1 beside the iOS 26.2, 26.4 and 26.5 runtimes only), the gate takes the first iPhone on the newest iOS that `xcodebuild
+-showdestinations` lists, past an ineligible one, and fails when none is listed or when the
+list cannot be read. `--against <file>` and `--release-check <file>` run the scenarios on
+other copies: the copies at df0332c9 read green with no Release output and with a Release
+carrying the Debug identifier, the ci.sh at ca3f0f35 read green on a failed build and on
+failed tests, and the ci.sh at 9a78df7f, whose pick kept to runtimes no newer than the
+simulator SDK, finds no iPhone on the runner's shape.
 
 ## The fixture stack
 

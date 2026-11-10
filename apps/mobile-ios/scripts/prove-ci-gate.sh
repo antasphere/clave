@@ -11,9 +11,13 @@
 #     binaries the xcodebuild stand-in writes: a clean Release output (green), a
 #     Release output carrying a development-only marker (red), no Release
 #     output at all (red), a Release carrying the Debug build's identifier (red);
-#   - the simulator pick a runner makes when CLAVE_IOS_SIMULATOR_UDID is unset:
-#     no iPhone at all (red), and a runtime newer than this Xcode's simulator
-#     SDK skipped for the newest one it can run (green, that device named).
+#   - the simulator pick a runner makes when CLAVE_IOS_SIMULATOR_UDID is unset,
+#     read from the destinations the xcodebuild stand-in lists in the shape of
+#     the hosted macos-26 runner as reported on 10 November 2026 (Xcode 26.0.1,
+#     whose simulator SDK is 26.0, beside the iOS 26.2, 26.4 and 26.5 runtimes
+#     only): no iPhone among them
+#     (red); the first iPhone on the newest iOS picked, past an ineligible one
+#     (green, that device named); the listing itself failing (red).
 #
 #   bash scripts/prove-ci-gate.sh                          # proves ./ci.sh and ./scripts/check-release-binary.sh
 #   bash scripts/prove-ci-gate.sh --against <ci copy>      # the scenarios on another copy of ci.sh
@@ -59,10 +63,14 @@ printf '%s\n' '#!/bin/bash' \
   '    -configuration) conf="$2"; shift 2; continue ;;' \
   '    -derivedDataPath) derived="$2"; shift 2; continue ;;' \
   '    build|test) action="$1" ;;' \
+  '    -showdestinations) action=showdestinations ;;' \
   '  esac' \
   '  shift' \
   'done' \
   'case "$action" in' \
+  '  showdestinations)' \
+  '    if [ "$CI_PROOF_LISTING" = fail ]; then echo "xcodebuild: error: a stand-in failure"; exit 70; fi' \
+  '    cat "$CI_PROOF_DESTINATIONS"; exit 0 ;;' \
   '  build)' \
   '    if [ "$CI_PROOF_FAIL" = build ]; then echo "** BUILD FAILED **"; exit 65; fi' \
   '    if [ -n "$CI_PROOF_RELEASE" ] && [ -n "$derived" ]; then' \
@@ -87,8 +95,9 @@ printf '%s\n' '#!/bin/bash' \
   'echo "stand-in xcodebuild: no action among the arguments"' \
   'exit 64' >"$sandbox/bin/xcodebuild"
 
-# The xcrun stand-in answers the simulator SDK's version and the device list the pick reads;
-# anything else goes to the real xcrun.
+# The xcrun stand-in answers the simulator SDK's version and the device list as the runner
+# would. ci.sh's pick no longer asks either; a copy given with --against that still does
+# meets the runner's shape here, never this Mac's devices. Anything else goes to the real xcrun.
 printf '%s\n' '#!/bin/bash' \
   'if [ "$1" = "--sdk" ] && [ "$3" = "--show-sdk-version" ]; then echo "26.0"; exit 0; fi' \
   'if [ "$1" = "simctl" ] && [ "$2" = "list" ]; then cat "$CI_PROOF_DEVICES"; exit 0; fi' \
@@ -98,10 +107,37 @@ printf '%s\n' '#!/bin/bash' \
   'if [ "$CI_PROOF_FAIL" = release ]; then echo "FAIL release has UITestFake"; exit 1; fi' \
   'echo "PASS release binary check"' >"$sandbox/stand-in-check.sh"
 
-printf '%s\n' '{"devices":{"com.apple.CoreSimulator.SimRuntime.iOS-26-0":[{"udid":"IPAD-2600","name":"iPad Air 11-inch (M3)","isAvailable":true}]}}' \
-  >"$sandbox/devices-no-iphone.json"
-printf '%s\n' '{"devices":{"com.apple.CoreSimulator.SimRuntime.iOS-17-5":[{"udid":"OLD-1750","name":"iPhone 15 Pro","isAvailable":true}],"com.apple.CoreSimulator.SimRuntime.iOS-26-1":[{"udid":"NEWER-2610","name":"iPhone 17","isAvailable":true}],"com.apple.CoreSimulator.SimRuntime.iOS-26-0":[{"udid":"PICK-2600","name":"iPhone 17","isAvailable":true}]}}' \
-  >"$sandbox/devices-newer-runtime.json"
+# The hosted macos-26 runner as reported on 10 November 2026: Xcode 26.0.1 (simulator SDK 26.0) beside the iOS 26.2, 26.4 and
+# 26.5 runtimes only, as simctl would list them.
+printf '%s\n' '{"devices":{"com.apple.CoreSimulator.SimRuntime.iOS-26-2":[{"udid":"OLD-2620","name":"iPhone 16e","isAvailable":true}],"com.apple.CoreSimulator.SimRuntime.iOS-26-4":[{"udid":"MID-2640","name":"iPhone Air","isAvailable":true}],"com.apple.CoreSimulator.SimRuntime.iOS-26-5":[{"udid":"PICK-2650","name":"iPhone 17 Pro","isAvailable":true}]}}' \
+  >"$sandbox/devices-runner.json"
+
+# What `xcodebuild -showdestinations` prints: the file, the available destinations, then
+# after "--" the ineligible ones, each line in xcodebuild's own shape.
+listing() {
+  local file="$1"
+  shift
+  printf '\t%s\n' 'Available destinations for the "Clave" scheme:' >"$file"
+  for entry in "$@"; do
+    if [ "$entry" = -- ]; then
+      printf '\n\t%s\n' 'Ineligible destinations for the "Clave" scheme:' >>"$file"
+    else
+      printf '\t\t{ %s }\n' "$entry" >>"$file"
+    fi
+  done
+}
+mac='platform:macOS, arch:arm64, variant:Designed for [iPad,iPhone], id:00006021-STAND-IN, name:My Mac'
+any_device='platform:iOS, id:dvtdevice-DVTiPhonePlaceholder-iphoneos:placeholder, name:Any iOS Device'
+any_simulator='platform:iOS Simulator, id:dvtdevice-DVTiOSDeviceSimulatorPlaceholder-iphonesimulator:placeholder, name:Any iOS Simulator Device'
+ipad='platform:iOS Simulator, arch:arm64, id:IPAD-2650, OS:26.5, name:iPad Pro 13-inch (M4)'
+listing "$sandbox/destinations-runner.txt" "$mac" "$any_device" "$any_simulator" "$ipad" \
+  'platform:iOS Simulator, arch:arm64, id:OLD-2620, OS:26.2, name:iPhone 16e' \
+  'platform:iOS Simulator, arch:arm64, id:PICK-2650, OS:26.5, name:iPhone 17 Pro' \
+  'platform:iOS Simulator, arch:arm64, id:LATER-2650, OS:26.5, name:iPhone 17' \
+  'platform:iOS Simulator, arch:arm64, id:MID-2640, OS:26.4, name:iPhone Air' \
+  -- 'platform:iOS Simulator, arch:arm64, id:INELIGIBLE-2700, OS:27.0, name:iPhone 18 Pro, error:iOS 27.0 is not supported by this Xcode'
+listing "$sandbox/destinations-no-iphone.txt" "$mac" "$any_device" "$any_simulator" "$ipad" \
+  -- 'platform:iOS Simulator, arch:arm64, id:INELIGIBLE-2650, OS:26.5, name:iPhone 17 Pro, error:iOS 26.5 is not supported by this Xcode'
 chmod +x "$sandbox/bin/swift" "$sandbox/bin/xcodebuild" "$sandbox/bin/xcrun" "$sandbox/stand-in-check.sh"
 
 failed=0
@@ -168,10 +204,13 @@ judge "the real release check with no Release output" fail "FAIL release binary 
 run_ci real "$udid" CI_PROOF_FAIL= CI_PROOF_RELEASE=shared
 judge "the real release check on a Release sharing the Debug identifier" fail "FAIL release is 'com.clave.ios.dev', not com.clave.ios"
 
-run_ci stand-in "" CI_PROOF_FAIL= CI_PROOF_DEVICES="$sandbox/devices-no-iphone.json"
-judge "a runner with no iPhone simulator" fail "no available iPhone simulator on a runtime this Xcode can run"
-run_ci stand-in "" CI_PROOF_FAIL= CI_PROOF_DEVICES="$sandbox/devices-newer-runtime.json"
-judge "a runner with a runtime newer than its Xcode" pass "ci: simulator PICK-2600"
+runner=(CI_PROOF_FAIL= CI_PROOF_DEVICES="$sandbox/devices-runner.json")
+run_ci stand-in "" "${runner[@]}" CI_PROOF_DESTINATIONS="$sandbox/destinations-no-iphone.txt"
+judge "a runner whose Xcode lists no iPhone simulator" fail "ci: no iPhone simulator among the destinations xcodebuild lists for the Clave scheme"
+run_ci stand-in "" "${runner[@]}" CI_PROOF_DESTINATIONS="$sandbox/destinations-runner.txt"
+judge "the hosted runner, Xcode 26.0.1 beside iOS 26.2, 26.4 and 26.5 only" pass "ci: simulator PICK-2650"
+run_ci stand-in "" "${runner[@]}" CI_PROOF_DESTINATIONS="$sandbox/destinations-runner.txt" CI_PROOF_LISTING=fail
+judge "a runner whose destinations cannot be listed" fail "xcodebuild: error: a stand-in failure"
 
 if [ "$failed" -eq 0 ]; then
   echo "PASS ci gate proof: $target follows each step, with $check read for real"

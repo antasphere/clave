@@ -61,12 +61,18 @@ argument `--ui-test-fake` selects in a Debug build), then `scripts/check-release
 which builds Release and proves the fake, the launch overrides and the developer connection
 are absent from its binary (`--prove-red` builds Release with `DEBUG` set and expects the
 check to fail). `CLAVE_IOS_SIMULATOR_UDID` names the simulator (on a shared Mac, name one you
-created). Each step's verdict is its tool's own exit code, the output read from a log file
-afterwards; `bash apps/mobile-ios/scripts/prove-ci-gate.sh` runs `ci.sh` with stand-ins for
-swift, xcodebuild and xcrun and proves it exits non-zero, without printing `ci: green`, when
-any one of the four steps fails, that the real release check fails on a Release output that
-is missing or carries a development-only marker, and that a runner's simulator pick keeps to
-the runtimes its Xcode can run.
+created). Unset, as on the hosted runner, the gate takes the first iPhone on the newest iOS
+that `xcodebuild -showdestinations` lists for the scheme and fails with a sentence saying so
+when there is none, so no runtime version is written in the gate. The hosted run's evidence
+is on whatever runtime the runner's image carries, which its log names (`ci: picked …`), and
+the iOS 17.5 evidence is this Mac's alone, never claimed for CI. Each step's verdict is its tool's own
+exit code, the output read from a log file afterwards; `bash
+apps/mobile-ios/scripts/prove-ci-gate.sh` runs `ci.sh` with stand-ins for swift, xcodebuild
+and xcrun and proves it exits non-zero, without printing `ci: green`, when any one of the
+four steps fails, that the real release check fails on a Release output that is missing or
+carries a development-only marker, and that a runner's simulator pick takes the newest
+iPhone its Xcode lists, never an ineligible one, and fails when there is none or the list
+cannot be read.
 
 ## The fixture check
 
