@@ -67,8 +67,11 @@ final class AccessibilityEvidenceTests: XCTestCase {
   /// The walk over the six screens: on each, the order, the audit of `types` against `recorded`,
   /// and the fields' own frames; the files named with `prefix`. With `recordingTranscriptContrast`,
   /// a contrast finding on a text of the chat's transcript is written to
-  /// `<prefix>chat-transcript-contrast.txt` and not judged. Returns what the audit reported beyond
-  /// `recorded`.
+  /// `<prefix>chat-transcript-contrast.txt` and not judged. When the runner names an evidence
+  /// folder, each screen also keeps what its audit read, never judged: the screen at each issue
+  /// (`<prefix><screen>-issue-<n>.png`, numbered from 1 per screen), the screen after the audit
+  /// (`<prefix><screen>-after-audit.png`) and one line per issue (`<prefix><screen>-issues.txt`).
+  /// Returns what the audit reported beyond `recorded`.
   @MainActor
   private func auditEachScreen(
     _ app: XCUIApplication, recorded: [EvidenceScreen: Set<String>], prefix: String,
@@ -86,10 +89,19 @@ final class AccessibilityEvidenceTests: XCTestCase {
       let recordsTranscript = recordingTranscriptContrast && screen == .chat
       var found: [String] = []
       var transcriptContrast: [String] = []
+      var issueLines: [String] = []
       do {
         try app.performAccessibilityAudit(for: types) { issue in
           let target = issue.element.map { "\($0.elementType.rawValue) '\($0.identifier)' '\($0.label)' \($0.frame)" } ?? "no element"
           found.append("\(issue.compactDescription) | \(issue.detailedDescription) | \(target)")
+          if Self.keepsIssueEvidence {
+            let n = issueLines.count + 1
+            self.keepScreenshot(topic: "a11y", name: "\(prefix)\(screen.rawValue)-issue-\(n)")
+            let window = app.windows.firstMatch
+            issueLines.append(
+              "\(n) | \(Self.name(of: issue.auditType)) | \(issue.compactDescription) | element \(target)"
+                + " | window \(window.exists ? window.frame : .null)")
+          }
           let key = "\(issue.compactDescription) | \(issue.element.map { $0.identifier.isEmpty ? $0.label : $0.identifier } ?? "")"
           // Unresolved: at the largest text size the audit's contrast check reads transcript texts at
           // frames that differ from their drawing, for rows the lazy stack has not laid out where they
@@ -109,6 +121,12 @@ final class AccessibilityEvidenceTests: XCTestCase {
       } catch {
         unexpected.append("\(screen.rawValue): the audit did not run: \(error)")
       }
+      if Self.keepsIssueEvidence {
+        keepScreenshot(topic: "a11y", name: "\(prefix)\(screen.rawValue)-after-audit")
+        keepText(
+          issueLines.isEmpty ? "no issue\n" : issueLines.joined(separator: "\n") + "\n", topic: "a11y",
+          name: "\(prefix)\(screen.rawValue)-issues.txt")
+      }
       keepText(
         found.isEmpty ? "no issue\n" : found.joined(separator: "\n") + "\n", topic: "a11y",
         name: "\(prefix)\(screen.rawValue)-audit.txt")
@@ -127,6 +145,21 @@ final class AccessibilityEvidenceTests: XCTestCase {
       XCTAssertGreaterThanOrEqual(frame.height, 44, "\(field) is \(frame.height) points tall")
     }
     return unexpected
+  }
+
+  /// Whether the runner names an evidence folder (`CLAVE_IOS_EVIDENCE_DIR`, from
+  /// `TEST_RUNNER_CLAVE_IOS_EVIDENCE_DIR` beside xcodebuild): the audit's per-issue evidence is
+  /// written only then, never into the default folder.
+  private static let keepsIssueEvidence = !(ProcessInfo.processInfo.environment["CLAVE_IOS_EVIDENCE_DIR"] ?? "").isEmpty
+
+  /// The audit type's name; its raw value when it is not one of the types an iOS audit reports.
+  private static func name(of type: XCUIAccessibilityAuditType) -> String {
+    let names: [(XCUIAccessibilityAuditType, String)] = [
+      (.contrast, "contrast"), (.elementDetection, "elementDetection"), (.hitRegion, "hitRegion"),
+      (.sufficientElementDescription, "sufficientElementDescription"), (.dynamicType, "dynamicType"),
+      (.textClipped, "textClipped"), (.trait, "trait"),
+    ]
+    return names.first { $0.0 == type }?.1 ?? "type \(type.rawValue)"
   }
 
   /// The prefixes of the identifiers the transcript's own elements carry: its turns, its tool runs
