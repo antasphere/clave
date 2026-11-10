@@ -286,6 +286,23 @@ class SendGuardTest {
     }
 
     @Test
+    fun `Discard while a reconnection asks about that send, the server answering accepted, is said delivered`() = guarded {
+        lostSend()
+        routes(write = { answer(200, """{"status":"accepted"}""") }, status = { asked, call -> if (asked == id(1)) machine.hold(call) else answer(200, """{"status":"accepted"}""") })
+        machine.welcome = true
+        machine.closePeers()
+        until(20_000) { machine.held.size == 1 }
+        val discard = scope.async { store.discardUnknown(machineId, "s1", id(1)) }
+        delay(500)
+        // The first write had landed after all: the server's answer stands over the press.
+        machine.respond(0, answer(200, """{"status":"accepted"}"""))
+        assertEquals(DeliveryController.DiscardResult.AlreadyDelivered, awaitGate("the discard", discard))
+        assertEquals("nothing written again", listOf(id(1)), writtenIds())
+        assertEquals(emptyList<String>(), sends.list().map { it.clientMessageId })
+        assertEquals("delivered, the draft goes", "", drafts.get(machineId, "s1"))
+    }
+
+    @Test
     fun `Discard of another conversation's send the pass has not reached means it is never reconciled`() = guarded {
         lostSend()
         lostSend(session = "s2")
