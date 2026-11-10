@@ -106,6 +106,7 @@ import {
   scheduleChatTitle,
   scheduleTitleGeneration,
   titleGenerationDisabled,
+  titleGenerationTestHooks,
   watchedTitleSessionsForTests
 } from './title-generator'
 
@@ -357,6 +358,17 @@ describe("the daemon's opt-out names no tab", () => {
     expect(titleGenerationDisabled()).toBeNull()
     disableTitleGeneration('--no-titles')
     expect(titleGenerationDisabled()).toBe('--no-titles')
+  })
+
+  it('the test hooks answer the opt-out as the module holds it: null while titles run, the flag once they are off', () => {
+    const hooks = titleGenerationTestHooks()
+    expect(hooks.disabled()).toBeNull()
+    hooks.disable('--no-titles')
+    expect(hooks.disabled()).toBe('--no-titles')
+    expect(titleGenerationDisabled()).toBe('--no-titles')
+    hooks.enable()
+    expect(hooks.disabled()).toBeNull()
+    expect(titleGenerationDisabled()).toBeNull()
   })
 
   it("a fresh chat's first message starts no CLI and names nothing", async () => {
