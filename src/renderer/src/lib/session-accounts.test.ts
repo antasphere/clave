@@ -230,6 +230,13 @@ describe('a server’s list is known by the accounts it answered, not by its pro
       pending: false,
       removed: false
     })
+    // The pushed list is the server's word: an account missing from it is
+    // removed, not pending.
+    expect(sessionOwnAccount(serverTab('srv-gone', 'old@example.com'), 'claude')).toMatchObject({
+      label: 'old@example.com',
+      pending: false,
+      removed: true
+    })
     // The Codex list was not pushed: still unknown.
     expect(sessionAccountView(serverTab('x'), 'codex').known).toBe(false)
   })
