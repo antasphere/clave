@@ -49,6 +49,8 @@ export interface HistoryEntry {
   /** The account directory the latest row that knew one named
    *  (PRDCT-4321): where the transcript lives instead of the shared root. */
   configDir?: string
+  /** The launch profile the latest row that knew one named (PRDCT-4321). */
+  launchProfileId?: string
 }
 
 /** A row's launch fields over the entry's: a field the row carries wins, a
@@ -165,6 +167,7 @@ export function foldHistory(rows: LedgerRow[]): HistoryEntry[] {
     }
     entry.closedAt = row.kind === 'closed' ? row.ts : null
     if (row.configDir) entry.configDir = row.configDir
+    if (row.launchProfileId) entry.launchProfileId = row.launchProfileId
     foldLaunch(entry, row)
   }
   return [...byId.values()]

@@ -60,7 +60,10 @@ export const HistoryConversation = Schema.Struct({
    *  still holds it (its Resume restarts that tab); `closed`: no tab holds
    *  it any more, a Resume opens a new tab on the conversation. */
   held: Schema.Literal('running', 'stopped', 'closed'),
-  launch: Schema.optional(HistoryLaunch)
+  launch: Schema.optional(HistoryLaunch),
+  /** The server's launch profile the tab ran on (its chat view, its own
+   *  profile), so a Resume reopens it the same way. */
+  launchProfileId: Schema.optional(Schema.String)
 })
 export type HistoryConversation = typeof HistoryConversation.Type
 

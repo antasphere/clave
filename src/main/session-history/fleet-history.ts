@@ -132,6 +132,7 @@ export function serverEntry(
     lastSeenAt: c.lastHumanAt,
     closedAt: c.held === 'closed' ? c.lastHumanAt : null,
     ...(c.launch ? { launch: c.launch } : {}),
+    ...(c.launchProfileId ? { launchProfileId: c.launchProfileId } : {}),
     transcript: {
       exists: c.transcript === 'present',
       path: '',

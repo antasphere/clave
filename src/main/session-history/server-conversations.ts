@@ -101,6 +101,7 @@ function identityOf(row: LedgerRow): string {
     row.groupId,
     row.groupName,
     row.configDir ?? null,
+    row.launchProfileId ?? null,
     row.dangerous ?? null,
     row.permissionMode ?? null,
     row.effort ?? null,
@@ -140,7 +141,8 @@ export function serverConversations(options: ServerConversationsOptions): Server
       groupId: group?.id ?? null,
       groupName: group?.name ?? null,
       ...launchOfRecord(record),
-      ...(configDir ? { configDir } : {})
+      ...(configDir ? { configDir } : {}),
+      ...(record.launchProfileId ? { launchProfileId: record.launchProfileId } : {})
     }
   }
 
@@ -218,7 +220,8 @@ export function serverConversations(options: ServerConversationsOptions): Server
           lastPrompt: peek.lastPrompt,
           transcript: peek.exists ? 'present' : 'gone',
           held,
-          ...(entry.launch ? { launch: entry.launch } : {})
+          ...(entry.launch ? { launch: entry.launch } : {}),
+          ...(entry.launchProfileId ? { launchProfileId: entry.launchProfileId } : {})
         }
       })
     }

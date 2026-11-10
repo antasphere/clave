@@ -1,3 +1,4 @@
+import { CHAT_PROFILE_IDS } from '../../shared/open-session-modes'
 import { randomUUID } from 'node:crypto'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { Effect, Layer } from 'effect'
@@ -1346,6 +1347,24 @@ describe('standalone MCP and the server’s own History (PRDCT-4321)', () => {
       claudeMode: true,
       model: 'opus',
       dangerousMode: true,
+      resumeSessionId: 'conv-old'
+    })
+  }, 15_000)
+
+  it('reopens a remembered conversation on the profile it ran on (its chat view)', async () => {
+    const cwd = await folder()
+    const { client, started } = await sessionFixture({
+      options: {
+        conversations: history([
+          remembered({ conversationId: 'conv-old', cwd, launchProfileId: CHAT_PROFILE_IDS.claude })
+        ])
+      }
+    })
+    payload(
+      await client.callTool({ name: 'clave_open_session', arguments: { resume: 'conv-old' } })
+    )
+    expect(started[0].options).toMatchObject({
+      launchProfileId: CHAT_PROFILE_IDS.claude,
       resumeSessionId: 'conv-old'
     })
   }, 15_000)

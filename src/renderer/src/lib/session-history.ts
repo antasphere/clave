@@ -212,6 +212,8 @@ async function resumeOnServer(
       ...launch,
       model: entry.model ?? undefined,
       resumeSessionId: entry.claudeSessionId,
+      // The way it ran there: its chat view, the server's own profile.
+      ...(entry.launchProfileId ? { launchProfileId: entry.launchProfileId } : {}),
       ...(workspaceId ? { workspaceId } : {})
     })
     await window.electronAPI.fleetSnapshot(serverId).catch(() => undefined)

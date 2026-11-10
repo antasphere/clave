@@ -528,6 +528,13 @@ function buildServer(
           ...args,
           cwd: args.cwd ?? remembered.cwd,
           ...(args.model === undefined && remembered.model ? { model: remembered.model } : {}),
+          // The profile it ran on (its chat view), unless the call picks one.
+          ...(args.profile === undefined &&
+          args.chat === undefined &&
+          remembered.launchProfileId &&
+          profileFamily(remembered.launchProfileId) === 'claude'
+            ? { profile: remembered.launchProfileId }
+            : {}),
           ...(args.dangerous === undefined && remembered.launch?.dangerous !== undefined
             ? { dangerous: remembered.launch.dangerous }
             : {})

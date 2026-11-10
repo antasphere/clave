@@ -163,6 +163,17 @@ describe('serverConversations: the ledger of what the tabs ran', () => {
     })
   })
 
+  it('keeps the launch profile a deleted tab ran on, so it reopens the same way', () => {
+    writeTranscript(root, 'conv-1')
+    const h = harness()
+    const tab = claudeRecord({ launchProfileId: 'chat:claude:mine' })
+    h.records.push(tab)
+    h.conversations.observe('tab-1')
+    h.conversations.closing(tab)
+    h.records.splice(0)
+    expect(h.conversations.list().conversations[0].launchProfileId).toBe('chat:claude:mine')
+  })
+
   it('says a held conversation running or stopped from the record and the running set', () => {
     writeTranscript(root, 'conv-1')
     const h = harness()

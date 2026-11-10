@@ -177,6 +177,8 @@ export interface HistoryListEntry {
   /** `server`: a conversation a server's own History listed (PRDCT-4321). */
   source: 'ledger' | 'transcript' | 'server'
   server?: HistoryServerRef
+  /** The launch profile a server's conversation ran on (PRDCT-4321). */
+  launchProfileId?: string
   /** Which CLI's conversation this is; resume exists for claude only. */
   provider: 'claude' | 'codex' | 'pi' | 'antigravity'
   agentProvider?: string | null
