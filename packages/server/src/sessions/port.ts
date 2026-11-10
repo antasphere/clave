@@ -18,6 +18,7 @@ import type {
   DraftHandling,
   HistoryPage,
   ModelOption,
+  ProviderOverride,
   ReleaseOutcome,
   RestartedSession,
   Session,
@@ -128,7 +129,9 @@ export interface SessionHostService extends SessionStreamSource {
     account: AccountOverride,
     resendRejected: boolean,
     /** A Resume: refused while the session runs (PRDCT-4193). */
-    onlyIfStopped?: boolean
+    onlyIfStopped?: boolean,
+    /** The tab comes back on another provider (PRDCT-4300). */
+    provider?: ProviderOverride
   ) => Promise<RestartedSession>
 }
 

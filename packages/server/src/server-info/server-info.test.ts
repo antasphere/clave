@@ -137,6 +137,61 @@ describe('the server domain over HTTP', () => {
     expect(answer.status).toBe(422)
     expect(await answer.json()).toMatchObject({ _tag: 'CapabilityUnavailable' })
   })
+
+  // PRDCT-4241: the server's own name, set from a Mac and kept by the server.
+  it('sets the server’s own name, trimmed, and answers the info with it', async () => {
+    let kept = 'box'
+    server = await startEmbedded({
+      ports: {
+        sessions: new FakeSource(),
+        serverInfo: ServerInfoPort.appRun(
+          '3.0.0',
+          () => kept,
+          (name) => {
+            kept = name
+            return kept
+          }
+        )
+      }
+    })
+    expect(await (await call('/server/info')).json()).toMatchObject({ name: 'box' })
+    const answer = await call('/server/name', { name: '  Studio ' })
+    expect(answer.status).toBe(200)
+    expect(await answer.json()).toMatchObject({ name: 'Studio', version: '3.0.0' })
+    expect(kept).toBe('Studio')
+    expect(await (await call('/server/info')).json()).toMatchObject({ name: 'Studio' })
+  })
+
+  it('refuses a name the rule refuses before the port sees it, and the reserved word', async () => {
+    const seen: string[] = []
+    server = await startEmbedded({
+      ports: {
+        sessions: new FakeSource(),
+        serverInfo: ServerInfoPort.appRun('3.0.0', 'box', (name) => {
+          seen.push(name)
+          return name
+        })
+      }
+    })
+    for (const bad of ['two words', 'every', '', '-leading', 'x'.repeat(64)]) {
+      const refused = await call('/server/name', { name: bad })
+      expect(refused.status, bad).toBe(422)
+      expect(await refused.json()).toMatchObject({ _tag: 'InvalidServerName' })
+    }
+    expect(seen).toEqual([])
+  })
+
+  it('a server that keeps no name says so', async () => {
+    server = await startEmbedded({
+      ports: { sessions: new FakeSource(), serverInfo: ServerInfoPort.appRun('3.0.0', 'box') }
+    })
+    const refused = await call('/server/name', { name: 'Studio' })
+    expect(refused.status).toBe(422)
+    expect(await refused.json()).toMatchObject({
+      _tag: 'CapabilityUnavailable',
+      message: 'This server keeps no name of its own.'
+    })
+  })
 })
 
 describe('the server domain on the push channel', () => {

@@ -2442,7 +2442,13 @@ canvas[data-orb-state] {
    it appears only once the page has scrolled (`data-scrolled`, set by
    `SettingsPage`), so a page at rest reads exactly as it did. The gap to the
    first section is split: 1rem inside the header, 1.25rem below it, the same
-   2.25rem at rest, and a stuck header no taller than it needs to be. */
+   2.25rem at rest, and a stuck header no taller than it needs to be.
+
+   It also bleeds 1rem past the page column on each side (into the scroller's
+   2rem padding) with the same padding back, so the text stays on the column:
+   the cards' shadows reach past the column's edge, and a header exactly the
+   column's width let them show through on both sides as the cards scrolled
+   under it. */
 .settings-page-header {
   position: sticky;
   top: -2rem;
@@ -2452,6 +2458,8 @@ canvas[data-orb-state] {
   justify-content: space-between;
   gap: 1rem;
   margin-top: -2rem;
+  margin-inline: -1rem;
+  padding-inline: 1rem;
   padding-top: 2rem;
   padding-bottom: 1rem;
   margin-bottom: 1.25rem;
@@ -6068,6 +6076,10 @@ details[open] > .chat-approval-items {
   min-width: calc(var(--spacing) * 56);
   max-width: calc(var(--spacing) * 80);
   padding: var(--spacing);
+  /* The menu is a portal outside the chat view: the glyph size its rows'
+     chevrons take (the provider rows, "Earlier versions") rides with it, or
+     the chevron fills the row (integration round 2, F8). */
+  --chat-glyph: calc(var(--spacing) * 3.5);
 }
 .chat-model-option {
   align-items: flex-start;
@@ -6092,6 +6104,65 @@ details[open] > .chat-approval-items {
 }
 .chat-model-empty {
   padding: calc(var(--spacing) * 2);
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+}
+/* The "Earlier versions" row: a submenu trigger drawn as a model row, its
+   chevron where the check of a selected row sits. */
+.chat-model-earlier .chat-model-earlier-chevron {
+  width: var(--chat-glyph);
+  height: var(--chat-glyph);
+  flex-shrink: 0;
+  margin-top: calc(var(--spacing) / 2);
+  color: var(--text-tertiary);
+}
+/* A provider row of the chip's menu (PRDCT-4300): the tab's own provider
+   carries its model as the hint and reads selected; another provider's row
+   opens that provider's models, a pick there being a move of the tab. */
+.chat-model-provider .chat-model-earlier-chevron {
+  width: var(--chat-glyph);
+  height: var(--chat-glyph);
+  flex-shrink: 0;
+  margin-top: calc(var(--spacing) / 2);
+  color: var(--text-tertiary);
+}
+/* The popover of a move to another provider, in the dock above the
+   composer: the facts as a two-column list, the note's checkbox, the error. */
+.chat-provider-switch-facts {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: calc(var(--spacing) * 1.5) calc(var(--spacing) * 3);
+  margin: 0;
+  font-size: var(--text-xs);
+}
+.chat-provider-switch-facts dt {
+  color: var(--text-tertiary);
+}
+.chat-provider-switch-facts dd {
+  margin: 0;
+  color: var(--text-secondary);
+}
+.chat-provider-switch-note {
+  display: flex;
+  align-items: flex-start;
+  gap: calc(var(--spacing) * 2);
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
+.chat-provider-switch-note input {
+  margin-top: calc(var(--spacing) / 2);
+}
+.chat-provider-switch-error {
+  color: var(--color-destructive, var(--text-primary));
+}
+/* The card at the head of a conversation that came from another provider:
+   one quiet line, the rows follow. */
+.chat-continued-from {
+  align-self: center;
+  margin: calc(var(--spacing) * 2) 0;
+  padding: calc(var(--spacing) / 2) calc(var(--spacing) * 2.5);
+  border: thin solid var(--border-subtle-color);
+  border-radius: var(--radius-2xl);
   font-size: var(--text-xs);
   color: var(--text-tertiary);
 }
@@ -6926,16 +6997,24 @@ button.exchange-part-who:hover {
 .stretch-card[open] .stretch-chevron {
   rotate: 180deg;
 }
-/* Opening: the height glides, the steps rise in one after another. */
+/* The height glides both ways on the ease-in-out the tool runs use, and the
+   content fades with it; the steps rise in one after another on the way in. */
 .stretch-card::details-content {
   block-size: 0;
   overflow: clip;
+  opacity: 0;
   transition:
-    block-size calc(var(--default-transition-duration) * 2) var(--ease-out-expo),
-    content-visibility calc(var(--default-transition-duration) * 2) allow-discrete;
+    block-size calc(var(--default-transition-duration) * 1.75) var(--term-disclosure-ease),
+    opacity calc(var(--default-transition-duration) * 1.75) var(--term-disclosure-ease),
+    content-visibility calc(var(--default-transition-duration) * 1.75) allow-discrete;
 }
 .stretch-card[open]::details-content {
   block-size: auto;
+  opacity: 1;
+  transition:
+    block-size calc(var(--default-transition-duration) * 2.25) var(--term-disclosure-ease),
+    opacity calc(var(--default-transition-duration) * 2.25) var(--term-disclosure-ease),
+    content-visibility calc(var(--default-transition-duration) * 2.25) allow-discrete;
 }
 .stretch-body {
   padding: 0 calc(var(--spacing) * 3) calc(var(--spacing) * 3);
@@ -6954,14 +7033,28 @@ button.exchange-part-who:hover {
   padding-bottom: calc(var(--spacing) * 2.5);
   opacity: 0;
   translate: 0 calc(var(--spacing) * -1);
+  /* Closing: every step fades at once while the height folds. */
   transition:
-    opacity calc(var(--default-transition-duration) * 2) var(--ease-out-expo),
-    translate calc(var(--default-transition-duration) * 3) var(--ease-out-settle);
-  transition-delay: calc(var(--default-transition-duration) * 0.35 * var(--stretch-i, 0));
+    opacity var(--default-transition-duration) var(--term-disclosure-ease),
+    translate var(--default-transition-duration) var(--term-disclosure-ease);
 }
+/* Opening: each step a beat after the one above it, easing in and out, no
+   overshoot. A keyframe, not a transition: a closed card's content is hidden
+   (content-visibility), so a step has no style to transition FROM and would
+   simply appear. The delay is the opening's only, so the close is not
+   staggered. */
 .stretch-card[open] .stretch-step {
   opacity: 1;
   translate: 0 0;
+  animation: stretch-step-in calc(var(--default-transition-duration) * 2.5)
+    var(--term-disclosure-ease) backwards;
+  animation-delay: calc(var(--default-transition-duration) * 0.35 * var(--stretch-i, 0));
+}
+@keyframes stretch-step-in {
+  from {
+    opacity: 0;
+    translate: 0 calc(var(--spacing) * -1);
+  }
 }
 /* The rail, one segment per step, ending at the last step's node. */
 .stretch-step::before {
@@ -7104,10 +7197,13 @@ button.exchange-part-who:hover {
 @media (prefers-reduced-motion: reduce) {
   .stretch-card,
   .stretch-card::details-content,
+  .stretch-card[open]::details-content,
   .stretch-step,
+  .stretch-card[open] .stretch-step,
   .stretch-chevron {
     transition: none;
   }
+  .stretch-card[open] .stretch-step,
   .stretch-drawing .stretch-fold,
   .stretch-drawing .stretch-land,
   .stretch-drawing .stretch-note,
@@ -7283,7 +7379,11 @@ button.exchange-part-who:hover {
    a glyph. Both levels open and close by animating their height. */
 .terminal-view {
   interpolate-size: allow-keywords;
-  /* An ease-in-out (cubic): the smoothest open and close for a height. */
+}
+/* An ease-in-out (cubic): the smoothest open and close for a height. Every
+   disclosure that glides (a tool run, a call, a card of working notes) uses it,
+   both ways; none of them springs past its mark. */
+:root {
   --term-disclosure-ease: cubic-bezier(0.65, 0, 0.35, 1);
 }
 .term-tools,
@@ -7470,7 +7570,9 @@ button.exchange-part-who:hover {
 }
 @media (prefers-reduced-motion: reduce) {
   .term-tools::details-content,
-  .term-call::details-content {
+  .term-call::details-content,
+  .term-tools[open]::details-content,
+  .term-call[open]::details-content {
     transition-property: opacity, content-visibility;
   }
   .term-tools[data-state='running'] > .term-tools-row .term-tools-title,
@@ -8229,6 +8331,227 @@ button.term-agent-model:focus-visible {
 }
 .routine-head-sub::first-letter {
   text-transform: uppercase;
+}
+/* A short list inside a settings row (a server's routines, PRDCT-4244):
+   one line per entry, the name then its facts, no controls. */
+.settings-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--spacing) * 1);
+  min-width: 0;
+  max-width: calc(var(--spacing) * 90);
+  text-align: left;
+}
+.settings-list-row {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+.settings-list-main {
+  font-size: var(--control-text);
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.settings-list-meta {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* The Routines popover (PRDCT-4244): one list of the workspace's routines
+   in sections, one per machine; a row opens the routine's panel in place. */
+.routines-list {
+  width: calc(var(--spacing) * 90);
+  max-width: calc(var(--radix-popover-content-available-width, 100vw) - 12px);
+  max-height: calc(var(--radix-popover-content-available-height, 100vh) - 12px);
+  overflow-y: auto;
+  padding-bottom: calc(var(--spacing) * 2);
+  outline: none;
+}
+/* The pages of the popover as one box (RoutinePages): the frame takes the
+   current page's size at once, so the popover is positioned once per page;
+   the surface inside animates to that size from the frame's top-right
+   corner, the one the popover keeps still, and clips the page sliding out.
+   Both pages hang from that same corner, so the leaving one stays put while
+   the box grows past it. */
+.routines-frame {
+  position: relative;
+}
+.routines-surface {
+  position: absolute;
+  top: 0;
+  right: 0;
+  /* No inset of its own: each page pads itself (the heads, the rows, the
+     form), and a padding here would be animated with the box. */
+  padding: 0;
+  overflow: hidden;
+}
+.routines-page {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: max-content;
+  max-width: 100vw;
+}
+/* The list's head wears the panel's head (a mark, a title, one quiet line),
+   so the two pages share a shape and the slide reads as one head moving. */
+.routines-list-head {
+  padding-bottom: calc(var(--spacing) * 1.5);
+}
+.routines-list-head .routine-mark {
+  color: var(--text-secondary);
+}
+.routines-section + .routines-section {
+  border-top: thin solid var(--border-subtle-color);
+  margin-top: calc(var(--spacing) * 1);
+  padding-top: calc(var(--spacing) * 1);
+}
+.routines-section-head {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--spacing) * 2);
+  min-height: var(--control-h-md);
+  padding: calc(var(--spacing) * 1) calc(var(--spacing) * 2) 0 calc(var(--spacing) * 4);
+}
+.routines-section-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  font-weight: var(--font-weight-medium);
+  letter-spacing: 0.02em;
+  color: var(--text-tertiary);
+}
+.routines-section-note {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--color-destructive);
+}
+.routines-section[data-kind='unknown'] .routines-section-note {
+  color: var(--color-status-waiting);
+}
+.routines-rows {
+  margin: 0;
+  padding: calc(var(--spacing) * 1) calc(var(--spacing) * 2);
+  list-style: none;
+}
+.routine-row {
+  min-height: calc(var(--control-h-md) + var(--spacing) * 3);
+  padding-block: calc(var(--spacing) * 1.5);
+}
+.routine-row-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: calc(var(--control-h-md) + var(--spacing) * 0.5);
+  height: calc(var(--control-h-md) + var(--spacing) * 0.5);
+  border-radius: var(--radius-lg);
+  background-color: var(--surface-100);
+}
+.routine-row-icon > svg {
+  width: calc(var(--spacing) * 4);
+  height: calc(var(--spacing) * 4);
+}
+.routine-row-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+.routine-row-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.routine-row-sub {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  font-weight: var(--font-weight-normal);
+  color: var(--text-tertiary);
+}
+.routine-row-sub::first-letter {
+  text-transform: uppercase;
+}
+.routine-row[data-state='invalid'] .routine-row-sub,
+.routine-row[data-state='unreachable'] .routine-row-sub {
+  color: var(--color-destructive);
+}
+.routines-empty {
+  padding: calc(var(--spacing) * 2) calc(var(--spacing) * 4) calc(var(--spacing) * 3);
+  font-size: var(--control-text-sm);
+  color: var(--text-tertiary);
+}
+/* The back chevron before the panel's mark, when the panel replaced the list. */
+.routine-back {
+  margin-left: calc(var(--spacing) * -1.5);
+}
+/* The form a section's “+” opens: the fields in a column, the acts at the foot. */
+.routine-form {
+  display: flex;
+  flex-direction: column;
+  width: calc(var(--spacing) * 100);
+  max-width: calc(var(--radix-popover-content-available-width, 100vw) - 12px);
+  max-height: calc(var(--radix-popover-content-available-height, 100vh) - 12px);
+}
+.routine-form-fields {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--spacing) * 3);
+  padding: calc(var(--spacing) * 1) calc(var(--spacing) * 4) calc(var(--spacing) * 3);
+  overflow-y: auto;
+}
+.routine-form-pair {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: calc(var(--spacing) * 3);
+}
+.routine-form-hint {
+  display: block;
+  margin-top: calc(var(--spacing) * 1);
+  font-size: 11px;
+  font-weight: var(--font-weight-normal);
+  color: var(--text-tertiary);
+}
+.routine-form-hint::first-letter {
+  text-transform: uppercase;
+}
+.routine-form-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: calc(var(--spacing) * 2);
+  padding: calc(var(--spacing) * 2.5) calc(var(--spacing) * 4) calc(var(--spacing) * 3.5);
+  border-top: thin solid var(--border-subtle-color);
+}
+/* The form's pickers (model, account): the settings select cut to the
+   form's input height, filling its column. */
+.routine-form-select {
+  width: 100%;
+  height: var(--control-h-lg);
+  padding: 0 0.5rem 0 0.75rem;
+  border-radius: var(--radius-lg);
+  background-color: var(--control-surface);
+  box-shadow: var(--field-shadow);
+  font-size: 0.875rem;
+  font-weight: var(--font-weight-normal);
+}
+.routine-form-select:focus-visible {
+  box-shadow: var(--focus-ring);
+}
+.routine-form-select[data-state='open'] {
+  box-shadow: var(--focus-ring);
 }
 /* One row: the tabs on the left, Run now and the small menu on the right. */
 .routine-nav {

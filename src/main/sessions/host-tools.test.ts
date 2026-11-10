@@ -44,6 +44,7 @@ vi.mock('./chat-view-default', () => ({ rememberChatView: vi.fn() }))
 // The records source is an object the host reads lazily; nothing here reaches it.
 vi.mock('./records', () => ({ sessionRecords: {} }))
 import { createSessionHost } from './host'
+import { rememberChatModel } from './chat-model-default'
 
 const sessions = new Map<string, { id: string; transport: string; title: string }>()
 const writes: unknown[] = []
@@ -140,5 +141,32 @@ describe('what the window keeps on the record (wave 6, lane A, PRDCT-3526)', () 
     ])
     expect(mocks.setSessionDisplayName).not.toHaveBeenCalled()
     expect(mocks.setSessionViewRecord).not.toHaveBeenCalled()
+  })
+})
+
+describe('a model switch through the host (PRDCT-4302)', () => {
+  it("the composer's pick is written and remembered as the next chat's default", async () => {
+    sessions.set('c2', {
+      id: 'c2',
+      transport: 'events',
+      title: 'chat',
+      adapterId: 'claude-chat'
+    } as never)
+    await host.write('c2', { type: 'set_model', model: 'claude-opus-5-5' })
+    expect(writes).toEqual([['c2', { type: 'set_model', model: 'claude-opus-5-5' }]])
+    expect(rememberChatModel).toHaveBeenCalledWith('claude-chat', 'claude-opus-5-5')
+  })
+  it("the policy's move at a cap is written and NOT remembered (remember: false)", async () => {
+    sessions.set('c2', {
+      id: 'c2',
+      transport: 'events',
+      title: 'chat',
+      adapterId: 'claude-chat'
+    } as never)
+    await host.write('c2', { type: 'set_model', model: 'claude-opus-5-5', remember: false })
+    expect(writes).toEqual([
+      ['c2', { type: 'set_model', model: 'claude-opus-5-5', remember: false }]
+    ])
+    expect(rememberChatModel).not.toHaveBeenCalled()
   })
 })

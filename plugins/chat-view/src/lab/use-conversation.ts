@@ -37,6 +37,8 @@ export function useConversation(
   retryPast: () => void
   /** Ask for the page of the past before what is here; false once none is older. */
   earlier: (() => Promise<void>) | null
+  /** Where the unread past starts, null once nothing is older. */
+  before: number | null
   imagesSupported: boolean
 } {
   const [conversation, dispatch] = useReducer(reduceConversation, {
@@ -164,6 +166,8 @@ export function useConversation(
     }
   }, [sessionId, before])
   return {
+    /** Where the unread past starts, for a handoff that must carry it all. */
+    before,
     conversation,
     dispatch,
     status,

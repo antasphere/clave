@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import { Schema } from 'effect'
 import { SessionRecord as WireRecord } from '@clave/contract/sessions'
+import { ServerEvent } from '@clave/contract/events'
 import type { SessionRecord as ShellRecord } from './adapters/pty-backend'
+import type { ElectronAPI } from '../../preload/index.d'
 
 /**
  * The wire `SessionRecord` (contract) and the shell's `SessionRecord`
@@ -94,5 +96,19 @@ describe('the SessionRecord mirror holds', () => {
     const shell = full as unknown as ShellRecord
     const onWire: typeof WireRecord.Type = shell
     expect(onWire.id).toBe('s1')
+  })
+})
+
+describe('the model push crosses the wire whole (PRDCT-4256)', () => {
+  it('the server event carries what the preload hands the window, and nothing is dropped', () => {
+    const event = { _tag: 'session.model_changed' as const, id: 's1', model: 'claude-opus-5-5' }
+    const decoded = Schema.decodeUnknownSync(ServerEvent)(event)
+    expect(decoded).toEqual(event)
+    // The preload's payload is the event minus its tag: compile-time proof the
+    // two copies agree (a field added to one and not the other is an error here).
+    type Payload = Parameters<Parameters<ElectronAPI['onSessionModelChanged']>[0]>[0]
+    const payload: Payload = { id: event.id, model: event.model }
+    const back: Omit<typeof event, '_tag'> = payload
+    expect(back).toEqual({ id: 's1', model: 'claude-opus-5-5' })
   })
 })

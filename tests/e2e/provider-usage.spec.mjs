@@ -30,7 +30,13 @@ export async function run(t) {
   mkdirSync(ROOT, { recursive: true })
   seedWorkspaces(DIR, { workspaces: [WS], activeWorkspaceId: WS.id, fresh: true })
   seedTrustedRoots(DIR, [ROOT])
-  const { app, win } = await launchApp(DIR, { server: 'in-process' })
+  // No machine-login read: a real read of this Mac's own login landing after
+  // the canned one below overwrote the foot's numbers once in a while (seen
+  // 9 November 2026, three Claude checks red on one run and green the next).
+  const { app, win } = await launchApp(DIR, {
+    server: 'in-process',
+    args: ['--test-no-machine-usage']
+  })
   const errors = []
   win.on('pageerror', (e) => errors.push(e.message))
   try {

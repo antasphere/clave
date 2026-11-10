@@ -1,4 +1,5 @@
 import { workspaceForPath } from '../../../shared/workspace-types'
+import { launchModeFields } from '../../../shared/runtime-choices'
 import { LOCAL_SERVER_ID } from '@clave/contract/fleet'
 import { useFleetStore } from '../store/fleet-store'
 import { allWorkspaces } from '../store/workspace-store'
@@ -25,6 +26,7 @@ import { usePinnedStore, getPinnedState, togglePinnedGroup } from '../store/pinn
 import type { PinnedGroupSession } from '../store/session-types'
 import { useWorkspaceStore, type Workspace } from '../store/workspace-store'
 import { profilesFor, selectedChatProfile } from '../store/launch-profile-store'
+import { rememberedLaunchModel } from './launch-model'
 import {
   getClaudeProfile,
   claudeProfileSpawnFields,
@@ -413,8 +415,8 @@ function alignSessionToGroupWorkspace(sessionId: string, group: SessionGroup): v
  *  label), else the pool's pick from the one selected in settings. An
  *  unknown name errors with the names that exist, never a silent
  *  fall-through to the wrong subscription. */
-export function resolveAccountForSpawn(ref: string | undefined): ClaudeProfile {
-  return resolveAccountRef('claude', ref) as ClaudeProfile
+export function resolveAccountForSpawn(ref: string | undefined, model?: string): ClaudeProfile {
+  return resolveAccountRef('claude', ref, model) as ClaudeProfile
 }
 
 // Legacy window-owned opens keep the live messaging link independently of
@@ -452,6 +454,15 @@ export async function openSessionProgrammatically(payload: {
   workspace?: string
   callerSessionId?: string
   attachToParent?: boolean
+  /** A past conversation reopened (PRDCT-4236): the History's id, resolved
+   *  by main before the call, for the spawn's resume. */
+  resumeSessionId?: string
+  /** The mode a Claude agent asks under short of bypass, and the effort to
+   *  start at: the caller's, or what a resumed conversation last ran on. */
+  permissionMode?: string
+  effort?: string
+  /** Bypass kept reachable to a conversation resumed in another mode. */
+  allowDangerous?: boolean
 }): Promise<unknown> {
   const state = useSessionStore.getState()
   const spawnedBy = payload.attachToParent === true ? payload.callerSessionId : undefined
@@ -525,9 +536,18 @@ export async function openSessionProgrammatically(payload: {
   // in settings — the same rule the launcher applies, so an agent-opened tab
   // lands on the account the user would have got from the button. Claude and
   // Codex have pools; nothing else does.
-  const claudeProfile = claudeMode ? resolveAccountForSpawn(payload.account) : null
+  // Judged for the model the tab will run (PRDCT-4253): one named, else the
+  // chat model main will start it on (`rememberedLaunchModel`), the way the
+  // launcher judges; a resumed conversation keeps its own, unknown here.
+  const pooled = claudeMode ? 'claude' : codexMode ? 'codex' : null
+  const judgedModel =
+    model ??
+    (pooled && !payload.resumeSessionId
+      ? await rememberedLaunchModel(pooled, launchProfileId, workspaceId ?? null)
+      : undefined)
+  const claudeProfile = claudeMode ? resolveAccountForSpawn(payload.account, judgedModel) : null
   const codexAccount = codexMode
-    ? (resolveAccountRef('codex', payload.account) as CodexAccount)
+    ? (resolveAccountRef('codex', payload.account, judgedModel) as CodexAccount)
     : null
   if (payload.account && !claudeMode && !codexMode) {
     throw new Error(
@@ -547,6 +567,16 @@ export async function openSessionProgrammatically(payload: {
     model,
     launchProfileId,
     ...accountFields,
+    ...(payload.resumeSessionId ? { resumeSessionId: payload.resumeSessionId } : {}),
+    // The mode and the effort to start at (PRDCT-4236). Bypass is the flag.
+    ...launchModeFields({
+      claudeMode,
+      codexMode,
+      dangerousMode,
+      permissionMode: payload.permissionMode,
+      effort: payload.effort,
+      allowDangerous: payload.allowDangerous
+    }),
     piProvider: piMode ? payload.provider : undefined,
     piThinking: piMode ? payload.thinking : undefined,
     initialCommand: mode === 'terminal' ? payload.command || undefined : undefined,
@@ -1115,17 +1145,18 @@ function resolveTargetSession(ref: string, callerSessionId: string | undefined):
   const named = sessions.filter((s) => s.name === ref)
   if (named.length === 0) throw new Error(`No session with id or name "${ref}"`)
   // Several tabs share the name (one on this Mac, one on a server): the one
-  // the caller can reach wins, else the first (round 3, C4).
+  // related to the caller wins, else the first (round 3, C4).
   return (
     (callerSessionId && named.length > 1
-      ? named.find((s) => canReach(callerSessionId, s))
+      ? named.find((s) => isRelatedTo(callerSessionId, s))
       : undefined) ?? named[0]
   )
 }
 
-/** Whether the caller may reach the target under the rule `assertCanReach`
- *  enforces: itself, the tab that opened it, a tab it opened, a groupmate. */
-function canReach(callerSessionId: string, target: Session): boolean {
+/** Whether the caller is related to the target: itself, the tab that opened
+ *  it, a tab it opened, a groupmate. Only the tie-break between tabs sharing a
+ *  name reads it; any tab may be reached (PRDCT-4236). */
+function isRelatedTo(callerSessionId: string, target: Session): boolean {
   if (callerSessionId === target.id) return true
   const state = useSessionStore.getState()
   const caller = state.sessions.find((s) => s.id === callerSessionId)
@@ -1137,48 +1168,22 @@ function canReach(callerSessionId: string, target: Session): boolean {
 }
 
 /**
- * Cross-tab reach gate: a tab may send to / read only a target it has a real
- * relationship with — one it opened, the one that opened it ("parent"), or one
- * the user placed in the same group (its terminals included: a tab reads its
- * group's dev server, PRDCT-3420). This keeps a single poisoned tab from
- * driving or reading tabs in unrelated projects; grouping is the explicit
- * "these tabs may talk" gesture for anything outside the spawn lineage.
- * Identity is the token-derived callerSessionId (unforgeable), so the gate is
- * enforceable — a tab cannot claim to be the target's parent.
+ * The one condition on reaching another tab: the call carries a tab identity.
+ * Any tab of this Mac, and of a connected Clave server, may be read, messaged,
+ * resumed, assigned or handed over to (PRDCT-4236, decided 9 November 2026):
+ * the former relation rule (parent, a tab opened, a groupmate) protected
+ * nothing, since an agent moved itself into the target's group to pass it.
+ * Identity is the token-derived callerSessionId (unforgeable), NOT the
+ * caller's presence in THIS window's store: with several windows the caller
+ * may live in another window's store while its target is hosted here (§3.8).
  */
-function assertCanReach(
+function requireCaller(
   callerSessionId: string | undefined,
-  target: Session,
-  verb: 'message' | 'read' | 'resume' | 'assign' | 'hand over to'
-): void {
-  // Identity is the token-derived callerSessionId (unforgeable), NOT the
-  // caller's presence in THIS window's store: with several windows the caller
-  // may live in another window's store while its target is hosted here (main
-  // routed the call to the target's window, §3.8). So the id alone proves the
-  // request came from a real tab; the relationship is then judged from
-  // whatever this store can see.
+  verb: 'message' | 'read' | 'resume'
+): asserts callerSessionId is string {
   if (!callerSessionId) {
     throw new Error(
-      `${verb === 'message' ? 'clave_send_to_session' : verb === 'read' ? 'clave_read_session' : verb === 'resume' ? 'clave_resume_session' : verb === 'assign' ? 'clave_set_work' : 'clave_hand_over'} must be called from inside a Clave agent tab — this request has no tab identity.`
-    )
-  }
-  if (callerSessionId === target.id) return
-  const state = useSessionStore.getState()
-  // The caller record is available only when it lives in this window. The
-  // "I opened target" relationship is verifiable WITHOUT it — `target.spawnedBy`
-  // is set by main at spawn and lives on the target, here — so a tab reaching a
-  // tab it opened works across windows. The "target opened me" (parent) and
-  // "same group" relationships need the caller's own record, so they resolve
-  // only within one window (parent stays caller-window by design, §3.8).
-  const caller = state.sessions.find((s) => s.id === callerSessionId)
-  const related =
-    messagingParentOf(target) === callerSessionId || // I opened target (my child) — cross-window
-    (!!caller &&
-      (target.id === messagingParentOf(caller) || // target opened me (my parent) — same window
-        shareAGroup(state.groups, caller.id, target.id))) // same group, terminals included
-  if (!related) {
-    throw new Error(
-      `Refusing to ${verb} tab "${target.name}": it is not related to yours. You can only reach the tab that opened yours ("parent"), tabs you opened, or tabs in the same group. Put both tabs in one group to allow this.`
+      `${verb === 'message' ? 'clave_send_to_session' : verb === 'read' ? 'clave_read_session' : 'clave_resume_session'} must be called from inside a Clave agent tab — this request has no tab identity.`
     )
   }
 }
@@ -1186,7 +1191,7 @@ function assertCanReach(
 /**
  * The work tools on the window's road (PRDCT-4123), for a call the server
  * does not serve: the same arguments read the same way (`shared/work-tools`),
- * this store's reach rule, and the server's command through the preload, so
+ * the caller's identity, and the server's command through the preload, so
  * the change is the server's and every window hears it.
  */
 async function handleSetWork(payload: Record<string, unknown>): Promise<unknown> {
@@ -1197,7 +1202,6 @@ async function handleSetWork(payload: Record<string, unknown>): Promise<unknown>
     )
   const ref = typeof payload.sessionId === 'string' ? payload.sessionId : 'mine'
   const target = resolveTargetSession(ref === 'mine' ? caller : ref, caller)
-  assertCanReach(caller, target, 'assign')
   const callerUnit = useSessionStore.getState().sessions.find((s) => s.id === caller)?.work?.unit
   const change = setWorkChange(payload, callerUnit)
   return workToolAnswer(target.id, await window.electronAPI.sessionsChangeWork(target.id, change))
@@ -1216,7 +1220,6 @@ async function handleHandOver(payload: Record<string, unknown>): Promise<unknown
       await window.electronAPI.sessionsChangeWork(caller, handOverChange(request))
     )
   const successor = resolveTargetSession(request.to, caller)
-  assertCanReach(caller, successor, 'hand over to')
   return workToolAnswer(
     caller,
     await window.electronAPI.sessionsChangeWork(caller, handOverChange(request, successor.id))
@@ -1350,8 +1353,8 @@ async function resumeStoppedSession(target: Session): Promise<{ resumed: boolean
   return { resumed: result.resumed }
 }
 
-/** `clave_resume_session` on the window's road: a stopped tab the caller
- *  can reach, of this Mac or of a connected server, started again under
+/** `clave_resume_session` on the window's road: any stopped tab, of this
+ *  Mac or of a connected server, started again under
  *  its id. A running tab is refused: there is nothing to resume. */
 async function handleResumeSession(payload: {
   sessionId: string
@@ -1362,7 +1365,7 @@ async function handleResumeSession(payload: {
       ? payload.callerSessionId
       : payload.sessionId
   const target = resolveTargetSession(ref, payload.callerSessionId)
-  assertCanReach(payload.callerSessionId, target, 'resume')
+  requireCaller(payload.callerSessionId, 'resume')
   if (target.alive)
     throw new Error(`Session "${target.name}" is running; there is nothing to resume.`)
   const { resumed } = await resumeStoppedSession(target)
@@ -1384,7 +1387,7 @@ async function handleSendToSession(payload: {
   callerSessionId?: string
 }): Promise<unknown> {
   // "mine", the caller's own id, or the caller's own tab name all mean the
-  // checkpoint path — resolved BEFORE the reach gate, which has nothing to
+  // checkpoint path — resolved BEFORE the identity gate, which has nothing to
   // gate on a message that never leaves the session.
   if (payload.callerSessionId && payload.sessionId === 'mine') {
     return handleSelfCheckpoint(payload.callerSessionId, payload.message)
@@ -1393,7 +1396,7 @@ async function handleSendToSession(payload: {
   if (payload.callerSessionId && target.id === payload.callerSessionId) {
     return handleSelfCheckpoint(payload.callerSessionId, payload.message)
   }
-  assertCanReach(payload.callerSessionId, target, 'message')
+  requireCaller(payload.callerSessionId, 'message')
   // The tabs a message can never be typed into are refused BEFORE any
   // resume: a stopped terminal asked to resume and deliver would otherwise
   // come back as a bare shell while the call fails (round 1, C1).
@@ -1475,8 +1478,8 @@ async function handleSendToSession(payload: {
   // never waits on it: it records the message once the submit has landed, and
   // fires on BOTH settle paths — a restore that failed still delivered a
   // message, and the record must show that. Fire-and-forget IPC, off the
-  // stash->restore critical path. `sender` is always set here: assertCanReach
-  // refused identity-less callers above.
+  // stash->restore critical path. `sender` is unset when the caller lives in
+  // another window's store (requireCaller only refused identity-less calls).
   if (sender) {
     const recordDelivery = (): void => {
       if (!submitted) return
@@ -1537,7 +1540,7 @@ async function handleReadSession(payload: {
   callerSessionId?: string
 }): Promise<unknown> {
   const target = resolveTargetSession(payload.sessionId, payload.callerSessionId)
-  assertCanReach(payload.callerSessionId, target, 'read')
+  requireCaller(payload.callerSessionId, 'read')
   const requested = Math.min(Math.max(payload.lines ?? 100, 1), 500)
   const lines: string[] = []
   // A chat has no terminal screen: its recent history is read instead, one
@@ -1651,9 +1654,8 @@ async function handleSwitchAccount(payload: {
   }
   if (effectiveSwitchMode(session) === 'propose') {
     state.setAccountProposal(session.id, {
-      accountId: target.id,
-      label: target.label,
-      reason: 'reported'
+      reason: 'reported',
+      rungs: [{ kind: 'account', accountId: target.id, label: target.label }]
     })
     return {
       sessionId: session.id,
@@ -1771,7 +1773,7 @@ async function execute(command: string, payload: unknown): Promise<unknown> {
 
 /** Subscribe to MCP commands from the main process. Returns an unsubscribe fn. */
 export function initMcpDispatcher(): () => void {
-  // Main's memory of the opens, for the reach rule after a reload (PRDCT-4193).
+  // Main's memory of the opens, for "parent" and the name tie-break after a reload (PRDCT-4193).
   void window.electronAPI.lineageParents?.().then(
     (parents) => {
       for (const [child, parent] of Object.entries(parents)) persistedParents.set(child, parent)

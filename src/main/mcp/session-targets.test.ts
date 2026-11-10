@@ -5,12 +5,12 @@ import { resourceKey } from '@clave/contract/fleet'
 import { buildProvenanceHeader } from '../../shared/exchange-provenance'
 import { sanitizeForPaste } from '../../shared/paste-sanitize'
 import {
-  assertCanReach,
   endedMessage,
   findTarget,
   isRelated,
   isServerTabRef,
   readAnswer,
+  requireCaller,
   resolveTarget,
   resumeTarget,
   sendToTarget,
@@ -20,7 +20,7 @@ import {
 
 /**
  * The one target rule both agent-tool surfaces share (PRDCT-4192), on a fake
- * host: which tab a reference names, whether the caller may reach it, the
+ * host: which tab a reference names, that the call carries a tab identity, the
  * self-addressed send as a checkpoint that is never typed (the daemon typed
  * a lane's own checkpoint back into it as its next instruction), the
  * refusals and the shapes answered. The host's facts are the only input, so
@@ -149,7 +149,7 @@ describe('findTarget / resolveTarget', () => {
   })
 })
 
-describe('isRelated / assertCanReach', () => {
+describe('isRelated / requireCaller', () => {
   const groups = [
     group('g', { sessionIds: ['me', 'sib'], terminals: [terminal('t1', 'dev')] }),
     group('far', { sessionIds: ['stranger'], terminals: [terminal('t2', 'far-dev')] })
@@ -171,23 +171,19 @@ describe('isRelated / assertCanReach', () => {
     // Another group's terminal is not reached through a group the caller is not in.
     expect(isRelated(host, groups, 'me', 'far-dev')).toBe(false)
   })
-  it('lets a related target through', async () => {
-    await expect(assertCanReach(host, session('kid'), 'message')).resolves.toBeUndefined()
-  })
-  it('refuses an unrelated tab with the verb and the way to allow it', async () => {
-    await expect(assertCanReach(host, session('stranger'), 'read')).rejects.toThrow(
-      'Refusing to read tab "name-stranger": it is not related to yours. You can only reach the tab that opened yours ("parent"), tabs you opened, or tabs in the same group. Put both tabs in one group to allow this.'
-    )
+  it('lets any caller with an identity through, a related target or a stranger (PRDCT-4236)', () => {
+    expect(() => requireCaller(host, 'message')).not.toThrow()
+    expect(() => requireCaller(host, 'read')).not.toThrow()
   })
   it('refuses a caller with no identity, naming the tool of the verb', async () => {
     const anon = fakeHost({ sessions: [session('x')] })
-    const cases: Array<[Parameters<typeof assertCanReach>[2], string]> = [
+    const cases: Array<[Parameters<typeof requireCaller>[1], string]> = [
       ['message', 'clave_send_to_session'],
       ['read', 'clave_read_session'],
       ['resume', 'clave_resume_session']
     ]
     for (const [verb, tool] of cases) {
-      await expect(assertCanReach(anon, session('x'), verb)).rejects.toThrow(
+      expect(() => requireCaller(anon, verb)).toThrow(
         `${tool} must be called from inside a Clave agent tab — this request has no tab identity.`
       )
     }
@@ -262,11 +258,27 @@ describe('sendToTarget', () => {
       )
     ).rejects.toThrow('Calling session not found')
   })
-  it('an unrelated target is refused before anything is typed', async () => {
+  it('an unrelated target is messaged like any other tab (PRDCT-4236)', async () => {
+    const io = fakeIo()
+    const answer = await sendToTarget(fakeHost(world()), { ref: 'stranger', message: 'x' }, io)
+    expect(io.type).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'stranger' }),
+      expect.stringContaining('x'),
+      'Lane'
+    )
+    expect(answer).toMatchObject({ delivered: true, sessionId: 'stranger', name: 'name-stranger' })
+  })
+  it('a call with no tab identity is refused before anything is typed', async () => {
     const io = fakeIo()
     await expect(
-      sendToTarget(fakeHost(world()), { ref: 'stranger', message: 'x' }, io)
-    ).rejects.toThrow('Refusing to message tab "name-stranger"')
+      sendToTarget(
+        fakeHost({ ...world(), caller: undefined }),
+        { ref: 'stranger', message: 'x' },
+        io
+      )
+    ).rejects.toThrow(
+      'clave_send_to_session must be called from inside a Clave agent tab — this request has no tab identity.'
+    )
     expect(io.type).not.toHaveBeenCalled()
   })
   it('an ended target without resume is refused with the way back', async () => {
@@ -430,10 +442,22 @@ describe('resumeTarget', () => {
       conversation: false
     })
   })
-  it('enforces the reach before restarting anything', async () => {
+  it('resumes an unrelated tab like any other (PRDCT-4236)', async () => {
+    const w = world()
+    const resume = vi.fn(async () => {
+      w.sessions[2] = session('stranger', { state: 'idle' })
+      return { resumed: true }
+    })
+    const answer = await resumeTarget(fakeHost(w), 'stranger', resume)
+    expect(resume).toHaveBeenCalledWith(expect.objectContaining({ id: 'stranger' }))
+    expect(answer).toMatchObject({ resumed: true, sessionId: 'stranger', alive: true })
+  })
+  it('refuses a call with no tab identity before restarting anything', async () => {
     const resume = vi.fn(async () => ({ resumed: true }))
-    await expect(resumeTarget(fakeHost(world()), 'stranger', resume)).rejects.toThrow(
-      'Refusing to resume tab "name-stranger"'
+    await expect(
+      resumeTarget(fakeHost({ ...world(), caller: undefined }), 'stranger', resume)
+    ).rejects.toThrow(
+      'clave_resume_session must be called from inside a Clave agent tab — this request has no tab identity.'
     )
     expect(resume).not.toHaveBeenCalled()
   })

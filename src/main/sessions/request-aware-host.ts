@@ -310,16 +310,17 @@ export function requestAwareSessionHost(options: {
         await base.stop(id)
         requests.cancelSession(id)
       },
-      restart: async (id, account, resend, onlyIfStopped) => {
+      restart: async (id, account, resend, onlyIfStopped, provider) => {
         // A Resume the host will refuse (the session RUNS: a live process,
         // not a chat held in state ended) must not take the session's pending
         // prompts with it (PRDCT-4193, round 4); one that goes through
-        // cancels the dead process's prompts as a move does (round 5).
+        // cancels the dead process's prompts as a move does (round 5). A
+        // move to another provider (PRDCT-4300) rides through whole.
         const live = base.get(id)
         if (onlyIfStopped && live && live.state !== 'ended')
-          return base.restart(id, account, resend, onlyIfStopped)
+          return base.restart(id, account, resend, onlyIfStopped, provider)
         requests.cancelSession(id)
-        return base.restart(id, account, resend, onlyIfStopped)
+        return base.restart(id, account, resend, onlyIfStopped, provider)
       }
     }
   }

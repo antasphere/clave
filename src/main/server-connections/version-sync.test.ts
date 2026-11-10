@@ -395,6 +395,48 @@ describe('the version sync loop', () => {
     expect(requests).toHaveLength(1)
   })
 
+  it('carries the server’s own name on its status, and renames through the server (PRDCT-4241)', async () => {
+    const renames: Array<{ id: string; name: string }> = []
+    let name = 'box'
+    const sync = createVersionSync({
+      appVersion: () => '3.0.0-beta.9',
+      automatic: true,
+      connections: () => [{ id: 'a', name: 'Box', url: 'http://a', enabled: true }],
+      read: async () => info('3.0.0-beta.9', { name }),
+      request: async () => {
+        throw new Error('not asked')
+      },
+      setName: async (id, next) => {
+        renames.push({ id, name: next })
+        name = next
+      },
+      publish: () => {}
+    })
+    expect((await sync.refresh())[0]).toMatchObject({ kind: 'match', serverName: 'box' })
+    const renamed = await sync.rename('a', 'Studio')
+    expect(renames).toEqual([{ id: 'a', name: 'Studio' }])
+    expect(renamed).toMatchObject({ serverId: 'a', serverName: 'Studio' })
+    expect(sync.results()[0]).toMatchObject({ serverName: 'Studio' })
+    await expect(sync.rename('zzz', 'Studio')).rejects.toThrow('Unknown server connection.')
+  })
+
+  it('keeps a server’s own name on its status while the server is away (verifier round 1, F3)', async () => {
+    let up = true
+    const sync = createVersionSync({
+      appVersion: () => '3.0.0-beta.9',
+      automatic: true,
+      connections: () => [{ id: 'a', name: 'Box', url: 'http://a', enabled: true }],
+      read: async () => (up ? info('3.0.0-beta.9', { name: 'box' }) : { kind: 'unreachable' }),
+      request: async () => {
+        throw new Error('not asked')
+      },
+      publish: () => {}
+    })
+    expect((await sync.refresh())[0]).toMatchObject({ kind: 'match', serverName: 'box' })
+    up = false
+    expect((await sync.refresh())[0]).toMatchObject({ kind: 'unreachable', serverName: 'box' })
+  })
+
   it('upgrades now on demand, for an upgrade that waits or failed', async () => {
     const { sync, requests } = fleet({ a: info('3.0.0-beta.8') })
     await sync.refresh()

@@ -185,6 +185,8 @@ interface RawRoutine {
   catchUp?: unknown
   timeoutMinutes?: unknown
   scope?: unknown
+  /** Where it runs (PRDCT-4241): a server's own name or id, or `every`. */
+  runsOn?: unknown
   /** The server that runs it, by its own name or its id (PRDCT-4149). */
   server?: unknown
   report?: unknown
@@ -330,6 +332,8 @@ export function resolveRoutine(raw: RawRoutine, dir: string): ClaveRoutine | nul
       ? { timeoutMinutes: count(raw.timeoutMinutes) as number }
       : {}),
     ...(text(raw.scope) ? { scope: (raw.scope as string).trim() } : {}),
+    ...(text(raw.runsOn) ? { runsOn: (raw.runsOn as string).trim() } : {}),
+    // The field runsOn replaced: read so the scheduler refuses it by name.
     ...(text(raw.server) ? { server: (raw.server as string).trim() } : {}),
     ...(report ? { report } : {})
   }
@@ -340,6 +344,8 @@ export function serializeRoutine(
   r: ClaveRoutineWrite,
   toRelative: (abs: string | null | undefined) => string
 ): RawRoutine {
+  // `server`, the field runsOn replaced (PRDCT-4241), is carried back as read:
+  // a file rewritten for one routine keeps what another still says.
   const { cwd, report, ...rest } = r
   return {
     ...rest,

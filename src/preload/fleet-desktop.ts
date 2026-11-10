@@ -1243,6 +1243,14 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
       return { sessionId: key(serverId, sessionId) }
     },
     fleetRoutineDeck: async (serverId, runId) => (await backing(serverId)).api.routines.deck(runId),
+    // ── PRDCT-4242: the routines a connected server keeps in its own store ──
+    fleetRoutineCreate: async (serverId, input) =>
+      (await backing(serverId)).api.routines.create(input),
+    fleetRoutineUpdate: async (serverId, key, patch) =>
+      (await backing(serverId)).api.routines.update(key, patch),
+    fleetRoutineDelete: async (serverId, key) => (await backing(serverId)).api.routines.delete(key),
+    fleetRoutinePause: async (serverId, key, paused) =>
+      (await backing(serverId)).api.routines.pause(key, paused),
     onFleetRoutines: (callback) => {
       routinesListeners.add(callback)
       return () => {
@@ -1254,6 +1262,8 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
       (await ports.invoke(FLEET_IPC.versions, refresh === true)) as ServerVersionStatus[],
     fleetUpgradeServer: async (serverId) =>
       (await ports.invoke(FLEET_IPC.upgradeNow, serverId)) as ServerVersionStatus,
+    fleetSetServerName: async (serverId, name) =>
+      (await ports.invoke(FLEET_IPC.setServerName, serverId, name)) as ServerVersionStatus,
     onFleetServerVersions: (callback) => ports.versions?.(callback) ?? noop
   }
   type LaunchSettings = Awaited<ReturnType<FleetDesktopAPI['fleetLaunchSettings']>>
@@ -1508,6 +1518,13 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
       both(
         local.onSessionRestarting(cb),
         eventListener('session.restarting', (event, owner) => cb({ id: key(owner, event.id) }))
+      ),
+    onSessionModelChanged: (cb) =>
+      both(
+        local.onSessionModelChanged(cb),
+        eventListener('session.model_changed', (event, owner) =>
+          cb({ id: key(owner, event.id), model: event.model })
+        )
       ),
     onSessionRestarted: (cb) =>
       both(

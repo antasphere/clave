@@ -66,6 +66,7 @@ import { promptRestore } from '../../store/restore-prompt-store'
 import { RestorePromptDialog } from '../ui/RestorePromptDialog'
 import { initMcpDispatcher } from '../../lib/mcp-dispatcher'
 import { initServedToolsEvents } from '../../lib/served-events'
+import { installProviderSwitchRoad } from '../../lib/switch-provider'
 import { placeRecords, adoptRehomed, adoptHiddenRecord } from '../../lib/adopt-record'
 import { requestGroupDissolve, useDissolveStore } from '../../lib/group-dissolve'
 import { planBootAdoption, bootSurvivors } from '../../lib/boot-adoption'
@@ -189,6 +190,8 @@ export function AppShell(): React.JSX.Element {
     // What the server did to a tab through an agent tool (wave 4): the
     // window follows the push channel's facts.
     initServedToolsEvents()
+    // The limit policy's third rung, a move to another provider (PRDCT-4300).
+    installProviderSwitchRoad()
     initSecretStore()
     initCopyOfferStore()
     initRoutinesStore()

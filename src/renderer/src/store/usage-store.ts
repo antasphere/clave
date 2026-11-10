@@ -1,7 +1,13 @@
 import { create } from 'zustand'
 import type { PiUsageTotals, UsageError, UsageLimits, UsageWindow } from '../../../preload/index.d'
 import type { Session } from './session-types'
-import { usageWindowsForModel } from '../../../shared/usage-summary'
+import {
+  isSharedWindow,
+  splitWindows,
+  tightestOf,
+  usageWindowsForModel
+} from '../../../shared/usage-summary'
+import { isExhausted, windowExhausted, type ScopedCap } from '../../../shared/account-pool'
 import { createUsageResource, type UsageResource } from './usage-resource'
 import { DEFAULT_CLAUDE_PROFILE_ID } from './claude-profile-store'
 import { DEFAULT_CODEX_ACCOUNT_ID } from './codex-account-store'
@@ -101,10 +107,20 @@ export const quotaUsageStores = { claude: useUsageStore, codex: useCodexUsageSto
  *  account's resource (the launcher's menu rows, the session's context menu). */
 export interface AccountUsageSummary {
   status: UsageResource<UsageLimits>['status']
-  /** The window about to stop this account, or null when none is known. */
+  /** The window about to stop the view this summary describes, or null when
+   *  none is known: an account's tightest SHARED cap (the 5-hour block, the
+   *  weekly all-models cap), a session's tightest among the shared caps and
+   *  its own family's (`claudeUsageForModel`). A family cap out is never an
+   *  account's exhaustion: it is under `scopedOut`. */
   tightest: UsageWindow | null
   /** All returned windows, including the 5-hour session window used for balancing. */
   windows?: UsageWindow[]
+  /** The tightest shared cap. */
+  shared?: UsageWindow | null
+  /** One entry per family cap in the view, each with its own exhaustion. */
+  scoped?: (ScopedCap & { window: UsageWindow })[]
+  /** The families whose cap is out (`['Fable']`). */
+  scopedOut?: string[]
   error: string | null
   /** When main actually read these numbers (not when this window received
    *  them), or null before the first read. */
@@ -123,11 +139,23 @@ export const useCodexAccountsUsage = create<{ byAccount: Record<string, AccountU
   () => ({ byAccount: {} })
 )
 
+/** The account view's fields over a read's windows: `tightest` over the
+ *  shared caps alone, every family cap under `scoped` (the split of
+ *  `shared/usage-summary.ts`). What `summarize` and the server settings'
+ *  `summarizeUsageRead` both build from. */
+export function accountUsageFieldsOf(
+  windows: UsageWindow[]
+): Pick<AccountUsageSummary, 'tightest' | 'windows' | 'shared' | 'scoped' | 'scopedOut'> {
+  const split = splitWindows(windows)
+  return { ...split, tightest: tightestOf(windows.filter(isSharedWindow)), windows }
+}
+
 function summarize(state: UsageResource<UsageLimits>): AccountUsageSummary {
   return {
     status: state.status,
-    tightest: state.status === 'error' ? null : tightestWindow(state.data?.windows ?? []),
-    windows: state.status === 'error' ? undefined : (state.data?.windows ?? []),
+    ...(state.status === 'error'
+      ? { tightest: null, windows: undefined }
+      : accountUsageFieldsOf(state.data?.windows ?? [])),
     error: state.error,
     fetchedAt: state.data?.fetchedAt ?? (state.status === 'error' ? state.fetchedAt : null),
     refreshing: state.refreshing,
@@ -231,7 +259,11 @@ export function claudeModelWindows(windows: UsageWindow[], model?: string): Usag
   return usageWindowsForModel(windows, model)
 }
 
-export function claudeUsageForModel(
+/** The SESSION view of an account's summary: the shared caps plus the cap of
+ *  the session's own model family, `tightest` over those; with no model,
+ *  the shared caps alone. Claude's families (Fable, Opus) and Codex's model
+ *  buckets (Spark) alike: a family is any window with a scope. */
+export function usageForModel(
   summary: AccountUsageSummary | undefined,
   model?: string
 ): AccountUsageSummary | undefined {
@@ -240,27 +272,20 @@ export function claudeUsageForModel(
     summary.windows ?? (summary.tightest ? [summary.tightest] : []),
     model
   )
-  return { ...summary, windows, tightest: tightestWindow(windows) }
+  return { ...summary, ...splitWindows(windows), windows }
 }
 
-/** Select by service severity, then utilization. Without a session context,
- * consider every reported window for the account overview. */
+/** The name the session view had when only Claude had families. */
+export const claudeUsageForModel = usageForModel
+
+/** The window about to stop a view, the shared rule (`tightestOf`): a cap
+ * that is out first, the one back last among those, then the service's
+ * severity, then utilization. With a model, over that model's caps. */
 export function tightestWindow(
   windows: UsageWindow[],
   context?: { model?: string }
 ): UsageWindow | null {
-  const rank = { normal: 0, warning: 1, critical: 2 }
-  let best: UsageWindow | null = null
-  for (const w of context ? claudeModelWindows(windows, context.model) : windows) {
-    if (!best) {
-      best = w
-      continue
-    }
-    const a = rank[w.severity ?? 'normal']
-    const b = rank[best.severity ?? 'normal']
-    if (a > b || (a === b && w.usedPercentage > best.usedPercentage)) best = w
-  }
-  return best
+  return tightestOf(context ? claudeModelWindows(windows, context.model) : windows)
 }
 
 /** The short name for a cap — what a one-line readout has room for. The
@@ -365,13 +390,16 @@ export function capName(w: UsageWindow): string {
   return w.label
 }
 
-/** The cap a headroom line names: the tightest, except that a cap tied with
- *  it at the same whole percent gives way to the all-models weekly one, so an
- *  untouched account reads "100% left · Overall" rather than naming
- *  whichever window the service happened to list first. */
+/** The cap a headroom line names: the tightest, except that an OPEN cap
+ *  tied with it at the same whole percent gives way to the all-models
+ *  weekly one, so an untouched account reads "100% left · Overall" rather
+ *  than naming whichever window the service happened to list first. */
 export function headroomWindow(summary: AccountUsageSummary | undefined): UsageWindow | null {
   const tightest = summary?.tightest
   if (!tightest) return null
+  // A cap that is out is the line, whatever ties with it: the one rule made
+  // it the cap that binds, and the chip and the notice name it.
+  if (windowExhausted(tightest)) return tightest
   const overall = summary.windows?.find((w) => w.kind === 'weekly_all')
   if (
     overall &&
@@ -390,6 +418,88 @@ export function headroomLabel(summary: AccountUsageSummary | undefined): string 
   if (!w) return null
   const left = Math.max(0, Math.round(100 - w.usedPercentage))
   return `${left}% left · ${capName(w)}`
+}
+
+/** How a cap's return is written: `in` for a one-line readout ("back in 2d
+ *  5h"), `at` where there is room for a date ("back Thu 2 Oct, 14:00"). */
+export interface CapWords {
+  now?: number
+  reset?: 'in' | 'at'
+}
+
+/** "Fable out · back in 2d 5h": the ONE way a cap that is out is named,
+ *  everywhere. The cap by `capName`, the return by `formatResetIn` or
+ *  `formatResetAt`; no return when the service gave none. Never a bare
+ *  "At limit" or "Limit reached": those said neither which cap nor when. */
+export function capOutLabel(w: UsageWindow, words: CapWords = {}): string {
+  const back =
+    words.reset === 'at' ? formatResetAt(w.resetsAt) : formatResetIn(w.resetsAt, words.now)
+  return back ? `${capName(w)} out · back ${back}` : `${capName(w)} out`
+}
+
+/** The parts every readout composes its words from. */
+export interface CapStatus {
+  /** "72% left · Overall": the headroom of the view's shared caps, or null
+   *  when the shared cap is out. */
+  headroom: string | null
+  /** Every cap of the view that is out, named with its return, the shared
+   *  cap first ("Overall out · back in 2d 5h", "Fable out · back Thu 2 Oct, 14:00"). */
+  out: string[]
+  /** The cap that stops the view: its tightest window when that is out. For
+   *  a session view, the cap that stops THIS session; for an account view,
+   *  the shared cap that stops every session on it. */
+  stopping: UsageWindow | null
+  /** Whether the view is out (`isExhausted`). */
+  exhausted: boolean
+}
+
+/** The status of a view (an account's summary, or a session's through
+ *  `claudeUsageForModel`), or null before a read and after a failed one.
+ *  An account with 72% of its week left and its Fable cap spent reads
+ *  `72% left · Overall` then `Fable out · back Thu 2 Oct, 14:00`; one whose
+ *  week is spent reads `Overall out · back in 2d 5h`. */
+export function capStatus(
+  summary: AccountUsageSummary | undefined,
+  words: CapWords = {}
+): CapStatus | null {
+  if (!summary || summary.status === 'error') return null
+  // A read that names only family caps has no tightest for the account as a
+  // whole, and still has families to name.
+  if (!summary.tightest && !summary.scoped?.length) return null
+  const exhausted = isExhausted(summary)
+  // The stopping cap is the view's tightest, which the one rule makes the
+  // cap out that comes back last; the others out follow in the read's
+  // order, one entry per name with its latest return (Codex's Spark block
+  // and Spark week both out read "Spark out" once, back when the week is).
+  const stopping = exhausted ? summary.tightest : null
+  const windows = summary.windows ?? (summary.tightest ? [summary.tightest] : [])
+  const byName = new Map<string, UsageWindow>()
+  for (const w of [...(stopping ? [stopping] : []), ...windows]) {
+    if (!windowExhausted(w)) continue
+    const held = byName.get(capName(w))
+    if (!held || (w.resetsAt ?? -1) > (held.resetsAt ?? -1)) byName.set(capName(w), w)
+  }
+  const out = [...byName.values()].map((w) => capOutLabel(w, words))
+  // The shared headroom: the tightest shared cap while it is open. A session
+  // view whose family cap is out still says what the account has left.
+  const shared = summary.shared === undefined ? summary.tightest : summary.shared
+  const headroom =
+    shared && !isExhausted({ tightest: shared })
+      ? headroomLabel({ ...summary, tightest: shared })
+      : null
+  return { headroom, out, stopping, exhausted }
+}
+
+/** The one line a row has room for: the headroom, then every cap that is
+ *  out, ` · ` between ("72% left · Overall · Fable out · back in 2d 5h"). */
+export function capStatusLine(
+  summary: AccountUsageSummary | undefined,
+  words: CapWords = {}
+): string | null {
+  const status = capStatus(summary, words)
+  if (!status) return null
+  const parts = [status.headroom, ...status.out].filter((part): part is string => part !== null)
+  return parts.length > 0 ? parts.join(' · ') : null
 }
 
 // Poll only providers/ranges that have been viewed. Codex is never started just

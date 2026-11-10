@@ -23,6 +23,7 @@ import { isValidModelName } from '../../../shared/model-name'
 import { tmuxKillSessionArgs } from '../../tmux-args'
 import { lineageOf } from '../lineage'
 import { sanitizeWork, type WorkAssignment } from '@clave/contract/work-rules'
+import type { ContinuedFrom } from '@clave/contract/sessions'
 import {
   buildAgentArgv,
   type AgentKind,
@@ -606,7 +607,7 @@ export interface SessionRecord {
    *  tab the user opened. Carried forward across adoption like the name. */
   spawnedBy?: string
   /** The tab whose agent opened this one through `clave_open_session`,
-   *  nested under it or not (PRDCT-4192): what "parent" and the reach rule
+   *  nested under it or not (PRDCT-4192): what "parent" and the name tie-break
    *  read once the host's memory of the open is gone. `spawnedBy` keeps
    *  meaning nesting. Always written by an agent's open; absent for a tab a
    *  person opened. Carried forward across adoption like spawnedBy. */
@@ -622,6 +623,10 @@ export interface SessionRecord {
    *  (PRDCT-4123): carried across adoption like spawnedBy, changed only
    *  through the server's ChangeSessionWork. */
   work?: WorkAssignment
+  /** The conversation came from another provider (PRDCT-4300): which, and
+   *  whether it was converted into this provider's storage or carried as a
+   *  handoff message. The tab's first card reads it. */
+  continuedFrom?: ContinuedFrom
   /** Populated only on the listAdoptableSessions() path (not persisted in
    *  the record). True when the backing tmux session is still running (app
    *  quit/reopen, no reboot) → reattach to the live process. False when the
@@ -913,6 +918,9 @@ export interface PtySpawnOptions {
    *  (pty-manager `restartSpawn`), never from a client; a spawn without it
    *  keeps the previous record's. */
   work?: WorkAssignment
+  /** The restart that changes the tab's provider says where the conversation
+   *  came from (PRDCT-4300); written to the record, read by the first card. */
+  continuedFrom?: ContinuedFrom
 }
 
 /** Validate a link crossing the IPC boundary. It is only ever compared to

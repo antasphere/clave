@@ -56,6 +56,7 @@ import type {
   WorkspaceState
 } from '../shared/workspace-types'
 import type { DownloadProgress, ReleaseNote, UpdaterState } from '../shared/updater-types'
+import type { LimitReport } from '../shared/limit-report'
 import type { AgentUpdateId, AgentUpdatesState } from '../shared/agent-updates'
 import type { GitRangeDirection } from '../shared/git-range'
 import type {
@@ -98,7 +99,21 @@ export interface HistoryLedgerRow {
   workspaceId: string | null
   groupId: string | null
   groupName: string | null
+  /** What the tab was launched on (PRDCT-4236): a reopen from the History
+   *  comes back the same way. The renderer fills `dangerous` and the account;
+   *  main adds the mode and the effort from the session's record. */
+  dangerous?: boolean
+  permissionMode?: string
+  effort?: string
+  accountId?: string
+  accountLabel?: string
 }
+
+/** The launch a History entry remembers, field by field from its latest row. */
+export type HistoryLaunch = Pick<
+  HistoryLedgerRow,
+  'dangerous' | 'permissionMode' | 'effort' | 'accountId' | 'accountLabel'
+>
 
 export type HistorySearchScope = 'human' | 'agent' | 'tools'
 
@@ -107,6 +122,41 @@ export interface HistorySearchHit {
   ts: string | null
   scope: HistorySearchScope
   excerpt: string
+}
+
+/** A chat provider a tab can be moved to (PRDCT-4300). */
+export interface ProviderChoice {
+  adapterId: string
+  /** The provider's own name (`claude`, `codex`, a plugin's id). */
+  provider: string
+  /** How the person reads it: Claude, Codex. */
+  label: string
+}
+/** The road a provider switch would take, said before Continue (PRDCT-4300). */
+export type ProviderSwitchPlan = {
+  from: { adapterId: string; provider: string }
+  to: { adapterId: string; provider: string }
+} & ({ road: 'convert'; codexVersion: string } | { road: 'handoff'; reason: string })
+/** What a restart may change about the tab: its account, the message the
+ *  limit rejected sent again, and (PRDCT-4300) the provider it comes back
+ *  on with what the conversation does there. */
+export interface RestartOverridesInput {
+  claudeProfileId?: string
+  claudeProfileLabel?: string
+  codexAccountId?: string
+  codexAccountLabel?: string
+  /** Send the message the limit rejected again on the new account. */
+  resendRejected?: boolean
+  /** A Resume, not a move: refused while the session runs (PRDCT-4193). */
+  onlyIfStopped?: boolean
+  /** The adapter the tab comes back on; absent keeps its provider. */
+  adapterId?: string
+  model?: string
+  /** The conversation to resume in the new provider's storage (a converted thread). */
+  resume?: string
+  /** The first message of the fresh conversation when nothing is resumed (the handoff). */
+  firstMessage?: string
+  continuedFrom?: { provider: string; road: 'converted' | 'handoff' }
 }
 
 export interface HistoryListEntry {
@@ -127,6 +177,7 @@ export interface HistoryListEntry {
   firstSeenAt: string
   lastSeenAt: string
   closedAt: string | null
+  launch?: HistoryLaunch
   transcript: {
     exists: boolean
     path: string
@@ -451,7 +502,7 @@ export interface SessionRecord {
   /** The tab whose agent opened this one: the boot restore folds it under
    *  that parent again and `"parent"` still reaches it. Absent = a user's tab. */
   spawnedBy?: string
-  /** The same tab, nested under it or not (PRDCT-4192): what the reach rule
+  /** The same tab, nested under it or not (PRDCT-4192): what the name tie-break
    *  reads after a restart. Absent = a user's tab. */
   openedBy?: string
   /** The permission mode and the effort the chat was last running in, as the
@@ -461,6 +512,10 @@ export interface SessionRecord {
   /** Which wave or lane the tab works on, its role and its standing
    *  (PRDCT-4123). Absent = an ordinary tab. */
   work?: WorkAssignment
+  /** The conversation came from another provider (PRDCT-4300): which, and
+   *  whether it was converted into this provider's storage or carried as a
+   *  handoff message. */
+  continuedFrom?: { provider: string; road: 'converted' | 'handoff' }
   /** True → reattach to a still-running tmux session. False → the tmux server
    *  died (reboot) but the sidecar survived; re-spawn fresh (Claude resumes). */
   live?: boolean
@@ -694,7 +749,7 @@ export interface ElectronAPI extends FleetDesktopAPI {
   sessionsList: () => Promise<Session[]>
   /** Which tab opened which, as main keeps it across a window reload
    *  (`sessions/lineage.ts`, PRDCT-4193): child session id or key → opener
-   *  id. The window's reach rule reads it after a reload, when its own
+   *  id. The window's name tie-break reads it after a reload, when its own
    *  memory of the opens is gone. */
   lineageParents: () => Promise<Record<string, string>>
   /** Register stream/exit listeners first, then await this before writing. */
@@ -706,6 +761,31 @@ export interface ElectronAPI extends FleetDesktopAPI {
    *  it; returns the updated record. */
   sessionsSetView: (id: string, viewId: string | null) => Promise<Session>
   sessionsModels: (id: string) => Promise<ModelOption[]>
+  // ── PRDCT-4300: provider then model, and the conversation moves ──
+  /** The chat providers this Mac can run a tab on: the built-in adapters
+   *  present in this build (Claude, Codex, the echo fixture when enabled). */
+  adaptersList: () => Promise<ProviderChoice[]>
+  /** A provider's models with no session of it open: asked of the CLI once
+   *  per boot (Claude's initialize on a short-lived process, Codex's
+   *  model/list on its app-server) and cached. */
+  adaptersModels: (adapterId: string, cwd: string) => Promise<ModelOption[]>
+  /** Which road a move of this tab to `adapterId` would take, before any
+   *  byte is written: convert through the session bridge, or a handoff
+   *  message, with the reason in the person's words. */
+  providerSwitchPlan: (sessionId: string, adapterId: string) => Promise<ProviderSwitchPlan>
+  /** Convert this tab's conversation into a Codex thread in the account's
+   *  home and read it back through the real Codex; refused with a reason
+   *  when the thread did not come back whole. */
+  providerSwitchConvert: (
+    sessionId: string,
+    target: { codexAccountId?: string; model?: string }
+  ) => Promise<{ ok: true; threadId: string } | { ok: false; reason: string }>
+  /** Write the full conversation beside the work (`<userData>/handoffs/<id>.md`)
+   *  and read the worktree's `git diff --stat`, for the handoff message. */
+  providerSwitchHandoff: (
+    sessionId: string,
+    tape: string
+  ) => Promise<{ path: string; diffStat: string | null }>
   sessionsCommands: (id: string) => Promise<CommandOption[]>
   /** One control request to the session's provider, from the closed set the
    *  native panels send (the MCP servers, the plugins); answers the provider's
@@ -810,6 +890,12 @@ export interface ElectronAPI extends FleetDesktopAPI {
       /** The Codex account (ADR 0002); codex mode only. */
       codexAccountId?: string
       codexAccountLabel?: string
+      /** The mode a Claude session asks under short of bypass, and the
+       *  reasoning effort (PRDCT-4191/4236): a resume brings them back. */
+      permissionMode?: 'default' | 'acceptEdits' | 'plan' | 'auto' | 'dontAsk'
+      effort?: string
+      /** Bypass kept reachable to a session resumed in another mode. */
+      allowDangerous?: boolean
       workspaceId?: string
       /** Spawning the hidden half of something else — persisted on the record
        *  so the next launch restores it as that half, not as a tab. */
@@ -874,6 +960,8 @@ export interface ElectronAPI extends FleetDesktopAPI {
   ) => () => void
   onSessionTyped: (callback: (payload: { id: string; from: string | null }) => void) => () => void
   onSessionRestarting: (callback: (payload: { id: string }) => void) => () => void
+  /** The session runs on `model` now, as its provider said it (PRDCT-4256). */
+  onSessionModelChanged: (callback: (payload: { id: string; model: string }) => void) => () => void
   onSessionRestarted: (
     callback: (payload: {
       id: string
@@ -892,7 +980,11 @@ export interface ElectronAPI extends FleetDesktopAPI {
   ) => () => void
   onSessionData: (id: string, callback: (data: string) => void) => () => void
   onSessionExit: (id: string, callback: (exitCode: number) => void) => () => void
-  onSessionLimitReported: (callback: (sessionId: string) => void) => () => void
+  /** A chat session's CLI reported its account's limit and which cap it hit
+   *  (ADR 0002, PRDCT-4302); both transports. */
+  onSessionLimitReported: (
+    callback: (payload: { id: string; report: LimitReport }) => void
+  ) => () => void
   onSessionAutoTitle: (sessionId: string, callback: (title: string) => void) => () => void
   onPlanDetected: (sessionId: string, callback: (planPath: string) => void) => () => void
   onClearDetected: (
@@ -947,6 +1039,9 @@ export interface ElectronAPI extends FleetDesktopAPI {
   /** Session history (PRDCT-1738). A ledger row per placement change,
    *  fire-and-forget; the folded list for the dialog. */
   historyStamp: (row: HistoryLedgerRow) => void
+  /** The ledger told what a closing tab runs on, from its record, before the
+   *  record goes (PRDCT-4236): awaited before the kill, never a reason to fail it. */
+  historyRestamp: (sessionId: string) => Promise<void>
   historyList: () => Promise<{ entries: HistoryListEntry[]; skippedLines: number }>
   /** The message trail's read: a live tab's conversation as turns.
    *  `configDir` is the tab's own account directory, when it ran with one:
@@ -990,6 +1085,23 @@ export interface ElectronAPI extends FleetDesktopAPI {
   routinesDismiss: (runId: string) => Promise<void>
   /** The run's conversation continued: in the panel (the session re-homed to this window) or as a tab (a new session this window places). */
   routinesOpenDiscussion: (runId: string, mode: 'panel' | 'tab') => Promise<{ sessionId: string }>
+  // ── PRDCT-4242: the routines the server keeps in its own store ──
+  routinesCreate: (
+    input: import('@clave/contract/routines/model').RoutineCreateInput
+  ) => Promise<import('@clave/contract/routines/model').RoutineView>
+  routinesUpdate: (
+    key: string,
+    patch: import('@clave/contract/routines/model').RoutinePatch
+  ) => Promise<import('@clave/contract/routines/model').RoutineView>
+  routinesDelete: (key: string) => Promise<void>
+  routinesPause: (
+    key: string,
+    paused: boolean
+  ) => Promise<import('@clave/contract/routines/model').RoutineView>
+  /** This Mac's own name as a server (PRDCT-4241): what a routine's runsOn places it by. */
+  routinesOwnName: () => Promise<string>
+  /** Set this Mac's own name as a server; answers the name in force. */
+  routinesSetOwnName: (name: string) => Promise<string>
   onRoutinesChanged: (callback: () => void) => () => void
   /** A connected server's run deck written under this Mac's user data and
    *  registered with the preview protocol (PRDCT-4149): its `clave-preview://` URL. */
@@ -1208,16 +1320,7 @@ export interface ElectronAPI extends FleetDesktopAPI {
    *  `resumed` false means it started fresh (nothing found to resume). */
   restartSession: (
     id: string,
-    overrides: {
-      claudeProfileId?: string
-      claudeProfileLabel?: string
-      codexAccountId?: string
-      codexAccountLabel?: string
-      /** Send the message the limit rejected again on the new account. */
-      resendRejected?: boolean
-      /** A Resume, not a move: refused while the session runs (PRDCT-4193). */
-      onlyIfStopped?: boolean
-    },
+    overrides: RestartOverridesInput,
     requestId?: string
   ) => Promise<(SessionInfo & { resumed: boolean; requestId?: string }) | { error: string }>
   getPiUsage: (range: PiUsageTotals['range']) => Promise<PiUsageTotals>

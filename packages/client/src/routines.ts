@@ -7,7 +7,16 @@
  * `RoutineReportRefused` with the schema's errors, a server that runs no
  * routines as `CapabilityUnavailable`, like every declared failure.
  */
-import type { RoutineRun, RoutineStatus, RoutinesListing } from '@clave/contract/routines'
+import type {
+  RoutineCreateInput,
+  RoutineMoveInput,
+  RoutineMoved,
+  RoutinePatch,
+  RoutineRun,
+  RoutineStatus,
+  RoutineView,
+  RoutinesListing
+} from '@clave/contract/routines'
 import type { Call } from './call'
 
 export interface RoutinesClient {
@@ -28,6 +37,12 @@ export interface RoutinesClient {
     windowKey: string,
     mode: 'panel' | 'tab'
   ) => Promise<{ sessionId: string }>
+  // ── PRDCT-4242: the routines the server keeps in its own store ──
+  readonly create: (input: RoutineCreateInput) => Promise<RoutineView>
+  readonly update: (key: string, patch: RoutinePatch) => Promise<RoutineView>
+  readonly delete: (key: string) => Promise<void>
+  readonly pause: (key: string, paused: boolean) => Promise<RoutineView>
+  readonly moveToFile: (key: string, input: RoutineMoveInput) => Promise<RoutineMoved>
 }
 
 export const routinesClient = (call: Call): RoutinesClient => ({
@@ -37,5 +52,10 @@ export const routinesClient = (call: Call): RoutinesClient => ({
   dismiss: (runId) => call((c) => c.routines.dismiss({ payload: { runId } })).then(() => undefined),
   report: (input) => call((c) => c.routines.report({ payload: input })),
   openDiscussion: (runId, windowKey, mode) =>
-    call((c) => c.routines.discussion({ payload: { runId, windowKey, mode } }))
+    call((c) => c.routines.discussion({ payload: { runId, windowKey, mode } })),
+  create: (input) => call((c) => c.routines.create({ payload: input })),
+  update: (key, patch) => call((c) => c.routines.update({ payload: { key, patch } })),
+  delete: (key) => call((c) => c.routines.delete({ payload: { key } })).then(() => undefined),
+  pause: (key, paused) => call((c) => c.routines.pause({ payload: { key, paused } })),
+  moveToFile: (key, input) => call((c) => c.routines.moveToFile({ payload: { key, ...input } }))
 })

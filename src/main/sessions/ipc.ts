@@ -48,7 +48,7 @@ export function registerSessionIpc(): void {
     const key = win && windowRegistry.getKeyForWindow(win.id)
     return key ? getSessionHost().list(key) : []
   })
-  // Which tab opened which (PRDCT-4193): the window's reach rule reads it
+  // Which tab opened which (PRDCT-4193): the window's name tie-break reads it
   // after a reload, its own memory of the opens gone with the page.
   ipcMain.handle('lineage:parents', () => lineageParents())
   ipcMain.handle('sessions:subscribe', (event, id: string) => {

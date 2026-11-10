@@ -263,6 +263,8 @@ describe('the preload routes the other session calls', () => {
       ['sessions:capabilities', 's1'],
       ['sessions:history', 's1', 40, 20],
       ['pty:spawn', '/repo', spawnOptions],
+      // A close tells the History what the tab runs on first (PRDCT-4236).
+      ['history:restamp', 's1'],
       ['pty:kill', 's1']
     ])
     expect(mocks.createApiClient).not.toHaveBeenCalled()
@@ -301,7 +303,10 @@ describe('the preload routes the other session calls', () => {
       channels().filter(
         (c) => c !== 'server:endpoint' && c !== 'server:external' && c !== 'window:identity'
       )
-    ).toEqual([])
+    ).toEqual([
+      // The History's restamp is main's whatever road the kill takes (PRDCT-4236).
+      'history:restamp'
+    ])
   })
 })
 
@@ -760,6 +765,45 @@ describe('restart correlation at the preload boundary', () => {
       'op-123'
     )
     expect(channels()).not.toContain('pty:restart')
+  })
+  it('carries a provider switch as its own object on the served route, resume included (PRDCT-4300)', async () => {
+    answer(onServer)
+    mocks.sessions.restart = vi.fn(async () => ({ id: 's1', resumed: true, requestId: 'op-9' }))
+    await api.restartSession(
+      's1',
+      {
+        codexAccountId: 'c1',
+        codexAccountLabel: 'Codex 1',
+        adapterId: 'codex-chat',
+        model: 'gpt-5.5',
+        resume: 'thread-7',
+        continuedFrom: { provider: 'claude', road: 'converted' }
+      },
+      'op-9'
+    )
+    expect(mocks.sessions.restart).toHaveBeenCalledExactlyOnceWith(
+      's1',
+      { codexAccountId: 'c1', codexAccountLabel: 'Codex 1' },
+      false,
+      'op-9',
+      false,
+      {
+        adapterId: 'codex-chat',
+        model: 'gpt-5.5',
+        resume: 'thread-7',
+        continuedFrom: { provider: 'claude', road: 'converted' }
+      }
+    )
+    expect(channels()).not.toContain('pty:restart')
+  })
+  it('carries the handoff the same way, on the IPC road too', async () => {
+    answer({ 'server:endpoint': null, 'pty:restart': { id: 's1', resumed: false } })
+    await api.restartSession('s1', { adapterId: 'echo', model: 'echo-1', firstMessage: 'hand' })
+    expect(mocks.invoke).toHaveBeenCalledWith('pty:restart', 's1', {
+      adapterId: 'echo',
+      model: 'echo-1',
+      firstMessage: 'hand'
+    })
   })
   it('does not pass a request ID to the legacy IPC restart or invent an echo', async () => {
     answer({ 'server:endpoint': null, 'pty:restart': { id: 's1', resumed: true } })

@@ -29,12 +29,12 @@ import type { LaunchProfile, LaunchProfilePreferences } from '../../../shared/ag
    workspace's or global default's chat form, read from the Mac's own store. */
 
 const switchAccount = vi.hoisted(() => ({
-  restartSessionProcess: vi.fn(async (id: string) => ({ ok: id !== '', resumed: true }))
+  restartSessionProcess: vi.fn(async (id: string) => ({ ok: id !== '', resumed: true })),
+  resolveAccountRef: vi.fn(() => ({ id: 'default', label: 'Default' }))
 }))
 vi.mock('./switch-account', () => ({
   restartSessionProcess: switchAccount.restartSessionProcess,
-  resolveAccountForSpawn: () => ({ id: 'default', label: 'Default' }),
-  resolveAccountRef: () => ({ id: 'default', label: 'Default' }),
+  resolveAccountRef: switchAccount.resolveAccountRef,
   claudeProfileSpawnFields: () => ({}),
   codexAccountSpawnFields: () => ({ codexAccountId: 'default', codexAccountLabel: 'Default' }),
   sessionAccountExhausted: () => false,
@@ -78,7 +78,11 @@ beforeEach(() => {
     alive: true,
     launchProfileId: options.launchProfileId
   }))
-  globals.window.electronAPI = { spawnSession, captureTabSpawn: vi.fn() }
+  globals.window.electronAPI = {
+    spawnSession,
+    captureTabSpawn: vi.fn(),
+    preferencesGet: vi.fn(async () => undefined)
+  }
 })
 afterEach(() => {
   globals.window.electronAPI = {}
@@ -141,6 +145,37 @@ describe('clave_open_session on the window road', () => {
       dangerous: true
     })
     expect(spawned()).toMatchObject({ launchProfileId: 'codex-chat', dangerousMode: true })
+  })
+  it('a past conversation reopened carries its id to the spawn, and only then (PRDCT-4236)', async () => {
+    await openSessionProgrammatically({ cwd: '/repo', mode: 'claude', resumeSessionId: 'abc' })
+    expect(spawned().resumeSessionId).toBe('abc')
+    await openSessionProgrammatically({ cwd: '/repo', mode: 'claude' })
+    expect(spawned()).not.toHaveProperty('resumeSessionId')
+  })
+  it('forwards the permission mode and the effort to the spawn; bypass is the flag (PRDCT-4236)', async () => {
+    await openSessionProgrammatically({
+      cwd: '/repo',
+      mode: 'claude',
+      permissionMode: 'acceptEdits',
+      allowDangerous: true,
+      effort: 'max'
+    })
+    expect(spawned()).toMatchObject({
+      permissionMode: 'acceptEdits',
+      allowDangerous: true,
+      effort: 'max',
+      dangerousMode: false
+    })
+    await openSessionProgrammatically({
+      cwd: '/repo',
+      mode: 'claude',
+      dangerous: true,
+      permissionMode: 'plan',
+      effort: 'Bad Effort'
+    })
+    expect(spawned()).toMatchObject({ dangerousMode: true })
+    expect(spawned()).not.toHaveProperty('permissionMode')
+    expect(spawned()).not.toHaveProperty('effort')
   })
   it('refuses a terminal profile beside chat, and leaves a terminal open untouched by the chat rule', async () => {
     useLaunchProfileStore.setState({
@@ -317,14 +352,21 @@ describe('clave_set_work and clave_hand_over on the window road', () => {
     })
   })
 
-  it('refuses to assign a tab the caller is not related to, before any change', async () => {
+  it('assigns a tab the caller is not related to (PRDCT-4236)', async () => {
     const answer = await dispatch('setWork', {
       callerSessionId: 'caller',
       sessionId: 'stranger',
       role: 'verifier'
     })
+    expect(answer.ok).toBe(true)
+    expect(sessionsChangeWork).toHaveBeenCalledTimes(1)
+    expect(sessionsChangeWork.mock.calls[0][0]).toBe('stranger')
+  })
+
+  it('refuses a work change with no tab identity, before any change', async () => {
+    const answer = await dispatch('setWork', { sessionId: 'stranger', role: 'verifier' })
     expect(answer.ok).toBe(false)
-    expect(answer.error).toMatch(/not related to yours/)
+    expect(answer.error).toMatch(/no tab identity/)
     expect(sessionsChangeWork).not.toHaveBeenCalled()
   })
 
@@ -347,6 +389,12 @@ describe('clave_set_work and clave_hand_over on the window road', () => {
     expect(answer).toMatchObject({ ok: true, result: { sessionId: 'caller' } })
     expect(sessionsChangeWork).toHaveBeenCalledTimes(1)
     expect(sessionsChangeWork).toHaveBeenCalledWith('caller', { type: 'offer', to: 'mate' })
+  })
+
+  it("offers the caller's role to a tab it is not related to (PRDCT-4236, round 1 M24)", async () => {
+    const answer = await dispatch('handOver', { callerSessionId: 'caller', to: 'stranger' })
+    expect(answer).toMatchObject({ ok: true, result: { sessionId: 'caller' } })
+    expect(sessionsChangeWork).toHaveBeenCalledWith('caller', { type: 'offer', to: 'stranger' })
   })
 
   it('refuses a hand over that both names a successor and accepts', async () => {
@@ -478,14 +526,26 @@ describe('resume and reach on the window road (PRDCT-4193)', () => {
     expect(fleetSnapshot).toHaveBeenCalledWith('srv')
   })
 
-  it('refuses to resume a tab the caller is not related to', async () => {
+  it('resumes a tab the caller is not related to (PRDCT-4236)', async () => {
     useSessionStore.setState({ sessions: [agent('r-lead'), agent('r-other', { alive: false })] })
     const answer = await dispatch('resumeSession', {
       callerSessionId: 'r-lead',
       sessionId: 'r-other'
     })
-    expect(answer.ok).toBe(false)
-    expect(answer.error).toMatch(/Refusing to resume tab "r-other"/)
+    expect(answer).toMatchObject({ ok: true, result: { resumed: true, sessionId: 'r-other' } })
+    expect(switchAccount.restartSessionProcess).toHaveBeenCalledWith('r-other', {
+      onlyIfStopped: true
+    })
+  })
+
+  it('refuses a resume with no tab identity, and restarts nothing', async () => {
+    useSessionStore.setState({ sessions: [agent('r-lead'), agent('r-other', { alive: false })] })
+    const answer = await dispatch('resumeSession', { sessionId: 'r-other' })
+    expect(answer).toMatchObject({
+      ok: false,
+      error:
+        'clave_resume_session must be called from inside a Clave agent tab — this request has no tab identity.'
+    })
     expect(switchAccount.restartSessionProcess).not.toHaveBeenCalled()
   })
 
@@ -530,17 +590,23 @@ describe('resume and reach on the window road (PRDCT-4193)', () => {
     )
   })
 
-  it('keeps the reach to a tab main remembers the caller opened, after a window reload', async () => {
+  it('reaches a tab before and after a window reload, and never without a tab identity', async () => {
     // A reloaded window: no live messaging link, no spawnedBy or openedBy on
-    // the child; only main's lineage knows who opened it.
+    // the child; only main's lineage knows who opened it. Since PRDCT-4236
+    // the lineage no longer decides the reach: the send goes through either way.
     useSessionStore.setState({ sessions: [agent('l-lead'), agent('l-child')] })
     const before = await dispatch('sendToSession', {
       callerSessionId: 'l-lead',
       sessionId: 'l-child',
       message: 'status?'
     })
-    expect(before.ok).toBe(false)
-    expect(before.error).toMatch(/not related to yours/)
+    expect(before).toMatchObject({ ok: true, result: { delivered: true, sessionId: 'l-child' } })
+    const anonymous = await dispatch('sendToSession', { sessionId: 'l-child', message: 'status?' })
+    expect(anonymous).toMatchObject({
+      ok: false,
+      error:
+        'clave_send_to_session must be called from inside a Clave agent tab — this request has no tab identity.'
+    })
     const after = await dispatch(
       'sendToSession',
       { callerSessionId: 'l-lead', sessionId: 'l-child', message: 'status?' },
@@ -861,5 +927,82 @@ describe('round 1: the window road refuses before resuming, and places by the pa
       usePairingStore.setState({ servers: {} } as never)
       useFleetStore.setState({ connections: [], statuses: {} } as never)
     }
+  })
+})
+
+describe('the account of a window-road open', () => {
+  it('is judged for the model the tab will run (PRDCT-4253)', async () => {
+    switchAccount.resolveAccountRef.mockClear()
+    await openSessionProgrammatically({ cwd: '/repo', mode: 'claude', model: 'claude-fable-5-1' })
+    expect(switchAccount.resolveAccountRef).toHaveBeenLastCalledWith(
+      'claude',
+      undefined,
+      'claude-fable-5-1'
+    )
+    await openSessionProgrammatically({ cwd: '/repo', mode: 'claude', account: 'Work' })
+    expect(switchAccount.resolveAccountRef).toHaveBeenLastCalledWith('claude', 'Work', undefined)
+    await openSessionProgrammatically({ cwd: '/repo', mode: 'codex', model: 'gpt-5.3-codex-spark' })
+    expect(switchAccount.resolveAccountRef).toHaveBeenLastCalledWith(
+      'codex',
+      undefined,
+      'gpt-5.3-codex-spark'
+    )
+  })
+  it('with no model named, is judged for the chat model main will start it on', async () => {
+    // Main starts a chat that names no model on the one last picked in a chat
+    // composer of its adapter (`pty-manager.ts`); the account must be judged
+    // for that one, or a spent Fable week lands a Fable tab on it.
+    globals.window.electronAPI.preferencesGet = vi.fn(async (key: string) =>
+      key === 'chatModels'
+        ? { 'claude-chat': 'claude-fable-5-1', 'codex-chat': 'gpt-5.5' }
+        : undefined
+    )
+    const base = preferences({})
+    useLaunchProfileStore.setState({
+      preferences: {
+        ...base,
+        customProfiles: [
+          ...base.customProfiles,
+          {
+            id: 'claude-chat',
+            name: 'Claude (chat)',
+            family: 'claude',
+            command: ['claude'],
+            additionalArgs: [],
+            builtIn: true
+          }
+        ]
+      },
+      loaded: true
+    })
+    switchAccount.resolveAccountRef.mockClear()
+    await openSessionProgrammatically({ cwd: '/repo', mode: 'claude', chat: true })
+    expect(switchAccount.resolveAccountRef).toHaveBeenLastCalledWith(
+      'claude',
+      undefined,
+      'claude-fable-5-1'
+    )
+    expect(spawned().model).toBeUndefined()
+    await openSessionProgrammatically({ cwd: '/repo', mode: 'codex', chat: true })
+    expect(switchAccount.resolveAccountRef).toHaveBeenLastCalledWith('codex', undefined, 'gpt-5.5')
+    // A named model wins; a resumed conversation keeps its own, unknown here.
+    await openSessionProgrammatically({
+      cwd: '/repo',
+      mode: 'claude',
+      chat: true,
+      model: 'claude-opus-5-5'
+    })
+    expect(switchAccount.resolveAccountRef).toHaveBeenLastCalledWith(
+      'claude',
+      undefined,
+      'claude-opus-5-5'
+    )
+    await openSessionProgrammatically({
+      cwd: '/repo',
+      mode: 'claude',
+      chat: true,
+      resumeSessionId: '11111111-1111-4111-8111-111111111111'
+    })
+    expect(switchAccount.resolveAccountRef).toHaveBeenLastCalledWith('claude', undefined, undefined)
   })
 })

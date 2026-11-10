@@ -57,7 +57,9 @@ export async function run(t) {
       bar
     )
 
-    /* 2. The model chip names the model the same way, menu opened or not. */
+    /* 2. The model chip names the provider, then the model (PRDCT-4300),
+       the same way menu opened or not; the header names the model alone.
+       The echo fixture stands in for a provider, so its chip reads "Echo". */
     const chip = view.locator('.term-model .chat-model-trigger-label')
     const before = await chip.innerText()
     await view.locator('.term-model .chat-model-trigger').click()
@@ -67,8 +69,8 @@ export async function run(t) {
     await win.keyboard.press('Escape')
     const header = await win.locator('.chat-header .pane-header-meta').innerText()
     t.check(
-      'the model reads "Opus 5.5" on the chip, before and after its menu opens, and in the header',
-      before === 'Opus 5.5' && opened === 'Opus 5.5' && header === 'Opus 5.5',
+      'the chip reads "Echo · Opus 5.5" before and after its menu opens, and the header "Opus 5.5"',
+      before === 'Echo · Opus 5.5' && opened === 'Echo · Opus 5.5' && header === 'Opus 5.5',
       { before, opened, header }
     )
 

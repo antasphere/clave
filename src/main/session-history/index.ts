@@ -1,6 +1,7 @@
-import type { LedgerRow } from './ledger'
+import type { LedgerLaunch, LedgerRow } from './ledger'
 import { DIGEST_HELPER_MARKER } from '../../shared/exchange-digest'
 import { WORK_DIGEST_MARKER } from '../../shared/work-digest'
+import { LAUNCH_KEYS } from '../../shared/runtime-choices'
 
 /**
  * The fold: ledger rows (and, as a one-time seed, the exchange-capture
@@ -41,6 +42,20 @@ export interface HistoryEntry {
   /** The last `closed` row's timestamp, or null while never closed (or
    *  re-placed after a close — a resumed tab). */
   closedAt: string | null
+  /** What the conversation was last launched on (PRDCT-4236): bypass, mode,
+   *  effort, account, field by field from the latest row that knew it.
+   *  Absent when no row ever carried one. */
+  launch?: LedgerLaunch
+}
+
+/** A row's launch fields over the entry's: a field the row carries wins, a
+ *  field it lacks keeps the earlier value. */
+function foldLaunch(entry: HistoryEntry, row: LedgerRow): void {
+  for (const key of LAUNCH_KEYS) {
+    const value = row[key]
+    if (value === undefined) continue
+    entry.launch = { ...entry.launch, [key]: value }
+  }
 }
 
 /** A capture-stream line reduced to what the fold needs. Built by
@@ -146,6 +161,7 @@ export function foldHistory(rows: LedgerRow[]): HistoryEntry[] {
       else entry.groups.push({ id: row.groupId, name: row.groupName ?? '', firstAt: row.ts })
     }
     entry.closedAt = row.kind === 'closed' ? row.ts : null
+    foldLaunch(entry, row)
   }
   return [...byId.values()]
 }

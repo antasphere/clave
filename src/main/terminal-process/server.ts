@@ -215,64 +215,63 @@ export async function startTerminalProcess(
     ping: () => Effect.succeed(create(PingResponseSchema, { terminals: held.size })),
 
     spawn: (request: SpawnRequest) =>
-      // A child can emit as soon as it starts. Keep spawn and both event
-      // subscriptions in one callback so an Effect yield cannot lose them.
-      Effect.suspend(() => {
-        let proc: PtyLike
-        try {
+      Effect.try({
+        try: () => {
           spawn ??= nodePtySpawn()
-          proc = spawn(request.file, request.args, {
+          return spawn(request.file, request.args, {
             name: request.name || 'xterm-256color',
             cols: Math.max(1, request.cols),
             rows: Math.max(1, request.rows),
             cwd: request.cwd,
             env: { ...request.env }
           })
-        } catch (error) {
-          return Effect.fail(new SpawnRefused({ reason: reason(error) }))
-        }
-        const term: Held = {
-          id: randomUUID(),
-          proc,
-          seq: 0n,
-          events: [],
-          bytes: 0,
-          exited: null,
-          exitedAt: null,
-          subscribers: new Set(),
-          attached: 0,
-          everAttached: false,
-          detachedAt: Date.now(),
-          hungUpAt: null,
-          killedAt: null
-        }
-        held.set(term.id, term)
-        proc.onData((data) => {
-          term.seq += 1n
-          push(
-            term,
-            create(TerminalEventSchema, {
-              seq: term.seq,
-              event: { case: 'output', value: { data } }
-            })
-          )
-        })
-        proc.onExit(({ exitCode, signal }) => {
-          term.seq += 1n
-          const exited = create(TerminalEventSchema, {
-            seq: term.seq,
-            event: {
-              case: 'exited',
-              value: { exitCode, ...(signal !== undefined && signal !== 0 && { signal }) }
-            }
+        },
+        catch: (error) => new SpawnRefused({ reason: reason(error) })
+      }).pipe(
+        Effect.map((proc) => {
+          const term: Held = {
+            id: randomUUID(),
+            proc,
+            seq: 0n,
+            events: [],
+            bytes: 0,
+            exited: null,
+            exitedAt: null,
+            subscribers: new Set(),
+            attached: 0,
+            everAttached: false,
+            detachedAt: Date.now(),
+            hungUpAt: null,
+            killedAt: null
+          }
+          held.set(term.id, term)
+          proc.onData((data) => {
+            term.seq += 1n
+            push(
+              term,
+              create(TerminalEventSchema, {
+                seq: term.seq,
+                event: { case: 'output', value: { data } }
+              })
+            )
           })
-          term.exited = exited
-          term.exitedAt = Date.now()
-          // Kept, attached or not, for the grace: the sweep forgets it.
-          push(term, exited)
+          proc.onExit(({ exitCode, signal }) => {
+            term.seq += 1n
+            const exited = create(TerminalEventSchema, {
+              seq: term.seq,
+              event: {
+                case: 'exited',
+                value: { exitCode, ...(signal !== undefined && signal !== 0 && { signal }) }
+              }
+            })
+            term.exited = exited
+            term.exitedAt = Date.now()
+            // Kept, attached or not, for the grace: the sweep forgets it.
+            push(term, exited)
+          })
+          return create(SpawnResponseSchema, { id: term.id, pid: proc.pid })
         })
-        return Effect.succeed(create(SpawnResponseSchema, { id: term.id, pid: proc.pid }))
-      }),
+      ),
 
     write: (request: WriteRequest) =>
       lookup(request.id).pipe(

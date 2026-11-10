@@ -199,10 +199,15 @@ export async function run(t) {
       false
     )
     await focus(ids.fable)
-    t.check(
-      'Fable footer retains its exhausted model quota',
-      !!(await until(async () => (await footer.textContent())?.includes('0% left')))
-    )
+    // A cap that is out is named, not counted (PRDCT-4255): the foot reads
+    // "Fable out · back in …" where it read "0% left", and names the cap.
+    const footIs = async (cap) =>
+      !!(await until(
+        async () =>
+          (await footer.getAttribute('data-usage-cap')) === cap &&
+          (await footer.textContent())?.startsWith(`${cap} out`)
+      ))
+    t.check('Fable footer retains its exhausted model quota', await footIs('Fable'))
     t.check('Fable retains its at-limit badge', (await warning(ids.fable).count()) > 0)
     t.equal(
       'MCP reports Fable exhaustion',
@@ -244,10 +249,9 @@ export async function run(t) {
     })
     await win.getByRole('button', { name: 'Refresh usage' }).click()
     await win.getByRole('button', { name: 'Back to sessions', exact: true }).click()
-    t.check(
-      'Shared five-hour exhaustion still warns Opus',
-      !!(await until(async () => (await footer.textContent())?.includes('1% left')))
-    )
+    // 1% left is within the margin that counts a cap as out
+    // (EXHAUSTED_LEFT_PERCENT): the foot names the shared 5-hour block.
+    t.check('Shared five-hour exhaustion still warns Opus', await footIs('5h'))
     t.equal(
       'MCP retains shared five-hour exhaustion',
       (await sessions()).find((s) => s.id === ids.opus)?.account?.exhausted,

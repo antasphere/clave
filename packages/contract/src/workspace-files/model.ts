@@ -109,9 +109,13 @@ export const ClaveRoutine = Schema.Struct({
   catchUp: Schema.optional(Schema.Boolean),
   timeoutMinutes: Schema.optional(Schema.Number),
   scope: Schema.optional(Schema.String),
-  /** The Clave server that runs this routine, by the server's own name or
-   *  its id (PRDCT-4149); every other server lists it and never runs it.
-   *  Absent, whichever server reads the file runs it. */
+  /** Where the routine runs (PRDCT-4241): a Clave server by its own name or
+   *  its id (every other server lists it and never runs it), or `every`,
+   *  once on every machine that reads the file. Required: a routine that
+   *  says neither is listed as unable to run and never runs anywhere. */
+  runsOn: Schema.optional(Schema.String),
+  /** The field `runsOn` replaced (PRDCT-4149 wrote `server`). Read so the
+   *  scheduler can refuse it by name; never written. */
   server: Schema.optional(Schema.String),
   report: Schema.optional(ClaveRoutineReport)
 })

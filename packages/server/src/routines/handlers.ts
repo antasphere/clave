@@ -9,14 +9,19 @@
 import { Effect } from 'effect'
 import { CommandHandler, QueryHandler } from '@structure-ai/cqrs'
 import {
+  CreateRoutine,
+  DeleteRoutine,
   DismissRoutineRun,
   GetRoutineDeck,
   ListRoutines,
+  MoveRoutineToFile,
   OpenRoutineDiscussion,
+  PauseRoutine,
   ReportRoutineRun,
   RoutineRefused,
   RoutineReportRefused,
-  RunRoutineNow
+  RunRoutineNow,
+  UpdateRoutine
 } from '@clave/contract/routines'
 import { Routines, type RoutinesService } from './port'
 
@@ -66,5 +71,13 @@ export const routineHandlers = [
   ),
   CommandHandler.make(OpenRoutineDiscussion, (p) =>
     call((r) => r.openDiscussion(p.runId, p.windowKey, p.mode))
+  ),
+  // PRDCT-4242: the store of created routines.
+  CommandHandler.make(CreateRoutine, (p) => call((r) => r.create(p))),
+  CommandHandler.make(UpdateRoutine, (p) => call((r) => r.update(p.key, p.patch))),
+  CommandHandler.make(DeleteRoutine, (p) => call((r) => r.delete(p.key))),
+  CommandHandler.make(PauseRoutine, (p) => call((r) => r.pause(p.key, p.paused))),
+  CommandHandler.make(MoveRoutineToFile, (p) =>
+    call((r) => r.moveToFile(p.key, { ...(p.group !== undefined ? { group: p.group } : {}) }))
   )
 ]

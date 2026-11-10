@@ -176,7 +176,7 @@ export function applyFleetSnapshot(snapshot: FleetSnapshot): void {
         piThinking: record?.piThinking,
         workspaceId: record?.workspaceId,
         // Who opened it on its server, as this window names that server's
-        // tabs (PRDCT-4193): the reach rule compares keys, so a raw id of
+        // tabs (PRDCT-4193): the name tie-break compares keys, so a raw id of
         // the server's record is wrapped in its owner's key here.
         spawnedBy: record?.spawnedBy
           ? resourceKey('session', serverId, record.spawnedBy)

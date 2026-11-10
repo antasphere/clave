@@ -1,0 +1,36 @@
+{
+  "name": "@clave/session-bridge",
+  "version": "0.1.0",
+  "description": "Carry a coding-agent conversation from one CLI to another: readers for Claude Code transcripts and Codex rollouts into one intermediate representation, and a writer that lays a Codex 0.167 thread down so `codex resume` opens it.",
+  "license": "MIT",
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/antasphere/clave.git",
+    "directory": "packages/session-bridge"
+  },
+  "exports": {
+    ".": "./src/index.ts",
+    "./ir": "./src/ir.ts",
+    "./readers/claude": "./src/readers/claude.ts",
+    "./readers/codex": "./src/readers/codex.ts",
+    "./writers/codex": "./src/writers/codex.ts"
+  },
+  "bin": {
+    "session-bridge": "./bin/session-bridge.mjs"
+  },
+  "files": [
+    "bin",
+    "src",
+    "docs",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --root . --config ./vitest.config.ts"
+  },
+  "engines": {
+    "node": ">=22.6"
+  }
+}

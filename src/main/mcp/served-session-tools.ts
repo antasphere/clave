@@ -14,18 +14,17 @@
  * switch, and the showing of a hidden group, are the window's work still:
  * the tool answers `NOT_SERVED` and the caller sends it to the window.
  */
-import type { LayoutSnapshot } from '@clave/contract/sidebar'
 import type { AccountOverride, Session } from '@clave/contract/sessions'
 import { pickAccount } from '../../shared/account-pool'
+import { launchModeFields } from '../../shared/runtime-choices'
 import { historyLines } from '../../shared/history-text'
 import {
   type TargetHost,
-  assertCanReach,
   checkpointCapture,
   findTarget,
-  isRelated as relatedOn,
   isServerTabRef,
   readAnswer,
+  requireCaller,
   resolveTarget as resolveOn,
   sendToTarget
 } from './session-targets'
@@ -103,23 +102,6 @@ function targetHost(ctx: Ctx, key: string): TargetHost {
     parentOf: (id) => parentOfSession(ctx, id),
     groups: async () => (await allLayouts(ctx, key)).flatMap((l) => l.groups)
   }
-}
-
-/** Whether two tabs are related for the agent tools' reach: the same tab, one
- *  opened the other, or they share a group (its terminals included). The one
- *  rule the messaging tools and the work tools (`served-work-tools.ts`) share. */
-export function isRelated(
-  ctx: Ctx,
-  layouts: readonly LayoutSnapshot[],
-  caller: string,
-  targetId: string
-): boolean {
-  return relatedOn(
-    { parentOf: (id) => parentOfSession(ctx, id) },
-    layouts.flatMap((l) => l.groups),
-    caller,
-    targetId
-  )
 }
 
 // ── The tools ──
@@ -212,7 +194,7 @@ async function readSession(ctx: Ctx, key: string, p: Payload): Promise<unknown |
   const host = targetHost(ctx, key)
   const target = ref === 'parent' ? await resolveOn(host, ref) : await findTarget(host, ref)
   if (!target) return NOT_SERVED
-  await assertCanReach(host, target, 'read')
+  requireCaller(host, 'read')
   const requested = Math.min(Math.max(typeof p.lines === 'number' ? p.lines : 100, 1), 500)
   // A chat has no screen: its recent history, one line per thing said or
   // done, under the same envelope (PRDCT-4199).
@@ -310,8 +292,9 @@ async function sendToSession(ctx: Ctx, key: string, p: Payload): Promise<unknown
 const resolveAccountRef = (
   ctx: Ctx,
   provider: AccountProvider,
-  ref: string | undefined
-): ServedPoolAccount => resolveAccountRefFrom(ctx.shell, provider, ref)
+  ref: string | undefined,
+  model?: string
+): ServedPoolAccount => resolveAccountRefFrom(ctx.shell, provider, ref, model)
 
 const providerOf = (ctx: Ctx, session: Session): AccountProvider | null => {
   const mode = modeOfSession(ctx, session)
@@ -336,10 +319,10 @@ async function switchAccount(ctx: Ctx, _key: string, p: Payload): Promise<unknow
     const accounts = ctx.shell.accounts(provider)
     const next = pickAccount({
       accounts: poolOf(accounts),
-      usage: usageOf(accounts, provider === 'claude' ? { model: record?.model } : undefined),
+      usage: usageOf(accounts, { model: record?.model }),
       preferredId: current,
       leavingId: current,
-      preferSessionHeadroom: true
+      preferWeeklyHeadroom: true
     })
     if (next === current) throw new Error('No other account of this provider has headroom')
     target = accounts.find((a) => a.id === next) ?? { id: next, label: next }
@@ -450,11 +433,20 @@ async function openSession(ctx: Ctx, key: string, p: Payload): Promise<unknown> 
       `The account argument applies to claude and codex modes only (got mode "${mode}")`
     )
   }
-  const accountFields = claudeMode
-    ? spawnFieldsOf('claude', resolveAccountRef(ctx, 'claude', accountRef))
-    : codexMode
-      ? spawnFieldsOf('codex', resolveAccountRef(ctx, 'codex', accountRef))
-      : {}
+  // The account is judged for the model the tab will run: a Fable week
+  // spent never costs a launch on Opus its account (PRDCT-4253). A launch
+  // naming no model runs the one main remembers for its chat, a resumed
+  // conversation its own, which nothing here knows (the shared caps judge).
+  const resumeSessionId = str(p.resumeSessionId)
+  const pooled: AccountProvider | null = claudeMode ? 'claude' : codexMode ? 'codex' : null
+  const judgedModel =
+    model ??
+    (pooled && resumeSessionId === undefined
+      ? ctx.shell.launchModel?.(pooled, launchProfileId, workspaceId)
+      : undefined)
+  const accountFields = pooled
+    ? spawnFieldsOf(pooled, resolveAccountRef(ctx, pooled, accountRef, judgedModel))
+    : {}
   const cwd = str(p.cwd) ?? ''
   const command = str(p.command)
   const prompt = str(p.prompt)
@@ -474,6 +466,19 @@ async function openSession(ctx: Ctx, key: string, p: Payload): Promise<unknown> 
         ...(model !== undefined ? { model } : {}),
         ...(launchProfileId !== undefined ? { launchProfileId } : {}),
         ...accountFields,
+        // A past conversation reopened (PRDCT-4236): the History's id, for
+        // the spawn's --resume (Claude), resume (Codex) or --session (Pi).
+        ...(resumeSessionId !== undefined ? { resumeSessionId } : {}),
+        // The mode and the effort to start at (PRDCT-4236): the caller's, or
+        // the ones a resumed conversation last ran at. Bypass is the flag.
+        ...launchModeFields({
+          claudeMode,
+          codexMode,
+          dangerousMode,
+          permissionMode: p.permissionMode,
+          effort: p.effort,
+          allowDangerous: p.allowDangerous
+        }),
         ...(piMode && provider !== undefined ? { piProvider: provider } : {}),
         ...(piMode && thinking !== undefined ? { piThinking: thinking } : {}),
         ...(mode === 'terminal' && command ? { initialCommand: command } : {}),
@@ -486,7 +491,7 @@ async function openSession(ctx: Ctx, key: string, p: Payload): Promise<unknown> 
           ? { spawnedBy: ctx.callerSessionId }
           : {}),
         // The opener, nested or not, on the record (PRDCT-4192): what the
-        // reach rule reads once this process's memory of the open is gone.
+        // name tie-break read once this process's memory of the open is gone.
         ...(ctx.callerSessionId ? { openedBy: ctx.callerSessionId } : {})
       }
     })
@@ -601,7 +606,8 @@ function pinnedAccountFields(
   ctx: Ctx,
   session: PinnedBlueprintSession,
   groupName: string,
-  pinOtherProvider: boolean
+  pinOtherProvider: boolean,
+  workspaceId: string | undefined
 ): AccountOverride {
   const provider: AccountProvider | null = session.codexMode
     ? 'codex'
@@ -609,9 +615,16 @@ function pinnedAccountFields(
       ? 'claude'
       : null
   if (!provider) return {}
+  // A pinned session names no model: it starts on the one its family's
+  // selected profile remembers, and its account is judged for that one, as
+  // the window's pinned groups do (`pinned-store.ts`). `claude agents` runs
+  // no chat, so the shared caps judge it.
+  const model = session.claudeAgentsMode
+    ? undefined
+    : ctx.shell.launchModel?.(provider, undefined, workspaceId)
   let account: { id: string; label: string }
   try {
-    account = resolveAccountRef(ctx, provider, session.account)
+    account = resolveAccountRef(ctx, provider, session.account, model)
   } catch {
     const fallback = ctx.shell.accounts(provider).find((a) => a.id === 'default')
     account = fallback ?? { id: 'default', label: 'Default' }
@@ -691,7 +704,13 @@ async function launchGroup(ctx: Ctx, key: string, p: Payload): Promise<unknown> 
             : {}),
           dangerousMode: session.dangerousMode,
           ...(initialPrompt !== undefined ? { initialPrompt } : {}),
-          ...pinnedAccountFields(ctx, session, pin.name, pinOtherProvider),
+          ...pinnedAccountFields(
+            ctx,
+            session,
+            pin.name,
+            pinOtherProvider,
+            pin.workspaceId ?? undefined
+          ),
           // The pin's workspace wins over the window's: a launch of a hidden
           // workspace's pin must not leak its sessions into the view.
           ...(pin.workspaceId ? { workspaceId: pin.workspaceId } : {})

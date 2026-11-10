@@ -17,7 +17,7 @@ import { registerSessionIpc } from '../sessions/ipc'
 import { windowRegistry } from '../window-registry'
 import { windowState } from '../window-state'
 import { startWatching as startAgentStateWatching } from '../agent-state-manager'
-import { hasServerEventPublisher } from '../server/session-events'
+import { hasServerEventPublisher, sessionLimitReported } from '../server/session-events'
 import { isServerExternal } from '../server/endpoint'
 import { adoptableRecordsFor, serverHoldsRecordsFor, tmuxAvailableFor } from './boot-reads'
 import { serverClient } from '../mcp/server-client'
@@ -33,6 +33,7 @@ import { getPreference } from './clave-file-handlers'
 import { installSessionWindows } from '../sessions/windows'
 import { electronSessionWindows } from '../sessions/electron-windows'
 import { getSessionHost } from '../sessions/host'
+import { restartOverridesFromWire } from './restart-overrides-wire'
 import { type AdoptionScope, selectAdoptableRecords } from '../../shared/adoption-scope'
 
 export function registerPtyHandlers(): void {
@@ -78,12 +79,11 @@ export function registerPtyHandlers(): void {
   ): Promise<SessionInfoResult> =>
     spawnSession(win ? windowRegistry.getKeyForWindow(win.id) : null, cwd, options)
 
-  // The CLI's own word on its account's limit reaches the window holding the
-  // tab (ADR 0002): the policy there proposes or makes the move.
-  ptyManager.onLimitReported((sessionId) => {
-    const win = windowRegistry.getWindowForSession(sessionId)
-    if (win && !win.isDestroyed()) win.webContents.send('session:limit-reported', sessionId)
-  })
+  // The CLI's own word on its account's limit, and which cap it hit, reaches
+  // the window holding the tab (ADR 0002, PRDCT-4302) on both transports: the
+  // policy there offers a model of the same account, another account, or a
+  // provider, and makes the move in automatic mode.
+  ptyManager.onLimitReported((sessionId, report) => sessionLimitReported(sessionId, report))
 
   // `initialInput` is main's own (a restart's resend, pty-manager.ts): a
   // renderer's spawn never carries one. Nor `work` (PRDCT-4123): a session's
@@ -115,24 +115,21 @@ export function registerPtyHandlers(): void {
         codexAccountLabel?: unknown
         resendRejected?: unknown
         onlyIfStopped?: unknown
+        adapterId?: unknown
+        model?: unknown
+        resume?: unknown
+        firstMessage?: unknown
+        continuedFrom?: unknown
       }
     ): Promise<(SessionInfoResult & { resumed: boolean }) | { error: string }> => {
       if (typeof id !== 'string') return { error: 'No session' }
-      const str = (v: unknown): string | undefined => (typeof v === 'string' ? v : undefined)
       const win = BrowserWindow.fromWebContents(_event.sender)
       // The restart itself is the lifecycle's (wave 4): the server's
       // `RestartSession` and this handler make the same one.
       try {
         return await restartSession(
           id,
-          {
-            claudeProfileId: str(overrides?.claudeProfileId),
-            claudeProfileLabel: str(overrides?.claudeProfileLabel),
-            codexAccountId: str(overrides?.codexAccountId),
-            codexAccountLabel: str(overrides?.codexAccountLabel),
-            resendRejected: overrides?.resendRejected === true,
-            onlyIfStopped: overrides?.onlyIfStopped === true
-          },
+          restartOverridesFromWire(overrides),
           win ? windowRegistry.getKeyForWindow(win.id) : null
         )
       } catch (error) {

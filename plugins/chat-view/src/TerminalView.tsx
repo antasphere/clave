@@ -37,6 +37,9 @@ import {
 import { PermissionModeMenu } from './PermissionModeMenu'
 import { ModelMenu } from './ModelMenu'
 import { EffortMenu } from './EffortMenu'
+import { ContinuedFromCard, ProviderSwitch } from './ProviderSwitch'
+import { midTurn, noteAgentName, useProviderSwitch } from './use-provider-switch'
+import { providerLabel } from './models'
 import { DeliveryStack } from './DeliveryStack'
 import { claudeContextWindow } from '../../../src/shared/claude-models'
 import { nextPermissionMode } from './permission-mode'
@@ -50,6 +53,7 @@ import {
 import { ContextMeter } from './TerminalStatus'
 import { WorkCards } from './WorkCards'
 import { AccountChip } from './AccountChip'
+import { useLimitSentence } from './limit-words'
 import { useQuestionHeight } from './question-height'
 import { groupEntries, visibleEntries } from './tools'
 import { ToolDisclosure } from './disclosure'
@@ -85,7 +89,7 @@ import { resumeHistoryEntry } from '../../../src/renderer/src/lib/session-histor
 import { emitTabClosed } from '../../../src/renderer/src/lib/exchange-capture'
 import { useViewSessionStore } from '../../../src/renderer/src/views/session-store'
 import { endIsCurrent } from '../../../src/renderer/src/views/session-end'
-import { acceptAccountProposal } from '../../../src/renderer/src/lib/account-policy'
+import { acceptRung } from '../../../src/renderer/src/lib/account-policy'
 import type { HistoryListEntry } from '../../../src/preload/index.d'
 import { Attachments } from './Attachments'
 import { useComposerFocus } from './focus'
@@ -524,6 +528,24 @@ export function TerminalView({
     (error: unknown): void =>
       dispatch({ event: { type: 'error', message: String(error), fatal: false } }),
     []
+  )
+  // A move of the tab to another provider (PRDCT-4300), from the chip's menu.
+  const switchSource = useRef({ conversation, before })
+  switchSource.current = { conversation, before }
+  const providerSwitch = useProviderSwitch({
+    session,
+    source: () => switchSource.current,
+    meta: () => ({
+      title: useViewSessionStore.getState().sessions.find((s) => s.id === session.id)?.name ?? '',
+      cwd: session.cwd,
+      model: switchSource.current.conversation.model
+    }),
+    working: () => midTurn(conversation.state),
+    visible,
+    onError: report
+  })
+  const continuedFrom = useViewSessionStore(
+    (s) => s.sessions.find((x) => x.id === session.id)?.continuedFrom
   )
   // /resume, /mcp and /plugin are the local host's. Remote commands stay
   // with their owning agent; the native panels use this desktop's APIs.
@@ -965,6 +987,12 @@ export function TerminalView({
                 text="Ask in plain words. Every step the agent takes is laid out here, in order, as it works."
               />
             )}
+            {continuedFrom && pastRead && (
+              <ContinuedFromCard
+                from={providerLabel(continuedFrom.provider)}
+                road={continuedFrom.road}
+              />
+            )}
             {/* Mounted from the start, empty or not: what it gains is told apart
                 from what it opened on by the rows it rendered before. */}
             <ToolDisclosure.Provider value={disclosure}>
@@ -1043,6 +1071,24 @@ export function TerminalView({
           ))}
       </div>
       <div className="chat-composer-wrap term-composer-wrap">
+        {providerSwitch.state && (
+          <ProviderSwitch
+            from={providerLabel(session.provider)}
+            target={providerSwitch.state.target}
+            plan={providerSwitch.state.plan}
+            landing={providerSwitch.state.landing}
+            noteOffered={providerSwitch.state.noteOffered}
+            noteAgent={noteAgentName(conversation.model, session.provider)}
+            working={midTurn(state)}
+            busy={providerSwitch.state.busy}
+            error={providerSwitch.state.error}
+            onContinue={(options) => void providerSwitch.confirm(options)}
+            onClose={() => {
+              providerSwitch.cancel()
+              textarea.current?.focus()
+            }}
+          />
+        )}
         {panel === 'resume' && (
           <ResumePicker
             cwd={session.cwd}
@@ -1236,15 +1282,25 @@ export function TerminalView({
           <span className="term-model">
             <ModelMenu
               sessionId={session.id}
-              model={conversation.model}
+              model={conversation.pendingModel ?? conversation.model}
+              pending={conversation.pendingModel !== null}
               disabled={closed}
-              onSelect={(id) => void write({ type: 'set_model', model: id }).catch(report)}
+              onSelect={(id) => {
+                // Shown the instant it is picked (PRDCT-4273); the provider's
+                // answer confirms it or, refusing, reverts the chip.
+                dispatch({ pickModel: id })
+                void write({ type: 'set_model', model: id }).catch(report)
+              }}
+              provider={session.provider}
+              adapterId={session.adapterId}
+              cwd={session.cwd}
+              onSwitchProvider={isRemoteKey(session.id) ? undefined : providerSwitch.begin}
             />
           </span>
           <span className="term-model term-chip-next" data-fit-drop="6">
             <EffortMenu
               sessionId={session.id}
-              model={conversation.model}
+              model={conversation.pendingModel ?? conversation.model}
               effort={conversation.effort}
               disabled={closed}
               onSelect={(id) => void write({ type: 'set_effort', effort: id }).catch(report)}
@@ -1351,36 +1407,50 @@ function EndedNotice({
   exitCode?: number
 }): React.JSX.Element {
   const host = useViewSessionStore((s) => s.sessions.find((x) => x.id === sessionId))
-  const limit = host?.limitReported === true
+  const limit = !!host?.limitReported
   const proposal = host?.accountProposal ?? null
-  const account = host?.claudeProfileLabel ?? host?.codexAccountLabel ?? 'This account'
+  const rungs = proposal?.rungs ?? []
+  const first = rungs[0]
+  // "Work is out on Fable, back in 2d 5h.": the account, the cap, the return.
+  const sentence = useLimitSentence(host)
   if (host?.restarting) {
     return (
       <div className="chat-notice" role="status" data-chat-ended="moving">
-        {proposal ? `Moving to ${proposal.label}…` : 'Moving to another account…'}
+        {first ? `Moving to ${first.label}…` : 'Moving to another account…'}
       </div>
     )
   }
-  if (limit && proposal) {
+  if (limit && rungs.length > 0) {
+    // The rungs in order (PRDCT-4302): another account resumes the
+    // conversation there with the rejected message sent again; another
+    // provider reconstructs it. A dead process takes no model, so the model
+    // rung is never here.
     return (
       <div className="chat-notice" role="status" data-chat-ended="limit">
-        {account} is out of usage credits.{' '}
-        <button
-          type="button"
-          className="chat-notice-action"
-          onClick={() => void acceptAccountProposal(sessionId)}
-          data-chat-continue-on={proposal.accountId}
-        >
-          Continue on {proposal.label}
-        </button>
+        {sentence}
+        {rungs.map((rung) => (
+          <button
+            key={`${rung.kind}:${rung.label}`}
+            type="button"
+            className="chat-notice-action"
+            onClick={() => void acceptRung(sessionId, rung)}
+            {...(rung.kind === 'account'
+              ? { 'data-chat-continue-on': rung.accountId }
+              : rung.kind === 'model'
+                ? { 'data-chat-continue-model': rung.model }
+                : { 'data-chat-continue-provider': rung.adapterId })}
+          >
+            {' '}
+            Continue on {rung.label}
+          </button>
+        ))}
       </div>
     )
   }
   if (limit) {
     return (
       <div className="chat-notice" role="status" data-chat-ended="limit">
-        {account} is out of usage credits, and no other account has headroom. Add one in Settings →
-        Accounts to continue.
+        {sentence} No other account has headroom: add one in Settings → Accounts to continue.
       </div>
     )
   }
