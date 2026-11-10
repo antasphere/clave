@@ -27,7 +27,7 @@ CLAVE_FIXTURE_BOOT=1 npx vitest run packages/mobile-native/fixture-server.boot.t
 
 One file per contract family under `fixtures/`: `sessions.json`, `timeline.json`,
 `requests.json`, `settings.json`, `files.json`, `push.json`, `events.json`,
-`devices.json`, `relay.json`, `notify.json` and `routes.json`, plus `shapes.json`, every shape and command of those files as a JSON Schema (draft 7) made from the contract's own schema, and `index.json`, which names every file with its SHA-256 and size and the contract version they were exported from. A native test suite vendors the folder (or reads it from the checkout) and asserts its decoders and encoders against it. The samples say what the contract accepts today; `shapes.json` says what each shape is (the properties, which of them are required, the literals, the nested shapes under `$defs`), so a field the contract adds, drops or makes optional changes a committed file even when every sample still decodes.
+`devices.json`, `relay.json`, `notify.json` and `routes.json`, plus `shapes.json`, every shape and command of those files as a JSON Schema (draft 7) made from the contract's own schema, and `index.json`, which names every file with its SHA-256 and size and the contract version they were exported from. A native test suite vendors the folder (or reads it from the checkout) and asserts its decoders and encoders against it. The samples say what the contract accepts today; `shapes.json` says what each shape is (the properties, which of them are required, the literals, the nested shapes under `$defs`), so a field the contract adds, drops or makes optional changes a committed file even when every sample still decodes. Its objects are left open (no `additionalProperties: false`): the contract accepts a payload holding a field it does not know and drops that field, so a phone's decoder accepts and ignores an unknown field too (on Android, `Json { ignoreUnknownKeys = true }`; Swift's `Codable` ignores one already). A rule with no JSON Schema form, such as the attachment path's NUL rule, is held by an invalid sample instead.
 
 Every file carries:
 
@@ -79,7 +79,9 @@ knows what refuses it with `A phone may not do this.`
   their colour roles as lowercase hex or `rgba(r, g, b, a)`, the shared roles, and the
   control, frame, radius, control-height and sidebar specs resolved to pixel numbers,
   all read from `packages/ui/src/tokens.css`. The desktop's `--font-weight-medium` is
-  400, and Geist Sans is the only face.
+  400, and the one face is Geist (`typography.fontSans` is the desktop's CSS family,
+  `Geist Sans`, an alias the font files do not carry: register and look the faces up by
+  the names in `fonts/fonts.json`).
 - `assets/icons.json`: the path data of the 36 Heroicons (24/outline, from the very
   `@heroicons/react` modules the renderer imports) and the 4 provider marks of the
   desktop's `cli-logos.tsx`, with one `assets/icons/svg/<name>.svg` and one Android
@@ -87,11 +89,14 @@ knows what refuses it with `A phone may not do this.`
   glyph, drawn white and tinted at render time the way the desktop paints
   `currentColor`. Adding an icon is one name in `ICONS` of `scripts/generate-assets.mjs`
   and a run.
-- `assets/fonts/`: Geist Sans at the three weights the desktop loads (`Geist-Regular.otf`,
+- `assets/fonts/`: Geist at the three weights the desktop loads (`Geist-Regular.otf`,
   `Geist-Medium.otf`, `Geist-SemiBold.otf`), unwrapped from the `@fontsource/geist-sans`
   WOFF files into OTF by `scripts/woff-to-otf.mjs` (no Python, no dependency), with the
   licence `OFL.txt` beside them and `fonts.json` naming the package version, the Geist
-  release (`geistRelease`), the upstream repository and each face's SHA-256. Geist is
+  release (`geistRelease`), the upstream repository, the family the faces register under
+  (`family`, `Geist`, read from each file's own name table, beside `cssFamily`, the
+  desktop's alias), and each face's PostScript name (`Geist-Regular`, `Geist-Medium`,
+  `Geist-SemiBold`, what `UIFont(name:)` and `Font.custom` take) and SHA-256. Geist is
   under the SIL Open Font License 1.1. **Never add the Sentient or Synonym files here**:
   their licence allows no redistribution through a repository (AGENTS.md, Type).
 
@@ -248,9 +253,11 @@ file at the root of its folder, owned by the app: `apps/mobile-ios/ci.sh` and
   versions are the app's, in its own `ci.sh`);
 - the script builds the app and runs its tests, prints its counts, and its exit code is
   the verdict; the results it leaves under `build/` are kept as artifacts for seven days;
-- a folder without `ci.sh` is one log line and a pass, so the workflow landed before the
-  apps did; once a folder exists, `npm run check:structure` requires the entry and refuses
-  a `package.json` inside a native app.
+- a folder without `ci.sh` makes its job skipped, with a notice on the checks page, so the
+  workflow landed before the apps did and a green app check always means the app's own
+  entry ran; once a folder holds files, `npm run check:structure` requires the entry as a
+  regular file and refuses a `package.json` anywhere inside a native app (build output left
+  out).
 
 The Linux job runs this package's tests, the booted fixture with `CLAVE_FIXTURE_BOOT=1`
 (set on the step; a CI step without it fails one case rather than skip the boots), the

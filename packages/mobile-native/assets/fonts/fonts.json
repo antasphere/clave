@@ -7,22 +7,27 @@
   "attribution": "Vercel",
   "license": "OFL-1.1",
   "licenseFile": "OFL.txt",
+  "family": "Geist",
+  "cssFamily": "Geist Sans",
   "faces": [
     {
       "weight": 400,
       "file": "Geist-Regular.otf",
+      "postScriptName": "Geist-Regular",
       "source": "files/geist-sans-latin-400-normal.woff",
       "sha256": "56dd0db842719674fbb979a0d8f064b7b3d84168c9e0b8674113673fab49f289"
     },
     {
       "weight": 500,
       "file": "Geist-Medium.otf",
+      "postScriptName": "Geist-Medium",
       "source": "files/geist-sans-latin-500-normal.woff",
       "sha256": "e4d9a0a1c3b2fe8e0c5a1d9b9925dc3b24d62638d41f6c5cf7c5b319b0d7c09e"
     },
     {
       "weight": 600,
       "file": "Geist-SemiBold.otf",
+      "postScriptName": "Geist-SemiBold",
       "source": "files/geist-sans-latin-600-normal.woff",
       "sha256": "0aa177eeaf8aec3606c1073e251ab9ed44991749a44ba995467d296390e105b5"
     }

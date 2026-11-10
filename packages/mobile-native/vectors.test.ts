@@ -6,8 +6,10 @@
  * hand) fails here, named. Then every committed sample is decoded once more
  * through the schema it was exported from: a valid one must decode, an
  * invalid one must be refused, whatever the file says. shapes.json carries
- * every schema as a JSON Schema, so a field added, dropped or made optional
- * changes a committed file even when every sample still decodes.
+ * every schema the families sample as a JSON Schema, so a field added, dropped
+ * or made optional changes a committed file even when every sample still
+ * decodes; a rule with no JSON Schema form (a custom predicate, the attachment
+ * path's NUL rule) is not in it, and an invalid sample holds it instead.
  */
 import { readdirSync, readFileSync } from 'node:fs'
 import path from 'node:path'
@@ -149,6 +151,31 @@ describe('the fixture vectors', () => {
     expect(Object.keys(session.properties ?? {}).length).toBeGreaterThan(
       (session.required ?? []).length
     )
+  })
+
+  it('leave every object open, as the contract decodes: a field it does not know is accepted and dropped', () => {
+    // Effect writes a struct closed; the export opens it, because the
+    // contract's decode is not closed. Both halves are held here: the file
+    // carries no closed object, and the contract really drops an extra field.
+    const closed: string[] = []
+    const walk = (node: unknown, at: string): void => {
+      if (Array.isArray(node)) return node.forEach((n, i) => walk(n, `${at}[${i}]`))
+      if (node === null || typeof node !== 'object') return
+      for (const [key, value] of Object.entries(node)) {
+        if (key === 'additionalProperties' && value === false) closed.push(at)
+        walk(value, `${at}.${key}`)
+      }
+    }
+    walk(JSON.parse(committed(SHAPES_FILE)), SHAPES_FILE)
+    expect(closed).toEqual([])
+    const sessions = JSON.parse(committed('sessions.json')) as {
+      shapes: { Session: { valid: Array<{ wire: Record<string, unknown> }> } }
+    }
+    const wire = { ...sessions.shapes.Session.valid[0].wire, aFieldTheContractDoesNotKnow: 1 }
+    const decoded = Schema.decodeUnknownEither(schemas.sessions.Session)(wire)
+    expect(Either.isRight(decoded)).toBe(true)
+    if (Either.isRight(decoded))
+      expect(Object.keys(decoded.right as object)).not.toContain('aFieldTheContractDoesNotKnow')
   })
 
   it('keep the ordering rule of a timeline page apart from the contract, and true to the docs', () => {

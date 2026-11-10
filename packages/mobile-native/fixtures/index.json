@@ -4,8 +4,8 @@
   "generatedBy": "packages/mobile-native/scripts/export-vectors.ts",
   "files": {
     "sessions.json": {
-      "sha256": "972bedccb940498a753f840f1c33c7c690bad4e346b39eb0b5ac21136862840f",
-      "bytes": 35091
+      "sha256": "ad668ad10be3c955bcf0bb78b548dfad93967eaefae62ed0f38e2ea3ab9106be",
+      "bytes": 35862
     },
     "timeline.json": {
       "sha256": "d507adb2a5d1ddc1907b2f12dba018fb635553e8c4f3fd73b03b202ce99bce93",
@@ -48,8 +48,8 @@
       "bytes": 30865
     },
     "shapes.json": {
-      "sha256": "891d7a4b2f66955756b14bca94db47bfce181a8bc4d8ae8c4b9e852dfd271a31",
-      "bytes": 495656
+      "sha256": "3fd1f655270e3809ccdb7f7f4f6111af812b676c0a33eab1db1976ecd9324c65",
+      "bytes": 472111
     }
   }
 }

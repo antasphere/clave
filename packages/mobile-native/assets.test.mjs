@@ -6,7 +6,7 @@ import { deflateSync } from 'node:zlib'
 import { describe, expect, it } from 'vitest'
 import { ASSETS_DIR, ICONS, LOGOS, generateAll, listFiles } from './scripts/generate-assets.mjs'
 import { specFromCss } from './scripts/tokens-from-css.mjs'
-import { sha256Hex, woffToOtf } from './scripts/woff-to-otf.mjs'
+import { fontNames, sha256Hex, woffToOtf } from './scripts/woff-to-otf.mjs'
 
 /* The native phones' assets are generated from what the desktop ships
    (tokens.css, @heroicons/react, cli-logos.tsx, @fontsource/geist-sans) and
@@ -126,6 +126,26 @@ describe('fonts', () => {
       [400, 'Geist-Regular.otf'],
       [500, 'Geist-Medium.otf'],
       [600, 'Geist-SemiBold.otf']
+    ])
+  })
+
+  it("names the family and each face's PostScript name as the fonts name themselves, apart from the desktop's CSS alias", () => {
+    // What a phone registers and looks a face up by: `UIFont(name:)` and
+    // `Font.custom` find "Geist" and "Geist-Regular", never "Geist Sans".
+    expect(manifest.family).toBe('Geist')
+    expect(manifest.cssFamily).toBe(readJson('tokens.json').typography.fontSans)
+    expect(manifest.cssFamily).not.toBe(manifest.family)
+    for (const face of manifest.faces) {
+      const own = fontNames(readFileSync(path.join(assets, 'fonts', face.file)))
+      expect(own, face.file).toEqual({
+        family: manifest.family,
+        postScriptName: face.postScriptName
+      })
+    }
+    expect(manifest.faces.map((f) => f.postScriptName)).toEqual([
+      'Geist-Regular',
+      'Geist-Medium',
+      'Geist-SemiBold'
     ])
   })
 

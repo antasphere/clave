@@ -111,6 +111,23 @@ function refused(schema: AnySchema, sample: unknown, label: string): unknown {
   return sample
 }
 
+/**
+ * A JSON Schema with its objects left open. Effect writes every struct with
+ * `additionalProperties: false`, but the contract's decode accepts a field it
+ * does not know and drops it, so the schema a phone is held to must accept
+ * one too. A schema-valued `additionalProperties`, a record's, is kept.
+ */
+export function openObjects(node: unknown): unknown {
+  if (Array.isArray(node)) return node.map(openObjects)
+  if (node === null || typeof node !== 'object') return node
+  const open: Record<string, unknown> = {}
+  for (const [key, value] of Object.entries(node)) {
+    if (key === 'additionalProperties' && value === false) continue
+    open[key] = openObjects(value)
+  }
+  return open
+}
+
 /** The members of a `Schema.Literal`. */
 function literalsOf(schema: unknown, label: string): ReadonlyArray<string | number | boolean> {
   const literals = (schema as { literals?: ReadonlyArray<string | number | boolean> }).literals
@@ -818,6 +835,19 @@ function sessionsFamily(): FamilyFile {
               'an effort with a capital',
               { id: 's1', input: { type: 'set_effort', effort: 'High' } },
               'effort is a short lowercase word'
+            ],
+            [
+              'an attachment path with a NUL byte',
+              {
+                id: 's1',
+                input: {
+                  type: 'user_message',
+                  text: 'see [Image #1]',
+                  attachments: [{ ...imageAttachment, path: '/tmp/clave-fixture/a\0b.png' }],
+                  clientMessageId: 'm-0123456789abcdef'
+                }
+              },
+              'an attachment path holds no NUL byte, a rule no JSON Schema of shapes.json can carry'
             ]
           ],
           success: [
@@ -2281,7 +2311,7 @@ export function buildVectors(): Vectors {
     shapes[family] = Object.fromEntries(
       Object.entries(registry)
         .sort(([a], [b]) => a.localeCompare(b))
-        .map(([name, schema]) => [name, JSONSchema.make(schema)])
+        .map(([name, schema]) => [name, openObjects(JSONSchema.make(schema))])
     )
   }
   files.set(
@@ -2289,6 +2319,7 @@ export function buildVectors(): Vectors {
     json({
       ...header('shapes', [
         'Every shape, command payload and command success the other files sample, as a JSON Schema (draft 7) made from the contract’s own schema: the properties, which of them are required, the literals, the nested shapes under $defs. A phone’s decoder is held to this, not only to the samples: a field the contract adds, drops or makes optional changes this file even when every sample still decodes.',
+        'The objects are left open, with no additionalProperties: false: the contract accepts a payload holding a field it does not know and drops that field, so a phone’s decoder accepts and ignores an unknown field too. A rule with no JSON Schema form (a custom predicate, such as the attachment path’s NUL rule) is not here: an invalid sample of the family holds it.',
         'Keyed by family, then by the name the other files use: a shape by its name, a command by <Command>.payload and <Command>.success.'
       ]),
       schemas: shapes

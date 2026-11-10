@@ -1,8 +1,12 @@
 name: Mobile
 
 # The native phone apps (the native mobile wave of 9 November 2026) and what
-# they share. Three jobs:
+# they share. Four jobs:
 #
+#  - `apps`, on Linux: which app entries this checkout holds. An app's job
+#    runs only when its entry is there, and shows as SKIPPED otherwise, with a
+#    notice on the checks page, so a green app check is never a pass on an
+#    absent app.
 #  - `shared`, on Linux: the fixture vectors, the generated assets and the
 #    fixture server of packages/mobile-native, which need no Mac: the vectors
 #    and assets tests hold the committed files to the contract and to the
@@ -23,8 +27,10 @@ name: Mobile
 # and the script's exit code is the verdict. The script builds and tests the
 # app and prints its counts; nothing here names a scheme, a module or a test
 # target, so a rename inside an app is no edit here. While an app folder is
-# absent, or holds no ci.sh, its job says so in one log line and passes: the
+# absent, or holds no ci.sh, its job is skipped and a notice says so: the
 # workflow landed before the apps did, and nothing in it needs them to exist.
+# The structure guard refuses an app folder that holds files and no regular
+# ci.sh, so an app that is there always runs.
 on:
   push:
     branches: [mobile, dev]
@@ -68,6 +74,30 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  apps:
+    name: Which native apps are here
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      ios: ${{ steps.find.outputs.ios }}
+      android: ${{ steps.find.outputs.android }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Find each app's entry
+        id: find
+        run: |
+          for app in ios android; do
+            if [ -f "apps/mobile-$app/ci.sh" ]; then
+              echo "$app=true" >> "$GITHUB_OUTPUT"
+              echo "apps/mobile-$app/ci.sh is here: its job runs." >> "$GITHUB_STEP_SUMMARY"
+            else
+              echo "$app=false" >> "$GITHUB_OUTPUT"
+              echo "::notice title=No $app app yet::apps/mobile-$app/ci.sh is absent: its job is skipped, nothing is built or tested."
+              echo "apps/mobile-$app/ci.sh is absent: its job is skipped, nothing is built or tested." >> "$GITHUB_STEP_SUMMARY"
+            fi
+          done
+
   shared:
     name: Vectors, assets and the fixture server (Linux)
     runs-on: ubuntu-latest
@@ -117,6 +147,8 @@ jobs:
 
   ios:
     name: iOS app (Xcode 26.0.1, macOS 26)
+    needs: apps
+    if: needs.apps.outputs.ios == 'true'
     runs-on: macos-26
     timeout-minutes: 60
     env:
@@ -132,12 +164,7 @@ jobs:
           swift --version
 
       - name: Build and test the app through its own entry
-        run: |
-          if [ ! -f apps/mobile-ios/ci.sh ]; then
-            echo "apps/mobile-ios/ci.sh is absent: nothing to build yet, the job passes."
-            exit 0
-          fi
-          bash apps/mobile-ios/ci.sh
+        run: bash apps/mobile-ios/ci.sh
 
       - name: Keep the test results
         if: always()
@@ -152,42 +179,31 @@ jobs:
 
   android:
     name: Android app (JDK 21, Linux)
+    needs: apps
+    if: needs.apps.outputs.android == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
 
-      - name: Is the app there
-        id: app
-        run: |
-          if [ -f apps/mobile-android/ci.sh ]; then
-            echo "present=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "present=false" >> "$GITHUB_OUTPUT"
-            echo "apps/mobile-android/ci.sh is absent: nothing to build yet, the job passes."
-          fi
-
       - uses: actions/setup-java@v4
-        if: steps.app.outputs.present == 'true'
         with:
           distribution: temurin
           java-version: '21'
 
       - uses: gradle/actions/setup-gradle@v4
-        if: steps.app.outputs.present == 'true'
 
       # ANDROID_HOME is the runner's SDK root; the app's entry installs the
       # platform and the build tools it pins into it through sdkmanager, which
       # is on the PATH here.
       - name: Build and test the app through its own entry
-        if: steps.app.outputs.present == 'true'
         run: |
           export PATH="$ANDROID_HOME/cmdline-tools/latest/bin:$PATH"
           java -version
           bash apps/mobile-android/ci.sh
 
       - name: Keep the test results
-        if: always() && steps.app.outputs.present == 'true'
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: android-results-${{ github.run_id }}-${{ github.run_attempt }}

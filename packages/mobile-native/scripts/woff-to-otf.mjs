@@ -73,3 +73,38 @@ export function woffToOtf(woffBytes) {
 export function sha256Hex(bytes) {
   return createHash('sha256').update(bytes).digest('hex')
 }
+
+/**
+ * The names an sfnt gives itself in its `name` table: the family a platform
+ * registers it under (the typographic family, name ID 16, else the legacy
+ * family, ID 1) and its PostScript name (ID 6), the one `UIFont(name:)` and
+ * SwiftUI's `Font.custom` look a face up by. Read from the Windows Unicode
+ * records (platform 3, encoding 1, US English), the ones every OTF carries.
+ */
+export function fontNames(sfntBytes) {
+  const font = Buffer.from(sfntBytes.buffer, sfntBytes.byteOffset, sfntBytes.byteLength)
+  const numTables = font.readUInt16BE(4)
+  let table = null
+  for (let i = 0; i < numTables; i++) {
+    const at = SFNT_HEADER + i * SFNT_RECORD
+    if (font.toString('latin1', at, at + 4) === 'name')
+      table = { offset: font.readUInt32BE(at + 8), length: font.readUInt32BE(at + 12) }
+  }
+  if (!table) throw new Error('fontNames: no name table')
+  const count = font.readUInt16BE(table.offset + 2)
+  const strings = table.offset + font.readUInt16BE(table.offset + 4)
+  const names = new Map()
+  for (let i = 0; i < count; i++) {
+    const at = table.offset + 6 + i * 12
+    const [platform, encoding, language, id, length, offset] = [0, 2, 4, 6, 8, 10].map((o) =>
+      font.readUInt16BE(at + o)
+    )
+    if (platform !== 3 || encoding !== 1 || language !== 0x409) continue
+    const utf16be = Buffer.from(font.subarray(strings + offset, strings + offset + length))
+    names.set(id, utf16be.swap16().toString('utf16le'))
+  }
+  const family = names.get(16) ?? names.get(1)
+  const postScriptName = names.get(6)
+  if (!family || !postScriptName) throw new Error('fontNames: no family or PostScript name')
+  return { family, postScriptName }
+}

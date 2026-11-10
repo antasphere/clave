@@ -1176,6 +1176,29 @@
             }
           },
           "because": "effort is a short lowercase word"
+        },
+        {
+          "name": "an attachment path with a NUL byte",
+          "wire": {
+            "id": "s1",
+            "input": {
+              "type": "user_message",
+              "text": "see [Image #1]",
+              "attachments": [
+                {
+                  "id": "a1",
+                  "label": "Image #1",
+                  "path": "/tmp/clave-fixture/a\u0000b.png",
+                  "name": "a.png",
+                  "mimeType": "image/png",
+                  "size": 12,
+                  "delivery": "image"
+                }
+              ],
+              "clientMessageId": "m-0123456789abcdef"
+            }
+          },
+          "because": "an attachment path holds no NUL byte, a rule no JSON Schema of shapes.json can carry"
         }
       ],
       "success": [

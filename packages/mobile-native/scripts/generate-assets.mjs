@@ -23,7 +23,7 @@ import { mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync }
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { THEME_NAMES, fontSansFromCss, specFromCss, tokensFromCss } from './tokens-from-css.mjs'
-import { sha256Hex, woffToOtf } from './woff-to-otf.mjs'
+import { fontNames, sha256Hex, woffToOtf } from './woff-to-otf.mjs'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 
@@ -259,12 +259,15 @@ export function renderIcons({ heroiconsDir, heroiconsVersion, logosSource }) {
 }
 
 /** The three OTFs, their manifest and the licence. */
-export function renderFonts({ packageDir, version }) {
+export function renderFonts({ packageDir, version, cssFamily }) {
   const faces = FACES.map(({ weight, file }) => {
     const source = `files/geist-sans-latin-${weight}-normal.woff`
     const bytes = woffToOtf(readFileSync(path.join(packageDir, source)))
-    return { file, weight, source, bytes }
+    return { file, weight, source, bytes, ...fontNames(bytes) }
   })
+  const families = [...new Set(faces.map((f) => f.family))]
+  if (families.length !== 1)
+    throw new Error(`the Geist faces name ${families.length} families: ${families.join(', ')}`)
   const metadata = JSON.parse(readFileSync(path.join(packageDir, 'metadata.json'), 'utf8'))
   const upstream = {
     geistRelease: metadata.version,
@@ -281,9 +284,15 @@ export function renderFonts({ packageDir, version }) {
     ...upstream,
     license: 'OFL-1.1',
     licenseFile: 'OFL.txt',
-    faces: faces.map(({ weight, file, source, bytes }) => ({
+    // What a phone registers and looks the faces up by, read from each OTF's
+    // own name table; the tokens' `typography.fontSans` is the desktop's CSS
+    // family, an alias the files themselves do not carry.
+    family: families[0],
+    cssFamily,
+    faces: faces.map(({ weight, file, source, bytes, postScriptName }) => ({
       weight,
       file,
+      postScriptName,
       source,
       sha256: sha256Hex(bytes)
     }))
@@ -302,7 +311,8 @@ const packageVersion = (dir) =>
 /** Every output, relative path under the assets folder → content. */
 export function generateAll(repoRoot) {
   const out = new Map()
-  out.set('tokens.json', renderTokens(readFileSync(path.join(repoRoot, TOKENS_SOURCE), 'utf8')))
+  const css = readFileSync(path.join(repoRoot, TOKENS_SOURCE), 'utf8')
+  out.set('tokens.json', renderTokens(css))
   const heroiconsDir = path.join(repoRoot, HEROICONS_PACKAGE)
   const icons = renderIcons({
     heroiconsDir,
@@ -313,7 +323,11 @@ export function generateAll(repoRoot) {
   for (const [name, svg] of icons.svgs) out.set(`icons/svg/${name}.svg`, svg)
   for (const [file, xml] of icons.drawables) out.set(`icons/android/${file}`, xml)
   const fontsDir = path.join(repoRoot, FONTS_PACKAGE)
-  const fonts = renderFonts({ packageDir: fontsDir, version: packageVersion(fontsDir) })
+  const fonts = renderFonts({
+    packageDir: fontsDir,
+    version: packageVersion(fontsDir),
+    cssFamily: fontSansFromCss(css)
+  })
   for (const face of fonts.faces) out.set(`fonts/${face.file}`, face.bytes)
   out.set('fonts/OFL.txt', fonts.license)
   out.set('fonts/fonts.json', fonts.manifest)
