@@ -9,6 +9,7 @@ import android.os.Build
 import android.os.SystemClock
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
+import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.SemanticsNodeInteraction
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithContentDescription
@@ -307,6 +308,10 @@ class AppEvidenceTest {
         SystemClock.sleep(5_000)
         rule.waitForIdle()
         assertEquals("nothing is sent again on its own: ${requests("POST /sessions/write").map { it.body }}", 1, requests("POST /sessions/write").size)
+        // The draft stays in the field, and Send is disabled until the person picks the card's
+        // "Send again" or "Discard": a plain send would be a second message under a new id.
+        assertEquals("will this land?", rule.onNodeWithContentDescription("Message").editableText())
+        rule.onNodeWithContentDescription("Send message").assertIsNotEnabled()
         screenshot("delivery-unknown.png")
 
         rule.onNodeWithText("Discard").performClick()

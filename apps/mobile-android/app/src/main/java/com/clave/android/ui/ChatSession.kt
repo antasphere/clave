@@ -11,7 +11,6 @@ import com.clave.core.chat.PickedKind
 import com.clave.core.chat.SendOutcome
 import com.clave.core.chat.admit
 import com.clave.core.chat.attachmentDraftKey
-import com.clave.core.chat.discardUnknownSend
 import com.clave.core.chat.labelled
 import com.clave.core.contract.Attachment
 import com.clave.core.contract.FileAttachment
@@ -43,9 +42,9 @@ const val DRAFT_DEBOUNCE_MS: Long = 300
  * One open conversation's composer and subscription, the prototype's ChatScreen rules on
  * the core's store: the draft and the attachment draft kept on the device until a send
  * lands, never sent by themselves; a send of unknown outcome shown as a choice (send again
- * under a NEW id, which may duplicate, or discard) and nothing sent meanwhile; a new send
- * while one is unknown discards the unknown one first. [open] subscribes and [close] lets
- * go, around the screen's life.
+ * under a NEW id, which may duplicate, or discard) and nothing sent meanwhile, the store
+ * refusing a plain send until the person has chosen. [open] subscribes and [close] lets go,
+ * around the screen's life.
  */
 class ChatSession(
     private val owner: OwnerSession,
@@ -151,12 +150,25 @@ class ChatSession(
     }
 
     /**
-     * Sends the draft and its attachments under a new id. A pending unknown send of this
-     * conversation is discarded first, as the prototype does. Sent clears the draft (when it
-     * is still the text sent) and the attachment draft; Rejected and Failed keep both and say
-     * why; Unknown shows the choice and sends nothing more.
+     * Sends the draft and its attachments under a new id. While a send of this conversation
+     * has an unknown outcome the store refuses (the composer's Send is disabled too): the
+     * person picks "Send again" or "Discard". Sent clears the draft (when it is still the text
+     * sent) and the attachment draft; Rejected and Failed keep both and say why; Unknown shows
+     * the choice and sends nothing more.
      */
-    fun send() {
+    fun send() = deliver { text, attachments -> store.send(machineId, sessionId, text, attachments = attachments) }
+
+    /**
+     * "Send again (may duplicate)": the unknown send is discarded first (once any reconnection
+     * pass of the machine has finished with it) and the draft goes under a NEW id; nothing is
+     * sent when that send was settled meanwhile.
+     */
+    fun resend() {
+        val unknown = _state.value.unknownSend ?: return
+        deliver { text, attachments -> store.resend(machineId, sessionId, unknown.clientMessageId, text, attachments) }
+    }
+
+    private fun deliver(call: suspend (text: String, attachments: List<Attachment>) -> SendOutcome) {
         val current = _state.value
         if ((current.draft.isBlank() && current.attachments.isEmpty()) || current.sending || current.attaching) return
         _state.update { it.copy(sending = true, error = null) }
@@ -164,11 +176,10 @@ class ChatSession(
             val text = current.draft
             val attachments = current.attachments
             try {
-                current.unknownSend?.let { discardUnknownSend(machineId, sessionId, it.clientMessageId, delivery.sends, delivery.marks) }
                 // The store clears the draft only when the stored one is the text sent.
                 draftWrite?.cancel()
                 drafts.set(machineId, sessionId, text)
-                when (val outcome = store.send(machineId, sessionId, text, attachments = attachments)) {
+                when (val outcome = call(text, attachments)) {
                     is SendOutcome.Sent -> {
                         owner.kv.remove(attachmentKey)
                         _state.update {
@@ -196,14 +207,12 @@ class ChatSession(
         }
     }
 
-    /** "Send again (may duplicate)": the same draft as a new send under a new id. */
-    fun resend() = send()
-
-    /** "Discard": the unknown send leaves the ledger, the mark is cleared, the draft and the attachments go. */
+    /** "Discard": the unknown send leaves the ledger (once any reconnection pass of the machine
+     *  has finished with it), the mark is cleared, the draft and the attachments go. */
     fun discard() {
         val unknown = _state.value.unknownSend
         scope.launch {
-            if (unknown != null) discardUnknownSend(machineId, sessionId, unknown.clientMessageId, delivery.sends, delivery.marks)
+            if (unknown != null) store.discardUnknown(machineId, sessionId, unknown.clientMessageId)
             delivery.marks.clear(machineId, sessionId)
             draftWrite?.cancel()
             drafts.clear(machineId, sessionId)

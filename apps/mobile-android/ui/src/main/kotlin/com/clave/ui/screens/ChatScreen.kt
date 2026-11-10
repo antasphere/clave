@@ -228,6 +228,7 @@ fun ChatScreen(
                     deliveryMark = state.composer.deliveryMark,
                     placeholder = if (state.ended) "This session has ended" else "Write a message…",
                     enabled = !state.ended,
+                    sendBlocked = state.unknownSend != null,
                 )
             }
         },

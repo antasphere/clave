@@ -436,7 +436,9 @@ fun PromptDock(count: Int, label: String, onOpen: () -> Unit, modifier: Modifier
  * The raised composer: attachments above the field, the field growing from one line to six,
  * the paper clip, and the round Send in the action ink that turns into Stop while the agent
  * works and nothing is typed (typing while it works still sends). A composer that is not
- * `enabled` (the session has ended) takes nothing and sends nothing.
+ * `enabled` (the session has ended) takes nothing and sends nothing; one whose send is
+ * `sendBlocked` (a message's delivery is unknown) keeps its text editable and its Send
+ * disabled until the person has chosen "Send again" or "Discard".
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -454,6 +456,7 @@ fun Composer(
     deliveryMark: String? = null,
     placeholder: String = "Write a message…",
     enabled: Boolean = true,
+    sendBlocked: Boolean = false,
 ) {
     val t = Clave.colors.theme
     val shape = RoundedCornerShape(Metrics.radiusXxl)
@@ -513,7 +516,7 @@ fun Composer(
                         }
                     },
                 )
-                val canSend = enabled && (text.isNotBlank() || attachments.isNotEmpty()) && !sending
+                val canSend = enabled && (text.isNotBlank() || attachments.isNotEmpty()) && !sending && !sendBlocked
                 if (enabled && working && text.isBlank()) {
                     RoundAction(ClaveIcon.Stop, "Interrupt", enabled = true, onClick = onStop)
                 } else {

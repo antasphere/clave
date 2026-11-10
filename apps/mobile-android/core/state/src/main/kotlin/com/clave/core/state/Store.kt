@@ -90,6 +90,17 @@ public data class RequestsState(
     val loading: Boolean,
 )
 
+/** A plain send refused while the conversation's last message is still being written. */
+public const val STILL_SENDING: String = "The last message is still being sent."
+
+/** A plain send refused while the conversation's last message has an unknown delivery. */
+public const val DELIVERY_UNKNOWN_FIRST: String =
+    "The last message's delivery is unknown. Choose Send again or Discard first."
+
+/** "Send again" when the unknown send was settled before the choice could be applied. */
+public const val SETTLED_MEANWHILE: String =
+    "The first message's delivery was settled meanwhile, so nothing was sent again."
+
 /** The outcome of an answer or an interrupt written into a session. */
 public data class ActionOutcome(val ok: Boolean, val error: String? = null)
 
@@ -643,14 +654,29 @@ public class ClaveStore(private val services: Services) {
      * table of the chat module's `sendMessage`. The ledger entry goes in before the write,
      * the settlement after it; the draft is cleared on `sent` only, and only when it is
      * still the text sent.
+     *
+     * While the conversation has a send whose outcome is not settled (its write in flight, or
+     * its outcome unknown), a new send is refused before any id is minted or any request
+     * leaves: a new id would be a second logical message the person never confirmed. That
+     * send is settled under its own id, by its sender or by the reconnection pass; the person
+     * may choose [resend] or [discardUnknown]. The draft is left as it is.
      */
     public suspend fun send(
         machineId: String,
         sessionId: String,
         text: String,
-        clientMessageId: String = services.mintMessageId(),
+        clientMessageId: String? = null,
         attachments: List<Attachment> = emptyList(),
     ): SendOutcome {
+        services.delivery?.let { delivery ->
+            val pending = delivery.unsettled(machineId, sessionId)
+            if (pending != null) {
+                val reason = if (delivery.inFlight(pending.clientMessageId)) STILL_SENDING else DELIVERY_UNKNOWN_FIRST
+                return SendOutcome.Failed(pending.clientMessageId, reason)
+            }
+        }
+        @Suppress("NAME_SHADOWING")
+        val clientMessageId = clientMessageId ?: services.mintMessageId()
         val trimmed = text.trim()
         if (trimmed.isEmpty() && attachments.isEmpty()) return SendOutcome.Failed(clientMessageId, "Nothing to send.")
         val client = try {
@@ -692,6 +718,35 @@ public class ClaveStore(private val services: Services) {
         }
         return outcome
     }
+
+    /**
+     * "Send again (may duplicate)": the person's explicit choice on a send of unknown outcome.
+     * The unknown send is discarded first, once any reconnection pass of the machine has
+     * finished reconciling (so no pass completes it afterwards), and the text goes under a NEW
+     * id. When that send was settled meanwhile (accepted, completed or refused by the pass),
+     * nothing is sent again.
+     */
+    public suspend fun resend(
+        machineId: String,
+        sessionId: String,
+        unknownId: String,
+        text: String,
+        attachments: List<Attachment> = emptyList(),
+    ): SendOutcome {
+        val delivery = services.delivery
+        if (delivery != null && !delivery.discard(machineId, sessionId, unknownId)) {
+            return SendOutcome.Failed(unknownId, SETTLED_MEANWHILE)
+        }
+        return send(machineId, sessionId, text, attachments = attachments)
+    }
+
+    /**
+     * "Discard": the person's explicit choice on a send of unknown outcome. It leaves the
+     * ledger and its mark goes, once any reconnection pass of the machine has finished
+     * reconciling, so no pass ever completes it afterwards. False when it was settled meanwhile.
+     */
+    public suspend fun discardUnknown(machineId: String, sessionId: String, unknownId: String): Boolean =
+        services.delivery?.discard(machineId, sessionId, unknownId) ?: false
 
     public suspend fun answerInChat(
         machineId: String,

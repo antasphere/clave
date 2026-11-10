@@ -23,6 +23,8 @@ import com.clave.core.ports.KeyValueStore
 import com.clave.core.ports.SystemClock
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.coroutines.cancellation.CancellationException
 
@@ -41,6 +43,9 @@ data class ReconnectPorts(
     val clearAttachments: (suspend (UnknownSend) -> Unit)? = null,
     /** A send whose own write is still in flight: the pass leaves it to its sender. */
     val isActive: ((UnknownSend) -> Boolean)? = null,
+    /** Runs the reconciliation of the ledger's sends; the controller holds the machine's lock
+     *  there, so the person's discard waits for it and a discarded send is never completed. */
+    val exclusive: suspend (suspend () -> Unit) -> Unit = { block -> block() },
 )
 
 data class ReconnectInput(
@@ -60,17 +65,19 @@ data class ReconnectReport(
 
 suspend fun reconnectPass(input: ReconnectInput, ports: ReconnectPorts, options: SendOptions = SendOptions()): ReconnectReport {
     val outcomes = mutableListOf<SettledSend>()
-    for (send in ports.sends.forMachine(input.machineId)) {
-        if (ports.isActive?.invoke(send) == true) continue
-        val sendPorts = object : SendPorts {
-            override suspend fun write(clientMessageId: String): WriteAnswer = ports.write(send)
-            override suspend fun status(clientMessageId: String): WriteStatus = ports.status(send)
-            override suspend fun sleep(ms: Long) = ports.sleep(ms)
-            override fun now(): Long = ports.now()
+    ports.exclusive {
+        for (send in ports.sends.forMachine(input.machineId)) {
+            if (ports.isActive?.invoke(send) == true) continue
+            val sendPorts = object : SendPorts {
+                override suspend fun write(clientMessageId: String): WriteAnswer = ports.write(send)
+                override suspend fun status(clientMessageId: String): WriteStatus = ports.status(send)
+                override suspend fun sleep(ms: Long) = ports.sleep(ms)
+                override fun now(): Long = ports.now()
+            }
+            val outcome = reconcile(send.clientMessageId, sendPorts, options, mayRetry = true)
+            outcomes.add(SettledSend(send, outcome))
+            settleSend(send, outcome, ports.sends, ports.marks, ports.drafts, ports.now, ports.clearAttachments)
         }
-        val outcome = reconcile(send.clientMessageId, sendPorts, options, mayRetry = true)
-        outcomes.add(SettledSend(send, outcome))
-        settleSend(send, outcome, ports.sends, ports.marks, ports.drafts, ports.now, ports.clearAttachments)
     }
     val refreshFailures = mutableListOf<String>()
     var requestsRefreshed = false
@@ -164,6 +171,38 @@ class DeliveryController(
     private val reconnecting = HashMap<String, CompletableDeferred<ReconnectReport>>()
     private val lock = Any()
 
+    /** Held by a machine's reconnection pass while it reconciles the ledger's sends (not while it
+     *  refreshes), and by the person's discard, so a pass never completes a discarded send. */
+    private val passLocks = ConcurrentHashMap<String, Mutex>()
+    private fun passLock(machineId: String): Mutex = passLocks.getOrPut(machineId) { Mutex() }
+
+    /**
+     * The conversation's send whose outcome is not settled: one in flight, or one whose outcome
+     * is unknown and waits for the reconnection pass or the person's choice. While it exists the
+     * conversation takes no new message, since a new id would be a second logical message; the
+     * reconciliation of that same id goes on.
+     */
+    suspend fun unsettled(machineId: String, sessionId: String): UnknownSend? =
+        sends.forSession(machineId, sessionId).firstOrNull()
+
+    /** Whether this send's own write is still in flight. */
+    fun inFlight(clientMessageId: String): Boolean = active.contains(clientMessageId)
+
+    /**
+     * The person's explicit choice on a send of unknown outcome ("Send again" or "Discard"): once
+     * any reconnection pass of the machine has finished, the send leaves the ledger and its mark
+     * is cleared. False when there is nothing to discard: the send was settled meanwhile (the
+     * pass found it accepted, completed it, or saw it refused), or its own write is in flight.
+     */
+    suspend fun discard(machineId: String, sessionId: String, clientMessageId: String): Boolean =
+        passLock(machineId).withLock {
+            if (inFlight(clientMessageId)) return@withLock false
+            if (sends.forSession(machineId, sessionId).none { it.clientMessageId == clientMessageId }) return@withLock false
+            sends.remove(clientMessageId)
+            marks.clear(machineId, sessionId)
+            true
+        }
+
     /** The attachment draft goes only when it is still the records sent. */
     private val clearAttachments: suspend (UnknownSend) -> Unit = { send ->
         val key = attachmentDraftKey(send.machineId, send.sessionId)
@@ -221,6 +260,7 @@ class DeliveryController(
                     refreshHistory = refreshHistory,
                     clearAttachments = clearAttachments,
                     isActive = { active.contains(it.clientMessageId) },
+                    exclusive = { block -> passLock(machineId).withLock { block() } },
                 ),
             )
             mine.complete(report)
