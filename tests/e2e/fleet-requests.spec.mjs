@@ -204,7 +204,11 @@ export async function run(t) {
     // its record of the approval says it was answered elsewhere.
     let macBDock = ''
     await eventually(async () => {
-      macBDock = (await dockOf(macB).count()) ? await dockOf(macB).innerText() : ''
+      // The inline question and old permission dock can coexist while this
+      // Mac receives the settlement. Observe all text before polling again.
+      macBDock = await dockOf(macB).evaluateAll((nodes) =>
+        nodes.map((node) => node.innerText).join('\n')
+      )
       return (
         macBDock.includes('Fleet public answer') && !macBDock.includes(nativeApproval.description)
       )
