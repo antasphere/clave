@@ -68,7 +68,13 @@ struct Composer: View {
         .accessibilityIdentifier("chat.composer.send-error")
     }
     if let notice = model.deliveryNotice {
-      noticeLine(notice, tone: theme.colors.textPrimary, identifier: "chat.composer.delivery-notice")
+      // What became of a send of unknown outcome, in the primary text ink: readable on the
+      // composer's ground in every theme, and not a tone (nothing failed).
+      Text(notice)
+        .font(.geist(Theme.text.xs, relativeTo: .caption))
+        .foregroundStyle(theme.colors.textPrimary)
+        .fixedSize(horizontal: false, vertical: true)
+        .accessibilityIdentifier("chat.composer.delivery-notice")
     }
     if let notice = model.actionError {
       ToneLine(notice, tone: .error)
