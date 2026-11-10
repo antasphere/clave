@@ -51,7 +51,7 @@ final class NotificationEvidenceTests: XCTestCase {
   // MARK: the push
 
   /// Where `scripts/evidence-push.sh` waits for the test's markers.
-  private let pushFolder = URL(fileURLWithPath: "/private/tmp/clave-native-a/evidence/push", isDirectory: true)
+  private let pushFolder = evidenceRoot.appendingPathComponent("push", isDirectory: true)
 
   /// Asks the script for one push by writing its marker.
   private func askForPush(_ name: String) throws {

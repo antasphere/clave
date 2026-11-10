@@ -90,9 +90,8 @@ final class ChatEvidenceTests: XCTestCase {
     let shot = keepScreenshot(topic: "chat", name: "turns")
     let ground = groundPixel(shot)
     // The person's turn is a box: down the column just inside its trailing edge, one fill other
-    // than the ground runs for at least 20 points. The column is read whole because the
-    // transcript's accessibility frames sit lower than the drawing on this system (a finding of
-    // this evidence), so the frame's vertical position is not trusted.
+    // than the ground runs for at least 20 points. The column is read whole, the frame's vertical
+    // position being testTheTranscriptsFramesLieOnItsDrawing's to prove.
     let column = user.frame.maxX - 8
     var run = 0, longest = 0, fill = ground, top: CGFloat = 0
     var y: CGFloat = 100
@@ -117,6 +116,55 @@ final class ChatEvidenceTests: XCTestCase {
       topic: "chat", name: "turns.txt")
   }
 
+  // MARK: the transcript's frames on its drawing
+
+  /// Where VoiceOver and the audit find the turns is where they are drawn. On the seeded chat as it
+  /// opens, at the latest, in the dark theme: every turn's frame lies inside the transcript's, the
+  /// pixel just inside the leading edge of the person's turn is its box's fill, and the pixel just
+  /// above that turn is the ground. iOS 17.5 put these frames about 80 points below the drawing.
+  @MainActor
+  func testTheTranscriptsFramesLieOnItsDrawing() {
+    let app = signInAndPair()
+    pickAppearance(app, "dark")
+    app.buttons["machines.open.m_fake"].tap()
+    openSeededChat(app)
+    let transcript = element(app, "chat.transcript")
+    XCTAssertTrue(transcript.waitForExistence(timeout: 5))
+    let user = turn(app, "chat.user.", containing: "seeded-fake")
+    XCTAssertTrue(user.waitForExistence(timeout: 5))
+
+    let area = transcript.frame
+    var lines = ["transcript \(area)"]
+    var outside: [String] = []
+    let turns = app.descendants(matching: .any)
+      .matching(NSPredicate(format: "identifier BEGINSWITH 'chat.user.' OR identifier BEGINSWITH 'chat.assistant.'"))
+      .allElementsBoundByIndex
+    XCTAssertFalse(turns.isEmpty, "No turn in the transcript")
+    for each in turns {
+      let frame = each.frame
+      let inside = area.insetBy(dx: -0.5, dy: -0.5).contains(frame)
+      lines.append("\(each.identifier) \(frame) \(inside ? "inside" : "OUTSIDE") the transcript")
+      if !inside { outside.append("\(each.identifier) \(frame)") }
+    }
+
+    let frame = user.frame
+    let shot = keepScreenshot(topic: "chat", name: "transcript-frames")
+    let fill = Pixel(red: 0x16, green: 0x15, blue: 0x13)
+    let ground = Pixel(red: 0x0e, green: 0x0d, blue: 0x0c)
+    let insideEdge = CGPoint(x: frame.minX + 4, y: frame.midY)
+    let aboveTop = CGPoint(x: frame.minX + 4, y: frame.minY - 4)
+    let inBox = pixel(shot, at: insideEdge)
+    let overBox = pixel(shot, at: aboveTop)
+    lines.append("\(user.identifier) frame \(frame)")
+    lines.append("pixel inside the leading edge at \(insideEdge): \(inBox) (box fill \(fill))")
+    lines.append("pixel above the top at \(aboveTop): \(overBox) (ground \(ground))")
+    keepText(lines.joined(separator: "\n") + "\n", topic: "chat", name: "transcript-frames.txt")
+
+    XCTAssertTrue(outside.isEmpty, "Turns outside the transcript \(area): \(outside.joined(separator: ", "))")
+    XCTAssertTrue(inBox.isWithin(3, of: fill), "Inside the person's turn at \(insideEdge) is \(inBox), not the box's \(fill)")
+    XCTAssertTrue(overBox.isWithin(3, of: ground), "Above the person's turn at \(aboveTop) is \(overBox), not the ground \(ground)")
+  }
+
   // MARK: E: the composer
 
   @MainActor
@@ -128,6 +176,9 @@ final class ChatEvidenceTests: XCTestCase {
     let before = field.frame.height
     field.tap()
     XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5), "No software keyboard")
+    // The reader was at the latest: the keyboard leaves the transcript's last block in view.
+    let latest = element(app, "chat.markdown.image")
+    XCTAssertTrue(latest.isHittable, "The latest block is under the keyboard at \(latest.frame)")
 
     let marker = "composer-\(Int(Date().timeIntervalSince1970))"
     field.typeText("\(marker) one\nline two\nline three")

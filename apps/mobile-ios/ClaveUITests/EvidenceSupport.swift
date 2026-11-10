@@ -5,7 +5,12 @@ import XCTest
 // the walk over the six screens of a paired machine on the in-process fake.
 
 /// Where the evidence goes, outside the repository; the simulator's processes write the host's /private/tmp.
-let evidenceRoot = URL(fileURLWithPath: "/private/tmp/clave-native-a/evidence", isDirectory: true)
+/// `CLAVE_IOS_EVIDENCE_DIR` in the test runner's environment (`TEST_RUNNER_CLAVE_IOS_EVIDENCE_DIR`
+/// beside xcodebuild) gives a second runner a folder of its own.
+let evidenceRoot = URL(
+  fileURLWithPath: ProcessInfo.processInfo.environment["CLAVE_IOS_EVIDENCE_DIR"].flatMap { $0.isEmpty ? nil : $0 }
+    ?? "/private/tmp/clave-native-a/evidence",
+  isDirectory: true)
 
 /// The six screens an evidence walk visits, in the order it visits them.
 enum EvidenceScreen: String, CaseIterable {
@@ -23,6 +28,11 @@ struct Pixel: Equatable, CustomStringConvertible {
   /// The sum of the channels' differences.
   func distance(to other: Pixel) -> Int {
     abs(red - other.red) + abs(green - other.green) + abs(blue - other.blue)
+  }
+
+  /// True when no channel is further than `tolerance` from the other pixel's.
+  func isWithin(_ tolerance: Int, of other: Pixel) -> Bool {
+    abs(red - other.red) <= tolerance && abs(green - other.green) <= tolerance && abs(blue - other.blue) <= tolerance
   }
 }
 

@@ -1,5 +1,6 @@
 import ClaveCore
 import SwiftUI
+import UIKit
 
 /// One conversation: the header with the agent's state, the transcript, the composer at the foot.
 struct ChatScreen: View {
@@ -110,9 +111,16 @@ struct ChatScreen: View {
         .padding(.top, Theme.space(4))
         .padding(.bottom, Theme.space(2))
       }
-      .defaultScrollAnchor(.bottom)
       .scrollDismissesKeyboard(.interactively)
       .accessibilityIdentifier("chat.transcript")
+      // The transcript appears with the conversation's first load, and again on each return to
+      // the chat: it opens at the latest. A scroll rather than a default anchor, because iOS 17.5
+      // aligned a short transcript's accessibility frames to the anchor while drawing it at the top.
+      .onAppear { proxy.scrollTo(bottomId, anchor: .bottom) }
+      // The keyboard covers the transcript's foot: a reader at the latest stays at the latest.
+      .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardDidShowNotification)) { _ in
+        if atBottom { withAnimation { proxy.scrollTo(bottomId, anchor: .bottom) } }
+      }
       .onChange(of: tailSignature(conversation)) { _, _ in
         // Follow the agent while the reader is at the latest; leave them where they are otherwise.
         if atBottom { proxy.scrollTo(bottomId, anchor: .bottom) }

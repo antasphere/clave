@@ -10,6 +10,10 @@
 #   CLAVE_IOS_SIMULATOR_UDID=<udid> zsh scripts/evidence-push.sh &
 #   xcodebuild ... test -only-testing:ClaveUITests/NotificationEvidenceTests/testAPushBannerOpensItsScreen
 #
+# A second runner keeps its evidence apart by naming one folder to both sides:
+#   CLAVE_IOS_EVIDENCE_PUSH_DIR=/private/tmp/clave-native-av/evidence/push zsh scripts/evidence-push.sh &
+#   TEST_RUNNER_CLAVE_IOS_EVIDENCE_DIR=/private/tmp/clave-native-av/evidence xcodebuild … test …
+#
 # Exits 0 once both pushes are sent, 1 when a push fails, 2 when the test never asks
 # (CLAVE_IOS_EVIDENCE_PUSH_WAIT seconds per push, 600 by default; raise it beside a full run).
 set -u
