@@ -6,7 +6,37 @@ import XCTest
 // (wrapped as DeliveryChatServer) and the machine's one delivery controller:
 // - a reconnection pass holding a send of unknown outcome while the person chooses on the bar
 //   (Send again, Discard): the choice waits, and finds the send settled or discards it;
-// - two conversations of one machine: one's pass never writes what the other is sending.
+// - two conversations of one machine: one's pass never writes what the other is sending;
+// - two sends at once: the second returns before it mints anything, whatever holds the first.
+
+/// A key-value store that holds the writes of one key while told to, until the test lets them
+/// through: a send held there waits inside `DeliveryController.begin`, before the ledger has it.
+actor HoldingStore: KeyValueStore {
+  private let inner = InMemoryKeyValueStore()
+  private var holding: String?
+  private var held: [CheckedContinuation<Void, Never>] = []
+
+  /// Holds every write of `key` from now on.
+  func hold(_ key: String) { holding = key }
+  /// How many writes wait.
+  var waiting: Int { held.count }
+  /// Lets the waiting writes through and holds no more.
+  func release() {
+    holding = nil
+    let waiting = held
+    held = []
+    for write in waiting { write.resume() }
+  }
+
+  func get(_ key: String) async throws -> String? { try await inner.get(key) }
+
+  func set(_ key: String, _ value: String) async throws {
+    if key == holding { await withCheckedContinuation { held.append($0) } }
+    try await inner.set(key, value)
+  }
+
+  func remove(_ key: String) async throws { try await inner.remove(key) }
+}
 
 /// Set once a task the test started has returned.
 @MainActor
@@ -18,7 +48,7 @@ final class Returned {
 final class DeliveryRaceTests: XCTestCase {
   private var server: DeliveryChatServer!
   private var push: PushClient!
-  private var store: InMemoryKeyValueStore!
+  private var store: HoldingStore!
   private var parts: MachineDeliveryParts!
   private var models: [ConversationModel] = []
 
@@ -28,7 +58,7 @@ final class DeliveryRaceTests: XCTestCase {
 
   override func setUp() async throws {
     server = DeliveryChatServer()
-    store = InMemoryKeyValueStore()
+    store = HoldingStore()
     parts = MachineDeliveryParts(store: store)
     // A reconnection's backoff (a second at most) passes at once; the liveness timers are real
     // and far longer than any test.
@@ -267,5 +297,68 @@ final class DeliveryRaceTests: XCTestCase {
     await send.value
     XCTAssertEqual(server.attempts, [id])
     XCTAssertEqual(server.kept, [id], "written once, by its composer")
+  }
+
+  // MARK: - F1.6: two sends at once
+
+  /// The first send held inside `delivery.begin` (the ledger's write waits): a second send at the
+  /// same moment returns while the first is held, writes nothing and leaves the draft; after the
+  /// release, one write under one id.
+  func testASecondSendReturnsWhileTheFirstIsHeldBeforeTheLedgerHasIt() async throws {
+    let model = try makeModel()
+    await model.appear()
+    let text = "Held before the ledger."
+    model.draft = text
+    await model.flushDraft()
+    await store.hold(UnknownSends.key)
+    let returned = Returned()
+    // Both run on the main actor in order: the second starts at the first one's first suspension.
+    let first = Task { await model.send() }
+    let second = Task {
+      await model.send()
+      returned.yes = true
+    }
+    await eventually("the first send held at the ledger") { await store.waiting >= 1 }
+    await until("the second send returned") { returned.yes }
+    let stillHeld = await store.waiting
+    XCTAssertEqual(stillHeld, 1, "the second returned while the first is held, and reached no ledger")
+    XCTAssertEqual(server.attempts, [], "the server received no write")
+    XCTAssertEqual(model.draft, text, "the draft is unchanged")
+    await store.release()
+    await first.value
+    await second.value
+    XCTAssertEqual(server.attempts.count, 1, "exactly one write")
+    XCTAssertEqual(server.kept.count, 1, "one message, under one id")
+  }
+
+  /// The same with the first send held in its attachment's upload.
+  func testASecondSendReturnsWhileTheFirstIsHeldInItsUpload() async throws {
+    let model = try makeModel()
+    await model.appear()
+    let file = FileManager.default.temporaryDirectory.appendingPathComponent("delivery-race-notes.txt")
+    try Data("twelve bytes".utf8).write(to: file)
+    defer { try? FileManager.default.removeItem(at: file) }
+    model.attach(PickedFile(uri: file.absoluteString, name: "notes.txt", mimeType: "text/plain", size: 12, kind: .file))
+    XCTAssertEqual(model.pendingFiles.count, 1)
+    let text = "With a file."
+    model.draft = text
+    server.holdUploads()
+    let returned = Returned()
+    let first = Task { await model.send() }
+    let second = Task {
+      await model.send()
+      returned.yes = true
+    }
+    await until("the first send held at its upload") { server.uploadsHeld >= 1 }
+    await until("the second send returned") { returned.yes }
+    XCTAssertEqual(server.uploadsHeld, 1, "one upload under way")
+    XCTAssertEqual(server.attempts, [], "the server received no write")
+    XCTAssertEqual(model.draft, text, "the draft is unchanged")
+    server.releaseHeldUploads()
+    await first.value
+    await second.value
+    XCTAssertEqual(server.uploads, 1, "one upload in all")
+    XCTAssertEqual(server.attempts.count, 1, "exactly one write")
+    XCTAssertEqual(server.kept.count, 1, "one message, under one id")
   }
 }

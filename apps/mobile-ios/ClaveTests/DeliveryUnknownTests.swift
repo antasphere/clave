@@ -41,6 +41,9 @@ final class DeliveryChatServer: HTTPTransport, WebSocketTransport, @unchecked Se
   private var _asks: [String] = []
   private var heldWrites: [CheckedContinuation<Void, Never>] = []
   private var heldReads: [String: CheckedContinuation<Status, Never>] = [:]
+  private var holdingUploads = false
+  private var heldUploads: [CheckedContinuation<Void, Never>] = []
+  private var _uploads = 0
 
   /// The id of every write that left the phone, in order, a lost one included.
   var attempts: [String] { lock.withLock { _attempts } }
@@ -75,6 +78,21 @@ final class DeliveryChatServer: HTTPTransport, WebSocketTransport, @unchecked Se
     read?.resume(returning: status)
   }
 
+  /// Every file upload from now on waits until `releaseHeldUploads`.
+  func holdUploads() { lock.withLock { holdingUploads = true } }
+  /// How many uploads wait; and how many reached the server in all.
+  var uploadsHeld: Int { lock.withLock { heldUploads.count } }
+  var uploads: Int { lock.withLock { _uploads } }
+  /// Lets the waiting uploads through and holds no more.
+  func releaseHeldUploads() {
+    let waiting = lock.withLock { () -> [CheckedContinuation<Void, Never>] in
+      holdingUploads = false
+      defer { heldUploads = [] }
+      return heldUploads
+    }
+    for upload in waiting { upload.resume() }
+  }
+
   func perform(_ request: URLRequest) async throws -> HTTPAnswer {
     let components = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)!
     switch (request.httpMethod ?? "GET", components.path) {
@@ -95,6 +113,15 @@ final class DeliveryChatServer: HTTPTransport, WebSocketTransport, @unchecked Se
       case .answer(let value):
         return HTTPAnswer(status: 200, headers: ["Content-Type": "application/json"], body: Data(#"{"status":"\#(value)"}"#.utf8))
       }
+    case ("POST", "/files/attachments/prepare"):
+      let hold = lock.withLock { () -> Bool in
+        _uploads += 1
+        return holdingUploads
+      }
+      if hold { await withCheckedContinuation { upload in lock.withLock { heldUploads.append(upload) } } }
+      return HTTPAnswer(
+        status: 200, headers: ["Content-Type": "application/json"],
+        body: Data(#"{"id":"f-1","path":"/tmp/scratch/notes.txt","name":"notes.txt","mimeType":"text/plain","size":12,"delivery":"reference"}"#.utf8))
     default:
       return try await chat.perform(request)
     }
