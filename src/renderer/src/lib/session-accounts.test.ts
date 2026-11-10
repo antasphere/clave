@@ -154,6 +154,12 @@ describe('the accounts of a session come from its owner', () => {
     expect(targets.some((t) => t.id === 'mac-spare')).toBe(false)
     expect(nextAccountFor(tab)).not.toBe('mac-spare')
     expect(resolveSessionAccountRef(tab, 'claude', '4@example.com').id).toBe('srv-two')
+    // "any": the server's pool, its next account with headroom, never this
+    // Mac's (whose spare is as open, and whose Default has room too).
+    expect(resolveSessionAccountRef(tab, 'claude', 'any')).toMatchObject({
+      id: 'srv-two',
+      label: '4@example.com'
+    })
     expect(() => resolveSessionAccountRef(tab, 'claude', 'Spare')).toThrow(/Unknown Claude/)
   })
 
