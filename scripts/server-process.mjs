@@ -123,6 +123,26 @@ export function readServerDiscovery(dataDir) {
   }
 }
 
+/** The budgets of every child started here: how long it has to print its
+ *  announcement line (`timeoutMs` by default), the grace the rejection
+ *  waits after SIGKILL for a child that never did, and how long `stop()`
+ *  waits after SIGTERM before SIGKILL (`killAfterMs` by default). A test
+ *  that boots a child through this script derives its own timeout from
+ *  these, never from Vitest's default (scripts/server-process.test.mjs);
+ *  scripts/server-process-budgets.test.mjs proves them real on fakes. */
+export const ANNOUNCE_TIMEOUT_MS = 15_000
+export const ANNOUNCE_KILL_GRACE_MS = 2_000
+export const STOP_KILL_AFTER_MS = 5_000
+/** How long a test polls for a stopped child's pid to be gone. */
+export const DEAD_POLL_MS = 5_000
+/** What a test that boots one server and stops it may spend: the announce
+ *  budget, the grace a failed announce waits, the stop's SIGTERM-to-SIGKILL
+ *  wait, the poll for the pid, and 3 s for the fetches and file checks in
+ *  between. Exported, so that a test that boots nothing holds it above the
+ *  starter's own worst case (scripts/server-process-budgets.test.mjs). */
+export const ONE_BOOT_BUDGET_MS =
+  ANNOUNCE_TIMEOUT_MS + ANNOUNCE_KILL_GRACE_MS + STOP_KILL_AFTER_MS + DEAD_POLL_MS + 3_000
+
 /**
  * Start a child and resolve its first stdout line, parsed as JSON and
  * checked to carry the `fields` named. Rejects when it exits first, stays
@@ -150,7 +170,7 @@ function startAnnouncing({ what, cmd, args, cwd, env, timeoutMs, fields }) {
         if (value instanceof Error) value.pid = child.pid
         const finish = () => fn(value)
         if (child.exitCode !== null || child.signalCode !== null) return finish()
-        const grace = setTimeout(finish, 2_000)
+        const grace = setTimeout(finish, ANNOUNCE_KILL_GRACE_MS)
         child.once('exit', () => {
           clearTimeout(grace)
           finish()
@@ -227,8 +247,8 @@ function stopChild(child, killAfterMs) {
 export async function startTerminalProcess({
   repo,
   port = 0,
-  timeoutMs = 15_000,
-  killAfterMs = 5_000,
+  timeoutMs = ANNOUNCE_TIMEOUT_MS,
+  killAfterMs = STOP_KILL_AFTER_MS,
   env = process.env
 }) {
   const { cmd, args } = terminalProcessCommand({ repo, port })
@@ -272,8 +292,8 @@ export async function startServerProcess({
   repo,
   dataDir,
   port = 0,
-  timeoutMs = 15_000,
-  killAfterMs = 5_000,
+  timeoutMs = ANNOUNCE_TIMEOUT_MS,
+  killAfterMs = STOP_KILL_AFTER_MS,
   env = process.env,
   terminals = 'sidecar',
   args: extraArgs = []

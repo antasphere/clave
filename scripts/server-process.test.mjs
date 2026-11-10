@@ -6,6 +6,8 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { execFile, execFileSync, spawn } from 'node:child_process'
 import {
+  DEAD_POLL_MS,
+  ONE_BOOT_BUDGET_MS,
   bunBinary,
   readServerDiscovery,
   serverCommand,
@@ -23,6 +25,19 @@ const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const BUNDLE = terminalProcessBundle(REPO)
 const built = existsSync(BUNDLE)
 
+// A test that boots one server lives within the starter's budgets, not
+// Vitest's 5 s default: ONE_BOOT_BUDGET_MS, from scripts/server-process.mjs,
+// adds the announcement's budget (a child still silent then is killed, and
+// the rejection waits its grace), the stop's wait between SIGTERM and
+// SIGKILL, and `untilDead`'s poll below, DEAD_POLL_MS; the fetches and the
+// file checks get the rest. On CI's macOS runner the first boot of this file, the cold one, took
+// 5075 ms once (run 42607782089) against 3136 and 3347 ms on two other runs
+// (42605092886, and the base's PR #337), so a budget below the starter's own
+// fails the test while the code under it is still within its budget.
+// scripts/server-process-budgets.test.mjs proves the budgets real on fakes
+// that never announce or never stop on their own, and holds this sum above
+// them.
+
 const alive = (pid) => {
   try {
     process.kill(pid, 0)
@@ -32,7 +47,7 @@ const alive = (pid) => {
   }
 }
 
-const untilDead = async (pid, ms = 5000) => {
+const untilDead = async (pid, ms = DEAD_POLL_MS) => {
   const end = Date.now() + ms
   while (Date.now() < end) {
     if (!alive(pid)) return true
@@ -42,25 +57,29 @@ const untilDead = async (pid, ms = 5000) => {
 }
 
 describe('the server as its own process', () => {
-  it('announces itself, writes an owner-only discovery file, and takes both away when stopped', async () => {
-    const dataDir = mkdtempSync(path.join(tmpdir(), 'clave-server-process-'))
-    try {
-      const server = await startServerProcess({ repo: REPO, dataDir, terminals: 'none' })
-      expect(server.url).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/)
-      expect(server.token).toMatch(/^[0-9a-f]{64}$/)
-      const file = path.join(dataDir, 'clave-server.json')
-      expect(existsSync(file)).toBe(true)
-      expect(statSync(file).mode & 0o777).toBe(0o600)
-      expect((await fetch(`${server.url}/health/live`)).status).toBe(200)
+  it(
+    'announces itself, writes an owner-only discovery file, and takes both away when stopped',
+    async () => {
+      const dataDir = mkdtempSync(path.join(tmpdir(), 'clave-server-process-'))
+      try {
+        const server = await startServerProcess({ repo: REPO, dataDir, terminals: 'none' })
+        expect(server.url).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/)
+        expect(server.token).toMatch(/^[0-9a-f]{64}$/)
+        const file = path.join(dataDir, 'clave-server.json')
+        expect(existsSync(file)).toBe(true)
+        expect(statSync(file).mode & 0o777).toBe(0o600)
+        expect((await fetch(`${server.url}/health/live`)).status).toBe(200)
 
-      await server.stop()
-      expect(await untilDead(server.pid)).toBe(true)
-      expect(existsSync(file)).toBe(false)
-      await expect(fetch(`${server.url}/health/live`)).rejects.toThrow()
-    } finally {
-      rmSync(dataDir, { recursive: true, force: true })
-    }
-  })
+        await server.stop()
+        expect(await untilDead(server.pid)).toBe(true)
+        expect(existsSync(file)).toBe(false)
+        await expect(fetch(`${server.url}/health/live`)).rejects.toThrow()
+      } finally {
+        rmSync(dataDir, { recursive: true, force: true })
+      }
+    },
+    ONE_BOOT_BUDGET_MS
+  )
 
   it('registers the test fixture route only under --test-no-activate, and never by default', async () => {
     const dataDir = mkdtempSync(path.join(tmpdir(), 'clave-server-process-gate-'))

@@ -17,6 +17,7 @@ import {
 } from './sessions/adapters/pty-backend'
 import { launchProfileManager } from './launch-profile-manager'
 import { buildOneShotLaunch, type OneShotLaunch } from './claude-one-shot'
+import { findExecutable } from './shell-launch'
 import { TITLE_HELPER_MARKER } from './session-history'
 import { sessionCleared, sessionPlanDetected, sessionTitleChanged } from './server/session-events'
 
@@ -74,6 +75,80 @@ interface TitleJob {
 const titleQueue: TitleJob[] = []
 let activeTitleJobs = 0
 const MAX_CONCURRENT_TITLES = 1
+
+/** The explicit opt-out (the native mobile wave, 9 November 2026): a fixture
+ *  daemon runs the Echo adapter and must reach no provider, yet every fresh
+ *  chat and every fresh Claude terminal is named by a `claude -p` one-shot
+ *  under the machine's login, the Echo chat included. The standalone entry
+ *  sets this from `--no-titles`. Checked at every entry below, so both call
+ *  sites are covered: the chat path (`pty-manager.ts`, `scheduleChatTitle`)
+ *  and the terminal path (`sessions/lifecycle.ts`, `scheduleTitleGeneration`),
+ *  and `generateTitle` itself refuses, in case a caller reaches it another way.
+ *
+ *  The terminal path's guard returns before the transcript watcher starts,
+ *  and that watcher is the only source of `sessionPlanDetected` and
+ *  `sessionCleared`: while titles are off, a Claude terminal's plan is not
+ *  detected and its `/clear` is not followed either.
+ *
+ *  The app never sets it, and neither does a daemon started without the
+ *  flag: there titles, plan detection and the `/clear` follow are unchanged. */
+let disabledBy: string | null = null
+
+/** Name no tab from now on; `reason` is the flag or variable that asked. */
+export function disableTitleGeneration(reason: string): void {
+  disabledBy = reason
+}
+
+/** Whether titles are off, and by what; null when they run as always. */
+export function titleGenerationDisabled(): string | null {
+  return disabledBy
+}
+
+/** Titles back on (test seam: the module is one per process). */
+export function enableTitleGenerationForTests(): void {
+  disabledBy = null
+}
+
+/** The terminal sessions being watched for their first message (test seam). */
+export function watchedTitleSessionsForTests(): number {
+  return sessions.size
+}
+
+/** What a title one-shot would start right now, resolved the way a real one
+ *  is (this process's cached login environment, the one-shot's own locate),
+ *  for a fixture to read from inside the process: the executable, its
+ *  arguments and the PATH it was found on, never the environment itself. */
+export async function resolveTitleLaunchForTests(
+  context: TitleLaunchContext = {}
+): Promise<{ file: string; args: readonly string[]; pathEnv: string | undefined }> {
+  const launch = await titleLaunch(context)
+  return { file: launch.file, args: launch.args, pathEnv: launch.env.PATH }
+}
+
+/** Where `command` lives on this process's cached login PATH, as a one-shot locates it. */
+export function locateOnLoginPathForTests(command: string): string | null {
+  return findExecutable(command, getLoginShellEnv().PATH)
+}
+
+export interface TitleGenerationTestHooks {
+  enable(): void
+  disable(reason: string): void
+  disabled(): string | null
+  launch(): Promise<{ file: string; args: readonly string[]; pathEnv: string | undefined }>
+  locate(command: string): string | null
+}
+
+/** The seams a daemon in test mode puts on `__claveE2E.titles`: the opt-out
+ *  turned, and the resolver asked, from inside the process. */
+export function titleGenerationTestHooks(): TitleGenerationTestHooks {
+  return {
+    enable: enableTitleGenerationForTests,
+    disable: disableTitleGeneration,
+    disabled: titleGenerationDisabled,
+    launch: () => resolveTitleLaunchForTests(),
+    locate: locateOnLoginPathForTests
+  }
+}
 
 /** The one-shot CLI children running right now, and the ones `cancelAll`
  *  ended. A `claude -p` is a child of this process in its own process
@@ -168,6 +243,7 @@ export function scheduleTitleGeneration(
   windowKey: string | null,
   launch: TitleLaunchContext = {}
 ): void {
+  if (disabledBy !== null) return
   const jsonlPath = getJsonlPath(cwd, claudeSessionId)
   const entry: SessionEntry = {
     cwd,
@@ -258,6 +334,7 @@ function watchJsonl(sessionId: string, entry: SessionEntry): void {
 
 /** A chat tab that just started a fresh conversation: its first message names it. */
 export function scheduleChatTitle(sessionId: string, launch: TitleLaunchContext = {}): void {
+  if (disabledBy !== null) return
   chatAwaitingTitle.set(sessionId, launch)
 }
 
@@ -266,6 +343,7 @@ export function scheduleChatTitle(sessionId: string, launch: TitleLaunchContext 
  *  same channel a terminal tab's title arrives on. Anything else leaves the tab
  *  waiting for the message that does state what the conversation is about. */
 export function notifyChatMessage(sessionId: string, text: string, windowKey: string | null): void {
+  if (disabledBy !== null) return
   const launch = chatAwaitingTitle.get(sessionId)
   if (!launch) return
   const message = text.trim()
@@ -460,6 +538,7 @@ function generateTitle(
 ): Promise<string> {
   return new Promise((resolve, reject) => {
     if (closed) return reject(new Error('Title generation cancelled'))
+    if (disabledBy !== null) return reject(new Error(`Title generation is off (${disabledBy})`))
     titleQueue.push({ sessionId, userMessage, launch, resolve, reject })
     processNextTitle()
   })

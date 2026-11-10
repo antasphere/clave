@@ -10,6 +10,25 @@
  * shared sidebar. It forbids --parent and never prints its token. See
  * docs/server-daemon.md. Without it the app-child protocol below is retained.
  *
+ * `--no-titles` names no tab (the native mobile wave, 9 November 2026): a
+ * fixture daemon on the Echo adapter must reach no provider, and a fresh
+ * chat is otherwise named by a `claude -p` one-shot under the machine's
+ * login (`packages/host/src/title-generator.ts`). Under the flag no Claude
+ * terminal's transcript is watched either, and that watcher is also what
+ * detects a plan and follows a `/clear`: neither happens in this daemon's
+ * terminal sessions while the flag is on.
+ *
+ * Without the flag, the default the app and every production daemon run,
+ * nothing of this changes: tabs are named, plans detected and `/clear`
+ * followed as before. The app never passes it.
+ *
+ * The discovery file says `titles: "off"` when it is on,
+ * beside `testMode` (`--test-no-activate`, which also stops the usage clock
+ * and turns the test fixture route on) and `machineUsage` (false under
+ * `--test-no-machine-usage`), so a fixture can read what this server will
+ * and will not reach. Under the test flag the title opt-out is also on the
+ * test hooks (`__claveE2E.titles`), for the fixture's own mutation.
+ *
  * `--app-version <semver>` is the version this server reports (issue #266):
  * the release's own, since a beta's package.json carries the stable version
  * it was cut from; without it, the checkout's package.json. A daemon that
@@ -119,7 +138,12 @@ import {
   getUserShell,
   getLoginShellEnv
 } from '../../../packages/host/src/pty-manager'
-import { TEST_NO_ACTIVATE } from '../../../packages/host/src/test-mode'
+import { TEST_NO_ACTIVATE, TEST_NO_MACHINE_USAGE } from '../../../packages/host/src/test-mode'
+import {
+  disableTitleGeneration,
+  titleGenerationDisabled,
+  titleGenerationTestHooks
+} from '../../../packages/host/src/title-generator'
 // ── Wave 5, lane C: the plugins, this server's own service (packages/host/src/plugins/standalone-plugins.ts) ──
 import { standalonePlugins } from '../../../packages/host/src/plugins/standalone-plugins'
 // ── Wave wcs1023, lane C: the git panel on this server's checkouts (server/git-port.ts) ──
@@ -208,6 +232,17 @@ async function main(): Promise<void> {
   const log = (line: string): void => {
     process.stderr.write(`clave-server: ${line}\n`)
   }
+
+  // ── The native mobile wave: a fixture daemon names no tab, so it reaches no provider ──
+  if (process.argv.includes('--no-titles')) {
+    disableTitleGeneration('--no-titles')
+    log('titles: off (--no-titles), no tab is named by a one-shot')
+  }
+  // Under `--test-no-activate` only: the fixture asks the one-shot's resolver
+  // from inside this process, and its mutation re-opens the titles in a
+  // running daemon that still announces them off, so that its recorder, and
+  // not the announcement, is what catches the one-shot.
+  installE2eHooks({ titles: titleGenerationTestHooks() })
 
   // ── Wave 6, lane B: the login shell's environment, read while the rest starts (PRDCT-3527) ──
   // tmux, Claude and Codex are found on its PATH, and a read made when first
@@ -520,6 +555,12 @@ async function main(): Promise<void> {
           mode: 'standalone',
           ok: true,
           pid: process.pid,
+          // What this server will not reach, for a fixture to read (the
+          // native mobile wave): titles off, the test mode on (the fixture
+          // route, no usage clock), the machine login's usage read off.
+          titles: titleGenerationDisabled() ? 'off' : 'on',
+          testMode: TEST_NO_ACTIVATE,
+          machineUsage: !TEST_NO_MACHINE_USAGE,
           terminals: terminalState?.address ?? terminalsAddress ?? null,
           terminalProcessPid: terminalState?.pid ?? null,
           terminalProcessGeneration: terminalState?.generation ?? null,
