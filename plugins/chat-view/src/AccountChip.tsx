@@ -1,19 +1,9 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
 import { BoltIcon, ExclamationTriangleIcon, MapPinIcon } from '@heroicons/react/24/outline'
 import { useViewSessionStore } from '../../../src/renderer/src/views/session-store'
 import { useSessionStore } from '../../../src/renderer/src/store/session-store'
 import {
-  useClaudeProfileStore,
-  sessionAccount
-} from '../../../src/renderer/src/store/claude-profile-store'
-import {
-  useCodexAccountStore,
-  sessionCodexAccount
-} from '../../../src/renderer/src/store/codex-account-store'
-import {
-  useClaudeAccountsUsage,
-  useCodexAccountsUsage,
   headroomWindow,
   capLevel,
   capName,
@@ -26,6 +16,11 @@ import {
   sessionSwitchTargets,
   switchSessionAccount
 } from '../../../src/renderer/src/lib/switch-account'
+import {
+  ensureSessionAccounts,
+  ownAccountFrom,
+  useSessionAccountView
+} from '../../../src/renderer/src/lib/session-accounts'
 import { effectiveSwitchMode } from '../../../src/renderer/src/store/account-policy-store'
 import { AccountMenuHeader } from '../../../src/renderer/src/components/layout/AccountMenuHeader'
 import {
@@ -41,30 +36,35 @@ import { MenuPreview } from '../../../src/renderer/src/components/ui/ContextMenu
  * account's caps as columns, every other account with its card beside the
  * highlighted row (picking one restarts the agent there, the conversation
  * resumed), and the tab's pin and switch mode. Nothing for a session that
- * has no account pool (Pi, a remote).
+ * has no account pool (Pi, a remote agent).
+ *
+ * The accounts and the usage are the tab's OWNER's (`lib/session-accounts.ts`):
+ * a tab on a server names that server's account, reads its usage there and
+ * moves among that server's accounts. The pin and the switch mode are this
+ * Mac's policy, which acts on this Mac's tabs only, so a server tab is not
+ * offered them.
  */
 export function AccountChip({ sessionId }: { sessionId: string }): React.JSX.Element | null {
   const host = useViewSessionStore((s) => s.sessions.find((x) => x.id === sessionId))
-  // Subscribed so a renamed, added or removed account redraws the chip.
-  useClaudeProfileStore((s) => s.profiles)
-  useCodexAccountStore((s) => s.accounts)
   const provider = host ? accountProviderOf(host) : null
-  const own = host
-    ? provider === 'codex'
-      ? sessionCodexAccount(host)
-      : sessionAccount(host)
-    : null
-  const claudeSummary = useClaudeAccountsUsage((s) => (own ? s.byAccount[own.id] : undefined))
-  const codexSummary = useCodexAccountsUsage((s) => (own ? s.byAccount[own.id] : undefined))
+  // Subscribed: a renamed, added or removed account, or a read that lands,
+  // redraws the chip, on this Mac or on the tab's server.
+  const view = useSessionAccountView(host, provider)
+  const own = host && view ? ownAccountFrom(view, host) : null
+  const ownId = own?.id
+  const known = view?.known
+  // A server tab's chip names the server's account as soon as it is drawn:
+  // the server's settings are read the first time one of its chips shows.
+  useEffect(() => {
+    if (host && provider) ensureSessionAccounts(host, provider)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionId, provider, ownId, known])
   const [open, setOpen] = useState(false)
   const [active, setActive] = useState<{ id: string; row: HTMLElement } | null>(null)
   const clearFrame = useRef<number | null>(null)
-  if (!host || !provider || !own) return null
+  if (!host || !provider || !own || !view) return null
 
-  const summary = claudeUsageForModel(
-    provider === 'codex' ? codexSummary : claudeSummary,
-    host.model
-  )
+  const summary = claudeUsageForModel(view.usage[own.id], host.model)
   const w = headroomWindow(summary)
   // Out: the cap that stops THIS session, named ("Fable out"); a limit the
   // CLI reported that the poll does not show yet reads "Out" alone, since
@@ -95,6 +95,8 @@ export function AccountChip({ sessionId }: { sessionId: string }): React.JSX.Ele
     .join(' · ')
 
   const targets = open && host.alive ? sessionSwitchTargets(host) : []
+  // This Mac's policy reads the pin and the mode of this Mac's tabs alone.
+  const policyHere = !view.remote
   const pinned = host.accountPinned === true
   const automatic = effectiveSwitchMode(host) === 'automatic'
   // Focus is the one signal hover and the arrow keys share; a blur is
@@ -115,7 +117,12 @@ export function AccountChip({ sessionId }: { sessionId: string }): React.JSX.Ele
   const previewed = active ? targets.find((t) => t.id === active.id) : undefined
 
   return (
-    <span className="term-account" data-level={level} data-account-chip={own.id}>
+    <span
+      className="term-account"
+      data-level={level}
+      data-account-chip={own.id}
+      data-account-owner={view.remote ? view.owner : undefined}
+    >
       <DropdownMenu.Root
         modal={false}
         open={open}
@@ -158,14 +165,18 @@ export function AccountChip({ sessionId }: { sessionId: string }): React.JSX.Ele
                     aria-label={target.label}
                     onFocus={(e) => highlight(target.id, e.currentTarget)}
                     onBlur={() => highlight(target.id, null)}
-                    onSelect={() => void switchSessionAccount(sessionId, target.id)}
+                    onSelect={() =>
+                      void switchSessionAccount(sessionId, target.id).then((result) => {
+                        if (!result.ok) console.error('Account switch failed:', result.error)
+                      })
+                    }
                   >
                     <AccountSwitchRow target={target} />
                   </DropdownMenu.Item>
                 ))}
               </>
             )}
-            {host.alive && (
+            {host.alive && policyHere && (
               <>
                 <DropdownMenu.Separator className="menu-sep" />
                 <DropdownMenu.Item

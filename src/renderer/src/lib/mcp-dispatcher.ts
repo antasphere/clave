@@ -27,25 +27,17 @@ import type { PinnedGroupSession } from '../store/session-types'
 import { useWorkspaceStore, type Workspace } from '../store/workspace-store'
 import { profilesFor, selectedChatProfile } from '../store/launch-profile-store'
 import { rememberedLaunchModel } from './launch-model'
-import {
-  getClaudeProfile,
-  claudeProfileSpawnFields,
-  sessionAccount,
-  type ClaudeProfile
-} from '../store/claude-profile-store'
-import {
-  getCodexAccount,
-  codexAccountSpawnFields,
-  sessionCodexAccount
-} from '../store/codex-account-store'
+import { claudeProfileSpawnFields, type ClaudeProfile } from '../store/claude-profile-store'
+import { codexAccountSpawnFields } from '../store/codex-account-store'
 import {
   accountProviderOf,
-  nextAccountFor,
   resolveAccountRef,
+  resolveSessionAccountRef,
   restartSessionProcess,
   sessionAccountExhausted,
   switchSessionAccount
 } from './switch-account'
+import { sessionOwnAccount } from './session-accounts'
 import { pairedServerWorkspaces } from '../store/pairing-store'
 import { historyLines } from '../../../shared/history-text'
 import type { CodexAccount } from '../../../preload/index.d'
@@ -217,6 +209,16 @@ function handleWindowState(payload: { workspace?: string }): unknown {
   }
 }
 
+/** A tab's account as `clave_list` reports it. */
+function listedAccount(
+  s: Session
+): { id: string; label: string; removed: boolean; exhausted: boolean } | null {
+  const provider = s.claudeMode || s.claudeAgentsMode ? 'claude' : s.codexMode ? 'codex' : null
+  if (!provider) return null
+  const { id, label, removed } = sessionOwnAccount(s, provider)
+  return { id, label, removed, exhausted: sessionAccountExhausted(s) }
+}
+
 function handleList(payload: { callerSessionId?: string; workspace?: string }): unknown {
   const state = useSessionStore.getState()
   const wsState = useWorkspaceStore.getState()
@@ -233,15 +235,11 @@ function handleList(payload: { callerSessionId?: string; workspace?: string }): 
       agentState: s.agentState ?? null,
       // Which wave or lane the tab works on, as its record keeps it (PRDCT-4123).
       work: s.work ?? null,
-      // The account the tab runs on (Claude or Codex); the Default when the
-      // tab predates accounts or was launched without naming one. Whether
-      // that account is about to hit its limit, for an agent to act on.
-      account:
-        s.claudeMode || s.claudeAgentsMode
-          ? { ...sessionAccount(s), exhausted: sessionAccountExhausted(s) }
-          : s.codexMode
-            ? { ...sessionCodexAccount(s), exhausted: sessionAccountExhausted(s) }
-            : null,
+      // The account the tab runs on (Claude or Codex), in its OWNER's list: a
+      // server tab names the server's account (PRDCT-4328); the Default when
+      // the tab predates accounts or was launched without naming one.
+      // Whether that account is about to hit its limit, for an agent to act on.
+      account: listedAccount(s),
       groupId: groupOfSession(state.groups, s.id)?.id ?? null,
       view: s.view ? { url: s.view.url, title: s.view.title ?? null } : null,
       workspaceId: s.workspaceId ?? null,
@@ -1639,20 +1637,18 @@ async function handleSwitchAccount(payload: {
   if (!session) throw new Error(`Unknown session "${payload.sessionId}"`)
   const provider = accountProviderOf(session)
   if (!provider) throw new Error('Only Claude and Codex tabs run on an account')
-  let target: { id: string; label: string }
-  if (payload.account === 'any') {
-    const next = nextAccountFor(session)
-    if (!next) throw new Error('No other account of this provider has headroom')
-    target = provider === 'codex' ? getCodexAccount(next) : getClaudeProfile(next)
-  } else {
-    target = resolveAccountRef(provider, payload.account)
-  }
+  // "any" or a name, in the tab's OWNER's list: a server tab moves among
+  // that server's accounts, never to an id of this Mac's (PRDCT-4328).
+  const target = resolveSessionAccountRef(session, provider, payload.account)
+  const remote = ownerOf(session.id) !== LOCAL_SERVER_ID
   // An agent's ask goes through the tab's mode (ADR 0002): in propose mode
-  // the user sees the move and decides; a pinned tab is never moved.
-  if (session.accountPinned) {
+  // the user sees the move and decides; a pinned tab is never moved. Both
+  // are this Mac's policy over this Mac's tabs: a server tab has neither
+  // (its menu does not offer them), so the move is made.
+  if (!remote && session.accountPinned) {
     throw new Error('This tab is pinned to its account; the user can unpin it from the tab menu')
   }
-  if (effectiveSwitchMode(session) === 'propose') {
+  if (!remote && effectiveSwitchMode(session) === 'propose') {
     state.setAccountProposal(session.id, {
       reason: 'reported',
       rungs: [{ kind: 'account', accountId: target.id, label: target.label }]

@@ -40,6 +40,9 @@ vi.mock('./switch-account', () => ({
   sessionAccountExhausted: () => false,
   switchSessionAccount: vi.fn()
 }))
+vi.mock('./session-accounts', () => ({
+  sessionOwnAccount: () => ({ id: 'default', label: 'Default', removed: false })
+}))
 import { openSessionProgrammatically, initMcpDispatcher } from './mcp-dispatcher'
 import { usePinnedStore } from '../store/pinned-store'
 import { resourceKey } from '@clave/contract/fleet'

@@ -1,26 +1,18 @@
+import { LOCAL_SERVER_ID } from '@clave/contract/fleet'
 import { useAccountPolicyStore } from '../store/account-policy-store'
-import { isRemoteKey } from './fleet-identity'
 import { useSessionStore, type Session } from '../store/session-store'
 import {
   useClaudeProfileStore,
   getClaudeProfile,
-  claudeProfileUsable,
   resolveClaudeProfile,
-  describeClaudeProfileAuth,
   type ClaudeProfile
 } from '../store/claude-profile-store'
 import {
   useCodexAccountStore,
   getCodexAccount,
-  codexAccountUsable,
-  resolveCodexAccount,
-  describeCodexAccountAuth
+  resolveCodexAccount
 } from '../store/codex-account-store'
-import {
-  accountsUsageFor,
-  claudeUsageForModel,
-  type AccountUsageSummary
-} from '../store/usage-store'
+import { claudeUsageForModel, type AccountUsageSummary } from '../store/usage-store'
 import {
   explicitAccountId,
   isExhausted,
@@ -28,6 +20,16 @@ import {
   switchTargets,
   type PoolAccount
 } from './account-pool'
+import {
+  describeAccountAuth,
+  ownerAccountView,
+  poolOf,
+  resolveOwnedAccount,
+  sessionAccountIdOf,
+  sessionAccountView,
+  type AccountOwnerView,
+  type AccountProvider
+} from './session-accounts'
 import type { CodexAccount, RestartOverridesInput } from '../../../preload/index.d'
 import { abandonOwnRestart, beginOwnRestart, ownAnswerApplies } from './restart-ownership'
 
@@ -36,7 +38,7 @@ import { abandonOwnRestart, beginOwnRestart, ownAnswerApplies } from './restart-
  * session moves to, and the move itself — the same tab restarted on the
  * other account with its conversation resumed.
  */
-export type AccountProvider = 'claude' | 'codex'
+export type { AccountProvider } from './session-accounts'
 
 /** The provider whose pool a session belongs to, or null (a terminal, Pi,
  *  Antigravity, a remote). */
@@ -49,23 +51,12 @@ export function accountProviderOf(session: Session): AccountProvider | null {
 
 /** The account a session is on, by provider. */
 export function sessionAccountId(session: Session, provider: AccountProvider): string {
-  return provider === 'codex'
-    ? (session.codexAccountId ?? 'default')
-    : (session.claudeProfileId ?? 'default')
+  return sessionAccountIdOf(session, provider)
 }
 
+/** This Mac's pool, for a launch on this Mac. */
 function poolAccounts(provider: AccountProvider): PoolAccount[] {
-  if (provider === 'codex') {
-    return useCodexAccountStore.getState().accounts.map((a) => ({
-      id: a.id,
-      usable: codexAccountUsable(a),
-      fallback: a.kind === 'apiKey'
-    }))
-  }
-  return useClaudeProfileStore.getState().profiles.map((p) => ({
-    id: p.id,
-    usable: claudeProfileUsable(p)
-  }))
+  return poolOf(ownerAccountView(LOCAL_SERVER_ID, provider))
 }
 
 /** The pool's pick for a new session. A named account is honored; when no
@@ -139,6 +130,29 @@ export function resolveAccountRef(
   throw new Error(`Unknown Claude account "${ref}". Available: ${names}`)
 }
 
+/** An account an agent names for a session's move: an id, a label, or "any"
+ *  for the pool's next account, all in the tab's OWNER's list (a server tab
+ *  moves among that server's accounts). Throws with the names that exist. */
+export function resolveSessionAccountRef(
+  session: Session,
+  provider: AccountProvider,
+  ref: string
+): { id: string; label: string } {
+  const view = sessionAccountView(session, provider)
+  if (!view.known) throw new Error("The server's accounts are not read yet; try again in a moment")
+  if (ref === 'any') {
+    const next = nextAccountFor(session)
+    if (!next) throw new Error('No other account of this provider has headroom')
+    const account = view.accounts.find((a) => a.id === next)
+    if (account) return account
+  }
+  const account = resolveOwnedAccount(view, ref)
+  if (account) return account
+  const names = view.accounts.map((a) => `"${a.label}" (${a.id})`).join(', ')
+  const kind = provider === 'codex' ? 'Codex' : 'Claude'
+  throw new Error(`Unknown ${kind} account "${ref}". Available: ${names}`)
+}
+
 /** Whether the account a session runs on is about to stop it. */
 export function sessionAccountExhausted(session: Session): boolean {
   const provider = accountProviderOf(session)
@@ -150,27 +164,27 @@ export function sessionAccountExhausted(session: Session): boolean {
 export function sessionAccountUsage(session: Session): AccountUsageSummary | undefined {
   const provider = accountProviderOf(session)
   if (!provider) return undefined
-  const summary = accountsUsageFor(provider)[sessionAccountId(session, provider)]
+  // The owner's usage: a server tab's id is an id of that server's list.
+  const summary = sessionAccountView(session, provider).usage[sessionAccountId(session, provider)]
   return claudeUsageForModel(summary, session.model)
 }
 
 /** Every account's usage as seen for one model: the shared caps plus that
  *  model's family cap on each (Claude's families, Codex's model buckets). */
+function viewUsageForModel(
+  view: AccountOwnerView,
+  model: string | undefined
+): Record<string, AccountUsageSummary | undefined> {
+  return Object.fromEntries(
+    Object.entries(view.usage).map(([id, summary]) => [id, claudeUsageForModel(summary, model)])
+  )
+}
+
 function poolUsageForModel(
   provider: AccountProvider,
   model: string | undefined
 ): Record<string, AccountUsageSummary | undefined> {
-  const usage = accountsUsageFor(provider)
-  return Object.fromEntries(
-    Object.entries(usage).map(([id, summary]) => [id, claudeUsageForModel(summary, model)])
-  )
-}
-
-function sessionPoolUsage(
-  session: Session,
-  provider: AccountProvider
-): Record<string, AccountUsageSummary | undefined> {
-  return poolUsageForModel(provider, session.model)
+  return viewUsageForModel(ownerAccountView(LOCAL_SERVER_ID, provider), model)
 }
 
 /** One account a session could move to, as the Switch account menu draws it. */
@@ -192,24 +206,26 @@ export interface SwitchTarget {
 /** The accounts a session could move to, in the menu's order: those with
  *  headroom first, each side by its soonest weekly reset. */
 export function sessionSwitchTargets(session: Session): SwitchTarget[] {
-  if (isRemoteKey(session.id)) return []
   const provider = accountProviderOf(session)
   if (!provider) return []
+  // The tab's OWNER's accounts: a server tab moves among that server's.
+  const view = sessionAccountView(session, provider)
+  if (!view.known) return []
   const current = sessionAccountId(session, provider)
-  const usage = sessionPoolUsage(session, provider)
-  return switchTargets(poolAccounts(provider), usage, current).map((t) => {
-    const account = provider === 'codex' ? getCodexAccount(t.id) : getClaudeProfile(t.id)
-    return {
-      ...t,
-      provider,
-      model: session.model,
-      label: account.label,
-      auth:
-        provider === 'codex'
-          ? describeCodexAccountAuth(account as CodexAccount)
-          : describeClaudeProfileAuth(account as ClaudeProfile),
-      summary: usage[t.id]
-    }
+  const usage = viewUsageForModel(view, session.model)
+  return switchTargets(poolOf(view), usage, current).flatMap((t) => {
+    const account = view.accounts.find((a) => a.id === t.id)
+    if (!account) return []
+    return [
+      {
+        ...t,
+        provider,
+        model: session.model,
+        label: account.label,
+        auth: describeAccountAuth(provider, account),
+        summary: usage[t.id]
+      }
+    ]
   })
 }
 
@@ -219,9 +235,11 @@ export function nextAccountFor(session: Session): string | null {
   const provider = accountProviderOf(session)
   if (!provider) return null
   const current = sessionAccountId(session, provider)
+  const view = sessionAccountView(session, provider)
+  if (!view.known) return null
   const next = pickAccount({
-    accounts: poolAccounts(provider),
-    usage: sessionPoolUsage(session, provider),
+    accounts: poolOf(view),
+    usage: viewUsageForModel(view, session.model),
     preferredId: current,
     leavingId: current,
     preferWeeklyHeadroom: true
@@ -279,16 +297,14 @@ export async function switchSessionAccount(
   const provider = accountProviderOf(session)
   if (!provider) return { ok: false, resumed: false, error: 'This tab has no account to switch' }
   if (sessionAccountId(session, provider) === accountId) return { ok: true, resumed: true }
+  // Named in the tab's OWNER's list: a server tab restarts on the server, on
+  // an account of that server, never on one of this Mac's.
+  const account = sessionAccountView(session, provider).accounts.find((a) => a.id === accountId)
+  if (!account) return { ok: false, resumed: false, error: `Unknown account "${accountId}"` }
   const overrides =
     provider === 'codex'
-      ? (() => {
-          const account = getCodexAccount(accountId)
-          return { codexAccountId: account.id, codexAccountLabel: account.label }
-        })()
-      : (() => {
-          const profile = getClaudeProfile(accountId)
-          return { claudeProfileId: profile.id, claudeProfileLabel: profile.label }
-        })()
+      ? { codexAccountId: account.id, codexAccountLabel: account.label }
+      : { claudeProfileId: account.id, claudeProfileLabel: account.label }
   return restartSessionProcess(sessionId, {
     overrides,
     resendRejected: options.resendRejected === true,
