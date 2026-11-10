@@ -3,22 +3,20 @@
 # root by the mobile CI job on a macOS runner with Xcode 26.0.1
 # (DEVELOPER_DIR set by the job). Its exit code is the verdict.
 #
-# Five steps: the core package's tests on the Mac (fast, no simulator); the app
-# and both test targets built for any iOS device, unsigned, with the job's own
-# Xcode (a device build needs no simulator runtime, while an asset catalog built
-# for the simulator needs one matching the SDK: the hosted runner has none for
-# Xcode 26.0.1); the app built for a simulator; the app's host
-# tests plus the launch smoke test and the shell's flow on that simulator; and
-# the release-binary check (a Release build that must carry none of the
+# Four steps: the core package's tests on the Mac (fast, no simulator); the app
+# built for a simulator; the app's host tests plus the launch smoke test and the
+# shell's flow on that simulator; and the release-binary check (a Release build that must carry none of the
 # development-only code). The simulator is the first iPhone on the newest iOS
 # that `xcodebuild -showdestinations` lists for the scheme, so the runner's own
 # runtimes decide and no version is written here; CLAVE_IOS_SIMULATOR_UDID
-# overrides it. A runner whose own Xcode can run no simulator (the hosted
-# macos-26 image's Xcode 26.0.1 lists none of its iOS 26.2, 26.4 and 26.5
-# runtimes) names an installed Xcode that can in CLAVE_IOS_SIMULATOR_DEVELOPER_DIR:
-# the last three steps then run under it, its folder checked first and its
-# version printed; unset, every step runs under the job's own Xcode. Nothing
-# else is tried.
+# overrides it. A runner whose own Xcode has no simulator runtime of its SDK
+# (the hosted macos-26 image's Xcode 26.0.1 beside the iOS 26.2, 26.4 and 26.5
+# runtimes: it lists no simulator, and its asset catalog compiler refuses to
+# build the app for any platform without that runtime) names an installed Xcode
+# that has one in CLAVE_IOS_SIMULATOR_DEVELOPER_DIR: every xcodebuild step then
+# runs under it, its folder checked first and its version printed, and the job's
+# own Xcode keeps the core package's tests; unset, every step runs under the
+# job's own Xcode. Nothing else is tried.
 # The fixture check (scripts/fixture-check.mjs) needs the repository's Bun
 # and a booted simulator for minutes and stays a gate run by hand on a Mac.
 set -euo pipefail
@@ -49,18 +47,6 @@ if [ "$status" -ne 0 ]; then
 fi
 rm -f "$log"
 DERIVED="${CLAVE_IOS_DERIVED_DATA:-$PWD/DerivedData}"
-
-echo "ci: xcodebuild build-for-testing (any iOS device, unsigned, $(xcodebuild -version | sed -n 1p))"
-log="$(step_log)"
-status=0
-xcodebuild -project Clave.xcodeproj -scheme Clave -destination 'generic/platform=iOS' \
-  -derivedDataPath "$DERIVED-device" build-for-testing CODE_SIGNING_ALLOWED=NO >"$log" 2>&1 || status=$?
-grep -E "error:|\*\* (TEST BUILD|BUILD) " "$log" || true
-if [ "$status" -ne 0 ]; then
-  echo "ci: xcodebuild build-for-testing exited $status (log: $log)"
-  exit "$status"
-fi
-rm -f "$log"
 
 if [ -n "${CLAVE_IOS_SIMULATOR_DEVELOPER_DIR:-}" ]; then
   if [ ! -x "$CLAVE_IOS_SIMULATOR_DEVELOPER_DIR/usr/bin/xcodebuild" ]; then
