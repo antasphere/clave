@@ -28,7 +28,7 @@ function fakePort(): { port: DigestsService; asked: unknown[] } {
   const port: DigestsService = {
     exchangeDigest: async (request: ExchangeDigestRead) => {
       asked.push(request)
-      return request.key === 'limit'
+      return request.key === '0-limit'
         ? { ok: false, error: 'You have hit your limit', reason: 'limit' }
         : { ok: true, needsYou: false, summary: 'Nothing for you.', message: null }
     },
@@ -49,7 +49,7 @@ describe('the digests over HTTP', () => {
     server = await startEmbedded({ ports: { sessions: new FakeSource(), digests: port } })
     const answer = await call('/digests/exchange', {
       sessionId: 's1',
-      key: 'k2',
+      key: '1-k2',
       messages: [{ from: 'Lane A', text: 'done' }],
       launch: { claudeProfileId: 'the-mac-account' }
     })
@@ -61,14 +61,18 @@ describe('the digests over HTTP', () => {
       message: null
     })
     expect(asked).toEqual([
-      { sessionId: 's1', key: 'k2', messages: [{ from: 'Lane A', text: 'done' }] }
+      { sessionId: 's1', key: '1-k2', messages: [{ from: 'Lane A', text: 'done' }] }
     ])
   })
 
   it('a read that could not be made is an answer with its reason', async () => {
     const { port } = fakePort()
     server = await startEmbedded({ ports: { sessions: new FakeSource(), digests: port } })
-    const answer = await call('/digests/exchange', { sessionId: 's1', key: 'limit', messages: [] })
+    const answer = await call('/digests/exchange', {
+      sessionId: 's1',
+      key: '0-limit',
+      messages: []
+    })
     expect(answer.status).toBe(200)
     expect(await answer.json()).toEqual({
       ok: false,
@@ -84,9 +88,14 @@ describe('the digests over HTTP', () => {
     expect(await filed.json()).toEqual({
       k1: { ok: true, needsYou: true, summary: 'Merge?', message: 0 }
     })
-    const work = await call('/digests/work', { sessionId: 's1', key: 'w2', notes: ['a'], tools: 2 })
+    const work = await call('/digests/work', {
+      sessionId: 's1',
+      key: 'work-1-w2',
+      notes: ['a'],
+      tools: 2
+    })
     expect(await work.json()).toMatchObject({ ok: true, title: 'Read the notes' })
-    expect(asked).toEqual([{ sessionId: 's1', key: 'w2', notes: ['a'], tools: 2 }])
+    expect(asked).toEqual([{ sessionId: 's1', key: 'work-1-w2', notes: ['a'], tools: 2 }])
     const workFiled = await call('/digests/work-of?sessionId=s1')
     expect(await workFiled.json()).toMatchObject({ w1: { title: 'Filed' } })
   })
@@ -94,11 +103,51 @@ describe('the digests over HTTP', () => {
   it('refuses without the token, and says so on a server with no digests', async () => {
     server = await startEmbedded({ ports: { sessions: new FakeSource() } })
     expect((await call('/digests/exchanges-of?sessionId=s1', undefined, 'wrong')).status).toBe(401)
-    const answer = await call('/digests/exchange', { sessionId: 's1', key: 'k', messages: [] })
+    const answer = await call('/digests/exchange', { sessionId: 's1', key: '1-k', messages: [] })
     expect(answer.status).toBe(422)
     expect(await answer.json()).toMatchObject({
       _tag: 'CapabilityUnavailable',
       capability: 'digests'
     })
+  })
+
+  it('refuses, before the port, what is past the bounds: too many messages, a key of another shape, a text too long', async () => {
+    const { port, asked } = fakePort()
+    server = await startEmbedded({ ports: { sessions: new FakeSource(), digests: port } })
+    const message = { from: 'a', text: 'b' }
+    const tooMany = await call('/digests/exchange', {
+      sessionId: 's1',
+      key: '501-x',
+      messages: Array.from({ length: 501 }, () => message)
+    })
+    expect(tooMany.status).toBe(400)
+    const shape = await call('/digests/exchange', {
+      sessionId: 's1',
+      key: 'anything',
+      messages: [message]
+    })
+    expect(shape.status).toBe(400)
+    const long = await call('/digests/work', {
+      sessionId: 's1',
+      key: 'work-1-x',
+      notes: ['n'.repeat(100_001)],
+      tools: 0
+    })
+    expect(long.status).toBe(400)
+    const workShape = await call('/digests/work', {
+      sessionId: 's1',
+      key: '1-x',
+      notes: ['n'],
+      tools: 0
+    })
+    expect(workShape.status).toBe(400)
+    expect(asked).toEqual([])
+    // The bounds themselves let a real timeline through.
+    const ok = await call('/digests/exchange', {
+      sessionId: 's1',
+      key: '500-x',
+      messages: Array.from({ length: 500 }, () => message)
+    })
+    expect(ok.status).toBe(200)
   })
 })

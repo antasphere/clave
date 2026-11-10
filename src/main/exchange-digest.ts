@@ -5,6 +5,7 @@ import * as helperRunner from './helpers/runner'
 import { DIGEST_TIMEOUT_MS, exchangeDigestHelper, workDigestHelper } from './helpers/digests'
 import type { HelperFailureReason } from '../shared/helper-prompt'
 import {
+  digestKey,
   parseDigestReply,
   type DigestDone,
   type DigestLaunch,
@@ -17,6 +18,7 @@ import {
   parseWorkDigestReply,
   placeNote,
   workDigestBucket,
+  workDigestKey,
   type WorkDigestDone,
   type WorkDigestRequest,
   type WorkDigestResult
@@ -257,43 +259,98 @@ export interface HostDigests {
 export const UNKNOWN_SESSION_ERROR = 'This server has no record of that session'
 
 /** The digests as a host serves them to its clients. */
+/** How many reads a session may have waiting on the host at once: a client
+ *  asking for more is told to ask again in a moment, so no client can queue
+ *  model calls without end, nor push a tab's real digests out of its store. */
+export const MAX_WAITING_PER_SESSION = 10
+
+/** A key that is not the key of what it came with: a call would cost a model
+ *  read for content the store files under a name it does not have. */
+export const KEY_MISMATCH_ERROR = 'The key does not match what was sent'
+
+/** The message as the key reads it: the view's own shape (`digestMessages`),
+ *  absent fields left out, so the same content gives the same key here. */
+const keyed = (message: DigestMessage): DigestMessage => ({
+  from: message.from,
+  text: message.text,
+  ...(message.request !== undefined && { request: message.request }),
+  ...(message.reply !== undefined && { reply: message.reply })
+})
+
+/** The digests as a host serves them to its clients. Every request is read
+ *  on the launch of the host's own record of the session, under the key the
+ *  host recomputes from the content (a key that does not match is refused),
+ *  and at most MAX_WAITING_PER_SESSION distinct reads wait per session. */
 export function hostDigests(recordOf: DigestRecordOf): HostDigests {
   const launchOf = (sessionId: string): DigestLaunch | null => {
     const record = recordOf(sessionId)
     return record ? launchFromRecord(record) : null
   }
+  const waiting = new Map<string, Set<string>>()
+  /** Run a read, unless it is one more than the session may have waiting.
+   *  A read filed already, or one already waiting, costs nothing more. */
+  const admit = <R>(
+    sessionId: string,
+    id: string,
+    filed: boolean,
+    run: () => Promise<R>,
+    busy: R
+  ): Promise<R> => {
+    if (filed) return run()
+    const pending = waiting.get(sessionId) ?? new Set<string>()
+    if (!pending.has(id) && pending.size >= MAX_WAITING_PER_SESSION) return Promise.resolve(busy)
+    pending.add(id)
+    waiting.set(sessionId, pending)
+    return run().finally(() => {
+      pending.delete(id)
+      if (pending.size === 0 && waiting.get(sessionId) === pending) waiting.delete(sessionId)
+    })
+  }
+  const unknown = {
+    ok: false as const,
+    error: UNKNOWN_SESSION_ERROR,
+    reason: 'unknown-session' as const
+  }
+  const mismatch = { ok: false as const, error: KEY_MISMATCH_ERROR, reason: 'failed' as const }
+  const busy = {
+    ok: false as const,
+    error: 'Too many reads are waiting for this tab',
+    reason: 'busy' as const
+  }
   return {
     exchangeDigest: (request) => {
+      const messages = request.messages.map(keyed)
+      if (digestKey(messages) !== request.key) return Promise.resolve(mismatch)
       const launch = launchOf(request.sessionId)
-      if (!launch)
-        return Promise.resolve({
-          ok: false,
-          error: UNKNOWN_SESSION_ERROR,
-          reason: 'unknown-session'
-        })
-      return requestDigest({
-        sessionId: request.sessionId,
-        key: request.key,
-        messages: [...request.messages],
-        launch
-      })
+      if (!launch) return Promise.resolve(unknown)
+      return admit<DigestResult>(
+        request.sessionId,
+        request.key,
+        digests().get(request.sessionId, request.key) !== undefined,
+        () => requestDigest({ sessionId: request.sessionId, key: request.key, messages, launch }),
+        busy
+      )
     },
     exchangeDigestsOf: digestsOf,
     workDigest: (request) => {
+      const notes = [...request.notes]
+      if (workDigestKey(notes) !== request.key) return Promise.resolve(mismatch)
       const launch = launchOf(request.sessionId)
-      if (!launch)
-        return Promise.resolve({
-          ok: false,
-          error: UNKNOWN_SESSION_ERROR,
-          reason: 'unknown-session'
-        })
-      return requestWorkDigest({
-        sessionId: request.sessionId,
-        key: request.key,
-        notes: [...request.notes],
-        tools: request.tools,
-        launch
-      })
+      if (!launch) return Promise.resolve(unknown)
+      return admit<WorkDigestResult>(
+        request.sessionId,
+        request.key,
+        digests().get(workDigestBucket(request.sessionId), request.key) !== undefined,
+        () =>
+          requestWorkDigest({
+            sessionId: request.sessionId,
+            key: request.key,
+            notes,
+            tools: request.tools,
+            launch
+          }),
+        busy
+      )
     },
     workDigestsOf
   }

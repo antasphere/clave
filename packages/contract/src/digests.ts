@@ -54,11 +54,25 @@ const NotRead = Schema.Struct({
   reason
 })
 
+/* The bounds of what a client may send (PRDCT-4327). The host reads only
+ * the latest messages, clipped, but the key is over all of them, so the
+ * whole timeline travels: generous for a real one, finite for any. */
+/** The most messages, or notes, one read may carry. */
+export const DIGEST_MAX_ITEMS = 500
+/** The longest any one text may be. */
+export const DIGEST_MAX_TEXT = 100_000
+const Text = Schema.String.pipe(Schema.maxLength(DIGEST_MAX_TEXT))
+const SessionId = Schema.String.pipe(Schema.minLength(1), Schema.maxLength(256))
+/** `digestKey`'s shape: the count, then the hash in base 36. */
+export const ExchangeDigestKey = Schema.String.pipe(Schema.pattern(/^\d{1,4}-[0-9a-z]{1,8}$/))
+/** `workDigestKey`'s shape. */
+export const WorkDigestKey = Schema.String.pipe(Schema.pattern(/^work-\d{1,4}-[0-9a-z]{1,8}$/))
+
 export const DigestMessage = Schema.Struct({
-  from: Schema.String,
-  text: Schema.String,
-  request: Schema.optional(Schema.String),
-  reply: Schema.optional(Schema.String)
+  from: Text,
+  text: Text,
+  request: Schema.optional(Text),
+  reply: Schema.optional(Text)
 })
 
 export const ExchangeDigestDone = Schema.Struct({
@@ -81,33 +95,33 @@ export type WorkDigestResult = typeof WorkDigestResult.Type
 
 export const ReadExchangeDigest = Command.define('ReadExchangeDigest', {
   payload: Schema.Struct({
-    sessionId: Schema.String,
-    key: Schema.String,
-    messages: Schema.Array(DigestMessage)
+    sessionId: SessionId,
+    key: ExchangeDigestKey,
+    messages: Schema.Array(DigestMessage).pipe(Schema.maxItems(DIGEST_MAX_ITEMS))
   }),
   success: ExchangeDigestResult,
   failure: CapabilityUnavailable
 })
 
 export const GetExchangeDigests = Query.define('GetExchangeDigests', {
-  payload: Schema.Struct({ sessionId: Schema.String }),
+  payload: Schema.Struct({ sessionId: SessionId }),
   success: Schema.Record({ key: Schema.String, value: ExchangeDigestDone }),
   failure: CapabilityUnavailable
 })
 
 export const ReadWorkDigest = Command.define('ReadWorkDigest', {
   payload: Schema.Struct({
-    sessionId: Schema.String,
-    key: Schema.String,
-    notes: Schema.Array(Schema.String),
-    tools: Schema.Number
+    sessionId: SessionId,
+    key: WorkDigestKey,
+    notes: Schema.Array(Text).pipe(Schema.maxItems(DIGEST_MAX_ITEMS)),
+    tools: Schema.Int.pipe(Schema.between(0, 100_000))
   }),
   success: WorkDigestResult,
   failure: CapabilityUnavailable
 })
 
 export const GetWorkDigests = Query.define('GetWorkDigests', {
-  payload: Schema.Struct({ sessionId: Schema.String }),
+  payload: Schema.Struct({ sessionId: SessionId }),
   success: Schema.Record({ key: Schema.String, value: WorkDigestDone }),
   failure: CapabilityUnavailable
 })
