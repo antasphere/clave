@@ -1,5 +1,6 @@
 import ClaveCore
 import SwiftUI
+import UIKit
 
 // The assistant's prose as the desktop's chat view draws it: GitHub-flavoured blocks on the
 // ground, inline text through Foundation's Markdown reader in Geist, fenced code in a scrolling
@@ -184,7 +185,6 @@ private struct RenderedBlockView: View {
     switch block {
     case .text(let text, let heading):
       Text(text)
-        .textSelection(.enabled)
         .fixedSize(horizontal: false, vertical: true)
         .accessibilityAddTraits(heading == nil ? [] : .isHeader)
     case .code(let language, let text):
@@ -242,7 +242,6 @@ private struct RenderedBlockView: View {
       Text(source)
         .font(.mono(Theme.codeSize))
         .foregroundStyle(theme.colors.textSecondary)
-        .textSelection(.enabled)
     }
   }
 }
@@ -266,7 +265,6 @@ struct CodeBlockView: View {
       }
       ScrollView(.horizontal, showsIndicators: false) {
         Text(text)
-          .textSelection(.enabled)
           .fixedSize(horizontal: true, vertical: true)
           .padding(Theme.space(3))
       }
@@ -274,6 +272,9 @@ struct CodeBlockView: View {
     .frame(maxWidth: .infinity, alignment: .leading)
     .background(shape.fill(theme.colors.surface50))
     .overlay(shape.strokeBorder(theme.colors.borderSubtle, lineWidth: 1))
+    .contextMenu {
+      Button("Copy code") { UIPasteboard.general.string = String(text.characters) }
+    }
     .accessibilityElement(children: .ignore)
     .accessibilityLabel(language.map { "Code, \($0)" } ?? "Code")
     .accessibilityValue(String(text.characters))

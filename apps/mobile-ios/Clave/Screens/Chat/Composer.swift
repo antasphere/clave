@@ -1,6 +1,7 @@
 import ClaveCore
 import PhotosUI
 import SwiftUI
+import UIKit
 
 /// The prompt dock at the foot of the chat: what became of the last send, the picked files, the
 /// growing field, the attachment menu and the send button.
@@ -16,6 +17,7 @@ struct Composer: View {
   @State private var pickFailure: String?
   @ScaledMetric(relativeTo: .body) private var glyph: CGFloat = Theme.chatGlyph
   @ScaledMetric(relativeTo: .body) private var sendSize: CGFloat = 32
+  @ScaledMetric(relativeTo: .body) private var fieldSize: CGFloat = Theme.text.sm
 
   private var ended: Bool { model.agentState == .ended }
 
@@ -123,20 +125,24 @@ struct Composer: View {
       }
       HStack(alignment: .bottom, spacing: Theme.space(2)) {
         attachMenu
-        TextField(
-          "Message",
-          text: $model.draft,
-          prompt: Text(ended ? "This session has ended" : "Message").foregroundStyle(theme.colors.textTertiary),
-          axis: .vertical)
-          .font(.geist(Theme.text.sm, weight: .regular, relativeTo: .body))
-          .foregroundStyle(theme.colors.textPrimary)
-          .lineLimit(1...8)
-          .focused($focused)
-          .disabled(model.sending || ended)
-          .padding(.vertical, Theme.space(2))
-          .frame(minHeight: 44)
-          .accessibilityIdentifier("chat.composer.field")
-          .accessibilityLabel("Message")
+        // A text view rather than a growing text field: its own frame is the box a finger and
+        // VoiceOver reach, from 44 points to eight lines, where it scrolls. The prompt is layered
+        // over it while it is empty.
+        ZStack(alignment: .topLeading) {
+          TextEditor(text: $model.draft)
+            .font(.geist(Theme.text.sm, weight: .regular, relativeTo: .body))
+            .foregroundStyle(theme.colors.textPrimary)
+            .scrollContentBackground(.hidden)
+            .focused($focused)
+            .disabled(model.sending || ended)
+            .accessibilityIdentifier("chat.composer.field")
+            .accessibilityLabel("Message")
+            .frame(minHeight: 44, maxHeight: growingFieldHeight(lines: 8, size: fieldSize, weight: .regular))
+            .fixedSize(horizontal: false, vertical: true)
+          if model.draft.isEmpty {
+            GrowingFieldPrompt(ended ? "This session has ended" : "Message", size: Theme.text.sm, weight: .regular)
+          }
+        }
         sendButton
       }
     }

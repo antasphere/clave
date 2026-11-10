@@ -125,11 +125,15 @@ private struct RequestsButton: View {
       .accessibilityIdentifier("workspaces.requests")
       if count > 0 {
         // Beside the button rather than in it, so the count is an element of its own; a tap on
-        // it opens the requests all the same.
-        Chip("\(count)")
-          .onTapGesture(perform: open)
-          .accessibilityLabel("\(count)")
-          .accessibilityIdentifier("workspaces.requests.badge")
+        // it opens the requests all the same, on a target of at least 44 points.
+        Button(action: open) {
+          Chip("\(count)")
+            .frame(minWidth: 44, minHeight: 44)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("\(count)")
+        .accessibilityIdentifier("workspaces.requests.badge")
       }
     }
   }

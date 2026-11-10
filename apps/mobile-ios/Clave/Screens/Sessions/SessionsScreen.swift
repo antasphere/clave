@@ -145,13 +145,21 @@ private struct SessionRowView: View {
           .accessibilityElement(children: .combine)
           .accessibilityIdentifier("sessions.row.\(row.id)")
       }
-      // Beside the button so the state is an element of its own; a tap on it opens the chat too.
-      Text(row.state.label)
-        .font(.geist(Theme.text.xs, relativeTo: .caption))
-        .foregroundStyle(stateColor)
-        .lineLimit(1)
-        .onTapGesture { if row.isChat { open() } }
+      // Beside the button so the state is an element of its own; on a chat, a tap on it opens the
+      // chat too. Either way it stands on at least 44 points.
+      if row.isChat {
+        Button(action: open) {
+          stateWord
+            .frame(minWidth: 44, minHeight: 44)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
         .accessibilityIdentifier("sessions.state.\(row.id)")
+      } else {
+        stateWord
+          .minimumAccessibilityTarget()
+          .accessibilityIdentifier("sessions.state.\(row.id)")
+      }
       if row.isChat {
         Icon(.chevronRight, size: 14)
           .foregroundStyle(theme.colors.textTertiary)
@@ -161,6 +169,14 @@ private struct SessionRowView: View {
     }
     .padding(.vertical, Theme.space(1))
     .frame(minHeight: 44)
+  }
+
+  /// The state in its word and its ink.
+  private var stateWord: some View {
+    Text(row.state.label)
+      .font(.geist(Theme.text.xs, relativeTo: .caption))
+      .foregroundStyle(stateColor)
+      .lineLimit(1)
   }
 
   private var summary: some View {

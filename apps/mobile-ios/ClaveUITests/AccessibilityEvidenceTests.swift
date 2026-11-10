@@ -13,7 +13,6 @@ final class AccessibilityEvidenceTests: XCTestCase {
   /// reports fails the test, so a new finding is seen.
   private let recorded: [EvidenceScreen: Set<String>] = AccessibilityEvidenceTests.unresolvedContrast.merging([
     .machines: [
-      "Hit area is too small | machines.paired.m_fake",
       "Dynamic Type font sizes are partially unsupported | Fake Mac",
       "Dynamic Type font sizes are partially unsupported | Paired, main",
       "Dynamic Type font sizes are partially unsupported | machines.online.m_fake",
@@ -30,11 +29,9 @@ final class AccessibilityEvidenceTests: XCTestCase {
       "Label not human-readable | fake.person@example.com",
     ],
     .workspaces: [
-      "Hit area is too small | workspaces.requests.badge",
       "Dynamic Type font sizes are partially unsupported | WORKSPACES",
     ],
     .sessions: [
-      "Hit area is too small | sessions.state.s_fake",
       "Dynamic Type font sizes are partially unsupported | SESSIONS",
       "Text clipped | Seeded chat",
       "Text clipped | echo · scratch",
@@ -43,15 +40,10 @@ final class AccessibilityEvidenceTests: XCTestCase {
       "Dynamic Type font sizes are partially unsupported | SAVED PROFILES"
     ],
     .chat: [
-      "Hit area is too small | Ready",
-      "Hit area is too small | seeded-fake",
-      "Hit area is too small | A paragraph with a link to Clave.",
-      "Hit area is too small | chat.composer.field",
       "Dynamic Type font sizes are partially unsupported | swift",
       "Text clipped | Read · /fake/scratch/README.md",
     ],
     .requests: [
-      "Hit area is too small | chat.permission.r_fake.question.0.answer",
       "Label not human-readable | chat.permission.r_fake.question.0.option.0",
     ],
   ]) { $0.union($1) }
@@ -68,8 +60,10 @@ final class AccessibilityEvidenceTests: XCTestCase {
     pickAppearance(app, "dark")
     var unexpected: [String] = []
     var summary: [String] = []
+    var fields: [String: CGRect] = [:]
     walkScreens(app) { screen in
       writeOrder(app, screen)
+      if let field = Self.field[screen] { fields[field] = element(app, field).frame }
       var found: [String] = []
       do {
         try app.performAccessibilityAudit(for: .all) { issue in
@@ -87,9 +81,20 @@ final class AccessibilityEvidenceTests: XCTestCase {
       keepText(found.isEmpty ? "no issue\n" : found.joined(separator: "\n") + "\n", topic: "a11y", name: "\(screen.rawValue)-audit.txt")
       summary.append("\(screen.rawValue): \(found.count) issue(s)")
     }
+    summary += fields.keys.sorted().map { "\($0) \(fields[$0] ?? .null)" }
     keepText(summary.joined(separator: "\n") + "\n", topic: "a11y", name: "summary.txt")
     XCTAssertTrue(unexpected.isEmpty, unexpected.joined(separator: "\n"))
+    // The fields' own frames, the elements a finger and VoiceOver reach, are at least 44 points tall.
+    for (field, frame) in fields {
+      XCTAssertGreaterThanOrEqual(frame.height, 44, "\(field) is \(frame.height) points tall")
+    }
   }
+
+  /// The text field of each screen that has one.
+  private static let field: [EvidenceScreen: String] = [
+    .chat: "chat.composer.field",
+    .requests: "chat.permission.r_fake.question.0.answer",
+  ]
 
   /// The labels of the buttons, texts and fields of the screen, in the accessibility tree's order.
   @MainActor

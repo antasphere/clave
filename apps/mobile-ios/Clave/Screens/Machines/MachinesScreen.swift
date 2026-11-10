@@ -238,6 +238,7 @@ private struct MachineRowView: View {
       .accessibilityElement(children: .combine)
       if row.paired {
         Chip(isMain ? "Paired, main" : "Paired", icon: .check)
+          .minimumAccessibilityTarget()
           .accessibilityIdentifier("machines.paired.\(row.id)")
         Button("Open", action: open)
           .buttonStyle(.clave(.primary, size: .small))

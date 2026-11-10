@@ -30,3 +30,13 @@ struct Chip: View {
     .accessibilityElement(children: .combine)
   }
 }
+
+extension View {
+  /// A small element that informs rather than acts, kept as drawn on an element frame of at least
+  /// 44 by 44 points, so a finger and VoiceOver's cursor find it.
+  func minimumAccessibilityTarget() -> some View {
+    frame(minWidth: 44, minHeight: 44)
+      .contentShape(.accessibility, Rectangle())
+      .accessibilityElement(children: .combine)
+  }
+}

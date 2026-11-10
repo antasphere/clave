@@ -1,5 +1,6 @@
 import ClaveCore
 import SwiftUI
+import UIKit
 
 /// The questions a permission asks, as a form: each question's options to pick from (one, or
 /// several when it allows it) and a free answer, masked when the request says the answer is a
@@ -12,6 +13,7 @@ struct QuestionForm: View {
   @Binding var replies: [String: QuestionReply]
 
   @Environment(\.claveTheme) private var theme
+  @ScaledMetric(relativeTo: .body) private var answerSize: CGFloat = Theme.field.text
 
   var body: some View {
     VStack(alignment: .leading, spacing: Theme.space(4)) {
@@ -80,21 +82,34 @@ struct QuestionForm: View {
         replies[key] = reply
       })
     let shape = RoundedRectangle(cornerRadius: Theme.field.radius, style: .continuous)
+    let identifier = "chat.permission.\(requestId).question.\(index).answer"
     Group {
       if secretKeys.contains(key) {
         SecureField("Answer", text: binding, prompt: Text("Answer").foregroundStyle(theme.colors.textTertiary))
+          .frame(minHeight: 44)
+          .accessibilityIdentifier(identifier)
       } else {
-        TextField("Answer", text: binding, prompt: Text("Your own answer").foregroundStyle(theme.colors.textTertiary), axis: .vertical)
+        // A text view rather than a growing text field: its own frame is the box a finger and
+        // VoiceOver reach, from 44 points to eight lines, where it scrolls. The prompt is layered
+        // over it while it is empty.
+        ZStack(alignment: .topLeading) {
+          TextEditor(text: binding)
+            .scrollContentBackground(.hidden)
+            .accessibilityLabel("Answer")
+            .accessibilityIdentifier(identifier)
+            .frame(minHeight: 44, maxHeight: growingFieldHeight(lines: 8, size: answerSize, weight: .medium))
+            .fixedSize(horizontal: false, vertical: true)
+          if binding.wrappedValue.isEmpty {
+            GrowingFieldPrompt("Your own answer", size: Theme.field.text, weight: .medium)
+          }
+        }
       }
     }
     .font(.geist(Theme.field.text, relativeTo: .body))
     .foregroundStyle(theme.colors.textPrimary)
     .padding(.horizontal, Theme.field.px)
-    .padding(.vertical, Theme.space(2))
-    .frame(minHeight: 44)
     .background(shape.fill(theme.colors.surface50))
     .overlay(shape.strokeBorder(theme.colors.border, lineWidth: 1))
-    .accessibilityIdentifier("chat.permission.\(requestId).question.\(index).answer")
   }
 
   private func toggle(_ label: String, key: String, multi: Bool) {

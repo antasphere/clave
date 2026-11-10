@@ -1,5 +1,6 @@
 import ClaveCore
 import SwiftUI
+import UIKit
 
 // The rows of the transcript, as the desktop's chat view draws them: the person's turn boxed,
 // the agent's prose on the ground, tool runs folded into one card, permission cards with their
@@ -74,13 +75,16 @@ struct UserTurnView: View {
           Text(body)
             .font(.geist(Theme.text.sm, weight: .regular, relativeTo: .body))
             .foregroundStyle(turn.interrupted ? theme.colors.textTertiary : theme.colors.textPrimary)
-            .textSelection(.enabled)
             .fixedSize(horizontal: false, vertical: true)
         }
         .padding(.horizontal, Theme.space(3.5))
         .padding(.vertical, Theme.space(2.5))
         .background(shape.fill(delivery == nil ? theme.colors.surfaceRaised : theme.colors.termModel.opacity(0.12)))
         .overlay(shape.strokeBorder(theme.colors.border, lineWidth: 1))
+        // Copying is the whole turn's, from the bubble: no small selectable text inside it.
+        .contextMenu {
+          Button("Copy") { UIPasteboard.general.string = body }
+        }
       }
       if turn.interrupted {
         Text("Interrupted")
@@ -184,6 +188,10 @@ struct AssistantTurnView: View {
     // Each drawn block is an element of its own (the heading, the paragraphs and their links, the
     // code, the table's cells, the image), so VoiceOver reads the prose and never its Markdown source.
     MarkdownView(text: turn.text)
+      // Copying is the whole turn's, its Markdown as written; a code block copies its own code.
+      .contextMenu {
+        Button("Copy") { UIPasteboard.general.string = turn.text }
+      }
       .accessibilityElement(children: .contain)
       .accessibilityIdentifier("chat.assistant.\(turn.ordinal)")
   }

@@ -20,13 +20,16 @@ struct PaneHeader<Trailing: View>: View {
 
   var body: some View {
     HStack(alignment: .center, spacing: Theme.space(2)) {
-      if let status { StatusDot(status) }
+      // The dot is drawn only: the title says the state, so VoiceOver reads the title, its
+      // heading and the state once, and no element smaller than a finger stands beside it.
+      if let status { StatusDot(status).accessibilityHidden(true) }
       VStack(alignment: .leading, spacing: Theme.space(0.5)) {
         Text(title)
           .font(.geist(Theme.text.lg, weight: .semibold, relativeTo: .title3))
           .foregroundStyle(theme.colors.textPrimary)
           .lineLimit(1)
           .accessibilityAddTraits(.isHeader)
+          .accessibilityValue(status?.label ?? "")
           .accessibilityIdentifier("pane.title")
         if let subtitle {
           Text(subtitle)
