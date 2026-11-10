@@ -39,8 +39,12 @@ vi.mock('./exchange-digest-store', () => ({
     get(): unknown {
       return undefined
     }
-    put(): void {}
-    flush(): void {}
+    put(): void {
+      /* nothing filed */
+    }
+    flush(): void {
+      /* nothing buffered */
+    }
   }
 }))
 
@@ -50,7 +54,12 @@ import { setHelperConfigSource } from './helpers/registry'
 const REPLY = JSON.stringify({ needs_you: false, message: null, summary: 'All quiet.' })
 const WORK_REPLY = JSON.stringify({ title: 'Read the files' })
 let n = 0
-const request = () => ({
+const request = (): {
+  sessionId: string
+  key: string
+  launch: Record<string, never>
+  messages: Array<{ from: string; text: string }>
+} => ({
   sessionId: 's',
   key: `k${++n}`,
   launch: {},
