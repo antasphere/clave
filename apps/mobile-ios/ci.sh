@@ -3,13 +3,20 @@
 # root by the mobile CI job on a macOS runner with Xcode 26.0.1
 # (DEVELOPER_DIR set by the job). Its exit code is the verdict.
 #
-# Four steps: the core package's tests on the Mac (fast, no simulator), the
-# app built for a simulator, the app's host tests plus the launch smoke test
-# and the shell's flow on that simulator, and the release-binary check (a
-# Release build that must carry none of the development-only code). The
-# simulator is the first iPhone on the newest iOS that `xcodebuild
-# -showdestinations` lists for the scheme, so the runner's own runtimes decide
-# and no version is written here; CLAVE_IOS_SIMULATOR_UDID overrides it.
+# Five steps: the core package's tests on the Mac (fast, no simulator); the app
+# and both test targets built for any simulator with the job's own Xcode, which
+# needs no simulator runtime; the app built for a simulator; the app's host
+# tests plus the launch smoke test and the shell's flow on that simulator; and
+# the release-binary check (a Release build that must carry none of the
+# development-only code). The simulator is the first iPhone on the newest iOS
+# that `xcodebuild -showdestinations` lists for the scheme, so the runner's own
+# runtimes decide and no version is written here; CLAVE_IOS_SIMULATOR_UDID
+# overrides it. A runner whose own Xcode can run no simulator (the hosted
+# macos-26 image's Xcode 26.0.1 lists none of its iOS 26.2, 26.4 and 26.5
+# runtimes) names an installed Xcode that can in CLAVE_IOS_SIMULATOR_DEVELOPER_DIR:
+# the last three steps then run under it, its folder checked first and its
+# version printed; unset, every step runs under the job's own Xcode. Nothing
+# else is tried.
 # The fixture check (scripts/fixture-check.mjs) needs the repository's Bun
 # and a booted simulator for minutes and stays a gate run by hand on a Mac.
 set -euo pipefail
@@ -22,6 +29,12 @@ echo "ci: Xcode $(xcodebuild -version | tr '\n' ' ')"
 # would leave the verdict to the filter, and under pipefail a `|| true` after
 # the pipe resets PIPESTATUS, so a failing build used to read as a success.
 step_log() { mktemp "${TMPDIR:-/tmp}/clave-ios-ci.XXXXXX"; }
+# The job's own Xcode, kept for the tools that resolve through it (python3 is one): the
+# simulator steps may run under another one below.
+JOB_DEVELOPER_DIR="${DEVELOPER_DIR:-}"
+with_job_xcode() {
+  if [ -n "$JOB_DEVELOPER_DIR" ]; then DEVELOPER_DIR="$JOB_DEVELOPER_DIR" "$@"; else env -u DEVELOPER_DIR "$@"; fi
+}
 
 echo "ci: swift test (ClaveCore)"
 log="$(step_log)"
@@ -33,6 +46,28 @@ if [ "$status" -ne 0 ]; then
   exit "$status"
 fi
 rm -f "$log"
+DERIVED="${CLAVE_IOS_DERIVED_DATA:-$PWD/DerivedData}"
+
+echo "ci: xcodebuild build-for-testing (any iOS Simulator, $(xcodebuild -version | head -n 1))"
+log="$(step_log)"
+status=0
+xcodebuild -project Clave.xcodeproj -scheme Clave -destination 'generic/platform=iOS Simulator' \
+  -derivedDataPath "$DERIVED-generic" build-for-testing >"$log" 2>&1 || status=$?
+grep -E "error:|\*\* (TEST BUILD|BUILD) " "$log" || true
+if [ "$status" -ne 0 ]; then
+  echo "ci: xcodebuild build-for-testing exited $status (log: $log)"
+  exit "$status"
+fi
+rm -f "$log"
+
+if [ -n "${CLAVE_IOS_SIMULATOR_DEVELOPER_DIR:-}" ]; then
+  if [ ! -x "$CLAVE_IOS_SIMULATOR_DEVELOPER_DIR/usr/bin/xcodebuild" ]; then
+    echo "ci: CLAVE_IOS_SIMULATOR_DEVELOPER_DIR holds no Xcode: $CLAVE_IOS_SIMULATOR_DEVELOPER_DIR"
+    exit 1
+  fi
+  export DEVELOPER_DIR="$CLAVE_IOS_SIMULATOR_DEVELOPER_DIR"
+  echo "ci: the simulator steps run under $(xcodebuild -version | head -n 1) (CLAVE_IOS_SIMULATOR_DEVELOPER_DIR)"
+fi
 
 UDID="${CLAVE_IOS_SIMULATOR_UDID:-}"
 if [ -z "$UDID" ]; then
@@ -56,7 +91,7 @@ if [ -z "$UDID" ]; then
     exit "$status"
   fi
   status=0
-  UDID="$(python3 -c '
+  UDID="$(with_job_xcode python3 -c '
 import re, sys
 best = None
 available = False
@@ -95,7 +130,6 @@ print(best[1])
   rm -f "$log"
 fi
 echo "ci: simulator $UDID"
-DERIVED="${CLAVE_IOS_DERIVED_DATA:-$PWD/DerivedData}"
 
 run_xcodebuild() {
   local log status=0

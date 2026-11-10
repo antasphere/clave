@@ -72,7 +72,14 @@ that `xcodebuild -showdestinations` lists for the scheme and fails with a senten
 when there is none, so no runtime version is written in the gate. The listing it judged and the
 runtimes `xcrun simctl list runtimes` names are kept under `build/reports` (which the mobile
 job uploads) and printed when no iPhone is picked: the hosted run of 10 November 2026 at
-19:34 UTC picked none and left no listing to read. The hosted run's evidence
+19:34 UTC picked none and left no listing to read; its run at 20:10 UTC kept it: Xcode 26.0.1
+lists only the Mac and the two placeholders there, beside the iOS 26.2, 26.4.1 and 26.5
+runtimes, so no simulator exists for it on that image. The gate therefore builds the app and
+both test targets for any simulator with the job's own Xcode first (`build-for-testing`,
+`generic/platform=iOS Simulator`, no runtime needed), and runs the pick, the build, the tests
+and the release check under the Xcode `CLAVE_IOS_SIMULATOR_DEVELOPER_DIR` names when the job
+names one (an installed Xcode whose runtime the runner has; its folder is checked and its
+version printed); unset, as on this Mac, every step runs under the job's own Xcode. The hosted run's evidence
 is on whatever runtime the runner's image carries, which its log names (`ci: picked …`), and
 the iOS 17.5 evidence is this Mac's alone, never claimed for CI. Each step's verdict is its tool's own
 exit code, the output read from a log file afterwards; `bash

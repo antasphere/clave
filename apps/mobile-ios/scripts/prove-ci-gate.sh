@@ -56,21 +56,31 @@ printf '%s\n' '#!/bin/bash' \
 # writes the binaries a build would: Debug with every development-only marker in its debug
 # dylib, Release clean, carrying a marker, or absent, as CI_PROOF_RELEASE says.
 printf '%s\n' '#!/bin/bash' \
-  'if [ "$1" = "-version" ]; then printf "Xcode 26.0.1\nBuild version 17A400\n"; exit 0; fi' \
+  'if [ "$1" = "-version" ]; then' \
+  '  if [ -n "$CI_PROOF_SIM_DEVDIR" ] && [ "$DEVELOPER_DIR" = "$CI_PROOF_SIM_DEVDIR" ]; then printf "Xcode 26.2\nBuild version 17C52\n"' \
+  '  else printf "Xcode 26.0.1\nBuild version 17A400\n"; fi' \
+  '  exit 0' \
+  'fi' \
   'conf=Debug; derived=""; action=""' \
   'while [ $# -gt 0 ]; do' \
   '  case "$1" in' \
   '    -configuration) conf="$2"; shift 2; continue ;;' \
   '    -derivedDataPath) derived="$2"; shift 2; continue ;;' \
+  '    build-for-testing) action=build-for-testing ;;' \
   '    build|test) action="$1" ;;' \
   '    -showdestinations) action=showdestinations ;;' \
   '  esac' \
   '  shift' \
   'done' \
+  'if [ -n "$CI_PROOF_TRACE" ]; then echo "$action ${DEVELOPER_DIR:-unset}" >>"$CI_PROOF_TRACE"; fi' \
   'case "$action" in' \
   '  showdestinations)' \
   '    if [ "$CI_PROOF_LISTING" = fail ]; then echo "xcodebuild: error: a stand-in failure"; exit 70; fi' \
-  '    cat "$CI_PROOF_DESTINATIONS"; exit 0 ;;' \
+  '    if [ -n "$CI_PROOF_JOB_DESTINATIONS" ] && [ "$DEVELOPER_DIR" != "$CI_PROOF_SIM_DEVDIR" ]; then cat "$CI_PROOF_JOB_DESTINATIONS"; else cat "$CI_PROOF_DESTINATIONS"; fi' \
+  '    exit 0 ;;' \
+  '  build-for-testing)' \
+  '    if [ "$CI_PROOF_FAIL" = generic ]; then echo "** TEST BUILD FAILED **"; exit 65; fi' \
+  '    echo "** TEST BUILD SUCCEEDED **"; exit 0 ;;' \
   '  build)' \
   '    if [ "$CI_PROOF_FAIL" = build ]; then echo "** BUILD FAILED **"; exit 65; fi' \
   '    if [ -n "$CI_PROOF_RELEASE" ] && [ -n "$derived" ]; then' \
@@ -139,6 +149,16 @@ listing "$sandbox/destinations-runner.txt" "$mac" "$any_device" "$any_simulator"
   -- 'platform:iOS Simulator, arch:arm64, id:INELIGIBLE-2700, OS:27.0, name:iPhone 18 Pro, error:iOS 27.0 is not supported by this Xcode'
 listing "$sandbox/destinations-no-iphone.txt" "$mac" "$any_device" "$any_simulator" "$ipad" \
   -- 'platform:iOS Simulator, arch:arm64, id:INELIGIBLE-2650, OS:26.5, name:iPhone 17 Pro, error:iOS 26.5 is not supported by this Xcode'
+# The hosted macos-26 runner as its own run of 10 November 2026 (run 42892565953) listed the
+# scheme's destinations under the job's Xcode 26.0.1: the Mac and the two placeholders, no
+# simulator and no ineligible one (the runner Mac's id replaced). Two toolchain folders stand
+# for the job's Xcode and for an installed Xcode that can run the runner's simulators.
+listing "$sandbox/destinations-hosted-20261110.txt" \
+  'platform:macOS, arch:arm64, variant:Designed for [iPad,iPhone], id:RUNNER-MAC, name:My Mac' "$any_device" "$any_simulator"
+mkdir -p "$sandbox/xcode-26.0.1/usr/bin" "$sandbox/xcode-26.2/usr/bin"
+printf '%s\n' '#!/bin/bash' 'exit 64' >"$sandbox/xcode-26.0.1/usr/bin/xcodebuild"
+printf '%s\n' '#!/bin/bash' 'exit 64' >"$sandbox/xcode-26.2/usr/bin/xcodebuild"
+chmod +x "$sandbox/xcode-26.0.1/usr/bin/xcodebuild" "$sandbox/xcode-26.2/usr/bin/xcodebuild"
 chmod +x "$sandbox/bin/swift" "$sandbox/bin/xcodebuild" "$sandbox/bin/xcrun" "$sandbox/stand-in-check.sh"
 
 failed=0
@@ -222,6 +242,47 @@ run_ci stand-in "" "${runner[@]}" CI_PROOF_DESTINATIONS="$sandbox/destinations-r
 judge "the hosted runner, Xcode 26.0.1 beside iOS 26.2, 26.4 and 26.5 only" pass "ci: simulator PICK-2650"
 run_ci stand-in "" "${runner[@]}" CI_PROOF_DESTINATIONS="$sandbox/destinations-runner.txt" CI_PROOF_LISTING=fail
 judge "a runner whose destinations cannot be listed" fail "xcodebuild: error: a stand-in failure"
+
+# Two toolchains. The trace names each xcodebuild action with the Xcode it ran under.
+trace="$sandbox/trace.txt"
+trace_says() {  # the scenario, the first line wanted, the Xcode every later line must name
+  local name="$1" first="$2" later="$3"
+  if [ "$(sed -n 1p "$trace")" = "$first" ] && [ "$(wc -l <"$trace" | tr -d ' ')" -ge 4 ] \
+    && [ "$(sed -n '2,$p' "$trace" | grep -vc " $later\$")" = 0 ]; then
+    echo "PASS $name"
+  else
+    echo "FAIL $name: the trace reads $(tr '\n' ';' <"$trace")"
+    failed=1
+  fi
+}
+# The job's own Xcode is DEVELOPER_DIR unset here, as on a Mac whose selected Xcode is the job's:
+# a folder standing for it would also stand between /usr/bin/python3 and its interpreter.
+job=(CI_PROOF_FAIL= CI_PROOF_DEVICES="$sandbox/devices-runner.json"
+  CI_PROOF_SIM_DEVDIR="$sandbox/xcode-26.2" CI_PROOF_DESTINATIONS="$sandbox/destinations-runner.txt")
+: >"$trace"
+run_ci stand-in "" "${job[@]}" CI_PROOF_TRACE="$trace"
+judge "no simulator Xcode named: every step under the job's own Xcode, as before" pass "ci: simulator PICK-2650"
+trace_says "the same run's trace: the job's Xcode for the build for any simulator and for every simulator step" \
+  "build-for-testing unset" "unset"
+if [[ $'\n'"$output"$'\n' == *$'\n'"ci: the simulator steps run under "* ]]; then
+  echo "FAIL the same run names another Xcode though none was named"; failed=1
+else
+  echo "PASS the same run names no other Xcode"
+fi
+hosted=("${job[@]}" CI_PROOF_JOB_DESTINATIONS="$sandbox/destinations-hosted-20261110.txt")
+run_ci stand-in "" "${hosted[@]}"
+judge "the hosted runner as its run of 10 November listed it, no simulator Xcode named" fail "ci: no iPhone simulator among the destinations xcodebuild lists for the Clave scheme"
+: >"$trace"
+run_ci stand-in "" "${hosted[@]}" CLAVE_IOS_SIMULATOR_DEVELOPER_DIR="$sandbox/xcode-26.2" CI_PROOF_TRACE="$trace"
+judge "the same runner with an installed simulator Xcode named" pass "ci: the simulator steps run under Xcode 26.2 (CLAVE_IOS_SIMULATOR_DEVELOPER_DIR)"
+trace_says "the same run's trace: the build for any simulator under the job's Xcode 26.0.1, the pick, build and tests under the named one" \
+  "build-for-testing unset" "$sandbox/xcode-26.2"
+run_ci stand-in "" "${hosted[@]}" CLAVE_IOS_SIMULATOR_DEVELOPER_DIR="$sandbox/no-such-xcode"
+judge "a named simulator Xcode folder that is not there" fail "ci: CLAVE_IOS_SIMULATOR_DEVELOPER_DIR holds no Xcode: $sandbox/no-such-xcode"
+run_ci stand-in "" "${hosted[@]}" CLAVE_IOS_SIMULATOR_DEVELOPER_DIR="$sandbox/tmp"
+judge "a named folder that holds no Xcode" fail "ci: CLAVE_IOS_SIMULATOR_DEVELOPER_DIR holds no Xcode: $sandbox/tmp"
+run_ci stand-in "$udid" CI_PROOF_FAIL=generic
+judge "the build for any simulator fails" fail "** TEST BUILD FAILED **"
 
 if [ "$failed" -eq 0 ]; then
   echo "PASS ci gate proof: $target follows each step, with $check read for real"
