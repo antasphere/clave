@@ -20,6 +20,19 @@ import org.junit.Test
 class DecodeTest {
     private fun json(text: String): JsonElement = Json.parseToJsonElement(text)
 
+    /** A server that grew a field this phone does not know yet still answers: unknown keys are
+     *  ignored by every decoder, never refused, as the wire's additive changes intend. */
+    @Test
+    fun unknownFieldsAreIgnoredNeverRefused() {
+        val session = Samples.at("session") as JsonObject
+        val grown = JsonObject(session + mapOf("addedLater" to json("""{"nested":[1,2]}"""), "flag" to JsonPrimitive(true)))
+        assertEquals(Decode.session(session), Decode.session(grown))
+        assertEquals(
+            Decode.writeStatus(json("""{"status":"accepted","at":5}""")),
+            Decode.writeStatus(json("""{"status":"accepted","at":5,"addedLater":"x","more":{"a":null}}""")),
+        )
+    }
+
     private fun assertRefused(sample: JsonElement, decode: (JsonElement) -> Any?) {
         try {
             val decoded = decode(sample)
