@@ -38,6 +38,10 @@ import { shellOwnsAntasphereAccount } from '../server-boot'
 import { serverLaunch } from '../server-launch'
 import { TEST_NO_ACTIVATE } from '../test-mode'
 import { helperPreferences, installHelperPreferences } from '../helpers/preferences'
+import { setHelperConfigSource } from '../helpers/registry'
+
+/** What a helper asked of main says when a server runs them (PRDCT-4330). */
+export const HELPERS_RUN_ON_SERVER = "Helpers run on Clave's server."
 import { settingsSourceFromManagers } from './source'
 
 /** The Antasphere account manager, while this process is the server; null
@@ -77,8 +81,12 @@ export const shellSettingsSource: SettingsSourceService = settingsSourceFromMana
 })
 
 // In-process, main is the server: every helper of this Mac runs here and
-// reads this Mac's preference at each call (PRDCT-4330).
+// reads this Mac's preference at each call (PRDCT-4330). With a server of its
+// own behind the window, THE choke point: main's runner refuses every helper,
+// whoever calls it and by whatever road (a fallback to IPC at boot, Sync all,
+// a caller added later), so nothing ever runs here on defaults.
 if (shellOwnsHelpers) installHelperPreferences(helperPreferences)
+else setHelperConfigSource(() => ({ refused: HELPERS_RUN_ON_SERVER }))
 
 if (TEST_NO_ACTIVATE) {
   const hooks = globalThis as { __claveE2E?: { settings?: SettingsSourceService } }

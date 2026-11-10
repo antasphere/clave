@@ -112,6 +112,9 @@ export function runHelper<Input, Output>(
   options: RunOptions = {}
 ): Promise<HelperOutcome<Output>> {
   if (closed) return Promise.resolve(failure('cancelled', 'Clave is quitting'))
+  // PRDCT-4330: a process that runs no helper refuses them all, never spawns.
+  const refused = helperConfig(definition).refused
+  if (refused) return Promise.resolve(failure('failed', refused))
   if (!helperConfig(definition).enabled)
     // PRDCT-4330: the sentence names the helper without leaning on its label's grammar.
     return Promise.resolve(
@@ -209,6 +212,8 @@ async function execute(job: Job): Promise<HelperOutcome<unknown>> {
   for (let attempt = 1; attempt <= attempts; attempt++) {
     if (closed || generation !== born) return failure('cancelled', 'Cancelled')
     const config = helperConfig(definition)
+    // PRDCT-4330: refused between two attempts too.
+    if (config.refused) return failure('failed', config.refused)
     let stdout:
       | { ok: true; stdout: string; stderr: string }
       | { ok: false; reason: HelperFailureReason; detail: string }
