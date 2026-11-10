@@ -1,6 +1,7 @@
 import { DigestStore } from './exchange-digest-store'
 import { settingsPorts } from './ports'
 import { TEST_NO_ACTIVATE } from './test-mode'
+import { accountTokenForSpawn } from './sessions/adapters/pty-backend'
 import * as helperRunner from './helpers/runner'
 import { DIGEST_TIMEOUT_MS, exchangeDigestHelper, workDigestHelper } from './helpers/digests'
 import type { HelperFailureReason } from '../shared/helper-prompt'
@@ -117,18 +118,22 @@ function read(request: DigestRequest): Promise<DigestResult> {
   if (TEST_NO_ACTIVATE) {
     const reply = testReply(process.env.CLAVE_E2E_DIGEST_REPLY, request.launch)
     if (!reply) return Promise.resolve({ ok: false, error: 'No model under test' })
-    return new Promise((resolve) =>
-      setTimeout(
-        () =>
-          resolve(
-            testFailure(reply) ??
-              parseDigestReply(reply, request.messages.length) ?? {
-                ok: false,
-                error: 'Unreadable test reply'
-              }
-          ),
-        600
-      )
+    return testAccount(request.launch).then(
+      (refused) =>
+        refused ??
+        new Promise<DigestResult>((resolve) =>
+          setTimeout(
+            () =>
+              resolve(
+                testFailure(reply) ??
+                  parseDigestReply(reply, request.messages.length) ?? {
+                    ok: false,
+                    error: 'Unreadable test reply'
+                  }
+              ),
+            600
+          )
+        )
     )
   }
   const messages = request.messages.slice(-MAX_MESSAGES).map((message) => ({
@@ -156,18 +161,22 @@ function readWork(request: WorkDigestRequest): Promise<WorkDigestResult> {
   if (TEST_NO_ACTIVATE) {
     const reply = testReply(process.env.CLAVE_E2E_WORK_DIGEST_REPLY, request.launch)
     if (!reply) return Promise.resolve({ ok: false, error: 'No model under test' })
-    return new Promise((resolve) =>
-      setTimeout(
-        () =>
-          resolve(
-            testFailure(reply) ??
-              parseWorkDigestReply(reply, request.notes.length) ?? {
-                ok: false,
-                error: 'Unreadable test reply'
-              }
-          ),
-        600
-      )
+    return testAccount(request.launch).then(
+      (refused) =>
+        refused ??
+        new Promise<WorkDigestResult>((resolve) =>
+          setTimeout(
+            () =>
+              resolve(
+                testFailure(reply) ??
+                  parseWorkDigestReply(reply, request.notes.length) ?? {
+                    ok: false,
+                    error: 'Unreadable test reply'
+                  }
+              ),
+            600
+          )
+        )
     )
   }
   const { notes, offset } = clipNotes(request.notes)
@@ -187,6 +196,26 @@ function readWork(request: WorkDigestRequest): Promise<WorkDigestResult> {
  *  runs on (`default` for the machine login), so a spec sees which one. */
 function testReply(reply: string | undefined, launch: DigestLaunch): string | undefined {
   return reply?.replaceAll('{account}', launch.claudeProfileId ?? 'default')
+}
+
+/** Under the harness, the account a read would run on is resolved as the
+ *  runner resolves it (`accountTokenForSpawn`): an account this process does
+ *  not know fails the read as the CLI would be refused, `auth`. */
+async function testAccount(launch: DigestLaunch): Promise<{
+  ok: false
+  error: string
+  reason: 'auth'
+} | null> {
+  try {
+    await accountTokenForSpawn('claude', launch.claudeProfileId)
+    return null
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : String(error),
+      reason: 'auth'
+    }
+  }
 }
 
 /** `E2E_FAIL:<reason>` under the harness: a read that fails with that reason. */

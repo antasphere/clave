@@ -96,6 +96,11 @@ export async function run(t) {
   try {
     const [server] = world.servers
     const account = await request(server, '/accounts/claude', { label: 'Named on the server' })
+    // A named account reads with its token, as the CLI would (`testAccount`).
+    await request(server, '/accounts/claude/token', {
+      id: account.id,
+      token: `sk-ant-oat01-${'x'.repeat(80)}`
+    })
     const started = await request(server, '/sessions/start', {
       cwd: server.root,
       options: {

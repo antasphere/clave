@@ -66,16 +66,14 @@ export async function run(t) {
           JSON.stringify(shown.flagged) === '[false,true]',
         shown
       )
-      // Filed by the tab's id in Clave's data folder, so a remount or a
-      // restart finds it.
+      // Filed by the tab's id in the data folder of the server that runs the
+      // tab (main's in-process, `userData/server` separate, PRDCT-4327), so a
+      // remount or a restart finds it: read back through the window's road.
       const filed = () =>
-        chat.app.evaluate(({ app }, id) => {
-          const fs = process.getBuiltinModule('fs')
-          const path = process.getBuiltinModule('path')
-          const file = path.join(app.getPath('userData'), 'exchange-digests.json')
-          if (!fs.existsSync(file)) return []
-          return Object.keys(JSON.parse(fs.readFileSync(file, 'utf-8'))[id] ?? {})
-        }, record.id)
+        chat.win.evaluate(
+          async (id) => Object.keys(await window.electronAPI.exchangeDigestsOf(id)),
+          record.id
+        )
       const saved = await until(async () => ((await filed()).length === 1 ? true : null), 8000)
       t.check(`${mode}: the digest is filed under the tab's session id`, saved === true, {
         filed: await filed()
