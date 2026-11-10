@@ -416,7 +416,7 @@ async function main(): Promise<void> {
       routines,
       // ── PRDCT-4327: the digests a client asks for, read on this server's
       // own record of the session, filed in its data folder ──
-      digests: hostDigests((id) => ptyManager.getSessionRecord(id)),
+      digests: hostDigests((id) => ptyManager.getSessionRecord(id) ?? ptyManager.spawnLaunchOf(id)),
       // ── Wave 4, lane C: the agent tokens, resolved for the attached shell ──
       // A desktop may still announce its own endpoint for old servers. This
       // server owns its endpoint and never points local providers at a Mac.

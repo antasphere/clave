@@ -85,7 +85,7 @@ async function start(options: StartOptions): Promise<ClaveServerEndpoint> {
   ])
   const server = await startEmbedded({
     ports: {
-      digests: hostDigests((id) => ptyManager.getSessionRecord(id)),
+      digests: hostDigests((id) => ptyManager.getSessionRecord(id) ?? ptyManager.spawnLaunchOf(id)),
       ...(options.appVersion !== undefined && {
         serverInfo: ServerInfoPort.appRun(
           options.appVersion,

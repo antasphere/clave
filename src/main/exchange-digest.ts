@@ -4,6 +4,7 @@ import { TEST_NO_ACTIVATE } from './test-mode'
 import * as helperRunner from './helpers/runner'
 import { helperCliArgs } from './helpers/runner'
 import { DIGEST_TIMEOUT_MS, exchangeDigestHelper, workDigestHelper } from './helpers/digests'
+import type { HelperFailureReason } from '../shared/helper-prompt'
 import {
   parseDigestReply,
   type DigestDone,
@@ -119,16 +120,17 @@ function read(request: DigestRequest): Promise<DigestResult> {
   // digest hands the model's reply in CLAVE_E2E_DIGEST_REPLY, read the way a
   // real one is, after a beat so the reading state shows.
   if (TEST_NO_ACTIVATE) {
-    const reply = process.env.CLAVE_E2E_DIGEST_REPLY
+    const reply = testReply(process.env.CLAVE_E2E_DIGEST_REPLY, request.launch)
     if (!reply) return Promise.resolve({ ok: false, error: 'No model under test' })
     return new Promise((resolve) =>
       setTimeout(
         () =>
           resolve(
-            parseDigestReply(reply, request.messages.length) ?? {
-              ok: false,
-              error: 'Unreadable test reply'
-            }
+            testFailure(reply) ??
+              parseDigestReply(reply, request.messages.length) ?? {
+                ok: false,
+                error: 'Unreadable test reply'
+              }
           ),
         600
       )
@@ -157,16 +159,17 @@ function read(request: DigestRequest): Promise<DigestResult> {
 function readWork(request: WorkDigestRequest): Promise<WorkDigestResult> {
   // Under the harness, the reply comes from CLAVE_E2E_WORK_DIGEST_REPLY.
   if (TEST_NO_ACTIVATE) {
-    const reply = process.env.CLAVE_E2E_WORK_DIGEST_REPLY
+    const reply = testReply(process.env.CLAVE_E2E_WORK_DIGEST_REPLY, request.launch)
     if (!reply) return Promise.resolve({ ok: false, error: 'No model under test' })
     return new Promise((resolve) =>
       setTimeout(
         () =>
           resolve(
-            parseWorkDigestReply(reply, request.notes.length) ?? {
-              ok: false,
-              error: 'Unreadable test reply'
-            }
+            testFailure(reply) ??
+              parseWorkDigestReply(reply, request.notes.length) ?? {
+                ok: false,
+                error: 'Unreadable test reply'
+              }
           ),
         600
       )
@@ -183,6 +186,22 @@ function readWork(request: WorkDigestRequest): Promise<WorkDigestResult> {
       }
       return placeNote(outcome.value, offset)
     })
+}
+
+/** The harness's reply, with `{account}` standing for the account the read
+ *  runs on (`default` for the machine login), so a spec sees which one. */
+function testReply(reply: string | undefined, launch: DigestLaunch): string | undefined {
+  return reply?.replaceAll('{account}', launch.claudeProfileId ?? 'default')
+}
+
+/** `E2E_FAIL:<reason>` under the harness: a read that fails with that reason. */
+function testFailure(
+  reply: string
+): { ok: false; error: string; reason: HelperFailureReason } | null {
+  const match = /^E2E_FAIL:(\w+)$/.exec(reply.trim())
+  return match
+    ? { ok: false, error: 'A failure under test', reason: match[1] as HelperFailureReason }
+    : null
 }
 
 /** What a failed digest says: the asked-shape one in words, the rest as the CLI said it. */

@@ -9,8 +9,8 @@ import { until } from './harness.mjs'
    - the card the digest came from is marked, the others are not;
    - the digest is filed under the tab's session id, and a timeline scrolled
      out of view is read and filed all the same;
-   - with no digest to be had, the timeline shows its messages and nothing
-     else: no error, no empty line. */
+   - with no digest to be had, the timeline shows its messages and one quiet
+     line saying it was not read, with Ask again (PRDCT-4327). */
 
 const header = (name, id) =>
   `[Message from Clave tab "${name}" — reply with clave_send_to_session sessionId="${id}"]\n`
@@ -114,11 +114,17 @@ export async function run(t) {
       const state = {
         failed,
         digestText: await timeline.locator('.exchange-digest-text').count(),
+        unread: await timeline.locator('.digest-unread-words').allInnerTexts(),
+        retry: await timeline.getByRole('button', { name: 'Ask again', exact: true }).count(),
         cards: await timeline.locator('.exchange').count()
       }
       t.check(
-        `${mode}: with no digest to be had, the timeline shows its messages and nothing else`,
-        state.failed && state.digestText === 0 && state.cards === 2,
+        `${mode}: with no digest to be had, the timeline shows its messages and says it was not read`,
+        state.failed &&
+          state.digestText === 0 &&
+          JSON.stringify(state.unread) === '["Not read."]' &&
+          state.retry === 1 &&
+          state.cards === 2,
         state
       )
     } finally {
