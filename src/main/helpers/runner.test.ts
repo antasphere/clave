@@ -41,6 +41,7 @@ import {
   cancelAll,
   cancelQueued,
   classifyFailure,
+  cliNotice,
   helperCliArgs,
   queuedHelpers,
   resetShutdownForTests,
@@ -312,6 +313,34 @@ describe('a reply that is not the asked shape', () => {
     mocks.spawned[0].finish(null, 'Claude AI usage limit reached|1762794000', '')
     await expect(done).resolves.toMatchObject({ ok: false, reason: 'limit' })
     expect(mocks.spawned).toHaveLength(1)
+  })
+})
+
+describe('an answer about limits or auth is not the CLI saying so', () => {
+  it.each([
+    'The usage limit check skips a token\nwhen the account was refreshed, so the cap never shows.',
+    'The 401 comes from the refresh path.\nIt retries with the stale OAuth token before reading the new one.',
+    'Here are the steps:\n1. fix the quota display\n2. add a test'
+  ])('%j is unreadable and retried', async (reply) => {
+    const h = helper({ attempts: 2 })
+    const done = runHelper(h, 'x')
+    await ticks()
+    mocks.spawned[0].finish(null, reply, '')
+    await ticks()
+    expect(mocks.spawned).toHaveLength(2)
+    mocks.spawned[1].finish(null, reply, '')
+    await expect(done).resolves.toMatchObject({ ok: false, reason: 'unreadable' })
+  })
+
+  it("the CLI's own notices, as the whole reply, are still a limit or a refusal", () => {
+    expect(cliNotice('Claude AI usage limit reached|1762794000')).toBe('limit')
+    expect(cliNotice("You've hit your limit · resets 5pm (Europe/Brussels)")).toBe('limit')
+    expect(cliNotice('5-hour limit reached ∙ resets 3am')).toBe('limit')
+    expect(cliNotice('API Error: 429 {"type":"rate_limit_error"}')).toBe('limit')
+    expect(cliNotice('Invalid API key · Please run /login')).toBe('auth')
+    expect(cliNotice('OAuth token has expired. Please run /login')).toBe('auth')
+    expect(cliNotice('API Error: 401 {"type":"authentication_error"}')).toBe('auth')
+    expect(cliNotice('fix quota display')).toBeNull()
   })
 })
 

@@ -77,6 +77,25 @@ export function classifyFailure(input: {
   if (AUTH_RE.test(text)) return 'auth'
   return 'failed'
 }
+/**
+ * The CLI's own notice, printed as the WHOLE reply with exit 0 ("Claude AI
+ * usage limit reached|…", "Invalid API key · Please run /login"), or null.
+ * Anchored and short on purpose: a model that answered a message about
+ * quotas or a 401 wrote a longer reply mentioning them, and that reply is
+ * unreadable (and retried), never a limit or a refusal.
+ */
+export function cliNotice(stdout: string): 'limit' | 'auth' | null {
+  const text = stdout.trim()
+  if (!text || text.length > 200 || text.split('\n').length > 2) return null
+  if (LIMIT_NOTICE.test(text)) return 'limit'
+  if (AUTH_NOTICE.test(text)) return 'auth'
+  return null
+}
+const LIMIT_NOTICE =
+  /^(?:Claude AI usage limit reached\b|You've (?:hit|reached) your (?:usage |session |weekly )?limit\b|(?:5-hour|weekly|Opus|Fable) limit reached\b|API Error: 429\b|You're out of extra usage\b)/i
+const AUTH_NOTICE =
+  /^(?:Invalid API key\b|Not logged in\b|Please run \/login\b|OAuth token (?:has )?(?:expired|been revoked)\b|API Error: 40[13]\b|Credit balance is too low\b)/i
+
 const LIMIT_RE =
   /usage limit|rate[ -]limit|limit reached|limit will reset|\b429\b|quota|out of extra usage/i
 const AUTH_RE =
@@ -206,9 +225,10 @@ async function execute(job: Job): Promise<HelperOutcome<unknown>> {
     const value = definition.parseReply(stdout.stdout, job.input)
     if (value !== null && value !== undefined)
       return { ok: true, value, attempts: attempt, model: config.model }
-    // A reply that is the CLI's own refusal, printed on stdout with exit 0.
-    const said = classifyFailure({ stdout: stdout.stdout })
-    if (said !== 'failed') return failure(said, stdout.stdout.trim().slice(0, 300))
+    // A reply that is the CLI's own refusal, printed on stdout with exit 0:
+    // only the notice as the whole reply, never a keyword inside an answer.
+    const said = cliNotice(stdout.stdout)
+    if (said) return failure(said, stdout.stdout.trim().slice(0, 300))
     last = failure('unreadable', stdout.stdout.trim().slice(0, 300) || 'Empty reply')
     if (attempt < attempts)
       console.warn(
