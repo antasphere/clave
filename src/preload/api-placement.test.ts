@@ -244,7 +244,7 @@ describe('routed reaches the server a key names; refused never does', () => {
   const S = sessionKey({ serverId: 'x', sessionId: 's1' })
   const F = resourceKey('file', 'x', '/srv/a')
   const G = resourceKey('group', 'x', 'g1')
-  const reached: string[] = []
+  const reached: Array<{ path: string; args: unknown[] }> = []
   // A value that is whatever the caller reads it as: an empty list, an
   // object of more of itself, a function answering itself; never a promise.
   const anything: unknown = new Proxy(
@@ -281,8 +281,8 @@ describe('routed reaches the server a key names; refused never does', () => {
       },
       {
         get: (_t, prop) => (prop === 'then' ? undefined : recorder(`${path}.${String(prop)}`)),
-        apply: () => {
-          reached.push(path)
+        apply: (_t, _this, args: unknown[]) => {
+          reached.push({ path, args })
           return Promise.resolve(ANSWERS[path] ?? anything)
         }
       }
@@ -372,13 +372,49 @@ describe('routed reaches the server a key names; refused never does', () => {
     [{ path: resourceKey('file', 'x', ATTACHMENT) }]
   ]
   /** Routed members that make no call of their own: they read or release
-   *  what the routed members got from the server. */
+   *  what the routed members got from the server. Pinned below. */
   const NO_CALL_OF_THEIR_OWN = new Map([
     ['sessionsList', 'merges the snapshots the fleet read from each server'],
     ['sessionsUnsubscribe', 'releases the stream sessionsSubscribe holds on the server']
   ])
+  /** Routed members whose server call carries no id of their arguments:
+   *  what they send is the window's own state. Pinned below. */
+  const NOT_BY_ARGUMENT = new Map([
+    ['listTrustedRoots', 'asks every connected server for its trusted roots'],
+    ['unwatchDir', 'sends the server the empty tree watch'],
+    ['gitUnwatchRepos', 'sends the server the namespace’s whole remaining watch map']
+  ])
+  /** The bare id a server must be handed for each key a shape carries. */
+  const BARE = new Map<string, string>([
+    [S, 's1'],
+    [F, '/srv/a'],
+    [G, 'g1']
+  ])
+  const keysIn = (value: unknown, depth = 0, out: string[] = []): string[] => {
+    if (typeof value === 'string') out.push(value)
+    else if (depth < 5 && value && typeof value === 'object')
+      for (const v of Object.values(value)) keysIn(v, depth + 1, out)
+    return out
+  }
+  /** What the shape that reached the server got wrong about identities: a
+   *  key sent as it is (an owner's key is the window's, never the server's),
+   *  or a key whose bare id is not what the server was handed. */
+  const identityFaults = (args: unknown[], calls: typeof reached): string[] => {
+    const sent = calls.flatMap((c) => keysIn(c.args))
+    const faults: string[] = []
+    if (sent.some((v) => v.startsWith('clave-owner:'))) faults.push('sent a key, not its bare id')
+    for (const k of keysIn(args)) {
+      if (!k.startsWith('clave-owner:')) continue
+      const bare = BARE.get(k) ?? (k.endsWith(encodeURIComponent(ATTACHMENT)) ? ATTACHMENT : null)
+      if (bare && !sent.some((v) => v === bare || v.startsWith(`${bare}/`)))
+        faults.push(`was not handed ${bare} for ${k}`)
+    }
+    return faults
+  }
   const settle = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 10))
+  let faults: string[] = []
   const reaches = async (fn: (...a: unknown[]) => unknown): Promise<boolean> => {
+    faults = []
     for (const args of shapes) {
       reached.length = 0
       try {
@@ -388,7 +424,11 @@ describe('routed reaches the server a key names; refused never does', () => {
         // a shape this member does not take
       }
       for (let i = 0; i < 6 && reached.length === 0; i++) await settle()
-      if (reached.length > 0) return true
+      if (reached.length > 0) {
+        await settle()
+        faults = identityFaults(args, reached)
+        return true
+      }
     }
     return false
   }
@@ -416,7 +456,21 @@ describe('routed reaches the server a key names; refused never does', () => {
         wrong.push(`${m.name}: routed, never reaches the server`)
       if (declared.placement === 'refused-for-remote' && hit)
         wrong.push(`${m.name}: refused, yet reaches the server`)
+      if (declared.placement === 'routed' && hit && !NOT_BY_ARGUMENT.has(m.name))
+        for (const fault of faults) wrong.push(`${m.name}: ${fault}`)
     }
     expect(wrong).toEqual([])
   }, 90_000)
+
+  it('the members exempted from those checks are exactly these, each for its reason', () => {
+    expect([...NO_CALL_OF_THEIR_OWN]).toEqual([
+      ['sessionsList', 'merges the snapshots the fleet read from each server'],
+      ['sessionsUnsubscribe', 'releases the stream sessionsSubscribe holds on the server']
+    ])
+    expect([...NOT_BY_ARGUMENT]).toEqual([
+      ['listTrustedRoots', 'asks every connected server for its trusted roots'],
+      ['unwatchDir', 'sends the server the empty tree watch'],
+      ['gitUnwatchRepos', 'sends the server the namespace’s whole remaining watch map']
+    ])
+  })
 })
