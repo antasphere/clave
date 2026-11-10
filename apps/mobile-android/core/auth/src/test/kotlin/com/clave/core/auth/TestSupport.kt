@@ -6,13 +6,25 @@ import com.clave.core.ports.HttpPort
 import com.clave.core.ports.HttpRequest
 import com.clave.core.ports.HttpResponse
 import com.clave.core.ports.SecureStore
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.SocketTimeoutException
 import java.net.URL
 import java.util.Collections
+
+/** Awaits [gate] for at most [timeoutMs]. When what it guards breaks, the test fails naming
+ *  [what] instead of blocking the whole task until the job's own timeout. */
+internal suspend fun <T> awaitGate(what: String, gate: Deferred<T>, timeoutMs: Long = 10_000): T {
+    var done = false
+    val value = withTimeoutOrNull(timeoutMs) { gate.await().also { done = true } }
+    if (!done) throw AssertionError("timed out waiting for $what")
+    @Suppress("UNCHECKED_CAST")
+    return value as T
+}
 
 /** A clock the test moves by hand, shared by the app's code and the fake issuer. */
 class TestClock(@Volatile var nowMs: Long = 1_900_000_000_000) : Clock {

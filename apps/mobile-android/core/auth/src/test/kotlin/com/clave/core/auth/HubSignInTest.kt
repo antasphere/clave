@@ -220,12 +220,12 @@ class HubSignInTest {
         })
         val first = async { signIn.signIn() }
         val second = async { signIn.signIn() }
-        opened.await()
+        awaitGate("the browser to open", opened)
         assertEquals(AuthPhase.SigningIn, signIn.status().phase)
         assertEquals(AuthPhase.SigningIn, signIn.status.value.phase)
         held.complete(null)
-        val a = first.await()
-        val b = second.await()
+        val a = awaitGate("the first sign-in to end", first)
+        val b = awaitGate("the second sign-in to end", second)
         assertEquals(a, b)
         assertEquals(AuthFailure.Cancelled, a.lastFailure)
         assertEquals(1, opens)
@@ -329,7 +329,7 @@ class HubSignInTest {
         fake.tokenDelayMs = 300
         val a = async { signIn.accessToken() }
         val b = async { signIn.accessToken() }
-        assertEquals(a.await(), b.await())
+        assertEquals(awaitGate("the first ask's token", a), awaitGate("the second ask's token", b))
         fake.tokenDelayMs = 0
         assertEquals(1, fake.refreshCount.get())
         val writes = store.writes.subList(mark, store.writes.size).toList()
@@ -433,13 +433,13 @@ class HubSignInTest {
             signIn.signIn()
             clock.advance(11_000)
             val oldCaller = async { failureOf { if (asksAccess) signIn.accessToken() else signIn.idToken() } }
-            entered.await()
+            awaitGate("the refresh to reach the issuer", entered)
             signIn.signOut()
             fake.user = FakeIssuer.User("owner-B", "B", "b@example.test", true)
             signIn.signIn()
             assertEquals("owner-B", signIn.status().account?.subject)
             release.complete(Unit)
-            assertEquals(AuthFailure.Cancelled, oldCaller.await())
+            assertEquals(AuthFailure.Cancelled, awaitGate("the old caller's answer", oldCaller))
             assertEquals("owner-B", signIn.status().account?.subject)
             val token = if (asksAccess) signIn.accessToken() else signIn.idToken()
             assertTrue(token.isNotEmpty())
@@ -460,10 +460,10 @@ class HubSignInTest {
             back
         })
         val running = async { signIn.signIn() }
-        opened.await()
+        awaitGate("the browser to open", opened)
         signIn.signOut()
         held.complete(Unit)
-        val status = running.await()
+        val status = awaitGate("the sign-in to end", running)
         assertEquals(AuthPhase.SignedOut, status.phase)
         assertNull(status.lastFailure)
         assertEquals(0, fake.tokenCount.get())
@@ -484,11 +484,11 @@ class HubSignInTest {
         }
         val auth = make(secureStore = slow)
         val signingIn = async { auth.signIn() }
-        entered.await()
+        awaitGate("the sign-in's access token write", entered)
         val signingOut = async { auth.signOut() }
         gate.complete(Unit)
-        signingIn.await()
-        signingOut.await()
+        awaitGate("the sign-in to end", signingIn)
+        awaitGate("the sign-out to end", signingOut)
         assertEquals(AuthPhase.SignedOut, auth.status().phase)
         assertNothingKept(slow)
         assertEquals(AuthPhase.SignedOut, make(secureStore = slow).restore().phase)
