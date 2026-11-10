@@ -37,6 +37,7 @@ import { AntasphereAccountManager } from '../antasphere-account'
 import { shellOwnsAntasphereAccount } from '../server-boot'
 import { serverLaunch } from '../server-launch'
 import { TEST_NO_ACTIVATE } from '../test-mode'
+import { helperPreferences, installHelperPreferences } from '../helpers/preferences'
 import { settingsSourceFromManagers } from './source'
 
 /** The Antasphere account manager, while this process is the server; null
@@ -58,6 +59,7 @@ export const shellSettingsSource: SettingsSourceService = settingsSourceFromMana
   launchProfiles: launchProfileManager,
   preferences: preferencesManager,
   workspaces: workspaceManager,
+  helpers: helperPreferences,
   // Loaded on first use so this module's own import graph reaches no PTY
   // backend (a unit test loads it without one); the app's boot imports the
   // same login manager statically, so in the app nothing loads twice.
@@ -65,6 +67,10 @@ export const shellSettingsSource: SettingsSourceService = settingsSourceFromMana
   applyAppIcon,
   ...(shellAntasphereAccount && { antasphere: shellAntasphereAccount })
 })
+
+// The helpers main runs (the git panel's, the titles and digests of an
+// in-process server) read this Mac's preference at each call (PRDCT-4330).
+installHelperPreferences(helperPreferences)
 
 if (TEST_NO_ACTIVATE) {
   const hooks = globalThis as { __claveE2E?: { settings?: SettingsSourceService } }

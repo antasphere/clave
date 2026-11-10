@@ -22,6 +22,13 @@ export type LaunchProfile = typeof S.LaunchProfileView.Type
 export type LauncherFamily = typeof S.LauncherFamily.Type
 export type LaunchProfilePreferences = typeof S.LaunchProfilePreferencesView.Type
 export type AppIcon = typeof S.AppIconSchema.Type
+export type HelperPreference = typeof S.HelperPreferenceView.Type
+export type HelperAccount = typeof S.HelperAccountView.Type
+export interface HelperPreferencePatch {
+  readonly enabled?: boolean
+  readonly model?: string | null
+  readonly account?: HelperAccount
+}
 export type Workspace = typeof S.WorkspaceView.Type
 export type WorkspaceState = typeof S.WorkspaceStateView.Type
 export type RegistryWriteResult = typeof S.UpdateWorkspaceRegistry.success.Type
@@ -76,6 +83,14 @@ export interface SettingsClient {
       family: LauncherFamily,
       profileId: string | null
     ) => Promise<LaunchProfilePreferences>
+  }
+  /** The helpers' preference on that server (PRDCT-4330); both answer the list. */
+  readonly helpers: {
+    readonly list: () => Promise<ReadonlyArray<HelperPreference>>
+    readonly set: (
+      helperId: string,
+      patch: HelperPreferencePatch
+    ) => Promise<ReadonlyArray<HelperPreference>>
   }
   readonly preferences: {
     readonly setAppIcon: (icon: AppIcon) => Promise<void>
@@ -179,6 +194,13 @@ export function settingsClient(callApi: Call): SettingsClient {
         call((g) => g.setGlobalLaunchProfile({ payload: { family, profileId } })),
       setWorkspace: (workspaceId, family, profileId) =>
         call((g) => g.setWorkspaceLaunchProfile({ payload: { workspaceId, family, profileId } }))
+    },
+    helpers: {
+      list: () => call((g) => g.listHelperPreferences({ payload: {} })).then((v) => v.helpers),
+      set: (helperId, patch) =>
+        call((g) => g.setHelperPreference({ payload: { helperId, ...patch } })).then(
+          (v) => v.helpers
+        )
     },
     preferences: {
       setAppIcon: (icon) => call((g) => g.setAppIcon({ payload: { icon } })).then(done)

@@ -29,6 +29,7 @@ import { piUsageManager } from '../pi-usage'
 import { launchProfileManager } from '../launch-profile-manager'
 import { preferencesManager } from '../preferences-manager'
 import { workspaceManager } from '../workspace-manager'
+import { helperPreferences, installHelperPreferences } from '../helpers/preferences'
 import { settingsSourceFromManagers } from './source'
 import { TEST_NO_ACTIVATE } from '../test-mode'
 import { installE2eHooks } from '../sessions/e2e-hooks'
@@ -57,6 +58,8 @@ export function standaloneSettingsSource(
         `[antasphere-account] ${event}${fields ? ` ${JSON.stringify(fields)}` : ''}\n`
       )
   })
+  // The helpers run here read this server's preference at each call (PRDCT-4330).
+  installHelperPreferences(helperPreferences)
   // The ports are installed: the stored session is read back now. A state,
   // never a rejection; a login is never what stops the server from starting.
   void antasphere.restore()
@@ -69,6 +72,7 @@ export function standaloneSettingsSource(
     launchProfiles: launchProfileManager,
     preferences: preferencesManager,
     workspaces: workspaceManager,
+    helpers: helperPreferences,
     // Loaded on first use, as the shell's: the daemon's login reaches the
     // login shell's environment through the terminal backend, which the
     // source's own import graph must not reach (`boot-graph.test.ts`).
