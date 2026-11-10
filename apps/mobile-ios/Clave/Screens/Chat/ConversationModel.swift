@@ -71,9 +71,10 @@ final class ConversationModel {
   /// machine's connection, which fans the frames out to every screen that asks.
   private let events: @MainActor () -> AsyncStream<PushEvent>
   private let now: @Sendable () -> Date
-  private let drafts: Drafts
-  private let attachmentDrafts: AttachmentDrafts
-  private let delivery: DeliveryController
+  /// The machine's delivery parts, shared by every conversation of the machine (read by tests).
+  let drafts: Drafts
+  let attachmentDrafts: AttachmentDrafts
+  let delivery: DeliveryController
   private let sleep: @Sendable (_ milliseconds: Double) async throws -> Void
 
   private var sync: TimelineSync?

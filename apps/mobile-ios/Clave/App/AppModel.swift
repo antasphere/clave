@@ -73,6 +73,9 @@ nonisolated struct NotificationResponseInput: Sendable {
   /// The move of each owner's shared ledger to its machines' own, by owner namespace: one task,
   /// which every connection of that owner waits for before it is built.
   @ObservationIgnored private var ledgerMoves: [String: Task<Void, Never>] = [:]
+  /// The connection being made for a machine, at most one at a time: a caller arriving meanwhile
+  /// waits for it rather than making a second one that would replace it.
+  @ObservationIgnored private var connecting: [String: Task<MachineConnection?, Never>] = [:]
   @ObservationIgnored private var starting = false
   @ObservationIgnored private var started = false
   @ObservationIgnored private var askedForRemoteNotifications = false
@@ -223,9 +226,20 @@ nonisolated struct NotificationResponseInput: Sendable {
   // MARK: connections
 
   /// The connection of a paired machine, made and started on first use; nil
-  /// when this phone keeps no credential for it.
+  /// when this phone keeps no credential for it. Two callers while it is being made get the same one.
   func connection(for machineId: String) async -> MachineConnection? {
     if let existing = connections[machineId], !existing.isUnpaired { return existing }
+    if let making = connecting[machineId] { return await making.value }
+    let making = Task { await self.makeConnection(for: machineId) }
+    connecting[machineId] = making
+    let made = await making.value
+    if connecting[machineId] == making { connecting[machineId] = nil }
+    return made
+  }
+
+  /// Makes and starts the connection of a paired machine, replacing one that no longer pairs; nil
+  /// when this phone keeps no credential for it, or the owner changed meanwhile.
+  private func makeConnection(for machineId: String) async -> MachineConnection? {
     guard let machines, let owner = account.ownerKeyValueStore else { return nil }
     await moveSharedLedger(of: owner)
     guard let credential = try? await machines.credentials.get(machineId) else { return nil }
@@ -393,6 +407,8 @@ nonisolated struct NotificationResponseInput: Sendable {
     }
     for connection in connections.values { connection.stop() }
     connections = [:]
+    // A connection still being made for the previous owner finds the owner changed and makes none.
+    connecting = [:]
     for conversation in conversations.values { conversation.disappear() }
     conversations = [:]
     if let inbox { Task { await inbox.close() } }
