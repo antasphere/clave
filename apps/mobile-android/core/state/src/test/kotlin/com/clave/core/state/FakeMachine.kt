@@ -23,10 +23,12 @@ import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
@@ -221,13 +223,18 @@ internal class TestClock(@Volatile var nowMs: Long = 1_900_000_000_000) : Clock 
 }
 
 /** Polls a condition in real time: the store runs against real sockets. */
-internal suspend fun until(timeoutMs: Long = 10_000, check: () -> Boolean) {
+internal suspend fun until(timeoutMs: Long = 10_000, what: String = "the condition", check: () -> Boolean) {
     val end = System.currentTimeMillis() + timeoutMs
     while (!check()) {
-        if (System.currentTimeMillis() > end) fail("timed out waiting")
+        if (System.currentTimeMillis() > end) fail("timed out waiting for $what")
         delay(10)
     }
 }
+
+/** Awaits [gate] for at most [timeoutMs]. When what it guards breaks, the test fails naming
+ *  [what] instead of blocking the whole task until the job's own timeout. */
+internal suspend fun <T : Any> awaitGate(what: String, gate: Deferred<T>, timeoutMs: Long = 10_000): T =
+    withTimeoutOrNull(timeoutMs) { gate.await() } ?: throw AssertionError("timed out waiting for $what")
 
 /** The transcript's text, every user and assistant entry joined. */
 internal fun ClaveStore.text(machineId: String, sessionId: String): String =

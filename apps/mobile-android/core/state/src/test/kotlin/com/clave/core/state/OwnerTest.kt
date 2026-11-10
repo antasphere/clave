@@ -175,16 +175,16 @@ class OwnerTest {
         }
         val states = CopyOnWriteArrayList<PairingState>()
         val pairing = scope.async { servicesA.pair(fixture, { states += it }, { false }) }
-        until { states.any { it is PairingState.Waiting } }
+        until(what = "the pairing to wait for the approval") { states.any { it is PairingState.Waiting } }
         approve.complete(Unit)
-        writing.await()
+        awaitGate("the approval's credential write to reach the secure store", writing)
         // Undispatched: the sign-out has begun (closing set, waiting on the owner's queue) when this returns.
         val signOut = scope.async(start = CoroutineStart.UNDISPATCHED) { servicesA.signOut() }
         // The hub login stays until the queue drains.
         assertEquals("sub-a", authA.status().account?.subject)
         release.complete(Unit)
-        assertEquals(PairingState.Cancelled, pairing.await())
-        signOut.await()
+        assertEquals(PairingState.Cancelled, awaitGate("the pairing to end", pairing))
+        awaitGate("the sign-out to end", signOut)
         assertNull(authA.status().account)
 
         // The next owner signs in: nothing of the old owner's approval is anywhere it reads.
