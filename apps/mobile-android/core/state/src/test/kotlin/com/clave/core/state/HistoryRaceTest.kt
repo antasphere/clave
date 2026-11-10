@@ -48,6 +48,11 @@ class HistoryRaceTest {
         }
 
         fun text(): String = h.store.text("m", "s")
+
+        /** Answers the [n]th timeline request the machine held, counting from 1. */
+        fun replyTo(n: Int, body: String) {
+            h.machine.respond(n - 1, answer(200, body))
+        }
     }
 
     /** The harness is closed by use: a failure of its close is added to the test's own
@@ -180,6 +185,30 @@ class HistoryRaceTest {
         // The cursor says there is no page before: nothing is asked.
         h.store.loadOlder("m", "s")
         assertEquals(2, timeline.get())
+    }
+
+    @Test
+    fun `an older page that lands after a refresh replaced the snapshot is dropped, never put in front of it`() = race {
+        val open = h.scope.async { h.store.openChat("m", "s") }
+        until { timeline.get() == 1 }
+        reply(page("six", 6, before = 6))
+        open.await()
+        // The page before six is on its way...
+        val older = h.scope.async { h.store.loadOlder("m", "s") }
+        until { timeline.get() == 2 }
+        // ...when a refresh takes a fresh snapshot of the same generation: its page starts at
+        // seven, so the page before six no longer joins it.
+        val refresh = h.scope.async { h.store.refreshOpenHistory("m") }
+        until { timeline.get() == 3 }
+        replyTo(3, page("seven", 7, before = 7))
+        refresh.await()
+        assertEquals("seven", text())
+        replyTo(2, timelineJson(listOf(Triple("five", 5L, "g")), "g" to 6L))
+        older.await()
+        assertEquals("seven", text())
+        val cursor = h.store.state.value.conversations[conversationKey("m", "s")]!!.cursor
+        assertEquals(7L, cursor.before)
+        assertEquals(false, cursor.loading)
     }
 
     @Test
