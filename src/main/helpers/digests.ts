@@ -22,6 +22,10 @@ import { defineHelper } from './registry'
 
 export const DIGEST_TIMEOUT_MS = 45_000
 
+/** The exchange and the work digests share one cap of two, as they shared
+ *  one queue before the helpers. */
+export const DIGEST_POOL = { id: 'digests', concurrency: 2 }
+
 /** The exchange digest reads messages already clipped by its caller. */
 export const exchangeDigestHelper = defineHelper<readonly DigestMessage[], DigestDone>({
   id: 'exchange-digest',
@@ -33,9 +37,11 @@ export const exchangeDigestHelper = defineHelper<readonly DigestMessage[], Diges
   fallbackModel: 'sonnet',
   timeoutMs: DIGEST_TIMEOUT_MS,
   priority: 30,
-  // A reader scrolling through history mounts many timelines at once: two
-  // at a time, the rest in turn.
-  concurrency: 2,
+  // A reader scrolling through history mounts many timelines at once: the
+  // two digests together run two at a time, the rest in turn, and never
+  // ahead of a title or a git call.
+  pool: DIGEST_POOL,
+  background: true,
   attempts: 2
 })
 
@@ -55,6 +61,7 @@ export const workDigestHelper = defineHelper<WorkDigestInput, WorkDigestDone>({
   fallbackModel: 'sonnet',
   timeoutMs: DIGEST_TIMEOUT_MS,
   priority: 20,
-  concurrency: 2,
+  pool: DIGEST_POOL,
+  background: true,
   attempts: 2
 })

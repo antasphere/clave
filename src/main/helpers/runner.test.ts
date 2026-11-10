@@ -58,6 +58,9 @@ import {
   setHelperConfigSource,
   type HelperDefinition
 } from './registry'
+import { exchangeDigestHelper, workDigestHelper } from './digests'
+import { titleHelper } from './title'
+import { commitMessageHelper, pushSummaryHelper } from './git'
 
 let sequence = 0
 function helper(
@@ -224,10 +227,10 @@ describe('the CLI a helper runs', () => {
 })
 
 describe('the queue', () => {
-  it(`runs at most ${MAX_RUNNING_HELPERS} at once, then the highest priority, oldest first among equals`, async () => {
-    const low = helper({ priority: 1 })
-    const mid = helper({ priority: 50 })
-    const high = helper({ priority: 90 })
+  it(`runs at most ${MAX_RUNNING_HELPERS} background helpers at once, then the highest priority, oldest first among equals`, async () => {
+    const low = helper({ priority: 1, background: true })
+    const mid = helper({ priority: 50, background: true })
+    const high = helper({ priority: 90, background: true })
     for (let i = 0; i < MAX_RUNNING_HELPERS; i++) void runHelper(low, `busy-${i}`)
     void runHelper(low, 'low-late')
     void runHelper(mid, 'mid-first')
@@ -277,6 +280,41 @@ describe('the queue', () => {
     expect(mocks.spawned[1].prompt).toBe('PROMPT theirs')
     mocks.spawned[1].finish(null, 'ok theirs', '')
     await expect(theirs).resolves.toMatchObject({ ok: true, value: 'theirs' })
+  })
+})
+
+describe('the digests and the helpers a person waits on', () => {
+  const json = '{"needs_you": false, "message": null, "summary": "Nothing for you."}'
+
+  it('exchange digests and work-card titles TOGETHER never run more than two at once', async () => {
+    const message = [{ from: 'a', text: 'b' }]
+    for (let i = 0; i < 3; i++) void runHelper(exchangeDigestHelper, message)
+    for (let i = 0; i < 2; i++) void runHelper(workDigestHelper, { notes: ['n'], tools: 1 })
+    await ticks()
+    expect(mocks.spawned).toHaveLength(2)
+    mocks.spawned[0].finish(null, json, '')
+    await ticks()
+    expect(mocks.spawned).toHaveLength(3)
+    expect(runningHelpers()).toBe(2)
+  })
+
+  it('a title, a git call and a prompt a person waits on never wait behind the digests', async () => {
+    const message = [{ from: 'a', text: 'b' }]
+    // The background cap full: two digests and another background helper.
+    void runHelper(exchangeDigestHelper, message)
+    void runHelper(workDigestHelper, { notes: ['n'], tools: 1 })
+    void runHelper(helper({ background: true }), 'filler')
+    void runHelper(exchangeDigestHelper, message)
+    await ticks()
+    expect(mocks.spawned).toHaveLength(MAX_RUNNING_HELPERS)
+    const explainer = helper({ priority: 100 })
+    void runHelper(titleHelper, 'please name this tab from its first message')
+    void runHelper(commitMessageHelper, { diff: '+x', recent: '' })
+    void runHelper(pushSummaryHelper, { commitMessages: ['feat: x'], diffStats: '' })
+    void runHelper(explainer, 'what does this permission do')
+    await ticks()
+    expect(mocks.spawned).toHaveLength(MAX_RUNNING_HELPERS + 4)
+    expect(queuedHelpers()).toEqual(['exchange-digest'])
   })
 })
 
@@ -402,7 +440,7 @@ describe('the quit ends every helper (PRDCT-3375)', () => {
   it('cancelAll signals every running CLI, refuses the queued, and drops a late answer', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
     try {
-      const h = helper({ attempts: 2 })
+      const h = helper({ attempts: 2, background: true })
       const running = [runHelper(h, 'a'), runHelper(h, 'b'), runHelper(h, 'c')]
       const queued = runHelper(h, 'd')
       await vi.waitFor(() => expect(mocks.spawned).toHaveLength(3))

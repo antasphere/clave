@@ -27,7 +27,9 @@ import {
  * nothing would kill.
  */
 
-/** Children at once, every helper together. */
+/** Background helpers (`background: true`, the digests) running at once,
+ *  all together. The others are not counted here: a title or a git call
+ *  never waits for a digest to end. */
 export const MAX_RUNNING_HELPERS = 3
 /** How long a cancelled child gets to leave on SIGTERM before SIGKILL. */
 export const HELPER_CANCEL_GRACE_MS = 1000
@@ -112,7 +114,8 @@ interface Job {
 
 const queue: Job[] = []
 const runningById = new Map<string, number>()
-let running = 0
+const runningByPool = new Map<string, number>()
+let runningBackground = 0
 let seq = 0
 let closed = false
 const children = new Map<ChildProcess, string>()
@@ -155,14 +158,23 @@ function failure(
   return { ok: false, reason, detail }
 }
 
-/** The next job that may start: the highest priority whose helper is under
- *  its own cap, the oldest of equals. */
+/** Whether a job may start now: under its helper's cap, its pool's, and,
+ *  for background work, the background cap. */
+function mayStart(definition: HelperDefinition<unknown, unknown>): boolean {
+  if ((runningById.get(definition.id) ?? 0) >= (definition.concurrency ?? Infinity)) return false
+  const pool = definition.pool
+  if (pool && (runningByPool.get(pool.id) ?? 0) >= pool.concurrency) return false
+  if (definition.background && runningBackground >= MAX_RUNNING_HELPERS) return false
+  return true
+}
+
+/** The next job that may start: the highest priority under its caps, the
+ *  oldest of equals. */
 function nextJob(): number {
   let best = -1
   for (let i = 0; i < queue.length; i++) {
     const job = queue[i]
-    const cap = job.definition.concurrency ?? Infinity
-    if ((runningById.get(job.definition.id) ?? 0) >= cap) continue
+    if (!mayStart(job.definition)) continue
     if (best === -1) {
       best = i
       continue
@@ -177,21 +189,25 @@ function nextJob(): number {
   return best
 }
 
+function count(definition: HelperDefinition<unknown, unknown>, delta: 1 | -1): void {
+  runningById.set(definition.id, (runningById.get(definition.id) ?? 0) + delta)
+  if (definition.pool)
+    runningByPool.set(definition.pool.id, (runningByPool.get(definition.pool.id) ?? 0) + delta)
+  if (definition.background) runningBackground += delta
+}
+
 function pump(): void {
-  while (running < MAX_RUNNING_HELPERS) {
+  for (;;) {
     const index = nextJob()
     if (index === -1) return
     const [job] = queue.splice(index, 1)
-    const id = job.definition.id
-    running++
-    runningById.set(id, (runningById.get(id) ?? 0) + 1)
+    count(job.definition, 1)
     void execute(job)
       .catch((error: unknown) =>
         failure('failed', error instanceof Error ? error.message : String(error))
       )
       .then((outcome) => {
-        running--
-        runningById.set(id, (runningById.get(id) ?? 1) - 1)
+        count(job.definition, -1)
         job.resolve(outcome)
         pump()
       })

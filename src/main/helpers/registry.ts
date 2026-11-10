@@ -36,8 +36,16 @@ export interface HelperDefinition<Input, Output> {
   timeoutMs: number
   /** Higher runs first; equal priorities run in the order asked. */
   priority: number
-  /** How many of this helper may run at once (the runner's own cap still holds). */
+  /** How many of this helper may run at once. */
   concurrency?: number
+  /** Helpers that share a cap: every helper naming the same pool id runs at
+   *  most `concurrency` at once, together (the two digests share two). */
+  pool?: { id: string; concurrency: number }
+  /** Work nobody is waiting on (the digests): it counts against the runner's
+   *  background cap (`MAX_RUNNING_HELPERS`). A helper that is not background
+   *  (a title, a git call, a prompt a person waits on) never waits behind
+   *  background work; only its own `concurrency` and `pool` hold it. */
+  background?: boolean
   /** Tries before an unreadable reply or a failed run is reported: 2 is one retry. */
   attempts?: number
 }
