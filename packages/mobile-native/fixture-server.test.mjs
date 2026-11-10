@@ -17,11 +17,16 @@ import { fileURLToPath } from 'node:url'
 import { afterAll, describe, expect, it } from 'vitest'
 import {
   DAEMON_FLAGS,
+  DAEMON_SETTINGS,
+  ENV_ALLOWLIST,
   MANIFEST_NAME,
   MUTATIONS,
   OWNER,
   REDIRECTS,
+  childEnv,
   flagsFor,
+  loginEnvOf,
+  loginShellEnvOf,
   parseArgs,
   proveFixture,
   proveNoProvider,
@@ -49,14 +54,17 @@ import {
    off (Claude) and caught (Codex), a fixture-issued token pairs and reaches
    the sessions directly and through the relay, five tampered tokens are
    refused by the check's name, both redirect schemes register. The manifest
-   and the printed lines carry the token's path and never the token. Four more
+   and the printed lines carry the token's path and never the token. More
    boots, one per mutation, prove the proof goes red, none of them with the
    usage flags dropped: without the title opt-out the first and third checks
    fail and the recorder catches the one-shot; with the guard bypassed through
    the test hook the daemon still announces titles off and the recorder alone
    catches it; with the usage clock started the recorder and the push channel
    catch the reads; with a PATH without the recorders the second check aborts
-   before any process. `--preflight` runs the two pre-boot checks alone. */
+   before any process; a daemon handed another PATH, or another home of the
+   fixture's own, is refused by the fifth or the seventh check before any
+   chat. `--preflight` runs the two pre-boot checks alone. The stand-in login
+   shell answers what was written into it, never what it is run with. */
 
 const SCRIPT = fileURLToPath(new URL('./scripts/fixture-server.mjs', import.meta.url))
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
@@ -123,13 +131,14 @@ describe('parseArgs', () => {
     expect(() => parseArgs(['--tmpdir'])).toThrow(/--tmpdir needs a value/)
   })
 
-  it('names the three flags and the five mutations, and drops a flag for one mutation only', () => {
+  it('names the three flags and the six mutations, and drops a flag for one mutation only', () => {
     expect(DAEMON_FLAGS).toEqual(['--no-titles', '--test-no-activate', '--test-no-machine-usage'])
     expect(MUTATIONS).toEqual([
       'drop-title-opt-out',
       'bypass-title-guard',
       'start-usage-clock',
       'divergent-daemon-env',
+      'divergent-home',
       'drop-recorders'
     ])
     expect(flagsFor(null)).toEqual(DAEMON_FLAGS)
@@ -141,6 +150,7 @@ describe('parseArgs', () => {
       'bypass-title-guard',
       'start-usage-clock',
       'divergent-daemon-env',
+      'divergent-home',
       'drop-recorders'
     ])
       expect(flagsFor(m), m).toEqual(DAEMON_FLAGS)
@@ -282,14 +292,17 @@ describe('the run folder', () => {
     const stubs = installStubs(path.join(root, 'stubs'))
     expect(readFileSync(stubs.log, 'utf8')).toBe('')
     expect((statSync(stubs.log).mode & 0o777).toString(8)).toBe('600')
+    expect(readdirSync(stubs.home)).toEqual([])
     writeFileSync(stubs.log, 'a line of an earlier run\n')
     writeFileSync(path.join(stubs.claudeConfigDir, 'left-behind'), 'x')
+    writeFileSync(path.join(stubs.home, '.claude.json'), '{}')
     const before = snapshot(stubs.dir)
     expect(installStubs(path.join(root, 'stubs'), { reuse: true })).toEqual(stubs)
     expect(snapshot(stubs.dir)).toEqual(before)
     installStubs(path.join(root, 'stubs'))
     expect(readFileSync(stubs.log, 'utf8')).toBe('')
     expect(readdirSync(stubs.claudeConfigDir)).toEqual([])
+    expect(readdirSync(stubs.home)).toEqual([])
   })
 
   it('a recorder log that is missing is a failure to read, never "no calls"', () => {
@@ -335,6 +348,62 @@ describe('the run folder', () => {
   })
 })
 
+describe("the daemon's home and login shell", () => {
+  const dirs = []
+  afterAll(() => {
+    for (const dir of dirs) rmSync(dir, { recursive: true, force: true })
+  })
+  const install = () => {
+    const root = mkdtempSync(path.join(os.tmpdir(), 'clave-native-login-'))
+    dirs.push(root)
+    claimRunFolder(root)
+    return { root, stubs: installStubs(path.join(root, 'stubs')) }
+  }
+
+  it("hands the daemon the fixture's home, never this shell's, and keeps the daemon's two settings out of the login environment", () => {
+    const { root, stubs } = install()
+    expect(ENV_ALLOWLIST).not.toContain('HOME')
+    const env = childEnv('http://127.0.0.1:9', path.join(root, 'server'), stubs)
+    expect(env.HOME).toBe(stubs.home)
+    expect(env.HOME).not.toBe(process.env.HOME)
+    expect(env.CLAVE_ANTASPHERE_ISSUER).toBe('http://127.0.0.1:9')
+    const login = loginEnvOf(stubs)
+    expect(login.HOME).toBe(stubs.home)
+    expect(login.PATH.startsWith(stubs.dir + path.delimiter)).toBe(true)
+    for (const key of DAEMON_SETTINGS) expect(Object.keys(login)).not.toContain(key)
+    // The login environment is the daemon's own less its two settings, key for key.
+    const less = Object.keys(env).filter((key) => !DAEMON_SETTINGS.includes(key))
+    expect(Object.keys(login).sort()).toEqual(less.sort())
+    // The one mutation of the PATH changes the daemon's environment, never the shell's.
+    expect(childEnv('http://127.0.0.1:9', root, stubs, { recorders: false }).HOME).toBe(stubs.home)
+  })
+
+  it('the stand-in shell answers the environment written into it, whatever environment it is run with, and runs a -c command on that same one', () => {
+    const { root, stubs } = install()
+    // A caller's environment of its own, a sentinel among it: none of it may come back.
+    const caller = { PATH: '/usr/bin:/bin', HOME: root, CLAVE_FIXTURE_SENTINEL: 'from-the-caller' }
+    const answer = loginShellEnvOf(stubs.shell, caller)
+    const fixed = loginEnvOf(stubs)
+    expect(Object.keys(answer).sort()).toEqual(Object.keys(fixed).sort())
+    expect(answer.CLAVE_FIXTURE_SENTINEL).toBeUndefined()
+    expect(answer.PATH).toBe(fixed.PATH)
+    expect(answer.HOME).toBe(stubs.home)
+    expect(answer.SHELL).toBe(stubs.shell)
+    // A command run through it, as the host runs one (`-l -c <command>`,
+    // packages/host/src/shell-launch.ts), sees the written environment too.
+    const seen = execFileSync(
+      stubs.shell,
+      [
+        '-l',
+        '-c',
+        'if [ -n "$CLAVE_FIXTURE_SENTINEL" ]; then printf set; else printf unset; fi; printf "|%s" "$HOME"'
+      ],
+      { env: caller, encoding: 'utf8' }
+    )
+    expect(seen).toBe(`unset|${stubs.home}`)
+  })
+})
+
 describe('the shell rule', () => {
   it('mirrors the names the host runs a command through, and refuses the stand-in under any other name', () => {
     const source = readFileSync(path.join(REPO, 'packages/host/src/shell-launch.ts'), 'utf8')
@@ -372,7 +441,7 @@ describe('the fixture server', () => {
     for (const dir of folders) rmSync(dir, { recursive: true, force: true })
   })
 
-  it('passes its two pre-boot checks, boots the provider on the named port, passes its three post-boot checks, signs the daemon in, lists it on the relay, seeds the chat, and the whole proof passes', async () => {
+  it('passes its two pre-boot checks, boots the provider on the named port, passes its five post-boot checks, signs the daemon in, lists it on the relay, seeds the chat, and the whole proof passes', async () => {
     const lines = []
     const tmpdir = tmp('test')
     const issuerPort = await freePort()
@@ -392,12 +461,14 @@ describe('the fixture server', () => {
       ['boot', 'announced', true],
       ['boot', 'announced', true],
       ['boot', 'observed', true],
+      ['boot', 'observed', true],
       ['boot', 'observed', true]
     ])
     // The daemon's environment, by key names: the allowlist's that this shell
     // had, the fixture's own, nothing else (the sixth check compares the lists).
     expect(fixture.checks[5].detail).toMatch(/^\d+ keys: /)
     for (const key of [
+      'HOME',
       'SHELL',
       'PATH',
       'CLAUDE_CONFIG_DIR',
@@ -405,6 +476,9 @@ describe('the fixture server', () => {
       'CLAVE_ANTASPHERE_ISSUER'
     ])
       expect(fixture.checks[5].detail).toContain(key)
+    // Its home, asked of the daemon itself: the fixture's folder.
+    expect(fixture.checks[6].detail).toBe('os.homedir() and HOME are stubs/home')
+    expect(fixture.server.env.HOME).toBe(fixture.stubs.home)
     expect(readFileSync(path.join(tmpdir, RUN_FOLDER_MARKER), 'utf8')).toBe(RUN_FOLDER_OWNER)
     expect(fixture.server.discovery).toMatchObject({
       titles: 'off',
@@ -440,6 +514,7 @@ describe('the fixture server', () => {
         flags: DAEMON_FLAGS,
         announces: { titles: 'off', testMode: true, machineUsage: false }
       },
+      stubs: { home: fixture.stubs.home },
       mutation: null
     })
     expect(lines.join('\n')).not.toContain(token)
@@ -571,11 +646,33 @@ describe('the fixture server', () => {
     }
     expect(error).not.toBeNull()
     expect(error.message).toMatch(/refuses to boot, before any chat/)
-    expect(error.checks).toHaveLength(6)
+    expect(error.checks).toHaveLength(7)
     expect(error.checks.slice(0, 4).every((c) => c.ok)).toBe(true)
     expect(error.checks[4]).toMatchObject({ stage: 'boot', kind: 'observed', ok: false })
-    expect(error.checks[4].detail).toMatch(
-      /the title one-shot would start|codex resolves to|the one-shot's PATH does not start with/
+    // The login PATH comes from the stand-in, the same whatever the daemon is
+    // handed: the divergent PATH shows in the daemon's own environment.
+    expect(error.checks[4].detail).toMatch(/the daemon's own PATH does not start with/)
+  }, 240_000)
+
+  it('refuses to boot a daemon whose home is not the one checked: the seventh check, asked of the daemon itself, fails before any chat', async () => {
+    let error = null
+    try {
+      await startFixture({
+        ports: { server: 0, relay: 0, issuer: 0 },
+        tmpdir: tmp('elsewhere-home'),
+        mutate: 'divergent-home',
+        log: () => {}
+      })
+    } catch (e) {
+      error = e
+    }
+    expect(error).not.toBeNull()
+    expect(error.message).toMatch(/refuses to boot, before any chat/)
+    expect(error.checks).toHaveLength(7)
+    expect(error.checks.slice(0, 6).every((c) => c.ok)).toBe(true)
+    expect(error.checks[6]).toMatchObject({ stage: 'boot', kind: 'observed', ok: false })
+    expect(error.checks[6].detail).toMatch(
+      /os\.homedir\(\) inside the daemon is not the fixture's home/
     )
   }, 240_000)
 

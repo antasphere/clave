@@ -149,7 +149,7 @@ daemon's identity, its keychain file on macOS and its relay credential; `<tmpdir
 `<tmpdir>/scratch`; `<tmpdir>/stubs`) is the fixture's state and survives a restart: the
 token, the server id and the machine id stay the same, the daemon registers and signs in
 anew (the provider's registrations live in its memory), the chat is seeded again. Remove
-the folder to start over. Nothing the fixture cleans lies outside what it created: the two
+the folder to start over. Nothing the fixture cleans lies outside what it created: the three
 owned folders and the recorder log under `<tmpdir>/stubs`, the daemon's stored registration
 and session under `<tmpdir>/server`.
 
@@ -165,29 +165,40 @@ through the machine login's keychain item. The fixture keeps all three off:
   machine login); the daemon announces the three in its discovery file as `titles: "off"`,
   `testMode: true`, `machineUsage: false`;
 - the daemon's environment is built from an allowlist and nothing of the calling shell's
-  beyond it: `HOME`, `USER`, `LOGNAME`, `TMPDIR`, `LANG`, `LC_ALL`, `LC_CTYPE`, `TERM` and
-  `TZ` as they are; `SHELL`, a script named `zsh` under `<tmpdir>/stubs` that prints the
-  daemon's environment whatever it is asked (the daemon reads its login environment through
-  `$SHELL -lic 'env -0'`, and only a POSIX shell's name is kept); `PATH`, the stubs folder
-  then the system directories, so the **recorders** `claude` and `codex` are the only ones
-  the daemon can find (every invocation appends one line, time, command, first two
-  arguments, never the stdin, to `<tmpdir>/stubs/recorder.log`); `CLAUDE_CONFIG_DIR` and
-  `CODEX_HOME`, two folders of the fixture's own recreated empty at every boot; the issuer; the keychain file on macOS. Both Bun children start with `--no-env-file`, so no `.env` of the working directory reaches them past the allowlist.
+  beyond it: `USER`, `LOGNAME`, `TMPDIR`, `LANG`, `LC_ALL`, `LC_CTYPE`, `TERM` and `TZ` as
+  they are; `HOME`, `<tmpdir>/stubs/home`, a folder of the fixture's own recreated empty at
+  every boot, so the daemon's readers that find the home through `os.homedir()` or `HOME`
+  (`~/.claude/projects`, `~/.claude.json`, `~/.codex/auth.json`, the analytics plugin it
+  forks with that `HOME`) find the fixture's folder and never the person's; `SHELL`, a
+  script named `zsh` under `<tmpdir>/stubs` (the daemon reads its login environment through
+  `$SHELL -lic 'env -0'`, and only a POSIX shell's name is kept) that answers the login
+  environment written into it at the install, under `env -i`, whatever environment it is
+  run with, and runs a `-c` command on that same environment; `PATH`, the stubs folder then
+  the system directories, so the **recorders** `claude` and `codex` are the only ones the
+  daemon can find (every invocation appends one line, time, command, first two arguments,
+  never the stdin, to `<tmpdir>/stubs/recorder.log`); `CLAUDE_CONFIG_DIR` and `CODEX_HOME`,
+  two more folders of the fixture's own recreated empty at every boot; the issuer; the
+  keychain file on macOS. The login environment the stand-in answers is all of it less the
+  last two, the daemon's own settings, which it reads from its process environment and no
+  child of it needs. Both Bun children start with `--no-env-file`, so no `.env` of the
+  working directory reaches them past the allowlist.
 
 It checks in two stages, prints every check as `check ok` or `check FAIL`, and **refuses to
 go on unless all pass** (exit code 2). Before any process starts (`preflight`): (1) the argv
-the daemon will get carries the three flags; (2) the environment the daemon will get, read
-the way the daemon reads its login environment, resolves `claude` and `codex` to the
-recorders. After the daemon announced itself and before any chat (`bootChecks`): (3) the
-discovery file says titles off; (4) it says the test mode on and the machine usage off, and
-the daemon answers `POST /e2e/evaluate`; (5) asked of the daemon itself through its test
-hooks, the title one-shot's own resolver (the daemon's cached login environment, the one-shot's locate) names the recorder `claude`, the cached login PATH names the recorder `codex`, and the daemon's `SHELL` is the fixture's `zsh` under a name the daemon runs a command through (the host's `POSIX_SHELLS`: any other name would send the Codex read to the real `/bin/zsh`); (6) asked of the daemon itself, the keys of its environment are the allowlist's and the fixture's own and nothing else (names compared, never values). `--preflight` runs the first two alone on the folder's stubs and exits, no process started: the way for a lane to show its worktree's stance before its first boot. A folder the fixture may write and clean is one it created, or one it marked: a regular file `.clave-native-fixture` at its root holding exactly the fixture's stamp (read with `lstat`, so a symlink is refused); a folder holding anything else and no marker, or a marker naming another owner, is refused with exit code 2 before a byte is written, and a dry run on a folder it reuses rewrites nothing.
+the daemon will get carries the three flags; (2) both the environment the daemon will get
+and the login environment its shell answers, read the way the daemon reads it, name the
+fixture's home as `HOME` and resolve `claude` and `codex` to the recorders. After the daemon
+announced itself and before any chat (`bootChecks`): (3) the discovery file says titles off;
+(4) it says the test mode on and the machine usage off, and the daemon answers
+`POST /e2e/evaluate`; (5) asked of the daemon itself through its test
+hooks, the title one-shot's own resolver (the daemon's cached login environment, the one-shot's locate) names the recorder `claude`, the cached login PATH names the recorder `codex`, the daemon's own `PATH` starts with the recorders' folder, and the daemon's `SHELL` is the fixture's `zsh` under a name the daemon runs a command through (the host's `POSIX_SHELLS`: any other name would send the Codex read to the real `/bin/zsh`); (6) asked of the daemon itself, the keys of its environment are the allowlist's and the fixture's own and nothing else (names compared, never values); (7) asked of the daemon itself, `os.homedir()` and `HOME` both resolve to the fixture's home (compared inside the daemon, which answers yes or no and never a path). `--preflight` runs the first two alone on the folder's stubs and exits, no process started: the way for a lane to show its worktree's stance before its first boot. A folder the fixture may write and clean is one it created, or one it marked: a regular file `.clave-native-fixture` at its root holding exactly the fixture's stamp (read with `lstat`, so a symlink is refused); a folder holding anything else and no marker, or a marker naming another owner, is refused with exit code 2 before a byte is written, and a dry run on a folder it reuses rewrites nothing.
 
 **While it runs, the recorder guards every mode.** The first line a recorder writes, in the plain run or under `--approve`, is printed and the fixture stops the three processes and exits 3; a read of the log that fails (the file gone or unreadable) stops them the same way, a failure and never "no calls" (the log exists, empty, from the install on). The enforcement is continuous, never a dry run.
 
 `--check` seeds the chat, waits past the clock's first tick and asserts: zero recorder
-lines, no `session.title_changed` for the chat on the push channel, the two owned folders
-still empty, no usage event on the push channel; then an explicit Claude usage read answers
+lines, no `session.title_changed` for the chat on the push channel, the two owned credential
+folders still empty and the fixture's home without `.claude`, `.claude.json` or `.codex`, no
+usage event on the push channel; then an explicit Claude usage read answers
 an error without the machine login and leaves the recorder silent, and an explicit Codex
 usage read reaches the codex recorder (exactly one line) and answers an error. Each row says
 what it rests on: `argv`, `announced` (a flag the daemon states, derived from the code), `observed` (what the fixture saw of the daemon's own environment or resolver), `recorder`, `wire` or `owned-folders`; no row rests on a provider's answer, none being expected, and the person's own folders (`~/.claude`, their Codex home) are never read. The recorder log is the evidence that no CLI ran; the owned folders staying empty is a supporting observation beside it, never a zero-call guarantee of its own.
@@ -204,8 +215,11 @@ keychain item is read by username through `/usr/bin/security`, which no environm
 variable redirects: a clock run without them would read the person's own login);
 `divergent-daemon-env` passes the preflight on the recorders' environment and starts the
 daemon on the calling shell's PATH instead, so the fifth check fails and nothing is seeded;
-`drop-recorders` starts nothing: the second check aborts before any process. The test runs
-the five, and the running-mode guard once.
+`divergent-home` passes the preflight on the fixture's home and starts the daemon with
+another empty folder of the fixture's own as `HOME` (`<tmpdir>/stubs/elsewhere-home`, never
+the person's home), so the seventh check fails and nothing is seeded; `drop-recorders`
+starts nothing: the second check aborts before any process. The test runs the six, and the
+running-mode guard once.
 
 Options: `--approve` approves every pending pairing as it appears (off by default; the token file is the way otherwise); `--check`; `--preflight`; `--json`, one JSON object instead of the lines, the checks included; `--timeout <ms>`, how long each process may take to announce itself (90 s by default). Exit codes: 2 a refused boot or a refused run folder, 3 the recorder caught an attempt while running or its log could not be read, 1 a failed proof or an error. A port of 0 takes a free one; without `--tmpdir` a fresh folder under the system
 temporary directory. On the Mac, the iOS simulator reaches `127.0.0.1` directly; the Android
@@ -228,8 +242,8 @@ file at the root of its folder, owned by the app: `apps/mobile-ios/ci.sh` and
   (Xcode 26.0.1, build 17A400, Swift 6.2) exported; the Android job runs on
   `ubuntu-latest` with Temurin JDK 21 (`JAVA_HOME` set by `actions/setup-java`), Gradle's
   cache (`gradle/actions/setup-gradle`), the runner's `ANDROID_HOME`, and `sdkmanager` on
-  the `PATH`, so the script installs the platform and build tools it pins
-  (`platforms;android-36`, `build-tools;36.0.0`) into it;
+  the `PATH`, so the script installs the platform and build tools it pins into it (the
+  versions are the app's, in its own `ci.sh`);
 - the script builds the app and runs its tests, prints its counts, and its exit code is
   the verdict; the results it leaves under `build/` are kept as artifacts for seven days;
 - a folder without `ci.sh` is one log line and a pass, so the workflow landed before the
