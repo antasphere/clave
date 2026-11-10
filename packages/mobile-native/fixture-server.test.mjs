@@ -24,6 +24,7 @@ import {
   loginEnvOf,
   loginShellEnvOf,
   parseArgs,
+  preflight,
   POSIX_SHELL_NAMES,
   RECORDER_LOG_NAME,
   REPO,
@@ -117,7 +118,7 @@ describe('parseArgs', () => {
 })
 
 describe('--preflight', () => {
-  it('runs the two pre-boot checks on the stubs and exits 0, no process started', () => {
+  it('runs the two pre-boot checks on the stubs and exits 0, no daemon, relay or provider started', () => {
     const dir = mkdtempSync(path.join(os.tmpdir(), 'clave-native-preflight-'))
     try {
       const run = spawnSync(process.execPath, [SCRIPT, '--preflight', '--tmpdir', dir], {
@@ -335,6 +336,26 @@ describe("the daemon's home and login shell", () => {
     expect(Object.keys(login).sort()).toEqual(less.sort())
     // The one mutation of the PATH changes the daemon's environment, never the shell's.
     expect(childEnv('http://127.0.0.1:9', root, stubs, { recorders: false }).HOME).toBe(stubs.home)
+  })
+
+  it("refuses, before any daemon, an environment whose HOME is not the fixture's home", async () => {
+    const { root, stubs } = install()
+    const env = {
+      ...childEnv('http://127.0.0.1:9', path.join(root, 'server'), stubs),
+      HOME: path.join(root, 'elsewhere')
+    }
+    const checks = await preflight({ flags: DAEMON_FLAGS, stubs, env, log: () => {} })
+    expect(checks[0].ok).toBe(true)
+    expect(checks[1]).toMatchObject({ stage: 'preflight', kind: 'observed', ok: false })
+    expect(checks[1].detail).toMatch(/HOME in the daemon's environment is not the fixture's home/)
+  })
+
+  it('the booted cases sit in their own file, behind their opt-in', () => {
+    // Renamed out of the suite or stripped of its guard, the booted file
+    // would run nowhere, or everywhere; either fails here.
+    const booted = readFileSync(new URL('./fixture-server.boot.test.mjs', import.meta.url), 'utf8')
+    expect(booted).toContain("const BOOT = process.env.CLAVE_FIXTURE_BOOT === '1'")
+    expect(booted).toContain("describe.runIf(BOOT)('the fixture server'")
   })
 
   it('the stand-in shell answers the environment written into it, whatever environment it is run with, and runs a -c command on that same one', () => {

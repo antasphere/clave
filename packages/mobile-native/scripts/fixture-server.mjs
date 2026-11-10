@@ -12,7 +12,7 @@
 // It checks before it boots and again before it seeds, prints every check
 // as `check ok` or `check FAIL`, and refuses to go on unless all pass:
 //
-//   before any process (`preflight`, also alone as `--preflight`):
+//   before any daemon, relay or provider (`preflight`, also alone as `--preflight`):
 //   1. flags: the argv the daemon will be started with carries --no-titles,
 //      --test-no-activate and --test-no-machine-usage;
 //   2. the recorders stand in: the environment the daemon will be started
@@ -66,7 +66,8 @@
 // with the token in the file otherwise), under the same watch. `--check`
 // runs the proof in this process after the boot and exits non-zero on a
 // failure, then stops everything. `--preflight` runs the two pre-boot checks
-// on the folder's stubs and exits, no process started. `--json` prints one
+// on the folder's stubs and exits, starting no daemon, relay or provider (the
+// stand-in shell runs, as the daemon would run it). `--json` prints one
 // JSON object instead of the lines. A port of 0 takes a free one; without
 // `--tmpdir` a fresh folder under the system temp directory is used. Exit
 // codes: 2 a refused boot or a refused run folder, 3 the recorder caught an
@@ -124,8 +125,9 @@
 //   - `--mutate <name>` is the verifier's knob and nobody's configuration; a
 //     mutant run never boots the daemon with the wrong usage flags against
 //     this Mac's login. `drop-title-opt-out` boots without --no-titles (the
-//     recorders in place, the usage flags kept) and continues past the failed
-//     first and third checks so the recorder shows the one-shot too;
+//     recorders in place, both usage flags kept), fails the first and third
+//     checks, and is refused before any chat: the one-shot itself is
+//     bypass-title-guard's to show, every flag kept;
 //     `bypass-title-guard` keeps every flag and re-opens the titles through
 //     the daemon's test hook, so the daemon still announces titles off while
 //     the one-shot really runs, and the recorder alone catches it;
@@ -143,7 +145,7 @@
 //     the fixture's own as HOME (<tmpdir>/stubs/elsewhere-home, never the
 //     person's home), so the seventh check, asked of the daemon itself,
 //     fails and nothing is seeded; `drop-recorders` starts nothing at all:
-//     the second check aborts before any process.
+//     the second check aborts before any daemon, relay or provider.
 //
 // Secrets: the daemon's token is in the token file (mode 0600) and in the
 // discovery file under the data folder, never on stdout; on macOS the
@@ -761,7 +763,7 @@ const expect = (condition, message) => {
 }
 
 /**
- * The two checks before any process starts: the argv the daemon will get
+ * The two checks before any daemon, relay or provider starts: the argv the daemon will get
  * carries the three flags (`argv`), and both the environment it will get and
  * the login environment its shell answers, read the way the daemon reads
  * it, name the fixture's home and resolve `claude` and `codex` to the
@@ -1103,7 +1105,10 @@ export async function startFixture({
     recorders: mutate !== 'drop-recorders'
   })
   const checks = await preflight({ flags, stubs, env, log })
-  if (!checks[1].ok || (!checks[0].ok && !mutate)) throw refusal(checks, 'daemon')
+  // Only drop-title-opt-out boots with the flags check failed, to show the
+  // daemon announcing titles on; it is refused below, before any chat.
+  if (!checks[1].ok || (!checks[0].ok && mutate !== 'drop-title-opt-out'))
+    throw refusal(checks, 'daemon')
   const provider = await startOidcProvider({
     port: ports?.issuer ?? 0,
     registrationStatus: 200,
@@ -1164,10 +1169,10 @@ export async function startFixture({
     })
     log(`server ${server.url}, its token in ${server.tokenFile}`)
     checks.push(...(await bootChecks({ server, stubs, log })))
-    // The resolver, the environment's keys and the home stop every run,
-    // a mutant one included; the flags and the announcement only a plain one.
-    if (!checks[4].ok || !checks[5].ok || !checks[6].ok || (checks.some((c) => !c.ok) && !mutate))
-      throw refusal(checks, 'chat')
+    // Any failed check stops the run before any chat, a mutant run included: a
+    // deliberately broken prerequisite never seeds. The mutations that seed
+    // (bypass-title-guard, start-usage-clock) pass every check.
+    if (checks.some((c) => !c.ok)) throw refusal(checks, 'chat')
     watch = watchEvents(server)
     if (mutate === 'bypass-title-guard') {
       const disabled = await evaluate(

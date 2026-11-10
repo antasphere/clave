@@ -5,7 +5,7 @@ import { createServer } from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { afterAll, describe, expect, it } from 'vitest'
+import { afterAll, beforeEach, describe, expect, it } from 'vitest'
 import {
   DAEMON_FLAGS,
   MANIFEST_NAME,
@@ -44,8 +44,10 @@ import {
    Every case here starts this checkout's daemon, a relay and the provider,
    and most seed an Echo chat, so they run only on purpose: with
    CLAVE_FIXTURE_BOOT=1, which the CI steps set. A name filter that widens, a
-   run of the folder or of the whole suite never boots them by accident; on CI
-   without the variable, the first case fails rather than let them skip. The
+   run of the folder or of the whole suite never boots them by accident (a
+   whole-suite run still boots the repository's other daemon tests, under
+   scripts/). On CI the first case fails without the variable, and the file
+   fails unless every booted case ran, so CI cannot lose them in silence. The
    parts that start nothing are in fixture-server.test.mjs. */
 
 const SCRIPT = fileURLToPath(new URL('./scripts/fixture-server.mjs', import.meta.url))
@@ -71,6 +73,14 @@ const freePort = () =>
 
 /** The booted cases run only on purpose: CLAVE_FIXTURE_BOOT=1. */
 const BOOT = process.env.CLAVE_FIXTURE_BOOT === '1'
+/** How many booted cases the block below holds: on CI every one of them runs,
+ *  or the file fails (an inverted or skipped block, a weakened first case). */
+const BOOTED_CASES = 8
+let bootedRan = 0
+afterAll(() => {
+  if (process.env.CI === 'true')
+    expect(bootedRan, 'the booted cases that ran on CI').toBe(BOOTED_CASES)
+})
 
 describe('the fixture server, booted only on purpose', () => {
   it('runs on CI: a CI step without CLAVE_FIXTURE_BOOT=1 fails here rather than skip the boots', () => {
@@ -79,6 +89,9 @@ describe('the fixture server, booted only on purpose', () => {
 })
 
 describe.runIf(BOOT)('the fixture server', () => {
+  beforeEach(() => {
+    bootedRan += 1
+  })
   const folders = []
   const fixtures = []
   const tmp = (name) => {
@@ -198,26 +211,35 @@ describe.runIf(BOOT)('the fixture server', () => {
     expect(recorded[0]).toMatch(/ codex app-server /)
   }, 240_000)
 
-  it('goes red without the title opt-out: the flags check and the announcement fail, and the recorder catches the one-shot', async () => {
-    const fixture = await startFixture({
-      ports: { server: 0, relay: 0, issuer: 0 },
-      tmpdir: tmp('no-opt-out'),
-      mutate: 'drop-title-opt-out',
-      log: () => {}
-    })
-    fixtures.push(fixture)
-    expect(fixture.checks[0]).toMatchObject({ stage: 'preflight', kind: 'argv', ok: false })
-    expect(fixture.checks[0].detail).toMatch(/missing --no-titles/)
-    expect(fixture.checks[2]).toMatchObject({ stage: 'boot', kind: 'announced', ok: false })
-    expect(fixture.checks[2].detail).toMatch(/titles "on"/)
-    expect(fixture.server.flags).toEqual(['--test-no-activate', '--test-no-machine-usage'])
-    const results = await proveNoProvider(fixture, { log: () => {} })
-    const recorder = results.find((r) => r.name.startsWith('the recorders saw no claude'))
-    expect(recorder.ok).toBe(false)
-    expect(recorder.detail).toMatch(/ claude -p /)
-    const named = results.find((r) => r.name === 'the seeded chat was not named by a one-shot')
-    expect(named.ok).toBe(false)
-    expect(named.detail).toMatch(/named the chat "fixture chat"/)
+  it('refuses without the title opt-out, before any chat: the flags check and the announcement fail, and nothing reaches the recorder', async () => {
+    // A deliberately broken prerequisite never seeds: the daemon boots without
+    // --no-titles, both usage flags kept, to show it announcing titles on, and
+    // the fixture refuses there. The one-shot itself is the bypass case's.
+    const tmpdir = tmp('no-opt-out')
+    let error = null
+    try {
+      // A start that returns is a refusal that did not come: the fixture is
+      // stopped with the others, and the assertions below say why it failed.
+      fixtures.push(
+        await startFixture({
+          ports: { server: 0, relay: 0, issuer: 0 },
+          tmpdir,
+          mutate: 'drop-title-opt-out',
+          log: () => {}
+        })
+      )
+    } catch (e) {
+      error = e
+    }
+    expect(error).not.toBeNull()
+    expect(error.message).toMatch(/refuses to boot, before any chat/)
+    expect(error.checks).toHaveLength(7)
+    expect(error.checks[0]).toMatchObject({ stage: 'preflight', kind: 'argv', ok: false })
+    expect(error.checks[0].detail).toMatch(/missing --no-titles/)
+    expect(error.checks[2]).toMatchObject({ stage: 'boot', kind: 'announced', ok: false })
+    expect(error.checks[2].detail).toMatch(/titles "on"/)
+    expect(error.checks.filter((c) => !c.ok)).toHaveLength(2)
+    expect(readFileSync(path.join(tmpdir, 'stubs', 'recorder.log'), 'utf8')).toBe('')
   }, 240_000)
 
   it('goes red with the guard bypassed through the test hook: every check passes, the daemon still announces titles off, and the recorder alone catches the one-shot', async () => {
@@ -238,6 +260,10 @@ describe.runIf(BOOT)('the fixture server', () => {
     const named = results.find((r) => r.name === 'the seeded chat was not named by a one-shot')
     expect(named.ok).toBe(false)
     expect(named.detail).toMatch(/named the chat "fixture chat"/)
+    // The one-shot's line came before the usage read, and the Claude row counts
+    // only the lines the read itself adds: it stays green, the blame elsewhere.
+    const claudeRead = results.find((r) => r.name.startsWith('an explicit Claude usage read'))
+    expect(claudeRead.ok, claudeRead.detail).toBe(true)
     // The owned folders stay empty: the one-shot reached the recorder, never a real claude.
     const owned = results.find((r) => r.kind === 'owned-folders')
     expect(owned.ok).toBe(true)
@@ -266,12 +292,16 @@ describe.runIf(BOOT)('the fixture server', () => {
   it('refuses to boot with a PATH without the recorders: the second check aborts before any process', async () => {
     let error = null
     try {
-      await startFixture({
-        ports: { server: 0, relay: 0, issuer: 0 },
-        tmpdir: tmp('no-recorders'),
-        mutate: 'drop-recorders',
-        log: () => {}
-      })
+      // A start that returns is a refusal that did not come: the fixture is
+      // stopped with the others, and the assertions below say why it failed.
+      fixtures.push(
+        await startFixture({
+          ports: { server: 0, relay: 0, issuer: 0 },
+          tmpdir: tmp('no-recorders'),
+          mutate: 'drop-recorders',
+          log: () => {}
+        })
+      )
     } catch (e) {
       error = e
     }
@@ -285,12 +315,16 @@ describe.runIf(BOOT)('the fixture server', () => {
   it('refuses to boot a daemon whose environment is not the one checked: the fifth check, asked of the daemon itself, fails before any chat', async () => {
     let error = null
     try {
-      await startFixture({
-        ports: { server: 0, relay: 0, issuer: 0 },
-        tmpdir: tmp('divergent'),
-        mutate: 'divergent-daemon-env',
-        log: () => {}
-      })
+      // A start that returns is a refusal that did not come: the fixture is
+      // stopped with the others, and the assertions below say why it failed.
+      fixtures.push(
+        await startFixture({
+          ports: { server: 0, relay: 0, issuer: 0 },
+          tmpdir: tmp('divergent'),
+          mutate: 'divergent-daemon-env',
+          log: () => {}
+        })
+      )
     } catch (e) {
       error = e
     }
@@ -307,12 +341,16 @@ describe.runIf(BOOT)('the fixture server', () => {
   it('refuses to boot a daemon whose home is not the one checked: the seventh check, asked of the daemon itself, fails before any chat', async () => {
     let error = null
     try {
-      await startFixture({
-        ports: { server: 0, relay: 0, issuer: 0 },
-        tmpdir: tmp('elsewhere-home'),
-        mutate: 'divergent-home',
-        log: () => {}
-      })
+      // A start that returns is a refusal that did not come: the fixture is
+      // stopped with the others, and the assertions below say why it failed.
+      fixtures.push(
+        await startFixture({
+          ports: { server: 0, relay: 0, issuer: 0 },
+          tmpdir: tmp('elsewhere-home'),
+          mutate: 'divergent-home',
+          log: () => {}
+        })
+      )
     } catch (e) {
       error = e
     }
