@@ -3,10 +3,13 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { execFileSync } from 'node:child_process'
 import {
   chmodSync,
+  existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
   realpathSync,
+  rmdirSync,
   rmSync,
   writeFileSync
 } from 'node:fs'
@@ -29,23 +32,18 @@ const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 // PR #355), so that a broken wiring, titles on, still reaches no provider:
 // `--test-no-activate` and `--test-no-machine-usage` on every boot (no usage
 // clock, no machine login read), Bun with `--no-env-file`, an allowlisted
-// environment, a stand-in login shell, recorders for `claude` and `codex`
-// first on its PATH, an empty Claude config folder and Codex home, a keychain
-// FILE on macOS, and the account issuer on a closed loopback port, never the
-// hub. The recorders' log must stay empty. No chat is created.
+// environment, a home folder of the test's own as HOME (the daemon's readers
+// that find the home through `os.homedir()` or HOME find it, never the
+// person's), a TMUX_TMPDIR of the test's own (a tmux the daemon finds lists
+// that folder's `clave` socket, never the person's), a stand-in login shell,
+// recorders for `claude` and `codex` first
+// on its PATH, an empty Claude config folder and Codex home, a keychain FILE
+// on macOS, and the account issuer on a closed loopback port, never the hub.
+// The recorders' log must stay empty. No chat is created.
 
-/** The keys the daemon's environment copies from this one, when set. */
-const ENV_ALLOWLIST = [
-  'HOME',
-  'USER',
-  'LOGNAME',
-  'TMPDIR',
-  'LANG',
-  'LC_ALL',
-  'LC_CTYPE',
-  'TERM',
-  'TZ'
-]
+/** The keys the daemon's environment copies from this one, when set. HOME
+ *  is not one of them: the daemon's home is the test's own folder. */
+const ENV_ALLOWLIST = ['USER', 'LOGNAME', 'TMPDIR', 'LANG', 'LC_ALL', 'LC_CTYPE', 'TERM', 'TZ']
 /** The system directories after the recorders: `security`, `sysctl`, `sh`. */
 const SYSTEM_PATH = '/usr/bin:/bin:/usr/sbin:/sbin'
 const USAGE_OFF = ['--test-no-activate', '--test-no-machine-usage']
@@ -76,12 +74,18 @@ const searchList = () =>
 
 /** The stand-ins and the empty homes, under `root`. On macOS the keychain
  *  file is named to `onKeychain` before it is created, so the cleanup deletes
- *  it whatever happens next. */
-function isolation(root, onKeychain) {
+ *  it whatever happens next. TMUX_TMPDIR is a folder of this run's own under
+ *  the real /tmp, made before the daemon starts: tmux 3.5a drops a TMUX_TMPDIR
+ *  that is unset, empty or names nothing and falls back to /tmp, where the
+ *  person's own Clave keeps its `clave` socket, which the daemon lists at its
+ *  start whenever it finds a tmux. `onTmux` is told the folder at once, so the
+ *  cleanup removes it whatever happens next. */
+function isolation(root, onKeychain, onTmux) {
   const stubs = path.join(root, 'stubs')
+  const home = path.join(root, 'home')
   const claudeConfig = path.join(root, 'claude-config')
   const codexHome = path.join(root, 'codex-home')
-  for (const dir of [stubs, claudeConfig, codexHome]) mkdirSync(dir)
+  for (const dir of [stubs, home, claudeConfig, codexHome]) mkdirSync(dir)
   const log = path.join(stubs, 'recorder.log')
   writeFileSync(log, '', { mode: 0o600 })
   const record = (name) =>
@@ -102,16 +106,20 @@ function isolation(root, onKeychain) {
     execFileSync('/usr/bin/security', ['create-keychain', '-p', '', keychain], { stdio: 'ignore' })
     execFileSync('/usr/bin/security', ['set-keychain-settings', keychain], { stdio: 'ignore' })
   }
+  const tmux = mkdtempSync(path.join(realpathSync('/tmp'), 'clave-no-titles-tmux-'))
+  onTmux(tmux)
   const shell = path.join(stubs, 'zsh')
   const env = {}
   for (const key of ENV_ALLOWLIST) if (process.env[key] !== undefined) env[key] = process.env[key]
   Object.assign(env, {
+    HOME: home,
     SHELL: shell,
     PATH: `${stubs}${path.delimiter}${SYSTEM_PATH}`,
     CLAUDE_CONFIG_DIR: claudeConfig,
     CODEX_HOME: codexHome,
     CLAVE_ANTASPHERE_ISSUER: CLOSED_ISSUER,
     CLAVE_BUN: bun,
+    TMUX_TMPDIR: tmux,
     ...(keychain && { CLAVE_KEYCHAIN_FILE: keychain })
   })
   // The daemon reads its login environment through `$SHELL -lic 'env -0'`.
@@ -137,7 +145,7 @@ function isolation(root, onKeychain) {
     `  *) exec /usr/bin/env -i ${fixed} /bin/sh -c "$cmd" ;;`,
     'esac'
   ])
-  return { env, log, claude, codex }
+  return { env, log, claude, codex, home, tmux }
 }
 
 /** Run `source` inside the daemon, through the test route. */
@@ -156,9 +164,20 @@ async function inside(server, source) {
 describe("the daemon's title opt-out, booted", () => {
   let root = null
   let keychain = null
+  let tmuxDir = null
   afterEach(() => {
-    // delete-keychain takes the file and its search-list entry away together;
-    // removing the folder alone would leave the entry behind.
+    // This run's tmux folder: what a tmux client makes in it is an empty
+    // tmux-<uid> folder, removed by rmdir, which refuses one that holds a
+    // socket; nothing here is ever removed recursively.
+    if (tmuxDir) {
+      for (const dir of [path.join(tmuxDir, `tmux-${process.getuid()}`), tmuxDir])
+        if (existsSync(dir)) rmdirSync(dir)
+    }
+    tmuxDir = null
+    // `security delete-keychain` deletes the keychain file and takes it off the
+    // search lists. Whether `create-keychain` put it on one depends on the
+    // macOS release (on Darwin 25.6 it puts it on none), so the check below
+    // holds one thing: afterwards, the user search list names nothing of this run.
     if (keychain) {
       try {
         execFileSync('/usr/bin/security', ['delete-keychain', keychain], { stdio: 'ignore' })
@@ -177,7 +196,16 @@ describe("the daemon's title opt-out, booted", () => {
     'under --no-titles the title module is off inside the daemon, the discovery file says so, and a one-shot would reach only the recorder',
     async () => {
       root = mkdtempSync(path.join(tmpdir(), 'clave-server-no-titles-'))
-      const iso = isolation(root, (file) => (keychain = file))
+      const iso = isolation(
+        root,
+        (file) => (keychain = file),
+        (dir) => (tmuxDir = dir)
+      )
+      // Before the daemon starts: TMUX_TMPDIR is the run's own folder, its own
+      // real path, mode 700, in the environment the stand-in shell answers too.
+      expect(realpathSync(iso.tmux)).toBe(iso.tmux)
+      expect(lstatSync(iso.tmux).mode & 0o777).toBe(0o700)
+      expect(iso.env.TMUX_TMPDIR).toBe(iso.tmux)
       const server = await startServerProcess({
         repo: REPO,
         dataDir: path.join(root, 'data'),
@@ -191,22 +219,31 @@ describe("the daemon's title opt-out, booted", () => {
           testMode: true,
           machineUsage: false
         })
+        // The home is compared inside the daemon, which answers yes or no.
         const seen = await inside(
           server,
           `async () => {
+            const os = await import('node:os')
+            const fs = await import('node:fs')
+            const real = (p) => { try { return fs.realpathSync(p) } catch { return null } }
+            const home = real(${JSON.stringify(iso.home)})
             const titles = globalThis.__claveE2E.titles
             const launch = await titles.launch()
             return {
               disabled: titles.disabled(),
               file: launch.file,
               codex: titles.locate('codex'),
-              keys: Object.keys(process.env).sort()
+              keys: Object.keys(process.env).sort(),
+              home: home !== null && real(os.homedir()) === home && real(process.env.HOME ?? '') === home,
+              tmux: process.env.TMUX_TMPDIR === ${JSON.stringify(iso.tmux)}
             }
           }`
         )
         expect(seen.disabled).toBe('--no-titles')
         expect(realpathSync(seen.file)).toBe(realpathSync(iso.claude))
         expect(realpathSync(seen.codex)).toBe(realpathSync(iso.codex))
+        expect(seen.home).toBe(true)
+        expect(seen.tmux).toBe(true)
         // Names compared, never values: exactly the keys the daemon was handed.
         const handed = Object.keys(iso.env).sort()
         const extra = seen.keys.filter((k) => !handed.includes(k))
@@ -225,7 +262,16 @@ describe("the daemon's title opt-out, booted", () => {
     'without the flag titles stay on: the opt-out is the flag alone, and the hooks answer null',
     async () => {
       root = mkdtempSync(path.join(tmpdir(), 'clave-server-no-titles-'))
-      const iso = isolation(root, (file) => (keychain = file))
+      const iso = isolation(
+        root,
+        (file) => (keychain = file),
+        (dir) => (tmuxDir = dir)
+      )
+      // Before the daemon starts: TMUX_TMPDIR is the run's own folder, its own
+      // real path, mode 700, in the environment the stand-in shell answers too.
+      expect(realpathSync(iso.tmux)).toBe(iso.tmux)
+      expect(lstatSync(iso.tmux).mode & 0o777).toBe(0o700)
+      expect(iso.env.TMUX_TMPDIR).toBe(iso.tmux)
       const server = await startServerProcess({
         repo: REPO,
         dataDir: path.join(root, 'data'),

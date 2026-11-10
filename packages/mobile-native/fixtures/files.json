@@ -1,0 +1,347 @@
+{
+  "$comment": "Generated from the real contract by packages/mobile-native/scripts/export-vectors.ts. Do not edit: run `npm run vectors --workspace @clave/mobile-native`; vectors.test.ts fails when this file no longer matches the contract.",
+  "family": "files",
+  "contract": 1,
+  "notes": [
+    "A device session may GET anything under /files/ and POST exactly /files/attachments/prepare; writes, uploads, creates and mkdirs under /files/ refuse it.",
+    "Paths are the server’s; `root` bounds every operation, symlinks included. An upload is base64 of at most MAX_TRANSFER_BYTES."
+  ],
+  "literals": {
+    "AttachmentDelivery": [
+      "image",
+      "reference",
+      "folder"
+    ],
+    "FileOperationFailedCode": [
+      "invalid_path",
+      "too_large",
+      "not_found",
+      "invalid_data",
+      "not_file",
+      "io"
+    ]
+  },
+  "constants": {
+    "MAX_TRANSFER_BYTES": 5242880,
+    "MAX_TEXT_BYTES": 1048576,
+    "MAX_PREVIEW_BYTES": 16384,
+    "MAX_BASE64_LENGTH": 6990508,
+    "MAX_FILE_ENTRIES": 5000,
+    "FILE_TREE_IGNORED": [
+      "node_modules",
+      ".git",
+      "dist",
+      "build",
+      "__pycache__",
+      ".next",
+      ".svelte-kit",
+      ".DS_Store",
+      "coverage",
+      ".cache"
+    ]
+  },
+  "shapes": {
+    "FileLocation": {
+      "valid": [
+        {
+          "name": "a file under a root",
+          "wire": {
+            "root": "/tmp/scratch",
+            "path": "notes/plan.md"
+          }
+        }
+      ],
+      "invalid": [
+        {
+          "name": "an empty path",
+          "wire": {
+            "root": "/tmp/scratch",
+            "path": ""
+          },
+          "because": "path is 1 to 4096 characters"
+        },
+        {
+          "name": "a path with a NUL byte",
+          "wire": {
+            "root": "/tmp/scratch",
+            "path": "a\u0000b"
+          },
+          "because": "a path holds no NUL byte"
+        }
+      ]
+    },
+    "FileText": {
+      "valid": [
+        {
+          "name": "a small text file",
+          "wire": {
+            "content": "# hi",
+            "truncated": false,
+            "size": 4,
+            "binary": false
+          }
+        },
+        {
+          "name": "a truncated text file",
+          "wire": {
+            "content": "xxxxxxxxxxxxxxxx",
+            "truncated": true,
+            "size": 2000000,
+            "binary": false
+          }
+        }
+      ],
+      "invalid": [
+        {
+          "name": "a file without binary",
+          "wire": {
+            "content": "",
+            "truncated": false,
+            "size": 0
+          },
+          "because": "binary is required"
+        }
+      ]
+    },
+    "FileAttachment": {
+      "valid": [
+        {
+          "name": "an image",
+          "wire": {
+            "id": "att-1",
+            "path": "/tmp/attachments/Fixture.png",
+            "name": "Fixture.png",
+            "mimeType": "image/png",
+            "size": 70,
+            "delivery": "image"
+          }
+        },
+        {
+          "name": "a file by reference",
+          "wire": {
+            "id": "att-2",
+            "path": "/tmp/attachments/report.pdf",
+            "name": "report.pdf",
+            "mimeType": "application/pdf",
+            "size": 1024,
+            "delivery": "reference"
+          }
+        },
+        {
+          "name": "a folder with its entry count",
+          "wire": {
+            "id": "att-3",
+            "path": "/tmp/scratch/src",
+            "name": "src",
+            "mimeType": "inode/directory",
+            "size": 0,
+            "delivery": "folder",
+            "entries": 3
+          }
+        }
+      ],
+      "invalid": [
+        {
+          "name": "an unknown delivery",
+          "wire": {
+            "id": "att-1",
+            "path": "/tmp/attachments/Fixture.png",
+            "name": "Fixture.png",
+            "mimeType": "image/png",
+            "size": 70,
+            "delivery": "inline"
+          },
+          "because": "delivery is image, reference or folder"
+        },
+        {
+          "name": "a name with a slash",
+          "wire": {
+            "id": "att-1",
+            "path": "/tmp/attachments/Fixture.png",
+            "name": "a/b.png",
+            "mimeType": "image/png",
+            "size": 70,
+            "delivery": "image"
+          },
+          "because": "name holds no slash"
+        }
+      ]
+    },
+    "AttachmentSource": {
+      "valid": [
+        {
+          "name": "a file on the server",
+          "wire": {
+            "kind": "file",
+            "root": "/tmp/scratch",
+            "path": "notes/plan.md"
+          }
+        },
+        {
+          "name": "an upload from the phone",
+          "wire": {
+            "kind": "upload",
+            "name": "Fixture.png",
+            "base64": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+            "image": true
+          }
+        }
+      ]
+    },
+    "PrepareFileAttachmentInput": {
+      "valid": [
+        {
+          "name": "an uploaded image",
+          "wire": {
+            "sessionId": "s1",
+            "source": {
+              "kind": "upload",
+              "name": "Fixture.png",
+              "base64": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+              "image": true
+            }
+          }
+        },
+        {
+          "name": "a file on the server",
+          "wire": {
+            "sessionId": "s1",
+            "source": {
+              "kind": "file",
+              "root": "/tmp/scratch",
+              "path": "notes/plan.md"
+            }
+          }
+        }
+      ],
+      "invalid": [
+        {
+          "name": "a session id with a space",
+          "wire": {
+            "sessionId": "has space",
+            "source": {
+              "kind": "upload",
+              "name": "Fixture.png",
+              "base64": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+              "image": true
+            }
+          },
+          "because": "sessionId is 1 to 128 letters, digits, underscore or dash"
+        },
+        {
+          "name": "an upload named with a slash",
+          "wire": {
+            "sessionId": "s1",
+            "source": {
+              "kind": "upload",
+              "name": "a/b.png",
+              "base64": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+              "image": true
+            }
+          },
+          "because": "name holds no slash"
+        }
+      ]
+    }
+  },
+  "commands": {
+    "ReadFile": {
+      "payload": [
+        {
+          "name": "a file under a root",
+          "wire": {
+            "root": "/tmp/scratch",
+            "path": "notes/plan.md"
+          }
+        }
+      ],
+      "success": [
+        {
+          "name": "a small text file",
+          "wire": {
+            "content": "# hi",
+            "truncated": false,
+            "size": 4,
+            "binary": false
+          }
+        }
+      ],
+      "failures": [
+        {
+          "tag": "FileOperationFailed",
+          "wire": {
+            "code": "not_found",
+            "message": "No such file.",
+            "_tag": "FileOperationFailed"
+          }
+        },
+        {
+          "tag": "FileOperationFailed",
+          "wire": {
+            "code": "invalid_path",
+            "message": "The path leaves its root.",
+            "_tag": "FileOperationFailed"
+          }
+        },
+        {
+          "tag": "CapabilityUnavailable",
+          "wire": {
+            "capability": "files",
+            "message": "This server serves no files.",
+            "_tag": "CapabilityUnavailable"
+          }
+        }
+      ]
+    },
+    "PrepareFileAttachment": {
+      "payload": [
+        {
+          "name": "an uploaded image",
+          "wire": {
+            "sessionId": "s1",
+            "source": {
+              "kind": "upload",
+              "name": "Fixture.png",
+              "base64": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+              "image": true
+            }
+          }
+        },
+        {
+          "name": "a file on the server",
+          "wire": {
+            "sessionId": "s1",
+            "source": {
+              "kind": "file",
+              "root": "/tmp/scratch",
+              "path": "notes/plan.md"
+            }
+          }
+        }
+      ],
+      "success": [
+        {
+          "name": "the prepared image",
+          "wire": {
+            "id": "att-1",
+            "path": "/tmp/attachments/Fixture.png",
+            "name": "Fixture.png",
+            "mimeType": "image/png",
+            "size": 70,
+            "delivery": "image"
+          }
+        }
+      ],
+      "failures": [
+        {
+          "tag": "FileOperationFailed",
+          "wire": {
+            "code": "too_large",
+            "message": "The upload is larger than 5 MiB.",
+            "_tag": "FileOperationFailed"
+          }
+        }
+      ]
+    }
+  }
+}

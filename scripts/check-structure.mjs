@@ -24,10 +24,50 @@ const required = [
   'apps/native/haptic/main.swift',
   'apps/native/mission-control/main.swift',
   'packages/host/src',
-  'packages/shared/src'
+  'packages/shared/src',
+  'packages/mobile-native/fixtures/index.json',
+  'packages/mobile-native/assets/tokens.json',
+  'packages/mobile-native/scripts/fixture-server.mjs'
 ]
 for (const file of required)
   assert(existsSync(path.join(root, file)), `Missing app/package home: ${file}`)
+
+// The native phone apps (the native mobile wave of 9 November 2026) are not
+// npm workspaces and hold no JavaScript: a SwiftUI project and a Gradle
+// project, each built and tested by one entry at its root, `ci.sh`, which
+// .github/workflows/mobile.yml runs. A folder that exists without the entry
+// would be skipped by the workflow in silence, so the guard requires it, a
+// regular file as the workflow tests it (`[ -f … ]`); a package.json anywhere
+// in one would mean a JavaScript toolchain crept into a native app, which the
+// decision brief forbids. Gradle's and Xcode's build output is left out of
+// that search: it is never tracked.
+const nativeApps = ['apps/mobile-ios', 'apps/mobile-android']
+function* nativeFiles(dir) {
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    if (['build', '.gradle', '.build', 'DerivedData', '.git'].includes(entry.name)) continue
+    const file = path.join(dir, entry.name)
+    if (entry.isDirectory()) yield* nativeFiles(file)
+    else yield file
+  }
+}
+for (const home of nativeApps) {
+  const directory = path.join(root, home)
+  if (!existsSync(directory)) continue
+  const entries = readdirSync(directory).filter((name) => name !== '.DS_Store')
+  if (entries.length === 0) continue
+  const entry = path.join(directory, 'ci.sh')
+  assert(
+    existsSync(entry) && statSync(entry).isFile(),
+    `Native app without its CI entry, a file: ${home}/ci.sh`
+  )
+  const manifests = [...nativeFiles(directory)].filter(
+    (file) => path.basename(file) === 'package.json'
+  )
+  assert(
+    manifests.length === 0,
+    `Native app carries a JavaScript manifest: ${manifests.map((file) => path.relative(root, file)).join(', ')}`
+  )
+}
 // An existing checkout can retain ignored build output after tracked source moves.
 const legacyGenerated = [
   'src/renderer/src/assets/fonts/private',

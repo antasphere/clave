@@ -1,0 +1,248 @@
+{
+  "$comment": "Generated from the real contract by packages/mobile-native/scripts/export-vectors.ts. Do not edit: run `npm run vectors --workspace @clave/mobile-native`; vectors.test.ts fails when this file no longer matches the contract.",
+  "family": "relay",
+  "contract": 1,
+  "notes": [
+    "A phone holding a bearer of the hub lists its own machines at GET /machines and reaches one at <relay>/m/<machineId>/<path>, the request forwarded to the machine as received, the device session’s Authorization included; WS <relay>/m/<machineId>/push is the push channel tunnelled.",
+    "The relay answers 404 for a machine it does not know, 503 for one offline or too busy, 413 beyond RELAY_MAX_BODY_BYTES, 504 past RELAY_REQUEST_TIMEOUT_MS, 502 when the machine could not perform the request; the machine’s own listener answers everything else, 401 included.",
+    "The claim, the connect socket and the machine frames are the server’s road, not a phone’s; they are listed for completeness under `machine`."
+  ],
+  "literals": {
+    "MachinePlatform": [
+      "macos",
+      "linux"
+    ]
+  },
+  "constants": {
+    "RELAY_PROTOCOL": 1,
+    "RELAY_CONNECT_PATH": "/machines/connect",
+    "RELAY_CLAIM_PATH": "/machines/claim",
+    "RELAY_MACHINES_PATH": "/machines",
+    "RELAY_FORGET_PATH": "/machines/forget",
+    "RELAY_HEALTH_PATH": "/health",
+    "RELAY_MACHINE_PREFIX": "/m/",
+    "RELAY_PUSH_PATH": "/push",
+    "RELAY_HELLO_TIMEOUT_MS": 5000,
+    "RELAY_PING_MS": 25000,
+    "RELAY_OFFLINE_MS": 60000,
+    "RELAY_MAX_BODY_BYTES": 8388608,
+    "RELAY_STREAM_THRESHOLD_BYTES": 65536,
+    "RELAY_MAX_TUNNELS": 64,
+    "RELAY_MAX_REQUESTS": 256,
+    "RELAY_REQUEST_TIMEOUT_MS": 120000,
+    "RELAY_MAX_FRAME_BYTES": 16777216,
+    "RELAY_AUTH_CACHE_MS": 600000,
+    "RELAY_CLOSE_UNAUTHORIZED": 4001,
+    "RELAY_CLOSE_MALFORMED": 4002,
+    "RELAY_CLOSE_HELLO_TIMEOUT": 4008,
+    "RELAY_CLOSE_REPLACED": 4009,
+    "RELAY_CLOSE_STOPPING": 4010,
+    "RELAY_CLOSE_SILENT": 4011,
+    "RELAY_CLOSE_FORGOTTEN": 4012
+  },
+  "shapes": {
+    "MachineView": {
+      "valid": [
+        {
+          "name": "a Mac online",
+          "wire": {
+            "id": "m_0123456789abcdef",
+            "name": "Fixture Mac · Fixture Owner",
+            "platform": "macos",
+            "version": "2.4.0",
+            "online": true,
+            "lastSeen": 1730000000000,
+            "direct": []
+          }
+        },
+        {
+          "name": "a Mac offline, last seen kept",
+          "wire": {
+            "id": "m_0123456789abcdef",
+            "name": "Fixture Mac · Fixture Owner",
+            "platform": "macos",
+            "version": "2.4.0",
+            "online": false,
+            "lastSeen": 1730000000000,
+            "direct": []
+          }
+        },
+        {
+          "name": "a Linux machine never heard from, with a direct address",
+          "wire": {
+            "id": "m_fedcba9876543210",
+            "name": "studio",
+            "platform": "linux",
+            "version": "2.4.0",
+            "online": false,
+            "lastSeen": null,
+            "direct": [
+              {
+                "url": "http://100.64.0.2:4710"
+              }
+            ]
+          }
+        }
+      ],
+      "invalid": [
+        {
+          "name": "an unknown platform",
+          "wire": {
+            "id": "m_0123456789abcdef",
+            "name": "Fixture Mac · Fixture Owner",
+            "platform": "windows",
+            "version": "2.4.0",
+            "online": true,
+            "lastSeen": 1730000000000,
+            "direct": []
+          },
+          "because": "platform is macos or linux"
+        },
+        {
+          "name": "a textual online",
+          "wire": {
+            "id": "m_0123456789abcdef",
+            "name": "Fixture Mac · Fixture Owner",
+            "platform": "macos",
+            "version": "2.4.0",
+            "online": "yes",
+            "lastSeen": 1730000000000,
+            "direct": []
+          },
+          "because": "online is a boolean"
+        }
+      ]
+    },
+    "MachineList": {
+      "valid": [
+        {
+          "name": "no machine",
+          "wire": {
+            "machines": []
+          }
+        },
+        {
+          "name": "two machines",
+          "wire": {
+            "machines": [
+              {
+                "id": "m_0123456789abcdef",
+                "name": "Fixture Mac · Fixture Owner",
+                "platform": "macos",
+                "version": "2.4.0",
+                "online": true,
+                "lastSeen": 1730000000000,
+                "direct": []
+              },
+              {
+                "id": "m_fedcba9876543210",
+                "name": "Fixture Mac · Fixture Owner",
+                "platform": "macos",
+                "version": "2.4.0",
+                "online": false,
+                "lastSeen": 1730000000000,
+                "direct": []
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "RelayHealth": {
+      "valid": [
+        {
+          "name": "live, one machine online of two known",
+          "wire": {
+            "status": "live",
+            "machines": 2,
+            "online": 1
+          }
+        }
+      ],
+      "invalid": [
+        {
+          "name": "a status the contract does not know",
+          "wire": {
+            "status": "down",
+            "machines": 0,
+            "online": 0
+          },
+          "because": "status is live"
+        }
+      ]
+    },
+    "ForgetMachine": {
+      "valid": [
+        {
+          "name": "by machine id",
+          "wire": {
+            "machineId": "m_0123456789abcdef"
+          }
+        }
+      ]
+    }
+  },
+  "machine": {
+    "MachineRecord": {
+      "valid": [
+        {
+          "name": "a Mac with no direct address",
+          "wire": {
+            "name": "Fixture Mac · Fixture Owner",
+            "platform": "macos",
+            "version": "2.4.0",
+            "direct": []
+          }
+        }
+      ]
+    },
+    "MachineCredential": {
+      "valid": [
+        {
+          "name": "the credential, answered once at the claim",
+          "wire": {
+            "machineId": "m_0123456789abcdef",
+            "machineSecret": "cms_000000000000000000000000000000000000000000000000"
+          }
+        }
+      ]
+    }
+  },
+  "derived": {
+    "parseMachinePath": [
+      {
+        "input": "/m/m_0123456789abcdef/sessions?windowKey=w",
+        "result": {
+          "machineId": "m_0123456789abcdef",
+          "path": "/sessions?windowKey=w"
+        }
+      },
+      {
+        "input": "/m/m_0123456789abcdef",
+        "result": {
+          "machineId": "m_0123456789abcdef",
+          "path": "/"
+        }
+      },
+      {
+        "input": "/m/m_0123456789abcdef/push",
+        "result": {
+          "machineId": "m_0123456789abcdef",
+          "path": "/push"
+        }
+      },
+      {
+        "input": "/m/bad id/sessions",
+        "result": null
+      },
+      {
+        "input": "/sessions",
+        "result": null
+      },
+      {
+        "input": "/m/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/sessions",
+        "result": null
+      }
+    ]
+  }
+}

@@ -66,13 +66,17 @@ const DEFAULT_USER = {
  *  - `issueRefresh`: whether `offline_access` earns a refresh token.
  *  - `idTokenTtlSec` / `accessTokenTtlSec`: the lifetimes it states.
  *  - `clockSkewSec`: the provider's own clock, for an "expired on arrival" token.
+ *  - `port`: the loopback port to bind; 0, the default, takes a free one. The
+ *    native phones' fixture server names its issuer port (a band), so the
+ *    phone's sign-in configuration can be written once.
  */
 export async function startOidcProvider({
   user = DEFAULT_USER,
   issueRefresh = true,
   idTokenTtlSec = 3600,
   accessTokenTtlSec = 3600,
-  registrationStatus = 201
+  registrationStatus = 201,
+  port: requestedPort = 0
 } = {}) {
   const keys = { signing: makeKey('clave-test-signing'), other: makeKey('clave-test-other') }
   const state = {
@@ -393,7 +397,7 @@ export async function startOidcProvider({
 
   await new Promise((resolve, reject) => {
     server.once('error', reject)
-    server.listen(0, '127.0.0.1', resolve)
+    server.listen(requestedPort, '127.0.0.1', resolve)
   })
   const port = server.address().port
   issuer = `http://127.0.0.1:${port}`

@@ -1,0 +1,16 @@
+{
+  "name": "@clave/mobile-native",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "description": "What the two native phone apps share and neither owns: fixture vectors exported from the real wire contract, the desktop's design tokens, icons and fonts generated for Swift and Kotlin, and the fixture server both apps are tested against (this checkout's own server as a daemon with the Echo adapter, a local relay and a local OpenID Connect provider). No phone code lives here.",
+  "scripts": {
+    "vectors": "bun scripts/export-vectors.ts",
+    "vectors:check": "bun scripts/export-vectors.ts --check",
+    "assets": "node scripts/generate-assets.mjs",
+    "assets:check": "node scripts/generate-assets.mjs --check",
+    "fixture": "node scripts/fixture-server.mjs",
+    "fixture:check": "node scripts/fixture-server.mjs --check"
+  }
+}

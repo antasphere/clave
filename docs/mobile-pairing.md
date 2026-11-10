@@ -86,8 +86,9 @@ hears it.
 
 A device session is an **allowlist** (`packages/server/src/devices/scope.ts`):
 `GET` on `/sessions`, `/sessions/by-id`, `/sessions/models`, `/sessions/commands`,
-`/sessions/capabilities`, `/sessions/history`, `/requests/pending`,
-`/launch-profiles`, `/workspaces`, `/devices/me` and anything under `/files/`;
+`/sessions/capabilities`, `/sessions/history`, `/sessions/timeline`,
+`/sessions/writes`, `/requests/pending`, `/launch-profiles`, `/workspaces`,
+`/devices/me` and anything under `/files/`;
 `POST` on `/sessions/start`, `/sessions/stop`, `/sessions/write`,
 `/sessions/resize`, `/sessions/view`, `/sessions/restart`, `/requests/resolve`,
 `/devices/me/push-token`, `/devices/me/push-token/clear` and exactly
@@ -99,6 +100,9 @@ saved server connections behind them), the plugins, the sidebar, the git
 panel, the server's own routes, the owner-only device routes and every write
 to the settings included, answers 403 `{error: "Forbidden", message: "A phone
 may not do this."}`. The owner's token keeps everything it had.
+`packages/mobile-native/fixtures/routes.json` carries the same two lists for
+the native apps (`scope`), exported from `scope.ts` and held in step by the
+vectors test.
 
 On the push channel a phone's socket is admitted with no `Origin`, a loopback
 `Origin`, or an `Origin` equal to the server's own address as the handshake's

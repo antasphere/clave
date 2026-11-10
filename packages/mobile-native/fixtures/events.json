@@ -1,0 +1,294 @@
+{
+  "$comment": "Generated from the real contract by packages/mobile-native/scripts/export-vectors.ts. Do not edit: run `npm run vectors --workspace @clave/mobile-native`; vectors.test.ts fails when this file no longer matches the contract.",
+  "family": "events",
+  "contract": 1,
+  "notes": [
+    "Every server event rides the push channel inside the envelope frame (`_tag: event`); `seq` is the server’s order from 1, so a client can tell what it missed.",
+    "A phone hears the tags under `heard` (routes.json derives them from the server’s scope): its sessions, the requests, the devices, the workspaces and the usage reads. The rest stays with the desktop.",
+    "The usage events carry the accounts’ usage reads whose shape is the desktop’s; a phone only needs their tag."
+  ],
+  "literals": {
+    "ServerEventTag": [
+      "files.dirs_changed",
+      "requests.changed",
+      "client.registered",
+      "client.unregistered",
+      "session.state_changed",
+      "session.title_changed",
+      "session.plan_detected",
+      "session.cleared",
+      "accounts.claude_changed",
+      "accounts.codex_changed",
+      "accounts.login_progressed",
+      "usage.claude_read",
+      "usage.codex_read",
+      "workspaces.state_changed",
+      "accounts.antasphere_changed",
+      "sidebar.layout_changed",
+      "sidebar.layout_removed",
+      "workspace_files.changed",
+      "workspace_files.review_needed",
+      "session.renamed",
+      "session.page_changed",
+      "session.work_changed",
+      "session.typed",
+      "session.restarting",
+      "session.restarted",
+      "pinned_group.launched",
+      "plugins.changed",
+      "plugins.notified",
+      "git.repos_changed",
+      "git.batch_progress",
+      "server.upgrade_changed",
+      "routines.changed",
+      "devices.changed",
+      "devices.pairing_requested"
+    ],
+    "heard": [
+      "requests.changed",
+      "session.state_changed",
+      "session.title_changed",
+      "session.plan_detected",
+      "session.cleared",
+      "usage.claude_read",
+      "usage.codex_read",
+      "workspaces.state_changed",
+      "session.renamed",
+      "session.page_changed",
+      "session.work_changed",
+      "session.typed",
+      "session.restarting",
+      "session.restarted",
+      "devices.changed"
+    ],
+    "notHeard": [
+      "files.dirs_changed",
+      "client.registered",
+      "client.unregistered",
+      "accounts.claude_changed",
+      "accounts.codex_changed",
+      "accounts.login_progressed",
+      "accounts.antasphere_changed",
+      "sidebar.layout_changed",
+      "sidebar.layout_removed",
+      "workspace_files.changed",
+      "workspace_files.review_needed",
+      "pinned_group.launched",
+      "plugins.changed",
+      "plugins.notified",
+      "git.repos_changed",
+      "git.batch_progress",
+      "server.upgrade_changed",
+      "routines.changed",
+      "devices.pairing_requested"
+    ]
+  },
+  "shapes": {
+    "ServerEventEnvelope": {
+      "valid": [
+        {
+          "name": "session.state_changed",
+          "wire": {
+            "id": "e1",
+            "seq": 4,
+            "at": 2,
+            "event": {
+              "_tag": "session.state_changed",
+              "id": "s1",
+              "state": "done"
+            }
+          }
+        },
+        {
+          "name": "session.title_changed",
+          "wire": {
+            "id": "e1",
+            "seq": 5,
+            "at": 2,
+            "event": {
+              "_tag": "session.title_changed",
+              "id": "s1",
+              "title": "Rename the plan"
+            }
+          }
+        },
+        {
+          "name": "session.plan_detected",
+          "wire": {
+            "id": "e1",
+            "seq": 6,
+            "at": 2,
+            "event": {
+              "_tag": "session.plan_detected",
+              "id": "s1",
+              "path": "/tmp/scratch/plan.md"
+            }
+          }
+        },
+        {
+          "name": "session.cleared",
+          "wire": {
+            "id": "e1",
+            "seq": 7,
+            "at": 2,
+            "event": {
+              "_tag": "session.cleared",
+              "id": "s1",
+              "providerSessionId": null
+            }
+          }
+        },
+        {
+          "name": "session.renamed",
+          "wire": {
+            "id": "e1",
+            "seq": 8,
+            "at": 2,
+            "event": {
+              "_tag": "session.renamed",
+              "id": "s1",
+              "name": "Plan"
+            }
+          }
+        },
+        {
+          "name": "session.typed",
+          "wire": {
+            "id": "e1",
+            "seq": 9,
+            "at": 2,
+            "event": {
+              "_tag": "session.typed",
+              "id": "s1",
+              "from": null
+            }
+          }
+        },
+        {
+          "name": "session.restarting",
+          "wire": {
+            "id": "e1",
+            "seq": 10,
+            "at": 2,
+            "event": {
+              "_tag": "session.restarting",
+              "id": "s1"
+            }
+          }
+        },
+        {
+          "name": "session.restarted",
+          "wire": {
+            "id": "e1",
+            "seq": 11,
+            "at": 2,
+            "event": {
+              "_tag": "session.restarted",
+              "id": "s1",
+              "resumed": true,
+              "account": {}
+            }
+          }
+        },
+        {
+          "name": "requests.changed",
+          "wire": {
+            "id": "e1",
+            "seq": 12,
+            "at": 2,
+            "event": {
+              "_tag": "requests.changed",
+              "revision": 7
+            }
+          }
+        },
+        {
+          "name": "workspaces.state_changed",
+          "wire": {
+            "id": "e1",
+            "seq": 13,
+            "at": 2,
+            "event": {
+              "_tag": "workspaces.state_changed",
+              "workspaces": [
+                {
+                  "id": "ws1",
+                  "name": "scratch",
+                  "rootDir": "/tmp/scratch",
+                  "profileFile": null,
+                  "createdAt": 1
+                }
+              ],
+              "pins": [],
+              "origin": null,
+              "revision": 4,
+              "instance": "i-1"
+            }
+          }
+        },
+        {
+          "name": "devices.changed",
+          "wire": {
+            "id": "e1",
+            "seq": 14,
+            "at": 2,
+            "event": {
+              "_tag": "devices.changed",
+              "revision": 2
+            }
+          }
+        },
+        {
+          "name": "devices.pairing_requested",
+          "wire": {
+            "id": "e1",
+            "seq": 15,
+            "at": 2,
+            "event": {
+              "_tag": "devices.pairing_requested",
+              "pairingId": "pair-1",
+              "name": "Fixture Pixel",
+              "platform": "android"
+            }
+          }
+        }
+      ],
+      "invalid": [
+        {
+          "name": "a textual seq",
+          "wire": {
+            "id": "e1",
+            "seq": "x",
+            "at": 2,
+            "event": {
+              "_tag": "requests.changed",
+              "revision": 1
+            }
+          },
+          "because": "seq is a number"
+        },
+        {
+          "name": "an unknown event tag",
+          "wire": {
+            "id": "e1",
+            "seq": 4,
+            "at": 2,
+            "event": {
+              "_tag": "something.new"
+            }
+          },
+          "because": "_tag is one of the server events; a phone ignores an envelope it cannot read"
+        },
+        {
+          "name": "an envelope without an event",
+          "wire": {
+            "id": "e1",
+            "seq": 4,
+            "at": 2
+          },
+          "because": "event is required"
+        }
+      ]
+    }
+  }
+}

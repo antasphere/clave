@@ -1,0 +1,682 @@
+{
+  "$comment": "Generated from the real contract by packages/mobile-native/scripts/export-vectors.ts. Do not edit: run `npm run vectors --workspace @clave/mobile-native`; vectors.test.ts fails when this file no longer matches the contract.",
+  "family": "devices",
+  "contract": 1,
+  "notes": [
+    "POST /devices/pair takes no bearer: the proof is the ID token the hub issued to the phone’s own client id; GET /devices/pair?id= answers the status and, on approved, the device session exactly once.",
+    "From then on the device session is the bearer on the API and the token of the push hello. The owner approves, refuses and revokes from the Mac; the owner-only commands are listed under `owner` so a phone knows what refuses it.",
+    "A refusal names the check (the sentences are the server’s today) and never the token; a server with no Antasphere login answers CapabilityUnavailable."
+  ],
+  "literals": {
+    "DevicePlatform": [
+      "ios",
+      "android"
+    ],
+    "PairingStatus": [
+      "pending",
+      "approved",
+      "refused",
+      "expired"
+    ],
+    "PairingRefusal": [
+      "format",
+      "algorithm",
+      "keys",
+      "key",
+      "signature",
+      "issuer",
+      "expired",
+      "not-yet-valid",
+      "audience",
+      "authorized-party",
+      "subject",
+      "busy"
+    ]
+  },
+  "constants": {
+    "DEVICE_PAIR_PATH": "/devices/pair",
+    "CLOSE_DEVICE_REVOKED": 4011
+  },
+  "shapes": {
+    "DeviceDescription": {
+      "valid": [
+        {
+          "name": "an iPhone",
+          "wire": {
+            "name": "Fixture iPhone",
+            "platform": "ios",
+            "appVersion": "0.1.0"
+          }
+        },
+        {
+          "name": "an Android phone",
+          "wire": {
+            "name": "Fixture Pixel",
+            "platform": "android",
+            "appVersion": "0.1.0"
+          }
+        }
+      ],
+      "invalid": [
+        {
+          "name": "an unknown platform",
+          "wire": {
+            "name": "Fixture iPhone",
+            "platform": "web",
+            "appVersion": "0.1.0"
+          },
+          "because": "platform is ios or android"
+        },
+        {
+          "name": "an empty name",
+          "wire": {
+            "name": "",
+            "platform": "ios",
+            "appVersion": "0.1.0"
+          },
+          "because": "name is 1 to 120 characters"
+        },
+        {
+          "name": "an empty app version",
+          "wire": {
+            "name": "Fixture iPhone",
+            "platform": "ios",
+            "appVersion": ""
+          },
+          "because": "appVersion is 1 to 64 characters"
+        }
+      ]
+    },
+    "DeviceView": {
+      "valid": [
+        {
+          "name": "a phone never seen since the pairing",
+          "wire": {
+            "id": "dev-1",
+            "name": "Fixture iPhone",
+            "platform": "ios",
+            "appVersion": "0.1.0",
+            "createdAt": 1730000000000,
+            "lastSeenAt": null
+          }
+        },
+        {
+          "name": "a phone seen a minute ago",
+          "wire": {
+            "id": "dev-1",
+            "name": "Fixture iPhone",
+            "platform": "ios",
+            "appVersion": "0.1.0",
+            "createdAt": 1730000000000,
+            "lastSeenAt": 1730000060000
+          }
+        }
+      ],
+      "invalid": [
+        {
+          "name": "a view without lastSeenAt",
+          "wire": {
+            "id": "dev-1",
+            "name": "P",
+            "platform": "ios",
+            "appVersion": "1",
+            "createdAt": 1730000000000
+          },
+          "because": "lastSeenAt is a number or null"
+        }
+      ]
+    },
+    "PendingPairingView": {
+      "valid": [
+        {
+          "name": "a phone asking",
+          "wire": {
+            "id": "pair-1",
+            "name": "Fixture Pixel",
+            "platform": "android",
+            "appVersion": "0.1.0",
+            "requestedAt": 1730000000000,
+            "expiresAt": 1730000600000
+          }
+        }
+      ]
+    },
+    "DeviceSessionView": {
+      "valid": [
+        {
+          "name": "the credential, shown once",
+          "wire": {
+            "token": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+            "deviceId": "dev-1",
+            "serverId": "srv-1",
+            "serverName": "Fixture Mac"
+          }
+        }
+      ]
+    },
+    "DevicesView": {
+      "valid": [
+        {
+          "name": "nobody paired, nobody asking",
+          "wire": {
+            "revision": 0,
+            "devices": [],
+            "pending": []
+          }
+        },
+        {
+          "name": "one paired, one asking",
+          "wire": {
+            "revision": 5,
+            "devices": [
+              {
+                "id": "dev-1",
+                "name": "Fixture iPhone",
+                "platform": "ios",
+                "appVersion": "0.1.0",
+                "createdAt": 1730000000000,
+                "lastSeenAt": null
+              }
+            ],
+            "pending": [
+              {
+                "id": "pair-1",
+                "name": "Fixture Pixel",
+                "platform": "android",
+                "appVersion": "0.1.0",
+                "requestedAt": 1730000000000,
+                "expiresAt": 1730000600000
+              }
+            ]
+          }
+        }
+      ]
+    }
+  },
+  "commands": {
+    "RequestDevicePairing": {
+      "payload": [
+        {
+          "name": "the phone’s ID token, its client id and how it names itself",
+          "wire": {
+            "idToken": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImNsYXZlLXRlc3Qtc2lnbmluZyJ9.eyJpc3MiOiJodHRwOi8vMTI3LjAuMC4xOjQ3MzAzIiwic3ViIjoiZml4dHVyZS1vd25lciJ9.c2lnbmF0dXJl",
+            "clientId": "dcr-0123456789ab",
+            "device": {
+              "name": "Fixture iPhone",
+              "platform": "ios",
+              "appVersion": "0.1.0"
+            }
+          }
+        }
+      ],
+      "invalidPayload": [
+        {
+          "name": "an empty token",
+          "wire": {
+            "idToken": "",
+            "clientId": "dcr-0123456789ab",
+            "device": {
+              "name": "Fixture iPhone",
+              "platform": "ios",
+              "appVersion": "0.1.0"
+            }
+          },
+          "because": "idToken is 1 to 16384 characters; the refusal says Invalid pairing request. and nothing of the body"
+        },
+        {
+          "name": "an unknown platform",
+          "wire": {
+            "idToken": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImNsYXZlLXRlc3Qtc2lnbmluZyJ9.eyJpc3MiOiJodHRwOi8vMTI3LjAuMC4xOjQ3MzAzIiwic3ViIjoiZml4dHVyZS1vd25lciJ9.c2lnbmF0dXJl",
+            "clientId": "dcr-0123456789ab",
+            "device": {
+              "name": "Fixture iPhone",
+              "platform": "web",
+              "appVersion": "0.1.0"
+            }
+          },
+          "because": "platform is ios or android"
+        }
+      ],
+      "success": [
+        {
+          "name": "the pairing to poll",
+          "wire": {
+            "pairingId": "pair-1",
+            "expiresAt": 1730000600000
+          }
+        }
+      ],
+      "failures": [
+        {
+          "tag": "DevicePairingRefused",
+          "wire": {
+            "check": "format",
+            "message": "The token is not a compact JWS.",
+            "_tag": "DevicePairingRefused"
+          }
+        },
+        {
+          "tag": "DevicePairingRefused",
+          "wire": {
+            "check": "algorithm",
+            "message": "The token is not signed with RS256 or ES256.",
+            "_tag": "DevicePairingRefused"
+          }
+        },
+        {
+          "tag": "DevicePairingRefused",
+          "wire": {
+            "check": "keys",
+            "message": "The hub’s keys could not be read: the issuer answered 503",
+            "_tag": "DevicePairingRefused"
+          }
+        },
+        {
+          "tag": "DevicePairingRefused",
+          "wire": {
+            "check": "key",
+            "message": "The token names a key the hub does not publish.",
+            "_tag": "DevicePairingRefused"
+          }
+        },
+        {
+          "tag": "DevicePairingRefused",
+          "wire": {
+            "check": "signature",
+            "message": "The token’s signature does not hold.",
+            "_tag": "DevicePairingRefused"
+          }
+        },
+        {
+          "tag": "DevicePairingRefused",
+          "wire": {
+            "check": "issuer",
+            "message": "The token was not issued by the Antasphere hub.",
+            "_tag": "DevicePairingRefused"
+          }
+        },
+        {
+          "tag": "DevicePairingRefused",
+          "wire": {
+            "check": "expired",
+            "message": "The token has expired.",
+            "_tag": "DevicePairingRefused"
+          }
+        },
+        {
+          "tag": "DevicePairingRefused",
+          "wire": {
+            "check": "not-yet-valid",
+            "message": "The token is not valid yet.",
+            "_tag": "DevicePairingRefused"
+          }
+        },
+        {
+          "tag": "DevicePairingRefused",
+          "wire": {
+            "check": "audience",
+            "message": "The token was not issued to this phone.",
+            "_tag": "DevicePairingRefused"
+          }
+        },
+        {
+          "tag": "DevicePairingRefused",
+          "wire": {
+            "check": "authorized-party",
+            "message": "The token was not issued to this phone.",
+            "_tag": "DevicePairingRefused"
+          }
+        },
+        {
+          "tag": "DevicePairingRefused",
+          "wire": {
+            "check": "subject",
+            "message": "The token is not the owner’s.",
+            "_tag": "DevicePairingRefused"
+          }
+        },
+        {
+          "tag": "DevicePairingRefused",
+          "wire": {
+            "check": "busy",
+            "message": "Too many phones are waiting for an answer; try again in a few minutes.",
+            "_tag": "DevicePairingRefused"
+          }
+        },
+        {
+          "tag": "CapabilityUnavailable",
+          "wire": {
+            "capability": "devices",
+            "message": "This server has no Antasphere login, so no phone can pair with it.",
+            "_tag": "CapabilityUnavailable"
+          }
+        },
+        {
+          "tag": "CapabilityUnavailable",
+          "wire": {
+            "capability": "configuration",
+            "message": "The Antasphere issuer configured for this server is refused; no phone can pair.",
+            "_tag": "CapabilityUnavailable"
+          }
+        }
+      ]
+    },
+    "ReadDevicePairing": {
+      "payload": [
+        {
+          "name": "by pairing id",
+          "wire": {
+            "id": "pair-1"
+          }
+        }
+      ],
+      "success": [
+        {
+          "name": "pending",
+          "wire": {
+            "status": "pending"
+          }
+        },
+        {
+          "name": "approved, the session carried once",
+          "wire": {
+            "status": "approved",
+            "deviceSession": {
+              "token": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+              "deviceId": "dev-1",
+              "serverId": "srv-1",
+              "serverName": "Fixture Mac"
+            }
+          }
+        },
+        {
+          "name": "approved, read again",
+          "wire": {
+            "status": "approved"
+          }
+        },
+        {
+          "name": "refused",
+          "wire": {
+            "status": "refused"
+          }
+        },
+        {
+          "name": "expired, or never known",
+          "wire": {
+            "status": "expired"
+          }
+        }
+      ]
+    },
+    "ReadOwnDevice": {
+      "payload": [
+        {
+          "name": "the phone’s own record",
+          "wire": {}
+        }
+      ],
+      "success": [
+        {
+          "name": "the record",
+          "wire": {
+            "id": "dev-1",
+            "name": "Fixture iPhone",
+            "platform": "ios",
+            "appVersion": "0.1.0",
+            "createdAt": 1730000000000,
+            "lastSeenAt": null
+          }
+        }
+      ],
+      "failures": [
+        {
+          "tag": "DeviceSessionRequired",
+          "wire": {
+            "message": "This route is a phone’s.",
+            "_tag": "DeviceSessionRequired"
+          }
+        },
+        {
+          "tag": "DeviceNotFound",
+          "wire": {
+            "id": "dev-1",
+            "message": "No phone with that id is paired here.",
+            "_tag": "DeviceNotFound"
+          }
+        }
+      ]
+    },
+    "SetDevicePushToken": {
+      "payload": [
+        {
+          "name": "an APNs token",
+          "wire": {
+            "token": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "platform": "ios"
+          }
+        },
+        {
+          "name": "an FCM token",
+          "wire": {
+            "token": "fcm-token-0123456789",
+            "platform": "android"
+          }
+        }
+      ],
+      "invalidPayload": [
+        {
+          "name": "an empty token",
+          "wire": {
+            "token": "",
+            "platform": "ios"
+          },
+          "because": "token is 1 to 4096 characters; the refusal says Invalid push token."
+        }
+      ],
+      "failures": [
+        {
+          "tag": "DeviceSessionRequired",
+          "wire": {
+            "message": "This route is a phone’s.",
+            "_tag": "DeviceSessionRequired"
+          }
+        }
+      ]
+    },
+    "ClearDevicePushToken": {
+      "payload": [
+        {
+          "name": "no more notifications here",
+          "wire": {}
+        }
+      ]
+    }
+  },
+  "owner": {
+    "ListDevices": {
+      "payload": [
+        {
+          "name": "the owner’s list",
+          "wire": {}
+        }
+      ],
+      "success": [
+        {
+          "name": "one paired, one asking",
+          "wire": {
+            "revision": 5,
+            "devices": [
+              {
+                "id": "dev-1",
+                "name": "Fixture iPhone",
+                "platform": "ios",
+                "appVersion": "0.1.0",
+                "createdAt": 1730000000000,
+                "lastSeenAt": null
+              }
+            ],
+            "pending": [
+              {
+                "id": "pair-1",
+                "name": "Fixture Pixel",
+                "platform": "android",
+                "appVersion": "0.1.0",
+                "requestedAt": 1730000000000,
+                "expiresAt": 1730000600000
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "ApproveDevicePairing": {
+      "payload": [
+        {
+          "name": "by pairing id",
+          "wire": {
+            "pairingId": "pair-1"
+          }
+        }
+      ],
+      "success": [
+        {
+          "name": "the device admitted",
+          "wire": {
+            "id": "dev-1",
+            "name": "Fixture iPhone",
+            "platform": "ios",
+            "appVersion": "0.1.0",
+            "createdAt": 1730000000000,
+            "lastSeenAt": null
+          }
+        }
+      ],
+      "failures": [
+        {
+          "tag": "DevicePairingNotFound",
+          "wire": {
+            "id": "pair-1",
+            "message": "The pairing is not waiting any more.",
+            "_tag": "DevicePairingNotFound"
+          }
+        }
+      ]
+    },
+    "RefuseDevicePairing": {
+      "payload": [
+        {
+          "name": "by pairing id",
+          "wire": {
+            "pairingId": "pair-1"
+          }
+        }
+      ],
+      "failures": [
+        {
+          "tag": "DevicePairingNotFound",
+          "wire": {
+            "id": "pair-1",
+            "message": "The pairing is not waiting any more.",
+            "_tag": "DevicePairingNotFound"
+          }
+        }
+      ]
+    },
+    "RevokeDevice": {
+      "payload": [
+        {
+          "name": "by device id",
+          "wire": {
+            "deviceId": "dev-1"
+          }
+        }
+      ],
+      "failures": [
+        {
+          "tag": "DeviceNotFound",
+          "wire": {
+            "id": "dev-1",
+            "message": "No phone with that id is paired here.",
+            "_tag": "DeviceNotFound"
+          }
+        }
+      ]
+    },
+    "ReadMobileRelay": {
+      "payload": [
+        {
+          "name": "the relay address",
+          "wire": {}
+        }
+      ],
+      "success": [
+        {
+          "name": "a relay set",
+          "wire": {
+            "url": "https://relay.example.com"
+          }
+        },
+        {
+          "name": "none",
+          "wire": {
+            "url": ""
+          }
+        }
+      ]
+    },
+    "SetMobileRelay": {
+      "payload": [
+        {
+          "name": "an https origin",
+          "wire": {
+            "url": "https://relay.example.com"
+          }
+        },
+        {
+          "name": "cleared",
+          "wire": {
+            "url": ""
+          }
+        }
+      ],
+      "success": [
+        {
+          "name": "the origin as stored",
+          "wire": {
+            "url": "https://relay.example.com"
+          }
+        }
+      ],
+      "failures": [
+        {
+          "tag": "RelayAddressInvalid",
+          "wire": {
+            "message": "The relay address must be an http(s) origin.",
+            "_tag": "RelayAddressInvalid"
+          }
+        }
+      ]
+    }
+  },
+  "events": {
+    "valid": [
+      {
+        "name": "devices.changed",
+        "wire": {
+          "_tag": "devices.changed",
+          "revision": 2
+        }
+      },
+      {
+        "name": "devices.pairing_requested, for the Mac and never a phone",
+        "wire": {
+          "_tag": "devices.pairing_requested",
+          "pairingId": "pair-1",
+          "name": "Fixture Pixel",
+          "platform": "android"
+        }
+      }
+    ]
+  }
+}

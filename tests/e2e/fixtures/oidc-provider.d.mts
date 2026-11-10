@@ -75,4 +75,6 @@ export function startOidcProvider(options?: {
   idTokenTtlSec?: number
   accessTokenTtlSec?: number
   registrationStatus?: number
+  /** The loopback port to bind; 0, the default, takes a free one. */
+  port?: number
 }): Promise<OidcProvider>
