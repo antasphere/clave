@@ -60,9 +60,13 @@ export interface AccountSources {
   servers: Record<string, ServerSettings>
 }
 
-/** A server's list is known once a load answered or a list was pushed. */
-function serverKnown(entry: ServerSettings | undefined): boolean {
-  return !!entry && (entry.status === 'ready' || entry.profiles !== null)
+/** A server's account list of a provider is known once a load answered it or
+ *  the server pushed it; the launch profiles say nothing of it. */
+export function serverListKnown(
+  entry: ServerSettings | undefined,
+  provider: AccountProvider
+): boolean {
+  return entry?.listed?.[provider] === true
 }
 
 /** The pure core: one owner's accounts and usage out of the sources. */
@@ -86,7 +90,7 @@ export function ownerViewFrom(
     owner,
     remote: true,
     provider,
-    known: serverKnown(entry),
+    known: serverListKnown(entry, provider),
     accounts: entry ? (provider === 'codex' ? entry.codex : entry.claude) : [],
     usage: entry ? entry.usage[provider] : {}
   }

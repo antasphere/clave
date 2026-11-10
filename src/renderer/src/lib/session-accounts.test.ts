@@ -87,6 +87,7 @@ function serverEntry(over: Partial<ServerSettings> = {}): ServerSettings {
     codex: [{ id: 'default', label: 'Default', kind: 'chatgpt', hasCredential: false }],
     migrated: [],
     profiles: { customProfiles: [] } as unknown as ServerSettings['profiles'],
+    listed: { claude: true, codex: true },
     usage: {
       claude: { 'srv-one': week(97), 'srv-two': week(10) },
       codex: {}
@@ -203,10 +204,61 @@ describe('the accounts of a session come from its owner', () => {
     const empty = serverEntry()
     useServerSettingsStore.setState({
       byServer: {
-        [SERVER]: { ...empty, status: 'loading', profiles: null, claude: [empty.claude[0]] }
+        [SERVER]: {
+          ...empty,
+          status: 'loading',
+          profiles: null,
+          listed: undefined,
+          claude: [empty.claude[0]]
+        }
       }
     })
     expect(sessionOwnAccount(tab, 'claude').pending).toBe(true)
+  })
+})
+
+describe('a server’s list is known by the accounts it answered, not by its profiles', () => {
+  it('a pushed account list alone makes the account known', async () => {
+    const { applyServerSettingsEvent } = await import('../store/server-settings-store')
+    applyServerSettingsEvent({
+      kind: 'claude-accounts',
+      serverId: SERVER,
+      accounts: [token('srv-one', '3@example.com')]
+    } as Parameters<typeof applyServerSettingsEvent>[0])
+    expect(sessionOwnAccount(serverTab('srv-one'), 'claude')).toMatchObject({
+      label: '3@example.com',
+      pending: false,
+      removed: false
+    })
+    // The Codex list was not pushed: still unknown.
+    expect(sessionAccountView(serverTab('x'), 'codex').known).toBe(false)
+  })
+
+  it('a launch profile saved before any load leaves the accounts pending, never removed', async () => {
+    const { saveServerLaunchProfile } = await import('../store/server-settings-store')
+    vi.stubGlobal('window', {
+      electronAPI: {
+        fleetLaunchProfileUpsert: vi.fn(async () => ({
+          version: 1,
+          customProfiles: [],
+          globalDefaults: {},
+          workspaceOverrides: {}
+        }))
+      }
+    })
+    await saveServerLaunchProfile(SERVER, {
+      id: 'p',
+      name: 'p',
+      family: 'claude',
+      command: ['x'],
+      additionalArgs: []
+    })
+    expect(useServerSettingsStore.getState().byServer[SERVER]?.profiles).not.toBeNull()
+    expect(sessionOwnAccount(serverTab('srv-one', '3@example.com'), 'claude')).toMatchObject({
+      label: '3@example.com',
+      pending: true,
+      removed: false
+    })
   })
 })
 
