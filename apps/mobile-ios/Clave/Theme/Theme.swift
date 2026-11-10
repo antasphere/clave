@@ -233,12 +233,27 @@ nonisolated extension Font {
   ) -> Font {
     .custom(weight.fontName, size: size, relativeTo: textStyle)
   }
+}
 
-  /// The system's monospaced design. SwiftUI has no sized, scaling system font,
-  /// so the size goes through UIFontMetrics: it follows the Dynamic Type setting
-  /// the view is evaluated under.
-  static func mono(_ size: CGFloat, relativeTo textStyle: UIFont.TextStyle = .body) -> Font {
-    .system(size: UIFontMetrics(forTextStyle: textStyle).scaledValue(for: size), design: .monospaced)
+/// The system's monospaced design at a size of the type scale. SwiftUI has no sized, scaling
+/// system font, so the size is a `@ScaledMetric` along `relativeTo`: it follows a change of the
+/// text size while the view is on screen.
+struct MonoFont: ViewModifier {
+  @ScaledMetric private var size: CGFloat
+
+  init(size: CGFloat, relativeTo textStyle: Font.TextStyle) {
+    _size = ScaledMetric(wrappedValue: size, relativeTo: textStyle)
+  }
+
+  func body(content: Content) -> some View {
+    content.font(.system(size: size, design: .monospaced))
+  }
+}
+
+extension View {
+  /// Monospaced text at `size`, scaled with Dynamic Type along `relativeTo`.
+  func monoFont(_ size: CGFloat, relativeTo textStyle: Font.TextStyle = .body) -> some View {
+    modifier(MonoFont(size: size, relativeTo: textStyle))
   }
 }
 

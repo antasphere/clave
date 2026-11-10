@@ -187,11 +187,11 @@ private struct SessionRowView: View {
         Text(row.title)
           .font(.geist(Theme.text.sm, relativeTo: .body))
           .foregroundStyle(theme.colors.textPrimary)
-          .lineLimit(1)
+          .fixedSize(horizontal: false, vertical: true)
         Text(row.description)
           .font(.geist(Theme.text.xs, weight: .regular, relativeTo: .caption))
           .foregroundStyle(theme.colors.textSecondary)
-          .lineLimit(1)
+          .fixedSize(horizontal: false, vertical: true)
       }
       .frame(maxWidth: .infinity, alignment: .leading)
     }

@@ -106,7 +106,9 @@ struct MarkdownRenderer {
     for run in text.runs {
       let intent = run.inlinePresentationIntent ?? []
       if intent.contains(.code) {
-        text[run.range].font = .mono(Theme.codeSize)
+        // A run of styled text takes no view modifier: Menlo through `relativeTo` scales with the
+        // text size as the paragraph around it does.
+        text[run.range].font = .custom("Menlo-Regular", size: Theme.codeSize, relativeTo: .body)
         text[run.range].backgroundColor = theme.colors.surface200
       } else if intent.contains(.stronglyEmphasized) {
         text[run.range].font = .geist(size, weight: .semibold, relativeTo: .body)
@@ -140,7 +142,7 @@ struct MarkdownRenderer {
       plain.foregroundColor = codeColor(.plain, palette)
       out = plain
     }
-    out.font = .mono(Theme.codeSize)
+    // The font is the code block's: `monoFont` on the drawn text, so it follows the text size.
     return out
   }
 }
@@ -240,7 +242,7 @@ private struct RenderedBlockView: View {
         .accessibilityHidden(true)
     case .raw(let source):
       Text(source)
-        .font(.mono(Theme.codeSize))
+        .monoFont(Theme.codeSize)
         .foregroundStyle(theme.colors.textSecondary)
     }
   }
@@ -258,13 +260,14 @@ struct CodeBlockView: View {
     VStack(alignment: .leading, spacing: 0) {
       if let language, !language.isEmpty {
         Text(language)
-          .font(.geist(Theme.text.meta, relativeTo: .caption2))
+          .font(.geist(Theme.text.meta, relativeTo: .caption))
           .foregroundStyle(theme.colors.textTertiary)
           .padding(.horizontal, Theme.space(3))
           .padding(.top, Theme.space(2))
       }
       ScrollView(.horizontal, showsIndicators: false) {
         Text(text)
+          .monoFont(Theme.codeSize)
           .fixedSize(horizontal: true, vertical: true)
           .padding(Theme.space(3))
       }

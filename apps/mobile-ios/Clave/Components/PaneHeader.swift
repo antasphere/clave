@@ -27,7 +27,7 @@ struct PaneHeader<Trailing: View>: View {
         Text(title)
           .font(.geist(Theme.text.lg, weight: .semibold, relativeTo: .title3))
           .foregroundStyle(theme.colors.textPrimary)
-          .lineLimit(1)
+          .fixedSize(horizontal: false, vertical: true)
           .accessibilityAddTraits(.isHeader)
           .accessibilityValue(status?.label ?? "")
           .accessibilityIdentifier("pane.title")
@@ -35,7 +35,7 @@ struct PaneHeader<Trailing: View>: View {
           Text(subtitle)
             .font(.geist(Theme.text.sm, relativeTo: .subheadline))
             .foregroundStyle(theme.colors.textSecondary)
-            .lineLimit(2)
+            .fixedSize(horizontal: false, vertical: true)
         }
       }
       .frame(maxWidth: .infinity, alignment: .leading)

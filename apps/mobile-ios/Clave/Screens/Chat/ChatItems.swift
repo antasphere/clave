@@ -236,7 +236,7 @@ struct ToolRunCard: View {
           Text(summary)
             .font(.geist(Theme.codeSize, relativeTo: .callout))
             .foregroundStyle(theme.colors.textSecondary)
-            .lineLimit(2)
+            .fixedSize(horizontal: false, vertical: true)
             .frame(maxWidth: .infinity, alignment: .leading)
           if status == .running {
             ProgressView().controlSize(.small)
@@ -296,7 +296,7 @@ struct ToolCallRow: View {
               .font(.geist(Theme.codeSize, weight: .semibold, relativeTo: .callout))
               .foregroundStyle(theme.colors.textSecondary)
             Text(description.target)
-              .font(.mono(Theme.codeSize))
+              .monoFont(Theme.codeSize)
               .foregroundStyle(theme.colors.textSecondary)
               .lineLimit(open ? nil : 1)
             if tool.failed == true {
@@ -342,12 +342,12 @@ struct ToolSectionView: View {
     let shape = RoundedRectangle(cornerRadius: Theme.radius.lg, style: .continuous)
     VStack(alignment: .leading, spacing: Theme.space(1)) {
       Text(section.label)
-        .font(.geist(Theme.text.meta, relativeTo: .caption2))
+        .font(.geist(Theme.text.meta, relativeTo: .caption))
         .textCase(.uppercase)
         .foregroundStyle(theme.colors.textTertiary)
       ScrollView(.horizontal, showsIndicators: false) {
         Text(full ? section.text : preview.text)
-          .font(.mono(Theme.codeSize))
+          .monoFont(Theme.codeSize)
           .foregroundStyle(theme.colors.textPrimary)
           .textSelection(.enabled)
           .fixedSize(horizontal: true, vertical: true)
@@ -468,7 +468,7 @@ struct DocumentSheet: View {
                 .foregroundStyle(theme.colors.textSecondary)
             } else {
               Text(file.content)
-                .font(.mono(Theme.codeSize))
+                .monoFont(Theme.codeSize)
                 .foregroundStyle(theme.colors.textPrimary)
                 .textSelection(.enabled)
                 .accessibilityIdentifier("chat.document.text")
@@ -526,14 +526,14 @@ struct PermissionCardView: View {
               .fixedSize(horizontal: false, vertical: true)
             if let tool = request.toolName, !tool.isEmpty, described == nil {
               Text(tool)
-                .font(.mono(Theme.text.xs))
+                .monoFont(Theme.text.xs)
                 .foregroundStyle(theme.colors.textTertiary)
             }
           }
         }
         if let target = described?.target, !target.isEmpty {
           Text(target)
-            .font(.mono(Theme.codeSize))
+            .monoFont(Theme.codeSize)
             .foregroundStyle(theme.colors.textSecondary)
             .textSelection(.enabled)
         } else if described != nil, !request.description.isEmpty {

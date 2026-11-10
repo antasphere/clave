@@ -8,6 +8,7 @@ struct MachinesScreen: View {
   let model: AppModel
 
   @Environment(\.claveTheme) private var theme
+  @Environment(\.dynamicTypeSize) private var dynamicTypeSize
   @State private var relayText = ""
   @State private var relayEdited = false
 
@@ -47,6 +48,10 @@ struct MachinesScreen: View {
       .scrollContentBackground(.hidden)
       .listRowSeparatorTint(theme.colors.borderSubtle)
       .refreshable { await model.machines?.refresh() }
+      // Rows that enter the list after its first layout (the machines, the developer section,
+      // inserted once someone is signed in) kept the text size they were drawn at when the setting
+      // changed: the list is drawn anew for a new text size.
+      .id(dynamicTypeSize)
     }
     .background(theme.colors.surface0)
     .toolbar(.hidden, for: .navigationBar)
@@ -55,6 +60,14 @@ struct MachinesScreen: View {
       await machines.load()
       if !relayEdited { relayText = machines.relayURL }
     }
+  }
+
+  /// A row's parts side by side, stacked at an accessibility text size so that no word is cut one
+  /// letter per line.
+  private var rowLayout: AnyLayout {
+    dynamicTypeSize.isAccessibilitySize
+      ? AnyLayout(VStackLayout(alignment: .leading, spacing: Theme.space(2)))
+      : AnyLayout(HStackLayout(spacing: Theme.space(3)))
   }
 
   // MARK: account
@@ -75,7 +88,7 @@ struct MachinesScreen: View {
         .accessibilityIdentifier("machines.signingin")
       default:
         if let person = account.person {
-          HStack(spacing: Theme.space(3)) {
+          rowLayout {
             // Who is signed in, as one element: VoiceOver reads a sentence, the email its value.
             HStack(spacing: Theme.space(3)) {
               Icon(.userCircle, size: 24).foregroundStyle(theme.colors.textTertiary)
@@ -220,22 +233,34 @@ private struct MachineRowView: View {
   let open: () -> Void
 
   @Environment(\.claveTheme) private var theme
+  @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
   var body: some View {
-    HStack(spacing: Theme.space(3)) {
+    // Side by side, or stacked at an accessibility text size so that no word is cut one letter
+    // per line beside the chip and the button.
+    let stacked = dynamicTypeSize.isAccessibilitySize
+    let layout = stacked
+      ? AnyLayout(VStackLayout(alignment: .leading, spacing: Theme.space(2)))
+      : AnyLayout(HStackLayout(spacing: Theme.space(3)))
+    let statusLayout = stacked
+      ? AnyLayout(VStackLayout(alignment: .leading, spacing: Theme.space(0.5)))
+      : AnyLayout(HStackLayout(spacing: Theme.space(1.5)))
+    layout {
       Icon(row.isDeveloper ? .serverStack : .computerDesktop, size: 20)
         .foregroundStyle(theme.colors.textTertiary)
       VStack(alignment: .leading, spacing: Theme.space(0.5)) {
         Text(row.machine.name)
           .font(.geist(Theme.text.sm, relativeTo: .body))
           .foregroundStyle(theme.colors.textPrimary)
-          .lineLimit(1)
-        HStack(spacing: Theme.space(1.5)) {
-          StatusDot(row.online ? .ready : .inactive)
-            .accessibilityHidden(true)
-          Text(row.online ? "Online" : "Offline")
-            .accessibilityIdentifier("machines.online.\(row.id)")
-          if !detail.isEmpty { Text(detail).lineLimit(1) }
+          .fixedSize(horizontal: false, vertical: true)
+        statusLayout {
+          HStack(spacing: Theme.space(1.5)) {
+            StatusDot(row.online ? .ready : .inactive)
+              .accessibilityHidden(true)
+            Text(row.online ? "Online" : "Offline")
+              .accessibilityIdentifier("machines.online.\(row.id)")
+          }
+          if !detail.isEmpty { Text(detail).fixedSize(horizontal: false, vertical: true) }
         }
         .font(.geist(Theme.text.xs, weight: .regular, relativeTo: .caption))
         .foregroundStyle(theme.colors.textSecondary)
@@ -311,6 +336,7 @@ struct NoticeRow: View {
           Text("A standalone server on this Mac or network, by address and token. This build only.")
             .font(.geist(Theme.text.xs, weight: .regular, relativeTo: .caption))
             .foregroundStyle(theme.colors.textSecondary)
+            .fixedSize(horizontal: false, vertical: true)
           ClaveField("http://127.0.0.1:43201", text: $url, label: "Server address")
             .keyboardType(.URL)
             .textInputAutocapitalization(.never)

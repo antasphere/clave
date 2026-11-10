@@ -170,7 +170,7 @@ struct RequestCard: View {
   private var secretForm: some View {
     if let action = request.action {
       Text(actionLine(action))
-        .font(.mono(Theme.codeSize))
+        .monoFont(Theme.codeSize)
         .foregroundStyle(theme.colors.textSecondary)
         .textSelection(.enabled)
         .fixedSize(horizontal: false, vertical: true)

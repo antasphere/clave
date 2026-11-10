@@ -58,7 +58,7 @@ struct ThemeGallery: View {
                 .font(.geist(Theme.text.xs, relativeTo: .caption))
                 .foregroundStyle(theme.colors.textSecondary)
               Text("npm run dev -- --port 4720")
-                .font(.mono(Theme.codeSize))
+                .monoFont(Theme.codeSize)
                 .foregroundStyle(theme.colors.termCwd)
             }
           }

@@ -12,7 +12,9 @@ struct SectionTitle: View {
 
   var body: some View {
     Text(title)
-      .font(.geist(Theme.text.meta, relativeTo: .caption2))
+      // Along caption, not caption2: caption2 keeps one size at every setting below the default,
+      // so its text did not follow those settings.
+      .font(.geist(Theme.text.meta, relativeTo: .caption))
       .textCase(.uppercase)
       .tracking(0.6)
       .foregroundStyle(theme.colors.textTertiary)

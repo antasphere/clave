@@ -172,6 +172,13 @@ extension XCTestCase {
     visit(.machines)
 
     let open = app.buttons["machines.open.m_fake"]
+    // At a large text size the machine's row may sit below the fold (Machines draws its list anew
+    // when the text size changes, as an audit does): scroll down to it.
+    var swipes = 0
+    while !(open.exists && open.isHittable) && swipes < 6 {
+      app.swipeUp()
+      swipes += 1
+    }
     XCTAssertTrue(open.waitForExistence(timeout: 5))
     open.tap()
     XCTAssertTrue(app.buttons["workspaces.row.scratch"].waitForExistence(timeout: 10))

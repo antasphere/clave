@@ -6,7 +6,7 @@ struct Chip: View {
   var icon: IconName?
 
   @Environment(\.claveTheme) private var theme
-  @ScaledMetric(relativeTo: .caption2) private var iconSize: CGFloat = 10
+  @ScaledMetric(relativeTo: .caption) private var iconSize: CGFloat = 10
 
   init(_ title: String, icon: IconName? = nil) {
     self.title = title
@@ -17,8 +17,8 @@ struct Chip: View {
     HStack(spacing: Theme.space(1)) {
       if let icon { Icon(icon, size: iconSize) }
       Text(title)
-        .font(.geist(Theme.text.badge, relativeTo: .caption2))
-        .lineLimit(1)
+        .font(.geist(Theme.text.badge, relativeTo: .caption))
+        .fixedSize(horizontal: false, vertical: true)
     }
     .foregroundStyle(theme.colors.textSecondary)
     .padding(.horizontal, Theme.space(1.5))

@@ -30,7 +30,7 @@ struct QuestionForm: View {
     VStack(alignment: .leading, spacing: Theme.space(2)) {
       if let header = question.header, !header.isEmpty {
         Text(header)
-          .font(.geist(Theme.text.meta, relativeTo: .caption2))
+          .font(.geist(Theme.text.meta, relativeTo: .caption))
           .textCase(.uppercase)
           .foregroundStyle(theme.colors.textTertiary)
       }

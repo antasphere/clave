@@ -22,7 +22,7 @@ struct ClaveButtonStyle: ButtonStyle {
       configuration.label
     }
     .font(.geist(spec.text, relativeTo: size == .regular ? .callout : .footnote))
-    .lineLimit(1)
+    .fixedSize(horizontal: false, vertical: true)
     .foregroundStyle(foreground)
     // The desktop's text buttons pad in multiples of the control's side: x2 primary, x1.5 the rest.
     .padding(.horizontal, spec.px * (role == .primary ? 2 : 1.5))
