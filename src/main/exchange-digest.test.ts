@@ -61,6 +61,7 @@ import {
   KEY_MISMATCH_ERROR,
   MAX_WAITING_PER_SESSION,
   hostDigests,
+  sessionLaunchOf,
   requestDigest,
   requestWorkDigest
 } from './exchange-digest'
@@ -293,5 +294,39 @@ describe("the host reads a digest on its own record's launch (PRDCT-4327)", () =
     await expect(next).resolves.toMatchObject({ ok: true })
     await expect(other).resolves.toMatchObject({ ok: true })
     await Promise.all(asks)
+  })
+})
+
+describe('the launch both servers compose (PRDCT-4327)', () => {
+  const source = {
+    records: { switched: { claudeProfileId: 'record-account' } } as Record<string, object>,
+    spawns: {
+      switched: { claudeProfileId: 'old-spawn-account' },
+      recordless: { claudeProfileId: 'spawn-account' }
+    } as Record<string, object>,
+    getSessionRecord(id: string) {
+      return this.records[id] ?? null
+    },
+    spawnLaunchOf(id: string) {
+      return this.spawns[id] ?? null
+    }
+  }
+  const launchOf = sessionLaunchOf(source)
+
+  it("reads the record first, then the spawn's launch, then nothing", () => {
+    expect(launchOf('switched')).toEqual({ claudeProfileId: 'record-account' })
+    expect(launchOf('recordless')).toEqual({ claudeProfileId: 'spawn-account' })
+    expect(launchOf('nobody')).toBeNull()
+  })
+
+  it('a session known only by its record is read on the record’s account', async () => {
+    source.records.cold = { claudeProfileId: 'cold-account' }
+    const host = hostDigests(launchOf)
+    const messages = [{ from: 'x', text: 'cold' }]
+    const done = host.exchangeDigest({ sessionId: 'cold', key: digestKey(messages), messages })
+    await ticks()
+    expect(mocks.accounts).toEqual(['cold-account'])
+    mocks.calls[0].finish(null, '{"needs_you": false, "message": null, "summary": "Cold."}', '')
+    await expect(done).resolves.toMatchObject({ ok: true, summary: 'Cold.' })
   })
 })

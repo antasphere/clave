@@ -259,6 +259,21 @@ export interface HostDigests {
 export const UNKNOWN_SESSION_ERROR = 'This server has no record of that session'
 
 /** The digests as a host serves them to its clients. */
+/** Where a host's sessions are known: its records, and the launch of what it
+ *  spawned (the session manager, `pty-manager.ts`). */
+export interface DigestLaunchSource {
+  getSessionRecord: (sessionId: string) => DigestLaunchRecord | null | undefined
+  spawnLaunchOf: (sessionId: string) => DigestLaunchRecord | null | undefined
+}
+
+/** The launch a host reads a session's digests on, as both servers compose
+ *  it: its own RECORD of the session first (what a tab comes back on, and
+ *  what an account switch rewrites), else the launch of the process it
+ *  spawned (a session that keeps no record), else none: refused. */
+export function sessionLaunchOf(source: DigestLaunchSource): DigestRecordOf {
+  return (sessionId) => source.getSessionRecord(sessionId) ?? source.spawnLaunchOf(sessionId)
+}
+
 /** How many reads a session may have waiting on the host at once: a client
  *  asking for more is told to ask again in a moment, so no client can queue
  *  model calls without end, nor push a tab's real digests out of its store. */
