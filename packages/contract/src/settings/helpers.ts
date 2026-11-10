@@ -32,7 +32,9 @@ export const HelperPreferenceView = Schema.Struct({
   /** The model it runs on: the person's pick, or `defaultModel`. */
   model: Schema.String,
   defaultModel: Schema.String,
-  account: HelperAccountView
+  account: HelperAccountView,
+  /** The account it was given is gone from the machine: it runs on the tab's own. */
+  accountRemoved: Schema.optional(Schema.Boolean)
 })
 
 /** Every helper of the host, highest priority first. */

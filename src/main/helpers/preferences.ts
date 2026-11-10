@@ -1,11 +1,9 @@
 import { lazySettingsPorts, type SettingsPorts } from '../ports/registry'
 import { readJson, writeJson } from '../ports/storage'
 import { helperById, listHelpers, setHelperConfigSource, type HelperConfig } from './registry'
-// The built-in declarations, pure (no runner, no PTY): imported so the list
-// below knows every helper whichever entry loads this file first.
-import './title'
-import './digests'
-import './git'
+// Every declared helper (`catalog.ts`): a helper added there shows here.
+import './catalog'
+import { claudeAccountsManager } from '../claude-accounts'
 import type {
   HelperAccount,
   HelperPreference as HelperPreferenceView,
@@ -13,13 +11,19 @@ import type {
 } from '../../shared/helper-preferences'
 
 /**
- * The helpers' preference on the machine that runs them (PRDCT-4330): per
- * helper, whether it runs, on which model and on which account. One JSON
- * document under the settings ports (`helper-preferences.json`, Electron's
- * data folder or the standalone server's), read at every call and never
- * cached: main and a separate server child share the folder, and either may
- * write it (the IPC route, the server route), so a cache in one would go
- * stale under the other.
+ * The helpers' preference of a machine (PRDCT-4330): per helper, whether it
+ * runs, on which model and on which account. ONE preference per machine,
+ * with one owner: the process that holds the machine's settings (the
+ * separate server child in the packaged app, main when the server runs
+ * in-process, the standalone server on a saved server). The owner keeps it
+ * here, one JSON document under its own settings ports
+ * (`helper-preferences.json`), read at every call.
+ *
+ * A process that runs helpers without owning the preference (main beside a
+ * separate or attached server: the digests and the git one-shots run there)
+ * never reads a file of its own nor the server's folder (ADR 0003): it asks
+ * the owner over the server's API at each call (`remoteHelperPreferences`),
+ * so the page's one write governs every helper whichever process runs it.
  *
  * Only what the person changed is stored: a helper with no entry runs on its
  * own defaults, so a model a helper's declaration moves to reaches everyone
@@ -69,8 +73,49 @@ function accountOf(entry: StoredEntry): HelperAccount {
   return { kind: 'account', accountId: entry.claudeProfileId }
 }
 
+/** The order a person reads them in; a helper declared later follows, by label. */
+const READING_ORDER = [
+  'tab-title',
+  'exchange-digest',
+  'work-digest',
+  'commit-message',
+  'push-summary'
+]
+function byReadingOrder(
+  a: { id: string; label: string },
+  b: { id: string; label: string }
+): number {
+  const rank = (id: string): number => {
+    const at = READING_ORDER.indexOf(id)
+    return at === -1 ? READING_ORDER.length : at
+  }
+  return rank(a.id) - rank(b.id) || a.label.localeCompare(b.label)
+}
+
+export interface HelperPreferencesOptions {
+  /** Whether a Claude account still exists on this machine: a helper whose
+   *  account was removed runs on the tab's own instead of failing each call. */
+  accountExists?: (id: string) => boolean
+}
+
 export class HelperPreferences {
-  constructor(private readonly ports: SettingsPorts = lazySettingsPorts) {}
+  private readonly accountExists: (id: string) => boolean
+
+  constructor(
+    private readonly ports: SettingsPorts = lazySettingsPorts,
+    options: HelperPreferencesOptions = {}
+  ) {
+    this.accountExists = options.accountExists ?? (() => true)
+  }
+
+  /** A stored account that is gone counts as none: the tab's own. */
+  private live(entry: StoredEntry): StoredEntry {
+    if (typeof entry.claudeProfileId !== 'string' || this.accountExists(entry.claudeProfileId))
+      return entry
+    const rest = { ...entry }
+    delete rest.claudeProfileId
+    return rest
+  }
 
   private load(): StoredDocument {
     const raw = readJson(this.ports.storage, HELPER_PREFERENCES_FILE)
@@ -88,8 +133,9 @@ export class HelperPreferences {
   /** What the runner asks before each call (`helperConfig`): the stored
    *  fields alone, the registry fills the rest from the helper's defaults. */
   configFor(id: string): Partial<HelperConfig> | undefined {
-    const entry = this.load().helpers[id]
-    if (!entry) return undefined
+    const stored = this.load().helpers[id]
+    if (!stored) return undefined
+    const entry = this.live(stored)
     const config: Partial<HelperConfig> = {}
     if (entry.enabled !== undefined) config.enabled = entry.enabled
     if (entry.model) config.model = entry.model
@@ -97,20 +143,24 @@ export class HelperPreferences {
     return config
   }
 
-  /** Every declared helper, highest priority first, with its preference. */
+  /** Every declared helper, in reading order, with its preference. */
   list(): HelperPreferenceView[] {
     const { helpers } = this.load()
-    return listHelpers().map((definition) => {
-      const entry = helpers[definition.id] ?? {}
-      return {
-        id: definition.id,
-        label: definition.label,
-        enabled: entry.enabled ?? true,
-        model: entry.model || definition.model,
-        defaultModel: definition.model,
-        account: accountOf(entry)
-      }
-    })
+    return listHelpers()
+      .map((definition): HelperPreferenceView => {
+        const stored = helpers[definition.id] ?? {}
+        const entry = this.live(stored)
+        return {
+          id: definition.id,
+          label: definition.label,
+          enabled: entry.enabled ?? true,
+          model: entry.model || definition.model,
+          defaultModel: definition.model,
+          account: accountOf(entry),
+          ...(entry !== stored && { accountRemoved: true })
+        }
+      })
+      .sort(byReadingOrder)
   }
 
   /** Change one helper's preference and answer the whole list. A helper
@@ -150,10 +200,63 @@ export class HelperPreferences {
   }
 }
 
-export const helperPreferences = new HelperPreferences()
+/** This process's store, on its own settings ports; a removed Claude
+ *  account is looked up in this machine's accounts (loaded on first use). */
+export const helperPreferences = new HelperPreferences(lazySettingsPorts, {
+  accountExists: (id) => claudeAccountsManager.get(id)?.id === id
+})
+
+/** What a helper's row says, as the runner reads it. */
+export function configFromView(view: HelperPreferenceView): Partial<HelperConfig> {
+  return {
+    enabled: view.enabled,
+    model: view.model,
+    ...(view.account.kind === 'machine' && { claudeProfileId: null }),
+    ...(view.account.kind === 'account' && { claudeProfileId: view.account.accountId })
+  }
+}
+
+/** The owner as a process that does not own the preference reaches it: the
+ *  server's settings API. */
+export interface HelperPreferencesOwner {
+  settings: {
+    helpers: {
+      list: () => Promise<ReadonlyArray<HelperPreferenceView>>
+      set: (
+        helperId: string,
+        patch: HelperPreferencePatch
+      ) => Promise<ReadonlyArray<HelperPreferenceView>>
+    }
+  }
+}
+
+/** The preference of this machine as held by its server: read and written
+ *  there, and asked at each call by the runner of this process. */
+export function remoteHelperPreferences(owner: () => Promise<HelperPreferencesOwner>): {
+  list: () => Promise<HelperPreferenceView[]>
+  set: (id: string, patch: HelperPreferencePatch) => Promise<HelperPreferenceView[]>
+  configFor: (id: string) => Promise<Partial<HelperConfig> | undefined>
+} {
+  const list = async (): Promise<HelperPreferenceView[]> => [
+    ...(await (await owner()).settings.helpers.list())
+  ]
+  return {
+    list,
+    set: async (id, patch) => [...(await (await owner()).settings.helpers.set(id, patch))],
+    configFor: async (id) => {
+      const view = (await list()).find((h) => h.id === id)
+      return view ? configFromView(view) : undefined
+    }
+  }
+}
 
 /** The entry's one call: the runner reads this machine's preference at each
- *  call from now on. Main and the standalone server each make it at boot. */
-export function installHelperPreferences(preferences: HelperPreferences = helperPreferences): void {
+ *  call from now on, from this process's store (the owner) or from the owner
+ *  it is given. Main and the standalone server each make it at boot. */
+export function installHelperPreferences(
+  preferences:
+    | Pick<HelperPreferences, 'configFor'>
+    | ReturnType<typeof remoteHelperPreferences> = helperPreferences
+): void {
   setHelperConfigSource((id) => preferences.configFor(id))
 }

@@ -21,6 +21,9 @@ export interface HelperPreference {
   model: string
   defaultModel: string
   account: HelperAccount
+  /** The account it was given is gone from the machine: it runs on the tab's
+   *  own (`account` says so) until another is picked. */
+  accountRemoved?: boolean
 }
 
 /** What a write may change; a field left out stays as it is. `model: null`

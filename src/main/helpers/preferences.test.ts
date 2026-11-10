@@ -46,8 +46,14 @@ vi.mock('../shell-launch', async (importOriginal) => ({
 import { fileStorage } from '../ports/storage'
 import { tempDataDir } from '../ports/testing'
 import type { SettingsPorts } from '../ports/registry'
-import { HELPER_PREFERENCES_FILE, HelperPreferences, installHelperPreferences } from './preferences'
-import { setHelperConfigSource } from './registry'
+import {
+  HELPER_PREFERENCES_FILE,
+  HelperPreferences,
+  installHelperPreferences,
+  remoteHelperPreferences,
+  type HelperPreferenceView
+} from './preferences'
+import { defineHelper, setHelperConfigSource } from './registry'
 import { cancelAll, resetShutdownForTests, runHelper } from './runner'
 import { titleHelper } from './title'
 
@@ -214,5 +220,112 @@ describe('the runner reads it at each call', () => {
     void runHelper(titleHelper, 'a third message', { claudeProfileId: 'tab-acct' })
     await ticks()
     expect(mocks.spawned[2].opts.env.CLAUDE_CODE_OAUTH_TOKEN).toBe('sk-ant-oat01-tab-acct')
+  })
+})
+
+describe('the list', () => {
+  it('reads in a person’s order: titles, digests, git, then any later helper by label', () => {
+    defineHelper({
+      id: 'zz-throwaway-explainer',
+      label: 'A throwaway explainer',
+      systemPrompt: 'x',
+      buildPrompt: () => 'x',
+      parseReply: () => null,
+      model: 'haiku',
+      timeoutMs: 1000,
+      priority: 999
+    })
+    const ids = preferences.list().map((h) => h.id)
+    expect(ids.slice(0, 5)).toEqual([
+      'tab-title',
+      'exchange-digest',
+      'work-digest',
+      'commit-message',
+      'push-summary'
+    ])
+    // Declared in the registry and nowhere else: it shows, and can be set.
+    expect(ids).toContain('zz-throwaway-explainer')
+    expect(ids.indexOf('zz-throwaway-explainer')).toBeGreaterThan(4)
+    preferences.set('zz-throwaway-explainer', { enabled: false })
+    expect(preferences.configFor('zz-throwaway-explainer')).toEqual({ enabled: false })
+  })
+})
+
+describe('an account that was removed', () => {
+  it('falls back to the tab’s own, the row says so, and any pick clears it', () => {
+    const gone = new HelperPreferences(portsOn(dir), { accountExists: (id) => id !== 'gone' })
+    gone.set('tab-title', { account: { kind: 'account', accountId: 'gone' }, model: 'sonnet' })
+    expect(gone.configFor('tab-title')).toEqual({ model: 'sonnet' })
+    expect(gone.list().find((h) => h.id === 'tab-title')).toMatchObject({
+      account: { kind: 'session' },
+      accountRemoved: true
+    })
+    gone.set('tab-title', { account: { kind: 'session' } })
+    const row = gone.list().find((h) => h.id === 'tab-title')
+    expect(row?.accountRemoved).toBeUndefined()
+    expect(preferences.configFor('tab-title')).toEqual({ model: 'sonnet' })
+  })
+
+  it('a helper on a removed account runs on the tab’s, not a failure each call', async () => {
+    const gone = new HelperPreferences(portsOn(dir), { accountExists: () => false })
+    installHelperPreferences(gone)
+    gone.set('tab-title', { account: { kind: 'account', accountId: 'gone' } })
+    void runHelper(titleHelper, 'a message', { claudeProfileId: 'tab-acct' })
+    await ticks()
+    expect(mocks.spawned[0].opts.env.CLAUDE_CODE_OAUTH_TOKEN).toBe('sk-ant-oat01-tab-acct')
+  })
+})
+
+describe('a process that does not own the preference asks its owner', () => {
+  const view = (over: Partial<HelperPreferenceView>): HelperPreferenceView => ({
+    id: 'tab-title',
+    label: 'Tab titles',
+    enabled: true,
+    model: 'haiku',
+    defaultModel: 'haiku',
+    account: { kind: 'session' },
+    ...over
+  })
+  const ownerWith = (
+    answer: () => Promise<HelperPreferenceView[]>
+  ): ReturnType<typeof remoteHelperPreferences> =>
+    remoteHelperPreferences(async () => ({
+      settings: { helpers: { list: answer, set: answer } }
+    }))
+
+  it('off at the owner: nothing runs, and the sentence names the helper whatever its grammar', async () => {
+    installHelperPreferences(ownerWith(async () => [view({ enabled: false })]))
+    const outcome = await runHelper(titleHelper, 'name this tab please', {})
+    expect(outcome).toEqual({
+      ok: false,
+      reason: 'disabled',
+      detail: 'Switched off in Settings › Helpers (Tab titles).'
+    })
+    expect(mocks.execFile).not.toHaveBeenCalled()
+  })
+
+  it('a model and an account picked at the owner reach the spawned call', async () => {
+    installHelperPreferences(
+      ownerWith(async () => [
+        view({ model: 'opus', account: { kind: 'account', accountId: 'helpers' } })
+      ])
+    )
+    void runHelper(titleHelper, 'first message here', { claudeProfileId: 'tab-acct' })
+    await ticks(8)
+    expect(mocks.spawned[0].args.slice(0, 3)).toEqual(['-p', '--model', 'opus'])
+    expect(mocks.spawned[0].opts.env.CLAUDE_CODE_OAUTH_TOKEN).toBe('sk-ant-oat01-helpers')
+  })
+
+  it('an owner that does not answer leaves the defaults, never a stuck call', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    installHelperPreferences(
+      ownerWith(async () => {
+        throw new Error('the server is gone')
+      })
+    )
+    void runHelper(titleHelper, 'first message here', {})
+    await ticks(8)
+    expect(mocks.spawned[0].args.slice(0, 3)).toEqual(['-p', '--model', 'haiku'])
+    warn.mockRestore()
   })
 })

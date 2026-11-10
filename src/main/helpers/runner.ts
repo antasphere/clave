@@ -9,7 +9,7 @@ import { launchProfileManager } from '../launch-profile-manager'
 import { buildOneShotLaunch } from '../claude-one-shot'
 import type { HelperFailureReason } from '../../shared/helper-prompt'
 import {
-  helperConfig,
+  resolveHelperConfig,
   type HelperConfig,
   type HelperDefinition,
   type HelperLaunchContext,
@@ -107,8 +107,32 @@ export function runHelper<Input, Output>(
   options: RunOptions = {}
 ): Promise<HelperOutcome<Output>> {
   if (closed) return Promise.resolve(failure('cancelled', 'Clave is quitting'))
-  if (!helperConfig(definition).enabled)
-    return Promise.resolve(failure('disabled', `${definition.label} is switched off`))
+  // ── PRDCT-4330: the preference may be asked of its owner (a promise) ──
+  const config = resolveHelperConfig(definition)
+  if (config instanceof Promise)
+    return config.then((answered) =>
+      closed
+        ? failure('cancelled', 'Clave is quitting')
+        : answered.enabled
+          ? enqueue(definition, input, context, options)
+          : switchedOff(definition)
+    )
+  if (!config.enabled) return Promise.resolve(switchedOff(definition))
+  return enqueue(definition, input, context, options)
+}
+
+/** A helper that is off: the sentence names it without leaning on its label's grammar. */
+function switchedOff(definition: { label: string }): HelperOutcome<never> {
+  return failure('disabled', `Switched off in Settings › Helpers (${definition.label}).`)
+}
+// ── end PRDCT-4330 ──
+
+function enqueue<Input, Output>(
+  definition: HelperDefinition<Input, Output>,
+  input: Input,
+  context: HelperLaunchContext,
+  options: RunOptions
+): Promise<HelperOutcome<Output>> {
   return new Promise((resolve) => {
     queue.push({
       definition: definition as HelperDefinition<unknown, unknown>,
@@ -192,7 +216,9 @@ async function execute(job: Job): Promise<HelperOutcome<unknown>> {
   let last: HelperOutcome<unknown> = failure('failed', 'Not run')
   for (let attempt = 1; attempt <= attempts; attempt++) {
     if (closed || generation !== born) return failure('cancelled', 'Cancelled')
-    const config = helperConfig(definition)
+    // PRDCT-4330: awaited only when the source asks its owner.
+    const resolved = resolveHelperConfig(definition)
+    const config = resolved instanceof Promise ? await resolved : resolved
     let stdout:
       | { ok: true; stdout: string }
       | { ok: false; reason: HelperFailureReason; detail: string }

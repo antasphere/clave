@@ -55,7 +55,11 @@ import type {
 } from '../../shared/antasphere-account-types'
 import type { Workspace } from '../../shared/workspace-types'
 import type { LaunchProfile } from '../../shared/agent-launch'
-import type { HelperAccount, HelperPreferences } from '../helpers/preferences'
+import type {
+  HelperAccount,
+  HelperPreferencePatch,
+  HelperPreferenceView
+} from '../helpers/preferences'
 
 /** The login jobs as the source needs them (`account-login.ts`'s manager). */
 export interface LoginJobsLike {
@@ -90,7 +94,13 @@ export interface SettingsManagers {
   preferences: PreferencesManager
   workspaces: WorkspaceManager
   /** The helpers' preference on this host (PRDCT-4330); absent, refused. */
-  helpers?: Pick<HelperPreferences, 'list' | 'set'>
+  helpers?: {
+    list(): HelperPreferenceView[] | Promise<HelperPreferenceView[]>
+    set(
+      id: string,
+      patch: HelperPreferencePatch
+    ): HelperPreferenceView[] | Promise<HelperPreferenceView[]>
+  }
   /** Where the process has a PTY for a login (the shell); absent, a login is
    *  refused. Loaded on the first call, not at construction: the login
    *  manager pulls the PTY backend in, which the shell must not load from
