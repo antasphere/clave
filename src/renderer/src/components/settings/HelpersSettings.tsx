@@ -1,6 +1,6 @@
 import { useEffect, type ReactElement, type ReactNode } from 'react'
 import { LOCAL_SERVER_ID } from '@clave/contract/fleet'
-import type { HelperPreference } from '../../../../shared/helper-preferences'
+import { HELPERS_NEED_UPDATE, type HelperPreference } from '../../../../shared/helper-preferences'
 import { useClaudeProfileStore } from '../../store/claude-profile-store'
 import {
   ACCOUNT_REMOVED,
@@ -98,7 +98,16 @@ export function HelpersList({
     void loadHelperPreferences(machine)
   }, [machine])
   let body: ReactNode
-  if (state.status === 'error' && state.helpers.length === 0)
+  if (state.status === 'error' && state.error === HELPERS_NEED_UPDATE)
+    // An older server: nothing to try again, the update is the way.
+    body = (
+      <SettingsCallout
+        role="status"
+        title={HELPERS_NEED_UPDATE}
+        text={`${machineName} runs a Clave server released before this page. Its helpers run on their own defaults until it is updated (Settings → Servers).`}
+      />
+    )
+  else if (state.status === 'error' && state.helpers.length === 0)
     body = (
       <SettingsCallout
         tone="danger"

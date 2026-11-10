@@ -111,8 +111,11 @@ describe('what a row offers', () => {
   it('says what a person gets when a helper is off, a later one included', () => {
     expect(store.helperWhenOff('tab-title')).toMatch(/first words/)
     expect(store.helperWhenOff('exchange-digest')).toMatch(/no digest/)
-    expect(store.helperWhenOff('exchange-digest')).toMatch(
-      /the card says the digest is switched off/
+    expect(store.helperWhenOff('exchange-digest')).toContain(
+      'Not read: digests are switched off in Settings.'
+    )
+    expect(store.helperWhenOff('work-digest')).toContain(
+      'No title: titles are switched off in Settings.'
     )
     expect(store.helperDoes('tab-title')).toBe('Names a new tab from its first message.')
     expect(store.helperDoes('permission-explainer')).toMatch(/short call/)

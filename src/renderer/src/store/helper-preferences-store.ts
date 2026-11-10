@@ -151,10 +151,11 @@ export function helperAccountChoices(
  *  not named here still says something true. */
 const WHEN_OFF: Record<string, string> = {
   'tab-title': "Off: a tab is named after its first message's first words.",
+  // The cards' own words (`plugins/chat-view/src/digest.ts`, digestFailureLine).
   'exchange-digest':
-    'Off: an exchange card shows no digest; the card says the digest is switched off.',
+    'Off: an exchange card shows no digest and reads "Not read: digests are switched off in Settings."',
   'work-digest':
-    'Off: a work card keeps no title of its own; the card says the digest is switched off.',
+    'Off: a work card keeps no title of its own and reads "No title: titles are switched off in Settings."',
   'commit-message': 'Off: the git panel writes no commit message for you.',
   'push-summary': 'Off: the git panel writes no push summary for you.'
 }
