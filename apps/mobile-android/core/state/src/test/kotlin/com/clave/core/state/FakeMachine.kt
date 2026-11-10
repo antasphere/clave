@@ -113,10 +113,12 @@ internal class FakeMachine(private val token: String = TOKEN) : AutoCloseable {
 
     fun count(line: String): Int = calls.count { it.line == line }
 
-    /** Inside [handler]: hold this request until [respond]. */
-    fun hold(call: Call): MockResponse {
+    /** Inside [handler]: hold this request until [respond]. [onHeld] runs once the request is
+     *  in [held], so a count kept there never runs ahead of the entry a reply looks for. */
+    fun hold(call: Call, onHeld: () -> Unit = {}): MockResponse {
         val entry = Held(call)
         held += entry
+        onHeld()
         return entry.future.get(30, TimeUnit.SECONDS)
     }
 

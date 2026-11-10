@@ -21,10 +21,11 @@ class HistoryRaceTest {
         private var counting = false
 
         init {
+            // Counted once held: counted before, a test waiting on the count could reply while
+            // the request was not yet among the held ones.
             h.machine.handler = { call ->
                 if (call.path == "/sessions/timeline") {
-                    timeline.incrementAndGet()
-                    h.machine.hold(call)
+                    h.machine.hold(call) { timeline.incrementAndGet() }
                 } else answer(200, """{"revision":1,"pending":[]}""")
             }
         }
@@ -32,6 +33,7 @@ class HistoryRaceTest {
         /** Answers the latest timeline request still waiting. */
         fun reply(body: String) {
             val index = h.machine.held.indexOfLast { !it.future.isDone }
+            check(index >= 0) { "no timeline request is waiting" }
             h.machine.respond(index, answer(200, body))
         }
 
@@ -48,13 +50,10 @@ class HistoryRaceTest {
         fun text(): String = h.store.text("m", "s")
     }
 
-    private fun race(block: suspend Race.() -> Unit) {
-        val h = Harness()
-        try {
-            runBlocking { Race(h.start()).block() }
-        } finally {
-            h.close()
-        }
+    /** The harness is closed by use: a failure of its close is added to the test's own
+     *  failure as suppressed, never put in its place. */
+    private fun race(block: suspend Race.() -> Unit) = Harness().use { h ->
+        runBlocking { Race(h.start()).block() }
     }
 
     @Test
@@ -126,9 +125,8 @@ class HistoryRaceTest {
 
     @Test
     fun `openChat waits for the subscription ack before the snapshot and merges the frames buffered meanwhile`() {
-        val h = Harness()
-        h.machine.holdAcks = { true }
-        try {
+        Harness().use { h ->
+            h.machine.holdAcks = { true }
             runBlocking {
                 val r = Race(h.start())
                 val open = h.scope.async { h.store.openChat("m", "s") }
@@ -144,8 +142,6 @@ class HistoryRaceTest {
                 open.await()
                 assertEquals("ab", r.text())
             }
-        } finally {
-            h.close()
         }
     }
 

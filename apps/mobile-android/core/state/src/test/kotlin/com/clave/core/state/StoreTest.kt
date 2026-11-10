@@ -49,12 +49,10 @@ class StoreTest {
         welcome: Boolean = true,
         block: suspend Harness.() -> Unit,
     ) {
-        val h = Harness(withDelivery = withDelivery, sleep = sleep)
-        h.machine.welcome = welcome
-        try {
+        // Closed by use: a failure of the close is added to the test's own as suppressed.
+        Harness(withDelivery = withDelivery, sleep = sleep).use { h ->
+            h.machine.welcome = welcome
             runBlocking { h.start().block() }
-        } finally {
-            h.close()
         }
     }
 
