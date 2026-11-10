@@ -51,7 +51,11 @@ vi.mock('./exchange-digest-store', () => ({
   }
 }))
 
-import { DIGEST_CLI_ARGS, cancelAll, requestDigest, requestWorkDigest } from './exchange-digest'
+import { cancelAll, requestDigest, requestWorkDigest } from './exchange-digest'
+import { helperCliArgs } from './helpers/runner'
+import { exchangeDigestHelper } from './helpers/digests'
+
+const DIGEST_CLI_ARGS = helperCliArgs(exchangeDigestHelper.systemPrompt, exchangeDigestHelper)
 import { DIGEST_HELPER_MARKER } from '../shared/exchange-digest'
 import { WORK_DIGEST_MARKER } from '../shared/work-digest'
 import { resetShutdownForTests } from './helpers/runner'

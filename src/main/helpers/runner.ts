@@ -27,42 +27,15 @@ import {
  * nothing would kill.
  */
 
-/** Children at once, every helper together. */
+/** Background helpers (`background: true`, the digests) running at once,
+ *  all together. The others are not counted here: a title or a git call
+ *  never waits for a digest to end. */
 export const MAX_RUNNING_HELPERS = 3
 /** How long a cancelled child gets to leave on SIGTERM before SIGKILL. */
 export const HELPER_CANCEL_GRACE_MS = 1000
 
-/**
- * The CLI arguments of a helper call: one turn on the helper's model with
- * the helper's own system prompt, no MCP server, no skill, no tool. The
- * person's settings stay in force (an `apiKeyHelper` may live there, and
- * `--bare` drops the OAuth and keychain logins), so the reply may still carry
- * their output style: every parser reads past it. `--tools` is variadic and
- * takes the rest of the line, so it comes last and the prompt goes on stdin.
- */
-export function helperCliArgs(
-  systemPrompt: string,
-  config: Pick<HelperConfig, 'model' | 'fallbackModel'>
-): string[] {
-  const fallback =
-    config.fallbackModel && config.fallbackModel !== config.model
-      ? ['--fallback-model', config.fallbackModel]
-      : []
-  return [
-    '-p',
-    '--model',
-    config.model,
-    ...fallback,
-    '--system-prompt',
-    systemPrompt,
-    '--strict-mcp-config',
-    '--mcp-config',
-    '{"mcpServers":{}}',
-    '--disable-slash-commands',
-    '--tools',
-    ''
-  ]
-}
+export { helperCliArgs } from './cli-args'
+import { helperCliArgs } from './cli-args'
 
 /** What the CLI's failure says it was. `killed` is execFile's own timeout. */
 export function classifyFailure(input: {
@@ -77,6 +50,25 @@ export function classifyFailure(input: {
   if (AUTH_RE.test(text)) return 'auth'
   return 'failed'
 }
+/**
+ * The CLI's own notice, printed as the WHOLE reply with exit 0 ("Claude AI
+ * usage limit reached|…", "Invalid API key · Please run /login"), or null.
+ * Anchored and short on purpose: a model that answered a message about
+ * quotas or a 401 wrote a longer reply mentioning them, and that reply is
+ * unreadable (and retried), never a limit or a refusal.
+ */
+export function cliNotice(stdout: string): 'limit' | 'auth' | null {
+  const text = stdout.trim()
+  if (!text || text.length > 200 || text.split('\n').length > 2) return null
+  if (LIMIT_NOTICE.test(text)) return 'limit'
+  if (AUTH_NOTICE.test(text)) return 'auth'
+  return null
+}
+const LIMIT_NOTICE =
+  /^(?:Claude AI usage limit reached\b|You've (?:hit|reached) your (?:usage |session |weekly )?limit\b|(?:5-hour|weekly|Opus|Fable) limit reached\b|API Error: 429\b|You're out of extra usage\b)/i
+const AUTH_NOTICE =
+  /^(?:Invalid API key\b|Not logged in\b|Please run \/login\b|OAuth token (?:has )?(?:expired|been revoked)\b|API Error: 40[13]\b|Credit balance is too low\b)/i
+
 const LIMIT_RE =
   /usage limit|rate[ -]limit|limit reached|limit will reset|\b429\b|quota|out of extra usage/i
 const AUTH_RE =
@@ -93,7 +85,8 @@ interface Job {
 
 const queue: Job[] = []
 const runningById = new Map<string, number>()
-let running = 0
+const runningByPool = new Map<string, number>()
+let runningBackground = 0
 let seq = 0
 let closed = false
 const children = new Map<ChildProcess, string>()
@@ -136,14 +129,23 @@ function failure(
   return { ok: false, reason, detail }
 }
 
-/** The next job that may start: the highest priority whose helper is under
- *  its own cap, the oldest of equals. */
+/** Whether a job may start now: under its helper's cap, its pool's, and,
+ *  for background work, the background cap. */
+function mayStart(definition: HelperDefinition<unknown, unknown>): boolean {
+  if ((runningById.get(definition.id) ?? 0) >= (definition.concurrency ?? Infinity)) return false
+  const pool = definition.pool
+  if (pool && (runningByPool.get(pool.id) ?? 0) >= pool.concurrency) return false
+  if (definition.background && runningBackground >= MAX_RUNNING_HELPERS) return false
+  return true
+}
+
+/** The next job that may start: the highest priority under its caps, the
+ *  oldest of equals. */
 function nextJob(): number {
   let best = -1
   for (let i = 0; i < queue.length; i++) {
     const job = queue[i]
-    const cap = job.definition.concurrency ?? Infinity
-    if ((runningById.get(job.definition.id) ?? 0) >= cap) continue
+    if (!mayStart(job.definition)) continue
     if (best === -1) {
       best = i
       continue
@@ -158,21 +160,25 @@ function nextJob(): number {
   return best
 }
 
+function count(definition: HelperDefinition<unknown, unknown>, delta: 1 | -1): void {
+  runningById.set(definition.id, (runningById.get(definition.id) ?? 0) + delta)
+  if (definition.pool)
+    runningByPool.set(definition.pool.id, (runningByPool.get(definition.pool.id) ?? 0) + delta)
+  if (definition.background) runningBackground += delta
+}
+
 function pump(): void {
-  while (running < MAX_RUNNING_HELPERS) {
+  for (;;) {
     const index = nextJob()
     if (index === -1) return
     const [job] = queue.splice(index, 1)
-    const id = job.definition.id
-    running++
-    runningById.set(id, (runningById.get(id) ?? 0) + 1)
+    count(job.definition, 1)
     void execute(job)
       .catch((error: unknown) =>
         failure('failed', error instanceof Error ? error.message : String(error))
       )
       .then((outcome) => {
-        running--
-        runningById.set(id, (runningById.get(id) ?? 1) - 1)
+        count(job.definition, -1)
         job.resolve(outcome)
         pump()
       })
@@ -191,7 +197,7 @@ async function execute(job: Job): Promise<HelperOutcome<unknown>> {
       | { ok: true; stdout: string }
       | { ok: false; reason: HelperFailureReason; detail: string }
     try {
-      stdout = await spawnOnce(job, config)
+      stdout = await spawnOnce(job, config, born)
     } catch (error) {
       // The launch refused before any child: an account removed under the
       // tab is the usual one. Not worth a retry.
@@ -200,15 +206,19 @@ async function execute(job: Job): Promise<HelperOutcome<unknown>> {
     }
     if (!stdout.ok) {
       last = stdout
-      if (stdout.reason !== 'failed') return stdout
+      if (stdout.reason === 'cancelled') return stdout
+      if (stdout.reason !== 'failed' && !definition.retryAnyFailure) return stdout
+      if (attempt < attempts)
+        console.warn(`[helpers] ${definition.id}: ${stdout.reason} on try ${attempt}, retrying`)
       continue
     }
     const value = definition.parseReply(stdout.stdout, job.input)
     if (value !== null && value !== undefined)
       return { ok: true, value, attempts: attempt, model: config.model }
-    // A reply that is the CLI's own refusal, printed on stdout with exit 0.
-    const said = classifyFailure({ stdout: stdout.stdout })
-    if (said !== 'failed') return failure(said, stdout.stdout.trim().slice(0, 300))
+    // A reply that is the CLI's own refusal, printed on stdout with exit 0:
+    // only the notice as the whole reply, never a keyword inside an answer.
+    const said = cliNotice(stdout.stdout)
+    if (said) return failure(said, stdout.stdout.trim().slice(0, 300))
     last = failure('unreadable', stdout.stdout.trim().slice(0, 300) || 'Empty reply')
     if (attempt < attempts)
       console.warn(
@@ -220,7 +230,8 @@ async function execute(job: Job): Promise<HelperOutcome<unknown>> {
 
 async function spawnOnce(
   job: Job,
-  config: HelperConfig
+  config: HelperConfig,
+  born: number
 ): Promise<
   { ok: true; stdout: string } | { ok: false; reason: HelperFailureReason; detail: string }
 > {
@@ -243,7 +254,9 @@ async function spawnOnce(
     },
     userShell: getUserShell()
   })
-  if (closed) return failure('cancelled', 'Clave is quitting')
+  // The account's token is read across an await: a `cancelAll` (or the
+  // quit) in between must not be followed by a child nothing would signal.
+  if (closed || generation !== born) return failure('cancelled', 'Cancelled')
   const prompt = definition.buildPrompt(job.input)
   return new Promise((resolve) => {
     // execFile calls back once; held to it, so a slot is never freed twice.
