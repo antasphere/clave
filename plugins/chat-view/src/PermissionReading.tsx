@@ -58,8 +58,10 @@ function LevelPill({
 /** The level and the reading, inside the permission card. Before the
  *  reading: the level the rules found (none when they could not tell) and
  *  "Reading what this does…". After: the level, raised by the reading or
- *  given by it to a request the rules could not tell, or "Not verified", and
- *  the sentence. A reading that failed says so in one quiet line. */
+ *  given by it to a request the rules could not tell, and the sentence; when
+ *  no level is earned, one line that says Clave could not check it and that
+ *  the sentence is a model's reading. A reading that failed says so in one
+ *  quiet line. */
 export function PermissionReading({ request }: { request: Permission }): React.JSX.Element {
   const value = useContext(PermissionReadingContext)
   const reading = value?.explained[request.id]
@@ -73,15 +75,20 @@ export function PermissionReading({ request }: { request: Permission }): React.J
   }, [reading, read])
   const waiting = !!value && read && !reading && !gaveUp
   const failed = !!value && read && !reading?.sentence && (!!reading?.failed || gaveUp)
+  // The rules could neither prove nor detect a level: the model's sentence is
+  // all there is, and the card says so in words rather than in a faint pill
+  // beside a confident sentence.
+  const unverified = level === null && !!reading?.sentence
   return (
     <div
       className="chat-permission-reading"
       data-level={level ?? 'unverified'}
       data-state={reading?.sentence ? 'read' : waiting ? 'reading' : failed ? 'failed' : 'none'}
     >
-      {!(waiting && level === null) && <LevelPill level={level} />}
+      {!(level === null && (waiting || unverified)) && <LevelPill level={level} />}
       {reading?.sentence ? (
-        <p className="chat-permission-sentence">
+        <p className="chat-permission-sentence" data-verified={unverified ? 'false' : undefined}>
+          {unverified && 'Not verified. Clave could not check this; a model reads it as: '}
           {reading.sentence}
           {reading.asked && MATCH_WORDS[reading.asked] && (
             <span className="chat-permission-match" data-asked={reading.asked}>
@@ -100,8 +107,9 @@ export function PermissionReading({ request }: { request: Permission }): React.J
   )
 }
 
-/** The way back for a tab launched with permissions skipped: one quiet
- *  action on the card, which sends the switch. Nothing when there is none. */
+/** The way back for a tab that skipped permissions before (launched that way,
+ *  or resumed from a session that was): one quiet action on the card, which
+ *  sends the switch. Nothing when there is none. */
 export function BackToBypass(): React.JSX.Element | null {
   const value = useContext(PermissionReadingContext)
   if (!value?.backToBypass) return null
@@ -110,7 +118,7 @@ export function BackToBypass(): React.JSX.Element | null {
       type="button"
       className="chat-permission-bypass"
       onClick={value.backToBypass}
-      title="This tab was started with permissions skipped; switch it back"
+      title="This tab skipped permissions before; switch back to skipping them"
     >
       <ArrowUturnLeftIcon />
       Back to skipping permissions

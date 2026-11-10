@@ -159,7 +159,7 @@ async function onThisMac(t) {
 async function onAManualTab(t) {
   const chat = await openChat('chat-permission-manual', [], undefined, {
     CLAVE_E2E_EXPLAINER_REPLY: JSON.stringify({
-      sentence: 'Runs the project tests. Changes nothing.',
+      sentence: 'Lists the test folder of the project. Changes nothing.',
       level: 'reads',
       asked: 'yes'
     }),
@@ -170,13 +170,13 @@ async function onAManualTab(t) {
   try {
     await inject(fixture, record.id, [
       { type: 'permission_mode', mode: 'default', modes: MODES.slice(0, 2) },
-      { type: 'user_message', text: 'run the tests' },
+      { type: 'user_message', text: 'show me the tests' },
       {
         type: 'permission_request',
         id: 'manual-1',
         description: 'Allow Bash?',
         toolName: 'Bash',
-        input: { command: 'npm test' },
+        input: { command: 'cd tests && ls' },
         options: [
           { id: 'allow-once', label: 'Allow once' },
           { id: 'deny', label: 'Deny' }
@@ -188,7 +188,9 @@ async function onAManualTab(t) {
     const reading = dock.locator('.chat-permission-reading')
     assert.match(await reading.innerText(), /Reading what this does…/)
     assert.equal(await reading.locator('.chat-permission-level').count(), 0, 'no level before')
-    await dock.getByText('Runs the project tests. Changes nothing.').waitFor({ timeout: 15_000 })
+    await dock
+      .getByText('Lists the test folder of the project. Changes nothing.', { exact: false })
+      .waitFor({ timeout: 15_000 })
     assert.match(await reading.innerText(), /Not verified/)
     assert.doesNotMatch(await reading.innerText(), /Reads only/)
     t.check('an unproven request shows no level, then "Not verified" beside the sentence', true)

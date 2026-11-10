@@ -51,6 +51,9 @@ const request = (command: string): Permission => ({
   input: { command },
   options: [{ id: 'allow-once', label: 'Allow once' }]
 })
+/** A command the rules neither prove nor rate (a `cd` they do not follow
+ *  into a proof): its level is unknown. */
+const UNKNOWN = 'cd src && ls'
 const render = (node: React.JSX.Element, value: PermissionReadingValue | null): string =>
   renderToStaticMarkup(
     value ? <PermissionReadingProvider value={value}>{node}</PermissionReadingProvider> : node
@@ -75,7 +78,7 @@ describe('the reading on the card', () => {
   })
 
   it('shows no level before the reading when the rules cannot tell', () => {
-    const html = render(<PermissionReading request={request('npm test')} />, {
+    const html = render(<PermissionReading request={request(UNKNOWN)} />, {
       explained: {},
       cwd: '/repo'
     })
@@ -86,7 +89,7 @@ describe('the reading on the card', () => {
 
   it('never shows "reads only" for an unproven request, even when the model says so', () => {
     const html = render(
-      <PermissionReading request={request('npm test')} />,
+      <PermissionReading request={request(UNKNOWN)} />,
       explained({ level: 'reads', sentence: 'Runs the tests. Changes nothing.' })
     )
     expect(html).toContain('Not verified')
@@ -94,9 +97,28 @@ describe('the reading on the card', () => {
     expect(html).toContain('Runs the tests. Changes nothing.')
   })
 
+  it('says in words that Clave could not check it when the model is all there is', () => {
+    const html = render(
+      <PermissionReading request={request(UNKNOWN)} />,
+      explained({ sentence: 'Lists a folder of the project. Changes nothing.' })
+    )
+    expect(html).toContain(
+      'Not verified. Clave could not check this; a model reads it as: Lists a folder of the project. Changes nothing.'
+    )
+    expect(html).toContain('data-verified="false"')
+    // One line, no pill beside the sentence.
+    expect(html).not.toContain('chat-permission-level')
+    // A level the rules found keeps the plain sentence.
+    const known = render(
+      <PermissionReading request={request('ls')} />,
+      explained({ level: 'reads', sentence: 'Lists the files of the project.' })
+    )
+    expect(known).not.toContain('could not check')
+  })
+
   it('takes the level the model gives an unknown request', () => {
     const html = render(
-      <PermissionReading request={request('npm test')} />,
+      <PermissionReading request={request(UNKNOWN)} />,
       explained({ level: 'outside', sentence: 'Runs the tests, which call a server.' })
     )
     expect(html).toContain('data-level="outside"')
@@ -134,7 +156,7 @@ describe('the reading on the card', () => {
     expect(known).toContain('Could not read what this does')
     expect(known).not.toContain('Reading what this does')
     const unknown = render(
-      <PermissionReading request={request('make')} />,
+      <PermissionReading request={request(UNKNOWN)} />,
       explained({ failed: 'timeout' })
     )
     expect(unknown).toContain('Not verified')
@@ -169,7 +191,9 @@ describe('the reading on the card', () => {
     expect(render(<PermissionLevelTag request={request('npm install')} />, null)).toContain(
       'Reaches outside the project'
     )
-    expect(render(<PermissionLevelTag request={request('make')} />, null)).toContain('Not verified')
+    expect(render(<PermissionLevelTag request={request(UNKNOWN)} />, null)).toContain(
+      'Not verified'
+    )
   })
 })
 
@@ -266,6 +290,14 @@ describe('the way back to skipping permissions', () => {
     renderToStaticMarkup(<Probe />)
     expect(seen[0].explained['clave-owner:request:k']).toMatchObject({ sentence: 'x' })
     expect(seen[0].backToBypass).toBeUndefined()
+  })
+
+  it('says the tab skipped permissions before, true for a resumed tab too', () => {
+    const html = render(<BackToBypass />, { explained: {}, backToBypass: () => {} })
+    expect(html).toContain(
+      'title="This tab skipped permissions before; switch back to skipping them"'
+    )
+    expect(html).not.toMatch(/started/)
   })
 
   it('is offered only when the view gives one', () => {
