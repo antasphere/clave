@@ -16,6 +16,7 @@ import { canResumeHistoryEntry, resumeHistoryEntry } from '../../lib/session-his
 import { dotStateOf, serverRowVisible, visibleInWorkspace } from '../../lib/session-history-diff'
 import { useFleetStore } from '../../store/fleet-store'
 import { pairedServerWorkspaces, usePairingStore } from '../../store/pairing-store'
+import { ownerOf } from '../../lib/fleet-identity'
 import { cn } from '@clave/ui/components'
 import { shortenPath } from '../../lib/utils'
 import { ContextMenu } from '../ui/ContextMenu'
@@ -133,9 +134,14 @@ function HistoryPanel({ presetGroupId }: { presetGroupId: string | null }): Reac
     void pairings
     return pairedServerWorkspaces(activeWorkspaceId).map((p) => ({
       workspaceId: p.workspaceId,
+      serverId: p.serverId,
       rootDir: workspaces.find((w) => w.id === p.workspaceId)?.rootDir ?? null
     }))
   }, [activeWorkspaceId, workspaces, pairings])
+  // The server that owns the active workspace ('local' for this Mac's): a
+  // server's row with no workspace is placed by its folder only under the
+  // roots of its own server.
+  const activeServerId = activeWorkspaceId ? ownerOf(activeWorkspaceId) : 'local'
 
   const [entries, setEntries] = useState<HistoryListEntry[] | null>(null)
   const [groupId, setGroupId] = useState<string | null>(presetGroupId)
@@ -242,7 +248,13 @@ function HistoryPanel({ presetGroupId }: { presetGroupId: string | null }): Reac
       // store-only transcript) by its own cwd against the workspace root.
       if (
         e.server
-          ? !serverRowVisible(e, activeWorkspaceId, activeRoot, serverScope)
+          ? !serverRowVisible(
+              { ...e, serverId: e.server.id },
+              activeWorkspaceId,
+              activeRoot,
+              activeServerId,
+              serverScope
+            )
           : !visibleInWorkspace(e, activeWorkspaceId, activeRoot)
       )
         return false
@@ -250,7 +262,16 @@ function HistoryPanel({ presetGroupId }: { presetGroupId: string | null }): Reac
       if (openOnly && !liveStates.has(e.claudeSessionId)) return false
       return true
     })
-  }, [entries, selectedGroup, activeWorkspaceId, activeRoot, serverScope, openOnly, liveStates])
+  }, [
+    entries,
+    selectedGroup,
+    activeWorkspaceId,
+    activeRoot,
+    activeServerId,
+    serverScope,
+    openOnly,
+    liveStates
+  ])
 
   /** The literal counts line's numbers, over the rows in scope. */
   const counts = useMemo(() => {
@@ -532,14 +553,15 @@ function HistoryPanel({ presetGroupId }: { presetGroupId: string | null }): Reac
               // What the row's second line and its title say when it cannot
               // be reopened from here (PRDCT-4321): a server's row by its
               // server, this Mac's by its transcript.
+              // A row its server does not list (held null) is not blocked
+              // while the server is online: it reopens there if its
+              // transcript is still on the server's disk.
               const blocked = server
                 ? !online
                   ? `${server.name} is offline`
-                  : server.held === null
-                    ? `Not in ${server.name}'s History`
-                    : server.held === 'closed' && missing
-                      ? `Transcript gone from ${server.name}`
-                      : null
+                  : server.held === 'closed' && missing
+                    ? `Transcript gone from ${server.name}`
+                    : null
                 : missing
                   ? 'Transcript gone'
                   : null
@@ -557,7 +579,7 @@ function HistoryPanel({ presetGroupId }: { presetGroupId: string | null }): Reac
                   data-history-provider={e.provider}
                   data-live={live ? 'true' : undefined}
                   data-state={dotState}
-                  data-missing={missing ? 'true' : undefined}
+                  data-missing={missing && server?.held !== null ? 'true' : undefined}
                   data-history-server={server?.id}
                   data-blocked={blocked !== null && !live ? 'true' : undefined}
                   data-hits={searching ? rowHits.length : undefined}
@@ -575,7 +597,7 @@ function HistoryPanel({ presetGroupId }: { presetGroupId: string | null }): Reac
                           ? !online
                             ? `Ran on ${server.name}, which is offline: it reopens there once ${server.name} is back.`
                             : server.held === null
-                              ? `This Mac saw this tab on ${server.name}, but ${server.name} does not list the conversation: it ran before ${server.name} kept a History, or its transcript is gone there.`
+                              ? `Resume on ${server.name} · it reopens there if its transcript is still on ${server.name}`
                               : server.held === 'closed' && missing
                                 ? `The transcript is no longer on ${server.name}'s disk; nothing to resume.`
                                 : `Resume on ${server.name} · ⌥-click to skip permissions`

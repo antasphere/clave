@@ -64,16 +64,31 @@ export interface ServerConversations {
   /** Stamp the record's last word as the tab goes: before its discard. */
   closing(record: SessionRecord): void
   list(): ServerHistory
+  /** `ids`, when given, are the only conversations searched (the ones the
+   *  client asked about), so the cap is spent on them. */
   search(request: {
     query: string
     scopes: HistorySearchScope[]
     maxHits?: number
+    ids?: readonly string[]
     signal?: AbortSignal
   }): Promise<HistorySearchResult>
 }
 
 /** How long a search may read before it answers with what it found. */
 export const SEARCH_BUDGET_MS = 20_000
+
+/** The daemon's rule for `running`: a session the host holds whose state is
+ *  not `ended`. A chat whose CLI ended on its own is still held, and is what
+ *  a Resume is for: running means a process at work. */
+export function runningIn(host: {
+  get(id: string): { state?: string } | undefined
+}): (id: string) => boolean {
+  return (id) => {
+    const live = host.get(id)
+    return live !== undefined && live.state !== 'ended'
+  }
+}
 
 function isClaudeConversation(record: SessionRecord): boolean {
   return (
@@ -187,6 +202,12 @@ export function serverConversations(options: ServerConversationsOptions): Server
     for (const record of options.records()) {
       if (isClaudeConversation(record)) holders.set(record.claudeSessionId!, record)
     }
+    // The group a conversation is listed in is the one its LAST row names
+    // (null: the tab sat at the top level), not the last group it first
+    // entered: a tab moved back, or out of every group, is listed where it is.
+    const lastRow = new Map<string, LedgerRow>()
+    for (const row of [...rows].sort((a, b) => a.ts.localeCompare(b.ts)))
+      if (row.claudeSessionId) lastRow.set(row.claudeSessionId, row)
     const shared = root()
     const index = indexTranscripts(shared)
     const out: Array<{ conversation: HistoryConversation; file: string | null }> = []
@@ -203,6 +224,7 @@ export function serverConversations(options: ServerConversationsOptions): Server
         : 'closed'
       const lastHumanAt =
         peek.lastHumanAt ?? entry.lastSeenAt ?? peek.modifiedAt ?? entry.firstSeenAt
+      const last = lastRow.get(entry.claudeSessionId)
       out.push({
         file: peek.exists ? peek.path : null,
         conversation: {
@@ -212,8 +234,8 @@ export function serverConversations(options: ServerConversationsOptions): Server
           title: peek.title,
           cwd: entry.cwd,
           model: entry.model,
-          groupId: entry.groups.at(-1)?.id ?? null,
-          groupName: entry.groups.at(-1)?.name || null,
+          groupId: last?.groupId ?? null,
+          groupName: (last?.groupId && last.groupName) || null,
           workspaceId: entry.workspaceId,
           firstSeenAt: entry.firstSeenAt,
           lastHumanAt,
@@ -241,8 +263,12 @@ export function serverConversations(options: ServerConversationsOptions): Server
       return { conversations: listed().map((l) => l.conversation) }
     },
     async search(request) {
+      // Only what the client asked about, before the cap: a newer
+      // conversation of another workspace never spends it (PRDCT-4321).
+      const asked = request.ids ? new Set(request.ids) : null
       const files = listed()
         .filter((l) => l.file !== null)
+        .filter((l) => !asked || asked.has(l.conversation.conversationId))
         .sort((a, b) => b.conversation.lastHumanAt.localeCompare(a.conversation.lastHumanAt))
         .map((l) => ({ claudeSessionId: l.conversation.conversationId, path: l.file! }))
       const budget = new AbortController()

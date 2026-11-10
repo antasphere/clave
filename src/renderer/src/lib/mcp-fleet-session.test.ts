@@ -165,6 +165,33 @@ describe('MCP fleet session launch', () => {
       ).rejects.toThrow()
     expect(api.fleetStart).not.toHaveBeenCalled()
   })
+  it('reopens a resumed conversation on the profile and the server account it ran on, unless the call names its account (PRDCT-4321)', async () => {
+    const api = setup()
+    const resumed = {
+      cwd: '/srv/repo',
+      mode: 'claude' as const,
+      resumeSessionId: 'conv-1',
+      resumeLaunchProfileId: 'chat:claude:mine',
+      resumeAccount: { id: 'srv-acct', label: 'Studio work' }
+    }
+    await openFleetSession('server', undefined, undefined, resumed)
+    expect(api.fleetStart.mock.calls.at(-1)![2]).toMatchObject({
+      claudeMode: true,
+      resumeSessionId: 'conv-1',
+      launchProfileId: 'chat:claude:mine',
+      claudeProfileId: 'srv-acct',
+      claudeProfileLabel: 'Studio work'
+    })
+    // The call's own account wins.
+    await openFleetSession('server', undefined, undefined, { ...resumed, account: 'Remote Claude' })
+    expect(api.fleetStart.mock.calls.at(-1)![2]).toMatchObject({
+      claudeProfileId: 'c',
+      claudeProfileLabel: 'Remote Claude'
+    })
+    // A codex resume never takes a Claude account.
+    await openFleetSession('server', undefined, undefined, { ...resumed, mode: 'codex' })
+    expect(api.fleetStart.mock.calls.at(-1)![2].claudeProfileId).toBeUndefined()
+  })
   it('carries same-server attachment only when explicitly requested', async () => {
     const api = setup()
     for (const attachToParent of [false, true]) {

@@ -11,7 +11,7 @@ import type {
 } from '@clave/contract/sessions'
 import type { SessionStream } from '../../shared/session-model'
 import { standaloneSidebar } from '../server/standalone-sidebar'
-import { serverOwnedSessionHost } from './server-owned-host'
+import { OBSERVE_EVERY_MS, serverOwnedSessionHost } from './server-owned-host'
 import { resumeOptions } from './resume-options'
 import type { ServerConversations } from '../session-history/server-conversations'
 
@@ -842,7 +842,7 @@ describe('the server’s own History is told what its tabs run (PRDCT-4321)', ()
     f.close()
   })
 
-  it('observes a tab at each state change, and at no other event', () => {
+  it('observes a tab at a state change that ends a turn, and at no other event', () => {
     const conversations = fakeConversations()
     const f = fixture(directory(), { conversations })
     f.emit(record.id, {
@@ -855,6 +855,43 @@ describe('the server’s own History is told what its tabs run (PRDCT-4321)', ()
     expect(conversations.observe).toHaveBeenCalledTimes(1)
     expect(conversations.observe).toHaveBeenCalledWith(record.id)
     f.close()
+  })
+
+  it('observes at a turn’s end only, never as a turn starts or waits', () => {
+    const conversations = fakeConversations()
+    const f = fixture(directory(), { conversations })
+    for (const state of ['working', 'blocked', 'done'] as const)
+      f.emit(record.id, { kind: 'event', event: { type: 'state_change', state } })
+    expect(conversations.observe).not.toHaveBeenCalled()
+    f.emit(record.id, { kind: 'event', event: { type: 'state_change', state: 'idle' } })
+    expect(conversations.observe).toHaveBeenCalledTimes(1)
+    f.emit('another-tab', { kind: 'event', event: { type: 'state_change', state: 'ended' } })
+    expect(conversations.observe).toHaveBeenCalledTimes(2)
+    expect(conversations.observe).toHaveBeenLastCalledWith('another-tab')
+    f.close()
+  })
+
+  it('observes a tab at most once per five seconds from its turns', () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    try {
+      vi.setSystemTime(new Date('2026-11-10T12:00:00.000Z'))
+      const conversations = fakeConversations()
+      const f = fixture(directory(), { conversations })
+      const idle = (): void =>
+        f.emit(record.id, { kind: 'event', event: { type: 'state_change', state: 'idle' } })
+      idle()
+      vi.setSystemTime(Date.now() + OBSERVE_EVERY_MS - 1)
+      idle()
+      f.emit(record.id, { kind: 'event', event: { type: 'state_change', state: 'ended' } })
+      expect(conversations.observe).toHaveBeenCalledTimes(1)
+      vi.setSystemTime(Date.now() + 1)
+      idle()
+      expect(conversations.observe).toHaveBeenCalledTimes(2)
+      expect(OBSERVE_EVERY_MS).toBe(5_000)
+      f.close()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('observes a stopped record’s Resume once it resolved', async () => {

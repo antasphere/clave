@@ -167,6 +167,9 @@ export async function run(t) {
       await row.getByRole('button', { name: 'Close', exact: true }).click()
       const confirm = win.getByRole('dialog', { name: 'Delete session', exact: true })
       await confirm.getByRole('button', { name: 'Delete', exact: true }).click()
+      // The confirmation holds the focus until it is gone: a shortcut pressed
+      // during its exit is swallowed, so the next step waits for it.
+      await confirm.waitFor({ state: 'detached', timeout: 15_000 })
       await eventually(async () => (await row.count()) === 0, 'the deleted tab leaves the sidebar')
       await eventually(
         async () =>

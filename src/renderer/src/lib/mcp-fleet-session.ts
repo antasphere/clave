@@ -59,6 +59,11 @@ export async function openFleetSession(
     name?: string
     /** A past conversation of this server to continue (PRDCT-4321). */
     resumeSessionId?: string
+    /** The launch profile and the server's own account that conversation ran
+     *  on (PRDCT-4321): used when the call names no profile, chat or account
+     *  of its own. */
+    resumeLaunchProfileId?: string
+    resumeAccount?: { id: string; label?: string }
     callerSessionId?: string
     attachToParent?: boolean
   }
@@ -97,14 +102,24 @@ export async function openFleetSession(
       : undefined
   if (payload.account && payload.account !== 'any' && !account)
     throw new Error(`Unknown account "${payload.account}" on the server`)
+  // A resumed conversation of this server (PRDCT-4321) comes back on the
+  // profile and the account it ran on, when nothing above chose one.
+  const resumedAccount = !account && modes.claudeMode ? payload.resumeAccount : undefined
   const info = await window.electronAPI.fleetStart(serverId, payload.cwd, {
     ...modes,
     ...(workspaceId ? { workspaceId } : {}),
     // Sending the server's profile also prevents the preload from substituting
     // a Mac profile with the same ID.
-    ...(profile ? { launchProfileId: profile.id, launchProfile: profile } : {}),
+    ...(profile
+      ? { launchProfileId: profile.id, launchProfile: profile }
+      : payload.resumeLaunchProfileId
+        ? { launchProfileId: payload.resumeLaunchProfileId }
+        : {}),
     ...(account && modes.claudeMode
       ? { claudeProfileId: account.id, claudeProfileLabel: account.label }
+      : {}),
+    ...(resumedAccount
+      ? { claudeProfileId: resumedAccount.id, claudeProfileLabel: resumedAccount.label }
       : {}),
     ...(account && modes.codexMode
       ? { codexAccountId: account.id, codexAccountLabel: account.label }

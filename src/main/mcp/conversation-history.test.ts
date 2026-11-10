@@ -660,6 +660,11 @@ describe('a server’s conversation in the agent tools (PRDCT-4321)', () => {
       })
       expect(await row(onServer(true, 'closed'))).toMatchObject({ open: null, resumable: true })
       expect(await row(onServer(true, null))).toMatchObject({ open: null })
+      // A row the server does not list is tried there while it is online,
+      // whatever this Mac's disk says of its transcript; offline, never.
+      expect(await row(gone(onServer(true, null)))).toMatchObject({ resumable: true })
+      expect(await row(gone(onServer(false, null)))).toMatchObject({ resumable: false })
+      expect(await row(gone(onServer(true, 'closed')))).toMatchObject({ resumable: false })
       expect(await row(onServer(false, 'closed'))).toMatchObject({
         server: { id: 'srv', name: 'Studio', online: false },
         resumable: false
@@ -720,6 +725,27 @@ describe('a server’s conversation in the agent tools (PRDCT-4321)', () => {
         planResume(lookups([gone(onServer(true, 'closed'))]), 'sc1', dirExists)
       ).rejects.toThrow(
         'The transcript of conversation "sc1" ("Studio research") is no longer on the server "Studio"'
+      )
+    })
+
+    it('starts a conversation its online server does not list there, its transcript unchecked', async () => {
+      const exists = (p: string): boolean => {
+        throw new Error(`dirExists asked for ${p}`)
+      }
+      // This Mac sees no transcript: it is on the server's disk, if anywhere.
+      expect(await planResume(lookups([gone(onServer(true, null))]), 'sc1', exists)).toMatchObject({
+        kind: 'start',
+        cwd: '/srv/odoo',
+        server: { id: 'srv', name: 'Studio' }
+      })
+      await expect(
+        planResume(lookups([onServer(true, null, { cwd: '' })]), 'sc1', exists)
+      ).rejects.toThrow('names no working directory')
+    })
+
+    it('refuses a conversation an offline server does not list, naming the server', async () => {
+      await expect(planResume(lookups([onServer(false, null)]), 'sc1', dirExists)).rejects.toThrow(
+        'ran on the server "Studio", which is offline'
       )
     })
 
@@ -796,6 +822,76 @@ describe('a server’s conversation in the agent tools (PRDCT-4321)', () => {
         expect(h.restarted).toEqual([])
         expect(h.focused).toEqual([])
       }
+    })
+
+    it('reopens a server’s conversation on the profile and the server account it ran on', async () => {
+      const ranOn = onServer(true, 'closed', {
+        launchProfileId: 'chat:claude:mine',
+        launch: { accountId: 'srv-acct', accountLabel: 'Studio work' }
+      })
+      const h = io()
+      const asked: string[] = []
+      h.isKnownAccount = (_provider, id) => {
+        asked.push(id)
+        return true
+      }
+      const out = (await openResumed(lookups([ranOn]), { resume: 'sc1' }, 'caller', h)) as {
+        payload: Record<string, unknown>
+      }
+      expect(out.payload).toMatchObject({
+        server: 'srv',
+        resumeSessionId: 'sc1',
+        resumeLaunchProfileId: 'chat:claude:mine',
+        resumeAccount: { id: 'srv-acct', label: 'Studio work' }
+      })
+      // The server's account is never looked up among this Mac's, nor sent
+      // as one of this Mac's.
+      expect(asked).toEqual([])
+      expect(out.payload.account).toBeUndefined()
+    })
+
+    it('lets the caller’s own profile, chat or account win over the remembered ones', async () => {
+      const ranOn = onServer(true, 'closed', {
+        launchProfileId: 'chat:claude:mine',
+        launch: { accountId: 'srv-acct', accountLabel: 'Studio work' }
+      })
+      for (const own of [{ profile: 'claude-chat' }, { chat: false }, { chat: true }]) {
+        const out = (await openResumed(
+          lookups([ranOn]),
+          { resume: 'sc1', ...own },
+          'caller',
+          io()
+        )) as { payload: Record<string, unknown> }
+        expect(out.payload.resumeLaunchProfileId).toBeUndefined()
+        expect(out.payload.resumeAccount).toEqual({ id: 'srv-acct', label: 'Studio work' })
+      }
+      const out = (await openResumed(
+        lookups([ranOn]),
+        { resume: 'sc1', account: 'other' },
+        'caller',
+        io()
+      )) as { payload: Record<string, unknown> }
+      expect(out.payload.resumeAccount).toBeUndefined()
+      expect(out.payload.account).toBe('other')
+      expect(out.payload.resumeLaunchProfileId).toBe('chat:claude:mine')
+    })
+
+    it('carries no remembered profile nor account for this Mac’s own conversation', async () => {
+      const mine = lookups([
+        entry({
+          claudeSessionId: 'c1',
+          launchProfileId: 'chat:claude:mine',
+          launch: { accountId: 'mac-acct' }
+        })
+      ])
+      const here = { ...io(), isDirectory: () => true, isKnownAccount: () => true }
+      const out = (await openResumed(mine, { resume: 'c1' }, 'caller', here)) as {
+        payload: Record<string, unknown>
+      }
+      expect(out.payload.resumeLaunchProfileId).toBeUndefined()
+      expect(out.payload.resumeAccount).toBeUndefined()
+      // This Mac's account is still named when it exists here.
+      expect(out.payload.account).toBe('mac-acct')
     })
 
     it('accepts local for this Mac’s own conversation and refuses a server', async () => {

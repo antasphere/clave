@@ -164,8 +164,10 @@ export interface RestartOverridesInput {
  *  this Mac's own. `online` is whether it answered this list; an offline
  *  server's rows are its last answer, kept, and cannot be resumed. `held`
  *  is what the server said of the conversation (a tab runs it, a stopped tab
- *  holds it, no tab does), null when the row comes from this Mac's own
- *  record of a server tab and the server did not answer. */
+ *  holds it, no tab does); null when the row comes from this Mac's own
+ *  record of a server tab and the server's answer does not list it (a
+ *  server older than its History, a tab it ran before it kept one) or the
+ *  server did not answer. */
 export interface HistoryServerRef {
   id: string
   name: string

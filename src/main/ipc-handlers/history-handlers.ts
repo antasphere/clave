@@ -10,8 +10,10 @@ import {
   historyWithServers,
   restampSessionLaunch,
   searchServers,
+  serverOwnerOf,
   stampRecords
 } from '../session-history/host-reads'
+import { splitSearchIds } from '../session-history/fleet-history'
 import type { HistorySearchScope } from '@clave/contract/history'
 import { serverClient } from '../mcp/server-client'
 
@@ -24,6 +26,9 @@ import { serverClient } from '../mcp/server-client'
 const SERVER_SCOPES: ReadonlySet<string> = new Set(['human', 'agent', 'tools'])
 /** Searches cancelled while a server was still answering: its hits are dropped. */
 const cancelledSearches = new Set<string>()
+/** The searches running now: only one of them can be cancelled, so a cancel
+ *  that arrives after its search ended is not kept. */
+const inflightSearches = new Set<string>()
 
 export function registerHistoryHandlers(): void {
   ipcMain.on('history:stamp', (_event, row: unknown) => {
@@ -55,7 +60,9 @@ export function registerHistoryHandlers(): void {
   ipcMain.handle('history:conversation', (_event, request: unknown) => getConversation(request))
   // This Mac's transcripts stream as they are read; each server that holds
   // one of the asked conversations searches its own disk at the same time
-  // (PRDCT-4321), its hits sent the same way.
+  // (PRDCT-4321), its hits sent the same way. A conversation the last list
+  // routed to a server is searched there only: a disk the Mac shares with
+  // its server would otherwise show each of its hits twice.
   ipcMain.handle('history:search', async (event, request: unknown) => {
     const send = (progress: unknown): void => {
       if (!event.sender.isDestroyed()) event.sender.send('history:search-hits', progress)
@@ -68,32 +75,39 @@ export function registerHistoryHandlers(): void {
     } | null
     const requestId = typeof r?.requestId === 'string' ? r.requestId : ''
     cancelledSearches.delete(requestId)
+    if (requestId) inflightSearches.add(requestId)
     const scopes = Array.isArray(r?.scopes)
       ? r.scopes.filter((s): s is HistorySearchScope => SERVER_SCOPES.has(s as string))
       : []
     const ids = Array.isArray(r?.claudeSessionIds)
       ? r.claudeSessionIds.filter((id): id is string => typeof id === 'string')
       : []
-    const [local, servers] = await Promise.all([
-      searchHistory(request, send),
-      requestId
-        ? searchServers(
-            { query: typeof r?.query === 'string' ? r.query : '', scopes, ids },
-            (hits) => send({ requestId, hits }),
-            () => cancelledSearches.has(requestId)
-          )
-        : Promise.resolve({ filesSearched: 0, truncated: false })
-    ])
-    cancelledSearches.delete(requestId)
-    return {
-      ...local,
-      filesSearched: local.filesSearched + servers.filesSearched,
-      truncated: local.truncated || servers.truncated
+    const { local: localIds, byServer } = splitSearchIds(ids, serverOwnerOf)
+    const serverIds = [...byServer.values()].flat()
+    try {
+      const [local, servers] = await Promise.all([
+        searchHistory({ ...(r ?? {}), claudeSessionIds: localIds }, send),
+        requestId
+          ? searchServers(
+              { query: typeof r?.query === 'string' ? r.query : '', scopes, ids: serverIds },
+              (hits) => send({ requestId, hits }),
+              () => cancelledSearches.has(requestId)
+            )
+          : Promise.resolve({ filesSearched: 0, truncated: false })
+      ])
+      return {
+        ...local,
+        filesSearched: local.filesSearched + servers.filesSearched,
+        truncated: local.truncated || servers.truncated
+      }
+    } finally {
+      inflightSearches.delete(requestId)
+      cancelledSearches.delete(requestId)
     }
   })
   ipcMain.on('history:search-cancel', (_event, requestId: unknown) => {
     if (typeof requestId !== 'string') return
-    cancelledSearches.add(requestId)
+    if (inflightSearches.has(requestId)) cancelledSearches.add(requestId)
     cancelSearch(requestId)
   })
 }

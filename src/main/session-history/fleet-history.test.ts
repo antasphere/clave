@@ -13,10 +13,12 @@ import { resourceKey, sessionKey } from '@clave/contract/fleet'
 import type { HistoryConversation } from '@clave/contract/history'
 import type { HistoryListEntry } from './service'
 import {
+  chunk,
   fileServerHistoryCache,
   mergeServerHistories,
   readServerHistories,
   serverEntry,
+  splitSearchIds,
   type ServerAnswer,
   type ServerHistoryCache,
   type ServerHistorySource
@@ -116,6 +118,25 @@ describe('readServerHistories: every connected server at once', () => {
     expect(list).not.toHaveBeenCalledWith('local')
   })
 
+  it('takes a server older than its History as online with nothing to list, its last answer left as it was', async () => {
+    // The client's HistoryMissing, told by its name.
+    const missing = Object.assign(new Error('no History route'), { name: 'HistoryMissing' })
+    const source: ServerHistorySource = {
+      servers: () => [{ id: 'old', name: 'Old VPS' }],
+      list: () => Promise.reject(missing),
+      search: async () => ({ hits: [], filesSearched: 0, truncated: false })
+    }
+    const cache: ServerHistoryCache = {
+      read: vi.fn(() => [conv({ conversationId: 'kept' })]),
+      write: vi.fn()
+    }
+    expect(await readServerHistories(source, cache, 20)).toEqual([
+      { server: { id: 'old', name: 'Old VPS' }, online: true, conversations: [] }
+    ])
+    expect(cache.write).not.toHaveBeenCalled()
+    expect(cache.read).not.toHaveBeenCalled()
+  })
+
   it('answers nothing when the servers cannot be read', async () => {
     const source: ServerHistorySource = {
       servers: () => {
@@ -127,6 +148,39 @@ describe('readServerHistories: every connected server at once', () => {
     const cache: ServerHistoryCache = { read: vi.fn(), write: vi.fn() }
     expect(await readServerHistories(source, cache, 20)).toEqual([])
     expect(source.list).not.toHaveBeenCalled()
+  })
+})
+
+describe('chunk: what one search request carries', () => {
+  it('cuts the items in runs of at most the size, in order', () => {
+    const ids = Array.from({ length: 250 }, (_, i) => `c-${i}`)
+    const parts = chunk(ids, 100)
+    expect(parts.map((p) => p.length)).toEqual([100, 100, 50])
+    expect(parts.flat()).toEqual(ids)
+    expect(chunk(['a', 'b'], 100)).toEqual([['a', 'b']])
+    expect(chunk([], 100)).toEqual([])
+    expect(chunk(['a', 'b', 'c'], 0)).toEqual([['a'], ['b'], ['c']])
+  })
+})
+
+describe('splitSearchIds: who searches which conversation', () => {
+  it('sends each server its own conversations and keeps the rest on this Mac, once each', () => {
+    const owners: Record<string, string> = { s1: 'srv-a', s2: 'srv-b', s3: 'srv-a' }
+    const { local, byServer } = splitSearchIds(
+      ['m1', 's1', 's2', 'm2', 's3', 's1', 'm1'],
+      (id) => owners[id]
+    )
+    expect(local).toEqual(['m1', 'm2'])
+    expect([...byServer]).toEqual([
+      ['srv-a', ['s1', 's3']],
+      ['srv-b', ['s2']]
+    ])
+  })
+
+  it('keeps everything on this Mac when no server answered for it', () => {
+    const { local, byServer } = splitSearchIds(['m1', 'm2'], () => undefined)
+    expect(local).toEqual(['m1', 'm2'])
+    expect(byServer.size).toBe(0)
   })
 })
 

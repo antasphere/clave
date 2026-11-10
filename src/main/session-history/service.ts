@@ -57,6 +57,9 @@ export interface HistoryServerRef {
   id: string
   name: string
   online: boolean
+  /** What the server said of the conversation; null = the server's answer
+   *  does not list it (a server older than its History, a tab it ran before
+   *  it kept one) or the server did not answer. */
   held: 'running' | 'stopped' | 'closed' | null
 }
 

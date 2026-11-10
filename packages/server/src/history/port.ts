@@ -21,11 +21,15 @@ import type {
 
 export interface HistoryService {
   readonly list: () => Promise<ServerHistory>
-  /** `scopes` is never empty: the handler defaults it to human and agent. */
+  /** `scopes` is never empty: the handler defaults it to human and agent.
+   *  `ids`, when present, is never empty: the conversations to search, so
+   *  the cap is spent on what the client asked about; absent, every listed
+   *  conversation. */
   readonly search: (request: {
     query: string
     scopes: HistorySearchScope[]
     maxHits?: number
+    ids?: string[]
   }) => Promise<HistorySearchResult>
 }
 

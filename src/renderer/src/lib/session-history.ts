@@ -154,8 +154,7 @@ export async function resumeHistoryEntry(
 
 /** Whether a History row can be reopened from here (PRDCT-4321): a live tab
  *  is always focused; a server's conversation reopens only while its server
- *  is connected and the server knows it; this Mac's own needs its transcript
- *  and its folder. */
+ *  is connected; this Mac's own needs its transcript and its folder. */
 export function canResumeHistoryEntry(
   entry: HistoryListEntry,
   live: boolean,
@@ -164,10 +163,14 @@ export function canResumeHistoryEntry(
   if (live) return true
   if (entry.provider !== 'claude' && entry.provider !== 'pi') return false
   if (entry.server) {
-    if (!serverConnected(entry.server.id) || entry.server.held === null) return false
+    if (!serverConnected(entry.server.id)) return false
     // A tab of the server still holds it: that tab comes back, whatever the
     // transcript's state.
-    if (entry.server.held !== 'closed') return true
+    if (entry.server.held === 'running' || entry.server.held === 'stopped') return true
+    // The server's answer does not list it (a server older than its History,
+    // a tab it ran before it kept one): its transcript is on the server's
+    // disk, unknown here, so its folder is all this Mac can check.
+    if (entry.server.held === null) return !!entry.cwd
   }
   return entry.transcript.exists && !!entry.cwd
 }
@@ -175,7 +178,8 @@ export function canResumeHistoryEntry(
 /** A server's conversation, reopened on that server (PRDCT-4321): the tab
  *  that still holds it resumed in place, else a new tab of that server on
  *  the conversation, in its folder, in the server's own workspace and group;
- *  never on this Mac, never in one of this Mac's workspaces. */
+ *  never on this Mac, never in one of this Mac's workspaces. A conversation
+ *  the server does not list is started as a closed one is. */
 async function resumeOnServer(
   entry: HistoryListEntry,
   server: NonNullable<HistoryListEntry['server']>,
@@ -199,7 +203,11 @@ async function resumeOnServer(
       await window.electronAPI.fleetSnapshot(serverId).catch(() => undefined)
       return show(entry.sessionId)
     }
-    if (server.held !== 'closed' || !entry.transcript.exists || !entry.cwd) return null
+    // A conversation the server does not list (held null) is started like a
+    // closed one, its transcript unchecked: the server resumes it when its
+    // transcript is there, as a start on a server always did.
+    if (!entry.cwd) return null
+    if (server.held === 'closed' && !entry.transcript.exists) return null
     // The account the server ran it on is the server's own: named by the
     // server's id and label, never looked up among this Mac's accounts.
     const launch = historyResumeLaunch(entry, options.dangerousMode, (_provider, id) =>

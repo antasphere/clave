@@ -134,6 +134,19 @@ describe('the History domain over HTTP', () => {
     ])
   })
 
+  it('passes the asked conversations to the port, and none named as absent', async () => {
+    const { port, asked } = fakePort()
+    server = await startEmbedded({ ports: { sessions: new FakeSource(), history: port } })
+    expect((await call('/history/search?query=intro&ids=c-1,c-2')).status).toBe(200)
+    expect((await call('/history/search?query=intro&ids=')).status).toBe(200)
+    expect((await call('/history/search?query=intro&ids=,,')).status).toBe(200)
+    expect(asked).toEqual([
+      { query: 'intro', scopes: ['human', 'agent'], ids: ['c-1', 'c-2'] },
+      { query: 'intro', scopes: ['human', 'agent'] },
+      { query: 'intro', scopes: ['human', 'agent'] }
+    ])
+  })
+
   it('refuses a cap outside the contract’s range before the port hears it', async () => {
     const { port, asked } = fakePort()
     server = await startEmbedded({ ports: { sessions: new FakeSource(), history: port } })

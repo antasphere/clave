@@ -25,11 +25,13 @@ export class HistoryMissing extends Error {
 
 export interface HistoryClient {
   readonly list: () => Promise<ServerHistory>
-  /** No scope reads human and agent, the server's default. */
+  /** No scope reads human and agent, the server's default; no ids, every
+   *  conversation the server lists. */
   readonly search: (request: {
     query: string
     scopes?: HistorySearchScope[]
     maxHits?: number
+    ids?: string[]
   }) => Promise<HistorySearchResult>
 }
 
@@ -47,7 +49,8 @@ export const historyClient = (call: Call, url: string, searchCall: Call = call):
     })
   return {
     list: () => missing(call((c) => c.history.list({ payload: {} }))),
-    // A GET carries the scopes comma-joined and its numbers as strings (the contract says why).
+    // A GET carries the scopes and the ids comma-joined and its numbers as
+    // strings (the contract says why).
     search: (request) =>
       missing(
         searchCall((c) =>
@@ -56,6 +59,8 @@ export const historyClient = (call: Call, url: string, searchCall: Call = call):
               query: request.query,
               ...(request.scopes !== undefined &&
                 request.scopes.length > 0 && { scopes: request.scopes.join(',') }),
+              ...(request.ids !== undefined &&
+                request.ids.length > 0 && { ids: request.ids.join(',') }),
               ...(request.maxHits !== undefined && { maxHits: String(request.maxHits) })
             }
           })

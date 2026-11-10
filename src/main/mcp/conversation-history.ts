@@ -147,11 +147,15 @@ export async function listConversations(
         groups: e.groups.map((g) => g.name),
         lastActivity: e.lastHumanAt,
         transcriptExists: e.transcript.exists,
+        // A server row the server does not list (held null) is still tried
+        // there while it is online: its transcript is on the server's disk,
+        // never this Mac's, so this Mac cannot say it is gone.
         resumable:
           RESUMABLE.has(e.provider) &&
-          e.transcript.exists &&
           !!e.cwd &&
-          (e.server ? e.server.online : true),
+          (e.server
+            ? e.server.online && (e.server.held === null || e.transcript.exists)
+            : e.transcript.exists),
         open,
         ...(e.launch ? { launch: e.launch } : {}),
         ...(e.server
@@ -186,8 +190,13 @@ export type ResumePlan =
       piThinking: string | null
       /** What it was last launched on, as the ledger remembers (PRDCT-4236). */
       launch: LedgerLaunch | null
+      /** The launch profile it ran on (PRDCT-4321), as the History knows it. */
+      launchProfileId?: string
       /** The server it ran on and reopens on (PRDCT-4321); absent for this Mac's. */
       server?: { id: string; name: string }
+      /** The server's own account it ran on, by its id and label; only with
+       *  `server` (PRDCT-4321). */
+      account?: { id: string; label?: string }
     }
   /** A tab of a server holds it (PRDCT-4321): answered as it is, nothing
    *  started; a stopped one is resumed with clave_resume_session. */
@@ -232,7 +241,12 @@ export async function planResume(
       alive: server.held === 'running',
       server: { id: server.id, name: server.name }
     }
-  if (!entry.transcript.exists)
+  // A conversation its online server does not list (a server older than its
+  // History, a tab it ran before it kept one): its transcript is on the
+  // server's disk, unknown here, so it is started there unchecked, and the
+  // server resumes it when its transcript is there.
+  const unlisted = server !== undefined && server.held === null
+  if (!unlisted && !entry.transcript.exists)
     throw new ResumeRefused(
       server
         ? `The transcript of conversation "${id}" ("${entry.title}") is no longer on the server "${server.name}"; there is nothing to resume.`
@@ -247,6 +261,15 @@ export async function planResume(
     throw new ResumeRefused(
       `The working directory of conversation "${id}" ("${entry.title}"), ${entry.cwd}, no longer exists. Pass cwd to open it elsewhere.`
     )
+  // A server's account is the server's own: carried by its id and label,
+  // never looked up among this Mac's accounts.
+  const account =
+    server && entry.launch?.accountId
+      ? {
+          id: entry.launch.accountId,
+          ...(entry.launch.accountLabel ? { label: entry.launch.accountLabel } : {})
+        }
+      : undefined
   return {
     kind: 'start',
     cwd: callerCwd || entry.cwd,
@@ -257,7 +280,9 @@ export async function planResume(
     piProvider: entry.agentProvider ?? null,
     piThinking: entry.thinking ?? null,
     launch: entry.launch ?? null,
-    ...(server ? { server: { id: server.id, name: server.name } } : {})
+    ...(entry.launchProfileId ? { launchProfileId: entry.launchProfileId } : {}),
+    ...(server ? { server: { id: server.id, name: server.name } } : {}),
+    ...(account ? { account } : {})
   }
 }
 
@@ -404,6 +429,18 @@ export async function openResumed(
           ...(p.thinking === undefined && plan.piThinking ? { thinking: plan.piThinking } : {})
         }
       : {}
+  // A server's conversation reopens the way it ran there (PRDCT-4321): on
+  // its launch profile and the server's own account, which the window
+  // resolves among the server's (`openFleetSession`); the caller's own
+  // profile, chat or account wins. This Mac's accounts are never consulted.
+  const onServer = plan.server
+    ? {
+        ...(plan.launchProfileId && p.profile === undefined && p.chat === undefined
+          ? { resumeLaunchProfileId: plan.launchProfileId }
+          : {}),
+        ...(plan.account && p.account === undefined ? { resumeAccount: plan.account } : {})
+      }
+    : {}
   return {
     payload: {
       ...p,
@@ -413,7 +450,8 @@ export async function openResumed(
       ...(p.name === undefined ? { name: plan.title } : {}),
       ...workspace,
       ...pi,
-      ...resumeLaunchDefaults(plan, p, io.isKnownAccount),
+      ...resumeLaunchDefaults(plan, p, plan.server ? () => false : io.isKnownAccount),
+      ...onServer,
       ...(plan.server ? { server: plan.server.id } : {}),
       resumeSessionId: resume
     }

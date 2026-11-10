@@ -17,9 +17,11 @@ import type { HistorySearchScope } from '@clave/contract/history'
 import type { ClaveApiClient } from '../../../packages/client/src/api'
 import { serverConnectionRegistry } from '../ipc-handlers/server-handlers'
 import {
+  chunk,
   fileServerHistoryCache,
   mergeServerHistories,
   readServerHistories,
+  splitSearchIds,
   type ServerHistoryCache,
   type ServerHistorySource
 } from './fleet-history'
@@ -120,6 +122,22 @@ export function connectedServers(): ServerHistorySource & { release: () => Promi
  *  search of the History asks of each server. */
 const serverOfConversation = new Map<string, string>()
 
+/** The server the last list routed a conversation to, if any: its search is
+ *  that server's, never this Mac's too. */
+export function serverOwnerOf(id: string): string | undefined {
+  return serverOfConversation.get(id)
+}
+
+/** The ids one search request names at most: its URL stays short. */
+export const SEARCH_IDS_PER_REQUEST = 100
+
+/** A client's disposal is never waited on: a hung endpoint lookup (a
+ *  keychain prompt) must not hold the list or the search past the
+ *  per-server deadline. */
+function releaseLater(source: { release?: () => Promise<void> }): void {
+  void source.release?.().catch(() => undefined)
+}
+
 /** The History of this Mac with every connected server's laid in: the
  *  dialog's and the agents' read. A server that does not answer keeps its
  *  last answer's rows, offline. */
@@ -137,17 +155,23 @@ export async function historyWithServers(
     const answers = await readServerHistories(source, historyCache())
     const entries = mergeServerHistories(local.entries, answers)
     serverOfConversation.clear()
+    // Only what a server's answer listed: a row this Mac tags with a server
+    // its answer does not name (held null) is not searched there, the
+    // server's search reads only what it lists, so it stays this Mac's.
     for (const e of entries)
-      if (e.server?.online) serverOfConversation.set(e.claudeSessionId, e.server.id)
+      if (e.source === 'server' && e.server?.online)
+        serverOfConversation.set(e.claudeSessionId, e.server.id)
     return { ...local, entries }
   } finally {
-    await source.release?.()
+    releaseLater(source)
   }
 }
 
 /** The servers' half of a History search: each online server that answered
- *  for one of the asked conversations searches its own disk; its hits on
- *  those conversations are handed to `onHits`. Never throws. */
+ *  for one of the asked conversations searches those conversations on its
+ *  own disk, at most `SEARCH_IDS_PER_REQUEST` ids a request, one request
+ *  after the other (the servers at once); its hits on them are handed to
+ *  `onHits`. Never throws. */
 export async function searchServers(
   request: { query: string; scopes: HistorySearchScope[]; ids: readonly string[] },
   onHits: (
@@ -161,37 +185,47 @@ export async function searchServers(
   cancelled: () => boolean,
   source: ServerHistorySource & { release?: () => Promise<void> } = connectedServers()
 ): Promise<{ filesSearched: number; truncated: boolean }> {
-  const wanted = new Map<string, Set<string>>()
-  for (const id of request.ids) {
-    const serverId = serverOfConversation.get(id)
-    if (!serverId) continue
-    const set = wanted.get(serverId) ?? new Set<string>()
-    set.add(id)
-    wanted.set(serverId, set)
-  }
+  const wanted = splitSearchIds(request.ids, serverOwnerOf).byServer
   if (wanted.size === 0 || !request.query.trim() || request.scopes.length === 0)
     return { filesSearched: 0, truncated: false }
+  /** One request: its hits on the ids it named handed on. */
+  const searchOne = async (
+    serverId: string,
+    ids: string[]
+  ): Promise<{ filesSearched: number; truncated: boolean }> => {
+    try {
+      const asked = new Set(ids)
+      const result = await source.search(serverId, {
+        query: request.query,
+        scopes: request.scopes,
+        ids
+      })
+      const hits = result.hits
+        .filter((h) => asked.has(h.conversationId))
+        .map((h) => ({
+          claudeSessionId: h.conversationId,
+          ts: h.ts,
+          scope: h.scope,
+          excerpt: h.excerpt
+        }))
+      if (hits.length > 0 && !cancelled()) onHits(hits)
+      return { filesSearched: result.filesSearched, truncated: result.truncated }
+    } catch {
+      return { filesSearched: 0, truncated: true }
+    }
+  }
   try {
     const results = await Promise.all(
       [...wanted].map(async ([serverId, ids]) => {
-        try {
-          const result = await source.search(serverId, {
-            query: request.query,
-            scopes: request.scopes
-          })
-          const hits = result.hits
-            .filter((h) => ids.has(h.conversationId))
-            .map((h) => ({
-              claudeSessionId: h.conversationId,
-              ts: h.ts,
-              scope: h.scope,
-              excerpt: h.excerpt
-            }))
-          if (hits.length > 0 && !cancelled()) onHits(hits)
-          return { filesSearched: result.filesSearched, truncated: result.truncated }
-        } catch {
-          return { filesSearched: 0, truncated: true }
+        let filesSearched = 0
+        let truncated = false
+        for (const part of chunk(ids, SEARCH_IDS_PER_REQUEST)) {
+          if (cancelled()) break
+          const result = await searchOne(serverId, part)
+          filesSearched += result.filesSearched
+          truncated ||= result.truncated
         }
+        return { filesSearched, truncated }
       })
     )
     return {
@@ -199,6 +233,6 @@ export async function searchServers(
       truncated: results.some((r) => r.truncated)
     }
   } finally {
-    await source.release?.()
+    releaseLater(source)
   }
 }

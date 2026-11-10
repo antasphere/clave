@@ -98,12 +98,14 @@ export const ListServerHistory = Query.define('ListServerHistory', {
   failure: CapabilityUnavailable
 })
 
-/** A search of the listed conversations' transcripts. The scopes travel
- *  comma-joined, as a query's payload is decoded from the URL. */
+/** A search of the listed conversations' transcripts. The scopes and the ids
+ *  travel comma-joined, as a query's payload is decoded from the URL. */
 export const SearchServerHistory = Query.define('SearchServerHistory', {
   payload: Schema.Struct({
     query: Schema.String,
     scopes: Schema.optional(Schema.split(',')),
+    /** The conversations to search, comma-joined; absent, every listed one. */
+    ids: Schema.optional(Schema.split(',')),
     maxHits: Schema.optional(Schema.NumberFromString.pipe(Schema.int(), Schema.between(1, 500)))
   }),
   success: HistorySearchResult,

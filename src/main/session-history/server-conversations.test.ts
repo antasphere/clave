@@ -12,7 +12,11 @@ import { tmpdir } from 'os'
 import { dirname, join } from 'path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { SessionRecord } from '@clave/contract/sessions'
-import { serverConversations, type ServerConversationsOptions } from './server-conversations'
+import {
+  runningIn,
+  serverConversations,
+  type ServerConversationsOptions
+} from './server-conversations'
 import { TITLE_HELPER_MARKER } from './index'
 import { transcriptPath } from './transcript-peek'
 
@@ -289,6 +293,69 @@ describe('serverConversations: the ledger of what the tabs ran', () => {
     expect(result.truncated).toBe(false)
   })
 
+  it('searches only the conversations asked for, before the cap', async () => {
+    // Three listed conversations hold the phrase; the client asks about the
+    // oldest one only, and only that one is read.
+    writeTranscript(root, 'conv-old', { said: 'the marigold lantern' })
+    writeTranscript(root, 'conv-mid', { said: 'the marigold lantern' })
+    writeTranscript(root, 'conv-new', { said: 'the marigold lantern' })
+    let clock = Date.parse('2026-11-10T08:00:00.000Z')
+    const h = harness({ now: () => new Date((clock += 60_000)) })
+    h.records.push(
+      claudeRecord({ id: 'tab-old', claudeSessionId: 'conv-old' }),
+      claudeRecord({ id: 'tab-mid', claudeSessionId: 'conv-mid' }),
+      claudeRecord({ id: 'tab-new', claudeSessionId: 'conv-new' })
+    )
+    const everything = await h.conversations.search({ query: 'marigold', scopes: ['human'] })
+    expect(new Set(everything.hits.map((hit) => hit.conversationId))).toEqual(
+      new Set(['conv-old', 'conv-mid', 'conv-new'])
+    )
+    const asked = await h.conversations.search({
+      query: 'marigold',
+      scopes: ['human'],
+      ids: ['conv-old']
+    })
+    expect(asked.hits.length).toBeGreaterThan(0)
+    expect(asked.hits.every((hit) => hit.conversationId === 'conv-old')).toBe(true)
+    expect(asked.filesSearched).toBe(1)
+  })
+
+  it('lists a tab in the group it is in now, not the last one it first entered', () => {
+    writeTranscript(root, 'conv-1')
+    let clock = Date.parse('2026-11-10T08:00:00.000Z')
+    let group: { id: string; name: string } | null = { id: 'g-A', name: 'Alpha' }
+    const h = harness({ now: () => new Date((clock += 1_000)), groupOf: () => group })
+    const tab = claudeRecord()
+    h.records.push(tab)
+    h.conversations.observe('tab-1')
+    group = { id: 'g-B', name: 'Beta' }
+    h.conversations.observe('tab-1')
+    group = { id: 'g-A', name: 'Alpha' }
+    h.conversations.observe('tab-1')
+    h.conversations.closing(tab)
+    h.records.splice(0)
+    expect(ledgerLines().map((l) => JSON.parse(l).groupId)).toEqual(['g-A', 'g-B', 'g-A', 'g-A'])
+    expect(h.conversations.list().conversations[0]).toMatchObject({
+      groupId: 'g-A',
+      groupName: 'Alpha'
+    })
+  })
+
+  it('lists a tab moved out of every group with no group', () => {
+    writeTranscript(root, 'conv-1')
+    let clock = Date.parse('2026-11-10T08:00:00.000Z')
+    let group: { id: string; name: string } | null = { id: 'g-A', name: 'Alpha' }
+    const h = harness({ now: () => new Date((clock += 1_000)), groupOf: () => group })
+    h.records.push(claudeRecord())
+    h.conversations.observe('tab-1')
+    group = null
+    h.conversations.observe('tab-1')
+    expect(h.conversations.list().conversations[0]).toMatchObject({
+      groupId: null,
+      groupName: null
+    })
+  })
+
   it('tells a ledger that cannot be written through log, and never throws', () => {
     const notADirectory = join(tmp, 'a-file')
     writeFileSync(notADirectory, 'not a directory')
@@ -302,5 +369,21 @@ describe('serverConversations: the ledger of what the tabs ran', () => {
     )
     expect(() => h.conversations.closing(tab)).not.toThrow()
     expect(() => h.conversations.list()).not.toThrow()
+  })
+})
+
+describe('runningIn: the daemon’s rule for a tab that runs its conversation', () => {
+  it('is a session the host holds whose state is not ended', () => {
+    const sessions = new Map<string, { state?: string }>([
+      ['working', { state: 'working' }],
+      ['idle', { state: 'idle' }],
+      ['ended', { state: 'ended' }]
+    ])
+    const running = runningIn({ get: (id) => sessions.get(id) })
+    expect(running('working')).toBe(true)
+    expect(running('idle')).toBe(true)
+    // A chat whose CLI ended on its own is held, not running: its Resume restarts it.
+    expect(running('ended')).toBe(false)
+    expect(running('not-held')).toBe(false)
   })
 })

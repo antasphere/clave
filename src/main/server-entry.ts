@@ -59,7 +59,7 @@ import * as path from 'path'
 import { acquireDaemonLease, daemonConfig, daemonIdentity } from './server/daemon-config'
 import { standaloneSidebar } from './server/standalone-sidebar'
 import { serverOwnedSessionHost } from './sessions/server-owned-host'
-import { serverConversations } from './session-history/server-conversations'
+import { runningIn, serverConversations } from './session-history/server-conversations'
 import { SERVER_LAYOUT_KEY } from '@clave/contract/sidebar'
 import { requestAwareSessionHost } from './sessions/request-aware-host'
 import { builtInProfileFamily, startStandaloneMcp } from './mcp/standalone-mcp'
@@ -295,10 +295,7 @@ async function main(): Promise<void> {
         records: () => originalSessions.listAdoptableRecords(),
         // A chat whose CLI ended on its own is still held, and is what a
         // Resume is for: running means a process at work, not ended.
-        running: (id) => {
-          const live = originalSessions.get(id)
-          return live !== undefined && live.state !== 'ended'
-        },
+        running: runningIn(originalSessions),
         groupOf: (id) => {
           const group = sidebar.get(SERVER_LAYOUT_KEY).groups.find((g) => g.sessionIds.includes(id))
           if (!group) return null

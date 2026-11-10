@@ -92,6 +92,16 @@ describe('the History domain of the client', () => {
     ])
   })
 
+  it('sends the asked conversations comma-joined, and none when the list is empty', async () => {
+    const asked = await withHistory()
+    await api!.history.search({ query: 'build', ids: ['c-1', 'c-2'] })
+    await api!.history.search({ query: 'build', ids: [] })
+    expect(asked).toEqual([
+      { query: 'build', scopes: ['human', 'agent'], ids: ['c-1', 'c-2'] },
+      { query: 'build', scopes: ['human', 'agent'] }
+    ])
+  })
+
   it('hears a server with nothing behind the port as CapabilityUnavailable', async () => {
     server = await startEmbedded({ ports: { sessions: new FakeSource() } })
     api = createApiClient({ url: server.url, token: server.token })

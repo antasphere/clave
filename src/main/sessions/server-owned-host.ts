@@ -50,6 +50,10 @@ export function stoppedSession(record: SessionRecord): Session {
   }
 }
 
+/** How often a turn's end may re-read a tab's record for the History, at
+ *  most, per tab (PRDCT-4321). */
+export const OBSERVE_EVERY_MS = 5_000
+
 export function serverOwnedSessionHost(options: ServerOwnedHostOptions): {
   host: SessionHostService
   close: () => void
@@ -58,11 +62,27 @@ export function serverOwnedSessionHost(options: ServerOwnedHostOptions): {
   const sidebar = options.sidebar
   const history = serverHistory(options.dataDir)
   const conversations = options.conversations
+  /** When each tab was last observed at a turn's end. */
+  const observedAt = new Map<string, number>()
   const stopHistory = options.subscribeAll((id, stream) => {
     history.record(id, stream)
-    // A state change is where a tab's conversation shows a change: the
-    // first idle after its start, a new conversation after `/clear`.
-    if (stream.kind === 'event' && stream.event.type === 'state_change') conversations?.observe(id)
+    // A turn's end is where a tab's conversation shows a change: the first
+    // idle after its start, a new conversation after `/clear`. An observe
+    // re-reads every record, so a tab is observed at most once per
+    // OBSERVE_EVERY_MS from here, and never at a turn's start.
+    if (
+      conversations &&
+      stream.kind === 'event' &&
+      stream.event.type === 'state_change' &&
+      (stream.event.state === 'idle' || stream.event.state === 'ended')
+    ) {
+      const now = Date.now()
+      const last = observedAt.get(id)
+      if (last === undefined || now - last >= OBSERVE_EVERY_MS) {
+        observedAt.set(id, now)
+        conversations.observe(id)
+      }
+    }
   })
   const bindings = new Map<string, Set<() => void>>()
   const unsubscriptions = new Set<() => void>()
@@ -160,6 +180,7 @@ export function serverOwnedSessionHost(options: ServerOwnedHostOptions): {
         if (last) conversations?.closing(last)
         if (record) base.discardRecord(record.tmuxName ?? record.id)
         history.remove(id)
+        observedAt.delete(id)
         sidebar.removeSession(SERVER_LAYOUT_KEY, id)
       } finally {
         closing.delete(id)
@@ -172,6 +193,7 @@ export function serverOwnedSessionHost(options: ServerOwnedHostOptions): {
       base.discardRecord(key)
       if (record) {
         history.remove(record.id)
+        observedAt.delete(record.id)
         sidebar.removeSession(SERVER_LAYOUT_KEY, record.id)
       }
     },

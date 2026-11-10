@@ -35,9 +35,10 @@ export interface ServerHistorySource {
   /** The servers this Mac is connected to (enabled connections). */
   servers: () => FleetServer[]
   list: (serverId: string) => Promise<readonly HistoryConversation[]>
+  /** `ids`: the conversations to search on that server, never empty. */
   search: (
     serverId: string,
-    request: { query: string; scopes: HistorySearchScope[]; maxHits?: number }
+    request: { query: string; scopes: HistorySearchScope[]; maxHits?: number; ids?: string[] }
   ) => Promise<{ hits: readonly HistorySearchHit[]; filesSearched: number; truncated: boolean }>
 }
 
@@ -65,8 +66,17 @@ function withTimeout<T>(work: Promise<T>, ms: number): Promise<T> {
   ]).finally(() => clearTimeout(timer))
 }
 
+/** A server that answered without the History domain: a release before it
+ *  (the client's `HistoryMissing`, `packages/client/src/history.ts`), told
+ *  by its name so this module needs no client import. */
+function historyMissing(error: unknown): boolean {
+  return error instanceof Error && error.name === 'HistoryMissing'
+}
+
 /** Every connected server's History, at once: its answer (kept for when it
- *  is offline), else its last answer marked offline. Never throws. */
+ *  is offline), else its last answer marked offline. A server older than
+ *  its History answered: it is online with nothing to list, and its last
+ *  answer is left as it was. Never throws. */
 export async function readServerHistories(
   source: ServerHistorySource,
   cache: ServerHistoryCache,
@@ -88,7 +98,8 @@ export async function readServerHistories(
           // A cache that cannot be written costs the offline view, never the list.
         }
         return { server, online: true, conversations }
-      } catch {
+      } catch (error) {
+        if (historyMissing(error)) return { server, online: true, conversations: [] }
         let kept: readonly HistoryConversation[] = []
         try {
           kept = cache.read(server.id) ?? []
@@ -99,6 +110,40 @@ export async function readServerHistories(
       }
     })
   )
+}
+
+/** `items` in runs of at most `size`, in order: what one request carries. */
+export function chunk<T>(items: readonly T[], size: number): T[][] {
+  const step = Math.max(1, Math.floor(size))
+  const out: T[][] = []
+  for (let i = 0; i < items.length; i += step) out.push(items.slice(i, i + step))
+  return out
+}
+
+/** A History search's ids, split by who reads each transcript (PRDCT-4321):
+ *  a conversation the last list routed to a server is searched on that
+ *  server only, never also on this Mac's disk (a disk the two share would
+ *  count each hit twice); every other id is this Mac's. */
+export function splitSearchIds(
+  ids: readonly string[],
+  ownerOf: (id: string) => string | undefined
+): { local: string[]; byServer: Map<string, string[]> } {
+  const local: string[] = []
+  const byServer = new Map<string, string[]>()
+  const seen = new Set<string>()
+  for (const id of ids) {
+    if (seen.has(id)) continue
+    seen.add(id)
+    const serverId = ownerOf(id)
+    if (serverId === undefined) {
+      local.push(id)
+      continue
+    }
+    const theirs = byServer.get(serverId) ?? []
+    theirs.push(id)
+    byServer.set(serverId, theirs)
+  }
+  return { local, byServer }
 }
 
 /** A server's conversation as a History row. */
