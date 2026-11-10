@@ -187,12 +187,13 @@ const DAEMON_FLAGS = ['--no-titles', '--test-no-activate', '--test-no-machine-us
  *  and `machineUsage` (false under --test-no-machine-usage). */
 const DISCOVERY = { titles: 'titles', testMode: 'testMode', machineUsage: 'machineUsage' }
 /** What the daemon's environment may carry of this shell's: nothing else travels. */
-const ENV_ALLOWLIST = ['HOME', 'USER', 'LOGNAME', 'TMPDIR', 'LANG', 'LC_ALL', 'LC_CTYPE', 'TERM', 'TZ']
-/** The same nine names, frozen apart for the check to compare against: an edit of the list
- *  above alone fails the check rather than widening it. */
-const ENV_ALLOWLIST_FROZEN = Object.freeze(['HOME', 'LANG', 'LC_ALL', 'LC_CTYPE', 'LOGNAME', 'TERM', 'TMPDIR', 'TZ', 'USER'])
+const ENV_ALLOWLIST = ['USER', 'LOGNAME', 'TMPDIR', 'LANG', 'LC_ALL', 'LC_CTYPE', 'TERM', 'TZ']
+/** The same eight names, frozen apart for the check to compare against: an edit of the list
+ *  above alone fails the check rather than widening it. HOME is not among them: the daemon gets
+ *  a home of the fixture's own (ENV_FIXTURE_KEYS), never this shell's. */
+const ENV_ALLOWLIST_FROZEN = Object.freeze(['LANG', 'LC_ALL', 'LC_CTYPE', 'LOGNAME', 'TERM', 'TMPDIR', 'TZ', 'USER'])
 /** What the fixture sets itself. */
-const ENV_FIXTURE_KEYS = ['PATH', 'SHELL', 'CLAUDE_CONFIG_DIR', 'CODEX_HOME', 'CLAVE_ANTASPHERE_ISSUER', 'CLAVE_KEYCHAIN_FILE']
+const ENV_FIXTURE_KEYS = ['HOME', 'PATH', 'SHELL', 'CLAUDE_CONFIG_DIR', 'CODEX_HOME', 'CLAVE_ANTASPHERE_ISSUER', 'CLAVE_KEYCHAIN_FILE']
 /** The daemon's login-environment module, imported inside its own process by one negative only
  *  (the divergent cache); every check reads the production resolver through `__claveE2E.titles`. */
 const PTY_BACKEND = path.join(REPO, 'packages', 'host', 'src', 'sessions', 'adapters', 'pty-backend.ts')
@@ -341,7 +342,11 @@ function shimPaths() {
     decoy: path.join(dir, 'decoy', 'claude'),
     decoyLog: path.join(dir, 'decoy.log'),
     claudeConfigDir: path.join(dir, 'claude-config'),
-    codexHome: path.join(dir, 'codex-home')
+    codexHome: path.join(dir, 'codex-home'),
+    // The daemon's HOME: the base's homedir() readers (the analytics collector's ~/.claude/projects,
+    // the session history and the Claude adapter's transcripts, triage's ~/.codex/auth.json, the
+    // extensions reader) resolve inside it, never in the person's home.
+    home: path.join(dir, 'home')
   }
 }
 
@@ -359,7 +364,7 @@ function writeShims(shims, env) {
   mkdirSync(shims.decoyDir, { recursive: true, mode: 0o700 })
   rmSync(shims.log, { force: true })
   rmSync(shims.decoyLog, { force: true })
-  for (const home of [shims.claudeConfigDir, shims.codexHome]) {
+  for (const home of [shims.home, shims.claudeConfigDir, shims.codexHome]) {
     rmSync(home, { recursive: true, force: true })
     mkdirSync(home, { recursive: true, mode: 0o700 })
   }
@@ -489,14 +494,17 @@ const samePath = (a, b) => {
 /**
  * The daemon's launch, built once and checked before it is used: the argv with the three
  * flags, and an environment built from the allowlist (a few of this shell's keys) with the
- * recorders first on PATH, the fixture's login shell, empty Claude and Codex homes of the
- * fixture's own, the fixture issuer and the keychain FILE. Nothing else of this shell's
- * environment travels: not its server, not its agent credentials, not its config homes.
+ * recorders first on PATH, the fixture's login shell, a HOME and empty Claude and Codex homes
+ * of the fixture's own, the fixture issuer and the keychain FILE. Nothing else of this shell's
+ * environment travels: not its HOME (readers of the base resolve ~/.claude and ~/.codex from
+ * homedir() whatever CLAUDE_CONFIG_DIR and CODEX_HOME say), not its server, not its agent
+ * credentials, not its config homes.
  */
 function daemonLaunch() {
   const shims = shimPaths()
   const env = {}
   for (const key of ENV_ALLOWLIST) if (process.env[key] !== undefined) env[key] = process.env[key]
+  env.HOME = shims.home
   env.PATH = `${shims.dir}${path.delimiter}${process.env.PATH ?? ''}`
   env.SHELL = shims.shell
   env.CLAUDE_CONFIG_DIR = shims.claudeConfigDir
@@ -599,14 +607,14 @@ async function preBootChecks(launch) {
       const lost = expected.filter((k) => !seen.includes(k))
       expectThat(extra.length === 0 && lost.length === 0, `a Bun child ${extra.length ? `sees extra keys ${extra.join(', ')}` : ''}${extra.length && lost.length ? ' and ' : ''}${lost.length ? `misses ${lost.join(', ')}` : ''}`)
       for (const key of ENV_FIXTURE_KEYS) expectThat(typeof launch.env[key] === 'string' && launch.env[key] !== '', `${key} is not set`)
-      for (const [name, home] of [['CLAUDE_CONFIG_DIR', launch.shims.claudeConfigDir], ['CODEX_HOME', launch.shims.codexHome]]) {
+      for (const [name, home] of [['HOME', launch.shims.home], ['CLAUDE_CONFIG_DIR', launch.shims.claudeConfigDir], ['CODEX_HOME', launch.shims.codexHome]]) {
         expectThat(launch.env[name] === home, `${name} is ${launch.env[name]}, not the fixture's`)
         expectThat(lstatSync(home).isDirectory() && !lstatSync(home).isSymbolicLink(), `${home} is not a plain directory`)
         const entries = readdirSync(home)
         expectThat(entries.length === 0, `${home} holds ${entries.length} entr${entries.length === 1 ? 'y' : 'ies'}`)
       }
       const kept = ENV_ALLOWLIST_FROZEN.filter((key) => key in launch.env)
-      return `${Object.keys(launch.env).length} keys: ${kept.join(' ')} of this shell, the ${ENV_FIXTURE_KEYS.length} of the fixture; a Bun child under --no-env-file sees exactly those names; both homes empty`
+      return `${Object.keys(launch.env).length} keys: ${kept.join(' ')} of this shell, the ${ENV_FIXTURE_KEYS.length} of the fixture; a Bun child under --no-env-file sees exactly those names; HOME and both agent homes the fixture's own and empty`
     }
   )
   await check(
@@ -1481,7 +1489,9 @@ async function runCheck(env) {
       const entries = readdirSync(home)
       expect(entries.length === 0, `${home} now holds: ${entries.join(', ')}`)
     }
-    return 'one probe, nothing else; both homes empty'
+    // What the daemon wrote into its own HOME, by name: inside the run's folder, never the person's.
+    const written = readdirSync(env.shims.home)
+    return `one probe, nothing else; both agent homes empty; the daemon's own HOME holds ${written.length ? written.join(', ') : 'nothing'}`
   })
   return !failed
 }
@@ -1524,7 +1534,7 @@ async function main() {
   const preFailed = pre.filter((c) => !c.ok)
   if (DRY_RUN) {
     say(`dry run: would start the daemon as: bun ${launch.args.join(' ')}`)
-    say(`dry run: SHELL=${launch.env.SHELL} CLAUDE_CONFIG_DIR=${launch.env.CLAUDE_CONFIG_DIR} CODEX_HOME=${launch.env.CODEX_HOME}`)
+    say(`dry run: HOME=${launch.env.HOME} SHELL=${launch.env.SHELL} CLAUDE_CONFIG_DIR=${launch.env.CLAUDE_CONFIG_DIR} CODEX_HOME=${launch.env.CODEX_HOME}`)
     say(preFailed.length ? 'dry run: the pre-boot checks FAILED; a boot would be refused (exit 2)' : 'dry run: the pre-boot checks passed; nothing was started (the boot checks run only on a boot)')
     if (MUTATE !== null) {
       mutateRecorderFiles(launch.shims, launch.env)
