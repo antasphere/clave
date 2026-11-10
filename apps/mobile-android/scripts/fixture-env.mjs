@@ -97,6 +97,7 @@ import { fileURLToPath } from 'node:url'
 import { WebSocket } from 'ws'
 import { ensureWorkspace } from '../../mobile/scripts/dev-server.mjs'
 import { startOidcProvider } from '../../../tests/e2e/fixtures/oidc-provider.mjs'
+import { runKeychain } from '../../../tests/e2e/fixtures/run-keychain.mjs'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const REPO = path.resolve(HERE, '..', '..', '..')
@@ -206,6 +207,13 @@ const MARKER_OWNER = 'apps/mobile-android/scripts/fixture-env.mjs'
 const RELAY_URL = `http://127.0.0.1:${RELAY_PORT}`
 const ISSUER_URL = `http://127.0.0.1:${ISSUER_PORT}`
 const SERVER_DATA = path.join(TMPDIR, 'server')
+/** The run's own macOS keychain FILE, in a folder of its own (runKeychain empties that folder when
+ *  it creates the file): the server files its secrets there, never in a personal keychain. Named
+ *  is not created: the reviewed lifecycle of the end-to-end specs creates it before the daemon
+ *  starts, never adds it to the search list, and deletes it at the stop. */
+const KEYCHAIN_DIR = path.join(TMPDIR, 'keychain')
+const KEYCHAIN_FILE = path.join(KEYCHAIN_DIR, 'fixture.keychain-db')
+const SECURITY = '/usr/bin/security'
 
 /**
  * The run folder is the fixture's own. A folder this script created carries a marker: a regular
@@ -510,7 +518,7 @@ function daemonLaunch() {
   env.CLAUDE_CONFIG_DIR = shims.claudeConfigDir
   env.CODEX_HOME = shims.codexHome
   env.CLAVE_ANTASPHERE_ISSUER = ISSUER_URL
-  env.CLAVE_KEYCHAIN_FILE = path.join(SERVER_DATA, 'keychain.json')
+  env.CLAVE_KEYCHAIN_FILE = KEYCHAIN_FILE
   writeShims(shims, env)
   const flags = RED_FLAGS ? DAEMON_FLAGS.filter((f) => f !== '--no-titles') : DAEMON_FLAGS
   const args = [
@@ -589,6 +597,12 @@ async function preBootChecks(launch) {
     expectThat(launch.args[0] === '--no-env-file', `the argv does not start with --no-env-file: bun ${launch.args.join(' ')}`)
     expectThat(launch.relayArgs[0] === '--no-env-file', `the relay's argv does not start with --no-env-file: bun ${launch.relayArgs.join(' ')}`)
     return `--no-env-file ${DAEMON_FLAGS.join(' ')}; the relay under --no-env-file too`
+  })
+  await check("the keychain FILE: CLAVE_KEYCHAIN_FILE names exactly the run's own, inside the run folder, never a personal keychain", async () => {
+    expectThat(launch.env.CLAVE_KEYCHAIN_FILE === KEYCHAIN_FILE, `CLAVE_KEYCHAIN_FILE is ${launch.env.CLAVE_KEYCHAIN_FILE}, not ${KEYCHAIN_FILE}`)
+    expectThat(KEYCHAIN_FILE.startsWith(TMPDIR + path.sep), `${KEYCHAIN_FILE} is outside the run folder ${TMPDIR}`)
+    expectThat(!KEYCHAIN_FILE.startsWith(path.join(os.homedir(), 'Library', 'Keychains')), `${KEYCHAIN_FILE} is among the person's keychains`)
+    return `${KEYCHAIN_FILE}, created at a boot before the daemon starts and deleted at the stop; never on the search list`
   })
   await check(
     "the daemon's environment is the allowlist and the fixture's keys, with empty Claude and Codex homes of the fixture's own",
@@ -864,6 +878,14 @@ const hex = (n) => randomBytes(n).toString('hex')
 const children = []
 let provider = null
 let stopping = null
+/** The run's keychain once created, and the user's search list as it was then (compared, never printed). */
+let KEYCHAIN = null
+let SEARCH_LIST_AT_BOOT = null
+
+/** The user's keychain search list: read only, to show the run never changed it. */
+function userSearchList() {
+  return execFileSync(SECURITY, ['list-keychains', '-d', 'user'], { encoding: 'utf-8' })
+}
 
 function stopChild(child) {
   return new Promise((resolve) => {
@@ -889,6 +911,13 @@ function stopAll() {
       // The daemon first, so it tells the relay goodbye while the relay listens.
       for (const child of [...children].reverse()) await stopChild(child)
       if (provider) await provider.close().catch(() => {})
+      if (KEYCHAIN !== null) {
+        const items = KEYCHAIN.items()
+        KEYCHAIN.remove()
+        const listed = SEARCH_LIST_AT_BOOT === null ? 'not read' : userSearchList() === SEARCH_LIST_AT_BOOT ? 'unchanged' : 'CHANGED'
+        note(`keychain: ${items} item(s) the server filed in the run's own; removed, its folder ${existsSync(KEYCHAIN_DIR) ? 'STILL THERE' : 'gone'}; the search list ${listed}`)
+        KEYCHAIN = null
+      }
     })()
   return stopping
 }
@@ -1555,6 +1584,16 @@ async function main() {
 
   const relayRun = await startRelay(launch)
   note(`relay ${RELAY_URL}`)
+
+  // The keychain FILE the daemon is told of, created now: named alone, the server could file nothing
+  // and a sign-in would fail its storage.
+  SEARCH_LIST_AT_BOOT = userSearchList()
+  KEYCHAIN = runKeychain(KEYCHAIN_FILE)
+  KEYCHAIN.create()
+  execFileSync(SECURITY, ['show-keychain-info', KEYCHAIN_FILE], { stdio: 'ignore' })
+  const listedNow = userSearchList()
+  if (listedNow !== SEARCH_LIST_AT_BOOT || listedNow.includes(KEYCHAIN_FILE)) throw new Error('creating the run keychain touched the user keychain search list')
+  note(`keychain ${KEYCHAIN_FILE}: the run's own, off the search list`)
 
   const daemon = await startDaemon(launch)
   note(`server ${daemon.url} (server id ${daemon.serverId ?? '?'})`)
