@@ -253,7 +253,11 @@ nonisolated struct NotificationResponseInput: Sendable {
     if let existing = connections[machineId], !existing.isUnpaired { return existing }
     let row = machines.row(machineId)
     var record = row?.record
-    if record == nil { record = try? await machines.records.get(machineId) }
+    if record == nil {
+      record = try? await machines.records.get(machineId)
+      // The owner may have changed while the record was read: nothing is made for the one who left.
+      guard self.machines === machines else { return nil }
+    }
     let partsKey = "\(owner.namespace)/\(machineId)"
     let parts = deliveryParts[partsKey] ?? MachineConnection.DeliveryParts(machineId: machineId, store: owner)
     deliveryParts[partsKey] = parts

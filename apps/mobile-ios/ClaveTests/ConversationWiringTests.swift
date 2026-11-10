@@ -125,6 +125,36 @@ actor TakeOutHoldingStore: KeyValueStore {
   }
 }
 
+/// The app's key-value store in memory that, once told, holds the next read of the owner's
+/// enrollment records until released.
+actor EnrollmentReadHoldingStore: KeyValueStore {
+  private let inner = InMemoryKeyValueStore()
+  private var holding = false
+  private var held: [CheckedContinuation<Void, Never>] = []
+
+  /// Holds the next read of the enrollment records, once.
+  func holdTheNextEnrollmentRead() { holding = true }
+  /// How many reads wait.
+  var waiting: Int { held.count }
+  /// Lets the waiting read go on.
+  func release() {
+    let waiting = held
+    held = []
+    for read in waiting { read.resume() }
+  }
+
+  func get(_ key: String) async throws -> String? {
+    if holding, key.hasSuffix(":\(EnrollmentRecords.key)") {
+      holding = false
+      await withCheckedContinuation { held.append($0) }
+    }
+    return try await inner.get(key)
+  }
+
+  func set(_ key: String, _ value: String) async throws { try await inner.set(key, value) }
+  func remove(_ key: String) async throws { try await inner.remove(key) }
+}
+
 @MainActor
 final class ConversationWiringTests: XCTestCase {
   private var apps: [AppModel] = []
@@ -298,5 +328,23 @@ final class ConversationWiringTests: XCTestCase {
     try await recording.value
     let ledger = try await UnknownSends(store: OwnerScopedKeyValueStore(base: kv, namespace: namespace), machineId: machine).list()
     XCTAssertEqual(ledger.map(\.clientMessageId), [new.clientMessageId], "the discarded send left and the new send's record stays")
+  }
+
+  /// The owner signs out while the app reads the machine's enrollment record to make its
+  /// connection: nothing is made for the owner who left, and the app keeps no connection for the
+  /// machine.
+  func testASignOutWhileTheEnrollmentRecordIsReadMakesNoConnection() async throws {
+    let kv = EnrollmentReadHoldingStore()
+    let app = try await signedInApp(kv: kv, keepRecord: false)
+    let machine = UITestFakeServer.machineId
+    await kv.holdTheNextEnrollmentRead()
+    let making = Task { await app.connection(for: machine) }
+    await eventually("the connection waits at the enrollment record's read") { await kv.waiting == 1 }
+    await app.account.signOut()
+    XCTAssertFalse(app.account.isSignedIn)
+    await kv.release()
+    let made = await making.value
+    XCTAssertNil(made, "no connection for the owner who left")
+    XCTAssertNil(app.connections[machine], "and the app keeps none for the machine")
   }
 }
