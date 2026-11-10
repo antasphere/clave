@@ -43,7 +43,9 @@ import {
   TMUX_FOLDER_PREFIX,
   claimRunFolder,
   claimTmuxFolder,
+  exitLatch,
   installStubs,
+  keychainFileOf,
   recorderLines,
   releaseTmuxFolder,
   shellStandsIn,
@@ -675,6 +677,31 @@ describe("the daemon's home and login shell", () => {
     )
   })
 
+  it("refuses, before any daemon, a Claude config folder, a Codex home or a keychain file that is not the run's own", async () => {
+    const { root, stubs } = install()
+    const base = childEnv('http://127.0.0.1:9', path.join(root, 'server'), stubs)
+    const second = async (env) =>
+      (await preflight({ flags: DAEMON_FLAGS, stubs, env, log: () => {} }))[1]
+    expect((await second(base)).ok).toBe(true)
+    expect((await second({ ...base, CLAUDE_CONFIG_DIR: stubs.home })).detail).toBe(
+      "CLAUDE_CONFIG_DIR in the daemon's environment is not the fixture's Claude config folder"
+    )
+    const noCodex = { ...base }
+    delete noCodex.CODEX_HOME
+    expect((await second(noCodex)).detail).toBe(
+      "CODEX_HOME in the daemon's environment is not the fixture's Codex home"
+    )
+    // On macOS an unset keychain file is the login keychain: refused; elsewhere none is expected.
+    const keychain = keychainFileOf(path.join(root, 'server'))
+    const noKeychain = { ...base }
+    delete noKeychain.CLAVE_KEYCHAIN_FILE
+    expect((await second(noKeychain)).ok).toBe(keychain === null)
+    const elsewhere = path.join(root, 'elsewhere.keychain-db')
+    expect((await second({ ...base, CLAVE_KEYCHAIN_FILE: elsewhere })).detail).toBe(
+      `CLAVE_KEYCHAIN_FILE in the daemon's environment is ${elsewhere}, not ${keychain ?? 'unset'}`
+    )
+  })
+
   it('the booted cases sit in their own file, behind their opt-in', () => {
     // Renamed out of the suite or stripped of its guard, the booted file
     // would run nowhere, or everywhere; either fails here.
@@ -707,6 +734,34 @@ describe("the daemon's home and login shell", () => {
       { env: caller, encoding: 'utf8' }
     )
     expect(seen).toBe(`unset|${stubs.home}`)
+  })
+})
+
+describe("the CLI's way out", () => {
+  it('a recorder failure reported while the fixture stops is latched: the run exits 3, never the code of the clean stop under way', async () => {
+    const codes = []
+    let finish
+    const exit = exitLatch(
+      () => new Promise((resolve) => (finish = resolve)),
+      (code) => codes.push(code)
+    )
+    const first = exit(0)
+    expect(exit.stopping()).toBe(true)
+    await exit(3)
+    await exit(1)
+    expect(codes).toEqual([])
+    finish()
+    await first
+    expect(codes).toEqual([3])
+    // A clean stop alone exits with its own code, and nothing after it counts.
+    const clean = []
+    const once = exitLatch(
+      async () => {},
+      (code) => clean.push(code)
+    )
+    await once(0)
+    await once(3)
+    expect(clean).toEqual([0])
   })
 })
 

@@ -19,8 +19,10 @@
 //      with has the fixture's `zsh` as its login shell, and both that
 //      environment and the login environment the shell answers, read the way
 //      the daemon reads it (`$SHELL -lic 'env -0'`), name the fixture's home
-//      as HOME, resolve `claude` and `codex` to the fixture's recorders, and
-//      carry exactly the fixture's tmux folder as TMUX_TMPDIR: a folder under
+//      as HOME, its Claude config folder and its Codex home as
+//      CLAUDE_CONFIG_DIR and CODEX_HOME, resolve `claude` and `codex` to the
+//      fixture's recorders, and carry exactly the fixture's tmux folder as
+//      TMUX_TMPDIR: a folder under
 //      the real /tmp named for this run folder, its own real path, this
 //      user's with mode 700, holding only its marker and its lease, with
 //      room in a socket address for every socket's name. tmux 3.5a
@@ -29,7 +31,9 @@
 //      to /tmp, where the person's own Clave keeps its `clave` socket, and
 //      follows a symlink wherever it points; the daemon lists that socket's
 //      sessions at its start (pty-backend.ts, liveTmuxSessions) whenever it
-//      finds a tmux;
+//      finds a tmux; and the daemon's own keychain setting is the run's
+//      keychain FILE on macOS (unset there, the daemon would use the login
+//      keychain), none elsewhere;
 //   after the daemon announced itself and before any chat (`bootChecks`):
 //   3. the daemon's discovery file says `titles: "off"`;
 //   4. it says `testMode: true` and `machineUsage: false`, and the daemon
@@ -43,7 +47,9 @@
 //      allowlist's and the fixture's own and nothing else (names compared,
 //      never values);
 //   7. inside the running daemon, `os.homedir()` and HOME both resolve to
-//      the fixture's home, and TMUX_TMPDIR is exactly the fixture's tmux
+//      the fixture's home, CLAUDE_CONFIG_DIR and CODEX_HOME to the fixture's
+//      two credential folders, CLAVE_KEYCHAIN_FILE is the run's keychain
+//      file (none on Linux), and TMUX_TMPDIR is exactly the fixture's tmux
 //      folder and still its own real path (compared inside the daemon, which
 //      answers yes or no, never a path); the folder holds no socket, and
 //      whether it holds the `tmux-<uid>` folder a tmux client makes there is
@@ -85,7 +91,8 @@
 // JSON object instead of the lines. A port of 0 takes a free one; without
 // `--tmpdir` a fresh folder under the system temp directory is used. Exit
 // codes: 2 a refused boot or a refused run folder, 3 the recorder caught an
-// attempt while running or its log could not be read, 1 a failed proof or an
+// attempt while running or its log could not be read (also when that is
+// reported while a stop is under way, exitLatch), 1 a failed proof or an
 // error.
 //
 // No real agent, no real login. The daemon names every fresh chat by its
@@ -825,9 +832,15 @@ export function childEnv(issuer, serverDir, stubs, { recorders = true, tmux = tr
   if (!recorders) env.PATH = process.env.PATH ?? SYSTEM_PATH
   if (!tmux) delete env.TMUX_TMPDIR
   env.CLAVE_ANTASPHERE_ISSUER = issuer
-  if (process.platform === 'darwin')
-    env.CLAVE_KEYCHAIN_FILE = path.join(serverDir, 'fixture.keychain-db')
+  const keychain = keychainFileOf(serverDir)
+  if (keychain !== null) env.CLAVE_KEYCHAIN_FILE = keychain
   return env
+}
+
+/** The daemon's keychain FILE for a data folder: on macOS one under it, never
+ *  the login keychain; on Linux none (the daemon's encrypted files). */
+export function keychainFileOf(serverDir) {
+  return process.platform === 'darwin' ? path.join(serverDir, 'fixture.keychain-db') : null
 }
 
 /** A keychain FILE for the daemon's sealed secrets on macOS, created once
@@ -1055,7 +1068,7 @@ export async function preflight({ flags, stubs, env, log }) {
     }
   )
   await check(
-    "the recorders stand in and tmux's sockets are the fixture's: the daemon's login shell is the fixture's zsh, and both the environment it will get and the login environment that shell answers name the fixture's home, resolve claude and codex to the recorders, and carry exactly the fixture's tmux folder as TMUX_TMPDIR, a folder tmux takes as it is",
+    "the recorders stand in and tmux's sockets are the fixture's: the daemon's login shell is the fixture's zsh, and both the environment it will get and the login environment that shell answers name the fixture's home, Claude config folder and Codex home, resolve claude and codex to the recorders, and carry exactly the fixture's tmux folder as TMUX_TMPDIR, a folder tmux takes as it is; the daemon's keychain file is the run's own",
     'observed',
     async () => {
       expect(
@@ -1093,7 +1106,24 @@ export async function preflight({ flags, stubs, env, log }) {
           value === stubs.tmux,
           `TMUX_TMPDIR in the daemon's ${where} is ${value === undefined ? 'unset' : value === '' ? 'empty' : `${value}, not the fixture's tmux folder`}`
         )
+        // The values that carry the isolation, compared, never only their names.
+        expect(
+          same(vars.CLAUDE_CONFIG_DIR, stubs.claudeConfigDir),
+          `CLAUDE_CONFIG_DIR in the daemon's ${where} is not the fixture's Claude config folder`
+        )
+        expect(
+          same(vars.CODEX_HOME, stubs.codexHome),
+          `CODEX_HOME in the daemon's ${where} is not the fixture's Codex home`
+        )
       }
+      // The daemon's own setting, kept out of the login environment: on macOS
+      // the keychain FILE under the run's data folder, which childEnv names,
+      // never unset (an unset one is the login keychain); none elsewhere.
+      const keychain = keychainFileOf(path.join(path.dirname(stubs.dir), 'server'))
+      expect(
+        (env.CLAVE_KEYCHAIN_FILE ?? null) === keychain,
+        `CLAVE_KEYCHAIN_FILE in the daemon's environment is ${env.CLAVE_KEYCHAIN_FILE === undefined ? 'unset' : env.CLAVE_KEYCHAIN_FILE}, not ${keychain ?? 'unset'}`
+      )
       return `claude and codex are the recorders under ${stubs.dir}, HOME its home, TMUX_TMPDIR ${stubs.tmux}`
     }
   )
@@ -1192,7 +1222,7 @@ export async function bootChecks({ server, stubs, log }) {
     }
   )
   await check(
-    "inside the running daemon, its home and its tmux folder are the fixture's: os.homedir() and HOME both resolve to the fixture's home, TMUX_TMPDIR is exactly the fixture's tmux folder and still its own real path, and no socket is in that folder",
+    "inside the running daemon, its home, its credential folders, its keychain file and its tmux folder are the fixture's: os.homedir() and HOME both resolve to the fixture's home, CLAUDE_CONFIG_DIR and CODEX_HOME to the fixture's folders, CLAVE_KEYCHAIN_FILE is the run's own, TMUX_TMPDIR is exactly the fixture's tmux folder and still its own real path, and no socket is in that folder",
     'observed',
     async () => {
       // Compared inside the daemon, which answers yes or no: no path of its
@@ -1205,11 +1235,17 @@ export async function bootChecks({ server, stubs, log }) {
           const fs = await import('node:fs')
           const real = (p) => { try { return fs.realpathSync(p) } catch { return null } }
           const want = real(${JSON.stringify(stubs.home)})
+          const config = real(${JSON.stringify(stubs.claudeConfigDir)})
+          const codex = real(${JSON.stringify(stubs.codexHome)})
+          const keychain = ${JSON.stringify(keychainFileOf(server.dataDir))}
           const tmux = ${JSON.stringify(stubs.tmux)}
           const value = process.env.TMUX_TMPDIR
           return {
             homedir: want !== null && real(os.homedir()) === want,
             env: want !== null && real(process.env.HOME ?? '') === want,
+            claudeConfig: config !== null && real(process.env.CLAUDE_CONFIG_DIR ?? '') === config,
+            codexHome: codex !== null && real(process.env.CODEX_HOME ?? '') === codex,
+            keychain: (process.env.CLAVE_KEYCHAIN_FILE ?? null) === keychain,
             tmuxSet: typeof value === 'string' && value !== '',
             tmuxSame: value === tmux,
             tmuxReal: real(value ?? '') === tmux
@@ -1218,6 +1254,18 @@ export async function bootChecks({ server, stubs, log }) {
       )
       expect(inside.homedir === true, "os.homedir() inside the daemon is not the fixture's home")
       expect(inside.env === true, "HOME inside the daemon is not the fixture's home")
+      expect(
+        inside.claudeConfig === true,
+        "CLAUDE_CONFIG_DIR inside the daemon is not the fixture's Claude config folder"
+      )
+      expect(
+        inside.codexHome === true,
+        "CODEX_HOME inside the daemon is not the fixture's Codex home"
+      )
+      expect(
+        inside.keychain === true,
+        "CLAVE_KEYCHAIN_FILE inside the daemon is not the fixture's keychain file"
+      )
       expect(inside.tmuxSet === true, 'TMUX_TMPDIR is unset or empty inside the daemon')
       expect(
         inside.tmuxSame === true,
@@ -1612,6 +1660,25 @@ export async function startFixture({
     await stop()
     throw error
   }
+}
+
+/** The CLI's way out: the first call stops the fixture and exits. A recorder
+ *  failure (code 3) reported while it stops, by the watch that still runs, is
+ *  latched: the run then exits 3, never the code of the clean stop that was
+ *  under way. Any other later call is ignored. */
+export function exitLatch(stop, exitProcess = (code) => process.exit(code)) {
+  let exiting = false
+  let latched = 0
+  const exit = async (code) => {
+    if (code === 3) latched = 3
+    if (exiting) return
+    exiting = true
+    await stop()
+    exitProcess(latched || code)
+  }
+  /** Whether a stop is under way. */
+  exit.stopping = () => exiting
+  return exit
 }
 
 /** Approve every pending pairing as it appears, by name and platform. */
@@ -2162,17 +2229,11 @@ async function main(argv) {
     }
     throw error
   }
-  let exiting = false
-  const exit = async (code) => {
-    if (exiting) return
-    exiting = true
-    await fixture.stop()
-    process.exit(code)
-  }
+  const exit = exitLatch(() => fixture.stop())
   process.on('SIGINT', () => void exit(0))
   process.on('SIGTERM', () => void exit(0))
   fixture.server.child.once('exit', (code) => {
-    if (!exiting) {
+    if (!exit.stopping()) {
       stderr(`the server exited (${code ?? 'signal'})`)
       void exit(code ?? 1)
     }
