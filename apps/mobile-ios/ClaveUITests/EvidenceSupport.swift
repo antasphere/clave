@@ -107,6 +107,20 @@ extension XCTestCase {
     pixel(shot, at: CGPoint(x: 4, y: 4))
   }
 
+  /// The keyboard put away when one is up, by its Done key when it has one, else by a swipe down
+  /// (the lists and the transcript let it go that way); fails when it stays.
+  @MainActor
+  func dismissKeyboard(_ app: XCUIApplication) {
+    let keyboard = app.keyboards.firstMatch
+    guard keyboard.exists else { return }
+    for key in ["done", "Done"] where keyboard.buttons[key].exists {
+      keyboard.buttons[key].tap()
+      break
+    }
+    if !keyboard.waitForNonExistence(timeout: 2) { app.swipeDown() }
+    XCTAssertTrue(keyboard.waitForNonExistence(timeout: 5), "The keyboard stays up")
+  }
+
   // MARK: navigation
 
   /// The system back button of the pushed screen on top.

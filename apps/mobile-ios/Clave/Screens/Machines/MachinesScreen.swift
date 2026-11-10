@@ -11,6 +11,7 @@ struct MachinesScreen: View {
   @Environment(\.dynamicTypeSize) private var dynamicTypeSize
   @State private var relayText = ""
   @State private var relayEdited = false
+  @FocusState private var relayFocused: Bool
 
   var body: some View {
     VStack(spacing: 0) {
@@ -147,7 +148,8 @@ struct MachinesScreen: View {
               relayText = $0
               relayEdited = true
             }),
-          label: "Team relay address"
+          label: "Team relay address",
+          focus: $relayFocused
         )
         .keyboardType(.URL)
         .textInputAutocapitalization(.never)
@@ -179,7 +181,11 @@ struct MachinesScreen: View {
   private func save(_ machines: MachinesModel) {
     let text = relayText
     Task {
-      if await machines.saveRelay(text) { relayEdited = false }
+      guard await machines.saveRelay(text) else { return }
+      relayEdited = false
+      // Saved, by Return or by Save: the field gives up its focus and the keyboard goes down. A
+      // refused address keeps both, for the person to correct it.
+      relayFocused = false
     }
   }
 

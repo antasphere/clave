@@ -48,6 +48,8 @@ final class AccessibilityEvidenceTests: XCTestCase {
     var summary: [String] = []
     var fields: [String: CGRect] = [:]
     walkScreens(app) { screen in
+      // An audit reads the screen, not a keyboard over it.
+      dismissKeyboard(app)
       keepScreenshot(topic: "a11y", name: "\(prefix)\(screen.rawValue)")
       writeOrder(app, screen, prefix: prefix)
       if let field = Self.field[screen] { fields[field] = element(app, field).frame }

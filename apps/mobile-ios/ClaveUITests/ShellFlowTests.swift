@@ -18,6 +18,21 @@ final class ShellFlowTests: XCTestCase {
     XCTAssertFalse(element(app, "placeholder.workspaces").exists)
   }
 
+  /// Saving the relay address puts the keyboard away: the field gives up its focus.
+  @MainActor
+  func testSavingTheRelayAddressPutsTheKeyboardAway() {
+    let app = launchFake()
+    signIn(app)
+    let field = app.textFields["machines.relay.field"]
+    XCTAssertTrue(field.waitForExistence(timeout: 5))
+    field.tap()
+    XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5), "No keyboard for the relay address")
+    field.typeText("https://relay.fake")
+    app.buttons["machines.relay.save"].tap()
+    XCTAssertTrue(element(app, "machines.row.m_fake").waitForExistence(timeout: 10))
+    XCTAssertTrue(app.keyboards.firstMatch.waitForNonExistence(timeout: 5), "The keyboard stays up after the save")
+  }
+
   @MainActor
   func testRelaunchStartsSignedOut() {
     let app = launchFake()
