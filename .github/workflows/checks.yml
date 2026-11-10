@@ -99,7 +99,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        task: ${{ inputs.baseline && fromJSON('["baseline"]') || fromJSON('["1","2","3","4"]') }}
+        task: ${{ inputs.baseline && fromJSON('["baseline"]') || fromJSON('["1","2","3","4","5"]') }}
     runs-on: macos-latest
     timeout-minutes: ${{ inputs.baseline && 120 || 35 }}
     steps:
@@ -138,7 +138,7 @@ jobs:
         if: ${{ !cancelled() && steps.build.outcome == 'success' && matrix.task != 'baseline' }}
         continue-on-error: true
         env:
-          HOST_BATCH: ${{ format('{0}/4', matrix.task) }}
+          HOST_BATCH: ${{ format('{0}/5', matrix.task) }}
         run: node tests/e2e/ci-batch.mjs "$HOST_BATCH" --report-dir=e2e-reports
 
       - name: All worker processes completed
@@ -207,7 +207,7 @@ jobs:
       # app on a newer test version (issue #266): the server upgrades to the
       # app's version only once no agent works, and Upgrade now runs it at once.
       - name: Gate, connected servers follow the app's version
-        if: ${{ !cancelled() && steps.build.outcome == 'success' && (matrix.task == '2' || matrix.task == 'baseline') }}
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && (matrix.task == '5' || matrix.task == 'baseline') }}
         run: node tests/e2e/run.mjs fleet-server-upgrade
 
       # Current full-renderer completeness, lifecycle and responsiveness gates.
@@ -217,7 +217,7 @@ jobs:
         run: node tests/e2e/run.mjs markdown-parser-deep-client markdown-full-native renderer-responsiveness
 
       - name: Gate, MCP sessions on connected servers
-        if: ${{ !cancelled() && steps.build.outcome == 'success' && (matrix.task == '1' || matrix.task == 'baseline') }}
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && (matrix.task == '5' || matrix.task == 'baseline') }}
         run: node tests/e2e/run.mjs mcp-fleet-sessions
 
       - name: Report, sequential baseline suite
@@ -254,7 +254,7 @@ jobs:
           merge-multiple: true
       - name: Every spec completed exactly once
         env:
-          SHARDS: ${{ inputs.baseline && '1' || '4' }}
+          SHARDS: ${{ inputs.baseline && '1' || '5' }}
         run: |
           node tests/e2e/merge-reports.mjs e2e-reports "$SHARDS" e2e-summary.md
           cat e2e-summary.md >> "$GITHUB_STEP_SUMMARY"

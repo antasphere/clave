@@ -24,12 +24,14 @@ order, then the shard index. Each shard runs its specs in the original order;
 Empty shards are valid, but an empty selection before sharding is an error.
 
 `shard-durations.json` contains placement hints from three complete runs at
-`fd4c7ee7`, linked in that file. Each of the 199 hints is the median per-spec
-duration, rounded to seconds with a minimum of 1. The runs contain early-ended
-samples for renderer-responsiveness and chat-turn-foot; the profile retains
-them and makes no assertion-coverage equivalence claim. New or renamed specs
-use the explicit 14-second fallback, the median of those hints. Removed specs' hints add no work. Missing
-or malformed hint data and nonpositive or nonnumeric values fail explicitly.
+`51e0c227`, linked in that file. Each of the 220 hints is the median per-spec
+duration, JS-rounded to seconds with a minimum of 1. All three runs have 4155
+checks and matching per-spec counts. The four shared early-ended spec samples
+are retained; hints are placement estimates, not a speed or passing-assertion
+claim. New or renamed specs use the explicit fallback in that file, the median
+of the resulting integer hints. For an even hint count, take the arithmetic mean
+of the two central hints without further rounding. Removed specs' hints add no
+work. Missing or malformed hint data and nonpositive or nonnumeric values fail explicitly.
 Update hints from complete comparable runs; do not use the current run's
 reports or host data. The runner and aggregate read the same checked-in file
 on macOS and Linux. Hints never define the inventory or change assertions,
@@ -41,10 +43,10 @@ checkout do not sweep each other's files or tmux sessions. Run only one suite
 per namespace. SIGINT and SIGTERM ask workers to clean up their own apps,
 servers and tmux sessions. Failed runs retain fixtures for diagnosis.
 
-CI uses four macOS jobs, each running one worker process. Host k runs global
-shard k/4. One worker per Mac keeps per-user keychain and keyboard state
+CI uses five macOS jobs, each running one worker process. Host k runs global
+shard k/5. One worker per Mac keeps per-user keychain and keyboard state
 isolated between workers; fixture namespaces isolate files and tmux. To
-reproduce one host, run `node tests/e2e/ci-batch.mjs 1/4 --report-dir=e2e-reports`
+reproduce one host, run `node tests/e2e/ci-batch.mjs 1/5 --report-dir=e2e-reports`
 on a built Mac checkout, using a separate empty report directory on each host.
 The batch command accepts no filename filters or worker-count override.
 
@@ -53,7 +55,7 @@ writes a completion output after checking the worker. A separate required
 step checks that output, so a fatal process exit cannot hide behind the report
 step's `continue-on-error`. Ordinary failed assertions still appear as FAIL,
 KNOWN or UNSTABLE and retain the original report policy. The aggregate requires
-all four original shard reports against the checkout's full inventory.
+all five original shard reports against the checkout's full inventory.
 
 The sequential measurement control (`baseline=true`) has a 120-minute job
 budget: the previous 195-spec control used 85.6 of 90 minutes before the next
@@ -61,9 +63,12 @@ base added work. Normal jobs keep their 35-minute limit. Per-spec deadlines
 and all report and gate policies are unchanged.
 
 Each host then runs its assigned gates. Every existing gate and all three server
-modes still run once. This needs four hosted Mac slots, with one suite
+modes still run once. This needs five hosted Mac slots, with one suite
 worker on each host. Each job installs and builds its own checkout. Account
-capacity and unrelated runs can still add queue time.
+capacity and unrelated runs can still add queue time. For a timing comparison,
+finish the control and PR validation run before requesting the five optimized
+hosts, then check for other active Mac jobs. Observed capacity is not a guarantee;
+all optimized queue time still counts.
 
 Each batch also preserves `resources-host-N.json`: host CPU/memory capacity,
 worker exit statuses, swap usage before/after, and process-tree resource samples
@@ -92,12 +97,15 @@ the sequential runner.
 
 To compare schedules on identical code, manually run the Checks workflow twice
 on the same ref. Set its `baseline` input to true for the original sequential
-schedule and false for the sharded schedule. Measure workflow creation to the
-last required job's completion, including queue time. Measure the suite window
-from the earliest shard report's start to the latest report's end separately.
-Report job queue and setup time, and retain both run URLs. Exclude the added
-aggregate job from the original-schedule baseline, while including it in the
-optimized result. Use a baseline where all required gates passed, since the
+schedule and false for the sharded schedule. For the conservative comparison,
+divide the original Mac job's duration, excluding its initial queue, by the
+optimized workflow's creation-to-last-required-job duration, including all queue,
+setup, gates and the aggregate. Report the baseline's initial queue and both
+whole workflow spans separately. Compare the sequential suite step with the
+window from the earliest optimized batch start to the latest batch end.
+Keep both run URLs and all per-spec results. Require matching inventory and
+per-spec check counts, with no new optimized abort, deadline hit or LATE result.
+Use a baseline where all required jobs and gates passed, since the
 hardened conditions continue after an earlier gate fails. A cancelled or timed-out
 baseline cannot substantiate a speedup. Local runs on a busy machine are useful
 for checking behavior, but do not establish the CI ratio.
@@ -105,3 +113,6 @@ for checking behavior, but do not establish the CI ratio.
 Baseline and normal runs use different concurrency groups, so they can run
 together without cancelling one another. A newer run of the same kind on the
 same ref cancels its predecessor. Keep the ref unchanged during the comparison.
+For the delivery comparison, use one executed control and one optimized sample
+per candidate. Preserve unsuccessful trials rather than rerunning an unchanged
+candidate to select a green result.
