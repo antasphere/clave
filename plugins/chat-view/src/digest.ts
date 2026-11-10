@@ -54,7 +54,8 @@ export type DigestFailure = DigestFailureReason | 'unanswered'
  *  the model, the server or the queue. Not a server that needs an update, a
  *  tab the server no longer has, a helper switched off (the line says where
  *  to switch it on), nor a request the server refused as invalid or under
- *  another key (`failed`): asking again would send the same thing. */
+ *  another key or with nothing to read (`refused`): asking again would send
+ *  the same thing. */
 const ASK_AGAIN: ReadonlySet<DigestFailure> = new Set<DigestFailure>([
   'timeout',
   'limit',
@@ -62,7 +63,11 @@ const ASK_AGAIN: ReadonlySet<DigestFailure> = new Set<DigestFailure>([
   'unreadable',
   'cancelled',
   'unanswered',
-  'busy'
+  'busy',
+  // The runner's catch-all: an API 5xx, an overloaded model, a network
+  // error, a CLI crash. Transient, and digests run one attempt: asking again
+  // is how they recover.
+  'failed'
 ])
 
 /** Whether asking again can change anything (`ASK_AGAIN`). */
@@ -95,6 +100,8 @@ function failureWords(reason: DigestFailure | undefined): string {
       return 'this server needs an update.'
     case 'unknown-session':
       return 'the server no longer has this tab.'
+    case 'refused':
+      return 'this could not be read.'
     case 'busy':
       return 'too many are being read; ask again in a moment.'
     default:

@@ -19,7 +19,14 @@ type Answer =
   | {
       ok: false
       error: string
-      reason?: 'limit' | 'timeout' | 'outdated' | 'unknown-session' | 'disabled' | 'failed'
+      reason?:
+        | 'limit'
+        | 'timeout'
+        | 'outdated'
+        | 'unknown-session'
+        | 'disabled'
+        | 'refused'
+        | 'failed'
     }
 
 let answers: Answer[] = []
@@ -131,7 +138,7 @@ describe('a digest that could not be read', () => {
     expect(d.useStore.getState().states['s|k']).toMatchObject({ state: 'done', fresh: true })
   })
 
-  for (const reason of ['outdated', 'unknown-session', 'disabled', 'failed'] as const)
+  for (const reason of ['outdated', 'unknown-session', 'disabled', 'refused'] as const)
     it(`a failure no ask can mend (${reason}) is not asked again, by the view or by Ask again`, async () => {
       const d = digests()
       const item = { key: 'k', payload: 'notes' }
@@ -158,6 +165,8 @@ describe('a digest that could not be read', () => {
       'Not read: too many are being read; ask again in a moment.'
     )
     expect(digestFailureLine('outdated', 'work')).toBe('No title: this server needs an update.')
+    expect(digestFailureLine('refused')).toBe('Not read: this could not be read.')
+    expect(digestFailureLine('refused', 'work')).toBe('No title: this could not be read.')
     for (const reason of [
       'timeout',
       'limit',
@@ -165,10 +174,11 @@ describe('a digest that could not be read', () => {
       'unreadable',
       'cancelled',
       'unanswered',
-      'busy'
+      'busy',
+      'failed'
     ] as const)
       expect(canAskAgain(reason)).toBe(true)
-    for (const reason of ['disabled', 'failed', 'outdated', 'unknown-session', undefined] as const)
+    for (const reason of ['disabled', 'refused', 'outdated', 'unknown-session', undefined] as const)
       expect(canAskAgain(reason)).toBe(false)
   })
 
@@ -211,5 +221,31 @@ describe('a digest that could not be read', () => {
     } finally {
       Object.assign(globalThis, { window: previous })
     }
+  })
+
+  it('a runner failure (an overloaded API, a crash) keeps Ask again, and is asked again by itself once stale', async () => {
+    const d = digests()
+    const item = { key: 'k', payload: 'notes' }
+    d.useStore.getState().file('s', {})
+    answers.push({ ok: false, error: 'API Error: 529 overloaded', reason: 'failed' })
+    d.view('s', [item], {})
+    await vi.advanceTimersByTimeAsync(DIGEST_SETTLE_MS)
+    await flush()
+    expect(d.useStore.getState().states['s|k']).toMatchObject({ state: 'failed', reason: 'failed' })
+    expect(canAskAgain('failed')).toBe(true)
+    // Ask again reads it at once…
+    answers.push({ ok: false, error: 'API Error: 529 overloaded', reason: 'failed' })
+    d.retry('s', 'k')
+    await vi.advanceTimersByTimeAsync(0)
+    await flush()
+    expect(read).toHaveBeenCalledTimes(2)
+    // …and a view asking a minute later asks again by itself.
+    answers.push({ ok: true, title: 'Read' })
+    await vi.advanceTimersByTimeAsync(DIGEST_RETRY_AFTER_MS)
+    d.view('s', [item], {})
+    await vi.advanceTimersByTimeAsync(DIGEST_SETTLE_MS)
+    await flush()
+    expect(read).toHaveBeenCalledTimes(3)
+    expect(d.useStore.getState().states['s|k']).toMatchObject({ state: 'done' })
   })
 })

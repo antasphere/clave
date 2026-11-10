@@ -239,10 +239,10 @@ describe("the host reads a digest on its own record's launch (PRDCT-4327)", () =
         key: digestKey([{ from: 'x', text: 'z' }]),
         messages: one
       })
-    ).resolves.toEqual({ ok: false, error: KEY_MISMATCH_ERROR, reason: 'failed' })
+    ).resolves.toEqual({ ok: false, error: KEY_MISMATCH_ERROR, reason: 'refused' })
     await expect(
       host.workDigest({ sessionId: 'named', key: workDigestKey(['b']), notes: ['a'], tools: 0 })
-    ).resolves.toMatchObject({ ok: false, reason: 'failed' })
+    ).resolves.toMatchObject({ ok: false, reason: 'refused' })
     await ticks()
     expect(mocks.calls).toHaveLength(0)
   })

@@ -35,7 +35,8 @@ export const DIGEST_FAILURE_REASONS = [
   // many reads waiting for it, a server without the digests.
   'unknown-session',
   'busy',
-  'outdated'
+  'outdated',
+  'refused'
 ] as const
 export type DigestFailureReason = (typeof DIGEST_FAILURE_REASONS)[number]
 const isReason = (value: unknown): value is DigestFailureReason =>

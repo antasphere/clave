@@ -70,7 +70,7 @@ export function workDigestsOf(sessionId: string): Record<string, WorkDigestDone>
 export function requestDigest(request: DigestRequest): Promise<DigestResult> {
   if (helperRunner.isShutDown())
     return Promise.resolve({ ok: false, error: 'Clave is quitting', reason: 'cancelled' })
-  if (!request.messages.length) return Promise.resolve({ ok: false, error: 'No messages' })
+  if (!request.messages.length) return Promise.resolve({ ok: false, error: 'No messages', reason: 'refused' })
   const filed = digests().get(request.sessionId, request.key)
   if (filed) return Promise.resolve(filed)
   const id = `${request.sessionId}|${request.key}`
@@ -90,7 +90,7 @@ export function requestDigest(request: DigestRequest): Promise<DigestResult> {
 export function requestWorkDigest(request: WorkDigestRequest): Promise<WorkDigestResult> {
   if (helperRunner.isShutDown())
     return Promise.resolve({ ok: false, error: 'Clave is quitting', reason: 'cancelled' })
-  if (!request.notes.length) return Promise.resolve({ ok: false, error: 'No notes' })
+  if (!request.notes.length) return Promise.resolve({ ok: false, error: 'No notes', reason: 'refused' })
   const bucket = workDigestBucket(request.sessionId)
   const filed = digests().get(bucket, request.key) as unknown as WorkDigestDone | undefined
   if (filed) return Promise.resolve(filed)
@@ -358,7 +358,7 @@ export function hostDigests(recordOf: DigestRecordOf): HostDigests {
     error: UNKNOWN_SESSION_ERROR,
     reason: 'unknown-session' as const
   }
-  const mismatch = { ok: false as const, error: KEY_MISMATCH_ERROR, reason: 'failed' as const }
+  const mismatch = { ok: false as const, error: KEY_MISMATCH_ERROR, reason: 'refused' as const }
   const busy = {
     ok: false as const,
     error: 'Too many reads are waiting for this tab',

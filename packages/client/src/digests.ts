@@ -37,7 +37,7 @@ export const isDigestsMissing = (error: unknown): boolean =>
     (error as { capability?: unknown }).capability === 'digests')
 
 /** The server refused what it was sent as invalid (a 400): asking again
- *  sends the same thing, so it reads as `failed`, never as a server that did
+ *  sends the same thing, so it reads as `refused`, never as a server that did
  *  not answer. */
 export const isDigestRefused = (error: unknown): boolean =>
   error instanceof Error && Schema.is(BadRequestProblem)(error.cause)
@@ -45,7 +45,7 @@ export const isDigestRefused = (error: unknown): boolean =>
 const REFUSED = {
   ok: false as const,
   error: 'The server refused the request as invalid',
-  reason: 'failed' as const
+  reason: 'refused' as const
 }
 
 const OUTDATED = {

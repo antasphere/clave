@@ -9,10 +9,17 @@
 import { asData, firstJsonObject, type HelperFailureReason } from './helper-prompt'
 
 /** Why a digest was not read: the helper's own reasons (`helper-prompt.ts`),
- *  and three a host or a client adds (PRDCT-4327): the server has no record
+ *  and four a host or a client adds (PRDCT-4327): the server has no record
  *  of the tab (`unknown-session`), the tab has too many reads waiting there
- *  (`busy`), the server is a release without the digests (`outdated`). */
-export type DigestFailureReason = HelperFailureReason | 'unknown-session' | 'busy' | 'outdated'
+ *  (`busy`), the server is a release without the digests (`outdated`), and
+ *  a request asking again cannot change (`refused`: refused as invalid,
+ *  under a key that is not its content's, or with nothing to read). */
+export type DigestFailureReason =
+  | HelperFailureReason
+  | 'unknown-session'
+  | 'busy'
+  | 'outdated'
+  | 'refused'
 
 /** One message of the timeline, as the digest reads it. */
 export interface DigestMessage {
