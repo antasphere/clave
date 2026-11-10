@@ -99,7 +99,10 @@
 // or 143, never the 0 of a passed proof, and no summary line is written;
 // running, a signal is the way out and exits 0 (superviseFixture). One that
 // comes during the boot is kept until the boot ends, then the fixture that
-// came up is stopped before anything is proven or printed (runCommand).
+// came up is stopped before anything is proven or printed, and a boot that
+// failed after it exits as that signal does; the first signal is the one
+// kept, and a second does not shorten a hung boot, which its own time limits
+// bound (runCommand).
 //
 // No real agent, no real login. The daemon names every fresh chat by its
 // first message with a `claude -p` one-shot (packages/host/src/title-generator.ts),
@@ -2301,9 +2304,16 @@ export async function superviseFixture(
  * SIGTERM during the boot is kept, never acted on in its middle, where a
  * started relay or daemon would be left running: a fixture that came up is
  * stopped as soon as the boot ends, before anything is proven or printed,
- * and a boot that failed has already stopped what it started. A refused run
- * folder, refused checks and the daemon's start refusing its TMUX_TMPDIR
- * exit 2. The hooks are parameters, as superviseFixture's.
+ * and a boot that failed has already stopped what it started, then exits as
+ * that signal does (a terminal's Ctrl-C reaches the relay and the daemon
+ * too, which stop and fail the boot). The first signal is the one kept. One
+ * pair of handlers serves the whole command and is never taken off: during
+ * the boot it keeps the signal, then it hands every signal to
+ * superviseFixture's handlers, so none is dropped between the two and the
+ * default action never comes back. A second signal does not shorten a hung
+ * boot: the boot's own time limits bound the wait. A refused run folder,
+ * refused checks and the daemon's start refusing its TMUX_TMPDIR exit 2.
+ * The hooks are parameters, as superviseFixture's.
  */
 export async function runCommand(
   options,
@@ -2312,24 +2322,28 @@ export async function runCommand(
     prove = proveFixture,
     watch = watchRecorder,
     on = (signal, handler) => process.on(signal, handler),
-    off = (signal, handler) => process.off(signal, handler),
     exitProcess = (code) => process.exit(code),
     out = (text) => process.stdout.write(text),
     log = stderr
   } = {}
 ) {
   let bootSignal = null
-  const kept = Object.keys(INTERRUPTED_CHECK_EXIT).map((signal) => [
-    signal,
-    () => {
-      bootSignal ??= signal
-    }
-  ])
-  for (const [signal, handler] of kept) on(signal, handler)
+  /** superviseFixture's handlers, once it runs. */
+  const running = {}
+  for (const signal of Object.keys(INTERRUPTED_CHECK_EXIT))
+    on(signal, () => {
+      if (running[signal]) running[signal]()
+      else bootSignal ??= signal
+    })
   let fixture
   try {
     fixture = await start({ ...options, log: options.json && !options.check ? () => {} : log })
   } catch (error) {
+    if (bootSignal !== null) {
+      const code = options.check ? INTERRUPTED_CHECK_EXIT[bootSignal] : 0
+      log(`${bootSignal} during the boot, which then failed (${error.message}); exit ${code}`)
+      return exitProcess(code)
+    }
     if (error.refusedFolder) {
       log(error.message)
       out('refused: the run folder\n')
@@ -2347,10 +2361,18 @@ export async function runCommand(
       return exitProcess(2)
     }
     throw error
-  } finally {
-    for (const [signal, handler] of kept) off(signal, handler)
   }
-  await superviseFixture(fixture, options, { prove, watch, on, exitProcess, out, log, bootSignal })
+  await superviseFixture(fixture, options, {
+    prove,
+    watch,
+    exitProcess,
+    out,
+    log,
+    bootSignal,
+    on: (signal, handler) => {
+      running[signal] = handler
+    }
+  })
 }
 
 async function main(argv) {

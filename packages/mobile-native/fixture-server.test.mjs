@@ -925,14 +925,19 @@ describe("the CLI's way out", () => {
       out: (text) => run.written.push(text),
       log: () => {}
     })
-    /** The whole command's hooks: `start` stands for the boot. */
-    run.cli = (start, prove) => ({
-      ...run.io(prove),
-      start,
-      off: (signal, handler) => {
-        if (run.handlers[signal] === handler) delete run.handlers[signal]
+    /** The whole command's hooks: `start` stands for the boot. Its `on` keeps
+     *  every handler put on, so the test sees whether one was ever taken off. */
+    run.cli = (start, prove) => {
+      run.listeners = {}
+      return {
+        ...run.io(prove),
+        start,
+        on: (signal, handler) => {
+          ;(run.listeners[signal] ??= []).push(handler)
+          run.handlers[signal] = handler
+        }
       }
-    })
+    }
     return run
   }
   const turn = () => new Promise((resolve) => setImmediate(resolve))
@@ -1094,9 +1099,91 @@ describe("the CLI's way out", () => {
         expect(run.stops, what).toBe(1)
         expect(proved, what).toBe(0)
         expect(run.written, what).toEqual([])
+        // A second signal during that stop reaches the running handlers, whose latch ignores it.
+        run.handlers[signal]()
         run.finish()
         await done
+        await turn()
         expect(run.codes, what).toEqual([check ? code : 0])
+        expect(run.stops, what).toBe(1)
+      }
+  })
+
+  it('the first signal of the boot is the one kept, and one pair of handlers serves the whole command, never taken off', async () => {
+    const run = supervised()
+    const done = runCommand(
+      { check: true },
+      run.cli(async () => {
+        run.handlers.SIGTERM()
+        run.handlers.SIGINT()
+        await turn()
+        return run.fixture
+      })
+    )
+    await turn()
+    await turn()
+    run.finish()
+    await done
+    expect(run.codes).toEqual([INTERRUPTED_CHECK_EXIT.SIGTERM])
+    // The command put on one handler per signal, and nothing else put one on the process.
+    expect(Object.keys(run.listeners).sort()).toEqual(['SIGINT', 'SIGTERM'])
+    for (const signal of ['SIGINT', 'SIGTERM']) expect(run.listeners[signal]).toHaveLength(1)
+  })
+
+  it('a signal that reaches the command once the boot has ended goes to the running fixture: under --check exit 130 and no summary, running exit 0', async () => {
+    for (const check of [true, false]) {
+      const run = supervised()
+      let ended = false
+      const done = runCommand(
+        { check },
+        run.cli(
+          async () => run.fixture,
+          async () => {
+            await turn()
+            await turn()
+            ended = true
+            return [{ ok: true }]
+          }
+        )
+      )
+      await turn()
+      run.handlers.SIGINT()
+      await turn()
+      await turn()
+      await turn()
+      expect(run.stops, `check ${check}`).toBe(1)
+      expect(summaries(run), `check ${check}`).toEqual([])
+      run.finish()
+      await done
+      await turn()
+      expect(run.codes, `check ${check}`).toEqual([check ? INTERRUPTED_CHECK_EXIT.SIGINT : 0])
+      if (check) expect(ended).toBe(true)
+    }
+  })
+
+  it('a boot that fails after a kept signal exits as that signal does, with no refusal line, whatever the failure', async () => {
+    const failures = [
+      Object.assign(new Error('not the fixture folder'), { refusedFolder: true }),
+      Object.assign(new Error('refused before the daemon'), { checks: [{ ok: false }] }),
+      Object.assign(new Error('refused to start the daemon: TMUX_TMPDIR is unset or empty'), {
+        refusedBoot: true
+      }),
+      new Error('the relay exited (0) before announcing itself')
+    ]
+    for (const check of [true, false])
+      for (const failure of failures) {
+        const run = supervised()
+        await runCommand(
+          { check, json: true },
+          run.cli(async () => {
+            run.handlers.SIGINT()
+            await turn()
+            throw failure
+          })
+        )
+        const what = `${failure.message}, check ${check}`
+        expect(run.codes, what).toEqual([check ? INTERRUPTED_CHECK_EXIT.SIGINT : 0])
+        expect(run.written, what).toEqual([])
       }
   })
 
@@ -1129,6 +1216,21 @@ describe("the CLI's way out", () => {
       expect(run.written, error.message).toEqual([line])
       expect(run.codes, error.message).toEqual([2])
       expect(run.stops).toBe(0)
+      if (error.refusedFolder) continue
+      // Under --json, the refusal is one object that says so, with its checks or its reason.
+      const json = supervised()
+      await runCommand(
+        { json: true },
+        json.cli(async () => {
+          throw error
+        })
+      )
+      expect(JSON.parse(json.written.join('')), error.message).toEqual(
+        error.checks
+          ? { refused: true, checks: error.checks }
+          : { refused: true, reason: error.message }
+      )
+      expect(json.codes).toEqual([2])
     }
     const run = supervised()
     await expect(
