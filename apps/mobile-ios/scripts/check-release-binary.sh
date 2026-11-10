@@ -68,6 +68,17 @@ binary_strings() {
   return 0
 }
 
+# The two builds are two apps: Debug carries the development identifier and Release its own, so
+# a Release install never shares the Debug install's container or Keychain service (the service
+# is named from the identifier).
+DEBUG_ID="com.clave.ios.dev"
+RELEASE_ID="com.clave.ios"
+
+# The bundle identifier a build wrote into its app's Info.plist; empty when there is none.
+bundle_id() {
+  plutil -extract CFBundleIdentifier raw -o - "$DERIVED/Build/Products/$1-iphonesimulator/Clave.app/Info.plist" 2>/dev/null
+}
+
 mkdir -p "$DERIVED"
 failed=0
 
@@ -83,6 +94,13 @@ if [ $PROVE_RED -eq 0 ]; then
     fi
   done
   build Release
+  debug_id="$(bundle_id Debug)"
+  if [ "$debug_id" = "$DEBUG_ID" ]; then
+    echo "PASS debug is $DEBUG_ID"
+  else
+    echo "FAIL debug is '$debug_id', not $DEBUG_ID"
+    failed=1
+  fi
 else
   # The guard left off: Release compiled with DEBUG set must carry the markers.
   build Release "SWIFT_ACTIVE_COMPILATION_CONDITIONS=DEBUG \$(inherited)"
@@ -90,6 +108,13 @@ fi
 
 release_text="$(binary_strings Release)" || { echo "FAIL release binary check: the Release binary could not be read"; exit 1; }
 release_failed=0
+release_id="$(bundle_id Release)"
+if [ "$release_id" = "$RELEASE_ID" ]; then
+  echo "PASS release is $RELEASE_ID"
+else
+  echo "FAIL release is '$release_id', not $RELEASE_ID"
+  release_failed=1
+fi
 for marker in "${MARKERS[@]}"; do
   if grep -qF -- "$marker" <<<"$release_text"; then
     echo "FAIL release has $marker"

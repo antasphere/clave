@@ -4,15 +4,16 @@
 the app. The other two scripts run the app against an isolated fixture stack on this Mac.
 `check-release-binary.sh` (bash, from `apps/mobile-ios`, `CLAVE_IOS_SIMULATOR_UDID` required)
 builds Debug and Release for the simulator and reads both binaries with `strings`: the
-development-only markers must be in Debug and absent from Release, and a binary that is not
-there fails the check rather than reading as one without markers; `--prove-red` shows the
-check fails when the guard is off.
+development-only markers must be in Debug and absent from Release, a binary that is not
+there fails the check rather than reading as one without markers, and each app must carry its
+own identifier (Debug `com.clave.ios.dev`, Release `com.clave.ios`, so the two never share a
+container or a Keychain service); `--prove-red` shows the check fails when the guard is off.
 `prove-ci-gate.sh` (bash, from `apps/mobile-ios`) runs `ci.sh` in a scratch folder with
 stand-ins for swift, xcodebuild and xcrun, and proves three things: the gate exits non-zero,
 without printing `ci: green`, when the core's tests, the build, the tests or the release
 check fail; the real `check-release-binary.sh`, reading the binaries the xcodebuild stand-in
-writes, passes a clean Release output and fails one carrying a development-only marker and
-one missing altogether; and with no simulator named, the gate fails on a runner with no
+writes, passes a clean Release output and fails one carrying a development-only marker, one
+missing altogether and one carrying the Debug build's identifier; and with no simulator named, the gate fails on a runner with no
 iPhone and skips a runtime newer than the Xcode's simulator SDK. `--against <file>` and
 `--release-check <file>` run the scenarios on other copies: the copies at df0332c9 read green
 with no Release output and pick the newer runtime, and the ci.sh at ca3f0f35 read green on a

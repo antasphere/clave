@@ -8,7 +8,7 @@
 			<key>CFBundleTypeRole</key>
 			<string>Editor</string>
 			<key>CFBundleURLName</key>
-			<string>com.clave.ios.dev.callback</string>
+			<string>com.clave.ios.callback</string>
 			<key>CFBundleURLSchemes</key>
 			<array>
 				<string>clave-ios</string>

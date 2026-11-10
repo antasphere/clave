@@ -10,7 +10,7 @@
 #   - the REAL release check (scripts/check-release-binary.sh) reading the
 #     binaries the xcodebuild stand-in writes: a clean Release output (green), a
 #     Release output carrying a development-only marker (red), no Release
-#     output at all (red);
+#     output at all (red), a Release carrying the Debug build's identifier (red);
 #   - the simulator pick a runner makes when CLAVE_IOS_SIMULATOR_UDID is unset:
 #     no iPhone at all (red), and a runtime newer than this Xcode's simulator
 #     SDK skipped for the newest one it can run (green, that device named).
@@ -67,13 +67,16 @@ printf '%s\n' '#!/bin/bash' \
   '    if [ "$CI_PROOF_FAIL" = build ]; then echo "** BUILD FAILED **"; exit 65; fi' \
   '    if [ -n "$CI_PROOF_RELEASE" ] && [ -n "$derived" ]; then' \
   '      app="$derived/Build/Products/$conf-iphonesimulator/Clave.app"' \
+  '      plist() { printf "%s\n" "<?xml version=\"1.0\" encoding=\"UTF-8\"?>" "<plist version=\"1.0\"><dict><key>CFBundleIdentifier</key><string>$1</string></dict></plist>" >"$app/Info.plist"; }' \
   '      if [ "$conf" = Debug ]; then' \
-  '        mkdir -p "$app"; printf "stub debug binary\n" >"$app/Clave"' \
+  '        mkdir -p "$app"; printf "stub debug binary\n" >"$app/Clave"; plist com.clave.ios.dev' \
   '        printf "%s\n" UITestFake CLAVE_IOS_ISSUER DeveloperConnectionSection "Add the developer server" --ui-test-fake CLAVE_IOS_RELAY developer.add >"$app/Clave.debug.dylib"' \
   '      elif [ "$CI_PROOF_RELEASE" = clean ]; then' \
-  '        mkdir -p "$app"; printf "stub release binary\n" >"$app/Clave"' \
+  '        mkdir -p "$app"; printf "stub release binary\n" >"$app/Clave"; plist com.clave.ios' \
   '      elif [ "$CI_PROOF_RELEASE" = marker ]; then' \
-  '        mkdir -p "$app"; printf "stub release binary\nUITestFake\n" >"$app/Clave"' \
+  '        mkdir -p "$app"; printf "stub release binary\nUITestFake\n" >"$app/Clave"; plist com.clave.ios' \
+  '      elif [ "$CI_PROOF_RELEASE" = shared ]; then' \
+  '        mkdir -p "$app"; printf "stub release binary\n" >"$app/Clave"; plist com.clave.ios.dev' \
   '      fi' \
   '    fi' \
   '    echo "** BUILD SUCCEEDED **"; exit 0 ;;' \
@@ -162,6 +165,8 @@ run_ci real "$udid" CI_PROOF_FAIL= CI_PROOF_RELEASE=marker
 judge "the real release check on a Release output carrying UITestFake" fail "FAIL release has UITestFake"
 run_ci real "$udid" CI_PROOF_FAIL= CI_PROOF_RELEASE=missing
 judge "the real release check with no Release output" fail "FAIL release binary check: the Release binary could not be read"
+run_ci real "$udid" CI_PROOF_FAIL= CI_PROOF_RELEASE=shared
+judge "the real release check on a Release sharing the Debug identifier" fail "FAIL release is 'com.clave.ios.dev', not com.clave.ios"
 
 run_ci stand-in "" CI_PROOF_FAIL= CI_PROOF_DEVICES="$sandbox/devices-no-iphone.json"
 judge "a runner with no iPhone simulator" fail "no available iPhone simulator on a runtime this Xcode can run"

@@ -420,7 +420,11 @@ final class ChatDeliveryControllerTests: XCTestCase {
       XCTFail("the settle did not throw")
     } catch is MarkWriteFailed {}
     let state = await controller.claimState(s.clientMessageId)
-    XCTAssertEqual(state.held, false, "let go on the throwing path")
+    // A send still held after the throw would make the discard below wait for ever: fail here.
+    guard state.held == false else {
+      XCTFail("let go on the throwing path: the send is still held, so a discard would wait for ever")
+      return
+    }
     let resolution = try await controller.discardPending(machineId: "m", sessionId: "s", clientMessageId: s.clientMessageId)
     XCTAssertEqual(resolution, .discarded)
   }
