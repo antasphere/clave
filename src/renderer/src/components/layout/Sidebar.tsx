@@ -2338,6 +2338,7 @@ export function Sidebar(): React.JSX.Element {
       {/* Group terminal configuration dialog */}
       <GroupCommandDialog
         isOpen={terminalDialogState !== null}
+        owner={ownerOf(terminalDialogState?.groupId)}
         initialCommand={
           terminalDialogState?.terminalId
             ? groups

@@ -11,6 +11,8 @@ import ColorPicker from './ColorPicker'
 import { FolderIcon } from '@heroicons/react/24/outline'
 import { cn } from '@clave/ui/components'
 import { ICON_COMPONENTS } from './terminal-icons'
+import { LOCAL_SERVER_ID } from '@clave/contract/fleet'
+import { pickFolderOn } from '../../lib/pick-folder'
 
 interface GroupCommandDialogProps {
   isOpen: boolean
@@ -28,6 +30,9 @@ interface GroupCommandDialogProps {
   initialColor?: GroupTerminalColor
   initialCwd?: string | null
   initialIcon?: GroupTerminalIcon
+  /** The machine the group runs on (`ownerOf` its key): a server group's
+   *  terminal folder is picked on that server (PRDCT-4329). */
+  owner?: string
 }
 
 export function GroupCommandDialog({
@@ -39,7 +44,8 @@ export function GroupCommandDialog({
   initialMode = 'prefill',
   initialColor = 'blue',
   initialCwd = null,
-  initialIcon = 'terminal'
+  initialIcon = 'terminal',
+  owner = LOCAL_SERVER_ID
 }: GroupCommandDialogProps): React.JSX.Element {
   const [command, setCommand] = useState(initialCommand ?? '')
   const [mode, setMode] = useState<'prefill' | 'auto'>(initialMode)
@@ -82,7 +88,9 @@ export function GroupCommandDialog({
   const handlePickFolder = async (): Promise<void> => {
     // Open the native picker at the group root (or the terminal's current cwd
     // when editing) instead of the OS default location.
-    const folder = await window.electronAPI.openFolderDialog(cwd ?? undefined)
+    // A server group's folder is picked in the server's picker: this Mac's
+    // dialog would answer a path the server does not have.
+    const folder = await pickFolderOn(owner, cwd ?? undefined)
     if (folder) {
       setCwd(folder)
     }
