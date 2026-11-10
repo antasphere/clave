@@ -27,7 +27,8 @@ simulator SDK, finds no iPhone on the runner's shape.
 
 ```sh
 node apps/mobile-ios/scripts/fixture-stack.mjs [--approve] [--dry-run | --self-check | --once | --prove-tmpdir-guard | --prove-env-guard stray|no-env-file|live-stub|relay-issuer | --prove-home-guard | --prove-tmux-guard unset|differs|symlink|mode|outside|long|missing | --prove-prerequisites | --prove-inside keys|cache|resolver|args|home|tmux|probe | --prove-recorder-read missing|unreadable | --prove-title-guard recorder|folder]
-node apps/mobile-ios/scripts/fixture-check.mjs --udid <simulator udid> [--only <xcodebuild -only-testing value>]
+node apps/mobile-ios/scripts/fixture-check.mjs --udid <simulator udid> [--only <xcodebuild -only-testing value>] [--derived <DerivedData path>]
+node apps/mobile-ios/scripts/fixture-check.mjs --prove-verdict
 ```
 
 `fixture-stack.mjs` brings the stack up and keeps it running until Ctrl-C. `--approve`
@@ -39,10 +40,24 @@ anything. A boot whose checks fail, whose watch catches a call, or whose run key
 fails (below) exits 2.
 
 `fixture-check.mjs` brings the stack up with approval on, boots the simulator if it is
-not booted, runs `xcodebuild test` (by default `-only-testing:ClaveUITests/FixtureFlowTests`),
-tears the stack down and exits with xcodebuild's code. `--push <payload.json>` sends a
-notification to the app once the tests are done. `--keep` leaves the stack up until
-Ctrl-C. The tests get the stack's facts as `TEST_RUNNER_CLAVE_FIXTURE_*` variables:
+not booted, runs `xcodebuild test` (by default `-only-testing:ClaveUITests/FixtureFlowTests`)
+and tears the stack down. Its verdict reads xcodebuild's own count for the class: it exits 0
+only when xcodebuild exited 0 and the line xcodebuild prints after `Test Suite
+'FixtureFlowTests' passed|failed at …` (never an enclosing suite's) says 4 tests executed, none
+skipped and no failure. The tests skip when a `TEST_RUNNER_CLAVE_FIXTURE_*` variable is missing
+or empty, so a run where any of them skipped, one where fewer than 4 ran (an `--only` narrower
+than the class included), one without that line and one with a failure are red, each with its
+own sentence, exit xcodebuild's code when it failed and 1 otherwise; a watch hit or a run
+keychain fault still exits 2. `--prove-verdict` runs that verdict (`fixtureVerdict`, one pure
+function) on seven canned outputs: 4 executed with none skipped or failed (green); 4 with 1
+skipped; 3 executed; 0 executed; the class's own line missing while the enclosing suites' lines
+say 4/0/0; xcodebuild exit 65 with 4/0/0; 4 with 1 failure. It prints PASS or FAIL per case and
+exits 0 only when every case gives the expected verdict, sentence kinds and exit code; it boots
+nothing and runs no xcodebuild. `--derived <path>` names the build folder, by default
+`<tmpdir>-DerivedData`, the run folder's sibling named from the caller's `--tmpdir`: the stack
+empties its run folder at every start (below), so a build folder inside it would be removed
+before every check. `--push <payload.json>` sends a notification to the app once the tests
+are done. `--keep` leaves the stack up until Ctrl-C. The tests get the stack's facts as `TEST_RUNNER_CLAVE_FIXTURE_*` variables:
 `ISSUER_URL`, `RELAY_URL`, `SERVER_URL`, `MACHINE_ID`, `WORKSPACE_ID`, `SESSION_ID`, `NONCE`. The owner's
 token is never passed to them.
 
