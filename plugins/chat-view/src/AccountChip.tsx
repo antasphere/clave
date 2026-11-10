@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useRef, useState } from 'react'
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
 import { BoltIcon, ExclamationTriangleIcon, MapPinIcon } from '@heroicons/react/24/outline'
 import { useViewSessionStore } from '../../../src/renderer/src/views/session-store'
@@ -18,7 +18,6 @@ import {
   switchSessionAccount
 } from '../../../src/renderer/src/lib/switch-account'
 import {
-  ensureSessionAccounts,
   ownAccountFrom,
   useSessionAccountView
 } from '../../../src/renderer/src/lib/session-accounts'
@@ -49,17 +48,10 @@ export function AccountChip({ sessionId }: { sessionId: string }): React.JSX.Ele
   const host = useViewSessionStore((s) => s.sessions.find((x) => x.id === sessionId))
   const provider = host ? accountProviderOf(host) : null
   // Subscribed: a renamed, added or removed account, or a read that lands,
-  // redraws the chip, on this Mac or on the tab's server.
+  // redraws the chip, on this Mac or on the tab's server. A server tab's
+  // chip reads the server's settings as it draws (`useSessionAccountView`).
   const view = useSessionAccountView(host, provider)
   const own = host && view ? ownAccountFrom(view, host) : null
-  const ownId = own?.id
-  const known = view?.known
-  // A server tab's chip names the server's account as soon as it is drawn:
-  // the server's settings are read the first time one of its chips shows.
-  useEffect(() => {
-    if (host && provider) ensureSessionAccounts(host, provider)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessionId, provider, ownId, known])
   const [open, setOpen] = useState(false)
   const [active, setActive] = useState<{ id: string; row: HTMLElement } | null>(null)
   const clearFrame = useRef<number | null>(null)

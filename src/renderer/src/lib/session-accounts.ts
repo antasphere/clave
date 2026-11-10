@@ -282,15 +282,84 @@ function serverReads(): Promise<typeof import('../store/server-settings-store')>
   return import('../store/server-settings-store')
 }
 
-/** Subscribed snapshot of the sources a session's view is made of: this
- *  Mac's lists and usage, and its owner's settings entry. Null without a
- *  session or a provider (the hooks still run, in the same order). */
+/** How long a kick of one session's account is held off after the last
+ *  (a row re-renders often; a server that failed is not hammered). */
+export const ACCOUNT_KICK_GAP_MS = 30_000
+const kicks = new Map<string, number>()
+
+/** For the tests: forget every kick. */
+export function resetAccountKicks(): void {
+  kicks.clear()
+}
+
+/**
+ * The read a reader of a session's account asks for as it draws: for a tab
+ * on a server, its settings when this Mac has none and its account's usage
+ * when stale (`ensureSessionAccounts`). Asked from the hooks below, so every
+ * chip, menu header and row that draws a server tab's account loads it
+ * itself, whatever else did or did not (the launcher reads only the servers
+ * it shows). Idempotent and held off per account for `ACCOUNT_KICK_GAP_MS`;
+ * run after the render, never inside it.
+ */
+export function kickSessionAccounts(
+  session: SessionAccountFields,
+  provider: AccountProvider,
+  now: number = Date.now()
+): void {
+  const owner = sessionOwner(session)
+  if (owner === LOCAL_SERVER_ID) return
+  const key = `${owner}\u0000${provider}\u0000${sessionAccountIdOf(session, provider)}`
+  const last = kicks.get(key)
+  if (last !== undefined && now - last < ACCOUNT_KICK_GAP_MS) return
+  kicks.set(key, now)
+  queueMicrotask(() => ensureSessionAccounts(session, provider))
+}
+
+/** A session's owner's view, subscribed, its account loaded as it draws. */
+export function useSessionAccounts(
+  session: SessionAccountFields,
+  provider: AccountProvider
+): AccountOwnerView {
+  const view = useOwnerAccountView(sessionOwner(session), provider)
+  kickSessionAccounts(session, provider)
+  return view
+}
+
+/** The same, null without a session or a provider (the hooks still run, in
+ *  the same order). */
 export function useSessionAccountView(
-  session: { id: string } | null | undefined,
+  session: SessionAccountFields | null | undefined,
   provider: AccountProvider | null
 ): AccountOwnerView | null {
   const view = useOwnerAccountView(session ? sessionOwner(session) : LOCAL_SERVER_ID, provider)
+  if (session && provider) kickSessionAccounts(session, provider)
   return session && provider ? view : null
+}
+
+/**
+ * The one usage summary of a session's account, subscribed to that entry
+ * alone (a row's badge): a read of another account, on this Mac or on any
+ * server, does not redraw it. Loads the account as it draws, as above.
+ */
+export function useSessionAccountSummary(
+  session: SessionAccountFields,
+  provider: AccountProvider | null
+): AccountUsageSummary | undefined {
+  const owner = sessionOwner(session)
+  const id = provider ? sessionAccountIdOf(session, provider) : ''
+  const local = owner === LOCAL_SERVER_ID
+  const claude = useClaudeAccountsUsage((s) =>
+    local && provider === 'claude' ? s.byAccount[id] : undefined
+  )
+  const codex = useCodexAccountsUsage((s) =>
+    local && provider === 'codex' ? s.byAccount[id] : undefined
+  )
+  const server = useServerSettingsStore((s) =>
+    !local && provider ? s.byServer[owner]?.usage[provider][id] : undefined
+  )
+  if (provider) kickSessionAccounts(session, provider)
+  if (!provider) return undefined
+  return local ? (provider === 'codex' ? codex : claude) : server
 }
 
 /** One owner's view, subscribed. */

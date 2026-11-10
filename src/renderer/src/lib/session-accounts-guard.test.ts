@@ -41,7 +41,7 @@ const ALIASED_STORE_IMPORT =
   /import\s*(\*\s*as\s+\w+|\{[^}]*\bas\b[^}]*\})\s*from\s*'[^']*\/(claude-profile-store|codex-account-store|usage-store)'/g
 
 const ALLOWED: Record<string, { reason: string; reads: number }> = {
-  'src/renderer/src/lib/session-accounts.ts': { reason: 'the seam itself', reads: 16 },
+  'src/renderer/src/lib/session-accounts.ts': { reason: 'the seam itself', reads: 18 },
   'src/renderer/src/lib/switch-account.ts': {
     reason: 'the pool of a LAUNCH on this Mac; every session reader in it goes through the seam',
     reads: 23

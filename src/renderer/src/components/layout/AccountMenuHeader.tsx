@@ -1,12 +1,6 @@
 import { ClaudeLogo, CodexLogo } from '../icons/cli-logos'
-import { useEffect } from 'react'
 import { capStatus, formatReset, claudeUsageForModel } from '../../store/usage-store'
-import {
-  ensureSessionAccounts,
-  ownAccountFrom,
-  sessionOwner,
-  useOwnerAccountView
-} from '../../lib/session-accounts'
+import { ownAccountFrom, useSessionAccounts } from '../../lib/session-accounts'
 import { soonestWeeklyReset } from '../../lib/account-pool'
 import type { Session } from '../../store/session-types'
 import { useNow } from '../../lib/use-now'
@@ -21,7 +15,7 @@ import { AccountUsageBars } from './AccountSwitchMenu'
  *
  * The account and its usage are the tab's OWNER's (`lib/session-accounts.ts`):
  * a tab on a server names that server's account and reads its usage there,
- * read once more on mount when the server has none or it is stale.
+ * read as it draws when the server has none or it is stale.
  */
 export function AccountMenuHeader({
   session,
@@ -33,14 +27,10 @@ export function AccountMenuHeader({
   const now = useNow()
   const codex = !!session.codexMode
   const provider = codex ? 'codex' : 'claude'
-  const view = useOwnerAccountView(sessionOwner(session), provider)
+  // Drawn on a server tab: the server's settings are read, and this
+  // account's usage when it is missing or stale (`useSessionAccounts`).
+  const view = useSessionAccounts(session, provider)
   const own = ownAccountFrom(view, session)
-  // Opened on a server tab: the server's settings, and this account's usage
-  // when it is missing or stale.
-  useEffect(() => {
-    ensureSessionAccounts(session, provider)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [session.id, provider, own.id, view.known])
   // The session's view of its account: the shared caps and its own family's.
   const summary = claudeUsageForModel(view.usage[own.id], session.model)
   const status = capStatus(summary, { now })

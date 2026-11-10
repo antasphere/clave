@@ -1,6 +1,5 @@
-import { isRemoteKey } from '../../lib/fleet-identity'
 import { FleetBadge } from '../fleet/FleetControls'
-import { memo, useEffect } from 'react'
+import { memo } from 'react'
 import { Tooltip, TooltipTrigger, TooltipContent } from '@clave/ui/components'
 import { useSessionStore, type Session } from '../../store/session-store'
 import { useLocationStore } from '../../store/location-store'
@@ -15,7 +14,7 @@ import { ClaudeVariantGlyph } from '../icons/cli-logos'
 import { SidebarTabItem } from './SidebarTabItem'
 import { claudeUsageForModel, capOutLabel, capStatus } from '../../store/usage-store'
 import { accountProviderOf, sessionAccountId } from '../../lib/switch-account'
-import { ensureSessionAccounts, useSessionAccountView } from '../../lib/session-accounts'
+import { useSessionAccountSummary } from '../../lib/session-accounts'
 import { tabStatusPresentation, type TabGlyph } from '../../lib/tab-status'
 import { AccountMenuHeader } from '../layout/AccountMenuHeader'
 import { useMarkPack } from '../plugins/native-marks'
@@ -26,18 +25,14 @@ import { SubagentMenu, type SessionMenuEvent } from './SubagentMenu'
  *  the next turn fails. Hovering shows the account card the tab's context menu
  *  opens with. Its own component, subscribed to the usage mirror, because the
  *  row itself only re-renders on its session object. */
-function AccountLimitBadge({ session }: { session: Session }): React.JSX.Element | null {
+export function AccountLimitBadge({ session }: { session: Session }): React.JSX.Element | null {
   const provider = accountProviderOf(session)
-  // The tab's OWNER's account and usage: a tab on a server reads the
-  // server's (PRDCT-4328), whose settings the first of its rows reads.
-  const view = useSessionAccountView(session, provider)
+  // The tab's OWNER's account's usage, that one entry alone: a read of
+  // another account does not redraw the row's badge. A tab on a server
+  // reads the server's (PRDCT-4328), loaded as the row draws.
+  const read = useSessionAccountSummary(session, provider)
   const accountId = provider ? sessionAccountId(session, provider) : ''
-  const known = view?.known
-  useEffect(() => {
-    if (provider && isRemoteKey(session.id)) ensureSessionAccounts(session, provider)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [session.id, provider, accountId, known])
-  const summary = view ? claudeUsageForModel(view.usage[accountId], session.model) : undefined
+  const summary = provider ? claudeUsageForModel(read, session.model) : undefined
   const stopping = capStatus(summary)?.stopping ?? null
   if (!provider || !session.alive || !stopping) return null
   // The cap that stops THIS tab, named with its return (PRDCT-4254).
