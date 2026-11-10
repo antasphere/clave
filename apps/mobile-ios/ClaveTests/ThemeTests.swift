@@ -30,8 +30,14 @@ final class ThemeTests: XCTestCase {
   }
 
   func testGeistFacesAreRegistered() {
+    // UIFont(name:) answers nil rather than a stand-in, and the face it finds must be the bundled
+    // Geist itself: its family "Geist" and the very PostScript name the views ask for, so a
+    // Font.custom lookup never falls back to the system font without a test saying so.
     for name in [GeistWeight.regularFontName, GeistWeight.mediumFontName, GeistWeight.semiboldFontName] {
-      XCTAssertNotNil(UIFont(name: name, size: 13), "\(name) is not registered by the bundle")
+      let font = UIFont(name: name, size: 13)
+      XCTAssertNotNil(font, "\(name) is not registered by the bundle")
+      XCTAssertEqual(font?.familyName, "Geist", "\(name) resolves to another family")
+      XCTAssertEqual(font?.fontName, name, "\(name) resolves to another face")
     }
     XCTAssertEqual(fontWeightMedium, 400)
     XCTAssertEqual(GeistWeight.medium.fontName, "Geist-Regular")
