@@ -30,6 +30,20 @@
     /// Long enough for a UI test to come back to the state line before the push client's backoff
     /// reaches a socket the fake accepts again.
     static let offlineSeconds = 5.0
+    /// A message starting with this: the fake keeps the write (its turn and Echo's reply appear),
+    /// loses the write's answer, and answers accepted when asked about it. The first write of
+    /// each text only; a later write of the same text is an ordinary one.
+    static let ackLostPrefix = "ack-lost:"
+    /// A message starting with this: the fake does not keep the write, loses its answer and fails
+    /// every status read for its id; `unknownDropDelay` later it closes every socket and refuses
+    /// new ones for `unknownOfflineSeconds`, and once a socket is accepted again it answers absent
+    /// for that id, so the reconnection's same-id write lands. The first write of each text only.
+    static let unknownPrefix = "unknown:"
+    static let unknownDropDelay = 3.0
+    static let unknownOfflineSeconds = 4.0
+    /// The line the timeline keeps once a socket is accepted again after an `unknown:` drop: what a
+    /// UI test waits on to know the reconnection's fresh snapshot has landed.
+    static let backAfterUnknown = "The fake machine is back."
     /// The last seeded reply: GitHub-flavoured Markdown, its image a data: URL so nothing is fetched.
     static let markdownReply = """
       ## Evidence heading
@@ -62,6 +76,17 @@
     private var heldCount = 0
     /// Until when a new socket's hello is answered by closing it (after an `offline:` message).
     private var refusingUntil: Date?
+    /// The texts whose first write a delivery behaviour already took.
+    private var deliveryTexts: Set<String> = []
+    /// The ids of `unknown:` writes, and what a status read about each gets.
+    private var unknownWrites: [String: UnknownWrite] = [:]
+    /// An `unknown:` drop happened and no socket has been accepted since.
+    private var awaitingReturn = false
+    /// What the timeline holds beyond the seeded events: the delivery behaviours' messages, so a
+    /// fresh snapshot after a reconnection still shows them.
+    private var kept: [TimelineItem] = []
+
+    private enum UnknownWrite { case unreadable, absent, landed }
 
     private func locked<T>(_ run: () -> T) -> T {
       lock.lock()
@@ -73,7 +98,14 @@
 
     // MARK: HTTP
 
+    /// The answer to one call; one whose answer a delivery behaviour loses reads as a 503 here.
     func answer(_ request: URLRequest) -> HTTPAnswer {
+      (try? respond(request)) ?? HTTPAnswer(status: 503)
+    }
+
+    /// The answer to one call, or its loss: a delivery behaviour may take a write and lose the
+    /// answer, or fail a status read.
+    func respond(_ request: URLRequest) throws -> HTTPAnswer {
       guard let url = request.url, let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
         let host = components.host
       else { return HTTPAnswer(status: 400) }
@@ -83,7 +115,7 @@
       let bearer = request.value(forHTTPHeaderField: "Authorization")?.replacingOccurrences(of: "Bearer ", with: "")
       switch host {
       case "hub.fake": return hub(method, path, body: request.httpBody)
-      case "relay.fake": return relay(method, path, query: query, bearer: bearer, body: request.httpBody)
+      case "relay.fake": return try relay(method, path, query: query, bearer: bearer, body: request.httpBody)
       default: return HTTPAnswer(status: 404)
       }
     }
@@ -130,7 +162,7 @@
       return "\(header).\(payload).\(Self.base64URL(Data("fake-signature".utf8)))"
     }
 
-    private func relay(_ method: String, _ path: String, query: [String: String], bearer: String?, body: Data?) -> HTTPAnswer {
+    private func relay(_ method: String, _ path: String, query: [String: String], bearer: String?, body: Data?) throws -> HTTPAnswer {
       if method == "GET", path == "/machines" {
         guard bearer == Self.accessToken else { return HTTPAnswer(status: 401) }
         return json([
@@ -144,10 +176,10 @@
       }
       let prefix = "/m/\(Self.machineId)"
       guard path.hasPrefix(prefix) else { return HTTPAnswer(status: 404) }
-      return machine(method, String(path.dropFirst(prefix.count)), query: query, bearer: bearer, body: body)
+      return try machine(method, String(path.dropFirst(prefix.count)), query: query, bearer: bearer, body: body)
     }
 
-    private func machine(_ method: String, _ route: String, query: [String: String], bearer: String?, body: Data?) -> HTTPAnswer {
+    private func machine(_ method: String, _ route: String, query: [String: String], bearer: String?, body: Data?) throws -> HTTPAnswer {
       // Pairing carries its proof in the body, not a bearer.
       if route == "/devices/pair" {
         if method == "POST" { return json(["pairingId": "p_fake", "expiresAt": now + 300_000]) }
@@ -195,7 +227,7 @@
       case ("GET", "/sessions/capabilities"):
         return json(["images": false])
       case ("GET", "/sessions/writes"):
-        return json(["status": "accepted", "at": now])
+        return try writeStatus(query["clientMessageId"] ?? "")
       case ("GET", "/launch-profiles"):
         return json(["version": 1, "customProfiles": [], "globalDefaults": [:], "workspaceOverrides": [:]])
       case ("GET", "/requests/pending"):
@@ -219,6 +251,7 @@
           return json(["status": "accepted", "at": now])
         }
         let text = Self.writtenText(body)
+        if let answer = try deliveryWrite(text, id: Self.writtenId(body)) { return answer }
         if text == Self.offlineCommand {
           dropSockets()
         } else if text.hasPrefix(Self.slowPrefix) {
@@ -259,6 +292,7 @@
       switch tag {
       case "hello":
         guard frame["token"] as? String == Self.deviceToken else { return [] }
+        acceptedAgain()
         return [Self.frame(["_tag": "welcome", "protocol": pushProtocol, "serverId": Self.serverId, "version": "fake"])]
       case "subscribe":
         let id = frame["sessionId"] as? String ?? ""
@@ -280,11 +314,13 @@
       stream([.userMessage(UserMessage(text: text)), .assistantText(delta: text, final: true, parent: nil)])
     }
 
-    /// The session's next events on its stream, each at the next position of the one generation.
-    private func stream(_ events: [SessionEvent]) {
+    /// The session's next events on its stream, each at the next position of the one generation;
+    /// `keep` puts them in the timeline too.
+    private func stream(_ events: [SessionEvent], keep: Bool = false) {
       for event in events {
         let position = locked { () -> Int in
           sequence += 1
+          if keep { kept.append(TimelineItem(event: event, at: now, position: SessionPosition(generation: Self.generation, sequence: sequence))) }
           return sequence
         }
         let stream = SessionStream.event(event, position: SessionPosition(generation: Self.generation, sequence: position))
@@ -315,6 +351,76 @@
       guard let held else { return }
       stream([.assistantText(delta: held.text, final: true, parent: nil), .stateChange(.idle)])
       broadcast(event: .sessionStateChanged(id: Self.sessionId, state: .idle))
+    }
+
+    // MARK: delivery behaviours
+
+    /// The delivery behaviours of a message whose text carries their prefix; nil for any other
+    /// text, which the fake answers as before.
+    private func deliveryWrite(_ text: String, id: String) throws -> HTTPAnswer? {
+      guard text.hasPrefix(Self.ackLostPrefix) || text.hasPrefix(Self.unknownPrefix) else { return nil }
+      let first = locked { deliveryTexts.insert(text).inserted }
+      if first, text.hasPrefix(Self.ackLostPrefix) {
+        keepAndEcho(text, id: id)
+        throw URLError(.networkConnectionLost)
+      }
+      if first {
+        locked { unknownWrites[id] = .unreadable }
+        DispatchQueue.global().asyncAfter(deadline: .now() + Self.unknownDropDelay) { [weak self] in self?.dropAfterUnknown() }
+        throw URLError(.networkConnectionLost)
+      }
+      // A later write of the same text (the reconnection's same-id write, or a new id): an
+      // ordinary message, kept and answered.
+      locked {
+        if unknownWrites[id] != nil { unknownWrites[id] = .landed }
+      }
+      keepAndEcho(text, id: id)
+      return json(["status": "accepted", "at": now])
+    }
+
+    /// What the status route says about an id: an `unknown:` write's status cannot be read until
+    /// a socket is accepted again after its drop, then it reads absent; anything else is accepted.
+    private func writeStatus(_ id: String) throws -> HTTPAnswer {
+      switch locked({ unknownWrites[id] }) {
+      case .unreadable?: throw URLError(.networkConnectionLost)
+      case .absent?: return json(["status": "absent"])
+      case .landed?, nil: return json(["status": "accepted", "at": now])
+      }
+    }
+
+    /// A message the machine keeps: in the timeline, and on the stream as the person's message,
+    /// under its id, and Echo's reply.
+    private func keepAndEcho(_ text: String, id: String) {
+      stream(
+        [.userMessage(UserMessage(clientMessageId: id.isEmpty ? nil : id, text: text)), .assistantText(delta: text, final: true, parent: nil)],
+        keep: true)
+    }
+
+    /// `unknownDropDelay` after an `unknown:` write: every socket closed, new ones refused for
+    /// `unknownOfflineSeconds`.
+    private func dropAfterUnknown() {
+      let open = locked { () -> [UITestFakeSocket] in
+        refusingUntil = Date().addingTimeInterval(Self.unknownOfflineSeconds)
+        awaitingReturn = true
+        return sockets
+      }
+      for socket in open { socket.close(code: 1001, reason: "The fake machine went away.") }
+    }
+
+    /// The first socket accepted after an `unknown:` drop: the ids it left unreadable now read
+    /// absent, and the timeline keeps a line saying the machine is back (not pushed: the fresh
+    /// snapshot the reconnection takes carries it).
+    private func acceptedAgain() {
+      locked {
+        guard awaitingReturn else { return }
+        awaitingReturn = false
+        for (id, state) in unknownWrites where state == .unreadable { unknownWrites[id] = .absent }
+        sequence += 1
+        kept.append(
+          TimelineItem(
+            event: .assistantText(delta: Self.backAfterUnknown, final: true, parent: nil), at: now,
+            position: SessionPosition(generation: Self.generation, sequence: sequence)))
+      }
     }
 
     /// An `offline:` message: every open socket closed by the machine, and new ones refused for a while.
@@ -369,11 +475,11 @@
     }
 
     private func timeline() -> TimelinePage {
-      let top = locked { sequence }
+      let (top, extra) = locked { (sequence, kept) }
       return TimelinePage(
         items: Self.seeded.enumerated().map { index, event in
           TimelineItem(event: event, at: 0, position: SessionPosition(generation: Self.generation, sequence: index + 1))
-        }, before: nil, cursor: SessionPosition(generation: Self.generation, sequence: top), truncated: false)
+        } + extra, before: nil, cursor: SessionPosition(generation: Self.generation, sequence: top), truncated: false)
     }
 
     private static func field(_ name: String, of body: Data?) -> String? {
@@ -386,6 +492,13 @@
         let input = object["input"] as? [String: Any]
       else { return nil }
       return input["type"] as? String
+    }
+
+    private static func writtenId(_ body: Data?) -> String {
+      guard let body, let object = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any],
+        let input = object["input"] as? [String: Any], let id = input["clientMessageId"] as? String
+      else { return "" }
+      return id
     }
 
     private static func writtenText(_ body: Data?) -> String {
@@ -425,7 +538,7 @@
 
     func perform(_ request: URLRequest) async throws -> HTTPAnswer {
       try Task.checkCancellation()
-      return server.answer(request)
+      return try server.respond(request)
     }
   }
 
