@@ -94,6 +94,7 @@ import { installE2eHooks } from './sessions/e2e-hooks'
 import { publishSessionStates, setServerEventPublisher } from './server/session-events'
 import { sessionManager } from './sessions/session-manager'
 import { eventsProfile, launchProfileManager } from './launch-profile-manager'
+import { rememberedSpawnModel } from './sessions/spawn-model'
 import { chatDefaultFor } from '../shared/open-session-modes'
 import { ptyManager, loginShellEnvAsync, getUserShell, getLoginShellEnv } from './pty-manager'
 import { TEST_NO_ACTIVATE } from './test-mode'
@@ -361,7 +362,8 @@ async function main(): Promise<void> {
       claudeUsage: usageManager,
       codexUsage: codexUsageManager,
       launchProfiles: launchProfileManager,
-      preference: (key) => preferencesManager.get(key as keyof Preferences)
+      preference: (key) => preferencesManager.get(key as keyof Preferences),
+      launchModel: rememberedSpawnModel
     }),
     storage: fileStorage(dataDir),
     dataDir,

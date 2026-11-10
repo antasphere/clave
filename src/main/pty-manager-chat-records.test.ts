@@ -676,6 +676,114 @@ describe('a chat tab keeps what it was running on, for the spawn that brings it 
   })
 })
 
+describe('a restart that moves the tab to another provider (PRDCT-4300)', () => {
+  const codex = {
+    id: 'codex-chat',
+    provider: 'codex',
+    spawn: vi.fn(async (spec: { id: string }) => ({ id: spec.id })),
+    kill: vi.fn(async () => undefined)
+  }
+  it('rebuilds the spawn on the other adapter under the same id, resuming the converted thread, and the record changes adapter', async () => {
+    mocks.manager.getAdapter.mockImplementation(((id: string) =>
+      id === 'codex-chat' ? codex : mocks.claude) as never)
+    const session = await ptyManager.spawn('/project', {
+      launchProfileId: 'claude-chat',
+      model: 'claude-opus-5-5',
+      claudeProfileId: 'work',
+      claudeProfileLabel: 'Work',
+      configDir: '/cfg/work',
+      spawnedBy: '77777777-7777-4777-8777-777777777777'
+    })
+    mocks.backend.getSessionRecord.mockImplementation(((id: string) =>
+      id === session.id
+        ? { id, adapterId: 'claude-chat', claudeSessionId: session.claudeSessionId }
+        : null) as never)
+    const plan = ptyManager.restartSpawn(session.id, {
+      adapterId: 'codex-chat',
+      model: 'gpt-5.5',
+      resume: 'thread-7',
+      codexAccountId: 'c1',
+      codexAccountLabel: 'Codex 1',
+      continuedFrom: { provider: 'claude', road: 'converted' }
+    })
+    expect(plan).toMatchObject({ cwd: '/project', resumed: true })
+    expect(plan?.options).toMatchObject({
+      adoptSessionId: session.id,
+      codexMode: true,
+      claudeMode: false,
+      launchProfileId: 'codex-chat',
+      model: 'gpt-5.5',
+      resumeSessionId: 'thread-7',
+      codexAccountId: 'c1',
+      codexAccountLabel: 'Codex 1',
+      spawnedBy: '77777777-7777-4777-8777-777777777777',
+      continuedFrom: { provider: 'claude', road: 'converted' }
+    })
+    expect(plan?.options.claudeProfileId).toBeUndefined()
+    expect(plan?.options.claudeSessionId).toBeUndefined()
+    // The same spawn made again: the same tab, now a Codex chat whose record
+    // says so, resuming the thread, with the card's note on it.
+    await ptyManager.kill(session.id)
+    const moved = await ptyManager.spawn(plan!.cwd, plan!.options)
+    expect(moved.id).toBe(session.id)
+    expect(codex.spawn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: session.id,
+        adapterId: 'codex-chat',
+        provider: 'codex',
+        options: expect.objectContaining({ resume: 'thread-7', model: 'gpt-5.5' })
+      })
+    )
+    expect(mocks.backend.writeEventSessionRecord).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        id: session.id,
+        adapterId: 'codex-chat',
+        codexMode: true,
+        claudeMode: false,
+        codexThreadId: 'thread-7',
+        codexAccountId: 'c1',
+        model: 'gpt-5.5',
+        continuedFrom: { provider: 'claude', road: 'converted' }
+      })
+    )
+    const written = (
+      mocks.backend.writeEventSessionRecord.mock.lastCall as unknown[] | undefined
+    )?.[0]
+    expect(written).not.toHaveProperty('claudeSessionId', session.claudeSessionId)
+  })
+  it('a restart that names no adapter keeps the provider, the conversation and the card', async () => {
+    const session = await ptyManager.spawn('/project', { launchProfileId: 'claude-chat' })
+    mocks.backend.getSessionRecord.mockImplementation(((id: string) =>
+      id === session.id
+        ? { id, adapterId: 'claude-chat', continuedFrom: { provider: 'codex', road: 'handoff' } }
+        : null) as never)
+    const plan = ptyManager.restartSpawn(session.id, { claudeProfileId: 'play' })
+    expect(plan?.options).toMatchObject({
+      launchProfileId: 'claude-chat',
+      resumeSessionId: session.claudeSessionId,
+      continuedFrom: { provider: 'codex', road: 'handoff' }
+    })
+    expect(plan?.options.codexMode).toBeFalsy()
+    expect(plan?.options.claudeMode).not.toBe(false)
+  })
+  it('a handoff opens the fresh conversation with the message, and resumes nothing', async () => {
+    mocks.manager.getAdapter.mockImplementation(((id: string) =>
+      id === 'codex-chat' ? codex : mocks.claude) as never)
+    const session = await ptyManager.spawn('/project', { launchProfileId: 'claude-chat' })
+    mocks.backend.getSessionRecord.mockImplementation(((id: string) =>
+      id === session.id ? { id, adapterId: 'claude-chat' } : null) as never)
+    const plan = ptyManager.restartSpawn(session.id, {
+      adapterId: 'codex-chat',
+      firstMessage: '# Continued from Claude · handoff',
+      continuedFrom: { provider: 'claude', road: 'handoff' }
+    })
+    expect(plan).toMatchObject({ resumed: false })
+    expect(plan?.options.resumeSessionId).toBeUndefined()
+    expect(plan?.options.initialPrompt).toBe('# Continued from Claude · handoff')
+    expect(plan?.options.initialInput).toBeUndefined()
+  })
+})
+
 describe('bypass kept reachable on the spawn and the record (PRDCT-4191, round 3 C5)', () => {
   it('passes allowDangerous to a Claude chat and records bypass as available', async () => {
     await ptyManager.spawn('/project', {

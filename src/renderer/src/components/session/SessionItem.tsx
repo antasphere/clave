@@ -16,9 +16,10 @@ import { SidebarTabItem } from './SidebarTabItem'
 import {
   useClaudeAccountsUsage,
   useCodexAccountsUsage,
-  claudeUsageForModel
+  claudeUsageForModel,
+  capOutLabel,
+  capStatus
 } from '../../store/usage-store'
-import { isExhausted } from '../../lib/account-pool'
 import { accountProviderOf, sessionAccountId } from '../../lib/switch-account'
 import { tabStatusPresentation, type TabGlyph } from '../../lib/tab-status'
 import { AccountMenuHeader } from '../layout/AccountMenuHeader'
@@ -35,28 +36,24 @@ function AccountLimitBadge({ session }: { session: Session }): React.JSX.Element
   const accountId = provider ? sessionAccountId(session, provider) : ''
   const claude = useClaudeAccountsUsage((s) => s.byAccount[accountId])
   const codex = useCodexAccountsUsage((s) => s.byAccount[accountId])
-  const summary =
-    provider === 'codex'
-      ? codex
-      : provider === 'claude'
-        ? claudeUsageForModel(claude, session.model)
-        : undefined
-  if (isRemoteKey(session.id) || !provider || !session.alive || !isExhausted(summary)) return null
+  const summary = provider
+    ? claudeUsageForModel(provider === 'codex' ? codex : claude, session.model)
+    : undefined
+  const stopping = capStatus(summary)?.stopping ?? null
+  if (isRemoteKey(session.id) || !provider || !session.alive || !stopping) return null
+  // The cap that stops THIS tab, named with its return (PRDCT-4254).
+  const words = capOutLabel(stopping)
   return (
     <Tooltip>
       <TooltipTrigger asChild>
-        <span
-          className="tab-limit-warning"
-          data-account-limit={accountId}
-          aria-label="This account is at its limit"
-        >
+        <span className="tab-limit-warning" data-account-limit={accountId} aria-label={words}>
           <ExclamationTriangleIcon />
         </span>
       </TooltipTrigger>
       <TooltipContent side="right" className="max-w-64">
         <AccountMenuHeader session={session} />
         <div className="mt-1.5 text-text-tertiary">
-          At its limit. Right-click the tab to switch it to another account.
+          {words}. Right-click the tab to switch it to another account.
         </div>
       </TooltipContent>
     </Tooltip>

@@ -15,6 +15,7 @@ import { codexAccountsManager } from '../codex-accounts'
 import { usageManager } from '../usage-manager'
 import { codexUsageManager } from '../codex-usage'
 import { launchProfileManager } from '../launch-profile-manager'
+import { rememberedSpawnModel } from '../sessions/spawn-model'
 import { preferencesManager, type Preferences } from '../preferences-manager'
 import { workspaceManager } from '../workspace-manager'
 import { ptyManager } from '../pty-manager'
@@ -65,7 +66,8 @@ export function shellRoutines(): RoutineService {
       claudeUsage: usageManager,
       codexUsage: codexUsageManager,
       launchProfiles: launchProfileManager,
-      preference: (key) => preferencesManager.get(key as keyof Preferences)
+      preference: (key) => preferencesManager.get(key as keyof Preferences),
+      launchModel: rememberedSpawnModel
     }),
     storage: fileStorage(userData),
     dataDir: userData,

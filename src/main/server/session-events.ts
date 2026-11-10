@@ -15,6 +15,7 @@
  */
 import type { ServerEvent } from '@clave/contract/events'
 import type { SessionManager } from '../sessions/session-manager'
+import type { LimitReport } from '../../shared/limit-report'
 import { sessionWindows } from '../sessions/windows'
 
 type Publisher = (event: ServerEvent) => Promise<void>
@@ -69,6 +70,35 @@ export function sessionPlanDetected(id: string, path: string, windowKey: string 
   publishOrSend({ _tag: 'session.plan_detected', id, path }, () =>
     send(windowKey, `session:plan-detected:${id}`, path)
   )
+}
+
+/** The session runs on `model` now (PRDCT-4256): the provider's own word,
+ *  as `pty-manager` writes it to the record. Sent on BOTH transports from
+ *  this one source, unlike the news above: the window's IPC channel at once
+ *  (the session's window, by key) and the server's push channel when one
+ *  publishes, and the window takes exactly one of them (the preload's dual
+ *  listener, IPC until its push socket is welcomed, push from then on), so a
+ *  switch made in a window's first seconds reaches its sidebar store too. */
+export function sessionModelChanged(id: string, model: string): void {
+  const windows = sessionWindows()
+  windows.send(windows.windowOf(id), 'session:model-changed', { id, model })
+  if (publisher)
+    void publisher({ _tag: 'session.model_changed', id, model }).catch((error) =>
+      console.error('[clave-server] session.model_changed not published', error)
+    )
+}
+
+/** The session's CLI reported its account's limit, and which cap it hit
+ *  (ADR 0002, PRDCT-4302). Both transports, from this one source, the way the
+ *  model change goes: the window's IPC channel at once and the server's push
+ *  channel when one publishes; the window takes exactly one of them. */
+export function sessionLimitReported(id: string, report: LimitReport): void {
+  const windows = sessionWindows()
+  windows.send(windows.windowOf(id), 'session:limit-reported', { id, report })
+  if (publisher)
+    void publisher({ _tag: 'session.limit_reported', id, ...report }).catch((error) =>
+      console.error('[clave-server] session.limit_reported not published', error)
+    )
 }
 
 /** The conversation was cleared; the tab follows `providerSessionId` now. */

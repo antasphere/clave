@@ -28,6 +28,7 @@ import { typeIntoTerminal, type TypingOutcome } from './typing'
 import { forgetLineage, parentOf, setParent } from './lineage'
 import { resumeOptions } from './resume-options'
 import { accountOverrides } from '../restart-overrides'
+import { providerSwitchOptions } from './provider-switch'
 import { conversationIdOf } from '../../shared/runtime-choices'
 import type { SessionRecord, SessionScreen } from '@clave/contract/sessions'
 
@@ -254,17 +255,34 @@ function planFromRecord(
   overrides: RestartOverrides
 ): { cwd: string; options: PtySpawnOptions; resumed: boolean } | null {
   if (!record) return null
-  const { resendRejected: _resend, onlyIfStopped: _only, ...requested } = overrides
+  const {
+    resendRejected: _resend,
+    onlyIfStopped: _only,
+    adapterId,
+    model,
+    resume,
+    firstMessage,
+    continuedFrom,
+    ...requested
+  } = overrides
   void _resend
   void _only
+  const options = {
+    ...resumeOptions(record),
+    ...(record.tmuxName ? { adoptTmuxName: record.tmuxName } : {}),
+    // Where the conversation came from stays on the tab across its restarts.
+    ...(record.continuedFrom ? { continuedFrom: record.continuedFrom } : {}),
+    ...accountOverrides(requested)
+  } as PtySpawnOptions
+  // A move to another provider (PRDCT-4300) from a stopped record: the same
+  // rebuild of the spawn `restartSpawn` makes for a live one.
+  const switching = adapterId !== undefined && adapterId !== record.adapterId
   return {
     cwd: record.cwd,
-    options: {
-      ...resumeOptions(record),
-      ...(record.tmuxName ? { adoptTmuxName: record.tmuxName } : {}),
-      ...accountOverrides(requested)
-    } as PtySpawnOptions,
-    resumed: !!conversationIdOf(record)
+    options: switching
+      ? providerSwitchOptions(options, { adapterId, model, resume, firstMessage, continuedFrom })
+      : options,
+    resumed: switching ? resume !== undefined : !!conversationIdOf(record)
   }
 }
 

@@ -347,7 +347,8 @@ export const sessionHandlers = [
             payload.id,
             payload.account,
             payload.resendRejected === true,
-            payload.onlyIfStopped === true
+            payload.onlyIfStopped === true,
+            payload.provider
           ),
         catch: (error) =>
           error instanceof CapabilityUnavailable

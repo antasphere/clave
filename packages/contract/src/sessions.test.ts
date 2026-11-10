@@ -481,6 +481,16 @@ describe('the sessions’ server events', () => {
   it('refuses a cleared session without its provider session id', () => {
     expect(Either.isLeft(decode(ServerEvent, { _tag: 'session.cleared', id: 's1' }))).toBe(true)
   })
+  it('carries a session’s model change with the model named (PRDCT-4256)', () => {
+    const event = { _tag: 'session.model_changed', id: 's1', model: 'claude-opus-5-5' }
+    expect(Schema.decodeUnknownSync(ServerEvent)(event)).toEqual(event)
+    expect(Either.isLeft(decode(ServerEvent, { _tag: 'session.model_changed', id: 's1' }))).toBe(
+      true
+    )
+    expect(
+      Either.isLeft(decode(ServerEvent, { _tag: 'session.model_changed', id: 's1', model: null }))
+    ).toBe(true)
+  })
 })
 
 describe('restart correlation contract', () => {
@@ -507,5 +517,18 @@ describe('restart correlation contract', () => {
   it("flattens a hosted multi-select for a provider's wire, one string per question", () => {
     expect(flattenAnswers({ a: 'x', b: ['y', 'z'], c: [] })).toEqual({ a: 'x', b: 'y, z', c: '' })
     expect(flattenAnswers(undefined)).toBeUndefined()
+  })
+})
+
+describe("a set_model's remember flag crosses both decoders (PRDCT-4302)", () => {
+  const input = { type: 'set_model', model: 'claude-opus-5-5', remember: false }
+  it('the Effect schema keeps remember: false, and an absent flag stays absent', () => {
+    const decode = Schema.decodeUnknownSync(SessionInput)
+    expect(decode(input)).toEqual(input)
+    expect('remember' in decode({ type: 'set_model', model: null })).toBe(false)
+  })
+  it('the zod schema keeps remember: false too', () => {
+    expect(ZodSessionInput.parse(input)).toEqual(input)
+    expect('remember' in ZodSessionInput.parse({ type: 'set_model', model: null })).toBe(false)
   })
 })

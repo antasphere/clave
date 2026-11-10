@@ -4,6 +4,7 @@ import { isRemoteKey } from '../lib/fleet-identity'
 import { launchSession } from '../lib/launch-session'
 import type { AgentSetup } from './launch-prefs'
 import { resolveAccountRef, type AccountProvider } from '../lib/switch-account'
+import { rememberedLaunchModel } from '../lib/launch-model'
 import type { PinnedGroupRoutine } from './session-types'
 import { getClaudeProfile } from './claude-profile-store'
 import { useAccountPolicyStore } from './account-policy-store'
@@ -49,11 +50,13 @@ function pinnedAccountField(s: {
   return {}
 }
 
-/** The spawn and record fields for a pinned session's account (ADR 0002). */
+/** The spawn and record fields for a pinned session's account (ADR 0002),
+ *  the account judged for the model the session will run (PRDCT-4302). */
 function resolvePinnedAccount(
   session: PinnedGroupSession,
   groupName: string,
-  pinOtherProvider: boolean
+  pinOtherProvider: boolean,
+  model: string | undefined
 ): {
   claudeProfileId?: string
   claudeProfileLabel?: string
@@ -74,7 +77,7 @@ function resolvePinnedAccount(
   const ref = useAccountPolicyStore.getState().useRecommendedAccount ? undefined : session.account
   let account: { id: string; label: string }
   try {
-    account = resolveAccountRef(provider, ref)
+    account = resolveAccountRef(provider, ref, model)
   } catch {
     account = provider === 'codex' ? getCodexAccount('default') : getClaudeProfile('default')
     void window.electronAPI?.showNotification?.({
@@ -942,6 +945,15 @@ async function spawnPinnedGroup(
   const serverId = workspaceServer(pg.workspaceId)
   if (serverId && pg.sessions.some((s) => s.account))
     console.info('[pinned] Server pin account labels use the server account pool.')
+  // The model each provider's sessions will run (PRDCT-4302): a pinned
+  // session names no model, so it starts on the one its family's selected
+  // profile remembers, and its account is judged for that one.
+  const launchModels = serverId
+    ? { claude: undefined, codex: undefined }
+    : {
+        claude: await rememberedLaunchModel('claude', undefined, pg.workspaceId ?? null),
+        codex: await rememberedLaunchModel('codex', undefined, pg.workspaceId ?? null)
+      }
 
   for (const session of pg.sessions) {
     try {
@@ -988,7 +1000,12 @@ async function spawnPinnedGroup(
         }
         continue
       }
-      const accountFields = resolvePinnedAccount(session, pg.name, !!pinOtherProvider)
+      const accountFields = resolvePinnedAccount(
+        session,
+        pg.name,
+        !!pinOtherProvider,
+        session.codexMode ? launchModels.codex : launchModels.claude
+      )
       const sessionInfo = await window.electronAPI.spawnSession(spawnCwd, {
         claudeMode: pinOtherProvider ? false : session.claudeMode,
         antigravityMode: session.antigravityMode,

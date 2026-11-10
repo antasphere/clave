@@ -41,6 +41,25 @@ export const ServerEvent = Schema.Union(
     id: Schema.String,
     providerSessionId: Schema.NullOr(Schema.String)
   }),
+  /** The session runs on `model` now, as its provider said it (the Claude
+   *  CLI's init frame, a switch it took, the default resolved at ready; the
+   *  Codex app-server's thread): what a window's sidebar judges the caps by
+   *  (PRDCT-4256). Sent over the window's IPC too while no server runs. */
+  Schema.TaggedStruct('session.model_changed', { id: Schema.String, model: Schema.String }),
+  /** The session's CLI reported its account's limit and WHICH cap it hit
+   *  (ADR 0002, PRDCT-4302): a shared cap, one model family's week, the org's
+   *  credits, or nothing more than the refusal. The window's policy picks its
+   *  rung from it. Sent over the window's IPC too while no server runs. */
+  Schema.TaggedStruct('session.limit_reported', {
+    id: Schema.String,
+    scope: Schema.Union(
+      Schema.Literal('shared'),
+      Schema.Literal('credits'),
+      Schema.Literal('unknown'),
+      Schema.Struct({ family: Schema.String })
+    ),
+    resetsAt: Schema.optional(Schema.Number)
+  }),
   // ── Lane D: settings (accounts, usage, workspaces) ──
   ...SettingsEvent.members,
   // ── Lane C: the sidebar (a window's layout changed or went with its window) ──

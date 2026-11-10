@@ -108,6 +108,15 @@ export interface ServedShell<W extends ToolWindow = ToolWindow> {
   /** The chat profile the launcher would open that family's chat on in that
    *  workspace (`chatDefaultFor`); undefined when its default has no chat form. */
   chatDefault(family: LauncherFamily, workspaceId: string | undefined): string | undefined
+  /** The model a launch naming none will run once spawned (`rememberedSpawnModel`):
+   *  the chat model last picked on the adapter of the profile it lands on. The
+   *  account pick judges by it (PRDCT-4253). Undefined when it is not known
+   *  here (a terminal CLI, a server whose preferences this process cannot read). */
+  launchModel?(
+    family: AccountProvider,
+    launchProfileId: string | undefined,
+    workspaceId: string | undefined
+  ): string | undefined
   /** The pinned groups the workspace state persists, every workspace's. */
   pins(): PinnedBlueprint[]
   /** The tab that opened a tab, null when none did (`sessions/lineage.ts`). */

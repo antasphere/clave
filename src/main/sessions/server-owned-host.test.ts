@@ -713,3 +713,60 @@ describe('a Resume of a chat the host still holds binds and readies the new proc
     f.close()
   })
 })
+
+describe('a move to another provider rides through the server-owned host (PRDCT-4300)', () => {
+  it('forwards the provider override for a running session', async () => {
+    const f = fixture()
+    const started = await f.host.start({ cwd: '/repo' })
+    const restart = vi.fn(async () => ({
+      id: started.id,
+      cwd: '/repo',
+      folderName: 'repo',
+      alive: true,
+      claudeSessionId: null,
+      piSessionId: null,
+      resumed: true
+    }))
+    ;(f.base as unknown as { restart: typeof restart }).restart = restart
+    const provider = { adapterId: 'codex-chat', model: 'gpt-5.5', resume: 'thread-7' }
+    await f.host.restart(started.id, { codexAccountId: 'c1' }, false, undefined, provider)
+    expect(restart).toHaveBeenCalledWith(
+      started.id,
+      { codexAccountId: 'c1' },
+      false,
+      undefined,
+      provider
+    )
+    f.close()
+  })
+  it('rebuilds a stopped record’s spawn on the other adapter, resuming the converted thread', async () => {
+    const f = fixture()
+    await f.host.restart(
+      record.id,
+      { codexAccountId: 'c1', codexAccountLabel: 'Codex 1' },
+      false,
+      undefined,
+      {
+        adapterId: 'codex-chat',
+        model: 'gpt-5.5',
+        resume: 'thread-7',
+        continuedFrom: { provider: 'claude', road: 'converted' }
+      }
+    )
+    expect(f.start).toHaveBeenCalledTimes(1)
+    expect(f.start.mock.calls[0][0]).toMatchObject({
+      cwd: '/repo',
+      options: {
+        adoptSessionId: record.id,
+        codexMode: true,
+        claudeMode: false,
+        launchProfileId: 'codex-chat',
+        resumeSessionId: 'thread-7',
+        model: 'gpt-5.5',
+        codexAccountId: 'c1',
+        continuedFrom: { provider: 'claude', road: 'converted' }
+      }
+    })
+    f.close()
+  })
+})

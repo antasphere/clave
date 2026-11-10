@@ -47,6 +47,26 @@ describe('Codex quota normalization', () => {
     })
   })
 
+  it('scopes a bucket with no name to its id, never to the shared caps', () => {
+    // A model bucket the server does not name (or names blank) is still a
+    // family of its own: read as shared, its cap out would put the whole
+    // account out for every model (PRDCT-4253). Only the general `codex`
+    // bucket is shared.
+    const weekly = { usedPercent: 100, windowDurationMins: 10080, resetsAt: 1789227620 }
+    const result = normalizeCodexLimits({
+      rateLimitsByLimitId: {
+        codex: { primary: { ...weekly, usedPercent: 30 } },
+        codex_bengalfox: { primary: weekly },
+        blank: { limitName: '  ', primary: { ...weekly, windowDurationMins: 300 } }
+      }
+    })
+    expect(result.windows.map((w) => [w.key, w.kind, w.scope])).toEqual([
+      ['codex:primary', 'weekly_all', null],
+      ['codex_bengalfox:primary', 'weekly_scoped', 'codex_bengalfox'],
+      ['blank:primary', 'session', 'blank']
+    ])
+  })
+
   it('handles old servers, zero usage, absent windows, and malformed percentages', () => {
     const result = normalizeCodexLimits({
       rateLimits: {

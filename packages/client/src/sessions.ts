@@ -12,6 +12,7 @@ import {
   type DraftHandling,
   type HistoryPage,
   type ModelOption,
+  type ProviderOverride,
   type ReleaseOutcome,
   type RestartedSession,
   type Session,
@@ -85,7 +86,9 @@ export interface SessionsClient {
     account: AccountOverride,
     resendRejected?: boolean,
     requestId?: string,
-    onlyIfStopped?: boolean
+    onlyIfStopped?: boolean,
+    /** The tab comes back on another provider (PRDCT-4300). */
+    provider?: ProviderOverride
   ) => Promise<RestartedSession>
   // ── PRDCT-4123: which work a session does ──
   /** One change to the session's work assignment, answered with every record
@@ -185,7 +188,7 @@ export const sessionsClient = (call: Call, historyCall: Call = call): SessionsCl
     ),
   type: (id, text, from) =>
     call((c) => c.sessions.type({ payload: { id, text, ...(from !== undefined && { from }) } })),
-  restart: (id, account, resendRejected, requestId, onlyIfStopped) =>
+  restart: (id, account, resendRejected, requestId, onlyIfStopped, provider) =>
     call((c) =>
       c.sessions.restart({
         payload: {
@@ -193,7 +196,8 @@ export const sessionsClient = (call: Call, historyCall: Call = call): SessionsCl
           account,
           ...(resendRejected !== undefined && { resendRejected }),
           ...(requestId !== undefined && { requestId }),
-          ...(onlyIfStopped !== undefined && { onlyIfStopped })
+          ...(onlyIfStopped !== undefined && { onlyIfStopped }),
+          ...(provider !== undefined && { provider })
         }
       })
     ),

@@ -26,6 +26,7 @@ import { usePinnedStore, getPinnedState, togglePinnedGroup } from '../store/pinn
 import type { PinnedGroupSession } from '../store/session-types'
 import { useWorkspaceStore, type Workspace } from '../store/workspace-store'
 import { profilesFor, selectedChatProfile } from '../store/launch-profile-store'
+import { rememberedLaunchModel } from './launch-model'
 import {
   getClaudeProfile,
   claudeProfileSpawnFields,
@@ -414,8 +415,8 @@ function alignSessionToGroupWorkspace(sessionId: string, group: SessionGroup): v
  *  label), else the pool's pick from the one selected in settings. An
  *  unknown name errors with the names that exist, never a silent
  *  fall-through to the wrong subscription. */
-export function resolveAccountForSpawn(ref: string | undefined): ClaudeProfile {
-  return resolveAccountRef('claude', ref) as ClaudeProfile
+export function resolveAccountForSpawn(ref: string | undefined, model?: string): ClaudeProfile {
+  return resolveAccountRef('claude', ref, model) as ClaudeProfile
 }
 
 // Legacy window-owned opens keep the live messaging link independently of
@@ -535,9 +536,18 @@ export async function openSessionProgrammatically(payload: {
   // in settings — the same rule the launcher applies, so an agent-opened tab
   // lands on the account the user would have got from the button. Claude and
   // Codex have pools; nothing else does.
-  const claudeProfile = claudeMode ? resolveAccountForSpawn(payload.account) : null
+  // Judged for the model the tab will run (PRDCT-4253): one named, else the
+  // chat model main will start it on (`rememberedLaunchModel`), the way the
+  // launcher judges; a resumed conversation keeps its own, unknown here.
+  const pooled = claudeMode ? 'claude' : codexMode ? 'codex' : null
+  const judgedModel =
+    model ??
+    (pooled && !payload.resumeSessionId
+      ? await rememberedLaunchModel(pooled, launchProfileId, workspaceId ?? null)
+      : undefined)
+  const claudeProfile = claudeMode ? resolveAccountForSpawn(payload.account, judgedModel) : null
   const codexAccount = codexMode
-    ? (resolveAccountRef('codex', payload.account) as CodexAccount)
+    ? (resolveAccountRef('codex', payload.account, judgedModel) as CodexAccount)
     : null
   if (payload.account && !claudeMode && !codexMode) {
     throw new Error(
@@ -1644,9 +1654,8 @@ async function handleSwitchAccount(payload: {
   }
   if (effectiveSwitchMode(session) === 'propose') {
     state.setAccountProposal(session.id, {
-      accountId: target.id,
-      label: target.label,
-      reason: 'reported'
+      reason: 'reported',
+      rungs: [{ kind: 'account', accountId: target.id, label: target.label }]
     })
     return {
       sessionId: session.id,

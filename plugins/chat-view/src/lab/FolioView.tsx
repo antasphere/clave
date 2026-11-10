@@ -54,6 +54,10 @@ import { continueList } from '../lists'
 import { nextPermissionMode } from '../permission-mode'
 import { PermissionModeMenu } from '../PermissionModeMenu'
 import { ModelMenu } from '../ModelMenu'
+import { ContinuedFromCard, ProviderSwitch } from '../ProviderSwitch'
+import { midTurn, noteAgentName, useProviderSwitch } from '../use-provider-switch'
+import { providerLabel } from '../models'
+import { useViewSessionStore } from '../../../../src/renderer/src/views/session-store'
 import { EffortMenu } from '../EffortMenu'
 import { ContextMeter } from '../TerminalStatus'
 import { WorkCards } from '../WorkCards'
@@ -582,6 +586,7 @@ export function FolioView({ session, onState, visible = true }: ChatViewProps): 
     past,
     retryPast,
     earlier,
+    before,
     imagesSupported
   } = useConversation(session.id, session.state)
   const presentation = usePresentation(conversation, visible)
@@ -606,6 +611,25 @@ export function FolioView({ session, onState, visible = true }: ChatViewProps): 
     await window.electronAPI.sessionsWrite(session.id, input)
   }
   const remotePending = useFleetStore((s) => s.requests[ownerOf(session.id)])
+  // A move of the tab to another provider (PRDCT-4300), from the chip's menu
+  // or the limit card, the popover under the book.
+  const switchSource = useRef({ conversation, before })
+  switchSource.current = { conversation, before }
+  const providerSwitch = useProviderSwitch({
+    session,
+    source: () => switchSource.current,
+    meta: () => ({
+      title: useViewSessionStore.getState().sessions.find((s) => s.id === session.id)?.name ?? '',
+      cwd: session.cwd,
+      model: switchSource.current.conversation.model
+    }),
+    working: () => midTurn(conversation.state),
+    visible,
+    onError: report
+  })
+  const continuedFrom = useViewSessionStore(
+    (s) => s.sessions.find((x) => x.id === session.id)?.continuedFrom
+  )
 
   // The book. Built from what is presented, so a hidden Folio rebuilds
   // nothing while another view is on screen.
@@ -909,6 +933,12 @@ export function FolioView({ session, onState, visible = true }: ChatViewProps): 
             )}
           </div>
         </div>
+        {continuedFrom && onLatest && (
+          <ContinuedFromCard
+            from={providerLabel(continuedFrom.provider)}
+            road={continuedFrom.road}
+          />
+        )}
         {!onLatest && latest && (
           <button
             type="button"
@@ -923,6 +953,24 @@ export function FolioView({ session, onState, visible = true }: ChatViewProps): 
         )}
       </div>
       <div className="chat-composer-wrap folio-composer">
+        {providerSwitch.state && (
+          <ProviderSwitch
+            from={providerLabel(session.provider)}
+            target={providerSwitch.state.target}
+            plan={providerSwitch.state.plan}
+            landing={providerSwitch.state.landing}
+            noteOffered={providerSwitch.state.noteOffered}
+            noteAgent={noteAgentName(conversation.model, session.provider)}
+            working={midTurn(state)}
+            busy={providerSwitch.state.busy}
+            error={providerSwitch.state.error}
+            onContinue={(options) => void providerSwitch.confirm(options)}
+            onClose={() => {
+              providerSwitch.cancel()
+              textarea.current?.focus()
+            }}
+          />
+        )}
         <PromptDock
           requests={waitingOn}
           agent={AGENT_NAMES[session.provider] ?? 'the agent'}
@@ -1087,13 +1135,23 @@ export function FolioView({ session, onState, visible = true }: ChatViewProps): 
             )}
             <ModelMenu
               sessionId={session.id}
-              model={conversation.model}
+              model={conversation.pendingModel ?? conversation.model}
+              pending={conversation.pendingModel !== null}
               disabled={closed}
-              onSelect={(id) => void write({ type: 'set_model', model: id }).catch(report)}
+              onSelect={(id) => {
+                // Shown the instant it is picked (PRDCT-4273); the provider's
+                // answer confirms it or, refusing, reverts the chip.
+                dispatch({ pickModel: id })
+                void write({ type: 'set_model', model: id }).catch(report)
+              }}
+              provider={session.provider}
+              adapterId={session.adapterId}
+              cwd={session.cwd}
+              onSwitchProvider={isRemoteKey(session.id) ? undefined : providerSwitch.begin}
             />
             <EffortMenu
               sessionId={session.id}
-              model={conversation.model}
+              model={conversation.pendingModel ?? conversation.model}
               effort={conversation.effort}
               disabled={closed}
               onSelect={(id) => void write({ type: 'set_effort', effort: id }).catch(report)}

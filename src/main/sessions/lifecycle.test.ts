@@ -418,6 +418,48 @@ describe('a Resume of a running tab is refused on this Mac too (PRDCT-4193, roun
       'This session is not running and left no record to resume from.'
     )
   })
+  it('moves a stopped record to another provider the way a live tab moves (PRDCT-4300)', async () => {
+    const id = `life-${++sequence}`
+    windows()
+    mocks.restartSpawn.mockReturnValue(null)
+    mocks.getSessionRecord.mockReturnValue({
+      id,
+      adapterId: 'claude-chat',
+      cwd: '/work/app',
+      folderName: 'app',
+      claudeMode: true,
+      antigravityMode: false,
+      codexMode: false,
+      piMode: false,
+      claudeAgentsMode: false,
+      dangerousMode: false,
+      claudeSessionId: 'conv-1',
+      claudeProfileId: 'work'
+    })
+    spawned(id)
+    await expect(
+      restartSession(id, {
+        adapterId: 'codex-chat',
+        model: 'gpt-5.5',
+        resume: 'thread-7',
+        codexAccountId: 'c1',
+        continuedFrom: { provider: 'claude', road: 'converted' }
+      })
+    ).resolves.toMatchObject({ id, resumed: true })
+    const [, options] = mocks.spawn.mock.calls.at(-1) as [string, PtySpawnOptions]
+    expect(options).toMatchObject({
+      adoptSessionId: id,
+      codexMode: true,
+      claudeMode: false,
+      launchProfileId: 'codex-chat',
+      resumeSessionId: 'thread-7',
+      model: 'gpt-5.5',
+      codexAccountId: 'c1',
+      continuedFrom: { provider: 'claude', road: 'converted' }
+    })
+    expect(options.claudeSessionId).toBeUndefined()
+    expect(options.claudeProfileId).toBeUndefined()
+  })
 
   it('finds a record keyed by its tmux name, spawns under the window that placed it, and offers the tmux name (round 2, N-F1, N-F2, N-F5)', async () => {
     const id = `life-${++sequence}`

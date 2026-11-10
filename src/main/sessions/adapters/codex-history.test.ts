@@ -6,6 +6,7 @@ import { createAgentTokenStore } from '../agent-tokens'
 import { installTerminalPorts, resetTerminalPorts } from '../../ports/terminals'
 import { CodexAdapter } from './codex-adapter'
 import { replayCodexHistory } from './codex-history'
+import { replayCodexHistory as replayRollout } from '@clave/session-bridge/readers/codex'
 import { formMessage } from '../../../shared/form-message'
 import { SessionManager } from '../session-manager'
 import { SessionEventSchema, type SessionStream } from '../../../shared/session-model'
@@ -71,6 +72,40 @@ async function setup(
 }
 
 describe('Codex resumed chat history', () => {
+  it("is the session bridge's reader (PRDCT-4301): one implementation of the rollout format", () => {
+    const rows = [
+      line('session_meta', { id: 't', cwd: '/w' }),
+      line('event_msg', { type: 'task_started', turn_id: 'turn' }),
+      line('response_item', {
+        type: 'message',
+        role: 'user',
+        content: [{ type: 'input_text', text: '<environment_context>x</environment_context>' }]
+      }),
+      line('response_item', {
+        type: 'message',
+        role: 'user',
+        content: [{ type: 'input_text', text: '<div> is broken' }]
+      }),
+      line('response_item', {
+        type: 'function_call',
+        call_id: 'c',
+        name: 'shell',
+        arguments: '{}'
+      }),
+      line('response_item', {
+        type: 'message',
+        role: 'assistant',
+        content: [{ type: 'output_text', text: 'ok' }]
+      })
+    ]
+    expect(replayCodexHistory(rows)).toEqual(replayRollout(rows))
+    expect(replayCodexHistory(rows).map((i) => i.event.type)).toEqual([
+      'user_message',
+      'tool_call',
+      'assistant_text',
+      'tool_result'
+    ])
+  })
   it("keeps a form message's marker, so a reloaded tab folds it into the form's record (PRDCT-4157)", () => {
     const response = (payload: unknown): string => line('response_item', payload)
     const msg = (role: string, text: string): string =>

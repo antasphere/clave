@@ -6076,6 +6076,10 @@ details[open] > .chat-approval-items {
   min-width: calc(var(--spacing) * 56);
   max-width: calc(var(--spacing) * 80);
   padding: var(--spacing);
+  /* The menu is a portal outside the chat view: the glyph size its rows'
+     chevrons take (the provider rows, "Earlier versions") rides with it, or
+     the chevron fills the row (integration round 2, F8). */
+  --chat-glyph: calc(var(--spacing) * 3.5);
 }
 .chat-model-option {
   align-items: flex-start;
@@ -6100,6 +6104,65 @@ details[open] > .chat-approval-items {
 }
 .chat-model-empty {
   padding: calc(var(--spacing) * 2);
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+}
+/* The "Earlier versions" row: a submenu trigger drawn as a model row, its
+   chevron where the check of a selected row sits. */
+.chat-model-earlier .chat-model-earlier-chevron {
+  width: var(--chat-glyph);
+  height: var(--chat-glyph);
+  flex-shrink: 0;
+  margin-top: calc(var(--spacing) / 2);
+  color: var(--text-tertiary);
+}
+/* A provider row of the chip's menu (PRDCT-4300): the tab's own provider
+   carries its model as the hint and reads selected; another provider's row
+   opens that provider's models, a pick there being a move of the tab. */
+.chat-model-provider .chat-model-earlier-chevron {
+  width: var(--chat-glyph);
+  height: var(--chat-glyph);
+  flex-shrink: 0;
+  margin-top: calc(var(--spacing) / 2);
+  color: var(--text-tertiary);
+}
+/* The popover of a move to another provider, in the dock above the
+   composer: the facts as a two-column list, the note's checkbox, the error. */
+.chat-provider-switch-facts {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: calc(var(--spacing) * 1.5) calc(var(--spacing) * 3);
+  margin: 0;
+  font-size: var(--text-xs);
+}
+.chat-provider-switch-facts dt {
+  color: var(--text-tertiary);
+}
+.chat-provider-switch-facts dd {
+  margin: 0;
+  color: var(--text-secondary);
+}
+.chat-provider-switch-note {
+  display: flex;
+  align-items: flex-start;
+  gap: calc(var(--spacing) * 2);
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
+.chat-provider-switch-note input {
+  margin-top: calc(var(--spacing) / 2);
+}
+.chat-provider-switch-error {
+  color: var(--color-destructive, var(--text-primary));
+}
+/* The card at the head of a conversation that came from another provider:
+   one quiet line, the rows follow. */
+.chat-continued-from {
+  align-self: center;
+  margin: calc(var(--spacing) * 2) 0;
+  padding: calc(var(--spacing) / 2) calc(var(--spacing) * 2.5);
+  border: thin solid var(--border-subtle-color);
+  border-radius: var(--radius-2xl);
   font-size: var(--text-xs);
   color: var(--text-tertiary);
 }

@@ -50,13 +50,55 @@ export function findClaudeModel(id: string | null | undefined): ClaudeModel | un
  */
 export function claudeModelName(id: string | null | undefined): string | null {
   if (!id) return null
-  if (bare(id) === 'default') return 'Default'
+  // The CLI's `default` alias names no model of its own: what it resolves to is
+  // asked of the CLI (the adapter's ready), never read off the word.
+  if (isDefaultClaudeAlias(id)) return null
   const known = findClaudeModel(id)
   if (known) return known.name
   const shape = FAMILY.exec(bare(id))
   if (!shape) return id
   const family = shape[1].charAt(0).toUpperCase() + shape[1].slice(1)
   return `${family} ${shape[2]}${shape[3] ? `.${shape[3]}` : ''}`
+}
+
+/** The CLI's `default` alias, with or without a context suffix ("default[1m]"). */
+export function isDefaultClaudeAlias(id: string | null | undefined): boolean {
+  return !!id && bare(id) === 'default'
+}
+
+/** A Claude id's family and version, read off its shape ("claude-opus-4-8" →
+ *  opus 4.8, "claude-haiku-4-5-20251001" → haiku 4.5); null for an alias, a
+ *  provider's id of another shape, or nothing. */
+export function claudeVersion(
+  id: string | null | undefined
+): { family: string; version: number } | null {
+  if (!id) return null
+  const shape = FAMILY.exec(bare(id))
+  if (!shape) return null
+  return { family: shape[1], version: Number(shape[2]) * 100 + Number(shape[3] ?? 0) }
+}
+
+/**
+ * Which of a list of ids are earlier versions of a family another id in the
+ * list names newer (Fable 5 beside Fable 5.1, Opus 4.8 beside Opus 5.5): what
+ * a menu folds under "Earlier versions" (PRDCT-4257). Decided by the ids'
+ * own shape over the list as the provider gives it, not by the table, so a
+ * version the table does not know yet (the CLI's Haiku 5.5 beside the table's
+ * Haiku 4.5) still folds its elders. An alias, an id of another shape and the
+ * newest of each family are never earlier.
+ */
+export function earlierClaudeIds(ids: readonly string[]): Set<string> {
+  const newest = new Map<string, number>()
+  for (const id of ids) {
+    const v = claudeVersion(id)
+    if (v && v.version > (newest.get(v.family) ?? -1)) newest.set(v.family, v.version)
+  }
+  const earlier = new Set<string>()
+  for (const id of ids) {
+    const v = claudeVersion(id)
+    if (v && v.version < (newest.get(v.family) ?? -1)) earlier.add(id)
+  }
+  return earlier
 }
 
 /** The context window of a model, when it is known before any turn says so. */
