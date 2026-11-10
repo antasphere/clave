@@ -94,6 +94,17 @@ describe('the mode line', () => {
   })
 })
 
+describe('the launch mode', () => {
+  it('is the first mode the provider reported, kept through changes and a replay', () => {
+    const state = apply(emptyConversation, ...events(mode('bypassPermissions'), mode('default')))
+    expect(state.launchedMode).toBe('bypassPermissions')
+    const synced = reduceConversation(state, { sync: [{ event: mode('default'), at: 1 }] })
+    expect(synced.launchedMode).toBe('default')
+    const empty = reduceConversation(state, { sync: [{ event: { type: 'turn_interrupted' } }] })
+    expect(empty.launchedMode).toBe('bypassPermissions')
+  })
+})
+
 describe('the host reading of a request', () => {
   const reading: ChatEvent = {
     type: 'permission_explained',

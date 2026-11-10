@@ -150,6 +150,10 @@ export interface Conversation {
   /** The mode this view asked the provider for, until the provider says it
    *  switched (the mode line then reads who asked). */
   askedMode?: string
+  /** The first mode the provider reported: the one the tab was launched in
+   *  (PRDCT-4331, the way back is offered only to a tab launched skipping
+   *  permissions). */
+  launchedMode?: string
   /** What each permission request does, by its id, as the host read it
    *  (`permission_explained`, PRDCT-4331): kept apart from the entries, so a
    *  reading that arrives before its request, or a page of the past without
@@ -359,14 +363,16 @@ export function reduceConversation(state: Conversation, action: Action): Convers
       entries: [],
       first: 0,
       state: 'idle',
-      permissionMode: null
+      permissionMode: null,
+      launchedMode: undefined
     })
     return {
       ...synced,
       state: state.state,
       run: state.run,
       exitCode: state.exitCode,
-      permissionMode: synced.permissionMode ?? state.permissionMode
+      permissionMode: synced.permissionMode ?? state.permissionMode,
+      launchedMode: synced.launchedMode ?? state.launchedMode
     }
   }
   if ('prepend' in action) {
@@ -619,6 +625,7 @@ export function reduceConversation(state: Conversation, action: Action): Convers
         ...state,
         entries,
         askedMode,
+        launchedMode: state.launchedMode ?? event.mode,
         permissionMode: { mode: event.mode, modes: event.modes }
       }
     }

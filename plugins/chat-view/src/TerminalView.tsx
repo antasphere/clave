@@ -67,10 +67,7 @@ import { StretchContext, recentStretches } from './stretch-context'
 import { useExchangeJump } from './jump'
 import { useSessionStore } from '../../../src/renderer/src/store/session-store'
 import { ApprovalRun, PromptDock } from './PromptDock'
-import {
-  PermissionReadingProvider,
-  type PermissionReadingValue
-} from './permission-reading-context'
+import { usePermissionReading, withPermissionReading } from './permission-reading-context'
 import { isQuestion } from './approvals'
 import { QuestionContext, typingWriter } from './question-context'
 import type { Values } from './input-request'
@@ -726,33 +723,16 @@ export function TerminalView({
   const waitingOn = isRemoteKey(session.id)
     ? serverDock(remotePending, session.id)
     : openRequests(conversation.entries)
-  // PRDCT-4331: a switch of the permission mode this view asks for, so the
-  // transcript's line can say who asked; and what the card reads of each
-  // request, the host's readings by the provider's id and, for a server's
-  // session, by the server's own request key the dock answers under.
-  const switchMode = (mode: string): void => {
-    dispatch({ askMode: mode })
-    void write({ type: 'set_permission_mode', mode }).catch(report)
-  }
-  const modes = conversation.permissionMode
-  const canBypass =
-    !!modes &&
-    modes.mode !== 'bypassPermissions' &&
-    modes.modes.some((m) => m.id === 'bypassPermissions')
-  const explained = conversation.explained
-  const permissionReading = useMemo((): PermissionReadingValue => {
-    const byKey = { ...explained }
-    for (const r of remotePending ?? [])
-      if (r.sessionId === session.id && r.providerRequestId && explained[r.providerRequestId])
-        byKey[r.id] = explained[r.providerRequestId]
-    return {
-      explained: byKey,
-      cwd: session.cwd,
-      ...(canBypass && { backToBypass: () => switchMode('bypassPermissions') })
-    }
-    // switchMode reads write and report, both stable for the session.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [explained, remotePending, session.id, session.cwd, canBypass])
+  // PRDCT-4331: what the permission card reads, and the mode switch.
+  const { reading: permissionReading, switchMode } = usePermissionReading({
+    sessionId: session.id,
+    cwd: session.cwd,
+    conversation,
+    dispatch,
+    write,
+    report,
+    remotePending
+  })
   const query = closed ? null : slashQuery(draft)
   const slashOpen = query !== null && slashDismissed !== draft
   const pickCommand = useCallback(
@@ -940,7 +920,8 @@ export function TerminalView({
     jump.reveal && (!searchReveal || jump.reveal.nonce > searchReveal.nonce)
       ? jump.reveal
       : searchReveal
-  return (
+  return withPermissionReading(
+    permissionReading,
     <div
       ref={pane}
       className="chat-view terminal-view"
@@ -1046,26 +1027,24 @@ export function TerminalView({
               >
                 <ExchangeContext.Provider value={exchanges}>
                   <StretchContext.Provider value={stretchContext}>
-                    <PermissionReadingProvider value={permissionReading}>
-                      <TranscriptRows
-                        rows={turns}
-                        settled={pastRead}
-                        scroll={transcript.scroll}
-                        reveal={reveal}
-                        holdAbove={pinQuestions}
-                      >
-                        {(turn, index, arriving) => (
-                          <TerminalTurn
-                            key={turn.key}
-                            rows={turn.rows}
-                            first={index === 0}
-                            arriving={arriving}
-                            liveRun={liveRun}
-                            onError={report}
-                          />
-                        )}
-                      </TranscriptRows>
-                    </PermissionReadingProvider>
+                    <TranscriptRows
+                      rows={turns}
+                      settled={pastRead}
+                      scroll={transcript.scroll}
+                      reveal={reveal}
+                      holdAbove={pinQuestions}
+                    >
+                      {(turn, index, arriving) => (
+                        <TerminalTurn
+                          key={turn.key}
+                          rows={turn.rows}
+                          first={index === 0}
+                          arriving={arriving}
+                          liveRun={liveRun}
+                          onError={report}
+                        />
+                      )}
+                    </TranscriptRows>
                   </StretchContext.Provider>
                 </ExchangeContext.Provider>
                 {tail.length > 0 && (
@@ -1154,21 +1133,19 @@ export function TerminalView({
             }}
           />
         )}
-        <PermissionReadingProvider value={permissionReading}>
-          <PromptDock
-            // Only /resume hides the dock; MCP and plugin panels keep pending
-            // prompts in sight. A server's session answers in this same dock, by
-            // the server's own request key (server-requests.ts).
-            // A question is answered where the agent asked it, inline in the
-            // transcript (InlineQuestion); the dock keeps what it always held
-            // best, a tool to allow, in reach above the composer.
-            requests={panel === 'resume' ? [] : waitingOn.filter((r) => !isQuestion(r))}
-            remote={isRemoteKey(session.id)}
-            agent={AGENT_NAMES[session.provider] ?? 'the agent'}
-            busy={(id) => !ready || state === 'ended' || pending.includes(id)}
-            onAnswer={(id, optionId, answers) => void answer(id, optionId, answers)}
-          />
-        </PermissionReadingProvider>
+        <PromptDock
+          // Only /resume hides the dock; MCP and plugin panels keep pending
+          // prompts in sight. A server's session answers in this same dock, by
+          // the server's own request key (server-requests.ts).
+          // A question is answered where the agent asked it, inline in the
+          // transcript (InlineQuestion); the dock keeps what it always held
+          // best, a tool to allow, in reach above the composer.
+          requests={panel === 'resume' ? [] : waitingOn.filter((r) => !isQuestion(r))}
+          remote={isRemoteKey(session.id)}
+          agent={AGENT_NAMES[session.provider] ?? 'the agent'}
+          busy={(id) => !ready || state === 'ended' || pending.includes(id)}
+          onAnswer={(id, optionId, answers) => void answer(id, optionId, answers)}
+        />
         {slashOpen && (
           <div className="chat-slash-anchor">
             <SlashMenu

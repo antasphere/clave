@@ -17,9 +17,13 @@ import {
   PermissionReading
 } from '../../../../plugins/chat-view/src/PermissionReading'
 import {
+  launchedSkipping,
+  offersWayBack,
   PermissionReadingProvider,
+  usePermissionReading,
   type PermissionReadingValue
 } from '../../../../plugins/chat-view/src/permission-reading-context'
+import { emptyConversation } from '../../../../plugins/chat-view/src/reducer'
 import type { Permission } from '../../../../plugins/chat-view/src/reducer'
 
 vi.mock('../../../../plugins/chat-view/src/permission-reading.css', () => ({}))
@@ -196,6 +200,74 @@ describe('the transcript row', () => {
 })
 
 describe('the way back to skipping permissions', () => {
+  const MODES = [
+    { id: 'default', label: 'Manual' },
+    { id: 'bypassPermissions', label: 'Bypass permissions' }
+  ]
+  it('is for a tab LAUNCHED skipping permissions, by its own flag or its first mode', () => {
+    expect(launchedSkipping(true, 'default')).toBe(true)
+    expect(launchedSkipping(undefined, 'bypassPermissions')).toBe(true)
+    expect(launchedSkipping(false, 'default')).toBe(false)
+    expect(launchedSkipping(undefined, undefined)).toBe(false)
+  })
+  it('is offered out of the mode, when the provider still offers it, and only then', () => {
+    expect(offersWayBack(true, { mode: 'default', modes: MODES })).toBe(true)
+    expect(offersWayBack(true, { mode: 'bypassPermissions', modes: MODES })).toBe(false)
+    expect(offersWayBack(true, { mode: 'default', modes: MODES.slice(0, 1) })).toBe(false)
+    // A Manual tab whose profile only allows the switch was never launched in it.
+    expect(offersWayBack(false, { mode: 'default', modes: MODES })).toBe(false)
+    expect(offersWayBack(true, null)).toBe(false)
+  })
+  it('sends the switch to skipping permissions, and tells the reducer who asked', () => {
+    const write = vi.fn(async () => {})
+    const dispatch = vi.fn()
+    const seen: PermissionReadingValue[] = []
+    function Probe(): null {
+      const value = usePermissionReading({
+        sessionId: 's',
+        cwd: '/repo',
+        conversation: {
+          ...emptyConversation,
+          launchedMode: 'bypassPermissions',
+          permissionMode: { mode: 'default', modes: MODES }
+        },
+        dispatch,
+        write,
+        report: () => {},
+        remotePending: undefined
+      }).reading
+      seen.push(value)
+      return null
+    }
+    renderToStaticMarkup(<Probe />)
+    expect(seen[0].backToBypass).toBeTypeOf('function')
+    seen[0].backToBypass!()
+    expect(write).toHaveBeenCalledWith({ type: 'set_permission_mode', mode: 'bypassPermissions' })
+    expect(dispatch).toHaveBeenCalledWith({ askMode: 'bypassPermissions' })
+  })
+  it("maps a server session's request key to the reading of its provider id", () => {
+    const seen: PermissionReadingValue[] = []
+    function Probe(): null {
+      const value = usePermissionReading({
+        sessionId: 's',
+        cwd: '/repo',
+        conversation: {
+          ...emptyConversation,
+          explained: { '"7"': { type: 'permission_explained', id: '"7"', sentence: 'x' } }
+        },
+        dispatch: () => {},
+        write: async () => {},
+        report: () => {},
+        remotePending: [{ id: 'clave-owner:request:k', sessionId: 's', providerRequestId: '"7"' }]
+      }).reading
+      seen.push(value)
+      return null
+    }
+    renderToStaticMarkup(<Probe />)
+    expect(seen[0].explained['clave-owner:request:k']).toMatchObject({ sentence: 'x' })
+    expect(seen[0].backToBypass).toBeUndefined()
+  })
+
   it('is offered only when the view gives one', () => {
     expect(render(<BackToBypass />, { explained: {} })).toBe('')
     expect(render(<BackToBypass />, { explained: {}, backToBypass: () => {} })).toContain(
