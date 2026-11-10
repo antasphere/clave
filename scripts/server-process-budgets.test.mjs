@@ -7,6 +7,8 @@ import { fileURLToPath } from 'node:url'
 import {
   ANNOUNCE_KILL_GRACE_MS,
   ANNOUNCE_TIMEOUT_MS,
+  DEAD_POLL_MS,
+  ONE_BOOT_BUDGET_MS,
   STOP_KILL_AFTER_MS,
   startServerProcess
 } from './server-process.mjs'
@@ -14,11 +16,12 @@ import {
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 
 // The budgets scripts/server-process.test.mjs derives its boot test's timeout
-// from, proved real on fakes. `CLAVE_BUN` names what the starter runs the
-// server entry under, so a script standing in for Bun ignores the entry and
-// its flags and behaves as a budget's worst case: one never announces itself,
-// one announces and then ignores SIGTERM. No server boots here, so this file
-// runs anywhere the unit tests run.
+// from, and that sum held above them. `CLAVE_BUN` names what the starter runs
+// the server entry under, so a script standing in for Bun ignores the entry
+// and its flags and behaves as a budget's worst case: one never announces
+// itself, one announces and then ignores SIGTERM. The grace's cap, which no
+// real process can reach, is proved in scripts/server-process-grace.test.mjs.
+// No server boots here, so this file runs anywhere the unit tests run.
 
 const alive = (pid) => {
   try {
@@ -48,6 +51,12 @@ describe('the budgets a boot test is derived from', () => {
     expect(ANNOUNCE_TIMEOUT_MS).toBe(15_000)
     expect(ANNOUNCE_KILL_GRACE_MS).toBe(2_000)
     expect(STOP_KILL_AFTER_MS).toBe(5_000)
+  })
+
+  it('a test that boots one server outlasts the starter: its budget covers the announce, its grace, the stop and the poll for the pid, with time left', () => {
+    const worst = ANNOUNCE_TIMEOUT_MS + ANNOUNCE_KILL_GRACE_MS + STOP_KILL_AFTER_MS + DEAD_POLL_MS
+    expect(ONE_BOOT_BUDGET_MS).toBeGreaterThan(worst)
+    expect(ONE_BOOT_BUDGET_MS).toBe(30_000)
   })
 
   it('a server that never announces itself is rejected, and already dead, within the announce budget and its grace', async () => {

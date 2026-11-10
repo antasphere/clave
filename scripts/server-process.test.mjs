@@ -6,9 +6,8 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { execFile, execFileSync, spawn } from 'node:child_process'
 import {
-  ANNOUNCE_KILL_GRACE_MS,
-  ANNOUNCE_TIMEOUT_MS,
-  STOP_KILL_AFTER_MS,
+  DEAD_POLL_MS,
+  ONE_BOOT_BUDGET_MS,
   bunBinary,
   readServerDiscovery,
   serverCommand,
@@ -27,18 +26,17 @@ const BUNDLE = terminalProcessBundle(REPO)
 const built = existsSync(BUNDLE)
 
 // A test that boots one server lives within the starter's budgets, not
-// Vitest's 5 s default: the announcement may take ANNOUNCE_TIMEOUT_MS (a
-// child still silent then is killed, and the rejection waits its grace),
-// `stop()` waits STOP_KILL_AFTER_MS between SIGTERM and SIGKILL, and
-// `untilDead` below polls for 5 s; the fetches and the file checks get the
-// rest. On CI's macOS runner the first boot of this file, the cold one, took
+// Vitest's 5 s default: ONE_BOOT_BUDGET_MS, from scripts/server-process.mjs,
+// adds the announcement's budget (a child still silent then is killed, and
+// the rejection waits its grace), the stop's wait between SIGTERM and
+// SIGKILL, and `untilDead`'s poll below, DEAD_POLL_MS; the fetches and the
+// file checks get the rest. On CI's macOS runner the first boot of this file, the cold one, took
 // 5075 ms once (run 42607782089) against 3136 and 3347 ms on two other runs
 // (42605092886, and the base's PR #337), so a budget below the starter's own
 // fails the test while the code under it is still within its budget.
 // scripts/server-process-budgets.test.mjs proves the budgets real on fakes
-// that never announce or never stop on their own.
-const ONE_BOOT_BUDGET_MS =
-  ANNOUNCE_TIMEOUT_MS + ANNOUNCE_KILL_GRACE_MS + STOP_KILL_AFTER_MS + 5_000 + 3_000
+// that never announce or never stop on their own, and holds this sum above
+// them.
 
 const alive = (pid) => {
   try {
@@ -49,7 +47,7 @@ const alive = (pid) => {
   }
 }
 
-const untilDead = async (pid, ms = 5000) => {
+const untilDead = async (pid, ms = DEAD_POLL_MS) => {
   const end = Date.now() + ms
   while (Date.now() < end) {
     if (!alive(pid)) return true

@@ -133,6 +133,15 @@ export function readServerDiscovery(dataDir) {
 export const ANNOUNCE_TIMEOUT_MS = 15_000
 export const ANNOUNCE_KILL_GRACE_MS = 2_000
 export const STOP_KILL_AFTER_MS = 5_000
+/** How long a test polls for a stopped child's pid to be gone. */
+export const DEAD_POLL_MS = 5_000
+/** What a test that boots one server and stops it may spend: the announce
+ *  budget, the grace a failed announce waits, the stop's SIGTERM-to-SIGKILL
+ *  wait, the poll for the pid, and 3 s for the fetches and file checks in
+ *  between. Exported, so that a test that boots nothing holds it above the
+ *  starter's own worst case (scripts/server-process-budgets.test.mjs). */
+export const ONE_BOOT_BUDGET_MS =
+  ANNOUNCE_TIMEOUT_MS + ANNOUNCE_KILL_GRACE_MS + STOP_KILL_AFTER_MS + DEAD_POLL_MS + 3_000
 
 /**
  * Start a child and resolve its first stdout line, parsed as JSON and
