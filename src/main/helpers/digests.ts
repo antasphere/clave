@@ -42,7 +42,8 @@ export const exchangeDigestHelper = defineHelper<readonly DigestMessage[], Diges
   // ahead of a title or a git call.
   pool: DIGEST_POOL,
   background: true,
-  attempts: 2
+  // One try: the card says it could not be read and offers to ask again.
+  attempts: 1
 })
 
 export interface WorkDigestInput {
@@ -63,5 +64,5 @@ export const workDigestHelper = defineHelper<WorkDigestInput, WorkDigestDone>({
   priority: 20,
   pool: DIGEST_POOL,
   background: true,
-  attempts: 2
+  attempts: 1
 })

@@ -316,6 +316,18 @@ describe('the digests and the helpers a person waits on', () => {
     expect(mocks.spawned).toHaveLength(MAX_RUNNING_HELPERS + 4)
     expect(queuedHelpers()).toEqual(['exchange-digest'])
   })
+
+  it('a digest that cannot be read is tried ONCE', async () => {
+    const done = runHelper(exchangeDigestHelper, [{ from: 'a', text: 'b' }])
+    await ticks()
+    mocks.spawned[0].finish(null, 'not json at all', '')
+    await expect(done).resolves.toMatchObject({ ok: false, reason: 'unreadable' })
+    const work = runHelper(workDigestHelper, { notes: ['n'], tools: 1 })
+    await ticks()
+    mocks.spawned[1].finish(new Error('boom'), '', 'boom')
+    await expect(work).resolves.toMatchObject({ ok: false, reason: 'failed' })
+    expect(mocks.spawned).toHaveLength(2)
+  })
 })
 
 describe('a reply that is not the asked shape', () => {
