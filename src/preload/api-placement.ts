@@ -21,7 +21,7 @@
  *
  * `wrongForServerTab` is `local` with the admission that it is NOT right for
  * a server tab today: the line names the task that fixes it, or says it is
- * not yet filed. Those entries are the list of what is left.
+ * PRDCT-4334. Those entries are the list of what is left.
  */
 export type Placement = 'routed' | 'local' | 'refused-for-remote'
 
@@ -57,20 +57,20 @@ export const API_PLACEMENT: Readonly<Record<string, Declaration>> = {
   sessionsModels: routed,
   adaptersList: local,
   adaptersModels: wrongForServerTab(
-    "a server tab's cwd is read on this Mac when the model menu lists a provider's models (not yet filed)"
+    "a server tab's cwd is read on this Mac when the model menu lists a provider's models (PRDCT-4334)"
   ),
   providerSwitchPlan: wrongForServerTab(
-    "the provider switch of a server tab reads this Mac's server (not yet filed)"
+    "the provider switch of a server tab reads this Mac's server (PRDCT-4334)"
   ),
   providerSwitchConvert: wrongForServerTab(
-    'the provider switch of a server tab converts on this Mac (not yet filed)'
+    'the provider switch of a server tab converts on this Mac (PRDCT-4334)'
   ),
   providerSwitchHandoff: wrongForServerTab(
-    'the handoff of a server tab is written on this Mac (not yet filed)'
+    'the handoff of a server tab is written on this Mac (PRDCT-4334)'
   ),
   sessionsCommands: routed,
   sessionsControl: wrongForServerTab(
-    "a server chat's MCP and plugin panels ask this Mac's server with the key (not yet filed; the server client has sessions.control)"
+    "a server chat's MCP and plugin panels ask this Mac's server with the key (PRDCT-4334; the server client has sessions.control)"
   ),
   sessionsCapabilities: routed,
   sessionsHistory: routed,
@@ -94,8 +94,12 @@ export const API_PLACEMENT: Readonly<Record<string, Declaration>> = {
   pluginsLink: localBecause('links a plugin folder of this Mac'),
   pluginsRemove: local,
   pluginsCommand: local,
-  pluginsInvokeAction: local,
-  pluginsPreviewAction: local,
+  pluginsInvokeAction: wrongForServerTab(
+    "the Sidebar offers plugin actions on server tabs and groups: this Mac's plugin host gets a server key as the target id (PRDCT-4334)"
+  ),
+  pluginsPreviewAction: wrongForServerTab(
+    "the Sidebar offers plugin actions on server tabs and groups: this Mac's plugin host gets a server key as the target id (PRDCT-4334)"
+  ),
   pluginsPanel: local,
   pluginsContext: refused("the plugin host's focus is this Mac's: a server key is ignored"),
   pluginsSecrets: local,
@@ -116,7 +120,7 @@ export const API_PLACEMENT: Readonly<Record<string, Declaration>> = {
   setSessionDisplayName: routed,
   setSessionViewRecord: routed,
   sessionsChangeWork: wrongForServerTab(
-    "a server tab's work assignment is written to this Mac's records (not yet filed; the server client has sessions.changeWork)"
+    "a server tab's work assignment is written to this Mac's records (PRDCT-4334; the server client has sessions.changeWork)"
   ),
   setSessionWorkspace: routed,
   tmuxAvailable: local,
@@ -125,7 +129,7 @@ export const API_PLACEMENT: Readonly<Record<string, Declaration>> = {
   serverHasRestoreRecords: local,
   bootRecordsComplete: local,
   discardSessionRecord: wrongForServerTab(
-    "discards this Mac's record by key: a server tab's record stays on the server (not yet filed)"
+    "discards this Mac's record by key: a server tab's record stays on the server (PRDCT-4334)"
   ),
   onSessionRehome: localBecause("a move between this Mac's windows"),
   onSessionRemovedForRehome: localBecause("a move between this Mac's windows"),
@@ -133,10 +137,10 @@ export const API_PLACEMENT: Readonly<Record<string, Declaration>> = {
   ackRehomed: localBecause("a move between this Mac's windows"),
   onSessionRenamed: routed,
   onSessionWorkChanged: wrongForServerTab(
-    "only this Mac's server's work changes are heard: a server tab's are not relayed (not yet filed)"
+    "only this Mac's server's work changes are heard: a server tab's are not relayed (PRDCT-4334)"
   ),
   onSessionPageChanged: wrongForServerTab(
-    "only this Mac's server's page changes are heard: a server tab's are not relayed (not yet filed)"
+    "only this Mac's server's page changes are heard: a server tab's are not relayed (PRDCT-4334)"
   ),
   onSessionTyped: routed,
   onSessionRestarting: routed,
@@ -168,13 +172,13 @@ export const API_PLACEMENT: Readonly<Record<string, Declaration>> = {
     "reads a transcript under the cwd on this Mac's disk; PRDCT-4321, the History lane"
   ),
   scrollSessionToText: wrongForServerTab(
-    "scrolls this Mac's pane by id: a server tab's pane is not found (not yet filed)"
+    "scrolls this Mac's pane by id: a server tab's pane is not found (PRDCT-4334)"
   ),
   historySearch: localBecause("this Mac's History index; PRDCT-4321, the History lane"),
   historySearchCancel: localBecause("this Mac's History index; PRDCT-4321, the History lane"),
   onHistorySearchHits: localBecause("this Mac's History index; PRDCT-4321, the History lane"),
   setSessionClaudeSessionId: wrongForServerTab(
-    "a server terminal's /clear is recorded on this Mac's record (not yet filed)"
+    "a server terminal's /clear is recorded on this Mac's record (PRDCT-4334)"
   ),
   secretList: local,
   secretSubmit: local,
@@ -183,11 +187,11 @@ export const API_PLACEMENT: Readonly<Record<string, Declaration>> = {
   'slideless.getState': local,
   'slideless.install': local,
   'slideless.serve': wrongForServerTab(
-    "serves a target of this Mac's disk: a server file's key is not served (unverified, not yet filed)"
+    "serves a target of this Mac's disk: a server file's key is not served (unverified, PRDCT-4334)"
   ),
   'slideless.release': localBecause('releases the lease serve() gave on this Mac'),
   'slideless.snapshot': wrongForServerTab(
-    "snapshots a target of this Mac's disk (unverified for a server file, not yet filed)"
+    "snapshots a target of this Mac's disk (unverified for a server file, PRDCT-4334)"
   ),
   'slideless.onState': local,
   'slideless.onServerExited': local,
@@ -195,7 +199,7 @@ export const API_PLACEMENT: Readonly<Record<string, Declaration>> = {
   'linkedDocuments.setDefaultSignature': localBecause('a file of this Mac'),
   'linkedDocuments.list': local,
   'linkedDocuments.open': wrongForServerTab(
-    'opens a linked document on this Mac for the calling session id (unverified for a server tab, not yet filed)'
+    'opens a linked document on this Mac for the calling session id (unverified for a server tab, PRDCT-4334)'
   ),
   'linkedDocuments.update': local,
   'linkedDocuments.openAttachment': local,
@@ -217,14 +221,14 @@ export const API_PLACEMENT: Readonly<Record<string, Declaration>> = {
   copyOfferCopy: local,
   copyOfferDismiss: local,
   copyOfferDismissSession: wrongForServerTab(
-    "the copy offers are this Mac's: a server tab's are never offered nor dismissed here (not yet filed)"
+    "the copy offers are this Mac's: a server tab's are never offered nor dismissed here (PRDCT-4334)"
   ),
   onCopyOffersChanged: local,
   saveDiscussion: wrongForServerTab(
-    "reads the transcript under the cwd on this Mac's disk: a server tab's transcript is on the server (not yet filed)"
+    "reads the transcript under the cwd on this Mac's disk: a server tab's transcript is on the server (PRDCT-4334)"
   ),
   savePlan: wrongForServerTab(
-    "reads the plan under the cwd on this Mac's disk: a server tab's is on the server (not yet filed)"
+    "reads the plan under the cwd on this Mac's disk: a server tab's is on the server (PRDCT-4334)"
   ),
   saveTranscript: local,
   openExternal: local,
@@ -246,7 +250,7 @@ export const API_PLACEMENT: Readonly<Record<string, Declaration>> = {
   onServerSetupProgress: local,
   openPath: routed,
   registerHtmlPreview: wrongForServerTab(
-    "serves a path of this Mac's disk: a server file's key is not served (not yet filed)"
+    "serves a path of this Mac's disk: a server file's key is not served (PRDCT-4334)"
   ),
   openFolderDialog: localBecause(
     'a dialog of this Mac; a server tab picks with the server picker (pickServerFolder) instead'
@@ -327,9 +331,11 @@ export const API_PLACEMENT: Readonly<Record<string, Declaration>> = {
   windowList: local,
   windowOpen: local,
   windowMoveSessions: wrongForServerTab(
-    "moves tabs between this Mac's windows; a server tab's id is not this Mac's session (not yet filed)"
+    "moves tabs between this Mac's windows; a server tab's id is not this Mac's session (PRDCT-4334)"
   ),
-  windowMoveGroup: localBecause("a move between this Mac's windows"),
+  windowMoveGroup: wrongForServerTab(
+    "server groups get the move-to-window menu, and this Mac's windows move a server group's id they do not own (PRDCT-4334)"
+  ),
   getUsageLimits: localBecause(
     "this Mac's accounts and usage; a server tab's: PRDCT-4328, the accounts lane (fleetAccounts, fleetUsage)"
   ),
@@ -520,7 +526,9 @@ export const API_PLACEMENT: Readonly<Record<string, Declaration>> = {
   trustWorkspaceRoot: routed,
   untrustWorkspaceRoot: routed,
   listTrustedRoots: routed,
-  extensionsGetInventory: localBecause("this Mac's agent config directory"),
+  extensionsGetInventory: wrongForServerTab(
+    "a server chat's plugin panel (PluginPanel) lists this Mac's plugins, not the server's (PRDCT-4334)"
+  ),
   extensionsInstallPlugin: localBecause("this Mac's agent config directory"),
   extensionsUninstallPlugin: localBecause("this Mac's agent config directory"),
   extensionsSetPluginEnabled: localBecause("this Mac's agent config directory"),

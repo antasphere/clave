@@ -85,11 +85,47 @@ export function GroupCommandDialog({
     onSave(command.trim(), mode, color, cwd, icon)
   }
 
+  // While a server's folder picker is up the dialog steps aside: a modal
+  // Radix dialog makes everything outside its content inert (pointer events
+  // off on <body>, focus trapped, an outside press dismisses it), and the
+  // picker is portalled to <body>, so over an open dialog it could be seen
+  // and not used. The form keeps its state and comes back with the folder.
+  const [pickingOnServer, setPickingOnServer] = useState(false)
+  // Focus goes back to the folder button once the dialog is back, whether
+  // the folder was picked, Escape pressed or the picker's X clicked.
+  const folderButtonRef = useRef<HTMLButtonElement>(null)
+  const [refocusFolder, setRefocusFolder] = useState(false)
+  useEffect(() => {
+    if (!refocusFolder || pickingOnServer) return
+    let frame = 0
+    const tryFocus = (tries: number): void => {
+      const button = folderButtonRef.current
+      if (button) {
+        button.focus()
+        if (document.activeElement === button) return setRefocusFolder(false)
+      }
+      if (tries > 0) frame = requestAnimationFrame(() => tryFocus(tries - 1))
+      else setRefocusFolder(false)
+    }
+    tryFocus(30)
+    return () => cancelAnimationFrame(frame)
+  }, [refocusFolder, pickingOnServer])
   const handlePickFolder = async (): Promise<void> => {
+    if (owner !== LOCAL_SERVER_ID) {
+      setPickingOnServer(true)
+      try {
+        const folder = await pickFolderOn(owner, cwd ?? undefined)
+        if (folder) setCwd(folder)
+      } finally {
+        setPickingOnServer(false)
+        setRefocusFolder(true)
+      }
+      return
+    }
     // Open the native picker at the group root (or the terminal's current cwd
     // when editing) instead of the OS default location.
-    // A server group's folder is picked in the server's picker: this Mac's
-    // dialog would answer a path the server does not have.
+    // This Mac's group: this Mac's native dialog (a server group's folder is
+    // picked above, in the server's picker).
     const folder = await pickFolderOn(owner, cwd ?? undefined)
     if (folder) {
       setCwd(folder)
@@ -100,13 +136,13 @@ export function GroupCommandDialog({
 
   return (
     <DialogPrimitive.Root
-      open={isOpen}
+      open={isOpen && !pickingOnServer}
       onOpenChange={(open) => {
         if (!open) onCancel()
       }}
     >
       <AnimatePresence>
-        {isOpen && (
+        {isOpen && !pickingOnServer && (
           <DialogPrimitive.Portal forceMount>
             <DialogPrimitive.Overlay asChild>
               <ModalScrim />
@@ -128,7 +164,9 @@ export function GroupCommandDialog({
 
                     {/* Folder picker */}
                     <button
+                      ref={folderButtonRef}
                       type="button"
+                      data-group-terminal-folder
                       onClick={handlePickFolder}
                       className="mt-3 w-full h-control-lg px-3 rounded-lg bg-surface-100 border border-border-subtle flex items-center gap-2 text-xs hover:bg-surface-200 transition-colors group"
                       title={cwd ?? 'Select folder'}
@@ -164,6 +202,7 @@ export function GroupCommandDialog({
                         <button
                           type="button"
                           onClick={() => setMode('prefill')}
+                          aria-pressed={mode === 'prefill'}
                           className={`px-3 py-1 text-[11px] font-medium transition-colors ${
                             mode === 'prefill'
                               ? 'bg-surface-200 text-text-primary'
@@ -175,6 +214,7 @@ export function GroupCommandDialog({
                         <button
                           type="button"
                           onClick={() => setMode('auto')}
+                          aria-pressed={mode === 'auto'}
                           className={`px-3 py-1 text-[11px] font-medium transition-colors border-l border-border-subtle ${
                             mode === 'auto'
                               ? 'bg-surface-200 text-text-primary'
@@ -197,6 +237,7 @@ export function GroupCommandDialog({
                               key={iconName}
                               type="button"
                               onClick={() => setIcon(iconName)}
+                              aria-pressed={icon === iconName}
                               className={cn(
                                 'p-1.5 rounded-lg transition-colors',
                                 icon === iconName

@@ -1,5 +1,5 @@
-import { parseResourceKey } from '@clave/contract/fleet'
-import { isRemoteKey } from './fleet-identity'
+import { LOCAL_SERVER_ID, parseResourceKey } from '@clave/contract/fleet'
+import { isRemoteKey, ownerOf } from './fleet-identity'
 /**
  * The file paths a drop carries, whichever way they arrived: Finder hands
  * real File objects, VS Code and friends a text/uri-list, Clave's own file and
@@ -71,11 +71,14 @@ export function failureText(error: unknown): string {
 
 /** What a dropped path that could not be attached leaves behind
  *  (PRDCT-4329). On this Mac's tab, the path in the message, so the agent
- *  can still reach it. On a server's tab, nothing: a path of this Mac means
- *  nothing to an agent on another machine, and the transfer carries one
- *  file's bytes, never a folder (`readBounded` refuses a directory, so a
- *  dropped folder always lands here). A server's own file, dragged in by its
- *  key, keeps the old fallback. */
+ *  can still reach it. On a server's tab, nothing, unless the path is that
+ *  same server's own file, dragged in by its key: a path of this Mac (or of
+ *  another server) means nothing to the agent there. A folder always lands
+ *  here for a server tab: the transfer carries one file's bytes, and the
+ *  upload (`localAttachmentUpload` -> `readBounded`,
+ *  `packages/server/src/files/binary.ts`) refuses a directory. */
 export function droppedPathFallback(sessionId: string, path: string): 'insert' | 'refuse' {
-  return isRemoteKey(sessionId) && !path.startsWith('clave-owner:') ? 'refuse' : 'insert'
+  const tab = ownerOf(sessionId)
+  if (tab === LOCAL_SERVER_ID) return 'insert'
+  return isRemoteKey(path) && ownerOf(path) === tab ? 'insert' : 'refuse'
 }
