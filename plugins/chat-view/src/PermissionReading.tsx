@@ -1,6 +1,11 @@
 import { useContext, useEffect, useState } from 'react'
-import { ArrowUturnLeftIcon } from '@heroicons/react/24/outline'
-import { RISK_LABELS } from '../../../src/shared/permission-risk'
+import {
+  ArrowUturnLeftIcon,
+  ExclamationTriangleIcon,
+  GlobeAltIcon,
+  PencilSquareIcon
+} from '@heroicons/react/24/outline'
+import { isExplainable, RISK_LABELS, type RiskLevel } from '../../../src/shared/permission-risk'
 import type { Permission } from './reducer'
 import {
   PermissionReadingContext,
@@ -10,38 +15,71 @@ import {
 import './permission-reading.css'
 
 /* What a permission request does, in plain words (PRDCT-4331), drawn inside
-   the existing card: the level from the rules at once, "Reading what this
-   does…" while the session's host reads it, then the sentence. The card is
-   answerable from its first frame; nothing here holds a button back. The
-   level shown is the rules' floor raised by the host's reading, never
-   lowered: the same rule the host applies, held here too so an older host's
-   word can never bring a level down. */
+   the existing card. The card is answerable from its first frame; nothing
+   here holds a button back. The level shown follows the one rule the host
+   applies (`shownLevel` in permission-risk.ts), held here too so an older
+   host's word can never bring a level down: the reading raises a level the
+   rules found, may give one to a request they could not tell, and never
+   says "reads only" by itself. */
 
 const MATCH_WORDS: Record<string, string> = {
   no: 'Not what you asked for'
 }
 
-/** The level and the reading, inside the permission card. */
+const LEVEL_ICONS: Partial<Record<RiskLevel, typeof PencilSquareIcon>> = {
+  project: PencilSquareIcon,
+  outside: GlobeAltIcon,
+  irreversible: ExclamationTriangleIcon
+}
+
+/** The level in words, with an icon for the three that change something;
+ *  "Not verified" when there is no level to show. Never green: the lowest
+ *  level is neutral, and nothing here says "safe". */
+function LevelPill({
+  level,
+  small = false
+}: {
+  level: RiskLevel | null
+  small?: boolean
+}): React.JSX.Element {
+  const Icon = level ? LEVEL_ICONS[level] : undefined
+  return (
+    <span
+      className="chat-permission-level"
+      data-level={level ?? 'unverified'}
+      data-size={small ? 'small' : undefined}
+    >
+      {Icon && <Icon aria-hidden="true" />}
+      {level ? RISK_LABELS[level] : 'Not verified'}
+    </span>
+  )
+}
+
+/** The level and the reading, inside the permission card. Before the
+ *  reading: the level the rules found (none when they could not tell) and
+ *  "Reading what this does…". After: the level, raised by the reading or
+ *  given by it to a request the rules could not tell, or "Not verified", and
+ *  the sentence. A reading that failed says so in one quiet line. */
 export function PermissionReading({ request }: { request: Permission }): React.JSX.Element {
   const value = useContext(PermissionReadingContext)
   const reading = value?.explained[request.id]
   const level = shownLevel(request, reading, value?.cwd)
+  const read = isExplainable(request)
   const [gaveUp, setGaveUp] = useState(false)
   useEffect(() => {
-    if (reading) return
+    if (reading || !read) return
     const timer = setTimeout(() => setGaveUp(true), READING_GIVE_UP_MS)
     return () => clearTimeout(timer)
-  }, [reading])
-  const loading = !!value && !reading && !gaveUp
+  }, [reading, read])
+  const waiting = !!value && read && !reading && !gaveUp
+  const failed = !!value && read && !reading?.sentence && (!!reading?.failed || gaveUp)
   return (
     <div
       className="chat-permission-reading"
-      data-level={level ?? 'unknown'}
-      data-state={reading?.sentence ? 'read' : loading ? 'reading' : 'none'}
+      data-level={level ?? 'unverified'}
+      data-state={reading?.sentence ? 'read' : waiting ? 'reading' : failed ? 'failed' : 'none'}
     >
-      <span className="chat-permission-level" data-level={level ?? 'unknown'}>
-        {level ? RISK_LABELS[level] : 'Not verified'}
-      </span>
+      {!(waiting && level === null) && <LevelPill level={level} />}
       {reading?.sentence ? (
         <p className="chat-permission-sentence">
           {reading.sentence}
@@ -51,12 +89,12 @@ export function PermissionReading({ request }: { request: Permission }): React.J
             </span>
           )}
         </p>
+      ) : waiting ? (
+        <p className="chat-permission-sentence" data-loading="true" aria-live="polite">
+          Reading what this does…
+        </p>
       ) : (
-        loading && (
-          <p className="chat-permission-sentence" data-loading="true" aria-live="polite">
-            Reading what this does…
-          </p>
-        )
+        failed && <p className="chat-permission-failed">Could not read what this does</p>
       )}
     </div>
   )
@@ -84,15 +122,9 @@ export function BackToBypass(): React.JSX.Element | null {
 export function PermissionLevelTag({ request }: { request: Permission }): React.JSX.Element {
   const value = useContext(PermissionReadingContext)
   const reading = value?.explained[request.id]
-  const level = shownLevel(request, reading, value?.cwd)
   return (
-    <span
-      className="chat-permission-level"
-      data-level={level ?? 'unknown'}
-      data-size="small"
-      title={reading?.sentence}
-    >
-      {level ? RISK_LABELS[level] : 'Not verified'}
+    <span className="chat-permission-tag" title={reading?.sentence}>
+      <LevelPill level={shownLevel(request, reading, value?.cwd)} small />
     </span>
   )
 }

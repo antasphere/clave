@@ -10,31 +10,54 @@
 }
 .chat-permission-level {
   --level-ink: var(--text-secondary);
+  display: inline-flex;
   flex-shrink: 0;
+  align-items: center;
+  gap: var(--spacing);
   padding: calc(var(--spacing) * 0.25) calc(var(--spacing) * 2);
   border-radius: var(--radius-full);
   border: thin solid color-mix(in srgb, var(--level-ink) 35%, transparent);
-  background-color: color-mix(in srgb, var(--level-ink) 10%, transparent);
   color: var(--level-ink);
   font-size: var(--text-xs);
   font-weight: var(--font-weight-medium);
   white-space: nowrap;
 }
+.chat-permission-level svg {
+  width: calc(var(--spacing) * 3.5);
+  height: calc(var(--spacing) * 3.5);
+}
+/* The lowest level is neutral: never a colour that reads as "safe". The
+   upper levels carry words and an icon; the ink only adds to them. */
 .chat-permission-level[data-level='reads'] {
-  --level-ink: var(--color-success);
+  --level-ink: var(--text-secondary);
 }
 .chat-permission-level[data-level='project'] {
-  --level-ink: var(--text-secondary);
+  --level-ink: var(--text-primary);
 }
 .chat-permission-level[data-level='outside'] {
   --level-ink: var(--color-warning);
+  background-color: color-mix(in srgb, var(--level-ink) 10%, transparent);
 }
 .chat-permission-level[data-level='irreversible'] {
   --level-ink: var(--color-destructive);
+  background-color: color-mix(in srgb, var(--level-ink) 10%, transparent);
+}
+.chat-permission-level[data-level='unverified'] {
+  --level-ink: var(--text-tertiary);
+  border-style: dashed;
 }
 .chat-permission-level[data-size='small'] {
   padding: 0 calc(var(--spacing) * 1.5);
   font-weight: var(--font-weight-normal);
+}
+.chat-permission-tag {
+  display: inline-flex;
+  margin-left: calc(var(--spacing) * 2);
+}
+.chat-permission-failed {
+  margin: 0;
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
 }
 .chat-permission-sentence {
   flex: 1;
