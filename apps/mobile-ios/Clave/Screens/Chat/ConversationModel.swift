@@ -103,9 +103,11 @@ final class ConversationModel {
   /// The agent's state as the transcript last said it, else as the session record said it.
   var agentState: AgentState { conversation?.state ?? session.state }
 
-  /// Whether a send has anything to carry.
+  /// Whether a send has anything to carry and may go. Never while a send's outcome is unknown: the
+  /// person chooses on the bar first (send again, or discard).
   var canSend: Bool {
-    !sending && (!draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !pendingFiles.isEmpty)
+    !sending && deliveryMark?.kind != .unknown
+      && (!draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !pendingFiles.isEmpty)
   }
 
   /// The sentence the composer shows for a send that did not land, a stored rejection included.
@@ -295,12 +297,22 @@ final class ConversationModel {
   // MARK: - Sending
 
   /// Sends the draft and the picked files under a new id, applying the send table when the
-  /// answer is lost.
+  /// answer is lost. While a send's outcome is unknown it sends nothing: a second message would
+  /// leave the first in the ledger, and the next reconnection would deliver it again by itself.
   func send() async {
     guard canSend else { return }
+    // The check above and this set must stay with no suspension point between them: canSend
+    // includes !sending, so a second send() that runs at any later suspension of this one returns
+    // at the guard before it mints an id. An await in between would let both mint and write.
     sending = true
     sendError = nil
     defer { sending = false }
+    // The stored mark, which the one in memory may not have caught up with yet. It is shown, and
+    // only the person's choice on the bar takes it away; nothing is discarded here.
+    if let stored = try? await delivery.marks.get(machineId, sessionId), stored.kind == .unknown {
+      deliveryMark = stored
+      return
+    }
 
     let sessionId = self.sessionId
     let client = self.client
