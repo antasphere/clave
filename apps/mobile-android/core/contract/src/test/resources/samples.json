@@ -1,0 +1,148 @@
+{
+  "note": "The samples of apps/mobile/src/contract/contract-pin.test.ts on the mobile branch at 00e16111, as JSON: what the contract's own Effect schemas decode, which the Kotlin decoders must decode to equal values. Lane C's deterministic vectors under packages/mobile-native/fixtures replace this file once announced.",
+  "session": {
+    "id": "s1", "provider": "claude", "transport": "events", "cwd": "/tmp/scratch", "windowKey": "server",
+    "state": "working", "createdAt": 1730000000000, "adapterId": "claude-chat", "title": "A chat", "viewId": "clave.chat/chat"
+  },
+  "sessionStamped": {
+    "id": "s1", "provider": "claude", "transport": "events", "cwd": "/tmp/scratch", "windowKey": "server",
+    "workspaceId": "ws1", "state": "working", "createdAt": 1730000000000, "adapterId": "claude-chat", "title": "A chat", "viewId": "clave.chat/chat"
+  },
+  "badSessions": [
+    { "id": "s1", "provider": "claude", "transport": "events", "cwd": "/tmp/scratch", "windowKey": "server", "state": "waiting", "createdAt": 1730000000000, "adapterId": "claude-chat", "title": "A chat" },
+    { "provider": "claude", "transport": "events", "cwd": "/tmp/scratch", "windowKey": "server", "state": "working", "createdAt": 1730000000000, "adapterId": "claude-chat", "title": "A chat" },
+    { "id": "s1", "provider": "claude", "transport": "events", "cwd": "/tmp/scratch", "windowKey": "server", "state": "working", "createdAt": "yesterday", "adapterId": "claude-chat", "title": "A chat" },
+    { "id": "s1", "provider": "claude", "transport": "events", "cwd": "/tmp/scratch", "windowKey": "server", "workspaceId": 7, "state": "working", "createdAt": 1730000000000, "adapterId": "claude-chat", "title": "A chat" },
+    { "id": "s1", "provider": "claude", "transport": "events", "cwd": "/tmp/scratch", "windowKey": "server", "workspaceId": null, "state": "working", "createdAt": 1730000000000, "adapterId": "claude-chat", "title": "A chat" }
+  ],
+  "events": [
+    { "type": "user_message", "text": "hello" },
+    { "type": "user_message", "text": "see [Image #1]", "attachments": [
+      { "id": "a1", "label": "Image #1", "path": "/tmp/a.png", "name": "a.png", "mimeType": "image/png", "size": 12, "delivery": "image" },
+      { "id": "a2", "delivery": "session", "sessionId": "s2", "name": "Other", "agent": "claude", "cwd": "/x" }
+    ] },
+    { "type": "assistant_text", "delta": "hel", "final": false },
+    { "type": "user_message", "text": "subagent brief", "parent": "parent" },
+    { "type": "assistant_text", "delta": "subagent answer", "final": true, "parent": "parent" },
+    { "type": "tool_call", "id": "t1", "name": "Read", "input": { "path": "/x" }, "parent": "p" },
+    { "type": "tool_result", "id": "t1", "output": "ok", "error": false },
+    { "type": "tool_result", "id": "sub", "output": "ok", "parent": "parent" },
+    { "type": "permission_withdrawn", "id": "retired" },
+    { "type": "permission_request", "id": "r1", "description": "Run it?",
+      "options": [ { "id": "allow-once", "label": "Allow" }, { "id": "deny", "label": "Deny" } ],
+      "toolName": "Bash", "input": { "command": "ls" }, "detail": "ls",
+      "questions": [ { "id": "q1", "question": "Which?", "header": "Pick", "options": [ { "label": "A", "description": "a" }, { "label": "B" } ], "multiSelect": true } ] },
+    { "type": "state_change", "state": "blocked" },
+    { "type": "session_meta", "model": "claude-opus-5-5", "providerSessionId": null },
+    { "type": "effort", "effort": "high" },
+    { "type": "error", "message": "boom", "fatal": true },
+    { "type": "turn_interrupted" },
+    { "type": "context_usage", "used": 10, "window": 200, "parent": "p" },
+    { "type": "subagent_model", "parent": "p", "model": "m" },
+    { "type": "permission_mode", "mode": "default", "modes": [ { "id": "default", "label": "Default" } ] },
+    { "type": "background_tasks", "tasks": [ { "id": "b1", "kind": "shell", "description": "d", "command": "echo example", "startedAt": 1, "outputFile": "/o" } ] },
+    { "type": "provider_event", "provider": "codex", "payload": { "any": 1 } }
+  ],
+  "badEvent": { "type": "no_such_event" },
+  "request": {
+    "id": "req-1", "sessionId": "s1", "kind": "clarification", "description": "A question", "createdAt": 1,
+    "providerRequestId": "native-1", "options": [ { "id": "answer", "label": "Answer" } ],
+    "questions": [ { "id": "q", "question": "Which?", "options": [ { "label": "A" } ], "multiSelect": false } ],
+    "secretQuestions": ["q"], "toolName": "AskUserQuestion", "detail": "d", "input": { "x": 1 },
+    "action": { "type": "env-file", "file": "/tmp/.env", "key": "KEY" }
+  },
+  "requestSnapshot": { "revision": 2, "pending": [ { "id": "req-1", "sessionId": "s1", "kind": "clarification", "description": "A question", "createdAt": 1, "providerRequestId": "native-1", "options": [ { "id": "answer", "label": "Answer" } ], "questions": [ { "id": "q", "question": "Which?", "options": [ { "label": "A" } ], "multiSelect": false } ], "secretQuestions": ["q"], "toolName": "AskUserQuestion", "detail": "d", "input": { "x": 1 }, "action": { "type": "env-file", "file": "/tmp/.env", "key": "KEY" } } ] },
+  "launchProfiles": {
+    "version": 1,
+    "customProfiles": [
+      { "id": "claude-chat", "name": "Claude (chat)", "family": "claude", "command": ["claude"], "additionalArgs": [], "builtIn": true, "sourceProfileId": "claude" },
+      { "id": "pi-x", "name": "Pi", "family": "pi", "command": ["pi"], "additionalArgs": ["--x"], "pi": { "provider": "openai", "model": "gpt", "thinking": "high" } }
+    ],
+    "globalDefaults": { "claude": "claude-chat" },
+    "workspaceOverrides": { "ws1": { "codex": "codex-chat" } }
+  },
+  "workspaces": {
+    "version": 1,
+    "workspaces": [ { "id": "ws1", "name": "scratch", "rootDir": "/tmp/scratch", "profileFile": null, "createdAt": 1 } ],
+    "lastActiveWorkspaceId": "ws1", "activeWorkspaceId": null, "pins": [ { "anything": true } ], "pinsMigrated": true, "revision": 3, "instance": "i-1"
+  },
+  "info": { "id": "s9", "cwd": "/tmp/scratch", "folderName": "scratch", "alive": true, "claudeSessionId": null, "piSessionId": null, "launchProfileId": "claude-chat", "model": "m" },
+  "envelope": { "id": "e1", "seq": 4, "at": 2, "event": { "_tag": "session.state_changed", "id": "s1", "state": "done" } },
+  "envelopeRequestsChanged": { "id": "e1", "seq": 4, "at": 2, "event": { "_tag": "requests.changed", "revision": 7 } },
+  "envelopeWorkspaces": { "id": "e1", "seq": 4, "at": 2, "event": { "_tag": "workspaces.state_changed", "workspaces": [ { "id": "ws1", "name": "scratch", "rootDir": "/tmp/scratch", "profileFile": null, "createdAt": 1 } ], "pins": [], "origin": null, "revision": 1, "instance": "i" } },
+  "frames": [
+    { "_tag": "welcome", "serverId": "srv", "protocol": 1, "version": "2.4.0" },
+    { "_tag": "welcome", "serverId": "srv", "protocol": 1 },
+    { "_tag": "subscribed", "sessionId": "s1", "session": { "id": "s1", "provider": "claude", "transport": "events", "cwd": "/tmp/scratch", "windowKey": "server", "state": "working", "createdAt": 1730000000000, "adapterId": "claude-chat", "title": "A chat", "viewId": "clave.chat/chat" } },
+    { "_tag": "unsubscribed", "sessionId": "s1" },
+    { "_tag": "stream", "sessionId": "s1", "stream": { "kind": "event", "event": { "type": "assistant_text", "delta": "hel", "final": false } } },
+    { "_tag": "stream", "sessionId": "s1", "stream": { "kind": "pty", "data": "aGk=" } },
+    { "_tag": "exit", "sessionId": "s1", "code": 0 },
+    { "_tag": "event", "id": "e1", "seq": 4, "at": 2, "event": { "_tag": "session.state_changed", "id": "s1", "state": "done" } },
+    { "_tag": "error", "sessionId": "s1", "message": "Unknown session" },
+    { "_tag": "error", "message": "Malformed frame" },
+    { "_tag": "pong" }
+  ],
+  "unknownFrames": [ { "_tag": "request", "requestId": "r", "windowKey": "w" }, { "_tag": "something-new" } ],
+  "failures": {
+    "sessionStartFailed": { "_tag": "SessionStartFailed", "message": "Program \"claude\" was not found" },
+    "capabilityUnavailable": { "_tag": "CapabilityUnavailable", "capability": "requests", "message": "This server holds no requests." }
+  },
+  "writes": {
+    "start": { "cwd": "/tmp/scratch", "options": { "claudeMode": true, "launchProfileId": "claude-chat", "launchProfile": { "id": "claude-chat", "name": "Claude (chat)", "family": "claude", "command": ["claude"], "additionalArgs": [], "builtIn": true, "sourceProfileId": "claude" }, "workspaceId": "ws1" } },
+    "userMessage": { "id": "s1", "input": { "type": "user_message", "text": "hi", "clientMessageId": "m-0123456789abcdef" } },
+    "permissionResponse": { "id": "s1", "input": { "type": "permission_response", "id": "r1", "optionId": "answer", "answers": { "q1": "A, B" } } },
+    "interrupt": { "id": "s1", "input": { "type": "interrupt" } },
+    "responses": [
+      { "type": "permission", "optionId": "allow-once" },
+      { "type": "permission", "optionId": "answer", "answers": { "q": "A" } },
+      { "type": "clarification", "answers": { "q": "A" } },
+      { "type": "secret", "value": "shh" },
+      { "type": "dismiss" }
+    ],
+    "clientFrames": [
+      { "_tag": "hello", "token": "t", "client": "clave-mobile/android" },
+      { "_tag": "subscribe", "sessionId": "s1" },
+      { "_tag": "unsubscribe", "sessionId": "s1" },
+      { "_tag": "ping" }
+    ]
+  },
+  "constants": { "PUSH_PATH": "/push", "PUSH_PROTOCOL": 1, "CLOSE_UNAUTHORIZED": 4001, "CLOSE_MALFORMED": 4002, "CLOSE_HELLO_TIMEOUT": 4008, "CLOSE_SERVER_STOPPING": 4010, "HELLO_TIMEOUT_MS": 5000, "CLOSE_DEVICE_REVOKED": 4011 },
+  "timeline": {
+    "cursor": { "generation": "adoption", "sequence": 4 },
+    "page": { "items": [ { "event": { "type": "user_message", "text": "a", "clientMessageId": "message-123" }, "position": { "generation": "adoption", "sequence": 4 }, "at": 1 } ], "before": 4, "cursor": { "generation": "adoption", "sequence": 4 }, "truncated": true },
+    "streamsWithPosition": [
+      { "kind": "event", "event": { "type": "user_message", "text": "a", "clientMessageId": "message-123" }, "position": { "generation": "adoption", "sequence": 4 } },
+      { "kind": "event", "event": { "type": "user_message", "text": "a", "clientMessageId": "message-123" } }
+    ],
+    "badPositions": [ { "generation": "", "sequence": 1 }, { "generation": "g", "sequence": -1 }, { "generation": "g", "sequence": 0.5 }, { "generation": "g", "sequence": 9007199254740992 } ],
+    "pageMissingTruncated": { "items": [], "before": null, "cursor": { "generation": "adoption", "sequence": 4 } },
+    "badPages": [
+      { "items": [ { "event": { "type": "user_message", "text": "a" }, "position": { "generation": "old", "sequence": 4 } } ], "before": null, "cursor": { "generation": "adoption", "sequence": 4 }, "truncated": false },
+      { "items": [ { "event": { "type": "user_message", "text": "a" }, "position": { "generation": "adoption", "sequence": 4 } }, { "event": { "type": "user_message", "text": "a" }, "position": { "generation": "adoption", "sequence": 3 } } ], "before": null, "cursor": { "generation": "adoption", "sequence": 4 }, "truncated": false },
+      { "items": [ { "event": { "type": "user_message", "text": "a" }, "position": { "generation": "adoption", "sequence": 5 } } ], "before": null, "cursor": { "generation": "adoption", "sequence": 4 }, "truncated": false }
+    ]
+  },
+  "devices": {
+    "pairingTicket": { "pairingId": "pair-1", "expiresAt": 1730000600000 },
+    "pairingPending": { "status": "pending" },
+    "pairingApproved": { "status": "approved", "deviceSession": { "token": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", "deviceId": "dev-1", "serverId": "6f1c", "serverName": "Valentins-MacBook-Pro" } },
+    "pairingApprovedConsumed": { "status": "approved" },
+    "pairingRefused": { "status": "refused" },
+    "pairingExpired": { "status": "expired" },
+    "deviceView": { "id": "dev-1", "name": "Pixel", "platform": "android", "appVersion": "0.1.0", "createdAt": 1, "lastSeenAt": null },
+    "refusal": { "_tag": "DevicePairingRefused", "check": "audience", "message": "The identity token was refused (audience)." },
+    "noOwner": { "_tag": "CapabilityUnavailable", "capability": "antasphereAccount", "message": "This server has no Antasphere login." },
+    "writeStatuses": [ { "status": "accepted", "at": 1 }, { "status": "pending" }, { "status": "rejected", "reason": "server restarted before dispatch" }, { "status": "absent" }, { "status": "unknown" } ],
+    "writeAnswers": [ { "status": "accepted", "at": 1 }, { "status": "pending" } ]
+  },
+  "relay": {
+    "machines": { "machines": [ { "id": "m1", "name": "Valentins-MacBook-Pro", "platform": "macos", "version": "3.0.0", "online": true, "lastSeen": 1730000000000, "direct": [] }, { "id": "m2", "name": "box", "platform": "linux", "version": "3.0.0", "online": false, "lastSeen": null, "direct": [ { "url": "https://10.0.0.2:4711" } ] } ] }
+  },
+  "notify": {
+    "payload": { "category": "question", "serverId": "6f1c", "serverName": "Valentins-MacBook-Pro", "sessionId": "clave-1", "sessionTitle": "Fix the build", "workspaceName": "clave-app", "requestId": "3a9e", "text": "Which branch do we ship from?", "actions": ["reply", "open"] },
+    "fcmData": { "category": "permission", "serverId": "6f1c", "serverName": "Valentins-MacBook-Pro", "sessionId": "clave-1", "sessionTitle": "Fix the build", "requestId": "3a9e", "text": "Run npm test?", "actions": "allow,deny,open", "categoryId": "clave.permission" },
+    "categories": ["question", "permission", "secret", "finished", "failed", "account_limit", "test"],
+    "actions": ["allow", "deny", "reply", "open"]
+  }
+}

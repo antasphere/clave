@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- The window's own theme, before Compose draws: no action bar, a dark ground the
+         default theme shares, edge to edge. Everything visible is Compose. -->
+    <style name="Theme.Clave" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">#0e0d0c</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowLightStatusBar">false</item>
+    </style>
+</resources>
