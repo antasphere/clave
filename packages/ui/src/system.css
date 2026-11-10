@@ -5815,6 +5815,23 @@ details[open] > .chat-approval-items {
 .chat-attachment-hint {
   color: var(--text-secondary);
 }
+/* A dropped tab of another machine: the machine's name, the way the sidebar
+   badges a server's tab. A tab the receiving agent cannot reach dims its hint. */
+.chat-attachment-machine {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(var(--spacing) * 0.75);
+  max-width: 16ch;
+  margin-right: calc(var(--spacing) * 1.5);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
+  color: var(--text-primary);
+}
+.chat-attachment[data-reach='none'] .chat-attachment-hint {
+  color: var(--text-tertiary);
+}
 .chat-attachment-issue {
   flex-basis: 100%;
   display: flex;

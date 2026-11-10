@@ -7,7 +7,9 @@ import {
   nextLabel,
   reconcileAttachments,
   removeMarker,
-  type Attachment
+  type Attachment,
+  sessionReach,
+  THIS_MAC
 } from './attachments'
 
 const image: Attachment = {
@@ -55,6 +57,16 @@ test('a session record is an attachment, a file record stays one, and labels are
   const unlabelled = { ...image, label: undefined }
   expect(AttachmentSchema.parse(unlabelled)).toEqual(unlabelled)
   expect(() => AttachmentSchema.parse({ ...tab, sessionId: 'not a/session' })).toThrow()
+  // A paired server's tab, by the key this Mac names it by.
+  const serverTab =
+    'clave-owner:session:server-00a75630-6a0d-4f07-badf-09f49446a8cc:d6dd98af-92b1-4788-b206-88e4f20a5670'
+  expect(AttachmentSchema.parse({ ...tab, sessionId: serverTab })).toMatchObject({
+    sessionId: serverTab
+  })
+  expect(() =>
+    AttachmentSchema.parse({ ...tab, sessionId: 'clave-owner:session:srv:a/b' })
+  ).toThrow()
+  expect(() => AttachmentSchema.parse({ ...tab, sessionId: 'clave-owner:group:srv:abc' })).toThrow()
   expect(() => AttachmentSchema.parse({ ...tab, path: '/x' })).toThrow()
 })
 
@@ -106,4 +118,20 @@ test('a record whose marker left the text leaves the message; an unlabelled one 
   expect(reconcileAttachments('', files)).toEqual([])
   const unlabelled: Attachment = { ...image, label: undefined }
   expect(reconcileAttachments('', [unlabelled, tab])).toEqual([unlabelled])
+})
+
+test('sessionReach: same machine says nothing, a server tab on this Mac is named, anything else on a server is out of reach', () => {
+  const server = (s: string, id: string): string => `clave-owner:session:${s}:${id}`
+  const nameOf = (id: string): string => `name of ${id}`
+  expect(sessionReach('a', 'b', nameOf)).toEqual({})
+  expect(sessionReach(server('s1', 'a'), server('s1', 'b'), nameOf)).toEqual({})
+  expect(sessionReach(server('s1', 'a'), 'mac-tab', nameOf)).toEqual({ machine: 'name of s1' })
+  expect(sessionReach('mac-tab', server('s1', 'b'), nameOf)).toEqual({
+    machine: THIS_MAC,
+    reachable: false
+  })
+  expect(sessionReach(server('s2', 'a'), server('s1', 'b'), nameOf)).toEqual({
+    machine: 'name of s2',
+    reachable: false
+  })
 })

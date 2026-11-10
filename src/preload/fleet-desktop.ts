@@ -661,7 +661,16 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
       ...event,
       // A session record names a tab, not a file: it carries no path to scope.
       attachments: event.attachments.map((file) => {
-        if (!isFileAttachment(file)) return file
+        // A tab the server's agent was handed by its bare id: the key this
+        // Mac names it by, the same rewrite the send boundary undid. One
+        // marked out of reach was never the server's, and keeps its id.
+        if (!isFileAttachment(file))
+          return file.reachable === false
+            ? file
+            : {
+                ...file,
+                sessionId: sessionKey({ serverId: ref.serverId, sessionId: file.sessionId })
+              }
         const path = resourceKey('file', ref.serverId, file.path)
         attachmentSessions.set(path, ref.sessionId)
         return { ...file, path }
@@ -1991,7 +2000,19 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
       input = {
         ...input,
         attachments: input.attachments.map((file) => {
-          if (!isFileAttachment(file)) return file
+          if (!isFileAttachment(file)) {
+            // A dropped tab. A tab of this Mac goes as it is, and so does a
+            // server's tab dropped on a tab of this Mac: the agent here
+            // reaches it by its key (PRDCT-4166). A server's agent knows its
+            // own tabs by their bare id; any other tab still goes, by its
+            // bare id and marked out of reach (the composer set `reachable`),
+            // so the agent knows of it without being able to call it.
+            if (!remote(id)) return file
+            const tab = parseSessionKey(file.sessionId)
+            return tab.serverId === owner
+              ? { ...file, sessionId: tab.sessionId }
+              : { ...file, sessionId: tab.sessionId, reachable: false as const }
+          }
           const ref = parseResourceKey('file', file.path)
           if (ref.serverId !== owner) throw new Error('Attachment belongs to a different server.')
           return remote(id) ? { ...file, path: ref.id } : file
