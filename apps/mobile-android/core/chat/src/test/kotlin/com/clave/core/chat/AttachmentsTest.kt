@@ -36,6 +36,16 @@ class AttachmentsTest {
     }
 
     @Test
+    fun `a file that is not a picture is held to the transfer bound too`() {
+        val pdf = PickedFile("file:///notes.pdf", "notes.pdf", "application/pdf", MAX_TRANSFER_BYTES, PickedKind.File)
+        assertEquals(Admission.Admitted(image = false), admit(pdf, context))
+        assertEquals(
+            Admission.Refused("notes.pdf is 5 MiB; the beta sends files of 5 MiB at most."),
+            admit(pdf.copy(size = MAX_TRANSFER_BYTES + 1), context),
+        )
+    }
+
+    @Test
     fun `refuses excess records and total image bytes`() {
         assertTrue(admit(file, context.copy(count = MAX_ATTACHMENTS)) is Admission.Refused)
         assertTrue(admit(file, context.copy(imageBytes = 20L * 1024 * 1024)) is Admission.Refused)
