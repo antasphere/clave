@@ -13,6 +13,8 @@ const mocks = vi.hoisted(() => ({
   execFile: vi.fn(),
   prompts: [] as string[],
   stdout: 'follow the first message',
+  /** Replies handed out one per call before `stdout` takes over. */
+  replies: [] as string[],
   error: null as Error | null,
   /** The launch profile manager's Claude-CLI resolver, answering with the tab's profile. */
   resolve: vi.fn(),
@@ -67,6 +69,11 @@ describe('title generation CLI arguments', () => {
     expect(TITLE_CLI_ARGS[TITLE_CLI_ARGS.indexOf('--tools') + 1]).toBe('')
   })
 
+  it('gives the helper a system prompt of its own', () => {
+    const value = TITLE_CLI_ARGS[TITLE_CLI_ARGS.indexOf('--system-prompt') + 1]
+    expect(value).toMatch(/not an assistant/)
+  })
+
   it('keeps the user settings in force and the prompt off the command line', () => {
     // `--setting-sources ''` would drop an auth helper; a positional prompt
     // would be swallowed by the variadic `--tools`.
@@ -98,20 +105,25 @@ function window(): { win: string; send: ReturnType<typeof vi.fn> } {
   return { win: key, send }
 }
 async function settled(): Promise<void> {
-  await new Promise((resolve) => setTimeout(resolve, 0))
-  await new Promise((resolve) => setImmediate(resolve))
+  // A title may take two tries (the retry), each a few ticks of its own.
+  for (let i = 0; i < 4; i++) {
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    await new Promise((resolve) => setImmediate(resolve))
+  }
 }
 
 beforeEach(() => {
   vi.clearAllMocks()
   mocks.prompts.length = 0
   mocks.stdout = 'follow the first message'
+  mocks.replies.length = 0
   mocks.error = null
   mocks.resolve.mockReturnValue(mocks.profile)
   mocks.execFile.mockImplementation(
     (_cmd: string, _args: string[], _opts: unknown, callback: Callback) => {
       const stdin = { write: (text: string) => mocks.prompts.push(text), end: vi.fn() }
-      setImmediate(() => callback(mocks.error, mocks.stdout, ''))
+      const reply = mocks.replies.length ? mocks.replies.shift()! : mocks.stdout
+      setImmediate(() => callback(mocks.error, reply, ''))
       return { stdin }
     }
   )
@@ -269,14 +281,98 @@ describe('a chat tab is named by its first message', () => {
     expect(send).toHaveBeenCalledWith(`session:auto-title:${id}`, 'fix the auth middleware')
   })
 
-  it('a label on the title line itself falls back to the message', async () => {
+  it('a label on the title line itself is stripped, not the whole reply refused', async () => {
+    // PRDCT-4326: "Title: fix auth middleware" used to fall to the heuristic.
     const id = `chat-${++sequence}`
     const { win, send } = window()
-    mocks.stdout = 'title: fix auth middleware'
+    mocks.stdout = 'Title: fix auth middleware'
+    scheduleChatTitle(id)
+    notifyChatMessage(id, 'please repair the login timeout in the auth layer', win)
+    await settled()
+    expect(send).toHaveBeenCalledWith(`session:auto-title:${id}`, 'fix auth middleware')
+    expect(mocks.execFile).toHaveBeenCalledTimes(1)
+  })
+
+  it('a title with a colon in it is kept', async () => {
+    // Server log: Rejected bad title ... "lane d merge flow: mergeable-ready pr #74".
+    const id = `chat-${++sequence}`
+    const { win, send } = window()
+    mocks.stdout = 'merge flow: ready pr\n'
+    scheduleChatTitle(id)
+    notifyChatMessage(id, 'please look at the lane d merge flow for the ready pr', win)
+    await settled()
+    expect(send).toHaveBeenCalledWith(`session:auto-title:${id}`, 'merge flow: ready pr')
+  })
+
+  it("the person's output style after the title does not reach the tab", async () => {
+    const id = `chat-${++sequence}`
+    const { win, send } = window()
+    mocks.stdout = 'fix auth middleware\n\nNext: nothing.\n'
+    scheduleChatTitle(id)
+    notifyChatMessage(id, 'please repair the login timeout in the auth layer', win)
+    await settled()
+    expect(send).toHaveBeenCalledWith(`session:auto-title:${id}`, 'fix auth middleware')
+  })
+
+  it('a reply that answers the message is asked ONCE more before the heuristic', async () => {
+    const id = `chat-${++sequence}`
+    const { win, send } = window()
+    mocks.replies.push(
+      "I'll look into the timeout. First, a few questions:\n1. Which route?\n2. Since when?",
+      'fix auth timeout'
+    )
     scheduleChatTitle(id)
     notifyChatMessage(id, 'please fix the auth middleware timeout on login', win)
     await settled()
+    expect(mocks.execFile).toHaveBeenCalledTimes(2)
+    expect(send).toHaveBeenCalledWith(`session:auto-title:${id}`, 'fix auth timeout')
+  })
+
+  it('two replies that are no title fall to the heuristic, and say why on stderr', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const id = `chat-${++sequence}`
+    const { win, send } = window()
+    mocks.stdout = 'Sure! Here is what I would do:\n- read the middleware\n- add a test'
+    scheduleChatTitle(id)
+    notifyChatMessage(id, 'please fix the auth middleware timeout on login', win)
+    await settled()
+    expect(mocks.execFile).toHaveBeenCalledTimes(2)
     expect(send).toHaveBeenCalledWith(`session:auto-title:${id}`, 'fix the auth middleware')
+    const said = warn.mock.calls.map((call) => call.join(' ')).join('\n')
+    expect(said).toMatch(/no title from the model \(unreadable/)
+    warn.mockRestore()
+  })
+
+  it('a long first message full of questions goes in as data, clipped, the ask after it', async () => {
+    // The tab that was named "in clave. we often": a 4,425-character first
+    // message, pasted raw after the instruction, was answered 4 times in 5.
+    const id = `chat-${++sequence}`
+    const { win, send } = window()
+    const questions = Array.from(
+      { length: 40 },
+      (_, i) =>
+        `Question ${i + 1}: in clave, we often see the helper answer instead of naming; why?`
+    ).join('\n')
+    const message = `in clave. we often get tabs named badly.\n${questions}\nTAIL-NEVER-SENT`
+    expect(message.length).toBeGreaterThan(3000)
+    scheduleChatTitle(id)
+    notifyChatMessage(id, message, win)
+    await settled()
+    const prompt = mocks.prompts.join('')
+    expect(prompt.startsWith('Generate a short 2-4 word title')).toBe(true)
+    const open = prompt.indexOf('<message>\n')
+    const close = prompt.indexOf('\n</message>')
+    expect(open).toBeGreaterThan(0)
+    expect(close).toBeGreaterThan(open)
+    // The message sits between the tags, clipped, and the instruction comes after.
+    expect(prompt.slice(open, close)).toContain('in clave. we often get tabs named badly.')
+    expect(prompt).not.toContain('TAIL-NEVER-SENT')
+    expect(close - open).toBeLessThan(1600)
+    expect(prompt.slice(close)).toMatch(/Reply with the title alone/)
+    // And the CLI is told it is a function, not an agent.
+    const args = mocks.execFile.mock.calls[0][1] as string[]
+    expect(args[args.indexOf('--system-prompt') + 1]).toMatch(/never answer/)
+    expect(send).toHaveBeenCalledWith(`session:auto-title:${id}`, 'follow the first message')
   })
 
   it('a window gone before the title arrived receives nothing', async () => {
