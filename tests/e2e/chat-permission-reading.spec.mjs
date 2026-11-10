@@ -33,6 +33,7 @@ const MODES = [
 
 export async function run(t) {
   await onThisMac(t)
+  await onAManualTab(t)
   await onAServerTab(t)
 }
 
@@ -151,6 +152,62 @@ async function onThisMac(t) {
   }
 }
 
+/* A tab launched in Manual: what the rules cannot prove shows no level, and
+   the model's "reads" never becomes "Reads only"; no way back is offered,
+   neither while its modes leave skipping permissions out nor once they name
+   it (a profile that only ALLOWS the switch, D5). */
+async function onAManualTab(t) {
+  const chat = await openChat('chat-permission-manual', [], undefined, {
+    CLAVE_E2E_EXPLAINER_REPLY: JSON.stringify({
+      sentence: 'Runs the project tests. Changes nothing.',
+      level: 'reads',
+      asked: 'yes'
+    }),
+    CLAVE_E2E_EXPLAINER_DELAY_MS: '1500'
+  })
+  const { win, record, fixture } = chat
+  const view = win.locator('[data-testid="chat-view"]')
+  try {
+    await inject(fixture, record.id, [
+      { type: 'permission_mode', mode: 'default', modes: MODES.slice(0, 2) },
+      { type: 'user_message', text: 'run the tests' },
+      {
+        type: 'permission_request',
+        id: 'manual-1',
+        description: 'Allow Bash?',
+        toolName: 'Bash',
+        input: { command: 'npm test' },
+        options: [
+          { id: 'allow-once', label: 'Allow once' },
+          { id: 'deny', label: 'Deny' }
+        ]
+      }
+    ])
+    const dock = view.locator('.chat-prompt[data-kind="permission"]')
+    await dock.waitFor()
+    const reading = dock.locator('.chat-permission-reading')
+    assert.match(await reading.innerText(), /Reading what this does…/)
+    assert.equal(await reading.locator('.chat-permission-level').count(), 0, 'no level before')
+    await dock.getByText('Runs the project tests. Changes nothing.').waitFor({ timeout: 15_000 })
+    assert.match(await reading.innerText(), /Not verified/)
+    assert.doesNotMatch(await reading.innerText(), /Reads only/)
+    t.check('an unproven request shows no level, then "Not verified" beside the sentence', true)
+    const wayBack = dock.getByRole('button', { name: 'Back to skipping permissions' })
+    assert.equal(await wayBack.count(), 0, 'modes without skipping permissions: no way back')
+    // The provider now lists skipping permissions (a profile that allows the
+    // switch): the tab was still never launched in it.
+    await inject(fixture, record.id, [
+      { type: 'permission_mode', mode: 'default', modes: MODES },
+      { type: 'assistant_text', delta: 'The modes are listed again.', final: true }
+    ])
+    await view.getByText('The modes are listed again.').waitFor()
+    assert.equal(await wayBack.count(), 0, 'never launched skipping: no way back')
+    t.check('a tab never launched skipping permissions is offered no way back', true)
+  } finally {
+    await chat.close()
+  }
+}
+
 async function onAServerTab(t) {
   const world = await fleetWorld('permission-reading', {
     count: 1,
@@ -203,6 +260,11 @@ async function onAServerTab(t) {
     await dock
       .getByText('Prints a word on the screen. Changes nothing.')
       .waitFor({ timeout: 15_000 })
+    assert.equal(
+      await dock.getByRole('button', { name: 'Back to skipping permissions' }).count(),
+      0,
+      'a tab with no permission modes is offered no way back'
+    )
     t.check('on a server tab, the reading made on the server reaches the Mac card', true)
   } finally {
     await world.close()
