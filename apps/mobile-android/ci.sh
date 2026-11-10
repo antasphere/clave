@@ -14,16 +14,19 @@ set -euo pipefail
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 cd "$HERE"
 
-COMPILE_SDK=37
+# compileSdk 37: Google's repository names its platform package platforms;android-37.0 (there
+# is no platforms;android-37), the folder platforms/android-37.0 the build reads.
+COMPILE_SDK_PACKAGE="platforms;android-37.0"
 BUILD_TOOLS=36.0.0
 
 : "${ANDROID_HOME:?ANDROID_HOME must point at an SDK root with cmdline-tools}"
 SDKMANAGER=$(ls -d "$ANDROID_HOME"/cmdline-tools/*/bin/sdkmanager 2>/dev/null | sort -V | tail -1 || true)
 if [ -z "$SDKMANAGER" ]; then echo "ci.sh: no sdkmanager under $ANDROID_HOME/cmdline-tools" >&2; exit 2; fi
-echo "ci.sh: JAVA_HOME=${JAVA_HOME:-unset}"; java -version 2>&1 | head -1
+# sed reads the whole version text: a reader that stops early would let pipefail end the run.
+echo "ci.sh: JAVA_HOME=${JAVA_HOME:-unset}"; java -version 2>&1 | sed -n 1p
 yes | "$SDKMANAGER" --licenses > /dev/null 2>&1 || true
-"$SDKMANAGER" --install "platforms;android-${COMPILE_SDK}" "build-tools;${BUILD_TOOLS}" "platform-tools" > /dev/null
-echo "ci.sh: installed platforms;android-${COMPILE_SDK} build-tools;${BUILD_TOOLS}"
+"$SDKMANAGER" --install "$COMPILE_SDK_PACKAGE" "build-tools;${BUILD_TOOLS}" "platform-tools" > /dev/null
+echo "ci.sh: installed $COMPILE_SDK_PACKAGE build-tools;${BUILD_TOOLS}"
 
 # The SDK root for Gradle: the runner's, through the environment (no local.properties on CI).
 export ANDROID_SDK_ROOT="$ANDROID_HOME"

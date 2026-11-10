@@ -21,7 +21,7 @@ at the repository root). No React Native, no JavaScript engine, no WebView-rende
 | Gradle | 9.7.0 | `gradle/wrapper/gradle-wrapper.properties` (with its sha256) |
 | Kotlin, Compose compiler plugin | 2.4.21 | `gradle/libs.versions.toml` |
 | JDK | 21 | `JAVA_HOME` (Homebrew's `openjdk@21` on the Mac, temurin on CI) |
-| compileSdk / build tools | 36 / 36.0.0 | `app/build.gradle.kts`, `ui/build.gradle.kts`, `ci.sh` |
+| compileSdk / build tools | 37 (the package `platforms;android-37.0`) / 36.0.0 | `app/build.gradle.kts`, `ui/build.gradle.kts`, `platform/build.gradle.kts`, `ci.sh` |
 | Compose BOM | 2026.09.00 | `gradle/libs.versions.toml` |
 
 Why these: the Kotlin Gradle plugin 2.4.21 row of the published matrix supports Gradle up to
@@ -50,7 +50,7 @@ echo "ad03dc49bfacfd52c110b14104ea548b8a07e830  cmdline-tools.zip" | shasum -a 1
 mkdir -p "$TOOLCHAIN/sdk/cmdline-tools" && unzip -q cmdline-tools.zip -d /tmp/ct && mv /tmp/ct/cmdline-tools "$TOOLCHAIN/sdk/cmdline-tools/latest"
 export ANDROID_HOME="$TOOLCHAIN/sdk" ANDROID_SDK_ROOT="$TOOLCHAIN/sdk" GRADLE_USER_HOME="$TOOLCHAIN/gradle"
 yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses
-"$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "platforms;android-36" "build-tools;36.0.0" "platform-tools" "emulator" "system-images;android-36.1;google_apis_playstore;arm64-v8a"
+"$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "platforms;android-37.0" "build-tools;36.0.0" "platform-tools" "emulator" "system-images;android-36.1;google_apis_playstore;arm64-v8a"
 echo "sdk.dir=$ANDROID_HOME" > local.properties   # gitignored
 ```
 
