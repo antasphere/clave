@@ -14,6 +14,10 @@
 // "Removed account"), the usage is read from this Mac's store ("Reading
 // usage…" forever), the switch list is emptied for a server tab, or the
 // switch sends an id the server does not hold.
+//
+// Not proven here: that each reader loads a server's accounts as it draws
+// (the launcher loads every connected server anyway); `session-accounts-
+// mount.test.tsx` holds that, one test per reader.
 import assert from 'node:assert/strict'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
@@ -419,6 +423,47 @@ export async function run(t) {
       await win.locator('[role="menuitem"]', { hasText: 'Keep on this model' }).count(),
       0
     )
+    await win.keyboard.press('Escape')
+
+    // ── The tab menu opened before the server's accounts are read: a loading
+    // row, filled in while the menu stays open (the verifier's recipe: the
+    // server's usage snapshot, which the Mac's settings load waits on, slowed
+    // by 8 s, and a fresh window holding none of the server's settings). ──
+    await server.fixture.evaluate(() => {
+      const usage = globalThis.__claveE2E.settings.usage
+      const original = usage.claudeSnapshot.bind(usage)
+      usage.claudeSnapshot = async (...args) => {
+        await new Promise((resolve) => setTimeout(resolve, 8_000))
+        return original(...args)
+      }
+    })
+    await win.reload()
+    const freshRow = win.locator(`[data-sidebar-item-id="${id}"]`)
+    await freshRow.waitFor({ timeout: 30_000 })
+    await freshRow.click({ button: 'right' })
+    const pendingEntry = win.locator('[role="menuitem"]', { hasText: 'Switch account' })
+    await pendingEntry.waitFor({ timeout: 5_000 })
+    await pendingEntry.hover()
+    const loadingRow = win.locator('[role="menuitem"]', {
+      hasText: 'Reading the server’s accounts'
+    })
+    t.check(
+      'the entry is there with a loading row while the server is unread',
+      await loadingRow
+        .waitFor({ timeout: 4_000 })
+        .then(() => true)
+        .catch(() => false)
+    )
+    const filledRow = win.locator('[role="menu"]').locator(`[data-account-switch-row="${work.id}"]`)
+    t.check(
+      'and fills in with the server’s Work while the menu stays open',
+      await filledRow
+        .waitFor({ timeout: 20_000 })
+        .then(() => true)
+        .catch(() => false),
+      `loading row still there: ${await loadingRow.count()}`
+    )
+    t.equal('the loading row is gone', await loadingRow.count(), 0)
     await win.keyboard.press('Escape')
 
     assert.deepEqual(mac.errors, [])
