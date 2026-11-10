@@ -972,6 +972,10 @@ describe('what the structure says, when nothing is proven', () => {
   it.each(NOT_PROVEN)('%s → %s', (command, level) => {
     expect(commandLevel(command, cwd)).toBe(level)
   })
+  it('a project that lives under /tmp keeps its deletions hard to undo', () => {
+    expect(commandLevel('rm -rf build', '/tmp/e2e/proj')).toBe('irreversible')
+    expect(commandLevel('rm -rf /tmp/scratch-copy', '/tmp/e2e/proj')).toBe('outside')
+  })
   it('Read, Glob and Grep outside the project', () => {
     const tool = (toolName: string, input: unknown): RuleLevel =>
       riskFloor({ toolName, input, cwd })

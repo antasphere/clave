@@ -1525,8 +1525,10 @@ function readTarget(word: string, ctx: Context): RuleLevel {
 }
 
 /** The machine's temporary folders. */
-const scratch = (path: string | null): boolean =>
-  path !== null && /^\/(?:private\/)?(?:tmp|var\/folders)\/./.test(path)
+/** The machine's temporary folders, outside the project (a project that
+ *  itself lives under /tmp is still the project). */
+const scratch = (path: string | null, ctx: Context): boolean =>
+  path !== null && !inside(path, ctx.base) && /^\/(?:private\/)?(?:tmp|var\/folders)\/./.test(path)
 
 /** Values of these options are not operands (`xargs -n 1 rm`). */
 const XARGS_VALUES = new Set(['-n', '-I', '-i', '-L', '-l', '-P', '-d', '-E', '-s', '-a', '-R'])
@@ -1850,7 +1852,7 @@ function programLevel(
   if (
     (program === 'rm' || program === 'rmdir' || program === 'unlink') &&
     operands.length &&
-    operands.every((o) => scratch(resolve(ctx.dir, o)))
+    operands.every((o) => scratch(resolve(ctx.dir, o), ctx))
   )
     // Scratch files of the machine's temporary folder: outside, not lost work.
     return 'outside'
