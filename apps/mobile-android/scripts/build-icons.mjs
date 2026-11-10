@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+/* eslint-disable @typescript-eslint/explicit-function-return-type -- plain JS, run by node */
 // The phone's icons are the desktop's: Heroicons 24/outline read out of the very
 // @heroicons/react modules the renderer imports (MIT, ui/LICENSES/MIT-Heroicons.txt), plus
 // the four provider marks of apps/desktop/src/renderer/src/components/icons/cli-logos.tsx,

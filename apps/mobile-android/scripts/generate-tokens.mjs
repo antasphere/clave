@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+/* eslint-disable @typescript-eslint/explicit-function-return-type -- plain JS, run by node */
 // The phone's colour roles, read from the desktop's own token file
 // (packages/ui/src/tokens.css) and written as Kotlin (ui/src/main/kotlin/com/clave/ui/theme/Tokens.kt):
 // the four theme blocks (dark on :root, light, coffee, charcoal), the cross-theme roles of
