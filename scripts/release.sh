@@ -294,7 +294,8 @@ ZIP=$(ls dist/Clave-"${NEW_VERSION}"-universal-mac.zip 2>/dev/null || true)
 if [[ -n "$PRERELEASE" ]]; then
   YML=$(ls dist/"${PRERELEASE_ID}"-mac.yml 2>/dev/null || true)
   [[ -n "$YML" ]] || error "${PRERELEASE_ID}-mac.yml not found in dist/ (the channel file a pre-release must carry)"
-  # What a stable user must never see is 'latest' anything on a pre-release.
+  # electron-builder writing a latest-mac.yml means the channel did not take,
+  # so the build itself is suspect. The fallback copy is made below, on purpose.
   [[ ! -f dist/latest-mac.yml ]] || error "latest-mac.yml was written for a pre-release build — refusing to publish it"
 else
 YML=$(ls dist/latest-mac.yml 2>/dev/null || true)
@@ -324,6 +325,22 @@ ls -lh "$DMG" "$ZIP" "$YML" ${BLOCKMAP:+"$BLOCKMAP"} ${ZIP_BLOCKMAP:+"$ZIP_BLOCK
 ASSETS=("$DMG" "$ZIP" "$YML")
 [[ -n "$BLOCKMAP" ]] && ASSETS+=("$BLOCKMAP")
 [[ -n "$ZIP_BLOCKMAP" ]] && ASSETS+=("$ZIP_BLOCKMAP")
+
+# ── Pre-release: latest-mac.yml as the fallback's copy of the channel file ──
+# electron-updater on a -beta tag asks for beta-mac.yml first and, when that
+# request fails for ANY reason (a GitHub 504 included), falls back to
+# latest-mac.yml on the same release. Without the file the fallback is a
+# certain 404, and the error a user sees ("Cannot find latest-mac.yml") hides
+# the real one (8 November 2026). A copy makes the fallback a real second try.
+# It cannot reach a stable install: stable reads /releases/latest, which never
+# returns a pre-release. Copied by hand, after the guard above has checked
+# electron-builder did not write one itself.
+if [[ -n "$PRERELEASE" ]]; then
+  FALLBACK_DIR="dist/prerelease-fallback"
+  rm -rf "$FALLBACK_DIR" && mkdir -p "$FALLBACK_DIR"
+  cp "$YML" "$FALLBACK_DIR/latest-mac.yml"
+  ASSETS+=("$FALLBACK_DIR/latest-mac.yml")
+fi
 
 # ── Pre-release: a GitHub pre-release on the pushed sha, no push ──
 if [[ -n "$PRERELEASE" ]]; then

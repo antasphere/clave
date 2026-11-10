@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { parseResourceKey } from '@clave/contract/fleet'
 import { attachmentFamily, FAMILY_NAMES, type AttachmentFamily } from '@clave/contract/attachments'
-import { XMarkIcon } from '@heroicons/react/24/outline'
+import { ComputerDesktopIcon, ServerIcon, XMarkIcon } from '@heroicons/react/24/outline'
 import {
   attachmentIssue,
   attachmentKind,
@@ -9,6 +9,7 @@ import {
   type Attachment,
   type AttachmentPreview,
   type FileAttachment,
+  THIS_MAC,
   type SessionAttachment
 } from '../../../src/shared/attachments'
 import {
@@ -365,16 +366,44 @@ function SessionChip({
   file: SessionAttachment
   onRemove?: () => void
 }): React.JSX.Element {
-  const { name, agent, cwd, label } = file
+  const { name, agent, cwd, label, machine } = file
+  const outOfReach = file.reachable === false
+  // A tab of another machine names it on the chip, the way the sidebar badges
+  // a server's tab; one this tab's agent cannot reach says that too, so the
+  // reader knows before sending what the agent will be able to do with it.
+  const where = machine === THIS_MAC ? 'This Mac' : machine
+  const title = [
+    cwd,
+    where && `Runs on ${where}`,
+    outOfReach && "This tab's agent cannot read or message it: it will only know its name."
+  ]
+    .filter(Boolean)
+    .join('\n')
   return (
-    <li className="chat-attachment" data-family="session" data-session={file.sessionId}>
-      <span className="chat-attachment-open" title={cwd || undefined}>
+    <li
+      className="chat-attachment"
+      data-family="session"
+      data-session={file.sessionId}
+      data-machine={machine ? 'other' : undefined}
+      data-reach={outOfReach ? 'none' : undefined}
+    >
+      <span className="chat-attachment-open" title={title || undefined}>
         <SessionGlyph />
         <span className="chat-attachment-text">
           <span className="chat-attachment-name">{name}</span>
           <span className="chat-attachment-hint">
             <Tag label={label} />
-            {label ? agent : `Session · ${agent}`}
+            {where && (
+              <span className="chat-attachment-machine">
+                {machine === THIS_MAC ? (
+                  <ComputerDesktopIcon className="w-3 h-3" aria-hidden="true" />
+                ) : (
+                  <ServerIcon className="w-3 h-3" aria-hidden="true" />
+                )}
+                {where}
+              </span>
+            )}
+            {outOfReach ? 'Name only' : label ? agent : `Session · ${agent}`}
           </span>
         </span>
       </span>

@@ -5,7 +5,7 @@
  * request. One module per domain is the pattern: a lane adds its own file
  * with a `<domain>Client(call)` and one line in `api.ts`.
  */
-import { Schema } from 'effect'
+import { ParseResult, Schema } from 'effect'
 import {
   type AccountOverride,
   type CommandOption,
@@ -97,8 +97,30 @@ export interface SessionsClient {
   readonly changeWork: (id: string, change: WorkChange) => Promise<WorkChangeResult>
 }
 
-/** A write goes over the wire in its encoded form: bytes as base64. */
-const encodeWrite = Schema.encodeSync(SessionWrite)
+/** A write goes over the wire in its encoded form: bytes as base64. A write
+ *  the contract refuses fails with ONE readable line naming the field, never
+ *  the schema's whole union tree, which is what a reader saw in the composer
+ *  on 8 November 2026 when a dropped tab's key failed the pattern. */
+const encodeWriteSync = Schema.encodeSync(SessionWrite)
+const encodeWrite = (input: SessionWrite): typeof SessionWrite.Encoded => {
+  try {
+    return encodeWriteSync(input)
+  } catch (error) {
+    throw ParseResult.isParseError(error) ? new Error(refusedWrite(error)) : error
+  }
+}
+/** The issue that went deepest is the one that names what was wrong; a union
+ *  reports one shallow issue per branch it did not take. */
+export function refusedWrite(error: ParseResult.ParseError): string {
+  const issues = ParseResult.ArrayFormatter.formatErrorSync(error)
+  const deepest = issues.reduce<(typeof issues)[number] | undefined>(
+    (best, issue) => (!best || issue.path.length > best.path.length ? issue : best),
+    undefined
+  )
+  if (!deepest) return 'Clave could not send this message.'
+  const where = deepest.path.length ? `${deepest.path.join('.')}: ` : ''
+  return `Clave could not send this message (${where}${deepest.message}).`
+}
 /** A GET carries its numbers as strings. */
 const asParam = (value: number | undefined): string | undefined =>
   value === undefined ? undefined : String(value)

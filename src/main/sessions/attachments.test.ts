@@ -199,3 +199,48 @@ test('markers key every line the provider reads, sessions included', async () =>
     )
   ).rejects.toThrow()
 })
+
+test('a tab of another machine names it, and one out of reach tells the agent not to call it', async () => {
+  const serverTab =
+    'clave-owner:session:server-00a75630-6a0d-4f07-badf-09f49446a8cc:d6dd98af-92b1-4788-b206-88e4f20a5670'
+  const prompt = await preparePrompt(
+    'see [Session #1] and [Session #2]',
+    [
+      {
+        id: 'a',
+        label: 'Session #1',
+        delivery: 'session',
+        sessionId: serverTab,
+        name: 'Lane · Company AI keys',
+        agent: 'Claude Code',
+        cwd: '/w',
+        machine: 'Studio server'
+      },
+      {
+        id: 'b',
+        label: 'Session #2',
+        delivery: 'session',
+        sessionId: 'mac-tab',
+        name: 'Notes',
+        agent: 'Claude Code',
+        cwd: '/n',
+        machine: 'the Mac this message was sent from',
+        reachable: false
+      }
+    ],
+    true
+  )
+  const lines = prompt.text.split('\n')
+  expect(lines).toContain(
+    '[Session #1] ' +
+      JSON.stringify({
+        session: serverTab,
+        name: 'Lane · Company AI keys',
+        agent: 'Claude Code',
+        cwd: '/w',
+        machine: 'Studio server'
+      })
+  )
+  expect(lines.find((l) => l.startsWith('[Session #2]'))).toContain('"reachable":false')
+  expect(lines.some((l) => l.includes('"reachable": false') && l.includes('never call'))).toBe(true)
+})
