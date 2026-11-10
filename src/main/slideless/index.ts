@@ -79,11 +79,11 @@ export function startSlideless(): void {
 export function registerSlidelessHandlers(): void {
   ipcMain.handle('slideless:get-state', () => state())
   ipcMain.handle('slideless:install', () => installManagedSlideless())
-  ipcMain.handle('slideless:serve', async (_event, target: unknown) => ({
-    url: await artefactServers.serve(String(target))
-  }))
-  ipcMain.handle('slideless:release', (_event, target: unknown) => {
-    artefactServers.release(String(target))
+  ipcMain.handle('slideless:serve', (_event, target: unknown) =>
+    artefactServers.serve(String(target))
+  )
+  ipcMain.handle('slideless:release', (_event, target: unknown, lease: unknown) => {
+    artefactServers.release(String(target), String(lease))
   })
   ipcMain.handle('slideless:snapshot', (_event, target: unknown) =>
     artefactServers.snapshot(String(target))

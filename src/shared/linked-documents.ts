@@ -97,7 +97,13 @@ export const linkedUpdateSchema = z
      * panel last loaded or saved (the watcher's call, PRDCT-4261), so a
      * panel's own save never reloads the panel under the person's cursor.
      */
-    ifChanged: z.boolean().optional()
+    ifChanged: z.boolean().optional(),
+    /**
+     * With content: the file this was typed against is no longer the one on
+     * disk (the panel reloaded it from disk in between). The store records a
+     * conflict and keeps the edit, never writing it over the newer file.
+     */
+    stale: z.boolean().optional()
   })
   .strict()
   .refine((v) => !(v.signatureMode && v.signaturePath), 'Choose signatureMode or signaturePath')

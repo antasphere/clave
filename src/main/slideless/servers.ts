@@ -1,4 +1,5 @@
 import type { ChildProcess, SpawnOptions } from 'child_process'
+import { randomUUID } from 'crypto'
 import { existsSync, statSync } from 'fs'
 import { createServer } from 'net'
 import { isAbsolute, resolve } from 'path'
@@ -44,6 +45,16 @@ interface Running {
   holders: number
   /** Set by stop(): the exit that follows is ours, not a crash. */
   stopped: boolean
+  /** Set once the child printed its address: only a server that started can crash. */
+  started: boolean
+  /** Who holds this server, by lease: a release with another server's lease does nothing here. */
+  leases: Set<string>
+}
+
+export interface Served {
+  url: string
+  /** What the holder hands back to release: it names this server, not just the target. */
+  lease: string
 }
 
 const SNAPSHOT_TIMEOUT_MS = 30_000
@@ -82,16 +93,18 @@ export class ArtefactServers {
   constructor(private readonly deps: ServerDeps) {}
 
   /** Start (or join) the server of a target and answer its address. */
-  async serve(raw: string): Promise<string> {
+  async serve(raw: string): Promise<Served> {
     const target = artefactTarget(raw)
+    const lease = randomUUID()
     const existing = this.running.get(target)
     if (
       existing &&
       !existing.stopped &&
       (existing.child === null || existing.child.exitCode === null)
     ) {
+      existing.leases.add(lease)
       existing.holders++
-      return existing.url
+      return { url: await existing.url, lease }
     }
     const resolved = this.deps.resolveCli()
     if (!resolved.cli) throw new Error(resolved.reason)
@@ -103,7 +116,9 @@ export class ArtefactServers {
       child: null,
       url: Promise.resolve(''),
       holders: 1,
-      stopped: false
+      stopped: false,
+      started: false,
+      leases: new Set([lease])
     }
     entry.url = (async () => {
       const port = await freePort()
@@ -129,25 +144,34 @@ export class ArtefactServers {
       )
       entry.child = child
       child.once('exit', () => {
-        const crashed = !entry.stopped && entry.holders > 0
+        // Only a server that had started can crash: a child that fails while
+        // starting gave its holder the error already, and reporting it would
+        // start a CLI that cannot start again, forever.
+        const crashed = entry.started && !entry.stopped && entry.holders > 0
         if (this.running.get(target) === entry) this.running.delete(target)
         if (crashed) this.deps.onExit?.(target)
       })
-      return this.readAddress(child, target)
+      const url = await this.readAddress(child, target)
+      entry.started = true
+      return url
     })()
     this.running.set(target, entry)
     try {
-      return await entry.url
+      return { url: await entry.url, lease }
     } catch (err) {
       this.stop(entry)
       throw err
     }
   }
 
-  /** One holder lets go; the last one stops the server. */
-  release(raw: string): void {
+  /**
+   * One holder lets go, by the lease its serve answered; the last one stops
+   * the server. The lease of a server that is gone (it crashed, and another
+   * holder serves a new one) does nothing to the new one.
+   */
+  release(raw: string, lease: string): void {
     const entry = this.running.get(resolve(raw))
-    if (!entry) return
+    if (!entry || !entry.leases.delete(lease)) return
     entry.holders--
     if (entry.holders <= 0) this.stop(entry)
   }

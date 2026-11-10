@@ -1723,7 +1723,8 @@ const electronAPI = {
     install: () => ipcRenderer.invoke('slideless:install') as Promise<SlidelessState>,
     serve: (target: string) =>
       ipcRenderer.invoke('slideless:serve', target) as Promise<SlidelessServed>,
-    release: (target: string) => ipcRenderer.invoke('slideless:release', target) as Promise<void>,
+    release: (target: string, lease: string) =>
+      ipcRenderer.invoke('slideless:release', target, lease) as Promise<void>,
     snapshot: (target: string) =>
       ipcRenderer.invoke('slideless:snapshot', target) as Promise<SlidelessSnapshot>,
     onState: (callback: (state: SlidelessState) => void) =>

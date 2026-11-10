@@ -101,18 +101,18 @@ export function LinkedDocumentPanel({
         pending.current--
         return
       }
-      if (input.content !== undefined && reloads.current !== reloadsAtCall) {
-        // The file changed on disk while this was typed, and the panel took
-        // the new file: saving the old buffer would erase that change unseen.
-        pending.current--
-        setStatus('Reloaded: the file changed on disk while you typed')
-        return
-      }
+      // Typed before a reload from disk landed: the store keeps it as a
+      // conflict instead of writing it over the file the panel just took.
+      const stale = input.content !== undefined && reloads.current !== reloadsAtCall
       try {
         const saved = await window.electronAPI.linkedDocuments.update(
           current.current.id,
           current.current.revision,
-          emailPatch ? { ...input, email: { ...current.current.email!, ...emailPatch } } : input
+          emailPatch
+            ? { ...input, email: { ...current.current.email!, ...emailPatch } }
+            : stale
+              ? { ...input, stale: true }
+              : input
         )
         const before = current.current.revision
         current.current = saved

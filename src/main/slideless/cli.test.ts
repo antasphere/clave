@@ -229,3 +229,20 @@ describe('the managed Slideless CLI', () => {
     expect(installedVersion(dir)).toBe('0.14.0')
   })
 })
+
+describe('the registry read', () => {
+  it('gives up on a registry whose answer stalls', async () => {
+    const dir = tmp()
+    const stalled = (async (_input: string | URL, init?: RequestInit) =>
+      new Response(
+        new ReadableStream({
+          start(controller) {
+            init?.signal?.addEventListener('abort', () => controller.error(new Error('aborted')))
+          }
+        })
+      )) as typeof fetch
+    await expect(installSlideless(dir, { fetch: stalled, timeoutMs: 200 })).rejects.toThrow(
+      /did not answer in time/
+    )
+  })
+})

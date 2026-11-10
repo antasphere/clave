@@ -344,6 +344,12 @@ export class LinkedDocumentStore {
         doc.content = this.readText(doc.path!)
         doc.sourceHash = digest(doc.content)
         delete doc.conflict
+      } else if (input.content !== undefined && input.stale) {
+        // Typed against a file the panel has since reloaded: keep the edit
+        // in Clave and leave the newer file alone, as for any outside change.
+        doc.content = input.content
+        doc.conflict =
+          'The file changed on disk while you typed. Your edits are retained in Clave. Copy them before loading the file.'
       } else if (input.content !== undefined) {
         doc.content = input.content
         try {

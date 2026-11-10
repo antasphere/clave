@@ -15,6 +15,8 @@ export interface SlidelessState {
 export interface SlidelessServed {
   /** The local preview's address, `http://127.0.0.1:<port>/`. */
   url: string
+  /** Handed back to release: it names the server this caller holds. */
+  lease: string
 }
 
 export interface SlidelessSnapshot {
@@ -29,7 +31,7 @@ export interface SlidelessAPI {
   /** Serve an artefact (a folder, or one .html file) and answer its address; shared by every caller of the same target. */
   serve: (target: string) => Promise<SlidelessServed>
   /** Let go of a target served for this caller; the server stops with its last holder. */
-  release: (target: string) => Promise<void>
+  release: (target: string, lease: string) => Promise<void>
   /** Save a local version of a served target (nothing changed: no new version). */
   snapshot: (target: string) => Promise<SlidelessSnapshot>
   onState: (callback: (state: SlidelessState) => void) => () => void

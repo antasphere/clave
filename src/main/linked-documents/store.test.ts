@@ -382,3 +382,24 @@ describe('round 1 of the review (PRDCT-4261, PRDCT-4262)', () => {
     expect(backToFile.root).toBeUndefined()
   })
 })
+
+describe('round 2 of the review: a save typed before a reload landed', () => {
+  it('is kept as a conflict, never written over the file the panel reloaded', async () => {
+    const { root, store } = fixture()
+    const path = join(root, 'notes.md')
+    writeFileSync(path, '# one')
+    const doc = await store.open('s1', { path })
+    writeFileSync(path, '# the agent rewrote it')
+    const reloaded = await store.update(doc.id, doc.revision, {
+      reloadExternal: true,
+      ifChanged: true
+    })
+    const saved = await store.update(reloaded.id, reloaded.revision, {
+      content: '# one, and my key',
+      stale: true
+    })
+    expect(readFileSync(path, 'utf8')).toBe('# the agent rewrote it')
+    expect(saved.content).toBe('# one, and my key')
+    expect(saved.conflict).toMatch(/changed on disk while you typed/)
+  })
+})

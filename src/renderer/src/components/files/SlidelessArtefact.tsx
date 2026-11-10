@@ -4,6 +4,9 @@ import { initSlideless, useSlidelessStore } from '../../store/slideless-store'
 import { finishesTurn } from '../../lib/tab-status'
 import { HtmlPreviewFrame } from './HtmlPreviewFrame'
 
+/** How many times a minute a view serves again a server that died under it. */
+const RESTART_LIMIT = 3
+
 /**
  * An HTML artefact shown through Slideless (PRDCT-4262): main runs the
  * Slideless command line Clave installed (`slideless dev` on the folder, or on
@@ -34,12 +37,26 @@ export function SlidelessArtefact({
   const [served, setServed] = useState<{ target: string; url?: string; error?: string } | null>(
     null
   )
-  // Bumped when main reports this target's server gone: the effect serves again.
+  // Bumped when main reports this target's server gone: the effect serves
+  // again, at most RESTART_LIMIT times a minute, so a server that keeps dying
+  // ends with its error on screen rather than a loop.
   const [generation, setGeneration] = useState(0)
+  const restarts = useRef<number[]>([])
   useEffect(
     () =>
       window.electronAPI.slideless.onServerExited((exited) => {
-        if (exited === target) setGeneration((g) => g + 1)
+        if (exited !== target) return
+        const now = Date.now()
+        restarts.current = restarts.current.filter((t) => now - t < 60_000)
+        if (restarts.current.length >= RESTART_LIMIT) {
+          setServed({
+            target,
+            error: 'Slideless stopped again and again; reopen the panel to retry'
+          })
+          return
+        }
+        restarts.current.push(now)
+        setGeneration((g) => g + 1)
       }),
     [target]
   )
@@ -47,13 +64,13 @@ export function SlidelessArtefact({
   useEffect(() => {
     if (!ready) return
     let cancelled = false
-    let holding = false
+    let lease: string | null = null
     window.electronAPI.slideless
       .serve(target)
-      .then(({ url }) => {
-        holding = true
-        if (cancelled) void window.electronAPI.slideless.release(target)
-        else setServed({ target, url })
+      .then((served) => {
+        lease = served.lease
+        if (cancelled) void window.electronAPI.slideless.release(target, served.lease)
+        else setServed({ target, url: served.url })
       })
       .catch((err: unknown) => {
         if (!cancelled)
@@ -61,7 +78,9 @@ export function SlidelessArtefact({
       })
     return () => {
       cancelled = true
-      if (holding) void window.electronAPI.slideless.release(target)
+      // The lease names the server this view holds: after a crash it is the
+      // old one, and releasing it leaves another view's new server alone.
+      if (lease) void window.electronAPI.slideless.release(target, lease)
     }
   }, [ready, target, generation])
 

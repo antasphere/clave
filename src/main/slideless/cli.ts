@@ -120,14 +120,21 @@ interface RegistryLatest {
   integrity: string
 }
 
-async function fetchWithTimeout(
+/** A JSON answer under one timeout that covers its body: a stalled answer fails. */
+async function fetchJson(
   fetchImpl: typeof globalThis.fetch,
-  url: string
-): Promise<Response> {
+  url: string,
+  timeoutMs: number
+): Promise<{ status: number; body: unknown }> {
   const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
   try {
-    return await fetchImpl(url, { signal: controller.signal, redirect: 'follow' })
+    const res = await fetchImpl(url, { signal: controller.signal, redirect: 'follow' })
+    if (!res.ok) return { status: res.status, body: null }
+    return { status: res.status, body: await res.json() }
+  } catch (err) {
+    if (controller.signal.aborted) throw new Error('The registry did not answer in time')
+    throw err
   } finally {
     clearTimeout(timer)
   }
@@ -159,12 +166,14 @@ async function download(
 
 async function latest(deps: InstallDeps): Promise<RegistryLatest> {
   const registry = (deps.registry ?? DEFAULT_REGISTRY).replace(/\/+$/, '')
-  const res = await fetchWithTimeout(
+  const res = await fetchJson(
     deps.fetch,
-    `${registry}/${SLIDELESS_PACKAGE.replace('/', '%2f')}/latest`
+    `${registry}/${SLIDELESS_PACKAGE.replace('/', '%2f')}/latest`,
+    deps.timeoutMs ?? REQUEST_TIMEOUT_MS
   )
-  if (!res.ok) throw new Error(`The registry answered ${res.status} for ${SLIDELESS_PACKAGE}`)
-  const body = (await res.json()) as {
+  if (res.status !== 200 || res.body === null)
+    throw new Error(`The registry answered ${res.status} for ${SLIDELESS_PACKAGE}`)
+  const body = res.body as {
     version?: unknown
     dist?: { tarball?: unknown; integrity?: unknown }
   }

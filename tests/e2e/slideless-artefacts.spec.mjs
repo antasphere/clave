@@ -407,4 +407,71 @@ export async function run(t) {
   } finally {
     await app.close()
   }
+
+  // ── Part three: a command line that dies is served again a few times, then
+  // its error shows; one that cannot start is started once (round 2 of the
+  // review: a failing start used to be restarted forever).
+  const DIR3 = userDataDir('slideless-artefacts-dying')
+  const ROOT3 = fixturePath('slideless-artefacts-dying-root')
+  rmSync(ROOT3, { recursive: true, force: true })
+  mkdirSync(`${ROOT3}/deck`, { recursive: true })
+  writeFileSync(`${ROOT3}/deck/index.html`, '<h1>deck</h1>')
+  const fake = `${ROOT3}/fake-slideless.cjs`
+  const starts = `${ROOT3}/starts.log`
+  const mode = `${ROOT3}/mode.txt`
+  writeFileSync(
+    fake,
+    `const fs = require('fs'), http = require('http');
+fs.appendFileSync(${JSON.stringify(starts)}, 'start\\n');
+if (fs.readFileSync(${JSON.stringify(mode)}, 'utf8').trim() === 'fail') { console.error('Error: cannot start'); process.exit(1); }
+const a = process.argv.slice(2); const port = Number(a[a.indexOf('--port') + 1]);
+http.createServer((q, r) => { r.writeHead(200); r.end('<h1>fake</h1>'); }).listen(port, '127.0.0.1', () => {
+  console.log(JSON.stringify({ url: 'http://127.0.0.1:' + port + '/' }));
+  setTimeout(() => process.exit(3), 400);
+});`
+  )
+  writeFileSync(mode, 'die')
+  const WS3 = { ...WS, id: 'aaaa0000-0000-4000-8000-000000000433', rootDir: ROOT3 }
+  seedWorkspaces(DIR3, { workspaces: [WS3], activeWorkspaceId: WS3.id, fresh: true })
+  seedTrustedRoots(DIR3, [ROOT3])
+  ;({ app, win } = await launchApp(DIR3, {
+    server: 'in-process',
+    env: { CLAVE_TEST_SLIDELESS_REGISTRY: '', CLAVE_SLIDELESS_CLI: fake }
+  }))
+  const count = () =>
+    existsSync(starts) ? readFileSync(starts, 'utf8').split('\n').filter(Boolean).length : 0
+  try {
+    await fakeAgent(win, ROOT3, WS3.id)
+    const agent = await spawnAgentTabIn(app, win, DIR3)
+    const client = mcpHttpClient(mcpEndpoint(DIR3), agent.token)
+    await client.init()
+    await client.call('clave_open_side_panel', { path: `${ROOT3}/deck` })
+    await sleep(8000)
+    t.check('a server that died under the panel is served again', count() >= 2, count())
+    t.check('at most three times a minute', count() <= 4, count())
+    const notice = await win
+      .locator('[data-testid="linked-document-panel"] [role="alert"]')
+      .textContent()
+      .catch(() => '')
+    t.check(
+      'then the panel says it stopped again and again',
+      /stopped again and again/.test(notice ?? ''),
+      notice
+    )
+
+    writeFileSync(mode, 'fail')
+    rmSync(starts, { force: true })
+    mkdirSync(`${ROOT3}/other`, { recursive: true })
+    writeFileSync(`${ROOT3}/other/index.html`, '<h1>other</h1>')
+    await client.call('clave_open_side_panel', { path: `${ROOT3}/other` })
+    await sleep(5000)
+    t.equal('a command line that cannot start is started once, not again and again', count(), 1)
+    const failed = await win
+      .locator('[data-testid="linked-document-panel"] [role="alert"]')
+      .textContent()
+      .catch(() => '')
+    t.check('and its error shows', /cannot start/.test(failed ?? ''), failed)
+  } finally {
+    await app.close()
+  }
 }
