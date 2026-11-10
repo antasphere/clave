@@ -168,7 +168,19 @@ extension FixtureFlowTests {
       XCTFail("the sign-in consent alert never showed; springboard showed: \(visibleElements(springboard))")
       return
     }
-    proceed.tap()
+    // The button exists while the alert is still animating in, and a tap then is dropped: the alert
+    // stays and the sign-in never starts. Tap again while it stays, three taps at most.
+    let gone = NSPredicate(format: "exists == false")
+    var dismissed = false
+    for _ in 0..<3 where !dismissed {
+      proceed.tap()
+      dismissed =
+        XCTWaiter().wait(for: [XCTNSPredicateExpectation(predicate: gone, object: proceed)], timeout: 5) == .completed
+    }
+    if !dismissed {
+      XCTFail("the sign-in consent alert stayed after three taps on Continue; springboard showed: \(visibleElements(springboard))")
+      return
+    }
 
     XCTAssertTrue(name.waitForExistence(timeout: 30), "the account never showed after the sign-in")
     expectLabel(of: name, containing: "Fixture Owner", timeout: 5)
@@ -271,11 +283,14 @@ extension FixtureFlowTests {
       .firstMatch
   }
 
+  /// A turn by its identifier's prefix and its words: the person's turn is one element whose label
+  /// holds them, the agent's a group of its drawn blocks with no label of its own, one of which holds
+  /// them (ChatFlowTests reads the turns the same way).
   @MainActor
   private func chatElement(_ app: XCUIApplication, prefix: String, containing text: String) -> XCUIElement {
-    app.descendants(matching: .any)
-      .matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label CONTAINS %@", prefix, text))
-      .firstMatch
+    let words = NSPredicate(format: "label CONTAINS %@", text)
+    let turns = app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH %@", prefix))
+    return prefix == "chat.assistant." ? turns.containing(words).firstMatch : turns.matching(words).firstMatch
   }
 
   @MainActor
