@@ -105,15 +105,16 @@ class AppEvidenceTest {
 
     // ── the flow test's helpers ──
 
-    private fun waitForText(text: String, substring: Boolean = false, timeoutMs: Long = EVIDENCE_WAIT_MS) = rule.waitUntil(timeoutMs) {
+    // Each wait names what it waits for, so a timeout says which step did not come.
+    private fun waitForText(text: String, substring: Boolean = false, timeoutMs: Long = EVIDENCE_WAIT_MS) = rule.waitUntil("the text \"$text\" on screen", timeoutMs) {
         rule.onAllNodesWithText(text, substring = substring).fetchSemanticsNodes().isNotEmpty()
     }
 
-    private fun waitForNoText(text: String, timeoutMs: Long = EVIDENCE_WAIT_MS) = rule.waitUntil(timeoutMs) {
+    private fun waitForNoText(text: String, timeoutMs: Long = EVIDENCE_WAIT_MS) = rule.waitUntil("the text \"$text\" gone", timeoutMs) {
         rule.onAllNodesWithText(text).fetchSemanticsNodes().isEmpty()
     }
 
-    private fun waitForDescription(description: String, timeoutMs: Long = EVIDENCE_WAIT_MS) = rule.waitUntil(timeoutMs) {
+    private fun waitForDescription(description: String, timeoutMs: Long = EVIDENCE_WAIT_MS) = rule.waitUntil("the element \"$description\" on screen", timeoutMs) {
         rule.onAllNodesWithContentDescription(description).fetchSemanticsNodes().isNotEmpty()
     }
 
@@ -322,6 +323,8 @@ class AppEvidenceTest {
         server.failWrites = false
         rule.onNodeWithContentDescription("Message").performTextInput("now it lands")
         rule.onNodeWithContentDescription("Send message").performClick()
+        // The stand-in answers the follow-up with "pong" once its write is accepted: the reply on
+        // screen is what shows the next send landed.
         waitForText("pong")
         rule.waitForIdle()
         assertEquals("the next send is one more write: ${requests("POST /sessions/write").map { it.body }}", 2, requests("POST /sessions/write").size)
