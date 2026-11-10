@@ -76,6 +76,11 @@ nonisolated struct NotificationResponseInput: Sendable {
   /// The connection being made for a machine, at most one at a time: a caller arriving meanwhile
   /// waits for it rather than making a second one that would replace it.
   @ObservationIgnored private var connecting: [String: Task<MachineConnection?, Never>] = [:]
+  /// Each machine's delivery parts by owner, kept for the app's life: a connection made again for a
+  /// machine (after the same owner signs in again, or in place of an unpaired one) works through the
+  /// controller and ledger the actions of the one before may still be using, so no two ledgers ever
+  /// write one machine's key.
+  @ObservationIgnored private var deliveryParts: [String: MachineConnection.DeliveryParts] = [:]
   @ObservationIgnored private var starting = false
   @ObservationIgnored private var started = false
   @ObservationIgnored private var askedForRemoteNotifications = false
@@ -249,9 +254,13 @@ nonisolated struct NotificationResponseInput: Sendable {
     let row = machines.row(machineId)
     var record = row?.record
     if record == nil { record = try? await machines.records.get(machineId) }
+    let partsKey = "\(owner.namespace)/\(machineId)"
+    let parts = deliveryParts[partsKey] ?? MachineConnection.DeliveryParts(machineId: machineId, store: owner)
+    deliveryParts[partsKey] = parts
     guard let connection = try? MachineConnection(
       machineId: machineId, credential: credential, machine: row?.machine, record: record,
-      environment: environment, credentials: machines.credentials, records: machines.records, ownerKeyValueStore: owner)
+      environment: environment, credentials: machines.credentials, records: machines.records, ownerKeyValueStore: owner,
+      deliveryParts: parts)
     else { return nil }
     connection.onUnpaired = { [weak self] _ in
       Task { await self?.machines?.refresh() }

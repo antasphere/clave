@@ -33,6 +33,22 @@ import Observation
   let drafts: Drafts
   let attachmentDrafts: AttachmentDrafts
 
+  /// One machine's delivery parts over its owner's store: the controller, with the ledger, the
+  /// marks, the drafts and the attachment drafts it settles.
+  struct DeliveryParts {
+    let delivery: DeliveryController
+    let drafts: Drafts
+    let attachmentDrafts: AttachmentDrafts
+
+    init(machineId: String, store: OwnerScopedKeyValueStore) {
+      drafts = Drafts(store: store)
+      attachmentDrafts = AttachmentDrafts(store: store)
+      delivery = DeliveryController(
+        sends: UnknownSends(store: store, machineId: machineId), marks: DeliveryMarks(store: store), drafts: drafts,
+        attachmentDrafts: attachmentDrafts)
+    }
+  }
+
   private(set) var state: State = .connecting
   private(set) var workspaces: WorkspaceStateView?
   private(set) var sessions: [Session] = []
@@ -60,12 +76,12 @@ import Observation
   @ObservationIgnored private var sawDisconnect = false
   @ObservationIgnored private var requestsRevision: Double = -1
 
-  /// A connection over `credential`; throws `TransportPolicyError` when this
-  /// build sends no credential to its address.
+  /// A connection over `credential`, through `deliveryParts` when given (else parts of its own);
+  /// throws `TransportPolicyError` when this build sends no credential to its address.
   init(
     machineId: String, credential: Credential, machine: Machine?, record: EnrollmentRecord?,
     environment: AppEnvironment, credentials: any CredentialStore, records: EnrollmentRecords,
-    ownerKeyValueStore: OwnerScopedKeyValueStore
+    ownerKeyValueStore: OwnerScopedKeyValueStore, deliveryParts: DeliveryParts? = nil
   ) throws {
     self.machineId = machineId
     self.machine = machine
@@ -73,12 +89,10 @@ import Observation
     self.credentials = credentials
     self.records = records
     self.ownerKeyValueStore = ownerKeyValueStore
-    drafts = Drafts(store: ownerKeyValueStore)
-    attachmentDrafts = AttachmentDrafts(store: ownerKeyValueStore)
-    delivery = DeliveryController(
-      sends: UnknownSends(store: ownerKeyValueStore, machineId: machineId), marks: DeliveryMarks(store: ownerKeyValueStore),
-      drafts: drafts,
-      attachmentDrafts: attachmentDrafts)
+    let parts = deliveryParts ?? DeliveryParts(machineId: machineId, store: ownerKeyValueStore)
+    drafts = parts.drafts
+    attachmentDrafts = parts.attachmentDrafts
+    delivery = parts.delivery
     client = try ClaveServerClient(credential: credential, transport: environment.transport, build: environment.buildKind)
     let bearer = credential.bearer
     push = try PushClient(

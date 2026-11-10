@@ -80,6 +80,51 @@ final class HeldSessionReadTransport: HTTPTransport, @unchecked Sendable {
   }
 }
 
+/// The app's key-value store in memory that, once told, holds the first read of one machine's
+/// ledger made after a conversation's mark was cleared, after the value was read: the read inside a
+/// Discard's removal of its record, between its read and its write.
+actor TakeOutHoldingStore: KeyValueStore {
+  private let inner = InMemoryKeyValueStore()
+  private var markSuffix: String?
+  private var ledgerSuffix: String?
+  private var markCleared = false
+  private var held: [CheckedContinuation<Void, Never>] = []
+
+  /// Holds the first read of a key ending with `ledger` once a key ending with `mark` was removed.
+  func holdTheLedgerReadAfterTheMarkIsCleared(mark: String, ledger: String) {
+    markSuffix = mark
+    ledgerSuffix = ledger
+    markCleared = false
+  }
+
+  /// How many reads wait.
+  var waiting: Int { held.count }
+  /// Lets the waiting reads go on.
+  func release() {
+    let waiting = held
+    held = []
+    for read in waiting { read.resume() }
+  }
+
+  func get(_ key: String) async throws -> String? {
+    let value = try await inner.get(key)
+    if markCleared, let ledgerSuffix, key.hasSuffix(ledgerSuffix) {
+      self.ledgerSuffix = nil
+      markSuffix = nil
+      markCleared = false
+      await withCheckedContinuation { held.append($0) }
+    }
+    return value
+  }
+
+  func set(_ key: String, _ value: String) async throws { try await inner.set(key, value) }
+
+  func remove(_ key: String) async throws {
+    try await inner.remove(key)
+    if let markSuffix, key.hasSuffix(markSuffix) { markCleared = true }
+  }
+}
+
 @MainActor
 final class ConversationWiringTests: XCTestCase {
   private var apps: [AppModel] = []
@@ -107,10 +152,10 @@ final class ConversationWiringTests: XCTestCase {
   private func signedInApp(
     server: UITestFakeServer = UITestFakeServer(),
     secure: any SecureStore = InMemorySecureStore(),
+    kv: any KeyValueStore = InMemoryKeyValueStore(),
     transport: (any HTTPTransport)? = nil,
     keepRecord: Bool = true
   ) async throws -> AppModel {
-    let kv = InMemoryKeyValueStore()
     let defaults = UserDefaults(suiteName: "clave.conversation-wiring-tests")!
     defaults.removePersistentDomain(forName: "clave.conversation-wiring-tests")
     let environment = AppEnvironment(
@@ -211,5 +256,47 @@ final class ConversationWiringTests: XCTestCase {
     XCTAssertNotNil(a, "the first call made no conversation")
     XCTAssertTrue(a === b, "both callers get the same model")
     XCTAssertTrue(a?.delivery === connection.delivery)
+  }
+
+  /// Addendum 3: a Discard made in the first sign-in is still taking its send out of the ledger,
+  /// held between its read and its write, while the same owner signs out and in again and the new
+  /// connection of the machine records a new send. The two must not write one machine's ledger past
+  /// each other: the discarded send leaves and the new send's record stays.
+  func testAnOldDiscardStillWritingWhenTheSameOwnerSignsInAgainLosesNoRecord() async throws {
+    let kv = TakeOutHoldingStore()
+    let app = try await signedInApp(kv: kv)
+    let namespace = try XCTUnwrap(app.account.ownerNamespace)
+    let machine = UITestFakeServer.machineId
+    let made = await app.connection(for: machine)
+    let first = try XCTUnwrap(made, "the app made no connection")
+    let old = UnknownSend(
+      machineId: machine, sessionId: UITestFakeServer.sessionId, clientMessageId: "m-old-discard-00000000000",
+      text: "Discarded in the first sign-in.", at: 1)
+    try await first.delivery.begin(old)
+    try await first.delivery.finish(old, .unknown(clientMessageId: old.clientMessageId, reason: "Delivery has not been confirmed."))
+    await kv.holdTheLedgerReadAfterTheMarkIsCleared(
+      mark: ":\(deliveryMarkKey(machine, UITestFakeServer.sessionId))", ledger: ":\(UnknownSends.key(for: machine))")
+    let discard = Task {
+      try await first.delivery.discardPending(
+        machineId: machine, sessionId: UITestFakeServer.sessionId, clientMessageId: old.clientMessageId, choice: .discard)
+    }
+    await eventually("the Discard holds between its read of the ledger and its write") { await kv.waiting == 1 }
+    await app.account.signOut()
+    await app.account.signIn()
+    XCTAssertEqual(app.account.ownerNamespace, namespace, "the same owner")
+    let remade = await app.connection(for: machine)
+    let again = try XCTUnwrap(remade, "no connection after signing in again")
+    XCTAssertFalse(again === first, "a new connection")
+    let new = UnknownSend(
+      machineId: machine, sessionId: "s_working", clientMessageId: "m-new-send-000000000000000",
+      text: "Sent after signing in again.", at: 2)
+    let recording = Task { try await again.delivery.begin(new) }
+    // The new send's record is written, or waits for the Discard ahead of it.
+    try await Task.sleep(nanoseconds: 300_000_000)
+    await kv.release()
+    _ = try await discard.value
+    try await recording.value
+    let ledger = try await UnknownSends(store: OwnerScopedKeyValueStore(base: kv, namespace: namespace), machineId: machine).list()
+    XCTAssertEqual(ledger.map(\.clientMessageId), [new.clientMessageId], "the discarded send left and the new send's record stays")
   }
 }
