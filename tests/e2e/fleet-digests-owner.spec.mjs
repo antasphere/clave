@@ -40,6 +40,30 @@ const exchange = (tag) => [
   { type: 'assistant_text', delta: 'Waiting.', final: true }
 ]
 const REPLY = JSON.stringify({ needs_you: true, message: 2, summary: 'Read on {account}.' })
+const WORK_REPLY = JSON.stringify({ title: 'Titled on {account}', needs_you: false, note: null })
+
+// A turn of working notes (three, the fold's minimum, `MIN_NOTES`) that
+// folds into one work card once it is over.
+let calls = 0
+const tool = () => {
+  const id = `wd-${++calls}`
+  return [
+    { type: 'tool_call', id, name: 'Bash', input: { command: `cmd ${id}` } },
+    { type: 'tool_result', id, output: 'ok' }
+  ]
+}
+const turn = (tag) => [
+  { type: 'state_change', state: 'working' },
+  { type: 'user_message', text: `work ${tag}` },
+  { type: 'assistant_text', delta: `First note of ${tag}: reading the code.`, final: true },
+  ...tool(),
+  { type: 'assistant_text', delta: `Second note of ${tag}: the fix is in.`, final: true },
+  ...tool(),
+  { type: 'assistant_text', delta: `Third note of ${tag}: the tests pass.`, final: true },
+  ...tool(),
+  { type: 'assistant_text', delta: `Done with ${tag}.`, final: true },
+  { type: 'state_change', state: 'idle' }
+]
 
 const inject = (server, id, events) =>
   server.fixture.evaluate(
@@ -48,10 +72,13 @@ const inject = (server, id, events) =>
     },
     { id, events }
   )
-const setReply = (server, reply) =>
-  server.fixture.evaluate((reply) => {
-    process.env.CLAVE_E2E_DIGEST_REPLY = reply
-  }, reply)
+const setReply = (server, reply, name = 'CLAVE_E2E_DIGEST_REPLY') =>
+  server.fixture.evaluate(
+    ({ reply, name }) => {
+      process.env[name] = reply
+    },
+    { reply, name }
+  )
 
 async function openTab(mac, key) {
   await showServer(mac, 0)
@@ -64,7 +91,7 @@ async function openTab(mac, key) {
 export async function run(t) {
   const world = await fleetWorld('digests-owner', {
     count: 1,
-    env: { CLAVE_E2E_DIGEST_REPLY: REPLY }
+    env: { CLAVE_E2E_DIGEST_REPLY: REPLY, CLAVE_E2E_WORK_DIGEST_REPLY: WORK_REPLY }
   })
   try {
     const [server] = world.servers
@@ -115,6 +142,30 @@ export async function run(t) {
     const onMac = existsSync(macFile) ? Object.keys(JSON.parse(readFileSync(macFile, 'utf8'))) : []
     t.check('nothing of it is filed on the Mac', onMac.length === 0, onMac)
 
+    // ── A work card on the server tab: titled by the server, on the tab's account ──
+    await inject(server, started.id, turn('one'))
+    const cardA = chatA.locator('.work-stretch').first()
+    await cardA.waitFor()
+    await eventually(
+      async () => ['done', 'failed'].includes(await cardA.getAttribute('data-digest')),
+      'the first work card is titled'
+    )
+    const titleA = await cardA.locator('.stretch-title-words').innerText()
+    t.check(
+      "a server tab's work card is titled by its server on the tab's named server account",
+      (await cardA.getAttribute('data-digest')) === 'done' && titleA === `Titled on ${account.id}`,
+      { titleA }
+    )
+    const workFiled = await request(
+      server,
+      `/digests/work-of?sessionId=${encodeURIComponent(started.id)}`
+    )
+    t.check(
+      'the title is filed on the server under the tab it was asked for',
+      Object.values(workFiled).some((d) => d.title === `Titled on ${account.id}`),
+      workFiled
+    )
+
     // ── Mac B: a second client reads the same digest, found filed ──
     const b = await world.mac('b')
     await connectMac(b, world.servers, { ui: false })
@@ -134,6 +185,21 @@ export async function run(t) {
       'a second client of the server reads the same digest, found filed rather than read again',
       shownB.text === `Read on ${account.id}.` && shownB.fresh === null,
       shownB
+    )
+    const cardB = chatB.locator('.work-stretch').first()
+    await cardB.waitFor()
+    await eventually(
+      async () => (await cardB.getAttribute('data-digest')) === 'done',
+      'the second Mac shows the work card titled'
+    )
+    const workB = {
+      title: await cardB.locator('.stretch-title-words').innerText(),
+      fresh: await cardB.getAttribute('data-digest-fresh')
+    }
+    t.check(
+      'a second client finds the work card title filed rather than read again',
+      workB.title === `Titled on ${account.id}` && workB.fresh === null,
+      workB
     )
     await b.close()
 
@@ -163,6 +229,37 @@ export async function run(t) {
       'Ask again reads the failed digest on the server',
       (await second.locator('.exchange-digest-text').innerText()) === `Read on ${account.id}.` &&
         (await second.locator('.digest-unread').count()) === 0,
+      true
+    )
+
+    // ── A work card whose title could not be read says so, and Ask again titles it ──
+    await setReply(server, 'E2E_FAIL:limit', 'CLAVE_E2E_WORK_DIGEST_REPLY')
+    await inject(server, started.id, turn('two'))
+    const cards = chatA.locator('.work-stretch')
+    await eventually(async () => (await cards.count()) >= 2, 'the second work card is drawn')
+    const failedCard = cards.last()
+    await eventually(
+      async () => (await failedCard.getAttribute('data-digest')) === 'failed',
+      'the second work card fails to be titled'
+    )
+    const workLine = await failedCard.locator('.digest-unread-words').innerText()
+    t.check(
+      'a work card that could not be titled says why in one line',
+      workLine === 'No title: this account is at its limit.',
+      { workLine }
+    )
+    await setReply(server, WORK_REPLY, 'CLAVE_E2E_WORK_DIGEST_REPLY')
+    await failedCard.getByRole('button', { name: 'Ask again', exact: true }).click()
+    await eventually(
+      async () => (await failedCard.getAttribute('data-digest')) === 'done',
+      'Ask again titles the work card'
+    )
+    t.check(
+      'Ask again on a work card titles it on the server, and the card stays as it was (closed)',
+      (await failedCard.locator('.stretch-title-words').innerText()) ===
+        `Titled on ${account.id}` &&
+        (await failedCard.locator('.digest-unread').count()) === 0 &&
+        !(await failedCard.locator('details.stretch-card').evaluate((el) => el.open)),
       true
     )
     assert.deepEqual(a.errors, [])
