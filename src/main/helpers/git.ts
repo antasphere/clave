@@ -87,7 +87,9 @@ export const commitMessageHelper = defineHelper<CommitMessageInput, string>({
   timeoutMs: GIT_TIMEOUT_MS,
   // A person is waiting on the panel's button.
   priority: 80,
-  attempts: 2
+  // One retry after any failure, a timeout included, as before the helpers.
+  attempts: 2,
+  retryAnyFailure: true
 })
 
 export interface PushSummaryInput {
@@ -142,5 +144,7 @@ export const pushSummaryHelper = defineHelper<
   fallbackModel: 'sonnet',
   timeoutMs: GIT_TIMEOUT_MS,
   priority: 40,
-  attempts: 2
+  // One retry after any failure, a timeout included, as before the helpers.
+  attempts: 2,
+  retryAnyFailure: true
 })

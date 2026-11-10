@@ -41,6 +41,7 @@ import {
   cancelAll,
   cancelQueued,
   classifyFailure,
+  cliNotice,
   helperCliArgs,
   queuedHelpers,
   resetShutdownForTests,
@@ -57,6 +58,9 @@ import {
   setHelperConfigSource,
   type HelperDefinition
 } from './registry'
+import { exchangeDigestHelper, workDigestHelper } from './digests'
+import { titleHelper } from './title'
+import { commitMessageHelper, pushSummaryHelper } from './git'
 
 let sequence = 0
 function helper(
@@ -223,10 +227,10 @@ describe('the CLI a helper runs', () => {
 })
 
 describe('the queue', () => {
-  it(`runs at most ${MAX_RUNNING_HELPERS} at once, then the highest priority, oldest first among equals`, async () => {
-    const low = helper({ priority: 1 })
-    const mid = helper({ priority: 50 })
-    const high = helper({ priority: 90 })
+  it(`runs at most ${MAX_RUNNING_HELPERS} background helpers at once, then the highest priority, oldest first among equals`, async () => {
+    const low = helper({ priority: 1, background: true })
+    const mid = helper({ priority: 50, background: true })
+    const high = helper({ priority: 90, background: true })
     for (let i = 0; i < MAX_RUNNING_HELPERS; i++) void runHelper(low, `busy-${i}`)
     void runHelper(low, 'low-late')
     void runHelper(mid, 'mid-first')
@@ -279,6 +283,112 @@ describe('the queue', () => {
   })
 })
 
+describe('the digests and the helpers a person waits on', () => {
+  const json = '{"needs_you": false, "message": null, "summary": "Nothing for you."}'
+
+  it('exchange digests and work-card titles TOGETHER never run more than two at once', async () => {
+    const message = [{ from: 'a', text: 'b' }]
+    for (let i = 0; i < 3; i++) void runHelper(exchangeDigestHelper, message)
+    for (let i = 0; i < 2; i++) void runHelper(workDigestHelper, { notes: ['n'], tools: 1 })
+    await ticks()
+    expect(mocks.spawned).toHaveLength(2)
+    mocks.spawned[0].finish(null, json, '')
+    await ticks()
+    expect(mocks.spawned).toHaveLength(3)
+    expect(runningHelpers()).toBe(2)
+  })
+
+  it('inside the pool, digests start in the order they were asked, whatever their priority', async () => {
+    const message = [{ from: 'a', text: 'b' }]
+    // The pool full with two exchange digests; then a work card waits first.
+    void runHelper(exchangeDigestHelper, message)
+    void runHelper(exchangeDigestHelper, message)
+    void runHelper(workDigestHelper, { notes: ['first asked'], tools: 1 })
+    void runHelper(exchangeDigestHelper, [{ from: 'c', text: 'asked later' }])
+    await ticks()
+    expect(mocks.spawned).toHaveLength(2)
+    mocks.spawned[0].finish(null, json, '')
+    await ticks()
+    expect(mocks.spawned[2].prompt).toContain('first asked')
+    expect(queuedHelpers()).toEqual(['exchange-digest'])
+  })
+
+  it('outside a shared pool, priority still decides', async () => {
+    const low = helper({ priority: 1, concurrency: 1, pool: { id: 'p-low', concurrency: 1 } })
+    const high = helper({ priority: 9, concurrency: 1, pool: { id: 'p-high', concurrency: 1 } })
+    const gate = helper({ background: true })
+    for (let i = 0; i < MAX_RUNNING_HELPERS; i++) void runHelper(gate, `busy-${i}`)
+    void runHelper({ ...low, background: true }, 'low')
+    void runHelper({ ...high, background: true }, 'high')
+    await ticks()
+    mocks.spawned[0].finish(null, 'ok', '')
+    await ticks()
+    expect(mocks.spawned[MAX_RUNNING_HELPERS].prompt).toBe('PROMPT high')
+  })
+
+  it('a title, a git call and a prompt a person waits on never wait behind the digests', async () => {
+    const message = [{ from: 'a', text: 'b' }]
+    // The background cap full: two digests and another background helper.
+    void runHelper(exchangeDigestHelper, message)
+    void runHelper(workDigestHelper, { notes: ['n'], tools: 1 })
+    void runHelper(helper({ background: true }), 'filler')
+    void runHelper(exchangeDigestHelper, message)
+    await ticks()
+    expect(mocks.spawned).toHaveLength(MAX_RUNNING_HELPERS)
+    const explainer = helper({ priority: 100 })
+    void runHelper(titleHelper, 'please name this tab from its first message')
+    void runHelper(commitMessageHelper, { diff: '+x', recent: '' })
+    void runHelper(pushSummaryHelper, { commitMessages: ['feat: x'], diffStats: '' })
+    void runHelper(explainer, 'what does this permission do')
+    await ticks()
+    expect(mocks.spawned).toHaveLength(MAX_RUNNING_HELPERS + 4)
+    expect(queuedHelpers()).toEqual(['exchange-digest'])
+  })
+
+  it('a digest that cannot be read is tried ONCE', async () => {
+    const done = runHelper(exchangeDigestHelper, [{ from: 'a', text: 'b' }])
+    await ticks()
+    mocks.spawned[0].finish(null, 'not json at all', '')
+    await expect(done).resolves.toMatchObject({ ok: false, reason: 'unreadable' })
+    const work = runHelper(workDigestHelper, { notes: ['n'], tools: 1 })
+    await ticks()
+    mocks.spawned[1].finish(new Error('boom'), '', 'boom')
+    await expect(work).resolves.toMatchObject({ ok: false, reason: 'failed' })
+    expect(mocks.spawned).toHaveLength(2)
+  })
+})
+
+describe('the git helpers retry once after any failure (as on dev)', () => {
+  it.each([
+    ['a timeout', Object.assign(new Error('Command failed'), { killed: true }), ''],
+    ['a limit', Object.assign(new Error('Command failed'), { code: 1 }), 'API Error: 429'],
+    ['a refusal', Object.assign(new Error('Command failed'), { code: 1 }), 'Not logged in']
+  ])('the commit message and the push summary retry after %s', async (_what, err, stderr) => {
+    const commit = runHelper(commitMessageHelper, { diff: '+x', recent: '' })
+    await ticks()
+    mocks.spawned[0].finish(err, '', stderr)
+    await ticks()
+    expect(mocks.spawned).toHaveLength(2)
+    mocks.spawned[1].finish(null, 'feat: x', '')
+    await expect(commit).resolves.toMatchObject({ ok: true, value: 'feat: x', attempts: 2 })
+    const push = runHelper(pushSummaryHelper, { commitMessages: ['feat: x'], diffStats: '' })
+    await ticks()
+    mocks.spawned[2].finish(err, '', stderr)
+    await ticks()
+    expect(mocks.spawned).toHaveLength(4)
+    mocks.spawned[3].finish(null, 'Title\nWhy.', '')
+    await expect(push).resolves.toMatchObject({ ok: true, attempts: 2 })
+  })
+
+  it('a title does not retry a timeout', async () => {
+    const done = runHelper(titleHelper, 'please name this tab from its first message')
+    await ticks()
+    mocks.spawned[0].finish(Object.assign(new Error('Command failed'), { killed: true }), '', '')
+    await expect(done).resolves.toMatchObject({ ok: false, reason: 'timeout' })
+    expect(mocks.spawned).toHaveLength(1)
+  })
+})
+
 describe('a reply that is not the asked shape', () => {
   it('is tried again as many times as the helper asks, then reported unreadable', async () => {
     const h = helper({ attempts: 2 })
@@ -311,6 +421,85 @@ describe('a reply that is not the asked shape', () => {
     await ticks()
     mocks.spawned[0].finish(null, 'Claude AI usage limit reached|1762794000', '')
     await expect(done).resolves.toMatchObject({ ok: false, reason: 'limit' })
+    expect(mocks.spawned).toHaveLength(1)
+  })
+})
+
+describe('an answer about limits or auth is not the CLI saying so', () => {
+  it.each([
+    'The usage limit check skips a token\nwhen the account was refreshed, so the cap never shows.',
+    'The 401 comes from the refresh path.\nIt retries with the stale OAuth token before reading the new one.',
+    'Here are the steps:\n1. fix the quota display\n2. add a test',
+    'Usage limit handling: three cases\n1. the 5-hour limit reached\n2. the weekly one',
+    'API errors (401, 429) are retried\nonce, then the card says so.'
+  ])('%j is unreadable and retried', async (reply) => {
+    const h = helper({ attempts: 2 })
+    const done = runHelper(h, 'x')
+    await ticks()
+    mocks.spawned[0].finish(null, reply, '')
+    await ticks()
+    expect(mocks.spawned).toHaveLength(2)
+    mocks.spawned[1].finish(null, reply, '')
+    await expect(done).resolves.toMatchObject({ ok: false, reason: 'unreadable' })
+  })
+
+  it("the CLI's own notices, as the whole reply, are still a limit or a refusal", () => {
+    expect(cliNotice('Claude AI usage limit reached|1762794000')).toBe('limit')
+    expect(cliNotice("You've hit your limit · resets 5pm (Europe/Brussels)")).toBe('limit')
+    expect(cliNotice('5-hour limit reached ∙ resets 3am')).toBe('limit')
+    expect(cliNotice('API Error: 429 {"type":"rate_limit_error"}')).toBe('limit')
+    expect(cliNotice('Invalid API key · Please run /login')).toBe('auth')
+    expect(cliNotice('OAuth token has expired. Please run /login')).toBe('auth')
+    expect(cliNotice('API Error: 401 {"type":"authentication_error"}')).toBe('auth')
+    expect(cliNotice('fix quota display')).toBeNull()
+  })
+})
+
+describe("the CLI's notices, however they are printed", () => {
+  it.each([
+    ['Failed to authenticate. API Error: 401 OAuth access token is invalid.', 'auth'],
+    [
+      `API Error: 429 ${JSON.stringify({ type: 'error', error: { type: 'rate_limit_error', message: 'x'.repeat(300) } })}`,
+      'limit'
+    ],
+    ['Claude usage limit reached. Your limit will reset at 5pm (Europe/Brussels).', 'limit'],
+    [
+      '5-hour limit reached ∙ resets 3am\n\n/upgrade to increase your usage limit.\nOr wait.',
+      'limit'
+    ]
+  ])('%j is recognised by how it opens', (reply, reason) => {
+    expect(cliNotice(reply)).toBe(reason)
+  })
+
+  it.each([
+    'Usage limit handling: three cases',
+    'API errors (401, 429) are retried',
+    'The usage limit check skips a token',
+    'The 401 comes from the refresh path.',
+    'Here are the steps:'
+  ])('%j is no notice', (reply) => {
+    expect(cliNotice(reply)).toBeNull()
+  })
+
+  it('a long notice on stdout with exit 0 is a limit, not retried', async () => {
+    const h = helper({ attempts: 2 })
+    const done = runHelper(h, 'x')
+    await ticks()
+    mocks.spawned[0].finish(null, '5-hour limit reached ∙ resets 3am\n\n/upgrade\nmore', '')
+    await expect(done).resolves.toMatchObject({ ok: false, reason: 'limit' })
+    expect(mocks.spawned).toHaveLength(1)
+  })
+
+  it('a notice on stderr alone with exit 0 is read too', async () => {
+    const h = helper({ attempts: 2 })
+    const done = runHelper(h, 'x')
+    await ticks()
+    mocks.spawned[0].finish(
+      null,
+      '',
+      'Failed to authenticate. API Error: 401 OAuth access token is invalid.'
+    )
+    await expect(done).resolves.toMatchObject({ ok: false, reason: 'auth' })
     expect(mocks.spawned).toHaveLength(1)
   })
 })
@@ -373,7 +562,7 @@ describe('the quit ends every helper (PRDCT-3375)', () => {
   it('cancelAll signals every running CLI, refuses the queued, and drops a late answer', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
     try {
-      const h = helper({ attempts: 2 })
+      const h = helper({ attempts: 2, background: true })
       const running = [runHelper(h, 'a'), runHelper(h, 'b'), runHelper(h, 'c')]
       const queued = runHelper(h, 'd')
       await vi.waitFor(() => expect(mocks.spawned).toHaveLength(3))
@@ -394,6 +583,20 @@ describe('the quit ends every helper (PRDCT-3375)', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+
+  it('a job waiting for its account token when cancelAll runs spawns nothing', async () => {
+    let release!: (token: string) => void
+    mocks.getToken.mockImplementationOnce(
+      () => new Promise<string>((resolve) => (release = resolve)) as unknown as string
+    )
+    const done = runHelper(helper(), 'x', { claudeProfileId: 'slow' })
+    await ticks()
+    expect(release).toBeTypeOf('function')
+    cancelAll()
+    release('sk-ant-oat01-slow')
+    await expect(done).resolves.toMatchObject({ ok: false, reason: 'cancelled' })
+    expect(mocks.execFile).not.toHaveBeenCalled()
   })
 
   it('cancelAll leaves the door open; shutdown shuts it', async () => {

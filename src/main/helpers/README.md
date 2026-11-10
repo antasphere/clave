@@ -29,7 +29,10 @@ export const myHelper = defineHelper<Input, Output>({
   timeoutMs: 30_000,
   priority: 50,                // higher runs first
   concurrency: 1,              // optional: at most this many of it at once
-  attempts: 2                  // optional: one retry on an unreadable or failed reply
+  pool: { id: 'x', concurrency: 2 }, // optional: a cap shared with other helpers
+  background: true,            // optional: nobody waits on it (counts against MAX_RUNNING_HELPERS)
+  attempts: 2,                 // optional: one retry on an unreadable or failed reply
+  retryAnyFailure: true        // optional: retry after a timeout, a limit or a refusal too
 })
 const outcome = await runHelper(myHelper, input, launchContext, { owner: sessionId })
 ```
@@ -37,6 +40,11 @@ const outcome = await runHelper(myHelper, input, launchContext, { owner: session
 Nothing in the runner changes for a new helper. Priorities today: permission explainer
 100 (`explainer.ts`; a person is waiting on the card, PRDCT-4331), commit message 80, tab title 70, push
 summary 40, exchange digest 30, work digest 20.
+
+Only `background` helpers (the two digests) count against `MAX_RUNNING_HELPERS`, and the
+two digests share the pool `digests` of two: a title, a git call or a prompt a person
+waits on never waits behind a digest. Digests run one attempt; titles one retry on an
+unreadable reply; the git helpers one retry after any failure, a timeout included.
 
 ## The rules every helper keeps
 
@@ -61,7 +69,18 @@ summary 40, exchange digest 30, work digest 20.
 
 `runHelper` never rejects. It answers `{ ok: true, value, attempts, model }` or
 `{ ok: false, reason, detail }` with `reason` one of `timeout`, `auth`, `limit`,
-`unreadable`, `cancelled`, `disabled`, `failed` — what a caller shows a person.
+`unreadable`, `cancelled`, `disabled`, `failed` — what a caller shows a person. A reply
+that does not parse is `unreadable`; `limit` and `auth` come only from the CLI itself (a
+non-zero exit, its stderr, or its own notice as the whole reply, `cliNotice`), never from
+a keyword inside a model's answer.
+
+## Replaying a title call by hand
+
+`npx vite-node scripts/replay-title-call.ts <message-file> [--runs 3] [--model haiku]`
+sends the app's own title prompt, system prompt and arguments to the machine's `claude`
+(`CLAVE_CLAUDE` names another binary), prints each reply, its time and the title read
+from it, and exits 1 when a reply is not a one-line title. Real model calls: never from
+the test suite.
 
 ## The config seam (for the Settings page, PRDCT-4330)
 
