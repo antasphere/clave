@@ -3,6 +3,8 @@ import { settingsPorts } from './ports'
 import { TEST_NO_ACTIVATE } from './test-mode'
 import { accountTokenForSpawn } from './sessions/adapters/pty-backend'
 import * as helperRunner from './helpers/runner'
+import { helperAccountId } from './helpers/runner'
+import { helperConfig } from './helpers/registry'
 import { DIGEST_TIMEOUT_MS, exchangeDigestHelper, workDigestHelper } from './helpers/digests'
 import type { HelperFailureReason } from '../shared/helper-prompt'
 import {
@@ -111,7 +113,7 @@ function read(request: DigestRequest): Promise<DigestResult> {
   if (TEST_NO_ACTIVATE) {
     const reply = testReply(process.env.CLAVE_E2E_DIGEST_REPLY, request.launch)
     if (!reply) return Promise.resolve({ ok: false, error: 'No model under test' })
-    return testAccount(request.launch).then(
+    return testAccount(exchangeDigestHelper, request.launch).then(
       (refused) =>
         refused ??
         new Promise<DigestResult>((resolve) =>
@@ -148,7 +150,7 @@ function readWork(request: WorkDigestRequest): Promise<WorkDigestResult> {
   if (TEST_NO_ACTIVATE) {
     const reply = testReply(process.env.CLAVE_E2E_WORK_DIGEST_REPLY, request.launch)
     if (!reply) return Promise.resolve({ ok: false, error: 'No model under test' })
-    return testAccount(request.launch).then(
+    return testAccount(workDigestHelper, request.launch).then(
       (refused) =>
         refused ??
         new Promise<WorkDigestResult>((resolve) =>
@@ -185,16 +187,21 @@ function testReply(reply: string | undefined, launch: DigestLaunch): string | un
   return reply?.replaceAll('{account}', launch.claudeProfileId ?? 'default')
 }
 
-/** Under the harness, the account a read would run on is resolved as the
- *  runner resolves it (`accountTokenForSpawn`): an account this process does
- *  not know fails the read as the CLI would be refused, `auth`. */
-async function testAccount(launch: DigestLaunch): Promise<{
-  ok: false
-  error: string
-  reason: 'auth'
-} | null> {
+/** Under the harness, a read stands in for the run up to the model call:
+ *  the helper's own config (`helperConfig`, the seam the Settings page sets)
+ *  decides whether it runs and on which account (`helperAccountId`), and that
+ *  account resolves as a spawn resolves it (`accountTokenForSpawn`): a helper
+ *  switched off answers `disabled`, an account this process does not know
+ *  fails as the CLI would be refused, `auth`. */
+async function testAccount(
+  definition: Parameters<typeof helperConfig>[0],
+  launch: DigestLaunch
+): Promise<{ ok: false; error: string; reason: 'auth' | 'disabled' } | null> {
+  const config = helperConfig(definition)
+  if (!config.enabled)
+    return { ok: false, error: `${definition.label} is switched off`, reason: 'disabled' }
   try {
-    await accountTokenForSpawn('claude', launch.claudeProfileId)
+    await accountTokenForSpawn('claude', helperAccountId(config, launch))
     return null
   } catch (error) {
     return {

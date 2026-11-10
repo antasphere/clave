@@ -105,6 +105,20 @@ export interface RunOptions {
 }
 
 /** Run a helper in its turn. Never rejects: every way it can end is an outcome. */
+// ── PRDCT-4327 (digests lane): the account rule, exported so the end-to-end
+// harness's stand-in for a read resolves the account the way a run does. ──
+/** The Claude account a helper runs on: the one chosen for the helper (its
+ *  config, `helperConfig`) over the caller's; `null` there is the machine
+ *  login, `undefined` the caller's account. */
+export function helperAccountId(
+  config: Pick<HelperConfig, 'claudeProfileId'>,
+  context: HelperLaunchContext
+): string | undefined {
+  return config.claudeProfileId !== undefined
+    ? (config.claudeProfileId ?? undefined)
+    : context.claudeProfileId
+}
+
 export function runHelper<Input, Output>(
   definition: HelperDefinition<Input, Output>,
   input: Input,
@@ -256,7 +270,7 @@ async function spawnOnce(
   // An account chosen for the helper replaces the session's; the machine
   // login (null) carries neither a token nor the legacy config dir.
   const onOwnAccount = config.claudeProfileId !== undefined
-  const accountId = onOwnAccount ? (config.claudeProfileId ?? undefined) : context.claudeProfileId
+  const accountId = helperAccountId(config, context)
   const profile = launchProfileManager.resolveClaudeCli(
     context.workspaceId,
     context.launchProfileId
