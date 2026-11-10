@@ -21,8 +21,14 @@ public struct UnknownSend: Codable, Sendable, Equatable {
   /// The draft as the person left it (untrimmed), when it differs from the text sent.
   public let draftText: String?
   public let attachments: [Attachment]?
+  /// The person's choice on the bar (discard, send again), written before anything waits for the
+  /// send, so a choice whose action ended before it could take the send out is still found.
+  public let choice: PendingChoice?
 
-  public init(machineId: String, sessionId: String, clientMessageId: String, text: String, at: Double, draftText: String? = nil, attachments: [Attachment]? = nil) {
+  public init(
+    machineId: String, sessionId: String, clientMessageId: String, text: String, at: Double, draftText: String? = nil,
+    attachments: [Attachment]? = nil, choice: PendingChoice? = nil
+  ) {
     self.machineId = machineId
     self.sessionId = sessionId
     self.clientMessageId = clientMessageId
@@ -30,6 +36,7 @@ public struct UnknownSend: Codable, Sendable, Equatable {
     self.at = at
     self.draftText = draftText
     self.attachments = attachments
+    self.choice = choice
   }
 
   public init(from decoder: Decoder) throws {
@@ -42,6 +49,8 @@ public struct UnknownSend: Codable, Sendable, Equatable {
     at = (try? c.decodeIfPresent("at", Double.self)) ?? 0
     draftText = try? c.decodeIfPresent("draftText", String.self)
     attachments = try? c.decodeIfPresent("attachments", [Attachment].self)
+    // A choice this build cannot read is no choice: the send is asked about as before.
+    choice = try? c.decodeIfPresent("choice", PendingChoice.self)
   }
 
   public func encode(to encoder: Encoder) throws {
@@ -53,6 +62,14 @@ public struct UnknownSend: Codable, Sendable, Equatable {
     try c.encode(at, key: "at")
     try c.encodeIfPresent(draftText, key: "draftText")
     try c.encodeIfPresent(attachments, key: "attachments")
+    try c.encodeIfPresent(choice, key: "choice")
+  }
+
+  /// The same send with the person's choice on it.
+  public func with(choice: PendingChoice?) -> UnknownSend {
+    UnknownSend(
+      machineId: machineId, sessionId: sessionId, clientMessageId: clientMessageId, text: text, at: at,
+      draftText: draftText, attachments: attachments, choice: choice)
   }
 }
 
@@ -73,11 +90,11 @@ func encodeStored<T: Encodable>(_ value: T) throws -> String {
 struct SerialQueue {
   private var tail: Task<Void, Never>?
 
-  mutating func enqueue(_ body: @escaping @Sendable () async throws -> Void) -> Task<Void, Error> {
+  mutating func enqueue<T: Sendable>(_ body: @escaping @Sendable () async throws -> T) -> Task<T, Error> {
     let previous = tail
-    let task = Task<Void, Error> {
+    let task = Task<T, Error> {
       await previous?.value
-      try await body()
+      return try await body()
     }
     tail = Task { _ = await task.result }
     return task
@@ -126,6 +143,19 @@ public actor UnknownSends {
   public func remove(_ clientMessageId: String) async throws {
     try await queue.enqueue { [self] in
       try await write(list().filter { $0.clientMessageId != clientMessageId })
+    }.value
+  }
+
+  /// Writes the person's choice into the record of this id, in its place in the list; false, with
+  /// nothing written, when the ledger holds no send of this id.
+  @discardableResult
+  public func recordChoice(_ clientMessageId: String, _ choice: PendingChoice) async throws -> Bool {
+    try await queue.enqueue { [self] in
+      var sends = try await list()
+      guard let index = sends.firstIndex(where: { $0.clientMessageId == clientMessageId }) else { return false }
+      sends[index] = sends[index].with(choice: choice)
+      try await write(sends)
+      return true
     }.value
   }
 

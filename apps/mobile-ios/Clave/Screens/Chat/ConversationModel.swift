@@ -410,6 +410,24 @@ final class ConversationModel {
     settlingHere.remove(clientMessageId)
   }
 
+  /// What the composer says when the phone could not write the person's choice down: the choice
+  /// claimed nothing, and the bar stays for it.
+  static let choiceNotKept = "This phone could not keep your choice, so nothing changed."
+
+  /// The person's choice on the bar's send, through the machine's controller; nil when it failed. A
+  /// choice the phone could not write down is said in the composer, and the bar stays.
+  private func choose(_ choice: PendingChoice, on id: String) async -> PendingResolution? {
+    do {
+      return try await delivery.discardPending(
+        machineId: machineId, sessionId: sessionId, clientMessageId: id, choice: choice)
+    } catch is ChoiceNotKept {
+      sendError = Self.choiceNotKept
+      return nil
+    } catch {
+      return nil
+    }
+  }
+
   /// The person chose to send again after an unknown outcome: a new id, which may duplicate. The
   /// first send is discarded once a pass reconciling it has let go; when that pass settled it
   /// meanwhile (it landed, or was refused), nothing is sent and the mark says what happened.
@@ -418,8 +436,7 @@ final class ConversationModel {
       let id = mark.clientMessageId
       settlingHere.insert(id)
       defer { settlingHere.remove(id) }
-      let resolution = try? await delivery.discardPending(
-        machineId: machineId, sessionId: sessionId, clientMessageId: id, choice: .sendAgain)
+      let resolution = await choose(.sendAgain, on: id)
       switch resolution {
       case .discarded?:
         break
@@ -444,8 +461,7 @@ final class ConversationModel {
     let id = mark.clientMessageId
     settlingHere.insert(id)
     defer { settlingHere.remove(id) }
-    let resolution = try? await delivery.discardPending(
-      machineId: machineId, sessionId: sessionId, clientMessageId: id, choice: .discard)
+    let resolution = await choose(.discard, on: id)
     switch resolution {
     case .discarded?:
       deliveryMark = nil
@@ -484,6 +500,12 @@ final class ConversationModel {
     // that refuses a send leaves a rejected mark).
     let listed = (try? await delivery.sends.list().contains { $0.clientMessageId == shown.clientMessageId }) ?? true
     guard !listed else { return }
+    // Taken out by the person's choice (here, or one an ended run left that a pass carried out):
+    // nothing was delivered, and the draft and the files stay as a Discard leaves them.
+    if await delivery.wasDiscarded(shown.clientMessageId) {
+      carried = nil
+      return
+    }
     await resync(shown.clientMessageId)
     deliveryNotice = "This message was delivered when the connection came back."
   }

@@ -32,6 +32,12 @@ public struct ReconnectPorts: Sendable {
   public var release: (@Sendable (UnknownSend) async -> Void)?
   /// Whether the person has made a choice on the send (discard, send again) that waits for it.
   public var choiceRecorded: (@Sendable (UnknownSend) async -> Bool)?
+  /// The choice a run that has ended left in the send's ledger record, with no action of this run
+  /// driving it; nil when there is none, or when the person's choice is being made now.
+  public var leftoverChoice: (@Sendable (UnknownSend) async -> PendingChoice?)?
+  /// Carries out a choice an ended run left: the send out of the ledger, its mark cleared when the
+  /// mark names it. Nothing reaches the server.
+  public var carryOutChoice: (@Sendable (UnknownSend) async throws -> Void)?
 
   public init(
     sends: UnknownSends,
@@ -47,7 +53,9 @@ public struct ReconnectPorts: Sendable {
     isActive: (@Sendable (UnknownSend) async -> Bool)? = nil,
     claim: (@Sendable (UnknownSend) async -> Bool)? = nil,
     release: (@Sendable (UnknownSend) async -> Void)? = nil,
-    choiceRecorded: (@Sendable (UnknownSend) async -> Bool)? = nil
+    choiceRecorded: (@Sendable (UnknownSend) async -> Bool)? = nil,
+    leftoverChoice: (@Sendable (UnknownSend) async -> PendingChoice?)? = nil,
+    carryOutChoice: (@Sendable (UnknownSend) async throws -> Void)? = nil
   ) {
     self.sends = sends
     self.marks = marks
@@ -63,6 +71,8 @@ public struct ReconnectPorts: Sendable {
     self.claim = claim
     self.release = release
     self.choiceRecorded = choiceRecorded
+    self.leftoverChoice = leftoverChoice
+    self.carryOutChoice = carryOutChoice
   }
 }
 
@@ -94,6 +104,9 @@ public func reconnectPass(machineId: String, openConversations: [String], ports:
       held = true
     }
     do {
+      // A choice a run that has ended left in the ledger: the pass may read the send's status, never
+      // write it.
+      let leftover = await ports.leftoverChoice?(send)
       // The person's choice, read before each step: once one is recorded, the pass sends nothing
       // more for this send unless its same-id write is already under way, and settles only a
       // delivery it learned of; the send stays in the ledger for the choice. A write already
@@ -104,6 +117,10 @@ public func reconnectPass(machineId: String, openConversations: [String], ports:
         send.clientMessageId,
         ports: SendPorts(
           write: { _ in
+            if leftover != nil {
+              step.stop()
+              throw ChoiceRecorded()
+            }
             if await chosen() {
               step.stop()
               throw ChoiceRecorded()
@@ -112,7 +129,7 @@ public func reconnectPass(machineId: String, openConversations: [String], ports:
             return try await ports.write(send)
           },
           status: { _ in
-            if !step.issued, await chosen() {
+            if leftover == nil, !step.issued, await chosen() {
               step.stop()
               throw ChoiceRecorded()
             }
@@ -122,14 +139,28 @@ public func reconnectPass(machineId: String, openConversations: [String], ports:
           now: ports.now),
         options: options,
         mayRetry: true)
-      var yielded = !step.issued && step.stopped
-      if !yielded, !step.issued, outcome.reason != nil {
-        // Not delivered, nothing written: a choice recorded during the last read takes the send.
-        yielded = await chosen()
-      }
-      if !yielded {
-        outcomes.append(.init(send: send, outcome: outcome))
-        try await settleSend(send, outcome, sends: ports.sends, marks: ports.marks, drafts: ports.drafts, now: ports.now, clearAttachments: ports.clearAttachments)
+      if leftover != nil {
+        // A delivery the pass learned of settles as delivered, and a send nobody can tell yet stays
+        // marked unknown with its choice for the next pass; refused, or never received (the write
+        // stopped), the send is the choice's, carried out with nothing written.
+        var refused = false
+        if case .rejected = outcome { refused = true }
+        if refused || step.stopped {
+          try await ports.carryOutChoice?(send)
+        } else {
+          outcomes.append(.init(send: send, outcome: outcome))
+          try await settleSend(send, outcome, sends: ports.sends, marks: ports.marks, drafts: ports.drafts, now: ports.now, clearAttachments: ports.clearAttachments)
+        }
+      } else {
+        var yielded = !step.issued && step.stopped
+        if !yielded, !step.issued, outcome.reason != nil {
+          // Not delivered, nothing written: a choice recorded during the last read takes the send.
+          yielded = await chosen()
+        }
+        if !yielded {
+          outcomes.append(.init(send: send, outcome: outcome))
+          try await settleSend(send, outcome, sends: ports.sends, marks: ports.marks, drafts: ports.drafts, now: ports.now, clearAttachments: ports.clearAttachments)
+        }
       }
     } catch {
       if held { await ports.release?(send) }
@@ -221,9 +252,23 @@ public func discardUnknownSend(machineId: String, sessionId: String, clientMessa
   try await marks.clear(machineId, sessionId)
 }
 
-/// The person's explicit choice on a send of unknown outcome, recorded before anything waits.
-public enum PendingChoice: Sendable, Equatable {
-  case discard, sendAgain
+/// The person's explicit choice on a send of unknown outcome, recorded before anything waits: in
+/// memory for a pass running now, and in the send's ledger record for one that runs after a reload.
+public enum PendingChoice: String, Codable, Sendable, Equatable {
+  case discard = "discard", sendAgain = "send-again"
+}
+
+/// The person's choice could not be written to the ledger, so it claimed nothing and changed
+/// nothing: the send and its mark are as they were.
+public struct ChoiceNotKept: Error, Sendable, Equatable, CustomStringConvertible {
+  /// What the store said.
+  public let reason: String
+
+  public init(reason: String) {
+    self.reason = reason
+  }
+
+  public var description: String { "The choice could not be kept: \(reason)" }
 }
 
 /// How the person's explicit choice on a send of unknown outcome ended.
@@ -326,20 +371,25 @@ public actor DeliveryController {
   }
 
   /// The person chose to discard a send of unknown outcome, or to send its text again under a new
-  /// id. The choice is recorded first, so a pass holding the send stops before its next request
-  /// unless its same-id write is already under way; once the send is held here, it leaves the
-  /// ledger and its mark is cleared, unless it was delivered meanwhile.
+  /// id. The choice is recorded first, in memory and then in the send's ledger record, so a pass
+  /// holding the send stops before its next request unless its same-id write is already under way,
+  /// and a pass after a reload finds the choice; once the send is held here, its mark is cleared and
+  /// it leaves the ledger, unless it was delivered meanwhile. A choice the ledger cannot keep throws
+  /// `ChoiceNotKept` before anything waits, with nothing changed.
   public func discardPending(
     machineId: String, sessionId: String, clientMessageId: String, choice: PendingChoice
   ) async throws -> PendingResolution {
     recordChoice(clientMessageId, choice)
     defer { endChoice(clientMessageId, choice) }
+    do {
+      try await sends.recordChoice(clientMessageId, choice)
+    } catch {
+      throw ChoiceNotKept(reason: reasonOf(error))
+    }
     await claim(clientMessageId)
     defer { release(clientMessageId) }
     if try await sends.list().contains(where: { $0.clientMessageId == clientMessageId }) {
-      try await sends.remove(clientMessageId)
-      try await marks.clear(machineId, sessionId)
-      discarded.insert(clientMessageId)
+      try await takeOut(clientMessageId, machineId: machineId, sessionId: sessionId)
       return .discarded
     }
     // Out of the ledger: delivered, unless an earlier choice discarded it or a pass refused it.
@@ -349,6 +399,43 @@ public actor DeliveryController {
       return .discarded
     }
     return .settledMeanwhile
+  }
+
+  /// Whether the person's choice took the send of this id out of the ledger: a choice made here, or
+  /// one an ended run left that a pass carried out. A composer that sees such a send's mark go does
+  /// not take it for delivered.
+  public func wasDiscarded(_ clientMessageId: String) -> Bool { discarded.contains(clientMessageId) }
+
+  /// The choice an ended run left on this send: the one in its ledger record, when no action of this
+  /// run holds a choice on it (a choice made now is followed as it is made).
+  func leftoverChoice(_ send: UnknownSend) async -> PendingChoice? {
+    guard !hasChoice(send.clientMessageId) else { return nil }
+    let stored = (try? await sends.list())?.first { $0.clientMessageId == send.clientMessageId }?.choice
+    return hasChoice(send.clientMessageId) ? nil : stored
+  }
+
+  /// A pass carries out a choice an ended run left on a send it holds.
+  func carryOutChoice(_ send: UnknownSend) async throws {
+    try await takeOut(send.clientMessageId, machineId: send.machineId, sessionId: send.sessionId)
+  }
+
+  /// The person's choice carried out on a send held here: the mark cleared first (only when it
+  /// names this send), then the record taken out of the ledger. The choice, the mark and the ledger
+  /// are separate writes; between these two, a reload finds no mark and the record with its choice,
+  /// which the next pass carries out without writing. The send counts as discarded from the first
+  /// write, so a composer reading the stores between the two never takes it for delivered.
+  private func takeOut(_ clientMessageId: String, machineId: String, sessionId: String) async throws {
+    let inserted = discarded.insert(clientMessageId).inserted
+    do {
+      if let mark = try await marks.get(machineId, sessionId), mark.clientMessageId == clientMessageId {
+        try await marks.clear(machineId, sessionId)
+      }
+    } catch {
+      // The mark is as it was, so the send is too: a pass that delivers it later says so.
+      if inserted { discarded.remove(clientMessageId) }
+      throw error
+    }
+    try await sends.remove(clientMessageId)
   }
 
   /// Before the write leaves: the send in the ledger and marked, so a crash mid-send is found again.
@@ -402,7 +489,9 @@ public actor DeliveryController {
       isActive: { [weak self] send in await self?.isActive(send.clientMessageId) ?? false },
       claim: { [weak self] send in await self?.claimForPass(send) ?? false },
       release: { [weak self] send in await self?.release(send.clientMessageId) },
-      choiceRecorded: { [weak self] send in await self?.hasChoice(send.clientMessageId) ?? false })
+      choiceRecorded: { [weak self] send in await self?.hasChoice(send.clientMessageId) ?? false },
+      leftoverChoice: { [weak self] send in await self?.leftoverChoice(send) },
+      carryOutChoice: { [weak self] send in try await self?.carryOutChoice(send) })
     let run = Task<Void, Error> {
       _ = try await reconnectPass(machineId: machineId, openConversations: openConversations, ports: ports, options: options)
     }
