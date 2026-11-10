@@ -18,7 +18,9 @@
 // start, and exits 0 or 2: nothing is started; it proves the pre-boot checks and,
 // under --mutate recorder-* or decoy-line, the recorder guard's one look, nothing else (not
 // the boot checks, not the guard's continuous watch).
-// Otherwise it keeps running until SIGINT/SIGTERM, which stops every child.
+// Otherwise it keeps running until SIGINT/SIGTERM, which stops every child and
+// exits 130 or 143, or 3 when a failure was latched (by the recorder guard or by
+// the stop).
 //
 // The run folder (--tmpdir, mandatory, never defaulted) is the fixture's own: an
 // absent or empty folder is claimed with `.clave-fixture`, a regular file naming
@@ -29,15 +31,20 @@
 // run. A dry run only reads the folder and builds its shims in a scratch folder.
 //
 // No real agent, no real login, proven before and after the boot and watched
-// for the whole run. Every child of the fixture (the daemon, the relay, the
-// recorder self-test, the Bun probe) runs under one sanitized environment: the
-// fixture's own keys over a frozen allowlist of the shell's, and Bun's automatic
-// .env loading off (--no-env-file). BEFORE anything starts (preBootChecks): the
+// for the whole run. Every child of the fixture runs under a sanitized environment
+// built in the launch, with Bun's automatic .env loading off (--no-env-file): the
+// daemon, the recorder self-test and the Bun probe under the fixture's own keys
+// over a frozen allowlist of the shell's, the relay under that allowlist and its
+// own HOME (the fixture's), nothing else. BEFORE anything starts (preBootChecks): the
 // daemon argv carries --no-env-file and --no-titles --test-no-activate
 // --test-no-machine-usage; the key NAMES a Bun process sees under that environment
 // (a probe printing names, never values) are exactly the launch's; the recorders
 // are first on PATH, the fixture's login shell stand-in is SHELL and the Claude and
-// Codex homes are empty folders of the fixture's own; the login environment, read
+// Codex homes are empty folders of the fixture's own; the relay's environment holds
+// the allowlist and HOME alone, as a Bun probe sees it; TMUX_TMPDIR names the run's
+// own tmux folder, made first, a real folder of the user's with mode 0700 whose
+// socket path fits a unix socket, and the stand-in prints the same (tmux skips a
+// TMUX_TMPDIR it cannot resolve, for the person's own socket); the login environment, read
 // the way the daemon reads it (`$SHELL -lic 'env -0'`), resolves `claude` and
 // `codex` to the recorders. The stand-in prints a fixture-authored environment
 // (written into it when the launch was built), never the one it is run in. AFTER
@@ -48,16 +55,23 @@
 // `__claveE2E.titles`) say the opt-out is --no-titles, locate claude and codex
 // on the daemon's cached login PATH to the recorders, and answer the one-shot's
 // launch as the production resolver builds it, compared with the recorder by
-// canonical path, and the key NAMES of the daemon's own environment, read inside
-// it, are exactly the launch's; no agent CLI is executed inside the daemon (the
-// hooks may read a cold login cache, which runs the fixture's stand-in once). The
+// canonical path; the key NAMES of the daemon's own environment, read inside it,
+// are exactly the launch's, and the values that carry the isolation (HOME, SHELL,
+// the two agent homes, CLAVE_KEYCHAIN_FILE, TMUX_TMPDIR in its own and its cached
+// login environment, PATH's first entry, os.homedir()) are the launch's; no agent
+// CLI is executed inside the daemon (reading a cold login cache runs the fixture's
+// stand-in once). The
 // recorder's own self-test runs BEFORE the boot, by the fixture itself (`claude
 // --version` on the recorder, never a CLI), so the log exists and holds that one
 // line from the start. One failed check refuses the
 // boot (exit 2) before any chat. From the daemon's start to the exit, in every
 // mode, the recorder log is watched: a line that is not the boot check's probe
 // stops everything with exit 3. The checked run's last step reads the same log
-// and the two homes (names only, nothing of the person's).
+// and the two homes (names only, nothing of the person's). The stop latches a run
+// keychain left behind or a changed search list, and stops a tmux server under the
+// run's own TMUX_TMPDIR through its exact socket path (never `-L`, never the
+// person's server), latching one that remains or still answers. A latched failure
+// is the exit, 3, whatever the exit was asked with: a SIGINT or SIGTERM stop too.
 //
 // Negatives, never a boot with a flag dropped: --red-flags (the argv without
 // --no-titles) and --red-interlock (a login shell that puts the real PATH
@@ -67,7 +81,11 @@
 // child, and the checks must refuse them with nothing executed; --mutate
 // decoy-on-process-path is a positive control (the daemon's own PATH led by
 // the decoy, the cache intact): a resolver reading the cache still answers the
-// recorder and the checks pass. --mutate recorder-removed|recorder-unreadable|
+// recorder and the checks pass. --mutate env-extra (one key added to the daemon's
+// own environment) and --mutate env-home (the daemon's own HOME moved to another
+// path inside the run folder) run under --check only, inside the daemon, and the
+// in-daemon environment checks must refuse them (exit 2) with nothing seeded.
+// --mutate recorder-removed|recorder-unreadable|
 // recorder-truncated damage the fixture's own recorder log after the checks, and
 // --mutate recorder-foreign-line|decoy-line write a non-probe line through the
 // fixture's own recorder or its decoy (`-p`, never a CLI), all under --check or
@@ -150,9 +168,17 @@ const RED_FLAGS = flag('red-flags')
 const RED_INTERLOCK = flag('red-interlock')
 const MUTATE = arg('mutate', null)
 /** The faults a run can carry, every flag kept and the real CLI never involved: the two resolver
- *  faults and the positive control run inside the daemon under --check; the three recorder-file
- *  faults damage the fixture's own log and run under --check or --dry-run. */
-const DAEMON_MUTATIONS = ['divergent-cache', 'wrong-resolver', 'decoy-on-process-path']
+ *  faults, the positive control and the two environment faults (one key added to the daemon's own
+ *  environment, its HOME moved inside the run folder) run inside the daemon under --check; the
+ *  recorder faults damage the fixture's own log or write a line through its recorders and run under
+ *  --check or --dry-run. */
+const DAEMON_MUTATIONS = [
+  'divergent-cache',
+  'wrong-resolver',
+  'decoy-on-process-path',
+  'env-extra',
+  'env-home'
+]
 const RECORDER_MUTATIONS = ['recorder-removed', 'recorder-unreadable', 'recorder-truncated', 'recorder-foreign-line', 'decoy-line']
 const MUTATIONS = [...DAEMON_MUTATIONS, ...RECORDER_MUTATIONS]
 if ((RED_FLAGS || RED_INTERLOCK) && !DRY_RUN) {
@@ -193,9 +219,33 @@ const ENV_ALLOWLIST = ['USER', 'LOGNAME', 'TMPDIR', 'LANG', 'LC_ALL', 'LC_CTYPE'
  *  a home of the fixture's own (ENV_FIXTURE_KEYS), never this shell's. */
 const ENV_ALLOWLIST_FROZEN = Object.freeze(['LANG', 'LC_ALL', 'LC_CTYPE', 'LOGNAME', 'TERM', 'TMPDIR', 'TZ', 'USER'])
 /** What the fixture sets itself. */
-const ENV_FIXTURE_KEYS = ['HOME', 'PATH', 'SHELL', 'CLAUDE_CONFIG_DIR', 'CODEX_HOME', 'CLAVE_ANTASPHERE_ISSUER', 'CLAVE_KEYCHAIN_FILE']
-/** The daemon's login-environment module, imported inside its own process by one negative only
- *  (the divergent cache); every check reads the production resolver through `__claveE2E.titles`. */
+const ENV_FIXTURE_KEYS = [
+  'HOME',
+  'PATH',
+  'SHELL',
+  'CLAUDE_CONFIG_DIR',
+  'CODEX_HOME',
+  'CLAVE_ANTASPHERE_ISSUER',
+  'CLAVE_KEYCHAIN_FILE',
+  'TMUX_TMPDIR'
+]
+/** What the relay gets of its own, over the same allowlist: a HOME of the fixture's (the daemon's),
+ *  so nothing Bun reads or writes under HOME is the person's. The relay runs no agent: none of the
+ *  daemon's other keys reaches it. */
+const ENV_RELAY_KEYS = Object.freeze(['HOME'])
+/** The daemon's own values compared inside it with the launch's (bootChecks): fixture-authored
+ *  paths, printed in the check's detail. */
+const ENV_VALUE_KEYS = [
+  'HOME',
+  'SHELL',
+  'CLAUDE_CONFIG_DIR',
+  'CODEX_HOME',
+  'CLAVE_KEYCHAIN_FILE',
+  'TMUX_TMPDIR'
+]
+/** The daemon's login-environment module, imported inside its own process by the value check (the
+ *  cached login environment's TMUX_TMPDIR) and by the PATH negatives; every resolver check reads
+ *  the production resolver through `__claveE2E.titles`. */
 const PTY_BACKEND = path.join(REPO, 'packages', 'host', 'src', 'sessions', 'adapters', 'pty-backend.ts')
 /** What the recorder answers a `--version` probe with; the title one-shot (-p) gets nothing. */
 const RECORDER_VERSION = 'claude fixture-recorder'
@@ -213,6 +263,23 @@ const SERVER_DATA = path.join(TMPDIR, 'server')
 const KEYCHAIN_DIR = path.join(TMPDIR, 'keychain')
 const KEYCHAIN_FILE = path.join(KEYCHAIN_DIR, 'fixture.keychain-db')
 const SECURITY = '/usr/bin/security'
+/** The run's own tmux folder, the daemon's TMUX_TMPDIR. At its start the daemon asks `tmux -L
+ *  clave` which sessions run (pty-backend.ts, liveTmuxSessions, with its own environment), and a
+ *  tmux-backed session's client gets its cached login environment; tmux puts that socket at
+ *  <TMUX_TMPDIR>/tmux-<uid>/clave. tmux 3.5a resolves TMUX_TMPDIR with realpath and SKIPS a value
+ *  it cannot resolve, for its default folder: the person's own socket. So a real run makes this
+ *  folder FIRST, before anything can run tmux, and the pre-boot check refuses a value that is
+ *  empty, not exactly this folder, not its own real path, not the user's, not mode 0700, outside
+ *  the run folder, or too long for a socket. A one-letter name, the shortest owned path the run
+ *  folder allows, leaves the socket path the most room. */
+const TMUX_DIR = path.join(TMPDIR, 't')
+/** The daemon's tmux socket name (pty-backend.ts, TMUX_SOCKET). */
+const TMUX_SOCKET_NAME = 'clave'
+/** The longest unix socket path macOS takes: sun_path is 104 bytes with the final NUL. */
+const UNIX_SOCKET_PATH_MAX = 103
+/** The folder tmux makes under [dir] for this user's sockets, and the daemon's socket in it. */
+const tmuxBaseOf = (dir) => path.join(dir, `tmux-${process.getuid()}`)
+const tmuxSocketOf = (dir) => path.join(tmuxBaseOf(dir), TMUX_SOCKET_NAME)
 
 /**
  * The run folder is the fixture's own. A folder this script created carries a marker: a regular
@@ -455,11 +522,16 @@ function recorderLines(file) {
 }
 const isProbe = (line) => /^\S+ claude --version ?$/.test(line)
 
-/** A recorder failure, latched: once set, no later success and no cleanup can bring the exit code
- *  under 3. `exitWith` reads it. */
+/** A failure, latched: once set, the exit code is 3 whatever the exit was asked with (a SIGINT or
+ *  SIGTERM stop included), and no later success and no cleanup changes it. The recorder guard
+ *  latches what it sees; the stop latches what it could not take away (a run keychain, a changed
+ *  search list, a tmux server of the run's own). `exitWith` reads it and says the first failure of
+ *  each kind. */
 let recorderFailure = null
-function latchRecorderFailure(reason) {
+const LATCHED = new Map()
+function latchRecorderFailure(reason, kind = 'recorder') {
   if (recorderFailure === null) recorderFailure = reason
+  if (!LATCHED.has(kind)) LATCHED.set(kind, reason)
 }
 
 /** Where `command` lives on `pathEnv`: the first directory holding an executable file of
@@ -498,14 +570,57 @@ const samePath = (a, b) => {
   }
 }
 
+/** The real path of [file] as far as it exists: the deepest existing folder's real path and the
+ *  rest as written (a dry run checks a folder that only a boot makes). */
+function realPathSoFar(file) {
+  const rest = []
+  for (let at = file; ; at = path.dirname(at)) {
+    try {
+      return path.join(realpathSync(at), ...rest)
+    } catch {
+      if (path.dirname(at) === at) return file
+      rest.unshift(path.basename(at))
+    }
+  }
+}
+
+/** What lstat says of [file], or null when nothing is there; any other error is thrown. */
+function lstatIfThere(file) {
+  try {
+    return lstatSync(file)
+  } catch (error) {
+    if (error?.code === 'ENOENT') return null
+    throw error
+  }
+}
+
+/** Whether this run made its tmux folder: the stop looks for a server under it only then. */
+let TMUX_MADE = false
+/** The run's own tmux folder, made at a real run before anything can run tmux, mode 0700; a folder
+ *  that cannot be made refuses the boot. A dry run makes nothing. */
+function makeTmuxDir() {
+  try {
+    mkdirSync(TMUX_DIR, { mode: 0o700 })
+    TMUX_MADE = true
+    chmodSync(TMUX_DIR, 0o700)
+  } catch (error) {
+    throw new RefusedBoot('pre-boot', [
+      {
+        name: `the run's tmux folder ${TMUX_DIR} cannot be made (${error?.code ?? error}); nothing was started`
+      }
+    ])
+  }
+}
+
 /**
  * The daemon's launch, built once and checked before it is used: the argv with the three
  * flags, and an environment built from the allowlist (a few of this shell's keys) with the
  * recorders first on PATH, the fixture's login shell, a HOME and empty Claude and Codex homes
- * of the fixture's own, the fixture issuer and the keychain FILE. Nothing else of this shell's
- * environment travels: not its HOME (readers of the base resolve ~/.claude and ~/.codex from
- * homedir() whatever CLAUDE_CONFIG_DIR and CODEX_HOME say), not its server, not its agent
- * credentials, not its config homes.
+ * of the fixture's own, the fixture issuer, the keychain FILE and the run's tmux folder. Nothing
+ * else of this shell's environment travels: not its HOME (readers of the base resolve ~/.claude
+ * and ~/.codex from homedir() whatever CLAUDE_CONFIG_DIR and CODEX_HOME say), not its server, not
+ * its agent credentials, not its config homes, not its tmux socket. The relay's argv and its own
+ * environment (the allowlist and HOME) are built here too, beside the daemon's.
  */
 function daemonLaunch() {
   const shims = shimPaths()
@@ -518,7 +633,9 @@ function daemonLaunch() {
   env.CODEX_HOME = shims.codexHome
   env.CLAVE_ANTASPHERE_ISSUER = ISSUER_URL
   env.CLAVE_KEYCHAIN_FILE = KEYCHAIN_FILE
+  env.TMUX_TMPDIR = TMUX_DIR
   writeShims(shims, env)
+  if (!DRY_RUN) makeTmuxDir()
   const flags = RED_FLAGS ? DAEMON_FLAGS.filter((f) => f !== '--no-titles') : DAEMON_FLAGS
   const args = [
     // Bun's own flag first: no automatic .env file of the repository root reaches the daemon.
@@ -544,7 +661,12 @@ function daemonLaunch() {
     '--issuer',
     ISSUER_URL
   ]
-  return { shims, env, args, relayArgs }
+  // The relay runs no agent: the allowlist and its own HOME, the fixture's, nothing of the daemon's.
+  const relayEnv = {}
+  for (const key of ENV_ALLOWLIST)
+    if (process.env[key] !== undefined) relayEnv[key] = process.env[key]
+  relayEnv.HOME = shims.home
+  return { shims, env, args, relayArgs, relayEnv }
 }
 
 /** The key NAMES a Bun process sees under [env] with .env loading off: a probe, never values. */
@@ -604,6 +726,58 @@ async function preBootChecks(launch) {
     return `${KEYCHAIN_FILE}, created at a boot before the daemon starts and deleted at the stop; never on the search list`
   })
   await check(
+    "the tmux folder: TMUX_TMPDIR names exactly the run's own, a real folder of the user's with mode 0700 inside the run folder, the login shell stand-in prints the same, and the daemon's socket in it fits a unix socket path",
+    async () => {
+      const dir = launch.env.TMUX_TMPDIR
+      expectThat(
+        typeof dir === 'string' && dir !== '',
+        "TMUX_TMPDIR is empty or unset: tmux would take its default folder, the person's"
+      )
+      expectThat(dir === TMUX_DIR, `TMUX_TMPDIR is ${dir}, not ${TMUX_DIR}`)
+      expectThat(
+        TMUX_DIR.startsWith(TMPDIR + path.sep),
+        `${TMUX_DIR} is outside the run folder ${TMPDIR}`
+      )
+      const real = realPathSoFar(TMUX_DIR)
+      expectThat(
+        real === TMUX_DIR,
+        `${TMUX_DIR} resolves to ${real}: a symlink in its path (give --tmpdir as its real path)`
+      )
+      const socket = tmuxSocketOf(TMUX_DIR)
+      const bytes = Buffer.byteLength(socket)
+      expectThat(
+        bytes <= UNIX_SOCKET_PATH_MAX,
+        `the daemon's socket ${socket} would be ${bytes} bytes, past ${UNIX_SOCKET_PATH_MAX}`
+      )
+      const login = loginShellEnvOf(launch.env.SHELL, launch.env)
+      expectThat(
+        login.TMUX_TMPDIR === TMUX_DIR,
+        `the login shell stand-in prints TMUX_TMPDIR ${login.TMUX_TMPDIR ?? 'unset'}`
+      )
+      if (DRY_RUN)
+        return `${TMUX_DIR}, made at a boot before anything can run tmux, mode 0700; socket ${socket}, ${bytes} bytes; the stand-in prints the same`
+      const state = lstatSync(TMUX_DIR)
+      expectThat(
+        state.isDirectory() && !state.isSymbolicLink(),
+        `${TMUX_DIR} is not a plain directory`
+      )
+      expectThat(
+        state.uid === process.getuid(),
+        `${TMUX_DIR} belongs to uid ${state.uid}, not ${process.getuid()}`
+      )
+      expectThat(
+        (state.mode & 0o777) === 0o700,
+        `${TMUX_DIR} has mode ${(state.mode & 0o777).toString(8)}, not 700`
+      )
+      const entries = readdirSync(TMUX_DIR)
+      expectThat(
+        entries.length === 0,
+        `${TMUX_DIR} holds ${entries.length} entr${entries.length === 1 ? 'y' : 'ies'}`
+      )
+      return `${TMUX_DIR}, the run's own (the user's, mode 0700, empty); socket ${socket}, ${bytes} bytes; the stand-in prints the same`
+    }
+  )
+  await check(
     "the daemon's environment is the allowlist and the fixture's keys, with empty Claude and Codex homes of the fixture's own",
     async () => {
       expectThat(
@@ -628,6 +802,31 @@ async function preBootChecks(launch) {
       }
       const kept = ENV_ALLOWLIST_FROZEN.filter((key) => key in launch.env)
       return `${Object.keys(launch.env).length} keys: ${kept.join(' ')} of this shell, the ${ENV_FIXTURE_KEYS.length} of the fixture; a Bun child under --no-env-file sees exactly those names; HOME and both agent homes the fixture's own and empty`
+    }
+  )
+  await check(
+    "the relay's environment is the allowlist and the relay's own HOME (the fixture's), nothing else",
+    async () => {
+      const allowed = new Set([...ENV_ALLOWLIST_FROZEN, ...ENV_RELAY_KEYS])
+      const stray = Object.keys(launch.relayEnv).filter((key) => !allowed.has(key))
+      expectThat(
+        stray.length === 0,
+        `keys outside the frozen allowlist and the relay's own: ${stray.join(', ')}`
+      )
+      expectThat(
+        launch.relayEnv.HOME === launch.shims.home,
+        `the relay's HOME is ${launch.relayEnv.HOME}, not the fixture's`
+      )
+      // What a Bun process sees under the relay's environment with .env loading off: the names.
+      const seen = bunEnvKeys(launch.relayEnv)
+      const expected = Object.keys(launch.relayEnv).sort()
+      const extra = seen.filter((k) => !expected.includes(k))
+      const lost = expected.filter((k) => !seen.includes(k))
+      expectThat(
+        extra.length === 0 && lost.length === 0,
+        `a Bun child under the relay's environment ${extra.length ? `sees extra keys ${extra.join(', ')}` : ''}${extra.length && lost.length ? ' and ' : ''}${lost.length ? `misses ${lost.join(', ')}` : ''}`
+      )
+      return `${expected.length} keys: ${expected.join(' ')}; a Bun child under --no-env-file sees exactly those names`
     }
   )
   await check(
@@ -674,6 +873,22 @@ const PATH_PREFIX_SOURCE = `async (arg) => {
   return target.PATH
 }`
 
+/** Inside the daemon: the values that carry the isolation, where the daemon reads them (its own
+ *  environment, os.homedir(), and the cached login environment a tmux-backed session's client
+ *  starts with); fixture-authored paths, compared with the launch's. */
+const VALUES_SOURCE = `async (arg) => {
+  const os = await import('node:os')
+  const m = await import(arg.ptyBackend)
+  const env = {}
+  for (const key of arg.keys) env[key] = process.env[key] ?? null
+  return {
+    env,
+    pathFirst: (process.env.PATH ?? '').split(':')[0],
+    homedir: os.homedir(),
+    loginTmux: m.getLoginShellEnv().TMUX_TMPDIR ?? null
+  }
+}`
+
 /**
  * The checks that run AFTER the daemon announces itself and BEFORE anything is seeded, each
  * inside the daemon's own process: what the discovery file announces, what its cached login
@@ -714,6 +929,44 @@ async function bootChecks(daemon, launch) {
       codex: codex, codexReal: codex ? real(codex) : null
     }
   }`
+  if (MUTATE === 'env-home') {
+    const moved = await evaluate(
+      daemon,
+      '(arg) => { process.env.HOME = arg.home; return process.env.HOME }',
+      { home: path.join(TMPDIR, 'otherhome') }
+    )
+    say(
+      `mutation  env-home: the daemon's own HOME is now ${moved}, another path inside the run folder; the value check must refuse it`
+    )
+  }
+  // Before the PATH faults below: the positive control leads the daemon's own PATH with the decoy.
+  await check(
+    "the daemon's own values, read inside it, are the launch's: HOME, SHELL, CLAUDE_CONFIG_DIR, CODEX_HOME, CLAVE_KEYCHAIN_FILE, TMUX_TMPDIR (its own and its cached login environment's), PATH's first entry and os.homedir()",
+    async () => {
+      const seen = await evaluate(daemon, VALUES_SOURCE, {
+        keys: ENV_VALUE_KEYS,
+        ptyBackend: PTY_BACKEND
+      })
+      expectThat(
+        seen !== null && typeof seen?.env === 'object',
+        `the daemon answered ${JSON.stringify(seen)}`
+      )
+      const rows = [
+        ...ENV_VALUE_KEYS.map((key) => [key, seen.env[key], launch.env[key]]),
+        ["the cached login environment's TMUX_TMPDIR", seen.loginTmux, launch.env.TMUX_TMPDIR],
+        ["PATH's first entry", seen.pathFirst, launch.env.PATH.split(path.delimiter)[0]],
+        ['os.homedir()', seen.homedir, launch.env.HOME]
+      ]
+      const wrong = rows.filter(([, value, expected]) => value !== expected)
+      expectThat(
+        wrong.length === 0,
+        wrong
+          .map(([name, value, expected]) => `${name} is ${value ?? 'unset'}, not ${expected}`)
+          .join('; ')
+      )
+      return rows.map(([name, value]) => `${name} ${value}`).join(', ')
+    }
+  )
   if (MUTATE === 'divergent-cache') {
     const mutated = await evaluate(daemon, PATH_PREFIX_SOURCE, { ptyBackend: PTY_BACKEND, where: 'cache', decoy: shims.decoyDir, on: true })
     say(`mutation  divergent-cache: the daemon's cached login PATH now starts with the decoy (${mutated.split(':')[0]}); the resolver must answer the decoy and the check must refuse`)
@@ -735,6 +988,16 @@ async function bootChecks(daemon, launch) {
   if (MUTATE === 'decoy-on-process-path') {
     const mutated = await evaluate(daemon, PATH_PREFIX_SOURCE, { ptyBackend: PTY_BACKEND, where: 'process', decoy: shims.decoyDir, on: true })
     say(`mutation  decoy-on-process-path (a positive control): the daemon's own PATH now starts with the decoy (${mutated.split(':')[0]}) while the cached login PATH is intact; a resolver reading the cache still answers the recorder, so the checks are expected to pass`)
+  }
+  if (MUTATE === 'env-extra') {
+    const added = await evaluate(
+      daemon,
+      '(arg) => { process.env[arg.key] = "1"; return arg.key }',
+      { key: 'FIXTURE_PROBE_EXTRA' }
+    )
+    say(
+      `mutation  env-extra: the daemon's own environment now carries ${added}, a key the launch never gave it; the key-name check must refuse it`
+    )
   }
   await check("the daemon's own environment, read inside it, carries exactly the launch's key names", async () => {
     const keys = await evaluate(daemon, '() => Object.keys(process.env).sort()')
@@ -904,6 +1167,92 @@ function stopChild(child) {
   })
 }
 
+/** Whether anything listens on the unix socket at [file]: a connect closed at once, never a command. */
+function socketAnswers(file) {
+  return new Promise((resolve) => {
+    const socket = net.connect({ path: file })
+    const done = (answers) => {
+      socket.destroy()
+      resolve(answers)
+    }
+    socket.setTimeout(1_000, () => done(true))
+    socket.once('connect', () => done(true))
+    socket.once('error', () => done(false))
+  })
+}
+
+/**
+ * The stop's tmux step, at a run that made its tmux folder: a server the daemon started there is
+ * stopped through its exact socket path (`tmux -S <socket> kill-server`, never `-L`, never the
+ * person's server), and its socket file, which tmux may leave behind, removed once nothing answers
+ * on it. The folder is looked at again first, so no path under it leads anywhere but the run's
+ * own: a folder that changed, a symlink in it, or a socket that still answers or remains is
+ * latched (exit 3) and named, and nothing is followed.
+ */
+async function stopRunTmux() {
+  const latch = (problem) => {
+    note(`tmux: ${problem}`)
+    latchRecorderFailure(problem, 'tmux')
+  }
+  const base = tmuxBaseOf(TMUX_DIR)
+  let sockets
+  try {
+    const dir = lstatIfThere(TMUX_DIR)
+    const plain = dir !== null && dir.isDirectory() && !dir.isSymbolicLink()
+    if (!plain || realpathSync(TMUX_DIR) !== TMUX_DIR)
+      return latch(`${TMUX_DIR} is no longer the run's own folder; no tmux command was run`)
+    const state = lstatIfThere(base)
+    if (state !== null && (state.isSymbolicLink() || !state.isDirectory()))
+      return latch(`${base} is not a plain folder; nothing under it was followed`)
+    const entries = state === null ? [] : readdirSync(base).map((name) => path.join(base, name))
+    const links = entries.filter((file) => lstatSync(file).isSymbolicLink())
+    if (links.length)
+      return latch(`${links.join(', ')}: a symlink under the run's tmux folder; not followed`)
+    sockets = entries.filter((file) => lstatSync(file).isSocket())
+  } catch (error) {
+    return latch(
+      `the run's tmux folder cannot be read (${error?.code ?? error?.message ?? error}); no tmux command was run`
+    )
+  }
+  if (sockets.length === 0) return note(`tmux: no server socket under the run's own ${TMUX_DIR}`)
+  // The tmux the daemon resolves: the first on its PATH, which its login shell stand-in prints too.
+  const tmux = locateOnPath('tmux', LAUNCH?.env.PATH)
+  const left = []
+  for (const socket of sockets) {
+    if (tmux !== null) {
+      try {
+        execFileSync(tmux, ['-S', socket, 'kill-server'], {
+          env: LAUNCH.env,
+          stdio: 'ignore',
+          timeout: 5_000
+        })
+      } catch {
+        /* no server on it any more, or it refused: what the socket answers next decides */
+      }
+    }
+    const quiet = await until(async () => !(await socketAnswers(socket)), 2_000, 100)
+    if (!quiet) {
+      left.push(
+        `${socket} still answers${tmux === null ? ' and no tmux was found to stop it' : ' after kill-server'}`
+      )
+      continue
+    }
+    try {
+      rmSync(socket, { force: true })
+    } catch {
+      /* the look below names it */
+    }
+    if (lstatIfThere(socket) !== null) left.push(`${socket} remains after its removal`)
+  }
+  if (left.length)
+    return latch(
+      `${sockets.length} server socket(s) under the run's own ${TMUX_DIR}: ${left.join('; ')}`
+    )
+  note(
+    `tmux: ${sockets.length} server socket(s) under the run's own ${TMUX_DIR}, each stopped through tmux -S <socket> kill-server and removed`
+  )
+}
+
 function stopAll() {
   if (!stopping)
     stopping = (async () => {
@@ -912,11 +1261,47 @@ function stopAll() {
       if (provider) await provider.close().catch(() => {})
       if (KEYCHAIN !== null) {
         const items = KEYCHAIN.items()
-        KEYCHAIN.remove()
-        const listed = SEARCH_LIST_AT_BOOT === null ? 'not read' : userSearchList() === SEARCH_LIST_AT_BOOT ? 'unchanged' : 'CHANGED'
-        note(`keychain: ${items} item(s) the server filed in the run's own; removed, its folder ${existsSync(KEYCHAIN_DIR) ? 'STILL THERE' : 'gone'}; the search list ${listed}`)
+        let threw = null
+        try {
+          KEYCHAIN.remove()
+        } catch (error) {
+          threw = error?.code ?? error?.message ?? String(error)
+        }
+        let listed
+        try {
+          listed =
+            SEARCH_LIST_AT_BOOT === null
+              ? 'not read'
+              : userSearchList() === SEARCH_LIST_AT_BOOT
+                ? 'unchanged'
+                : 'CHANGED'
+        } catch {
+          listed = 'UNREADABLE'
+        }
+        // What happened ("removed" only once the folder is gone); the search list never printed.
+        const kept = existsSync(KEYCHAIN_DIR)
+        const removal = !kept
+          ? 'removed, its folder gone'
+          : existsSync(KEYCHAIN_FILE)
+            ? 'NOT removed: the file and its folder STILL THERE'
+            : 'the file removed, its folder STILL THERE'
+        note(
+          `keychain: ${items} item(s) the server filed in the run's own; ${removal}${threw ? ` (the removal threw ${threw})` : ''}; the search list ${listed}`
+        )
+        const failed = []
+        if (kept)
+          failed.push(`the run keychain's folder ${KEYCHAIN_DIR} is still there after its removal`)
+        if (listed === 'CHANGED')
+          failed.push('the user keychain search list differs from the one read at the boot')
+        if (listed === 'UNREADABLE')
+          failed.push('the user keychain search list cannot be read at the stop')
+        if (failed.length) latchRecorderFailure(failed.join('; '), 'keychain')
         KEYCHAIN = null
       }
+      if (TMUX_MADE)
+        await stopRunTmux().catch((error) =>
+          latchRecorderFailure(`the stop's tmux step failed: ${error?.message ?? error}`, 'tmux')
+        )
     })()
   return stopping
 }
@@ -931,11 +1316,10 @@ async function exitWith(code) {
     const last = recorderVerdict(LAUNCH.shims)
     if (last !== null) latchRecorderFailure(last)
   }
-  if (recorderFailure !== null) {
-    note(`recorder failure latched: ${recorderFailure}`)
-    process.exit(Math.max(code, 3))
-  }
-  process.exit(code)
+  for (const [kind, reason] of LATCHED) note(`${kind} failure latched: ${reason}`)
+  // A latched failure is the exit whatever it was asked with: a SIGINT or SIGTERM stop that latched
+  // one exits 3, never 130 or 143.
+  process.exit(recorderFailure !== null ? 3 : code)
 }
 
 process.on('SIGINT', () => void exitWith(130))
@@ -1053,9 +1437,9 @@ async function startProviderOn(port) {
 
 async function startRelay(launch) {
   mkdirSync(RELAY_DATA, { recursive: true, mode: 0o700 })
-  // The relay runs no agent; it still gets the launch's argv (checked before the boot) and the
-  // fixture's sanitized environment, nothing of the shell's.
-  const run = spawnBun('relay', launch.relayArgs, launch.env)
+  // The relay runs no agent: the launch's argv and its own environment, both checked before the
+  // boot, and nothing else.
+  const run = spawnBun('relay', launch.relayArgs, launch.relayEnv)
   const url = await until(async () => {
     if (run.child.exitCode !== null) throw new Error('exited')
     for (const line of run.stdoutLines) {
@@ -1543,9 +1927,13 @@ async function runCheck(env) {
       const entries = readdirSync(home)
       expect(entries.length === 0, `${home} now holds: ${entries.join(', ')}`)
     }
-    // What the daemon wrote into its own HOME, by name: inside the run's folder, never the person's.
-    const written = readdirSync(env.shims.home)
-    return `one probe, nothing else; both agent homes empty; the daemon's own HOME holds ${written.length ? written.join(', ') : 'nothing'}`
+    // What the daemon wrote into its own HOME, by name, read where the daemon itself says its HOME
+    // is: the launch's, inside the run's folder; any other answer fails the step, never listed.
+    const daemon = { url: env.serverUrl, token: env.serverToken }
+    const home = await evaluate(daemon, '() => process.env.HOME ?? null')
+    expect(home === env.shims.home, `the daemon reports its HOME as ${home}, not the launch's`)
+    const written = readdirSync(home)
+    return `one probe, nothing else; both agent homes empty; the daemon's own HOME, as the daemon reports it, holds ${written.length ? written.join(', ') : 'nothing'}`
   })
   return !failed
 }
@@ -1588,7 +1976,9 @@ async function main() {
   const preFailed = pre.filter((c) => !c.ok)
   if (DRY_RUN) {
     say(`dry run: would start the daemon as: bun ${launch.args.join(' ')}`)
-    say(`dry run: HOME=${launch.env.HOME} SHELL=${launch.env.SHELL} CLAUDE_CONFIG_DIR=${launch.env.CLAUDE_CONFIG_DIR} CODEX_HOME=${launch.env.CODEX_HOME}`)
+    say(
+      `dry run: HOME=${launch.env.HOME} SHELL=${launch.env.SHELL} CLAUDE_CONFIG_DIR=${launch.env.CLAUDE_CONFIG_DIR} CODEX_HOME=${launch.env.CODEX_HOME} TMUX_TMPDIR=${launch.env.TMUX_TMPDIR}`
+    )
     say(preFailed.length ? 'dry run: the pre-boot checks FAILED; a boot would be refused (exit 2)' : 'dry run: the pre-boot checks passed; nothing was started (the boot checks run only on a boot)')
     if (MUTATE !== null) {
       mutateRecorderFiles(launch.shims, launch.env)

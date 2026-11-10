@@ -167,10 +167,25 @@ is not the self-test's, or a log gone missing, unreadable or truncated, stops ev
 exit 3. The run folder is the runner's own (a marker it wrote; anything else is refused
 untouched). `--dry-run` runs the pre-boot checks alone, reads the run folder only and starts
 nothing; `--dry-run --mutate recorder-removed|recorder-unreadable|recorder-truncated` shows the
-guard latch; `--dry-run --red-flags|--red-interlock` shows two pre-boot checks go red; the
-daemon-side faults (`--mutate divergent-cache|wrong-resolver`, and the positive control
+guard latch, and so does `--dry-run --mutate recorder-foreign-line|decoy-line`;
+`--dry-run --red-flags|--red-interlock` shows two pre-boot checks go red; the daemon-side faults
+(`--mutate divergent-cache|wrong-resolver|env-extra|env-home`, and the positive control
 `decoy-on-process-path`) run under `--check` only. The shared fixture lane C ships
 (`packages/mobile-native/scripts/fixture-server.mjs`) runs the same three boot checks.
+
+The daemon's HOME is an empty folder of the run's own (`shims/home`), never the person's, so
+whatever the server reads or writes under its home directory stays in the run folder. The server
+files its secrets in a keychain file of the run's own (`keychain/fixture.keychain-db`, named by
+`CLAVE_KEYCHAIN_FILE`), created just before the daemon starts, never put on the user's search
+list and deleted at the stop, where a keychain left behind or a search list that changed fails
+the run with exit 3. The daemon's `TMUX_TMPDIR` is a folder of the run's own (`t`, mode 0700),
+made before anything can run tmux and checked to be the user's real folder whose socket path
+(`t/tmux-<uid>/clave`) fits macOS's 103-byte limit, so its `tmux -L clave` never reaches the
+person's server; `--tmpdir` is therefore a real path (under `/private/tmp`, not `/tmp`), and a
+tmux server found under that folder at the stop is stopped through its exact socket. After the
+boot and before any chat, the daemon's own HOME, SHELL, Claude and Codex homes, keychain file,
+`TMUX_TMPDIR` (in its cached login environment too), first PATH entry and `os.homedir()` are
+read inside it and compared with the launch's, and any difference refuses the boot (exit 2).
 
 ## What a release APK needs, named apart
 
