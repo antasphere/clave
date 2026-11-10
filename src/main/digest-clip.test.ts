@@ -12,8 +12,8 @@ import {
   DIGEST_MAX_MESSAGES,
   clipDigestMessages,
   digestKey
-} from './exchange-digest'
-import { MAX_NOTES, MAX_NOTE_CHARS, clipNotes, workDigestKey } from './work-digest'
+} from '../shared/exchange-digest'
+import { MAX_NOTES, MAX_NOTE_CHARS, clipNotes, workDigestKey } from '../shared/work-digest'
 
 /**
  * The one clip of what a digest reads (PRDCT-4327): the view applies it
