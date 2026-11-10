@@ -7,6 +7,7 @@ import { useClaudeProfileStore } from '../store/claude-profile-store'
 import { useServerSettingsStore, type ServerSettings } from '../store/server-settings-state'
 import {
   ensureSessionAccounts,
+  refreshSessionAccountUsage,
   sessionAccountView,
   sessionOwnAccount,
   SERVER_USAGE_STALE_MS
@@ -240,6 +241,36 @@ describe('the switch of a server tab', () => {
     expect((await switchSessionAccount(tab.id, 'mac-only')).ok).toBe(false)
     expect(restartSession).not.toHaveBeenCalled()
     held.sessions = []
+  })
+})
+
+describe('a limit report reads the usage of the tab’s owner', () => {
+  const api = (): Record<string, ReturnType<typeof vi.fn>> => {
+    const electronAPI = {
+      getUsageLimits: vi.fn(async () => ({})),
+      getCodexUsageLimits: vi.fn(async () => ({})),
+      fleetUsage: vi.fn(async () => ({ error: 'x' }))
+    }
+    vi.stubGlobal('window', { electronAPI })
+    return electronAPI
+  }
+
+  it('a server tab: the server reads its account, this Mac reads nothing', async () => {
+    const electronAPI = api()
+    useServerSettingsStore.setState({ byServer: { [SERVER]: serverEntry() } })
+    refreshSessionAccountUsage(serverTab('srv-one'), 'claude')
+    await vi.waitFor(() =>
+      expect(electronAPI.fleetUsage).toHaveBeenCalledWith(SERVER, 'claude', 'srv-one', true)
+    )
+    expect(electronAPI.getUsageLimits).not.toHaveBeenCalled()
+    expect(electronAPI.getCodexUsageLimits).not.toHaveBeenCalled()
+  })
+
+  it('a tab on this Mac: main reads it, forced', () => {
+    const electronAPI = api()
+    refreshSessionAccountUsage(localTab('default'), 'claude')
+    expect(electronAPI.getUsageLimits).toHaveBeenCalledWith('default', { force: true })
+    expect(electronAPI.fleetUsage).not.toHaveBeenCalled()
   })
 })
 
