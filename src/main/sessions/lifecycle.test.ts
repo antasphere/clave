@@ -545,6 +545,44 @@ describe('a Resume of a running tab is refused on this Mac too (PRDCT-4193, roun
     mocks.adoptable = []
   })
 
+  it('a Resume from a tmux-keyed record carries the work the tab does (PRDCT-4123)', async () => {
+    const id = `life-${++sequence}`
+    windows()
+    const work = {
+      unit: 'stable-wave/lane-a',
+      kind: 'lane',
+      label: 'Lane A',
+      role: 'lead',
+      standing: 'current',
+      joinedAt: 1,
+      since: 1
+    }
+    mocks.restartSpawn.mockReturnValue(null)
+    mocks.getSessionRecord.mockReturnValue(undefined)
+    mocks.adoptable = [
+      {
+        id,
+        tmuxName: 'clave-root-work01',
+        cwd: '/work/app',
+        folderName: 'app',
+        claudeMode: true,
+        antigravityMode: false,
+        codexMode: false,
+        piMode: false,
+        claudeAgentsMode: false,
+        dangerousMode: false,
+        claudeSessionId: 'conv-4',
+        windowKey: 'w7',
+        work
+      }
+    ]
+    spawned(id)
+    await restartSession(id, { onlyIfStopped: true })
+    const [, options] = mocks.spawn.mock.calls.at(-1) as [string, PtySpawnOptions]
+    expect(options.work).toEqual(work)
+    mocks.adoptable = []
+  })
+
   it('a record naming a window that no longer exists resumes under the primary window (round 3, R3-F1)', async () => {
     const id = `life-${++sequence}`
     windows()

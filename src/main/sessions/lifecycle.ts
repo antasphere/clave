@@ -272,6 +272,10 @@ function planFromRecord(
     ...(record.tmuxName ? { adoptTmuxName: record.tmuxName } : {}),
     // Where the conversation came from stays on the tab across its restarts.
     ...(record.continuedFrom ? { continuedFrom: record.continuedFrom } : {}),
+    // And the work it does (PRDCT-4123): the spawn reads the record back by
+    // the tab's id, which misses a record keyed by its tmux name, so the
+    // assignment travels with the plan.
+    ...(record.work ? { work: record.work } : {}),
     ...accountOverrides(requested)
   } as PtySpawnOptions
   // A move to another provider (PRDCT-4300) from a stopped record: the same
