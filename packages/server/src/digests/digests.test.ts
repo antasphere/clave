@@ -111,43 +111,29 @@ describe('the digests over HTTP', () => {
     })
   })
 
-  it('refuses, before the port, what is past the bounds: too many messages, a key of another shape, a text too long', async () => {
+  it('refuses, before the port, what is past the bounds the clip sets, and takes what is within', async () => {
     const { port, asked } = fakePort()
     server = await startEmbedded({ ports: { sessions: new FakeSource(), digests: port } })
     const message = { from: 'a', text: 'b' }
-    const tooMany = await call('/digests/exchange', {
-      sessionId: 's1',
-      key: '501-x',
-      messages: Array.from({ length: 501 }, () => message)
-    })
-    expect(tooMany.status).toBe(400)
-    const shape = await call('/digests/exchange', {
-      sessionId: 's1',
-      key: 'anything',
-      messages: [message]
-    })
-    expect(shape.status).toBe(400)
-    const long = await call('/digests/work', {
-      sessionId: 's1',
-      key: 'work-1-x',
-      notes: ['n'.repeat(100_001)],
-      tools: 0
-    })
-    expect(long.status).toBe(400)
-    const workShape = await call('/digests/work', {
-      sessionId: 's1',
-      key: '1-x',
-      notes: ['n'],
-      tools: 0
-    })
-    expect(workShape.status).toBe(400)
+    const exchange = (body: object): Promise<number> =>
+      call('/digests/exchange', { sessionId: 's1', key: '1-x', ...body }).then((r) => r.status)
+    const work = (body: object): Promise<number> =>
+      call('/digests/work', { sessionId: 's1', key: 'work-1-x', tools: 0, ...body }).then(
+        (r) => r.status
+      )
+    // The messages: 30 at most, a text of 4,096 characters at most.
+    expect(await exchange({ messages: Array.from({ length: 31 }, () => message) })).toBe(400)
+    expect(await exchange({ messages: [{ from: 'a', text: 'b'.repeat(4_097) }] })).toBe(400)
+    expect(await exchange({ messages: [{ from: 'a'.repeat(257), text: 'b' }] })).toBe(400)
+    expect(await exchange({ key: 'anything', messages: [message] })).toBe(400)
+    // The notes: 40 at most, a note of 1,024 characters at most.
+    expect(await work({ notes: Array.from({ length: 41 }, () => 'n') })).toBe(400)
+    expect(await work({ notes: ['n'.repeat(1_025)] })).toBe(400)
+    expect(await work({ key: '1-x', notes: ['n'] })).toBe(400)
     expect(asked).toEqual([])
-    // The bounds themselves let a real timeline through.
-    const ok = await call('/digests/exchange', {
-      sessionId: 's1',
-      key: '500-x',
-      messages: Array.from({ length: 500 }, () => message)
-    })
-    expect(ok.status).toBe(200)
+    // The clip's own output passes: 30 messages of 4,001 characters, 40 notes of 601.
+    const clipped = { from: 'a', text: `${'b'.repeat(4_000)}…`, request: 'r', reply: 'p' }
+    expect(await exchange({ messages: Array.from({ length: 30 }, () => clipped) })).toBe(200)
+    expect(await work({ notes: Array.from({ length: 40 }, () => `${'n'.repeat(600)}…`) })).toBe(200)
   })
 })

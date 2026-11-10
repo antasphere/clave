@@ -54,14 +54,25 @@ const NotRead = Schema.Struct({
   reason
 })
 
-/* The bounds of what a client may send (PRDCT-4327). The host reads only
- * the latest messages, clipped, but the key is over all of them, so the
- * whole timeline travels: generous for a real one, finite for any. */
-/** The most messages, or notes, one read may carry. */
-export const DIGEST_MAX_ITEMS = 500
-/** The longest any one text may be. */
-export const DIGEST_MAX_TEXT = 100_000
+/* The bounds of what a client may send (PRDCT-4327). A client clips a
+ * timeline before it keys and sends it, and the host clips again
+ * (`clipDigestMessages`, `clipNotes` in the app's shared code): the latest
+ * 30 messages, each text clipped to 4,000 characters (plus the mark of the
+ * cut), the sender's name to 200; the latest 40 notes, each to 600. The
+ * bounds follow that clip with a small margin; `digests.test.ts` in the app
+ * holds them to it. */
+/** The most messages one read may carry. */
+export const DIGEST_MAX_MESSAGES = 30
+/** The longest a message's text, request or reply may be. */
+export const DIGEST_MAX_TEXT = 4_096
+/** The longest a sender's name may be. */
+export const DIGEST_MAX_FROM = 256
+/** The most notes one work card's read may carry. */
+export const DIGEST_MAX_NOTES = 40
+/** The longest a note may be. */
+export const DIGEST_MAX_NOTE = 1_024
 const Text = Schema.String.pipe(Schema.maxLength(DIGEST_MAX_TEXT))
+const Note = Schema.String.pipe(Schema.maxLength(DIGEST_MAX_NOTE))
 const SessionId = Schema.String.pipe(Schema.minLength(1), Schema.maxLength(256))
 /** `digestKey`'s shape: the count, then the hash in base 36. */
 export const ExchangeDigestKey = Schema.String.pipe(Schema.pattern(/^\d{1,4}-[0-9a-z]{1,8}$/))
@@ -69,7 +80,7 @@ export const ExchangeDigestKey = Schema.String.pipe(Schema.pattern(/^\d{1,4}-[0-
 export const WorkDigestKey = Schema.String.pipe(Schema.pattern(/^work-\d{1,4}-[0-9a-z]{1,8}$/))
 
 export const DigestMessage = Schema.Struct({
-  from: Text,
+  from: Schema.String.pipe(Schema.maxLength(DIGEST_MAX_FROM)),
   text: Text,
   request: Schema.optional(Text),
   reply: Schema.optional(Text)
@@ -97,7 +108,7 @@ export const ReadExchangeDigest = Command.define('ReadExchangeDigest', {
   payload: Schema.Struct({
     sessionId: SessionId,
     key: ExchangeDigestKey,
-    messages: Schema.Array(DigestMessage).pipe(Schema.maxItems(DIGEST_MAX_ITEMS))
+    messages: Schema.Array(DigestMessage).pipe(Schema.maxItems(DIGEST_MAX_MESSAGES))
   }),
   success: ExchangeDigestResult,
   failure: CapabilityUnavailable
@@ -113,7 +124,7 @@ export const ReadWorkDigest = Command.define('ReadWorkDigest', {
   payload: Schema.Struct({
     sessionId: SessionId,
     key: WorkDigestKey,
-    notes: Schema.Array(Text).pipe(Schema.maxItems(DIGEST_MAX_ITEMS)),
+    notes: Schema.Array(Note).pipe(Schema.maxItems(DIGEST_MAX_NOTES)),
     tools: Schema.Int.pipe(Schema.between(0, 100_000))
   }),
   success: WorkDigestResult,

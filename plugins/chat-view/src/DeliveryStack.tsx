@@ -50,10 +50,14 @@ export function DeliveryStack({
   const { sessionId, index, recent } = useExchanges()
   // What the digest reads, and so its key; the view asks for it
   // (`useTimelineDigests`), this only shows where it stands.
-  const key = useMemo(() => digestKey(digestMessages(group, index)), [group, index])
+  const read = useMemo(() => digestMessages(group, index), [group, index])
+  const key = useMemo(() => digestKey(read), [read])
   const digest = useDigestState(sessionId, key, recent.has(id))
   const done = digest.state === 'done' ? digest.result : null
-  const flagged = done?.needsYou ? done.message : null
+  // The digest counts the messages it read: put back in the timeline's own
+  // count, past the ones the clip left out in front.
+  const left = group.messages.length - read.length
+  const flagged = done?.needsYou && done.message !== null ? done.message + left : null
   return (
     <section
       className="chat-delivery-stack exchange-timeline"

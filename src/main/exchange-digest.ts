@@ -6,6 +6,7 @@ import * as helperRunner from './helpers/runner'
 import { DIGEST_TIMEOUT_MS, exchangeDigestHelper, workDigestHelper } from './helpers/digests'
 import type { HelperFailureReason } from '../shared/helper-prompt'
 import {
+  clipDigestMessages,
   digestKey,
   parseDigestReply,
   type DigestDone,
@@ -35,14 +36,6 @@ import {
  */
 
 export { DIGEST_TIMEOUT_MS }
-
-/** The digest of a timeline never needs more than its latest messages. */
-const MAX_MESSAGES = 30
-/** Nor more than this of any one message. */
-const MAX_CHARS = 4000
-
-const clip = (text: string | undefined): string | undefined =>
-  text === undefined ? undefined : text.length > MAX_CHARS ? `${text.slice(0, MAX_CHARS)}…` : text
 
 /** The digests read so far, filed by session (exchange-digest-store.ts),
  *  in Clave's data folder through the storage port rather than Electron's
@@ -136,13 +129,7 @@ function read(request: DigestRequest): Promise<DigestResult> {
         )
     )
   }
-  const messages = request.messages.slice(-MAX_MESSAGES).map((message) => ({
-    from: message.from,
-    text: clip(message.text) ?? '',
-    request: clip(message.request),
-    reply: clip(message.reply)
-  }))
-  const offset = request.messages.length - messages.length
+  const { messages, offset } = clipDigestMessages(request.messages)
   return helperRunner
     .runHelper(exchangeDigestHelper, messages, request.launch)
     .then((outcome): DigestResult => {
@@ -312,15 +299,6 @@ export const MAX_WAITING_PER_SESSION = 10
  *  read for content the store files under a name it does not have. */
 export const KEY_MISMATCH_ERROR = 'The key does not match what was sent'
 
-/** The message as the key reads it: the view's own shape (`digestMessages`),
- *  absent fields left out, so the same content gives the same key here. */
-const keyed = (message: DigestMessage): DigestMessage => ({
-  from: message.from,
-  text: message.text,
-  ...(message.request !== undefined && { request: message.request }),
-  ...(message.reply !== undefined && { reply: message.reply })
-})
-
 /** The digests as a host serves them to its clients. Every request is read
  *  on the launch of the host's own record of the session, under the key the
  *  host recomputes from the content (a key that does not match is refused),
@@ -363,7 +341,8 @@ export function hostDigests(recordOf: DigestRecordOf): HostDigests {
   }
   return {
     exchangeDigest: (request) => {
-      const messages = request.messages.map(keyed)
+      // Clipped as the view clips (idempotent), so the key is the view's.
+      const { messages } = clipDigestMessages(request.messages)
       if (digestKey(messages) !== request.key) return Promise.resolve(mismatch)
       const launch = launchOf(request.sessionId)
       if (!launch) return Promise.resolve(unknown)
@@ -377,7 +356,7 @@ export function hostDigests(recordOf: DigestRecordOf): HostDigests {
     },
     exchangeDigestsOf: digestsOf,
     workDigest: (request) => {
-      const notes = [...request.notes]
+      const { notes } = clipNotes(request.notes)
       if (workDigestKey(notes) !== request.key) return Promise.resolve(mismatch)
       const launch = launchOf(request.sessionId)
       if (!launch) return Promise.resolve(unknown)
