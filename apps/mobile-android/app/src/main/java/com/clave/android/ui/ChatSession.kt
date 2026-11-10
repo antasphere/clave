@@ -5,6 +5,7 @@ import com.clave.android.OwnerSession
 import com.clave.core.chat.Admission
 import com.clave.core.chat.AdmissionContext
 import com.clave.core.chat.AttachmentJson
+import com.clave.core.chat.DeliveryController
 import com.clave.core.chat.MAX_TRANSFER_BYTES
 import com.clave.core.chat.NO_FILES_ROUTE
 import com.clave.core.chat.PickedKind
@@ -15,6 +16,10 @@ import com.clave.core.chat.labelled
 import com.clave.core.contract.Attachment
 import com.clave.core.contract.FileAttachment
 import com.clave.core.contract.FileDelivery
+import com.clave.core.state.ARRIVED_NOTHING_DISCARDED
+import com.clave.core.state.ARRIVED_NOTHING_SENT
+import com.clave.core.state.BEING_COMPLETED
+import com.clave.core.state.STILL_SENDING
 import com.clave.core.transport.ServerError
 import com.clave.core.transport.messageOf
 import com.clave.platform.files.ContentFiles
@@ -159,9 +164,10 @@ class ChatSession(
     fun send() = deliver { text, attachments -> store.send(machineId, sessionId, text, attachments = attachments) }
 
     /**
-     * "Send again (may duplicate)": the unknown send is discarded first (once any reconnection
-     * pass of the machine has finished with it) and the draft goes under a NEW id; nothing is
-     * sent when that send was settled meanwhile.
+     * "Send again (may duplicate)", decided at once against any reconnection pass of the machine:
+     * before the pass sends the same-id completion, the unknown send is discarded and the draft
+     * goes under a NEW id. When the first message had already arrived nothing more goes, the
+     * composer empties and it says so; when the completion has left, nothing changes and it says why.
      */
     fun resend() {
         val unknown = _state.value.unknownSend ?: return
@@ -171,6 +177,8 @@ class ChatSession(
     private fun deliver(call: suspend (text: String, attachments: List<Attachment>) -> SendOutcome) {
         val current = _state.value
         if ((current.draft.isBlank() && current.attachments.isEmpty()) || current.sending || current.attaching) return
+        // A Send again answered with the first id as sent: that message had arrived, none went now.
+        val unknownAtStart = current.unknownSend?.clientMessageId
         _state.update { it.copy(sending = true, error = null) }
         scope.launch {
             val text = current.draft
@@ -186,7 +194,7 @@ class ChatSession(
                             it.copy(
                                 draft = if (it.draft == text) "" else it.draft,
                                 attachments = if (it.attachments == attachments) emptyList() else it.attachments,
-                                error = null,
+                                error = if (outcome.clientMessageId == unknownAtStart) ARRIVED_NOTHING_SENT else null,
                             )
                         }
                         if (_state.value.draft.isEmpty()) drafts.clear(machineId, sessionId)
@@ -207,18 +215,42 @@ class ChatSession(
         }
     }
 
-    /** "Discard": the unknown send leaves the ledger (once any reconnection pass of the machine
-     *  has finished with it), the mark is cleared, the draft and the attachments go. */
+    @Volatile private var discarding = false
+
+    /**
+     * "Discard", decided at once against any reconnection pass of the machine; what the server
+     * had answered before stands and is said. Discarded, the send, its mark, the draft and the
+     * attachments go. Arrived before the choice, the delivered text leaves the composer and it
+     * says so. Refused, the rejection's mark stays with the draft. A completion already on its
+     * way, or the send's own write still out, changes nothing and says why.
+     */
     fun discard() {
-        val unknown = _state.value.unknownSend
+        val unknown = _state.value.unknownSend ?: return
+        if (discarding) return
+        discarding = true
         scope.launch {
-            if (unknown != null) store.discardUnknown(machineId, sessionId, unknown.clientMessageId)
-            delivery.marks.clear(machineId, sessionId)
-            draftWrite?.cancel()
-            drafts.clear(machineId, sessionId)
-            owner.kv.remove(attachmentKey)
-            _state.update { it.copy(draft = "", attachments = emptyList(), error = null) }
-            readDelivery()
+            try {
+                when (store.discardUnknown(machineId, sessionId, unknown.clientMessageId)) {
+                    DeliveryController.DiscardResult.Discarded, null -> {
+                        delivery.marks.clear(machineId, sessionId)
+                        draftWrite?.cancel()
+                        drafts.clear(machineId, sessionId)
+                        owner.kv.remove(attachmentKey)
+                        _state.update { it.copy(draft = "", attachments = emptyList(), error = null) }
+                    }
+                    DeliveryController.DiscardResult.AlreadyDelivered -> _state.update {
+                        it.copy(draft = if (it.draft == (unknown.draftText ?: unknown.text)) "" else it.draft, error = ARRIVED_NOTHING_DISCARDED)
+                    }
+                    DeliveryController.DiscardResult.AlreadyRejected -> _state.update { it.copy(error = null) }
+                    DeliveryController.DiscardResult.BeingCompleted -> _state.update { it.copy(error = BEING_COMPLETED) }
+                    DeliveryController.DiscardResult.InFlight -> _state.update { it.copy(error = STILL_SENDING) }
+                    // No longer waiting (discarded already): the card goes with the next read.
+                    DeliveryController.DiscardResult.NothingToDiscard -> _state.update { it.copy(error = null) }
+                }
+            } finally {
+                discarding = false
+                readDelivery()
+            }
         }
     }
 

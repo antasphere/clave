@@ -1,5 +1,6 @@
 package com.clave.core.state
 
+import com.clave.core.chat.DeliveryController
 import com.clave.core.chat.DeliveryMark
 import com.clave.core.chat.SendOutcome
 import com.clave.core.chat.UNKNOWN_SENDS_KEY
@@ -61,10 +62,10 @@ class SendGuardTest {
     }
 
     /** The first send's answer is lost and its status cannot be asked: its outcome is unknown. */
-    private suspend fun Harness.lostSend(text: String = "hello"): SendOutcome.Unknown {
+    private suspend fun Harness.lostSend(text: String = "hello", session: String = "s1"): SendOutcome.Unknown {
         routes(write = { answer(504, "{}") }, status = { _, _ -> answer(504, "{}") })
-        drafts.set(machineId, "s1", text)
-        val outcome = store.send(machineId, "s1", text)
+        drafts.set(machineId, session, text)
+        val outcome = store.send(machineId, session, text)
         assertTrue("the first send ends unknown: $outcome", outcome is SendOutcome.Unknown)
         return outcome as SendOutcome.Unknown
     }
@@ -240,17 +241,17 @@ class SendGuardTest {
     @Test
     fun `Discard leaves nothing a later reconnection replays`() = guarded {
         lostSend()
-        assertTrue(store.discardUnknown(machineId, "s1", id(1)))
+        assertEquals(DeliveryController.DiscardResult.Discarded, store.discardUnknown(machineId, "s1", id(1)))
         assertNull(marks.get(machineId, "s1"))
         routes(write = { answer(200, """{"status":"accepted"}""") }, status = { _, _ -> answer(200, """{"status":"absent"}""") })
         reconnect()
         assertEquals(listOf(id(1)), writtenIds())
         assertEquals(emptyList<String>(), sends.list().map { it.clientMessageId })
-        assertFalse(store.discardUnknown(machineId, "s1", id(1)))
+        assertEquals(DeliveryController.DiscardResult.NothingToDiscard, store.discardUnknown(machineId, "s1", id(1)))
     }
 
     @Test
-    fun `Send again while a reconnection is settling that send waits for it, and sends nothing once the pass completed it`() = guarded {
+    fun `Send again while a reconnection asks about that send stops its completion and goes under a new id`() = guarded {
         lostSend()
         routes(write = { answer(200, """{"status":"accepted"}""") }, status = { asked, call -> if (asked == id(1)) machine.hold(call) else answer(200, """{"status":"accepted"}""") })
         machine.welcome = true
@@ -259,11 +260,114 @@ class SendGuardTest {
         val retry = scope.async { store.resend(machineId, "s1", id(1), "hello") }
         delay(500)
         assertEquals("nothing goes while the pass reconciles the same send", listOf(id(1)), writtenIds())
+        // Absent: the pass would complete the first id, but the person's choice came first.
         machine.respond(0, answer(200, """{"status":"absent"}"""))
-        assertEquals(SendOutcome.Failed(id(1), SETTLED_MEANWHILE), retry.await())
-        assertEquals("only the original id reached the machine", listOf(id(1), id(1)), writtenIds())
-        assertEquals(1, minted.get())
+        assertEquals(SendOutcome.Sent(id(2), reconciled = false), awaitGate("the Send again", retry))
+        assertEquals("the first id is never completed after the choice", listOf(id(1), id(2)), writtenIds())
+        assertEquals(2, minted.get())
         assertEquals(emptyList<String>(), sends.list().map { it.clientMessageId })
+    }
+
+    @Test
+    fun `Discard while a reconnection asks about that send means the pass never completes it`() = guarded {
+        lostSend()
+        routes(write = { answer(200, """{"status":"accepted"}""") }, status = { asked, call -> if (asked == id(1)) machine.hold(call) else answer(200, """{"status":"accepted"}""") })
+        machine.welcome = true
+        machine.closePeers()
+        until(20_000) { machine.held.size == 1 }
+        val discard = scope.async { store.discardUnknown(machineId, "s1", id(1)) }
+        delay(500)
+        machine.respond(0, answer(200, """{"status":"absent"}"""))
+        assertEquals(DeliveryController.DiscardResult.Discarded, awaitGate("the discard", discard))
+        delay(500)
+        assertEquals("nothing is written after the press", listOf(id(1)), writtenIds())
+        assertEquals(emptyList<String>(), sends.list().map { it.clientMessageId })
+        assertNull(marks.get(machineId, "s1"))
+    }
+
+    @Test
+    fun `Discard of another conversation's send the pass has not reached means it is never reconciled`() = guarded {
+        lostSend()
+        lostSend(session = "s2")
+        // Its own lost send asked about it once already; the pass must not ask again.
+        val askedBefore = askedIds().count { it == id(2) }
+        routes(write = { answer(200, """{"status":"accepted"}""") }, status = { asked, call -> if (asked == id(1)) machine.hold(call) else answer(200, """{"status":"absent"}""") })
+        machine.welcome = true
+        machine.closePeers()
+        until(20_000) { machine.held.size == 1 }
+        val discard = scope.async { store.discardUnknown(machineId, "s2", id(2)) }
+        delay(500)
+        machine.respond(0, answer(200, """{"status":"absent"}"""))
+        assertEquals(DeliveryController.DiscardResult.Discarded, awaitGate("the discard", discard))
+        until(what = "the pass to settle the first send") { runBlocking { sends.list().isEmpty() } }
+        assertEquals("the first completed under its own id, the discarded one never again", listOf(id(1), id(2), id(1)), writtenIds())
+        assertEquals("the pass never asks about the discarded send", askedBefore, askedIds().count { it == id(2) })
+    }
+
+    @Test
+    fun `Discard once the completion has left is refused as being completed, and the send arrives`() = guarded {
+        lostSend()
+        routes(write = { call -> machine.hold(call) }, status = { _, _ -> answer(200, """{"status":"absent"}""") })
+        machine.welcome = true
+        machine.closePeers()
+        until(20_000, what = "the pass's same-id completion to leave") { machine.held.size == 1 }
+        assertEquals(DeliveryController.DiscardResult.BeingCompleted, store.discardUnknown(machineId, "s1", id(1)))
+        assertEquals(SendOutcome.Failed(id(1), BEING_COMPLETED), store.resend(machineId, "s1", id(1), "hello"))
+        machine.respond(0, answer(200, """{"status":"accepted"}"""))
+        until(what = "the pass to settle the completion") { runBlocking { sends.list().isEmpty() } }
+        assertEquals(listOf(id(1), id(1)), writtenIds())
+        assertEquals("delivered, the draft goes", "", drafts.get(machineId, "s1"))
+        assertEquals(1, minted.get())
+    }
+
+    @Test
+    fun `Send again and Discard after the pass delivered say it had arrived and send nothing`() = guarded {
+        lostSend()
+        routes(write = { answer(200, """{"status":"accepted"}""") }, status = { _, _ -> answer(200, """{"status":"accepted"}""") })
+        reconnect()
+        assertEquals(SendOutcome.Sent(id(1), reconciled = true), store.resend(machineId, "s1", id(1), "hello"))
+        assertEquals(DeliveryController.DiscardResult.AlreadyDelivered, store.discardUnknown(machineId, "s1", id(1)))
+        assertEquals("nothing more reached the machine", listOf(id(1)), writtenIds())
+        assertEquals(1, minted.get())
+        assertEquals("", drafts.get(machineId, "s1"))
+    }
+
+    @Test
+    fun `Discard while the send's own write is in flight is refused, and the send goes on`() = guarded {
+        routes(write = { call -> machine.hold(call) }, status = { _, _ -> answer(200, """{"status":"accepted"}""") })
+        drafts.set(machineId, "s1", "first")
+        val first = scope.async { store.send(machineId, "s1", "first") }
+        until(what = "the first send's write to leave") { machine.held.size == 1 }
+        assertEquals(DeliveryController.DiscardResult.InFlight, store.discardUnknown(machineId, "s1", id(1)))
+        machine.respond(0, answer(200, """{"status":"accepted"}"""))
+        assertEquals(SendOutcome.Sent(id(1), reconciled = false), awaitGate("the first send", first))
+        assertEquals(emptyList<String>(), sends.list().map { it.clientMessageId })
+    }
+
+    @Test
+    fun `a reconnection reads the ledger only once it holds the machine's lock, after a discard that held it`() = guarded {
+        lostSend()
+        lostSend(session = "s2")
+        routes(write = { answer(200, """{"status":"accepted"}""") }, status = { _, _ -> answer(200, """{"status":"absent"}""") })
+        // The discard's ledger write is held under the lock while the pass starts and waits for it.
+        val holding = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        kv.beforeSet = { key ->
+            if (key == UNKNOWN_SENDS_KEY && !holding.isCompleted) {
+                holding.complete(Unit)
+                release.await()
+            }
+        }
+        val discard = scope.async { store.discardUnknown(machineId, "s1", id(1)) }
+        awaitGate("the discard's ledger write under the lock", holding)
+        machine.welcome = true
+        machine.closePeers()
+        until(what = "the push channel to open again") { machine.upgrades.get() >= 2 }
+        delay(500)
+        release.complete(Unit)
+        assertEquals(DeliveryController.DiscardResult.Discarded, awaitGate("the discard", discard))
+        until(what = "the pass to settle the other send") { runBlocking { sends.list().isEmpty() } }
+        assertEquals("the discarded send is never written again", listOf(id(1), id(2), id(2)), writtenIds())
     }
 
     private companion object {

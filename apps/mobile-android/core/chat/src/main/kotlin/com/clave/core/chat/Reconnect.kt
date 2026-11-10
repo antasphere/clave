@@ -44,8 +44,16 @@ data class ReconnectPorts(
     /** A send whose own write is still in flight: the pass leaves it to its sender. */
     val isActive: ((UnknownSend) -> Boolean)? = null,
     /** Runs the reconciliation of the ledger's sends; the controller holds the machine's lock
-     *  there, so the person's discard waits for it and a discarded send is never completed. */
+     *  there, so the ledger is read and settled by one pass at a time. */
     val exclusive: suspend (suspend () -> Unit) -> Unit = { block -> block() },
+    /** Whether the person discarded this send before the pass reached it: it is left alone. */
+    val discarded: ((UnknownSend) -> Boolean)? = null,
+    /** Right before this send's same-id completion leaves: false when the person discarded it first. */
+    val mayComplete: ((UnknownSend) -> Boolean)? = null,
+    /** This send's reconciliation is over, whatever it found. */
+    val reconciled: ((UnknownSend) -> Unit)? = null,
+    /** The pass settled this send with this outcome. */
+    val settled: ((UnknownSend, SendOutcome) -> Unit)? = null,
 )
 
 data class ReconnectInput(
@@ -68,15 +76,28 @@ suspend fun reconnectPass(input: ReconnectInput, ports: ReconnectPorts, options:
     ports.exclusive {
         for (send in ports.sends.forMachine(input.machineId)) {
             if (ports.isActive?.invoke(send) == true) continue
+            // Discarded by the person while the pass worked on another send: never reconciled.
+            if (ports.discarded?.invoke(send) == true) continue
             val sendPorts = object : SendPorts {
                 override suspend fun write(clientMessageId: String): WriteAnswer = ports.write(send)
                 override suspend fun status(clientMessageId: String): WriteStatus = ports.status(send)
                 override suspend fun sleep(ms: Long) = ports.sleep(ms)
                 override fun now(): Long = ports.now()
+                override suspend fun mayComplete(clientMessageId: String): Boolean = ports.mayComplete?.invoke(send) ?: true
+                override fun discarded(clientMessageId: String): Boolean = ports.discarded?.invoke(send) ?: false
             }
-            val outcome = reconcile(send.clientMessageId, sendPorts, options, mayRetry = true)
-            outcomes.add(SettledSend(send, outcome))
-            settleSend(send, outcome, ports.sends, ports.marks, ports.drafts, ports.now, ports.clearAttachments)
+            try {
+                val outcome = reconcile(send.clientMessageId, sendPorts, options, mayRetry = true)
+                // Discarded meanwhile and still unknown (the completion not sent, or the server
+                // unable to say): the person's discard settles it. What the server answered
+                // (accepted, rejected) is settled here whatever the person chose since.
+                if (outcome is SendOutcome.Unknown && ports.discarded?.invoke(send) == true) continue
+                outcomes.add(SettledSend(send, outcome))
+                settleSend(send, outcome, ports.sends, ports.marks, ports.drafts, ports.now, ports.clearAttachments)
+                ports.settled?.invoke(send, outcome)
+            } finally {
+                ports.reconciled?.invoke(send)
+            }
         }
     }
     val refreshFailures = mutableListOf<String>()
@@ -201,20 +222,71 @@ class DeliveryController(
 
     private fun claimKey(machineId: String, sessionId: String): String = "$machineId\u0000$sessionId"
 
-    /**
-     * The person's explicit choice on a send of unknown outcome ("Send again" or "Discard"): once
-     * any reconnection pass of the machine has finished, the send leaves the ledger and its mark
-     * is cleared. False when there is nothing to discard: the send was settled meanwhile (the
-     * pass found it accepted, completed it, or saw it refused), or its own write is in flight.
-     */
-    suspend fun discard(machineId: String, sessionId: String, clientMessageId: String): Boolean =
-        passLock(machineId).withLock {
-            if (inFlight(clientMessageId)) return@withLock false
-            if (sends.forSession(machineId, sessionId).none { it.clientMessageId == clientMessageId }) return@withLock false
-            sends.remove(clientMessageId)
-            marks.clear(machineId, sessionId)
-            true
+    /** Who decided first for a send of unknown outcome: the person's discard, or the pass's same-id completion. */
+    private enum class Decision { Discarded, Completing }
+    private val decisions = ConcurrentHashMap<String, Decision>()
+
+    /** What the person's discard did. */
+    enum class DiscardResult {
+        /** The send left the ledger and its mark: nothing of it will be sent again. */
+        Discarded,
+        /** The server had accepted it before the discard: it arrived. */
+        AlreadyDelivered,
+        /** The server had refused it: its rejection mark says why. */
+        AlreadyRejected,
+        /** The reconnection's same-id completion was already on its way: it can no longer be discarded. */
+        BeingCompleted,
+        /** Its own write is still in flight. */
+        InFlight,
+        /** It is no longer waiting, and how it was settled is not known here (discarded already). */
+        NothingToDiscard,
+    }
+
+    /** How the latest sends were settled, by id (accepted true, rejected false; 64 kept): what a
+     *  late Discard or Send again can truthfully say. */
+    private val settledLately = object : LinkedHashMap<String, Boolean>(16, 0.75f, false) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Boolean>?): Boolean = size > 64
+    }
+
+    private fun noteSettled(clientMessageId: String, outcome: SendOutcome) = synchronized(settledLately) {
+        when (outcome) {
+            is SendOutcome.Sent -> settledLately[clientMessageId] = true
+            is SendOutcome.Rejected -> settledLately[clientMessageId] = false
+            else -> Unit
         }
+    }
+
+    /**
+     * The person's explicit choice on a send of unknown outcome ("Send again" or "Discard"),
+     * decided at once and without waiting: a reconnection pass that has not sent the same-id
+     * completion yet will not send it, and a pass that has not reached the send leaves it alone.
+     * Then, once the pass has let go of the ledger, the send leaves it and its mark is cleared.
+     * What the server answered before the discard stands and is said: accepted (it arrived),
+     * rejected, or a completion already on its way.
+     */
+    suspend fun discard(machineId: String, sessionId: String, clientMessageId: String): DiscardResult {
+        if (inFlight(clientMessageId)) return DiscardResult.InFlight
+        if (decisions.putIfAbsent(clientMessageId, Decision.Discarded) == Decision.Completing) return DiscardResult.BeingCompleted
+        return passLock(machineId).withLock {
+            try {
+                when {
+                    inFlight(clientMessageId) -> DiscardResult.InFlight
+                    sends.forSession(machineId, sessionId).any { it.clientMessageId == clientMessageId } -> {
+                        sends.remove(clientMessageId)
+                        marks.clear(machineId, sessionId)
+                        DiscardResult.Discarded
+                    }
+                    else -> when (synchronized(settledLately) { settledLately[clientMessageId] }) {
+                        true -> DiscardResult.AlreadyDelivered
+                        false -> DiscardResult.AlreadyRejected
+                        null -> DiscardResult.NothingToDiscard
+                    }
+                }
+            } finally {
+                decisions.remove(clientMessageId, Decision.Discarded)
+            }
+        }
+    }
 
     /** The attachment draft goes only when it is still the records sent. */
     private val clearAttachments: suspend (UnknownSend) -> Unit = { send ->
@@ -245,6 +317,7 @@ class DeliveryController(
     suspend fun finish(send: UnknownSend, outcome: SendOutcome) {
         try {
             settleSend(send, outcome, sends, marks, drafts, clock::now, clearAttachments)
+            noteSettled(send.clientMessageId, outcome)
             if (outcome is SendOutcome.Failed) {
                 // The write itself failed (a refused token, a policy): nothing is in doubt.
                 sends.remove(send.clientMessageId)
@@ -284,6 +357,10 @@ class DeliveryController(
                     clearAttachments = clearAttachments,
                     isActive = { active.contains(it.clientMessageId) },
                     exclusive = { block -> passLock(machineId).withLock { block() } },
+                    discarded = { decisions[it.clientMessageId] == Decision.Discarded },
+                    mayComplete = { decisions.putIfAbsent(it.clientMessageId, Decision.Completing) != Decision.Discarded },
+                    reconciled = { decisions.remove(it.clientMessageId, Decision.Completing) },
+                    settled = { send, outcome -> noteSettled(send.clientMessageId, outcome) },
                 ),
             )
             mine.complete(report)

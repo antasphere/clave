@@ -235,8 +235,13 @@ internal suspend fun until(timeoutMs: Long = 10_000, what: String = "the conditi
 
 /** Awaits [gate] for at most [timeoutMs]. When what it guards breaks, the test fails naming
  *  [what] instead of blocking the whole task until the job's own timeout. */
-internal suspend fun <T : Any> awaitGate(what: String, gate: Deferred<T>, timeoutMs: Long = 10_000): T =
-    withTimeoutOrNull(timeoutMs) { gate.await() } ?: throw AssertionError("timed out waiting for $what")
+internal suspend fun <T> awaitGate(what: String, gate: Deferred<T>, timeoutMs: Long = 10_000): T {
+    var done = false
+    val value = withTimeoutOrNull(timeoutMs) { gate.await().also { done = true } }
+    if (!done) throw AssertionError("timed out waiting for $what")
+    @Suppress("UNCHECKED_CAST")
+    return value as T
+}
 
 /** The transcript's text, every user and assistant entry joined. */
 internal fun ClaveStore.text(machineId: String, sessionId: String): String =

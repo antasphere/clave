@@ -51,6 +51,9 @@ class SendFailure(
     }
 }
 
+/** The reason of a same-id completion that did not leave because the person discarded the send first. */
+const val DISCARDED_FIRST: String = "Discarded before the reconnection sent it again."
+
 interface SendPorts {
     /** Performs the write under this id; throws a [SendFailure] on failure. */
     suspend fun write(clientMessageId: String): WriteAnswer
@@ -58,6 +61,13 @@ interface SendPorts {
     suspend fun status(clientMessageId: String): WriteStatus
     suspend fun sleep(ms: Long)
     fun now(): Long
+
+    /** Asked right before the same-id completion leaves: false once that send must not be
+     *  written any more, the person having discarded it first. */
+    suspend fun mayComplete(clientMessageId: String): Boolean = true
+
+    /** Whether the person has discarded this send: a pass stops waiting on its status then. */
+    fun discarded(clientMessageId: String): Boolean = false
 }
 
 sealed interface SendOutcome {
@@ -154,6 +164,8 @@ suspend fun reconcile(
                         "The message was sent again once and its outcome is still not known.",
                     )
                 }
+                // The person's discard and this completion: whichever comes first decides.
+                if (!ports.mayComplete(clientMessageId)) return SendOutcome.Unknown(clientMessageId, DISCARDED_FIRST)
                 try {
                     val answer = ports.write(clientMessageId)
                     if (answer.status == WriteAnswerStatus.Accepted) return SendOutcome.Sent(clientMessageId, reconciled = true)
@@ -165,6 +177,7 @@ suspend fun reconcile(
                 return reconcile(clientMessageId, ports, options, mayRetry = false)
             }
             WriteStatusKind.Pending -> {
+                if (ports.discarded(clientMessageId)) return SendOutcome.Unknown(clientMessageId, DISCARDED_FIRST)
                 if (ports.now() - started >= budget) {
                     return SendOutcome.Unknown(clientMessageId, "The server is still working on the message after a minute.")
                 }

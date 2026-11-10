@@ -98,9 +98,18 @@ public const val STILL_SENDING: String = "The last message is still being sent."
 public const val DELIVERY_UNKNOWN_FIRST: String =
     "The last message's delivery is unknown. Choose Send again or Discard first."
 
-/** "Send again" when the unknown send was settled before the choice could be applied. */
-public const val SETTLED_MEANWHILE: String =
-    "The first message's delivery was settled meanwhile, so nothing was sent again."
+/** "Send again" or "Discard" once the reconnection's same-id completion of that message has left. */
+public const val BEING_COMPLETED: String =
+    "The reconnection is already sending this message again under its own id; it can no longer be discarded or sent anew."
+
+/** "Send again" when the server had accepted the first message before the choice: nothing new goes. */
+public const val ARRIVED_NOTHING_SENT: String = "The first message had already arrived, so nothing was sent again."
+
+/** "Send again" on a message no longer waiting, whose settling is not known here. */
+public const val NOTHING_WAITING: String = "That message is no longer waiting, so nothing was sent again."
+
+/** "Discard" when the server had accepted the message before the choice. */
+public const val ARRIVED_NOTHING_DISCARDED: String = "The message had already arrived, so nothing was discarded."
 
 /** The outcome of an answer or an interrupt written into a session. */
 public data class ActionOutcome(val ok: Boolean, val error: String? = null)
@@ -761,19 +770,29 @@ public class ClaveStore(private val services: Services) {
         attachments: List<Attachment> = emptyList(),
     ): SendOutcome {
         val delivery = services.delivery
-        if (delivery != null && !delivery.discard(machineId, sessionId, unknownId)) {
-            return SendOutcome.Failed(unknownId, SETTLED_MEANWHILE)
+        if (delivery != null) {
+            when (delivery.discard(machineId, sessionId, unknownId)) {
+                DeliveryController.DiscardResult.Discarded -> Unit
+                // It arrived before the choice: the first id is the message, nothing more goes.
+                DeliveryController.DiscardResult.AlreadyDelivered -> return SendOutcome.Sent(unknownId, reconciled = true)
+                DeliveryController.DiscardResult.AlreadyRejected ->
+                    return SendOutcome.Rejected(unknownId, delivery.marks.get(machineId, sessionId)?.reason ?: "The server refused the message.")
+                DeliveryController.DiscardResult.BeingCompleted -> return SendOutcome.Failed(unknownId, BEING_COMPLETED)
+                DeliveryController.DiscardResult.InFlight -> return SendOutcome.Failed(unknownId, STILL_SENDING)
+                DeliveryController.DiscardResult.NothingToDiscard -> return SendOutcome.Failed(unknownId, NOTHING_WAITING)
+            }
         }
         return send(machineId, sessionId, text, attachments = attachments)
     }
 
     /**
-     * "Discard": the person's explicit choice on a send of unknown outcome. It leaves the
-     * ledger and its mark goes, once any reconnection pass of the machine has finished
-     * reconciling, so no pass ever completes it afterwards. False when it was settled meanwhile.
+     * "Discard": the person's explicit choice on a send of unknown outcome, decided at once: a
+     * reconnection pass that has not sent the same-id completion will not send it. What the
+     * server had answered before stands and is said (DeliveryController.DiscardResult); null
+     * without a delivery ledger.
      */
-    public suspend fun discardUnknown(machineId: String, sessionId: String, unknownId: String): Boolean =
-        services.delivery?.discard(machineId, sessionId, unknownId) ?: false
+    public suspend fun discardUnknown(machineId: String, sessionId: String, unknownId: String): DeliveryController.DiscardResult? =
+        services.delivery?.discard(machineId, sessionId, unknownId)
 
     public suspend fun answerInChat(
         machineId: String,
