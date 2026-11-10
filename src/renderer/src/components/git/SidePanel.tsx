@@ -1,4 +1,5 @@
 import { isRemoteKey } from '../../lib/fleet-identity'
+import { pickFolderOn } from '../../lib/pick-folder'
 import { LOCAL_SERVER_ID, parseResourceKey, resourceKey } from '@clave/contract/fleet'
 import { panelRoots } from '../../lib/panel-roots'
 import { repoDisplayName, repoDisplayPath } from '../../lib/git-paths'
@@ -492,12 +493,16 @@ function SidePanelBody(): React.JSX.Element {
     return cut === -1 ? ['', shown] : [shown.slice(0, cut + 1), shown.slice(cut + 1)]
   }, [cwd])
 
+  // A server tab's folder is a path of the server's disk: it is picked on
+  // the server, from where the panel stands (PRDCT-4329).
   const handleChangeFolder = useCallback(async () => {
-    const folderPath = await window.electronAPI?.openFolderDialog()
+    const folderPath = fleetRemote
+      ? await pickFolderOn(fleetOwner, cwd ?? undefined)
+      : await window.electronAPI?.openFolderDialog()
     if (folderPath) {
       setCustomCwd(folderPath)
     }
-  }, [setCustomCwd])
+  }, [setCustomCwd, fleetRemote, fleetOwner, cwd])
 
   const handleResetFolder = useCallback(() => {
     setCustomCwd(null)
