@@ -58,32 +58,53 @@ export function ownWordsOf(question: AgentQuestion, value: InputAnswer | undefin
     .join(', ')
 }
 
-/** A multi-select's answer with its own words replaced by `words`: the
- *  options picked, in their order, then the words when there are any. The
- *  words are kept as typed (a trailing space is the next word coming);
- *  the answer sent trims them (`answersOf`). */
+/** A multi-select's picks: the options its answer holds. The line of own
+ *  words the person is typing is the answer's last entry and never a pick,
+ *  even while it reads like an option ("No" on the way to "No idea"); with
+ *  no line known (`words` undefined), every entry that is an option is one. */
+export function picksOf(
+  question: AgentQuestion,
+  value: InputAnswer | undefined,
+  words?: string
+): string[] {
+  const labels = labelsOf(question)
+  let list = listOf(value)
+  if (words !== undefined && words.trim() !== '' && list.at(-1) === words) list = list.slice(0, -1)
+  return list.filter((entry) => labels.has(entry))
+}
+
+/** A multi-select's answer with its line of own words changed from
+ *  `previous` to `words`: the options picked, in their order, then the
+ *  words when there are any. The words are kept as typed (a trailing space
+ *  is the next word coming); the answer sent trims them (`answersOf`). */
 export function withOwnWords(
   question: AgentQuestion,
   value: InputAnswer | undefined,
+  previous: string,
   words: string
 ): string[] {
-  const labels = labelsOf(question)
-  const picked = listOf(value).filter((entry) => labels.has(entry))
-  return words.trim() === '' ? picked : [...picked, words]
+  const picks = picksOf(question, value, previous)
+  return words.trim() === '' ? picks : [...picks, words]
 }
 
 /** A multi-select's answer with one option picked or unpicked; its own
- *  words stay where they were, last. */
+ *  words (`words`, the line as the card holds it, or the entries that are no
+ *  option when the card does not say) stay where they were, last. */
 export function togglePick(
   question: AgentQuestion,
   value: InputAnswer | undefined,
-  label: string
+  label: string,
+  words?: string
 ): string[] {
   const labels = labelsOf(question)
-  const list = listOf(value)
-  const picked = list.filter((entry) => labels.has(entry))
-  const own = list.filter((entry) => !labels.has(entry))
-  const next = picked.includes(label) ? picked.filter((l) => l !== label) : [...picked, label]
+  const picks = picksOf(question, value, words)
+  const own =
+    words !== undefined
+      ? words.trim() === ''
+        ? []
+        : [words]
+      : listOf(value).filter((entry) => !labels.has(entry))
+  const next = picks.includes(label) ? picks.filter((l) => l !== label) : [...picks, label]
   // The options keep the order the agent gave them, whatever the clicks.
   const order = question.options.map((o) => o.label)
   next.sort((a, b) => order.indexOf(a) - order.indexOf(b))

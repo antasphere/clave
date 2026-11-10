@@ -36,6 +36,7 @@ import {
   nativeHeadline,
   ownWordsOf,
   pickedOption,
+  picksOf,
   takesOwnWords,
   togglePick,
   withOwnWords
@@ -128,6 +129,7 @@ function Field({
   busy,
   remote,
   secret = false,
+  enterMoves = false,
   autoFocus,
   focusToken = 0,
   onChange,
@@ -142,6 +144,9 @@ function Field({
   remote: boolean
   /** A private answer (a native question marked secret): typed unseen. */
   secret?: boolean
+  /** The agent's own question asked in words alone: its field is one line
+   *  that grows, where Enter moves on and Shift+Enter is a new line. */
+  enterMoves?: boolean
   autoFocus: boolean
   /** Changes when the reader reopens this question from its folded line:
    *  the field takes the caret at the end of the answer, to edit it. */
@@ -159,6 +164,24 @@ function Field({
   const id = `chat-field-${key.replace(/[^a-z0-9_-]/gi, '-')}`
   const [opened, setOpened] = useState(false)
   const field = useRef<HTMLInputElement | HTMLTextAreaElement>(null)
+  /* A multi-select's line of own words, as typed: held here, so a word on
+     its way that reads like an option ("No" on the way to "No idea") is never
+     taken for that option. Read again from the answer when someone else
+     changes it (the agent's fill, a remount). */
+  const [ownLine, setOwnLine] = useState(() => ownWordsOf(question, value))
+  const produced = useRef<InputAnswer | undefined>(value)
+  useEffect(() => {
+    if (value === produced.current) return
+    produced.current = value
+    setOwnLine(ownWordsOf(question, value))
+    // The question is the request's, fixed for the field's life.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [value])
+  /** The field's own change: remembered, so it is not read back as another's. */
+  const change = (next: InputAnswer): void => {
+    produced.current = next
+    onChange(next)
+  }
   useEffect(() => {
     if (autoFocus) field.current?.focus({ preventScroll: true })
   }, [autoFocus])
@@ -172,6 +195,8 @@ function Field({
   }, [focusToken])
   /** Enter moves on, Shift+Enter is a new line in a field that takes several. */
   const enterMovesOn = (event: React.KeyboardEvent): void => {
+    // ⌘Enter is the card's (one answer, sent once), never the field's too.
+    if (event.metaKey || event.ctrlKey) return
     if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
       event.preventDefault()
       onEnter()
@@ -208,28 +233,39 @@ function Field({
   )
   if (kind === 'choice') {
     const words = takesOwnWords(question)
-    const list = typeof value === 'string' ? [value] : [...((value as readonly string[]) ?? [])]
     const answer = typeof value === 'string' ? value : ''
     // A single choice's option is the one its answer starts from, the answer
     // edited or not; a closed choice's answer IS the option.
-    const chosen = question.multiSelect ? null : words ? pickedOption(question, answer) : answer
+    // A private answer ticks an option only when it IS that option: a tick
+    // on what it starts with would show how the private value starts.
+    const chosen = question.multiSelect
+      ? null
+      : words && !secret
+        ? pickedOption(question, answer)
+        : question.options.some((o) => o.label === answer)
+          ? answer
+          : null
+    const picks = question.multiSelect ? picksOf(question, value, words ? ownLine : undefined) : []
     const isPicked = (label: string): boolean =>
-      question.multiSelect ? list.includes(label) : chosen === label
+      question.multiSelect ? picks.includes(label) : chosen === label
     const pick = (label: string): void => {
       if (question.multiSelect) {
-        onChange(togglePick(question, value, label))
+        change(togglePick(question, value, label, words ? ownLine : undefined))
         onTouch()
         return
       }
-      onChange(label)
+      change(label)
       onTouch()
       onPick?.(label)
     }
     // The answer line: a single choice's whole answer, the option picked
     // landing in it to be edited; a multi-select's own words beside its picks.
-    const line = question.multiSelect ? ownWordsOf(question, value) : answer
-    const write = (text: string): void =>
-      onChange(question.multiSelect ? withOwnWords(question, value, text) : text)
+    const line = question.multiSelect ? ownLine : answer
+    const write = (text: string): void => {
+      if (!question.multiSelect) return change(text)
+      change(withOwnWords(question, value, ownLine, text))
+      setOwnLine(text)
+    }
     const lineLabel = question.multiSelect ? 'Your own words' : 'Your answer'
     const linePlaceholder = question.multiSelect
       ? 'Add your own words'
@@ -350,7 +386,7 @@ function Field({
                   data-primary={opened ? 'true' : undefined}
                   disabled={busy}
                   onClick={() => {
-                    onChange('done')
+                    change('done')
                     onTouch()
                     onPick?.('done')
                   }}
@@ -365,7 +401,10 @@ function Field({
       </div>
     )
   }
-  if (kind === 'long-text')
+  if (kind === 'long-text') {
+    // The agent's own question in words alone keeps the name it gave the
+    // field (its header, else its question), as its answer always had.
+    const named = enterMoves ? { 'aria-label': question.header ?? question.question } : {}
     return (
       <div className="chat-field-wrap" data-kind={kind}>
         {label}
@@ -373,12 +412,24 @@ function Field({
         {secret ? (
           <input
             {...common}
+            {...named}
             type="password"
             autoComplete="off"
             className="chat-field"
             placeholder={question.placeholder}
             value={typeof value === 'string' ? value : ''}
-            onChange={(event) => onChange(event.target.value)}
+            onChange={(event) => change(event.target.value)}
+            onKeyDown={enterMovesOn}
+          />
+        ) : enterMoves ? (
+          <textarea
+            {...common}
+            {...named}
+            rows={1}
+            className="chat-field chat-field--answer"
+            placeholder={question.placeholder ?? 'Write your answer'}
+            value={typeof value === 'string' ? value : ''}
+            onChange={(event) => change(event.target.value)}
             onKeyDown={enterMovesOn}
           />
         ) : (
@@ -388,12 +439,13 @@ function Field({
             rows={3}
             placeholder={question.placeholder}
             value={typeof value === 'string' ? value : ''}
-            onChange={(event) => onChange(event.target.value)}
+            onChange={(event) => change(event.target.value)}
           />
         )}
         {trouble}
       </div>
     )
+  }
   if (isPathKind(kind)) {
     const pick = async (): Promise<void> => {
       const current = typeof value === 'string' && value ? value : undefined
@@ -402,7 +454,7 @@ function Field({
           ? await window.electronAPI.openFileDialog(current)
           : await window.electronAPI.openFolderDialog(current)
       if (path) {
-        onChange(path)
+        change(path)
         onTouch()
       }
     }
@@ -421,8 +473,9 @@ function Field({
               question.placeholder ?? (kind === 'file' ? '/path/to/file' : '/path/to/folder')
             }
             value={typeof value === 'string' ? value : ''}
-            onChange={(event) => onChange(event.target.value)}
+            onChange={(event) => change(event.target.value)}
             onKeyDown={(event) => {
+              if (event.metaKey || event.ctrlKey) return
               if (event.key === 'Enter' && !event.nativeEvent.isComposing) {
                 event.preventDefault()
                 onEnter()
@@ -469,8 +522,9 @@ function Field({
         spellCheck={typed === 'text'}
         placeholder={question.placeholder}
         value={typeof value === 'string' ? value : ''}
-        onChange={(event) => onChange(event.target.value)}
+        onChange={(event) => change(event.target.value)}
         onKeyDown={(event) => {
+          if (event.metaKey || event.ctrlKey) return
           if (event.key === 'Enter' && !event.nativeEvent.isComposing) {
             event.preventDefault()
             onEnter()
@@ -844,16 +898,18 @@ export function InputPrompt({
     if (next === undefined) send(vals)
     else focusField(next)
   }
-  /** A pick moves on and never sends: on the last question it folds it
-   *  with the others, every answer in sight above the button that sends them
-   *  (the stack is the review, no page of its own). Takes the values with the
-   *  pick in them, which the click has not yet rendered. */
+  /** A pick moves on and never sends: to the next question still open, or,
+   *  every one answered, to the stack folded whole, each answer in sight
+   *  above the button that sends them (the stack is the review, no page of
+   *  its own). A question reopened and picked again goes back there, not to
+   *  the next one already answered. Takes the values with the pick in them,
+   *  which the click has not yet rendered. */
   const pickOn = (vals: Values): void => {
-    if (busy) return
-    if (!steps || step < questions.length - 1) return advance(step, vals)
-    if (problemsOf(vals)[keys[step]] !== null) return
+    if (busy || !steps) return
+    const judged = problemsOf(vals)
+    if (judged[keys[step]] !== null) return
     setDirection('forward')
-    setStep(questions.length)
+    setStep(nextUnanswered(keys, vals, judged, step + 1))
   }
   const back = (): void => {
     setDirection('back')
@@ -944,7 +1000,14 @@ export function InputPrompt({
         if (event.key === 'Escape' && skip) {
           event.preventDefault()
           event.stopPropagation()
-          doSkip()
+          // Escape in a field the person writes in leaves the field, never
+          // their words: the card keeps the keys, a second Escape skips.
+          if (
+            event.target instanceof HTMLTextAreaElement ||
+            event.target instanceof HTMLInputElement
+          )
+            body.current?.focus({ preventScroll: true })
+          else doSkip()
           return
         }
         if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
@@ -1082,6 +1145,7 @@ export function InputPrompt({
                     busy={busy}
                     remote={remote}
                     secret={secret}
+                    enterMoves={how !== 'hosted'}
                     // The card's first caret, once, on the question it opens
                     // on; a choice and a link leave it to the card's keys.
                     autoFocus={

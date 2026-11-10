@@ -185,6 +185,31 @@ export async function run(t) {
     })
     t.check('a pick on the last question folds every answer above Send, and only Send sends', true)
 
+    // A plugin's question carries no questions of its own: its choice IS the
+    // answer, sent as that option's own id, with no answer line to edit.
+    await inject(fixture, record.id, [
+      {
+        type: 'permission_request',
+        id: 'plugin-ask',
+        description: 'Install the helper now?',
+        options: [
+          { id: 'opt-install', label: 'Install' },
+          { id: 'opt-later', label: 'Later' }
+        ]
+      }
+    ])
+    await dock.waitFor()
+    assert.match(await dock.innerText(), /Install the helper now\?/)
+    assert.equal(await dock.getByRole('textbox', { name: 'Your answer' }).count(), 0)
+    await dock.getByRole('radio', { name: /Later/ }).click()
+    await until(async () => (await writes()).length === 3)
+    assert.deepEqual((await writes())[2], {
+      type: 'permission_response',
+      id: 'plugin-ask',
+      optionId: 'opt-later'
+    })
+    t.check("a plugin's question is answered by the option clicked, by its own id", true)
+
     // A tool permission answers from the keyboard: Escape denies.
     await inject(fixture, record.id, [
       {
@@ -238,8 +263,8 @@ export async function run(t) {
       win.evaluate(() => document.activeElement?.classList.contains('chat-prompt-body') ?? false)
     )
     await win.keyboard.press('Escape')
-    await until(async () => (await writes()).length === 3)
-    assert.deepEqual((await writes())[2], {
+    await until(async () => (await writes()).length === 4)
+    assert.deepEqual((await writes())[3], {
       type: 'permission_response',
       id: 'write',
       optionId: 'deny'

@@ -122,14 +122,30 @@ export async function run(t) {
     await win.keyboard.type(', in reports/checks.md')
     const stillPicked =
       (await dock.getByRole('radio', { name: /A file/ }).getAttribute('aria-checked')) === 'true'
-    await dock.getByRole('button', { name: 'Send', exact: true }).click()
+    // Escape in the line leaves the line, never the question nor its words.
+    await win.keyboard.press('Escape')
+    await win.waitForTimeout(300)
+    const kept =
+      (await dock.count()) === 1 &&
+      (await answers()).length === 1 &&
+      (await line.inputValue()) === 'A file, in reports/checks.md' &&
+      (await win.evaluate(
+        () => document.activeElement?.classList.contains('chat-prompt-body') ?? false
+      ))
+    // ⌘Enter from the line sends the answer, once.
+    await line.focus()
+    await win.keyboard.press('Meta+Enter')
     const single = await until(async () => (await answers())[1])
+    await win.waitForTimeout(500)
+    const once = (await answers()).length === 2
     t.check(
-      'a single choice waits in its answer line, edited, and sends the edited answer',
+      'a single choice waits in its answer line, edited; Escape keeps it, ⌘Enter sends it once',
       waited &&
         stillPicked &&
+        kept &&
+        once &&
         single['Where should the report go?'] === 'A file, in reports/checks.md',
-      { waited, stillPicked, single }
+      { waited, stillPicked, kept, once, single }
     )
   } finally {
     await chat.close()

@@ -14,8 +14,9 @@ const empty = (value: InputAnswer | undefined): boolean =>
   (typeof value === 'string' ? value.trim() === '' : value.every((entry) => entry.trim() === ''))
 
 /** The answers as sent: every question answered, trimmed, a multi-select's
- *  labels as an array with the person's own words last, each trimmed and an
- *  empty one dropped; a question left empty is left out. */
+ *  labels as an array with the person's own words last, each trimmed, an
+ *  empty one dropped and a repeated one said once; a question left empty is
+ *  left out. */
 export function answersOf(
   questions: readonly AgentQuestion[],
   values: Values
@@ -25,7 +26,11 @@ export function answersOf(
       const value = own(values, questionKey(q))
       if (empty(value)) return []
       if (typeof value === 'string') return [[questionKey(q), value.trim()]]
-      const list = (value as readonly string[]).map((entry) => entry.trim()).filter(Boolean)
+      // Trimmed, blanks dropped, and each said once: own words that read like
+      // a ticked option are that option.
+      const list = [
+        ...new Set((value as readonly string[]).map((entry) => entry.trim()).filter(Boolean))
+      ]
       return list.length ? [[questionKey(q), list]] : []
     })
   )

@@ -8,6 +8,7 @@ import {
   nativeHeadline,
   ownWordsOf,
   pickedOption,
+  picksOf,
   takesOwnWords,
   togglePick,
   withOwnWords
@@ -91,21 +92,46 @@ describe('the option a single answer starts from', () => {
 
 describe("a multi-select's own words", () => {
   const multi: AgentQuestion = { ...lint, multiSelect: true }
+  const yesNo: AgentQuestion = {
+    question: 'Which apply?',
+    options: opts('No', 'Yes'),
+    multiSelect: true
+  }
 
   it('stay last, apart from the options picked', () => {
     expect(ownWordsOf(multi, ['Lint', 'and the docs'])).toBe('and the docs')
     expect(ownWordsOf(multi, ['Lint', 'Tests'])).toBe('')
     expect(ownWordsOf(multi, undefined)).toBe('')
-    expect(withOwnWords(multi, ['Lint', 'old words'], 'and the docs')).toEqual([
+    expect(withOwnWords(multi, ['Lint', 'old words'], 'old words', 'and the docs')).toEqual([
       'Lint',
       'and the docs'
     ])
   })
 
   it('are kept as typed, and dropped when blank', () => {
-    expect(withOwnWords(multi, ['Lint'], 'and ')).toEqual(['Lint', 'and '])
-    expect(withOwnWords(multi, ['Lint', 'and'], '')).toEqual(['Lint'])
-    expect(withOwnWords(multi, ['Lint', 'and'], '   ')).toEqual(['Lint'])
+    expect(withOwnWords(multi, ['Lint'], '', 'and ')).toEqual(['Lint', 'and '])
+    expect(withOwnWords(multi, ['Lint', 'and'], 'and', '')).toEqual(['Lint'])
+    expect(withOwnWords(multi, ['Lint', 'and'], 'and', '   ')).toEqual(['Lint'])
+  })
+
+  it('are never taken for an option while they read like one, on the way to more (round 1)', () => {
+    // "No idea", typed a key at a time, with No and Yes offered and nothing picked.
+    let value: string[] = []
+    let line = ''
+    for (const typed of ['N', 'No', 'No ', 'No i', 'No idea']) {
+      value = withOwnWords(yesNo, value, line, typed)
+      line = typed
+      expect(picksOf(yesNo, value, line)).toEqual([])
+    }
+    expect(value).toEqual(['No idea'])
+    expect(answersOf([yesNo], { [yesNo.question]: value })).toEqual({ 'Which apply?': ['No idea'] })
+  })
+
+  it('stay apart from a ticked option that reads the same, sent once', () => {
+    const value = withOwnWords(yesNo, ['No'], '', 'No')
+    expect(value).toEqual(['No', 'No'])
+    expect(picksOf(yesNo, value, 'No')).toEqual(['No'])
+    expect(answersOf([yesNo], { [yesNo.question]: value })).toEqual({ 'Which apply?': ['No'] })
   })
 
   it('survive an option picked or unpicked, the options in the order asked', () => {
@@ -119,6 +145,9 @@ describe("a multi-select's own words", () => {
       'and the docs'
     ])
     expect(togglePick(multi, undefined, 'Tests')).toEqual(['Tests'])
+    // The line the card holds says which entry is the words, even one that reads like an option.
+    expect(togglePick(yesNo, ['No'], 'Yes', 'No')).toEqual(['Yes', 'No'])
+    expect(picksOf(yesNo, ['Yes', 'No'], 'No')).toEqual(['Yes'])
   })
 })
 

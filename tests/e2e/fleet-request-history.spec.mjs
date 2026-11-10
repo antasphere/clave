@@ -112,15 +112,14 @@ export async function run(t) {
         'the live question follows the approval'
       )
       assert.equal((await dock.innerText()).includes('Previous public field'), false)
-      await dock.locator('textarea.chat-prompt-other').fill('synthetic public response')
+      await dock.locator('textarea.chat-field--answer').fill('synthetic public response')
       await dock.getByRole('button', { name: 'Next', exact: true }).click()
-      const privateField = dock.locator('input.chat-prompt-other')
+      const privateField = dock.locator('input[type="password"]')
       await privateField.waitFor()
       assert.equal(await privateField.getAttribute('type'), 'password')
       const secret = `srvq-synthetic-private-${reused ? 'reused' : 'distinct'}`
       await privateField.fill(secret)
-      await dock.getByRole('button', { name: 'Review', exact: true }).click()
-      assert.equal((await dock.innerText()).includes(secret), false, 'masked at review')
+      assert.equal((await dock.innerText()).includes(secret), false, 'masked before it is sent')
       await dock.getByRole('button', { name: 'Send', exact: true }).click()
       const replies = () => {
         const file = path.join(server.root, 'provider-replies.jsonl')
