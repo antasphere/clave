@@ -26,8 +26,12 @@ vi.mock('./exchange-digest-store', () => ({
     get(): undefined {
       return undefined
     }
-    put(): void {}
-    flush(): void {}
+    put(): void {
+      /* nothing filed */
+    }
+    flush(): void {
+      /* nothing buffered */
+    }
   }
 }))
 
@@ -42,7 +46,7 @@ afterEach(() => {
   delete process.env.CLAVE_E2E_WORK_DIGEST_REPLY
 })
 let n = 0
-const ask = (launch: { claudeProfileId?: string }) =>
+const ask = (launch: { claudeProfileId?: string }): ReturnType<typeof requestDigest> =>
   requestDigest({
     sessionId: `s${++n}`,
     key: `k${n}`,

@@ -50,7 +50,7 @@ import { StretchContext } from '../../../../plugins/chat-view/src/stretch-contex
 import { DigestUnread as RealUnread } from '../../../../plugins/chat-view/src/DeliveryStack'
 
 let at = 0
-const step = (text: string) => ({
+const step = (text: string): { note: object; work: object[] } => ({
   note: { kind: 'assistant', text, final: true, at: ++at },
   work: [{ kind: 'tool', id: `t${at}`, name: 'Bash', input: {}, complete: true, at: ++at }]
 })
