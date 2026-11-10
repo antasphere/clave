@@ -484,6 +484,47 @@ final class DeliveryRaceTests: XCTestCase {
     XCTAssertEqual(server.attempts, [old, old], "a further send writes nothing")
   }
 
+  /// t2c: the send's first mark wakes the bar, which reads the ledger for what the send carried
+  /// while the send is still out. That read, held here until the send has recorded its picked
+  /// file, must not take the file out of the record: once a pass finds the send delivered, the
+  /// composer drops the file it sent, and a further send writes nothing. (Under load on iOS 17.5
+  /// the late read emptied the record and the file went out again as a new message.)
+  func testTheBarsLateReadOfTheLedgerKeepsTheFileTheSendCarried() async throws {
+    let model = try makeModel()
+    await model.appear()
+    let file = FileManager.default.temporaryDirectory.appendingPathComponent("late-read-notes.txt")
+    try Data("twelve bytes".utf8).write(to: file)
+    defer { try? FileManager.default.removeItem(at: file) }
+    model.attach(PickedFile(uri: file.absoluteString, name: "notes.txt", mimeType: "text/plain", size: 12, kind: .file))
+    server.planWrites(.loseBeforeKept)
+    server.answerStatusByDefault(.unreadable)
+    model.draft = "A file, and a late read of the ledger."
+    // The send's own entry reads the ledger once; the bar's read after it is held.
+    await store.holdReads(UnknownSends.key, skipping: 1)
+    let sending = Task { await model.send() }
+    await eventually("the bar holds at its read of the ledger") { await store.readsWaiting == 1 }
+    await eventually("the send's outcome is marked") {
+      let mark = try? await parts.delivery.marks.get("m1", "s1")
+      return mark?.kind == .unknown && mark?.reason != "Delivery has not been confirmed."
+    }
+    // The send records what it carried as soon as its outcome is marked; then the read goes on.
+    try await Task.sleep(nanoseconds: 200_000_000)
+    await store.releaseReads()
+    await sending.value
+    let old = server.attempts.last ?? ""
+    XCTAssertEqual(model.deliveryMark?.kind, .unknown, "the bar shows")
+    XCTAssertEqual(model.pendingFiles.count, 1, "the file stays with the unknown send")
+    server.answerStatus(.answer("accepted"), for: old)
+    let asked = try await addSentinel()
+    await dropSocket()
+    await passFinished(asked)
+    await until("the composer says the send was delivered") { model.deliveryNotice != nil }
+    XCTAssertEqual(model.pendingFiles, [], "the file the send carried goes with it")
+    XCTAssertFalse(model.canSend)
+    await model.send()
+    XCTAssertEqual(server.attempts, [old], "a further send writes nothing")
+  }
+
   /// t3: Send again on a bar whose send a pass delivered while this model was not listening (its
   /// mark in memory is stale): nothing is sent, the person is told, and the field follows the store.
   func testSendAgainOnAStaleBarAfterTheSendWasDeliveredSendsNothing() async throws {

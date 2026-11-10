@@ -492,6 +492,9 @@ final class ConversationModel {
   /// mark this model did not set).
   private func loadCarried(_ clientMessageId: String) async {
     guard let record = try? await delivery.sends.list().first(where: { $0.clientMessageId == clientMessageId }) else { return }
+    // The send's first mark wakes this read while the send is still out; a send of this model
+    // that records what it carried meanwhile, its picked files with it, keeps that record.
+    guard carried?.clientMessageId != clientMessageId else { return }
     carried = Carried(clientMessageId: clientMessageId, draftText: record.draftText ?? record.text, files: [])
   }
 
