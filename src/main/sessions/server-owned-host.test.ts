@@ -13,6 +13,7 @@ import type { SessionStream } from '../../shared/session-model'
 import { standaloneSidebar } from '../server/standalone-sidebar'
 import { serverOwnedSessionHost } from './server-owned-host'
 import { resumeOptions } from './resume-options'
+import type { ServerConversations } from '../session-history/server-conversations'
 
 type WireStateFrame = Extract<SessionStream, { kind: 'event' }>['event']
 const dirs: string[] = []
@@ -65,7 +66,10 @@ const session: Session = {
 
 function fixture(
   dataDir = directory(),
-  extra: { currentState?: (id: string) => WireStateFrame | undefined } = {}
+  extra: {
+    currentState?: (id: string) => WireStateFrame | undefined
+    conversations?: ServerConversations
+  } = {}
 ): {
   host: SessionHostService
   close: () => void
@@ -116,9 +120,9 @@ function fixture(
     stop,
     subscribe: vi.fn(() => () => {}),
     subscribeExit: vi.fn(() => () => {}),
-    discardRecord: (id) => {
+    discardRecord: vi.fn((id: string) => {
       records.delete(id)
-    },
+    }),
     keepOnRecord: vi.fn(),
     history: () => ({ items: [], before: null })
   }
@@ -130,6 +134,7 @@ function fixture(
     sidebar,
     ready,
     ...(extra.currentState ? { currentState: extra.currentState } : {}),
+    ...(extra.conversations ? { conversations: extra.conversations } : {}),
     subscribeAll: (fn) => {
       stream = fn
       return () => {
@@ -767,6 +772,110 @@ describe('a move to another provider rides through the server-owned host (PRDCT-
         continuedFrom: { provider: 'claude', road: 'converted' }
       }
     })
+    f.close()
+  })
+})
+
+describe('the server’s own History is told what its tabs run (PRDCT-4321)', () => {
+  const fakeConversations = (): ServerConversations & {
+    observe: ReturnType<typeof vi.fn<(id: string) => void>>
+    closing: ReturnType<typeof vi.fn<(record: SessionRecord) => void>>
+  } => ({
+    observe: vi.fn<(id: string) => void>(),
+    closing: vi.fn<(record: SessionRecord) => void>(),
+    list: () => ({ conversations: [] }),
+    search: async () => ({ hits: [], filesSearched: 0, truncated: false })
+  })
+  const discardSpy = (f: ReturnType<typeof fixture>): ReturnType<typeof vi.fn> =>
+    f.base.discardRecord as unknown as ReturnType<typeof vi.fn>
+
+  it('observes a tab it starts', async () => {
+    const conversations = fakeConversations()
+    const f = fixture(directory(), { conversations })
+    const started = await f.host.start({ cwd: '/repo' })
+    expect(conversations.observe).toHaveBeenCalledWith(started.id)
+    f.close()
+  })
+
+  it('stamps a closed tab’s last word before its record is discarded', async () => {
+    const conversations = fakeConversations()
+    const f = fixture(directory(), { conversations })
+    await f.host.stop(record.id)
+    expect(conversations.closing).toHaveBeenCalledTimes(1)
+    expect(conversations.closing.mock.calls[0][0]).toMatchObject({ id: record.id })
+    const discard = discardSpy(f)
+    expect(discard).toHaveBeenCalledWith(record.id)
+    expect(conversations.closing.mock.invocationCallOrder[0]).toBeLessThan(
+      discard.mock.invocationCallOrder[0]
+    )
+    f.close()
+  })
+
+  it('stamps a stopped record’s last word before a discard by key', () => {
+    const conversations = fakeConversations()
+    const f = fixture(directory(), { conversations })
+    f.host.discardRecord(record.id)
+    expect(conversations.closing).toHaveBeenCalledTimes(1)
+    expect(conversations.closing.mock.calls[0][0]).toMatchObject({ id: record.id })
+    const discard = discardSpy(f)
+    expect(discard).toHaveBeenCalledWith(record.id)
+    expect(conversations.closing.mock.invocationCallOrder[0]).toBeLessThan(
+      discard.mock.invocationCallOrder[0]
+    )
+    expect(f.host.listAdoptableRecords()).toHaveLength(0)
+    f.close()
+  })
+
+  it('observes a renamed tab after the rename', async () => {
+    const conversations = fakeConversations()
+    const f = fixture(directory(), { conversations })
+    const started = await f.host.start({ cwd: '/repo' })
+    conversations.observe.mockClear()
+    const rename = vi.fn((id: string, name: string) => ({ ...f.live.get(id)!, title: name }))
+    ;(f.base as unknown as { rename: typeof rename }).rename = rename
+    f.host.rename(started.id, 'Invoices')
+    expect(rename).toHaveBeenCalledWith(started.id, 'Invoices')
+    expect(conversations.observe).toHaveBeenCalledWith(started.id)
+    expect(conversations.observe.mock.invocationCallOrder[0]).toBeGreaterThan(
+      rename.mock.invocationCallOrder[0]
+    )
+    f.close()
+  })
+
+  it('observes a tab at each state change, and at no other event', () => {
+    const conversations = fakeConversations()
+    const f = fixture(directory(), { conversations })
+    f.emit(record.id, {
+      kind: 'event',
+      event: { type: 'assistant_text', delta: 'an answer', final: true }
+    })
+    f.emit(record.id, { kind: 'pty', data: Buffer.from('bytes') })
+    expect(conversations.observe).not.toHaveBeenCalled()
+    f.emit(record.id, { kind: 'event', event: { type: 'state_change', state: 'idle' } })
+    expect(conversations.observe).toHaveBeenCalledTimes(1)
+    expect(conversations.observe).toHaveBeenCalledWith(record.id)
+    f.close()
+  })
+
+  it('observes a stopped record’s Resume once it resolved', async () => {
+    const conversations = fakeConversations()
+    const f = fixture(directory(), { conversations })
+    const start = f.start.getMockImplementation()!
+    let finish!: () => void
+    f.start.mockImplementationOnce(async (input) => {
+      await new Promise<void>((resolve) => {
+        finish = resolve
+      })
+      return start(input)
+    })
+    const resuming = f.host.restart(record.id, {}, false)
+    await Promise.resolve()
+    expect(f.start).toHaveBeenCalledTimes(1)
+    expect(conversations.observe).not.toHaveBeenCalled()
+    finish()
+    await resuming
+    expect(conversations.observe).toHaveBeenCalledTimes(1)
+    expect(conversations.observe).toHaveBeenCalledWith(record.id)
     f.close()
   })
 })

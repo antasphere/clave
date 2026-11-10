@@ -24,6 +24,8 @@ import { sidebarHandlers } from '../../../packages/server/src/sidebar/handlers'
 import { SidebarLayoutsPort } from '../../../packages/server/src/sidebar/port'
 import { ServerEvents } from '../../../packages/server/src/events'
 import type { SessionHostService } from '@clave/server'
+import type { HistoryConversation } from '@clave/contract/history'
+import type { ServerConversations } from '../session-history/server-conversations'
 
 const closes: Array<() => Promise<unknown> | void> = []
 afterEach(async () => {
@@ -1283,5 +1285,188 @@ describe('standalone MCP: a read of any tab, and a stopped terminal asked to res
     expect(errorText(answer)).toContain('Refusing to send to a plain terminal')
     expect(restarted).toEqual([])
     expect(typed).toEqual([])
+  }, 15_000)
+})
+
+/**
+ * PRDCT-4321: this server's own History. A resume of a conversation it
+ * remembers, its tab deleted, finds its folder, its model and its bypass
+ * there; the caller's own values win; a conversation whose transcript is gone
+ * is not remembered. `clave_history` lists what the server's tabs ran.
+ */
+describe('standalone MCP and the server’s own History (PRDCT-4321)', () => {
+  const remembered = (
+    over: Partial<HistoryConversation> & { conversationId: string }
+  ): HistoryConversation => ({
+    sessionId: 'deleted-tab',
+    name: 'Odoo research',
+    title: 'Odoo accounting',
+    cwd: '/srv/odoo',
+    model: 'opus',
+    groupId: null,
+    groupName: null,
+    workspaceId: null,
+    firstSeenAt: '2026-11-01T10:00:00.000Z',
+    lastHumanAt: '2026-11-09T10:00:00.000Z',
+    lastPrompt: null,
+    transcript: 'present',
+    held: 'closed',
+    ...over
+  })
+  const history = (conversations: HistoryConversation[]): ServerConversations => ({
+    observe: () => {},
+    closing: () => {},
+    list: () => ({ conversations }),
+    search: async () => ({ hits: [], filesSearched: 0, truncated: false })
+  })
+  /** A folder of this server's disk the remembered conversation ran in. */
+  const folder = async (): Promise<string> => {
+    const scratch = join('/tmp', process.env.CLAVE_E2E_NS ?? 'clave-vps-d-impl')
+    await mkdir(scratch, { recursive: true })
+    const dir = await mkdtemp(join(scratch, 'mcp-history-'))
+    closes.push(() => rm(dir, { force: true, recursive: true }))
+    return dir
+  }
+
+  it('resumes a remembered conversation in its own folder, on its model, in bypass', async () => {
+    const cwd = await folder()
+    const { client, started } = await sessionFixture({
+      options: {
+        conversations: history([
+          remembered({ conversationId: 'conv-old', cwd, launch: { dangerous: true } })
+        ])
+      }
+    })
+    payload(
+      await client.callTool({ name: 'clave_open_session', arguments: { resume: 'conv-old' } })
+    )
+    expect(started).toHaveLength(1)
+    expect(started[0].cwd).toBe(cwd)
+    expect(started[0].options).toMatchObject({
+      claudeMode: true,
+      model: 'opus',
+      dangerousMode: true,
+      resumeSessionId: 'conv-old'
+    })
+  }, 15_000)
+
+  it('lets the call’s own cwd, model and dangerous: false win over the History', async () => {
+    const cwd = await folder()
+    const { client, started, directory } = await sessionFixture({
+      options: {
+        conversations: history([
+          remembered({ conversationId: 'conv-old', cwd, launch: { dangerous: true } })
+        ])
+      }
+    })
+    payload(
+      await client.callTool({
+        name: 'clave_open_session',
+        arguments: { resume: 'conv-old', cwd: directory, model: 'sonnet', dangerous: false }
+      })
+    )
+    expect(started).toHaveLength(1)
+    expect(started[0].cwd).toBe(directory)
+    expect(started[0].options).toMatchObject({
+      model: 'sonnet',
+      dangerousMode: false,
+      resumeSessionId: 'conv-old'
+    })
+  }, 15_000)
+
+  it('does not remember a conversation whose transcript is gone: cwd is required', async () => {
+    const cwd = await folder()
+    const { client, started } = await sessionFixture({
+      options: {
+        conversations: history([
+          remembered({ conversationId: 'conv-old', cwd, transcript: 'gone' })
+        ])
+      }
+    })
+    expect(
+      errorText(
+        await client.callTool({ name: 'clave_open_session', arguments: { resume: 'conv-old' } })
+      )
+    ).toContain(
+      "cwd is required unless resume names a conversation this server's History remembers or a tab of this server still holds."
+    )
+    expect(started).toHaveLength(0)
+  }, 15_000)
+
+  it('registers clave_history only when the server keeps a History', async () => {
+    const without = await sessionFixture()
+    expect((await without.client.listTools()).tools.map((t) => t.name)).not.toContain(
+      'clave_history'
+    )
+    const withHistory = await sessionFixture({ options: { conversations: history([]) } })
+    expect((await withHistory.client.listTools()).tools.map((t) => t.name)).toContain(
+      'clave_history'
+    )
+  }, 15_000)
+
+  it('clave_history: newest first, filtered by query and open, bounded by limit, with the total', async () => {
+    const { client } = await sessionFixture({
+      options: {
+        conversations: history([
+          remembered({
+            conversationId: 'c-old',
+            title: 'Invoices import',
+            lastHumanAt: '2026-11-01T10:00:00.000Z'
+          }),
+          remembered({
+            conversationId: 'c-new',
+            title: null,
+            name: 'Payroll tab',
+            cwd: '/srv/payroll',
+            held: 'running',
+            sessionId: 'tab-live',
+            lastHumanAt: '2026-11-09T10:00:00.000Z',
+            launch: { dangerous: true }
+          }),
+          remembered({
+            conversationId: 'c-mid',
+            title: 'Bank sync',
+            cwd: '/srv/bank',
+            held: 'stopped',
+            sessionId: 'tab-stopped',
+            transcript: 'gone',
+            lastHumanAt: '2026-11-05T10:00:00.000Z'
+          })
+        ])
+      }
+    })
+    const call = async (args: Record<string, unknown>): Promise<Record<string, unknown>> =>
+      payload(await client.callTool({ name: 'clave_history', arguments: args }))
+    const ids = (answer: Record<string, unknown>): string[] =>
+      (answer.conversations as Array<{ conversationId: string }>).map((c) => c.conversationId)
+
+    const all = await call({})
+    expect(ids(all)).toEqual(['c-new', 'c-mid', 'c-old'])
+    expect(all).toMatchObject({ shown: 3, total: 3 })
+    const rows = all.conversations as Array<Record<string, unknown>>
+    expect(rows[0]).toMatchObject({
+      conversationId: 'c-new',
+      title: 'Payroll tab',
+      name: 'Payroll tab',
+      cwd: '/srv/payroll',
+      held: 'running',
+      sessionId: 'tab-live',
+      transcriptExists: true,
+      resumable: true,
+      launch: { dangerous: true }
+    })
+    expect(rows[1]).toMatchObject({ transcriptExists: false, resumable: false })
+    expect(rows[2]).toMatchObject({ held: 'closed', sessionId: null })
+
+    // The query reads the title, the tab's name and the directory.
+    expect(ids(await call({ query: 'INVOICES' }))).toEqual(['c-old'])
+    expect(ids(await call({ query: 'payroll tab' }))).toEqual(['c-new'])
+    expect(ids(await call({ query: '/srv/bank' }))).toEqual(['c-mid'])
+    // Open: a tab of the server holds it, running or stopped.
+    expect(ids(await call({ open: true }))).toEqual(['c-new', 'c-mid'])
+    const limited = await call({ limit: 1 })
+    expect(ids(limited)).toEqual(['c-new'])
+    expect(limited).toMatchObject({ shown: 1, total: 3 })
+    expect(await call({ open: true, limit: 1 })).toMatchObject({ shown: 1, total: 2 })
   }, 15_000)
 })

@@ -293,7 +293,12 @@ async function main(): Promise<void> {
     ? serverConversations({
         dataDir,
         records: () => originalSessions.listAdoptableRecords(),
-        running: (id) => originalSessions.get(id) !== undefined,
+        // A chat whose CLI ended on its own is still held, and is what a
+        // Resume is for: running means a process at work, not ended.
+        running: (id) => {
+          const live = originalSessions.get(id)
+          return live !== undefined && live.state !== 'ended'
+        },
         groupOf: (id) => {
           const group = sidebar.get(SERVER_LAYOUT_KEY).groups.find((g) => g.sessionIds.includes(id))
           if (!group) return null

@@ -53,7 +53,7 @@ export interface ServerAnswer {
 }
 
 /** How long the list waits for one server before taking its last answer. */
-export const SERVER_HISTORY_TIMEOUT_MS = 5_000
+export const SERVER_HISTORY_TIMEOUT_MS = 3_000
 
 function withTimeout<T>(work: Promise<T>, ms: number): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined
@@ -168,7 +168,14 @@ export function mergeServerHistories(
   const remote = new Map<string, HistoryListEntry>()
   for (const answer of answers) {
     for (const c of answer.conversations) {
-      const entry = serverEntry(answer.server, answer.online, c)
+      // One malformed conversation (an older server, a damaged cache) is
+      // skipped alone; it never costs the other rows.
+      let entry: HistoryListEntry
+      try {
+        entry = serverEntry(answer.server, answer.online, c)
+      } catch {
+        continue
+      }
       const before = remote.get(entry.claudeSessionId)
       // Two servers naming one conversation (a disk they share): the later wins.
       if (!before || before.lastHumanAt < entry.lastHumanAt)

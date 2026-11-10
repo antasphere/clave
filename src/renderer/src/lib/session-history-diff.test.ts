@@ -14,6 +14,7 @@ import {
   historyResumeLaunch,
   encodeProjectDir,
   resumeTargetGroup,
+  serverRowVisible,
   tabSessions,
   visibleInWorkspace,
   type LayoutState
@@ -390,5 +391,50 @@ describe('historyResumeLaunch: a reopen from the History comes back as it was la
     expect(
       historyResumeLaunch({ provider: 'pi', model: null, launch: { dangerous: true } }, true, known)
     ).toEqual({ dangerousMode: false })
+  })
+})
+
+describe('serverRowVisible: a server’s row in the active workspace (PRDCT-4321)', () => {
+  const paired = [
+    { workspaceId: 'srv-ws-paired', rootDir: '/srv/paired' },
+    { workspaceId: 'srv-ws-rootless', rootDir: null }
+  ]
+  const row = (
+    workspaceId: string | null,
+    cwd = '/elsewhere'
+  ): {
+    workspaceId: string | null
+    cwd: string
+  } => ({ workspaceId, cwd })
+
+  it('shows every row when no workspace is active', () => {
+    expect(serverRowVisible(row('srv-ws-other'), null, null, [])).toBe(true)
+    expect(serverRowVisible(row(null), null, '/a/b', paired)).toBe(true)
+  })
+
+  it('shows a row of the active workspace or of a paired one, and no other', () => {
+    expect(serverRowVisible(row('ws-active'), 'ws-active', '/a/b', paired)).toBe(true)
+    expect(serverRowVisible(row('srv-ws-paired'), 'ws-active', '/a/b', paired)).toBe(true)
+    expect(serverRowVisible(row('srv-ws-other'), 'ws-active', '/a/b', paired)).toBe(false)
+    // A row naming a workspace is judged by it, whatever its folder.
+    expect(serverRowVisible(row('srv-ws-other', '/a/b/x'), 'ws-active', '/a/b', paired)).toBe(false)
+  })
+
+  it('places a row with no workspace by its folder: under the active root or a paired root', () => {
+    expect(serverRowVisible(row(null, '/a/b'), 'ws-active', '/a/b', paired)).toBe(true)
+    expect(serverRowVisible(row(null, '/a/b/repo'), 'ws-active', '/a/b', paired)).toBe(true)
+    expect(serverRowVisible(row(null, '/srv/paired/repo'), 'ws-active', '/a/b', paired)).toBe(true)
+    expect(serverRowVisible(row(null, '/srv/other'), 'ws-active', '/a/b', paired)).toBe(false)
+    expect(serverRowVisible(row(null, ''), 'ws-active', '/a/b', paired)).toBe(false)
+    expect(serverRowVisible(row(null, '/a/b/repo'), 'ws-active', null, [])).toBe(false)
+  })
+
+  it('never takes a root prefix that stops inside a folder name', () => {
+    expect(serverRowVisible(row(null, '/a/bc'), 'ws-active', '/a/b', [])).toBe(false)
+    expect(
+      serverRowVisible(row(null, '/srv/paired-two'), 'ws-active', null, [
+        { workspaceId: 'p', rootDir: '/srv/paired' }
+      ])
+    ).toBe(false)
   })
 })
