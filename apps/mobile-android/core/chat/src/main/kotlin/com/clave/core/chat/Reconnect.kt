@@ -29,6 +29,9 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
 
 data class ReconnectPorts(
     val sends: UnknownSends,
@@ -48,10 +51,11 @@ data class ReconnectPorts(
     /** Runs the reconciliation of the ledger's sends; the controller holds the machine's lock
      *  there, so the ledger is read and settled by one pass at a time. */
     val exclusive: suspend (suspend () -> Unit) -> Unit = { block -> block() },
-    /** Whether the person discarded this send before the pass reached it: it is left alone. */
-    val discarded: ((UnknownSend) -> Boolean)? = null,
+    /** Whether the person discarded this send before the pass reached it, or it left the ledger since
+     *  the pass read it: it is left alone. */
+    val discarded: (suspend (UnknownSend) -> Boolean)? = null,
     /** Right before this send's same-id completion leaves: false when the person discarded it first. */
-    val mayComplete: ((UnknownSend) -> Boolean)? = null,
+    val mayComplete: (suspend (UnknownSend) -> Boolean)? = null,
     /** This send's reconciliation is over, whatever it found. */
     val reconciled: ((UnknownSend) -> Unit)? = null,
     /** The pass settled this send with this outcome. */
@@ -86,7 +90,7 @@ suspend fun reconnectPass(input: ReconnectInput, ports: ReconnectPorts, options:
                 override suspend fun sleep(ms: Long) = ports.sleep(ms)
                 override fun now(): Long = ports.now()
                 override suspend fun mayComplete(clientMessageId: String): Boolean = ports.mayComplete?.invoke(send) ?: true
-                override fun discarded(clientMessageId: String): Boolean = ports.discarded?.invoke(send) ?: false
+                override suspend fun discarded(clientMessageId: String): Boolean = ports.discarded?.invoke(send) ?: false
             }
             try {
                 val outcome = reconcile(send.clientMessageId, sendPorts, options, mayRetry = true)
@@ -162,6 +166,13 @@ suspend fun settleSend(
 suspend fun recordUnknownSend(send: UnknownSend, reason: String, sends: UnknownSends, marks: DeliveryMarks) {
     sends.add(send)
     marks.set(send.machineId, send.sessionId, DeliveryMark(DeliveryMark.Kind.Unknown, send.clientMessageId, reason, send.at))
+}
+
+/** The records of a stored attachment draft as written; none when it is not a JSON list. */
+private fun recordsOf(raw: String): List<JsonElement> = try {
+    (Json.parseToJsonElement(raw) as? JsonArray)?.toList() ?: emptyList()
+} catch (_: Exception) {
+    emptyList()
 }
 
 /** The person chose to discard a send of unknown outcome: it leaves the ledger and the mark. */
@@ -242,6 +253,8 @@ class DeliveryController(
         InFlight,
         /** It is no longer waiting, and how it was settled is not known here (discarded already). */
         NothingToDiscard,
+        /** The phone could not record the discard: nothing was discarded, and the send still waits. */
+        NotSaved,
     }
 
     /** How the latest sends were settled, by id (accepted true, rejected false; 64 kept): what a
@@ -262,28 +275,49 @@ class DeliveryController(
      * The person's explicit choice on a send of unknown outcome ("Send again" or "Discard"),
      * decided at once and without waiting: a reconnection pass that has not sent the same-id
      * completion yet will not send it, and a pass that has not reached the send leaves it alone.
+     * The decision is written into the send's ledger entry, and awaited, before the wait, so a
+     * controller built again over the same stores after the process ended (while a pass held this
+     * send) finds it and carries the discard out instead of completing the send ([finishRecordedDiscards]).
      * Then, once the pass has let go of the ledger, the send leaves it and its mark is cleared.
      * What the server answered before the discard stands and is said: accepted (it arrived),
-     * rejected, or a completion already on its way.
+     * rejected, or a completion already on its way. A record the store failed to write discards
+     * nothing ([DiscardResult.NotSaved]), once the pass has let go.
      */
     suspend fun discard(machineId: String, sessionId: String, clientMessageId: String): DiscardResult {
         if (inFlight(clientMessageId)) return DiscardResult.InFlight
         if (decisions.putIfAbsent(clientMessageId, Decision.Discarded) == Decision.Completing) return DiscardResult.BeingCompleted
         // Once decided, the discard is carried through even when its caller is cancelled meanwhile (a
-        // screen closing): a decision left behind would make every pass skip the send, and the first
-        // pass after a restart deliver the message the person discarded.
-        return withContext(NonCancellable) { discardDecided(machineId, sessionId, clientMessageId) }
+        // screen closing): a decision left behind would make every pass skip the send.
+        return withContext(NonCancellable) {
+            // The store returns once the write is on disk; what this guards is a process that ends
+            // during the wait below, not a power loss. The entry, its mark and the draft are separate
+            // writes, not one transaction.
+            val recorded = try {
+                sends.markDiscarded(clientMessageId)
+            } catch (_: Exception) {
+                // Whatever the store threw, a cancellation of its own included: the claim is let go
+                // only by discardDecided, under the lock, and the answer says nothing was discarded.
+                false
+            }
+            discardDecided(machineId, sessionId, clientMessageId, recorded)
+        }
     }
 
-    private suspend fun discardDecided(machineId: String, sessionId: String, clientMessageId: String): DiscardResult =
+    /** Under the machine's lock, so no pass is midway through this send. [recorded]: the decision reached
+     *  the ledger entry before the wait. Without it nothing is discarded: during the wait the decision
+     *  lived in memory only, and "Discarded" is said only of one a process death could not have lost. */
+    private suspend fun discardDecided(machineId: String, sessionId: String, clientMessageId: String, recorded: Boolean): DiscardResult =
         passLock(machineId).withLock {
             try {
                 when {
                     inFlight(clientMessageId) -> DiscardResult.InFlight
                     sends.forSession(machineId, sessionId).any { it.clientMessageId == clientMessageId } -> {
-                        sends.remove(clientMessageId)
-                        marks.clear(machineId, sessionId)
-                        DiscardResult.Discarded
+                        if (recorded) {
+                            discardUnknownSend(machineId, sessionId, clientMessageId, sends, marks)
+                            DiscardResult.Discarded
+                        } else {
+                            DiscardResult.NotSaved
+                        }
                     }
                     else -> when (synchronized(settledLately) { settledLately[clientMessageId] }) {
                         true -> DiscardResult.AlreadyDelivered
@@ -296,10 +330,45 @@ class DeliveryController(
             }
         }
 
-    /** The attachment draft goes only when it is still the records sent. */
+    /**
+     * Whether the ledger still holds this send waiting for its outcome: no discard recorded in its
+     * entry (by this controller, another one over the same stores, or one whose process ended), and
+     * not settled since the pass read the ledger. Read from the store, not from this controller's memory.
+     */
+    private suspend fun waiting(send: UnknownSend): Boolean =
+        sends.list().any { it.clientMessageId == send.clientMessageId && !it.discarded }
+
+    /**
+     * Carries out, at the start of a pass and under its lock, every discard recorded in this machine's
+     * ledger that no Discard of this controller is still carrying out: what a process leaves when it
+     * ends while its Discard waits for a pass. The send leaves the ledger and its mark is cleared, as
+     * the Discard would have done, and it is never reconciled. The drafts stay as they are: that Discard
+     * may have been a Send again, whose text was never sent.
+     */
+    private suspend fun finishRecordedDiscards(machineId: String) {
+        for (send in sends.forMachine(machineId)) {
+            if (!send.discarded || active.contains(send.clientMessageId)) continue
+            if (decisions[send.clientMessageId] == Decision.Discarded) continue
+            discardUnknownSend(send.machineId, send.sessionId, send.clientMessageId, sends, marks)
+        }
+    }
+
+    /** The attachment draft goes when it is still the records sent; otherwise the records sent leave it
+     *  and a file the person added since stays, so a restart never brings a delivered file back. */
     private val clearAttachments: suspend (UnknownSend) -> Unit = { send ->
         val key = attachmentDraftKey(send.machineId, send.sessionId)
-        if (kv.get(key) == AttachmentJson.encodeList(send.attachments ?: emptyList())) kv.remove(key)
+        val sent = send.attachments ?: emptyList()
+        val stored = kv.get(key)
+        if (stored == AttachmentJson.encodeList(sent)) {
+            kv.remove(key)
+        } else if (stored != null && sent.isNotEmpty()) {
+            val kept = recordsOf(stored)
+            val sentRecords = sent.map(AttachmentJson::encode)
+            val remaining = kept.filterNot { it in sentRecords }
+            if (remaining.size < kept.size) {
+                if (remaining.isEmpty()) kv.remove(key) else kv.set(key, JsonArray(remaining).toString())
+            }
+        }
     }
 
     suspend fun begin(send: UnknownSend) {
@@ -364,9 +433,14 @@ class DeliveryController(
                     refreshHistory = refreshHistory,
                     clearAttachments = clearAttachments,
                     isActive = { active.contains(it.clientMessageId) },
-                    exclusive = { block -> passLock(machineId).withLock { block() } },
-                    discarded = { decisions[it.clientMessageId] == Decision.Discarded },
-                    mayComplete = { decisions.putIfAbsent(it.clientMessageId, Decision.Completing) != Decision.Discarded },
+                    exclusive = { block ->
+                        passLock(machineId).withLock {
+                            finishRecordedDiscards(machineId)
+                            block()
+                        }
+                    },
+                    discarded = { decisions[it.clientMessageId] == Decision.Discarded || !waiting(it) },
+                    mayComplete = { waiting(it) && decisions.putIfAbsent(it.clientMessageId, Decision.Completing) != Decision.Discarded },
                     reconciled = { decisions.remove(it.clientMessageId, Decision.Completing) },
                     settled = { send, outcome -> noteSettled(send.clientMessageId, outcome) },
                 ),

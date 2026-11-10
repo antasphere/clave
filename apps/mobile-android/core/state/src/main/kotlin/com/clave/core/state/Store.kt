@@ -111,6 +111,9 @@ public const val NOTHING_WAITING: String = "That message is no longer waiting, s
 /** "Discard" when the server had accepted the message before the choice. */
 public const val ARRIVED_NOTHING_DISCARDED: String = "The message had already arrived, so nothing was discarded."
 
+/** "Send again" or "Discard" when the phone could not record the choice: the message still waits, as before. */
+public const val CHOICE_NOT_SAVED: String = "The phone could not save that choice, so nothing was discarded or sent again. Try again."
+
 /** The outcome of an answer or an interrupt written into a session. */
 public data class ActionOutcome(val ok: Boolean, val error: String? = null)
 
@@ -780,6 +783,7 @@ public class ClaveStore(private val services: Services) {
                 DeliveryController.DiscardResult.BeingCompleted -> return SendOutcome.Failed(unknownId, BEING_COMPLETED)
                 DeliveryController.DiscardResult.InFlight -> return SendOutcome.Failed(unknownId, STILL_SENDING)
                 DeliveryController.DiscardResult.NothingToDiscard -> return SendOutcome.Failed(unknownId, NOTHING_WAITING)
+                DeliveryController.DiscardResult.NotSaved -> return SendOutcome.Failed(unknownId, CHOICE_NOT_SAVED)
             }
         }
         return send(machineId, sessionId, text, attachments = attachments)

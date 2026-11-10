@@ -67,7 +67,7 @@ interface SendPorts {
     suspend fun mayComplete(clientMessageId: String): Boolean = true
 
     /** Whether the person has discarded this send: a pass stops waiting on its status then. */
-    fun discarded(clientMessageId: String): Boolean = false
+    suspend fun discarded(clientMessageId: String): Boolean = false
 }
 
 sealed interface SendOutcome {

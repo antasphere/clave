@@ -199,9 +199,17 @@ internal class SyncKv : KeyValueStore {
     val map: MutableMap<String, String> = Collections.synchronizedMap(linkedMapOf())
     /** Runs before a write lands, with its key; a test suspends here to hold it. */
     @Volatile var beforeSet: (suspend (String) -> Unit)? = null
-    override suspend fun get(key: String): String? = map[key]
+    /** The same, with the value the write brings, so a test can hold one write by what it writes. */
+    @Volatile var beforeWrite: (suspend (key: String, value: String) -> Unit)? = null
+    /** Runs before every read, with its key. */
+    @Volatile var beforeGet: ((String) -> Unit)? = null
+    override suspend fun get(key: String): String? {
+        beforeGet?.invoke(key)
+        return map[key]
+    }
     override suspend fun set(key: String, value: String) {
         beforeSet?.invoke(key)
+        beforeWrite?.invoke(key, value)
         map[key] = value
     }
     override suspend fun remove(key: String) { map.remove(key) }
@@ -268,7 +276,9 @@ internal fun streamFrame(sessionId: String, delta: String, sequence: Long, gener
 
 /**
  * A store on one fake machine with id [machineId], reached at the fixture's base URL, its
- * credential kept, the machines loaded once [start] runs.
+ * credential kept, the machines loaded once [start] runs. Given another harness's [kv], it is a
+ * second controller and store built over the same durable stores (the ledger, the marks, the
+ * drafts); [ownsMachine] false leaves the shared machine to the harness that made it.
  */
 internal class Harness(
     val machine: FakeMachine = FakeMachine(),
@@ -277,10 +287,11 @@ internal class Harness(
     val clock: TestClock = TestClock(),
     sleep: (suspend (Long) -> Unit)? = null,
     mint: (() -> String)? = null,
+    val kv: SyncKv = SyncKv(),
+    private val ownsMachine: Boolean = true,
 ) : AutoCloseable {
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     val http = OkHttpClient()
-    val kv = SyncKv()
     val drafts = Drafts(kv)
     val credentials = SecureCredentialStore(SyncSecure())
     val sends = UnknownSends(kv)
@@ -327,7 +338,7 @@ internal class Harness(
     override fun close() {
         store.disconnectAll()
         scope.cancel()
-        machine.close()
+        if (ownsMachine) machine.close()
         http.dispatcher.executorService.shutdown()
         http.connectionPool.evictAll()
     }

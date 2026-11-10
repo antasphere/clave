@@ -18,6 +18,8 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import java.util.concurrent.CopyOnWriteArraySet
@@ -32,6 +34,13 @@ data class UnknownSend(
     /** The composer's text before the markers and the trim, to know whether the draft is still it. */
     val draftText: String? = null,
     val attachments: List<Attachment>? = null,
+    /**
+     * The person discarded it (Discard, or Send again) and the discard is not carried out yet. It is
+     * written into the entry before the discard waits for a reconnection pass, so a controller built
+     * again over these stores after the process ended finds the send decided: it never completes it,
+     * and it carries the discard out. In the entry itself, the record cannot outlive the send or miss it.
+     */
+    val discarded: Boolean = false,
 ) {
     /** The same message under the same id, the write a reconnection completes. */
     fun toUserMessage(): SessionEvent.UserMessage = SessionEvent.UserMessage(
@@ -57,6 +66,7 @@ private fun encodeSend(send: UnknownSend): JsonObject = buildJsonObject {
     put("at", send.at)
     send.draftText?.let { put("draftText", it) }
     send.attachments?.let { list -> put("attachments", JsonArray(list.map(AttachmentJson::encode))) }
+    if (send.discarded) put("discarded", true)
 }
 
 private fun decodeSend(value: JsonElement): UnknownSend? {
@@ -69,6 +79,7 @@ private fun decodeSend(value: JsonElement): UnknownSend? {
         at = numberOf(o["at"])?.toLong() ?: 0,
         draftText = stringOf(o["draftText"]),
         attachments = (o["attachments"] as? JsonArray)?.mapNotNull(AttachmentJson::decode),
+        discarded = (o["discarded"] as? JsonPrimitive)?.takeIf { !it.isString }?.booleanOrNull == true,
     )
 }
 
@@ -95,6 +106,15 @@ class UnknownSends(private val store: KeyValueStore) {
 
     suspend fun remove(clientMessageId: String): Unit = writing.withLock {
         write(list().filter { it.clientMessageId != clientMessageId })
+    }
+
+    /** Records the person's discard in the send's entry, awaited until the store has it; false when
+     *  the send is no longer in the ledger (settled meanwhile), and then nothing is written. */
+    suspend fun markDiscarded(clientMessageId: String): Boolean = writing.withLock {
+        val sends = list()
+        if (sends.none { it.clientMessageId == clientMessageId }) return@withLock false
+        write(sends.map { if (it.clientMessageId == clientMessageId) it.copy(discarded = true) else it })
+        true
     }
 
     private suspend fun write(sends: List<UnknownSend>) {

@@ -8,6 +8,7 @@ import com.clave.core.contract.FileDelivery
 import com.clave.core.state.ARRIVED_NOTHING_DISCARDED
 import com.clave.core.state.ARRIVED_NOTHING_SENT
 import com.clave.core.state.BEING_COMPLETED
+import com.clave.core.state.CHOICE_NOT_SAVED
 import com.clave.core.state.STILL_SENDING
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -45,10 +46,23 @@ class ComposerAfterTest {
             DiscardResult.BeingCompleted to BEING_COMPLETED,
             DiscardResult.InFlight to STILL_SENDING,
             DiscardResult.NothingToDiscard to null,
+            DiscardResult.NotSaved to CHOICE_NOT_SAVED,
         )
         for ((result, sentence) in cases) {
             assertEquals("$result", ComposerAfter("hello", listOf(file), sentence, clearsStored = false), composerAfterDiscard(result, "hello", listOf(file), unknown))
         }
+    }
+
+    @Test
+    fun `delivered, a file sent leaves the composer and a file added since stays`() {
+        assertEquals(
+            "" to listOf(other),
+            composerAfterDelivered(unknown, null, null, storedDraft = "", draft = "hello", attachments = listOf(file, other)),
+        )
+        assertEquals(
+            ComposerAfter("", listOf(other), ARRIVED_NOTHING_DISCARDED, clearsStored = false),
+            composerAfterDiscard(DiscardResult.AlreadyDelivered, "hello", listOf(file, other), unknown),
+        )
     }
 
     @Test

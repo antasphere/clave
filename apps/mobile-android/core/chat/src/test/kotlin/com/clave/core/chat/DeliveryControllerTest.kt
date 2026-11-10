@@ -213,4 +213,19 @@ class DeliveryControllerTest {
         env.delivery.finish(other, SendOutcome.Sent(other.clientMessageId, reconciled = false))
         assertEquals("[]", env.kv.get(attachmentDraftKey("m", "s")))
     }
+
+    @Test
+    fun `a sent message's records leave its attachment draft and a file added since stays`() = runTest {
+        val env = Env()
+        val record = com.clave.core.contract.FileAttachment(
+            id = "f-1", label = "Image #1", path = "/p.png", name = "p.png", mimeType = "image/png", size = 3,
+            delivery = com.clave.core.contract.FileDelivery.Image,
+        )
+        val added = record.copy(id = "f-2", label = "Image #2", path = "/q.png", name = "q.png")
+        val withFile = sendOf("message-4100").copy(attachments = listOf(record))
+        env.kv.set(attachmentDraftKey("m", "s"), AttachmentJson.encodeList(listOf(record, added)))
+        env.delivery.begin(withFile)
+        env.delivery.finish(withFile, SendOutcome.Sent(withFile.clientMessageId, reconciled = false))
+        assertEquals("the file added since, alone", AttachmentJson.encodeList(listOf(added)), env.kv.get(attachmentDraftKey("m", "s")))
+    }
 }
