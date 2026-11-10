@@ -63,15 +63,31 @@ describe('answers judged by their kind', () => {
     )
   })
 
-  it('a choice is one of the options, or several when allowed', () => {
+  it("a choice takes an option, several when allowed, or the person's own words (PRDCT-4322)", () => {
     const one = q('choice', { options: [{ label: 'A' }, { label: 'B' }] })
     expect(answerProblem(one, 'A')).toBeNull()
-    expect(answerProblem(one, 'C')).toBe('Choose among the options')
+    expect(answerProblem(one, 'A, only on Mondays')).toBeNull()
+    expect(answerProblem(one, 'Neither, C')).toBeNull()
     expect(answerProblem(one, ['A', 'B'])).toBe('Choose one')
     const many = q('choice', { options: [{ label: 'A' }, { label: 'B' }], multiSelect: true })
     expect(answerProblem(many, ['A', 'B'])).toBeNull()
-    expect(answerProblem(many, ['A', 'Z'])).toBe('Choose among the options')
+    expect(answerProblem(many, ['A', 'and Z too'])).toBeNull()
     expect(answerProblem(many, [])).toBe('An answer is needed')
+    expect(answerProblem(many, ['  ', ''])).toBe('An answer is needed')
+  })
+
+  it('a choice the agent closed to its options takes those alone', () => {
+    const one = q('choice', { options: [{ label: 'A' }, { label: 'B' }], optionsOnly: true })
+    expect(answerProblem(one, 'A')).toBeNull()
+    expect(answerProblem(one, 'C')).toBe('Choose among the options')
+    expect(answerProblem(one, 'A, only on Mondays')).toBe('Choose among the options')
+    const many = q('choice', {
+      options: [{ label: 'A' }, { label: 'B' }],
+      multiSelect: true,
+      optionsOnly: true
+    })
+    expect(answerProblem(many, ['A', 'B'])).toBeNull()
+    expect(answerProblem(many, ['A', 'Z'])).toBe('Choose among the options')
   })
 
   it("a provider's own question has no kind and takes any words", () => {
@@ -113,6 +129,8 @@ describe("a hosted question's shape", () => {
     [{ kind: 'choice', options: [{ label: 'a' }, { label: 'a' }] }, 'share a label'],
     [{ kind: 'text', options: [{ label: 'a' }, { label: 'b' }] }, 'options belong to a choice'],
     [{ kind: 'text', multiSelect: true }, 'options belong to a choice'],
+    [{ kind: 'choice', options: [{ label: 'a' }, { label: 'b' }], optionsOnly: true }, null],
+    [{ kind: 'text', optionsOnly: true }, 'optionsOnly belongs to a choice'],
     [{ kind: 'link', url: 'https://github.com/login' }, null],
     [{ kind: 'link' }, 'a link needs its url'],
     [{ kind: 'link', url: 'javascript:alert(1)' }, 'http(s) address'],

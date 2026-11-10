@@ -10,24 +10,23 @@ import type { Permission } from './reducer'
 export type Values = Record<string, InputAnswer>
 
 const empty = (value: InputAnswer | undefined): boolean =>
-  value === undefined || (typeof value === 'string' ? value.trim() === '' : value.length === 0)
+  value === undefined ||
+  (typeof value === 'string' ? value.trim() === '' : value.every((entry) => entry.trim() === ''))
 
 /** The answers as sent: every question answered, trimmed, a multi-select's
- *  labels as an array; an optional question left empty is left out. */
+ *  labels as an array with the person's own words last, each trimmed and an
+ *  empty one dropped; a question left empty is left out. */
 export function answersOf(
   questions: readonly AgentQuestion[],
   values: Values
 ): Record<string, string | string[]> {
   return Object.fromEntries(
-    questions.flatMap((q) => {
+    questions.flatMap((q): [string, string | string[]][] => {
       const value = own(values, questionKey(q))
       if (empty(value)) return []
-      return [
-        [
-          questionKey(q),
-          typeof value === 'string' ? value.trim() : [...(value as readonly string[])]
-        ]
-      ]
+      if (typeof value === 'string') return [[questionKey(q), value.trim()]]
+      const list = (value as readonly string[]).map((entry) => entry.trim()).filter(Boolean)
+      return list.length ? [[questionKey(q), list]] : []
     })
   )
 }

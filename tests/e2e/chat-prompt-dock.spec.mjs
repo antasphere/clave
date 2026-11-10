@@ -2,12 +2,14 @@ import assert from 'node:assert/strict'
 import { openChat, inject } from './chat-view.spec.mjs'
 import { until } from './harness.mjs'
 
-/* What the agent waits on docks above the composer. What this spec holds in the
-   real app: a question is answered by choosing, never by "allowing" it, and the
-   reply that crosses the write IPC carries the reader's choices keyed by the
-   question — the shape the Claude CLI turns into the model's answer. A tool
-   permission answers from the keyboard. Every answer leaves the dock and
-   leaves its record in the transcript. */
+/* What the agent waits on. What this spec holds in the real app: the agent's
+   own question is the form's card (PRDCT-4322), its questions one below
+   another, answered by choosing or in the person's own words, never by
+   "allowing" it; an answer is edited in place from its folded line; the reply
+   that crosses the write IPC carries one string per question keyed by the
+   question, the shape the Claude CLI turns into the model's answer. A tool
+   permission answers from the keyboard. Every answer leaves its record in the
+   transcript. */
 
 export async function run(t) {
   const chat = await openChat('chat-prompt-dock')
@@ -60,28 +62,56 @@ export async function run(t) {
     assert.equal(await dock.locator('.chat-prompt-step').innerText(), '1/2')
     // No "Allow" anywhere: a question is answered, not permitted.
     assert.equal(await view.getByRole('button', { name: /Allow/ }).count(), 0)
-    const next = dock.getByRole('button', { name: 'Next', exact: true })
-    assert.equal(await next.isDisabled(), true, 'nothing chosen, nothing to send')
+    // The agent's own question is the form's card (PRDCT-4322): both questions
+    // stand one below another, the first open, the second folded to its line.
+    const fields = dock.locator('.chat-ask-field')
+    assert.equal(await fields.count(), 2)
+    assert.equal(await fields.nth(0).getAttribute('data-state'), 'active')
+    assert.equal(await fields.nth(1).getAttribute('data-state'), 'upcoming')
+    assert.match(await fields.nth(1).innerText(), /Who else to copy\?/)
+    // The adapter's « Claude asks 2 questions » is not said again under the eyebrow.
+    assert.equal(await dock.locator('.chat-prompt-ask').count(), 0)
+    // Next with nothing chosen moves nowhere and says why.
+    await dock.getByRole('button', { name: 'Next', exact: true }).click()
+    await dock.locator('.chat-field-problem').filter({ hasText: 'An answer is needed' }).waitFor()
+    assert.equal(await dock.locator('.chat-prompt-step').innerText(), '1/2')
     // A single choice is the answer: one click moves on, no Next to press.
     await dock.getByRole('radio', { name: /Draft only/ }).click()
     await dock.locator('.chat-prompt-step').filter({ hasText: '2/2' }).waitFor()
-    // The page that came in is the one that swipes, from the right.
-    assert.equal(await dock.locator('.chat-prompt-page').getAttribute('data-direction'), 'forward')
-    // Back keeps the choice and reverses the swipe; the choice again moves on.
-    await dock.getByRole('button', { name: 'Back', exact: true }).click()
+    assert.equal(await fields.nth(0).getAttribute('data-state'), 'done')
+    assert.match(await fields.nth(0).innerText(), /Send now or draft\?\s*Draft only/)
+    assert.equal(await dock.locator('.chat-ask-fields').getAttribute('data-direction'), 'forward')
+    t.check(
+      'a question docks with its options, the next one folded below, one choice moves on',
+      true
+    )
+
+    // The answer is edited where it stands: the folded line reopens the
+    // question with the caret at the end of its answer line.
+    await fields.nth(0).locator('.chat-ask-folded').click()
     await dock.locator('.chat-prompt-step').filter({ hasText: '1/2' }).waitFor()
-    assert.equal(await dock.locator('.chat-prompt-page').getAttribute('data-direction'), 'back')
+    assert.equal(await dock.locator('.chat-ask-fields').getAttribute('data-direction'), 'back')
+    const answerLine = fields.nth(0).getByRole('textbox', { name: 'Your answer' })
+    await until(() => answerLine.evaluate((el) => el === document.activeElement))
+    assert.equal(await answerLine.inputValue(), 'Draft only')
+    await win.keyboard.type(', and show it to me first')
+    // The option the answer starts from stays picked as it is edited.
     assert.equal(
       await dock.getByRole('radio', { name: /Draft only/ }).getAttribute('aria-checked'),
       'true'
     )
-    await dock.getByRole('radio', { name: /Draft only/ }).click()
-    t.check('a question docks with its options and one choice moves it on at once', true)
+    await win.keyboard.press('Enter')
+    await dock.locator('.chat-prompt-step').filter({ hasText: '2/2' }).waitFor()
+    assert.match(
+      await fields.nth(0).innerText(),
+      /Draft only, and show it to me first/,
+      'the edited answer folds into its line'
+    )
+    t.check('a folded answer reopens to be edited in place, and folds back edited', true)
 
     // The second question is multi-select, answered by digit keys and own words.
-    await dock.locator('.chat-prompt-step').filter({ hasText: '2/2' }).waitFor()
     await dock.getByRole('checkbox', { name: /Romain/ }).waitFor()
-    // Moving on kept focus in the dock, so a digit picks at once.
+    // Moving on kept the focus in the card, so a digit picks at once.
     await win.keyboard.press('2')
     assert.ok(
       await until(
@@ -92,15 +122,9 @@ export async function run(t) {
       'the digit key picks the second option'
     )
     await dock.getByRole('checkbox', { name: /Romain/ }).click()
-    await dock.getByPlaceholder('Type your own answer').fill('the client')
-    await dock.getByRole('button', { name: 'Review', exact: true }).click()
-    // Nothing goes before the reader has seen every reply together.
-    const review = dock.locator('.chat-prompt-review')
-    await review.waitFor()
-    assert.equal((await writes()).length, 0, 'the review sends nothing')
-    assert.match(await review.innerText(), /Send now or draft\?\s*Draft only/)
-    assert.match(await review.innerText(), /Who else to copy\?\s*Valentin, Romain, the client/)
-    t.check('the last question opens a review of every reply, and sends nothing yet', true)
+    await dock.getByPlaceholder('Add your own words').fill('the client')
+    // The last question's button sends: no separate review page.
+    assert.equal((await writes()).length, 0, 'nothing is sent before the last button')
     await dock.getByRole('button', { name: 'Send', exact: true }).click()
     await until(async () => (await writes()).length === 1)
     assert.deepEqual((await writes())[0], {
@@ -108,17 +132,58 @@ export async function run(t) {
       id: 'ask',
       optionId: 'answer',
       answers: {
-        'Send now or draft?': 'Draft only',
-        'Who else to copy?': 'Valentin, Romain, the client'
+        'Send now or draft?': 'Draft only, and show it to me first',
+        'Who else to copy?': 'Romain, Valentin, the client'
       }
     })
-    t.check('the answers cross the write IPC keyed by question, choices and own words joined', true)
+    t.check(
+      'the answers cross the write IPC keyed by question, one string each, own words last',
+      true
+    )
 
     await until(async () => (await view.locator('.chat-prompt').count()) === 0)
     const row = view.locator('.chat-permission-row[data-kind="question"]')
-    assert.match(await row.innerText(), /Answered/)
-    assert.match(await row.innerText(), /Draft only; Valentin, Romain, the client/)
-    t.check('an answered question leaves the dock and records its answer in the transcript', true)
+    assert.match(await row.innerText(), /Answered/i)
+    assert.match(await row.innerText(), /Send now or draft\?\s*Draft only, and show it to me first/)
+    assert.match(await row.innerText(), /Who else to copy\?\s*Romain, Valentin, the client/)
+    t.check('an answered question closes into the card it was, every answer on its line', true)
+
+    // A pick on the last question never sends: every answer folds into its
+    // line above the button that sends them, and only that button sends.
+    await inject(fixture, record.id, [
+      {
+        type: 'permission_request',
+        id: 'ask-two',
+        description: 'Claude asks 2 questions',
+        toolName: 'AskUserQuestion',
+        input: {},
+        questions: [
+          { question: 'Ship today?', options: [{ label: 'Yes' }, { label: 'No' }] },
+          { question: 'Tell the client?', options: [{ label: 'Now' }, { label: 'Tomorrow' }] }
+        ],
+        options: [
+          { id: 'answer', label: 'Submit' },
+          { id: 'deny', label: 'Skip' }
+        ]
+      }
+    ])
+    await dock.waitFor()
+    await dock.getByRole('radio', { name: /Yes/ }).click()
+    await dock.locator('.chat-prompt-step').filter({ hasText: '2/2' }).waitFor()
+    await dock.getByRole('radio', { name: /Tomorrow/ }).click()
+    await until(
+      async () => (await dock.locator('.chat-ask-field[data-folded="true"]').count()) === 2
+    )
+    assert.equal((await writes()).length, 1, 'the last pick sends nothing')
+    assert.match(await dock.innerText(), /Ship today\?\s*Yes/)
+    assert.match(await dock.innerText(), /Tell the client\?\s*Tomorrow/)
+    await dock.getByRole('button', { name: 'Send', exact: true }).click()
+    await until(async () => (await writes()).length === 2)
+    assert.deepEqual((await writes())[1].answers, {
+      'Ship today?': 'Yes',
+      'Tell the client?': 'Tomorrow'
+    })
+    t.check('a pick on the last question folds every answer above Send, and only Send sends', true)
 
     // A tool permission answers from the keyboard: Escape denies.
     await inject(fixture, record.id, [
@@ -173,8 +238,8 @@ export async function run(t) {
       win.evaluate(() => document.activeElement?.classList.contains('chat-prompt-body') ?? false)
     )
     await win.keyboard.press('Escape')
-    await until(async () => (await writes()).length === 2)
-    assert.deepEqual((await writes())[1], {
+    await until(async () => (await writes()).length === 3)
+    assert.deepEqual((await writes())[2], {
       type: 'permission_response',
       id: 'write',
       optionId: 'deny'

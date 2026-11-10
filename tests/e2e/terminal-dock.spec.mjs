@@ -4,10 +4,11 @@ import { until } from './harness.mjs'
 /* The question dock in the Terminal view. What this spec holds in the real app:
    - it reads in the Chat view's face, not the composer's monospace;
    - a multi-select shows a box on every option before anything is picked;
-   - a click on the dock's own words keeps its keys: a digit picks an option
+   - a click on the card's own words keeps its keys: a digit picks an option
      and never lands in the prompt;
-   - an option takes a note, which travels with it in the answer, and a single
-     choice with a note waits for Enter instead of sending on the click. */
+   - the person's own words travel with the options picked, and a single
+     choice's answer line takes the option to be edited before it is sent
+     (PRDCT-4322). */
 
 export async function run(t) {
   const chat = await openChat(
@@ -70,7 +71,7 @@ export async function run(t) {
       look
     )
 
-    await dock.locator('.chat-prompt-title').click()
+    await dock.locator('.chat-field-question').click()
     await win.keyboard.press('2')
     const composer = view.getByRole('textbox', { name: 'Message', exact: true })
     t.check(
@@ -80,18 +81,15 @@ export async function run(t) {
       await composer.inputValue()
     )
 
-    await dock.locator('.chat-prompt-choice').nth(2).hover()
-    await dock.getByRole('button', { name: 'Add a note to Lint' }).click()
-    await win.keyboard.type('only the changed files')
-    await win.keyboard.press('Enter')
-    // Enter again sends from the review.
-    await dock.locator('.chat-prompt-review').waitFor()
+    await dock.getByRole('checkbox', { name: /Lint/ }).click()
+    await dock.getByPlaceholder('Add your own words').fill('only the changed files')
+    // Enter in the last field sends: no separate review page.
     await win.keyboard.press('Enter')
     await dock.waitFor({ state: 'detached' })
     const multi = (await answers())[0]
     t.check(
-      'a note travels with its option in the answer',
-      multi?.['Which checks should run?'] === 'E2E, Lint — only the changed files',
+      "the person's own words travel after the options picked",
+      multi?.['Which checks should run?'] === 'E2E, Lint, only the changed files',
       multi
     )
 
@@ -115,19 +113,23 @@ export async function run(t) {
       }
     ])
     await dock.waitFor()
-    await dock.locator('.chat-prompt-choice').nth(1).hover()
-    await dock.getByRole('button', { name: 'Add a note to A file' }).click()
-    await win.keyboard.type('reports/checks.md')
-    const waited = (await answers()).length === 1
+    // One question: the option picked lands in the answer line and waits there.
     await dock.getByRole('radio', { name: /A file/ }).click()
-    const stillUp = (await dock.count()) === 1 && (await answers()).length === 1
-    await dock.getByRole('button', { name: /Review/ }).click()
-    await dock.getByRole('button', { name: /Send/ }).click()
+    const line = dock.getByRole('textbox', { name: 'Your answer' })
+    const waited = (await answers()).length === 1 && (await line.inputValue()) === 'A file'
+    await line.focus()
+    await win.keyboard.press('End')
+    await win.keyboard.type(', in reports/checks.md')
+    const stillPicked =
+      (await dock.getByRole('radio', { name: /A file/ }).getAttribute('aria-checked')) === 'true'
+    await dock.getByRole('button', { name: 'Send', exact: true }).click()
     const single = await until(async () => (await answers())[1])
     t.check(
-      'a single choice with a note waits for Review, and sends the note with it',
-      waited && stillUp && single['Where should the report go?'] === 'A file — reports/checks.md',
-      { waited, stillUp, single }
+      'a single choice waits in its answer line, edited, and sends the edited answer',
+      waited &&
+        stillPicked &&
+        single['Where should the report go?'] === 'A file, in reports/checks.md',
+      { waited, stillPicked, single }
     )
   } finally {
     await chat.close()

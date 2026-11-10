@@ -220,6 +220,8 @@ export const AgentQuestion = Schema.Struct({
     Schema.Struct({ label: Schema.String, description: Schema.optional(Schema.String) })
   ),
   multiSelect: Schema.optional(Schema.Boolean),
+  /** A hosted choice closed to its options (PRDCT-4322): no own words. */
+  optionsOnly: Schema.optional(Schema.Boolean),
   /** A hosted input request's question (clave_request_input, PRDCT-4157):
    *  the kind of value asked for, and the field's own words. Absent on a
    *  provider's native question, which is a choice among its options. The

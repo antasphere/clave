@@ -189,6 +189,7 @@ export interface FleetPendingRequest {
     header?: string
     options: readonly { label: string; description?: string }[]
     multiSelect?: boolean
+    optionsOnly?: boolean
     /** A hosted input request's question (PRDCT-4157); see the contract's `input-kinds.ts`. */
     kind?: InputKind
     hint?: string

@@ -1704,9 +1704,7 @@ canvas[data-orb-state] {
    means adding it to this selector — src/renderer/src/lib/row-rhythm.test.ts
    finds every full-width class with a hover fill and fails on one left out. */
 :is(.sidebar-item, :has(> .sidebar-item)) + :is(.sidebar-item, :has(> .sidebar-item)),
-.chat-prompt-option + .chat-prompt-option,
-.chat-prompt-choice + .chat-prompt-choice,
-.chat-prompt-choice + .chat-prompt-option {
+.chat-prompt-option + .chat-prompt-option {
   margin-top: var(--row-gap);
 }
 /* Menus read it through --menu-row-gap: Comfortable stacks its menu rows flush. */
@@ -1871,9 +1869,6 @@ canvas[data-orb-state] {
      sliding: the collapse is layout, not decoration. */
   .group-switcher-wrap {
     transition: none;
-  }
-  .chat-prompt-page {
-    animation: scrim-in 100ms ease-out;
   }
 }
 
@@ -4111,30 +4106,6 @@ details[open] > .chat-tool-row .chat-tool-chevron,
   color: var(--text-primary);
   font-weight: 500;
 }
-/* One question's page. Each step comes in from the right, the swipe that
-   carries the reader through the questions; Back reverses it. Small enough
-   to be felt rather than watched. */
-@keyframes chat-prompt-page-in {
-  from {
-    opacity: 0;
-    transform: translateX(calc(var(--spacing) * 3));
-  }
-}
-@keyframes chat-prompt-page-back {
-  from {
-    opacity: 0;
-    transform: translateX(calc(var(--spacing) * -3));
-  }
-}
-.chat-prompt-page {
-  display: flex;
-  flex-direction: column;
-  gap: calc(var(--spacing) * 2);
-  animation: chat-prompt-page-in 180ms var(--ease-out-expo);
-}
-.chat-prompt-page[data-direction='back'] {
-  animation-name: chat-prompt-page-back;
-}
 .chat-prompt-target {
   margin-top: calc(var(--spacing) * -1);
   font-size: var(--text-xs);
@@ -4227,51 +4198,6 @@ details[open] > .chat-tool-row .chat-tool-chevron,
   height: var(--chat-glyph);
   color: var(--text-primary);
 }
-/* One option and what the reader adds to it: the option, a pencil on
-   approach that opens a note, and the note under it once opened. The pencil
-   sits in the option's own row, left of its key, so the option keeps room
-   for it. */
-.chat-prompt-choice {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-}
-.chat-prompt-choice > .chat-prompt-option .chat-prompt-option-text {
-  margin-right: calc(var(--spacing) * 6);
-}
-.chat-prompt-note-btn {
-  position: absolute;
-  right: calc(var(--spacing) * 8.5);
-  top: calc(50% - var(--spacing) * 2.5);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: calc(var(--spacing) * 5);
-  height: calc(var(--spacing) * 5);
-  border-radius: var(--radius-sm);
-  color: var(--text-tertiary);
-  opacity: 0;
-  transition:
-    opacity var(--default-transition-duration),
-    color var(--default-transition-duration),
-    background-color var(--default-transition-duration);
-}
-.chat-prompt-note-btn svg {
-  width: var(--chat-glyph);
-  height: var(--chat-glyph);
-}
-.chat-prompt-choice:hover .chat-prompt-note-btn,
-.chat-prompt-note-btn:focus-visible {
-  opacity: 1;
-}
-.chat-prompt-note-btn:hover {
-  color: var(--text-primary);
-  background-color: var(--surface-100);
-}
-/* Under a multi-select option, the note starts where its label does, past the box. */
-.chat-prompt-choice[data-multi] .chat-prompt-note {
-  margin-left: calc(var(--spacing) * 8.5);
-}
 /* A multi-select's box: empty until picked, the accent's tick once it is. */
 .chat-prompt-box {
   flex-shrink: 0;
@@ -4308,11 +4234,8 @@ details[open] > .chat-tool-row .chat-tool-chevron,
   font-family: var(--font-sans);
 }
 
-/* The reader's own words. "Other" is a card whose body IS the field: no
-   inner box, the words sit under the label, and the card's edge firms up
-   while it has the caret. A note is the same field one level down: a soft
-   fill under its option, a step darker while it is written in. Both grow
-   with what is typed and wrap it, up to a few lines, then scroll. */
+/* A field with no box of its own, which grows with what is typed and wraps
+   it, up to a few lines, then scrolls: the search fields of the panels. */
 .chat-prompt-other {
   width: 100%;
   min-height: 0;
@@ -4334,42 +4257,6 @@ details[open] > .chat-tool-row .chat-tool-chevron,
 }
 .chat-prompt-other::placeholder {
   color: var(--text-tertiary);
-}
-.chat-prompt-note {
-  width: auto;
-  margin: calc(var(--spacing) * 1.5) 0 0 calc(var(--spacing) * 2.5);
-  padding: calc(var(--spacing) * 1.5) calc(var(--spacing) * 2.5);
-  border-radius: var(--radius-md);
-  background-color: var(--surface-100);
-  transition: background-color var(--default-transition-duration);
-}
-.chat-prompt-note:focus {
-  background-color: var(--surface-200);
-}
-/* The review before sending: each question, quiet, and what was said to it. */
-.chat-prompt-review {
-  display: flex;
-  flex-direction: column;
-  gap: calc(var(--spacing) * 2.5);
-  margin: calc(var(--spacing) * 1) 0 0;
-  padding: calc(var(--spacing) * 3) calc(var(--spacing) * 3.5);
-  border-radius: var(--radius-lg);
-  background-color: var(--surface-100);
-}
-.chat-prompt-review-item {
-  display: flex;
-  flex-direction: column;
-  gap: calc(var(--spacing) * 0.5);
-}
-.chat-prompt-review dt {
-  font-size: var(--text-xs);
-  color: var(--text-tertiary);
-}
-.chat-prompt-review dd {
-  margin: 0;
-  color: var(--text-primary);
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
 }
 .chat-prompt-actions {
   display: flex;
@@ -4677,6 +4564,15 @@ details[open] > .chat-tool-row .chat-tool-chevron,
 .chat-ask-field[data-state='problem'] .chat-ask-folded-answer {
   color: var(--color-destructive);
 }
+/* A question still to come, below the one being answered: the question
+   alone, a click opens it. */
+.chat-ask-field[data-state='upcoming'] .chat-ask-folded-question {
+  color: var(--text-secondary);
+}
+.chat-ask-field[data-state='upcoming'] .chat-ask-folded:hover .chat-ask-folded-question {
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+}
 /* The agent filled the form from what the reader said. */
 .chat-ask-note {
   margin: 0;
@@ -4902,6 +4798,19 @@ details[open] > .chat-tool-row .chat-tool-chevron,
   field-sizing: content;
   overflow-y: auto;
   overscroll-behavior: contain;
+}
+/* The answer line under a choice's options (PRDCT-4322): the option picked
+   lands in it to be edited in place, or the person writes their own words.
+   One line that grows with what is typed and wraps it, then scrolls. */
+.chat-field--answer {
+  display: block;
+  max-height: calc(var(--spacing) * 40);
+  padding: calc(var(--spacing) * 1.5) calc(var(--control-px) * 1.75);
+  resize: none;
+  field-sizing: content;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  overflow-wrap: anywhere;
 }
 .chat-field[type='date']::-webkit-calendar-picker-indicator {
   opacity: 0.6;
