@@ -91,6 +91,12 @@ final class MachinesTests: XCTestCase {
     XCTAssertNoThrow(try EnrollmentClient(baseURL: "http://127.0.0.1:43201", transport: transport, build: .development))
   }
 
+  /// The policy's word on plain http to the loopback in a release build.
+  private func releaseRefusal(_ url: String) -> String? {
+    guard case .refused(let reason) = credentialMayTravelTo(url, build: .release) else { return nil }
+    return reason
+  }
+
   // MARK: the credential store
 
   func testKeepsOneCredentialPerMachineTheFirstPairedAsMain() async throws {
@@ -173,7 +179,7 @@ final class MachinesTests: XCTestCase {
     }
     let kv = InMemoryKeyValueStore()
     let credentials = SecureCredentialStore(InMemorySecureStore())
-    let source = DeveloperMachineSource(store: kv, credentials: credentials, now: { 5 })
+    let source = DeveloperMachineSource(store: kv, credentials: credentials, build: .development, now: { 5 })
     do {
       _ = try await source.add(serverURL: server, token: "wrong", name: "Dev", transport: transport)
       XCTFail("kept a refused token")
@@ -199,7 +205,7 @@ final class MachinesTests: XCTestCase {
   }
 
   func testTheDeveloperConnectionStillRefusesPlainHttpOffTheLoopback() async throws {
-    let source = DeveloperMachineSource(store: InMemoryKeyValueStore(), credentials: SecureCredentialStore(InMemorySecureStore()))
+    let source = DeveloperMachineSource(store: InMemoryKeyValueStore(), credentials: SecureCredentialStore(InMemorySecureStore()), build: .development)
     let transport = ScriptedTransport()
     do {
       _ = try await source.add(serverURL: "192.168.1.20:43201", token: "t", transport: transport)
@@ -209,5 +215,38 @@ final class MachinesTests: XCTestCase {
     }
     let count = await transport.requests.count
     XCTAssertEqual(count, 0)
+  }
+
+  /// The source follows the build it is given: a release one refuses the loopback over plain http
+  /// with the policy's error, sends nothing and keeps nothing; a development one adds it.
+  func testTheDeveloperSourceSendsTheTokenWhereItsBuildAllows() async throws {
+    let server = "http://127.0.0.1:43201"
+    let transport = ScriptedTransport()
+    await transport.on("GET", "/launch-profiles") { _ in
+      HTTPAnswer(status: 200, body: Data(#"{"version":1,"customProfiles":[],"globalDefaults":{},"workspaceOverrides":{}}"#.utf8))
+    }
+    let kv = InMemoryKeyValueStore()
+    let credentials = SecureCredentialStore(InMemorySecureStore())
+    let release = DeveloperMachineSource(store: kv, credentials: credentials, build: .release)
+    do {
+      _ = try await release.add(serverURL: server, token: "server-token", transport: transport)
+      XCTFail("a release build added a plain-http server")
+    } catch let error as TransportPolicyError {
+      XCTAssertEqual(error.message, releaseRefusal(server))
+    }
+    let sent = await transport.requests.count
+    XCTAssertEqual(sent, 0, "the token went nowhere")
+    let records = try await release.records()
+    XCTAssertEqual(records, [])
+    let tokens = try await credentials.known()
+    XCTAssertEqual(tokens, [], "no token kept")
+    let list = try await kv.get(DeveloperMachineSource.listKey)
+    XCTAssertNil(list)
+
+    let development = DeveloperMachineSource(store: kv, credentials: credentials, build: .development)
+    let machine = try await development.add(serverURL: server, token: "server-token", transport: transport)
+    XCTAssertEqual(machine.id, "dev:127.0.0.1:43201")
+    let kept = try await credentials.get(machine.id)
+    XCTAssertEqual(kept, Credential(serverUrl: server, bearer: "server-token"))
   }
 }

@@ -260,9 +260,16 @@ struct MachineRow: Identifiable, Equatable, Sendable {
   }
 
   /// The machine a cold launch opens: the last one opened while it is still
-  /// paired, else the main one, else none.
+  /// paired, else the main one, else none. A release build never opens a
+  /// developer machine: the records a development build kept are left out
+  /// here, never deleted.
   func currentMachineId() async -> String? {
-    let paired = (try? await credentials.known()) ?? []
+    var paired = (try? await credentials.known()) ?? []
+    if environment.buildKind == .release {
+      let developer = DeveloperMachineSource(store: keyValueStore, credentials: credentials, build: environment.buildKind)
+      let ids = Set(((try? await developer.records()) ?? []).map(\.id))
+      paired.removeAll { ids.contains($0) }
+    }
     let last = try? await keyValueStore.get(Self.lastMachineKey)
     let main = try? await credentials.mainMachineId()
     return Self.currentMachine(last: last ?? nil, main: main ?? nil, paired: paired)
@@ -294,7 +301,7 @@ struct MachineRow: Identifiable, Equatable, Sendable {
 
   #if DEBUG
     private func developerSource() -> DeveloperMachineSource {
-      DeveloperMachineSource(store: keyValueStore, credentials: credentials)
+      DeveloperMachineSource(store: keyValueStore, credentials: credentials, build: environment.buildKind)
     }
 
     /// Adds a standalone server by its address and token; the token is tried once before it is kept.

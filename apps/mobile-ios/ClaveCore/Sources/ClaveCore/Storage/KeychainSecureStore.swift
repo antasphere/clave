@@ -25,8 +25,9 @@ public struct KeychainSecureStore: SecureStore {
   /// The item service every key is filed under.
   public let service: String
 
-  /// A store under `service`.
-  public init(service: String = "com.clave.ios.dev.credentials") {
+  /// A store under `service`; the app names it from its bundle identifier, so
+  /// two builds installed side by side never share one.
+  public init(service: String) {
     self.service = service
   }
 

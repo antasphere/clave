@@ -61,20 +61,24 @@ public func developerMachineId(_ serverURL: String) -> String {
 
 /// The developer's machines, for a development build only (the app shows the
 /// screen under DEBUG): the list in the key-value store, each token in the
-/// credential store under the machine's id. The transport policy still
-/// applies, with the development allowance: plain http to the loopback.
+/// credential store under the machine's id. The transport policy applies with
+/// the build the source is given: a development build may reach the loopback
+/// over plain http, a release build never sends the token over plain http.
 public struct DeveloperMachineSource: MachineSource {
   /// The key-value key of the list.
   public static let listKey = "clave.developer-machines"
 
   private let store: any KeyValueStore
   private let credentials: any CredentialStore
+  private let build: BuildKind
   private let now: @Sendable () -> Double
 
-  /// A source over `store` (the list) and `credentials` (the tokens).
-  public init(store: any KeyValueStore, credentials: any CredentialStore, now: @escaping @Sendable () -> Double = { Date().timeIntervalSince1970 * 1000 }) {
+  /// A source over `store` (the list) and `credentials` (the tokens), for `build`: the build
+  /// decides where a token may travel, so it has no default.
+  public init(store: any KeyValueStore, credentials: any CredentialStore, build: BuildKind, now: @escaping @Sendable () -> Double = { Date().timeIntervalSince1970 * 1000 }) {
     self.store = store
     self.credentials = credentials
+    self.build = build
     self.now = now
   }
 
@@ -92,7 +96,7 @@ public struct DeveloperMachineSource: MachineSource {
   /// (a 401 is the server refusing it), then kept under the machine's id.
   public func add(serverURL: String, token: String, name: String = "Developer machine", transport: any HTTPTransport) async throws -> Machine {
     let normalized = try normalizeServerURL(serverURL)
-    let client = try ClaveServerClient(baseURL: normalized, bearer: { token }, transport: transport, build: .development)
+    let client = try ClaveServerClient(baseURL: normalized, bearer: { token }, transport: transport, build: build)
     _ = try await client.launchProfiles.list()
     let id = developerMachineId(normalized)
     var kept = try await records().filter { $0.id != id }

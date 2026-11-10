@@ -93,7 +93,7 @@ struct AppEnvironment: Sendable {
       relayOverride: options.relayOverride,
       transport: URLSessionTransport(),
       webSocketTransport: URLSessionWebSocketTransport(),
-      secureStore: KeychainSecureStore(),
+      secureStore: KeychainSecureStore(service: storageNames(bundleIdentifier: Bundle.main.bundleIdentifier).keychainService),
       keyValueStore: FileKeyValueStore(directory: applicationSupportDirectory()),
       opener: WebAuthenticationOpener(),
       usesRemoteNotifications: true,
@@ -150,6 +150,22 @@ struct AppEnvironment: Sendable {
         appearanceDefaults: defaults)
     }
   #endif
+
+  /// The names the live stores are filed under, from the app's bundle identifier, so a Debug and
+  /// a Release install (com.clave.ios.dev, com.clave.ios) never share one. The Keychain service is
+  /// the one name the app chooses: the key-value store is a folder in the app's own container and
+  /// the appearance lives in its standard defaults, which the system keeps per identifier.
+  nonisolated struct StorageNames: Equatable, Sendable {
+    /// The service every Keychain item is filed under.
+    let keychainService: String
+  }
+
+  /// The identifier a bundle that has none is taken for: the development build's.
+  nonisolated static let fallbackBundleIdentifier = "com.clave.ios.dev"
+
+  nonisolated static func storageNames(bundleIdentifier: String?) -> StorageNames {
+    StorageNames(keychainService: "\(bundleIdentifier ?? fallbackBundleIdentifier).credentials")
+  }
 
   /// The app's own state lives beside its other support files, out of the
   /// person's Documents, and is never synced as a document.
