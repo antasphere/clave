@@ -434,3 +434,21 @@ describe('round 3 of the review: a conflict ends only when the file is loaded', 
     expect(after.conflict).toBeUndefined()
   })
 })
+
+describe('round 4 of the review: a conflict from a passing write error still heals', () => {
+  it('writes again once the cause is gone, while a stale conflict keeps blocking', async () => {
+    const { root, store } = fixture()
+    const path = join(root, 'notes.md')
+    writeFileSync(path, 'one')
+    const doc = await store.open('s1', { path })
+    // An outside writer changes the file, then puts it back: the conflict
+    // its change raised heals on the next keystroke, as it always did.
+    writeFileSync(path, 'someone else')
+    const conflicted = await store.update(doc.id, doc.revision, { content: 'one!' })
+    expect(conflicted.conflict).toBeTruthy()
+    writeFileSync(path, 'one')
+    const healed = await store.update(conflicted.id, conflicted.revision, { content: 'one!!' })
+    expect(healed.conflict).toBeUndefined()
+    expect(readFileSync(path, 'utf8')).toBe('one!!')
+  })
+})

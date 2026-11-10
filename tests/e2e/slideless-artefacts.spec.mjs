@@ -362,7 +362,7 @@ export async function run(t) {
     )
     const editor = win.locator('[data-testid="linked-document-panel"] .markdown-page-content')
     await editor.waitFor({ state: 'visible', timeout: 10000 })
-    const editorText = () => editor.textContent().catch(() => '')
+    const editorText = () => editor.textContent({ timeout: 2000 }).catch(() => '')
     t.check(
       'it shows the file',
       !!(await until(async () => (await editorText()).includes('first words')))
@@ -420,17 +420,19 @@ export async function run(t) {
     await sleep(1000)
     await win.keyboard.type('Q')
     const conflicted = await until(async () =>
-      /changed on disk while you typed/.test((await alert.textContent().catch(() => '')) ?? '')
+      /changed on disk while you typed/.test(
+        (await alert.textContent({ timeout: 2000 }).catch(() => '')) ?? ''
+      )
         ? true
         : null
     )
     t.check(
       'a key typed during the reload is kept as a conflict',
       !!conflicted,
-      await alert.textContent().catch(() => '')
+      await alert.textContent({ timeout: 2000 }).catch(() => '')
     )
     t.check('and the agent’s file is left as it was', disk().includes('during your typing'), disk())
-    await editor.click()
+    await editor.click({ timeout: 5000 })
     await win.keyboard.type('R')
     await sleep(1500)
     t.check('the next keys do not erase it either', disk().includes('during your typing'), disk())
@@ -496,7 +498,7 @@ http.createServer((q, r) => { r.writeHead(200); r.end('<h1>fake</h1>'); }).liste
     t.check('at most three times a minute', count() <= 4, count())
     const notice = await win
       .locator('[data-testid="linked-document-panel"] [role="alert"]')
-      .textContent()
+      .textContent({ timeout: 2000 })
       .catch(() => '')
     t.check(
       'then the panel says it stopped again and again',
@@ -513,7 +515,7 @@ http.createServer((q, r) => { r.writeHead(200); r.end('<h1>fake</h1>'); }).liste
     t.equal('a command line that cannot start is started once, not again and again', count(), 1)
     const failed = await win
       .locator('[data-testid="linked-document-panel"] [role="alert"]')
-      .textContent()
+      .textContent({ timeout: 2000 })
       .catch(() => '')
     t.check('and its error shows', /cannot start/.test(failed ?? ''), failed)
   } finally {

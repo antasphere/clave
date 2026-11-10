@@ -23,6 +23,9 @@ import { digest, validateEmailHtml, importSignature } from './email'
 /** Fields a build before PRDCT-3438 persisted for the composer's built-in send, removed since. */
 const LEGACY_DELIVERY_FIELDS = ['delivery', 'deliveries', 'preparedPackages'] as const
 
+/** The hash a stale save leaves: no file's digest is ever equal to it. */
+const STALE_HASH = 'stale'
+
 /** Synchronous disk critical sections serialize IPC/MCP edits; the async signature imports use revision checks. */
 export class LinkedDocumentStore {
   constructor(
@@ -344,14 +347,16 @@ export class LinkedDocumentStore {
         doc.content = this.readText(doc.path!)
         doc.sourceHash = digest(doc.content)
         delete doc.conflict
-      } else if (input.content !== undefined && (input.stale || doc.conflict)) {
-        // Typed against a file the panel has since reloaded, or while a
-        // conflict stands: keep the edit in Clave and leave the file alone.
-        // Only loading the file (reloadExternal) ends a conflict; a keystroke
-        // never does, or the next one would write the old text over the
-        // newer file.
+      } else if (input.content !== undefined && input.stale) {
+        // Typed against a file the panel has since reloaded: keep the edit in
+        // Clave and leave the newer file alone. The hash the panel holds is
+        // made to match no file, so every later keystroke meets the same
+        // check an outside change meets, until the file is loaded again
+        // (reloadExternal) — while a conflict from a passing write error still
+        // heals on the next save, as it always did.
         doc.content = input.content
-        doc.conflict ??=
+        doc.sourceHash = STALE_HASH
+        doc.conflict =
           'The file changed on disk while you typed. Your edits are retained in Clave. Copy them before loading the file.'
       } else if (input.content !== undefined) {
         doc.content = input.content
