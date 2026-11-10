@@ -292,6 +292,27 @@ class OwnerTest {
     }
 
     @Test
+    fun `owner isolation a relay list that lands after the hub login changed writes no cache and is refused`() = runBlocking {
+        val authA = signedIn("sub-a")
+        val a = storesOf(authA)
+        val servicesA = services(authA, a, defaultRelay = "")
+        a.kv.set(RELAY_URL_KEY, machine.base)
+        machine.handler = { call -> if (call.rawPath == "/machines") machine.hold(call) else answer(404, "{}") }
+        val listing = scope.async { runCatching { servicesA.source.list() } }
+        until(what = "the relay's list to be asked") { machine.held.size == 1 }
+        // Signed out elsewhere while the relay's answer is on its way.
+        authA.signOut()
+        machine.respond(
+            0,
+            answer(200, """{"machines":[{"id":"r1","name":"Relay Mac","platform":"macos","version":"2.4.0","online":true,"lastSeen":5,"direct":[]}]}"""),
+        )
+        val outcome = awaitGate("the list to end", listing)
+        assertEquals("The account changed.", (outcome.exceptionOrNull() as? AuthError)?.message)
+        assertNull(a.kv.get(MACHINES_CACHE_KEY))
+        assertTrue(rawKv.map.keys.toString(), rawKv.map.keys.none { it.endsWith(MACHINES_CACHE_KEY) })
+    }
+
+    @Test
     fun `the machines come from the relay, and from the cache only when the relay is out of reach`() = runBlocking {
         val auth = signedIn("sub-a")
         val servicesA = services(auth, storesOf(auth), defaultRelay = "")
