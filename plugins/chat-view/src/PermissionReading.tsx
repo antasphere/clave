@@ -8,6 +8,7 @@ import {
 import { isExplainable, RISK_LABELS, type RiskLevel } from '../../../src/shared/permission-risk'
 import type { Permission } from './reducer'
 import {
+  maySecrets,
   PermissionReadingContext,
   READING_GIVE_UP_MS,
   shownLevel
@@ -79,6 +80,9 @@ export function PermissionReading({ request }: { request: Permission }): React.J
   // all there is, and the card says so in words rather than in a faint pill
   // beside a confident sentence.
   const unverified = level === null && !!reading?.sentence
+  // The rules' note, beside the level or the "Not verified" line: what is
+  // read may hold a secret. A hint, in the same neutral ink as the level.
+  const secrets = maySecrets(request, value?.cwd) && (level !== null || unverified)
   return (
     <div
       className="chat-permission-reading"
@@ -86,6 +90,7 @@ export function PermissionReading({ request }: { request: Permission }): React.J
       data-state={reading?.sentence ? 'read' : waiting ? 'reading' : failed ? 'failed' : 'none'}
     >
       {!(level === null && (waiting || unverified)) && <LevelPill level={level} />}
+      {secrets && <span className="chat-permission-secrets">May show secrets</span>}
       {reading?.sentence ? (
         <p className="chat-permission-sentence" data-verified={unverified ? 'false' : undefined}>
           {unverified && 'Not verified. Clave could not check this; a model reads it as: '}

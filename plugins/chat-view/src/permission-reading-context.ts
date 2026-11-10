@@ -10,6 +10,7 @@ import {
 } from 'react'
 import {
   riskFloor,
+  ruleReading,
   shownLevel as ruleShown,
   type RiskLevel
 } from '../../../src/shared/permission-risk'
@@ -47,6 +48,12 @@ export function shownLevel(
     riskFloor({ toolName: request.toolName, input: request.input, cwd }),
     reading?.level
   )
+}
+
+/** Whether what the request reads may show a secret: the rules' note
+ *  (R1), a hint beside any level; its absence claims nothing. */
+export function maySecrets(request: Permission, cwd: string | undefined): boolean {
+  return ruleReading({ toolName: request.toolName, input: request.input, cwd }).maySecrets
 }
 
 /** Whether a tab was LAUNCHED skipping permissions (PRDCT-4331, D5): its

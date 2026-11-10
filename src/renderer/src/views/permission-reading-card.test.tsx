@@ -51,9 +51,9 @@ const request = (command: string): Permission => ({
   input: { command },
   options: [{ id: 'allow-once', label: 'Allow once' }]
 })
-/** A command the rules neither prove nor rate (a `cd` they do not follow
- *  into a proof): its level is unknown. */
-const UNKNOWN = 'cd src && ls'
+/** A command the rules neither prove nor rate (a script the structure does
+ *  not settle): its level is unknown. */
+const UNKNOWN = 'npm test'
 const render = (node: React.JSX.Element, value: PermissionReadingValue | null): string =>
   renderToStaticMarkup(
     value ? <PermissionReadingProvider value={value}>{node}</PermissionReadingProvider> : node
@@ -114,6 +114,26 @@ describe('the reading on the card', () => {
       explained({ level: 'reads', sentence: 'Lists the files of the project.' })
     )
     expect(known).not.toContain('could not check')
+  })
+
+  it('notes "May show secrets" beside the level, and beside the "Not verified" line', () => {
+    const proven = render(<PermissionReading request={request('grep -r KEY .')} />, {
+      explained: {},
+      cwd: '/repo'
+    })
+    expect(proven).toContain('Reads only')
+    expect(proven).toContain('May show secrets')
+    const unverified = render(
+      <PermissionReading request={request('node scripts/show.js .env')} />,
+      explained({ sentence: 'Counts the lines of a settings file.' })
+    )
+    expect(unverified).toContain('Not verified. Clave could not check this')
+    expect(unverified).toContain('May show secrets')
+    const plain = render(<PermissionReading request={request('ls')} />, {
+      explained: {},
+      cwd: '/repo'
+    })
+    expect(plain).not.toContain('May show secrets')
   })
 
   it('takes the level the model gives an unknown request', () => {

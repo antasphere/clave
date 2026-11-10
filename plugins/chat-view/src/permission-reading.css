@@ -66,6 +66,13 @@
   color: var(--text-primary);
   animation: chat-permission-sentence-in 220ms var(--ease-out-expo);
 }
+/* The secrets note: a hint beside the level, in its neutral ink. */
+.chat-permission-secrets {
+  flex-shrink: 0;
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  white-space: nowrap;
+}
 /* No level earned: the model's reading, said to be one, in the quiet ink;
    never a tone that reads as "safe". */
 .chat-permission-sentence[data-verified='false'] {
