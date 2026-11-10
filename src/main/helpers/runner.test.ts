@@ -152,6 +152,23 @@ describe('the registry', () => {
   })
 })
 
+describe('the built-in helpers', () => {
+  it('are all declared once the index is loaded, the commit message first', async () => {
+    const index = await import('./index')
+    const ids = index.listHelpers().map((h) => h.id)
+    for (const id of [
+      'commit-message',
+      'tab-title',
+      'push-summary',
+      'exchange-digest',
+      'work-digest'
+    ])
+      expect(ids).toContain(id)
+    expect(ids.indexOf('commit-message')).toBeLessThan(ids.indexOf('tab-title'))
+    expect(ids.indexOf('tab-title')).toBeLessThan(ids.indexOf('exchange-digest'))
+  })
+})
+
 describe('the CLI a helper runs', () => {
   it('one turn on the model, its own system prompt, no MCP, no skill, no tool, the prompt on stdin', async () => {
     const h = helper({ fallbackModel: 'sonnet' })
