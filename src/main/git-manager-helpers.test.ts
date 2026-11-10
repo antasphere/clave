@@ -1,4 +1,8 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterAll, describe, expect, it, vi } from 'vitest'
+import { execFileSync } from 'node:child_process'
+import { mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import path from 'node:path'
 
 // The git panel's two one-shots on the helpers runner (PRDCT-4326): they used
 // to run a bare `claude`, whatever the launch profile said. The CLI is a stub.
@@ -15,7 +19,9 @@ vi.mock('child_process', async (importOriginal) => ({
 vi.mock('./sessions/adapters/pty-backend', () => ({
   getLoginShellEnv: () => ({ PATH: '/bin', CLAUDECODE: '1' }),
   getUserShell: () => '/bin/zsh',
-  accountTokenForSpawn: async () => undefined
+  // The default account is a token account: the helper must run on it.
+  accountTokenForSpawn: async (kind: string, id: string | undefined) =>
+    kind === 'claude' && id === undefined ? 'sk-ant-oat01-default' : undefined
 }))
 vi.mock('./launch-profile-manager', () => ({
   launchProfileManager: { resolveClaudeCli: mocks.resolve }
@@ -66,6 +72,7 @@ describe('the push summary helper from the git manager', () => {
     expect(args.slice(0, 4)).toEqual(['--wrapper', '-p', '--model', 'haiku'])
     expect(args).toContain('--system-prompt')
     expect(opts.env.CLAUDECODE).toBeUndefined()
+    expect(opts.env.CLAUDE_CODE_OAUTH_TOKEN).toBe('sk-ant-oat01-default')
     expect(prompts[0]).toContain('<commit-messages>\n- feat: parallel pulls\n</commit-messages>')
   })
 
@@ -100,5 +107,46 @@ describe('the push summary helper from the git manager', () => {
     await expect(gitManager.summarizePushGroup('/repo', ['x'], '')).rejects.toThrow(
       /claude: command not found/
     )
+  })
+})
+
+const scratch = mkdtempSync(path.join(realpathSync(tmpdir()), 'clave-git-helpers-'))
+afterAll(() => rmSync(scratch, { recursive: true, force: true }))
+
+describe('the commit message helper from the git manager', () => {
+  it("starts the way a session does: the default launch profile's command, on the default account", async () => {
+    const git = (...args: string[]): string =>
+      execFileSync('git', args, { cwd: scratch, encoding: 'utf-8' })
+    git('init', '-q', '-b', 'main')
+    git('config', 'user.email', 'test@example.com')
+    git('config', 'user.name', 'Test')
+    writeFileSync(path.join(scratch, 'a.txt'), 'one\n')
+    git('add', '.')
+    git('commit', '-qm', 'feat: the first one')
+    writeFileSync(path.join(scratch, 'a.txt'), 'one\ntwo\n')
+    git('add', '.')
+    mocks.resolve.mockReturnValue({
+      id: 'custom',
+      name: 'Custom',
+      family: 'claude',
+      command: ['/opt/bin/my-claude', '--wrapper'],
+      additionalArgs: []
+    })
+    mocks.execFile.mockClear()
+    const prompts = stub([{ stdout: 'feat: add the second line\n\nNext: push it.' }])
+    await expect(gitManager.generateCommitMessage(scratch)).resolves.toBe(
+      'feat: add the second line'
+    )
+    const [file, args, opts] = mocks.execFile.mock.calls[0] as [
+      string,
+      string[],
+      { env: Record<string, string> }
+    ]
+    expect(file).toBe('/opt/bin/my-claude')
+    expect(args.slice(0, 4)).toEqual(['--wrapper', '-p', '--model', 'haiku'])
+    expect(args).toContain('--system-prompt')
+    expect(opts.env.CLAUDE_CODE_OAUTH_TOKEN).toBe('sk-ant-oat01-default')
+    expect(prompts[0]).toMatch(/<diff>\n[\s\S]*\+two[\s\S]*\n<\/diff>/)
+    expect(prompts[0]).toContain('<recent-commits>\nfeat: the first one\n</recent-commits>')
   })
 })

@@ -2,7 +2,6 @@ import { DigestStore } from './exchange-digest-store'
 import { settingsPorts } from './ports'
 import { TEST_NO_ACTIVATE } from './test-mode'
 import * as helperRunner from './helpers/runner'
-import { helperCliArgs } from './helpers/runner'
 import { DIGEST_TIMEOUT_MS, exchangeDigestHelper, workDigestHelper } from './helpers/digests'
 import type { HelperFailureReason } from '../shared/helper-prompt'
 import {
@@ -33,12 +32,6 @@ import {
  */
 
 export { DIGEST_TIMEOUT_MS }
-
-/** The CLI arguments a digest is asked with on the helper's defaults. */
-export const DIGEST_CLI_ARGS = helperCliArgs(
-  exchangeDigestHelper.systemPrompt,
-  exchangeDigestHelper
-)
 
 /** The digest of a timeline never needs more than its latest messages. */
 const MAX_MESSAGES = 30
