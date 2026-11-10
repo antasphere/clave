@@ -402,6 +402,16 @@ class OwnerTest {
     }
 
     @Test
+    fun `a response for a paired machine that lost its credential builds no client, never with another machine's`() = runBlocking {
+        val auth = signedIn("sub-a")
+        val servicesA = services(auth, storesOf(auth))
+        twoPaired(servicesA)
+        servicesA.credentials.remove("laptop")
+        val result = servicesA.respond(allowTapped(serverId = "srv-2", serverName = "Laptop")) { error("no client without the resolved machine's own credential") }
+        assertEquals(HandleResult.Open(DeepLink.Machines("Pair this phone again.")), result)
+    }
+
+    @Test
     fun `a push is posted with the machine its own server resolves to, and with none for a server this owner never paired`() = runBlocking {
         val auth = signedIn("sub-a")
         val servicesA = services(auth, storesOf(auth))

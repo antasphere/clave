@@ -38,6 +38,7 @@ class TransportPolicyTest {
             "http://localhost.evil.example/",
             "http://127.0.0.1.example/",
             "http://127.0.0.1./",
+            "http://localhost./",
             "http://127.0.0.2/",
             "http://127.1/",
             "http://2130706433/",
