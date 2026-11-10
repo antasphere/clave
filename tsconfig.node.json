@@ -12,7 +12,8 @@
     "packages/shared/src/**/*",
     "packages/contract/src/**/*",
     "packages/server/src/**/*",
-    "packages/client/src/**/*"
+    "packages/client/src/**/*",
+    "packages/mobile-native/**/*.ts"
   ],
   "compilerOptions": {
     "composite": true,

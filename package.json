@@ -164,7 +164,8 @@
     "packages/host",
     "packages/shared",
     "packages/analytics",
-    "packages/clave-channel"
+    "packages/clave-channel",
+    "packages/mobile-native"
   ],
   "overrides": {
     "@effect/cli": "0.77.0"

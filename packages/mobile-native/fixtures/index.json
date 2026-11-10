@@ -1,0 +1,55 @@
+{
+  "$comment": "The fixture vectors both native phones test against, exported from the real contract by packages/mobile-native/scripts/export-vectors.ts; this index names every file with its hash. Do not edit.",
+  "contract": 1,
+  "generatedBy": "packages/mobile-native/scripts/export-vectors.ts",
+  "files": {
+    "sessions.json": {
+      "sha256": "ad668ad10be3c955bcf0bb78b548dfad93967eaefae62ed0f38e2ea3ab9106be",
+      "bytes": 35862
+    },
+    "timeline.json": {
+      "sha256": "d507adb2a5d1ddc1907b2f12dba018fb635553e8c4f3fd73b03b202ce99bce93",
+      "bytes": 15178
+    },
+    "requests.json": {
+      "sha256": "71ce87cb4fc3c18f2e72d04df3493ac2ec0b22382a107c120aca106c9b0893b6",
+      "bytes": 14645
+    },
+    "settings.json": {
+      "sha256": "ea26d4eb272d5282c605c3ca6de8d2063529e6baad53f355599d59299627263c",
+      "bytes": 10213
+    },
+    "files.json": {
+      "sha256": "346c278e744335f1681c910613208a90f6ce3e03ccb46f1ee2e381359c35d124",
+      "bytes": 9016
+    },
+    "push.json": {
+      "sha256": "b2f86504da32d9505b7f768a3ea0d76814b62a8ab45ef41a69fa131a71cc02e1",
+      "bytes": 7392
+    },
+    "events.json": {
+      "sha256": "8f63b8ad3c7796d0d7a2cfd088291e9ed8d34f9f58f71703f03bf7053ec37e41",
+      "bytes": 7799
+    },
+    "devices.json": {
+      "sha256": "406fc99e2aae95bc4011ffed82c4740a3db1b3d1c67f88c7c891c613086f56b8",
+      "bytes": 17650
+    },
+    "relay.json": {
+      "sha256": "bb850c0aa1f43b3b351057f803bc57062676c95321a3c20abe51900e15f69053",
+      "bytes": 7115
+    },
+    "notify.json": {
+      "sha256": "772cccce1deb53532d9df7edd99904b5820c70aaf04a010ff04c8e9c5f2d1352",
+      "bytes": 8512
+    },
+    "routes.json": {
+      "sha256": "a81d636de605bf584f0e1d9d639e3d7aae655849e4a6407df633d1d3a9b036ac",
+      "bytes": 30865
+    },
+    "shapes.json": {
+      "sha256": "3fd1f655270e3809ccdb7f7f4f6111af812b676c0a33eab1db1976ecd9324c65",
+      "bytes": 472111
+    }
+  }
+}

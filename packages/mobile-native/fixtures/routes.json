@@ -1,0 +1,1400 @@
+{
+  "$comment": "Generated from the real contract by packages/mobile-native/scripts/export-vectors.ts. Do not edit: run `npm run vectors --workspace @clave/mobile-native`; vectors.test.ts fails when this file no longer matches the contract.",
+  "family": "routes",
+  "contract": 1,
+  "notes": [
+    "Every route of the server’s API, read off the API’s own groups: the method, the path, the command or query behind it, and whether a device session may call it (packages/server/src/devices/scope.ts). A query is a GET with its payload as query strings; a command is a POST with a JSON body.",
+    "A route a device session may not call answers 403 with the sentence under `scope.forbiddenMessage`; a route it may call authenticates it like any caller, so a bad token is 401.",
+    "The health routes take no bearer. The push channel is a WebSocket at `push.path` on the same listener."
+  ],
+  "routes": [
+    {
+      "group": "agentTools",
+      "name": "announce",
+      "method": "POST",
+      "path": "/agent-tools/announce",
+      "device": false
+    },
+    {
+      "group": "agentTools",
+      "name": "resolveToken",
+      "method": "POST",
+      "path": "/agent-tools/resolve-token",
+      "device": false
+    },
+    {
+      "group": "clients",
+      "name": "list",
+      "method": "GET",
+      "path": "/clients",
+      "device": false
+    },
+    {
+      "group": "clients",
+      "name": "register",
+      "method": "POST",
+      "path": "/clients",
+      "device": false
+    },
+    {
+      "group": "clients",
+      "name": "confirmRegistration",
+      "method": "POST",
+      "path": "/clients/registrations/v1/confirm",
+      "device": false
+    },
+    {
+      "group": "clients",
+      "name": "releaseRegistration",
+      "method": "POST",
+      "path": "/clients/registrations/v1/release",
+      "device": false
+    },
+    {
+      "group": "clients",
+      "name": "reserveRegistration",
+      "method": "POST",
+      "path": "/clients/registrations/v1/reserve",
+      "device": false
+    },
+    {
+      "group": "clients",
+      "name": "unregister",
+      "method": "POST",
+      "path": "/clients/unregister",
+      "device": false
+    },
+    {
+      "group": "devices",
+      "name": "list",
+      "method": "GET",
+      "path": "/devices",
+      "device": false
+    },
+    {
+      "group": "devices",
+      "name": "approve",
+      "method": "POST",
+      "path": "/devices/approve",
+      "device": false
+    },
+    {
+      "group": "devices",
+      "name": "me",
+      "method": "GET",
+      "path": "/devices/me",
+      "device": true
+    },
+    {
+      "group": "devices",
+      "name": "setPushToken",
+      "method": "POST",
+      "path": "/devices/me/push-token",
+      "device": true
+    },
+    {
+      "group": "devices",
+      "name": "clearPushToken",
+      "method": "POST",
+      "path": "/devices/me/push-token/clear",
+      "device": true
+    },
+    {
+      "group": "devices",
+      "name": "readPairing",
+      "method": "GET",
+      "path": "/devices/pair",
+      "device": false
+    },
+    {
+      "group": "devices",
+      "name": "requestPairing",
+      "method": "POST",
+      "path": "/devices/pair",
+      "device": false
+    },
+    {
+      "group": "devices",
+      "name": "refuse",
+      "method": "POST",
+      "path": "/devices/refuse",
+      "device": false
+    },
+    {
+      "group": "devices",
+      "name": "readRelay",
+      "method": "GET",
+      "path": "/devices/relay",
+      "device": false
+    },
+    {
+      "group": "devices",
+      "name": "setRelay",
+      "method": "POST",
+      "path": "/devices/relay",
+      "device": false
+    },
+    {
+      "group": "devices",
+      "name": "revoke",
+      "method": "POST",
+      "path": "/devices/revoke",
+      "device": false
+    },
+    {
+      "group": "files",
+      "name": "prepareAttachment",
+      "method": "POST",
+      "path": "/files/attachments/prepare",
+      "device": true
+    },
+    {
+      "group": "files",
+      "name": "previewAttachment",
+      "method": "GET",
+      "path": "/files/attachments/preview",
+      "device": true
+    },
+    {
+      "group": "files",
+      "name": "createFile",
+      "method": "POST",
+      "path": "/files/create",
+      "device": false
+    },
+    {
+      "group": "files",
+      "name": "download",
+      "method": "GET",
+      "path": "/files/download",
+      "device": true
+    },
+    {
+      "group": "files",
+      "name": "list",
+      "method": "GET",
+      "path": "/files/list",
+      "device": true
+    },
+    {
+      "group": "files",
+      "name": "listAll",
+      "method": "POST",
+      "path": "/files/list-all",
+      "device": false
+    },
+    {
+      "group": "files",
+      "name": "createDirectory",
+      "method": "POST",
+      "path": "/files/mkdir",
+      "device": false
+    },
+    {
+      "group": "files",
+      "name": "read",
+      "method": "GET",
+      "path": "/files/read",
+      "device": true
+    },
+    {
+      "group": "files",
+      "name": "stat",
+      "method": "GET",
+      "path": "/files/stat",
+      "device": true
+    },
+    {
+      "group": "files",
+      "name": "upload",
+      "method": "POST",
+      "path": "/files/upload",
+      "device": false
+    },
+    {
+      "group": "files",
+      "name": "syncWatch",
+      "method": "POST",
+      "path": "/files/watch",
+      "device": false
+    },
+    {
+      "group": "files",
+      "name": "write",
+      "method": "POST",
+      "path": "/files/write",
+      "device": false
+    },
+    {
+      "group": "git",
+      "name": "checkIgnored",
+      "method": "POST",
+      "path": "/git/check-ignored",
+      "device": false
+    },
+    {
+      "group": "git",
+      "name": "commit",
+      "method": "POST",
+      "path": "/git/commit",
+      "device": false
+    },
+    {
+      "group": "git",
+      "name": "commitDiff",
+      "method": "GET",
+      "path": "/git/commit-diff",
+      "device": false
+    },
+    {
+      "group": "git",
+      "name": "commitFiles",
+      "method": "GET",
+      "path": "/git/commit-files",
+      "device": false
+    },
+    {
+      "group": "git",
+      "name": "diff",
+      "method": "GET",
+      "path": "/git/diff",
+      "device": false
+    },
+    {
+      "group": "git",
+      "name": "discard",
+      "method": "POST",
+      "path": "/git/discard",
+      "device": false
+    },
+    {
+      "group": "git",
+      "name": "discover",
+      "method": "GET",
+      "path": "/git/discover",
+      "device": false
+    },
+    {
+      "group": "git",
+      "name": "fetch",
+      "method": "POST",
+      "path": "/git/fetch",
+      "device": false
+    },
+    {
+      "group": "git",
+      "name": "fetchBatch",
+      "method": "POST",
+      "path": "/git/fetch-batch",
+      "device": false
+    },
+    {
+      "group": "git",
+      "name": "generateCommitMessage",
+      "method": "POST",
+      "path": "/git/generate-commit-message",
+      "device": false
+    },
+    {
+      "group": "git",
+      "name": "incoming",
+      "method": "GET",
+      "path": "/git/incoming",
+      "device": false
+    },
+    {
+      "group": "git",
+      "name": "journey",
+      "method": "GET",
+      "path": "/git/journey",
+      "device": false
+    },
+    {
+      "group": "git",
+      "name": "log",
+      "method": "GET",
+      "path": "/git/log",
+      "device": false
+    },
+    {
+      "group": "git",
+      "name": "magicPull",
+      "method": "POST",
+      "path": "/git/magic-pull",
+      "device": false
+    },
+    {
+      "group": "git",
+      "name": "magicSync",
+      "method": "POST",
+      "path": "/git/magic-sync",
+      "device": false
+    },
+    {
+      "group": "git",
+      "name": "outgoing",
+      "method": "GET",
+      "path": "/git/outgoing",
+      "device": false
+    },
+    {
+      "group": "git",
+      "name": "publishBranch",
+      "method": "POST",
+      "path": "/git/publish-branch",
+      "device": false
+    },
+    {
+      "group": "git",
+      "name": "pull",
+      "method": "POST",
+      "path": "/git/pull",
+      "device": false
+    },
+    {
+      "group": "git",
+      "name": "push",
+      "method": "POST",
+      "path": "/git/push",
+      "device": false
+    },
+    {
+      "group": "git",
+      "name": "rangeDiff",
+      "method": "GET",
+      "path": "/git/range-diff",
+      "device": false
+    },
+    {
+      "group": "git",
+      "name": "rangeFiles",
+      "method": "GET",
+      "path": "/git/range-files",
+      "device": false
+    },
+    {
+      "group": "git",
+      "name": "refreshRemotes",
+      "method": "POST",
+      "path": "/git/refresh-remotes",
+      "device": false
+    },
+    {
+      "group": "git",
+      "name": "stage",
+      "method": "POST",
+      "path": "/git/stage",
+      "device": false
+    },
+    {
+      "group": "git",
+      "name": "status",
+      "method": "GET",
+      "path": "/git/status",
+      "device": false
+    },
+    {
+      "group": "git",
+      "name": "statusBatch",
+      "method": "POST",
+      "path": "/git/status-batch",
+      "device": false
+    },
+    {
+      "group": "git",
+      "name": "summarizePush",
+      "method": "POST",
+      "path": "/git/summarize-push",
+      "device": false
+    },
+    {
+      "group": "git",
+      "name": "unstage",
+      "method": "POST",
+      "path": "/git/unstage",
+      "device": false
+    },
+    {
+      "group": "git",
+      "name": "watches",
+      "method": "POST",
+      "path": "/git/watches",
+      "device": false
+    },
+    {
+      "group": "health",
+      "name": "live",
+      "method": "GET",
+      "path": "/health/live",
+      "device": false
+    },
+    {
+      "group": "health",
+      "name": "ready",
+      "method": "GET",
+      "path": "/health/ready",
+      "device": false
+    },
+    {
+      "group": "notify",
+      "name": "status",
+      "method": "GET",
+      "path": "/notify/status",
+      "device": false
+    },
+    {
+      "group": "notify",
+      "name": "test",
+      "method": "POST",
+      "path": "/notify/test",
+      "device": false
+    },
+    {
+      "group": "plugins",
+      "name": "list",
+      "method": "GET",
+      "path": "/plugins",
+      "device": false
+    },
+    {
+      "group": "plugins",
+      "name": "invokeAction",
+      "method": "POST",
+      "path": "/plugins/actions/invoke",
+      "device": false
+    },
+    {
+      "group": "plugins",
+      "name": "previewAction",
+      "method": "POST",
+      "path": "/plugins/actions/preview",
+      "device": false
+    },
+    {
+      "group": "plugins",
+      "name": "command",
+      "method": "POST",
+      "path": "/plugins/command",
+      "device": false
+    },
+    {
+      "group": "plugins",
+      "name": "context",
+      "method": "POST",
+      "path": "/plugins/context",
+      "device": false
+    },
+    {
+      "group": "plugins",
+      "name": "disable",
+      "method": "POST",
+      "path": "/plugins/disable",
+      "device": false
+    },
+    {
+      "group": "plugins",
+      "name": "enable",
+      "method": "POST",
+      "path": "/plugins/enable",
+      "device": false
+    },
+    {
+      "group": "plugins",
+      "name": "groups",
+      "method": "POST",
+      "path": "/plugins/groups",
+      "device": false
+    },
+    {
+      "group": "plugins",
+      "name": "link",
+      "method": "POST",
+      "path": "/plugins/link",
+      "device": false
+    },
+    {
+      "group": "plugins",
+      "name": "panel",
+      "method": "GET",
+      "path": "/plugins/panel",
+      "device": false
+    },
+    {
+      "group": "plugins",
+      "name": "remove",
+      "method": "POST",
+      "path": "/plugins/remove",
+      "device": false
+    },
+    {
+      "group": "plugins",
+      "name": "secrets",
+      "method": "GET",
+      "path": "/plugins/secrets",
+      "device": false
+    },
+    {
+      "group": "plugins",
+      "name": "replySecret",
+      "method": "POST",
+      "path": "/plugins/secrets/reply",
+      "device": false
+    },
+    {
+      "group": "plugins",
+      "name": "leaseView",
+      "method": "POST",
+      "path": "/plugins/views/lease",
+      "device": false
+    },
+    {
+      "group": "plugins",
+      "name": "requestView",
+      "method": "POST",
+      "path": "/plugins/views/request",
+      "device": false
+    },
+    {
+      "group": "plugins",
+      "name": "revokeView",
+      "method": "POST",
+      "path": "/plugins/views/revoke",
+      "device": false
+    },
+    {
+      "group": "requests",
+      "name": "list",
+      "method": "GET",
+      "path": "/requests/pending",
+      "device": true
+    },
+    {
+      "group": "requests",
+      "name": "resolve",
+      "method": "POST",
+      "path": "/requests/resolve",
+      "device": true
+    },
+    {
+      "group": "routines",
+      "name": "list",
+      "method": "GET",
+      "path": "/routines",
+      "device": false
+    },
+    {
+      "group": "routines",
+      "name": "discussion",
+      "method": "POST",
+      "path": "/routines/discussion",
+      "device": false
+    },
+    {
+      "group": "routines",
+      "name": "dismiss",
+      "method": "POST",
+      "path": "/routines/dismiss",
+      "device": false
+    },
+    {
+      "group": "routines",
+      "name": "report",
+      "method": "POST",
+      "path": "/routines/report",
+      "device": false
+    },
+    {
+      "group": "routines",
+      "name": "runNow",
+      "method": "POST",
+      "path": "/routines/run-now",
+      "device": false
+    },
+    {
+      "group": "server",
+      "name": "info",
+      "method": "GET",
+      "path": "/server/info",
+      "device": false
+    },
+    {
+      "group": "server",
+      "name": "upgrade",
+      "method": "POST",
+      "path": "/server/upgrade",
+      "device": false
+    },
+    {
+      "group": "sessions",
+      "name": "list",
+      "method": "GET",
+      "path": "/sessions",
+      "device": true
+    },
+    {
+      "group": "sessions",
+      "name": "get",
+      "method": "GET",
+      "path": "/sessions/by-id",
+      "device": true
+    },
+    {
+      "group": "sessions",
+      "name": "capabilities",
+      "method": "GET",
+      "path": "/sessions/capabilities",
+      "device": true
+    },
+    {
+      "group": "sessions",
+      "name": "commands",
+      "method": "GET",
+      "path": "/sessions/commands",
+      "device": true
+    },
+    {
+      "group": "sessions",
+      "name": "control",
+      "method": "POST",
+      "path": "/sessions/control",
+      "device": false
+    },
+    {
+      "group": "sessions",
+      "name": "history",
+      "method": "GET",
+      "path": "/sessions/history",
+      "device": true
+    },
+    {
+      "group": "sessions",
+      "name": "keepOnRecord",
+      "method": "POST",
+      "path": "/sessions/keep-on-record",
+      "device": false
+    },
+    {
+      "group": "sessions",
+      "name": "models",
+      "method": "GET",
+      "path": "/sessions/models",
+      "device": true
+    },
+    {
+      "group": "sessions",
+      "name": "setPage",
+      "method": "POST",
+      "path": "/sessions/page",
+      "device": false
+    },
+    {
+      "group": "sessions",
+      "name": "listAdoptable",
+      "method": "GET",
+      "path": "/sessions/records",
+      "device": false
+    },
+    {
+      "group": "sessions",
+      "name": "discardRecord",
+      "method": "POST",
+      "path": "/sessions/records/discard",
+      "device": false
+    },
+    {
+      "group": "sessions",
+      "name": "release",
+      "method": "POST",
+      "path": "/sessions/release",
+      "device": false
+    },
+    {
+      "group": "sessions",
+      "name": "rename",
+      "method": "POST",
+      "path": "/sessions/rename",
+      "device": false
+    },
+    {
+      "group": "sessions",
+      "name": "resize",
+      "method": "POST",
+      "path": "/sessions/resize",
+      "device": true
+    },
+    {
+      "group": "sessions",
+      "name": "restart",
+      "method": "POST",
+      "path": "/sessions/restart",
+      "device": true
+    },
+    {
+      "group": "sessions",
+      "name": "screen",
+      "method": "GET",
+      "path": "/sessions/screen",
+      "device": false
+    },
+    {
+      "group": "sessions",
+      "name": "start",
+      "method": "POST",
+      "path": "/sessions/start",
+      "device": true
+    },
+    {
+      "group": "sessions",
+      "name": "stop",
+      "method": "POST",
+      "path": "/sessions/stop",
+      "device": true
+    },
+    {
+      "group": "sessions",
+      "name": "timeline",
+      "method": "GET",
+      "path": "/sessions/timeline",
+      "device": true
+    },
+    {
+      "group": "sessions",
+      "name": "type",
+      "method": "POST",
+      "path": "/sessions/type",
+      "device": false
+    },
+    {
+      "group": "sessions",
+      "name": "setView",
+      "method": "POST",
+      "path": "/sessions/view",
+      "device": true
+    },
+    {
+      "group": "sessions",
+      "name": "changeWork",
+      "method": "POST",
+      "path": "/sessions/work",
+      "device": false
+    },
+    {
+      "group": "sessions",
+      "name": "write",
+      "method": "POST",
+      "path": "/sessions/write",
+      "device": true
+    },
+    {
+      "group": "sessions",
+      "name": "writeStatus",
+      "method": "GET",
+      "path": "/sessions/writes",
+      "device": true
+    },
+    {
+      "group": "settings",
+      "name": "readAntasphereAccount",
+      "method": "GET",
+      "path": "/accounts/antasphere",
+      "device": false
+    },
+    {
+      "group": "settings",
+      "name": "cancelAntasphereSignIn",
+      "method": "POST",
+      "path": "/accounts/antasphere/cancel",
+      "device": false
+    },
+    {
+      "group": "settings",
+      "name": "dismissAntasphereFailure",
+      "method": "POST",
+      "path": "/accounts/antasphere/dismiss",
+      "device": false
+    },
+    {
+      "group": "settings",
+      "name": "confirmAntasphereHandoff",
+      "method": "POST",
+      "path": "/accounts/antasphere/handoff/confirm",
+      "device": false
+    },
+    {
+      "group": "settings",
+      "name": "signInWithAntasphere",
+      "method": "POST",
+      "path": "/accounts/antasphere/sign-in",
+      "device": false
+    },
+    {
+      "group": "settings",
+      "name": "signOutOfAntasphere",
+      "method": "POST",
+      "path": "/accounts/antasphere/sign-out",
+      "device": false
+    },
+    {
+      "group": "settings",
+      "name": "listClaudeAccounts",
+      "method": "GET",
+      "path": "/accounts/claude",
+      "device": false
+    },
+    {
+      "group": "settings",
+      "name": "addClaudeAccount",
+      "method": "POST",
+      "path": "/accounts/claude",
+      "device": false
+    },
+    {
+      "group": "settings",
+      "name": "listMigratedClaudeAccounts",
+      "method": "GET",
+      "path": "/accounts/claude/migrated",
+      "device": false
+    },
+    {
+      "group": "settings",
+      "name": "removeClaudeAccount",
+      "method": "POST",
+      "path": "/accounts/claude/remove",
+      "device": false
+    },
+    {
+      "group": "settings",
+      "name": "renameClaudeAccount",
+      "method": "POST",
+      "path": "/accounts/claude/rename",
+      "device": false
+    },
+    {
+      "group": "settings",
+      "name": "reorderClaudeAccounts",
+      "method": "POST",
+      "path": "/accounts/claude/reorder",
+      "device": false
+    },
+    {
+      "group": "settings",
+      "name": "setClaudeAccountToken",
+      "method": "POST",
+      "path": "/accounts/claude/token",
+      "device": false
+    },
+    {
+      "group": "settings",
+      "name": "clearClaudeAccountToken",
+      "method": "POST",
+      "path": "/accounts/claude/token/clear",
+      "device": false
+    },
+    {
+      "group": "settings",
+      "name": "listCodexAccounts",
+      "method": "GET",
+      "path": "/accounts/codex",
+      "device": false
+    },
+    {
+      "group": "settings",
+      "name": "addCodexAccount",
+      "method": "POST",
+      "path": "/accounts/codex",
+      "device": false
+    },
+    {
+      "group": "settings",
+      "name": "clearCodexAccountCredential",
+      "method": "POST",
+      "path": "/accounts/codex/credential/clear",
+      "device": false
+    },
+    {
+      "group": "settings",
+      "name": "removeCodexAccount",
+      "method": "POST",
+      "path": "/accounts/codex/remove",
+      "device": false
+    },
+    {
+      "group": "settings",
+      "name": "renameCodexAccount",
+      "method": "POST",
+      "path": "/accounts/codex/rename",
+      "device": false
+    },
+    {
+      "group": "settings",
+      "name": "reorderCodexAccounts",
+      "method": "POST",
+      "path": "/accounts/codex/reorder",
+      "device": false
+    },
+    {
+      "group": "settings",
+      "name": "listAccountLogins",
+      "method": "GET",
+      "path": "/accounts/login",
+      "device": false
+    },
+    {
+      "group": "settings",
+      "name": "startAccountLogin",
+      "method": "POST",
+      "path": "/accounts/login",
+      "device": false
+    },
+    {
+      "group": "settings",
+      "name": "startCodexApiKeyLogin",
+      "method": "POST",
+      "path": "/accounts/login/api-key",
+      "device": false
+    },
+    {
+      "group": "settings",
+      "name": "cancelAccountLogin",
+      "method": "POST",
+      "path": "/accounts/login/cancel",
+      "device": false
+    },
+    {
+      "group": "settings",
+      "name": "sendAccountLoginInput",
+      "method": "POST",
+      "path": "/accounts/login/input",
+      "device": false
+    },
+    {
+      "group": "settings",
+      "name": "listLaunchProfiles",
+      "method": "GET",
+      "path": "/launch-profiles",
+      "device": true
+    },
+    {
+      "group": "settings",
+      "name": "upsertLaunchProfile",
+      "method": "POST",
+      "path": "/launch-profiles",
+      "device": false
+    },
+    {
+      "group": "settings",
+      "name": "deleteLaunchProfile",
+      "method": "POST",
+      "path": "/launch-profiles/delete",
+      "device": false
+    },
+    {
+      "group": "settings",
+      "name": "setGlobalLaunchProfile",
+      "method": "POST",
+      "path": "/launch-profiles/global",
+      "device": false
+    },
+    {
+      "group": "settings",
+      "name": "setWorkspaceLaunchProfile",
+      "method": "POST",
+      "path": "/launch-profiles/workspace",
+      "device": false
+    },
+    {
+      "group": "settings",
+      "name": "setAppIcon",
+      "method": "POST",
+      "path": "/preferences/app-icon",
+      "device": false
+    },
+    {
+      "group": "settings",
+      "name": "readClaudeUsage",
+      "method": "GET",
+      "path": "/usage/claude",
+      "device": false
+    },
+    {
+      "group": "settings",
+      "name": "readClaudeUsageSnapshot",
+      "method": "GET",
+      "path": "/usage/claude/snapshot",
+      "device": false
+    },
+    {
+      "group": "settings",
+      "name": "readCodexUsage",
+      "method": "GET",
+      "path": "/usage/codex",
+      "device": false
+    },
+    {
+      "group": "settings",
+      "name": "readCodexUsageSnapshot",
+      "method": "GET",
+      "path": "/usage/codex/snapshot",
+      "device": false
+    },
+    {
+      "group": "settings",
+      "name": "readPiUsage",
+      "method": "GET",
+      "path": "/usage/pi",
+      "device": false
+    },
+    {
+      "group": "settings",
+      "name": "loadWorkspaceState",
+      "method": "GET",
+      "path": "/workspaces",
+      "device": true
+    },
+    {
+      "group": "settings",
+      "name": "setLastActiveWorkspace",
+      "method": "POST",
+      "path": "/workspaces/last-active",
+      "device": false
+    },
+    {
+      "group": "settings",
+      "name": "updateWorkspacePins",
+      "method": "POST",
+      "path": "/workspaces/pins",
+      "device": false
+    },
+    {
+      "group": "settings",
+      "name": "updateWorkspaceRegistry",
+      "method": "POST",
+      "path": "/workspaces/registry",
+      "device": false
+    },
+    {
+      "group": "sidebar",
+      "name": "absorbLayout",
+      "method": "POST",
+      "path": "/sidebar/absorb",
+      "device": false
+    },
+    {
+      "group": "sidebar",
+      "name": "createGroup",
+      "method": "POST",
+      "path": "/sidebar/groups",
+      "device": false
+    },
+    {
+      "group": "sidebar",
+      "name": "setGroupCollapsed",
+      "method": "POST",
+      "path": "/sidebar/groups/collapsed",
+      "device": false
+    },
+    {
+      "group": "sidebar",
+      "name": "setGroupColor",
+      "method": "POST",
+      "path": "/sidebar/groups/color",
+      "device": false
+    },
+    {
+      "group": "sidebar",
+      "name": "deleteGroup",
+      "method": "POST",
+      "path": "/sidebar/groups/delete",
+      "device": false
+    },
+    {
+      "group": "sidebar",
+      "name": "setGroupPrompt",
+      "method": "POST",
+      "path": "/sidebar/groups/prompt",
+      "device": false
+    },
+    {
+      "group": "sidebar",
+      "name": "renameGroup",
+      "method": "POST",
+      "path": "/sidebar/groups/rename",
+      "device": false
+    },
+    {
+      "group": "sidebar",
+      "name": "addTerminal",
+      "method": "POST",
+      "path": "/sidebar/groups/terminals",
+      "device": false
+    },
+    {
+      "group": "sidebar",
+      "name": "removeTerminal",
+      "method": "POST",
+      "path": "/sidebar/groups/terminals/remove",
+      "device": false
+    },
+    {
+      "group": "sidebar",
+      "name": "updateTerminal",
+      "method": "POST",
+      "path": "/sidebar/groups/terminals/update",
+      "device": false
+    },
+    {
+      "group": "sidebar",
+      "name": "setGroupView",
+      "method": "POST",
+      "path": "/sidebar/groups/view",
+      "device": false
+    },
+    {
+      "group": "sidebar",
+      "name": "getLayout",
+      "method": "GET",
+      "path": "/sidebar/layout",
+      "device": false
+    },
+    {
+      "group": "sidebar",
+      "name": "saveLayout",
+      "method": "POST",
+      "path": "/sidebar/layout",
+      "device": false
+    },
+    {
+      "group": "sidebar",
+      "name": "listLayouts",
+      "method": "GET",
+      "path": "/sidebar/layouts",
+      "device": false
+    },
+    {
+      "group": "sidebar",
+      "name": "moveItems",
+      "method": "POST",
+      "path": "/sidebar/move",
+      "device": false
+    },
+    {
+      "group": "sidebar",
+      "name": "placeSession",
+      "method": "POST",
+      "path": "/sidebar/place",
+      "device": false
+    },
+    {
+      "group": "sidebar",
+      "name": "removeSession",
+      "method": "POST",
+      "path": "/sidebar/remove",
+      "device": false
+    },
+    {
+      "group": "sidebar",
+      "name": "moveGroup",
+      "method": "POST",
+      "path": "/sidebar/windows/move-group",
+      "device": false
+    },
+    {
+      "group": "sidebar",
+      "name": "moveSessions",
+      "method": "POST",
+      "path": "/sidebar/windows/move-sessions",
+      "device": false
+    },
+    {
+      "group": "views",
+      "name": "answer",
+      "method": "POST",
+      "path": "/views/answer",
+      "device": false
+    },
+    {
+      "group": "views",
+      "name": "request",
+      "method": "POST",
+      "path": "/views/request",
+      "device": false
+    },
+    {
+      "group": "workspaceFiles",
+      "name": "autoDiscover",
+      "method": "GET",
+      "path": "/workspace-files/auto-discover",
+      "device": false
+    },
+    {
+      "group": "workspaceFiles",
+      "name": "discover",
+      "method": "GET",
+      "path": "/workspace-files/discover",
+      "device": false
+    },
+    {
+      "group": "workspaceFiles",
+      "name": "discoverRecursive",
+      "method": "GET",
+      "path": "/workspace-files/discover-recursive",
+      "device": false
+    },
+    {
+      "group": "workspaceFiles",
+      "name": "exists",
+      "method": "GET",
+      "path": "/workspace-files/exists",
+      "device": false
+    },
+    {
+      "group": "workspaceFiles",
+      "name": "image",
+      "method": "GET",
+      "path": "/workspace-files/image",
+      "device": false
+    },
+    {
+      "group": "workspaceFiles",
+      "name": "read",
+      "method": "POST",
+      "path": "/workspace-files/read",
+      "device": false
+    },
+    {
+      "group": "workspaceFiles",
+      "name": "answerReview",
+      "method": "POST",
+      "path": "/workspace-files/review/answer",
+      "device": false
+    },
+    {
+      "group": "workspaceFiles",
+      "name": "trustedRoots",
+      "method": "GET",
+      "path": "/workspace-files/trust/roots",
+      "device": false
+    },
+    {
+      "group": "workspaceFiles",
+      "name": "trustRoot",
+      "method": "POST",
+      "path": "/workspace-files/trust/roots",
+      "device": false
+    },
+    {
+      "group": "workspaceFiles",
+      "name": "untrustRoot",
+      "method": "POST",
+      "path": "/workspace-files/trust/roots/remove",
+      "device": false
+    },
+    {
+      "group": "workspaceFiles",
+      "name": "unwatch",
+      "method": "POST",
+      "path": "/workspace-files/unwatch",
+      "device": false
+    },
+    {
+      "group": "workspaceFiles",
+      "name": "watch",
+      "method": "POST",
+      "path": "/workspace-files/watch",
+      "device": false
+    },
+    {
+      "group": "workspaceFiles",
+      "name": "write",
+      "method": "POST",
+      "path": "/workspace-files/write",
+      "device": false
+    }
+  ],
+  "scope": {
+    "forbiddenMessage": "A phone may not do this.",
+    "GET": [
+      "/devices/me",
+      "/files/attachments/preview",
+      "/files/download",
+      "/files/list",
+      "/files/read",
+      "/files/stat",
+      "/requests/pending",
+      "/sessions",
+      "/sessions/by-id",
+      "/sessions/capabilities",
+      "/sessions/commands",
+      "/sessions/history",
+      "/sessions/models",
+      "/sessions/timeline",
+      "/sessions/writes",
+      "/launch-profiles",
+      "/workspaces",
+      "/files/*"
+    ],
+    "POST": [
+      "/devices/me/push-token",
+      "/devices/me/push-token/clear",
+      "/files/attachments/prepare",
+      "/requests/resolve",
+      "/sessions/resize",
+      "/sessions/restart",
+      "/sessions/start",
+      "/sessions/stop",
+      "/sessions/view",
+      "/sessions/write"
+    ]
+  },
+  "events": {
+    "heard": [
+      "requests.changed",
+      "session.state_changed",
+      "session.title_changed",
+      "session.plan_detected",
+      "session.cleared",
+      "usage.claude_read",
+      "usage.codex_read",
+      "workspaces.state_changed",
+      "session.renamed",
+      "session.page_changed",
+      "session.work_changed",
+      "session.typed",
+      "session.restarting",
+      "session.restarted",
+      "devices.changed"
+    ],
+    "notHeard": [
+      "files.dirs_changed",
+      "client.registered",
+      "client.unregistered",
+      "accounts.claude_changed",
+      "accounts.codex_changed",
+      "accounts.login_progressed",
+      "accounts.antasphere_changed",
+      "sidebar.layout_changed",
+      "sidebar.layout_removed",
+      "workspace_files.changed",
+      "workspace_files.review_needed",
+      "pinned_group.launched",
+      "plugins.changed",
+      "plugins.notified",
+      "git.repos_changed",
+      "git.batch_progress",
+      "server.upgrade_changed",
+      "routines.changed",
+      "devices.pairing_requested"
+    ],
+    "heardPrefixes": [
+      "session.",
+      "usage."
+    ]
+  },
+  "push": {
+    "path": "/push"
+  },
+  "health": [
+    "/health/live",
+    "/health/ready"
+  ]
+}

@@ -68,7 +68,15 @@ jobs:
       - name: Generated code is current
         run: npm run proto:gen && git diff --exit-code -- packages/server/src/terminals/proto
 
+      # CLAVE_FIXTURE_BOOT=1 opts in to the native fixture's booted cases
+      # (packages/mobile-native/fixture-server.boot.test.mjs), which never run
+      # without it: a run on a developer's machine boots no native fixture by
+      # accident. It guards nothing else. A whole-suite run there still boots
+      # the repository's existing daemon tests, scripts/server-no-titles.test.mjs
+      # and scripts/server-process.test.mjs, the second with no test flag.
       - name: Unit tests
+        env:
+          CLAVE_FIXTURE_BOOT: '1'
         run: npx vitest run
 
   # The end-to-end suite drives the REAL app (tests/e2e/harness.mjs): a built
@@ -145,6 +153,13 @@ jobs:
       # its bytes, a killed process is reported by the server.
       - name: Gate, the terminal process from the built bundle
         run: npx vitest run scripts/server-process.test.mjs packages/host/src/terminal-process
+
+      # The daemon's --no-titles booted twice under the native fixture's
+      # isolation. The Linux job runs it too; only here does each boot get a
+      # keychain FILE, created before it and deleted after it, with the user
+      # search list checked by path.
+      - name: Gate, the daemon's title opt-out booted, with its keychain file
+        run: npx vitest run scripts/server-no-titles.test.mjs
 
       - name: Gate, the server spec with the server in-process
         run: node tests/e2e/run.mjs server-boot
