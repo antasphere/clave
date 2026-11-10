@@ -120,6 +120,7 @@ export async function run(t) {
       ({ work, play }) => {
         globalThis.__used[work] = 40
         globalThis.__used[play] = 10
+        globalThis.__used.default = 70
       },
       { work: work.id, play: play.id }
     )
@@ -233,8 +234,18 @@ export async function run(t) {
       0
     )
     t.equal(
-      'pin and switch mode are not offered: this Mac’s policy does not act on a server tab',
-      await menu.getByText(/Pin to this account|Switch automatically at limit/).count(),
+      'the pin is offered: it holds an agent’s ask',
+      await menu.getByText('Pin to this account').count(),
+      1
+    )
+    t.equal(
+      'the mode is worded for the agents’ asks it governs on a server tab',
+      await menu.getByText('Let agents switch without asking').count(),
+      1
+    )
+    t.equal(
+      'no knob only this Mac’s policy reads',
+      await menu.getByText(/Switch automatically at limit|Keep on this model/).count(),
       0
     )
 
@@ -266,30 +277,146 @@ export async function run(t) {
       listed?.account?.id === play.id && listed.account.label === 'Play' && !listed.account.removed,
       JSON.stringify(listed?.account)
     )
-    const back = await callMcp(app, 'switchAccount', { sessionId: id, account: 'Work' })
+    // Propose mode (the default): the agent's ask is proposed in the tab,
+    // as on this Mac, and the person's accept makes it.
+    const asked = await callMcp(app, 'switchAccount', { sessionId: id, account: 'Work' })
     t.check(
-      'clave_switch_account resolves a name in the server’s list and moves the tab there',
-      back?.account?.id === work.id && back.switched === true,
-      JSON.stringify(back)
+      'clave_switch_account resolves a name in the server’s list and, in propose mode, proposes it',
+      asked?.account?.id === work.id && asked.proposed === true && asked.switched === false,
+      JSON.stringify(asked)
     )
+    const proposal = win.locator(`[data-account-proposal="${work.id}"]`).first()
+    await proposal.waitFor({ timeout: 10_000 })
+    t.equal(
+      'the server’s record did not move on the ask',
+      (await record())?.claudeProfileId,
+      play.id
+    )
+    await proposal.locator('[data-account-proposal-accept]').click()
     await eventually(
       async () => (await record())?.claudeProfileId === work.id,
-      'the server’s record says Work again'
+      'the accepted proposal moves the tab to Work on the server'
     )
+
+    // The chip's menu, opened fresh each time (a menu still closing would
+    // swallow the click that opens the next).
+    const chipMenu = async (theChip, item) => {
+      const surface = win.locator('.term-account-menu')
+      await surface.waitFor({ state: 'detached' }).catch(() => {})
+      await theChip.getByRole('button', { name: 'Account' }).click()
+      await surface.waitFor()
+      await surface.getByText(item, { exact: true }).click()
+      await surface.waitFor({ state: 'detached' })
+    }
+    // A pinned server tab refuses the agent's move.
+    const workChip = pane.locator(`[data-account-chip="${work.id}"]`)
+    await workChip.waitFor({ timeout: 10_000 })
+    await chipMenu(workChip, 'Pin to this account')
+    const refused = await callMcp(app, 'switchAccount', { sessionId: id, account: 'Play' }).then(
+      () => null,
+      (error) => String(error?.message ?? error)
+    )
+    t.check('a pinned server tab refuses the agent’s move', /pinned/.test(refused ?? ''), refused)
+    await chipMenu(workChip, 'Unpin from this account')
+
+    // Automatic mode, set on the tab: "any" moves it at once, in the
+    // server's pool (Play: 90% left; the server's Default: 30%).
+    await chipMenu(workChip, 'Let agents switch without asking')
+    const anyMove = await callMcp(app, 'switchAccount', { sessionId: id, account: 'any' })
+    t.check(
+      '"any" picks the server’s account with the most headroom and moves the tab',
+      anyMove?.account?.id === play.id && anyMove.switched === true,
+      JSON.stringify(anyMove)
+    )
+    await eventually(
+      async () => (await record())?.claudeProfileId === play.id,
+      'the server’s record says Play after "any"'
+    )
+
+    // ── The server removes the account the tab runs on: that IS removed ──
+    await request(server, '/accounts/claude/remove', { id: play.id })
+    const playChip = pane.locator(`[data-account-chip="${play.id}"]`)
+    await eventually(
+      async () => /Play/.test(await playChip.innerText().catch(() => '')),
+      'the chip keeps the label the tab started with'
+    )
+    await playChip.getByRole('button', { name: 'Account' }).click()
+    await eventually(
+      async () =>
+        /removed account/.test(
+          await win.locator(`[data-account-header="${play.id}"]`).first().innerText()
+        ),
+      'the header says the server removed the account'
+    )
+    await win.keyboard.press('Escape')
+    const afterRemoval = (await callMcp(app, 'list', {})).sessions.find((s) => s.id === id)
+    t.check(
+      'clave_list says removed',
+      afterRemoval?.account?.removed === true,
+      JSON.stringify(afterRemoval?.account)
+    )
+
+    // ── A tab on the SERVER's Default: the server's machine login, never this Mac's ──
+    const onDefault = await callMcp(app, 'openSession', {
+      server: owner,
+      cwd: server.root,
+      mode: 'claude',
+      profile: `chat:claude:${STUB_ID}`,
+      account: 'Default',
+      name: 'Served default'
+    })
+    const defaultPane = win.locator(`.chat-host[data-session-id="${onDefault.sessionId}"]`)
+    await callMcp(app, 'focus', { sessionId: onDefault.sessionId })
+    // A new chat opens in the view the reader picked last (Enclave, above).
+    const defaultStatus = defaultPane.locator('[data-testid="terminal-view"] .term-status')
+    const inEnclave = await defaultStatus
+      .waitFor({ timeout: 15_000 })
+      .then(() => true)
+      .catch(() => false)
+    if (!inEnclave) {
+      await win.getByLabel('Session menu', { exact: true }).click()
+      const tile2 = win.locator('.view-tile', { hasText: /^Enclave$/ })
+      await tile2.waitFor()
+      await win.waitForTimeout(500)
+      await tile2.click({ force: true })
+      await defaultStatus.waitFor({ timeout: 10_000 })
+    }
+    const defaultChip = defaultPane.locator('[data-account-chip="default"]')
+    await defaultChip.waitFor({ timeout: 10_000 })
+    t.equal(
+      'the Default chip is the server’s',
+      await defaultChip.getAttribute('data-account-owner'),
+      owner
+    )
+    const reads = await until(async () => /30% left/.test(await defaultChip.innerText()), {
+      tries: 120,
+      gapMs: 100
+    })
+    t.check(
+      'it shows the SERVER’s Default usage (30% left; this Mac reads none in a test run)',
+      reads,
+      await defaultChip.innerText()
+    )
+    await callMcp(app, 'focus', { sessionId: id })
 
     // ── The tab menu in the sidebar: the same header and list ──
     const row = win.locator(`[data-sidebar-item-id="${id}"]`)
     await row.click({ button: 'right' })
-    const sideHeader = win.locator(`[data-account-header="${work.id}"]`).first()
+    const sideHeader = win.locator(`[data-account-header="${play.id}"]`).first()
     await eventually(
-      async () => /Work · Token/.test(await sideHeader.innerText()),
-      'the tab menu header names Work on the server'
+      async () => /removed account/.test(await sideHeader.innerText()),
+      'the tab menu header says the server removed the account'
     )
     const entry = win.locator('[role="menuitem"]', { hasText: 'Switch account' })
     t.equal('the tab menu offers Switch account', await entry.count(), 1)
     t.equal(
-      'and no pin for a server tab',
+      'and the pin, which holds an agent’s ask',
       await win.locator('[role="menuitem"]', { hasText: 'Pin to this account' }).count(),
+      1
+    )
+    t.equal(
+      'but not "Keep on this model", which only this Mac’s policy reads',
+      await win.locator('[role="menuitem"]', { hasText: 'Keep on this model' }).count(),
       0
     )
     await win.keyboard.press('Escape')
