@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # The release APK reaches the real API and nothing else: no in-process fake, no developer
-# connection, no test double in its dex, no plain-http allowance in its network security
-# config, the release application id and no debuggable flag. The fakes behind the UI tests
+# connection, no test double in its dex, no WebView and no JavaScript engine, no plain-http
+# allowance and no trust anchor but the system's in its network security config, the release
+# application id and no debuggable flag. The fakes behind the UI tests
 # live in the androidTest and debug source sets; this check is what keeps them there. Each
 # rule is shown red on a release APK built with what it refuses (the lane's record names
 # those runs).
@@ -64,9 +65,11 @@ lines() {
 
 # 1. The dex: every class defined in the APK, matched against what a release must not carry.
 #    A fake is any class under a `fake` package or named Fake…, the developer connection,
-#    MockWebServer, the Compose test manifest and the test runners.
-dump "$WORK/dex.txt" "$APKANALYZER" dex packages --defined-only "$APK"
-awk '$1 == "C" {print $NF}' "$WORK/dex.txt" > "$WORK/defined.txt"
+#    MockWebServer, the Compose test manifest and the test runners. The listing holds the
+#    classes and members the dex defines (state d) and the ones it only references (state r):
+#    `C d 1 1 85 com.example.Foo`, `M r 0 1 8 android.webkit.WebView … findAddress(…)`.
+dump "$WORK/dex.txt" "$APKANALYZER" dex packages "$APK"
+awk '$1 == "C" && $2 == "d" {print $NF}' "$WORK/dex.txt" > "$WORK/defined.txt"
 total=$(awk 'END {print NR}' "$WORK/defined.txt")
 lines -E '(^|\.)fake(\.|$)|(^|\.)Fake[A-Z]|mockwebserver|(^|\.)dev(eloper)?\.|DeveloperConnection|androidx\.compose\.ui\.test|androidx\.test\.|junit\.' "$WORK/defined.txt" > "$WORK/offending.txt"
 if [ -s "$WORK/offending.txt" ]; then
@@ -76,9 +79,43 @@ else
   say "check-release-apk: ok · no fake, developer connection or test double among $total classes"
 fi
 
-# 2. The network security config: no cleartext allowance, no domain exception. A release build
-#    shortens resource file names (res/8G.xml), so the file is found through the resource table,
-#    which maps xml/network_security_config to its path; the plain path is the fallback.
+# 2. No browser engine and no JavaScript engine: the decision brief rules out a WebView-rendered
+#    interface and any JavaScript engine. Of android.webkit a release may reference the file
+#    type table (MimeTypeMap) and WebView's static findAddress, which androidx.core's address
+#    linkifier calls; any other class or member (a WebView built, its settings, a page loaded,
+#    a script evaluated, a bridge added, a client set) fails. So does any class, defined or
+#    referenced, of a known JavaScript engine, and any native library that carries one.
+lines -E '^[CMF] [dr] [0-9]+[[:space:]]+[0-9]+[[:space:]]+[0-9]+[[:space:]]+android\.webkit\.' "$WORK/dex.txt" > "$WORK/webkit.txt"
+lines -vE '[[:space:]]android\.webkit\.MimeTypeMap( |$)|[[:space:]]android\.webkit\.WebView$|[[:space:]]android\.webkit\.WebView java\.lang\.String findAddress\(java\.lang\.String\)$' "$WORK/webkit.txt" > "$WORK/webkit-offending.txt"
+awk '$1 == "C" {print $NF}' "$WORK/dex.txt" > "$WORK/classes.txt"
+lines -E '^(org\.mozilla\.javascript|com\.eclipsesource\.v8|app\.cash\.quickjs|com\.whl\.quickjs|com\.caoccao\.javet|org\.liquidplayer|com\.squareup\.duktape|com\.facebook\.hermes|com\.facebook\.react|org\.graalvm\.polyglot|com\.oracle\.truffle\.js|org\.openjdk\.nashorn|jdk\.nashorn|javax\.script|androidx\.javascriptengine|expo\.modules)\.' "$WORK/classes.txt" > "$WORK/engine-classes.txt"
+dump "$WORK/files.txt" "$APKANALYZER" files list "$APK"
+lines -E '^/lib/[^/]+/lib(hermes|jsc|jscexecutor|v8|j2v8|v8android|quickjs|javet|duktape|reactnativejni)[^/]*\.so$' "$WORK/files.txt" > "$WORK/engine-libs.txt"
+engines_ok=1
+if [ -s "$WORK/webkit-offending.txt" ]; then
+  fail "the dex reaches android.webkit beyond MimeTypeMap and WebView.findAddress:"
+  sed -E 's/^[CMF] [dr] [0-9]+[[:space:]]+[0-9]+[[:space:]]+[0-9]+[[:space:]]+/  /' "$WORK/webkit-offending.txt"
+  engines_ok=0
+fi
+if [ -s "$WORK/engine-classes.txt" ]; then
+  fail "the dex carries or references a JavaScript engine:"
+  sed 's/^/  /' "$WORK/engine-classes.txt"
+  engines_ok=0
+fi
+if [ -s "$WORK/engine-libs.txt" ]; then
+  fail "the APK carries a JavaScript engine's native library:"
+  sed 's/^/  /' "$WORK/engine-libs.txt"
+  engines_ok=0
+fi
+if [ $engines_ok -eq 1 ]; then
+  say "check-release-apk: ok · no WebView and no JavaScript engine (android.webkit: $(awk 'END {print NR}' "$WORK/webkit.txt") reference(s), all MimeTypeMap or WebView.findAddress)"
+fi
+
+# 3. The network security config: no cleartext allowance, no domain exception, and no trust
+#    anchor but the system's (a user-installed or bundled CA would let a certificate the person
+#    or an app added read the traffic). A release build shortens resource file names
+#    (res/8G.xml), so the file is found through the resource table, which maps
+#    xml/network_security_config to its path; the plain path is the fallback.
 dump "$WORK/resources.txt" "$AAPT2" dump resources "$APK"
 config_path=$(awk '/ xml\/network_security_config$/ {found=1; next} found && /\(file\)/ {print $3; exit}' "$WORK/resources.txt")
 [ -n "$config_path" ] || config_path=res/xml/network_security_config.xml
@@ -92,12 +129,21 @@ else
   if found 'E: domain(-config)? ' "$WORK/config.txt"; then
     fail "the network security config carries a domain exception"; config_ok=0
   fi
+  # Every certificates element, wherever it sits (base config, debug overrides), names its
+  # source on the line after it: `A: src="system" (Raw: "system")`.
+  lines -E 'A: src=' "$WORK/config.txt" > "$WORK/anchors.txt"
+  lines -vE 'A: src="system"( |$)' "$WORK/anchors.txt" > "$WORK/anchors-offending.txt"
+  if [ -s "$WORK/anchors-offending.txt" ]; then
+    fail "the network security config trusts an anchor other than the system's:"
+    sed -E 's/^[[:space:]]*/  /' "$WORK/anchors-offending.txt"
+    config_ok=0
+  fi
   if [ $config_ok -eq 1 ]; then
-    say "check-release-apk: ok · network security config ($config_path): no cleartext, no domain exception"
+    say "check-release-apk: ok · network security config ($config_path): no cleartext, no domain exception, system anchors only"
   fi
 fi
 
-# 3. The manifest: the release application id, not debuggable. Debuggable is read twice, from
+# 4. The manifest: the release application id, not debuggable. Debuggable is read twice, from
 #    the badging and from the manifest's own attribute.
 dump "$WORK/badging.txt" "$AAPT2" dump badging "$APK"
 pkg=$(sed -n "s/^package: name='\([^']*\)'.*/\1/p" "$WORK/badging.txt")
