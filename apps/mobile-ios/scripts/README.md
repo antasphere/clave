@@ -26,7 +26,7 @@ simulator SDK, finds no iPhone on the runner's shape.
 ## The fixture stack
 
 ```sh
-node apps/mobile-ios/scripts/fixture-stack.mjs [--approve] [--dry-run | --self-check | --once | --prove-tmpdir-guard | --prove-env-guard stray|no-env-file|live-stub|relay-issuer | --prove-home-guard | --prove-prerequisites | --prove-inside keys|cache|resolver|args|home|probe | --prove-recorder-read missing|unreadable | --prove-title-guard recorder|folder]
+node apps/mobile-ios/scripts/fixture-stack.mjs [--approve] [--dry-run | --self-check | --once | --prove-tmpdir-guard | --prove-env-guard stray|no-env-file|live-stub|relay-issuer | --prove-home-guard | --prove-tmux-guard unset|differs|symlink|mode|outside|long|missing | --prove-prerequisites | --prove-inside keys|cache|resolver|args|home|tmux|probe | --prove-recorder-read missing|unreadable | --prove-title-guard recorder|folder]
 node apps/mobile-ios/scripts/fixture-check.mjs --udid <simulator udid> [--only <xcodebuild -only-testing value>]
 ```
 
@@ -48,7 +48,9 @@ token is never passed to them.
 
 Both scripts take `--server <port>` (default 47101), `--relay <port>` (default 47102)
 and `--tmpdir <dir>` (default `/private/tmp/clave-native-a/stack`). The provider takes a
-free port, which the scripts print. Everything listens on 127.0.0.1.
+free port, which the scripts print. Everything listens on 127.0.0.1. The tmpdir must be its own
+canonical path (`/private/tmp/...`, never `/tmp/...`, a symlink on macOS): check 3 refuses an
+owned tmux folder that `realpath` would rewrite (below).
 
 ## The tmpdir
 
@@ -67,9 +69,9 @@ folder alone.
 
 ```
 stack.json      issuer, relay, server, serverId, machineId, workspaceId, sessionId, nonce, scratch, tokenFile,
-                announced (the three discovery fields), inside (what check 5 read, the daemon's home facts
-                included), probe (what the daemon ran and answered), recorderLog, recorderBaseline (the
-                probe's one line)
+                announced (the three discovery fields), inside (what check 5 read, the daemon's home and
+                TMUX_TMPDIR facts included), probe (what the daemon ran and answered), recorderLog,
+                recorderBaseline (the probe's one line)
 owner-token     the server's bearer token, mode 0600 (the only place the scripts write it)
 server/         the daemon's data, and run.keychain-db, the run's own keychain while the run lasts
                 (made before the daemon is built, deleted at every stop; no login keychain is touched)
@@ -80,8 +82,11 @@ stubs/          zsh (the daemon's login shell, stood in for), bin/claude and bin
                 claude-config/ and codex-home/ (the empty folders a real CLI run with that environment
                 would write into)
 home/           the owned home: the HOME of the daemon, the relay and the stub shell (below), empty at boot
+tmux/           the owned tmux folder: the TMUX_TMPDIR of the daemon and the stub shell (below), made afresh
+                at mode 0700 at every boot; the daemon's tmux makes tmux-<uid>/ in it
 report.json     written at every stop: stoppedAt, home, homeEntries (the names of what is under home/,
-                never the content)
+                never the content), tmux (check 5's read of tmux/: readAt, folder, socketFolder,
+                socketFolderFound, tmuxOnPath, ok, verdict; readAt null when the run stopped before it)
 logs/           server.log, relay.log, xcodebuild.log
 results/        one .xcresult per check
 check.json      startedAt, finishedAt, udid, only, exitCode, resultBundle
@@ -113,6 +118,36 @@ nowhere, so the transcript readers fall back to the owned home as well. Check 3 
 both children and of the stub before the boot, check 5 proves it from inside the daemon, and at
 every stop the names under `home/` are written to `report.json`: the record of what the server
 kept there.
+
+## The owned tmux folder
+
+`tmux/` is the daemon's `TMUX_TMPDIR`: the daemon's environment and the fixed environment the stub
+shell prints both carry `TMUX_TMPDIR=<tmpdir>/tmux`, a folder the stack makes afresh at mode 0700
+at every boot, after the run folder is emptied and before any child starts (one already there is
+refused with exit 2, never reused); the dry run and the no-boot proofs make theirs in the dry
+run's own folder. The relay is not given one. At its start the daemon lists the sessions on its
+tmux socket (`liveTmuxSessions` in `packages/host/src/sessions/adapters/pty-backend.ts`, `tmux -L
+clave list-sessions` run with the daemon's own environment, the `tmux` found on its cached login
+`PATH`, which holds the stack's own `PATH` and so `/opt/homebrew/bin`). HOME does not move that
+socket: tmux 3.5a puts it in `tmux-<uid>/` under the first of `$TMUX_TMPDIR` and `/tmp` that
+`realpath` resolves, skipping a `TMUX_TMPDIR` that does not resolve, so a daemon given the owned
+home alone still reached `/private/tmp/tmux-<uid>/clave`, the installed app's live socket.
+
+Check 3 requires, before any child starts, the daemon's `TMUX_TMPDIR` and the one the stub shell
+prints to be present and equal, and the folder to be absolute, inside the run folder, a real
+folder (`lstat`, a symlink refused and never followed) that is its own canonical path by
+`realpath`(3) as tmux calls it, owned by this user, at mode 0700, with a socket path
+`<folder>/tmux-<uid>/clave` of at most 100 bytes (macOS's `sun_path` holds 104 with its closing
+NUL). A failure names the key and the reason and prints the run folder's path alone, never the
+value, and a value outside the run folder is judged as written, never read. Check 5 requires,
+inside the daemon, its `process.env.TMUX_TMPDIR` and its cached login `TMUX_TMPDIR` to be the owned
+tmux folder; once that read is back, with `tmux` on the daemon's `PATH` (the stack's own
+`locateOnPath`), `<tmpdir>/tmux/tmux-<uid>` must be a real folder, which tmux makes where it
+resolves its socket (the daemon's records listing runs before it announces itself,
+`apps/server/src/main.ts`, the write ledger's session ids), or the boot ends with exit 2 before the
+seed; with no `tmux` on that `PATH`, no tmux could run. `report.json` records that read either way,
+one `lstat` of that one folder (nothing in it is listed or read), and whether `tmux` is on the
+`PATH`, never where.
 
 ## The run keychain
 
@@ -187,7 +222,9 @@ Seven checks, printed first, every boot; one failing stops the boot with exit 2:
    holding the stack's marker, and not the person's own home (the stack's `os.homedir()` or its
    user's login home); `CLAVE_TRANSCRIPTS_ROOT` is set in none of the three. Every value is
    compared as written, so a wrong one is never read, listed or followed, and a failure names
-   the child and the key and prints the owned paths alone, never the value;
+   the child and the key and prints the owned paths alone, never the value. In the same check,
+   the daemon's `TMUX_TMPDIR` and the one the stub shell prints are present and equal and name a
+   folder tmux can keep its socket in without leaving the run ("The owned tmux folder", above);
 4. after the daemon has announced itself and before anything is seeded, its discovery file
    (`clave-server.json`) says `titles: "off"`, `testMode: true` and `machineUsage: false`
    (`startStack`, step 3b);
@@ -211,7 +248,10 @@ Seven checks, printed first, every boot; one failing stops the boot with exit 2:
    path's own arguments (`TITLE_CLI_ARGS`, read from the daemon's own `title-generator.ts`) off the
    end of the launch, which must end with exactly them, so no wrapper token can precede the
    one-shot's own on either road; on the module road its environment must carry no credential
-   (`startStack`, step 3c, `assertInside`). Nothing runs here;
+   (`startStack`, step 3c, `assertInside`); the daemon's `process.env.TMUX_TMPDIR` and its cached
+   login one must be the owned tmux folder, and once the read is back, with `tmux` on the
+   daemon's `PATH`, `tmux/tmux-<uid>` must be there (`readTmuxFolder`, its read kept in
+   `report.json`). Nothing runs here;
 6. only then the daemon itself runs the probe (`startStack`, step 3d): inside the daemon the
    one-shot's executable is resolved again the same way, its canonical path checked once more
    against the recorder's and the probe's arguments against exactly `--version`, a wrapper or
@@ -246,13 +286,27 @@ set to the stack's own home and (d) a stub shell whose fixed text carries anothe
 stack's block rewritten with it, so check 2 still reads the text the stack wrote and only check
 3's read-back can see it), each expected red alone with its exact reason, a case whose check
 lines hold the value failing with the lines withheld, then (e) the unmutated build, every check
-green; `--prove-prerequisites` hands check 4 a discovery read saying
+green; `--prove-tmux-guard <case>` starts nothing and hands check 3, in a dry run's folder, the
+daemon's `TMUX_TMPDIR` wrong one way per sub-case, each decoy the proof's own, put in the daemon's
+environment and the stub's fixed text alike unless the sub-case is about one side: `unset` (a)
+removed from the daemon's environment, (b) set empty there, (c) removed from the stub's fixed
+text; `differs`, the stub's fixed text naming a second owned folder; `symlink` (a) an owned
+symbolic link to an owned folder, (b) an owned folder reached through that link; `mode`, an owned
+folder at 0755; `outside` (a) an owned folder beside the run folder, in the lane's tmpdir, (b) a
+relative path; `long` (a) an owned folder whose socket path is 101 bytes, (b) one at exactly 100,
+which must pass; `missing` (a) a path that does not exist, (b) a regular file. Each refused
+sub-case must be red alone with its exact reason, failed with its lines withheld if they hold the
+value; then the unmutated build passes every check, the stack's record of started children holds
+none, and `lsof -nP -iTCP:<port> -sTCP:LISTEN` finds nothing on the server and relay ports before
+the cases and after them; `--prove-prerequisites` hands check 4 a discovery read saying
 `titles: "on"`; `--prove-inside keys` hands check 5 one stray key in the daemon's
 environment, `--prove-inside cache` a cached login `PATH` without the recorders,
 `--prove-inside resolver` a one-shot that would start another executable, `--prove-inside
 args` a one-shot carrying `-p` beyond its executable (applied after the read, on whichever road
 the daemon serves, and refused with the module road's reason) and `--prove-inside home` another folder (`scratch/`) as
-the owned home it expects, so the daemon's real `os.homedir()` must fail it, each refused before
+the owned home it expects, so the daemon's real `os.homedir()` must fail it, `--prove-inside tmux`
+the same folder as the owned tmux folder it expects while the daemon has its own, valid, so the
+daemon's real `TMUX_TMPDIR` must fail it, each refused before
 the probe, and `--prove-inside probe` hands the daemon a wrong expected canonical path, which it
 refuses to run, nothing started; `--prove-recorder-read missing|unreadable` removes or replaces the owned recorder log
 while the stack runs and expects the watch to latch a failure; `--prove-title-guard recorder`

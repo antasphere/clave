@@ -14,7 +14,8 @@
 //        [--tmpdir /private/tmp/clave-native-a/stack] [--approve]
 //        [--dry-run | --self-check | --once | --prove-tmpdir-guard
 //         | --prove-env-guard stray|no-env-file|live-stub|relay-issuer | --prove-home-guard
-//         | --prove-prerequisites | --prove-inside keys|cache|resolver|args|probe|home
+//         | --prove-tmux-guard unset|differs|symlink|mode|outside|long|missing
+//         | --prove-prerequisites | --prove-inside keys|cache|resolver|args|probe|home|tmux
 //         | --prove-recorder-read missing|unreadable | --prove-title-guard recorder|folder]
 //
 // The run folder is the stack's own or nothing happens: a folder it made holds
@@ -40,7 +41,18 @@
 // <tmpdir>/home, an empty folder inside the run folder and never the person's
 // own home (several of the server's readers resolve ~/.claude, ~/.claude.json
 // and ~/.codex from os.homedir(), which is $HOME), and CLAVE_TRANSCRIPTS_ROOT
-// is set nowhere. After the daemon announces itself and before anything is
+// is set nowhere; in the same check, the daemon's TMUX_TMPDIR and the one the
+// stub prints are present and equal, and name a folder tmux can use without
+// leaving the run: absolute, a real folder (lstat, a symlink never followed),
+// its own canonical path, this user's, mode 0700, inside the run folder, its
+// socket path <folder>/tmux-<uid>/clave at most 100 bytes. The stack makes
+// that folder, the owned tmux folder <tmpdir>/tmux, fresh at every boot
+// before any child starts. The daemon runs `tmux -L clave list-sessions` at
+// its start with its own environment, and tmux puts its socket in the first
+// of $TMUX_TMPDIR and /tmp that realpath resolves, never under HOME: with the
+// owned home alone it reached the installed app's live socket folder,
+// /private/tmp/tmux-<uid>.
+// After the daemon announces itself and before anything is
 // seeded: (4) its discovery file says titles "off", testMode true and
 // machineUsage false; (5) read INSIDE the daemon through its test route (POST
 // /e2e/evaluate, packages/server/src/fixtures/route.ts): its cached login
@@ -53,7 +65,11 @@
 // launchProfileManager.resolveClaudeCli) has the recorder's canonical path as
 // its file and no argument beyond its executable (on the hooks road, beyond
 // the title path's own arguments, which the read takes off the end), a
-// wrapper or a foreign path refused without starting anything; (6) only then
+// wrapper or a foreign path refused without starting anything; its
+// process.env TMUX_TMPDIR and the cached login one are the owned tmux folder,
+// and once that read is back, with tmux on the daemon's PATH,
+// <tmpdir>/tmux/tmux-<uid> must be there (tmux makes it where it resolves its
+// socket; report.json records the read either way); (6) only then
 // the daemon itself executes that probe, which must answer the recorder's
 // fixed line and leave exactly one line in the recorder log, the baseline.
 // After the seed, the recorders and the two folders are read at once and then
@@ -63,7 +79,8 @@
 // --self-check keep the stack up at least 12 s (7 s past the usage clock's
 // first tick at 5 s) under that watch. At every stop the names of the files
 // under the owned home, never their content, are written to
-// <tmpdir>/report.json: the record of what the server kept there.
+// <tmpdir>/report.json: the record of what the server kept there, beside
+// check 5's read of the owned tmux folder (or that the run stopped before it).
 //
 // The server seals the owner's session in the keychain FILE that
 // CLAVE_KEYCHAIN_FILE names (packages/host/src/ports/secrets.ts): the run's
@@ -97,13 +114,25 @@
 // the stack's own os.homedir() (built in memory, never printed), a HOME in a
 // sibling folder outside the run folder, the relay's HOME set to the stack's
 // own home, or a stub shell whose fixed text carries another HOME, each red
-// with its reason, and the unmutated build, green; --prove-prerequisites hands
+// with its reason, and the unmutated build, green; --prove-tmux-guard
+// unset|differs|symlink|mode|outside|long|missing starts nothing and hands
+// check 3 TMUX_TMPDIR removed or empty, a stub whose fixed text names a second
+// owned folder, an owned symlink to an owned folder or a folder reached
+// through it, a folder at 0755, a folder beside the run folder or a relative
+// path, a folder whose socket path is 101 bytes (and one at exactly 100,
+// which passes), a path that does not exist or a regular file, each a decoy
+// of the proof's own in the daemon's environment and the stub's fixed text
+// alike (unless the case is about one of them), each red with its reason and
+// the value never printed, and the unmutated build, green, no child started
+// and nothing listening on the server and relay ports before or after (lsof);
+// --prove-prerequisites hands
 // check 4 a discovery read saying titles "on"; --prove-inside
-// keys|cache|resolver|args|home hands check 5 one stray key in the daemon's
-// environment, a cached PATH without the recorders, a one-shot whose file is
-// not the recorder, a one-shot carrying an argument (-p) beyond its executable
-// on whichever road the daemon serves, or another folder as the owned home it
-// expects, and --prove-inside probe asks the daemon to run the
+// keys|cache|resolver|args|home|tmux hands check 5 one stray key in the
+// daemon's environment, a cached PATH without the recorders, a one-shot whose
+// file is not the recorder, a one-shot carrying an argument (-p) beyond its
+// executable on whichever road the daemon serves, or another folder as the
+// owned home it expects, or as the owned tmux folder it expects (the daemon's
+// own valid), and --prove-inside probe asks the daemon to run the
 // probe against a wrong expected path, all refused before the seed with
 // nothing started; --prove-recorder-read
 // missing|unreadable removes or replaces the owned recorder log while the
@@ -119,6 +148,7 @@
 // Import `startStack(options)` to drive the stack from another script.
 import { execFileSync, spawn } from 'node:child_process'
 import {
+  chmodSync,
   createWriteStream,
   existsSync,
   lstatSync,
@@ -162,10 +192,22 @@ const DAEMON_OWN_KEYS = [
   'CLAVE_ANTASPHERE_ISSUER',
   'CLAVE_KEYCHAIN_FILE',
   'CLAUDE_CONFIG_DIR',
-  'CODEX_HOME'
+  'CODEX_HOME',
+  'TMUX_TMPDIR'
 ]
 /** The children's HOME, a folder of the run folder: <tmpdir>/home. */
 export const HOME_FOLDER = 'home'
+/** The daemon's TMUX_TMPDIR, a folder of the run folder: <tmpdir>/tmux. tmux
+ *  makes tmux-<uid>/ in the first of $TMUX_TMPDIR and /tmp that realpath
+ *  resolves and puts its sockets there; HOME plays no part. */
+export const TMUX_FOLDER = 'tmux'
+/** The daemon's tmux socket name (TMUX_SOCKET in packages/host/src/sessions/adapters/pty-backend.ts). */
+const TMUX_SOCKET_LABEL = 'clave'
+/** The longest socket path, in bytes, the owned tmux folder may give the
+ *  daemon's tmux: macOS's sun_path holds 104 with the closing NUL. */
+export const TMUX_SOCKET_MAX_BYTES = 100
+/** Where lsof is, for the no-boot proof that nothing listens on the two ports. */
+const LSOF = '/usr/sbin/lsof'
 /** Read before the home by two of the readers below; no child may carry it. */
 const TRANSCRIPTS_ROOT_KEY = 'CLAVE_TRANSCRIPTS_ROOT'
 /** The server's readers that resolve their paths from os.homedir() (which Node and
@@ -237,6 +279,11 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 const shQuote = (s) => `'${String(s).replace(/'/g, `'\\''`)}'`
 /** The stop of a boot still under way, for a signal that arrives before the stack is up. */
 let inFlightStop = null
+/** Every child this process started through startChild, in order, by name and
+ *  pid: the stack's own record, read by the no-boot proofs. Never cleared. */
+const startedChildren = []
+/** The children started so far (a copy). */
+export const childrenStarted = () => startedChildren.map((c) => ({ ...c }))
 
 /** An error that names the step it failed and the exit code the process ends with. */
 function fail(step, err, child, exitCode = 1) {
@@ -325,11 +372,12 @@ export function dryRunFolder(tmpdir) {
  * answering `--version` with a fixed line and a one-shot with a fixed title;
  * and an empty Claude config folder and Codex home beside them, where a real
  * CLI run with that environment would leave its files. The fixed environment
- * names the owned home as HOME, the daemon's own. A stub on the daemon's
+ * names the owned home as HOME and the owned tmux folder as TMUX_TMPDIR, the
+ * daemon's own. A stub on the daemon's
  * PATH alone is not enough: the login profile would put the real CLI back in
  * front. The log is removed at every boot.
  */
-function writeStubs(tmpdir, { issuer, serverDir, home }) {
+function writeStubs(tmpdir, { issuer, serverDir, home, tmux }) {
   const dir = path.join(tmpdir, 'stubs')
   const bin = path.join(dir, 'bin')
   const claudeConfigDir = path.join(dir, 'claude-config')
@@ -343,7 +391,7 @@ function writeStubs(tmpdir, { issuer, serverDir, home }) {
     return file
   }
   const shell = path.join(dir, 'zsh')
-  const env = daemonEnv({ issuer, serverDir, bin, shell, claudeConfigDir, codexHome, home })
+  const env = daemonEnv({ issuer, serverDir, bin, shell, claudeConfigDir, codexHome, home, tmux })
   const envBlock = envBlockOf(env)
   write(shell, [
     '#!/bin/sh',
@@ -595,6 +643,58 @@ function homeProblems(value, { home, runFolder }) {
   return problems
 }
 
+/** The folder the daemon's tmux makes for its sockets under a TMUX_TMPDIR of
+ *  `folder`, and its `-L clave` socket there. */
+const tmuxSocketFolder = (folder) => `${folder}/tmux-${process.getuid()}`
+const tmuxSocketPath = (folder) => `${tmuxSocketFolder(folder)}/${TMUX_SOCKET_LABEL}`
+
+/** What is wrong with `value` as the daemon's TMUX_TMPDIR, as phrases that print
+ *  the run folder's own path alone, never `value`; empty when tmux can put its
+ *  socket there. tmux takes the first of $TMUX_TMPDIR and /tmp that realpath
+ *  resolves (one that does not resolve sends it back to /tmp) and follows a
+ *  link wherever it leads, so the value must be absolute, inside the run
+ *  folder, a real folder (lstat, a symlink never followed) that is its own
+ *  canonical path by realpath(3), as tmux calls it, this user's, mode 0700,
+ *  and its socket path within TMUX_SOCKET_MAX_BYTES. A value outside the run
+ *  folder is judged as written: nothing outside the run folder is ever read. */
+function tmuxProblems(value, { runFolder }) {
+  if (typeof value !== 'string' || value === '') return ['is unset']
+  if (!path.isAbsolute(value)) return ['is not an absolute path']
+  const problems = []
+  if (!liesUnder(value, runFolder)) problems.push(`lies outside the run folder ${runFolder}`)
+  else {
+    let info = null
+    try {
+      info = lstatSync(value)
+    } catch (err) {
+      problems.push(
+        err.code === 'ENOENT' ? 'does not exist' : `cannot be read (${err.code ?? 'unknown error'})`
+      )
+    }
+    if (info?.isSymbolicLink()) problems.push('is a symbolic link')
+    else if (info && !info.isDirectory()) problems.push('is not a folder')
+    else if (info) {
+      let real = null
+      try {
+        real = realpathSync.native(value)
+      } catch (err) {
+        problems.push(`has no canonical path (${err.code ?? 'unknown error'})`)
+      }
+      if (real !== null && real !== value) problems.push('is not its own canonical path')
+      if (info.uid !== process.getuid())
+        problems.push(`is owned by uid ${info.uid}, not this process's uid ${process.getuid()}`)
+      const mode = info.mode & 0o777
+      if (mode !== 0o700) problems.push(`has mode 0${mode.toString(8).padStart(3, '0')}, not 0700`)
+    }
+  }
+  const socketBytes = Buffer.byteLength(tmuxSocketPath(value))
+  if (socketBytes > TMUX_SOCKET_MAX_BYTES)
+    problems.push(
+      `makes a tmux socket path of ${socketBytes} bytes, over the ${TMUX_SOCKET_MAX_BYTES}-byte bound`
+    )
+  return problems
+}
+
 /** A child's environment, built from the allowlist and `extra`, nothing else of this process. */
 function childEnv(extra = {}) {
   const env = {}
@@ -608,6 +708,27 @@ export function makeOwnedHome(runFolder) {
   const home = path.join(runFolder, HOME_FOLDER)
   mkdirSync(home, { recursive: true, mode: 0o700 })
   return home
+}
+
+/** The daemon's TMUX_TMPDIR: <run folder>/tmux, made now at mode 0700 beside
+ *  the stack's other owned folders, before any child starts. Never reused: the
+ *  run folder's own emptying is the only way an earlier one goes, and one still
+ *  there is refused (exit 2) rather than taken over. */
+export function makeOwnedTmux(runFolder) {
+  const tmux = path.join(runFolder, TMUX_FOLDER)
+  try {
+    mkdirSync(tmux, { mode: 0o700 })
+  } catch (err) {
+    throw fail(
+      'make the owned tmux folder',
+      new Error(
+        `${tmux} could not be made afresh (${err.code ?? 'unknown error'}); an earlier one is never reused`
+      ),
+      null,
+      CHECK_FAILED_EXIT
+    )
+  }
+  return tmux
 }
 
 /** The run keychain's faults this process saw: the user's search list could not
@@ -790,10 +911,21 @@ export function daemonArgs({ serverDir, serverPort, relayUrl }) {
 
 /** The daemon's own environment: the allowlist, the owned home as HOME, the
  *  issuer, the run's keychain FILE under its data folder, the stub as its login shell,
- *  the recorders first on PATH, the empty Claude config folder and Codex home.
+ *  the recorders first on PATH, the empty Claude config folder and Codex home,
+ *  and the owned tmux folder as TMUX_TMPDIR, which the daemon's tmux inherits
+ *  (pty-backend.ts runs `tmux -L clave` with the daemon's own environment).
  *  The same values are written into the stub shell, so the login environment
  *  the daemon reads is this one and no process's. */
-export function daemonEnv({ issuer, serverDir, bin, shell, claudeConfigDir, codexHome, home }) {
+export function daemonEnv({
+  issuer,
+  serverDir,
+  bin,
+  shell,
+  claudeConfigDir,
+  codexHome,
+  home,
+  tmux
+}) {
   return childEnv({
     HOME: home,
     PATH: `${bin}${path.delimiter}${process.env.PATH ?? '/usr/bin:/bin'}`,
@@ -801,7 +933,8 @@ export function daemonEnv({ issuer, serverDir, bin, shell, claudeConfigDir, code
     CLAVE_ANTASPHERE_ISSUER: issuer,
     CLAVE_KEYCHAIN_FILE: path.join(serverDir, RUN_KEYCHAIN),
     CLAUDE_CONFIG_DIR: claudeConfigDir,
-    CODEX_HOME: codexHome
+    CODEX_HOME: codexHome,
+    TMUX_TMPDIR: tmux
   })
 }
 
@@ -837,7 +970,9 @@ const expect = (condition, message) => {
  * CLAUDE_CONFIG_DIR and CODEX_HOME the empty folders the stack made; and the
  * HOME of the daemon, of the relay and of the stub's fixed text is the owned
  * home `home`, an empty real folder of the marked `runFolder`, never the
- * person's own, with CLAVE_TRANSCRIPTS_ROOT set nowhere. No shell is run here.
+ * person's own, with CLAVE_TRANSCRIPTS_ROOT set nowhere; in the same check the
+ * daemon's TMUX_TMPDIR is a folder tmuxProblems finds nothing wrong with and the
+ * stub's fixed text names the very same one. No shell is run here.
  */
 export async function preBootChecks({ relay, relayEnv, args, env, stubs, home, runFolder, log }) {
   if (!Array.isArray(relay))
@@ -929,7 +1064,7 @@ export async function preBootChecks({ relay, relayEnv, args, env, stubs, home, r
   await runCheck(
     results,
     log,
-    `both children's HOME is the owned home, an empty folder inside the run folder and never the person's own home, and so is the HOME the stub shell prints; ${TRANSCRIPTS_ROOT_KEY} is set nowhere`,
+    `both children's HOME is the owned home, an empty folder inside the run folder and never the person's own home, and so is the HOME the stub shell prints; ${TRANSCRIPTS_ROOT_KEY} is set nowhere; the daemon's TMUX_TMPDIR, the same in the stub shell's fixed environment, is a real folder of this user at 0700 inside the run folder, its own canonical path, its tmux socket path within ${TMUX_SOCKET_MAX_BYTES} bytes`,
     () => {
       expect(
         typeof home === 'string' &&
@@ -990,8 +1125,27 @@ export async function preBootChecks({ relay, relayEnv, args, env, stubs, home, r
         if (wrong.length) problems.push(`${key} ${wrong.join(', ')}`)
         if (TRANSCRIPTS_ROOT_KEY in vars) problems.push(`${where} sets ${TRANSCRIPTS_ROOT_KEY}`)
       }
+      // TMUX_TMPDIR: the daemon's own value is the one its tmux inherits, judged
+      // by tmuxProblems; the stub's fixed text, the login environment a terminal
+      // of the daemon gets, must name the very same string.
+      const daemonsTmux = env && typeof env === 'object' ? env.TMUX_TMPDIR : undefined
+      const tmuxWrong = tmuxProblems(daemonsTmux, { runFolder })
+      if (tmuxWrong.length) problems.push(`the daemon's TMUX_TMPDIR ${tmuxWrong.join(', ')}`)
+      if (!fixed)
+        problems.push(
+          'the stub shell prints no fixed environment to read its TMUX_TMPDIR back from'
+        )
+      else if (typeof fixed.TMUX_TMPDIR !== 'string' || fixed.TMUX_TMPDIR === '')
+        problems.push('the TMUX_TMPDIR the stub shell prints is unset')
+      else if (
+        typeof daemonsTmux === 'string' &&
+        daemonsTmux !== '' &&
+        fixed.TMUX_TMPDIR !== daemonsTmux
+      )
+        problems.push("the TMUX_TMPDIR the stub shell prints is not the daemon's")
       expect(problems.length === 0, problems.join('; '))
-      return `HOME is ${home} for the daemon, the relay and the stub shell's fixed environment: an empty real folder inside the run folder, not the person's home; ${TRANSCRIPTS_ROOT_KEY} unset in all three`
+      const ownedTmux = path.join(runFolder, TMUX_FOLDER)
+      return `HOME is ${home} for the daemon, the relay and the stub shell's fixed environment: an empty real folder inside the run folder, not the person's home; ${TRANSCRIPTS_ROOT_KEY} unset in all three; TMUX_TMPDIR, the same for the daemon and the stub shell's fixed environment, ${daemonsTmux === ownedTmux ? `is the owned tmux folder ${ownedTmux}` : `is a folder inside the run folder ${runFolder}`}: real, this user's, mode 0700, its own canonical path, a ${Buffer.byteLength(tmuxSocketPath(daemonsTmux))}-byte socket path`
     }
   )
   return results
@@ -1014,7 +1168,9 @@ export async function preBootChecks({ relay, relayEnv, args, env, stubs, home, r
  * `titleArgsLast`. The cached login
  * environment is read from the daemon's own backend module either way. The
  * home facts are the daemon's os.homedir() and HOME and the root each of
- * HOME_READERS computes, by that reader's own expression. Nothing is started.
+ * HOME_READERS computes, by that reader's own expression; the tmux fact is its
+ * process.env TMUX_TMPDIR, the one its tmux inherits, beside the cached login
+ * one in `cached`. Nothing is started.
  */
 export function insideFactsSource() {
   return `async () => {
@@ -1024,7 +1180,7 @@ export function insideFactsSource() {
     const canonicalOf = (p) => { try { return typeof p === 'string' ? fs.realpathSync(p) : null } catch { return null } }
     const backend = await import(${JSON.stringify(PTY_BACKEND)})
     const login = backend.getLoginShellEnv()
-    const cached = { PATH: login.PATH ?? null, SHELL: login.SHELL ?? null, CLAUDE_CONFIG_DIR: login.CLAUDE_CONFIG_DIR ?? null, CODEX_HOME: login.CODEX_HOME ?? null, HOME: login.HOME ?? null, keys: Object.keys(login).length }
+    const cached = { PATH: login.PATH ?? null, SHELL: login.SHELL ?? null, CLAUDE_CONFIG_DIR: login.CLAUDE_CONFIG_DIR ?? null, CODEX_HOME: login.CODEX_HOME ?? null, HOME: login.HOME ?? null, TMUX_TMPDIR: login.TMUX_TMPDIR ?? null, keys: Object.keys(login).length }
     const home = {
       homedir: os.homedir(),
       HOME: process.env.HOME ?? null,
@@ -1038,7 +1194,8 @@ export function insideFactsSource() {
         'packages/host/src/extensions-reader.ts:409': path.join(os.homedir(), '.claude.json')
       }
     }
-    const base = { shell: process.env.SHELL ?? null, userShell: backend.getUserShell(), cached, home, envKeys: Object.keys(process.env).sort() }
+    const tmux = { TMUX_TMPDIR: process.env.TMUX_TMPDIR ?? null }
+    const base = { shell: process.env.SHELL ?? null, userShell: backend.getUserShell(), cached, home, tmux, envKeys: Object.keys(process.env).sort() }
     const hooks = globalThis.__claveE2E?.titles
     if (hooks && typeof hooks.launch === 'function' && typeof hooks.locate === 'function') {
       const titles = await import(${JSON.stringify(TITLE_GENERATOR)})
@@ -1138,9 +1295,10 @@ export async function evaluateInside(serverUrl, token, source, arg) {
   return body.value
 }
 
-/** What the inside read must show, checked against the stubs by canonical path
- *  and against `home`, the owned home; the probe is not run yet. */
-export function assertInside(inside, stubs, expectedEnvKeys = null, home = null) {
+/** What the inside read must show, checked against the stubs by canonical path,
+ *  against `home`, the owned home, and against `tmux`, the owned tmux folder;
+ *  the probe is not run yet. */
+export function assertInside(inside, stubs, expectedEnvKeys = null, home = null, tmux = null) {
   expect(same(inside.shell, stubs.shell), `the daemon's SHELL is ${inside.shell}`)
   if (expectedEnvKeys) {
     const got = Array.isArray(inside.envKeys) ? inside.envKeys : []
@@ -1199,6 +1357,22 @@ export function assertInside(inside, stubs, expectedEnvKeys = null, home = null)
     outside.length === 0,
     `inside the daemon, the root ${outside.join(', ')} computes does not lie under the owned home ${home}`
   )
+  // TMUX_TMPDIR, the daemon's own (what its tmux inherits) and its cached login
+  // one (what a terminal it spawns gets), compared as written with the owned
+  // tmux folder, which alone is printed.
+  expect(
+    typeof tmux === 'string' && tmux !== '',
+    'the inside read was handed no owned tmux folder to compare with: a boot that forgets it fails closed'
+  )
+  const atTmux = (p) => typeof p === 'string' && path.resolve(p) === path.resolve(tmux)
+  expect(
+    atTmux(inside.tmux?.TMUX_TMPDIR),
+    `inside the daemon, process.env.TMUX_TMPDIR is not the owned tmux folder ${tmux}`
+  )
+  expect(
+    atTmux(inside.cached.TMUX_TMPDIR),
+    `the cached login TMUX_TMPDIR is not the owned tmux folder ${tmux}`
+  )
   if (inside.road === 'hooks') {
     expect(
       typeof inside.titlesDisabled === 'string' && inside.titlesDisabled.length > 0,
@@ -1241,7 +1415,50 @@ export function assertInside(inside, stubs, expectedEnvKeys = null, home = null)
     same(locateOnPath('claude', inside.oneShot.PATH), stubs.claude),
     `claude on the one-shot's PATH is ${locateOnPath('claude', inside.oneShot.PATH) ?? 'nothing'}`
   )
-  return `road ${inside.road}; ${Array.isArray(inside.envKeys) ? inside.envKeys.length : '?'} environment keys, exactly the allowlist plus the stack's own; SHELL ${path.basename(inside.shell)} under stubs; os.homedir(), HOME and the cached login HOME are the owned home ${home}, the roots of the ${HOME_READERS.length} readers lie under it, ${TRANSCRIPTS_ROOT_KEY} unset; the daemon's own locate and its one-shot both name ${path.relative(stubs.dir, inside.oneShot.file)} by canonical path, the one-shot carrying no argument beyond the executable${inside.road === 'hooks' ? ` and the title path's own ${inside.oneShot.launchArgs?.length ?? '?'}` : ''}`
+  return `road ${inside.road}; ${Array.isArray(inside.envKeys) ? inside.envKeys.length : '?'} environment keys, exactly the allowlist plus the stack's own; SHELL ${path.basename(inside.shell)} under stubs; os.homedir(), HOME and the cached login HOME are the owned home ${home}, the roots of the ${HOME_READERS.length} readers lie under it, ${TRANSCRIPTS_ROOT_KEY} unset; TMUX_TMPDIR, the daemon's own and the cached login one, is the owned tmux folder ${tmux}; the daemon's own locate and its one-shot both name ${path.relative(stubs.dir, inside.oneShot.file)} by canonical path, the one-shot carrying no argument beyond the executable${inside.road === 'hooks' ? ` and the title path's own ${inside.oneShot.launchArgs?.length ?? '?'}` : ''}`
+}
+
+/**
+ * Where the daemon's tmux made its folder, read once the inside read is back
+ * and before the seed. tmux makes tmux-<uid>/ in the folder it resolves its
+ * socket in, and the daemon's records listing runs `tmux -L clave
+ * list-sessions` before the daemon announces itself (apps/server/src/main.ts,
+ * the write ledger's session ids), so with tmux on the daemon's PATH (the
+ * stack's own locateOnPath over `pathValue`) <tmux>/tmux-<uid> must be a real
+ * folder by now, else the boot fails; with no tmux on that PATH, no tmux could
+ * run, and the record says so. Whether tmux is on the PATH is kept, never where
+ * (a folder of that PATH can lie in the person's home). One lstat of that one
+ * folder: nothing in it is listed or read. Answers the record report.json keeps.
+ */
+export function readTmuxFolder(tmux, pathValue) {
+  const socketFolder = tmuxSocketFolder(tmux)
+  let found
+  try {
+    const info = lstatSync(socketFolder)
+    found = info.isSymbolicLink()
+      ? 'a symbolic link'
+      : info.isDirectory()
+        ? 'a folder'
+        : 'not a folder'
+  } catch (err) {
+    found = err.code === 'ENOENT' ? 'absent' : `unreadable (${err.code ?? 'unknown error'})`
+  }
+  const tmuxOnPath = locateOnPath('tmux', pathValue) !== null
+  const ok = !tmuxOnPath || found === 'a folder'
+  const verdict = !tmuxOnPath
+    ? `no tmux on the daemon's PATH, so no tmux could run (${socketFolder}: ${found})`
+    : ok
+      ? `tmux is on the daemon's PATH and ${socketFolder} is a folder: the daemon's tmux resolved its socket path in the owned tmux folder`
+      : `tmux is on the daemon's PATH, yet ${socketFolder} is ${found}: the daemon's tmux did not make its folder in the owned tmux folder`
+  return {
+    readAt: new Date().toISOString(),
+    folder: tmux,
+    socketFolder,
+    socketFolderFound: found,
+    tmuxOnPath,
+    ok,
+    verdict
+  }
 }
 
 /** What the executed probe must show: run, the recorder's answer, and exactly one line in the log. */
@@ -1327,6 +1544,7 @@ function startChild(name, cmd, args, { env, logsDir, secrets }) {
     env,
     stdio: ['ignore', 'pipe', 'pipe']
   })
+  startedChildren.push({ name, pid: child.pid ?? null })
   const tail = []
   const redact = (text) => {
     let out = text
@@ -1408,11 +1626,12 @@ export async function startStack({
   approve = false,
   /** Proof runs only, every flag kept: a discovery read doctored before
    *  check 4, an inside read doctored before check 5 or another folder handed
-   *  to it as the owned home it expects, a wrong expected canonical path
-   *  handed to the daemon for check 6. */
+   *  to it as the owned home or the owned tmux folder it expects, a wrong
+   *  expected canonical path handed to the daemon for check 6. */
   injectDiscovery = null,
   injectInside = null,
   injectExpectedHome = null,
+  injectExpectedTmux = null,
   injectProbeExpectation = null,
   log = (line) => process.stdout.write(`fixture-stack: ${line}\n`)
 } = {}) {
@@ -1426,6 +1645,9 @@ export async function startStack({
     mkdirSync(dir, { recursive: true, mode: 0o700 })
   // The children's HOME, made with the other owned folders before any child is built.
   const home = makeOwnedHome(tmpdir)
+  // The daemon's TMUX_TMPDIR, made afresh beside it: tmux skips a TMUX_TMPDIR
+  // that realpath cannot resolve, so the folder exists before any child starts.
+  const tmux = makeOwnedTmux(tmpdir)
   // The run's own keychain, an owned file of the run folder under server/: made
   // at step 0, before the daemon is built, and deleted at every stop.
   const keychain = runKeychain(path.join(serverDir, RUN_KEYCHAIN), log)
@@ -1438,6 +1660,8 @@ export async function startStack({
   let watch = null
   let stubs = null
   let baseline = null
+  /** Check 5's read of the owned tmux folder (readTmuxFolder), kept for report.json. */
+  let tmuxRead = null
   /** Latched by the watch: the first failure or violations it saw; never cleared. */
   let latched = null
   let stopped = false
@@ -1446,7 +1670,9 @@ export async function startStack({
     resolveViolated = r
   })
   /** The record of what the server kept in the owned home, once every child
-   *  has stopped: the names under it, never their content, in report.json. */
+   *  has stopped: the names under it, never their content, in report.json,
+   *  beside check 5's read of the owned tmux folder, or that the run stopped
+   *  before that read. */
   const reportHome = () => {
     const file = path.join(tmpdir, 'report.json')
     let names = null
@@ -1464,7 +1690,13 @@ export async function startStack({
             stoppedAt: new Date().toISOString(),
             home,
             homeEntries: names,
-            ...(unreadable === null ? {} : { homeUnreadable: unreadable })
+            ...(unreadable === null ? {} : { homeUnreadable: unreadable }),
+            tmux: tmuxRead ?? {
+              readAt: null,
+              folder: tmux,
+              socketFolder: tmuxSocketFolder(tmux),
+              verdict: 'not read: the run stopped before the inside read was back'
+            }
           },
           null,
           2
@@ -1520,7 +1752,7 @@ export async function startStack({
 
     // 2. The stubs, both commands and the pre-boot checks, before the relay or
     // the daemon exists: one failing stops the boot with nothing else started.
-    stubs = writeStubs(tmpdir, { issuer: provider.issuer, serverDir, home })
+    stubs = writeStubs(tmpdir, { issuer: provider.issuer, serverDir, home, tmux })
     const relayUrl = `http://127.0.0.1:${relayPort}`
     const relayCommand = relayArgs({ relayDir, relayPort, issuer: provider.issuer })
     // The very environment the check judges is the one the relay is started with.
@@ -1621,17 +1853,30 @@ export async function startStack({
     // build both name the recorders, the launch's file is the recorder's
     // canonical path, its arguments exactly --version, and it carries no
     // credential; its os.homedir(), its HOME and its cached login HOME are the
-    // owned home and the roots of HOME_READERS lie under it. Nothing runs yet.
+    // owned home and the roots of HOME_READERS lie under it; its TMUX_TMPDIR
+    // and its cached login one are the owned tmux folder. Once the read is
+    // back, the owned tmux folder is read (readTmuxFolder, kept for
+    // report.json): with tmux on the daemon's PATH, the folder tmux makes
+    // where it resolves its socket must be there. Nothing runs yet.
     let inside
     const expectedHome = injectExpectedHome ?? home
     if (injectExpectedHome)
       log(`the owned home the inside read expects, doctored for a proof: ${injectExpectedHome}`)
+    const expectedTmux = injectExpectedTmux ?? tmux
+    if (injectExpectedTmux)
+      log(
+        `the owned tmux folder the inside read expects, doctored for a proof: ${injectExpectedTmux}`
+      )
     const insideCheck = await runCheck(
       postBoot,
       log,
-      `inside the daemon, the cached login environment and the one-shot resolver name the recorders, the probe is the recorder with exactly --version, and os.homedir(), HOME and the roots of the ${HOME_READERS.length} home readers are in the owned home, ${TRANSCRIPTS_ROOT_KEY} unset (the plugin runner, where the analytics collector reads, inherits the daemon's HOME: packages/host/src/plugins/plugin-host.ts:113-117)`,
+      `inside the daemon, the cached login environment and the one-shot resolver name the recorders, the probe is the recorder with exactly --version, and os.homedir(), HOME and the roots of the ${HOME_READERS.length} home readers are in the owned home, ${TRANSCRIPTS_ROOT_KEY} unset (the plugin runner, where the analytics collector reads, inherits the daemon's HOME: packages/host/src/plugins/plugin-host.ts:113-117); its TMUX_TMPDIR and its cached login one are the owned tmux folder, and with tmux on the daemon's PATH, tmux has made its folder there (the read kept in report.json)`,
       async () => {
         inside = await evaluateInside(serverUrl, token, insideFactsSource())
+        // The read is back: the owned tmux folder now says where the daemon's
+        // tmux resolved its socket. Read before the read is judged, so
+        // report.json keeps it whatever the verdict.
+        tmuxRead = readTmuxFolder(tmux, env.PATH)
         if (injectInside) {
           inside = {
             ...inside,
@@ -1643,7 +1888,15 @@ export async function startStack({
           }
           log(`inside read doctored for a proof: ${JSON.stringify(injectInside)}`)
         }
-        return assertInside(inside, stubs, Object.keys(env).sort(), expectedHome)
+        const detail = assertInside(
+          inside,
+          stubs,
+          Object.keys(env).sort(),
+          expectedHome,
+          expectedTmux
+        )
+        expect(tmuxRead.ok, tmuxRead.verdict)
+        return `${detail}; ${tmuxRead.verdict}`
       }
     )
     if (!insideCheck.ok)
@@ -1974,6 +2227,7 @@ function parseArgs(argv) {
     proveTmpdirGuard: argv.includes('--prove-tmpdir-guard'),
     proveEnvGuard: argv.includes('--prove-env-guard') ? value('prove-env-guard', 'stray') : null,
     proveHomeGuard: argv.includes('--prove-home-guard'),
+    proveTmuxGuard: argv.includes('--prove-tmux-guard') ? value('prove-tmux-guard', 'unset') : null,
     provePrerequisites: argv.includes('--prove-prerequisites'),
     proveInside: argv.includes('--prove-inside') ? value('prove-inside', 'resolver') : null,
     proveRecorderRead: argv.includes('--prove-recorder-read')
@@ -2120,15 +2374,17 @@ export function proveTmpdirGuard(write = (line) => process.stdout.write(line + '
 
 /** What a boot hands the pre-boot checks, built in `runFolder` the way a boot
  *  builds it, the commands naming the boot's own folders under `tmpdir`: the
- *  owned home, the stubs, both commands and both environments. Nothing is run;
- *  the dry run and the no-boot proofs judge exactly this. */
+ *  owned home, the owned tmux folder, the stubs, both commands and both
+ *  environments. Nothing is run; the dry run and the no-boot proofs judge
+ *  exactly this. */
 export function preBootInputs(
   runFolder,
   { tmpdir, serverPort, relayPort, issuer, relayIssuer = issuer }
 ) {
   const home = makeOwnedHome(runFolder)
+  const tmux = makeOwnedTmux(runFolder)
   const serverDir = path.join(tmpdir, 'server')
-  const stubs = writeStubs(runFolder, { issuer, serverDir, home })
+  const stubs = writeStubs(runFolder, { issuer, serverDir, home, tmux })
   return {
     relay: relayArgs({ relayDir: path.join(tmpdir, 'relay'), relayPort, issuer: relayIssuer }),
     relayEnv: relayEnv({ home }),
@@ -2136,6 +2392,7 @@ export function preBootInputs(
     env: stubs.env,
     stubs,
     home,
+    tmux,
     runFolder
   }
 }
@@ -2278,6 +2535,324 @@ export async function proveHomeGuard(
   return ok
 }
 
+/** The cases of --prove-tmux-guard, as the usage line names them. */
+export const TMUX_GUARD_CASES = [
+  'unset',
+  'differs',
+  'symlink',
+  'mode',
+  'outside',
+  'long',
+  'missing'
+]
+
+/** The processes listening on TCP `port`, on any address, as `lsof -nP
+ *  -iTCP:<port> -sTCP:LISTEN` lists them: "COMMAND PID" each, empty when none.
+ *  A read that fails throws: it is never "nothing listens". */
+export function listenersOn(port) {
+  if (!Number.isInteger(port) || port < 1 || port > 65535)
+    throw new Error(`${port} is not a TCP port`)
+  try {
+    return execFileSync(LSOF, ['-nP', `-iTCP:${port}`, '-sTCP:LISTEN'], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      timeout: STEP_MS
+    })
+      .split('\n')
+      .slice(1)
+      .filter((line) => line.trim() !== '')
+      .map((line) => line.trim().split(/\s+/).slice(0, 2).join(' '))
+  } catch (err) {
+    // lsof exits 1 and prints nothing when no process matches.
+    if (err.status === 1 && String(err.stdout ?? '') === '') return []
+    throw new Error(`lsof could not read port ${port} (${err.code ?? `exit ${err.status}`})`)
+  }
+}
+
+/** The no-boot proof of check 3's tmux half, the owned tmux folder. In a dry
+ *  run's folder the pre-boot checks judge the build a boot would use with
+ *  TMUX_TMPDIR wrong one way, and each sub-case of `which` must turn check 3
+ *  red alone, its reason exactly the expected text, the value never printed:
+ *  `unset`, the key (a) removed from the daemon's environment, (b) set empty
+ *  there, (c) removed from the stub shell's fixed text; `differs`, the stub's
+ *  fixed text naming a second owned folder; `symlink`, (a) an owned symbolic
+ *  link to an owned folder, (b) an owned folder reached through that link;
+ *  `mode`, an owned folder at 0755; `outside`, (a) an owned folder beside the
+ *  run folder, in the lane's tmpdir, (b) a relative path; `long`, (a) an owned
+ *  folder whose socket path is one byte over TMUX_SOCKET_MAX_BYTES, and (b),
+ *  the bound's other side, one exactly at it, which must pass; `missing`, (a)
+ *  a path that does not exist, (b) a regular file. Every decoy is the proof's
+ *  own, made inside the dry run's folder (beside it for `outside`) and removed
+ *  at the end; it goes into the daemon's environment and the stub's fixed text
+ *  alike (the stack's block rewritten with it, so check 2 still reads the text
+ *  the stack wrote), unless the sub-case is about one side alone. Then, every
+ *  decoy removed, the unmutated build passes every check. Nothing is started:
+ *  the stack's record of started children holds none, and lsof finds nothing
+ *  listening on the server or relay port before the cases or after them.
+ *  Resolves true on PASS. */
+export async function proveTmuxGuard(
+  { tmpdir, serverPort, relayPort },
+  which,
+  write = (line) => process.stdout.write(line + '\n')
+) {
+  if (!TMUX_GUARD_CASES.includes(which))
+    throw new Error(`--prove-tmux-guard takes ${TMUX_GUARD_CASES.join(', ')}`)
+  let ok = true
+  const report = (pass, what) => {
+    write(`${pass ? 'PASS' : 'FAIL'} ${what}`)
+    if (!pass) ok = false
+  }
+  /** What listens on the two ports now: one phrase each, and whether both are free. */
+  const ports = () => {
+    let free = true
+    const phrases = []
+    for (const [name, port] of [
+      ['server', serverPort],
+      ['relay', relayPort]
+    ]) {
+      let list
+      try {
+        list = listenersOn(port)
+      } catch (err) {
+        free = false
+        phrases.push(`${name} port ${port}: ${err.message}`)
+        continue
+      }
+      if (list.length) free = false
+      phrases.push(`${name} port ${port}: ${list.length ? list.join(', ') : 'no listener'}`)
+    }
+    return { free, text: phrases.join(', ') }
+  }
+  const before = ports()
+  const place = dryRunFolder(tmpdir)
+  const made = []
+  try {
+    const inputs = preBootInputs(place.folder, {
+      tmpdir,
+      serverPort,
+      relayPort,
+      issuer: 'http://127.0.0.1:0'
+    })
+    const { runFolder, stubs } = inputs
+    /** A folder of the run folder at exactly `mode`, set past the umask. */
+    const ownedFolder = (name, mode = 0o700) => {
+      const dir = path.join(runFolder, name)
+      mkdirSync(dir, { mode })
+      chmodSync(dir, mode)
+      made.push(dir)
+      return dir
+    }
+    /** A name under the run folder whose tmux socket path is exactly `bytes` long. */
+    const sized = (prefix, bytes) => {
+      const pad = bytes - Buffer.byteLength(tmuxSocketPath(path.join(runFolder, prefix)))
+      if (pad < 1)
+        throw new Error(
+          `the run folder ${runFolder} is too long to build a ${bytes}-byte socket path in it; run the proof with a shorter --tmpdir`
+        )
+      return `${prefix}${'x'.repeat(pad)}`
+    }
+    /** The decoy in the daemon's environment and the stub's fixed text alike. */
+    const both = (value) => ({ env: { ...inputs.env, TMUX_TMPDIR: value }, stubTmux: value })
+    const daemons = (reason) => `the daemon's TMUX_TMPDIR ${reason}`
+    const judge = async ({ label, env, stubTmux, expected, secret }) => {
+      const lines = []
+      let stubsForCase = stubs
+      let original = null
+      if (stubTmux !== undefined) {
+        original = readFileSync(stubs.shell, 'utf8')
+        if (original.split(stubs.envBlock).length !== 2)
+          throw new Error("the stub shell's text does not hold the stack's block exactly once")
+        const fixed = { ...stubs.env }
+        if (stubTmux === null) delete fixed.TMUX_TMPDIR
+        else fixed.TMUX_TMPDIR = stubTmux
+        const block = envBlockOf(fixed)
+        writeFileSync(
+          stubs.shell,
+          original.replace(stubs.envBlock, () => block)
+        )
+        stubsForCase = { ...stubs, envBlock: block }
+      }
+      let results
+      try {
+        results = await preBootChecks({
+          ...inputs,
+          ...(env ? { env } : {}),
+          stubs: stubsForCase,
+          log: (line) => lines.push(`fixture-stack: ${line}`)
+        })
+      } finally {
+        if (original !== null) writeFileSync(stubs.shell, original)
+      }
+      if (secret !== null && lines.some((line) => line.includes(secret))) {
+        report(false, `${label}: a check printed the value, so its lines are withheld`)
+        return
+      }
+      for (const line of lines) write(line)
+      const reds = results.map((r, i) => (r.ok ? null : i)).filter((i) => i !== null)
+      const ownedCheck = results[3]
+      const pass =
+        results.length === 4 &&
+        (expected === null
+          ? reds.length === 0
+          : sameList(reds, [3]) && ownedCheck.detail === expected)
+      report(
+        pass,
+        expected === null
+          ? `${label}: the ${results.length} pre-boot checks pass (red: ${JSON.stringify(reds.map((i) => i + 1))}; ${ownedCheck?.detail ?? 'no result'})`
+          : `${label}: check 4 of ${results.length}, the owned home and tmux folder, red alone with its reason, the value never printed (red: ${JSON.stringify(reds.map((i) => i + 1))}; ${ownedCheck?.detail ?? 'no result'})`
+      )
+    }
+    const subCases = {
+      unset: () => {
+        const without = { ...inputs.env }
+        delete without.TMUX_TMPDIR
+        return [
+          {
+            label: "(a) removed from the daemon's environment",
+            env: without,
+            expected: daemons('is unset'),
+            secret: null
+          },
+          {
+            label: "(b) set empty in the daemon's environment",
+            env: { ...inputs.env, TMUX_TMPDIR: '' },
+            expected: daemons('is unset'),
+            secret: null
+          },
+          {
+            label: "(c) removed from the stub shell's fixed text",
+            stubTmux: null,
+            expected: 'the TMUX_TMPDIR the stub shell prints is unset',
+            secret: null
+          }
+        ]
+      },
+      differs: () => {
+        const second = ownedFolder('decoy-tmux-second')
+        return [
+          {
+            label: "the stub shell's fixed text naming a second owned folder",
+            stubTmux: second,
+            expected: "the TMUX_TMPDIR the stub shell prints is not the daemon's",
+            secret: second
+          }
+        ]
+      },
+      symlink: () => {
+        const target = ownedFolder('decoy-tmux-target')
+        mkdirSync(path.join(target, 'inner'), { mode: 0o700 })
+        const link = path.join(runFolder, 'decoy-tmux-link')
+        symlinkSync(target, link)
+        made.push(link)
+        const through = path.join(link, 'inner')
+        return [
+          {
+            label: '(a) an owned symbolic link to an owned folder',
+            ...both(link),
+            expected: daemons('is a symbolic link'),
+            secret: link
+          },
+          {
+            label: '(b) an owned folder reached through that link',
+            ...both(through),
+            expected: daemons('is not its own canonical path'),
+            secret: through
+          }
+        ]
+      },
+      mode: () => {
+        const wide = ownedFolder('decoy-tmux-wide', 0o755)
+        return [
+          {
+            label: 'an owned folder at mode 0755',
+            ...both(wide),
+            expected: daemons('has mode 0755, not 0700'),
+            secret: wide
+          }
+        ]
+      },
+      outside: () => {
+        const beside = mkdtempSync(`${runFolder}-tmux-outside-`)
+        made.push(beside)
+        const relative = 'decoy-tmux-relative'
+        return [
+          {
+            label: '(a) an owned folder beside the run folder, outside it',
+            ...both(beside),
+            expected: daemons(`lies outside the run folder ${runFolder}`),
+            secret: beside
+          },
+          {
+            label: '(b) a relative path',
+            ...both(relative),
+            expected: daemons('is not an absolute path'),
+            secret: relative
+          }
+        ]
+      },
+      long: () => {
+        const over = ownedFolder(sized('decoy-tmux-long-', TMUX_SOCKET_MAX_BYTES + 1))
+        const edge = ownedFolder(sized('decoy-tmux-edge-', TMUX_SOCKET_MAX_BYTES))
+        return [
+          {
+            label: `(a) an owned folder whose socket path is ${TMUX_SOCKET_MAX_BYTES + 1} bytes`,
+            ...both(over),
+            expected: daemons(
+              `makes a tmux socket path of ${TMUX_SOCKET_MAX_BYTES + 1} bytes, over the ${TMUX_SOCKET_MAX_BYTES}-byte bound`
+            ),
+            secret: over
+          },
+          {
+            label: `(b) the bound's other side, an owned folder whose socket path is exactly ${TMUX_SOCKET_MAX_BYTES} bytes, accepted`,
+            ...both(edge),
+            expected: null,
+            secret: edge
+          }
+        ]
+      },
+      missing: () => {
+        const absent = path.join(runFolder, 'decoy-tmux-missing')
+        const file = path.join(runFolder, 'decoy-tmux-file')
+        writeFileSync(file, 'a regular file where a folder should be\n', { mode: 0o600 })
+        made.push(file)
+        return [
+          {
+            label: '(a) a path that does not exist',
+            ...both(absent),
+            expected: daemons('does not exist'),
+            secret: absent
+          },
+          {
+            label: '(b) a regular file',
+            ...both(file),
+            expected: daemons('is not a folder'),
+            secret: file
+          }
+        ]
+      }
+    }[which]()
+    for (const sub of subCases) await judge({ ...sub, label: `${which} ${sub.label}` })
+    for (const dir of made.splice(0).reverse()) rmSync(dir, { recursive: true, force: true })
+    await judge({
+      label: 'the unmutated build, every decoy removed',
+      expected: null,
+      secret: null
+    })
+  } catch (err) {
+    report(false, `the tmux guard stopped: ${err.message}`)
+  } finally {
+    for (const dir of made.reverse()) rmSync(dir, { recursive: true, force: true })
+    if (place.fresh) rmSync(place.folder, { recursive: true, force: true })
+  }
+  const after = ports()
+  const started = childrenStarted()
+  report(
+    started.length === 0 && before.free && after.free,
+    `nothing was started: the stack's record of started children holds ${started.length ? started.map((c) => `${c.name} (pid ${c.pid})`).join(', ') : 'none'}; lsof -nP -iTCP:<port> -sTCP:LISTEN before the cases: ${before.text}; after them: ${after.text}`
+  )
+  return ok
+}
+
 const isMain = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)
 if (isMain) {
   const options = parseArgs(process.argv.slice(2))
@@ -2388,6 +2963,26 @@ if (isMain) {
     }
     process.exit(ok ? 0 : 1)
   }
+  if (options.proveTmuxGuard) {
+    // No boot. Check 3's tmux half, the owned tmux folder, judges the build a
+    // boot would use with TMUX_TMPDIR wrong one way per sub-case of the case
+    // named, then the unmutated build; no child starts and nothing listens on
+    // the server and relay ports before or after (proveTmuxGuard).
+    if (!TMUX_GUARD_CASES.includes(options.proveTmuxGuard)) {
+      process.stderr.write(
+        `fixture-stack: --prove-tmux-guard takes ${TMUX_GUARD_CASES.slice(0, -1).join(', ')} or ${TMUX_GUARD_CASES.at(-1)}\n`
+      )
+      process.exit(1)
+    }
+    let ok = false
+    try {
+      ok = await proveTmuxGuard(options, options.proveTmuxGuard)
+    } catch (err) {
+      process.stderr.write(`fixture-stack: ${err.message}\n`)
+      process.exit(err.exitCode ?? 1)
+    }
+    process.exit(ok ? 0 : 1)
+  }
   if (options.dryRun) {
     // The four pre-boot checks on the very commands and environments a boot
     // would use, nothing started: the provider, the relay and the daemon stay
@@ -2419,7 +3014,12 @@ if (isMain) {
     )
     const results = await preBootChecks({ ...inputs, log })
     log(
-      "checks 4 to 6 run after the daemon announces itself and before anything is seeded: the discovery read (step 3b), the inside read through POST /e2e/evaluate (step 3c), which also reads the daemon's home, and the probe the daemon runs itself (step 3d); the recorder watch runs from the probe to the stop (steps 3e and 7b), and every stop writes the names under the owned home to report.json"
+      "checks 4 to 6 run after the daemon announces itself and before anything is seeded: the discovery read (step 3b), the inside read through POST /e2e/evaluate (step 3c), which also reads the daemon's home and its TMUX_TMPDIR, then the owned tmux folder, and the probe the daemon runs itself (step 3d); the recorder watch runs from the probe to the stop (steps 3e and 7b), and every stop writes the names under the owned home and the tmux folder's read to report.json"
+    )
+    log(
+      locateOnPath('tmux', inputs.env.PATH) === null
+        ? `no tmux on the daemon's PATH: a boot's report.json will record that no tmux could run`
+        : `tmux is on the daemon's PATH: a boot fails at check 5 unless ${tmuxSocketFolder(path.join(options.tmpdir, TMUX_FOLDER))} is there once the inside read is back`
     )
     log(
       `a boot makes the run keychain ${path.join(options.tmpdir, 'server', RUN_KEYCHAIN)} before the daemon is built (step 0) and deletes it at every stop, between two reads of the user's keychain search list that must be equal and never name it; a dry run makes none and reads no list`
@@ -2463,7 +3063,9 @@ if (isMain) {
     // the title path's own arguments), refused for exactly that on either
     // road; home: check 5 expects another folder of
     // the run folder (scratch, made at boot) as the owned home, so the daemon's
-    // real os.homedir() must fail it; each refused before the probe. probe:
+    // real os.homedir() must fail it; tmux: the daemon is handed the valid owned
+    // tmux folder and check 5 expects scratch as the owned tmux folder, so the
+    // daemon's real TMUX_TMPDIR must fail it; each refused before the probe. probe:
     // the daemon is handed a wrong expected canonical path and must refuse to
     // run its launch, nothing started.
     const doctored = {
@@ -2476,16 +3078,18 @@ if (isMain) {
       },
       args: { injectInside: { oneShot: { args: ['-p'] } } },
       home: { injectExpectedHome: path.join(options.tmpdir, 'scratch') },
+      tmux: { injectExpectedTmux: path.join(options.tmpdir, 'scratch') },
       probe: { injectProbeExpectation: { canonical: '/usr/local/bin/claude' } }
     }[options.proveInside]
     if (!doctored) {
       process.stderr.write(
-        `fixture-stack: --prove-inside takes keys, cache, resolver, args, home or probe\n`
+        `fixture-stack: --prove-inside takes keys, cache, resolver, args, home, tmux or probe\n`
       )
       process.exit(1)
     }
     const reasons = {
       home: /os\.homedir\(\) is not the owned home/,
+      tmux: /process\.env\.TMUX_TMPDIR is not the owned tmux folder/,
       args: /the profile's command carries tokens beyond the executable: \["-p"\]/
     }
     await proof(
