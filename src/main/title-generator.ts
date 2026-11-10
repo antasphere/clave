@@ -10,7 +10,7 @@ import {
 import { join, dirname } from 'path'
 import { homedir } from 'os'
 import * as helperRunner from './helpers/runner'
-import { HELPER_CANCEL_GRACE_MS, helperCliArgs } from './helpers/runner'
+import { HELPER_CANCEL_GRACE_MS } from './helpers/runner'
 import { TITLE_TIMEOUT_MS, titleHelper } from './helpers/title'
 import { sessionCleared, sessionPlanDetected, sessionTitleChanged } from './server/session-events'
 
@@ -366,10 +366,6 @@ function extractPlanPath(entry: Record<string, unknown>): string | null {
 // --- Title generation ---
 
 export { TITLE_TIMEOUT_MS }
-
-/** The CLI arguments a title is asked with on the helper's defaults (the
- *  runner builds them per call, from `helperConfig`). */
-export const TITLE_CLI_ARGS = helperCliArgs(titleHelper.systemPrompt, titleHelper)
 
 /**
  * The tab's title: the helper's, run as the session runs (its launch

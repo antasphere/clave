@@ -57,7 +57,12 @@ vi.mock('./shell-launch', async (importOriginal) => ({
 }))
 vi.mock('./session-history', () => ({ TITLE_HELPER_MARKER: 'Generate a short 2-4 word title' }))
 
-import { TITLE_CLI_ARGS, cleanup, notifyChatMessage, scheduleChatTitle } from './title-generator'
+import { cleanup, notifyChatMessage, scheduleChatTitle } from './title-generator'
+import { helperCliArgs } from './helpers/runner'
+import { titleHelper } from './helpers/title'
+
+/** The arguments a title is asked with on the helper's defaults. */
+const TITLE_CLI_ARGS = helperCliArgs(titleHelper.systemPrompt, titleHelper)
 
 describe('title generation CLI arguments', () => {
   it('asks Haiku for one turn with no MCP server, skill or tool', () => {
