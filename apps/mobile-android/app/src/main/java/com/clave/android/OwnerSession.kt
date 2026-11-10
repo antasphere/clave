@@ -14,8 +14,6 @@ import com.clave.core.notifications.NotificationInbox
 import com.clave.core.notifications.RefusedException
 import com.clave.core.notifications.SettleClient
 import com.clave.core.notifications.TokenRegistration
-import com.clave.core.notifications.asMachineResolver
-import com.clave.core.notifications.handleResponse
 import com.clave.core.ports.HttpPort
 import com.clave.core.ports.KeyValueStore
 import com.clave.core.ports.Log
@@ -83,12 +81,9 @@ class OwnerSession private constructor(
     }
 
     private suspend fun respond(response: IncomingResponse): HandleResult = try {
-        handleResponse(
-            response = response,
-            machines = services.records.asMachineResolver(),
-            credentials = { machineId -> services.credentials.get(machineId) },
-            client = ::settleClientOf,
-        )
+        // The machine and its credential are chosen by the owner's services, from the payload's
+        // server id through this account's pairing records (OwnerServices.respond, tested there).
+        services.respond(response, ::settleClientOf)
     } catch (e: CancellationException) {
         throw e
     } catch (e: Exception) {

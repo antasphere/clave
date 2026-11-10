@@ -25,10 +25,11 @@ class ClaveMessagingService : FirebaseMessagingService() {
     override fun onMessageReceived(message: RemoteMessage) {
         val services = services(this)
         val payload = parsePayload(message.data) ?: return
-        // Firebase calls this on its own worker thread and waits for it to return.
+        // Firebase calls this on its own worker thread and waits for it to return. The machine
+        // is the owner services' choice (OwnerServices.machineForServer, tested there).
         val machineId = runBlocking {
             withTimeoutOrNull(OWNER_WAIT_MS) {
-                services.restoredOwner().services.records.byServerId(payload.serverId)?.machineId
+                services.restoredOwner().services.machineForServer(payload.serverId)
             }
         }
         services.notifications.post(message.data, machineId)

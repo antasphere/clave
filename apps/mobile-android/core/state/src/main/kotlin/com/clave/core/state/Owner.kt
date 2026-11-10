@@ -29,14 +29,19 @@ import com.clave.core.devices.assertCredentialMayTravelTo
 import com.clave.core.notifications.CleanupCredentialStore
 import com.clave.core.notifications.CleanupOwner
 import com.clave.core.notifications.DeviceToken
+import com.clave.core.notifications.HandleResult
+import com.clave.core.notifications.IncomingResponse
 import com.clave.core.notifications.OwnerPushWork
 import com.clave.core.notifications.PushCleanupResult
 import com.clave.core.notifications.PushTokenClient
 import com.clave.core.notifications.PushTokenSource
+import com.clave.core.notifications.SettleClient
 import com.clave.core.notifications.TokenRegistration
 import com.clave.core.notifications.TokenTarget
+import com.clave.core.notifications.asMachineResolver
 import com.clave.core.notifications.asPushTokenClient
 import com.clave.core.notifications.clearPushRegistrations
+import com.clave.core.notifications.handleResponse
 import com.clave.core.notifications.pendingPushCleanup
 import com.clave.core.notifications.pushTokenKey
 import com.clave.core.notifications.registerDeviceToken
@@ -316,6 +321,19 @@ public class OwnerServices(
                 throw e
             }
         }
+
+    /** The machine a push from [serverId] is posted with: the one this owner paired with that
+     *  server, or none (the tap then lands on Machines), never another paired machine. */
+    public suspend fun machineForServer(serverId: String): String? = records.byServerId(serverId)?.machineId
+
+    /**
+     * Answers a notification response for this owner. The machine is the one the payload's own
+     * server id resolves to through this owner's pairing records, and the credential is that
+     * machine's: never the main machine's nor another's. A server this owner never paired with
+     * gets no client built at all.
+     */
+    public suspend fun respond(response: IncomingResponse, client: (Credential) -> SettleClient): HandleResult =
+        handleResponse(response, records.asMachineResolver(), { machineId -> credentials.get(machineId) }, client)
 
     public suspend fun registerPush(machineId: String, token: DeviceToken? = null, requestPermission: Boolean = true): TokenRegistration =
         pushWork.lock.withLock { registerPushNow(machineId, token, requestPermission) }

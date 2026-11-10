@@ -12,14 +12,26 @@ import com.clave.core.auth.StoredToken
 import com.clave.core.chat.Drafts
 import com.clave.core.contract.DeviceDescription
 import com.clave.core.contract.DevicePlatform
+import com.clave.core.contract.IdLabel
 import com.clave.core.contract.MachinePlatform
+import com.clave.core.contract.PendingRequest
+import com.clave.core.contract.RequestKind
+import com.clave.core.contract.RequestResponse
+import com.clave.core.contract.RequestSnapshot
+import com.clave.core.contract.ResolveOutcome
+import com.clave.core.contract.WriteAnswer
 import com.clave.core.devices.BuildKind
 import com.clave.core.devices.Credential
 import com.clave.core.devices.EnrollmentRecord
 import com.clave.core.devices.EnrollmentRecords
 import com.clave.core.devices.Machine
 import com.clave.core.devices.PairingState
+import com.clave.core.notifications.ActionIds
+import com.clave.core.notifications.DeepLink
 import com.clave.core.notifications.DeviceToken
+import com.clave.core.notifications.HandleResult
+import com.clave.core.notifications.IncomingResponse
+import com.clave.core.notifications.SettleClient
 import com.clave.core.notifications.TokenRegistration
 import com.clave.core.ports.HttpFailure
 import com.clave.core.ports.HttpPort
@@ -36,6 +48,10 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import okhttp3.OkHttpClient
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -116,6 +132,57 @@ class OwnerTest {
     }
 
     private fun credentialKeys(): List<String> = rawSecure.map.keys.filter { it.contains("clave.credential.") }
+
+    /** Two machines this owner paired, on distinct servers with distinct names; the first one
+     *  paired is the main machine. */
+    private suspend fun twoPaired(services: OwnerServices) {
+        services.records.set(EnrollmentRecord("studio", "device-1", "srv-1", "Studio", 1))
+        services.credentials.set("studio", Credential("https://relay.example/m/studio", "studio-session"))
+        services.records.set(EnrollmentRecord("laptop", "device-2", "srv-2", "Laptop", 2))
+        services.credentials.set("laptop", Credential("https://relay.example/m/laptop", "laptop-session"))
+    }
+
+    /** Allow, tapped on a permission notification of [serverId] as FCM hands it over. */
+    private fun allowTapped(serverId: String, serverName: String) = IncomingResponse(
+        notificationId = "n-1",
+        date = 1,
+        actionIdentifier = ActionIds.allow,
+        data = buildJsonObject {
+            put("category", "permission")
+            put("serverId", serverId)
+            put("serverName", serverName)
+            put("sessionId", "s-1")
+            put("sessionTitle", "Chat")
+            put("requestId", "r-1")
+            put("text", "Run?")
+            put("actions", JsonArray(listOf(JsonPrimitive("allow"), JsonPrimitive("deny"))))
+        },
+    )
+
+    /** A machine's request routes: the one permission request pending, every resolution kept. */
+    private fun settleClient(resolved: MutableList<Pair<String, RequestResponse>>) = object : SettleClient {
+        override suspend fun listRequests() = RequestSnapshot(
+            1,
+            listOf(
+                PendingRequest(
+                    id = "r-1",
+                    sessionId = "s-1",
+                    kind = RequestKind.Permission,
+                    description = "Run?",
+                    createdAt = 1,
+                    options = listOf(IdLabel("allow-once", "Allow"), IdLabel("deny", "Deny")),
+                ),
+            ),
+        )
+
+        override suspend fun resolve(requestId: String, response: RequestResponse): ResolveOutcome {
+            resolved += requestId to response
+            return ResolveOutcome(true)
+        }
+
+        override suspend fun writePermissionResponse(sessionId: String, requestId: String, optionId: String): WriteAnswer =
+            error("the request route answers first")
+    }
 
     @Test
     fun `owner isolation two subjects never share a draft, a credential, a relay url or a pairing record`() = runBlocking {
@@ -310,6 +377,42 @@ class OwnerTest {
         assertEquals("The account changed.", (outcome.exceptionOrNull() as? AuthError)?.message)
         assertNull(a.kv.get(MACHINES_CACHE_KEY))
         assertTrue(rawKv.map.keys.toString(), rawKv.map.keys.none { it.endsWith(MACHINES_CACHE_KEY) })
+    }
+
+    @Test
+    fun `a notification response is answered with the credential of the machine its own server resolves to, never the main one`() = runBlocking {
+        val auth = signedIn("sub-a")
+        val servicesA = services(auth, storesOf(auth))
+        twoPaired(servicesA)
+        assertEquals("studio", servicesA.credentials.mainMachineId())
+        val bearers = mutableListOf<String>()
+        val resolved = mutableListOf<Pair<String, RequestResponse>>()
+        // The payload's server name happens to be the other server's id; only the id decides.
+        val result = servicesA.respond(allowTapped(serverId = "srv-2", serverName = "srv-1")) { credential ->
+            bearers += credential.bearer
+            settleClient(resolved)
+        }
+        assertEquals(HandleResult.Settled, result)
+        assertEquals(listOf("laptop-session"), bearers)
+        assertEquals(listOf("r-1" to RequestResponse.Permission("allow-once")), resolved)
+
+        // A server this owner never paired with gets no client at all; the tap opens Machines.
+        val unpaired = servicesA.respond(allowTapped(serverId = "srv-9", serverName = "Other Mac")) { error("no client for an unpaired server") }
+        assertTrue(unpaired.toString(), unpaired is HandleResult.Open && unpaired.link is DeepLink.Machines)
+    }
+
+    @Test
+    fun `a push is posted with the machine its own server resolves to, and with none for a server this owner never paired`() = runBlocking {
+        val auth = signedIn("sub-a")
+        val servicesA = services(auth, storesOf(auth))
+        twoPaired(servicesA)
+        assertEquals("laptop", servicesA.machineForServer("srv-2"))
+        assertEquals("studio", servicesA.machineForServer("srv-1"))
+        assertNull(servicesA.machineForServer("srv-9"))
+        assertNull(servicesA.machineForServer("Studio"))
+        // Another owner on the same phone resolves none of them.
+        val authB = signedIn("sub-b")
+        assertNull(services(authB, storesOf(authB)).machineForServer("srv-2"))
     }
 
     @Test
