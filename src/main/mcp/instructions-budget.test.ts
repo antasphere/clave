@@ -34,4 +34,15 @@ describe('MCP server instructions', () => {
     expect(at).toBeGreaterThanOrEqual(0)
     expect(at).toBeLessThan(BUDGET / 2)
   })
+
+  it('says how an HTML artefact is made and shown, beside the side panel (PRDCT-4263)', () => {
+    // Every session learns it here or nowhere: a folder with index.html,
+    // opened once, then edited; the panel reloads and keeps the versions.
+    const text = instructions()
+    const line = text.split('\n').find((l) => l.includes('clave_open_side_panel')) ?? ''
+    expect(line).toContain('folder with index.html')
+    expect(line).toContain('ONCE')
+    expect(line).toMatch(/reloads itself/)
+    expect(line).toMatch(/version per turn/)
+  })
 })

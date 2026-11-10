@@ -13,6 +13,12 @@ app anyway, and how the small line drawings that light up an empty state or a de
 drawn. Two parts: **the drawing**, then **the deck**. Do the drawing part on its own when
 only an asset is asked for.
 
+A deck an agent makes in a session is shown the same way: write the folder (its
+`index.html` and anything beside it), open the FOLDER once with `clave_open_side_panel`,
+then keep editing its files. Clave serves it through the Slideless command line it runs
+itself: the panel reloads on every edit, and a version is saved when each of your turns
+ends, so never reopen it to refresh and never save versions yourself.
+
 ## Part 1: the drawing
 
 A Clave drawing is a small, literal line illustration of the thing the reader is about to

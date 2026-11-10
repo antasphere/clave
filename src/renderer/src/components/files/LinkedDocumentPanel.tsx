@@ -3,7 +3,8 @@ import { useEffect, useRef, useState } from 'react'
 import { DocumentTextIcon, EnvelopeIcon, XMarkIcon } from '@heroicons/react/24/outline'
 import type { LinkedDocument, LinkedEmail, LinkedUpdate } from '../../../../shared/linked-documents'
 import { MarkdownPageEditor } from './MarkdownPageEditor'
-import { HtmlPreviewFrame } from './HtmlPreviewFrame'
+import { SlidelessArtefact } from './SlidelessArtefact'
+import { useFileChanged } from '../../hooks/use-file-changed'
 import { ViewModeToggle } from './ViewModeToggle'
 import { IconButton } from '@clave/ui/components'
 import { CodeEditor } from './CodeEditor'
@@ -25,13 +26,18 @@ export function LinkedDocumentPanel({
   const current = useRef(incoming)
   const [status, setStatus] = useState('Saved')
   const [error, setError] = useState('')
-  const [source, setSource] = useState(incoming.kind === 'html')
+  // HTML opens on the page itself (PRDCT-4262): an artefact is there to be
+  // seen, through Slideless; Source is one click away.
+  const [source, setSource] = useState(false)
   const [signatureError, setSignatureError] = useState('')
   const [epoch, setEpoch] = useState(0)
   const pending = useRef(0)
   const queue = useRef(Promise.resolve())
   const scroll = useRef<HTMLDivElement>(null)
   const blocked = useRef(false)
+  // Counts the reloads from disk that changed the document: a keystroke typed
+  // before one landed must not be saved over the file it replaced.
+  const reloads = useRef(0)
   useEffect(
     () =>
       registerLinkedFlusher(
@@ -70,9 +76,18 @@ export function LinkedDocumentPanel({
   useEffect(() => {
     if (scroll.current) scroll.current.scrollTop = incoming.scroll
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  // The file follows its agent (PRDCT-4261): an edit made outside the panel
+  // reloads it, unless the panel holds edits of its own or a conflict. Main
+  // reloads only when the file is not what the panel last loaded or saved,
+  // so the panel's own saves never reload it under the person's cursor.
+  useFileChanged(doc.kind === 'email' ? null : (doc.path ?? null), () => {
+    if (pending.current || blocked.current || current.current.conflict) return
+    update({ reloadExternal: true, ifChanged: true })
+  })
 
   function update(input: LinkedUpdate, emailPatch?: Partial<LinkedEmail>): void {
     if (blocked.current) return
+    const reloadsAtCall = reloads.current
     pending.current++
     setStatus('Saving…')
     setError('')
@@ -86,15 +101,26 @@ export function LinkedDocumentPanel({
         pending.current--
         return
       }
+      // Typed before a reload from disk landed: the store keeps it as a
+      // conflict instead of writing it over the file the panel just took.
+      const stale = input.content !== undefined && reloads.current !== reloadsAtCall
       try {
         const saved = await window.electronAPI.linkedDocuments.update(
           current.current.id,
           current.current.revision,
-          emailPatch ? { ...input, email: { ...current.current.email!, ...emailPatch } } : input
+          emailPatch
+            ? { ...input, email: { ...current.current.email!, ...emailPatch } }
+            : stale
+              ? { ...input, stale: true }
+              : input
         )
+        const before = current.current.revision
         current.current = saved
         if (pending.current === 1) setDoc(saved)
-        if (input.reloadExternal) setEpoch((e) => e + 1)
+        if (input.reloadExternal && saved.revision !== before) {
+          reloads.current++
+          setEpoch((e) => e + 1)
+        }
         setStatus(saved.conflict ? 'Conflict · edits retained' : 'Saved')
       } catch (e) {
         // Never overwrite the local buffer following an agent revision conflict.
@@ -205,26 +231,51 @@ export function LinkedDocumentPanel({
             signatureError={signatureError}
             onSignatureError={setSignatureError}
           />
-        ) : source ? (
-          <CodeEditor
-            filename={doc.path!}
-            value={doc.content}
-            onChange={(content) => update({ content })}
-          />
         ) : doc.kind === 'markdown' ? (
-          <MarkdownPageEditor
-            key={epoch}
-            content={doc.content}
-            onChange={(content) => update({ content })}
-            onSave={() => {}}
-          />
-        ) : doc.conflict ? (
-          <div className="linked-document-notice">
-            Resolve the external file conflict before previewing. Your edits remain available in
-            Source.
-          </div>
+          source ? (
+            <CodeEditor
+              filename={doc.path!}
+              value={doc.content}
+              onChange={(content) => update({ content })}
+            />
+          ) : (
+            <MarkdownPageEditor
+              key={epoch}
+              content={doc.content}
+              onChange={(content) => update({ content })}
+              onSave={() => {}}
+            />
+          )
         ) : (
-          <HtmlPreviewFrame filePath={doc.path!} reloadKey={doc.revision} />
+          <>
+            {source && (
+              <CodeEditor
+                filename={doc.path!}
+                value={doc.content}
+                onChange={(content) => update({ content })}
+              />
+            )}
+            {/* The Slideless view stays mounted under Source and through a
+                conflict (PRDCT-4262), so its server keeps running and each
+                finished turn still saves a version; it is only out of sight. */}
+            {!source && doc.conflict && (
+              <div className="linked-document-notice">
+                Resolve the external file conflict before previewing. Your edits remain available in
+                Source.
+              </div>
+            )}
+            <div
+              className="h-full"
+              style={source || doc.conflict ? { display: 'none' } : undefined}
+            >
+              <SlidelessArtefact
+                target={doc.root ?? doc.path!}
+                page={doc.path!}
+                sessionId={doc.sessionId}
+                reloadKey={doc.revision}
+              />
+            </div>
+          </>
         )}
       </div>
     </section>

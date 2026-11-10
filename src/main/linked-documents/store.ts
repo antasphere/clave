@@ -1,4 +1,12 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'fs'
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  renameSync,
+  statSync,
+  writeFileSync
+} from 'fs'
 import { basename, extname, join, resolve, isAbsolute } from 'path'
 import { randomUUID } from 'crypto'
 import {
@@ -14,6 +22,9 @@ import { digest, validateEmailHtml, importSignature } from './email'
 
 /** Fields a build before PRDCT-3438 persisted for the composer's built-in send, removed since. */
 const LEGACY_DELIVERY_FIELDS = ['delivery', 'deliveries', 'preparedPackages'] as const
+
+/** The hash a stale save leaves: no file's digest is ever equal to it. */
+const STALE_HASH = 'stale'
 
 /** Synchronous disk critical sections serialize IPC/MCP edits; the async signature imports use revision checks. */
 export class LinkedDocumentStore {
@@ -71,6 +82,27 @@ export class LinkedDocumentStore {
     const abs = resolve(p)
     if (!statSync(abs).isFile()) throw new Error('Expected a regular file')
     return abs
+  }
+  /** A folder an agent opened, or undefined when the path is not one. */
+  private resolveFolder(p: string): string | undefined {
+    if (!isAbsolute(p)) throw new Error('Use an absolute local file path')
+    const abs = resolve(p)
+    return existsSync(abs) && statSync(abs).isDirectory() ? abs : undefined
+  }
+  /** A folder's entry page: index.html, else its one .html file. */
+  private entryOf(root: string): string {
+    for (const name of ['index.html', 'index.htm'])
+      if (existsSync(join(root, name)) && statSync(join(root, name)).isFile())
+        return join(root, name)
+    const pages = readdirSync(root).filter(
+      (name) => /\.html?$/i.test(name) && statSync(join(root, name)).isFile()
+    )
+    if (pages.length === 1) return join(root, pages[0]!)
+    throw new Error(
+      pages.length === 0
+        ? 'The folder holds no HTML page: write its index.html first'
+        : 'The folder holds several HTML pages and no index.html: name one index.html'
+    )
   }
   private readText(p: string): string {
     const abs = this.resolveFile(p)
@@ -147,13 +179,27 @@ export class LinkedDocumentStore {
     const signature = input.signaturePath
       ? await importSignature(this.resolveFile(input.signaturePath))
       : undefined
-    const filePath = input.path ? this.resolveFile(input.path) : undefined
+    const root = input.path ? this.resolveFolder(input.path) : undefined
+    const filePath = root
+      ? this.entryOf(root)
+      : input.path
+        ? this.resolveFile(input.path)
+        : undefined
     const ext = filePath ? extname(filePath).toLowerCase() : ''
     if (filePath && !['.md', '.markdown', '.html', '.htm'].includes(ext))
-      throw new Error('Linked files support Markdown and HTML')
+      throw new Error('Linked files support Markdown, HTML, and a folder holding an HTML page')
     const prior = this.index()[sessionId]
-    if (prior && filePath && this.get(prior).path === filePath)
-      return this.update(prior, this.get(prior).revision, { hidden: false })
+    if (prior && filePath && this.get(prior).path === filePath && this.get(prior).root === root) {
+      const was = this.get(prior)
+      // Opening the same file again shows what is on disk now (PRDCT-4261):
+      // an agent that edited it and opens it again must not see the old page.
+      // A panel holding a conflict keeps it, and the person's edits with it.
+      const changed = !was.conflict && digest(this.readText(filePath)) !== was.sourceHash
+      return this.update(prior, was.revision, {
+        hidden: false,
+        ...(changed ? { reloadExternal: true } : {})
+      })
+    }
     const content = filePath ? this.readText(filePath) : ''
     const doc: LinkedDocument = {
       id: randomUUID(),
@@ -162,6 +208,7 @@ export class LinkedDocumentStore {
       title: input.title || (filePath ? basename(filePath) : 'Email'),
       revision: 1,
       path: filePath,
+      ...(root ? { root } : {}),
       content,
       sourceHash: filePath ? digest(content) : undefined,
       email: input.email,
@@ -281,10 +328,36 @@ export class LinkedDocumentStore {
         input.signatureMode
       )
         throw new Error('Email fields require an email')
-      if (input.reloadExternal) {
+      if (input.reloadExternal && input.ifChanged) {
+        // The watcher's call: nothing to do when the file is what the panel
+        // holds, and never over a conflict the person has to resolve.
+        // A file gone for a moment (a checkout, an agent's rm then write) is
+        // nothing to load: the panel keeps what it holds, and the watcher's
+        // next event, when the file is back, reloads it.
+        let disk: string
+        try {
+          disk = this.readText(doc.path!)
+        } catch {
+          return doc
+        }
+        if (doc.conflict || digest(disk) === doc.sourceHash) return doc
+        doc.content = disk
+        doc.sourceHash = digest(disk)
+      } else if (input.reloadExternal) {
         doc.content = this.readText(doc.path!)
         doc.sourceHash = digest(doc.content)
         delete doc.conflict
+      } else if (input.content !== undefined && input.stale) {
+        // Typed against a file the panel has since reloaded: keep the edit in
+        // Clave and leave the newer file alone. The hash the panel holds is
+        // made to match no file, so every later keystroke meets the same
+        // check an outside change meets, until the file is loaded again
+        // (reloadExternal) — while a conflict from a passing write error still
+        // heals on the next save, as it always did.
+        doc.content = input.content
+        doc.sourceHash = STALE_HASH
+        doc.conflict =
+          'The file changed on disk while you typed. Your edits are retained in Clave. Copy them before loading the file.'
       } else if (input.content !== undefined) {
         doc.content = input.content
         try {
