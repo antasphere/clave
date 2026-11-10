@@ -6,6 +6,7 @@ import { registerUsageHandlers } from './usage-handlers'
 import { registerGitHandlers } from './git-handlers'
 import { registerUpdaterHandlers } from './updater-handlers'
 import { registerAgentUpdateHandlers } from './agent-update-handlers'
+import { registerSlidelessHandlers } from '../slideless'
 import { registerTelemetryHandlers } from './telemetry-handlers'
 import { registerOnboardingHandlers } from './onboarding-handlers'
 import { registerFeedbackHandlers } from './feedback-handlers'
@@ -62,6 +63,7 @@ export function registerIpcHandlers(deps: KeymapHandlerDeps = {}): void {
   registerGitHandlers()
   registerUpdaterHandlers()
   registerAgentUpdateHandlers()
+  registerSlidelessHandlers()
   registerTelemetryHandlers()
   registerOnboardingHandlers()
   registerFeedbackHandlers()

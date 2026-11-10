@@ -18,6 +18,7 @@ import {
 import { ClaveMark } from '../ui/ClaveMark'
 import { PrereleaseMark } from '../ui/PrereleaseMark'
 import { AgentUpdatesSection } from './AgentUpdatesSection'
+import { SlidelessSection } from './SlidelessSection'
 import { UpdateErrorDrawing } from './UpdateErrorDrawing'
 import {
   describeUpdaterError,
@@ -252,6 +253,8 @@ export function UpdatesTab(): React.JSX.Element {
       </SettingsSection>
 
       <AgentUpdatesSection />
+
+      <SlidelessSection />
 
       <SettingsSection
         title="Release channel"

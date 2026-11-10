@@ -3,7 +3,8 @@ import { useEffect, useRef, useState } from 'react'
 import { DocumentTextIcon, EnvelopeIcon, XMarkIcon } from '@heroicons/react/24/outline'
 import type { LinkedDocument, LinkedEmail, LinkedUpdate } from '../../../../shared/linked-documents'
 import { MarkdownPageEditor } from './MarkdownPageEditor'
-import { HtmlPreviewFrame } from './HtmlPreviewFrame'
+import { SlidelessArtefact } from './SlidelessArtefact'
+import { useFileChanged } from '../../hooks/use-file-changed'
 import { ViewModeToggle } from './ViewModeToggle'
 import { IconButton } from '@clave/ui/components'
 import { CodeEditor } from './CodeEditor'
@@ -25,7 +26,9 @@ export function LinkedDocumentPanel({
   const current = useRef(incoming)
   const [status, setStatus] = useState('Saved')
   const [error, setError] = useState('')
-  const [source, setSource] = useState(incoming.kind === 'html')
+  // HTML opens on the page itself (PRDCT-4262): an artefact is there to be
+  // seen, through Slideless; Source is one click away.
+  const [source, setSource] = useState(false)
   const [signatureError, setSignatureError] = useState('')
   const [epoch, setEpoch] = useState(0)
   const pending = useRef(0)
@@ -70,6 +73,14 @@ export function LinkedDocumentPanel({
   useEffect(() => {
     if (scroll.current) scroll.current.scrollTop = incoming.scroll
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  // The file follows its agent (PRDCT-4261): an edit made outside the panel
+  // reloads it, unless the panel holds edits of its own or a conflict. Main
+  // reloads only when the file is not what the panel last loaded or saved,
+  // so the panel's own saves never reload it under the person's cursor.
+  useFileChanged(doc.kind === 'email' ? null : (doc.path ?? null), () => {
+    if (pending.current || blocked.current || current.current.conflict) return
+    update({ reloadExternal: true, ifChanged: true })
+  })
 
   function update(input: LinkedUpdate, emailPatch?: Partial<LinkedEmail>): void {
     if (blocked.current) return
@@ -92,9 +103,10 @@ export function LinkedDocumentPanel({
           current.current.revision,
           emailPatch ? { ...input, email: { ...current.current.email!, ...emailPatch } } : input
         )
+        const before = current.current.revision
         current.current = saved
         if (pending.current === 1) setDoc(saved)
-        if (input.reloadExternal) setEpoch((e) => e + 1)
+        if (input.reloadExternal && saved.revision !== before) setEpoch((e) => e + 1)
         setStatus(saved.conflict ? 'Conflict · edits retained' : 'Saved')
       } catch (e) {
         // Never overwrite the local buffer following an agent revision conflict.
@@ -224,7 +236,12 @@ export function LinkedDocumentPanel({
             Source.
           </div>
         ) : (
-          <HtmlPreviewFrame filePath={doc.path!} reloadKey={doc.revision} />
+          <SlidelessArtefact
+            target={doc.root ?? doc.path!}
+            page={doc.path!}
+            sessionId={doc.sessionId}
+            reloadKey={doc.revision}
+          />
         )}
       </div>
     </section>

@@ -1,0 +1,155 @@
+import { afterEach, describe, expect, it } from 'vitest'
+import { spawn } from 'child_process'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs'
+import { tmpdir } from 'os'
+import { join } from 'path'
+import { ArtefactServers, artefactTarget } from './servers'
+
+/**
+ * A stand-in for the Slideless CLI, run as a real child process: it answers
+ * `dev <target> --port <n> … --json` by listening on the port, printing the
+ * address line the real CLI prints, and counting snapshots on the real route
+ * (header required, as the real one does).
+ */
+const FAKE_CLI = `
+const http = require('http');
+const args = process.argv.slice(2);
+if (process.env.FAKE_MODE === 'crash') { console.error('Error: no entry page in the folder'); process.exit(1); }
+if (process.env.ELECTRON_RUN_AS_NODE !== '1') { console.error('not run as node'); process.exit(2); }
+const port = Number(args[args.indexOf('--port') + 1]);
+const store = args[args.indexOf('--store') + 1];
+let version = 0;
+http.createServer((req, res) => {
+  if (req.url === '/__slideless/snapshot' && req.method === 'POST') {
+    if (req.headers['x-slideless'] !== 'snapshot') { res.writeHead(403); return res.end('{}'); }
+    version++;
+    res.writeHead(201, { 'content-type': 'application/json' });
+    return res.end(JSON.stringify({ version, created: true, store, target: args[1] }));
+  }
+  res.writeHead(200); res.end('ok');
+}).listen(port, '127.0.0.1', () => {
+  console.log('noise before the address');
+  console.log(JSON.stringify({ url: 'http://127.0.0.1:' + port + '/', entry: 'index.html' }));
+});
+`
+
+const dirs: string[] = []
+const servers: ArtefactServers[] = []
+afterEach(() => {
+  servers.splice(0).forEach((s) => s.stopAll())
+  dirs.splice(0).forEach((d) => rmSync(d, { recursive: true, force: true }))
+})
+
+interface Setup {
+  root: string
+  deck: string
+  servers: ArtefactServers
+  spawned: string[][]
+  cliPath: string
+}
+
+function setup(env: NodeJS.ProcessEnv = {}): Setup {
+  const root = mkdtempSync(join(tmpdir(), 'clave-artefacts-'))
+  dirs.push(root)
+  const cliPath = join(root, 'fake-cli.cjs')
+  writeFileSync(cliPath, FAKE_CLI)
+  const deck = join(root, 'deck')
+  mkdirSync(deck)
+  writeFileSync(join(deck, 'index.html'), '<h1>x</h1>')
+  const spawned: string[][] = []
+  const servers_ = new ArtefactServers({
+    spawn: (command, args, options) => {
+      spawned.push([command, ...args])
+      return spawn(command, args, options)
+    },
+    fetch: globalThis.fetch,
+    execPath: process.execPath,
+    store: join(root, 'store'),
+    resolveCli: () => ({ cli: { cliPath, version: '0.14.0', override: false } }),
+    env: { ...process.env, ...env },
+    startTimeoutMs: 5000
+  })
+  servers.push(servers_)
+  return { root, deck, servers: servers_, spawned, cliPath }
+}
+
+describe('artefact servers', () => {
+  it('runs the CLI with Electron Node on a free port, keeps versions in its store, and answers the address', async () => {
+    const { deck, servers: s, spawned, cliPath, root } = setup()
+    const url = await s.serve(deck)
+    expect(url).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/$/)
+    const port = url.match(/:(\d+)\//)![1]
+    expect(spawned[0]).toEqual([
+      process.execPath,
+      cliPath,
+      'dev',
+      deck,
+      '--port',
+      port,
+      '--no-open',
+      '--json',
+      '--store',
+      join(root, 'store')
+    ])
+    expect(await (await fetch(url)).text()).toBe('ok')
+  })
+
+  it('shares one server between holders and stops it with the last one', async () => {
+    const { deck, servers: s, spawned } = setup()
+    const a = await s.serve(deck)
+    const b = await s.serve(`${deck}/`)
+    expect(b).toBe(a)
+    expect(spawned).toHaveLength(1)
+    s.release(deck)
+    expect(s.targets()).toEqual([deck])
+    s.release(deck)
+    expect(s.targets()).toEqual([])
+    await expect
+      .poll(
+        async () =>
+          fetch(a).then(
+            () => 'up',
+            () => 'down'
+          ),
+        { timeout: 3000 }
+      )
+      .toBe('down')
+  })
+
+  it('saves a version through the dev server route, with its header', async () => {
+    const { deck, servers: s } = setup()
+    await s.serve(deck)
+    expect(await s.snapshot(deck)).toEqual({ version: 1, created: true })
+    expect(await s.snapshot(deck)).toEqual({ version: 2, created: true })
+    await expect(s.snapshot(join(deck, 'other'))).rejects.toThrow(/not being served/)
+  })
+
+  it('says why the CLI could not start, and forgets the target', async () => {
+    const { deck, servers: s } = setup({ FAKE_MODE: 'crash' })
+    await expect(s.serve(deck)).rejects.toThrow(/no entry page in the folder/)
+    expect(s.targets()).toEqual([])
+  })
+
+  it('refuses to start without a CLI, saying why', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'clave-artefacts-'))
+    dirs.push(root)
+    const s = new ArtefactServers({
+      spawn,
+      fetch: globalThis.fetch,
+      execPath: process.execPath,
+      store: join(root, 'store'),
+      resolveCli: () => ({ cli: null, reason: 'Slideless is not installed yet' })
+    })
+    await expect(s.serve(root)).rejects.toThrow('Slideless is not installed yet')
+  })
+
+  it('takes a folder or an .html file, absolute and existing, and nothing else', () => {
+    const { deck } = setup()
+    expect(artefactTarget(deck)).toBe(deck)
+    expect(artefactTarget(join(deck, 'index.html'))).toBe(join(deck, 'index.html'))
+    expect(() => artefactTarget('deck')).toThrow(/absolute/)
+    expect(() => artefactTarget(join(deck, 'nope'))).toThrow(/No such/)
+    writeFileSync(join(deck, 'notes.txt'), 'x')
+    expect(() => artefactTarget(join(deck, 'notes.txt'))).toThrow(/folder or an .html/)
+  })
+})

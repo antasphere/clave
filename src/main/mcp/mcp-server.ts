@@ -92,21 +92,21 @@ const MCP_PATH = '/mcp'
 // 2026-09-08, when this block ran to 4242 chars and half the tools were unreachable.
 // KEEP THIS STRING UNDER 2000 CHARACTERS, and put the tool an agent must not miss
 // near the top. Anything longer belongs in a tool description, not here.
-const INSTRUCTIONS = `You are running inside Clave, a Mac app that runs agent sessions as tabs in sidebar groups. You are one of those tabs. Tabs and groups belong to a WORKSPACE (a root folder) and to the WINDOW they were opened in; address a tab by id or name. What you open lands in your window unless you pass window or workspace. Pass "mine" as a sessionId or groupId to mean your own.
+const INSTRUCTIONS = `You are running inside Clave, which runs agent sessions as tabs in sidebar groups; you are one of them. Tabs and groups belong to a WORKSPACE (a root folder) and to the WINDOW they were opened in; address a tab by id or name. What you open lands in your window unless you pass window or workspace. Pass "mine" as a sessionId or groupId to mean your own.
 
 Reach for a clave_* tool when:
-- the user will REVIEW or EDIT something you drafted (a document, a plan, an email) -> clave_open_side_panel opens it in an editor beside your tab; clave_side_panel reads it back when they are done; you send an email yourself, never from the panel. That is what "open it in the panel" means; clave_open_file is not.
+- the user will REVIEW or EDIT something you drafted (a document, a plan, an email) -> clave_open_side_panel opens it beside your tab ("the panel"); clave_side_panel reads it back; you send an email yourself, never from the panel. An HTML page or deck is a folder with index.html: open the folder ONCE, then edit its files; it reloads itself and keeps a version per turn.
 - they only need to READ a file -> clave_open_file (a tab).
 - a live page belongs to a group or a tab -> clave_set_group_view / clave_set_session_view.
-- work could run in parallel -> clave_open_session (a fresh agent tab or terminal, any directory, a prompt, a model) or clave_add_group_terminal (a saved command). clave_launch_group starts a pinned .clave template.
+- work could run in parallel -> clave_open_session (an agent tab or terminal, any directory, a prompt, a model) or clave_add_group_terminal (a saved command). clave_launch_group starts a pinned .clave template.
 - a PAST conversation ("reopen it") -> clave_history lists them; clave_open_session with resume: <id> reopens one.
-- a secret -> clave_request_secret; any other value to type or pick -> clave_request_input, a form in the chat that outlives your turn: ask, end the turn; chat answers go into it via clave_input_set. Never ask in prose.
+- a secret -> clave_request_secret; any other value to type or pick -> clave_request_input, a form in the chat that outlives your turn: ask, end the turn; answers go in via clave_input_set. Never ask in prose.
 - the user must copy something you produced -> clave_offer_copy.
 - long work done -> clave_notify.
 - a job on a schedule -> clave_routine_create, never cron or launchd.
 - tabs must talk -> clave_send_to_session ("parent" reports back to the tab that opened yours; your own id logs a checkpoint) and clave_read_session (recent output).
 
-Also: clave_list, clave_create_group, clave_move_session, clave_rename, clave_focus, clave_close_session, clave_open_window, clave_switch_workspace (only when they should look there). Pi tabs can be messaged and read, not call tools.`
+Also: clave_list, clave_create_group, clave_move_session, clave_rename, clave_focus, clave_close_session, clave_open_window, clave_switch_workspace (when they should look there). Pi tabs can be messaged and read only.`
 
 let httpServer: http.Server | null = null
 let serverToken: string | null = null
@@ -1407,7 +1407,7 @@ function buildServer(callerSessionId: string | undefined): McpServer {
     'clave_open_side_panel',
     {
       description:
-        'THE tool for "open the panel", "open it beside this session", "let me review/edit/modify that draft": opens a Markdown/HTML file or a structured email in a SIDE PANEL beside YOUR calling session, two panes, focused immediately, and the user edits it there. Prefer it over clave_open_file whenever the user will change what you wrote — clave_open_file is a read-only-ish tab elsewhere in the window, not the panel. Pass exactly one of path or email; email takes to/cc/subject/bodyHtml/threadId and makes this a full composer. Files and attachments must use absolute paths. Signatures support text, links, tables and inline styling; local/data/HTTPS images are staged when signaturePath imports an HTML file. Reopening a path preserves edits. The panel is for the USER to review and edit, and it has no send: once they are done, clave_side_panel read gives you the reviewed email (fields, reply headers, signature, each attachment\'s file path) and you send it through your own channel (your mail tool or script), never from the panel.',
+        'THE tool for "open the panel", "open it beside this session", "let me review/edit/modify that draft": opens a Markdown/HTML file or a structured email in a SIDE PANEL beside YOUR calling session, two panes, focused immediately, and the user edits it there. Prefer it over clave_open_file whenever the user will change what you wrote — clave_open_file is a read-only-ish tab elsewhere in the window, not the panel. Pass exactly one of path or email; email takes to/cc/subject/bodyHtml/threadId and makes this a full composer. Files and attachments must use absolute paths. Signatures support text, links, tables and inline styling; local/data/HTTPS images are staged when signaturePath imports an HTML file. An HTML page, document or deck: pass a FOLDER holding a self-contained index.html (inline style and script, its assets beside it). HTML is shown through Slideless, which Clave runs locally: it reloads on every edit you make to its files and Clave saves a version when each of your turns ends, so open it ONCE and keep editing; never reopen it to refresh. Reopening a path shows the file as it is on disk now. The panel is for the USER to review and edit, and it has no send: once they are done, clave_side_panel read gives you the reviewed email (fields, reply headers, signature, each attachment\'s file path) and you send it through your own channel (your mail tool or script), never from the panel.',
       inputSchema: linkedOpenSchema
     },
     async (args) => {

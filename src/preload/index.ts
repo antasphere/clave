@@ -16,6 +16,7 @@ import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import type { UpdaterState } from '../shared/updater-types'
 import { reportFromWire, type LimitReport } from '../shared/limit-report'
 import type { AgentUpdateId, AgentUpdatesState } from '../shared/agent-updates'
+import type { SlidelessServed, SlidelessSnapshot, SlidelessState } from '../shared/slideless'
 import type {
   LaunchProfile,
   LaunchProfilePreferences,
@@ -1717,6 +1718,17 @@ const electronAPI = {
   onSecretRequestsChanged: (callback: (requests: unknown[]) => void) =>
     createIpcListener<[unknown[]]>('secret:requests-changed', callback),
 
+  slideless: {
+    getState: () => ipcRenderer.invoke('slideless:get-state') as Promise<SlidelessState>,
+    install: () => ipcRenderer.invoke('slideless:install') as Promise<SlidelessState>,
+    serve: (target: string) =>
+      ipcRenderer.invoke('slideless:serve', target) as Promise<SlidelessServed>,
+    release: (target: string) => ipcRenderer.invoke('slideless:release', target) as Promise<void>,
+    snapshot: (target: string) =>
+      ipcRenderer.invoke('slideless:snapshot', target) as Promise<SlidelessSnapshot>,
+    onState: (callback: (state: SlidelessState) => void) =>
+      createIpcListener<[SlidelessState]>('slideless:state', callback)
+  },
   linkedDocuments: {
     getDefaultSignature: () => ipcRenderer.invoke('linked-documents:get-default-signature'),
     setDefaultSignature: (path: string) =>
