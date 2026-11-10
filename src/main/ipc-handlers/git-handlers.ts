@@ -2,6 +2,7 @@ import { BrowserWindow, ipcMain } from 'electron'
 import * as fs from 'fs'
 import log from 'electron-log/main'
 import { gitManager } from '../git-manager'
+import { isServerExternal } from '../server/endpoint'
 import { GitRepoWatcher } from '../git-watch'
 import { GIT_WATCH_DEBOUNCE_MS, GIT_WATCH_MAX_WAIT_MS } from '../constants'
 import { logPullFailures } from '../pull-log'
@@ -41,7 +42,42 @@ const repoWatcher = new GitRepoWatcher({
   maxWaitMs: GIT_WATCH_MAX_WAIT_MS
 })
 
+/** What a person reads when the server that writes this Mac's commit
+ *  messages cannot be reached: no address, no protocol words. */
+export const SERVER_SILENT = "Clave's server did not answer. Try again in a moment."
+
+/** Sync all's commit message, written where this Mac's helpers run
+ *  (PRDCT-4330): with a server of its own behind the window, that server
+ *  writes it (the call the panel's own button makes, through the routed
+ *  member); in-process, main's helper as before. A server that cannot be
+ *  reached is said in plain words; its own refusal ("Switched off …") passes
+ *  through. Main spawns nothing either way: its runner refuses all helpers
+ *  when a server backs the window (`settings/shell-source.ts`). */
+export async function syncCommitMessage(
+  cwd: string,
+  local: (cwd: string) => Promise<string> = (dir) => gitManager.generateCommitMessage(dir),
+  server: () => Promise<{
+    git: { generateCommitMessage: (cwd: string) => Promise<string> }
+  }> = async () => (await import('../mcp/server-client')).serverClient.api()
+): Promise<string> {
+  if (!isServerExternal()) return local(cwd)
+  let api: Awaited<ReturnType<typeof server>>
+  try {
+    api = await server()
+  } catch {
+    throw new Error(SERVER_SILENT)
+  }
+  try {
+    return await api.git.generateCommitMessage(cwd)
+  } catch (error) {
+    const tag = (error as { _tag?: unknown } | null)?._tag
+    if (tag === 'ServerUnreachable' || tag === 'ServerRefused') throw new Error(SERVER_SILENT)
+    throw error
+  }
+}
+
 export function registerGitHandlers(): void {
+  gitManager.setCommitMessageWriter((cwd) => syncCommitMessage(cwd))
   const watchedSenders = new Set<number>()
   ipcMain.handle('git:watch-repos', (event, subscriberId: string, repoPaths: string[]) => {
     const wcId = event.sender.id

@@ -485,6 +485,15 @@ function readOnlyGit(cwd: string): ReturnType<typeof simpleGit> {
 }
 
 class GitManager {
+  // ── PRDCT-4330 (helpers-settings lane) ──
+  /** Who writes Sync all's commit message: this process's helper unless
+   *  main is told otherwise (with a server of its own behind the window, the
+   *  server writes it: `ipc-handlers/git-handlers.ts`). */
+  private commitMessageWriter: ((cwd: string) => Promise<string>) | null = null
+  setCommitMessageWriter(writer: ((cwd: string) => Promise<string>) | null): void {
+    this.commitMessageWriter = writer
+  }
+  // ── end PRDCT-4330 ──
   /** Every background read of every window goes through this one queue. */
   private readonly queue = new GitQueue(GIT_QUEUE_CONCURRENCY, GIT_QUEUE_FETCH_CONCURRENCY)
   private readonly repoInfoCache = new Map<string, RepoInfo>()
@@ -1224,7 +1233,10 @@ class GitManager {
 
         // 3. Generate commit message
         progress.step(repoPath, 'generating')
-        const message = await this.generateCommitMessage(repoPath)
+        // PRDCT-4330: written where this Mac's helpers run.
+        const message = await (
+          this.commitMessageWriter ?? ((cwd: string) => this.generateCommitMessage(cwd))
+        )(repoPath)
         result.actions.push('generated')
 
         // 4. Commit
