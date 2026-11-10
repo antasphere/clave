@@ -15,6 +15,7 @@ import {
   isRiskLevel,
   RISK_LABELS,
   ruleReading,
+  type Floor,
   type RiskLevel,
   type RuleLevel
 } from './permission-risk'
@@ -43,6 +44,8 @@ export interface ExplainerInput {
   /** What the rules gave: a level the model can only raise, or `unknown`,
    *  when the model's reading is the only level there is. */
   floor: RuleLevel
+  /** With an unknown floor: what the parts the rules could read reach. */
+  atLeast?: Floor
 }
 
 export interface ExplainerReading {
@@ -97,16 +100,20 @@ ${blocks.join('\n\n')}${noticed}${secrets}
 
 ${
   input.floor === 'unknown'
-    ? 'The rules could not tell what this request does: your reading is the only one.'
+    ? input.atLeast
+      ? `The rules could not tell what all of this request does, but the parts they could read already reach "${input.atLeast}" (${RISK_LABELS[input.atLeast]}).`
+      : 'The rules could not tell what this request does: your reading is the only one.'
     : `The rules already rated this request "${input.floor}" (${RISK_LABELS[input.floor]}).`
 }
 
 Reply with ONE line of JSON and nothing else:
 {"sentence": "...", "level": "...", "asked": "..."}
-- sentence: what saying yes does, for someone who does not program. One or two short sentences, at most 30 words. Plain words: no command names, no flags, no code, no file paths (say "four files of the project", "a file outside the project", "a website"). Say what it touches and whether it changes anything, for example "Reads four files of the project. Changes nothing." or "Deletes the project's build folder for good."
+- sentence: what saying yes does, for someone who does not program. One or two short sentences, at most 30 words. Plain words: no command names, no flags, no code, no file paths (say "four files of the project", "a file outside the project", "a website"). Say what it touches and whether it changes anything, for example "Reads four files of the project. Changes nothing." or "Deletes the project's build folder for good." Say only what the request's text shows: never state facts about backups, version control, or what is live or in production unless the text shows them, and use "may" only for what the command itself can plausibly do.
 - level: "reads" (reads only, changes nothing), "project" (changes files inside the project folder), "outside" (touches files outside the project, other programs, or the internet), or "irreversible" (deletes, overwrites history, sends or publishes something, runs code from the internet, uses administrator rights: hard to undo). ${
     input.floor === 'unknown'
-      ? 'When unsure, choose the higher level.'
+      ? input.atLeast
+        ? `When unsure, choose the higher level. Never lower than "${input.atLeast}".`
+        : 'When unsure, choose the higher level.'
       : `Never lower than "${input.floor}".`
   }
 - asked: "yes" when it is what the person asked for or a plain step toward it, "no" when it goes beyond or against what they asked, "unclear" when their message does not say.`

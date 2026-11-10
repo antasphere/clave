@@ -14,7 +14,12 @@
 import type { SessionHostService } from '@clave/server'
 import type { SessionEvent, SessionStream } from '../../shared/session-model'
 import type { HelperOutcome } from '../helpers/registry'
-import { isExplainable, riskFloor, shownLevel, toolDescription } from '../../shared/permission-risk'
+import {
+  isExplainable,
+  ruleReading,
+  shownLevel,
+  toolDescription
+} from '../../shared/permission-risk'
 import {
   parseExplainerReply,
   type ExplainerInput,
@@ -110,7 +115,9 @@ export function explainingSessionHost(options: ExplainingHostOptions): {
     asked.set(key, signature)
     const cwd = base.get(sessionId)?.cwd
     const toolName = request.toolName!
-    const floor = riskFloor({ toolName, input: request.input, cwd })
+    const rules = ruleReading({ toolName, input: request.input, cwd })
+    const floor = rules.level
+    const atLeast = rules.atLeast
     const context = contextOf(sessionId)
     const input: ExplainerInput = {
       toolName,
@@ -120,7 +127,8 @@ export function explainingSessionHost(options: ExplainingHostOptions): {
       ...(context.asked && { asked: context.asked }),
       ...(context.words.trim() && { agentWords: context.words.slice(-AGENT_WORDS_CHARS) }),
       ...(cwd && { cwd }),
-      floor
+      floor,
+      ...(atLeast && { atLeast })
     }
     const owner = `${key}\u0000${++readings}`
     const previous = inflight.get(key)
@@ -152,11 +160,12 @@ export function explainingSessionHost(options: ExplainingHostOptions): {
               },
               // The model raises what the rules found, may give an unknown
               // request an upper level, never says "reads only" by itself.
-              shownLevel(floor, outcome.value.level)
+              // With a floor (a part unreadable, the rest readable): never under it.
+              shownLevel(floor, outcome.value.level ?? null, atLeast)
             )
           : withLevel(
               { type: 'permission_explained', id: request.id, failed: outcome.reason },
-              shownLevel(floor)
+              shownLevel(floor, undefined, atLeast)
             )
         let readings = held.get(sessionId)
         if (!readings) held.set(sessionId, (readings = new Map()))

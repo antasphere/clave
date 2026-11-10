@@ -212,6 +212,24 @@ describe('the explainer trigger', () => {
     expect(f.published).toEqual([{ type: 'permission_explained', id: 'r1', failed: 'limit' }])
   })
 
+  it('keeps the floor of a request read only in part: the model never goes under it', async () => {
+    const explain = vi.fn<Explain>(async () =>
+      reading({ level: 'reads', sentence: 'Runs a script.' })
+    )
+    const f = fixture(explain)
+    f.emit(bash('r1', 'python3 wipe.py > log.txt'))
+    await settle()
+    expect(explain.mock.calls[0][1]).toMatchObject({ floor: 'unknown', atLeast: 'project' })
+    expect(f.published[0]).toMatchObject({ level: 'project', sentence: 'Runs a script.' })
+  })
+
+  it('publishes no level for a request read only in part when the reading fails', async () => {
+    const f = fixture(async () => ({ ok: false, reason: 'timeout', detail: 'slow' }))
+    f.emit(bash('r1', 'python3 wipe.py > log.txt'))
+    await settle()
+    expect(f.published).toEqual([{ type: 'permission_explained', id: 'r1', failed: 'timeout' }])
+  })
+
   it('says why no sentence came, with the floor', async () => {
     const f = fixture(async () => ({ ok: false, reason: 'timeout', detail: 'slow' }))
     f.emit(bash('r1', 'git push origin main'))

@@ -71,6 +71,24 @@ describe('the explainer prompt', () => {
     expect(secret).not.toContain('<rules_noticed>')
   })
 
+  it('names the floor of a request the rules could read only in part', () => {
+    const prompt = explainerPrompt({
+      ...INPUT,
+      input: { command: 'python3 wipe.py > log.txt' },
+      cwd: '/repo',
+      floor: 'unknown',
+      atLeast: 'project'
+    })
+    expect(prompt).toContain('could not tell what all of this request does')
+    expect(prompt).toContain('Never lower than "project"')
+  })
+
+  it('keeps the sentence to what the text shows', () => {
+    const prompt = explainerPrompt(INPUT)
+    expect(prompt).toContain("Say only what the request's text shows")
+    expect(prompt).toMatch(/backups, version control, or what is live/)
+  })
+
   it('clips a long request and a long message', () => {
     const prompt = explainerPrompt({
       ...INPUT,
