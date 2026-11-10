@@ -70,7 +70,7 @@ import { exchangeDigestHelper } from './helpers/digests'
 
 const DIGEST_CLI_ARGS = helperCliArgs(exchangeDigestHelper.systemPrompt, exchangeDigestHelper)
 import { DIGEST_HELPER_MARKER, clipDigestMessages, digestKey } from '../shared/exchange-digest'
-import { WORK_DIGEST_MARKER, workDigestKey } from '../shared/work-digest'
+import { WORK_DIGEST_MARKER, clipNotes, workDigestKey } from '../shared/work-digest'
 import { resetShutdownForTests } from './helpers/runner'
 
 async function ticks(): Promise<void> {
@@ -357,5 +357,16 @@ describe('the launch both servers compose (PRDCT-4327)', () => {
     expect(mocks.calls).toHaveLength(1)
     mocks.calls[0].finish(null, '{"needs_you": true, "message": 1, "summary": "Raw."}', '')
     await expect(done).resolves.toMatchObject({ ok: true, summary: 'Raw.', message: 0 })
+  })
+
+  it('clips the notes it receives before it checks the key, so unclipped notes key as the view keys them', async () => {
+    const raw = Array.from({ length: 45 }, (_, i) => `N${i} `.repeat(400))
+    const key = workDigestKey(clipNotes(raw).notes)
+    const host = hostDigests(() => ({}))
+    const done = host.workDigest({ sessionId: 'raw-notes', key, notes: raw, tools: 3 })
+    await ticks()
+    expect(mocks.calls).toHaveLength(1)
+    mocks.calls[0].finish(null, '{"title": "Raw notes", "needs_you": false, "note": null}', '')
+    await expect(done).resolves.toMatchObject({ ok: true, title: 'Raw notes' })
   })
 })

@@ -10,6 +10,17 @@
  * `src/main/exchange-digest.ts`, `journalRead`): main's is the app's user
  * data, the child's is `userData/server`.
  *
+ * Only a session id the server does not know is asked, not a real tab's
+ * timeline: in separate mode a tab only exists once the server child is up
+ * (it spawns them), so a real tab in the boot window means one restored from
+ * a previous run with its conversation, and the harness's chat fixture
+ * (`--dev-echo-adapter`) keeps no history across a restart; a real Claude
+ * chat on the stream stub would need its transcript staged by hand and two
+ * launches, which is the record path `fleet-digests-record.spec.mjs` already
+ * walks. That a card which failed for want of the server is asked again by
+ * itself once it comes is pinned by the view's unit test
+ * (`plugins/chat-view/src/digest.test.ts`, "when the window's server comes").
+ *
  * Fails if: a digest asked before the server is named goes to main over IPC
  * (main's journal has a line, and that answer is main's reading rather than
  * the server's "no record of that tab"); or the calls asked early are lost
