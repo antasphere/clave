@@ -57,6 +57,7 @@ import com.clave.ui.components.ScreenScaffold
 import com.clave.ui.theme.Clave
 import com.clave.ui.theme.ClaveIcon
 import com.clave.ui.theme.ClaveTypography
+import com.clave.ui.theme.Icon
 import com.clave.ui.theme.Metrics
 import com.clave.ui.theme.shadow
 
@@ -282,10 +283,14 @@ private fun RequestCard(
         }
         val said = problem
         if (said != null) {
-            BasicText(
-                said,
-                style = ClaveTypography.type(Metrics.textXs, lineHeight = Metrics.proseLineHeight).copy(color = c.shared.destructive),
-            )
+            // The red is the triangle's; the sentence takes the secondary ink, readable in every theme.
+            Row(horizontalArrangement = Arrangement.spacedBy(Metrics.space(2)), verticalAlignment = Alignment.Top) {
+                Icon(ClaveIcon.ExclamationTriangle, contentDescription = null, tint = c.shared.destructive, size = Metrics.chatGlyph)
+                BasicText(
+                    said,
+                    style = ClaveTypography.type(Metrics.textXs, lineHeight = Metrics.proseLineHeight).copy(color = c.theme.textSecondary),
+                )
+            }
         }
     }
 }

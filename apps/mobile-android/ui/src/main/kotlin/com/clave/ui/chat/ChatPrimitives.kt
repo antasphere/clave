@@ -5,8 +5,6 @@ import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -16,6 +14,8 @@ import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -53,6 +53,7 @@ import com.clave.ui.components.ClaveTextField
 import com.clave.ui.components.Notice
 import com.clave.ui.components.NoticeKind
 import com.clave.ui.components.StatusDot
+import com.clave.ui.components.StatusWord
 import com.clave.ui.markdown.Markdown
 import com.clave.ui.theme.Clave
 import com.clave.ui.theme.ClaveIcon
@@ -208,13 +209,8 @@ fun ToolRow(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
-            if (failures > 0) {
-                BasicText(
-                    text = "$failures failed",
-                    style = ClaveTypography.type(Metrics.textXs).copy(color = c.shared.destructive),
-                    maxLines = 1,
-                )
-            }
+            // The red is the dot's, the count's words the readable ink.
+            if (failures > 0) StatusWord("$failures failed", c.shared.destructive)
             Icon(
                 ClaveIcon.ChevronRight,
                 null,

@@ -229,7 +229,9 @@ fun Notice(
             BasicText(
                 text = text,
                 style = ClaveTypography.type(Metrics.textControl, lineHeight = Metrics.proseLineHeight).copy(
-                    color = if (kind == NoticeKind.Destructive) c.shared.destructive else t.textSecondary,
+                    // The hue is the triangle's: the destructive red reads at 2.97:1 to 3.22:1 on
+                    // this surface in the light themes, the primary ink at 12:1 and more.
+                    color = if (kind == NoticeKind.Destructive) t.textPrimary else t.textSecondary,
                 ),
             )
             if (action != null) {

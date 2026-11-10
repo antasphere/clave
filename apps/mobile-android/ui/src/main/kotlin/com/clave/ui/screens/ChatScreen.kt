@@ -462,7 +462,8 @@ private fun UnknownSendCard(send: UnknownSendView, onResend: () -> Unit, onDisca
     ) {
         Row(horizontalArrangement = Arrangement.spacedBy(Metrics.space(2)), verticalAlignment = Alignment.CenterVertically) {
             Icon(ClaveIcon.ExclamationTriangle, contentDescription = null, tint = c.shared.destructive, size = Metrics.chatGlyph)
-            BasicText("Delivery unknown", style = ClaveTypography.type(Metrics.textControl).copy(color = c.shared.destructive))
+            // The red is the triangle's; the words take the primary ink, readable in every theme.
+            BasicText("Delivery unknown", style = ClaveTypography.type(Metrics.textControl).copy(color = c.theme.textPrimary))
         }
         BasicText(
             send.text,

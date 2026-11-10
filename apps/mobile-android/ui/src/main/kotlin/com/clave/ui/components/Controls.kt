@@ -20,12 +20,12 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.foundation.selection.toggleable
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -50,6 +50,7 @@ import com.clave.ui.theme.Icon
 import com.clave.ui.theme.Metrics
 import com.clave.ui.theme.Reachability
 import com.clave.ui.theme.SessionStatus
+import com.clave.ui.theme.ThemeColors
 import com.clave.ui.theme.shadow
 import com.clave.ui.theme.withAlpha
 
@@ -250,24 +251,44 @@ fun StatusDot(color: Color, modifier: Modifier = Modifier, pulsing: Boolean = fa
     Box(modifier.size(size).alpha(alpha).clip(CircleShape).background(color))
 }
 
-/** `.status-text`: a state said in words at the end of a row, in its ink. */
+/**
+ * The ink of a state said in words: the theme's secondary text, which reads at 4.5:1 or more on
+ * every surface a row sits on in the four themes (StatusInkTest holds it). The state's hue is
+ * its dot's alone: 12 sp words in the shared status hues fell to 1.91:1 on the light themes.
+ */
+fun statusWordInk(theme: ThemeColors): Color = theme.textSecondary
+
+/** `.status-text`: a state said in words at the end of a row, in the readable ink. */
 @Composable
-fun StatusWord(label: String, color: Color, modifier: Modifier = Modifier) {
+fun StatusWord(label: String, modifier: Modifier = Modifier) {
     BasicText(
         text = label,
         modifier = modifier,
-        style = ClaveTypography.type(Metrics.textXs).copy(color = color),
+        style = ClaveTypography.type(Metrics.textXs).copy(color = statusWordInk(Clave.colors.theme)),
         maxLines = 1,
         overflow = TextOverflow.Ellipsis,
     )
 }
 
-/** A session's state in the sidebar's words and inks. */
+/** A state with its own dot, where the row has none: the dot in the state's canonical hue, the
+ *  word in the readable ink. */
 @Composable
-fun StatusWord(status: SessionStatus, modifier: Modifier = Modifier) =
-    StatusWord(status.label, status.color(Clave.colors.shared), modifier)
+fun StatusWord(label: String, dot: Color, modifier: Modifier = Modifier) {
+    Row(
+        modifier,
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(Metrics.space(1)),
+    ) {
+        StatusDot(dot)
+        StatusWord(label)
+    }
+}
 
-/** A machine's reachability in words. */
+/** A session's state in the sidebar's words; the session row carries the state's dot itself. */
+@Composable
+fun StatusWord(status: SessionStatus, modifier: Modifier = Modifier) = StatusWord(status.label, modifier)
+
+/** A machine's reachability: the dot in the state's hue, then the word. */
 @Composable
 fun StatusWord(reachability: Reachability, modifier: Modifier = Modifier) =
     StatusWord(reachability.label, reachability.color(Clave.colors.shared), modifier)
