@@ -315,7 +315,13 @@ export async function run(t) {
   seedTrustedRoots(DIR2, [ROOT2])
   ;({ app, win } = await launchApp(DIR2, {
     server: 'in-process',
-    env: { CLAVE_TEST_SLIDELESS_REGISTRY: '', CLAVE_SLIDELESS_CLI: '' }
+    // Every reload from disk held 3 s in main: the window in which a
+    // keystroke crosses one, opened on purpose (round 3 of the review).
+    env: {
+      CLAVE_TEST_SLIDELESS_REGISTRY: '',
+      CLAVE_SLIDELESS_CLI: '',
+      CLAVE_TEST_LINKED_RELOAD_HOLD_MS: '3000'
+    }
   }))
   try {
     await fakeAgent(win, ROOT2, WS2.id)
@@ -403,6 +409,45 @@ export async function run(t) {
     t.check(
       'and the keys reach the file',
       !!(await until(() => readFileSync(`${ROOT2}/notes.md`, 'utf8').includes('xyz')))
+    )
+    await sleep(4000)
+
+    // A key typed while the agent's rewrite is being loaded never erases it.
+    const disk = () => readFileSync(`${ROOT2}/notes.md`, 'utf8')
+    const alert = win.locator('[data-testid="linked-document-panel"] [role="alert"]')
+    writeFileSync(`${ROOT2}/notes.md`, '# Notes\n\nthe agent wrote this during your typing\n')
+    // The watcher has seen the write and its reload is held in main.
+    await sleep(1000)
+    await win.keyboard.type('Q')
+    const conflicted = await until(async () =>
+      /changed on disk while you typed/.test((await alert.textContent().catch(() => '')) ?? '')
+        ? true
+        : null
+    )
+    t.check(
+      'a key typed during the reload is kept as a conflict',
+      !!conflicted,
+      await alert.textContent().catch(() => '')
+    )
+    t.check('and the agent’s file is left as it was', disk().includes('during your typing'), disk())
+    await editor.click()
+    await win.keyboard.type('R')
+    await sleep(1500)
+    t.check('the next keys do not erase it either', disk().includes('during your typing'), disk())
+    t.check('and the conflict stands', (await alert.count()) > 0)
+    // Bounded: with no conflict there is no button, and the check below says so.
+    await win
+      .getByRole('button', { name: 'Load saved version' })
+      .click({ timeout: 5000 })
+      .catch(() => {})
+    t.check(
+      'loading the file shows the agent’s text and ends the conflict',
+      !!(await until(async () =>
+        (await editorText()).includes('during your typing') && (await alert.count()) === 0
+          ? true
+          : null
+      )),
+      await editorText()
     )
   } finally {
     await app.close()

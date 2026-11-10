@@ -403,3 +403,34 @@ describe('round 2 of the review: a save typed before a reload landed', () => {
     expect(saved.conflict).toMatch(/changed on disk while you typed/)
   })
 })
+
+describe('round 3 of the review: a conflict ends only when the file is loaded', () => {
+  it('keeps the agent’s file through every keystroke after a stale save, until the person loads it', async () => {
+    const { root, store } = fixture()
+    const path = join(root, 'notes.md')
+    writeFileSync(path, 'first words')
+    const doc = await store.open('s1', { path })
+    writeFileSync(path, 'the agent rewrote it')
+    const reloaded = await store.update(doc.id, doc.revision, {
+      reloadExternal: true,
+      ifChanged: true
+    })
+    const stale = await store.update(reloaded.id, reloaded.revision, {
+      content: 'Wfirst words',
+      stale: true
+    })
+    expect(stale.conflict).toBeTruthy()
+    const next = await store.update(stale.id, stale.revision, { content: 'WXfirst words' })
+    expect(readFileSync(path, 'utf8')).toBe('the agent rewrote it')
+    expect(next.conflict).toBeTruthy()
+    expect(next.content).toBe('WXfirst words')
+    const loaded = await store.update(next.id, next.revision, { reloadExternal: true })
+    expect(loaded.conflict).toBeUndefined()
+    expect(loaded.content).toBe('the agent rewrote it')
+    const after = await store.update(loaded.id, loaded.revision, {
+      content: 'the agent rewrote it!'
+    })
+    expect(readFileSync(path, 'utf8')).toBe('the agent rewrote it!')
+    expect(after.conflict).toBeUndefined()
+  })
+})
