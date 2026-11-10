@@ -193,8 +193,13 @@ internal class FakeMachine(private val token: String = TOKEN) : AutoCloseable {
 /** A key-value store safe across the store's threads. */
 internal class SyncKv : KeyValueStore {
     val map: MutableMap<String, String> = Collections.synchronizedMap(linkedMapOf())
+    /** Runs before a write lands, with its key; a test suspends here to hold it. */
+    @Volatile var beforeSet: (suspend (String) -> Unit)? = null
     override suspend fun get(key: String): String? = map[key]
-    override suspend fun set(key: String, value: String) { map[key] = value }
+    override suspend fun set(key: String, value: String) {
+        beforeSet?.invoke(key)
+        map[key] = value
+    }
     override suspend fun remove(key: String) { map.remove(key) }
 }
 

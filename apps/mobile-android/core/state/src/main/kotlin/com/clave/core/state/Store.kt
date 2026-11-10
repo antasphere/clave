@@ -3,6 +3,7 @@ package com.clave.core.state
 import com.clave.core.chat.Action
 import com.clave.core.chat.BufferedItem
 import com.clave.core.chat.Conversation
+import com.clave.core.chat.DeliveryController
 import com.clave.core.chat.HistoryCursor
 import com.clave.core.chat.Reachability
 import com.clave.core.chat.SendFailure
@@ -668,15 +669,35 @@ public class ClaveStore(private val services: Services) {
         clientMessageId: String? = null,
         attachments: List<Attachment> = emptyList(),
     ): SendOutcome {
-        services.delivery?.let { delivery ->
+        val delivery = services.delivery ?: return sendAdmitted(machineId, sessionId, text, clientMessageId, attachments, null)
+        // One send at a time per conversation, claimed before any check or id: two senders of
+        // the same conversation (two screens, a tap racing a retry) cannot both pass the check
+        // below before either has written its ledger entry.
+        if (!delivery.claim(machineId, sessionId)) {
+            return SendOutcome.Failed(delivery.unsettled(machineId, sessionId)?.clientMessageId ?: "", STILL_SENDING)
+        }
+        try {
             val pending = delivery.unsettled(machineId, sessionId)
             if (pending != null) {
                 val reason = if (delivery.inFlight(pending.clientMessageId)) STILL_SENDING else DELIVERY_UNKNOWN_FIRST
                 return SendOutcome.Failed(pending.clientMessageId, reason)
             }
+            return sendAdmitted(machineId, sessionId, text, clientMessageId, attachments, delivery)
+        } finally {
+            delivery.release(machineId, sessionId)
         }
-        @Suppress("NAME_SHADOWING")
-        val clientMessageId = clientMessageId ?: services.mintMessageId()
+    }
+
+    /** The admitted send: its id minted, its ledger entry written before the write, settled after it. */
+    private suspend fun sendAdmitted(
+        machineId: String,
+        sessionId: String,
+        text: String,
+        givenId: String?,
+        attachments: List<Attachment>,
+        delivery: DeliveryController?,
+    ): SendOutcome {
+        val clientMessageId = givenId ?: services.mintMessageId()
         val trimmed = text.trim()
         if (trimmed.isEmpty() && attachments.isEmpty()) return SendOutcome.Failed(clientMessageId, "Nothing to send.")
         val client = try {
@@ -696,7 +717,6 @@ public class ClaveStore(private val services: Services) {
             draftText = text,
             attachments = attachments.takeIf { it.isNotEmpty() },
         )
-        val delivery = services.delivery
         try {
             delivery?.begin(send)
         } catch (e: CancellationException) {

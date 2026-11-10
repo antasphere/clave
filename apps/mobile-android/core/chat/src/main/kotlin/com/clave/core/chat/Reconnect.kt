@@ -188,6 +188,19 @@ class DeliveryController(
     /** Whether this send's own write is still in flight. */
     fun inFlight(clientMessageId: String): Boolean = active.contains(clientMessageId)
 
+    /** The conversations a send is being admitted or written in: one send each at a time. */
+    private val claims = ConcurrentHashMap.newKeySet<String>()
+
+    /** Takes the conversation's one send slot, before any check or id; false while another send holds it. */
+    fun claim(machineId: String, sessionId: String): Boolean = claims.add(claimKey(machineId, sessionId))
+
+    /** Gives the conversation's send slot back, once that send has settled or was refused. */
+    fun release(machineId: String, sessionId: String) {
+        claims.remove(claimKey(machineId, sessionId))
+    }
+
+    private fun claimKey(machineId: String, sessionId: String): String = "$machineId\u0000$sessionId"
+
     /**
      * The person's explicit choice on a send of unknown outcome ("Send again" or "Discard"): once
      * any reconnection pass of the machine has finished, the send leaves the ledger and its mark

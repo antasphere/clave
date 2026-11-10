@@ -2,11 +2,14 @@ package com.clave.core.state
 
 import com.clave.core.chat.DeliveryMark
 import com.clave.core.chat.SendOutcome
+import com.clave.core.chat.UNKNOWN_SENDS_KEY
 import com.clave.core.chat.UnknownSend
 import java.util.concurrent.atomic.AtomicInteger
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import okhttp3.mockwebserver.MockResponse
@@ -89,6 +92,30 @@ class SendGuardTest {
         machine.respond(0, answer(200, """{"status":"accepted"}"""))
         assertEquals(SendOutcome.Sent(id(1), reconciled = false), first.await())
         assertEquals(listOf(id(1)), writtenIds())
+    }
+
+    @Test
+    fun `two sends to one conversation at once, the first held just before its ledger entry lands, give one id and one write`() = guarded {
+        routes(write = { answer(200, """{"status":"accepted"}""") }, status = { _, _ -> answer(200, """{"status":"accepted"}""") })
+        val paused = CompletableDeferred<Unit>()
+        val gate = CompletableDeferred<Unit>()
+        kv.beforeSet = { key ->
+            if (key == UNKNOWN_SENDS_KEY && paused.complete(Unit)) gate.await()
+        }
+        val first = scope.async { store.send(machineId, "s1", "first") }
+        paused.await()
+        // The first send has passed its checks and minted its id; its ledger entry is not written yet.
+        val second = scope.async { store.send(machineId, "s1", "second") }
+        withTimeoutOrNull(1_000) { second.await() }
+        val mintedWhileHeld = minted.get()
+        gate.complete(Unit)
+        val firstOutcome = first.await()
+        val secondOutcome = second.await()
+        assertEquals("no second id is minted while the first send is being admitted", 1, mintedWhileHeld)
+        assertEquals(SendOutcome.Sent(id(1), reconciled = false), firstOutcome)
+        assertEquals(SendOutcome.Failed("", STILL_SENDING), secondOutcome)
+        assertEquals(listOf(id(1)), writtenIds())
+        assertEquals(1, minted.get())
     }
 
     @Test
