@@ -1,5 +1,4 @@
 import * as path from 'path'
-import { homedir } from 'os'
 import { app } from 'electron'
 import { CaptureStore } from '../exchange-capture/store'
 import { SessionLedger, normalizeLedgerRow, type LedgerRow } from './ledger'
@@ -21,6 +20,11 @@ import { CodexCache, codexRoot, listCodexSessions } from './codex'
 import { PiCache, listPiSessions, piRoot } from './pi'
 import { searchTranscripts, type SearchHit, type SearchScope } from './search'
 import { ConversationCache, type ConversationTurn } from './conversation'
+import { conversationRoot, transcriptsRoot } from './transcript-peek'
+
+// The roots moved beside the peek (PRDCT-4321): a server reads them too,
+// and it runs no Electron.
+export { conversationRoot, transcriptsRoot }
 
 /**
  * Session-history service: the main-process owner of the ledger and the one
@@ -48,10 +52,21 @@ import { ConversationCache, type ConversationTurn } from './conversation'
  * transcripts are indexed once per list rather than probed once per miss.
  */
 
+/** The server a row's conversation ran on: the preload's `HistoryServerRef`. */
+export interface HistoryServerRef {
+  id: string
+  name: string
+  online: boolean
+  held: 'running' | 'stopped' | 'closed' | null
+}
+
 export interface HistoryListEntry extends HistoryEntry {
   /** Where the entry comes from: the ledger (a conversation Clave ran), or
    *  a transcript a store holds that Clave never saw. */
-  source: 'ledger' | 'transcript'
+  source: 'ledger' | 'transcript' | 'server'
+  /** The server the conversation ran on (PRDCT-4321); absent for this Mac's
+   *  own. Filled by the merge of the servers' Histories (`fleet-history.ts`). */
+  server?: HistoryServerRef
   /** Which CLI's conversation this is — the counts line's word. Resume
    *  exists for claude only today; the others are listed and searchable. */
   provider: 'claude' | 'codex' | 'pi' | 'antigravity'
@@ -87,23 +102,6 @@ function getLedger(): SessionLedger {
 function getCapture(): CaptureStore {
   if (!capture) capture = new CaptureStore(path.join(app.getPath('userData'), 'exchange-capture'))
   return capture
-}
-
-export function transcriptsRoot(): string {
-  return process.env.CLAVE_TRANSCRIPTS_ROOT || path.join(homedir(), '.claude', 'projects')
-}
-
-/** Where a Claude conversation's transcript lives: under its tab's own
- *  account directory (`CLAUDE_CONFIG_DIR`) when the tab ran with one, else
- *  the shared root. Only an absolute path counts; anything else is the
- *  shared root, so a stray value never points the read elsewhere. */
-export function conversationRoot(configDir: unknown): string {
-  // Taken as the spawn takes it (CLAUDE_CONFIG_DIR, untrimmed), so the read
-  // looks where Claude Code wrote.
-  if (typeof configDir === 'string' && path.isAbsolute(configDir)) {
-    return path.join(configDir, 'projects')
-  }
-  return transcriptsRoot()
 }
 
 /** What a session's record says of what it runs on: the mode and the effort

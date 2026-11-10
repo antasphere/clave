@@ -206,6 +206,28 @@ export function visibleInWorkspace(
   return true
 }
 
+/** A server's row (PRDCT-4321) in the active workspace: the server
+ *  workspace it ran in when that is the active one or one paired with it
+ *  (the sidebar shows those tabs here), else, when it names none, a folder
+ *  under the active root or under a paired workspace's root. With no
+ *  workspace active, every row shows, as this Mac's own do. */
+export function serverRowVisible(
+  entry: { workspaceId: string | null; cwd: string },
+  activeWorkspaceId: string | null,
+  activeRoot: string | null,
+  paired: ReadonlyArray<{ workspaceId: string; rootDir: string | null }>
+): boolean {
+  if (!activeWorkspaceId) return true
+  if (entry.workspaceId)
+    return (
+      entry.workspaceId === activeWorkspaceId ||
+      paired.some((p) => p.workspaceId === entry.workspaceId)
+    )
+  const under = (root: string | null): boolean =>
+    !!root && !!entry.cwd && (entry.cwd === root || entry.cwd.startsWith(root + '/'))
+  return under(activeRoot) || paired.some((p) => under(p.rootDir))
+}
+
 export { encodeProjectDir } from '../../../shared/project-dir'
 
 /** The row dot's word, the sidebar's own mapping: a closed conversation is a

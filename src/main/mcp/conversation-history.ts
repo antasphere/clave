@@ -57,6 +57,9 @@ export interface HistoryRow {
    *  bypass, the mode and the effort it ran at, the account. A resume
    *  defaults to it. Absent when the ledger never saw it launched. */
   launch?: LedgerLaunch
+  /** The server the conversation ran on (PRDCT-4321), absent for this
+   *  Mac's own: a resume reopens it there, and only while it is online. */
+  server?: { id: string; name: string; online: boolean }
 }
 
 export interface HistoryFilter {
@@ -126,7 +129,13 @@ export async function listConversations(
         e.cwd.toLowerCase().includes(query)
     )
     .map((e): HistoryRow => {
-      const open = holders.get(e.claudeSessionId) ?? null
+      // A server's conversation is held by a tab of that server, as the
+      // server said (PRDCT-4321); this Mac's records know none of its tabs.
+      const open = e.server
+        ? e.server.held === 'running' || e.server.held === 'stopped'
+          ? { sessionId: e.sessionId, alive: e.server.held === 'running' }
+          : null
+        : (holders.get(e.claudeSessionId) ?? null)
       return {
         conversationId: e.claudeSessionId,
         provider: e.provider,
@@ -138,9 +147,16 @@ export async function listConversations(
         groups: e.groups.map((g) => g.name),
         lastActivity: e.lastHumanAt,
         transcriptExists: e.transcript.exists,
-        resumable: RESUMABLE.has(e.provider) && e.transcript.exists && !!e.cwd,
+        resumable:
+          RESUMABLE.has(e.provider) &&
+          e.transcript.exists &&
+          !!e.cwd &&
+          (e.server ? e.server.online : true),
         open,
-        ...(e.launch ? { launch: e.launch } : {})
+        ...(e.launch ? { launch: e.launch } : {}),
+        ...(e.server
+          ? { server: { id: e.server.id, name: e.server.name, online: e.server.online } }
+          : {})
       }
     })
     .filter((r) => filter.open !== true || r.open !== null)
@@ -170,7 +186,12 @@ export type ResumePlan =
       piThinking: string | null
       /** What it was last launched on, as the ledger remembers (PRDCT-4236). */
       launch: LedgerLaunch | null
+      /** The server it ran on and reopens on (PRDCT-4321); absent for this Mac's. */
+      server?: { id: string; name: string }
     }
+  /** A tab of a server holds it (PRDCT-4321): answered as it is, nothing
+   *  started; a stopped one is resumed with clave_resume_session. */
+  | { kind: 'server-held'; sessionId: string; alive: boolean; server: { id: string; name: string } }
 
 export class ResumeRefused extends Error {}
 
@@ -199,15 +220,30 @@ export async function planResume(
     )
   if (!RESUMABLE.has(entry.provider))
     throw new ResumeRefused(`Conversation "${id}" is ${entry.provider}'s, which cannot be resumed.`)
+  const server = entry.server
+  if (server && !server.online)
+    throw new ResumeRefused(
+      `Conversation "${id}" ("${entry.title}") ran on the server "${server.name}", which is offline; it reopens there once the server is back.`
+    )
+  if (server && (server.held === 'running' || server.held === 'stopped'))
+    return {
+      kind: 'server-held',
+      sessionId: entry.sessionId,
+      alive: server.held === 'running',
+      server: { id: server.id, name: server.name }
+    }
   if (!entry.transcript.exists)
     throw new ResumeRefused(
-      `The transcript of conversation "${id}" ("${entry.title}") is gone; there is nothing to resume.`
+      server
+        ? `The transcript of conversation "${id}" ("${entry.title}") is no longer on the server "${server.name}"; there is nothing to resume.`
+        : `The transcript of conversation "${id}" ("${entry.title}") is gone; there is nothing to resume.`
     )
   if (!callerCwd && !entry.cwd)
     throw new ResumeRefused(
       `Conversation "${id}" ("${entry.title}") names no working directory; it cannot be resumed. Pass cwd to open it there.`
     )
-  if (!callerCwd && !dirExists(entry.cwd))
+  // A server's directory is on the server's disk, never this Mac's.
+  if (!server && !callerCwd && !dirExists(entry.cwd))
     throw new ResumeRefused(
       `The working directory of conversation "${id}" ("${entry.title}"), ${entry.cwd}, no longer exists. Pass cwd to open it elsewhere.`
     )
@@ -220,7 +256,8 @@ export async function planResume(
     workspaceId: entry.workspaceId,
     piProvider: entry.agentProvider ?? null,
     piThinking: entry.thinking ?? null,
-    launch: entry.launch ?? null
+    launch: entry.launch ?? null,
+    ...(server ? { server: { id: server.id, name: server.name } } : {})
   }
 }
 
@@ -295,12 +332,38 @@ export async function openResumed(
   io: ResumeOpenIo
 ): Promise<{ result: unknown } | { payload: Record<string, unknown> }> {
   const resume = String(p.resume).trim()
-  if (p.server !== undefined)
-    throw new ResumeRefused(
-      'resume reopens a conversation of this Mac; omit server. A stopped tab on a Clave server is resumed with clave_resume_session.'
-    )
   const callerCwd = typeof p.cwd === 'string' && p.cwd ? p.cwd : undefined
   const plan = await planResume(lookups, resume, io.isDirectory, callerCwd)
+  // A conversation reopens where it ran (PRDCT-4321): a server's on that
+  // server, this Mac's here; a `server` naming another place is refused.
+  const ranOn = plan.kind === 'server-held' || plan.kind === 'start' ? plan.server : undefined
+  if (p.server !== undefined) {
+    const asked = String(p.server).trim().toLowerCase()
+    const matches = ranOn
+      ? asked === ranOn.id.toLowerCase() || asked === ranOn.name.toLowerCase()
+      : asked === 'local'
+    if (!matches)
+      throw new ResumeRefused(
+        ranOn
+          ? `Conversation "${resume}" ran on the server "${ranOn.name}" and reopens there; omit server or name that one.`
+          : `Conversation "${resume}" is this Mac's and reopens here; omit server.`
+      )
+  }
+  if (plan.kind === 'server-held') {
+    return {
+      result: {
+        sessionId: plan.sessionId,
+        groupId: null,
+        conversation: resume,
+        alreadyOpen: true,
+        resumed: false,
+        server: plan.server.name,
+        note: plan.alive
+          ? `A tab of the server "${plan.server.name}" already runs this conversation; nothing was started.`
+          : `A stopped tab of the server "${plan.server.name}" holds this conversation; resume it with clave_resume_session.`
+      }
+    }
+  }
   if (plan.kind === 'open' || plan.kind === 'stopped') {
     let resumed = false
     if (plan.kind === 'stopped') {
@@ -351,6 +414,7 @@ export async function openResumed(
       ...workspace,
       ...pi,
       ...resumeLaunchDefaults(plan, p, io.isKnownAccount),
+      ...(plan.server ? { server: plan.server.id } : {}),
       resumeSessionId: resume
     }
   }

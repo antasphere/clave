@@ -6,13 +6,16 @@ import {
   XMarkIcon,
   ShieldExclamationIcon,
   ClipboardDocumentIcon,
-  PlayIcon
+  PlayIcon,
+  ServerIcon
 } from '@heroicons/react/24/outline'
 import { useHistoryStore } from '../../store/history-store'
 import { useSessionStore, inActiveWorkspace } from '../../store/session-store'
 import { useWorkspaceStore } from '../../store/workspace-store'
-import { resumeHistoryEntry } from '../../lib/session-history'
-import { dotStateOf, visibleInWorkspace } from '../../lib/session-history-diff'
+import { canResumeHistoryEntry, resumeHistoryEntry } from '../../lib/session-history'
+import { dotStateOf, serverRowVisible, visibleInWorkspace } from '../../lib/session-history-diff'
+import { useFleetStore } from '../../store/fleet-store'
+import { pairedServerWorkspaces, usePairingStore } from '../../store/pairing-store'
 import { cn } from '@clave/ui/components'
 import { shortenPath } from '../../lib/utils'
 import { ContextMenu } from '../ui/ContextMenu'
@@ -117,6 +120,22 @@ function HistoryPanel({ presetGroupId }: { presetGroupId: string | null }): Reac
   const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId)
   const workspaces = useWorkspaceStore((s) => s.workspaces)
   const activeRoot = workspaces.find((w) => w.id === activeWorkspaceId)?.rootDir ?? null
+  // PRDCT-4321: which servers are connected now (a row's dot and its
+  // Resume), and the server workspaces paired with the active one, whose
+  // conversations this workspace shows as the sidebar shows their tabs.
+  const fleetStatuses = useFleetStore((s) => s.statuses)
+  const serverConnected = useCallback(
+    (serverId: string) => fleetStatuses[serverId]?.state === 'connected',
+    [fleetStatuses]
+  )
+  const pairings = usePairingStore((s) => s.servers)
+  const serverScope = useMemo(() => {
+    void pairings
+    return pairedServerWorkspaces(activeWorkspaceId).map((p) => ({
+      workspaceId: p.workspaceId,
+      rootDir: workspaces.find((w) => w.id === p.workspaceId)?.rootDir ?? null
+    }))
+  }, [activeWorkspaceId, workspaces, pairings])
 
   const [entries, setEntries] = useState<HistoryListEntry[] | null>(null)
   const [groupId, setGroupId] = useState<string | null>(presetGroupId)
@@ -221,12 +240,17 @@ function HistoryPanel({ presetGroupId }: { presetGroupId: string | null }): Reac
     return entries.filter((e) => {
       // A stamped entry by its workspace; an unstamped one (the seed, a
       // store-only transcript) by its own cwd against the workspace root.
-      if (!visibleInWorkspace(e, activeWorkspaceId, activeRoot)) return false
+      if (
+        e.server
+          ? !serverRowVisible(e, activeWorkspaceId, activeRoot, serverScope)
+          : !visibleInWorkspace(e, activeWorkspaceId, activeRoot)
+      )
+        return false
       if (selectedGroup && !entryInGroup(e.groups, selectedGroup)) return false
       if (openOnly && !liveStates.has(e.claudeSessionId)) return false
       return true
     })
-  }, [entries, selectedGroup, activeWorkspaceId, activeRoot, openOnly, liveStates])
+  }, [entries, selectedGroup, activeWorkspaceId, activeRoot, serverScope, openOnly, liveStates])
 
   /** The literal counts line's numbers, over the rows in scope. */
   const counts = useMemo(() => {
@@ -336,12 +360,13 @@ function HistoryPanel({ presetGroupId }: { presetGroupId: string | null }): Reac
       // Nothing to resume: a codex conversation (no resume exists), or a
       // claude one whose transcript or folder is gone while its tab is not
       // open. The dialog stays, the row's own title says why.
-      if (entry.provider !== 'claude' && entry.provider !== 'pi') return
-      if (!liveStates.has(entry.claudeSessionId) && (!entry.transcript.exists || !entry.cwd)) return
+      // A server's conversation (PRDCT-4321) waits for its server.
+      if (!canResumeHistoryEntry(entry, liveStates.has(entry.claudeSessionId), serverConnected))
+        return
       closeHistory()
       void resumeHistoryEntry(entry, { groupId: selectedGroup?.id ?? null, dangerousMode })
     },
-    [closeHistory, selectedGroup, liveStates]
+    [closeHistory, selectedGroup, liveStates, serverConnected]
   )
 
   const latestGroupName = (e: HistoryListEntry): string | null =>
@@ -502,6 +527,22 @@ function HistoryPanel({ presetGroupId }: { presetGroupId: string | null }): Reac
               const dotState = dotStateOf(live, liveStates.get(e.claudeSessionId))
               const missing = !e.transcript.exists
               const inert = e.provider !== 'claude' && e.provider !== 'pi'
+              const server = e.server ?? null
+              const online = server ? serverConnected(server.id) : true
+              // What the row's second line and its title say when it cannot
+              // be reopened from here (PRDCT-4321): a server's row by its
+              // server, this Mac's by its transcript.
+              const blocked = server
+                ? !online
+                  ? `${server.name} is offline`
+                  : server.held === null
+                    ? `Not in ${server.name}'s History`
+                    : server.held === 'closed' && missing
+                      ? `Transcript gone from ${server.name}`
+                      : null
+                : missing
+                  ? 'Transcript gone'
+                  : null
               const prompt = excerpt(e.transcript.lastPrompt)
               const gname =
                 latestGroupName(e) ??
@@ -517,6 +558,8 @@ function HistoryPanel({ presetGroupId }: { presetGroupId: string | null }): Reac
                   data-live={live ? 'true' : undefined}
                   data-state={dotState}
                   data-missing={missing ? 'true' : undefined}
+                  data-history-server={server?.id}
+                  data-blocked={blocked !== null && !live ? 'true' : undefined}
                   data-hits={searching ? rowHits.length : undefined}
                   onClick={(ev) => resume(e, ev.altKey)}
                   onContextMenu={(ev) => {
@@ -526,11 +569,19 @@ function HistoryPanel({ presetGroupId }: { presetGroupId: string | null }): Reac
                   title={
                     inert
                       ? `A ${e.provider} conversation — listed for the record; resume exists for claude sessions only.`
-                      : missing
-                        ? 'Transcript no longer on disk — Claude Code cleaned it up; nothing to resume.'
-                        : live
-                          ? 'Open — click to focus the tab'
-                          : `Resume in ${selectedGroup?.name ?? 'the sidebar'} · ⌥-click to skip permissions`
+                      : live
+                        ? 'Open — click to focus the tab'
+                        : server
+                          ? !online
+                            ? `Ran on ${server.name}, which is offline: it reopens there once ${server.name} is back.`
+                            : server.held === null
+                              ? `This Mac saw this tab on ${server.name}, but ${server.name} does not list the conversation: it ran before ${server.name} kept a History, or its transcript is gone there.`
+                              : server.held === 'closed' && missing
+                                ? `The transcript is no longer on ${server.name}'s disk; nothing to resume.`
+                                : `Resume on ${server.name} · ⌥-click to skip permissions`
+                          : missing
+                            ? 'Transcript no longer on disk — Claude Code cleaned it up; nothing to resume.'
+                            : `Resume in ${selectedGroup?.name ?? 'the sidebar'} · ⌥-click to skip permissions`
                   }
                 >
                   <span className="flex items-center gap-2 min-w-0">
@@ -540,6 +591,7 @@ function HistoryPanel({ presetGroupId }: { presetGroupId: string | null }): Reac
                       aria-label={dotState}
                     />
                     <span className="history-row-title truncate">{e.title}</span>
+                    {server && <HistoryServerTag server={server} online={online} />}
                     {inert && <span className="history-row-group flex-shrink-0">{e.provider}</span>}
                     {gname && <span className="history-row-group truncate">{gname}</span>}
                     <span className="history-row-time tabular-nums">
@@ -559,7 +611,7 @@ function HistoryPanel({ presetGroupId }: { presetGroupId: string | null }): Reac
                         !prompt && 'history-row-prompt--none'
                       )}
                     >
-                      {missing ? 'Transcript gone' : (prompt ?? shortenPath(e.cwd))}
+                      {blocked !== null && !live ? blocked : (prompt ?? shortenPath(e.cwd))}
                     </span>
                   )}
                   {searching && rowHits.length > HITS_PER_ROW && (
@@ -592,8 +644,11 @@ function HistoryPanel({ presetGroupId }: { presetGroupId: string | null }): Reac
               icon: <PlayIcon className="w-3.5 h-3.5" />,
               disabled:
                 menu.entry.provider !== 'claude' ||
-                ((!menu.entry.transcript.exists || !menu.entry.cwd) &&
-                  !liveStates.has(menu.entry.claudeSessionId)),
+                !canResumeHistoryEntry(
+                  menu.entry,
+                  liveStates.has(menu.entry.claudeSessionId),
+                  serverConnected
+                ),
               onClick: () => resume(menu.entry, false)
             },
             {
@@ -601,8 +656,7 @@ function HistoryPanel({ presetGroupId }: { presetGroupId: string | null }): Reac
               icon: <ShieldExclamationIcon className="w-3.5 h-3.5" />,
               disabled:
                 menu.entry.provider !== 'claude' ||
-                !menu.entry.transcript.exists ||
-                !menu.entry.cwd,
+                !canResumeHistoryEntry(menu.entry, false, serverConnected),
               onClick: () => resume(menu.entry, true)
             },
             {
@@ -615,5 +669,31 @@ function HistoryPanel({ presetGroupId }: { presetGroupId: string | null }): Reac
       )}
     </div>,
     document.body
+  )
+}
+
+/** The server a conversation ran on (PRDCT-4321): the sidebar's server
+ *  badge, its name in the colour the server wears on this Mac, and a dot for
+ *  its connection, green while connected, a grey ring while not. */
+function HistoryServerTag({
+  server,
+  online
+}: {
+  server: NonNullable<HistoryListEntry['server']>
+  online: boolean
+}): React.JSX.Element {
+  const color = usePairingStore((s) => s.servers[server.id]?.color)
+  return (
+    <span
+      className="history-server"
+      style={color ? { backgroundColor: `${color}26`, color } : undefined}
+      title={`Ran on ${server.name} · ${online ? 'connected' : 'offline'}`}
+      data-history-server-tag={server.id}
+      data-online={online ? 'true' : 'false'}
+    >
+      <ServerIcon className="w-3 h-3 flex-shrink-0" />
+      <span className="truncate">{server.name}</span>
+      <span className="history-server-dot" data-online={online ? 'true' : 'false'} />
+    </span>
   )
 }

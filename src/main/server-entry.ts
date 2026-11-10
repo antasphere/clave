@@ -59,6 +59,8 @@ import * as path from 'path'
 import { acquireDaemonLease, daemonConfig, daemonIdentity } from './server/daemon-config'
 import { standaloneSidebar } from './server/standalone-sidebar'
 import { serverOwnedSessionHost } from './sessions/server-owned-host'
+import { serverConversations } from './session-history/server-conversations'
+import { SERVER_LAYOUT_KEY } from '@clave/contract/sidebar'
 import { requestAwareSessionHost } from './sessions/request-aware-host'
 import { builtInProfileFamily, startStandaloneMcp } from './mcp/standalone-mcp'
 import { executeSecretAction } from './secret-actions'
@@ -285,11 +287,30 @@ async function main(): Promise<void> {
   // and, wave 4, the agent tokens the server resolves for the attached shell.
   const { host: originalSessions, agentTools } = standaloneSessionHost({ dataDir, terminals })
   const sidebar = config.daemon ? standaloneSidebar(dataDir) : undefined
+  // PRDCT-4321: the daemon's own History, the conversations its tabs ran,
+  // kept after a tab is deleted and served to every connected client.
+  const conversations = sidebar
+    ? serverConversations({
+        dataDir,
+        records: () => originalSessions.listAdoptableRecords(),
+        running: (id) => originalSessions.get(id) !== undefined,
+        groupOf: (id) => {
+          const group = sidebar.get(SERVER_LAYOUT_KEY).groups.find((g) => g.sessionIds.includes(id))
+          if (!group) return null
+          return {
+            id: group.id,
+            name: group.name,
+            ...(group.workspaceId ? { workspaceId: group.workspaceId } : {})
+          }
+        }
+      })
+    : undefined
   const owned = sidebar
     ? serverOwnedSessionHost({
         host: originalSessions,
         sidebar,
         dataDir,
+        conversations,
         subscribeAll: (listener) => sessionManager.subscribeAll(listener),
         ready: (id) => sessionManager.ready(id),
         currentState: (id) => sessionManager.currentState(id)
@@ -421,6 +442,14 @@ async function main(): Promise<void> {
       // app's own git implementation, its repo watcher's bursts and a batch's
       // progress published to every attached client (server/git-port.ts).
       git: serverGitPort(),
+      // ── PRDCT-4321: this server's own History, the conversations its tabs
+      // ran, for every connected client; none on a server the app runs ──
+      ...(conversations && {
+        history: {
+          list: async () => conversations.list(),
+          search: (request) => conversations.search(request)
+        }
+      }),
       // ── Issue #266: the server domain ──
       serverInfo:
         selfUpgrade ??
@@ -454,6 +483,8 @@ async function main(): Promise<void> {
           ownName: () => serverName()
         },
         ...(sidebar && { sidebar }),
+        // PRDCT-4321: the History tool and the resume of a deleted tab.
+        ...(conversations && { conversations }),
         // An agent's profile must belong to the mode it opens (a chat or
         // plugin profile, or one of this server's custom profiles).
         profileFamily: (id) =>

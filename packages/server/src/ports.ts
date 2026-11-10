@@ -45,6 +45,10 @@ export { GitPort, type GitService } from './git/port'
 import { ServerInfoPort, type ServerInfoService } from './server-info/port'
 
 export { ServerInfoPort, type ServerInfoService } from './server-info/port'
+// ── PRDCT-4321: the server's History ──
+import { HistoryPort, type HistoryService } from './history/port'
+
+export { HistoryPort, type HistoryService } from './history/port'
 // ── ADR 0004: the routines ──
 import { Routines, type RoutinesService } from './routines/port'
 
@@ -79,6 +83,9 @@ export interface ServerPorts {
   // ── Issue #266: the server domain ──
   /** The version this server runs and its self-upgrade. `ServerInfoPort.none` when absent: no version reported, no upgrade. */
   readonly serverInfo?: ServerInfoService
+  // ── PRDCT-4321: the server's History ──
+  /** The conversations this server's tabs ran (PRDCT-4321). `HistoryPort.none` when absent: no History of its own. */
+  readonly history?: HistoryService
   // ── ADR 0004: the routines ──
   /** The scheduler and its runs. `Routines.none` when absent: nothing listed, every act refused as unavailable. */
   readonly routines?: RoutinesService
@@ -102,6 +109,8 @@ export const PortsLive = (
   | GitPort
   // ── Issue #266: the server domain ──
   | ServerInfoPort
+  // ── PRDCT-4321: the server's History ──
+  | HistoryPort
   // ── ADR 0004: the routines ──
   | Routines
 > =>
@@ -121,6 +130,8 @@ export const PortsLive = (
     GitPort.layer(ports.git ?? GitPort.none),
     // ── Issue #266: the server domain ──
     ServerInfoPort.layer(ports.serverInfo ?? ServerInfoPort.none),
+    // ── PRDCT-4321: the server's History ──
+    HistoryPort.layer(ports.history ?? HistoryPort.none),
     // ── ADR 0004: the routines ──
     Routines.layer(ports.routines ?? Routines.none)
   )

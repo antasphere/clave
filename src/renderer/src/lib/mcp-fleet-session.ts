@@ -57,6 +57,8 @@ export async function openFleetSession(
     autoRun?: boolean
     prompt?: string
     name?: string
+    /** A past conversation of this server to continue (PRDCT-4321). */
+    resumeSessionId?: string
     callerSessionId?: string
     attachToParent?: boolean
   }
@@ -111,6 +113,9 @@ export async function openFleetSession(
     initialCommand: mode === 'terminal' ? payload.command : undefined,
     autoExecute: mode === 'terminal' && !!payload.command && payload.autoRun !== false,
     initialPrompt: mode !== 'terminal' ? payload.prompt : undefined,
+    ...(mode !== 'terminal' && payload.resumeSessionId
+      ? { resumeSessionId: payload.resumeSessionId }
+      : {}),
     ...(payload.attachToParent && payload.callerSessionId
       ? { spawnedBy: payload.callerSessionId }
       : {})

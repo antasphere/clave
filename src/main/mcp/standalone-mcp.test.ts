@@ -496,7 +496,7 @@ describe('standalone MCP session tools', () => {
         await client.callTool({ name: 'clave_open_session', arguments: { resume: 'conv-new' } })
       )
     ).toContain(
-      'cwd is required unless resume names a conversation a tab of this server still holds.'
+      "cwd is required unless resume names a conversation this server's History remembers or a tab of this server still holds."
     )
     expect(
       errorText(

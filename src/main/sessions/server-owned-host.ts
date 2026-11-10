@@ -8,6 +8,7 @@ import { serverHistory } from './server-history'
 import { resumeOptions } from './resume-options'
 import { providerSwitchOptions } from './provider-switch'
 import type { PtySpawnOptions } from './adapters/pty-backend'
+import type { ServerConversations } from '../session-history/server-conversations'
 
 export interface ServerOwnedHostOptions {
   host: SessionHostService
@@ -20,6 +21,10 @@ export interface ServerOwnedHostOptions {
    *  moment it binds and again when a Resume binds it to the new process
    *  (PRDCT-4191). Absent, nothing is told, as before. */
   currentState?: SessionManager['currentState']
+  /** The server's own History (PRDCT-4321): told each tab's conversation as
+   *  it changes, and its last word before its record goes, so a deleted tab's
+   *  conversation stays listed and resumable. Absent, nothing is kept. */
+  conversations?: ServerConversations
 }
 
 /** Recover a tab's identity, never its process. Only restart is Resume. */
@@ -52,7 +57,13 @@ export function serverOwnedSessionHost(options: ServerOwnedHostOptions): {
   const base = options.host
   const sidebar = options.sidebar
   const history = serverHistory(options.dataDir)
-  const stopHistory = options.subscribeAll((id, stream) => history.record(id, stream))
+  const conversations = options.conversations
+  const stopHistory = options.subscribeAll((id, stream) => {
+    history.record(id, stream)
+    // A state change is where a tab's conversation shows a change: the
+    // first idle after its start, a new conversation after `/clear`.
+    if (stream.kind === 'event' && stream.event.type === 'state_change') conversations?.observe(id)
+  })
   const bindings = new Map<string, Set<() => void>>()
   const unsubscriptions = new Set<() => void>()
   const bind = (id: string): void => {
@@ -133,6 +144,7 @@ export function serverOwnedSessionHost(options: ServerOwnedHostOptions): {
         )
       bind(result.id)
       if (base.get(result.id)?.transport === 'events') options.ready(result.id)
+      conversations?.observe(result.id)
       return result
     },
     stop: async (id) => {
@@ -142,6 +154,10 @@ export function serverOwnedSessionHost(options: ServerOwnedHostOptions): {
         await pending.get(id)?.catch(() => {})
         const record = recordOf(id)
         await base.stop(id)
+        // The record's last word, read again after the stop (a running tab's
+        // record can still change as it stops), before the record goes.
+        const last = recordOf(id) ?? record
+        if (last) conversations?.closing(last)
         if (record) base.discardRecord(record.tmuxName ?? record.id)
         history.remove(id)
         sidebar.removeSession(SERVER_LAYOUT_KEY, id)
@@ -152,6 +168,7 @@ export function serverOwnedSessionHost(options: ServerOwnedHostOptions): {
     discardRecord: (key) => {
       const record = records().find((r) => (r.tmuxName ?? r.id) === key)
       if (record && base.get(record.id)) throw new Error('Close a running session through stop')
+      if (record) conversations?.closing(record)
       base.discardRecord(key)
       if (record) {
         history.remove(record.id)
@@ -221,7 +238,9 @@ export function serverOwnedSessionHost(options: ServerOwnedHostOptions): {
     },
     rename: (id, name) => {
       requireLive(id)
-      return base.rename(id, name)
+      const renamed = base.rename(id, name)
+      conversations?.observe(id)
+      return renamed
     },
     setPage: (id, page) => {
       requireLive(id)
@@ -294,9 +313,14 @@ export function serverOwnedSessionHost(options: ServerOwnedHostOptions): {
         if (base.get(id)?.transport === 'events') options.ready(id)
         return { ...result, resumed: !!spawn.resumeSessionId }
       }
-      const work = resume().finally(() => {
-        pending.delete(id)
-      })
+      const work = resume()
+        .then((result) => {
+          conversations?.observe(id)
+          return result
+        })
+        .finally(() => {
+          pending.delete(id)
+        })
       pending.set(id, work)
       return work
     }
