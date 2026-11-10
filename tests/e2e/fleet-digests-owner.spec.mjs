@@ -254,13 +254,16 @@ export async function run(t) {
       { workLine }
     )
     await setReply(server, WORK_REPLY, 'CLAVE_E2E_WORK_DIGEST_REPLY')
-    await failedCard.getByRole('button', { name: 'Ask again', exact: true }).click()
+    // From the keyboard: the control takes the focus and Enter asks.
+    const again = failedCard.getByRole('button', { name: 'Ask again', exact: true })
+    await again.focus()
+    await a.win.keyboard.press('Enter')
     await eventually(
       async () => (await failedCard.getAttribute('data-digest')) === 'done',
       'Ask again titles the work card'
     )
     t.check(
-      'Ask again on a work card titles it on the server, and the card stays as it was (closed)',
+      'Ask again on a work card, pressed with Enter, titles it on the server, and the card stays closed',
       (await failedCard.locator('.stretch-title-words').innerText()) ===
         `Titled on ${account.id}` &&
         (await failedCard.locator('.digest-unread').count()) === 0 &&
