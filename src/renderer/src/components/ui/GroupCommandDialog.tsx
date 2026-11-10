@@ -85,11 +85,27 @@ export function GroupCommandDialog({
     onSave(command.trim(), mode, color, cwd, icon)
   }
 
+  // While a server's folder picker is up the dialog steps aside: a modal
+  // Radix dialog makes everything outside its content inert (pointer events
+  // off on <body>, focus trapped, an outside press dismisses it), and the
+  // picker is portalled to <body>, so over an open dialog it could be seen
+  // and not used. The form keeps its state and comes back with the folder.
+  const [pickingOnServer, setPickingOnServer] = useState(false)
   const handlePickFolder = async (): Promise<void> => {
+    if (owner !== LOCAL_SERVER_ID) {
+      setPickingOnServer(true)
+      try {
+        const folder = await pickFolderOn(owner, cwd ?? undefined)
+        if (folder) setCwd(folder)
+      } finally {
+        setPickingOnServer(false)
+      }
+      return
+    }
     // Open the native picker at the group root (or the terminal's current cwd
     // when editing) instead of the OS default location.
-    // A server group's folder is picked in the server's picker: this Mac's
-    // dialog would answer a path the server does not have.
+    // This Mac's group: this Mac's native dialog (a server group's folder is
+    // picked above, in the server's picker).
     const folder = await pickFolderOn(owner, cwd ?? undefined)
     if (folder) {
       setCwd(folder)
@@ -100,13 +116,13 @@ export function GroupCommandDialog({
 
   return (
     <DialogPrimitive.Root
-      open={isOpen}
+      open={isOpen && !pickingOnServer}
       onOpenChange={(open) => {
         if (!open) onCancel()
       }}
     >
       <AnimatePresence>
-        {isOpen && (
+        {isOpen && !pickingOnServer && (
           <DialogPrimitive.Portal forceMount>
             <DialogPrimitive.Overlay asChild>
               <ModalScrim />
