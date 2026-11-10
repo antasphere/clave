@@ -15,6 +15,9 @@ const mocks = vi.hoisted(() => ({
   listeners: new Map<string, { onData: (d: string) => void; onExit: (c: number) => void }>(),
   // ── Wave 4: the restart and the state the shadow reads ──
   restartSpawn: vi.fn(),
+  killAndWait: vi.fn(),
+  tmuxNameOf: vi.fn((): string | null => null),
+  discardSessionRecord: vi.fn(),
   getSessionRecord: vi.fn(() => undefined as unknown),
   setSessionDisplayName: vi.fn(),
   setSessionViewRecord: vi.fn(),
@@ -37,8 +40,11 @@ vi.mock('../pty-manager', () => ({
     // The real kill ends the process, whose exit runs the listener the
     // lifecycle attached, before the kill resolves.
     killAndWait: async (id: string) => {
+      mocks.killAndWait(id)
       mocks.listeners.get(id)?.onExit(0)
     },
+    tmuxNameOf: mocks.tmuxNameOf,
+    discardSessionRecord: mocks.discardSessionRecord,
     getSessionRecord: mocks.getSessionRecord,
     listAdoptableSessions: () => mocks.adoptable,
     setSessionDisplayName: mocks.setSessionDisplayName,
@@ -498,6 +504,44 @@ describe('a Resume of a running tab is refused on this Mac too (PRDCT-4193, roun
       claudeProfileId: 'acct-kept',
       windowKey: 'w7'
     })
+    mocks.adoptable = []
+  })
+
+  it('resumes a record-only tab without the kill that would discard its record, then drops a tmux-keyed record the spawn did not take', async () => {
+    // A restart places stopped tabs without a process (PRDCT-4236); their
+    // close for good discards the record, and a Resume must not go that way.
+    const id = `life-${++sequence}`
+    windows()
+    mocks.restartSpawn.mockReturnValue(null)
+    mocks.getSessionRecord.mockReturnValue(undefined)
+    mocks.tmuxNameOf.mockReturnValue(null)
+    mocks.adoptable = [
+      {
+        id,
+        tmuxName: 'clave-root-chat01',
+        cwd: '/work/app',
+        folderName: 'app',
+        claudeMode: true,
+        antigravityMode: false,
+        codexMode: false,
+        piMode: false,
+        claudeAgentsMode: false,
+        dangerousMode: false,
+        claudeSessionId: 'conv-3',
+        windowKey: 'w7'
+      }
+    ]
+    spawned(id)
+    await restartSession(id, { onlyIfStopped: true })
+    expect(mocks.killAndWait).not.toHaveBeenCalled()
+    expect(mocks.discardSessionRecord).toHaveBeenCalledWith('clave-root-chat01')
+
+    // The spawn that took the tmux name keeps its record.
+    mocks.discardSessionRecord.mockClear()
+    mocks.tmuxNameOf.mockReturnValue('clave-root-chat01')
+    await restartSession(id, { onlyIfStopped: true })
+    expect(mocks.discardSessionRecord).not.toHaveBeenCalled()
+    mocks.tmuxNameOf.mockReturnValue(null)
     mocks.adoptable = []
   })
 

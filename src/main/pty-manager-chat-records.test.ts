@@ -118,6 +118,7 @@ beforeEach(() => {
   mocks.rememberedEffort.mockReturnValue(undefined)
   mocks.hasCodexRollout.mockReturnValue(true)
   mocks.backend.getSessionRecord.mockImplementation(() => null)
+  mocks.backend.listAdoptableSessions.mockReturnValue([])
   mocks.streams.clear()
   mocks.manager.subscribe.mockImplementation((id: string, listener: (stream: unknown) => void) => {
     mocks.streams.set(id, listener)
@@ -280,6 +281,26 @@ describe('a Claude chat tab survives a restart', () => {
 
     expect(mocks.backend.discardSessionRecord).toHaveBeenCalledTimes(1)
     expect(mocks.backend.discardSessionRecord).toHaveBeenCalledWith(closed.id)
+  })
+
+  it('drops the record of a stopped tab closed before it was resumed, and keeps it on quit', async () => {
+    // A restart places every stopped tab without starting it (PRDCT-4236):
+    // no process here, only its record. Closing it left the record, and the
+    // next launch brought the closed tab back.
+    const tmuxKeyed = '22222222-2222-4222-8222-222222222222'
+    mocks.backend.listAdoptableSessions.mockReturnValue([
+      { id: TAB },
+      { id: tmuxKeyed, tmuxName: 'clave-project-abc123' }
+    ] as never)
+
+    await ptyManager.kill(TAB, false)
+    expect(mocks.backend.discardSessionRecord).not.toHaveBeenCalled()
+
+    await ptyManager.kill(TAB)
+    await ptyManager.kill(tmuxKeyed)
+    expect(mocks.backend.discardSessionRecord).toHaveBeenNthCalledWith(1, TAB)
+    expect(mocks.backend.discardSessionRecord).toHaveBeenNthCalledWith(2, 'clave-project-abc123')
+    expect(mocks.manager.kill).not.toHaveBeenCalled()
   })
 })
 
