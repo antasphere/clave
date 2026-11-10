@@ -13,6 +13,7 @@ import { parseDelivery } from '../../../src/shared/exchange-provenance'
 import type { ToolGroup as ToolRun } from './tools'
 import { TerminalTools } from './TerminalTools'
 import { InlineQuestion, PermissionRow } from './PromptDock'
+import { ModeLine } from './PermissionReading'
 import { isQuestion } from './approvals'
 import { ChatCode } from './code'
 import { Attachments } from './Attachments'
@@ -145,6 +146,8 @@ export const EntryRow = memo(function EntryRow({
         {entry.message}
       </div>
     )
+  if (entry.kind === 'mode')
+    return <ModeLine label={entry.label} fromLabel={entry.fromLabel} by={entry.by} />
   return null
 })
 /** A run of tools, re-rendered only when one of its calls changed or it

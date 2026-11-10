@@ -59,6 +59,11 @@ import { StretchContext, recentStretches } from './stretch-context'
 import { useExchangeJump } from './jump'
 import { useSessionStore } from '../../../src/renderer/src/store/session-store'
 import { ApprovalRun, InlineQuestion, PermissionRow, PromptDock } from './PromptDock'
+import { ModeLine } from './PermissionReading'
+import {
+  PermissionReadingProvider,
+  type PermissionReadingValue
+} from './permission-reading-context'
 import { FormTail } from './FormTail'
 import { isInputRequest } from './input-request'
 import { isQuestion } from './approvals'
@@ -403,6 +408,8 @@ const EntryRow = memo(function EntryRow({
         {entry.message}
       </div>
     )
+  if (entry.kind === 'mode')
+    return <ModeLine label={entry.label} fromLabel={entry.fromLabel} by={entry.by} />
   return null
 })
 /** A run of tools, re-rendered only when one of its calls changed: the run is
@@ -894,6 +901,33 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
   const waitingOn = isRemoteKey(session.id)
     ? serverDock(remotePending, session.id)
     : openRequests(conversation.entries)
+  // PRDCT-4331: a switch of the permission mode this view asks for, so the
+  // transcript's line can say who asked; and what the card reads of each
+  // request, the host's readings by the provider's id and, for a server's
+  // session, by the server's own request key the dock answers under.
+  const switchMode = (mode: string): void => {
+    dispatch({ askMode: mode })
+    void write({ type: 'set_permission_mode', mode }).catch(report)
+  }
+  const modes = conversation.permissionMode
+  const canBypass =
+    !!modes &&
+    modes.mode !== 'bypassPermissions' &&
+    modes.modes.some((m) => m.id === 'bypassPermissions')
+  const explained = conversation.explained
+  const permissionReading = useMemo((): PermissionReadingValue => {
+    const byKey = { ...explained }
+    for (const r of remotePending ?? [])
+      if (r.sessionId === session.id && r.providerRequestId && explained[r.providerRequestId])
+        byKey[r.id] = explained[r.providerRequestId]
+    return {
+      explained: byKey,
+      cwd: session.cwd,
+      ...(canBypass && { backToBypass: () => switchMode('bypassPermissions') })
+    }
+    // switchMode reads write and report, both stable for the session.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [explained, remotePending, session.id, session.cwd, canBypass])
   const query = closed ? null : slashQuery(draft)
   const slashOpen = query !== null && slashDismissed !== draft
   const pickCommand = useCallback(
@@ -1162,23 +1196,25 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
               >
                 <ExchangeContext.Provider value={exchanges}>
                   <StretchContext.Provider value={stretchContext}>
-                    <TranscriptRows
-                      rows={blocks}
-                      settled={pastRead}
-                      scroll={transcript.scroll}
-                      reveal={reveal}
-                    >
-                      {({ block, key }, index, arriving) => (
-                        <TranscriptRow
-                          rowKey={key}
-                          key={key}
-                          block={block}
-                          first={index === 0}
-                          arriving={arriving}
-                          onError={report}
-                        />
-                      )}
-                    </TranscriptRows>
+                    <PermissionReadingProvider value={permissionReading}>
+                      <TranscriptRows
+                        rows={blocks}
+                        settled={pastRead}
+                        scroll={transcript.scroll}
+                        reveal={reveal}
+                      >
+                        {({ block, key }, index, arriving) => (
+                          <TranscriptRow
+                            rowKey={key}
+                            key={key}
+                            block={block}
+                            first={index === 0}
+                            arriving={arriving}
+                            onError={report}
+                          />
+                        )}
+                      </TranscriptRows>
+                    </PermissionReadingProvider>
                   </StretchContext.Provider>
                 </ExchangeContext.Provider>
                 {tail.length > 0 && (
@@ -1267,19 +1303,21 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
             }}
           />
         )}
-        <PromptDock
-          // Only /resume hides the dock; MCP and plugin panels keep pending
-          // prompts in sight. A server's session answers in this same dock, by
-          // the server's own request key (server-requests.ts).
-          // A question is answered where the agent asked it, inline in the
-          // transcript (InlineQuestion); the dock keeps what it always held
-          // best, a tool to allow, in reach above the composer.
-          requests={panel === 'resume' ? [] : waitingOn.filter((r) => !isQuestion(r))}
-          remote={isRemoteKey(session.id)}
-          agent={AGENT_NAMES[session.provider] ?? 'the agent'}
-          busy={(id) => !ready || state === 'ended' || pending.includes(id)}
-          onAnswer={(id, optionId, answers) => void answer(id, optionId, answers)}
-        />
+        <PermissionReadingProvider value={permissionReading}>
+          <PromptDock
+            // Only /resume hides the dock; MCP and plugin panels keep pending
+            // prompts in sight. A server's session answers in this same dock, by
+            // the server's own request key (server-requests.ts).
+            // A question is answered where the agent asked it, inline in the
+            // transcript (InlineQuestion); the dock keeps what it always held
+            // best, a tool to allow, in reach above the composer.
+            requests={panel === 'resume' ? [] : waitingOn.filter((r) => !isQuestion(r))}
+            remote={isRemoteKey(session.id)}
+            agent={AGENT_NAMES[session.provider] ?? 'the agent'}
+            busy={(id) => !ready || state === 'ended' || pending.includes(id)}
+            onAnswer={(id, optionId, answers) => void answer(id, optionId, answers)}
+          />
+        </PermissionReadingProvider>
         {slashOpen && (
           <div className="chat-slash-anchor">
             <SlashMenu
@@ -1366,7 +1404,7 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
                   conversation.permissionMode.mode,
                   conversation.permissionMode.modes
                 )
-                if (next) void write({ type: 'set_permission_mode', mode: next }).catch(report)
+                if (next) switchMode(next)
                 return
               }
               if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
@@ -1443,9 +1481,7 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
                 mode={conversation.permissionMode.mode}
                 modes={conversation.permissionMode.modes}
                 disabled={closed}
-                onSelect={(id) =>
-                  void write({ type: 'set_permission_mode', mode: id }).catch(report)
-                }
+                onSelect={switchMode}
               />
             )}
             <ModelMenu

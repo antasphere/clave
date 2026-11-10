@@ -18,6 +18,7 @@ import { Key } from './prompt-bits'
 import { ClosedForm, InputPrompt } from './InputPrompt'
 import { isDeny, isInputRequest, forgetCard } from './input-request'
 import { useQuestionHost, type Answer } from './question-context'
+import { BackToBypass, PermissionLevelTag, PermissionReading } from './PermissionReading'
 
 export type { Answer } from './question-context'
 
@@ -130,6 +131,8 @@ function PermissionPrompt({
     >
       <div className="chat-prompt-title">{title}</div>
       {target && <div className="chat-prompt-target">{target}</div>}
+      {/* PRDCT-4331: the level at once, then what the request does in plain words. */}
+      <PermissionReading request={request} />
       {request.detail && <p className="chat-prompt-detail">{request.detail}</p>}
       {code && (
         <pre className="chat-prompt-code">
@@ -180,6 +183,7 @@ function PermissionPrompt({
             </button>
           ))}
       </div>
+      <BackToBypass />
     </div>
   )
 }
@@ -770,6 +774,7 @@ export function PermissionRow({ entry }: { entry: PermissionEntry }): React.JSX.
       <span className="chat-permission-row-text">
         <span className="chat-tool-name">{status}</span>
         <span className="chat-tool-summary">{subject}</span>
+        {!question && <PermissionLevelTag request={request} />}
         {answers && question && !hosted && (
           <span className="chat-permission-row-answer">→ {answers}</span>
         )}
