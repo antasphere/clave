@@ -1332,30 +1332,36 @@ export function Sidebar(): React.JSX.Element {
           })
         }
         // The policy's knobs on this tab: pinned to its account (never moved,
-        // never proposed), and its own mode over the workspace's.
-        const pinned = session.accountPinned === true
-        items.push({
-          label: pinned ? 'Unpin from this account' : 'Pin to this account',
-          icon: <MapPinIcon className="w-3.5 h-3.5" />,
-          onClick: () => useSessionStore.getState().setAccountPinned(sessionId, !pinned)
-        })
-        // Kept on its model (PRDCT-4302): a family's cap out never has the
-        // policy change this tab's model; it falls to the account rung.
-        const modelPinned = session.modelPinned === true
-        items.push({
-          label: modelPinned ? 'Let the model change at limit' : 'Keep on this model',
-          icon: <CpuChipIcon className="w-3.5 h-3.5" />,
-          onClick: () => useSessionStore.getState().setModelPinned(sessionId, !modelPinned)
-        })
-        const automatic = effectiveSwitchMode(session) === 'automatic'
-        items.push({
-          label: automatic ? 'Propose switches, do not make them' : 'Switch automatically at limit',
-          icon: <BoltIcon className="w-3.5 h-3.5" />,
-          onClick: () =>
-            useSessionStore
-              .getState()
-              .setAccountSwitchMode(sessionId, automatic ? 'propose' : 'automatic')
-        })
+        // never proposed), and its own mode over the workspace's. This Mac's
+        // policy acts on this Mac's tabs alone (`account-policy.ts`), so a
+        // tab on a server is not offered knobs nothing would read (PRDCT-4328).
+        if (!isRemoteKey(sessionId)) {
+          const pinned = session.accountPinned === true
+          items.push({
+            label: pinned ? 'Unpin from this account' : 'Pin to this account',
+            icon: <MapPinIcon className="w-3.5 h-3.5" />,
+            onClick: () => useSessionStore.getState().setAccountPinned(sessionId, !pinned)
+          })
+          // Kept on its model (PRDCT-4302): a family's cap out never has the
+          // policy change this tab's model; it falls to the account rung.
+          const modelPinned = session.modelPinned === true
+          items.push({
+            label: modelPinned ? 'Let the model change at limit' : 'Keep on this model',
+            icon: <CpuChipIcon className="w-3.5 h-3.5" />,
+            onClick: () => useSessionStore.getState().setModelPinned(sessionId, !modelPinned)
+          })
+          const automatic = effectiveSwitchMode(session) === 'automatic'
+          items.push({
+            label: automatic
+              ? 'Propose switches, do not make them'
+              : 'Switch automatically at limit',
+            icon: <BoltIcon className="w-3.5 h-3.5" />,
+            onClick: () =>
+              useSessionStore
+                .getState()
+                .setAccountSwitchMode(sessionId, automatic ? 'propose' : 'automatic')
+          })
+        }
       }
       if (
         session &&

@@ -1,10 +1,10 @@
 import type { Session } from '../../../src/renderer/src/store/session-types'
-import { sessionAccountUsage } from '../../../src/renderer/src/lib/switch-account'
 import {
-  capStatus,
-  useClaudeAccountsUsage,
-  useCodexAccountsUsage
-} from '../../../src/renderer/src/store/usage-store'
+  accountProviderOf,
+  sessionAccountUsage
+} from '../../../src/renderer/src/lib/switch-account'
+import { useSessionAccountView } from '../../../src/renderer/src/lib/session-accounts'
+import { capStatus } from '../../../src/renderer/src/store/usage-store'
 import { limitSentence } from './limit-sentence'
 
 /**
@@ -20,9 +20,9 @@ import { limitSentence } from './limit-sentence'
  */
 export function useLimitSentence(host: Session | undefined): string {
   const account = host?.claudeProfileLabel ?? host?.codexAccountLabel ?? 'This account'
-  const accountId = host?.claudeProfileId ?? host?.codexAccountId ?? 'default'
-  useClaudeAccountsUsage((s) => s.byAccount[accountId])
-  useCodexAccountsUsage((s) => s.byAccount[accountId])
+  // Subscribed to the tab's OWNER's usage: a server tab's reads are the
+  // server's (PRDCT-4328).
+  useSessionAccountView(host, host ? accountProviderOf(host) : null)
   const stopping = host ? (capStatus(sessionAccountUsage(host))?.stopping ?? null) : null
   return limitSentence(account, stopping, host?.limitReported ?? null)
 }

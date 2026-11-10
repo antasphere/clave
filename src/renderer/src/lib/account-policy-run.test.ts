@@ -65,6 +65,23 @@ vi.mock('../store/account-policy-store', () => ({
   effectiveSwitchMode: () => fake.mode,
   effectiveFamilyLimitRule: () => fake.onFamilyLimit
 }))
+vi.mock('./session-accounts', () => ({
+  sessionAccountView: (_s: Session, provider: string) => ({
+    usage: { work: fake.account },
+    accounts:
+      provider === 'codex'
+        ? [{ id: 'work', label: 'work' }]
+        : [
+            { id: 'work', label: 'Work' },
+            { id: 'play', label: 'Play' }
+          ]
+  }),
+  // This Mac's tab: the forced read goes to main, as the real seam sends it.
+  refreshSessionAccountUsage: (_s: Session, provider: string) =>
+    provider === 'codex'
+      ? window.electronAPI.getCodexUsageLimits('work', { force: true })
+      : window.electronAPI.getUsageLimits('work', { force: true })
+}))
 vi.mock('./switch-account', () => ({
   accountProviderOf: (s: Session) => (s.claudeMode ? 'claude' : s.codexMode ? 'codex' : null),
   nextAccountFor: () => fake.next,

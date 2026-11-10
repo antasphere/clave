@@ -191,6 +191,8 @@ function poolUsageForModel(
 export interface SwitchTarget {
   id: string
   provider: AccountProvider
+  /** Whose account it is: `LOCAL_SERVER_ID`, or the server the tab runs on. */
+  owner: string
   model?: string
   label: string
   /** How the account signs in ("Max 20x", "API key"), for the preview. */
@@ -220,6 +222,7 @@ export function sessionSwitchTargets(session: Session): SwitchTarget[] {
       {
         ...t,
         provider,
+        owner: view.owner,
         model: session.model,
         label: account.label,
         auth: describeAccountAuth(provider, account),

@@ -22,7 +22,11 @@ vi.mock('../../../src/renderer/src/store/usage-store', async (original) => {
   }
 })
 vi.mock('../../../src/renderer/src/lib/switch-account', () => ({
+  accountProviderOf: () => 'claude',
   sessionAccountUsage: () => undefined
+}))
+vi.mock('../../../src/renderer/src/lib/session-accounts', () => ({
+  useSessionAccountView: () => null
 }))
 import { useLimitSentence } from './limit-words'
 

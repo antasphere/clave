@@ -255,6 +255,22 @@ export function ensureSessionAccounts(
     void serverReads().then((reads) => reads.readServerUsage(owner, provider, id, false))
 }
 
+/** Read a session's account's usage again now, forced, on its owner: the
+ *  CLI reported a limit the poll may not have seen yet. */
+export function refreshSessionAccountUsage(
+  session: SessionAccountFields,
+  provider: AccountProvider
+): void {
+  const owner = sessionOwner(session)
+  const id = sessionAccountIdOf(session, provider)
+  if (owner !== LOCAL_SERVER_ID) {
+    void serverReads().then((reads) => reads.readServerUsage(owner, provider, id, true))
+    return
+  }
+  if (provider === 'codex') void window.electronAPI.getCodexUsageLimits(id, { force: true })
+  else void window.electronAPI.getUsageLimits(id, { force: true })
+}
+
 /** The server reads, loaded on first use: `server-settings-store.ts` pulls
  *  the fleet store in, which nothing that only reads a session's account
  *  (the agent tools, their tests) should load with it. */
