@@ -64,6 +64,19 @@
 // their content, are written to <tmpdir>/report.json: the record of what the
 // server kept there.
 //
+// The server seals the owner's session in the keychain FILE that
+// CLAVE_KEYCHAIN_FILE names (packages/host/src/ports/secrets.ts): the run's
+// own, <tmpdir>/server/run.keychain-db, made before the daemon is built with
+// `security create-keychain -p '' <file>` and `security set-keychain-settings
+// <file>`, never added to the search list, and deleted with `security
+// delete-keychain <file>` at every stop, a failed boot included (the method of
+// tests/e2e/fixtures/run-keychain.mjs, its commands copied here). The user's
+// keychain search list (`security list-keychains -d user`) is read once before
+// the keychain is made and once after it is deleted: the two must be equal and
+// neither may name the run's keychain, or the run ends with exit 2 whatever
+// the mode. Only the counts and the result are printed, never the list (it
+// names the person's home). The stack never edits the list.
+//
 // --dry-run runs the four pre-boot checks on the very commands and environments
 // a boot would use, prints those commands and exits without starting anything.
 // --approve approves every pending pairing as the owner (GET /devices every
@@ -198,6 +211,9 @@ const ONE_SHOT = path.join(REPO, 'packages', 'host', 'src', 'claude-one-shot.ts'
 const PROFILE_MANAGER = path.join(REPO, 'packages', 'host', 'src', 'launch-profile-manager.ts')
 
 const SHELL_LAUNCH = path.join(REPO, 'packages', 'host', 'src', 'shell-launch.ts')
+/** The run's own keychain file, in the daemon's data folder: <tmpdir>/server/run.keychain-db. */
+export const RUN_KEYCHAIN = 'run.keychain-db'
+const SECURITY = '/usr/bin/security'
 
 export const DEFAULTS = {
   serverPort: 47101,
@@ -590,6 +606,146 @@ export function makeOwnedHome(runFolder) {
   return home
 }
 
+/** The run keychain's faults this process saw: the user's search list could not
+ *  be read, named the run's keychain or changed during the run, or the keychain
+ *  was not deleted. Any one ends the process with exit 2, whatever the mode and
+ *  whatever its verdict line said. Never cleared. */
+const keychainFaults = []
+/** The run keychain's faults so far (a copy), for a driver's exit code. */
+export const runKeychainFaults = () => [...keychainFaults]
+
+/** One `security` command with the stack's own environment; its stdout, which
+ *  no caller prints. A failure names the subcommand and the first line security
+ *  wrote to stderr. */
+function security(args) {
+  try {
+    return execFileSync(SECURITY, args, {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      timeout: STEP_MS
+    })
+  } catch (err) {
+    const said = String(err.stderr ?? '')
+      .trim()
+      .split('\n')[0]
+    throw new Error(`security ${args[0]} failed: ${said || err.code || `exit ${err.status}`}`)
+  }
+}
+
+/** The user's keychain search list as `security list-keychains -d user` prints
+ *  it, one path per entry. Counted and compared, never printed: it names the
+ *  person's home. */
+function userSearchList() {
+  return security(['list-keychains', '-d', 'user'])
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => line.replace(/^"(.*)"$/, '$1'))
+}
+
+/** Whether a search-list entry names `file`: as written, or by its folder's canonical path. */
+function namesFile(entry, file) {
+  const spellings = (p) => {
+    const at = path.resolve(p)
+    const folder = canonical(path.dirname(at))
+    return folder ? [at, path.join(folder, path.basename(at))] : [at]
+  }
+  const mine = spellings(file)
+  return spellings(entry).some((s) => mine.includes(s))
+}
+
+const countEntries = (n) => `${n} entr${n === 1 ? 'y' : 'ies'}`
+
+/**
+ * The run's own keychain FILE, the repository's reviewed method
+ * (tests/e2e/fixtures/run-keychain.mjs), its three commands copied here.
+ * `open()` reads the user's search list, then makes the keychain with
+ * `security create-keychain -p '' <file>` and `security set-keychain-settings
+ * <file>` (no lock on sleep, no timeout), never adding it to the list; a list
+ * that cannot be read or already names the file is refused (`searchList` set
+ * on the error) before anything is made. `close()` deletes the keychain with
+ * `security delete-keychain <file>` and reads the list again, which must equal
+ * the first read and name the file in neither. `close()` answers the faults,
+ * empty when the bracket closed clean, and none for a keychain never opened.
+ * Only counts and results are logged, never the list.
+ */
+export function runKeychain(file, log) {
+  let before = null
+  let made = false
+  const refusal = (message) => Object.assign(new Error(message), { searchList: true })
+  return {
+    file,
+    open() {
+      let list
+      try {
+        list = userSearchList()
+      } catch (err) {
+        throw refusal(
+          `the user's keychain search list cannot be read before the run keychain is made: ${err.message}`
+        )
+      }
+      if (list.some((entry) => namesFile(entry, file)))
+        throw refusal(
+          `the user's keychain search list names the run keychain ${file} before this run made it (${countEntries(list.length)}); the stack never edits the list, so nothing was made`
+        )
+      before = list
+      log(
+        `keychain search list (security list-keychains -d user), read before the run keychain is made: ${countEntries(list.length)}, the run keychain not among them`
+      )
+      security(['create-keychain', '-p', '', file])
+      made = true
+      security(['set-keychain-settings', file])
+      log(
+        `run keychain made: ${file} (security create-keychain, then set-keychain-settings), never added to the search list`
+      )
+    },
+    close() {
+      if (before === null) return []
+      const faults = []
+      if (made || existsSync(file)) {
+        try {
+          security(['delete-keychain', file])
+        } catch (err) {
+          faults.push(`the run keychain could not be deleted: ${err.message}`)
+        }
+        if (existsSync(file))
+          faults.push(`the run keychain ${file} is still there after security delete-keychain`)
+        else log(`run keychain deleted (security delete-keychain): ${file} is gone`)
+      }
+      let after
+      try {
+        after = userSearchList()
+      } catch (err) {
+        faults.push(
+          `the user's keychain search list cannot be read after the run keychain was deleted: ${err.message}`
+        )
+        log(
+          `keychain search list, read after the run keychain was deleted: unreadable, ${countEntries(before.length)} before: FAIL`
+        )
+        return faults
+      }
+      const equal = sameList(before, after)
+      const named = after.some((entry) => namesFile(entry, file))
+      if (!equal)
+        faults.push(
+          `the user's keychain search list changed during the run: ${countEntries(before.length)} before the run keychain was made, ${countEntries(after.length)} after it was deleted`
+        )
+      if (named)
+        faults.push(
+          `the user's keychain search list names the run keychain after it was deleted (${countEntries(after.length)})`
+        )
+      const wrong = [
+        ...(equal ? [] : ['not equal']),
+        ...(named ? ['it names the run keychain'] : [])
+      ]
+      log(
+        `keychain search list (security list-keychains -d user), read after the run keychain was deleted: ${countEntries(after.length)}, ${countEntries(before.length)} before; ${wrong.length ? `FAIL: ${wrong.join(', ')}; the stack never edits the list, nothing was changed back` : 'equal, the run keychain named in neither: ok'}`
+      )
+      return faults
+    }
+  }
+}
+
 /** The relay's environment: the allowlist, this process's PATH and the owned home as HOME. */
 export function relayEnv({ home }) {
   return childEnv({ HOME: home, PATH: process.env.PATH ?? '/usr/bin:/bin' })
@@ -629,7 +785,7 @@ export function daemonArgs({ serverDir, serverPort, relayUrl }) {
 }
 
 /** The daemon's own environment: the allowlist, the owned home as HOME, the
- *  issuer, a keychain FILE under its data folder, the stub as its login shell,
+ *  issuer, the run's keychain FILE under its data folder, the stub as its login shell,
  *  the recorders first on PATH, the empty Claude config folder and Codex home.
  *  The same values are written into the stub shell, so the login environment
  *  the daemon reads is this one and no process's. */
@@ -639,7 +795,7 @@ export function daemonEnv({ issuer, serverDir, bin, shell, claudeConfigDir, code
     PATH: `${bin}${path.delimiter}${process.env.PATH ?? '/usr/bin:/bin'}`,
     SHELL: shell,
     CLAVE_ANTASPHERE_ISSUER: issuer,
-    CLAVE_KEYCHAIN_FILE: path.join(serverDir, 'keychain.json'),
+    CLAVE_KEYCHAIN_FILE: path.join(serverDir, RUN_KEYCHAIN),
     CLAUDE_CONFIG_DIR: claudeConfigDir,
     CODEX_HOME: codexHome
   })
@@ -1215,8 +1371,10 @@ const echoReplyOf = (page, text) =>
 /**
  * Brings the whole stack up. Resolves the facts (the same as stack.json)
  * with `stop()` (the watch, the approver, the server, the relay, the
- * provider, in that order; it answers the problems latched or seen, empty
- * when none), `selfCheck()`, `problems` (the list latched by the watch) and
+ * provider, then the run keychain and the second read of the search list, in
+ * that order, once however often it is called; it answers the recorders'
+ * problems latched or seen, empty when none, and the keychain's faults go to
+ * runKeychainFaults()), `selfCheck()`, `problems` (the list latched by the watch) and
  * `died` (resolves `server`, `relay` or `recorder`). On any failure
  * everything started so far is stopped and the error thrown names the step,
  * the child's last stderr lines and the exit code.
@@ -1246,6 +1404,9 @@ export async function startStack({
     mkdirSync(dir, { recursive: true, mode: 0o700 })
   // The children's HOME, made with the other owned folders before any child is built.
   const home = makeOwnedHome(tmpdir)
+  // The run's own keychain, an owned file of the run folder under server/: made
+  // at step 0, before the daemon is built, and deleted at every stop.
+  const keychain = runKeychain(path.join(serverDir, RUN_KEYCHAIN), log)
 
   const secrets = []
   let provider = null
@@ -1294,8 +1455,7 @@ export async function startStack({
       log(`the owned home's report could not be written: ${err.message}`)
     }
   }
-  const stop = async () => {
-    if (stopped) return latched ?? []
+  const stopOnce = async () => {
     stopped = true
     inFlightStop = null
     if (watch) clearInterval(watch)
@@ -1303,13 +1463,31 @@ export async function startStack({
     if (server) await server.stop()
     if (relay) await relay.stop()
     if (provider) await provider.close()
+    // The keychain goes once nothing can write to it, and the search list is read again.
+    keychainFaults.push(...keychain.close())
     reportHome()
     if (latched) return latched
     return stubs && baseline ? problemsOf(inspect(stubs, baseline)) : []
   }
+  /** One stop per run: every caller (a signal, the failed boot, the driver) waits
+   *  for it and gets its answer, so none exits before the keychain is deleted. */
+  let stopping = null
+  const stop = () => {
+    if (!stopping) stopping = stopOnce()
+    return stopping
+  }
 
   inFlightStop = stop
   try {
+    // 0. The run's keychain, before the daemon is built: the user's search list
+    // read first, then create-keychain and set-keychain-settings.
+    try {
+      keychain.open()
+    } catch (err) {
+      if (err.searchList) keychainFaults.push(err.message)
+      throw fail('make the run keychain', err, null, err.searchList ? CHECK_FAILED_EXIT : 1)
+    }
+
     // 1. The provider.
     try {
       provider = await startOidcProvider({ registrationStatus: 200, user: OWNER })
@@ -2083,6 +2261,18 @@ if (isMain) {
   const options = parseArgs(process.argv.slice(2))
   let stack = null
   let ending = false
+  /** How every mode that boots ends: exit 2 when the run keychain's bracket did
+   *  not close clean, whatever the mode's own code or verdict line. */
+  const exit = (code) => {
+    const faults = runKeychainFaults()
+    if (faults.length) {
+      process.stdout.write(
+        `fixture-stack: the run keychain's bracket failed, exit ${CHECK_FAILED_EXIT}: ${faults.join(' | ')}\n`
+      )
+      process.exit(CHECK_FAILED_EXIT)
+    }
+    process.exit(code)
+  }
   const end = async (code) => {
     if (ending) return
     ending = true
@@ -2096,7 +2286,7 @@ if (isMain) {
       code = CHECK_FAILED_EXIT
     }
     process.stdout.write('fixture-stack: stopped\n')
-    process.exit(code)
+    exit(code)
   }
   process.on('SIGINT', () => void end(0))
   process.on('SIGTERM', () => void end(0))
@@ -2209,6 +2399,9 @@ if (isMain) {
     log(
       "checks 4 to 6 run after the daemon announces itself and before anything is seeded: the discovery read (step 3b), the inside read through POST /e2e/evaluate (step 3c), which also reads the daemon's home, and the probe the daemon runs itself (step 3d); the recorder watch runs from the probe to the stop (steps 3e and 7b), and every stop writes the names under the owned home to report.json"
     )
+    log(
+      `a boot makes the run keychain ${path.join(options.tmpdir, 'server', RUN_KEYCHAIN)} before the daemon is built (step 0) and deletes it at every stop, between two reads of the user's keychain search list that must be equal and never name it; a dry run makes none and reads no list`
+    )
     const ok = results.length === 4 && results.every((c) => c.ok)
     log(
       ok
@@ -2224,12 +2417,12 @@ if (isMain) {
     } catch (err) {
       const red = err.fixtureStep === step && (reason === null || reason.test(err.message))
       process.stdout.write(`${red ? 'PASS' : 'FAIL'} ${name} (${err.message.split('\n')[0]})\n`)
-      process.exit(red ? 0 : 1)
+      exit(red ? 0 : 1)
     }
     if (!step) return
     await stack.stop()
     process.stdout.write(`FAIL ${name}: the boot went on\n`)
-    process.exit(1)
+    exit(1)
   }
   if (options.provePrerequisites) {
     // Every flag kept; the discovery read handed to check 4 says titles "on":
@@ -2296,7 +2489,7 @@ if (isMain) {
     process.stdout.write(
       `${red ? 'PASS' : 'FAIL'} a recorder log that is ${options.proveRecorderRead} is a latched failure, never "no calls" (died: ${who}; ${left.join(' | ')})\n`
     )
-    process.exit(red ? 0 : 1)
+    exit(red ? 0 : 1)
   }
   if (options.proveTitleGuard) {
     // Every flag kept; the stack comes up, then one of two things the watch must
@@ -2333,13 +2526,13 @@ if (isMain) {
     process.stdout.write(
       `${red ? 'PASS' : 'FAIL'} the recorder watch stops the daemon on ${what} while the stack runs (died: ${who}; ${left.join(' | ')})\n`
     )
-    process.exit(red ? 0 : 1)
+    exit(red ? 0 : 1)
   }
   try {
     stack = await startStack(options)
   } catch (err) {
     process.stderr.write(`fixture-stack: ${err.message}\n`)
-    process.exit(err.exitCode ?? 1)
+    exit(err.exitCode ?? 1)
   }
   process.stdout.write(factLines(stack).join('\n') + '\n')
   process.stdout.write('fixture-stack: ready\n')

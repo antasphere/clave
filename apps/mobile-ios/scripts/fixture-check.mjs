@@ -5,7 +5,9 @@
 // Echo-only server, all on 127.0.0.1). It brings the stack up with every
 // pairing approved on sight, boots the simulator when it is not booted, runs
 // the UI tests with xcodebuild, tears the stack down and exits with
-// xcodebuild's code.
+// xcodebuild's code, or 2 when the recorders were not silent or the run
+// keychain's bracket failed (the user's keychain search list moved during the
+// run, or the run keychain was not deleted).
 //
 //   node apps/mobile-ios/scripts/fixture-check.mjs --udid <simulator udid>
 //        [--only ClaveUITests/FixtureFlowTests] [--derived <DerivedData path>]
@@ -22,7 +24,7 @@
 import { execFileSync, spawn } from 'node:child_process'
 import { createWriteStream, mkdirSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
-import { REPO, factLines, parseStackArgs, startStack } from './fixture-stack.mjs'
+import { REPO, factLines, parseStackArgs, runKeychainFaults, startStack } from './fixture-stack.mjs'
 
 const BUNDLE_ID = 'com.clave.ios.dev'
 // The test lines, the errors and the "** TEST SUCCEEDED **" / "** BUILD FAILED **" verdicts;
@@ -105,7 +107,9 @@ async function main() {
     stack = await startStack({ ...options, approve: true })
   } catch (err) {
     process.stderr.write(`fixture-check: ${err.message}\n`)
-    process.exit(err.exitCode ?? 1)
+    const faults = runKeychainFaults()
+    if (faults.length) log(`the run keychain's bracket failed: ${faults.join(' | ')}`)
+    process.exit(faults.length ? 2 : (err.exitCode ?? 1))
   }
   for (const line of factLines(stack)) log(line)
 
@@ -179,6 +183,13 @@ async function main() {
       // The recorder watch saw a call, or a file landed in a credential folder:
       // the run is red whatever xcodebuild said.
       log(`the recorders or the credential folders were not silent: ${left.join(' | ')}`)
+      exitCode = 2
+    }
+    const faults = runKeychainFaults()
+    if (faults.length) {
+      // The user's keychain search list moved, or the run keychain stayed: red
+      // whatever xcodebuild said.
+      log(`the run keychain's bracket failed: ${faults.join(' | ')}`)
       exitCode = 2
     }
     log('stack stopped')

@@ -31,7 +31,8 @@ approves every phone that asks to pair. `--self-check` proves the stack end to e
 exits. `--once` brings it up, prints it and tears it down; both keep the stack up at least
 12 s under the recorder watch. `--dry-run` runs the four pre-boot checks below on the very
 commands and environments a boot would use, prints those commands and exits without starting
-anything. A boot whose checks fail, or whose watch catches a call, exits 2.
+anything. A boot whose checks fail, whose watch catches a call, or whose run keychain's bracket
+fails (below) exits 2.
 
 `fixture-check.mjs` brings the stack up with approval on, boots the simulator if it is
 not booted, runs `xcodebuild test` (by default `-only-testing:ClaveUITests/FixtureFlowTests`),
@@ -66,7 +67,8 @@ stack.json      issuer, relay, server, serverId, machineId, workspaceId, session
                 included), probe (what the daemon ran and answered), recorderLog, recorderBaseline (the
                 probe's one line)
 owner-token     the server's bearer token, mode 0600 (the only place the scripts write it)
-server/         the daemon's data, its keychain file included (no login keychain is touched)
+server/         the daemon's data, and run.keychain-db, the run's own keychain while the run lasts
+                (made before the daemon is built, deleted at every stop; no login keychain is touched)
 relay/          the relay's data
 scratch/        the workspace `scratch` the Echo chat runs in
 stubs/          zsh (the daemon's login shell, stood in for), bin/claude and bin/codex (the recorders),
@@ -107,6 +109,27 @@ nowhere, so the transcript readers fall back to the owned home as well. Check 3 
 both children and of the stub before the boot, check 5 proves it from inside the daemon, and at
 every stop the names under `home/` are written to `report.json`: the record of what the server
 kept there.
+
+## The run keychain
+
+On macOS the server seals the owner's session with `/usr/bin/security add-generic-password`, in
+the keychain file `CLAVE_KEYCHAIN_FILE` names (`packages/host/src/ports/secrets.ts`,
+`standalone.ts`). The stack names `<tmpdir>/server/run.keychain-db`, an owned file of the run
+folder, and makes it at step 0 of every boot, after the run folder's ownership checks and before
+the daemon is built, with the repository's reviewed method (`tests/e2e/fixtures/run-keychain.mjs`,
+its three commands copied into the stack): `security create-keychain -p '' <file>`, then
+`security set-keychain-settings <file>` (no lock on sleep, no timeout). It is never added to the
+search list, and every stop, a failed boot included, deletes it with `security delete-keychain
+<file>` once the server, the relay and the provider are down. The `security` commands run with
+the stack's own environment.
+
+The user's keychain search list (`security list-keychains -d user`) is read once before the
+keychain is made and once after it is deleted. The two reads must be equal and must not name the
+run's keychain; only the number of entries and the result are printed, never the list, which
+names the person's home. A list that differs, names the run keychain, or cannot be read, and a
+keychain that cannot be deleted, end the run with exit 2 whatever the mode and whatever its
+verdict line says (`fixture-check.mjs` too). The stack never edits the list: a list that already
+names the run keychain before the boot refuses it with nothing made.
 
 ## What the self-check proves
 
