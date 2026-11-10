@@ -17,6 +17,7 @@ import type {
   UsageError
 } from './index.d'
 import type { LaunchProfile, LauncherFamily } from '../shared/agent-launch'
+import type { HelperPreference, HelperPreferencePatch } from '../shared/helper-preferences'
 import type { InputKind } from '@clave/contract/input-kinds'
 import type {
   RoutineCreateInput,
@@ -139,6 +140,14 @@ export interface FleetDesktopAPI {
     family: LauncherFamily,
     profileId: string | null
   ): Promise<LaunchProfilePreferences>
+  /** The helpers of a server (PRDCT-4330), read and written on that server:
+   *  the runner there reads the preference at each call. */
+  fleetHelpers(serverId: string): Promise<HelperPreference[]>
+  fleetHelperSet(
+    serverId: string,
+    helperId: string,
+    patch: HelperPreferencePatch
+  ): Promise<HelperPreference[]>
   /** A server's settings as they change, from its live push socket: delivered while the connection is open; a page reads the lists again when the server (re)connects. */
   onFleetSettingsEvent(callback: (event: FleetSettingsEvent) => void): () => void
   // ── PRDCT-4149: the routines a connected server runs, read and driven from the Mac ──

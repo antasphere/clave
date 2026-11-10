@@ -6,6 +6,11 @@ import { helperById, listHelpers, setHelperConfigSource, type HelperConfig } fro
 import './title'
 import './digests'
 import './git'
+import type {
+  HelperAccount,
+  HelperPreference as HelperPreferenceView,
+  HelperPreferencePatch
+} from '../../shared/helper-preferences'
 
 /**
  * The helpers' preference on the machine that runs them (PRDCT-4330): per
@@ -23,31 +28,11 @@ import './git'
 
 export const HELPER_PREFERENCES_FILE = 'helper-preferences.json'
 
-/** Whose account a helper runs on: the tab's own (the default), the
- *  machine's login, or one Claude account of the machine. */
-export type HelperAccount =
-  | { kind: 'session' }
-  | { kind: 'machine' }
-  | { kind: 'account'; accountId: string }
-
-/** A helper as Settings shows it: its defaults and the person's choice. */
-export interface HelperPreferenceView {
-  id: string
-  label: string
-  enabled: boolean
-  /** The model it runs on: the person's pick, or `defaultModel`. */
-  model: string
-  defaultModel: string
-  account: HelperAccount
-}
-
-/** What a write may change; a field left out stays as it is. `model: null`
- *  returns the helper to its default model. */
-export interface HelperPreferencePatch {
-  enabled?: boolean
-  model?: string | null
-  account?: HelperAccount
-}
+export type {
+  HelperAccount,
+  HelperPreference as HelperPreferenceView,
+  HelperPreferencePatch
+} from '../../shared/helper-preferences'
 
 /** One helper's stored entry: `claudeProfileId` absent is the tab's own,
  *  null the machine login, a string that account. */

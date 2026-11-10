@@ -24,6 +24,7 @@ import type {
 } from '../shared/agent-launch'
 import type { GitBatchProgress } from '../shared/git-batch'
 import type { GitRangeDirection } from '../shared/git-range'
+import type { HelperPreference, HelperPreferencePatch } from '../shared/helper-preferences'
 import type { MergeMethod, PullRef, ReviewEvent } from '../shared/github-pull'
 import type { WindowIdentity, Workspace, WorkspaceState } from '../shared/workspace-types'
 import type {
@@ -1250,6 +1251,16 @@ const electronAPI = {
       ipcRenderer.invoke('launch-profiles:set-workspace', { workspaceId, family, profileId }),
     server: async ({ api }, workspaceId, family, profileId) =>
       profiles(await api.settings.launchProfiles.setWorkspace(workspaceId, family, profileId))
+  }),
+  // ── Settings: the helpers of this Mac (PRDCT-4330), with a server arm ──
+  helpersList: viaServer<[], HelperPreference[]>({
+    ipc: () => ipcRenderer.invoke('helpers:list'),
+    server: async ({ api }) => loose<HelperPreference[]>(await api.settings.helpers.list())
+  }),
+  helperSet: viaServer<[string, HelperPreferencePatch], HelperPreference[]>({
+    ipc: (helperId, patch) => ipcRenderer.invoke('helpers:set', { helperId, patch }),
+    server: async ({ api }, helperId, patch) =>
+      loose<HelperPreference[]>(await api.settings.helpers.set(helperId, patch))
   }),
   spawnSession: viaServer<
     [
