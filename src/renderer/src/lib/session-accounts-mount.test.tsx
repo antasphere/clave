@@ -28,7 +28,7 @@ vi.mock('../store/session-store', () => ({
   )
 }))
 import { useServerSettingsStore } from '../store/server-settings-state'
-import { resetAccountKicks } from './session-accounts'
+import { ACCOUNT_KICK_GAP_MS, kickSessionAccounts, resetAccountKicks } from './session-accounts'
 import { AccountMenuHeader } from '../components/layout/AccountMenuHeader'
 import { AccountLimitBadge } from '../components/session/SessionItem'
 
@@ -89,5 +89,26 @@ describe('a server tab’s account is read by whatever draws it', () => {
     renderToStaticMarkup(<AccountMenuHeader session={held.host} />)
     await new Promise((resolve) => setTimeout(resolve, 20))
     expect(fleetAccounts).not.toHaveBeenCalled()
+  })
+})
+
+describe('a server whose load fails is not read again on every draw', () => {
+  const settle = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 10))
+
+  it('several draws within the hold-off: one load; once it has passed: a second', async () => {
+    fleetAccounts.mockImplementation(async () => {
+      throw new Error('the server is away')
+    })
+    const t0 = 1_000_000
+    for (const at of [t0, t0 + 10, t0 + 1_000, t0 + ACCOUNT_KICK_GAP_MS - 1]) {
+      kickSessionAccounts(tab(), 'claude', at)
+      await settle()
+    }
+    // The entry is in error after the first load: without the hold-off,
+    // every draw would load it again.
+    expect(useServerSettingsStore.getState().byServer[SERVER]?.status).toBe('error')
+    expect(fleetAccounts).toHaveBeenCalledTimes(1)
+    kickSessionAccounts(tab(), 'claude', t0 + ACCOUNT_KICK_GAP_MS + 1)
+    await vi.waitFor(() => expect(fleetAccounts).toHaveBeenCalledTimes(2))
   })
 })
