@@ -87,9 +87,9 @@ export { filesClient, type FilesClient } from './files'
 export { requestsClient, type RequestsClient } from './requests'
 // ── Wave wcs1023, lane C: the git domain ──
 export { gitClient, type GitClient } from './git'
-// ── Issue #266: the server's version and its self-upgrade ──
 // ── PRDCT-4327: the digests ──
 export { digestsClient, type DigestsClient } from './digests'
+// ── Issue #266: the server's version and its self-upgrade ──
 export { serverInfoClient, type ServerInfoClient, ServerInfoMissing } from './server-info'
 // ── ADR 0004: the routines ──
 export { routinesClient, type RoutinesClient } from './routines'
