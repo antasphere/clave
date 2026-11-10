@@ -4,8 +4,10 @@
 # (DEVELOPER_DIR set by the job). Its exit code is the verdict.
 #
 # Five steps: the core package's tests on the Mac (fast, no simulator); the app
-# and both test targets built for any simulator with the job's own Xcode, which
-# needs no simulator runtime; the app built for a simulator; the app's host
+# and both test targets built for any iOS device, unsigned, with the job's own
+# Xcode (a device build needs no simulator runtime, while an asset catalog built
+# for the simulator needs one matching the SDK: the hosted runner has none for
+# Xcode 26.0.1); the app built for a simulator; the app's host
 # tests plus the launch smoke test and the shell's flow on that simulator; and
 # the release-binary check (a Release build that must carry none of the
 # development-only code). The simulator is the first iPhone on the newest iOS
@@ -48,11 +50,11 @@ fi
 rm -f "$log"
 DERIVED="${CLAVE_IOS_DERIVED_DATA:-$PWD/DerivedData}"
 
-echo "ci: xcodebuild build-for-testing (any iOS Simulator, $(xcodebuild -version | head -n 1))"
+echo "ci: xcodebuild build-for-testing (any iOS device, unsigned, $(xcodebuild -version | sed -n 1p))"
 log="$(step_log)"
 status=0
-xcodebuild -project Clave.xcodeproj -scheme Clave -destination 'generic/platform=iOS Simulator' \
-  -derivedDataPath "$DERIVED-generic" build-for-testing >"$log" 2>&1 || status=$?
+xcodebuild -project Clave.xcodeproj -scheme Clave -destination 'generic/platform=iOS' \
+  -derivedDataPath "$DERIVED-device" build-for-testing CODE_SIGNING_ALLOWED=NO >"$log" 2>&1 || status=$?
 grep -E "error:|\*\* (TEST BUILD|BUILD) " "$log" || true
 if [ "$status" -ne 0 ]; then
   echo "ci: xcodebuild build-for-testing exited $status (log: $log)"
@@ -66,7 +68,7 @@ if [ -n "${CLAVE_IOS_SIMULATOR_DEVELOPER_DIR:-}" ]; then
     exit 1
   fi
   export DEVELOPER_DIR="$CLAVE_IOS_SIMULATOR_DEVELOPER_DIR"
-  echo "ci: the simulator steps run under $(xcodebuild -version | head -n 1) (CLAVE_IOS_SIMULATOR_DEVELOPER_DIR)"
+  echo "ci: the simulator steps run under $(xcodebuild -version | sed -n 1p) (CLAVE_IOS_SIMULATOR_DEVELOPER_DIR)"
 fi
 
 UDID="${CLAVE_IOS_SIMULATOR_UDID:-}"

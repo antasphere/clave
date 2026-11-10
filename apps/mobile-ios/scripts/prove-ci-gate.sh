@@ -61,18 +61,23 @@ printf '%s\n' '#!/bin/bash' \
   '  else printf "Xcode 26.0.1\nBuild version 17A400\n"; fi' \
   '  exit 0' \
   'fi' \
-  'conf=Debug; derived=""; action=""' \
+  'conf=Debug; derived=""; action=""; dest=""; signing=signed' \
   'while [ $# -gt 0 ]; do' \
   '  case "$1" in' \
   '    -configuration) conf="$2"; shift 2; continue ;;' \
   '    -derivedDataPath) derived="$2"; shift 2; continue ;;' \
+  '    -destination) dest="$2"; shift 2; continue ;;' \
+  '    CODE_SIGNING_ALLOWED=NO) signing=unsigned ;;' \
   '    build-for-testing) action=build-for-testing ;;' \
   '    build|test) action="$1" ;;' \
   '    -showdestinations) action=showdestinations ;;' \
   '  esac' \
   '  shift' \
   'done' \
-  'if [ -n "$CI_PROOF_TRACE" ]; then echo "$action ${DEVELOPER_DIR:-unset}" >>"$CI_PROOF_TRACE"; fi' \
+  'if [ -n "$CI_PROOF_TRACE" ]; then' \
+  '  if [ "$action" = build-for-testing ]; then echo "$action ${DEVELOPER_DIR:-unset} $dest $signing" >>"$CI_PROOF_TRACE"' \
+  '  else echo "$action ${DEVELOPER_DIR:-unset}" >>"$CI_PROOF_TRACE"; fi' \
+  'fi' \
   'case "$action" in' \
   '  showdestinations)' \
   '    if [ "$CI_PROOF_LISTING" = fail ]; then echo "xcodebuild: error: a stand-in failure"; exit 70; fi' \
@@ -262,8 +267,8 @@ job=(CI_PROOF_FAIL= CI_PROOF_DEVICES="$sandbox/devices-runner.json"
 : >"$trace"
 run_ci stand-in "" "${job[@]}" CI_PROOF_TRACE="$trace"
 judge "no simulator Xcode named: every step under the job's own Xcode, as before" pass "ci: simulator PICK-2650"
-trace_says "the same run's trace: the job's Xcode for the build for any simulator and for every simulator step" \
-  "build-for-testing unset" "unset"
+trace_says "the same run's trace: the job's Xcode for the unsigned build for any iOS device and for every simulator step" \
+  "build-for-testing unset generic/platform=iOS unsigned" "unset"
 if [[ $'\n'"$output"$'\n' == *$'\n'"ci: the simulator steps run under "* ]]; then
   echo "FAIL the same run names another Xcode though none was named"; failed=1
 else
@@ -275,14 +280,14 @@ judge "the hosted runner as its run of 10 November listed it, no simulator Xcode
 : >"$trace"
 run_ci stand-in "" "${hosted[@]}" CLAVE_IOS_SIMULATOR_DEVELOPER_DIR="$sandbox/xcode-26.2" CI_PROOF_TRACE="$trace"
 judge "the same runner with an installed simulator Xcode named" pass "ci: the simulator steps run under Xcode 26.2 (CLAVE_IOS_SIMULATOR_DEVELOPER_DIR)"
-trace_says "the same run's trace: the build for any simulator under the job's Xcode 26.0.1, the pick, build and tests under the named one" \
-  "build-for-testing unset" "$sandbox/xcode-26.2"
+trace_says "the same run's trace: the unsigned build for any iOS device under the job's Xcode 26.0.1, the pick, build and tests under the named one" \
+  "build-for-testing unset generic/platform=iOS unsigned" "$sandbox/xcode-26.2"
 run_ci stand-in "" "${hosted[@]}" CLAVE_IOS_SIMULATOR_DEVELOPER_DIR="$sandbox/no-such-xcode"
 judge "a named simulator Xcode folder that is not there" fail "ci: CLAVE_IOS_SIMULATOR_DEVELOPER_DIR holds no Xcode: $sandbox/no-such-xcode"
 run_ci stand-in "" "${hosted[@]}" CLAVE_IOS_SIMULATOR_DEVELOPER_DIR="$sandbox/tmp"
 judge "a named folder that holds no Xcode" fail "ci: CLAVE_IOS_SIMULATOR_DEVELOPER_DIR holds no Xcode: $sandbox/tmp"
 run_ci stand-in "$udid" CI_PROOF_FAIL=generic
-judge "the build for any simulator fails" fail "** TEST BUILD FAILED **"
+judge "the unsigned build for any iOS device fails" fail "** TEST BUILD FAILED **"
 
 if [ "$failed" -eq 0 ]; then
   echo "PASS ci gate proof: $target follows each step, with $check read for real"

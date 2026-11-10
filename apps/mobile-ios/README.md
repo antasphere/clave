@@ -74,9 +74,12 @@ runtimes `xcrun simctl list runtimes` names are kept under `build/reports` (whic
 job uploads) and printed when no iPhone is picked: the hosted run of 10 November 2026 at
 19:34 UTC picked none and left no listing to read; its run at 20:10 UTC kept it: Xcode 26.0.1
 lists only the Mac and the two placeholders there, beside the iOS 26.2, 26.4.1 and 26.5
-runtimes, so no simulator exists for it on that image. The gate therefore builds the app and
-both test targets for any simulator with the job's own Xcode first (`build-for-testing`,
-`generic/platform=iOS Simulator`, no runtime needed), and runs the pick, the build, the tests
+runtimes, so no simulator exists for it on that image, and its run at 20:31 UTC showed that even a
+build for any simulator fails there (the asset catalog needs a simulator runtime matching the
+SDK: "No simulator runtime version from ["23C54", "23E254a", "23F77"] available to use with
+iphonesimulator SDK version 23A339"). The gate therefore builds the app and both test targets
+for any iOS device, unsigned, with the job's own Xcode first (`build-for-testing`,
+`generic/platform=iOS`, `CODE_SIGNING_ALLOWED=NO`, no runtime needed), and runs the pick, the build, the tests
 and the release check under the Xcode `CLAVE_IOS_SIMULATOR_DEVELOPER_DIR` names when the job
 names one (an installed Xcode whose runtime the runner has; its folder is checked and its
 version printed); unset, as on this Mac, every step runs under the job's own Xcode. The hosted run's evidence

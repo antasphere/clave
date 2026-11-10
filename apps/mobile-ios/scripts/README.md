@@ -26,9 +26,11 @@ runtimes simctl names and keeps both under `build/reports`, byte for byte. With 
 toolchains (a trace names the Xcode each xcodebuild action ran under): unset, every step runs
 under the job's own Xcode and no other is named; on the runner as its run of 10 November listed
 it (the Mac and the two placeholders only) the gate fails for want of an iPhone; with an
-installed Xcode named, the build for any simulator runs under the job's Xcode and the pick,
-the build and the tests under the named one; a named folder that is missing or holds no Xcode
-fails before any simulator step; and a failed build for any simulator fails the gate. `--against <file>` and `--release-check <file>` run the scenarios on
+installed Xcode named, the unsigned build for any iOS device runs under the job's Xcode and the
+pick, the build and the tests under the named one (the trace also names the compile's
+destination and signing, so a build for the simulator or a signed one reads red); a named
+folder that is missing or holds no Xcode fails before any simulator step; and a failed
+compile fails the gate. `--against <file>` and `--release-check <file>` run the scenarios on
 other copies: the copies at df0332c9 read green with no Release output and with a Release
 carrying the Debug identifier, the ci.sh at ca3f0f35 read green on a failed build and on
 failed tests, and the ci.sh at 9a78df7f, whose pick kept to runtimes no newer than the
