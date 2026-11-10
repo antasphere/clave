@@ -883,7 +883,7 @@ function provenFind(args: PWord[], ctx: Context): boolean {
 
 /** A jq filter that reads nothing but its input: no environment, no other
  *  input, no module, no shell formatting. */
-const JQ_BANNED = /env|input|import|include|\$__loc__|\$__prog|@sh|modulemeta|get_search_list/
+const JQ_BANNED = /env|input|import|include|\$__loc__|\$__prog|@sh|modulemeta|get_search_list/i
 
 function provenJq(args: PWord[], ctx: Context): boolean {
   let filter: PWord | null = null

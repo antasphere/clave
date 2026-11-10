@@ -611,6 +611,8 @@ const NOT_PROVEN: Array<[string, RuleLevel | 'notreads']> = [
   ['grep -r x .config', 'outside'],
   ['git show HEAD:.env', 'outside'],
   ['jq -n env', 'outside'],
+  ["jq -r '$ENV.HOME' a.json", 'outside'],
+  ["jq -r '$__loc__' a.json", 'unknown'],
   ["jq 'input' a.json", 'outside'],
   ['crontab -l', 'outside'],
   ['npm test', 'outside'],
