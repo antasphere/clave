@@ -119,6 +119,7 @@ import { ViewEmpty } from './EmptyDrawing'
 import { ServerEnded } from './ServerEnded'
 import {
   failureText,
+  droppedPathFallback,
   pathForMessage,
   pathsFromDataTransfer
 } from '../../../src/renderer/src/lib/dropped-paths'
@@ -865,15 +866,21 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
     if (!paths.length) return
     const stable = await Promise.all(
       paths.map((p) =>
-        stablePath(p).catch((failure: unknown) => {
+        stablePath(p).catch((failure: unknown): string | null => {
           const path = isRemoteKey(p) ? parseResourceKey('file', p).id : p
           const name = path.split(/[\\/]/).pop() || path
+          // A path of this Mac means nothing to a server's agent (PRDCT-4329).
+          if (droppedPathFallback(session.id, p) === 'refuse') {
+            report(`${failureText(failure)} ${name} is on this Mac and was not sent to the server.`)
+            return null
+          }
           report(`${failureText(failure)} ${name} is in the message as a path.`)
           return path
         })
       )
     )
-    insertAtCaret(stable.map(pathForMessage).join(' ') + ' ')
+    const kept = stable.filter((path): path is string => path !== null)
+    if (kept.length) insertAtCaret(kept.map(pathForMessage).join(' ') + ' ')
   }
   const stablePath = async (p: string): Promise<string> => {
     if (!isRemoteKey(session.id)) {

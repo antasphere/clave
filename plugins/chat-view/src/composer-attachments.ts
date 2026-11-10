@@ -21,7 +21,11 @@ import {
   type SessionAttachment
 } from '../../../src/shared/attachments'
 import { onSessionsDrag } from '../../../src/renderer/src/lib/session-drag'
-import { failureText, pathForMessage } from '../../../src/renderer/src/lib/dropped-paths'
+import {
+  droppedPathFallback,
+  failureText,
+  pathForMessage
+} from '../../../src/renderer/src/lib/dropped-paths'
 import { useViewSessionStore } from '../../../src/renderer/src/views/session-store'
 import { useFleetStore } from '../../../src/renderer/src/store/fleet-store'
 import type { Session } from '../../../src/renderer/src/store/session-types'
@@ -206,7 +210,10 @@ export function useComposerAttachments(opts: {
         setPreparations((current) => current.filter((p) => p.id !== key))
       } catch (failure) {
         if (withdrawn.current.has(key)) continue
-        if (path) {
+        if (path && droppedPathFallback(sessionId, path) === 'refuse') {
+          setPreparations((current) => current.filter((p) => p.id !== key))
+          report(`${failureText(failure)} ${name} is on this Mac and was not sent to the server.`)
+        } else if (path) {
           setPreparations((current) => current.filter((p) => p.id !== key))
           insertAtCaret(pathForMessage(path) + ' ')
           report(`${failureText(failure)} ${name} is in the message as a path.`)
