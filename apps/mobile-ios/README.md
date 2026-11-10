@@ -63,8 +63,10 @@ are absent from its binary (`--prove-red` builds Release with `DEBUG` set and ex
 check to fail). `CLAVE_IOS_SIMULATOR_UDID` names the simulator (on a shared Mac, name one you
 created). Each step's verdict is its tool's own exit code, the output read from a log file
 afterwards; `bash apps/mobile-ios/scripts/prove-ci-gate.sh` runs `ci.sh` with stand-ins for
-swift, xcodebuild and the release check and proves it exits non-zero, without printing
-`ci: green`, when any one of the four steps fails.
+swift, xcodebuild and xcrun and proves it exits non-zero, without printing `ci: green`, when
+any one of the four steps fails, that the real release check fails on a Release output that
+is missing or carries a development-only marker, and that a runner's simulator pick keeps to
+the runtimes its Xcode can run.
 
 ## The fixture check
 

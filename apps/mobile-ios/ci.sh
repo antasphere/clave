@@ -34,8 +34,12 @@ rm -f "$log"
 
 UDID="${CLAVE_IOS_SIMULATOR_UDID:-}"
 if [ -z "$UDID" ]; then
+  # The newest iOS runtime this Xcode's simulator SDK can run (a newer runtime a
+  # later Xcode installed beside it would fail the build), its first iPhone.
+  SDK="$(xcrun --sdk iphonesimulator --show-sdk-version)"
   UDID="$(xcrun simctl list devices available -j | python3 -c '
 import json, re, sys
+sdk = tuple(int(part) for part in sys.argv[1].split(".")[:2])
 data = json.load(sys.stdin)["devices"]
 best = None
 for runtime, devices in data.items():
@@ -43,14 +47,16 @@ for runtime, devices in data.items():
     if not match:
         continue
     version = (int(match.group(1)), int(match.group(2)))
+    if version > sdk:
+        continue
     for device in devices:
         if device.get("isAvailable") and device["name"].startswith("iPhone"):
             if best is None or version > best[0]:
                 best = (version, device["udid"], device["name"], runtime)
 if best is None:
-    sys.exit("no available iPhone simulator")
+    sys.exit("no available iPhone simulator on a runtime this Xcode can run")
 print(best[1])
-')"
+' "$SDK")"
 fi
 echo "ci: simulator $UDID"
 DERIVED="${CLAVE_IOS_DERIVED_DATA:-$PWD/DerivedData}"

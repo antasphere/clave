@@ -11,14 +11,16 @@
 #   bash scripts/check-release-binary.sh              # the check
 #   bash scripts/check-release-binary.sh --prove-red  # Release built with DEBUG set: the check must fail
 #
-# Run from apps/mobile-ios. CLAVE_IOS_SIMULATOR_UDID names the simulator,
-# CLAVE_IOS_DERIVED_DATA the build folder.
+# Run from apps/mobile-ios. CLAVE_IOS_SIMULATOR_UDID names the simulator to
+# build for (required: on a shared Mac, one you created; ci.sh passes the one it
+# picked), CLAVE_IOS_DERIVED_DATA the build folder (a folder under the system's
+# temporary folder by default).
 set -uo pipefail
 
 cd "$(dirname "$0")/.."
 
-UDID="${CLAVE_IOS_SIMULATOR_UDID:-DA4B1D9E-9C78-4614-8C52-4F2C075298E2}"
-DERIVED="${CLAVE_IOS_DERIVED_DATA:-/private/tmp/clave-native-a/DerivedData-release-check}"
+UDID="${CLAVE_IOS_SIMULATOR_UDID:?CLAVE_IOS_SIMULATOR_UDID must name the simulator to build for}"
+DERIVED="${CLAVE_IOS_DERIVED_DATA:-${TMPDIR:-/tmp}/clave-ios-release-check}"
 # What strings really shows (verified on 9 November 2026): Swift keeps a
 # string of 15 bytes or fewer inline in the instructions of an optimized
 # build, so `--ui-test-fake`, `CLAVE_IOS_RELAY` and `developer.add` can be
@@ -50,12 +52,20 @@ build() {
 }
 
 # The text of every binary of the app, Clave and its debug dylib when there is one.
+# It runs inside a command substitution, so it returns its verdict and every
+# caller acts on it: an `exit` here would only leave the subshell, and a missing
+# binary would then read as one that lacks every marker.
 binary_strings() {
   local app="$DERIVED/Build/Products/$1-iphonesimulator/Clave.app"
-  [ -f "$app/Clave" ] || { echo "FAIL no binary at $app/Clave" >&2; exit 1; }
-  for file in "$app/Clave" "$app/Clave.debug.dylib"; do
-    [ -f "$file" ] && strings -a "$file"
-  done
+  if [ ! -f "$app/Clave" ]; then
+    echo "FAIL no binary at $app/Clave" >&2
+    return 1
+  fi
+  strings -a "$app/Clave" || return 1
+  if [ -f "$app/Clave.debug.dylib" ]; then
+    strings -a "$app/Clave.debug.dylib" || return 1
+  fi
+  return 0
 }
 
 mkdir -p "$DERIVED"
@@ -63,7 +73,7 @@ failed=0
 
 if [ $PROVE_RED -eq 0 ]; then
   build Debug
-  debug_text="$(binary_strings Debug)"
+  debug_text="$(binary_strings Debug)" || { echo "FAIL release binary check: the Debug binary could not be read"; exit 1; }
   for marker in "${MARKERS[@]}"; do
     if grep -qF -- "$marker" <<<"$debug_text"; then
       echo "PASS debug has $marker"
@@ -78,7 +88,7 @@ else
   build Release "SWIFT_ACTIVE_COMPILATION_CONDITIONS=DEBUG \$(inherited)"
 fi
 
-release_text="$(binary_strings Release)"
+release_text="$(binary_strings Release)" || { echo "FAIL release binary check: the Release binary could not be read"; exit 1; }
 release_failed=0
 for marker in "${MARKERS[@]}"; do
   if grep -qF -- "$marker" <<<"$release_text"; then
