@@ -730,7 +730,14 @@ public class ClaveStore(private val services: Services) {
             override suspend fun sleep(ms: Long) = services.sleep(ms)
             override fun now(): Long = services.clock.now()
         }
-        val outcome = sendMessage(clientMessageId, ports, SendOptions())
+        val outcome = try {
+            sendMessage(clientMessageId, ports, SendOptions())
+        } catch (e: Throwable) {
+            // Cancelled with the write out: its outcome is not known, so the entry stays for the
+            // reconnection pass and only the in-flight mark goes.
+            delivery?.abandon(send)
+            throw e
+        }
         if (outcome is SendOutcome.Failed) log.event("store.send_failed", mapOf("machine" to machineId))
         delivery?.finish(send, outcome)
         if (outcome is SendOutcome.Sent && services.drafts.get(machineId, sessionId) == text) {

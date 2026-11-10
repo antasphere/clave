@@ -232,6 +232,16 @@ class DeliveryController(
         }
     }
 
+    /**
+     * The send's own coroutine ended before it settled (cancelled while its write was out): the
+     * write may have landed, so the ledger entry, its unknown mark and the draft stay, and only
+     * the in-flight mark goes. The next reconnection pass settles the same id, and the person
+     * may choose meanwhile. Nothing is dropped and no other id is minted.
+     */
+    fun abandon(send: UnknownSend) {
+        active.remove(send.clientMessageId)
+    }
+
     suspend fun finish(send: UnknownSend, outcome: SendOutcome) {
         try {
             settleSend(send, outcome, sends, marks, drafts, clock::now, clearAttachments)

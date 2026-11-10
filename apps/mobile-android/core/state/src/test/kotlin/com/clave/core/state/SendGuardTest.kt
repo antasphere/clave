@@ -7,6 +7,7 @@ import com.clave.core.chat.UnknownSend
 import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeoutOrNull
@@ -116,6 +117,57 @@ class SendGuardTest {
         assertEquals(SendOutcome.Failed("", STILL_SENDING), secondOutcome)
         assertEquals(listOf(id(1)), writtenIds())
         assertEquals(1, minted.get())
+    }
+
+    @Test
+    fun `two conversations each send at once and both are admitted`() = guarded {
+        routes(
+            write = { call ->
+                if (json(call.body).jsonObject["id"]!!.jsonPrimitive.content == "s1") machine.hold(call) else answer(200, """{"status":"accepted"}""")
+            },
+            status = { _, _ -> answer(200, """{"status":"accepted"}""") },
+        )
+        val first = scope.async { store.send(machineId, "s1", "to the first") }
+        until { machine.held.size == 1 }
+        // The first conversation's send holds its claim, its write in flight; the second's is its own.
+        assertEquals(SendOutcome.Sent(id(2), reconciled = false), store.send(machineId, "s2", "to the second"))
+        machine.respond(0, answer(200, """{"status":"accepted"}"""))
+        assertEquals(SendOutcome.Sent(id(1), reconciled = false), first.await())
+        assertEquals(setOf(id(1), id(2)), writtenIds().toSet())
+    }
+
+    @Test
+    fun `a send cancelled after its ledger entry is written stays unknown, frees its claim, and the next reconnection settles the same id`() = guarded {
+        routes(write = { call -> machine.hold(call) }, status = { _, _ -> answer(200, """{"status":"absent"}""") })
+        drafts.set(machineId, "s1", "hello")
+        val first = scope.async { store.send(machineId, "s1", "hello") }
+        until { machine.held.size == 1 }
+        first.cancelAndJoin()
+        // The write may have landed: the entry, its unknown mark and the draft stay; it is no longer in flight.
+        assertEquals(listOf(id(1)), sends.list().map { it.clientMessageId })
+        assertFalse("a cancelled send is not in flight any more", delivery!!.inFlight(id(1)))
+        assertEquals(DeliveryMark.Kind.Unknown, marks.get(machineId, "s1")!!.kind)
+        assertEquals("hello", drafts.get(machineId, "s1"))
+        // The claim came back: a plain send is refused for the unknown entry, not as still sending.
+        assertEquals(SendOutcome.Failed(id(1), DELIVERY_UNKNOWN_FIRST), store.send(machineId, "s1", "hello"))
+        machine.respond(0, answer(503, "{}"))
+        routes(write = { answer(200, """{"status":"accepted"}""") }, status = { _, _ -> answer(200, """{"status":"absent"}""") })
+        reconnect()
+        assertEquals("the same id, completed once by the pass", listOf(id(1), id(1)), writtenIds())
+        assertEquals(emptyList<String>(), sends.list().map { it.clientMessageId })
+        assertEquals("", drafts.get(machineId, "s1"))
+        assertEquals("no other id was minted", 1, minted.get())
+    }
+
+    @Test
+    fun `the claim comes back after nothing to send and after a refusal`() = guarded {
+        routes(write = { answer(200, """{"status":"accepted"}""") }, status = { _, _ -> answer(200, """{"status":"accepted"}""") })
+        assertEquals("Nothing to send.", (store.send(machineId, "s1", "   ") as SendOutcome.Failed).reason)
+        assertEquals(SendOutcome.Sent(id(2), reconciled = false), store.send(machineId, "s1", "after nothing"))
+        lostSend("lost")
+        assertEquals(SendOutcome.Failed(id(3), DELIVERY_UNKNOWN_FIRST), store.send(machineId, "s1", "refused"))
+        routes(write = { answer(200, """{"status":"accepted"}""") }, status = { _, _ -> answer(200, """{"status":"accepted"}""") })
+        assertEquals(SendOutcome.Sent(id(4), reconciled = false), store.resend(machineId, "s1", id(3), "lost"))
     }
 
     @Test
