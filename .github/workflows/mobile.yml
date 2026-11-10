@@ -102,10 +102,14 @@ jobs:
       - name: The assets are what the desktop's sources generate today
         run: npm run assets:check --workspace @clave/mobile-native
 
-      # The three tests of the package: the vectors decoded once more through
+      # The tests of the package: the vectors decoded once more through
       # their schemas, the assets held to their sources, and the fixture server
       # booted on free ports with the pairing proof run against it.
+      # CLAVE_FIXTURE_BOOT=1 opts in to the booted cases
+      # (fixture-server.boot.test.mjs), which never run without it.
       - name: Vectors, assets and fixture tests
+        env:
+          CLAVE_FIXTURE_BOOT: '1'
         run: npx vitest run packages/mobile-native
 
       - name: Lint and typecheck of the package

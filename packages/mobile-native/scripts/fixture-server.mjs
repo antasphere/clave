@@ -109,12 +109,12 @@
 //     append one line per invocation (the time, the command, its first two
 //     arguments, never the stdin) to <tmpdir>/stubs/recorder.log; `claude -p`
 //     answers a fixed title, `codex` exits silently.
-//   - the proof (`--check`, and fixture-server.test.mjs) seeds the chat, waits
+//   - the proof (`--check`, and fixture-server.boot.test.mjs) seeds the chat, waits
 //     past the clock's first tick, and asserts: zero recorder lines, no
 //     session.title_changed for the chat, the two owned credential folders
 //     still empty and the fixture's home without .claude, .claude.json or
 //     .codex, no usage event on the push channel; then an explicit Claude read
-//     answers without the machine login and leaves the recorder silent, and
+//     answers without the machine login and adds no claude line, and
 //     an explicit Codex read reaches the codex recorder, exactly one line,
 //     and answers an error. Each row says whether it rests on the argv, on
 //     the daemon's announcement (derived from the code's flags), on a
@@ -1495,18 +1495,23 @@ export async function proveNoProvider(fixture, { log = stderr } = {}) {
     }
   )
   await check(
-    'an explicit Claude usage read answers without the machine login and leaves the recorder silent (announced: machineUsage false)',
+    'an explicit Claude usage read answers without the machine login and invokes no claude (announced: machineUsage false)',
     'wire',
     async () => {
       expect(server.discovery.machineUsage === false, 'the daemon announces machineUsage true')
+      // Only the lines the read itself adds: a line from before it (a title
+      // one-shot under a mutation) is the first row's, never this one's.
+      const before = recorderLines(stubs).filter((l) => l.includes(' claude ')).length
       const read = await call(server.url, server.token, 'GET', '/usage/claude?force=true')
       expect(read.status === 200, `GET /usage/claude answered ${read.status}`)
       expect(
         typeof read.body?.error === 'string' && !read.body.windows,
         `the read answered ${JSON.stringify(read.body).slice(0, 200)}`
       )
-      const claudeLines = recorderLines(stubs).filter((l) => l.includes(' claude '))
-      expect(claudeLines.length === 0, `claude invoked: ${claudeLines.join(' | ')}`)
+      const added = recorderLines(stubs)
+        .filter((l) => l.includes(' claude '))
+        .slice(before)
+      expect(added.length === 0, `the read invoked claude: ${added.join(' | ')}`)
       return `the read answered an error, no credential read: ${read.body.error}`
     }
   )

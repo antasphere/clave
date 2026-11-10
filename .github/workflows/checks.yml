@@ -68,7 +68,12 @@ jobs:
       - name: Generated code is current
         run: npm run proto:gen && git diff --exit-code -- packages/server/src/terminals/proto
 
+      # CLAVE_FIXTURE_BOOT=1 opts in to the native fixture's booted cases
+      # (packages/mobile-native/fixture-server.boot.test.mjs), which never run
+      # without it, so a run on a developer's machine boots no daemon by accident.
       - name: Unit tests
+        env:
+          CLAVE_FIXTURE_BOOT: '1'
         run: npx vitest run
 
   # The end-to-end suite drives the REAL app (tests/e2e/harness.mjs): a built
