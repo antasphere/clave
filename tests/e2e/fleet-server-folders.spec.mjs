@@ -65,6 +65,7 @@ export async function run(t) {
     const [server] = world.servers
     const picked = path.join(server.root, 'picked-folder')
     mkdirSync(picked, { recursive: true })
+    writeFileSync(path.join(picked, 'inside-picked.txt'), 'in the picked folder\n')
     writeFileSync(path.join(server.root, 'reveal-probe.txt'), 'on the server\n')
     // A real folder of this Mac, so the upload's refusal is a folder's.
     const macFolder = fixturePath(`server-folders-mac-${process.pid}`)
@@ -103,7 +104,17 @@ export async function run(t) {
     await win.getByText('Add terminal', { exact: true }).first().click()
     const dialog = win.getByRole('dialog', { name: 'Add terminal' })
     await dialog.waitFor()
-    const folderButton = dialog.locator('button[title]').first()
+    const folderButton = dialog.locator('[data-group-terminal-folder]')
+    // The form filled before the picker opens: it must be there when the
+    // dialog comes back.
+    const commandInput = dialog.locator('input[placeholder^="e.g., npm run dev"]')
+    await commandInput.fill('npm run kept')
+    await dialog.getByRole('button', { name: 'Auto-execute', exact: true }).click()
+    await dialog.locator('button[title="bolt"]').click()
+    const focusedIsFolderButton = () =>
+      win.evaluate(
+        () => document.activeElement?.hasAttribute('data-group-terminal-folder') === true
+      )
     await folderButton.click()
     const pickerShown = await eventually(
       async () => (await win.locator('button[title="Edit path"]').count()) > 0,
@@ -128,7 +139,46 @@ export async function run(t) {
       await dialog.waitFor()
       t.equal(
         'the folder picked on the server comes back into the dialog',
-        await dialog.locator('button[title]').first().getAttribute('title'),
+        await folderButton.getAttribute('title'),
+        picked
+      )
+      const form = {
+        command: await commandInput.inputValue(),
+        auto: await dialog
+          .getByRole('button', { name: 'Auto-execute', exact: true })
+          .getAttribute('aria-pressed'),
+        bolt: await dialog.locator('button[title="bolt"]').getAttribute('aria-pressed')
+      }
+      t.check(
+        'the command, the mode and the icon chosen before the pick are all still in the form',
+        form.command === 'npm run kept' && form.auto === 'true' && form.bolt === 'true',
+        form
+      )
+      // Focus goes back to the control that opened the picker: after a pick,
+      // after Escape, after the picker's X.
+      const focusBack = (how) =>
+        eventually(focusedIsFolderButton, `focus returns to the folder button after ${how}`).then(
+          () => true,
+          () => false
+        )
+      t.check('after a pick, focus is back on the folder button', await focusBack('a pick'))
+      const pickerOpen = () => win.locator('button.btn-icon[title="Edit path"]:visible').count()
+      await folderButton.click()
+      await eventually(async () => (await pickerOpen()) > 0, 'the picker opens again')
+      await win.keyboard.press('Escape')
+      await eventually(async () => (await pickerOpen()) === 0, 'Escape closes the picker')
+      t.check('after Escape, focus is back on the folder button', await focusBack('Escape'))
+      await folderButton.click()
+      await eventually(async () => (await pickerOpen()) > 0, 'the picker opens a third time')
+      await win
+        .locator('div:has(> h3:text-is("Open folder")) > button.btn-icon-sm:visible')
+        .first()
+        .click()
+      await eventually(async () => (await pickerOpen()) === 0, 'the X closes the picker')
+      t.check('after the picker’s X, focus is back on the folder button', await focusBack('the X'))
+      t.equal(
+        'a cancelled pick leaves the picked folder in the dialog',
+        await folderButton.getAttribute('title'),
         picked
       )
     }
@@ -159,6 +209,43 @@ export async function run(t) {
         () => false
       )
       t.check('the side panel’s server picker can be used', ok)
+      // The panel adopts the folder: its path line names it, and its file
+      // tree lists that folder's content, read from the server.
+      // The path line: the plain path button names the folder in its title,
+      // or (a folder under the panel's root) the breadcrumb ends with it.
+      const pathLine = () =>
+        win.evaluate((folder) => {
+          const plain = document.querySelector('.panel-path')
+          if (plain)
+            return plain.getAttribute('title') === folder ? folder : plain.getAttribute('title')
+          const crumbs = document.querySelector('div[title^="Double-click to go back to"]')
+          const last = crumbs ? [...crumbs.querySelectorAll('button')].pop() : null
+          return last?.textContent === folder.split('/').pop()
+            ? folder
+            : (last?.textContent ?? null)
+        }, picked)
+      const adopted = await eventually(
+        async () => (await pathLine()) === picked,
+        'the path line names the picked folder'
+      ).then(
+        () => true,
+        () => false
+      )
+      t.check('the side panel’s path line shows the folder picked on the server', adopted, {
+        pathLine: await pathLine()
+      })
+      const pickedTree = win.locator(`[data-file-tree-root="${owned('file', owner, picked)}"]`)
+      const listed = await pickedTree
+        .locator('[data-tree-name="inside-picked.txt"]')
+        .waitFor({ state: 'visible', timeout: 15_000 })
+        .then(
+          () => true,
+          () => false
+        )
+      t.check(
+        'the side panel’s file tree lists the picked folder’s content from the server',
+        listed
+      )
     }
     t.equal('Another folder… never opened this Mac’s folder dialog', await nativeCalls(), 0)
 
