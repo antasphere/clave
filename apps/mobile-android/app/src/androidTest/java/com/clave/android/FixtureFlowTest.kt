@@ -218,7 +218,7 @@ class FixtureFlowTest {
         waitForText(fixture.nonce, substring = true, timeoutMs = CHAT_MS)
         waitForDescription("Message")
         rule.onNodeWithContentDescription("Message").performTextInput(reply)
-        rule.onNodeWithContentDescription("Send message").performClick()
+        rule.tapSendAtRest(STEP_MS)
         // The person's turn, then the echo repeating it: at least the first.
         rule.waitUntil(CHAT_MS) { rule.onAllNodesWithText(reply, substring = true).fetchSemanticsNodes().isNotEmpty() }
         rule.waitUntil(CHAT_MS) { rule.onNodeWithContentDescription("Message").editableText() == "" }

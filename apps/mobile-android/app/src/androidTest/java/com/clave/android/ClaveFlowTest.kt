@@ -151,7 +151,7 @@ class ClaveFlowTest {
         // 6. A message sent: one write under the phone's id, its echo and the answer streamed back.
         waitForDescription("Message")
         rule.onNodeWithContentDescription("Message").performTextInput("ping")
-        rule.onNodeWithContentDescription("Send message").performClick()
+        rule.tapSendAtRest(WAIT_MS)
         waitForText("pong")
         rule.waitUntil(WAIT_MS) { rule.onNodeWithContentDescription("Message").editableText() == "" }
         val writes = requests("POST /sessions/write")

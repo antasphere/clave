@@ -108,9 +108,12 @@ class AppEvidenceTest {
 
     // ── the flow test's helpers ──
 
-    // Each wait names what it waits for, so a timeout says which step did not come.
+    // Each wait names what it waits for, so a timeout says which step did not come. A moment with
+    // no resumed compose root (the activity paused around a link's onNewIntent: the test library
+    // drops the root at every lifecycle event but ON_RESUME) reads as "not on screen yet", never
+    // as an IllegalStateException that ends the wait; the text must still come within the timeout.
     private fun waitForText(text: String, substring: Boolean = false, timeoutMs: Long = EVIDENCE_WAIT_MS) = rule.waitUntil("the text \"$text\" on screen", timeoutMs) {
-        rule.onAllNodesWithText(text, substring = substring).fetchSemanticsNodes().isNotEmpty()
+        rule.onAllNodesWithText(text, substring = substring).fetchSemanticsNodes(atLeastOneRootRequired = false).isNotEmpty()
     }
 
     private fun waitForNoText(text: String, timeoutMs: Long = EVIDENCE_WAIT_MS) = rule.waitUntil("the text \"$text\" gone", timeoutMs) {
@@ -301,10 +304,10 @@ class AppEvidenceTest {
         openEchoChat()
         server.failWrites = true
         rule.onNodeWithContentDescription("Message").performTextInput("will this land?")
-        rule.onNodeWithContentDescription("Send message").performClick()
+        rule.tapSendAtRest(EVIDENCE_WAIT_MS)
         val asked = SystemClock.elapsedRealtime()
-        // Normally shown within a second (264 ms and 342 ms in the runs of 10 November); it timed
-        // out twice, cause not established, so a timeout here says what the screen showed.
+        // Normally shown within a second (264 ms and 342 ms in the runs of 10 November); a timeout
+        // here says what the screen showed.
         try {
             waitForText("Delivery unknown", timeoutMs = 75_000)
         } catch (e: ComposeTimeoutException) {
@@ -331,11 +334,10 @@ class AppEvidenceTest {
 
         server.failWrites = false
         rule.onNodeWithContentDescription("Message").performTextInput("now it lands")
-        rule.onNodeWithContentDescription("Send message").performClick()
+        rule.tapSendAtRest(EVIDENCE_WAIT_MS)
         // The stand-in answers the follow-up with "pong" once its write is accepted: the reply on
-        // screen is what shows the next send landed. It timed out twice (round 3's run, and on
-        // Android 8.0 at 8c2a043d), cause not established: a timeout says what the screen showed
-        // and how many writes the stand-in had.
+        // screen is what shows the next send landed. A timeout says what the screen showed and how
+        // many writes the stand-in had.
         try {
             waitForText("pong")
         } catch (e: ComposeTimeoutException) {
