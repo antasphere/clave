@@ -390,7 +390,7 @@ final class ConversationModel {
   func resendUnderNewId() async {
     if let mark = deliveryMark, mark.kind == .unknown {
       let resolution = try? await delivery.discardPending(
-        machineId: machineId, sessionId: sessionId, clientMessageId: mark.clientMessageId)
+        machineId: machineId, sessionId: sessionId, clientMessageId: mark.clientMessageId, choice: .sendAgain)
       guard resolution == .discarded else {
         await reloadMark()
         return
@@ -405,7 +405,7 @@ final class ConversationModel {
   func discardUnknownSend() async {
     guard let mark = deliveryMark else { return }
     let resolution = try? await delivery.discardPending(
-      machineId: machineId, sessionId: sessionId, clientMessageId: mark.clientMessageId)
+      machineId: machineId, sessionId: sessionId, clientMessageId: mark.clientMessageId, choice: .discard)
     if resolution == .discarded {
       deliveryMark = nil
       sendError = nil

@@ -177,33 +177,35 @@ final class DeliveryRaceTests: XCTestCase {
 
   // MARK: - F1.5: a pass and the person's choices
 
-  /// r1: Send again while a pass holds the send; the pass finds it absent and writes it once under
-  /// the old id. Send again waited, found it settled, and wrote nothing.
-  func testSendAgainWhileAPassHoldsTheSendWaitsAndTheOldIdLandsOnce() async throws {
+  /// t2a (r1): Send again while a pass holds the send at its status read, released absent: the
+  /// choice was recorded before the pass's same-id write, so the pass writes nothing and Send again
+  /// sends under a new id. The old id is never written; one message, under the new id.
+  func testSendAgainMadeWhileThePassReadsTheStatusWinsAndTheOldIdIsNeverWritten() async throws {
     let model = try makeModel()
     await model.appear()
     let (old, asked) = try await unknownSendWithAPassHoldingIt(model, "Racing the pass.")
-    let returned = Returned()
-    let resend = Task {
-      await model.resendUnderNewId()
-      returned.yes = true
-    }
-    try await Task.sleep(nanoseconds: 300_000_000)
-    XCTAssertFalse(returned.yes, "Send again returned while the pass held the send")
+    let resend = Task { await model.resendUnderNewId() }
+    await eventually("Send again waits for the pass") { await parts.delivery.claimState(old).waiting == 1 }
     XCTAssertEqual(server.attempts, [old], "nothing written while the pass holds")
     server.answerStatus(.answer("absent"), for: old)
     server.answerHeldStatus(of: old, .answer("absent"))
     await resend.value
     await passFinished(asked)
-    XCTAssertEqual(server.attempts, [old, old], "the pass's one same-id write; Send again wrote nothing")
-    XCTAssertEqual(server.kept, [old], "exactly one message, under the old id")
-    await until("the bar gone") { model.deliveryMark == nil }
+    let ids = server.attempts
+    XCTAssertEqual(ids.count, 2, "the lost original and the new id")
+    let new = ids.last ?? ""
+    XCTAssertNotEqual(new, old)
+    XCTAssertEqual(server.kept, [new], "one message, under the new id")
+    try await laterPass()
+    XCTAssertEqual(server.attempts, [old, new], "the old id is never written")
+    XCTAssertEqual(server.kept, [new])
     let ledger = try await ledger()
     XCTAssertEqual(ledger, [])
   }
 
-  /// r2: the same, the held read answered unreadable: the pass leaves the send unknown, Send again
-  /// discards it and sends under a new id. One message, under the new id; a later pass writes nothing.
+  /// r2: Send again while a pass holds the send, the held read answered unreadable: the pass stops
+  /// for the choice, Send again discards the send and sends under a new id. One message, under the
+  /// new id; a later pass writes nothing.
   func testSendAgainWhileAPassHoldsAnUnreadableSendDeliversOnceUnderTheNewId() async throws {
     let model = try makeModel()
     await model.appear()
@@ -227,29 +229,29 @@ final class DeliveryRaceTests: XCTestCase {
     XCTAssertEqual(ledger, [])
   }
 
-  /// r3: Discard while a pass holds the send; the pass finds it absent and writes it once. The
-  /// discard waited and did nothing.
-  func testDiscardWhileAPassHoldsTheSendWaitsAndTheOldIdLandsOnce() async throws {
+  /// t1a (r3): Discard while a pass holds the send at its status read, released absent: the choice
+  /// was recorded before the pass's same-id write, so nothing is ever written; the send is
+  /// discarded and the draft stays to edit.
+  func testDiscardMadeWhileThePassReadsTheStatusWinsAndNothingIsEverWritten() async throws {
     let model = try makeModel()
     await model.appear()
-    let (old, asked) = try await unknownSendWithAPassHoldingIt(model, "Discard racing the pass.")
-    let returned = Returned()
-    let discard = Task {
-      await model.discardUnknownSend()
-      returned.yes = true
-    }
-    try await Task.sleep(nanoseconds: 300_000_000)
-    XCTAssertFalse(returned.yes, "Discard returned while the pass held the send")
+    let text = "Discard racing the pass."
+    let (old, asked) = try await unknownSendWithAPassHoldingIt(model, text)
+    let discard = Task { await model.discardUnknownSend() }
+    await eventually("Discard waits for the pass") { await parts.delivery.claimState(old).waiting == 1 }
     XCTAssertEqual(server.attempts, [old], "nothing written while the pass holds")
     server.answerStatus(.answer("absent"), for: old)
     server.answerHeldStatus(of: old, .answer("absent"))
     await discard.value
     await passFinished(asked)
-    XCTAssertEqual(server.attempts, [old, old], "the old id once, by the pass")
-    XCTAssertEqual(server.kept, [old])
+    XCTAssertEqual(server.attempts, [old], "the old id is never written")
+    XCTAssertEqual(server.kept, [])
     await until("the bar gone") { model.deliveryMark == nil }
+    XCTAssertEqual(model.draft, text, "the draft stays to edit")
     let ledger = try await ledger()
-    XCTAssertEqual(ledger, [])
+    XCTAssertEqual(ledger, [], "discarded")
+    try await laterPass()
+    XCTAssertEqual(server.attempts, [old], "nor by a later pass")
   }
 
   /// r4: Discard while a pass holds the send, the held read answered unreadable: the discard takes

@@ -425,13 +425,13 @@ final class ChatDeliveryControllerTests: XCTestCase {
       XCTFail("let go on the throwing path: the send is still held, so a discard would wait for ever")
       return
     }
-    let resolution = try await controller.discardPending(machineId: "m", sessionId: "s", clientMessageId: s.clientMessageId)
+    let resolution = try await controller.discardPending(machineId: "m", sessionId: "s", clientMessageId: s.clientMessageId, choice: .discard)
     XCTAssertEqual(resolution, .discarded)
   }
 
-  /// A discard asked while a pass holds the send waits for it; the pass found it absent and wrote
-  /// it once under its id, so the discard finds it settled and changes nothing.
-  func testADiscardWaitsForThePassHoldingTheSendAndFindsItSettled() async throws {
+  /// A choice recorded while the pass reads the send's status stops the pass before its write:
+  /// released absent, it writes nothing, settles nothing, and the discard takes the send.
+  func testAChoiceRecordedDuringTheStatusReadStopsThePassBeforeItsWrite() async throws {
     let kv = InMemoryKeyValueStore()
     let controller = controllerOver(kv)
     let s = sendOf("message-2001")
@@ -454,16 +454,120 @@ final class ChatDeliveryControllerTests: XCTestCase {
         refreshRequests: { _ in }, refreshHistory: { _, _ in }, sleep: { _ in })
     }
     await entered.wait()
-    let discard = Task { try await controller.discardPending(machineId: "m", sessionId: "s", clientMessageId: s.clientMessageId) }
+    let discard = Task { try await controller.discardPending(machineId: "m", sessionId: "s", clientMessageId: s.clientMessageId, choice: .discard) }
     await eventually("the discard waits for the pass") { await controller.claimState(s.clientMessageId).waiting == 1 }
-    XCTAssertEqual(writes.value, [], "nothing written while the pass holds the send")
+    await release.open()
+    try await pass.value
+    let resolution = try await discard.value
+    XCTAssertEqual(resolution, .discarded)
+    XCTAssertEqual(writes.value, [], "no write once the choice was recorded")
+    let list = try await controller.sends.list()
+    XCTAssertEqual(list, [])
+    let mark = try await controller.marks.get("m", "s")
+    XCTAssertNil(mark)
+  }
+
+  /// A same-id write already under way when the choice is made is never withdrawn: its answer,
+  /// accepted, settles the send delivered, and the choice finds it so.
+  func testAWriteUnderWayWhenTheChoiceIsMadeSettlesTheSendDelivered() async throws {
+    let kv = InMemoryKeyValueStore()
+    let controller = controllerOver(kv)
+    let s = sendOf("message-2002")
+    try await recordUnknownSend(s, reason: "lost", sends: controller.sends, marks: controller.marks)
+    let entered = Gate()
+    let release = Gate()
+    let writes = Box<[String]>([])
+    let pass = Task {
+      try await controller.reconnect(
+        machineId: "m", openConversations: [],
+        status: { _ in WriteStatus(status: .absent) },
+        write: { send in
+          writes.mutate { $0.append(send.clientMessageId) }
+          await entered.open()
+          await release.wait()
+          return WriteAnswer(status: .accepted)
+        },
+        refreshRequests: { _ in }, refreshHistory: { _, _ in }, sleep: { _ in })
+    }
+    await entered.wait()
+    let discard = Task { try await controller.discardPending(machineId: "m", sessionId: "s", clientMessageId: s.clientMessageId, choice: .discard) }
+    await eventually("the discard waits for the pass") { await controller.claimState(s.clientMessageId).waiting == 1 }
     await release.open()
     try await pass.value
     let resolution = try await discard.value
     XCTAssertEqual(resolution, .settledMeanwhile)
-    XCTAssertEqual(writes.value, [s.clientMessageId], "the old id once, by the pass")
+    XCTAssertEqual(writes.value, [s.clientMessageId], "the one same-id write")
     let list = try await controller.sends.list()
     XCTAssertEqual(list, [])
+  }
+
+  /// The original found accepted at the status read with a choice pending: nothing is written, and
+  /// the send is settled delivered.
+  func testAnOriginalFoundAcceptedWithAChoicePendingIsDeliveredWithNoWrite() async throws {
+    let kv = InMemoryKeyValueStore()
+    let controller = controllerOver(kv)
+    let s = sendOf("message-2003")
+    try await recordUnknownSend(s, reason: "lost", sends: controller.sends, marks: controller.marks)
+    let entered = Gate()
+    let release = Gate()
+    let writes = Box<[String]>([])
+    let pass = Task {
+      try await controller.reconnect(
+        machineId: "m", openConversations: [],
+        status: { _ in
+          await entered.open()
+          await release.wait()
+          return WriteStatus(status: .accepted)
+        },
+        write: { send in
+          writes.mutate { $0.append(send.clientMessageId) }
+          return WriteAnswer(status: .accepted)
+        },
+        refreshRequests: { _ in }, refreshHistory: { _, _ in }, sleep: { _ in })
+    }
+    await entered.wait()
+    let discard = Task { try await controller.discardPending(machineId: "m", sessionId: "s", clientMessageId: s.clientMessageId, choice: .sendAgain) }
+    await eventually("the choice waits for the pass") { await controller.claimState(s.clientMessageId).waiting == 1 }
+    await release.open()
+    try await pass.value
+    let resolution = try await discard.value
+    XCTAssertEqual(resolution, .settledMeanwhile)
+    XCTAssertEqual(writes.value, [], "no write: the original had landed")
+  }
+
+  /// settledMeanwhile means delivered: a send a pass refused leaves the ledger with its refusal
+  /// mark, and the person's choice on it answers discarded and clears that mark.
+  func testASendAPassRefusedIsDiscardedNotDelivered() async throws {
+    let kv = InMemoryKeyValueStore()
+    let controller = controllerOver(kv)
+    let s = sendOf("message-2004")
+    try await recordUnknownSend(s, reason: "lost", sends: controller.sends, marks: controller.marks)
+    try await controller.reconnect(
+      machineId: "m", openConversations: [],
+      status: { _ in WriteStatus(status: .rejected, reason: "The provider refused the message.") },
+      write: { _ in
+        XCTFail("a refused send is never written")
+        return WriteAnswer(status: .accepted)
+      },
+      refreshRequests: { _ in }, refreshHistory: { _, _ in }, sleep: { _ in })
+    let refused = try await controller.marks.get("m", "s")
+    XCTAssertEqual(refused?.kind, .rejected)
+    let resolution = try await controller.discardPending(machineId: "m", sessionId: "s", clientMessageId: s.clientMessageId, choice: .discard)
+    XCTAssertEqual(resolution, .discarded)
+    let mark = try await controller.marks.get("m", "s")
+    XCTAssertNil(mark)
+  }
+
+  /// A second choice on a send the first one discarded answers discarded, never delivered.
+  func testASecondChoiceOnADiscardedSendIsNotADelivery() async throws {
+    let kv = InMemoryKeyValueStore()
+    let controller = controllerOver(kv)
+    let s = sendOf("message-2005")
+    try await recordUnknownSend(s, reason: "lost", sends: controller.sends, marks: controller.marks)
+    let first = try await controller.discardPending(machineId: "m", sessionId: "s", clientMessageId: s.clientMessageId, choice: .discard)
+    let second = try await controller.discardPending(machineId: "m", sessionId: "s", clientMessageId: s.clientMessageId, choice: .sendAgain)
+    XCTAssertEqual(first, .discarded)
+    XCTAssertEqual(second, .discarded)
   }
 }
 
