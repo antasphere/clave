@@ -16,7 +16,18 @@ import {
  */
 type Answer =
   | { ok: true; title: string }
-  | { ok: false; error: string; reason?: 'limit' | 'outdated' | 'unknown-session' }
+  | {
+      ok: false
+      error: string
+      reason?:
+        | 'limit'
+        | 'timeout'
+        | 'outdated'
+        | 'unknown-session'
+        | 'disabled'
+        | 'refused'
+        | 'failed'
+    }
 
 let answers: Answer[] = []
 const read = vi.fn((): Promise<Answer> => Promise.resolve(answers.shift()!))
@@ -63,7 +74,7 @@ describe('a digest that could not be read', () => {
     const d = digests()
     const item = { key: 'k', payload: 'notes' }
     d.useStore.getState().file('s', {})
-    answers.push({ ok: false, error: 'boom' })
+    answers.push({ ok: false, error: 'boom', reason: 'timeout' })
     d.view('s', [item], {})
     await vi.advanceTimersByTimeAsync(DIGEST_SETTLE_MS)
     await flush()
@@ -127,7 +138,7 @@ describe('a digest that could not be read', () => {
     expect(d.useStore.getState().states['s|k']).toMatchObject({ state: 'done', fresh: true })
   })
 
-  for (const reason of ['outdated', 'unknown-session'] as const)
+  for (const reason of ['outdated', 'unknown-session', 'disabled', 'refused'] as const)
     it(`a failure no ask can mend (${reason}) is not asked again, by the view or by Ask again`, async () => {
       const d = digests()
       const item = { key: 'k', payload: 'notes' }
@@ -154,7 +165,87 @@ describe('a digest that could not be read', () => {
       'Not read: too many are being read; ask again in a moment.'
     )
     expect(digestFailureLine('outdated', 'work')).toBe('No title: this server needs an update.')
-    expect(canAskAgain('busy')).toBe(true)
-    expect(canAskAgain('limit')).toBe(true)
+    expect(digestFailureLine('refused')).toBe('Not read: this could not be read.')
+    expect(digestFailureLine('refused', 'work')).toBe('No title: this could not be read.')
+    for (const reason of [
+      'timeout',
+      'limit',
+      'auth',
+      'unreadable',
+      'cancelled',
+      'unanswered',
+      'busy',
+      'failed'
+    ] as const)
+      expect(canAskAgain(reason)).toBe(true)
+    for (const reason of ['disabled', 'refused', 'outdated', 'unknown-session', undefined] as const)
+      expect(canAskAgain(reason)).toBe(false)
+  })
+
+  it('when the window’s server comes, the filed digests are read again and a card that failed for want of it is asked again', async () => {
+    let connected: () => void = () => {}
+    const previous = (globalThis as { window?: unknown }).window
+    Object.assign(globalThis, {
+      window: {
+        electronAPI: {
+          onServerConnected: (callback: () => void) => {
+            connected = callback
+            return () => {}
+          }
+        }
+      }
+    })
+    try {
+      // What the server has filed for the tab: read when it comes.
+      const d = createDigests<string, { ok: true; title: string }>({
+        filed: () => Promise.resolve({ other: { ok: true, title: 'Filed' } }),
+        read: () =>
+          read.mock.calls.length === 0
+            ? (read(), Promise.reject(new Error('no server')))
+            : (read(), Promise.resolve({ ok: true, title: 'Now' }))
+      })
+      d.useStore.getState().file('s', {})
+      d.view('s', [{ key: 'k', payload: '' }], {})
+      await vi.advanceTimersByTimeAsync(DIGEST_SETTLE_MS)
+      await flush()
+      expect(d.useStore.getState().states['s|k']).toMatchObject({
+        state: 'failed',
+        reason: 'unanswered'
+      })
+      connected()
+      await vi.advanceTimersByTimeAsync(0)
+      await flush()
+      expect(read).toHaveBeenCalledTimes(2)
+      expect(d.useStore.getState().states['s|k']).toMatchObject({ state: 'done' })
+      expect(d.useStore.getState().states['s|other']).toMatchObject({ state: 'done' })
+    } finally {
+      Object.assign(globalThis, { window: previous })
+    }
+  })
+
+  it('a runner failure (an overloaded API, a crash) keeps Ask again, and is asked again by itself once stale', async () => {
+    const d = digests()
+    const item = { key: 'k', payload: 'notes' }
+    d.useStore.getState().file('s', {})
+    answers.push({ ok: false, error: 'API Error: 529 overloaded', reason: 'failed' })
+    d.view('s', [item], {})
+    await vi.advanceTimersByTimeAsync(DIGEST_SETTLE_MS)
+    await flush()
+    expect(d.useStore.getState().states['s|k']).toMatchObject({ state: 'failed', reason: 'failed' })
+    expect(canAskAgain('failed')).toBe(true)
+    // Ask again reads it at once…
+    answers.push({ ok: false, error: 'API Error: 529 overloaded', reason: 'failed' })
+    d.retry('s', 'k')
+    await vi.advanceTimersByTimeAsync(0)
+    await flush()
+    expect(read).toHaveBeenCalledTimes(2)
+    // …and a view asking a minute later asks again by itself.
+    answers.push({ ok: true, title: 'Read' })
+    await vi.advanceTimersByTimeAsync(DIGEST_RETRY_AFTER_MS)
+    d.view('s', [item], {})
+    await vi.advanceTimersByTimeAsync(DIGEST_SETTLE_MS)
+    await flush()
+    expect(read).toHaveBeenCalledTimes(3)
+    expect(d.useStore.getState().states['s|k']).toMatchObject({ state: 'done' })
   })
 })

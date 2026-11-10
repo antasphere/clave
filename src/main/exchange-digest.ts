@@ -1,12 +1,15 @@
+import fs from 'fs'
 import { DigestStore } from './exchange-digest-store'
 import { settingsPorts } from './ports'
 import { TEST_NO_ACTIVATE } from './test-mode'
 import { accountTokenForSpawn } from './sessions/adapters/pty-backend'
 import * as helperRunner from './helpers/runner'
+import { helperAccountId } from './helpers/runner'
 import { helperConfig } from './helpers/registry'
 import { DIGEST_TIMEOUT_MS, exchangeDigestHelper, workDigestHelper } from './helpers/digests'
 import type { HelperFailureReason } from '../shared/helper-prompt'
 import {
+  clipDigestMessages,
   digestKey,
   parseDigestReply,
   type DigestDone,
@@ -36,14 +39,6 @@ import {
  */
 
 export { DIGEST_TIMEOUT_MS }
-
-/** The digest of a timeline never needs more than its latest messages. */
-const MAX_MESSAGES = 30
-/** Nor more than this of any one message. */
-const MAX_CHARS = 4000
-
-const clip = (text: string | undefined): string | undefined =>
-  text === undefined ? undefined : text.length > MAX_CHARS ? `${text.slice(0, MAX_CHARS)}…` : text
 
 /** The digests read so far, filed by session (exchange-digest-store.ts),
  *  in Clave's data folder through the storage port rather than Electron's
@@ -75,7 +70,8 @@ export function workDigestsOf(sessionId: string): Record<string, WorkDigestDone>
 export function requestDigest(request: DigestRequest): Promise<DigestResult> {
   if (helperRunner.isShutDown())
     return Promise.resolve({ ok: false, error: 'Clave is quitting', reason: 'cancelled' })
-  if (!request.messages.length) return Promise.resolve({ ok: false, error: 'No messages' })
+  if (!request.messages.length)
+    return Promise.resolve({ ok: false, error: 'No messages', reason: 'refused' })
   const filed = digests().get(request.sessionId, request.key)
   if (filed) return Promise.resolve(filed)
   const id = `${request.sessionId}|${request.key}`
@@ -95,7 +91,8 @@ export function requestDigest(request: DigestRequest): Promise<DigestResult> {
 export function requestWorkDigest(request: WorkDigestRequest): Promise<WorkDigestResult> {
   if (helperRunner.isShutDown())
     return Promise.resolve({ ok: false, error: 'Clave is quitting', reason: 'cancelled' })
-  if (!request.notes.length) return Promise.resolve({ ok: false, error: 'No notes' })
+  if (!request.notes.length)
+    return Promise.resolve({ ok: false, error: 'No notes', reason: 'refused' })
   const bucket = workDigestBucket(request.sessionId)
   const filed = digests().get(bucket, request.key) as unknown as WorkDigestDone | undefined
   if (filed) return Promise.resolve(filed)
@@ -138,12 +135,15 @@ async function read(request: DigestRequest): Promise<DigestResult> {
   // Under the end-to-end harness no model is called: a spec that wants a
   // digest hands the model's reply in CLAVE_E2E_DIGEST_REPLY, read the way a
   // real one is, after a beat so the reading state shows.
-  if (harnessReplies()) {
+  if (TEST_NO_ACTIVATE) {
     const off = switchedOff(exchangeDigestHelper)
     if (off) return off
+    journalRead('exchange', request.sessionId, request.key)
+  }
+  if (harnessReplies()) {
     const reply = testReply(process.env.CLAVE_E2E_DIGEST_REPLY, request.launch)
     if (!reply) return Promise.resolve({ ok: false, error: 'No model under test' })
-    return testAccount(request.launch).then(
+    return testAccount(exchangeDigestHelper, request.launch).then(
       (refused) =>
         refused ??
         new Promise<DigestResult>((resolve) =>
@@ -161,13 +161,7 @@ async function read(request: DigestRequest): Promise<DigestResult> {
         )
     )
   }
-  const messages = request.messages.slice(-MAX_MESSAGES).map((message) => ({
-    from: message.from,
-    text: clip(message.text) ?? '',
-    request: clip(message.request),
-    reply: clip(message.reply)
-  }))
-  const offset = request.messages.length - messages.length
+  const { messages, offset } = clipDigestMessages(request.messages)
   return helperRunner
     .runHelper(exchangeDigestHelper, messages, request.launch)
     .then((outcome): DigestResult => {
@@ -183,12 +177,15 @@ async function read(request: DigestRequest): Promise<DigestResult> {
 
 async function readWork(request: WorkDigestRequest): Promise<WorkDigestResult> {
   // Under the harness, the reply comes from CLAVE_E2E_WORK_DIGEST_REPLY.
-  if (harnessReplies()) {
+  if (TEST_NO_ACTIVATE) {
     const off = switchedOff(workDigestHelper)
     if (off) return off
+    journalRead('work', request.sessionId, request.key)
+  }
+  if (harnessReplies()) {
     const reply = testReply(process.env.CLAVE_E2E_WORK_DIGEST_REPLY, request.launch)
     if (!reply) return Promise.resolve({ ok: false, error: 'No model under test' })
-    return testAccount(request.launch).then(
+    return testAccount(workDigestHelper, request.launch).then(
       (refused) =>
         refused ??
         new Promise<WorkDigestResult>((resolve) =>
@@ -219,22 +216,39 @@ async function readWork(request: WorkDigestRequest): Promise<WorkDigestResult> {
     })
 }
 
+/** Under the harness, every read is journaled where THIS process keeps its
+ *  data (main: the app's user data; a separate server: `userData/server`;
+ *  a daemon: its data dir), one JSON line each, so a spec tells which
+ *  process read a digest (`chat-digest-early.spec.mjs`). */
+function journalRead(kind: 'exchange' | 'work', sessionId: string, key: string): void {
+  try {
+    fs.appendFileSync(
+      settingsPorts().storage.pathOf('e2e-digest-reads.jsonl'),
+      `${JSON.stringify({ kind, sessionId, key, pid: process.pid, at: Date.now() })}\n`
+    )
+  } catch {
+    /* a journal that cannot be written is no read of its own */
+  }
+}
+
 /** The harness's reply, with `{account}` standing for the account the read
  *  runs on (`default` for the machine login), so a spec sees which one. */
 function testReply(reply: string | undefined, launch: DigestLaunch): string | undefined {
   return reply?.replaceAll('{account}', launch.claudeProfileId ?? 'default')
 }
 
-/** Under the harness, the account a read would run on is resolved as the
- *  runner resolves it (`accountTokenForSpawn`): an account this process does
- *  not know fails the read as the CLI would be refused, `auth`. */
-async function testAccount(launch: DigestLaunch): Promise<{
-  ok: false
-  error: string
-  reason: 'auth'
-} | null> {
+/** Under the harness, a read stands in for the run up to the model call:
+ *  the helper's own config (`helperConfig`, the seam the Settings page sets)
+ *  decides on which account it runs (`helperAccountId`), and that account
+ *  resolves as a spawn resolves it (`accountTokenForSpawn`): an account this
+ *  process does not know fails as the CLI would be refused, `auth`. Whether
+ *  the helper runs at all was read before (`switchedOff`). */
+async function testAccount(
+  definition: Parameters<typeof helperConfig>[0],
+  launch: DigestLaunch
+): Promise<{ ok: false; error: string; reason: 'auth' } | null> {
   try {
-    await accountTokenForSpawn('claude', launch.claudeProfileId)
+    await accountTokenForSpawn('claude', helperAccountId(helperConfig(definition), launch))
     return null
   } catch (error) {
     return {
@@ -339,15 +353,6 @@ export const MAX_WAITING_PER_SESSION = 10
  *  read for content the store files under a name it does not have. */
 export const KEY_MISMATCH_ERROR = 'The key does not match what was sent'
 
-/** The message as the key reads it: the view's own shape (`digestMessages`),
- *  absent fields left out, so the same content gives the same key here. */
-const keyed = (message: DigestMessage): DigestMessage => ({
-  from: message.from,
-  text: message.text,
-  ...(message.request !== undefined && { request: message.request }),
-  ...(message.reply !== undefined && { reply: message.reply })
-})
-
 /** The digests as a host serves them to its clients. Every request is read
  *  on the launch of the host's own record of the session, under the key the
  *  host recomputes from the content (a key that does not match is refused),
@@ -382,7 +387,7 @@ export function hostDigests(recordOf: DigestRecordOf): HostDigests {
     error: UNKNOWN_SESSION_ERROR,
     reason: 'unknown-session' as const
   }
-  const mismatch = { ok: false as const, error: KEY_MISMATCH_ERROR, reason: 'failed' as const }
+  const mismatch = { ok: false as const, error: KEY_MISMATCH_ERROR, reason: 'refused' as const }
   const busy = {
     ok: false as const,
     error: 'Too many reads are waiting for this tab',
@@ -390,7 +395,8 @@ export function hostDigests(recordOf: DigestRecordOf): HostDigests {
   }
   return {
     exchangeDigest: (request) => {
-      const messages = request.messages.map(keyed)
+      // Clipped as the view clips (idempotent), so the key is the view's.
+      const { messages } = clipDigestMessages(request.messages)
       if (digestKey(messages) !== request.key) return Promise.resolve(mismatch)
       const launch = launchOf(request.sessionId)
       if (!launch) return Promise.resolve(unknown)
@@ -404,7 +410,7 @@ export function hostDigests(recordOf: DigestRecordOf): HostDigests {
     },
     exchangeDigestsOf: digestsOf,
     workDigest: (request) => {
-      const notes = [...request.notes]
+      const { notes } = clipNotes(request.notes)
       if (workDigestKey(notes) !== request.key) return Promise.resolve(mismatch)
       const launch = launchOf(request.sessionId)
       if (!launch) return Promise.resolve(unknown)

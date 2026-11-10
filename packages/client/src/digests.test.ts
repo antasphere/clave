@@ -59,4 +59,15 @@ describe('the digests of the client', () => {
     api = createApiClient({ url: 'http://127.0.0.1:9', token: 't', timeoutMs: 2_000 })
     await expect(api.digests.exchange(read)).rejects.toBeInstanceOf(ServerUnreachable)
   })
+
+  it('a request the server refuses as invalid (400) reads as refused, never as unanswered', async () => {
+    server = await startEmbedded({ ports: { sessions: new FakeSource() } })
+    api = createApiClient({ url: server.url, token: server.token })
+    await expect(
+      api.digests.exchange({ sessionId: 's', key: 'not-a-key', messages: [] })
+    ).resolves.toMatchObject({ ok: false, reason: 'refused' })
+    await expect(
+      api.digests.work({ sessionId: 's', key: '1-x', notes: [], tools: 0 })
+    ).resolves.toMatchObject({ ok: false, reason: 'refused' })
+  })
 })

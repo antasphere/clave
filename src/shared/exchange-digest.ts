@@ -9,10 +9,17 @@
 import { asData, firstJsonObject, type HelperFailureReason } from './helper-prompt'
 
 /** Why a digest was not read: the helper's own reasons (`helper-prompt.ts`),
- *  and three a host or a client adds (PRDCT-4327): the server has no record
+ *  and four a host or a client adds (PRDCT-4327): the server has no record
  *  of the tab (`unknown-session`), the tab has too many reads waiting there
- *  (`busy`), the server is a release without the digests (`outdated`). */
-export type DigestFailureReason = HelperFailureReason | 'unknown-session' | 'busy' | 'outdated'
+ *  (`busy`), the server is a release without the digests (`outdated`), and
+ *  a request asking again cannot change (`refused`: refused as invalid,
+ *  under a key that is not its content's, or with nothing to read). */
+export type DigestFailureReason =
+  | HelperFailureReason
+  | 'unknown-session'
+  | 'busy'
+  | 'outdated'
+  | 'refused'
 
 /** One message of the timeline, as the digest reads it. */
 export interface DigestMessage {
@@ -57,6 +64,35 @@ export type DigestResult =
 
 /** A digest that was read. */
 export type DigestDone = Extract<DigestResult, { ok: true }>
+
+/** The digest of a timeline reads its latest messages only… */
+export const DIGEST_MAX_MESSAGES = 30
+/** …each text, request and reply clipped to this many characters… */
+export const DIGEST_MAX_CHARS = 4000
+/** …and the sender's name to this many. */
+export const DIGEST_MAX_FROM = 200
+
+const clipTo = (text: string, max: number): string =>
+  text.length > max ? `${text.slice(0, max)}…` : text
+
+/** What a digest reads of a timeline (PRDCT-4327): the latest
+ *  DIGEST_MAX_MESSAGES messages, each field clipped, and how many were left
+ *  out in front (`offset`), so the message the digest names is put back in
+ *  the timeline's own count. The view applies it before it keys and sends a
+ *  timeline, the host again to what it receives before it checks the key:
+ *  idempotent, so the two agree, and a pasted log of any length is read. */
+export function clipDigestMessages(messages: readonly DigestMessage[]): {
+  messages: DigestMessage[]
+  offset: number
+} {
+  const kept = messages.slice(-DIGEST_MAX_MESSAGES).map((message) => ({
+    from: clipTo(message.from, DIGEST_MAX_FROM),
+    text: clipTo(message.text, DIGEST_MAX_CHARS),
+    ...(message.request !== undefined && { request: clipTo(message.request, DIGEST_MAX_CHARS) }),
+    ...(message.reply !== undefined && { reply: clipTo(message.reply, DIGEST_MAX_CHARS) })
+  }))
+  return { messages: kept, offset: messages.length - kept.length }
+}
 
 /** A short stable key for a run of messages (FNV-1a over what the digest
  *  reads): the same messages, the same key, in any process. */

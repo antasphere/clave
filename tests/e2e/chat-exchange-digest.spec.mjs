@@ -10,7 +10,8 @@ import { until } from './harness.mjs'
    - the digest is filed under the tab's session id, and a timeline scrolled
      out of view is read and filed all the same;
    - with no digest to be had, the timeline shows its messages and one quiet
-     line saying it was not read, with Ask again (PRDCT-4327). */
+     line saying it was not read, and no Ask again: a failure of no known
+     class is not one asking again can change (PRDCT-4327). */
 
 const header = (name, id) =>
   `[Message from Clave tab "${name}" — reply with clave_send_to_session sessionId="${id}"]\n`
@@ -121,7 +122,7 @@ export async function run(t) {
         state.failed &&
           state.digestText === 0 &&
           JSON.stringify(state.unread) === '["Not read: something went wrong."]' &&
-          state.retry === 1 &&
+          state.retry === 0 &&
           state.cards === 2,
         state
       )

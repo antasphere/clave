@@ -69,8 +69,8 @@ import { helperCliArgs } from './helpers/runner'
 import { exchangeDigestHelper } from './helpers/digests'
 
 const DIGEST_CLI_ARGS = helperCliArgs(exchangeDigestHelper.systemPrompt, exchangeDigestHelper)
-import { DIGEST_HELPER_MARKER, digestKey } from '../shared/exchange-digest'
-import { WORK_DIGEST_MARKER, workDigestKey } from '../shared/work-digest'
+import { DIGEST_HELPER_MARKER, clipDigestMessages, digestKey } from '../shared/exchange-digest'
+import { WORK_DIGEST_MARKER, clipNotes, workDigestKey } from '../shared/work-digest'
 import { resetShutdownForTests } from './helpers/runner'
 
 async function ticks(): Promise<void> {
@@ -239,10 +239,10 @@ describe("the host reads a digest on its own record's launch (PRDCT-4327)", () =
         key: digestKey([{ from: 'x', text: 'z' }]),
         messages: one
       })
-    ).resolves.toEqual({ ok: false, error: KEY_MISMATCH_ERROR, reason: 'failed' })
+    ).resolves.toEqual({ ok: false, error: KEY_MISMATCH_ERROR, reason: 'refused' })
     await expect(
       host.workDigest({ sessionId: 'named', key: workDigestKey(['b']), notes: ['a'], tools: 0 })
-    ).resolves.toMatchObject({ ok: false, reason: 'failed' })
+    ).resolves.toMatchObject({ ok: false, reason: 'refused' })
     await ticks()
     expect(mocks.calls).toHaveLength(0)
   })
@@ -328,5 +328,45 @@ describe('the launch both servers compose (PRDCT-4327)', () => {
     expect(mocks.accounts).toEqual(['cold-account'])
     mocks.calls[0].finish(null, '{"needs_you": false, "message": null, "summary": "Cold."}', '')
     await expect(done).resolves.toMatchObject({ ok: true, summary: 'Cold.' })
+  })
+
+  it('reads a message of 300,000 characters: the view’s key is the host’s, the model reads the clip', async () => {
+    const long = [{ from: 'Lane A', text: 'L'.repeat(300_000) }]
+    // What the view sends: the clip, keyed.
+    const sent = clipDigestMessages(long).messages
+    const host = hostDigests(() => ({}))
+    const done = host.exchangeDigest({ sessionId: 'long', key: digestKey(sent), messages: sent })
+    await ticks()
+    expect(mocks.calls).toHaveLength(1)
+    const prompt = mocks.calls[0].prompt
+    expect(prompt).toContain(`${'L'.repeat(4_000)}…`)
+    expect(prompt).not.toContain('L'.repeat(4_001))
+    mocks.calls[0].finish(null, '{"needs_you": false, "message": null, "summary": "Long."}', '')
+    await expect(done).resolves.toMatchObject({ ok: true, summary: 'Long.' })
+  })
+
+  it('clips what it receives before it checks the key, so an unclipped timeline keys as the view keys it', async () => {
+    const raw = Array.from({ length: 33 }, (_, i) => ({
+      from: 'Lane B',
+      text: `R${i}`.repeat(50_000)
+    }))
+    const key = digestKey(clipDigestMessages(raw).messages)
+    const host = hostDigests(() => ({}))
+    const done = host.exchangeDigest({ sessionId: 'raw', key, messages: raw })
+    await ticks()
+    expect(mocks.calls).toHaveLength(1)
+    mocks.calls[0].finish(null, '{"needs_you": true, "message": 1, "summary": "Raw."}', '')
+    await expect(done).resolves.toMatchObject({ ok: true, summary: 'Raw.', message: 0 })
+  })
+
+  it('clips the notes it receives before it checks the key, so unclipped notes key as the view keys them', async () => {
+    const raw = Array.from({ length: 45 }, (_, i) => `N${i} `.repeat(400))
+    const key = workDigestKey(clipNotes(raw).notes)
+    const host = hostDigests(() => ({}))
+    const done = host.workDigest({ sessionId: 'raw-notes', key, notes: raw, tools: 3 })
+    await ticks()
+    expect(mocks.calls).toHaveLength(1)
+    mocks.calls[0].finish(null, '{"title": "Raw notes", "needs_you": false, "note": null}', '')
+    await expect(done).resolves.toMatchObject({ ok: true, title: 'Raw notes' })
   })
 })

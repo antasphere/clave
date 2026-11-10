@@ -1,4 +1,5 @@
 import type { Entry } from './reducer'
+import { clipNotes } from '../../../src/shared/work-digest'
 import { isQuestion } from './approvals'
 import { isInputRequest } from './input-request'
 import { blockKey, type Block } from './tools'
@@ -87,6 +88,13 @@ export function stretchSpan(stretch: WorkStretch): { from: number; to: number } 
 /** The notes' texts, in order, for the digest. */
 export const stretchNotes = (stretch: WorkStretch): string[] =>
   stretch.steps.flatMap((step) => (step.note && step.work.length ? [step.note.text] : []))
+
+/** What the digest reads of a stretch (PRDCT-4327): its notes clipped as
+ *  the host clips them (`clipNotes`, idempotent), keyed and sent as they
+ *  are, and how many were left out in front, so the note the digest flags is
+ *  put back in the stretch's own count. */
+export const digestNotes = (stretch: WorkStretch): { notes: string[]; offset: number } =>
+  clipNotes(stretchNotes(stretch))
 
 /** The last block of a stretch, whose key is the stretch's. */
 function lastBlock(stretch: WorkStretch): Block {

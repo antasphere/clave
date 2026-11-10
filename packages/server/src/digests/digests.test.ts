@@ -3,6 +3,7 @@ import type { ExchangeDigestRead, WorkDigestRead } from '@clave/contract/digests
 import { startEmbedded, type EmbeddedServer } from '../embedded'
 import { FakeSource } from '../test-support'
 import type { DigestsService } from './port'
+import { DIGEST_BODY_LIMIT } from '../runtime'
 
 /**
  * The digests domain (PRDCT-4327): a client asks the server a tab runs on,
@@ -111,43 +112,60 @@ describe('the digests over HTTP', () => {
     })
   })
 
-  it('refuses, before the port, what is past the bounds: too many messages, a key of another shape, a text too long', async () => {
+  it('refuses, before the port, what is past the bounds the clip sets, and takes what is within', async () => {
     const { port, asked } = fakePort()
     server = await startEmbedded({ ports: { sessions: new FakeSource(), digests: port } })
     const message = { from: 'a', text: 'b' }
-    const tooMany = await call('/digests/exchange', {
-      sessionId: 's1',
-      key: '501-x',
-      messages: Array.from({ length: 501 }, () => message)
-    })
-    expect(tooMany.status).toBe(400)
-    const shape = await call('/digests/exchange', {
-      sessionId: 's1',
-      key: 'anything',
-      messages: [message]
-    })
-    expect(shape.status).toBe(400)
-    const long = await call('/digests/work', {
-      sessionId: 's1',
-      key: 'work-1-x',
-      notes: ['n'.repeat(100_001)],
-      tools: 0
-    })
-    expect(long.status).toBe(400)
-    const workShape = await call('/digests/work', {
+    const exchange = (body: object): Promise<number> =>
+      call('/digests/exchange', { sessionId: 's1', key: '1-x', ...body }).then((r) => r.status)
+    const work = (body: object): Promise<number> =>
+      call('/digests/work', { sessionId: 's1', key: 'work-1-x', tools: 0, ...body }).then(
+        (r) => r.status
+      )
+    // The messages: 30 at most, a text of 4,096 characters at most.
+    expect(await exchange({ messages: Array.from({ length: 31 }, () => message) })).toBe(400)
+    expect(await exchange({ messages: [{ from: 'a', text: 'b'.repeat(4_097) }] })).toBe(400)
+    expect(await exchange({ messages: [{ from: 'a'.repeat(257), text: 'b' }] })).toBe(400)
+    expect(await exchange({ key: 'anything', messages: [message] })).toBe(400)
+    // The notes: 40 at most, a note of 1,024 characters at most.
+    expect(await work({ notes: Array.from({ length: 41 }, () => 'n') })).toBe(400)
+    expect(await work({ notes: ['n'.repeat(1_025)] })).toBe(400)
+    expect(await work({ key: '1-x', notes: ['n'] })).toBe(400)
+    expect(asked).toEqual([])
+    // The clip's own output passes: 30 messages of 4,001 characters, 40 notes of 601.
+    const clipped = { from: 'a', text: `${'b'.repeat(4_000)}…`, request: 'r', reply: 'p' }
+    expect(await exchange({ messages: Array.from({ length: 30 }, () => clipped) })).toBe(200)
+    expect(await work({ notes: Array.from({ length: 40 }, () => `${'n'.repeat(600)}…`) })).toBe(200)
+  })
+
+  it('reads no body past its limit: a digest command over 3 MiB is refused before it is parsed', async () => {
+    const { port, asked } = fakePort()
+    server = await startEmbedded({ ports: { sessions: new FakeSource(), digests: port } })
+    const huge = {
       sessionId: 's1',
       key: '1-x',
-      notes: ['n'],
-      tools: 0
-    })
-    expect(workShape.status).toBe(400)
+      messages: [{ from: 'a', text: 'b'.repeat(DIGEST_BODY_LIMIT) }]
+    }
+    const answer = await call('/digests/exchange', huge)
+    expect(answer.status).toBe(413)
+    // Streamed without a length, the read stops at the limit: the server
+    // answers an error or drops the socket, and the port never sees it.
+    const body = JSON.stringify(huge)
+    const streamed = await fetch(`${server.url}/digests/work`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${server.token}`, 'content-type': 'application/json' },
+      body: new ReadableStream({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode(body))
+          controller.close()
+        }
+      }),
+      duplex: 'half'
+    } as RequestInit).then(
+      (r) => r.status,
+      () => 'dropped' as const
+    )
+    expect(streamed === 'dropped' || streamed >= 400).toBe(true)
     expect(asked).toEqual([])
-    // The bounds themselves let a real timeline through.
-    const ok = await call('/digests/exchange', {
-      sessionId: 's1',
-      key: '500-x',
-      messages: Array.from({ length: 500 }, () => message)
-    })
-    expect(ok.status).toBe(200)
   })
 })
