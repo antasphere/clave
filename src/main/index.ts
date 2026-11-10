@@ -178,9 +178,16 @@ async function bootServer(): Promise<void> {
         // (`setSessionHost`), for the server, the IPC arm and the test seam
         // alike. Loaded here, with the server, so main's boot stays free of
         // Effect (`server/lazy-load.test.ts`).
-        const [{ PendingRequests }, { requestAwareSessionHost }] = await Promise.all([
+        const [
+          { PendingRequests },
+          { requestAwareSessionHost },
+          { explainingSessionHost },
+          { explainPermission }
+        ] = await Promise.all([
           import('@clave/server'),
-          import('./sessions/request-aware-host')
+          import('./sessions/request-aware-host'),
+          import('./sessions/permission-explanations'),
+          import('./sessions/explain-permission')
         ])
         const aware = requestAwareSessionHost({
           host: getSessionHost(),
@@ -190,12 +197,20 @@ async function bootServer(): Promise<void> {
           publish: (id, event) => sessionManager.publishHostEvent(id, event),
           setState: (id, state) => sessionManager.setState(id, state)
         })
-        setSessionHost(aware.host)
-        installE2eHooks({ sessionHost: aware.host })
+        // ── PRDCT-4331: every tool permission read in plain words, here where the session runs ──
+        const explained = explainingSessionHost({
+          host: aware.host,
+          subscribeAll: (listener) => sessionManager.subscribeAll(listener),
+          subscribeRemoved: (listener) => sessionManager.subscribeRemoved(listener),
+          publish: (id, event) => sessionManager.publishHostEvent(id, event),
+          explain: explainPermission
+        })
+        setSessionHost(explained.host)
+        installE2eHooks({ sessionHost: explained.host })
         const endpoint = await startClaveServer({
           ports: {
             // ── Lane A: sessions ──
-            sessions: aware.host,
+            sessions: explained.host,
             // ── PRDCT-4157: the pending requests, the hosted create through the wrapper ──
             requests: aware.port,
             // ── Lane D: settings, the shell's managers (settings/shell-source.ts) ──

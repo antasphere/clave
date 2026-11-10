@@ -330,6 +330,20 @@ export const SessionEventSchema = z.discriminatedUnion('type', [
     /** The agent's word under a field it could not fill, by the question's key. */
     notes: z.record(z.string(), z.string()).optional()
   }),
+  /** What a permission request does, read where the session runs
+   *  (PRDCT-4331): its level (the rules' floor, raised and never lowered by
+   *  the explainer's reading), the plain sentence and whether it matches the
+   *  person's ask; or, with `failed`, why no sentence came. Keyed by the
+   *  request's id; it never answers the request. Mirrors
+   *  `packages/contract/src/sessions.ts`. */
+  z.object({
+    type: z.literal('permission_explained'),
+    id: z.string(),
+    level: z.enum(['reads', 'project', 'outside', 'irreversible']),
+    sentence: z.string().optional(),
+    asked: z.enum(['yes', 'no', 'unclear']).optional(),
+    failed: z.string().optional()
+  }),
   /** How full the conversation's context is (or, with `parent`, a subagent's):
    *  the tokens its last call read and wrote, and the model's window once the
    *  provider has named it. The

@@ -143,6 +143,15 @@ const events: unknown[] = [
   { type: 'permission_updated', id: 'p', answers: { login: 'luca-a', projects: ['reb'] } },
   { type: 'permission_updated', id: 'p', answers: { login: 'luca-a' }, sent: true },
   { type: 'permission_updated', id: 'p', answers: { login: 'luca-b' }, typed: true },
+  { type: 'permission_explained', id: 'p', level: 'reads' },
+  {
+    type: 'permission_explained',
+    id: 'p',
+    level: 'irreversible',
+    sentence: 'Deletes the build folder.',
+    asked: 'no'
+  },
+  { type: 'permission_explained', id: 'p', level: 'outside', failed: 'timeout' },
   { type: 'context_usage', used: 10, window: 200, parent: 'p' },
   { type: 'subagent_model', parent: 'p', model: 'sonnet' },
   { type: 'permission_mode', mode: 'default', modes: [{ id: 'default', label: 'Default' }] },

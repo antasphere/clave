@@ -11,6 +11,8 @@ import { sameId } from './models'
 
 export type ChatEvent = SessionEvent
 export type Permission = Extract<SessionEvent, { type: 'permission_request' }>
+/** What a request does, as the session's host read it (PRDCT-4331). */
+export type PermissionReading = Extract<SessionEvent, { type: 'permission_explained' }>
 export type Entry =
   | {
       kind: 'user'
@@ -106,6 +108,18 @@ export type Entry =
       at: number
     }
   | { kind: 'error'; message: string; at: number }
+  /** The permission mode changed (PRDCT-4331): one line, said in the
+   *  transcript, never for the first word on the mode nor for a repeat.
+   *  `by` is known when this view asked for the switch. */
+  | {
+      kind: 'mode'
+      mode: string
+      label: string
+      from: string
+      fromLabel: string
+      by?: 'you'
+      at: number
+    }
 export interface Conversation {
   entries: Entry[]
   /** The ordinal of `entries[0]`: an entry's `first + index` is its own for
@@ -133,6 +147,14 @@ export interface Conversation {
   /** The mode the agent asks in and the modes it can switch to; null for a
    *  provider that has none, and the view shows no switch. */
   permissionMode: { mode: string; modes: PermissionModeOption[] } | null
+  /** The mode this view asked the provider for, until the provider says it
+   *  switched (the mode line then reads who asked). */
+  askedMode?: string
+  /** What each permission request does, by its id, as the host read it
+   *  (`permission_explained`, PRDCT-4331): kept apart from the entries, so a
+   *  reading that arrives before its request, or a page of the past without
+   *  the request, is not lost. */
+  explained: Record<string, PermissionReading>
   exitCode?: number
 }
 export const emptyConversation: Conversation = {
@@ -143,7 +165,8 @@ export const emptyConversation: Conversation = {
   model: null,
   pendingModel: null,
   effort: null,
-  permissionMode: null
+  permissionMode: null,
+  explained: {}
 }
 export type Action =
   | { event: ChatEvent; at?: number }
@@ -176,6 +199,8 @@ export type Action =
   /** The reader picked a model from the chip (PRDCT-4273): shown at once,
    *  confirmed or reverted by the provider's answer. */
   | { pickModel: string }
+  /** This view asked the provider for a permission mode (PRDCT-4331). */
+  | { askMode: string }
 
 /** Whether anything answers the reader's last message yet: text, a tool call,
  *  a question, an error. What decides, on Escape, between taking the message
@@ -259,6 +284,7 @@ export function reduceConversation(state: Conversation, action: Action): Convers
   if ('exit' in action)
     return { ...state, state: 'ended', exitCode: action.exit, pendingModel: null }
   if ('pickModel' in action) return { ...state, pendingModel: action.pickModel }
+  if ('askMode' in action) return { ...state, askedMode: action.askMode }
   if ('reconnected' in action) return state.run === null ? state : { ...state, run: null }
   if ('session' in action) {
     // The subscribe's answer is the host's current word AT THE TIME IT WAS
@@ -326,18 +352,33 @@ export function reduceConversation(state: Conversation, action: Action): Convers
     // that is no longer the one running (PRDCT-4191).
     // Replayed from rest: a transcript carries no state changes, and a replay
     // read under the live `working` would mark every message as mid-turn.
+    // The mode is replayed from no mode, so the past's first word on it is
+    // no change; the live word stands when the past says none.
     const synced = action.sync.reduce(reduceConversation, {
       ...state,
       entries: [],
       first: 0,
-      state: 'idle'
+      state: 'idle',
+      permissionMode: null
     })
-    return { ...synced, state: state.state, run: state.run, exitCode: state.exitCode }
+    return {
+      ...synced,
+      state: state.state,
+      run: state.run,
+      exitCode: state.exitCode,
+      permissionMode: synced.permissionMode ?? state.permissionMode
+    }
   }
   if ('prepend' in action) {
     if (!action.prepend.length) return state
-    const past = action.prepend.reduce(reduceConversation, emptyConversation).entries
-    return { ...state, entries: [...past, ...state.entries], first: state.first - past.length }
+    const earlier = action.prepend.reduce(reduceConversation, emptyConversation)
+    const past = earlier.entries
+    return {
+      ...state,
+      entries: [...past, ...state.entries],
+      first: state.first - past.length,
+      explained: { ...earlier.explained, ...state.explained }
+    }
   }
   if ('answer' in action) {
     // The answer is this view's own, so it was never answered elsewhere: the
@@ -555,8 +596,34 @@ export function reduceConversation(state: Conversation, action: Action): Convers
     }
     case 'effort':
       return { ...state, effort: event.effort }
-    case 'permission_mode':
-      return { ...state, permissionMode: { mode: event.mode, modes: event.modes } }
+    case 'permission_mode': {
+      // A change is said once in the transcript: not the first word on the
+      // mode (the launch's), not a repeat (a switch this view asked for comes
+      // back twice, the switch's answer and the CLI's own report).
+      const before = state.permissionMode
+      const askedMode = state.askedMode === event.mode ? undefined : state.askedMode
+      if (before && before.mode !== event.mode) {
+        const label = (id: string, modes: PermissionModeOption[]): string =>
+          modes.find((m) => m.id === id)?.label ?? id
+        entries.push({
+          kind: 'mode',
+          mode: event.mode,
+          label: label(event.mode, event.modes),
+          from: before.mode,
+          fromLabel: label(before.mode, before.modes.length ? before.modes : event.modes),
+          ...(state.askedMode === event.mode && { by: 'you' as const }),
+          at
+        })
+      }
+      return {
+        ...state,
+        entries,
+        askedMode,
+        permissionMode: { mode: event.mode, modes: event.modes }
+      }
+    }
+    case 'permission_explained':
+      return { ...state, explained: { ...state.explained, [event.id]: event } }
     case 'error':
       entries.push({ kind: 'error', message: event.message, at })
       // A refused switch comes back as an error (the CLI's reason, or the
