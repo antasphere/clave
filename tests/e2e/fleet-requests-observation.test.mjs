@@ -133,7 +133,10 @@ describe('the second Mac observes the question after the approval leaves', () =>
 
   it.each([
     { state: 'empty', prompts: [] },
-    { state: 'unrelated prompt', prompts: ['An unrelated prompt'] }
+    { state: 'unrelated prompt', prompts: ['An unrelated prompt'] },
+    { state: 'different Fleet question', prompts: ['Fleet private answer'] },
+    { state: 'partial question label', prompts: ['Fleet public status'] },
+    { state: 'other public answer', prompts: ['Other public answer'] }
   ])(
     'still fails at the existing bound when the question is missing: $state',
     async ({ prompts }) => {
