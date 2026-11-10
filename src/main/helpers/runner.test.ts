@@ -401,7 +401,9 @@ describe('an answer about limits or auth is not the CLI saying so', () => {
   it.each([
     'The usage limit check skips a token\nwhen the account was refreshed, so the cap never shows.',
     'The 401 comes from the refresh path.\nIt retries with the stale OAuth token before reading the new one.',
-    'Here are the steps:\n1. fix the quota display\n2. add a test'
+    'Here are the steps:\n1. fix the quota display\n2. add a test',
+    'Usage limit handling: three cases\n1. the 5-hour limit reached\n2. the weekly one',
+    'API errors (401, 429) are retried\nonce, then the card says so.'
   ])('%j is unreadable and retried', async (reply) => {
     const h = helper({ attempts: 2 })
     const done = runHelper(h, 'x')
@@ -422,6 +424,55 @@ describe('an answer about limits or auth is not the CLI saying so', () => {
     expect(cliNotice('OAuth token has expired. Please run /login')).toBe('auth')
     expect(cliNotice('API Error: 401 {"type":"authentication_error"}')).toBe('auth')
     expect(cliNotice('fix quota display')).toBeNull()
+  })
+})
+
+describe("the CLI's notices, however they are printed", () => {
+  it.each([
+    ['Failed to authenticate. API Error: 401 OAuth access token is invalid.', 'auth'],
+    [
+      `API Error: 429 ${JSON.stringify({ type: 'error', error: { type: 'rate_limit_error', message: 'x'.repeat(300) } })}`,
+      'limit'
+    ],
+    ['Claude usage limit reached. Your limit will reset at 5pm (Europe/Brussels).', 'limit'],
+    [
+      '5-hour limit reached ∙ resets 3am\n\n/upgrade to increase your usage limit.\nOr wait.',
+      'limit'
+    ]
+  ])('%j is recognised by how it opens', (reply, reason) => {
+    expect(cliNotice(reply)).toBe(reason)
+  })
+
+  it.each([
+    'Usage limit handling: three cases',
+    'API errors (401, 429) are retried',
+    'The usage limit check skips a token',
+    'The 401 comes from the refresh path.',
+    'Here are the steps:'
+  ])('%j is no notice', (reply) => {
+    expect(cliNotice(reply)).toBeNull()
+  })
+
+  it('a long notice on stdout with exit 0 is a limit, not retried', async () => {
+    const h = helper({ attempts: 2 })
+    const done = runHelper(h, 'x')
+    await ticks()
+    mocks.spawned[0].finish(null, '5-hour limit reached ∙ resets 3am\n\n/upgrade\nmore', '')
+    await expect(done).resolves.toMatchObject({ ok: false, reason: 'limit' })
+    expect(mocks.spawned).toHaveLength(1)
+  })
+
+  it('a notice on stderr alone with exit 0 is read too', async () => {
+    const h = helper({ attempts: 2 })
+    const done = runHelper(h, 'x')
+    await ticks()
+    mocks.spawned[0].finish(
+      null,
+      '',
+      'Failed to authenticate. API Error: 401 OAuth access token is invalid.'
+    )
+    await expect(done).resolves.toMatchObject({ ok: false, reason: 'auth' })
+    expect(mocks.spawned).toHaveLength(1)
   })
 })
 

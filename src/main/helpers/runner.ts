@@ -51,23 +51,28 @@ export function classifyFailure(input: {
   return 'failed'
 }
 /**
- * The CLI's own notice, printed as the WHOLE reply with exit 0 ("Claude AI
- * usage limit reached|…", "Invalid API key · Please run /login"), or null.
- * Anchored and short on purpose: a model that answered a message about
- * quotas or a 401 wrote a longer reply mentioning them, and that reply is
- * unreadable (and retried), never a limit or a refusal.
+ * The CLI's own notice ("Claude AI usage limit reached|…", "Failed to
+ * authenticate. API Error: 401 …", "Invalid API key · Please run /login"),
+ * or null. Recognised by how the reply OPENS: its first non-empty line must
+ * start with one of the CLI's own notice openings, whatever follows and
+ * however long. A model that answered a message about quotas or a 401 does
+ * not open with those exact words ("Usage limit handling: …", "API errors
+ * (401, 429) are retried"), so its reply stays unreadable and is retried.
  */
 export function cliNotice(stdout: string): 'limit' | 'auth' | null {
-  const text = stdout.trim()
-  if (!text || text.length > 200 || text.split('\n').length > 2) return null
-  if (LIMIT_NOTICE.test(text)) return 'limit'
-  if (AUTH_NOTICE.test(text)) return 'auth'
+  const first = stdout
+    .split('\n')
+    .map((line) => line.trim())
+    .find(Boolean)
+  if (!first) return null
+  if (LIMIT_NOTICE.test(first)) return 'limit'
+  if (AUTH_NOTICE.test(first)) return 'auth'
   return null
 }
 const LIMIT_NOTICE =
-  /^(?:Claude AI usage limit reached\b|You've (?:hit|reached) your (?:usage |session |weekly )?limit\b|(?:5-hour|weekly|Opus|Fable) limit reached\b|API Error: 429\b|You're out of extra usage\b)/i
+  /^(?:Claude (?:AI )?usage limit reached\b|You've (?:hit|reached) your (?:usage |session |weekly )?limit\b|(?:5-hour|weekly|Opus|Fable|Sonnet) limit reached\b|API Error: 429\b|You're out of extra usage\b)/i
 const AUTH_NOTICE =
-  /^(?:Invalid API key\b|Not logged in\b|Please run \/login\b|OAuth token (?:has )?(?:expired|been revoked)\b|API Error: 40[13]\b|Credit balance is too low\b)/i
+  /^(?:Invalid API key\b|Not logged in\b|Please run \/login\b|Failed to authenticate\b|OAuth (?:access )?token (?:has )?(?:expired|been revoked|is invalid)\b|API Error: 40[13]\b|Credit balance is too low\b)/i
 
 const LIMIT_RE =
   /usage limit|rate[ -]limit|limit reached|limit will reset|\b429\b|quota|out of extra usage/i
@@ -194,7 +199,7 @@ async function execute(job: Job): Promise<HelperOutcome<unknown>> {
     if (closed || generation !== born) return failure('cancelled', 'Cancelled')
     const config = helperConfig(definition)
     let stdout:
-      | { ok: true; stdout: string }
+      | { ok: true; stdout: string; stderr: string }
       | { ok: false; reason: HelperFailureReason; detail: string }
     try {
       stdout = await spawnOnce(job, config, born)
@@ -217,8 +222,11 @@ async function execute(job: Job): Promise<HelperOutcome<unknown>> {
       return { ok: true, value, attempts: attempt, model: config.model }
     // A reply that is the CLI's own refusal, printed on stdout with exit 0:
     // only the notice as the whole reply, never a keyword inside an answer.
-    const said = cliNotice(stdout.stdout)
-    if (said) return failure(said, stdout.stdout.trim().slice(0, 300))
+    // Nothing that parses: the notice may be on stdout or, with exit 0, on
+    // stderr alone.
+    const onStdout = cliNotice(stdout.stdout)
+    const said = onStdout ?? cliNotice(stdout.stderr)
+    if (said) return failure(said, (onStdout ? stdout.stdout : stdout.stderr).trim().slice(0, 300))
     last = failure('unreadable', stdout.stdout.trim().slice(0, 300) || 'Empty reply')
     if (attempt < attempts)
       console.warn(
@@ -233,7 +241,8 @@ async function spawnOnce(
   config: HelperConfig,
   born: number
 ): Promise<
-  { ok: true; stdout: string } | { ok: false; reason: HelperFailureReason; detail: string }
+  | { ok: true; stdout: string; stderr: string }
+  | { ok: false; reason: HelperFailureReason; detail: string }
 > {
   const { definition, context } = job
   // An account chosen for the helper replaces the session's; the machine
@@ -298,7 +307,7 @@ async function spawnOnce(
           resolve(failure(reason, detail))
           return
         }
-        resolve({ ok: true, stdout })
+        resolve({ ok: true, stdout, stderr: stderr ?? '' })
       }
     )
     children.set(child, definition.id)
