@@ -46,26 +46,40 @@ export const DIGEST_RETRY_AFTER_MS = 60_000
 /** Why a read failed, as the card says it. */
 export type DigestFailure = HelperFailureReason | 'unanswered'
 
-/** The one quiet line a card shows for a read that failed. */
-export function digestFailureLine(reason: DigestFailure | undefined): string {
+/** Which card a line is for: a timeline's digest, or a work card's title. */
+export type DigestCard = 'exchange' | 'work'
+
+/** What a failure says after its opening, in words for anyone. */
+function failureWords(reason: DigestFailure | undefined): string {
   switch (reason) {
     case 'limit':
-      return 'Not read: the account is at its limit.'
+      return 'this account is at its limit.'
     case 'auth':
-      return 'Not read: the account is not signed in.'
+      return 'this account is signed out.'
     case 'timeout':
-      return 'Not read: the read timed out.'
-    case 'disabled':
-      return 'Not read: this helper is switched off.'
+      return 'it took too long.'
     case 'cancelled':
-      return 'Not read: the read was stopped.'
+      return 'the read was stopped.'
     case 'unreadable':
-      return 'Not read: the answer was not in the asked shape.'
+      return 'the answer could not be used.'
     case 'unanswered':
-      return 'Not read: the server did not answer.'
+      return 'the server did not answer.'
     default:
-      return 'Not read.'
+      return 'something went wrong.'
   }
+}
+
+/** The one quiet line a card shows for a read that failed: "Not read: …" on
+ *  a timeline, "No title: …" on a work card. */
+export function digestFailureLine(
+  reason: DigestFailure | undefined,
+  card: DigestCard = 'exchange'
+): string {
+  if (reason === 'disabled')
+    return card === 'work'
+      ? 'No title: titles are switched off in Settings.'
+      : 'Not read: digests are switched off in Settings.'
+  return `${card === 'work' ? 'No title' : 'Not read'}: ${failureWords(reason)}`
 }
 
 export type DigestStateOf<Done> =

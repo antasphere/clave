@@ -109,6 +109,7 @@ export function WorkStretch({
             {digest.state === 'failed' && (
               <DigestUnread
                 reason={digest.reason}
+                card="work"
                 onRetry={() => retryWorkDigest(sessionId, key)}
               />
             )}

@@ -150,7 +150,7 @@ export async function run(t) {
     const line = await second.locator('.digest-unread-words').innerText()
     t.check(
       'a failed read shows one quiet line with the class of its reason',
-      line === 'Not read: the account is at its limit.',
+      line === 'Not read: this account is at its limit.',
       { line }
     )
     await setReply(server, REPLY)

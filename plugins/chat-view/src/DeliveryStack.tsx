@@ -6,7 +6,13 @@ import { useSessionStore } from '../../../src/renderer/src/store/session-store'
 import { useDisclosure } from './disclosure'
 import { digestMessages, gist, useExchange, useExchanges, type ExchangeSide } from './exchanges'
 import { digestKey } from '../../../src/shared/exchange-digest'
-import { digestFailureLine, retryDigest, useDigestState, type DigestFailure } from './digest'
+import {
+  digestFailureLine,
+  retryDigest,
+  useDigestState,
+  type DigestCard,
+  type DigestFailure
+} from './digest'
 import { ExchangeDrawing } from './ExchangeDrawing'
 import type { DeliveryEntry, DeliveryGroup } from './tools'
 
@@ -99,14 +105,16 @@ export function DeliveryStack({
  *  class of the reason, and a way to ask again. Shared with the work cards. */
 export function DigestUnread({
   reason,
+  card = 'exchange',
   onRetry
 }: {
   reason: DigestFailure | undefined
+  card?: DigestCard
   onRetry: () => void
 }): React.JSX.Element {
   return (
     <span className="digest-unread" data-reason={reason ?? 'failed'}>
-      <span className="digest-unread-words">{digestFailureLine(reason)}</span>
+      <span className="digest-unread-words">{digestFailureLine(reason, card)}</span>
       <button
         type="button"
         className="digest-unread-retry"

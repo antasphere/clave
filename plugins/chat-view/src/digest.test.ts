@@ -83,11 +83,23 @@ describe('a digest that could not be read', () => {
     })
   })
 
-  it('says the class of the reason in one line', () => {
-    expect(digestFailureLine('limit')).toBe('Not read: the account is at its limit.')
-    expect(digestFailureLine('auth')).toBe('Not read: the account is not signed in.')
-    expect(digestFailureLine('timeout')).toBe('Not read: the read timed out.')
-    expect(digestFailureLine('disabled')).toBe('Not read: this helper is switched off.')
-    expect(digestFailureLine(undefined)).toBe('Not read.')
+  it('says the class of the reason in words for anyone, Not read on a timeline, No title on a work card', () => {
+    const lines = {
+      timeout: 'Not read: it took too long.',
+      auth: 'Not read: this account is signed out.',
+      limit: 'Not read: this account is at its limit.',
+      unreadable: 'Not read: the answer could not be used.',
+      cancelled: 'Not read: the read was stopped.',
+      disabled: 'Not read: digests are switched off in Settings.',
+      failed: 'Not read: something went wrong.',
+      unanswered: 'Not read: the server did not answer.'
+    } as const
+    for (const [reason, line] of Object.entries(lines))
+      expect(digestFailureLine(reason as keyof typeof lines)).toBe(line)
+    expect(digestFailureLine(undefined)).toBe('Not read: something went wrong.')
+    expect(digestFailureLine('limit', 'work')).toBe('No title: this account is at its limit.')
+    expect(digestFailureLine('disabled', 'work')).toBe(
+      'No title: titles are switched off in Settings.'
+    )
   })
 })

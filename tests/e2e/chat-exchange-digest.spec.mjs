@@ -122,7 +122,7 @@ export async function run(t) {
         `${mode}: with no digest to be had, the timeline shows its messages and says it was not read`,
         state.failed &&
           state.digestText === 0 &&
-          JSON.stringify(state.unread) === '["Not read."]' &&
+          JSON.stringify(state.unread) === '["Not read: something went wrong."]' &&
           state.retry === 1 &&
           state.cards === 2,
         state
