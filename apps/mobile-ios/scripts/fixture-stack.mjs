@@ -51,18 +51,19 @@
 // plugin runner inherits that HOME), CLAVE_TRANSCRIPTS_ROOT is unset, and the
 // one-shot launch the title path builds (buildOneShotLaunch over
 // launchProfileManager.resolveClaudeCli) has the recorder's canonical path as
-// its file and exactly --version as its arguments, a wrapper or a foreign path
-// refused without starting anything; (6) only then the daemon itself executes
-// that probe, which must answer the recorder's fixed line and leave exactly
-// one line in the recorder log, the baseline. After the seed, the recorders
-// and the two folders are read at once and then every half second for the
-// whole run: a line beyond the baseline, a file in a folder, or a recorder log
-// that cannot be read stops the daemon, latches the failure through the
-// cleanup and ends the run with exit 2. --once and --self-check keep the stack
-// up at least 12 s (7 s past the usage clock's first tick at 5 s) under that
-// watch. At every stop the names of the files under the owned home, never
-// their content, are written to <tmpdir>/report.json: the record of what the
-// server kept there.
+// its file and no argument beyond its executable (on the hooks road, beyond
+// the title path's own arguments, which the read takes off the end), a
+// wrapper or a foreign path refused without starting anything; (6) only then
+// the daemon itself executes that probe, which must answer the recorder's
+// fixed line and leave exactly one line in the recorder log, the baseline.
+// After the seed, the recorders and the two folders are read at once and then
+// every half second for the whole run: a line beyond the baseline, a file in a
+// folder, or a recorder log that cannot be read stops the daemon, latches the
+// failure through the cleanup and ends the run with exit 2. --once and
+// --self-check keep the stack up at least 12 s (7 s past the usage clock's
+// first tick at 5 s) under that watch. At every stop the names of the files
+// under the owned home, never their content, are written to
+// <tmpdir>/report.json: the record of what the server kept there.
 //
 // The server seals the owner's session in the keychain FILE that
 // CLAVE_KEYCHAIN_FILE names (packages/host/src/ports/secrets.ts): the run's
@@ -100,8 +101,9 @@
 // check 4 a discovery read saying titles "on"; --prove-inside
 // keys|cache|resolver|args|home hands check 5 one stray key in the daemon's
 // environment, a cached PATH without the recorders, a one-shot whose file is
-// not the recorder, arguments other than --version, or another folder as the
-// owned home it expects, and --prove-inside probe asks the daemon to run the
+// not the recorder, a one-shot carrying an argument (-p) beyond its executable
+// on whichever road the daemon serves, or another folder as the owned home it
+// expects, and --prove-inside probe asks the daemon to run the
 // probe against a wrong expected path, all refused before the seed with
 // nothing started; --prove-recorder-read
 // missing|unreadable removes or replaces the owned recorder log while the
@@ -211,6 +213,8 @@ const ONE_SHOT = path.join(REPO, 'packages', 'host', 'src', 'claude-one-shot.ts'
 const PROFILE_MANAGER = path.join(REPO, 'packages', 'host', 'src', 'launch-profile-manager.ts')
 
 const SHELL_LAUNCH = path.join(REPO, 'packages', 'host', 'src', 'shell-launch.ts')
+/** The title path's module, for its own one-shot arguments (TITLE_CLI_ARGS) on the hooks road. */
+const TITLE_GENERATOR = path.join(REPO, 'packages', 'host', 'src', 'title-generator.ts')
 /** The run's own keychain file, in the daemon's data folder: <tmpdir>/server/run.keychain-db. */
 export const RUN_KEYCHAIN = 'run.keychain-db'
 const SECURITY = '/usr/bin/security'
@@ -1001,7 +1005,13 @@ export async function preBootChecks({ relay, relayEnv, args, env, stubs, home, r
  * PATH, resolved from the daemon's cached login environment by the one-shot's
  * own locate) and `locate(command)`; on a daemon without them, a dynamic
  * import by absolute path lands on the daemon's own module instances and the
- * launch is built the way the title path builds it. The cached login
+ * launch is built the way the title path builds it. Either way `oneShot.args`
+ * is the same quantity: the launch's arguments beyond its executable and the
+ * title path's own. The module road builds the launch with no arguments of its
+ * own; the hooks road's launch ends with the title module's TITLE_CLI_ARGS
+ * (read from the daemon's own instance), which the read takes off the end,
+ * keeping the whole list as `launchArgs` and whether it ended with them as
+ * `titleArgsLast`. The cached login
  * environment is read from the daemon's own backend module either way. The
  * home facts are the daemon's os.homedir() and HOME and the root each of
  * HOME_READERS computes, by that reader's own expression. Nothing is started.
@@ -1031,13 +1041,18 @@ export function insideFactsSource() {
     const base = { shell: process.env.SHELL ?? null, userShell: backend.getUserShell(), cached, home, envKeys: Object.keys(process.env).sort() }
     const hooks = globalThis.__claveE2E?.titles
     if (hooks && typeof hooks.launch === 'function' && typeof hooks.locate === 'function') {
+      const titles = await import(${JSON.stringify(TITLE_GENERATOR)})
       const launch = await hooks.launch()
+      const all = [...launch.args]
+      const own = Array.isArray(titles.TITLE_CLI_ARGS) ? [...titles.TITLE_CLI_ARGS] : []
+      const at = all.length - own.length
+      const ownLast = own.length > 0 && at >= 0 && own.every((a, i) => all[at + i] === a)
       return {
         ...base,
         road: 'hooks',
         titlesDisabled: typeof hooks.disabled === 'function' ? hooks.disabled() : null,
         located: { claude: hooks.locate('claude'), codex: hooks.locate('codex') },
-        oneShot: { file: launch.file, canonical: canonicalOf(launch.file), args: [...launch.args], PATH: launch.pathEnv ?? null }
+        oneShot: { file: launch.file, canonical: canonicalOf(launch.file), args: ownLast ? all.slice(0, at) : all, launchArgs: all, titleArgsLast: ownLast, PATH: launch.pathEnv ?? null }
       }
     }
     const oneShot = await import(${JSON.stringify(ONE_SHOT)})
@@ -1189,19 +1204,26 @@ export function assertInside(inside, stubs, expectedEnvKeys = null, home = null)
       typeof inside.titlesDisabled === 'string' && inside.titlesDisabled.length > 0,
       `the title hooks say titles are on (disabled() answered ${JSON.stringify(inside.titlesDisabled)})`
     )
+    // The title path's launch is the profile's command, then the title path's
+    // own arguments; the read took those off the end, so what is left is the
+    // module road's quantity and is asserted below as the module road asserts it.
     expect(
-      Array.isArray(inside.oneShot.args) && ['-p', '--print'].includes(inside.oneShot.args[0]),
-      `the one-shot's arguments start with ${JSON.stringify(inside.oneShot.args?.[0])}: a wrapper token before the one-shot's own`
+      inside.oneShot.titleArgsLast === true,
+      `the one-shot's arguments do not end with the title path's own: ${JSON.stringify(inside.oneShot.launchArgs)}`
     )
   } else {
     expect(
       inside.profile?.family === 'claude',
       `the resolver answered a ${inside.profile?.family} profile`
     )
-    expect(
-      Array.isArray(inside.oneShot.args) && inside.oneShot.args.length === 0,
-      `the profile's command carries tokens beyond the executable: ${JSON.stringify(inside.oneShot.args)}`
-    )
+  }
+  // On either road: no token beyond the executable (on the hooks road, beyond
+  // the title path's own arguments), so no wrapper runs before the one-shot.
+  expect(
+    Array.isArray(inside.oneShot.args) && inside.oneShot.args.length === 0,
+    `the profile's command carries tokens beyond the executable: ${JSON.stringify(inside.oneShot.args)}`
+  )
+  if (inside.road !== 'hooks') {
     expect(
       same(inside.oneShot.CLAUDE_CONFIG_DIR, stubs.claudeConfigDir),
       `the one-shot's CLAUDE_CONFIG_DIR is ${inside.oneShot.CLAUDE_CONFIG_DIR}`
@@ -1219,7 +1241,7 @@ export function assertInside(inside, stubs, expectedEnvKeys = null, home = null)
     same(locateOnPath('claude', inside.oneShot.PATH), stubs.claude),
     `claude on the one-shot's PATH is ${locateOnPath('claude', inside.oneShot.PATH) ?? 'nothing'}`
   )
-  return `road ${inside.road}; ${Array.isArray(inside.envKeys) ? inside.envKeys.length : '?'} environment keys, exactly the allowlist plus the stack's own; SHELL ${path.basename(inside.shell)} under stubs; os.homedir(), HOME and the cached login HOME are the owned home ${home}, the roots of the ${HOME_READERS.length} readers lie under it, ${TRANSCRIPTS_ROOT_KEY} unset; the daemon's own locate and its one-shot both name ${path.relative(stubs.dir, inside.oneShot.file)} by canonical path`
+  return `road ${inside.road}; ${Array.isArray(inside.envKeys) ? inside.envKeys.length : '?'} environment keys, exactly the allowlist plus the stack's own; SHELL ${path.basename(inside.shell)} under stubs; os.homedir(), HOME and the cached login HOME are the owned home ${home}, the roots of the ${HOME_READERS.length} readers lie under it, ${TRANSCRIPTS_ROOT_KEY} unset; the daemon's own locate and its one-shot both name ${path.relative(stubs.dir, inside.oneShot.file)} by canonical path, the one-shot carrying no argument beyond the executable${inside.road === 'hooks' ? ` and the title path's own ${inside.oneShot.launchArgs?.length ?? '?'}` : ''}`
 }
 
 /** What the executed probe must show: run, the recorder's answer, and exactly one line in the log. */
@@ -2437,7 +2459,9 @@ if (isMain) {
     // Every flag kept. keys, cache, resolver, args: the inside read handed to
     // check 5 shows a stray key in the daemon's environment, a cached login
     // PATH without the recorders, a one-shot whose file is not the recorder, or
-    // arguments other than --version; home: check 5 expects another folder of
+    // a one-shot carrying -p beyond its executable (on the hooks road, beyond
+    // the title path's own arguments), refused for exactly that on either
+    // road; home: check 5 expects another folder of
     // the run folder (scratch, made at boot) as the owned home, so the daemon's
     // real os.homedir() must fail it; each refused before the probe. probe:
     // the daemon is handed a wrong expected canonical path and must refuse to
@@ -2460,13 +2484,17 @@ if (isMain) {
       )
       process.exit(1)
     }
+    const reasons = {
+      home: /os\.homedir\(\) is not the owned home/,
+      args: /the profile's command carries tokens beyond the executable: \["-p"\]/
+    }
     await proof(
       `the boot refuses before the seed on a doctored ${options.proveInside} (${JSON.stringify(doctored)})`,
       { ...options, ...doctored },
       options.proveInside === 'probe'
         ? 'run the probe inside the daemon'
         : 'read the daemon from inside',
-      options.proveInside === 'home' ? /os\.homedir\(\) is not the owned home/ : null
+      reasons[options.proveInside] ?? null
     )
   }
   if (options.proveRecorderRead) {

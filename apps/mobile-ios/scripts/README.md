@@ -201,9 +201,13 @@ Seven checks, printed first, every boot; one failing stops the boot with exit 2:
    the cached login `HOME` must be the owned home, the root each reader listed under "The owned
    home" computes, by that reader's own expression, must lie under it, and `CLAVE_TRANSCRIPTS_ROOT` must be unset
    (the plugin runner inherits the daemon's HOME, `plugin-host.ts:113-117`, so this covers the
-   collector too); the one-shot's executable must have the recorder's canonical path, no wrapper
-   token may precede its own arguments, and on the module road its environment must carry no
-   credential (`startStack`, step 3c, `assertInside`). Nothing runs here;
+   collector too); the one-shot's executable must have the recorder's canonical path, and it must
+   carry no argument beyond its executable, asserted the same way on both roads: the module road
+   builds the launch with no arguments of its own, and on the hooks road the read takes the title
+   path's own arguments (`TITLE_CLI_ARGS`, read from the daemon's own `title-generator.ts`) off the
+   end of the launch, which must end with exactly them, so no wrapper token can precede the
+   one-shot's own on either road; on the module road its environment must carry no credential
+   (`startStack`, step 3c, `assertInside`). Nothing runs here;
 6. only then the daemon itself runs the probe (`startStack`, step 3d): inside the daemon the
    one-shot's executable is resolved again the same way, its canonical path checked once more
    against the recorder's and the probe's arguments against exactly `--version`, a wrapper or
@@ -242,7 +246,8 @@ green; `--prove-prerequisites` hands check 4 a discovery read saying
 `titles: "on"`; `--prove-inside keys` hands check 5 one stray key in the daemon's
 environment, `--prove-inside cache` a cached login `PATH` without the recorders,
 `--prove-inside resolver` a one-shot that would start another executable, `--prove-inside
-args` arguments other than `--version` and `--prove-inside home` another folder (`scratch/`) as
+args` a one-shot carrying `-p` beyond its executable (applied after the read, on whichever road
+the daemon serves, and refused with the module road's reason) and `--prove-inside home` another folder (`scratch/`) as
 the owned home it expects, so the daemon's real `os.homedir()` must fail it, each refused before
 the probe, and `--prove-inside probe` hands the daemon a wrong expected canonical path, which it
 refuses to run, nothing started; `--prove-recorder-read missing|unreadable` removes or replaces the owned recorder log
