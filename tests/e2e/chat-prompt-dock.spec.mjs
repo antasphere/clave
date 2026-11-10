@@ -177,13 +177,25 @@ export async function run(t) {
     assert.equal((await writes()).length, 1, 'the last pick sends nothing')
     assert.match(await dock.innerText(), /Ship today\?\s*Yes/)
     assert.match(await dock.innerText(), /Tell the client\?\s*Tomorrow/)
+    // A question reopened and picked again goes back to the stack, not to
+    // the next question, already answered.
+    await dock.locator('.chat-ask-field').first().locator('.chat-ask-folded').click()
+    await dock.locator('.chat-prompt-step').filter({ hasText: '1/2' }).waitFor()
+    await dock.getByRole('radio', { name: /No/ }).click()
+    await until(
+      async () => (await dock.locator('.chat-ask-field[data-folded="true"]').count()) === 2
+    )
+    assert.equal(await dock.locator('.chat-prompt-step').count(), 0, 'the stack, no step open')
     await dock.getByRole('button', { name: 'Send', exact: true }).click()
     await until(async () => (await writes()).length === 2)
     assert.deepEqual((await writes())[1].answers, {
-      'Ship today?': 'Yes',
+      'Ship today?': 'No',
       'Tell the client?': 'Tomorrow'
     })
-    t.check('a pick on the last question folds every answer above Send, and only Send sends', true)
+    t.check(
+      'a pick on the last question folds every answer above Send, a re-pick returns there, only Send sends',
+      true
+    )
 
     // A plugin's question carries no questions of its own: its choice IS the
     // answer, sent as that option's own id, with no answer line to edit.
@@ -209,6 +221,112 @@ export async function run(t) {
       optionId: 'opt-later'
     })
     t.check("a plugin's question is answered by the option clicked, by its own id", true)
+
+    // Codex's question in words alone answers on Enter, key by key; a private
+    // answer that starts like an option ticks nothing, which would show how
+    // it starts (round 1).
+    await inject(fixture, record.id, [
+      {
+        type: 'permission_request',
+        id: 'codex-ask',
+        description: 'Codex asks 2 questions',
+        toolName: 'item/tool/requestUserInput',
+        input: {
+          questions: [
+            { id: 'why', question: 'Why now?' },
+            { id: 'env', question: 'Which environment?', isSecret: true }
+          ]
+        },
+        questions: [
+          { id: 'why', question: 'Why now?', options: [] },
+          {
+            id: 'env',
+            question: 'Which environment?',
+            options: [{ label: 'prod' }, { label: 'staging' }]
+          }
+        ],
+        options: [
+          { id: 'answer', label: 'Submit' },
+          { id: 'deny', label: 'Skip' }
+        ]
+      }
+    ])
+    await dock.waitFor()
+    const why = dock.getByRole('textbox', { name: 'Why now?' })
+    await why.click()
+    await win.keyboard.type('the client asked')
+    await win.keyboard.press('Enter')
+    await dock.locator('.chat-prompt-step').filter({ hasText: '2/2' }).waitFor()
+    const privateLine = dock.locator('input[type="password"]')
+    await privateLine.click()
+    await win.keyboard.type('prod-eu-secret')
+    assert.equal(
+      await dock.getByRole('radio', { name: /^prod/ }).getAttribute('aria-checked'),
+      'false',
+      'a private answer ticks no option it only starts like'
+    )
+    await dock.getByRole('button', { name: 'Send', exact: true }).click()
+    await until(async () => (await writes()).length === 4)
+    assert.deepEqual((await writes())[3].answers, {
+      why: 'the client asked',
+      env: 'prod-eu-secret'
+    })
+    t.check(
+      'a question in words alone answers on Enter; a private answer ticks nothing it starts like',
+      true
+    )
+
+    // A multi-select's own words, typed key by key, are never taken for the
+    // option they read like on the way, nor after Escape and a digit (round 2).
+    await inject(fixture, record.id, [
+      {
+        type: 'permission_request',
+        id: 'yes-no',
+        description: 'Which apply?',
+        toolName: 'AskUserQuestion',
+        input: {},
+        questions: [
+          {
+            question: 'Which apply?',
+            multiSelect: true,
+            options: [{ label: 'No' }, { label: 'Yes' }]
+          }
+        ],
+        options: [
+          { id: 'answer', label: 'Submit' },
+          { id: 'deny', label: 'Skip' }
+        ]
+      }
+    ])
+    await dock.waitFor()
+    const words = dock.getByRole('textbox', { name: 'Your own words' })
+    await words.click()
+    await win.keyboard.type('No')
+    await win.keyboard.press('Escape')
+    await until(() =>
+      win.evaluate(() => document.activeElement?.classList.contains('chat-prompt-body') ?? false)
+    )
+    await win.keyboard.press('2')
+    await until(
+      async () =>
+        (await dock.getByRole('checkbox', { name: /Yes/ }).getAttribute('aria-checked')) === 'true'
+    )
+    assert.equal(
+      await dock.getByRole('checkbox', { name: /No/ }).getAttribute('aria-checked'),
+      'false'
+    )
+    assert.equal(await words.inputValue(), 'No', 'the words stay in their line')
+    await words.click()
+    await win.keyboard.press('End')
+    await win.keyboard.type(' idea')
+    assert.equal(
+      await dock.getByRole('checkbox', { name: /No/ }).getAttribute('aria-checked'),
+      'false'
+    )
+    await dock.getByRole('button', { name: 'Send', exact: true }).click()
+    await until(async () => (await writes()).length === 5)
+    assert.deepEqual((await writes())[4].answers, { 'Which apply?': 'Yes, No idea' })
+    t.check('own words typed key by key stay words, through Escape and a digit', true)
 
     // A tool permission answers from the keyboard: Escape denies.
     await inject(fixture, record.id, [
@@ -263,8 +381,8 @@ export async function run(t) {
       win.evaluate(() => document.activeElement?.classList.contains('chat-prompt-body') ?? false)
     )
     await win.keyboard.press('Escape')
-    await until(async () => (await writes()).length === 4)
-    assert.deepEqual((await writes())[3], {
+    await until(async () => (await writes()).length === 6)
+    assert.deepEqual((await writes())[5], {
       type: 'permission_response',
       id: 'write',
       optionId: 'deny'

@@ -130,6 +130,8 @@ function Field({
   remote,
   secret = false,
   enterMoves = false,
+  ownLine = '',
+  onOwnLine,
   autoFocus,
   focusToken = 0,
   onChange,
@@ -147,6 +149,10 @@ function Field({
   /** The agent's own question asked in words alone: its field is one line
    *  that grows, where Enter moves on and Shift+Enter is a new line. */
   enterMoves?: boolean
+  /** A multi-select's line of own words as the person typed it, kept by the
+   *  card (`lineOf`), and where a change of it goes. */
+  ownLine?: string
+  onOwnLine?: (text: string) => void
   autoFocus: boolean
   /** Changes when the reader reopens this question from its folded line:
    *  the field takes the caret at the end of the answer, to edit it. */
@@ -164,24 +170,7 @@ function Field({
   const id = `chat-field-${key.replace(/[^a-z0-9_-]/gi, '-')}`
   const [opened, setOpened] = useState(false)
   const field = useRef<HTMLInputElement | HTMLTextAreaElement>(null)
-  /* A multi-select's line of own words, as typed: held here, so a word on
-     its way that reads like an option ("No" on the way to "No idea") is never
-     taken for that option. Read again from the answer when someone else
-     changes it (the agent's fill, a remount). */
-  const [ownLine, setOwnLine] = useState(() => ownWordsOf(question, value))
-  const produced = useRef<InputAnswer | undefined>(value)
-  useEffect(() => {
-    if (value === produced.current) return
-    produced.current = value
-    setOwnLine(ownWordsOf(question, value))
-    // The question is the request's, fixed for the field's life.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [value])
-  /** The field's own change: remembered, so it is not read back as another's. */
-  const change = (next: InputAnswer): void => {
-    produced.current = next
-    onChange(next)
-  }
+  const change = onChange
   useEffect(() => {
     if (autoFocus) field.current?.focus({ preventScroll: true })
   }, [autoFocus])
@@ -264,7 +253,7 @@ function Field({
     const write = (text: string): void => {
       if (!question.multiSelect) return change(text)
       change(withOwnWords(question, value, ownLine, text))
-      setOwnLine(text)
+      onOwnLine?.(text)
     }
     const lineLabel = question.multiSelect ? 'Your own words' : 'Your answer'
     const linePlaceholder = question.multiSelect
@@ -609,6 +598,23 @@ export function InputPrompt({
   const [direction, setDirectionState] = useState<'forward' | 'back'>(kept.direction)
   /** Per field, how many times the agent set it: each landing flashes once. */
   const [landed, setLandedState] = useState<Record<string, number>>(kept.landed)
+  /* Each multi-select's line of own words, as the person typed it (round 2):
+     kept by the card and remembered across a remount, so the field, the
+     digit keys and a row mounted again all read the same line, and words on
+     their way that read like an option ("No" on the way to "No idea") are
+     never taken for it. A field set by someone else (the agent's fill, the
+     typing the server kept) is read again from its answer. */
+  const [lines, setLinesState] = useState<Record<string, string>>(kept.lines)
+  const setLines = (update: (current: Record<string, string>) => Record<string, string>): void =>
+    setLinesState((current) => {
+      const next = update(current)
+      remember(request.id, { lines: next })
+      return next
+    })
+  const forgetLines = (gone: readonly string[]): void =>
+    setLines((current) =>
+      Object.fromEntries(Object.entries(current).filter(([key]) => !gone.includes(key)))
+    )
   /** The notes the reader typed over: gone until a new one arrives. */
   const [dismissed, setDismissed] = useState<Record<string, string>>({})
   // Every change of standing is remembered as it is made (CardMemory).
@@ -730,6 +736,11 @@ export function InputPrompt({
     typing.current = setTimeout(() => flushRef.current(), TYPING_SYNC_MS)
   }
   const touch = (key: string): void => setTouched((current) => ({ ...current, [key]: true }))
+  /** A multi-select's line of own words: as typed, else read off its answer. */
+  const lineOf = (question: AgentQuestion): string => {
+    const key = questionKey(question)
+    return Object.hasOwn(lines, key) ? lines[key] : ownWordsOf(question, own(values, key))
+  }
   const shownProblem = (key: string): string | null =>
     attempted || touched[key] ? problems[key] : null
   const noteFor = (key: string): string | undefined => {
@@ -794,6 +805,7 @@ export function InputPrompt({
         keys.includes(key) && JSON.stringify(applied.current[key]) !== JSON.stringify(value)
     )
     if (!changed.length) return
+    forgetLines(changed.map(([key]) => key))
     applied.current = { ...applied.current, ...Object.fromEntries(changed) }
     // The server holds what the agent set: the reader's typing is told
     // apart from it (PRDCT-4210).
@@ -839,6 +851,7 @@ export function InputPrompt({
     )
     synced.current = { ...typed, ...synced.current }
     if (!fresh.length) return
+    forgetLines(fresh.map(([key]) => key))
     setValues((current) => {
       const next = { ...current, ...Object.fromEntries(fresh) }
       drafts?.set(request.id, next)
@@ -1029,7 +1042,8 @@ export function InputPrompt({
           event.preventDefault()
           const key = questionKey(current)
           const label = current.options[n - 1].label
-          if (current.multiSelect) set(key, togglePick(current, own(values, key), label))
+          if (current.multiSelect)
+            set(key, togglePick(current, own(values, key), label, lineOf(current)))
           else {
             set(key, label)
             if (how === 'plugin') send({ ...values, [key]: label })
@@ -1146,6 +1160,8 @@ export function InputPrompt({
                     remote={remote}
                     secret={secret}
                     enterMoves={how !== 'hosted'}
+                    ownLine={lineOf(question)}
+                    onOwnLine={(text) => setLines((current) => ({ ...current, [key]: text }))}
                     // The card's first caret, once, on the question it opens
                     // on; a choice and a link leave it to the card's keys.
                     autoFocus={

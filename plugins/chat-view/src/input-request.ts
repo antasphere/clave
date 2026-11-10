@@ -74,6 +74,8 @@ export interface CardMemory {
    *  (PRDCT-4210): what the agent set and what the reader's typing already
    *  sent. The typing is sent as it differs from this, never the agent's. */
   synced: Values
+  /** Each multi-select's line of own words as the person typed it (round 2). */
+  lines: Record<string, string>
 }
 const memory = new Map<string, CardMemory>()
 export const recalled = (id: string): CardMemory =>
@@ -84,7 +86,8 @@ export const recalled = (id: string): CardMemory =>
     applied: {},
     touched: {},
     attempted: false,
-    synced: {}
+    synced: {},
+    lines: {}
   }
 /** Written on a change of state, never on a render: a second instance of
  *  the same card (a hidden view of the session) must not write its own
