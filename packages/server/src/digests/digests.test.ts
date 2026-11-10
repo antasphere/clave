@@ -3,6 +3,7 @@ import type { ExchangeDigestRead, WorkDigestRead } from '@clave/contract/digests
 import { startEmbedded, type EmbeddedServer } from '../embedded'
 import { FakeSource } from '../test-support'
 import type { DigestsService } from './port'
+import { DIGEST_BODY_LIMIT } from '../runtime'
 
 /**
  * The digests domain (PRDCT-4327): a client asks the server a tab runs on,
@@ -135,5 +136,36 @@ describe('the digests over HTTP', () => {
     const clipped = { from: 'a', text: `${'b'.repeat(4_000)}…`, request: 'r', reply: 'p' }
     expect(await exchange({ messages: Array.from({ length: 30 }, () => clipped) })).toBe(200)
     expect(await work({ notes: Array.from({ length: 40 }, () => `${'n'.repeat(600)}…`) })).toBe(200)
+  })
+
+  it('reads no body past its limit: a digest command over 3 MiB is refused before it is parsed', async () => {
+    const { port, asked } = fakePort()
+    server = await startEmbedded({ ports: { sessions: new FakeSource(), digests: port } })
+    const huge = {
+      sessionId: 's1',
+      key: '1-x',
+      messages: [{ from: 'a', text: 'b'.repeat(DIGEST_BODY_LIMIT) }]
+    }
+    const answer = await call('/digests/exchange', huge)
+    expect(answer.status).toBe(413)
+    // Streamed without a length, the read stops at the limit: the server
+    // answers an error or drops the socket, and the port never sees it.
+    const body = JSON.stringify(huge)
+    const streamed = await fetch(`${server.url}/digests/work`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${server.token}`, 'content-type': 'application/json' },
+      body: new ReadableStream({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode(body))
+          controller.close()
+        }
+      }),
+      duplex: 'half'
+    } as RequestInit).then(
+      (r) => r.status,
+      () => 'dropped' as const
+    )
+    expect(streamed === 'dropped' || streamed >= 400).toBe(true)
+    expect(asked).toEqual([])
   })
 })
