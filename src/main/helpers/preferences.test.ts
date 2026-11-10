@@ -46,13 +46,7 @@ vi.mock('../shell-launch', async (importOriginal) => ({
 import { fileStorage } from '../ports/storage'
 import { tempDataDir } from '../ports/testing'
 import type { SettingsPorts } from '../ports/registry'
-import {
-  HELPER_PREFERENCES_FILE,
-  HelperPreferences,
-  installHelperPreferences,
-  remoteHelperPreferences,
-  type HelperPreferenceView
-} from './preferences'
+import { HELPER_PREFERENCES_FILE, HelperPreferences, installHelperPreferences } from './preferences'
 import { defineHelper, setHelperConfigSource } from './registry'
 import { cancelAll, resetShutdownForTests, runHelper } from './runner'
 import { titleHelper } from './title'
@@ -188,7 +182,11 @@ describe('the runner reads it at each call', () => {
     installHelperPreferences(preferences)
     preferences.set('tab-title', { enabled: false })
     const outcome = await runHelper(titleHelper, 'name this tab please', {})
-    expect(outcome).toMatchObject({ ok: false, reason: 'disabled' })
+    expect(outcome).toEqual({
+      ok: false,
+      reason: 'disabled',
+      detail: 'Switched off in Settings › Helpers (Tab titles).'
+    })
     expect(mocks.execFile).not.toHaveBeenCalled()
   })
 
@@ -273,59 +271,5 @@ describe('an account that was removed', () => {
     void runHelper(titleHelper, 'a message', { claudeProfileId: 'tab-acct' })
     await ticks()
     expect(mocks.spawned[0].opts.env.CLAUDE_CODE_OAUTH_TOKEN).toBe('sk-ant-oat01-tab-acct')
-  })
-})
-
-describe('a process that does not own the preference asks its owner', () => {
-  const view = (over: Partial<HelperPreferenceView>): HelperPreferenceView => ({
-    id: 'tab-title',
-    label: 'Tab titles',
-    enabled: true,
-    model: 'haiku',
-    defaultModel: 'haiku',
-    account: { kind: 'session' },
-    ...over
-  })
-  const ownerWith = (
-    answer: () => Promise<HelperPreferenceView[]>
-  ): ReturnType<typeof remoteHelperPreferences> =>
-    remoteHelperPreferences(async () => ({
-      settings: { helpers: { list: answer, set: answer } }
-    }))
-
-  it('off at the owner: nothing runs, and the sentence names the helper whatever its grammar', async () => {
-    installHelperPreferences(ownerWith(async () => [view({ enabled: false })]))
-    const outcome = await runHelper(titleHelper, 'name this tab please', {})
-    expect(outcome).toEqual({
-      ok: false,
-      reason: 'disabled',
-      detail: 'Switched off in Settings › Helpers (Tab titles).'
-    })
-    expect(mocks.execFile).not.toHaveBeenCalled()
-  })
-
-  it('a model and an account picked at the owner reach the spawned call', async () => {
-    installHelperPreferences(
-      ownerWith(async () => [
-        view({ model: 'opus', account: { kind: 'account', accountId: 'helpers' } })
-      ])
-    )
-    void runHelper(titleHelper, 'first message here', { claudeProfileId: 'tab-acct' })
-    await ticks(8)
-    expect(mocks.spawned[0].args.slice(0, 3)).toEqual(['-p', '--model', 'opus'])
-    expect(mocks.spawned[0].opts.env.CLAUDE_CODE_OAUTH_TOKEN).toBe('sk-ant-oat01-helpers')
-  })
-
-  it('an owner that does not answer leaves the defaults, never a stuck call', async () => {
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
-    installHelperPreferences(
-      ownerWith(async () => {
-        throw new Error('the server is gone')
-      })
-    )
-    void runHelper(titleHelper, 'first message here', {})
-    await ticks(8)
-    expect(mocks.spawned[0].args.slice(0, 3)).toEqual(['-p', '--model', 'haiku'])
-    warn.mockRestore()
   })
 })

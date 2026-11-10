@@ -19,11 +19,11 @@ import type {
  * here, one JSON document under its own settings ports
  * (`helper-preferences.json`), read at every call.
  *
- * A process that runs helpers without owning the preference (main beside a
- * separate or attached server: the digests and the git one-shots run there)
- * never reads a file of its own nor the server's folder (ADR 0003): it asks
- * the owner over the server's API at each call (`remoteHelperPreferences`),
- * so the page's one write governs every helper whichever process runs it.
+ * The owner is also the only process that runs helpers: with a server
+ * behind the window (the separate child, or a daemon the app attaches to),
+ * main runs none, and every helper of this Mac runs on that server, with its
+ * preference and its accounts. Main installs this store only when it IS the
+ * server (in-process, `settings/shell-source.ts`).
  *
  * Only what the person changed is stored: a helper with no entry runs on its
  * own defaults, so a model a helper's declaration moves to reaches everyone
@@ -206,57 +206,11 @@ export const helperPreferences = new HelperPreferences(lazySettingsPorts, {
   accountExists: (id) => claudeAccountsManager.get(id)?.id === id
 })
 
-/** What a helper's row says, as the runner reads it. */
-export function configFromView(view: HelperPreferenceView): Partial<HelperConfig> {
-  return {
-    enabled: view.enabled,
-    model: view.model,
-    ...(view.account.kind === 'machine' && { claudeProfileId: null }),
-    ...(view.account.kind === 'account' && { claudeProfileId: view.account.accountId })
-  }
-}
-
-/** The owner as a process that does not own the preference reaches it: the
- *  server's settings API. */
-export interface HelperPreferencesOwner {
-  settings: {
-    helpers: {
-      list: () => Promise<ReadonlyArray<HelperPreferenceView>>
-      set: (
-        helperId: string,
-        patch: HelperPreferencePatch
-      ) => Promise<ReadonlyArray<HelperPreferenceView>>
-    }
-  }
-}
-
-/** The preference of this machine as held by its server: read and written
- *  there, and asked at each call by the runner of this process. */
-export function remoteHelperPreferences(owner: () => Promise<HelperPreferencesOwner>): {
-  list: () => Promise<HelperPreferenceView[]>
-  set: (id: string, patch: HelperPreferencePatch) => Promise<HelperPreferenceView[]>
-  configFor: (id: string) => Promise<Partial<HelperConfig> | undefined>
-} {
-  const list = async (): Promise<HelperPreferenceView[]> => [
-    ...(await (await owner()).settings.helpers.list())
-  ]
-  return {
-    list,
-    set: async (id, patch) => [...(await (await owner()).settings.helpers.set(id, patch))],
-    configFor: async (id) => {
-      const view = (await list()).find((h) => h.id === id)
-      return view ? configFromView(view) : undefined
-    }
-  }
-}
-
 /** The entry's one call: the runner reads this machine's preference at each
- *  call from now on, from this process's store (the owner) or from the owner
- *  it is given. Main and the standalone server each make it at boot. */
+ *  call from now on. The owner makes it at boot: the standalone server, and
+ *  main only when the server runs inside it. */
 export function installHelperPreferences(
-  preferences:
-    | Pick<HelperPreferences, 'configFor'>
-    | ReturnType<typeof remoteHelperPreferences> = helperPreferences
+  preferences: Pick<HelperPreferences, 'configFor'> = helperPreferences
 ): void {
   setHelperConfigSource((id) => preferences.configFor(id))
 }

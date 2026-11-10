@@ -37,12 +37,7 @@ import { AntasphereAccountManager } from '../antasphere-account'
 import { shellOwnsAntasphereAccount } from '../server-boot'
 import { serverLaunch } from '../server-launch'
 import { TEST_NO_ACTIVATE } from '../test-mode'
-import {
-  helperPreferences,
-  installHelperPreferences,
-  remoteHelperPreferences,
-  type HelperPreferencesOwner
-} from '../helpers/preferences'
+import { helperPreferences, installHelperPreferences } from '../helpers/preferences'
 import { settingsSourceFromManagers } from './source'
 
 /** The Antasphere account manager, while this process is the server; null
@@ -55,24 +50,13 @@ export const shellAntasphereAccount: AntasphereAccountManager | null = shellOwns
   ? new AntasphereAccountManager({})
   : null
 
-/** This Mac's helpers' preference as main reaches it (PRDCT-4330): main's own
- *  store while the server runs in this process, which then owns it; with the
- *  server elsewhere (the shell's separate child, the packaged default, or one
- *  attached), the server owns it and main asks it over the server's API at
- *  each call, never through a file of its own (ADR 0003). The client loads on
- *  the first call, not at boot (`boot-graph.test.ts`). */
-function shellHelperPreferences():
-  | typeof helperPreferences
-  | ReturnType<typeof remoteHelperPreferences> {
-  if (serverLaunch.mode === 'in-process') return helperPreferences
-  return (remoteHelpers ??= remoteHelperPreferences(
-    async () =>
-      (await (
-        await import('../mcp/server-client')
-      ).serverClient.api()) as unknown as HelperPreferencesOwner
-  ))
-}
-let remoteHelpers: ReturnType<typeof remoteHelperPreferences> | null = null
+/** Whether main owns this Mac's helpers (PRDCT-4330): only while the server
+ *  runs in this process. With a server behind the window (the separate
+ *  child, the packaged default, or an attached daemon), that server owns the
+ *  preference and the accounts and runs every helper; main keeps no
+ *  preference, runs no helper, and its IPC route refuses (the window asks
+ *  the server). */
+const shellOwnsHelpers = serverLaunch.mode === 'in-process'
 
 export const shellSettingsSource: SettingsSourceService = settingsSourceFromManagers({
   claudeAccounts: claudeAccountsManager,
@@ -83,7 +67,7 @@ export const shellSettingsSource: SettingsSourceService = settingsSourceFromMana
   launchProfiles: launchProfileManager,
   preferences: preferencesManager,
   workspaces: workspaceManager,
-  helpers: shellHelperPreferences(),
+  ...(shellOwnsHelpers && { helpers: helperPreferences }),
   // Loaded on first use so this module's own import graph reaches no PTY
   // backend (a unit test loads it without one); the app's boot imports the
   // same login manager statically, so in the app nothing loads twice.
@@ -92,10 +76,9 @@ export const shellSettingsSource: SettingsSourceService = settingsSourceFromMana
   ...(shellAntasphereAccount && { antasphere: shellAntasphereAccount })
 })
 
-// The helpers main runs (the git panel's one-shots, the digests, and every
-// helper of an in-process server) read this Mac's ONE preference at each call
-// (PRDCT-4330), whichever process owns it.
-installHelperPreferences(shellHelperPreferences())
+// In-process, main is the server: every helper of this Mac runs here and
+// reads this Mac's preference at each call (PRDCT-4330).
+if (shellOwnsHelpers) installHelperPreferences(helperPreferences)
 
 if (TEST_NO_ACTIVATE) {
   const hooks = globalThis as { __claveE2E?: { settings?: SettingsSourceService } }

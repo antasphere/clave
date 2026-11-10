@@ -65,9 +65,7 @@ export interface HelperConfig {
 
 /** Where overrides come from (the Settings page, PRDCT-4330): a partial
  *  answer per helper, merged over the helper's defaults. */
-export type HelperConfigSource = (
-  id: string
-) => Partial<HelperConfig> | undefined | Promise<Partial<HelperConfig> | undefined>
+export type HelperConfigSource = (id: string) => Partial<HelperConfig> | undefined
 
 export type HelperOutcome<Output> =
   | { ok: true; value: Output; attempts: number; model: string }
@@ -104,44 +102,7 @@ export function helperById(id: string): AnyHelper | undefined {
  *  helper's own defaults; an installed source (`setHelperConfigSource`)
  *  overrides any field it answers. */
 export function helperConfig(definition: AnyHelper): HelperConfig {
-  const answer = configSource(definition.id)
-  // PRDCT-4330: an asking source answers through `resolveHelperConfig`; read
-  // synchronously, its answer is not here yet and the defaults stand.
-  return merge(definition, isThenable(answer) ? undefined : answer)
-}
-
-// ── PRDCT-4330 (helpers-settings lane): the seam may answer asynchronously ──
-// A process that runs helpers without owning the machine's preference asks
-// the owner (main asks its separate server). A synchronous source is
-// answered synchronously, as before; a promise is awaited, and a source that
-// fails leaves the helper's defaults, said on stderr.
-const isThenable = <T>(value: T | Promise<T>): value is Promise<T> =>
-  typeof (value as { then?: unknown } | undefined)?.then === 'function'
-
-export function resolveHelperConfig(definition: AnyHelper): HelperConfig | Promise<HelperConfig> {
-  let answer: ReturnType<HelperConfigSource>
-  try {
-    answer = configSource(definition.id)
-  } catch (error) {
-    console.warn(`[helpers] ${definition.id}: the preference could not be read:`, error)
-    return merge(definition, undefined)
-  }
-  if (!isThenable(answer)) return merge(definition, answer)
-  return Promise.resolve(answer).then(
-    (override) => merge(definition, override),
-    (error: unknown) => {
-      console.warn(
-        `[helpers] ${definition.id}: the preference could not be read, defaults used:`,
-        error instanceof Error ? error.message : error
-      )
-      return merge(definition, undefined)
-    }
-  )
-}
-// ── end PRDCT-4330 ──
-
-function merge(definition: AnyHelper, answer: Partial<HelperConfig> | undefined): HelperConfig {
-  const override = answer ?? {}
+  const override = configSource(definition.id) ?? {}
   return {
     enabled: override.enabled ?? true,
     model: override.model || definition.model,
