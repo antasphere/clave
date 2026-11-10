@@ -1645,7 +1645,7 @@ function provenSegment(seg: Segment, ctx: Context): RuleLevel | null {
   if (!words.length) return null
   // `cd` changes nothing; where it leads is followed by `followCd`.
   if (words[0] === 'cd') return 'reads'
-  if (words.some((w) => /[$`\u0000]/.test(w))) return null
+  if (words.some((w) => /[$`]/.test(w) || w.includes('\u0000'))) return null
   const pwords = words.map((value, i) => ({
     value,
     glob: !seg.quoted[i] && /[*?[]/.test(value),
