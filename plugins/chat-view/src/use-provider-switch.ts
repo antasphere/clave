@@ -4,7 +4,6 @@ import type { ProviderSwitchPlan } from '../../../src/preload/index.d'
 import { claudeModelName } from '../../../src/shared/claude-models'
 import {
   canWriteHandoffNote,
-  handoffBudgetChars,
   planProviderSwitch,
   providerSwitchLanding,
   requestHandoffNote,
@@ -14,6 +13,7 @@ import {
   takeProviderSwitchAsk
 } from '../../../src/renderer/src/lib/switch-provider'
 import { useViewSessionStore } from '../../../src/renderer/src/views/session-store'
+import { handoffBudgetChars } from '../../../src/renderer/src/lib/handoff-budget'
 import type { ProviderPick } from './ModelMenu'
 import type { ProviderSwitchLanding } from './ProviderSwitch'
 import { reduceConversation, type Conversation, type Entry } from './reducer'
@@ -71,6 +71,7 @@ export function useProviderSwitch({
   source,
   meta,
   working,
+  visible,
   onError
 }: {
   session: Session
@@ -82,6 +83,10 @@ export function useProviderSwitch({
    *  read when the move is made. */
   source: () => { conversation: Conversation; before: number | null }
   meta: () => Pick<TranscriptMeta, 'title' | 'cwd' | 'model'>
+  /** Whether this view is the one on screen for the tab: the limit card's
+   *  ask is taken by the visible pane alone (integration round 3, R2-3),
+   *  never by a hidden sibling view mounted beside it. */
+  visible: boolean
   onError: (error: unknown) => void
 }): {
   state: ProviderSwitchState | null
@@ -112,12 +117,12 @@ export function useProviderSwitch({
   )
   const askedFlag = useRef<boolean | undefined>(undefined)
   useEffect(() => {
-    if (!asked) return
+    if (!asked || !visible) return
     const ask = takeProviderSwitchAsk(session.id)
     if (!ask) return
     askedFlag.current = ask.resendRejected
     begin({ adapterId: ask.adapterId, provider: ask.provider, label: ask.label, model: ask.model })
-  }, [asked, session.id, begin])
+  }, [asked, visible, session.id, begin])
   // The road, asked once per target.
   useEffect(() => {
     if (!state || state.plan !== null) return
@@ -143,57 +148,19 @@ export function useProviderSwitch({
     async ({ note }: { note: boolean }): Promise<void> => {
       if (!state?.plan) return
       const { target, plan } = state
-      const from = providerLabel(session.provider)
       try {
-        let noteText: string | null = null
-        if (noteToAsk(note, working())) {
-          setState((s) => (s ? { ...s, busy: `Asking ${from} for a handoff note…` } : s))
-          noteText = await requestHandoffNote(session.id)
-        } else if (note) {
-          onError(
-            `The handoff note was skipped: ${from} was in the middle of a turn when you pressed Continue.`
-          )
-        }
-        setState((s) =>
-          s
-            ? {
-                ...s,
-                busy:
-                  plan.road === 'convert'
-                    ? `Converting the conversation for ${target.label}…`
-                    : 'Writing the handoff…'
-              }
-            : s
-        )
-        const stored = sessionById(session.id)
-        const result = await switchSessionProvider(session.id, {
-          from: session.provider,
+        const result = await performProviderSwitch({
+          sessionId: session.id,
+          provider: session.provider,
           target,
-          road: plan.road,
-          // The move the limit caused carries the rejected message across (G7):
-          // the card's word when it asked, else the report the tab holds.
-          resendRejected: askedFlag.current ?? !!stored?.limitReported,
-          handoff: async () => {
-            const entries = await wholeConversation(session.id, source())
-            const head: TranscriptMeta = { ...meta(), agent: from, exportedAt: new Date() }
-            // The whole conversation, every output whole, beside the work.
-            const tape = transcriptMarkdown(entries, head, {
-              lastStretchOutputs: true,
-              outputChars: Number.MAX_SAFE_INTEGER
-            })
-            const { path, diffStat } = await window.electronAPI.providerSwitchHandoff(
-              session.id,
-              tape
-            )
-            return handoffMessage(entries, head, {
-              from,
-              note: noteText,
-              files: editedFiles(entries),
-              diffStat,
-              tapePath: path,
-              budgetChars: handoffBudgetChars(target.model.id)
-            })
-          }
+          plan,
+          note,
+          working: working(),
+          resendRejected: askedFlag.current,
+          source: source(),
+          meta: meta(),
+          onBusy: (busy) => setState((s) => (s ? { ...s, busy } : s)),
+          onError
         })
         settleProviderSwitchAsk(session.id, result)
         askedFlag.current = undefined
@@ -220,4 +187,69 @@ export function useProviderSwitch({
  *  Claude id, the id itself for another provider's. */
 export function noteAgentName(model: string | null, provider: string): string {
   return claudeModelName(model) ?? model ?? providerLabel(provider)
+}
+
+/** The move the popover makes on Continue, outside React so the tests
+ *  reach it (integration round 3, R2-4): the note asked first when ticked
+ *  and the agent idle now, the conversion when the road is convert, the
+ *  handoff built from the view's whole conversation under the one budget
+ *  when it is not or when Codex refuses, the rejected message carried
+ *  across when the move is the limit's doing. */
+export async function performProviderSwitch(input: {
+  sessionId: string
+  provider: string
+  target: ProviderPick
+  plan: ProviderSwitchPlan
+  note: boolean
+  working: boolean
+  /** The limit card's word when it asked; else the report the tab holds decides. */
+  resendRejected?: boolean
+  source: { conversation: Conversation; before: number | null }
+  meta: Pick<TranscriptMeta, 'title' | 'cwd' | 'model'>
+  onBusy: (busy: string) => void
+  onError: (error: unknown) => void
+}): Promise<Awaited<ReturnType<typeof switchSessionProvider>>> {
+  const { sessionId, target, plan } = input
+  const from = providerLabel(input.provider)
+  let noteText: string | null = null
+  if (noteToAsk(input.note, input.working)) {
+    input.onBusy(`Asking ${from} for a handoff note…`)
+    noteText = await requestHandoffNote(sessionId)
+  } else if (input.note) {
+    input.onError(
+      `The handoff note was skipped: ${from} was in the middle of a turn when you pressed Continue.`
+    )
+  }
+  input.onBusy(
+    plan.road === 'convert'
+      ? `Converting the conversation for ${target.label}…`
+      : 'Writing the handoff…'
+  )
+  const stored = sessionById(sessionId)
+  return switchSessionProvider(sessionId, {
+    from: input.provider,
+    target,
+    road: plan.road,
+    // The move the limit caused carries the rejected message across (G7):
+    // the card's word when it asked, else the report the tab holds.
+    resendRejected: input.resendRejected ?? !!stored?.limitReported,
+    handoff: async () => {
+      const entries = await wholeConversation(sessionId, input.source)
+      const head: TranscriptMeta = { ...input.meta, agent: from, exportedAt: new Date() }
+      // The whole conversation, every output whole, beside the work.
+      const tape = transcriptMarkdown(entries, head, {
+        lastStretchOutputs: true,
+        outputChars: Number.MAX_SAFE_INTEGER
+      })
+      const { path, diffStat } = await window.electronAPI.providerSwitchHandoff(sessionId, tape)
+      return handoffMessage(entries, head, {
+        from,
+        note: noteText,
+        files: editedFiles(entries),
+        diffStat,
+        tapePath: path,
+        budgetChars: handoffBudgetChars(target.model.id)
+      })
+    }
+  })
 }

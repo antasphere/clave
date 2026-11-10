@@ -541,6 +541,7 @@ export function TerminalView({
       model: switchSource.current.conversation.model
     }),
     working: () => midTurn(conversation.state),
+    visible,
     onError: report
   })
   const continuedFrom = useViewSessionStore(

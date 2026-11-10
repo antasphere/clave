@@ -624,6 +624,7 @@ export function FolioView({ session, onState, visible = true }: ChatViewProps): 
       model: switchSource.current.conversation.model
     }),
     working: () => midTurn(conversation.state),
+    visible,
     onError: report
   })
   const continuedFrom = useViewSessionStore(

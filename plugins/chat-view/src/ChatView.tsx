@@ -715,6 +715,7 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
       model: exportSource.current.conversation.model
     }),
     working: () => midTurn(conversation.state),
+    visible,
     onError: report
   })
   const continuedFrom = useViewSessionStore(

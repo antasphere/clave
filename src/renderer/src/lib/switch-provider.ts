@@ -1,5 +1,5 @@
 import type { ModelOption, SessionStream } from '../../../shared/session-model'
-import { claudeContextWindow } from '../../../shared/claude-models'
+import { handoffBudgetChars } from './handoff-budget'
 import type { ProviderChoice, ProviderSwitchPlan } from '../../../preload/index.d'
 import { isChatSession, registerProviderSwitchRoad } from './account-policy'
 import { useSessionStore, type Session } from '../store/session-store'
@@ -245,28 +245,35 @@ export function providerSwitchTargetFor(
   return choice ? { adapterId: choice.adapterId, label: choice.label } : null
 }
 
-/** The characters a handoff may take: half the target model's window when
- *  its id names one (Clave's table), else a 200k window, at four characters
- *  a token. The full tape goes to the file regardless. */
-export function handoffBudgetChars(modelId: string): number {
-  const window = claudeContextWindow(modelId) ?? 200_000
-  return Math.round(window * 0.5 * 4)
-}
+export { handoffBudgetChars }
 
 /** What the limit card asked for: a move the view's popover opens on. */
 export type ProviderSwitchAsk = NonNullable<Session['providerSwitchAsk']>
-const pendingAsks = new Map<string, (result: ProviderSwitchResult | { cancelled: true }) => void>()
+interface PendingAsk {
+  settle: (result: ProviderSwitchResult | { cancelled: true }) => void
+  /** The withdrawal, armed until a view takes the ask (integration round 3,
+   *  R2-2: it used to run on, and wiped the card fifteen seconds into the
+   *  popover). */
+  timer: ReturnType<typeof setTimeout> | null
+}
+const pendingAsks = new Map<string, PendingAsk>()
 
-/** The ask a view takes, once: read and cleared together. */
+/** The ask a view takes, once: read and cleared together, the withdrawal
+ *  disarmed, since the popover now holds the move and settles it. */
 export function takeProviderSwitchAsk(sessionId: string): ProviderSwitchAsk | null {
   const session = sessionById(sessionId)
   const ask = session?.providerSwitchAsk ?? null
-  if (ask)
-    useSessionStore.setState((state) => ({
-      sessions: state.sessions.map((s) =>
-        s.id === sessionId ? { ...s, providerSwitchAsk: null } : s
-      )
-    }))
+  if (!ask) return null
+  const pending = pendingAsks.get(sessionId)
+  if (pending?.timer) {
+    clearTimeout(pending.timer)
+    pending.timer = null
+  }
+  useSessionStore.setState((state) => ({
+    sessions: state.sessions.map((s) =>
+      s.id === sessionId ? { ...s, providerSwitchAsk: null } : s
+    )
+  }))
   return ask
 }
 
@@ -275,9 +282,10 @@ export function settleProviderSwitchAsk(
   sessionId: string,
   result: ProviderSwitchResult | { cancelled: true }
 ): void {
-  const settle = pendingAsks.get(sessionId)
+  const pending = pendingAsks.get(sessionId)
   pendingAsks.delete(sessionId)
-  settle?.(result)
+  if (pending?.timer) clearTimeout(pending.timer)
+  pending?.settle(result)
 }
 
 /** The limit card's provider rung: the move is asked of the view's popover,
@@ -306,29 +314,30 @@ export async function switchToProvider(
     resendRejected: options.resendRejected
   }
   return new Promise((resolve) => {
-    pendingAsks.get(sessionId)?.({ cancelled: true })
-    // A pane that never takes the ask (none mounted for this tab) must not
+    settleProviderSwitchAsk(sessionId, { cancelled: true })
+    // A pane that never takes the ask (none visible for this tab) must not
     // hold the policy's promise for good: the ask is withdrawn, with a word.
-    const timer = setTimeout(() => {
-      if (pendingAsks.get(sessionId) !== settle) return
-      pendingAsks.delete(sessionId)
-      useSessionStore.setState((state) => ({
-        sessions: state.sessions.map((s) =>
-          s.id === sessionId && s.providerSwitchAsk === ask ? { ...s, providerSwitchAsk: null } : s
-        )
-      }))
-      resolve({
-        ok: false,
-        resumed: false,
-        road: 'handoff',
-        error: 'No chat view took the move; open the tab and pick the provider from its chip.'
-      })
-    }, ASK_TIMEOUT_MS)
-    const settle = (result: ProviderSwitchResult | { cancelled: true }): void => {
-      clearTimeout(timer)
-      resolve(result)
+    const pending: PendingAsk = {
+      settle: resolve,
+      timer: setTimeout(() => {
+        if (pendingAsks.get(sessionId) !== pending) return
+        pendingAsks.delete(sessionId)
+        useSessionStore.setState((state) => ({
+          sessions: state.sessions.map((s) =>
+            s.id === sessionId && s.providerSwitchAsk === ask
+              ? { ...s, providerSwitchAsk: null }
+              : s
+          )
+        }))
+        resolve({
+          ok: false,
+          resumed: false,
+          road: 'handoff',
+          error: 'No chat view took the move; open the tab and pick the provider from its chip.'
+        })
+      }, ASK_TIMEOUT_MS)
     }
-    pendingAsks.set(sessionId, settle)
+    pendingAsks.set(sessionId, pending)
     useSessionStore.setState((state) => ({
       sessions: state.sessions.map((s) =>
         s.id === sessionId ? { ...s, providerSwitchAsk: ask } : s

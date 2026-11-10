@@ -65,6 +65,14 @@ const emit = (f) => process.stdout.write(JSON.stringify(f) + '\\n');
 const record = (line) => { fs.mkdirSync(path.dirname(transcript), { recursive: true }); fs.appendFileSync(transcript, JSON.stringify({ sessionId: sid, cwd: ${JSON.stringify(ROOT)}, timestamp: new Date().toISOString(), ...line }) + '\\n'); };
 readline.createInterface({ input: process.stdin }).on('line', (line) => {
   const input = JSON.parse(line);
+  // The model list a menu asks for (initialize, no turn): what the real CLI answers, in short.
+  if (input.type === 'control_request' && input.request?.subtype === 'initialize') {
+    emit({ type: 'control_response', response: { request_id: input.request_id, subtype: 'success', response: { commands: [], models: [
+      { value: 'default', displayName: 'Default', description: 'Opus · Best for everyday, complex tasks', resolvedModel: 'claude-opus-5-5' },
+      { value: 'opus', displayName: 'Opus', description: 'Best for everyday, complex tasks', resolvedModel: 'claude-opus-5-5' }
+    ] } } });
+    return;
+  }
   if (input.type !== 'user') return;
   const content = input.message.content;
   fs.appendFileSync(${JSON.stringify(INPUTS)}, JSON.stringify({ token, content }) + '\\n');
@@ -280,6 +288,54 @@ export async function run(t) {
     const chipText = async () => chat(id).locator('.chat-model-trigger').first().innerText()
     const chipOk = await until(async () => /^Echo · (echo-1|Echo 1)$/.test(await chipText()))
     t.check('the chip reads the new provider and model', chipOk, await chipText())
+
+    // ── The same tab in its other two views (integration round 3, G8): the
+    // card reads where the conversation came from, and the chip's provider
+    // row opens the popover there too. The visible view alone takes a move. ──
+    // The pane's own view picker, as a person switches (the registry follows
+    // the menu's pick, never a bare sessionsSetView from outside).
+    const switchTo = async (title) => {
+      await win.getByLabel('Session menu', { exact: true }).click()
+      const item = win.locator('.view-tile', { hasText: title })
+      await item.waitFor()
+      await win.waitForTimeout(500)
+      await item.click({ force: true })
+      await win.waitForTimeout(300)
+    }
+    for (const [title, testId] of [
+      [/^Enclave$/, 'terminal-view'],
+      [/^Folio$/, 'folio-view']
+    ]) {
+      await switchTo(title)
+      const other = pane(id).locator(`[data-testid="${testId}"]`).first()
+      await other.waitFor()
+      await other.locator('.chat-continued-from').waitFor({ timeout: 10_000 })
+      t.check(
+        `${testId}: the card says the conversation came from Claude`,
+        /Continued from Claude · handoff/.test(
+          await other.locator('.chat-continued-from').innerText()
+        )
+      )
+      await other.getByRole('button', { name: 'Model', exact: true }).click()
+      const claudeRow = win.locator('.chat-model-provider[data-adapter="claude-chat"]')
+      await claudeRow.waitFor()
+      await claudeRow.click()
+      // The stub CLI answers the list a menu asks for: Claude's models, mapped
+      // to the table's names, so Opus 5.5 is a row to pick.
+      const pick = win.getByRole('menuitem', { name: /Opus 5\.5/ })
+      await pick.first().waitFor({ timeout: 25_000 })
+      await pick.first().click()
+      const otherPopover = other.locator('section[data-kind="provider-switch"]')
+      await otherPopover.waitFor()
+      t.check(
+        `${testId}: picking another provider's model opens the popover in this view`,
+        /reconstructs/.test(await otherPopover.innerText())
+      )
+      await otherPopover.getByRole('button', { name: 'Cancel', exact: true }).click()
+      await otherPopover.waitFor({ state: 'hidden' })
+    }
+    await switchTo(/^Chat$/)
+    await chat(id).waitFor()
     t.check(
       'the Claude stub got no further message',
       lines(INPUTS).length === claudeInputs,

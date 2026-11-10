@@ -3,31 +3,19 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 /**
- * The wiring of the provider road into the shell and the three views, pinned
- * on the sources (integration round 2, G8): no unit test renders a view or
- * the shell, and the integration tester found that unregistering the road at
- * boot, or dropping a view's `onSwitchProvider`, left every test green. The
- * pin is coarse by design: it says these calls are there, not that they work;
- * the end-to-end spec chat-provider-switch says that.
+ * The road's registration at boot, pinned on the shell's source (integration
+ * round 2, G8): no unit test renders the shell, and unregistering the road
+ * left every test green. The three views' wiring is pinned by behaviour in
+ * the end-to-end spec chat-provider-switch (the chip's provider row opens the
+ * popover and the card reads the move in the chat, Enclave and Folio views).
  */
-const read = (path: string): string => readFileSync(join(import.meta.dirname, path), 'utf8')
-
-describe('the provider road is wired where it must be (PRDCT-4300)', () => {
-  it('the shell registers the road at boot', () => {
-    const shell = read('../../../src/renderer/src/components/layout/AppShell.tsx')
+describe('the provider road is registered at boot (PRDCT-4300)', () => {
+  it('the shell installs the road beside the served events', () => {
+    const shell = readFileSync(
+      join(import.meta.dirname, '../../../src/renderer/src/components/layout/AppShell.tsx'),
+      'utf8'
+    )
     expect(shell).toContain("import { installProviderSwitchRoad } from '../../lib/switch-provider'")
     expect(shell).toMatch(/^\s*installProviderSwitchRoad\(\)\s*$/m)
   })
-  for (const view of ['ChatView.tsx', 'TerminalView.tsx', 'lab/FolioView.tsx']) {
-    it(`${view} hands the chip a move, opens the popover and draws the card`, () => {
-      const source = read(view)
-      expect(source).toContain('useProviderSwitch({')
-      expect(source).toMatch(
-        /onSwitchProvider=\{isRemoteKey\(session\.id\) \? undefined : providerSwitch\.begin\}/
-      )
-      expect(source).toContain('<ProviderSwitch')
-      expect(source).toContain('<ContinuedFromCard')
-      expect(source).toContain('onContinue={(options) => void providerSwitch.confirm(options)}')
-    })
-  }
 })

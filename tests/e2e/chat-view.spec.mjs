@@ -355,6 +355,15 @@ export async function run(t) {
       "the tab's own provider is the first row"
     )
     assert.equal(await providers.first().getAttribute('data-selected'), 'true')
+    // The menu is a portal outside the chat view: the glyph size its chevron
+    // takes must travel with it, or the chevron fills the row (integration
+    // round 2, F8; this is its guard).
+    const chevron = await providers.first().locator('.chat-model-earlier-chevron').boundingBox()
+    assert.ok(
+      chevron && chevron.width >= 8 && chevron.width <= 32 && chevron.height <= 32,
+      `the provider row's chevron is glyph-sized in the portal (${JSON.stringify(chevron)})`
+    )
+    t.check('the provider rows’ chevron is glyph-sized in the menu’s portal', true)
     assert.ok(
       await until(async () => (await providers.count()) >= 3),
       'the other providers this host runs are listed (Claude and Codex at least)'

@@ -314,6 +314,21 @@ describe("lane E's third rung: the road the limit policy takes (PRDCT-4300)", ()
     })
     expect((h.state.sessions as Session[])[0].providerSwitchAsk).toBeNull()
   })
+  it('a taken ask is never withdrawn: the popover holds the move past fifteen seconds (round 3, R2-2)', async () => {
+    vi.useFakeTimers()
+    const pending = mod.switchToProvider('s1', 'codex-chat')
+    await vi.advanceTimersByTimeAsync(10)
+    expect(mod.takeProviderSwitchAsk('s1')).toMatchObject({ adapterId: 'codex-chat' })
+    let settledWith: unknown = 'still pending'
+    void pending.then((r) => {
+      settledWith = r
+    })
+    await vi.advanceTimersByTimeAsync(mod.ASK_TIMEOUT_MS * 3)
+    expect(settledWith).toBe('still pending')
+    mod.settleProviderSwitchAsk('s1', { ok: true, resumed: true, road: 'converted' })
+    await vi.advanceTimersByTimeAsync(1)
+    expect(settledWith).toEqual({ ok: true, resumed: true, road: 'converted' })
+  })
   it('refuses when the provider lists no model', async () => {
     ;(h.api.adaptersModels as ReturnType<typeof vi.fn>).mockResolvedValue([])
     expect(await mod.switchToProvider('s1', 'codex-chat')).toMatchObject({ ok: false })
