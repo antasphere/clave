@@ -49,6 +49,28 @@ describe('the explainer prompt', () => {
     expect(prompt).not.toContain('Never lower than')
   })
 
+  it('passes what the rules noticed as data, and the secrets note as an instruction', () => {
+    const prompt = explainerPrompt({
+      ...INPUT,
+      input: { command: 'git commit -m "rm the old curl helper"' },
+      cwd: '/repo',
+      floor: 'project'
+    })
+    expect(prompt).toMatch(
+      /<rules_noticed>\n[\s\S]*the text mentions: rm, curl[\s\S]*\n<\/rules_noticed>/
+    )
+    expect(prompt).toContain('look at what they do before you choose the level')
+    expect(prompt).not.toContain('may include a secret')
+    const secret = explainerPrompt({
+      ...INPUT,
+      input: { command: 'grep -r KEY .' },
+      cwd: '/repo',
+      floor: 'reads'
+    })
+    expect(secret).toContain('what this reads may include a secret')
+    expect(secret).not.toContain('<rules_noticed>')
+  })
+
   it('clips a long request and a long message', () => {
     const prompt = explainerPrompt({
       ...INPUT,
