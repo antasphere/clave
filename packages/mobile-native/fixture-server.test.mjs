@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type -- plain JS, run by vitest */
 import { execFileSync, spawnSync } from 'node:child_process'
+import { EventEmitter } from 'node:events'
 import {
   chmodSync,
   existsSync,
@@ -24,7 +25,9 @@ import {
   DAEMON_FLAGS,
   DAEMON_SETTINGS,
   ENV_ALLOWLIST,
+  INTERRUPTED_CHECK_EXIT,
   MUTATIONS,
+  bootChecks,
   childEnv,
   flagsFor,
   loginEnvOf,
@@ -49,6 +52,8 @@ import {
   recorderLines,
   releaseTmuxFolder,
   shellStandsIn,
+  startDaemon,
+  superviseFixture,
   tmuxFallback,
   tmuxFolderContentsProblem,
   tmuxFolderFor,
@@ -62,9 +67,12 @@ import {
    the run folder's ownership, the fixture's tmux folder (taken, refused, held
    to what tmux asks of a folder), the stubs and the recorder watch, the
    daemon's home, its TMUX_TMPDIR and the stand-in login shell (which answers
-   what was written into it, never what it is run with), and the shell rule.
-   No tmux is run here. Every booted case is in fixture-server.boot.test.mjs,
-   which runs only with CLAVE_FIXTURE_BOOT=1. */
+   what was written into it, never what it is run with), the daemon's start
+   refusing a TMUX_TMPDIR before it makes anything, the checks asked of the
+   daemon itself run in a stand-in Node process on an environment the test
+   chose, the CLI's ways out driven with a fixture of the test's own, and the
+   shell rule. No tmux is run here. Every booted case is in
+   fixture-server.boot.test.mjs, which runs only with CLAVE_FIXTURE_BOOT=1. */
 
 const SCRIPT = fileURLToPath(new URL('./scripts/fixture-server.mjs', import.meta.url))
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
@@ -737,6 +745,132 @@ describe("the daemon's home and login shell", () => {
   })
 })
 
+describe("the daemon's start and the checks asked of the daemon itself", () => {
+  const dirs = []
+  afterAll(() => {
+    for (const dir of dirs) removeRun(dir)
+  })
+  const install = () => {
+    const root = mkdtempSync(path.join(os.tmpdir(), 'clave-native-inside-'))
+    dirs.push(root)
+    claimRunFolder(root)
+    const stubs = installStubs(path.join(root, 'stubs'))
+    const serverDir = path.join(root, 'server')
+    return { root, stubs, serverDir, env: childEnv('http://127.0.0.1:9', serverDir, stubs) }
+  }
+
+  it('the start refuses, before it makes or starts anything, a TMUX_TMPDIR tmux would not take as it is: unset, a decoy not made yet, another mode', async () => {
+    const { root, stubs, serverDir, env } = install()
+    // No keychain file is made here, whatever the start does with this environment.
+    delete env.CLAVE_KEYCHAIN_FILE
+    const unset = { ...env }
+    delete unset.TMUX_TMPDIR
+    const open = path.join(realpathSync(root), 'open')
+    mkdirSync(open, { mode: 0o755 })
+    chmodSync(open, 0o755)
+    for (const [what, handed] of [
+      ['unset', unset],
+      ['a decoy not made yet', { ...env, TMUX_TMPDIR: path.join(stubs.tmux, TMUX_DECOY) }],
+      ['mode 755', { ...env, TMUX_TMPDIR: open }]
+    ]) {
+      const problem = tmuxTmpdirProblem(handed.TMUX_TMPDIR)
+      expect(problem, what).not.toBeNull()
+      // /usr/bin/false stands where Bun would: nothing could announce itself even past the guard.
+      await expect(
+        startDaemon({
+          bun: '/usr/bin/false',
+          port: 0,
+          dataDir: serverDir,
+          tokenFile: path.join(serverDir, 'token'),
+          relay: 'http://127.0.0.1:9',
+          env: handed,
+          flags: DAEMON_FLAGS,
+          log: () => {},
+          timeoutMs: 2_000
+        }),
+        what
+      ).rejects.toThrow(`refused to start the daemon: ${problem}`)
+      expect(existsSync(serverDir), what).toBe(false)
+    }
+  })
+
+  it('the sixth and seventh checks compare each value on their own: a stand-in for the daemon on the handed environment passes both, one key more or less fails the sixth, and another Claude config folder, Codex home or keychain file fails the seventh at that value', async () => {
+    const { stubs, serverDir, env } = install()
+    const server = {
+      url: 'http://127.0.0.1:9',
+      token: 'unused',
+      discovery: { titles: 'off', testMode: true, machineUsage: false },
+      env,
+      dataDir: serverDir
+    }
+    // The function the check would send to the daemon's test route, run in a
+    // Node process started on `actual`, as that route runs it in the daemon.
+    // Node on macOS adds __CF_USER_TEXT_ENCODING to its own environment, which
+    // the daemon's Bun does not (the booted sixth check passes there): the
+    // stand-in first drops every key it was not started with.
+    const standIn = (actual) => async (_server, source) => {
+      const keep = JSON.stringify(Object.keys(actual))
+      const run = spawnSync(
+        process.execPath,
+        [
+          '--input-type=module',
+          '-e',
+          `const keep = new Set(${keep}); for (const key of Object.keys(process.env)) if (!keep.has(key)) delete process.env[key]; process.stdout.write(JSON.stringify(await (${source})()))`
+        ],
+        { env: actual, encoding: 'utf8', timeout: 20_000 }
+      )
+      if (run.status !== 0) throw new Error(`the stand-in exited ${run.status}`)
+      return JSON.parse(run.stdout)
+    }
+    const sixAndSeven = async (actual) => {
+      const results = await bootChecks({ server, stubs, log: () => {}, ask: standIn(actual) })
+      return [
+        results.find((r) => r.name.startsWith("inside the running daemon, the environment's keys")),
+        results.find((r) => r.name.startsWith('inside the running daemon, its home'))
+      ]
+    }
+    const elsewhere = path.join(stubs.dir, 'elsewhere')
+    mkdirSync(elsewhere)
+    const keychain = keychainFileOf(serverDir)
+
+    const [six, seven] = await sixAndSeven(env)
+    expect(six.ok, six.detail).toBe(true)
+    expect(seven.ok, seven.detail).toBe(true)
+
+    const more = await sixAndSeven({ ...env, CLAVE_FIXTURE_EXTRA: 'one more' })
+    expect(more[0].detail).toBe('extra: CLAVE_FIXTURE_EXTRA; missing: none')
+    expect(more[1].ok, more[1].detail).toBe(true)
+    const fewer = { ...env }
+    delete fewer.CLAVE_ANTASPHERE_ISSUER
+    const less = await sixAndSeven(fewer)
+    expect(less[0].detail).toBe('extra: none; missing: CLAVE_ANTASPHERE_ISSUER')
+    expect(less[1].ok, less[1].detail).toBe(true)
+
+    for (const [key, detail] of [
+      [
+        'CLAUDE_CONFIG_DIR',
+        "CLAUDE_CONFIG_DIR inside the daemon is not the fixture's Claude config folder"
+      ],
+      ['CODEX_HOME', "CODEX_HOME inside the daemon is not the fixture's Codex home"]
+    ]) {
+      const [keys, values] = await sixAndSeven({ ...env, [key]: elsewhere })
+      expect(keys.ok, `${key}: ${keys.detail}`).toBe(true)
+      expect(values.detail, key).toBe(detail)
+    }
+    const otherKeychain = await sixAndSeven({
+      ...env,
+      CLAVE_KEYCHAIN_FILE: path.join(serverDir, 'elsewhere.keychain-db')
+    })
+    expect(otherKeychain[1].detail).toBe(
+      "CLAVE_KEYCHAIN_FILE inside the daemon is not the fixture's keychain file"
+    )
+    // On macOS an unset keychain file is the login keychain: refused; elsewhere none is expected.
+    const noKeychain = { ...env }
+    delete noKeychain.CLAVE_KEYCHAIN_FILE
+    expect((await sixAndSeven(noKeychain))[1].ok).toBe(keychain === null)
+  })
+})
+
 describe("the CLI's way out", () => {
   it('a recorder failure reported while the fixture stops is latched: the run exits 3, never the code of the clean stop under way', async () => {
     const codes = []
@@ -762,6 +896,144 @@ describe("the CLI's way out", () => {
     await once(0)
     await once(3)
     expect(clean).toEqual([0])
+  })
+
+  /** A fixture of the test's own, nothing started: its stop stays under way
+   *  until `finish`, and every hook of the CLI is recorded. */
+  const supervised = () => {
+    const run = { handlers: {}, codes: [], written: [], stops: 0, finish: null, caught: null }
+    run.child = new EventEmitter()
+    run.fixture = {
+      checks: [{ ok: true }],
+      stubs: { log: path.join(os.tmpdir(), 'no-recorder.log') },
+      server: { child: run.child },
+      lines: () => ({ CLAVE_FIXTURE_SERVER_URL: 'http://127.0.0.1:9' }),
+      stop: () => {
+        run.stops += 1
+        return new Promise((resolve) => (run.finish = resolve))
+      }
+    }
+    run.io = (prove = async () => [{ ok: true }]) => ({
+      prove,
+      watch: (_stubs, onCaught) => (run.caught = onCaught),
+      on: (signal, handler) => (run.handlers[signal] = handler),
+      exitProcess: (code) => run.codes.push(code),
+      out: (text) => run.written.push(text),
+      log: () => {}
+    })
+    return run
+  }
+  const turn = () => new Promise((resolve) => setImmediate(resolve))
+  const summaries = (run) => run.written.filter((text) => /^\d+ checks, \d+ failed/.test(text))
+
+  it('under --check, a SIGINT or a SIGTERM before the summary line exits 130 or 143 once the fixture stopped, and no summary line is written, whether the proof then ends or throws', async () => {
+    expect(INTERRUPTED_CHECK_EXIT).toEqual({ SIGINT: 130, SIGTERM: 143 })
+    for (const [signal, code] of Object.entries(INTERRUPTED_CHECK_EXIT))
+      for (const ending of ['ends', 'throws']) {
+        const run = supervised()
+        const done = superviseFixture(
+          run.fixture,
+          { check: true },
+          run.io(async () => {
+            await turn()
+            run.handlers[signal]()
+            await turn()
+            if (ending === 'throws') throw new Error('fetch failed')
+            return [{ ok: true }]
+          })
+        )
+        await done
+        expect(run.stops, `${signal}, the proof ${ending}`).toBe(1)
+        expect(summaries(run), `${signal}, the proof ${ending}`).toEqual([])
+        expect(run.codes).toEqual([])
+        run.finish()
+        await turn()
+        expect(run.codes, `${signal}, the proof ${ending}`).toEqual([code])
+      }
+  })
+
+  it('under --check, the daemon exiting by itself is a failure, exit 1, whatever its own code, and no summary line is written', async () => {
+    for (const own of [0, null]) {
+      const run = supervised()
+      const done = superviseFixture(
+        run.fixture,
+        { check: true },
+        run.io(async () => {
+          await turn()
+          run.child.emit('exit', own)
+          await turn()
+          return [{ ok: true }]
+        })
+      )
+      await done
+      expect(summaries(run), `the daemon's own code ${own}`).toEqual([])
+      run.finish()
+      await turn()
+      expect(run.codes, `the daemon's own code ${own}`).toEqual([1])
+      expect(run.stops).toBe(1)
+    }
+  })
+
+  it('under --check, a proof that runs to its end writes its summary line and exits with its verdict, a signal during the stop changing nothing; a proof that throws by itself stops the fixture and exits 1', async () => {
+    for (const [rows, line, code] of [
+      [[{ ok: true }], '2 checks, 0 failed\n', 0],
+      [[{ ok: false }], '2 checks, 1 failed\n', 1]
+    ]) {
+      const run = supervised()
+      const done = superviseFixture(
+        run.fixture,
+        { check: true },
+        run.io(async () => rows)
+      )
+      await turn()
+      expect(run.written).toEqual([line])
+      run.handlers.SIGINT()
+      run.finish()
+      await done
+      expect(run.codes).toEqual([code])
+      expect(run.stops).toBe(1)
+    }
+    const run = supervised()
+    const done = superviseFixture(
+      run.fixture,
+      { check: true },
+      run.io(async () => {
+        throw new Error('no answer')
+      })
+    )
+    await turn()
+    expect(run.stops).toBe(1)
+    run.finish()
+    await done
+    expect(run.codes).toEqual([1])
+    expect(summaries(run)).toEqual([])
+  })
+
+  it('running, a signal is the way out, exit 0; the daemon exiting by itself exits 1; and a recorder failure reported during a stop exits 3, the fixture stopped once', async () => {
+    const signalled = supervised()
+    await superviseFixture(signalled.fixture, {}, signalled.io())
+    signalled.handlers.SIGINT()
+    signalled.finish()
+    await turn()
+    expect(signalled.codes).toEqual([0])
+
+    const gone = supervised()
+    await superviseFixture(gone.fixture, {}, gone.io())
+    gone.child.emit('exit', 0)
+    gone.finish()
+    await turn()
+    expect(gone.codes).toEqual([1])
+
+    const caught = supervised()
+    await superviseFixture(caught.fixture, {}, caught.io())
+    caught.handlers.SIGTERM()
+    expect(caught.stops).toBe(1)
+    caught.caught(['claude -p fixture'])
+    caught.child.emit('exit', 0)
+    caught.finish()
+    await turn()
+    expect(caught.codes).toEqual([3])
+    expect(caught.stops).toBe(1)
   })
 })
 
