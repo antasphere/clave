@@ -345,9 +345,19 @@ export async function restartSession(
   // leaves behind (the parent link among them); the same tab comes back
   // under the same id, so its link is kept across (verifier round 1, F1).
   const parent = parentOf(id)
-  await ptyManager.killAndWait(id)
+  // Only a process this one runs is ended. A tab with none (placed stopped
+  // by a restart, PRDCT-4236) has only its record, and a kill is a close
+  // for good: it would discard that record before the spawn reads it back
+  // (the work assignment, the start time), and a failed spawn would leave
+  // nothing to resume from.
+  if (current) await ptyManager.killAndWait(id)
   windows.unbind(id)
   const info = await spawnSession(key, plan.cwd, plan.options)
+  // A record keyed by a tmux name the new process did not take (a chat tab's
+  // record is keyed by its id) would stay beside the one the spawn wrote,
+  // and the next launch would bring the tab back twice.
+  const staleKey = current ? undefined : record?.tmuxName
+  if (staleKey && ptyManager.tmuxNameOf(id) !== staleKey) ptyManager.discardSessionRecord(staleKey)
   if (parent) setParent(id, parent)
   if (record?.displayName) {
     ptyManager.setSessionDisplayName(id, record.displayName, record.userRenamed === true)
