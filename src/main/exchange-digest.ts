@@ -70,7 +70,8 @@ export function workDigestsOf(sessionId: string): Record<string, WorkDigestDone>
 export function requestDigest(request: DigestRequest): Promise<DigestResult> {
   if (helperRunner.isShutDown())
     return Promise.resolve({ ok: false, error: 'Clave is quitting', reason: 'cancelled' })
-  if (!request.messages.length) return Promise.resolve({ ok: false, error: 'No messages', reason: 'refused' })
+  if (!request.messages.length)
+    return Promise.resolve({ ok: false, error: 'No messages', reason: 'refused' })
   const filed = digests().get(request.sessionId, request.key)
   if (filed) return Promise.resolve(filed)
   const id = `${request.sessionId}|${request.key}`
@@ -90,7 +91,8 @@ export function requestDigest(request: DigestRequest): Promise<DigestResult> {
 export function requestWorkDigest(request: WorkDigestRequest): Promise<WorkDigestResult> {
   if (helperRunner.isShutDown())
     return Promise.resolve({ ok: false, error: 'Clave is quitting', reason: 'cancelled' })
-  if (!request.notes.length) return Promise.resolve({ ok: false, error: 'No notes', reason: 'refused' })
+  if (!request.notes.length)
+    return Promise.resolve({ ok: false, error: 'No notes', reason: 'refused' })
   const bucket = workDigestBucket(request.sessionId)
   const filed = digests().get(bucket, request.key) as unknown as WorkDigestDone | undefined
   if (filed) return Promise.resolve(filed)
