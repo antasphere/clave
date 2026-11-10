@@ -37,7 +37,8 @@ const COMMAND = '`npm run assets --workspace @clave/mobile-native`'
 const comment = (source) =>
   `Generated from ${source} by packages/mobile-native/scripts/generate-assets.mjs. Do not edit: run ${COMMAND}; assets.test.mjs fails when this file no longer matches its source.`
 
-/** phone name → Heroicons 24/outline component (apps/mobile's set). */
+/** phone name → Heroicons 24/outline component (the React Native prototype's set, on the
+ *  branch mobile-react-native-baseline-20261109). */
 export const ICONS = {
   'arrow-left': 'ArrowLeftIcon',
   'arrow-path': 'ArrowPathIcon',

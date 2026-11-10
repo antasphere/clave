@@ -11,7 +11,6 @@ const required = [
   'apps/desktop/src/main/index.ts',
   'apps/desktop/src/preload/index.ts',
   'apps/desktop/src/renderer/index.html',
-  'apps/mobile/index.ts',
   'apps/server/src/main.ts',
   'apps/terminals/src/main.ts',
   'apps/terminals/src/probe.ts',

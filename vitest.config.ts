@@ -1,4 +1,4 @@
-import { configDefaults, defineConfig } from 'vitest/config'
+import { defineConfig } from 'vitest/config'
 
 /**
  * The unit tests: pure logic only. Nothing here boots Electron or renders a
@@ -22,7 +22,6 @@ export default defineConfig({
       'scripts/**/*.test.mjs',
       'tests/e2e/**/*.test.mjs'
     ],
-    exclude: [...configDefaults.exclude, 'apps/mobile/**'],
     environment: 'node',
     // The framework ships TypeScript source, not compiled output, so Node
     // cannot load it from node_modules on its own: vite transforms it instead.
