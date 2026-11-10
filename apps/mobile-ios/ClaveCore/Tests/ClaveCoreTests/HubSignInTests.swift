@@ -120,6 +120,21 @@ final class HubSignInTests: XCTestCase {
     XCTAssertEqual(tokens, 0)
   }
 
+  func testACallbackCarryingNoStateIsRefusedBeforeAnyExchange() async {
+    let hub = self.hub!
+    let stateless = StubOpener { url in
+      let back = await hub.authorize(url)
+      var components = URLComponents(url: back, resolvingAgainstBaseURL: false)!
+      components.queryItems = components.queryItems!.filter { $0.name != "state" }
+      return components.url
+    }
+    let status = await make(opener: stateless).signIn()
+    XCTAssertEqual(status.phase, .signedOut)
+    XCTAssertEqual(status.lastFailure, .invalidResponse)
+    let exchanges = await hub.tokenRequests.count
+    XCTAssertEqual(exchanges, 0)
+  }
+
   func testATwiceCarriedStateOrAnotherCallbackIsRefused() async {
     let hub = self.hub!
     let doubled = StubOpener { url in
@@ -348,6 +363,45 @@ final class HubSignInTests: XCTestCase {
     let refreshes = await hub.refreshCount
     XCTAssertEqual(refreshes, 1)
     XCTAssertGreaterThan(try decodeIdToken(renewed).exp, clock.now.timeIntervalSince1970)
+  }
+
+  func testARenewedIdTokenNamingAnotherPersonIsRefusedAndTheStoredOneKept() async throws {
+    await hub.configure { $0.idTTL = 10 }
+    await hub.configure { $0.accessTTL = 3600 }
+    let signIn = make()
+    _ = await signIn.signIn()
+    let before = await store.values[HubStoreKey.idToken]
+    await hub.configure { $0.subject = "someone-else" }
+    clock.advance(11)
+    let result = await failure { _ = try await signIn.idToken() }
+    XCTAssertEqual(result, .invalidResponse)
+    let refreshes = await hub.refreshCount
+    XCTAssertEqual(refreshes, 1, "the renewal was asked for")
+    let kept = try await HubTokenStore(secure: store).readIdToken()
+    XCTAssertEqual(try decodeIdToken(XCTUnwrap(kept).token).sub, "user-7f3a")
+    let after = await store.values[HubStoreKey.idToken]
+    XCTAssertEqual(after, before, "the stored ID token is still the sign-in's")
+  }
+
+  func testARenewedIdTokenOfAnotherIssuerOrAudienceIsRefusedAndNothingOfItKept() async throws {
+    for tamper: [String: JSValue] in [["iss": .string("https://evil.test")], ["aud": .string("another-client")]] {
+      store = InMemorySecureStore()
+      await hub.configure { $0.tamper = [:] }
+      await hub.configure { $0.idTTL = 10 }
+      await hub.configure { $0.accessTTL = 3600 }
+      let signIn = make()
+      _ = await signIn.signIn()
+      let before = await store.values
+      let refreshes = await hub.refreshCount
+      await hub.configure { $0.tamper = tamper }
+      clock.advance(11)
+      let result = await failure { _ = try await signIn.idToken() }
+      XCTAssertEqual(result, .invalidResponse, "\(tamper)")
+      let asked = await hub.refreshCount
+      XCTAssertEqual(asked, refreshes + 1, "the renewal was asked for: \(tamper)")
+      let after = await store.values
+      XCTAssertEqual(after, before, "nothing of the renewal is kept: \(tamper)")
+    }
   }
 
   // MARK: the restore

@@ -1,7 +1,7 @@
 import XCTest
 @testable import ClaveCore
 
-private enum WriteStep { case ok, pending, network, timeout, refused, unauthenticated }
+private enum WriteStep { case ok, pending, network, timeout, refused, unauthenticated, forbidden }
 private enum StatusStep { case answer(WriteStatus), network, notFound }
 
 /// Ports over scripts that count every write and every ask, with a fake clock.
@@ -39,6 +39,7 @@ private final class Script: @unchecked Sendable {
         case .timeout: throw ServerError(.timeout, "The server did not answer within 10 s.")
         case .refused: throw ServerError(.refused, "The provider refused the message.", status: 422, failure: ServerFailure(tag: "SessionWriteRefused", message: "The provider refused the message."))
         case .unauthenticated: throw ServerError(.unauthenticated, "The server refused the token.", status: 401)
+        case .forbidden: throw ServerError(.forbidden, "A phone may not do this.", status: 403)
         }
       },
       status: { _ in
@@ -91,6 +92,27 @@ final class ChatSendTests: XCTestCase {
     let outcome = await sendMessage("m-1", ports: s.ports)
     XCTAssertEqual(outcome, .failed(clientMessageId: "m-1", reason: "The server refused the token."))
     XCTAssertEqual(s.asks, 0)
+  }
+
+  /// A 403 on the write itself is the device session's scope speaking: the send fails in the
+  /// server's words, it is never asked about, and the ledger keeps nothing of it.
+  func testAForbiddenWriteFailsInTheServersWordsAndIsNeverAskedAbout() async throws {
+    let kv = InMemoryKeyValueStore()
+    let delivery = DeliveryController(
+      sends: UnknownSends(store: kv), marks: DeliveryMarks(store: kv), drafts: Drafts(store: kv),
+      attachmentDrafts: AttachmentDrafts(store: kv), now: { 1 })
+    let send = UnknownSend(machineId: "m", sessionId: "s", clientMessageId: "m-1", text: "Not allowed.", at: 1)
+    try await delivery.begin(send)
+    let s = Script(writes: [.forbidden], statuses: [])
+    let outcome = await sendMessage("m-1", ports: s.ports)
+    try await delivery.finish(send, outcome)
+    XCTAssertEqual(outcome, .failed(clientMessageId: "m-1", reason: "A phone may not do this."))
+    XCTAssertEqual(s.writes, ["m-1"], "one write")
+    XCTAssertEqual(s.asks, 0, "no status read")
+    let ledger = try await delivery.sends.list()
+    XCTAssertEqual(ledger, [], "nothing left in the ledger")
+    let mark = try await delivery.marks.get("m", "s")
+    XCTAssertNil(mark, "nothing marked unknown")
   }
 
   func testAcceptedTheLostAnswerIsFoundLanded() async {

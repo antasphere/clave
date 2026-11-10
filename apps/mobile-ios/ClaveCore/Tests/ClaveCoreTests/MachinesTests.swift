@@ -97,6 +97,28 @@ final class MachinesTests: XCTestCase {
     return reason
   }
 
+  func testAnEnrollmentClientBuiltWithNoBuildNamedRefusesTheLoopbackOverPlainHttp() async {
+    let transport = ScriptedTransport()
+    let address = "http://127.0.0.1:43201"
+    XCTAssertNotNil(releaseRefusal(address))
+    XCTAssertThrowsError(try EnrollmentClient(baseURL: address, transport: transport)) { error in
+      XCTAssertEqual((error as? TransportPolicyError)?.message, releaseRefusal(address))
+    }
+    let sent = await transport.requests.count
+    XCTAssertEqual(sent, 0)
+  }
+
+  func testARelaySourceBuiltWithNoBuildNamedRefusesTheLoopbackOverPlainHttp() async {
+    let transport = ScriptedTransport()
+    let address = "http://127.0.0.1:43202"
+    XCTAssertNotNil(releaseRefusal(address))
+    XCTAssertThrowsError(try RelayMachineSource(relayURL: address, token: { "t" }, transport: transport)) { error in
+      XCTAssertEqual((error as? TransportPolicyError)?.message, releaseRefusal(address))
+    }
+    let sent = await transport.requests.count
+    XCTAssertEqual(sent, 0)
+  }
+
   // MARK: the credential store
 
   func testKeepsOneCredentialPerMachineTheFirstPairedAsMain() async throws {

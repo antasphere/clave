@@ -239,4 +239,13 @@ final class ContractDecodingTests: XCTestCase {
     XCTAssertEqual(payload.actions, [.reply, .open])
     XCTAssertEqual(NotificationCategory.accountLimit.rawValue, "account_limit")
   }
+
+  func testANotificationPayloadWithoutItsServerNameIsRefused() throws {
+    XCTAssertEqual(try ContractJSON.decode(NotificationPayload.self, from: fixture("notification")).serverName, "Valentins-MacBook-Pro")
+    var object = try XCTUnwrap(JSONSerialization.jsonObject(with: fixture("notification")) as? [String: Any])
+    XCTAssertNotNil(object.removeValue(forKey: "serverName"))
+    let data = try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
+    XCTAssertThrowsError(try ContractJSON.decode(NotificationPayload.self, from: data))
+    XCTAssertNil(notificationPayload(from: ["clave": String(decoding: data, as: UTF8.self)]))
+  }
 }

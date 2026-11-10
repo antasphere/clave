@@ -105,4 +105,18 @@ final class IdTokenTests: XCTestCase {
     XCTAssertNoThrow(try checkIdToken(decoded, expected: at(2_000_000_030)))
     XCTAssertNoThrow(try checkIdToken(decoded, expected: at(1_899_999_970)))
   }
+
+  /// The issued-at check allows the skew and not a second more; the boundary is the skew the
+  /// checks themselves carry, the server's minute.
+  func testATokenIssuedASecondPastTheSkewAheadIsNotYetValid() throws {
+    let now: TimeInterval = 1_950_000_000
+    let expected = ExpectedIdToken(issuer: "https://hub.test", clientId: "client-1", nonce: "n-1", now: Date(timeIntervalSince1970: now))
+    let skew = expected.skew
+    XCTAssertEqual(skew, 60)
+    func issued(_ ahead: TimeInterval) throws -> IdTokenClaims {
+      try decodeIdToken(token(nil, ["iat": .number(now + ahead)]))
+    }
+    XCTAssertEqual(refusal { try checkIdToken(issued(skew + 1), expected: expected) }, .notYetValid)
+    XCTAssertNoThrow(try checkIdToken(issued(skew - 1), expected: expected))
+  }
 }
