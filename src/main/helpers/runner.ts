@@ -235,7 +235,10 @@ async function execute(job: Job): Promise<HelperOutcome<unknown>> {
     }
     if (!stdout.ok) {
       last = stdout
-      if (stdout.reason !== 'failed') return stdout
+      if (stdout.reason === 'cancelled') return stdout
+      if (stdout.reason !== 'failed' && !definition.retryAnyFailure) return stdout
+      if (attempt < attempts)
+        console.warn(`[helpers] ${definition.id}: ${stdout.reason} on try ${attempt}, retrying`)
       continue
     }
     const value = definition.parseReply(stdout.stdout, job.input)

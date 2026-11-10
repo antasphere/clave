@@ -48,6 +48,10 @@ export interface HelperDefinition<Input, Output> {
   background?: boolean
   /** Tries before an unreadable reply or a failed run is reported: 2 is one retry. */
   attempts?: number
+  /** Retry after ANY failure, a timeout, a limit or a refusal included (the
+   *  git calls, as before the helpers). Without it only an unreadable reply
+   *  or an unexplained failure is retried. A cancel is never retried. */
+  retryAnyFailure?: boolean
 }
 
 /** What the runner asks before each call. `claudeProfileId` undefined means

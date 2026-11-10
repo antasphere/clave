@@ -330,6 +330,37 @@ describe('the digests and the helpers a person waits on', () => {
   })
 })
 
+describe('the git helpers retry once after any failure (as on dev)', () => {
+  it.each([
+    ['a timeout', Object.assign(new Error('Command failed'), { killed: true }), ''],
+    ['a limit', Object.assign(new Error('Command failed'), { code: 1 }), 'API Error: 429'],
+    ['a refusal', Object.assign(new Error('Command failed'), { code: 1 }), 'Not logged in']
+  ])('the commit message and the push summary retry after %s', async (_what, err, stderr) => {
+    const commit = runHelper(commitMessageHelper, { diff: '+x', recent: '' })
+    await ticks()
+    mocks.spawned[0].finish(err, '', stderr)
+    await ticks()
+    expect(mocks.spawned).toHaveLength(2)
+    mocks.spawned[1].finish(null, 'feat: x', '')
+    await expect(commit).resolves.toMatchObject({ ok: true, value: 'feat: x', attempts: 2 })
+    const push = runHelper(pushSummaryHelper, { commitMessages: ['feat: x'], diffStats: '' })
+    await ticks()
+    mocks.spawned[2].finish(err, '', stderr)
+    await ticks()
+    expect(mocks.spawned).toHaveLength(4)
+    mocks.spawned[3].finish(null, 'Title\nWhy.', '')
+    await expect(push).resolves.toMatchObject({ ok: true, attempts: 2 })
+  })
+
+  it('a title does not retry a timeout', async () => {
+    const done = runHelper(titleHelper, 'please name this tab from its first message')
+    await ticks()
+    mocks.spawned[0].finish(Object.assign(new Error('Command failed'), { killed: true }), '', '')
+    await expect(done).resolves.toMatchObject({ ok: false, reason: 'timeout' })
+    expect(mocks.spawned).toHaveLength(1)
+  })
+})
+
 describe('a reply that is not the asked shape', () => {
   it('is tried again as many times as the helper asks, then reported unreadable', async () => {
     const h = helper({ attempts: 2 })
