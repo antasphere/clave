@@ -100,6 +100,7 @@ printf '%s\n' '#!/bin/bash' \
 # meets the runner's shape here, never this Mac's devices. Anything else goes to the real xcrun.
 printf '%s\n' '#!/bin/bash' \
   'if [ "$1" = "--sdk" ] && [ "$3" = "--show-sdk-version" ]; then echo "26.0"; exit 0; fi' \
+  'if [ "$1" = "simctl" ] && [ "$2" = "list" ] && [ "$3" = "runtimes" ]; then printf "%s\n" "== Runtimes ==" "iOS 26.2 (26.2 - STAND-IN) - com.apple.CoreSimulator.SimRuntime.iOS-26-2" "iOS 26.5 (26.5 - STAND-IN) - com.apple.CoreSimulator.SimRuntime.iOS-26-5"; exit 0; fi' \
   'if [ "$1" = "simctl" ] && [ "$2" = "list" ]; then cat "$CI_PROOF_DEVICES"; exit 0; fi' \
   'exec /usr/bin/xcrun "$@"' >"$sandbox/bin/xcrun"
 
@@ -205,8 +206,18 @@ run_ci real "$udid" CI_PROOF_FAIL= CI_PROOF_RELEASE=shared
 judge "the real release check on a Release sharing the Debug identifier" fail "FAIL release is 'com.clave.ios.dev', not com.clave.ios"
 
 runner=(CI_PROOF_FAIL= CI_PROOF_DEVICES="$sandbox/devices-runner.json")
+rm -rf "$sandbox/run/build"
 run_ci stand-in "" "${runner[@]}" CI_PROOF_DESTINATIONS="$sandbox/destinations-no-iphone.txt"
 judge "a runner whose Xcode lists no iPhone simulator" fail "ci: no iPhone simulator among the destinations xcodebuild lists for the Clave scheme"
+judge "the same run prints the listing it judged" fail "ci: listed: { platform:iOS Simulator, arch:arm64, id:INELIGIBLE-2650, OS:26.5, name:iPhone 17 Pro, error:iOS 26.5 is not supported by this Xcode }"
+judge "the same run prints the runtimes simctl lists" fail "ci: runtime: iOS 26.5 (26.5 - STAND-IN) - com.apple.CoreSimulator.SimRuntime.iOS-26-5"
+# The listing the job uploads: kept under build/reports, byte for byte what xcodebuild printed.
+if cmp -s "$sandbox/destinations-no-iphone.txt" "$sandbox/run/build/reports/showdestinations.txt"; then
+  echo "PASS the same run keeps the listing under build/reports for the job to upload"
+else
+  echo "FAIL the same run keeps no build/reports/showdestinations.txt equal to what xcodebuild printed"
+  failed=1
+fi
 run_ci stand-in "" "${runner[@]}" CI_PROOF_DESTINATIONS="$sandbox/destinations-runner.txt"
 judge "the hosted runner, Xcode 26.0.1 beside iOS 26.2, 26.4 and 26.5 only" pass "ci: simulator PICK-2650"
 run_ci stand-in "" "${runner[@]}" CI_PROOF_DESTINATIONS="$sandbox/destinations-runner.txt" CI_PROOF_LISTING=fail

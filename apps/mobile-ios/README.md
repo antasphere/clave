@@ -69,7 +69,10 @@ are absent from its binary (`--prove-red` builds Release with `DEBUG` set and ex
 check to fail). `CLAVE_IOS_SIMULATOR_UDID` names the simulator (on a shared Mac, name one you
 created). Unset, as on the hosted runner, the gate takes the first iPhone on the newest iOS
 that `xcodebuild -showdestinations` lists for the scheme and fails with a sentence saying so
-when there is none, so no runtime version is written in the gate. The hosted run's evidence
+when there is none, so no runtime version is written in the gate. The listing it judged and the
+runtimes `xcrun simctl list runtimes` names are kept under `build/reports` (which the mobile
+job uploads) and printed when no iPhone is picked: the hosted run of 10 November 2026 at
+19:34 UTC picked none and left no listing to read. The hosted run's evidence
 is on whatever runtime the runner's image carries, which its log names (`ci: picked …`), and
 the iOS 17.5 evidence is this Mac's alone, never claimed for CI. Each step's verdict is its tool's own
 exit code, the output read from a log file afterwards; `bash

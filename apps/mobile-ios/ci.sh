@@ -40,12 +40,19 @@ if [ -z "$UDID" ]; then
   # it cannot use is listed under "Ineligible destinations", or not at all. The
   # pick reads only the available ones: the first iPhone on the newest iOS, never
   # a placeholder such as "Any iOS Simulator Device".
+  # The listing and the runtimes simctl knows are kept under build/reports, which
+  # the mobile CI job uploads, and printed when no simulator is picked: a pick
+  # that finds none must leave the runner's own answer to read.
+  reports="$PWD/build/reports"
+  mkdir -p "$reports"
   log="$(step_log)"
   status=0
   xcodebuild -project Clave.xcodeproj -scheme Clave -showdestinations >"$log" 2>&1 || status=$?
+  cp "$log" "$reports/showdestinations.txt"
+  xcrun simctl list runtimes >"$reports/simctl-runtimes.txt" 2>&1 || true
   if [ "$status" -ne 0 ]; then
     tail -5 "$log"
-    echo "ci: xcodebuild -showdestinations exited $status (log: $log)"
+    echo "ci: xcodebuild -showdestinations exited $status (kept in build/reports/showdestinations.txt)"
     exit "$status"
   fi
   status=0
@@ -79,7 +86,10 @@ sys.stderr.write("ci: picked %s, iOS %s\n" % (best[2], best[3]))
 print(best[1])
 ' "$log")" || status=$?
   if [ "$status" -ne 0 ]; then
-    echo "ci: the destinations xcodebuild listed are in $log"
+    echo "ci: what xcodebuild listed for the scheme (kept in build/reports/showdestinations.txt):"
+    grep -E "destinations for|platform:iOS Simulator" "$log" | head -n 60 | sed -E 's/^[[:space:]]+//; s/^/ci: listed: /' || true
+    echo "ci: the simulator runtimes simctl lists (kept in build/reports/simctl-runtimes.txt):"
+    head -n 20 "$reports/simctl-runtimes.txt" | sed -E 's/^/ci: runtime: /' || true
     exit "$status"
   fi
   rm -f "$log"
