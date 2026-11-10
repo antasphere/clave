@@ -104,6 +104,15 @@ class ReducerTest {
     }
 
     @Test
+    fun `a permission request delivered twice is shown once`() {
+        // A replay without positions (a live frame, then the same request again) repeats it.
+        val request = SessionEvent.PermissionRequest(id = "p-1", description = "Run the tests?", options = emptyList())
+        val c = run(listOf(request, request))
+        assertEquals(1, c.entries.count { it is Entry.Permission })
+        assertEquals(AgentState.Blocked, c.state)
+    }
+
+    @Test
     fun `a fatal error ends the conversation and is kept for the error state`() {
         val c = run(listOf(SessionEvent.Error("account limit reached", true)))
         assertEquals(AgentState.Ended, c.state)
