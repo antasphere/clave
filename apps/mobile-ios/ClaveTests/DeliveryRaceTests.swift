@@ -15,6 +15,9 @@ actor HoldingStore: KeyValueStore {
   private let inner = InMemoryKeyValueStore()
   private var holding: String?
   private var held: [CheckedContinuation<Void, Never>] = []
+  private var holdingReads: String?
+  private var readsToPass = 0
+  private var heldReads: [CheckedContinuation<Void, Never>] = []
 
   /// Holds every write of `key` from now on.
   func hold(_ key: String) { holding = key }
@@ -28,7 +31,31 @@ actor HoldingStore: KeyValueStore {
     for write in waiting { write.resume() }
   }
 
-  func get(_ key: String) async throws -> String? { try await inner.get(key) }
+  /// Holds the reads of `key` from now on, after letting the next `skipping` through.
+  func holdReads(_ key: String, skipping: Int) {
+    holdingReads = key
+    readsToPass = skipping
+  }
+  /// How many reads wait.
+  var readsWaiting: Int { heldReads.count }
+  /// Lets the waiting reads through and holds no more.
+  func releaseReads() {
+    holdingReads = nil
+    let waiting = heldReads
+    heldReads = []
+    for read in waiting { read.resume() }
+  }
+
+  func get(_ key: String) async throws -> String? {
+    if key == holdingReads {
+      if readsToPass > 0 {
+        readsToPass -= 1
+      } else {
+        await withCheckedContinuation { heldReads.append($0) }
+      }
+    }
+    return try await inner.get(key)
+  }
 
   func set(_ key: String, _ value: String) async throws {
     if key == holding { await withCheckedContinuation { held.append($0) } }
@@ -51,6 +78,8 @@ final class DeliveryRaceTests: XCTestCase {
   private var store: HoldingStore!
   private var parts: MachineDeliveryParts!
   private var models: [ConversationModel] = []
+  /// The push streams of conversations built deaf to the push channel, kept open.
+  private var silences: [AsyncStream<PushEvent>.Continuation] = []
 
   /// Another conversation's send, last in the ledger and answered unknown: a pass that asked about
   /// it has gone through every send before it.
@@ -73,19 +102,31 @@ final class DeliveryRaceTests: XCTestCase {
   override func tearDown() async throws {
     for model in models { model.disappear() }
     models = []
+    for silence in silences { silence.finish() }
+    silences = []
     await push.stop()
   }
 
-  /// A conversation of machine m1 over the machine's shared parts.
-  private func makeModel(_ sessionId: String = "s1") throws -> ConversationModel {
+  /// A conversation of machine m1 over the machine's shared parts. `hearsPush: false` builds one
+  /// that hears nothing of the push channel, so it never runs a reconnection pass of its own: what
+  /// it learns of its sends, it learns from the marks.
+  private func makeModel(_ sessionId: String = "s1", hearsPush: Bool = true) throws -> ConversationModel {
     let client = try ClaveServerClient(baseURL: "https://fake.invalid", bearer: { "device-token" }, transport: server)
     let push: PushClient = self.push
     let session = Session(
       id: sessionId, provider: "claude", transport: .events, cwd: "/tmp/scratch", windowKey: "server", state: .idle,
       createdAt: 1, adapterId: "claude-chat", title: "Seeded chat")
+    let events: @MainActor () -> AsyncStream<PushEvent>
+    if hearsPush {
+      events = { TestPushFanout.shared(for: push).stream() }
+    } else {
+      let (silent, continuation) = AsyncStream<PushEvent>.makeStream()
+      silences.append(continuation)
+      events = { silent }
+    }
     let model = ConversationModel(
       machineId: "m1", session: session, client: client, push: push,
-      events: { TestPushFanout.shared(for: push).stream() }, delivery: parts.delivery, drafts: parts.drafts,
+      events: events, delivery: parts.delivery, drafts: parts.drafts,
       attachmentDrafts: parts.attachmentDrafts)
     models.append(model)
     return model
@@ -116,8 +157,8 @@ final class DeliveryRaceTests: XCTestCase {
 
   /// A send nobody can tell the outcome of: the write never kept and its answer lost, the status
   /// route unreadable. Returns its id.
-  private func unknownSend(_ model: ConversationModel, _ text: String) async -> String {
-    server.planWrites(.loseBeforeKept)
+  private func unknownSend(_ model: ConversationModel, _ text: String, kept: Bool = false) async -> String {
+    server.planWrites(kept ? .keepThenLose : .loseBeforeKept)
     server.answerStatusByDefault(.unreadable)
     model.draft = text
     await model.send()
@@ -166,8 +207,8 @@ final class DeliveryRaceTests: XCTestCase {
   }
 
   /// The unknown send, then a pass started and held at the send's status read.
-  private func unknownSendWithAPassHoldingIt(_ model: ConversationModel, _ text: String) async throws -> (old: String, asked: Int) {
-    let old = await unknownSend(model, text)
+  private func unknownSendWithAPassHoldingIt(_ model: ConversationModel, _ text: String, kept: Bool = false) async throws -> (old: String, asked: Int) {
+    let old = await unknownSend(model, text, kept: kept)
     server.answerStatus(.held, for: old)
     let asked = try await addSentinel()
     await dropSocket()
@@ -199,6 +240,7 @@ final class DeliveryRaceTests: XCTestCase {
     try await laterPass()
     XCTAssertEqual(server.attempts, [old, new], "the old id is never written")
     XCTAssertEqual(server.kept, [new])
+    XCTAssertNil(model.deliveryNotice, "no delivered notice")
     let ledger = try await ledger()
     XCTAssertEqual(ledger, [])
   }
@@ -248,6 +290,7 @@ final class DeliveryRaceTests: XCTestCase {
     XCTAssertEqual(server.kept, [])
     await until("the bar gone") { model.deliveryMark == nil }
     XCTAssertEqual(model.draft, text, "the draft stays to edit")
+    XCTAssertNil(model.deliveryNotice, "no delivered notice")
     let ledger = try await ledger()
     XCTAssertEqual(ledger, [], "discarded")
     try await laterPass()
@@ -362,5 +405,204 @@ final class DeliveryRaceTests: XCTestCase {
     XCTAssertEqual(server.uploads, 1, "one upload in all")
     XCTAssertEqual(server.attempts.count, 1, "exactly one write")
     XCTAssertEqual(server.kept.count, 1, "one message, under one id")
+  }
+
+  // MARK: - Round 4b: what the composer says about a send a pass decided
+
+  /// t1b: Discard while the pass's same-id write is in flight (the request reached the server, its
+  /// answer held), released accepted: a write already sent is never withdrawn, so the message is
+  /// delivered once, under the old id; the discard finds it so, says so, and the field follows.
+  func testDiscardDuringThePassesWriteFindsTheMessageDeliveredAndSaysSo() async throws {
+    let model = try makeModel()
+    await model.appear()
+    let old = await unknownSend(model, "Discard while the write is out.")
+    server.planWrites(.hold)
+    server.answerStatus(.answer("absent"), for: old)
+    let asked = try await addSentinel()
+    await dropSocket()
+    await until("the pass's write is in flight") { server.writesHeld == 1 }
+    let discard = Task { await model.discardUnknownSend() }
+    await eventually("Discard waits for the pass") { await parts.delivery.claimState(old).waiting == 1 }
+    server.releaseHeldWrites()
+    await discard.value
+    await passFinished(asked)
+    XCTAssertEqual(server.kept, [old], "one message, under the old id")
+    XCTAssertEqual(server.attempts, [old, old], "the lost original and the pass's one write")
+    XCTAssertEqual(model.deliveryNotice, "This message was delivered before it could be discarded.")
+    XCTAssertEqual(model.draft, "", "the field follows the store the delivery cleared")
+    XCTAssertNil(model.deliveryMark)
+    XCTAssertFalse(model.canSend)
+  }
+
+  /// t1c: the status read answers accepted with a Discard pending: the original had landed, so
+  /// nothing is written and the person is told it was delivered.
+  func testDiscardPendingWhenTheOriginalIsFoundAcceptedSaysDelivered() async throws {
+    let model = try makeModel()
+    await model.appear()
+    let (old, asked) = try await unknownSendWithAPassHoldingIt(model, "Kept, then discarded?", kept: true)
+    let discard = Task { await model.discardUnknownSend() }
+    await eventually("Discard waits for the pass") { await parts.delivery.claimState(old).waiting == 1 }
+    server.answerHeldStatus(of: old, .answer("accepted"))
+    await discard.value
+    await passFinished(asked)
+    XCTAssertEqual(server.attempts, [old], "no write: the original had landed")
+    XCTAssertEqual(server.kept, [old])
+    XCTAssertEqual(model.deliveryNotice, "This message was delivered before it could be discarded.")
+    XCTAssertEqual(model.draft, "")
+  }
+
+  /// t2b: Send again while the old id's write is in flight, released accepted: one message in all,
+  /// under the old id; the person is told it had already been delivered, the field and the picked
+  /// file follow the stores, and a further send writes nothing.
+  func testSendAgainDuringThePassesWriteSendsNothingMoreAndSaysSo() async throws {
+    let model = try makeModel()
+    await model.appear()
+    let file = FileManager.default.temporaryDirectory.appendingPathComponent("delivery-truth-notes.txt")
+    try Data("twelve bytes".utf8).write(to: file)
+    defer { try? FileManager.default.removeItem(at: file) }
+    model.attach(PickedFile(uri: file.absoluteString, name: "notes.txt", mimeType: "text/plain", size: 12, kind: .file))
+    XCTAssertEqual(model.pendingFiles.count, 1)
+    let old = await unknownSend(model, "Send again while the write is out.")
+    XCTAssertEqual(model.pendingFiles.count, 1, "the file stays with the unknown send")
+    server.planWrites(.hold)
+    server.answerStatus(.answer("absent"), for: old)
+    let asked = try await addSentinel()
+    await dropSocket()
+    await until("the pass's write is in flight") { server.writesHeld == 1 }
+    let resend = Task { await model.resendUnderNewId() }
+    await eventually("Send again waits for the pass") { await parts.delivery.claimState(old).waiting == 1 }
+    server.releaseHeldWrites()
+    await resend.value
+    await passFinished(asked)
+    XCTAssertEqual(server.kept, [old], "one message in all, under the old id")
+    XCTAssertEqual(server.attempts, [old, old])
+    XCTAssertEqual(model.deliveryNotice, "This message had already been delivered, so it was not sent again.")
+    XCTAssertEqual(model.draft, "", "the field follows the store")
+    XCTAssertEqual(model.pendingFiles, [], "the picked file too")
+    XCTAssertFalse(model.canSend)
+    await model.send()
+    XCTAssertEqual(server.attempts, [old, old], "a further send writes nothing")
+  }
+
+  /// t3: Send again on a bar whose send a pass delivered while this model was not listening (its
+  /// mark in memory is stale): nothing is sent, the person is told, and the field follows the store.
+  func testSendAgainOnAStaleBarAfterTheSendWasDeliveredSendsNothing() async throws {
+    let sender = try makeModel()
+    await sender.appear()
+    let text = "Delivered behind the bar."
+    let old = await unknownSend(sender, text)
+    let stale = try makeModel()
+    await stale.appear()
+    XCTAssertEqual(stale.deliveryMark?.clientMessageId, old)
+    XCTAssertEqual(stale.draft, text)
+    stale.disappear()
+    server.answerStatus(.answer("absent"), for: old)
+    let asked = try await addSentinel()
+    await dropSocket()
+    await passFinished(asked)
+    XCTAssertEqual(server.kept, [old], "the sender's pass delivered it")
+    XCTAssertEqual(stale.deliveryMark?.kind, .unknown, "the model that did not listen still shows the bar")
+    let writes = server.attempts.count
+    await stale.resendUnderNewId()
+    XCTAssertEqual(server.attempts.count, writes, "nothing sent")
+    XCTAssertEqual(stale.deliveryNotice, "This message had already been delivered, so it was not sent again.")
+    XCTAssertEqual(stale.draft, "", "the field follows the store")
+    XCTAssertNil(stale.deliveryMark)
+    XCTAssertFalse(stale.canSend)
+  }
+
+  /// t4 (P08): a pass held at conversation A's status read; conversation B's unknown send is
+  /// discarded meanwhile. B's discard answers at once (the pass had not reached B); the pass reads
+  /// the ledger again when it gets to B and skips it; B's id is never written by the pass.
+  func testADiscardOfASendThePassHasNotReachedIsImmediateAndThePassSkipsIt() async throws {
+    let a = try makeModel("s1")
+    let b = try makeModel("s2")
+    await a.appear()
+    await b.appear()
+    let oldA = await unknownSend(a, "A's message.")
+    let textB = "B's message."
+    let oldB = await unknownSend(b, textB)
+    server.answerStatus(.held, for: oldA)
+    server.answerStatus(.answer("absent"), for: oldB)
+    let asked = try await addSentinel()
+    await dropSocket()
+    await until("the pass holds at A's status read") { server.isHoldingStatus(of: oldA) }
+    let claimB = await parts.delivery.claimState(oldB)
+    XCTAssertFalse(claimB.held, "the pass has not reached B")
+    await b.discardUnknownSend()
+    XCTAssertTrue(server.isHoldingStatus(of: oldA), "B's discard returned while the pass still holds A")
+    XCTAssertNil(b.deliveryNotice)
+    XCTAssertEqual(b.draft, textB, "B's draft stays to edit")
+    let ledgerB = try await ledger("s2")
+    XCTAssertEqual(ledgerB, [], "B discarded")
+    server.answerHeldStatus(of: oldA, .unreadable)
+    await passFinished(asked)
+    XCTAssertEqual(server.asks.filter { $0 == oldB }.count, 1, "the pass never asked about B")
+    XCTAssertEqual(server.attempts.filter { $0 == oldB }.count, 1, "B's id never written by the pass")
+    XCTAssertFalse(server.kept.contains(oldB))
+  }
+
+  /// t5: conversation X's pass delivers conversation Y's unknown send while Y's bar shows. Y hears
+  /// no push, so it runs no pass of its own and learns it from the marks: the bar goes, the text it
+  /// sent leaves the field, and Y says the message was delivered.
+  func testAnotherConversationsPassDeliveringThisSendClearsTheBarAndSaysSo() async throws {
+    let x = try makeModel("s1")
+    let y = try makeModel("s2", hearsPush: false)
+    await x.appear()
+    await y.appear()
+    let old = await unknownSend(y, "Y's message.")
+    server.answerStatus(.answer("absent"), for: old)
+    let asked = try await addSentinel()
+    await dropSocket()
+    await passFinished(asked)
+    XCTAssertEqual(server.kept, [old], "X's pass delivered Y's send under its id")
+    await until("Y's bar gone") { y.deliveryMark == nil }
+    await until("Y says it was delivered") { y.deliveryNotice != nil }
+    XCTAssertEqual(y.deliveryNotice, "This message was delivered when the connection came back.")
+    XCTAssertEqual(y.draft, "", "the text it sent leaves the field")
+    XCTAssertFalse(y.canSend)
+  }
+
+  /// t6: the person typed new text after the unknown send, then a pass delivers the send: the new
+  /// text stays in the field and Send stays enabled for it (it is a new message).
+  func testTextTypedAfterTheUnknownSendStaysWhenAPassDeliversIt() async throws {
+    let x = try makeModel("s1")
+    let y = try makeModel("s2", hearsPush: false)
+    await x.appear()
+    await y.appear()
+    let old = await unknownSend(y, "Y's first message.")
+    y.draft = "A new thought."
+    await y.flushDraft()
+    server.answerStatus(.answer("absent"), for: old)
+    let asked = try await addSentinel()
+    await dropSocket()
+    await passFinished(asked)
+    XCTAssertEqual(server.kept, [old])
+    await until("Y's bar gone") { y.deliveryMark == nil }
+    await until("Y says it was delivered") { y.deliveryNotice != nil }
+    XCTAssertEqual(y.draft, "A new thought.", "the new text stays")
+    XCTAssertTrue(y.canSend, "and Send is there for it")
+  }
+
+  /// t6b: the person types while the composer resyncs after a delivery (it has read the draft the
+  /// settle cleared, and its read of the picked files is held): what they typed stays.
+  func testTextTypedWhileTheComposerResyncsStays() async throws {
+    let x = try makeModel("s1")
+    let y = try makeModel("s2", hearsPush: false)
+    await x.appear()
+    await y.appear()
+    let old = await unknownSend(y, "Y's message.")
+    server.answerStatus(.answer("absent"), for: old)
+    // The settle reads Y's picked files once; the resync's read after it is held.
+    await store.holdReads(attachmentDraftKey("m1", "s2"), skipping: 1)
+    let asked = try await addSentinel()
+    await dropSocket()
+    await eventually("the resync holds at its read of the picked files") { await store.readsWaiting == 1 }
+    y.draft = "Typed during the resync."
+    await store.releaseReads()
+    await passFinished(asked)
+    await until("Y says it was delivered") { y.deliveryNotice != nil }
+    XCTAssertEqual(y.draft, "Typed during the resync.", "what the person typed stays")
+    XCTAssertTrue(y.canSend)
   }
 }

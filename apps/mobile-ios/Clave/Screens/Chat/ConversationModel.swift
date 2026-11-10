@@ -31,6 +31,7 @@ final class ConversationModel {
     didSet {
       guard draft != oldValue, !restoringDraft else { return }
       draftTouched = true
+      deliveryNotice = nil
       saveDraft(draft)
     }
   }
@@ -46,6 +47,10 @@ final class ConversationModel {
   private(set) var sendError: String?
   /// The sentence of the last other write that failed (an answer, an interrupt, an older page).
   private(set) var actionError: String?
+  /// What the composer says about a send of unknown outcome that was delivered while the person
+  /// was not driving it: by a reconnection, or before a choice on the bar could act. Cleared by the
+  /// next edit of the draft and the next send.
+  private(set) var deliveryNotice: String?
 
   /// Whether the machine's server takes files from the phone. The Mac app's own server has no
   /// files route; until the machine list says which kind of server this is, a refusal from the
@@ -71,6 +76,19 @@ final class ConversationModel {
   private var draftSave: Task<Void, Never>?
   private var dropped = false
   private var pickedImages: [String: Bool] = [:]
+  /// What the send of unknown outcome the bar names carried, so its later delivery clears only that.
+  private var carried: Carried?
+  /// The sends this model is settling itself right now (its own send, a choice on the bar): a mark
+  /// that changes for one of them is not news from a pass.
+  private var settlingHere: Set<String> = []
+  private var markRefresh: Task<Void, Never>?
+
+  private struct Carried: Equatable {
+    let clientMessageId: String
+    /// The draft as the person left it when it was sent.
+    let draftText: String
+    let files: [PickedFile]
+  }
 
   /// A conversation over its machine's delivery parts: the one controller, drafts and attachment
   /// drafts every conversation of the machine shares, so a reconnection pass knows each send a
@@ -152,15 +170,17 @@ final class ConversationModel {
         self.publish(state)
       }
     })
+    // Any conversation's pass may settle this conversation's send: every change of a mark is read
+    // again here, and the refresh tells this conversation's own from the others'.
     tasks.append(Task { [weak self] in
       for await _ in marks {
         guard let self else { return }
-        await self.reloadMark()
+        await self.refreshMark()
       }
     })
 
     await loadDraft()
-    await reloadMark()
+    await refreshMark()
     await push.start()
     if capabilities == nil {
       tasks.append(Task { [weak self] in await self?.loadCapabilities() })
@@ -308,13 +328,16 @@ final class ConversationModel {
     // at the guard before it mints an id. An await in between would let both mint and write.
     sending = true
     sendError = nil
+    deliveryNotice = nil
     defer { sending = false }
     // The stored mark, which the one in memory may not have caught up with yet. It is shown, and
     // only the person's choice on the bar takes it away; nothing is discarded here.
     if let stored = try? await delivery.marks.get(machineId, sessionId), stored.kind == .unknown {
       deliveryMark = stored
+      if carried?.clientMessageId != stored.clientMessageId { await loadCarried(stored.clientMessageId) }
       return
     }
+    let picked = pendingFiles
 
     let sessionId = self.sessionId
     let client = self.client
@@ -354,9 +377,11 @@ final class ConversationModel {
       attachments: records.isEmpty ? nil : records)
     // The draft must be on the device before the ledger compares against it.
     await flushDraft()
+    settlingHere.insert(clientMessageId)
     do {
       try await delivery.begin(record)
     } catch {
+      settlingHere.remove(clientMessageId)
       sendError = "This phone could not keep a record of the message, so it was not sent."
       return
     }
@@ -379,9 +404,10 @@ final class ConversationModel {
     case .rejected(_, let reason), .failed(_, let reason):
       sendError = reason
     case .unknown:
-      break
+      carried = Carried(clientMessageId: clientMessageId, draftText: draftText, files: picked)
     }
-    await reloadMark()
+    await refreshMark()
+    settlingHere.remove(clientMessageId)
   }
 
   /// The person chose to send again after an unknown outcome: a new id, which may duplicate. The
@@ -389,10 +415,21 @@ final class ConversationModel {
   /// meanwhile (it landed, or was refused), nothing is sent and the mark says what happened.
   func resendUnderNewId() async {
     if let mark = deliveryMark, mark.kind == .unknown {
+      let id = mark.clientMessageId
+      settlingHere.insert(id)
+      defer { settlingHere.remove(id) }
       let resolution = try? await delivery.discardPending(
-        machineId: machineId, sessionId: sessionId, clientMessageId: mark.clientMessageId, choice: .sendAgain)
-      guard resolution == .discarded else {
-        await reloadMark()
+        machineId: machineId, sessionId: sessionId, clientMessageId: id, choice: .sendAgain)
+      switch resolution {
+      case .discarded?:
+        break
+      case .settledMeanwhile?:
+        await resync(id)
+        deliveryNotice = "This message had already been delivered, so it was not sent again."
+        await refreshMark()
+        return
+      case nil:
+        await refreshMark()
         return
       }
     }
@@ -404,17 +441,77 @@ final class ConversationModel {
   /// reconciling the send finishes first; when it settled the send meanwhile, the mark says how.
   func discardUnknownSend() async {
     guard let mark = deliveryMark else { return }
+    let id = mark.clientMessageId
+    settlingHere.insert(id)
+    defer { settlingHere.remove(id) }
     let resolution = try? await delivery.discardPending(
-      machineId: machineId, sessionId: sessionId, clientMessageId: mark.clientMessageId, choice: .discard)
-    if resolution == .discarded {
+      machineId: machineId, sessionId: sessionId, clientMessageId: id, choice: .discard)
+    switch resolution {
+    case .discarded?:
       deliveryMark = nil
       sendError = nil
+    case .settledMeanwhile?:
+      await resync(id)
+      deliveryNotice = "This message was delivered before it could be discarded."
+    case nil:
+      break
     }
-    await reloadMark()
+    await refreshMark()
   }
 
-  private func reloadMark() async {
-    deliveryMark = try? await delivery.marks.get(machineId, sessionId)
+  /// Reads the conversation's mark again, one read at a time and in order. When the bar named a
+  /// send of unknown outcome and a pass this model did not drive delivered it, the composer follows
+  /// the stores and says so.
+  private func refreshMark() async {
+    let previous = markRefresh
+    let refresh = Task { [weak self] in
+      await previous?.value
+      await self?.readMark()
+    }
+    markRefresh = refresh
+    await refresh.value
+  }
+
+  private func readMark() async {
+    let shown = deliveryMark
+    let stored = try? await delivery.marks.get(machineId, sessionId)
+    deliveryMark = stored
+    if let stored, stored.kind == .unknown, carried?.clientMessageId != stored.clientMessageId {
+      await loadCarried(stored.clientMessageId)
+    }
+    guard let shown, shown.kind == .unknown, stored == nil, !settlingHere.contains(shown.clientMessageId) else { return }
+    // Gone from the ledger with its mark: delivered (a discard is this model's own act, and a pass
+    // that refuses a send leaves a rejected mark).
+    let listed = (try? await delivery.sends.list().contains { $0.clientMessageId == shown.clientMessageId }) ?? true
+    guard !listed else { return }
+    await resync(shown.clientMessageId)
+    deliveryNotice = "This message was delivered when the connection came back."
+  }
+
+  /// What a send of unknown outcome carried, read back from the ledger (after a restart, or for a
+  /// mark this model did not set).
+  private func loadCarried(_ clientMessageId: String) async {
+    guard let record = try? await delivery.sends.list().first(where: { $0.clientMessageId == clientMessageId }) else { return }
+    carried = Carried(clientMessageId: clientMessageId, draftText: record.draftText ?? record.text, files: [])
+  }
+
+  /// After a send was delivered: the field and the picked files follow the stores, which the
+  /// settle cleared when they still held what was sent. Either is cleared here only when the store
+  /// is empty and it still equals what the send carried, so anything typed or picked since stays,
+  /// and a draft the settle kept is never cleared.
+  private func resync(_ clientMessageId: String) async {
+    let storedDraft = (try? await drafts.get(machineId, sessionId)) ?? ""
+    let storedFiles = (try? await attachmentDrafts.get(machineId, sessionId)) ?? []
+    guard let sent = carried, sent.clientMessageId == clientMessageId else { return }
+    if storedDraft.isEmpty, !draft.isEmpty, draft == sent.draftText {
+      draft = ""
+    }
+    if storedFiles.isEmpty, !pendingFiles.isEmpty, pendingFiles == sent.files {
+      pendingFiles = []
+      pickedImages = [:]
+      attachNotice = nil
+    }
+    carried = nil
   }
 
   private func reconcileAfterReconnect() async {
@@ -432,14 +529,9 @@ final class ConversationModel {
       refreshRequests: { _ in },
       refreshHistory: { _, _ in },
       sleep: sleep)
-    await reloadMark()
-    await flushDraft()
-    if let stored = try? await drafts.get(machineId, sessionId), stored.isEmpty, !draft.isEmpty {
-      // The pass found the message landed and cleared the stored draft; the field follows it.
-      restoringDraft = true
-      draft = ""
-      restoringDraft = false
-    }
+    // The pass may have delivered this conversation's send: the mark, the field and the picked
+    // files follow the stores through the one refresh the marks listener runs too.
+    await refreshMark()
   }
 
   // MARK: - Other writes

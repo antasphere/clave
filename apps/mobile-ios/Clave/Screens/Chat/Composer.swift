@@ -66,6 +66,9 @@ struct Composer: View {
     if let notice = model.sendNotice {
       noticeLine(notice, tone: theme.colors.destructive, identifier: "chat.composer.send-error")
     }
+    if let notice = model.deliveryNotice {
+      noticeLine(notice, tone: theme.colors.textPrimary, identifier: "chat.composer.delivery-notice")
+    }
     if let notice = model.actionError {
       noticeLine(notice, tone: theme.colors.destructive, identifier: "chat.composer.action-error")
     }
