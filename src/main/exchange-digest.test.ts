@@ -7,7 +7,8 @@ type Callback = (err: Error | null, stdout: string, stderr: string) => void
 const mocks = vi.hoisted(() => ({
   execFile: vi.fn(),
   calls: [] as Array<{ args: string[]; prompt: string; finish: Callback }>,
-  filed: new Map<string, unknown>()
+  filed: new Map<string, unknown>(),
+  accounts: [] as Array<string | undefined>
 }))
 vi.mock('electron', () => {
   throw new Error('the exchange digest imported electron')
@@ -16,7 +17,10 @@ vi.mock('child_process', () => ({ execFile: mocks.execFile }))
 vi.mock('./sessions/adapters/pty-backend', () => ({
   getLoginShellEnv: () => ({ PATH: '/bin' }),
   getUserShell: () => '/bin/zsh',
-  accountTokenForSpawn: async () => undefined
+  accountTokenForSpawn: async (_provider: string, accountId?: string) => {
+    mocks.accounts.push(accountId)
+    return undefined
+  }
 }))
 vi.mock('./launch-profile-manager', () => ({
   launchProfileManager: {
@@ -51,7 +55,14 @@ vi.mock('./exchange-digest-store', () => ({
   }
 }))
 
-import { DIGEST_CLI_ARGS, cancelAll, requestDigest, requestWorkDigest } from './exchange-digest'
+import {
+  DIGEST_CLI_ARGS,
+  UNKNOWN_SESSION_ERROR,
+  cancelAll,
+  hostDigests,
+  requestDigest,
+  requestWorkDigest
+} from './exchange-digest'
 import { DIGEST_HELPER_MARKER } from '../shared/exchange-digest'
 import { WORK_DIGEST_MARKER } from '../shared/work-digest'
 import { resetShutdownForTests } from './helpers/runner'
@@ -62,6 +73,7 @@ async function ticks(): Promise<void> {
 
 beforeEach(() => {
   mocks.calls.length = 0
+  mocks.accounts.length = 0
   mocks.filed.clear()
   mocks.execFile.mockImplementation(
     (_file: string, args: string[], _opts: unknown, finish: Callback) => {
@@ -150,6 +162,64 @@ describe('the exchange digest on the helpers runner', () => {
         messages: [{ from: 'x', text: 'y' }]
       })
     ).resolves.toMatchObject({ ok: false, reason: 'cancelled' })
+    expect(mocks.calls).toHaveLength(0)
+  })
+})
+
+describe("the host reads a digest on its own record's launch (PRDCT-4327)", () => {
+  const records: Record<string, { claudeProfileId?: string; configDir?: string }> = {
+    named: { claudeProfileId: 'server-account-7' },
+    plain: {}
+  }
+  const host = hostDigests((id) => records[id] ?? null)
+  // What a client may send: its OWN ids for the tab's launch. Never read.
+  const clientLaunch = { launch: { claudeProfileId: 'mac-account-1', configDir: '/mac/home' } }
+
+  it("a tab on a named account is read on the record's account, not the client's", async () => {
+    const done = host.exchangeDigest({
+      sessionId: 'named',
+      key: 'h1',
+      messages: [{ from: 'x', text: 'y' }],
+      ...clientLaunch
+    } as Parameters<typeof host.exchangeDigest>[0])
+    await ticks()
+    expect(mocks.accounts).toEqual(['server-account-7'])
+    mocks.calls[0].finish(
+      null,
+      '{"needs_you": false, "message": null, "summary": "Nothing for you."}',
+      ''
+    )
+    await expect(done).resolves.toMatchObject({ ok: true, summary: 'Nothing for you.' })
+    expect(mocks.filed.get('named|h1')).toMatchObject({ ok: true })
+  })
+
+  it('a tab on the Default is read on the machine login, whatever the client sent', async () => {
+    const done = host.workDigest({
+      sessionId: 'plain',
+      key: 'w-h2',
+      notes: ['one'],
+      tools: 1,
+      ...clientLaunch
+    } as Parameters<typeof host.workDigest>[0])
+    await ticks()
+    expect(mocks.accounts).toEqual([undefined])
+    mocks.calls[0].finish(null, '{"title": "One", "needs_you": false, "note": null}', '')
+    await expect(done).resolves.toMatchObject({ ok: true, title: 'One' })
+  })
+
+  it('a session the host has no record of is refused without a call', async () => {
+    await expect(
+      host.exchangeDigest({
+        sessionId: 'nobody',
+        key: 'h3',
+        messages: [{ from: 'x', text: 'y' }],
+        ...clientLaunch
+      } as Parameters<typeof host.exchangeDigest>[0])
+    ).resolves.toEqual({ ok: false, error: UNKNOWN_SESSION_ERROR, reason: 'failed' })
+    await expect(
+      host.workDigest({ sessionId: 'nobody', key: 'w-h3', notes: ['a'], tools: 0 })
+    ).resolves.toMatchObject({ ok: false, reason: 'failed' })
+    await ticks()
     expect(mocks.calls).toHaveLength(0)
   })
 })

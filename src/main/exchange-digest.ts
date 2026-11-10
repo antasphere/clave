@@ -190,6 +190,84 @@ function failureText(outcome: { reason: string; detail: string }): string {
     : outcome.detail
 }
 
+/* The host's side (PRDCT-4327): a client asks the server a tab runs on for
+ * its digests, and the server reads them on the tab's own agent and account,
+ * which it takes from ITS OWN record of the session. What a client sends
+ * about the launch is never read: a server's account ids mean nothing on the
+ * Mac that shows the tab, and the reverse. The digests are filed in the
+ * host's data folder, so every client of that server reads the same one. */
+
+/** The fields of a session record a digest's launch is read from. */
+export interface DigestLaunchRecord {
+  workspaceId?: string
+  launchProfileId?: string
+  claudeProfileId?: string
+  configDir?: string
+}
+
+/** How the host finds its own record of a session, by the session's id. */
+export type DigestRecordOf = (sessionId: string) => DigestLaunchRecord | null | undefined
+
+/** The launch a digest runs on: the record's, field for field. No account on
+ *  the record is the Default (the machine login), never another account. */
+export function launchFromRecord(record: DigestLaunchRecord): DigestLaunch {
+  return {
+    workspaceId: record.workspaceId,
+    launchProfileId: record.launchProfileId,
+    claudeProfileId: record.claudeProfileId,
+    configDir: record.configDir
+  }
+}
+
+/** What a client sends: the digest's subject, never its launch. */
+export type HostDigestRequest = Omit<DigestRequest, 'launch'>
+export type HostWorkDigestRequest = Omit<WorkDigestRequest, 'launch'>
+
+export interface HostDigests {
+  exchangeDigest: (request: HostDigestRequest) => Promise<DigestResult>
+  exchangeDigestsOf: (sessionId: string) => Record<string, DigestDone>
+  workDigest: (request: HostWorkDigestRequest) => Promise<WorkDigestResult>
+  workDigestsOf: (sessionId: string) => Record<string, WorkDigestDone>
+}
+
+/** A session this host has no record of: said, never read on a guess. */
+export const UNKNOWN_SESSION_ERROR = 'This server has no record of that session'
+
+/** The digests as a host serves them to its clients. */
+export function hostDigests(recordOf: DigestRecordOf): HostDigests {
+  const launchOf = (sessionId: string): DigestLaunch | null => {
+    const record = recordOf(sessionId)
+    return record ? launchFromRecord(record) : null
+  }
+  return {
+    exchangeDigest: (request) => {
+      const launch = launchOf(request.sessionId)
+      if (!launch)
+        return Promise.resolve({ ok: false, error: UNKNOWN_SESSION_ERROR, reason: 'failed' })
+      return requestDigest({
+        sessionId: request.sessionId,
+        key: request.key,
+        messages: request.messages,
+        launch
+      })
+    },
+    exchangeDigestsOf: digestsOf,
+    workDigest: (request) => {
+      const launch = launchOf(request.sessionId)
+      if (!launch)
+        return Promise.resolve({ ok: false, error: UNKNOWN_SESSION_ERROR, reason: 'failed' })
+      return requestWorkDigest({
+        sessionId: request.sessionId,
+        key: request.key,
+        notes: request.notes,
+        tools: request.tools,
+        launch
+      })
+    },
+    workDigestsOf
+  }
+}
+
 /** End every queued and running digest: the sessions' shutdown calls it with
  *  the titles' (`pty-manager.ts` killAll); `quit` also shuts the door. The
  *  runner is one for every helper, so this ends the titles' too. */
