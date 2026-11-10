@@ -72,13 +72,18 @@ final class ConversationModel {
   private var dropped = false
   private var pickedImages: [String: Bool] = [:]
 
+  /// A conversation over its machine's delivery parts: the one controller, drafts and attachment
+  /// drafts every conversation of the machine shares, so a reconnection pass knows each send a
+  /// composer is driving and the person's choices wait for a pass reconciling the same send.
   init(
     machineId: String,
     session: Session,
     client: ClaveServerClient,
     push: PushClient,
     events: @escaping @MainActor () -> AsyncStream<PushEvent>,
-    store: any KeyValueStore,
+    delivery: DeliveryController,
+    drafts: Drafts,
+    attachmentDrafts: AttachmentDrafts,
     now: @escaping @Sendable () -> Date = { Date() }
   ) {
     self.machineId = machineId
@@ -88,12 +93,9 @@ final class ConversationModel {
     self.push = push
     self.events = events
     self.now = now
-    let milliseconds: @Sendable () -> Double = { now().timeIntervalSince1970 * 1000 }
-    drafts = Drafts(store: store)
-    attachmentDrafts = AttachmentDrafts(store: store)
-    delivery = DeliveryController(
-      sends: UnknownSends(store: store), marks: DeliveryMarks(store: store), drafts: drafts,
-      attachmentDrafts: attachmentDrafts, now: milliseconds)
+    self.drafts = drafts
+    self.attachmentDrafts = attachmentDrafts
+    self.delivery = delivery
     sleep = { try await Task.sleep(nanoseconds: UInt64(max(0, $0) * 1_000_000)) }
   }
 
@@ -382,25 +384,32 @@ final class ConversationModel {
     await reloadMark()
   }
 
-  /// The person chose to send again after an unknown outcome: a new id, which may duplicate.
+  /// The person chose to send again after an unknown outcome: a new id, which may duplicate. The
+  /// first send is discarded once a pass reconciling it has let go; when that pass settled it
+  /// meanwhile (it landed, or was refused), nothing is sent and the mark says what happened.
   func resendUnderNewId() async {
     if let mark = deliveryMark, mark.kind == .unknown {
-      try? await ClaveCore.discardUnknownSend(
-        machineId: machineId, sessionId: sessionId, clientMessageId: mark.clientMessageId,
-        sends: delivery.sends, marks: delivery.marks)
+      let resolution = try? await delivery.discardPending(
+        machineId: machineId, sessionId: sessionId, clientMessageId: mark.clientMessageId)
+      guard resolution == .discarded else {
+        await reloadMark()
+        return
+      }
     }
     deliveryMark = nil
     await send()
   }
 
-  /// The person chose to give up on a send of unknown outcome; the draft stays to edit.
+  /// The person chose to give up on a send of unknown outcome; the draft stays to edit. A pass
+  /// reconciling the send finishes first; when it settled the send meanwhile, the mark says how.
   func discardUnknownSend() async {
     guard let mark = deliveryMark else { return }
-    try? await ClaveCore.discardUnknownSend(
-      machineId: machineId, sessionId: sessionId, clientMessageId: mark.clientMessageId,
-      sends: delivery.sends, marks: delivery.marks)
-    deliveryMark = nil
-    sendError = nil
+    let resolution = try? await delivery.discardPending(
+      machineId: machineId, sessionId: sessionId, clientMessageId: mark.clientMessageId)
+    if resolution == .discarded {
+      deliveryMark = nil
+      sendError = nil
+    }
     await reloadMark()
   }
 

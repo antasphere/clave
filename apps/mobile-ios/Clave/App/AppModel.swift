@@ -260,7 +260,8 @@ nonisolated struct NotificationResponseInput: Sendable {
     if let existing = conversations[key] { return existing }
     let model = ConversationModel(
       machineId: machineId, session: session, client: connection.client, push: connection.push,
-      events: { connection.events() }, store: connection.ownerKeyValueStore)
+      events: { connection.events() }, delivery: connection.delivery, drafts: connection.drafts,
+      attachmentDrafts: connection.attachmentDrafts)
     // A conversation never outlives its connection: one made over a connection already replaced is not kept.
     if connections[machineId] === connection { conversations[key] = model }
     return model

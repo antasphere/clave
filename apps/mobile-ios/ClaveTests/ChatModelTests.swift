@@ -201,11 +201,28 @@ final class FakeChatServer: HTTPTransport, WebSocketTransport, @unchecked Sendab
   }
 }
 
+/// One machine's delivery parts over a store, as `MachineConnection` makes them: every
+/// conversation of the machine shares them.
+struct MachineDeliveryParts {
+  let delivery: DeliveryController
+  let drafts: Drafts
+  let attachmentDrafts: AttachmentDrafts
+
+  init(store: any KeyValueStore) {
+    drafts = Drafts(store: store)
+    attachmentDrafts = AttachmentDrafts(store: store)
+    delivery = DeliveryController(
+      sends: UnknownSends(store: store), marks: DeliveryMarks(store: store), drafts: drafts,
+      attachmentDrafts: attachmentDrafts)
+  }
+}
+
 @MainActor
 final class ChatModelTests: XCTestCase {
   private var server: FakeChatServer!
   private var push: PushClient!
   private var store: InMemoryKeyValueStore!
+  private var parts: MachineDeliveryParts!
   private var models: [ConversationModel] = []
 
   private let session = Session(
@@ -215,6 +232,7 @@ final class ChatModelTests: XCTestCase {
   override func setUp() async throws {
     server = FakeChatServer()
     store = InMemoryKeyValueStore()
+    parts = MachineDeliveryParts(store: store)
     // A reconnection's backoff (a second at most) passes at once; the liveness timers are real
     // and far longer than any test.
     push = try PushClient(
@@ -236,7 +254,8 @@ final class ChatModelTests: XCTestCase {
     let push: PushClient = self.push
     let model = ConversationModel(
       machineId: "m1", session: session, client: client, push: push,
-      events: { TestPushFanout.shared(for: push).stream() }, store: store)
+      events: { TestPushFanout.shared(for: push).stream() }, delivery: parts.delivery, drafts: parts.drafts,
+      attachmentDrafts: parts.attachmentDrafts)
     models.append(model)
     return model
   }

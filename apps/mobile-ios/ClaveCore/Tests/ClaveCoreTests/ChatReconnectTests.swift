@@ -370,4 +370,116 @@ final class ChatDeliveryControllerTests: XCTestCase {
     let isActive = await controller.isActive(s.clientMessageId)
     XCTAssertFalse(isActive)
   }
+
+  // MARK: the claim
+
+  /// A send is held by one party at a time and handed on in the order they asked; another send's
+  /// claim is not held up by it.
+  func testTheClaimIsHeldByOneAtATimeAndHandedOnInTheOrderAsked() async throws {
+    let controller = controllerOver(InMemoryKeyValueStore())
+    await controller.claim("message-1")
+    let order = Box<[Int]>([])
+    var waiting: [Task<Void, Never>] = []
+    for n in 1...3 {
+      waiting.append(Task {
+        await controller.claim("message-1")
+        order.mutate { $0.append(n) }
+      })
+      await eventually("waiter \(n) queued") { await controller.claimState("message-1").waiting == n }
+    }
+    await controller.claim("message-2")
+    XCTAssertEqual(order.value, [], "nobody has it while it is held")
+    for n in 1...3 {
+      await controller.release("message-1")
+      await eventually("waiter \(n) served") { order.value.count == n }
+      XCTAssertEqual(order.value, Array(1...n), "in the order they asked")
+    }
+    for task in waiting { await task.value }
+    await controller.release("message-1")
+    let state = await controller.claimState("message-1")
+    XCTAssertEqual(state.held, false)
+    XCTAssertEqual(state.waiting, 0)
+  }
+
+  /// A pass whose settling throws still lets go of the send, so the person's choice never waits
+  /// for ever: the error reaches the caller and the send is free.
+  func testThePassLetsGoOfASendWhoseSettlingThrows() async throws {
+    let kv = InMemoryKeyValueStore()
+    let marks = FailingMarkStore(kv)
+    let controller = DeliveryController(
+      sends: UnknownSends(store: kv), marks: DeliveryMarks(store: marks), drafts: Drafts(store: kv),
+      attachmentDrafts: AttachmentDrafts(store: kv))
+    let s = sendOf("message-2000")
+    try await recordUnknownSend(s, reason: "lost", sends: controller.sends, marks: DeliveryMarks(store: kv))
+    await marks.failFromNowOn()
+    do {
+      try await controller.reconnect(
+        machineId: "m", openConversations: [],
+        status: { _ in WriteStatus(status: .unknown) }, write: { _ in WriteAnswer(status: .accepted) },
+        refreshRequests: { _ in }, refreshHistory: { _, _ in }, sleep: { _ in })
+      XCTFail("the settle did not throw")
+    } catch is MarkWriteFailed {}
+    let state = await controller.claimState(s.clientMessageId)
+    XCTAssertEqual(state.held, false, "let go on the throwing path")
+    let resolution = try await controller.discardPending(machineId: "m", sessionId: "s", clientMessageId: s.clientMessageId)
+    XCTAssertEqual(resolution, .discarded)
+  }
+
+  /// A discard asked while a pass holds the send waits for it; the pass found it absent and wrote
+  /// it once under its id, so the discard finds it settled and changes nothing.
+  func testADiscardWaitsForThePassHoldingTheSendAndFindsItSettled() async throws {
+    let kv = InMemoryKeyValueStore()
+    let controller = controllerOver(kv)
+    let s = sendOf("message-2001")
+    try await recordUnknownSend(s, reason: "lost", sends: controller.sends, marks: controller.marks)
+    let entered = Gate()
+    let release = Gate()
+    let writes = Box<[String]>([])
+    let pass = Task {
+      try await controller.reconnect(
+        machineId: "m", openConversations: [],
+        status: { _ in
+          await entered.open()
+          await release.wait()
+          return WriteStatus(status: .absent)
+        },
+        write: { send in
+          writes.mutate { $0.append(send.clientMessageId) }
+          return WriteAnswer(status: .accepted)
+        },
+        refreshRequests: { _ in }, refreshHistory: { _, _ in }, sleep: { _ in })
+    }
+    await entered.wait()
+    let discard = Task { try await controller.discardPending(machineId: "m", sessionId: "s", clientMessageId: s.clientMessageId) }
+    await eventually("the discard waits for the pass") { await controller.claimState(s.clientMessageId).waiting == 1 }
+    XCTAssertEqual(writes.value, [], "nothing written while the pass holds the send")
+    await release.open()
+    try await pass.value
+    let resolution = try await discard.value
+    XCTAssertEqual(resolution, .settledMeanwhile)
+    XCTAssertEqual(writes.value, [s.clientMessageId], "the old id once, by the pass")
+    let list = try await controller.sends.list()
+    XCTAssertEqual(list, [])
+  }
+}
+
+private struct MarkWriteFailed: Error {}
+
+/// A key-value store whose writes of delivery marks fail once told to.
+private actor FailingMarkStore: KeyValueStore {
+  private let inner: InMemoryKeyValueStore
+  private var failing = false
+
+  init(_ inner: InMemoryKeyValueStore) { self.inner = inner }
+
+  func failFromNowOn() { failing = true }
+
+  func get(_ key: String) async throws -> String? { try await inner.get(key) }
+
+  func set(_ key: String, _ value: String) async throws {
+    if failing { throw MarkWriteFailed() }
+    try await inner.set(key, value)
+  }
+
+  func remove(_ key: String) async throws { try await inner.remove(key) }
 }

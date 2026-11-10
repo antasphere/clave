@@ -1,4 +1,4 @@
-import ClaveCore
+@testable import ClaveCore
 import XCTest
 @testable import Clave
 
@@ -17,6 +17,8 @@ final class DeliveryChatServer: HTTPTransport, WebSocketTransport, @unchecked Se
     case keepThenLose
     /// The write never reaches the server: nothing kept, the answer lost.
     case loseBeforeKept
+    /// The write waits until the test lets it through (`releaseHeldWrites`), then is kept.
+    case hold
   }
 
   enum Status: Equatable, Sendable {
@@ -24,6 +26,8 @@ final class DeliveryChatServer: HTTPTransport, WebSocketTransport, @unchecked Se
     case unreadable
     /// The server's answer about the id.
     case answer(String)
+    /// The read waits until the test answers it (`answerHeldStatus`).
+    case held
   }
 
   /// The timeline, the capabilities and the push channel are its.
@@ -35,6 +39,8 @@ final class DeliveryChatServer: HTTPTransport, WebSocketTransport, @unchecked Se
   private var _attempts: [String] = []
   private var _kept: [String] = []
   private var _asks: [String] = []
+  private var heldWrites: [CheckedContinuation<Void, Never>] = []
+  private var heldReads: [String: CheckedContinuation<Status, Never>] = [:]
 
   /// The id of every write that left the phone, in order, a lost one included.
   var attempts: [String] { lock.withLock { _attempts } }
@@ -50,6 +56,25 @@ final class DeliveryChatServer: HTTPTransport, WebSocketTransport, @unchecked Se
   /// What it says about any other id.
   func answerStatusByDefault(_ status: Status) { lock.withLock { fallback = status } }
 
+  /// How many writes wait to be let through.
+  var writesHeld: Int { lock.withLock { heldWrites.count } }
+  /// Lets the waiting writes through, in the order they came.
+  func releaseHeldWrites() {
+    let waiting = lock.withLock { () -> [CheckedContinuation<Void, Never>] in
+      defer { heldWrites = [] }
+      return heldWrites
+    }
+    for write in waiting { write.resume() }
+  }
+
+  /// Whether a status read about this id waits for its answer.
+  func isHoldingStatus(of id: String) -> Bool { lock.withLock { heldReads[id] != nil } }
+  /// Answers the waiting status read about this id.
+  func answerHeldStatus(of id: String, _ status: Status) {
+    let read = lock.withLock { heldReads.removeValue(forKey: id) }
+    read?.resume(returning: status)
+  }
+
   func perform(_ request: URLRequest) async throws -> HTTPAnswer {
     let components = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)!
     switch (request.httpMethod ?? "GET", components.path) {
@@ -57,12 +82,15 @@ final class DeliveryChatServer: HTTPTransport, WebSocketTransport, @unchecked Se
       return try await write(request)
     case ("GET", "/sessions/writes"):
       let id = components.queryItems?.first { $0.name == "clientMessageId" }?.value ?? ""
-      let status = lock.withLock { () -> Status in
+      var status = lock.withLock { () -> Status in
         _asks.append(id)
         return statuses[id] ?? fallback
       }
+      if status == .held {
+        status = await withCheckedContinuation { read in lock.withLock { heldReads[id] = read } }
+      }
       switch status {
-      case .unreadable:
+      case .unreadable, .held:
         throw URLError(.networkConnectionLost)
       case .answer(let value):
         return HTTPAnswer(status: 200, headers: ["Content-Type": "application/json"], body: Data(#"{"status":"\#(value)"}"#.utf8))
@@ -81,6 +109,7 @@ final class DeliveryChatServer: HTTPTransport, WebSocketTransport, @unchecked Se
       return plan.isEmpty ? .accept : plan.removeFirst()
     }
     if fate == .loseBeforeKept { throw URLError(.networkConnectionLost) }
+    if fate == .hold { await withCheckedContinuation { write in lock.withLock { heldWrites.append(write) } } }
     // The chat server keeps the message in its timeline and pushes it, as a server would.
     let answer = try await chat.perform(request)
     if input["type"] as? String == "user_message", answer.status == 200 { lock.withLock { _kept.append(id) } }
@@ -89,8 +118,35 @@ final class DeliveryChatServer: HTTPTransport, WebSocketTransport, @unchecked Se
   }
 
   func connect(_ url: URL, headers: [String: String]) async throws -> any WebSocketConnection {
-    try await chat.connect(url, headers: headers)
+    let socket = try await chat.connect(url, headers: headers)
+    guard let fake = socket as? FakeChatSocket else { return socket }
+    return AnySessionSocket(fake)
   }
+}
+
+/// A socket of the chat server that also acknowledges a subscription to a session other than
+/// s1 (the chat server answers s1's alone), for a second conversation of the machine.
+final class AnySessionSocket: WebSocketConnection, @unchecked Sendable {
+  private let inner: FakeChatSocket
+
+  init(_ inner: FakeChatSocket) {
+    self.inner = inner
+  }
+
+  func send(_ text: String) async throws {
+    if let frame = (try? JSONSerialization.jsonObject(with: Data(text.utf8))) as? [String: Any],
+      frame["_tag"] as? String == "subscribe", let id = frame["sessionId"] as? String, id != "s1"
+    {
+      let session = FakeChatServer.sessionJSON.replacingOccurrences(of: #""id":"s1""#, with: #""id":"\#(id)""#)
+      inner.feed(#"{"_tag":"subscribed","sessionId":"\#(id)","session":\#(session)}"#)
+      return
+    }
+    try await inner.send(text)
+  }
+
+  func receive() async throws -> WebSocketMessage { try await inner.receive() }
+
+  func close(code: Int) { inner.close(code: code) }
 }
 
 @MainActor
@@ -98,6 +154,7 @@ final class DeliveryUnknownTests: XCTestCase {
   private var server: DeliveryChatServer!
   private var push: PushClient!
   private var store: InMemoryKeyValueStore!
+  private var parts: MachineDeliveryParts!
   private var models: [ConversationModel] = []
 
   /// Another conversation's send, put last in the ledger before each reconnection and answered
@@ -111,6 +168,7 @@ final class DeliveryUnknownTests: XCTestCase {
   override func setUp() async throws {
     server = DeliveryChatServer()
     store = InMemoryKeyValueStore()
+    parts = MachineDeliveryParts(store: store)
     // A reconnection's backoff (a second at most) passes at once; the liveness timers are real
     // and far longer than any test.
     push = try PushClient(
@@ -132,7 +190,8 @@ final class DeliveryUnknownTests: XCTestCase {
     let push: PushClient = self.push
     let model = ConversationModel(
       machineId: "m1", session: session, client: client, push: push,
-      events: { TestPushFanout.shared(for: push).stream() }, store: store)
+      events: { TestPushFanout.shared(for: push).stream() }, delivery: parts.delivery, drafts: parts.drafts,
+      attachmentDrafts: parts.attachmentDrafts)
     models.append(model)
     return model
   }
@@ -174,6 +233,18 @@ final class DeliveryUnknownTests: XCTestCase {
     server.chat.sockets.last?.feed(.closed(code: 1006, reason: "gone"))
     await until("the socket reopened") { server.chat.sockets.count == sockets + 1 }
     await until("the pass reached the end of the ledger") { server.asks.filter { $0 == sentinelId }.count == asked + 1 }
+    let now = server.asks.filter { $0 == sentinelId }.count
+    if now != asked + 1 {
+      XCTFail("the pass: sentinel asked \(now) times (\(asked) before), \(server.chat.sockets.count) sockets, \(server.asks.count) status reads")
+    }
+    // The sentinel's status read is seen before the pass has settled it and returned; a
+    // reconnection arriving before the pass let go of the machine would join it, not run its own.
+    let start = Date()
+    while await parts.delivery.isReconnecting("m1"), Date().timeIntervalSince(start) < 20 {
+      try? await Task.sleep(nanoseconds: 5_000_000)
+    }
+    let running = await parts.delivery.isReconnecting("m1")
+    XCTAssertFalse(running, "the pass never let go of the machine")
   }
 
   // MARK: - The table, same id

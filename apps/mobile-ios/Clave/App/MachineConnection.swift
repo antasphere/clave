@@ -25,6 +25,13 @@ import Observation
   let client: ClaveServerClient
   let push: PushClient
   let ownerKeyValueStore: OwnerScopedKeyValueStore
+  /// The machine's one delivery controller, with the drafts and attachment drafts it settles, over
+  /// the owner's store: every conversation of the machine sends through them, so a reconnection
+  /// pass knows each send a composer is driving, and a pass and the person's choices take each send
+  /// of unknown outcome in turn.
+  let delivery: DeliveryController
+  let drafts: Drafts
+  let attachmentDrafts: AttachmentDrafts
 
   private(set) var state: State = .connecting
   private(set) var workspaces: WorkspaceStateView?
@@ -66,6 +73,11 @@ import Observation
     self.credentials = credentials
     self.records = records
     self.ownerKeyValueStore = ownerKeyValueStore
+    drafts = Drafts(store: ownerKeyValueStore)
+    attachmentDrafts = AttachmentDrafts(store: ownerKeyValueStore)
+    delivery = DeliveryController(
+      sends: UnknownSends(store: ownerKeyValueStore), marks: DeliveryMarks(store: ownerKeyValueStore), drafts: drafts,
+      attachmentDrafts: attachmentDrafts)
     client = try ClaveServerClient(credential: credential, transport: environment.transport, build: environment.buildKind)
     let bearer = credential.bearer
     push = try PushClient(

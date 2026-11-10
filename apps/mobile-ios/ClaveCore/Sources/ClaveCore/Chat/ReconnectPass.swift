@@ -25,6 +25,11 @@ public struct ReconnectPorts: Sendable {
   public var clearAttachments: (@Sendable (UnknownSend) async throws -> Void)?
   /// A send the composer is still driving: the pass leaves it to the composer.
   public var isActive: (@Sendable (UnknownSend) async -> Bool)?
+  /// Holds the send while the pass reconciles and settles it, so a choice the person makes on the
+  /// bar meanwhile waits for the pass; false when the send is no longer the pass's to settle.
+  public var claim: (@Sendable (UnknownSend) async -> Bool)?
+  /// Lets go of a send the claim held.
+  public var release: (@Sendable (UnknownSend) async -> Void)?
 
   public init(
     sends: UnknownSends,
@@ -37,7 +42,9 @@ public struct ReconnectPorts: Sendable {
     refreshRequests: @escaping @Sendable (_ machineId: String) async throws -> Void,
     refreshHistory: @escaping @Sendable (_ machineId: String, _ sessionId: String) async throws -> Void,
     clearAttachments: (@Sendable (UnknownSend) async throws -> Void)? = nil,
-    isActive: (@Sendable (UnknownSend) async -> Bool)? = nil
+    isActive: (@Sendable (UnknownSend) async -> Bool)? = nil,
+    claim: (@Sendable (UnknownSend) async -> Bool)? = nil,
+    release: (@Sendable (UnknownSend) async -> Void)? = nil
   ) {
     self.sends = sends
     self.marks = marks
@@ -50,6 +57,8 @@ public struct ReconnectPorts: Sendable {
     self.refreshHistory = refreshHistory
     self.clearAttachments = clearAttachments
     self.isActive = isActive
+    self.claim = claim
+    self.release = release
   }
 }
 
@@ -73,17 +82,30 @@ public func reconnectPass(machineId: String, openConversations: [String], ports:
   var outcomes: [ReconnectReport.Settled] = []
   for send in try await ports.sends.forMachine(machineId) {
     if let isActive = ports.isActive, await isActive(send) { continue }
-    let outcome = await reconcile(
-      send.clientMessageId,
-      ports: SendPorts(
-        write: { _ in try await ports.write(send) },
-        status: { _ in try await ports.status(send) },
-        sleep: ports.sleep,
-        now: ports.now),
-      options: options,
-      mayRetry: true)
-    outcomes.append(.init(send: send, outcome: outcome))
-    try await settleSend(send, outcome, sends: ports.sends, marks: ports.marks, drafts: ports.drafts, now: ports.now, clearAttachments: ports.clearAttachments)
+    // The ledger was read before this send's turn: the claim reads it again, and a person's
+    // choice on the bar waits until the send is settled and let go.
+    var held = false
+    if let claim = ports.claim {
+      guard await claim(send) else { continue }
+      held = true
+    }
+    do {
+      let outcome = await reconcile(
+        send.clientMessageId,
+        ports: SendPorts(
+          write: { _ in try await ports.write(send) },
+          status: { _ in try await ports.status(send) },
+          sleep: ports.sleep,
+          now: ports.now),
+        options: options,
+        mayRetry: true)
+      outcomes.append(.init(send: send, outcome: outcome))
+      try await settleSend(send, outcome, sends: ports.sends, marks: ports.marks, drafts: ports.drafts, now: ports.now, clearAttachments: ports.clearAttachments)
+    } catch {
+      if held { await ports.release?(send) }
+      throw error
+    }
+    if held { await ports.release?(send) }
   }
   var refreshFailures: [String] = []
   var requestsRefreshed = false
@@ -143,15 +165,27 @@ public func recordUnknownSend(_ send: UnknownSend, reason: String, sends: Unknow
   try await marks.set(send.machineId, send.sessionId, DeliveryMark(kind: .unknown, clientMessageId: send.clientMessageId, reason: reason, at: send.at))
 }
 
-/// The person chose to discard a send of unknown outcome: it leaves the ledger and the mark.
+/// The person chose to discard a send of unknown outcome: it leaves the ledger and the mark. This
+/// does not wait for a pass reconciling the send; the app goes through
+/// `DeliveryController.discardPending`, which does.
 public func discardUnknownSend(machineId: String, sessionId: String, clientMessageId: String, sends: UnknownSends, marks: DeliveryMarks) async throws {
   try await sends.remove(clientMessageId)
   try await marks.clear(machineId, sessionId)
 }
 
-/// The composer's and the reconnection's one owner of the ledger: a send is recorded before it is
-/// dispatched, settled when it ends, and skipped by a pass while it is still in flight; one pass
-/// per machine runs at a time, a second request joining the one running.
+/// How the person's explicit choice on a send of unknown outcome ended.
+public enum PendingResolution: Sendable, Equatable {
+  /// The send left the ledger and its mark was cleared: nothing writes it again.
+  case discarded
+  /// A reconnection pass settled it while the choice waited: nothing was changed.
+  case settledMeanwhile
+}
+
+/// One machine's owner of the ledger, shared by every conversation of the machine: a send is
+/// recorded before it is dispatched, settled when it ends, and skipped by a pass while it is
+/// still in flight; one pass per machine runs at a time, a second request joining the one
+/// running; and a send of unknown outcome is held by one party at a time (a pass reconciling it,
+/// or the person's choice on the bar), in the order they asked.
 public actor DeliveryController {
   public let sends: UnknownSends
   public let marks: DeliveryMarks
@@ -160,6 +194,8 @@ public actor DeliveryController {
   private let now: @Sendable () -> Double
   private var active: Set<String> = []
   private var reconnecting: [String: Task<Void, Error>] = [:]
+  private var claimed: Set<String> = []
+  private var waiters: [String: [CheckedContinuation<Void, Never>]] = [:]
 
   /// The controller over one owner's ledger, marks and drafts. Pass the composer's own `Drafts`:
   /// each instance caches, so a second one over the same store would not see the composer's edits.
@@ -173,6 +209,61 @@ public actor DeliveryController {
 
   /// Whether a send is still in flight from the composer.
   public func isActive(_ clientMessageId: String) -> Bool { active.contains(clientMessageId) }
+
+  /// Holds the send of this id once nobody else does; those who asked before are served first.
+  public func claim(_ id: String) async {
+    guard claimed.contains(id) else {
+      claimed.insert(id)
+      return
+    }
+    // Handed over by release(), which keeps the id held for this waiter.
+    await withCheckedContinuation { waiters[id, default: []].append($0) }
+  }
+
+  /// Hands the send to the next one waiting for it, else frees it.
+  public func release(_ id: String) {
+    guard var queue = waiters[id], !queue.isEmpty else {
+      claimed.remove(id)
+      return
+    }
+    let next = queue.removeFirst()
+    waiters[id] = queue.isEmpty ? nil : queue
+    next.resume()
+  }
+
+  /// Whether a pass runs for this machine now: a reconnection arriving meanwhile joins it.
+  func isReconnecting(_ machineId: String) -> Bool { reconnecting[machineId] != nil }
+
+  /// Whether the send of this id is held, and how many wait for it.
+  func claimState(_ id: String) -> (held: Bool, waiting: Int) {
+    (claimed.contains(id), waiters[id]?.count ?? 0)
+  }
+
+  /// A pass's claim: false, the hold let go, when the send left the ledger meanwhile or the
+  /// composer is driving it.
+  func claimForPass(_ send: UnknownSend) async -> Bool {
+    await claim(send.clientMessageId)
+    let listed = (try? await sends.list().contains { $0.clientMessageId == send.clientMessageId }) ?? false
+    if !listed || active.contains(send.clientMessageId) {
+      release(send.clientMessageId)
+      return false
+    }
+    return true
+  }
+
+  /// The person chose to discard a send of unknown outcome, or to send its text again under a new
+  /// id. Waits for a pass reconciling the send, then takes it out of the ledger and clears the
+  /// mark, unless that pass settled it meanwhile.
+  public func discardPending(machineId: String, sessionId: String, clientMessageId: String) async throws -> PendingResolution {
+    await claim(clientMessageId)
+    defer { release(clientMessageId) }
+    guard try await sends.list().contains(where: { $0.clientMessageId == clientMessageId }) else {
+      return .settledMeanwhile
+    }
+    try await sends.remove(clientMessageId)
+    try await marks.clear(machineId, sessionId)
+    return .discarded
+  }
 
   /// Before the write leaves: the send in the ledger and marked, so a crash mid-send is found again.
   public func begin(_ send: UnknownSend) async throws {
@@ -222,7 +313,9 @@ public actor DeliveryController {
       clearAttachments: { send in
         try await attachments.clearIfUnchanged(send.machineId, send.sessionId, sent: send.attachments ?? [])
       },
-      isActive: { [weak self] send in await self?.isActive(send.clientMessageId) ?? false })
+      isActive: { [weak self] send in await self?.isActive(send.clientMessageId) ?? false },
+      claim: { [weak self] send in await self?.claimForPass(send) ?? false },
+      release: { [weak self] send in await self?.release(send.clientMessageId) })
     let run = Task<Void, Error> {
       _ = try await reconnectPass(machineId: machineId, openConversations: openConversations, ports: ports, options: options)
     }
