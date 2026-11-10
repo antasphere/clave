@@ -55,8 +55,12 @@ echo "sdk.dir=$ANDROID_HOME" > local.properties   # gitignored
 ```
 
 The lane of 9 November 2026 copied the platform, the build tools and the platform tools from
-the Mac's existing SDK into the private root instead of downloading them again, and linked the
-system image and the emulator read-only; the versions and checksums are in its record.
+the Mac's existing SDK into the private root instead of downloading them again; the versions and
+checksums are in its record. In that root, `system-images` is a real folder: the Android 16 image
+is a read-only link to the Mac's own image folder, and the Android 8.0 image is a folder of its
+own. The emulator is a read-only link too. A link names one package's folder, never
+`system-images` itself, and nothing is installed or updated through a link: `sdkmanager` follows
+a link and writes into whatever it points at.
 
 ## Build, test, run
 
@@ -90,9 +94,11 @@ on that emulator:
 ./gradlew :platform:connectedDebugAndroidTest :ui:connectedDebugAndroidTest :app:connectedDebugAndroidTest
 ```
 
-The lowest supported Android is 8.0 (minSdk 26), and the app runs there too, on a second
-virtual device from the API 26 image installed into the private SDK (`sdkmanager --install
-"system-images;android-26;google_apis;arm64-v8a"`, checksum in the toolchain notes):
+The lowest supported Android is 8.0 (minSdk 26). The app runs there too, and its instrumented
+suites pass there as on Android 16, the fixture check aside. The second virtual device boots the
+API 26 image from the private root's own `system-images` folder (`sdkmanager --install
+"system-images;android-26;google_apis;arm64-v8a"` with `ANDROID_HOME` on the private root, its
+checksum in the toolchain notes):
 
 ```sh
 "$ANDROID_HOME/cmdline-tools/latest/bin/avdmanager" create avd -n clave-native-b-min \
