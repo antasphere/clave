@@ -12,6 +12,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.junit4.v2.createComposeRule
@@ -24,7 +25,9 @@ import com.clave.ui.theme.ClaveTheme
 import com.clave.ui.theme.Reachability
 import com.clave.ui.theme.SessionStatus
 import com.clave.ui.theme.ThemeName
+import com.clave.ui.theme.Tokens
 import java.io.File
+import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
 import org.junit.Assert.assertTrue
@@ -83,5 +86,48 @@ class ContrastEvidenceTest {
         }
         File(writeEvidenceDir(), "contrast.txt").writeText(notes.toString())
         assertTrue("words under 4.5:1 as drawn: $under", under.isEmpty())
+    }
+
+    /**
+     * The destructive button as drawn, on its resting ground (surface0) and its pressed fill
+     * (surface100), in each theme: its label, read with the red cue's pixels set aside, at 4.5:1 or
+     * more; the warning triangle in the destructive hue present beside it.
+     */
+    @Test
+    fun theDestructiveButtonLabelReadsAndItsRedCueStaysOnTheDevice() {
+        var theme by mutableStateOf(ThemeName.Dark)
+        var pressedGround by mutableStateOf(false)
+        rule.setContent {
+            ClaveTheme(theme) {
+                val t = Clave.colors.theme
+                Box(Modifier.background(if (pressedGround) t.surface100 else t.surface0).padding(12.dp).testTag("button")) {
+                    ClaveButton("Forget this machine", onClick = {}, kind = ButtonKind.Destructive)
+                }
+            }
+        }
+        val red = Tokens.shared.destructive.toArgb()
+        fun nearRed(p: Int) = abs(((p shr 16) and 255) - ((red shr 16) and 255)) + abs(((p shr 8) and 255) - ((red shr 8) and 255)) + abs((p and 255) - (red and 255)) <= 24
+        val notes = StringBuilder()
+        val under = mutableListOf<String>()
+        for (name in ThemeName.entries) {
+            for (pressedFill in listOf(false, true)) {
+                theme = name
+                pressedGround = pressedFill
+                rule.waitForIdle()
+                val bitmap = rule.onNodeWithTag("button").captureToImage().asAndroidBitmap()
+                val pixels = IntArray(bitmap.width * bitmap.height)
+                bitmap.getPixels(pixels, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)
+                val ground = pixels.toList().groupingBy { it }.eachCount().maxByOrNull { it.value }!!.key
+                val lg = lum(ground)
+                val label = pixels.filterNot(::nearRed).maxOf { (max(lum(it), lg) + 0.05) / (min(lum(it), lg) + 0.05) }
+                val cue = pixels.count(::nearRed)
+                val where = if (pressedFill) "pressed fill" else "resting ground"
+                notes.appendLine("$name destructive button on its $where: label %.2f:1, red cue pixels %d".format(label, cue))
+                if (label < 4.5) under += "$name $where label %.2f:1".format(label)
+                if (cue < 20) under += "$name $where red cue missing ($cue pixels)"
+            }
+        }
+        File(writeEvidenceDir(), "contrast-button.txt").writeText(notes.toString())
+        assertTrue("the destructive button as drawn: $under", under.isEmpty())
     }
 }

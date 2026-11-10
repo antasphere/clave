@@ -66,7 +66,10 @@ enum class ButtonKind {
     Secondary,
     /** No fill, primary ink: a quiet choice beside the others. */
     Ghost,
-    /** The destructive ink as text, no fill: the danger stays in the word. */
+    /** No fill; the label in the primary ink, readable in every theme, and the danger on a
+     *  warning triangle in the destructive hue beside it (its own cue unless an icon is given):
+     *  the red as 13 sp words read at 2.97:1 to 3.94:1 on the light grounds. The label names
+     *  the action. */
     Destructive,
 }
 
@@ -91,11 +94,9 @@ fun ClaveButton(
         ButtonKind.Ghost, ButtonKind.Destructive -> if (pressed) t.surface100 else Color.Transparent
     }
     val animatedFill by animateColorAsState(fill, tween(Metrics.pressMillis), label = "button fill")
-    val ink = when (kind) {
-        ButtonKind.Primary -> t.actionForeground
-        ButtonKind.Destructive -> c.shared.destructive
-        else -> t.textPrimary
-    }
+    val ink = if (kind == ButtonKind.Primary) t.actionForeground else t.textPrimary
+    val cue = icon ?: if (kind == ButtonKind.Destructive) ClaveIcon.ExclamationTriangle else null
+    val cueTint = if (kind == ButtonKind.Destructive) c.shared.destructive else ink
     val raised = if (kind == ButtonKind.Secondary) {
         Modifier.shadow(Clave.shadows.raised, shape).border(Metrics.hairline, c.edge, shape)
     } else {
@@ -119,7 +120,7 @@ fun ClaveButton(
         horizontalArrangement = Arrangement.spacedBy(Metrics.controlGap, Alignment.CenterHorizontally),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        if (icon != null) Icon(icon, contentDescription = null, tint = ink, size = Metrics.controlIcon)
+        if (cue != null) Icon(cue, contentDescription = null, tint = cueTint, size = Metrics.controlIcon)
         BasicText(
             text = label,
             style = ClaveTypography.type(Metrics.controlText).copy(color = ink),
