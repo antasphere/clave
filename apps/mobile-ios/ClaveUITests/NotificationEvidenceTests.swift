@@ -61,9 +61,15 @@ final class NotificationEvidenceTests: XCTestCase {
   /// Where `scripts/evidence-push.sh` waits for the test's markers.
   private let pushFolder = evidenceRoot.appendingPathComponent("push", isDirectory: true)
 
-  /// Asks the script for one push by writing its marker.
+  /// The marker the script writes once `simctl push` has taken the push `name`.
+  private func sentMarker(_ name: String) -> URL { pushFolder.appendingPathComponent("sent-\(name)") }
+
+  /// Asks the script for one push by writing its marker. A sent marker an earlier run left is
+  /// removed first, so the one read after the wait is the script's answer to this ask.
   private func askForPush(_ name: String) throws {
     try FileManager.default.createDirectory(at: pushFolder, withIntermediateDirectories: true)
+    let sent = sentMarker(name)
+    if FileManager.default.fileExists(atPath: sent.path) { try FileManager.default.removeItem(at: sent) }
     try Data().write(to: pushFolder.appendingPathComponent("ready-\(name)"))
   }
 
@@ -75,7 +81,9 @@ final class NotificationEvidenceTests: XCTestCase {
 
   /// Two pushes sent from outside by `scripts/evidence-push.sh` (run it in the background first):
   /// a finished session's banner opens its chat, and a question about a conversation the machine
-  /// no longer has opens the requests. Skipped when no push arrives (the script is not running).
+  /// no longer has opens the requests. Fails when the script sent the first push and no banner
+  /// came within 30 s; skipped only when the script never answered the ask (no sent marker after
+  /// the wait: it is not running, or its own wait ran out before the test asked).
   @MainActor
   func testAPushBannerOpensItsScreen() throws {
     let app = XCUIApplication()
@@ -96,7 +104,12 @@ final class NotificationEvidenceTests: XCTestCase {
     let chatBanner = banner("Evidence push: Seeded chat finished")
     guard chatBanner.waitForExistence(timeout: 30) else {
       keepScreenshot(topic: "push", name: "no-banner")
-      throw XCTSkip("No banner within 30 s: run scripts/evidence-push.sh beside this test")
+      // The script answers an ask within a second or two: a sent marker means the push left.
+      if FileManager.default.fileExists(atPath: sentMarker("chat").path) {
+        XCTFail("The push was sent and no banner arrived within 30 s")
+        return
+      }
+      throw XCTSkip("No banner within 30 s and the push script never answered: run scripts/evidence-push.sh beside this test")
     }
     keepScreenshot(topic: "push", name: "banner-chat")
     chatBanner.tap()
