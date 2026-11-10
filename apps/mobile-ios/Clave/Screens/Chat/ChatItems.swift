@@ -242,9 +242,7 @@ struct ToolRunCard: View {
             ProgressView().controlSize(.small)
           }
           if failures > 0 {
-            Text(failures == 1 ? "1 failed" : "\(failures) failed")
-              .font(.geist(Theme.text.xs, relativeTo: .caption))
-              .foregroundStyle(theme.colors.destructive)
+            ToneLine(failures == 1 ? "1 failed" : "\(failures) failed", tone: .error)
           }
           Icon(open ? .chevronDown : .chevronRight, size: glyph)
             .foregroundStyle(theme.colors.textTertiary)
@@ -300,9 +298,7 @@ struct ToolCallRow: View {
               .foregroundStyle(theme.colors.textSecondary)
               .lineLimit(open ? nil : 1)
             if tool.failed == true {
-              Text("Failed")
-                .font(.geist(Theme.text.xs, relativeTo: .caption))
-                .foregroundStyle(theme.colors.destructive)
+              ToneLine("Failed", tone: .error)
             }
           }
           if let detail = description.detail {
@@ -458,9 +454,7 @@ struct DocumentSheet: View {
             .font(.geist(Theme.text.xs, relativeTo: .caption))
             .foregroundStyle(theme.colors.textSecondary)
           if let failure {
-            Text(failure)
-              .font(.geist(Theme.text.sm, relativeTo: .body))
-              .foregroundStyle(theme.colors.destructive)
+            ToneLine(failure, tone: .error, size: Theme.text.sm, textStyle: .body)
           } else if let file {
             if file.binary {
               Text("This file is binary, so it is not shown here.")
@@ -552,9 +546,7 @@ struct PermissionCardView: View {
             QuestionForm(requestId: request.id, questions: questions, secretKeys: secretKeys, replies: $replies)
           }
           if let problem {
-            Text(problem)
-              .font(.geist(Theme.text.xs, relativeTo: .caption))
-              .foregroundStyle(theme.colors.destructive)
+            ToneLine(problem, tone: .error)
           }
           FlowRow(spacing: Theme.space(2)) {
             ForEach(request.options, id: \.id) { option in
@@ -619,14 +611,16 @@ struct ErrorItemView: View {
   @Environment(\.claveTheme) private var theme
 
   var body: some View {
+    // The words in a text ink, the error's ink on the glyph beside them.
     HStack(alignment: .firstTextBaseline, spacing: Theme.space(2)) {
       Icon(.exclamationTriangle, size: Theme.chatGlyph)
+        .foregroundStyle(theme.colors.destructive)
       Text(item.message)
         .font(.geist(Theme.text.sm, weight: .regular, relativeTo: .body))
+        .foregroundStyle(theme.colors.textPrimary)
         .textSelection(.enabled)
         .fixedSize(horizontal: false, vertical: true)
     }
-    .foregroundStyle(theme.colors.destructive)
     .frame(maxWidth: .infinity, alignment: .leading)
     .accessibilityElement(children: .combine)
     .accessibilityLabel("Error, \(item.message)")

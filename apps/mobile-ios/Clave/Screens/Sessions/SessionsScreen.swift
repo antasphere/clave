@@ -48,6 +48,7 @@ private struct SessionsContent: View {
   let workspaceId: String
 
   @Environment(\.claveTheme) private var theme
+  @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
   private var workspace: WorkspaceView? {
     connection.workspaces?.workspaces.first { $0.id == workspaceId }
@@ -85,6 +86,9 @@ private struct SessionsContent: View {
       .scrollContentBackground(.hidden)
       .listRowSeparatorTint(theme.colors.borderSubtle)
       .refreshable { await connection.reloadSessions() }
+      // As on Machines: a list's rows kept the text size they were drawn at when the setting
+      // changed (iOS 17.5 here, the rows after the first); the list is drawn anew for a new size.
+      .id(dynamicTypeSize)
     }
     // The list may have changed on the Mac since the workspace was opened.
     .task { await connection.reloadSessions() }
@@ -171,11 +175,11 @@ private struct SessionRowView: View {
     .frame(minHeight: 44)
   }
 
-  /// The state in its word and its ink.
+  /// The state in its word, in a text ink: the row's StatusDot carries the state's ink.
   private var stateWord: some View {
     Text(row.state.label)
       .font(.geist(Theme.text.xs, relativeTo: .caption))
-      .foregroundStyle(stateColor)
+      .foregroundStyle(theme.colors.textSecondary)
       .lineLimit(1)
   }
 
@@ -197,14 +201,5 @@ private struct SessionRowView: View {
     }
     .frame(minHeight: 44)
     .contentShape(Rectangle())
-  }
-
-  private var stateColor: Color {
-    switch row.state {
-    case .working: theme.colors.statusWorking
-    case .waiting: theme.colors.statusWaiting
-    case .error: theme.colors.destructive
-    case .idle, .finished: theme.colors.textTertiary
-    }
   }
 }

@@ -75,6 +75,7 @@ struct GrowingFieldPrompt: View {
       // Its whole height counts in the field's, so a long prompt at a large text size is never cut.
       .fixedSize(horizontal: false, vertical: true)
       .allowsHitTesting(false)
-      .accessibilityHidden(true)
+      // No accessibility of its own: the field's label already says it.
+      .accessibilityRepresentation { EmptyView() }
   }
 }

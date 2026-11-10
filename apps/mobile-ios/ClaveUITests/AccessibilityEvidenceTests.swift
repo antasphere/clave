@@ -3,7 +3,8 @@ import XCTest
 /// Evidence C: Xcode's accessibility audit on each of the six screens, and the order VoiceOver
 /// meets their buttons, texts and fields, written to `evidence/a11y/<screen>-order.txt`. What the
 /// audit still reports is written to `evidence/a11y/<screen>-audit.txt` in its own words; the same
-/// walk with the app at the largest accessibility text size writes `xxxl-<screen>-audit.txt`.
+/// walk with the app at the largest accessibility text size writes `xxxl-<screen>-audit.txt`, and
+/// the contrast audit alone in each theme `contrast-<theme>-<screen>-audit.txt`.
 final class AccessibilityEvidenceTests: XCTestCase {
   override func setUp() {
     continueAfterFailure = false
@@ -17,6 +18,10 @@ final class AccessibilityEvidenceTests: XCTestCase {
   /// The same, the app launched at the largest accessibility text size.
   private let recordedAtTheLargestTextSize: [EvidenceScreen: Set<String>] = AccessibilityEvidenceTests.unresolvedContrast
 
+  /// The contrast audit in the four themes: nothing recorded. Every word is in a text ink on a
+  /// surface where it reads 4.5:1 or more (ContrastTests), so any finding is new.
+  private let recordedInEveryTheme: [EvidenceScreen: Set<String>] = [:]
+
   // unresolved: red in the full run, green alone, cause unknown
   private static let unresolvedContrast: [EvidenceScreen: Set<String>] = [
     .chat: ["Contrast failed | Name", "Contrast failed | Value", "Contrast failed | alpha", "Contrast failed | 1"],
@@ -27,7 +32,8 @@ final class AccessibilityEvidenceTests: XCTestCase {
   func testEachScreenPassesTheAuditAndKeepsItsOrder() throws {
     let app = signInAndPair()
     pickAppearance(app, "dark")
-    auditEachScreen(app, recorded: recorded, prefix: "")
+    let unexpected = auditEachScreen(app, recorded: recorded, prefix: "")
+    XCTAssertTrue(unexpected.isEmpty, unexpected.joined(separator: "\n"))
   }
 
   @MainActor
@@ -37,13 +43,33 @@ final class AccessibilityEvidenceTests: XCTestCase {
     app.launchArguments = ["--ui-test-fake", "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"]
     signInAndPair(app)
     pickAppearance(app, "dark")
-    auditEachScreen(app, recorded: recordedAtTheLargestTextSize, prefix: "xxxl-")
+    let unexpected = auditEachScreen(app, recorded: recordedAtTheLargestTextSize, prefix: "xxxl-")
+    XCTAssertTrue(unexpected.isEmpty, unexpected.joined(separator: "\n"))
   }
 
-  /// The walk over the six screens: on each, the order, the audit against `recorded`, and the
-  /// fields' own frames; the files named with `prefix`.
+  /// Every word readable in every theme: the six screens in the dark, light, coffee and charcoal
+  /// themes at the default size, the contrast audit alone on each, the keyboard put away first.
+  /// All four themes are walked before the verdict, so a red run names every finding.
   @MainActor
-  private func auditEachScreen(_ app: XCUIApplication, recorded: [EvidenceScreen: Set<String>], prefix: String) {
+  func testEachScreenPassesTheContrastAuditInEveryTheme() throws {
+    let app = signInAndPair()
+    var unexpected: [String] = []
+    for theme in ["dark", "light", "coffee", "charcoal"] {
+      pickAppearance(app, theme)
+      unexpected += auditEachScreen(app, recorded: recordedInEveryTheme, prefix: "contrast-\(theme)-", for: .contrast)
+        .map { "\(theme) \($0)" }
+    }
+    XCTAssertTrue(unexpected.isEmpty, unexpected.joined(separator: "\n"))
+  }
+
+  /// The walk over the six screens: on each, the order, the audit of `types` against `recorded`,
+  /// and the fields' own frames; the files named with `prefix`. Returns what the audit reported
+  /// beyond `recorded`.
+  @MainActor
+  private func auditEachScreen(
+    _ app: XCUIApplication, recorded: [EvidenceScreen: Set<String>], prefix: String,
+    for types: XCUIAccessibilityAuditType = .all
+  ) -> [String] {
     var unexpected: [String] = []
     var summary: [String] = []
     var fields: [String: CGRect] = [:]
@@ -55,7 +81,7 @@ final class AccessibilityEvidenceTests: XCTestCase {
       if let field = Self.field[screen] { fields[field] = element(app, field).frame }
       var found: [String] = []
       do {
-        try app.performAccessibilityAudit(for: .all) { issue in
+        try app.performAccessibilityAudit(for: types) { issue in
           let target = issue.element.map { "\($0.elementType.rawValue) '\($0.identifier)' '\($0.label)' \($0.frame)" } ?? "no element"
           found.append("\(issue.compactDescription) | \(issue.detailedDescription) | \(target)")
           let key = "\(issue.compactDescription) | \(issue.element.map { $0.identifier.isEmpty ? $0.label : $0.identifier } ?? "")"
@@ -74,11 +100,11 @@ final class AccessibilityEvidenceTests: XCTestCase {
     }
     summary += fields.keys.sorted().map { "\($0) \(fields[$0] ?? .null)" }
     keepText(summary.joined(separator: "\n") + "\n", topic: "a11y", name: "\(prefix)summary.txt")
-    XCTAssertTrue(unexpected.isEmpty, unexpected.joined(separator: "\n"))
     // The fields' own frames, the elements a finger and VoiceOver reach, are at least 44 points tall.
     for (field, frame) in fields {
       XCTAssertGreaterThanOrEqual(frame.height, 44, "\(field) is \(frame.height) points tall")
     }
+    return unexpected
   }
 
   /// The text field of each screen that has one.

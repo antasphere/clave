@@ -64,16 +64,18 @@ struct Composer: View {
         discard: { Task { await model.discardUnknownSend() } })
     }
     if let notice = model.sendNotice {
-      noticeLine(notice, tone: theme.colors.destructive, identifier: "chat.composer.send-error")
+      ToneLine(notice, tone: .error)
+        .accessibilityIdentifier("chat.composer.send-error")
     }
     if let notice = model.deliveryNotice {
       noticeLine(notice, tone: theme.colors.textPrimary, identifier: "chat.composer.delivery-notice")
     }
     if let notice = model.actionError {
-      noticeLine(notice, tone: theme.colors.destructive, identifier: "chat.composer.action-error")
+      ToneLine(notice, tone: .error)
+        .accessibilityIdentifier("chat.composer.action-error")
     }
     if let notice = pickFailure ?? model.attachNotice {
-      noticeLine(notice, tone: theme.colors.textSecondary, identifier: "chat.composer.attach-notice")
+      noticeLine(notice, identifier: "chat.composer.attach-notice")
     }
     if model.sending {
       HStack(spacing: Theme.space(2)) {
@@ -87,10 +89,10 @@ struct Composer: View {
     }
   }
 
-  private func noticeLine(_ text: String, tone: Color, identifier: String) -> some View {
+  private func noticeLine(_ text: String, identifier: String) -> some View {
     Text(text)
       .font(.geist(Theme.text.xs, relativeTo: .caption))
-      .foregroundStyle(tone)
+      .foregroundStyle(theme.colors.textSecondary)
       .fixedSize(horizontal: false, vertical: true)
       .accessibilityIdentifier(identifier)
   }
@@ -108,7 +110,8 @@ struct Composer: View {
             } label: {
               HStack(spacing: Theme.space(1)) {
                 Icon(file.kind == .image ? .photo : .document, size: 12)
-                Text(file.name).lineLimit(1)
+                // A word on surface200: textPrimary (textSecondary reads 4.45 there in charcoal).
+                Text(file.name).lineLimit(1).foregroundStyle(theme.colors.textPrimary)
                 Icon(.xMark, size: 12)
               }
               .font(.geist(Theme.text.xs, relativeTo: .caption))

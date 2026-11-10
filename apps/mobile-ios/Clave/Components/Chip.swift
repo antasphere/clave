@@ -16,8 +16,10 @@ struct Chip: View {
   var body: some View {
     HStack(spacing: Theme.space(1)) {
       if let icon { Icon(icon, size: iconSize) }
+      // A word on surface200: textPrimary (textSecondary reads 4.45 there in charcoal).
       Text(title)
         .font(.geist(Theme.text.badge, relativeTo: .caption))
+        .foregroundStyle(theme.colors.textPrimary)
         .fixedSize(horizontal: false, vertical: true)
     }
     .foregroundStyle(theme.colors.textSecondary)

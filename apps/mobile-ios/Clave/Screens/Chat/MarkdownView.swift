@@ -117,7 +117,9 @@ struct MarkdownRenderer {
         text[run.range].strikethroughStyle = .single
       }
       if run.link != nil {
-        text[run.range].foregroundColor = theme.colors.accent
+        // On inline code's surface200 the accent reads 4.07 (charcoal) and 4.45 (coffee): there the
+        // link is textPrimary, its underline saying it is a link.
+        text[run.range].foregroundColor = intent.contains(.code) ? theme.colors.textPrimary : theme.colors.accent
         text[run.range].underlineStyle = .single
       }
     }

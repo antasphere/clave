@@ -159,9 +159,7 @@ struct MachinesScreen: View {
         .accessibilityIdentifier("machines.relay.field")
         HStack {
           if let refusal = machines.relayRefusal {
-            Text(refusal)
-              .font(.geist(Theme.text.xs, weight: .regular, relativeTo: .caption))
-              .foregroundStyle(theme.colors.destructive)
+            ToneLine(refusal, tone: .error)
               .accessibilityIdentifier("machines.relay.refusal")
           }
           Spacer(minLength: 0)
@@ -361,9 +359,7 @@ struct NoticeRow: View {
             .accessibilityIdentifier("developer.token")
           HStack {
             if let error = machines.developerError {
-              Text(error)
-                .font(.geist(Theme.text.xs, weight: .regular, relativeTo: .caption))
-                .foregroundStyle(theme.colors.destructive)
+              ToneLine(error, tone: .error)
             }
             Spacer(minLength: 0)
             Button("Add") {

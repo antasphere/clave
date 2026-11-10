@@ -141,10 +141,7 @@ struct RequestCard: View {
           .fixedSize(horizontal: false, vertical: true)
       }
       if let notice {
-        Text(notice)
-          .font(.geist(Theme.text.xs, relativeTo: .caption))
-          .foregroundStyle(theme.colors.warning)
-          .fixedSize(horizontal: false, vertical: true)
+        ToneLine(notice, tone: .warning)
           .accessibilityIdentifier("requests.notice.\(request.id)")
       }
       if !isSettled {
@@ -282,10 +279,7 @@ struct RequestCard: View {
   @ViewBuilder
   private var problemLine: some View {
     if let problem {
-      Text(problem)
-        .font(.geist(Theme.text.xs, relativeTo: .caption))
-        .foregroundStyle(theme.colors.destructive)
-        .fixedSize(horizontal: false, vertical: true)
+      ToneLine(problem, tone: .error)
         .accessibilityIdentifier("requests.problem.\(request.id)")
     }
   }

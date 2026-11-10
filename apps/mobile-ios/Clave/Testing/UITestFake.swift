@@ -214,7 +214,7 @@
             lastActiveWorkspaceId: Self.workspaceId, activeWorkspaceId: Self.workspaceId, pins: [], pinsMigrated: true,
             revision: 1, instance: "fake"))
       case ("GET", "/sessions"):
-        return encoded([Self.session()])
+        return encoded([Self.session()] + Self.stateSessions)
       case ("GET", "/sessions/by-id"):
         guard query["id"] == Self.sessionId else {
           return json(["_tag": "SessionNotFound", "message": "There is no such conversation.", "id": query["id"] ?? ""], status: 422)
@@ -455,15 +455,30 @@
         workspaceId: workspaceId, state: .idle, createdAt: 0, adapterId: "echo", title: "Seeded chat")
     }
 
+    /// Two more chats in the workspace, only listed: one working, one waiting for the person, so
+    /// the Sessions screen shows those states' words. Older than the seeded chat, so they list
+    /// after it.
+    static let stateSessions: [Session] = [
+      Session(
+        id: "s_working", provider: "echo", transport: .events, cwd: "/fake/scratch", windowKey: "server",
+        workspaceId: workspaceId, state: .working, createdAt: -1, adapterId: "echo", title: "Working chat"),
+      Session(
+        id: "s_waiting", provider: "echo", transport: .events, cwd: "/fake/scratch", windowKey: "server",
+        workspaceId: workspaceId, state: .blocked, createdAt: -2, adapterId: "echo", title: "Waiting chat"),
+    ]
+
     /// The seeded conversation: the person's message, Echo's reply, one completed tool call
     /// (a read of the workspace's README) for the transcript's tool card, and a final reply in
-    /// GitHub-flavoured Markdown (a heading, a link, a fenced block, a table and an image).
+    /// GitHub-flavoured Markdown (a heading, a link, a fenced block, a table and an image), then a
+    /// tool call that failed, so the transcript shows a failure's words.
     static let seeded: [SessionEvent] = [
       .userMessage(UserMessage(text: "seeded-fake")),
       .assistantText(delta: "seeded-fake", final: true, parent: nil),
       .toolCall(id: "t_fake", name: "Read", input: .object(["file_path": .string("/fake/scratch/README.md")]), parent: nil),
       .toolResult(id: "t_fake", output: .string("# Scratch"), error: false, parent: nil),
       .assistantText(delta: markdownReply, final: true, parent: nil),
+      .toolCall(id: "t_failed", name: "Bash", input: .object(["command": .string("make check")]), parent: nil),
+      .toolResult(id: "t_failed", output: .string("make: *** [check] Error 1"), error: true, parent: nil),
     ]
 
     static func clarification() -> PendingRequest {

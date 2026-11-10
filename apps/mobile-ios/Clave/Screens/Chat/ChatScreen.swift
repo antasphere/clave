@@ -181,11 +181,8 @@ struct ChatScreen: View {
     }
     if case .failed(let message) = model.state {
       // A refresh failed over a transcript already shown: the transcript stays, the sentence says why.
-      Text(message)
-        .font(.geist(Theme.text.xs, relativeTo: .caption))
-        .foregroundStyle(theme.colors.destructive)
+      ToneLine(message, tone: .error, alignment: .center)
         .frame(maxWidth: .infinity)
-        .multilineTextAlignment(.center)
         .accessibilityIdentifier("chat.failed")
     }
   }
