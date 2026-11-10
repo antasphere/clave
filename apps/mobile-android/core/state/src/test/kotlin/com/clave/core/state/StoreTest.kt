@@ -623,6 +623,26 @@ class StoreTest {
     // ── the device-session boundary ──
 
     @Test
+    fun `a send refused 401 fails with the refusal, never read as a lost answer to reconcile`() = harness {
+        // A revoked device session answers 401 (docs/mobile-pairing.md); here the write route alone.
+        machine.handler = { call ->
+            if (call.line == "POST /sessions/write") answer(401, "{}") else answer(404, """{"error":"no such route"}""")
+        }
+        store.connect(machineId)
+        until(what = "the machine to be reachable") { store.state.value.reachability[machineId] == Reachability.Reachable }
+        drafts.set(machineId, "s1", "hello")
+        val sent = store.send(machineId, "s1", "hello")
+        assertEquals(SendOutcome.Failed(sent.clientMessageId, "The server refused the token."), sent)
+        // One write and no question to the status route: nothing is in doubt, nothing waits for
+        // a reconnection with the refused credential.
+        assertEquals(1, machine.count("POST /sessions/write"))
+        assertEquals(0, machine.count("GET /sessions/writes"))
+        assertEquals(emptyList<Any>(), sends.list())
+        assertNull(marks.get(machineId, "s1"))
+        assertEquals("hello", drafts.get(machineId, "s1"))
+    }
+
+    @Test
     fun `device session boundary a 403 surfaces the server's sentence once and is never retried`() = harness {
         val sentence = "A phone may not do this."
         machine.handler = { answer(403, """{"_tag":"DeviceScopeForbidden","message":"$sentence"}""") }
