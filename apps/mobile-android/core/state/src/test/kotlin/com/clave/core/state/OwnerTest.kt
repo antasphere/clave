@@ -235,6 +235,63 @@ class OwnerTest {
     }
 
     @Test
+    fun `owner isolation an approval never lands once the hub login changed under it, these services never signed out`() = runBlocking {
+        val authA = signedIn("sub-a")
+        val a = storesOf(authA)
+        val servicesA = services(authA, a)
+        val approve = CompletableDeferred<Unit>()
+        enrollment(approve)
+        val writing = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        rawSecure.beforeSet = { key ->
+            if (key.startsWith(a.namespace) && key.contains("clave.credential.") && !writing.isCompleted) {
+                writing.complete(Unit)
+                release.await()
+            }
+        }
+        val states = CopyOnWriteArrayList<PairingState>()
+        val pairing = scope.async { servicesA.pair(fixture, { states += it }, { false }) }
+        until(what = "the pairing to wait for the approval") { states.any { it is PairingState.Waiting } }
+        approve.complete(Unit)
+        awaitGate("the approval's credential write to reach the secure store", writing)
+        // The hub login changes elsewhere (an expiry, another screen) while the write is held;
+        // the owner's own services are never signed out, so only the owner check can stop it.
+        authA.signOut()
+        release.complete(Unit)
+        assertEquals(PairingState.Cancelled, awaitGate("the pairing to end", pairing))
+        assertNull(a.credentials.get("m1"))
+        assertEquals(emptyList<EnrollmentRecord>(), EnrollmentRecords(a.kv).list())
+        assertEquals(emptyList<String>(), credentialKeys())
+    }
+
+    @Test
+    fun `owner isolation a sign-out never signs out the login that replaced its owner while its cleanup ran`() = runBlocking {
+        LoopbackIssuer(clock).use { issuer ->
+            val auth = issuer.signedIn("sub-a")
+            val a = storesOf(auth)
+            val servicesA = services(auth, a)
+            enrollment(CompletableDeferred(Unit))
+            assertTrue(servicesA.pair(fixture, {}, { false }) is PairingState.Approved)
+            assertEquals(TokenRegistration.Registered("fcm-token"), servicesA.registerPush("m1"))
+            // A's sign-out holds its push cleanup at the machine; meanwhile B signs in on the
+            // same hub login.
+            machine.handler = { call ->
+                if (call.line == "POST /devices/me/push-token/clear") machine.hold(call) else answer(404, "{}")
+            }
+            val signOut = scope.async { servicesA.signOut() }
+            until(what = "the sign-out's push cleanup to reach the machine") { machine.held.size == 1 }
+            issuer.subject = "sub-b"
+            assertEquals("sub-b", auth.signIn().account?.subject)
+            machine.respond(0, answer(200, "{}"))
+            awaitGate("the sign-out to end", signOut)
+            // A's cleanup reached A's machine; B is still signed in.
+            assertEquals(1, machine.count("POST /devices/me/push-token/clear"))
+            assertEquals("sub-b", auth.status().account?.subject)
+            assertEquals("access-sub-b", auth.accessToken())
+        }
+    }
+
+    @Test
     fun `the machines come from the relay, and from the cache only when the relay is out of reach`() = runBlocking {
         val auth = signedIn("sub-a")
         val servicesA = services(auth, storesOf(auth), defaultRelay = "")
