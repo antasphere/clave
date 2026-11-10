@@ -58,6 +58,42 @@ export function replyLines(stdout: string): string[] {
 }
 const STYLE_FOOTER = /^(?:[-*>_]\s*)?(?:\*\*)?(?:next|note|ps|p\.s\.)(?:\*\*)?\s*[:—–-]/i
 
+/**
+ * The first JSON object in a reply, wherever it sits: after a sentence, in a
+ * code fence, before a `Next: …` line the person's output style added, or
+ * beside a second object. Each `{` is tried in turn, cut at its own closing
+ * brace (strings and escapes respected); null when none parses to an object.
+ */
+export function firstJsonObject(stdout: string): Record<string, unknown> | null {
+  for (let start = stdout.indexOf('{'); start !== -1; start = stdout.indexOf('{', start + 1)) {
+    const end = closingBrace(stdout, start)
+    if (end === -1) continue
+    try {
+      const value: unknown = JSON.parse(stdout.slice(start, end + 1))
+      if (value && typeof value === 'object' && !Array.isArray(value))
+        return value as Record<string, unknown>
+    } catch {
+      /* not this one */
+    }
+  }
+  return null
+}
+
+function closingBrace(text: string, start: number): number {
+  let depth = 0
+  let inString = false
+  for (let i = start; i < text.length; i++) {
+    const c = text[i]
+    if (inString) {
+      if (c === '\\') i++
+      else if (c === '"') inString = false
+    } else if (c === '"') inString = true
+    else if (c === '{') depth++
+    else if (c === '}' && --depth === 0) return i
+  }
+  return -1
+}
+
 /** The first line of every helper's system prompt: the helper is a
  *  function, not an agent (`--system-prompt` replaces the CLI's own). */
 export const HELPER_SYSTEM_PREAMBLE =
