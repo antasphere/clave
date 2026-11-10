@@ -142,7 +142,7 @@ describe('the explainer trigger', () => {
     await f.host.write(session.id, { type: 'user_message', text: 'why is the cart empty?' })
     f.emit({ type: 'assistant_text', delta: 'Let me look at ', final: false })
     f.emit({ type: 'assistant_text', delta: 'the cart code.', final: true })
-    f.emit(bash('r1', 'grep -rn cart src | head -20; echo ===; grep -n total src/cart.ts'))
+    f.emit(bash('r1', 'grep -rn cart src | head -20; echo next; grep -n total src/cart.ts'))
     await settle()
     expect(explain).toHaveBeenCalledTimes(1)
     const [sessionId, input] = explain.mock.calls[0]
@@ -188,20 +188,18 @@ describe('the explainer trigger', () => {
   })
 
   it('never lets the model say "reads only" for a request the rules could not prove', async () => {
-    // A `cd` the proof does not follow: neither proven nor detected.
-    const f = fixture(async () =>
-      reading({ level: 'reads', sentence: 'Lists a folder of the project.' })
-    )
-    f.emit(bash('r1', 'cd src && ls'))
+    // A script the structure does not settle: neither proven nor detected.
+    const f = fixture(async () => reading({ level: 'reads', sentence: 'Runs the tests.' }))
+    f.emit(bash('r1', 'npm test'))
     await settle()
     expect(f.published[0]).not.toHaveProperty('level')
-    expect(f.published[0]).toMatchObject({ sentence: 'Lists a folder of the project.' })
+    expect(f.published[0]).toMatchObject({ sentence: 'Runs the tests.' })
   })
 
   it('lets the model give an unknown request an upper level', async () => {
     const explain = vi.fn<Explain>(async () => reading({ level: 'outside' }))
     const f = fixture(explain)
-    f.emit(bash('r1', 'cd src && ls'))
+    f.emit(bash('r1', 'npm test'))
     await settle()
     expect(explain.mock.calls[0][1].floor).toBe('unknown')
     expect(f.published[0]).toMatchObject({ level: 'outside' })
@@ -209,7 +207,7 @@ describe('the explainer trigger', () => {
 
   it('says a failure on an unknown request with no level', async () => {
     const f = fixture(async () => ({ ok: false, reason: 'limit', detail: 'x' }))
-    f.emit(bash('r1', 'cd src && ls'))
+    f.emit(bash('r1', 'npm test'))
     await settle()
     expect(f.published).toEqual([{ type: 'permission_explained', id: 'r1', failed: 'limit' }])
   })

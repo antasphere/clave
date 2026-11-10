@@ -128,56 +128,10 @@ const WRITE_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit'])
 const CODEX_COMMAND = new Set(['item/commandExecution/requestApproval', 'execCommandApproval'])
 const CODEX_EDIT = new Set(['item/fileChange/requestApproval', 'applyPatchApproval'])
 
-/** Words in a tool's name that say it removes something for good. */
-const FINAL_WORDS = new Set([
-  'delete',
-  'remove',
-  'drop',
-  'destroy',
-  'purge',
-  'erase',
-  'wipe',
-  'truncate',
-  'revoke',
-  'cancel',
-  'archive',
-  'transfer',
-  'pay',
-  'refund',
-  'merge',
-  'deploy',
-  'release',
-  'publish',
-  'reset',
-  'overwrite',
-  'kill',
-  'terminate',
-  'flush',
-  'unlink',
-  'rm'
-])
-/** Words that say it sends, posts or runs something: once done, done. */
-const SEND_WORDS = new Set([
-  'send',
-  'post',
-  'reply',
-  'message',
-  'email',
-  'mail',
-  'tweet',
-  'execute',
-  'exec',
-  'run',
-  'sql',
-  'invoke',
-  'trigger',
-  'dispatch',
-  'broadcast',
-  'notify',
-  'push',
-  'upload',
-  'share'
-])
+/** Words in an MCP tool's name that say it removes something for good. */
+const MCP_FINAL = new Set(['delete', 'drop', 'destroy', 'purge', 'wipe', 'truncate'])
+/** Words that say it writes a file (then a governing path is hard to undo). */
+const MCP_WRITE = new Set(['write', 'edit', 'create', 'move', 'save', 'put', 'update', 'append'])
 
 /** A tool name's words: `mcp__slack__chat_postMessage` → mcp, slack, chat, post, message. */
 function nameWords(name: string): string[] {
@@ -188,16 +142,8 @@ function nameWords(name: string): string[] {
     .map((w) => w.toLowerCase())
 }
 
-const SQL_CHANGE =
-  /\b(?:drop|delete|truncate|update|alter|insert|replace|grant|revoke|merge|upsert)\b|\b(?:dropDatabase|deleteMany|deleteOne|findOneAndDelete|remove)\s*\(/i
-
-const safeJson = (value: unknown): string => {
-  try {
-    return JSON.stringify(value) ?? ''
-  } catch {
-    return ''
-  }
-}
+/** A database statement that removes data, as a client's command argument. */
+const SQL_FINAL = /\b(?:drop|truncate)\b|\bdelete\s+from\b|\bflush(?:all|db)\b/i
 
 /** Every string inside a tool's input, however deep. */
 function inputStrings(value: unknown, out: string[] = [], depth = 0): string[] {
@@ -209,38 +155,85 @@ function inputStrings(value: unknown, out: string[] = [], depth = 0): string[] {
   return out
 }
 
-function mcpLevel(name: string, input: unknown, ctx: Context): RiskLevel {
+/** An MCP tool: a remote service, so outside at least; hard to undo when its
+ *  name says it removes something, when it runs a statement that drops data,
+ *  or when it writes a file that governs startup or permissions. */
+function mcpLevel(name: string, input: unknown, ctx: Context, acc: Acc): RiskLevel {
   const words = nameWords(name.split('__').slice(2).join('__') || name)
-  if (words.some((w) => FINAL_WORDS.has(w) || SEND_WORDS.has(w))) return 'irreversible'
-  const body = safeJson(input)
-  if (SQL_CHANGE.test(body) && /\b(?:sql|query|statement)\b/i.test(body + ' ' + name))
-    return 'irreversible'
-  // A path to what governs startup or permissions, handed to a tool the
-  // rules cannot read: it may write there.
-  for (const s of inputStrings(input))
-    if (governingMention(s) || GOVERNING_FILES.some((re) => re.test(resolve(ctx.dir, s) ?? '')))
-      return 'irreversible'
+  if (words.some((w) => MCP_FINAL.has(w))) return 'irreversible'
+  const values = inputStrings(input)
+  if (words.some((w) => w === 'sql' || w === 'query' || w === 'execute'))
+    if (values.some((v) => SQL_FINAL.test(v))) return 'irreversible'
+  if (words.some((w) => MCP_WRITE.has(w)))
+    for (const v of values) {
+      if (/\s/.test(v)) continue
+      if (governingMention(v) || GOVERNING_FILES.some((re) => re.test(resolve(ctx.dir, v) ?? '')))
+        return 'irreversible'
+    }
+  for (const v of values) if (!/\s/.test(v) && secretWord(v)) acc.maySecrets = true
+  // A send or a post, or anything else on a remote service: outside.
   return 'outside'
 }
 
+/**
+ * What the rules read of one permission request: the LEVEL (proven reads, a
+ * detected upper level, or unknown), and beside it two things that never set
+ * a level:
+ *   - `maySecrets`: a best-effort NOTE that what is read may show a secret (a
+ *     secret-like name, a recursive search from the project's root or a
+ *     dot-folder, an environment dump, `git remote -v`, a dotfile glob). Its
+ *     absence claims nothing.
+ *   - `hints`: words the rules NOTICED without acting on them (a destructive
+ *     or network word inside quoted text, a here-document body, interpreter
+ *     code, a commit message), for the explainer's prompt only.
+ */
+export interface RuleReading {
+  level: RuleLevel
+  maySecrets: boolean
+  hints: string[]
+}
+
+/** At most this many hints go to the prompt. */
+const MAX_HINTS = 8
+
+export function ruleReading({ toolName, input, cwd }: RiskInput): RuleReading {
+  const acc = newAcc()
+  const level = toolLevel(toolName ?? '', record(input), input, cwd, acc)
+  return { level, maySecrets: acc.maySecrets, hints: [...acc.hints].slice(0, MAX_HINTS) }
+}
+
 /** The level of one permission request, from the rules alone. */
-export function riskFloor({ toolName, input, cwd }: RiskInput): RuleLevel {
-  const name = toolName ?? ''
-  const p = record(input)
+export function riskFloor(request: RiskInput): RuleLevel {
+  return ruleReading(request).level
+}
+
+function toolLevel(
+  name: string,
+  p: Record<string, unknown>,
+  input: unknown,
+  cwd: string | undefined,
+  acc: Acc
+): RuleLevel {
   const ctx = startContext(cwd)
-  if (READ_TOOLS.has(name)) return readToolLevel(name, p, ctx)
+  if (READ_TOOLS.has(name)) return readToolLevel(name, p, ctx, acc)
   if (INERT_TOOLS.has(name)) return 'reads'
   if (WRITE_TOOLS.has(name)) {
     const path = text(p.file_path) || text(p.notebook_path)
+    if (path && secretWord(path)) acc.maySecrets = true
     return path ? writeLevel(resolve(ctx.dir, path), ctx) : 'outside'
   }
-  if (name === 'Bash') return scriptLevel(text(p.command), ctx, true)
+  if (name === 'Bash') return scriptLevel(text(p.command), ctx, true, acc)
   // PowerShell is not the shell the proof knows: detected, never proven.
-  if (name === 'PowerShell') return scriptLevel(text(p.command), ctx, false)
+  if (name === 'PowerShell') return scriptLevel(text(p.command), ctx, false, acc)
   if (CODEX_COMMAND.has(name)) {
     const at = text(p.cwd) ? startContext(cwd, text(p.cwd)) : ctx
     const argv = strings(p.command)
-    return scriptLevel(argv.length ? argv.map(shellQuote).join(' ') : text(p.command), at, true)
+    return scriptLevel(
+      argv.length ? argv.map(shellQuote).join(' ') : text(p.command),
+      at,
+      true,
+      acc
+    )
   }
   if (CODEX_EDIT.has(name)) {
     const paths = codexPaths(p)
@@ -254,7 +247,7 @@ export function riskFloor({ toolName, input, cwd }: RiskInput): RuleLevel {
   if (name === 'item/permissions/requestApproval') return 'outside'
   if (name === ELICITATION) return 'outside'
   if (name === 'ExitPlanMode' || name === 'AskUserQuestion') return 'unknown'
-  if (name.startsWith('mcp__')) return mcpLevel(name, input, ctx)
+  if (name.startsWith('mcp__')) return mcpLevel(name, input, ctx, acc)
   // WebFetch, WebSearch, a skill, a subagent, a tool the rules do not know:
   // the network, or code and instructions they cannot read, at least outside.
   return 'outside'
@@ -265,9 +258,15 @@ function shellQuote(arg: string): string {
   return /^[A-Za-z0-9_\-.,/:=@%+]+$/.test(arg) ? arg : `'${arg.replace(/'/g, `'\\''`)}'`
 }
 
-/** Read, Glob, Grep, LS: reads only when every path and glob passes the
- *  path rule; outside when one names a secret or leaves the project. */
-function readToolLevel(name: string, p: Record<string, unknown>, ctx: Context): RuleLevel {
+/** Read, Glob, Grep, LS: reads only when every path and glob is inside the
+ *  project; outside when one leaves it. A secret-like name or a dotfile glob
+ *  is a note, not a level. */
+function readToolLevel(
+  name: string,
+  p: Record<string, unknown>,
+  ctx: Context,
+  acc: Acc
+): RuleLevel {
   const items: Array<{ value: string; glob: boolean }> = []
   if (name === 'Read') items.push({ value: text(p.file_path), glob: false })
   else if (name === 'NotebookRead') items.push({ value: text(p.notebook_path), glob: false })
@@ -280,7 +279,7 @@ function readToolLevel(name: string, p: Record<string, unknown>, ctx: Context): 
   let level: RuleLevel = 'unknown'
   for (const item of items) {
     if (!pathOk({ value: item.value, glob: item.glob, quoted: true }, ctx, true)) proven = false
-    if (secretWord(item.value)) level = combine(level, 'outside')
+    if (secretWord(item.value) || (item.glob && globMaySecret(item.value))) acc.maySecrets = true
     const at = resolve(ctx.dir, item.value.replace(/[*?[{].*$/, '') || '.')
     if (at === null || (!isDevice(at) && !inside(at, ctx.base))) level = combine(level, 'outside')
   }
@@ -367,7 +366,7 @@ const GOVERNING = [
   /(?:^|\/)\.(?:gitconfig|npmrc|yarnrc|yarnrc\.yml|netrc|pypirc|curlrc|wgetrc)$/i,
   /(?:^|\/)Library\/(?:LaunchAgents|LaunchDaemons|StartupItems)(?:\/|$)/i,
   /(?:^|\/)crontab$/i,
-  /^\/(?:etc|private|Library|System|usr|bin|sbin|var\/root|Applications)(?:\/|$)/i,
+  /^\/(?:etc|private\/etc|private\/var\/root|Library|System|usr|bin|sbin|var\/root|Applications)(?:\/|$)/i,
   /^\/$/
 ]
 /** The governing FILES, without the system folders: what a mention or a
@@ -380,27 +379,19 @@ const GOVERNING_NAME =
   /(?:^|[\s/'"=:])(?:\.(?:zshrc|zshenv|zprofile|zlogin|zlogout|bashrc|bash_profile|bash_login|bash_logout|profile|kshrc|cshrc|tcshrc|inputrc|gitconfig|npmrc|yarnrc|netrc|pypirc|curlrc|wgetrc|mcp\.json|claude\.json)\b|\.ssh\b|\.aws\b|\.gnupg\b|\.kube\b|authorized_keys\b|\.claude\/|\.git\/(?:hooks|config)\b|LaunchAgents\b|LaunchDaemons\b|crontab\b|(?:^|\/private)\/etc\b)/i
 const governingMention = (word: string): boolean => GOVERNING_NAME.test(word)
 
-/** A secret's name (path rule e): matched against each component. */
+/** A secret's name: matched against each component, for the NOTE only
+ *  (R1: a name can never prove a file holds no secret, so it sets no level).
+ *  The broad words (`token`, `secret`, `credential`) skip source and text
+ *  files, where they are names of code rather than of a secret. */
 const SECRET_NAME =
-  /^(?:\.env.*|.*\.(?:pem|key|p12|pfx|keystore|jks|kdbx)|id_(?:rsa|dsa|ecdsa|ed25519).*|\.npmrc|\.netrc|\.pgpass|\.pypirc|\.git-credentials|\.htpasswd|credentials.*)$/i
+  /^(?:\.env.*|\.envrc|.*\.(?:pem|key|p12|pfx|keystore|jks|kdbx|tfvars|tfstate)|id_(?:rsa|dsa|ecdsa|ed25519).*|\.npmrc|\.netrc|\.pgpass|\.pypirc|\.git-credentials|\.aws-credentials|\.htpasswd|\.yarnrc.*|\.dev\.vars.*|\.vault-token|kubeconfig.*|auth\.json|serviceaccount.*\.json)$/i
+const SECRET_BROAD = /secret|credential|token/i
+const CODE_FILE =
+  /\.(?:ts|tsx|js|jsx|mjs|cjs|py|rb|go|rs|java|kt|swift|c|h|cc|cpp|cs|php|md|mdx|txt|css|scss|html|vue|svelte|test|spec|snap|map|d\.ts)$/i
 const SECRET_DIR = /^\.(?:ssh|aws|gnupg|kube|docker|config|azure|gcloud)$/i
 /** What a glob component, read literally, says it is after. */
 const SECRET_MARK =
-  /\.env|\.pem|\.key|\.p12|\.pfx|id_rsa|id_dsa|id_ecdsa|id_ed25519|npmrc|netrc|credential|\.ssh|\.aws|\.gnupg|\.kube|\.docker|keychain/i
-/** Names a glob is tried against before a proof: if it could match one, it
- *  could read a secret. A component not starting with `.` is not tried on
- *  dotfiles (a glob's `*` never matches a leading dot). */
-const SECRET_SAMPLES = [
-  'server.pem',
-  'server.key',
-  'cert.p12',
-  'cert.pfx',
-  'id_rsa',
-  'id_ed25519',
-  'credentials',
-  'credentials.json'
-]
-const DOT_SAMPLES = ['.env', '.env.local', '.npmrc', '.netrc', '.ssh', '.aws', '.config']
+  /\.env|\.pem|\.key|\.p12|\.pfx|id_rsa|id_dsa|id_ecdsa|id_ed25519|npmrc|netrc|yarnrc|credential|secret|token|tfvars|kubeconfig|\.ssh|\.aws|\.gnupg|\.kube|\.docker|keychain/i
 
 const GLOB_CHARS = /[*?[]/
 
@@ -415,11 +406,10 @@ function globRe(component: string): RegExp {
       const end = component.indexOf(']', i + 2)
       if (end < 0) out += '\\['
       else {
-        const body = component
+        out += `[${component
           .slice(i + 1, end)
           .replace(/^!/, '^')
-          .replace(/\\/g, '\\\\')
-        out += `[${body}]`
+          .replace(/\\/g, '\\\\')}]`
         i = end
       }
     } else if (c === '{') out += '(?:'
@@ -434,7 +424,28 @@ function globRe(component: string): RegExp {
   }
 }
 
-const isSecretComponent = (c: string): boolean => SECRET_NAME.test(c) || SECRET_DIR.test(c)
+/** Names a glob is tried against for the NOTE: if it could match one, what
+ *  it reaches may hold a secret. `**` reaches every folder below, dot-folders
+ *  included where the tool shows them. */
+const SECRET_SAMPLES = [
+  'server.pem',
+  'server.key',
+  'credentials.json',
+  'secrets.json',
+  'id_rsa',
+  '.env',
+  '.npmrc'
+]
+const globMaySecret = (word: string): boolean =>
+  word.split('/').some((c) => {
+    if (c === '**') return true
+    if (!GLOB_CHARS.test(c) && !/[{}]/.test(c)) return false
+    const re = globRe(c)
+    return SECRET_SAMPLES.some((sample) => re.test(sample))
+  })
+
+const isSecretComponent = (c: string): boolean =>
+  SECRET_NAME.test(c) || SECRET_DIR.test(c) || (SECRET_BROAD.test(c) && !CODE_FILE.test(c))
 
 /** Whether a word names a secret, or could through a glob (detection, so
  *  read literally: `.e*`, `*credentials*`, `~/.ssh/x`). */
@@ -578,14 +589,15 @@ function proofParse(script: string): PWord[][] | null {
 }
 
 /**
- * Path rule (e): inside the working folder (a relative path never climbing
- * above it, an absolute one only inside it, no `~`), no secret's name on any
- * component, and no glob that could reach a dotfile, a secret, or (unless
- * `leadingGlobOk`) expand into a word starting with `-`.
+ * Path rule: inside the working folder (a relative path never climbing above
+ * it, an absolute one only inside it, no `~`, no zsh `=word`), and no glob
+ * that (unless `leadingGlobOk`) could expand into a word starting with `-`.
+ * Whether the file may hold a secret is NOT part of the proof (R1): the
+ * rules say it in a note beside the level.
  */
 function pathOk(word: PWord, ctx: Context, leadingGlobOk = false): boolean {
   const v = word.value
-  if (!v || v.startsWith('~') || v.includes('\u0000')) return false
+  if (!v || v.startsWith('~') || v.startsWith('=') || v.includes('\u0000')) return false
   if (word.glob && !leadingGlobOk && GLOB_CHARS.test(v[0])) return false
   let resolved: string | null
   if (v.startsWith('/')) {
@@ -601,19 +613,7 @@ function pathOk(word: PWord, ctx: Context, leadingGlobOk = false): boolean {
     }
     resolved = normalise(`${ctx.dir}/${v}`)
   }
-  if (!resolved || !inside(resolved, ctx.base)) return false
-  for (const component of v.split('/')) {
-    if (!component) continue
-    if (isSecretComponent(component)) return false
-    if (word.glob && (GLOB_CHARS.test(component) || /[{}]/.test(component))) {
-      if (component.startsWith('.')) return false
-      if (component === '**') continue
-      const re = globRe(component)
-      if (SECRET_SAMPLES.some((s) => re.test(s))) return false
-      if (DOT_SAMPLES.some((s) => re.test(s))) return false
-    }
-  }
-  return true
+  return !!resolved && inside(resolved, ctx.base)
 }
 
 type Check = (value: string, ctx: Context, word: PWord) => boolean
@@ -750,11 +750,6 @@ const READ_LIST: Record<string, Spec> = {
     pattern: true
   }
 }
-
-/** The programs that only read whatever their options (a governing file they
- *  name is read, not written): the READ LIST, find, jq. Not `command`, which
- *  runs whatever follows it. */
-const READERS = new Set([...Object.keys(READ_LIST), 'find', 'jq'])
 
 /** Whether one simple command is proven to read only. */
 function provenCommand(words: PWord[], ctx: Context): boolean {
@@ -901,14 +896,13 @@ function provenJq(args: PWord[], ctx: Context): boolean {
   return files.every((w) => pathOk(w, ctx))
 }
 
-/** A git operand: a revision or a path, never above the project, never a
- *  secret (`HEAD:.env` included). */
+/** A git operand: a revision or a path, never above the project (a secret
+ *  it names, `HEAD:.env`, is the note's business). */
 function gitOperandOk(w: PWord, ctx: Context): boolean {
   const v = w.value
-  if (!v || w.glob || v.startsWith('-') || v.startsWith('~')) return false
+  if (!v || w.glob || v.startsWith('-') || v.startsWith('~') || v.startsWith('=')) return false
   if (v.startsWith('/')) return pathOk(w, ctx)
-  if (v.split(/[/:]/).includes('..')) return false
-  return !v.split(/[/:]/).some(isSecretComponent)
+  return !v.split(/[/:]/).includes('..')
 }
 
 const GIT_HISTORY_FLAGS = new Set([
@@ -1021,71 +1015,138 @@ export function provenReads(command: string, cwd?: string): boolean {
   return proven(command, startContext(cwd))
 }
 
-function proven(command: string, ctx: Context): boolean {
+/** R2: `cd PATH` into the working folder is a proven step that moves the
+ *  folder for the commands after it; any other `cd` (to `~`, `/tmp`, above
+ *  the root, `-`, no argument) leaves the rest unproven. An operand that
+ *  starts with `=` (zsh's `=word`, a program's path) is never proven. */
+function proven(command: string, start: Context): boolean {
   const commands = proofParse(command)
   if (!commands) return false
-  return commands.every((words) => provenCommand(words, ctx))
+  const ctx: Context = { base: start.base, dir: start.dir }
+  for (const words of commands) {
+    if (words.some((w) => w.value.startsWith('='))) return false
+    if (words[0].value === 'cd' && !words[0].glob) {
+      const args = words.slice(1).filter((w, i) => !(i === 0 && w.value === '--'))
+      if (args.length !== 1 || args[0].glob || args[0].value.startsWith('-')) return false
+      if (!pathOk(args[0], ctx)) return false
+      ctx.dir = resolve(ctx.dir, args[0].value)
+      continue
+    }
+    if (!provenCommand(words, ctx)) return false
+  }
+  return true
 }
 
 // ═════════════════════════════════════════════════════════════════════════
-// 2. DETECTED upper levels: lexical, recursive, erring upward
+// 2. DETECTED upper levels: from the command's STRUCTURE only (R3)
 // ═════════════════════════════════════════════════════════════════════════
 
-/** The level of a shell command: proven reads, else what is detected, else
- *  unknown. `provable`: the shell is the one the proof knows. */
-function scriptLevel(command: string, ctx: Context, provable: boolean): RuleLevel {
+/** What a reading gathers beside the level. */
+interface Acc {
+  maySecrets: boolean
+  hints: Set<string>
+  /** Program words run, for the rule across the whole request (a download
+   *  run by a shell). */
+  fetched: boolean
+  /** A shell or interpreter that reads its code from its input. */
+  stdinShell: boolean
+  /** Files a download wrote. */
+  downloaded: Set<string>
+  /** Work left: a request too large to read is unknown past it. */
+  budget: number
+}
+const newAcc = (): Acc => ({
+  maySecrets: false,
+  hints: new Set(),
+  fetched: false,
+  stdinShell: false,
+  downloaded: new Set(),
+  budget: 4000
+})
+
+/** The level of a shell command: proven reads, else what its structure
+ *  shows, else unknown. `provable`: the shell is the one the proof knows. */
+function scriptLevel(command: string, ctx: Context, provable: boolean, acc: Acc): RuleLevel {
   // An empty command: nothing the rules can read, and nothing a person
   // should be told is safe.
   if (!command.trim()) return 'outside'
+  let level = detectScript(command, ctx, 0, acc)
+  // A download run by a shell: piped or sourced into one, or saved and run.
+  if (acc.fetched && acc.stdinShell) level = combine(level, 'irreversible')
+  // The level: a proof wins over a detection (the note and hints stay).
   if (provable && proven(command, ctx)) return 'reads'
-  const state: DetectState = { names: new Set(), budget: 4000 }
-  let level = detectScript(command, ctx, false, 0, state)
-  // Downloaded code into a shell: a fetch and a shell, interpreter, `source`
-  // or `eval` anywhere in the same request.
-  if ([...state.names].some((n) => FETCH.has(n)) && [...state.names].some((n) => RUNS_CODE.has(n)))
-    level = combine(level, 'irreversible')
   return level
 }
 
 /** The level of a shell command, from the rules (exported for tests). */
 export function commandLevel(command: string, cwd?: string): RuleLevel {
-  return scriptLevel(command, startContext(cwd), true)
+  return scriptLevel(command, startContext(cwd), true, newAcc())
 }
 
 interface Segment {
   /** Its words, quotes and backslashes taken off. */
   words: string[]
+  /** Which words had a quoted part (not program text the shell splits). */
+  quoted: boolean[]
   /** Its redirections: the operator and the word after it. */
   redirects: Array<{ op: string; target: string }>
-  /** Text it carries that may be code: quoted strings, here-document bodies,
-   *  `name=value` values, brace lists, comments. */
-  subs: string[]
+  /** Command substitutions inside quotes or here-documents: they RUN, so
+   *  they are read as structure. */
+  code: string[]
+  /** What it feeds a program on its input: here-documents and here-strings
+   *  (code when the program is a shell). */
+  stdin: string[]
+  /** Text that is not structure (quoted strings, here-document bodies,
+   *  `name=value` values, comments): read for hints only. */
+  text: string[]
 }
 
-interface DetectState {
-  /** Every program-like name seen, for the rules across the whole request. */
-  names: Set<string>
-  /** Work left: a request too large to read is outside at least. */
-  budget: number
-}
-
-const newSegment = (): Segment => ({ words: [], redirects: [], subs: [] })
+const newSegment = (): Segment => ({
+  words: [],
+  quoted: [],
+  redirects: [],
+  code: [],
+  stdin: [],
+  text: []
+})
 
 /** `$'…'`: the escapes a person cannot read (`\x72\x6d` is `rm`). */
 function ansiC(body: string): string {
   return body.replace(/\\(x[0-9a-fA-F]{1,2}|[0-7]{1,3}|u[0-9a-fA-F]{1,4}|.)/g, (_m, e: string) => {
-    if (/^x/.test(e)) return String.fromCharCode(parseInt(e.slice(1), 16))
-    if (/^u/.test(e)) return String.fromCharCode(parseInt(e.slice(1), 16))
+    if (/^[xu]/.test(e)) return String.fromCharCode(parseInt(e.slice(1), 16))
     if (/^[0-7]+$/.test(e)) return String.fromCharCode(parseInt(e, 8))
     return ({ n: '\n', t: '\t', r: '\r' } as Record<string, string>)[e] ?? e
   })
 }
 
+/** The command substitutions in a string: `$(…)` (balanced) and backticks. */
+function substitutions(s: string): string[] {
+  const out: string[] = []
+  for (let i = 0; i < s.length; i++) {
+    if (s[i] === '$' && s[i + 1] === '(') {
+      let depth = 0
+      let j = i + 1
+      for (; j < s.length; j++) {
+        if (s[j] === '(') depth++
+        else if (s[j] === ')' && --depth === 0) break
+      }
+      out.push(s.slice(i + 2, j).replace(/^\(|\)$/g, ''))
+      i = j
+    } else if (s[i] === '`') {
+      const end = s.indexOf('`', i + 1)
+      if (end < 0) break
+      out.push(s.slice(i + 1, end))
+      i = end
+    }
+  }
+  return out
+}
+
 /**
  * The lenient lexer: never fails, splits a script into segments at every
  * place a command can start (`;`, `&`, `|`, newline, `(`, `)`, backtick,
- * `$(`, `<(`, a brace group), and keeps everything that may be code as text
- * to scan again.
+ * `$(`, `<(`, a brace group), keeps substitutions inside quotes as code, and
+ * everything else that is text as text.
  */
 function lex(source: string): Segment[] {
   const s = source.replace(/\\\r?\n/g, '')
@@ -1095,30 +1156,25 @@ function lex(source: string): Segment[] {
   let started = false
   let wordQuoted = false
   let pending: string | null = null
-  const heredocs: Array<{ delim: string; strip: boolean; owner: Segment }> = []
+  const heredocs: Array<{ delim: string; strip: boolean; quoted: boolean; owner: Segment }> = []
   let heredocNext: { strip: boolean } | null = null
   const endWord = (): void => {
     if (!started) return
     if (heredocNext) {
-      heredocs.push({ delim: word, strip: heredocNext.strip, owner: seg })
+      heredocs.push({ delim: word, strip: heredocNext.strip, quoted: wordQuoted, owner: seg })
       heredocNext = null
     } else if (pending) {
-      if (pending === '<<<') seg.subs.push(word)
+      if (pending === '<<<') seg.stdin.push(word)
       else if (/^[<>]&$/.test(pending) && /^(?:\d+-?|-)$/.test(word)) {
         // a descriptor copied, not a file
       } else seg.redirects.push({ op: pending, target: word })
       pending = null
-    } else seg.words.push(word)
-    // Text inside a word that may be code; pushed only when it differs, so
-    // the recursion always shrinks.
-    const extra = [
-      word.includes('=') ? word.slice(word.indexOf('=') + 1) : '',
-      word.replace(/[{},]/g, ' '),
-      word.replace(/\$\{[^}]*\}|\$[A-Za-z_]\w*/g, ' ')
-    ]
-    // A word built from several quoted parts (`'a '\''b'`) is read whole too.
-    if (wordQuoted) extra.push(word)
-    for (const e of extra) if (e && (e !== word || wordQuoted)) seg.subs.push(e)
+    } else {
+      seg.words.push(word)
+      seg.quoted.push(wordQuoted)
+      if (word.includes('=')) seg.text.push(word.slice(word.indexOf('=') + 1))
+      if (/[{},$]/.test(word)) seg.text.push(word.replace(/\$\{[^}]*\}|\$[A-Za-z_]\w*|[{},]/g, ' '))
+    }
     word = ''
     started = false
     wordQuoted = false
@@ -1127,8 +1183,8 @@ function lex(source: string): Segment[] {
     endWord()
     pending = null
     heredocNext = null
-    seg.subs = [...new Set(seg.subs)]
-    if (seg.words.length || seg.redirects.length || seg.subs.length) segments.push(seg)
+    if (seg.words.length || seg.redirects.length || seg.code.length || seg.text.length)
+      segments.push(seg)
     seg = newSegment()
   }
   const n = s.length
@@ -1154,7 +1210,10 @@ function lex(source: string): Segment[] {
           if ((doc.strip ? line.replace(/^\t+/, '') : line) === doc.delim) break
           lines.push(line)
         }
-        doc.owner.subs.push(lines.join('\n'))
+        const body = lines.join('\n')
+        doc.owner.stdin.push(body)
+        doc.owner.text.push(body)
+        if (!doc.quoted) doc.owner.code.push(...substitutions(body))
       }
       continue
     }
@@ -1169,7 +1228,7 @@ function lex(source: string): Segment[] {
       word += body
       started = true
       wordQuoted = true
-      seg.subs.push(body)
+      seg.text.push(body)
       i = end + 1
       continue
     }
@@ -1185,7 +1244,8 @@ function lex(source: string): Segment[] {
       word += body
       started = true
       wordQuoted = true
-      seg.subs.push(body)
+      seg.text.push(body)
+      seg.code.push(...substitutions(body))
       i = j + 1
       continue
     }
@@ -1198,7 +1258,7 @@ function lex(source: string): Segment[] {
     if (c === '#' && !started) {
       let end = s.indexOf('\n', i)
       if (end < 0) end = n
-      seg.subs.push(s.slice(i + 1, end))
+      seg.text.push(s.slice(i + 1, end))
       i = end
       continue
     }
@@ -1246,126 +1306,45 @@ function lex(source: string): Segment[] {
     i++
   }
   endSegment()
-  // A here-document never closed: its body is the rest, already lexed.
   return segments
 }
 
 /** A word's program name: the last part of a path, lower-cased (macOS finds
- *  `RM` as `rm`), a leading `!` or backslash dropped. */
-const baseName = (word: string): string =>
-  (word.split('/').pop() ?? word).replace(/^[^A-Za-z0-9_./-]+/, '').toLowerCase()
+ *  `RM` as `rm`). */
+const baseName = (word: string): string => (word.split('/').pop() ?? word).toLowerCase()
 
-/** Programs whose name alone, anywhere, means "Hard to undo". */
-const DESTROY = new Set([
-  'rm',
-  'rmdir',
-  'unlink',
-  'shred',
-  'srm',
-  'truncate',
-  'dd',
-  'wipefs',
-  'diskutil',
-  'fdisk',
-  'parted',
-  'kill',
-  'pkill',
-  'killall',
-  'shutdown',
-  'reboot',
-  'halt',
-  'poweroff',
-  'sudo',
-  'doas',
-  'su',
-  'pkexec',
-  'rimraf',
-  'del-cli'
-])
-/** `asProgram`: the word stands where a program does, so a glob in it
- *  (`/bin/r? -rf x`) is tried against the list too. */
-function destroyWord(word: string, asProgram = false): boolean {
-  const b = baseName(word)
-  if (DESTROY.has(b) || /^(?:mkfs|newfs)/.test(b)) return true
-  if (asProgram && GLOB_CHARS.test(b)) {
-    const re = globRe(b)
-    return [...DESTROY].some((d) => re.test(d)) || re.test('mkfs')
-  }
-  return false
-}
-
-/** Options that remove what they name. */
-const DELETE_FLAG = /^(?:--?delete(?:[-=].*)?|--remove-source-files|--delete-after)$/
-
-const FETCH = new Set(['curl', 'wget', 'http', 'https', 'xh', 'fetch', 'aria2c', 'httpie'])
+const FETCH = new Set(['curl', 'wget', 'http', 'https', 'xh', 'aria2c'])
 const NETWORK = new Set([
   ...FETCH,
   'ssh',
   'scp',
   'sftp',
   'ftp',
-  'rsync',
   'nc',
   'ncat',
   'netcat',
-  'socat',
   'telnet',
-  'mosh',
-  'open',
-  'xdg-open'
+  'socat',
+  'mosh'
 ])
-/** Network names that are also ordinary words: counted only as a program. */
-const NETWORK_AMBIGUOUS = new Set(['open', 'fetch', 'http', 'https'])
-
 const SHELLS = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh', 'fish', 'csh', 'tcsh', 'ash'])
 const INTERPRETERS = new Set([
   ...SHELLS,
   'node',
   'nodejs',
   'ruby',
-  'irb',
   'perl',
   'php',
   'deno',
   'bun',
   'lua',
-  'luajit',
-  'rscript',
   'osascript',
-  'awk',
-  'gawk',
-  'mawk',
-  'nawk',
-  'tclsh',
-  'pwsh',
-  'powershell',
-  'swift',
-  'java',
-  'jshell',
-  'groovy',
-  'make',
-  'gmake',
-  'just',
-  'rake',
-  'tsx',
-  'ts-node',
-  'vite-node',
-  'busybox'
+  'pwsh'
 ])
 const isInterpreter = (name: string): boolean =>
-  INTERPRETERS.has(name) || /^python[\d.]*$/.test(name) || /^pypy[\d.]*$/.test(name)
-/** What runs code it is handed (for the download-into-a-shell rule). */
-const RUNS_CODE = new Set([...INTERPRETERS, 'python', 'python3', 'source', 'eval', 'exec'])
-
-/** Command-line tools that act on a remote service or the system. */
-const REMOTE = new Set([
-  'docker',
-  'podman',
-  'kubectl',
-  'helm',
-  'terraform',
-  'tofu',
-  'pulumi',
+  INTERPRETERS.has(name) || /^python[\d.]*$/.test(name)
+/** Command-line tools of a cloud. */
+const CLOUD = new Set([
   'aws',
   'gcloud',
   'gsutil',
@@ -1381,198 +1360,137 @@ const REMOTE = new Set([
   'firebase',
   'supabase',
   'railway',
+  'pulumi'
+])
+/** Remote programs: outside whatever they are asked. */
+const REMOTE = new Set([
+  ...CLOUD,
   'gh',
   'glab',
-  'hub',
-  'ansible',
-  'ansible-playbook',
-  'serverless',
-  'sls',
-  'cdk',
-  'eksctl',
-  'oc',
-  'nomad',
-  'vault',
-  'consul',
-  'stripe',
-  's3cmd',
-  'rclone',
-  'minikube',
-  'psql',
-  'mysql',
-  'mariadb',
-  'sqlite3',
-  'redis-cli',
-  'mongo',
-  'mongosh',
-  'clickhouse-client',
-  'cqlsh',
-  'sqlcmd',
-  'duckdb',
-  'launchctl',
-  'defaults',
-  'systemctl',
-  'service',
-  'security',
-  'dscl',
-  'networksetup',
-  'scutil',
-  'pmset',
-  'csrutil',
-  'spctl',
-  'tmutil',
-  'nvram',
-  'crontab',
+  'docker',
+  'podman',
+  'kubectl',
+  'helm',
+  'terraform',
+  'tofu',
   'brew',
-  'port',
-  'apt',
-  'apt-get',
-  'yum',
-  'dnf',
-  'pacman',
-  'snap',
   'pip',
   'pip3',
   'pipx',
-  'gem',
-  'cargo',
-  'go',
-  'npm',
-  'pnpm',
-  'yarn',
-  'bun',
   'npx',
   'bunx',
-  'uv',
-  'uvx',
-  'poetry',
-  'composer',
-  'mvn',
-  'gradle'
+  'pnpx'
 ])
-/** Remote names that are also ordinary words: in quoted text, counted only
- *  as the program. */
-const REMOTE_AMBIGUOUS = new Set([
-  'go',
-  'hub',
-  'service',
-  'port',
-  'security',
-  'defaults',
-  'snap',
-  'vault',
-  'consul',
-  'gem',
-  'oc',
-  'bun',
-  'stripe',
-  'apt',
-  'fly',
-  'render'
-])
-/** Verbs that, beside a remote or system tool, remove or end something. */
-const VERBS = new Set([
-  'delete',
-  'destroy',
-  'terminate',
-  'purge',
-  'prune',
-  'wipe',
-  'erase',
-  'remove',
-  'uninstall',
-  'rm',
-  'rmi',
-  'drop',
-  'flushall',
-  'flushdb',
-  'publish',
-  'unpublish',
-  'deprecate',
-  'merge',
-  'transfer',
-  'archive',
-  'stop',
-  'disable',
-  'mask',
-  'unload',
-  'bootout'
-])
-const SQL_CLIENTS = new Set([
+const DB_CLIENTS = new Set([
   'psql',
   'mysql',
   'mariadb',
   'sqlite3',
   'mongo',
   'mongosh',
+  'redis-cli',
   'clickhouse-client',
   'cqlsh',
   'sqlcmd',
   'duckdb'
 ])
-
-/** Code text that removes files. */
-const CODE_DELETES =
-  /unlink|remove|rmtree|rmsync|rmdir|\.delete\b|delete\s*\(|empty\s+trash|truncate/i
-
-/** Variables that steer what a program runs or reads. */
-const STEERING =
-  /^(?:PATH|LD_\w+|DYLD_\w+|GIT_\w+|\w*PAGER|\w*EDITOR|LESS\w*|BASH_ENV|ENV|ZDOTDIR|PROMPT_COMMAND|NODE_OPTIONS|NODE_PATH|PYTHON\w*|PERL5\w*|RUBY\w*|IFS|CDPATH|HOME|SHELL|\w*CONFIG\w*|\w*_OPTS|\w*_OPTIONS)$/
-
-/** Programs the detection knows, so it does not call them unknown. */
-const KNOWN = new Set([
+/** Package managers' subcommands that reach the registry. */
+const PACKAGE_NETWORK =
+  /^(?:install|i|ci|add|update|upgrade|up|publish|unpublish|remove|uninstall|rm|dlx|create|outdated|audit|login|dedupe)$/
+/** Programs that only read whatever they are given (a path outside the
+ *  project they name is a read outside). */
+const READERS = new Set([
   ...Object.keys(READ_LIST),
   'find',
   'jq',
-  'git',
-  'cd',
-  'set',
-  'false',
-  'test',
-  '[',
-  'sleep',
-  'exit',
-  'mkdir',
-  'touch',
-  'cp',
-  'mv',
-  'ln',
-  'tee',
-  'sed',
+  'less',
+  'more',
+  'bat',
+  'diff',
+  'xxd',
+  'od',
+  'hexdump',
+  'strings',
+  'shasum',
+  'md5',
+  'sha256sum'
+])
+
+/** Words worth pointing the model at when they appear in text the rules do
+ *  not read as structure. */
+const HINT_WORDS = new Set([
+  'rm',
+  'rmdir',
+  'unlink',
+  'shred',
+  'truncate',
+  'dd',
+  'diskutil',
+  'wipefs',
+  'kill',
+  'pkill',
+  'killall',
+  'sudo',
+  'doas',
+  'curl',
+  'wget',
+  'ssh',
+  'scp',
+  'rsync',
+  'nc',
+  'eval',
+  'exec',
+  'rmtree',
+  'rmsync',
+  'remove',
+  'delete',
+  'drop',
+  'destroy',
+  'terminate',
+  'purge',
+  'wipe',
+  'force',
+  'push',
+  'publish',
   'chmod',
   'chown',
-  'install'
+  'crontab',
+  'system',
+  'spawn',
+  'popen',
+  'writefile',
+  'writefilesync'
 ])
-/** Programs that write the files they are given. */
-const WRITERS = new Set(['mkdir', 'touch', 'cp', 'mv', 'ln', 'tee', 'install'])
-/** Options whose value is a file the program writes. */
-const WRITE_OPTION =
-  /^(?:-o|--output|--out|--output-file|--outfile|--log-file|-fprint0?|-fprintf|-fls)$/
-const WRITE_OPTION_EQ = /^(?:--output|--out|--output-file|--outfile|--log-file)=(.+)$/
-/** Long options that run another program. */
-const RUN_OPTION =
-  /^--(?:exec|exec-batch|execdir|pre|hostname-bin|pager|to-command|use-compress-program|compress-program|checkpoint-action|command|editor|shell|filter|rsh|ssh|run|eval)(?:=|$)/
+
+function noticeText(text: string, acc: Acc): void {
+  for (const token of text.split(/[^A-Za-z0-9_-]+/)) {
+    const t = token.toLowerCase().replace(/^-+/, '')
+    if (HINT_WORDS.has(t) || /^mkfs/.test(t)) acc.hints.add(t)
+  }
+  for (const m of text.matchAll(
+    /\bgit\s+(push|reset|clean|checkout|restore|branch|filter-branch|reflog|gc|stash|rebase|worktree)\b/g
+  ))
+    acc.hints.add(`git ${m[1]}`)
+  const governing = GOVERNING_NAME.exec(text)
+  if (governing) acc.hints.add(governing[0].replace(/^[\s/'"=:]/, ''))
+  if (/https?:\/\//.test(text)) acc.hints.add('a web address')
+}
 
 const isAssignment = (w: string): boolean => /^[A-Za-z_]\w*\+?=/.test(w)
 
-function detectScript(
-  source: string,
-  start: Context,
-  quoted: boolean,
-  depth: number,
-  state: DetectState
-): RuleLevel {
-  if (depth > 8 || --state.budget < 0) return 'outside'
+function detectScript(source: string, start: Context, depth: number, acc: Acc): RuleLevel {
+  if (depth > 8 || --acc.budget < 0) return 'unknown'
   const ctx: Context = { base: start.base, dir: start.dir }
-  let level: RuleLevel = 'unknown'
+  let level: RuleLevel = 'reads'
   for (const seg of lex(source)) {
-    if (--state.budget < 0) return combine(level, 'outside')
-    level = combine(level, segmentLevel(seg, ctx, quoted, state))
-    for (const sub of seg.subs)
-      if (sub.trim()) level = combine(level, detectScript(sub, ctx, true, depth + 1, state))
+    if (--acc.budget < 0) return combine(level, 'unknown')
+    level = combine(level, segmentLevel(seg, ctx, depth, acc))
+    for (const code of seg.code)
+      if (code.trim()) level = combine(level, detectScript(code, ctx, depth + 1, acc))
+    for (const t of seg.text) noticeText(t, acc)
     followCd(seg, ctx)
   }
-  return level
+  return level === 'reads' ? 'unknown' : level
 }
 
 /** `cd` inside a compound command: later relative paths resolve from there;
@@ -1592,164 +1510,461 @@ function followCd(seg: Segment, ctx: Context): void {
   else ctx.dir = null
 }
 
-function segmentLevel(seg: Segment, ctx: Context, quoted: boolean, state: DetectState): RuleLevel {
+/** The level of writing a word (a redirection, a write's target). */
+function writeTarget(word: string, ctx: Context): RiskLevel {
+  if (governingMention(word)) return 'irreversible'
+  return writeLevel(resolve(ctx.dir, word), ctx)
+}
+
+/** The level of reading a word that names a path: outside when it leaves
+ *  the project; nothing to say otherwise. */
+function readTarget(word: string, ctx: Context): RuleLevel {
+  if (!/^(?:\/|~|\$HOME\b|\$\{HOME\}|\.\.(?:\/|$))|\/\.\.(?:\/|$)/.test(word)) return 'unknown'
+  const at = resolve(ctx.dir, word)
+  return at === null || (!isDevice(at) && !inside(at, ctx.base)) ? 'outside' : 'unknown'
+}
+
+/** The machine's temporary folders. */
+const scratch = (path: string | null): boolean =>
+  path !== null && /^\/(?:private\/)?(?:tmp|var\/folders)\/./.test(path)
+
+/** Values of these options are not operands (`xargs -n 1 rm`). */
+const XARGS_VALUES = new Set(['-n', '-I', '-i', '-L', '-l', '-P', '-d', '-E', '-s', '-a', '-R'])
+
+/** Past the wrappers the rules know, to the program they run: `sudo`,
+ *  `doas`, `env`, `command`, `time`, `nice`, `nohup`, `timeout N`, `xargs`.
+ *  `sudo`/`doas` themselves are hard to undo. */
+function unwrap(
+  words: string[],
+  k: number,
+  acc: Acc
+): { at: number; level: RuleLevel; writes: string[] } {
+  let i = k
+  let level: RuleLevel = 'unknown'
+  const writes: string[] = []
+  for (;;) {
+    const name = baseName(words[i] ?? '')
+    if (name === 'sudo' || name === 'doas') {
+      level = 'irreversible'
+      i++
+      while (i < words.length && words[i].startsWith('-')) {
+        if (/^-[ugCDhpRrT]$/.test(words[i])) i++
+        i++
+      }
+    } else if (name === 'env') {
+      i++
+      while (i < words.length && (words[i].startsWith('-') || isAssignment(words[i]))) {
+        if (/^-[uCS]$/.test(words[i])) i++
+        i++
+      }
+      if (i >= words.length) acc.maySecrets = true
+    } else if (name === 'command' || name === 'builtin') {
+      if (/^-[vV]$/.test(words[i + 1] ?? '')) return { at: words.length, level, writes }
+      i++
+      while (words[i] === '-p') i++
+    } else if (name === 'time' || name === 'nohup') {
+      i++
+      while (i < words.length && words[i].startsWith('-')) {
+        // `time -o FILE` writes FILE.
+        if (/^(?:-o|--output)$/.test(words[i]) && words[i + 1] !== undefined) {
+          writes.push(words[i + 1])
+          i++
+        } else if (words[i] === '-f') i++
+        i++
+      }
+    } else if (name === 'nice') {
+      i++
+      while (i < words.length && words[i].startsWith('-')) {
+        if (words[i] === '-n') i++
+        i++
+      }
+    } else if (name === 'timeout') {
+      i++
+      while (i < words.length && words[i].startsWith('-')) {
+        if (/^-[sk]$/.test(words[i])) i++
+        i++
+      }
+      i++
+    } else if (name === 'xargs') {
+      i++
+      while (i < words.length && words[i].startsWith('-')) {
+        if (XARGS_VALUES.has(words[i])) i++
+        i++
+      }
+    } else return { at: i, level, writes }
+    if (i >= words.length) return { at: i, level, writes }
+  }
+}
+
+function segmentLevel(seg: Segment, ctx: Context, depth: number, acc: Acc): RuleLevel {
   const words = seg.words
   let k = 0
   while (k < words.length && isAssignment(words[k])) k++
-  const assigns = words.slice(0, k)
-  const programWord = words[k]
-  const program = programWord === undefined ? undefined : baseName(programWord)
-  const names = words.map(baseName)
-  for (const name of names) state.names.add(name)
-  if (program === '.') state.names.add('source')
-  let level: RuleLevel = 'unknown'
+  let level: RuleLevel = 'reads'
   const raise = (l: RuleLevel): void => {
     level = combine(level, l)
   }
 
-  // Hard to undo: a destructive program's name, or an option that deletes.
-  if (words.some((w, i) => destroyWord(w, i === k)) || words.some((w) => DELETE_FLAG.test(w)))
-    return 'irreversible'
-
-  // Variables that steer a program.
-  if (assigns.some((a) => STEERING.test(a.slice(0, a.search(/\+?=/))))) raise('outside')
-
-  // git, wherever it stands.
-  names.forEach((name, i) => {
-    if (name === 'git') raise(gitLevel(words.slice(i + 1), ctx))
-  })
-
-  // Remote services and the system.
-  const tokens = words.flatMap((w) => w.split(/[^A-Za-z0-9_.+-]+/)).filter(Boolean)
-  const lower = tokens.map((t) => t.toLowerCase())
-  const counts = (n: string, i: number, ambiguous: Set<string>): boolean =>
-    !ambiguous.has(n) || i === k || (!quoted && !NETWORK_AMBIGUOUS.has(n))
-  if (names.some((n, i) => REMOTE.has(n) && counts(n, i, quoted ? REMOTE_AMBIGUOUS : new Set()))) {
-    raise('outside')
-    if (lower.some((t) => !t.startsWith('-') && t.split('-').some((part) => VERBS.has(part))))
-      raise('irreversible')
-    if (
-      names.includes('gh') &&
-      (tokens.some((t) => /delete|merge|transfer|archive/i.test(t)) ||
-        words.some((w) => /^--(?:visibility|public)\b/.test(w)))
-    )
-      raise('irreversible')
-    if (
-      /\b(?:npm|pnpm|yarn)\b/.test(names.join(' ')) &&
-      /\bconfig\s+(?:set|delete|rm|edit)\b/.test(words.join(' '))
-    )
-      raise('irreversible')
-    if (
-      names.some((n) => SQL_CLIENTS.has(n)) &&
-      /\b(?:drop|delete|truncate)\b/i.test(words.join(' '))
-    )
-      raise('irreversible')
-  }
-  if (lower.some((t) => t === 'flushall' || t === 'flushdb')) raise('irreversible')
-  // An HTTP DELETE.
-  if (
-    names.some((n) => FETCH.has(n) || n === 'gh') &&
-    words.some((w) => /^(?:-X|--request=?|--method=?|-X=)?DELETE$/i.test(w))
-  )
-    raise('irreversible')
-
-  // The network.
-  if (names.some((n, i) => NETWORK.has(n) && (!NETWORK_AMBIGUOUS.has(n) || i === k)))
-    raise('outside')
-
-  // Shells and interpreters: code the rules cannot read.
-  const interpreter = quoted
-    ? program !== undefined && isInterpreter(program)
-    : names.some(isInterpreter)
-  if (interpreter) {
-    raise('outside')
-    if (CODE_DELETES.test(words.join(' '))) raise('irreversible')
-  }
-
-  // A program the rules do not know, or one called by a path (`./cat`).
-  if (!quoted && programWord !== undefined) {
-    if (/[/\\]/.test(programWord) || !KNOWN.has(programWord)) raise('outside')
-  }
-  if (program === 'set' && words.length === k + 1) raise('outside')
-  if (program === 'jq' && /env|\$ENV|input|import|include/.test(words.slice(k + 1).join(' ')))
-    raise('outside')
-  if (program === 'date' && words.slice(k + 1).some((w) => !w.startsWith('+'))) raise('outside')
-
-  // Secrets, and globs that reach dotfiles.
-  if (words.some(secretWord) || seg.redirects.some((r) => secretWord(r.target))) raise('outside')
-
-  // Paths outside the project (top level only: quoted text is not a path).
-  if (!quoted) {
-    for (const w of words.slice(k + 1)) {
-      const candidate = w.includes('=') && w.startsWith('-') ? w.slice(w.indexOf('=') + 1) : w
-      if (!/^(?:\/|~|\$HOME\b|\$\{HOME\}|\.\.(?:\/|$))|\/\.\.(?:\/|$)/.test(candidate)) continue
-      const at = resolve(ctx.dir, candidate)
-      if (at === null || (!isDevice(at) && !inside(at, ctx.base))) raise('outside')
-    }
-  }
-
-  // What the program writes: options, writers, sed, chmod.
-  const writes: string[] = []
-  words.forEach((w, i) => {
-    if (WRITE_OPTION.test(w) && !(w === '-o' && program === 'find') && words[i + 1] !== undefined)
-      writes.push(words[i + 1])
-    const eq = WRITE_OPTION_EQ.exec(w)
-    if (eq) writes.push(eq[1])
-  })
-  // Program by program, wherever the program stands: behind a wrapper the
-  // rules do not know (`nice chmod -R …`), its rule still applies.
-  names.forEach((name, j) => {
-    if (j < k) return
-    const after = words.slice(j + 1)
-    const operands = after.filter((w) => !w.startsWith('-'))
-    if (WRITERS.has(name)) writes.push(...operands)
-    if (name === 'uniq' && operands.length >= 2) writes.push(operands[1])
-    if (name === 'file' && after.includes('-C')) raise('project')
-    // crontab with anything but a listing installs or removes the table.
-    if (name === 'crontab' && after.some((w) => w !== '-l')) raise('irreversible')
-    if (name === 'sed') {
-      raise('project')
-      const script = after.join('\n')
-      if (/(?:^|[\s;{}0-9$!/,])e(?:\s|;|}|$)|\/[gpIiMm0-9w]*e[gpIiMm0-9]*$/m.test(script))
-        raise('outside')
-    }
-    if (name === 'chmod' || name === 'chown' || name === 'chgrp') {
-      if (after.some((w) => /^-[A-Za-z]*R|^--recursive$/.test(w))) raise('irreversible')
-      for (const w of operands.slice(1)) {
-        const at = resolve(ctx.dir, w)
-        raise(at !== null && writeLevel(at, ctx) === 'project' ? 'project' : 'irreversible')
-      }
-    }
-    if (name === 'find' && after.some((w) => /^-(?:exec|execdir|ok|okdir)$/.test(w)))
-      raise('outside')
-    if (name === 'fd' && after.some((w) => /^-[A-Za-z]*[xX]/.test(w))) raise('outside')
-  })
-  if (words.some((w) => RUN_OPTION.test(w))) raise('outside')
-  for (const w of writes)
-    raise(governingMention(w) ? 'irreversible' : writeLevel(resolve(ctx.dir, w), ctx))
-
-  // Redirections into a file.
+  // Redirections into a file: the project, outside, or what governs.
   for (const r of seg.redirects) {
-    if (!r.op.includes('>')) continue
-    raise(governingMention(r.target) ? 'irreversible' : writeLevel(resolve(ctx.dir, r.target), ctx))
+    if (r.op.includes('>')) raise(writeTarget(r.target, ctx))
+    if (secretWord(r.target)) acc.maySecrets = true
   }
 
-  // A governing file named by anything but a known reader: it may write it.
-  const reader =
-    program !== undefined &&
-    (program === 'cd' || READERS.has(program)) &&
-    !/[/\\]/.test(programWord ?? '') &&
-    writes.length === 0
-  const mentions = words.slice(k + 1).concat(assigns)
-  if (mentions.some((w) => governingMention(w) || governingPath(w, ctx)))
-    raise(reader ? 'outside' : 'irreversible')
+  const { at, level: wrapped, writes } = unwrap(words, k, acc)
+  raise(wrapped)
+  for (const w of writes) raise(writeTarget(w, ctx))
+  if (at >= words.length) return level
+  const program = baseName(words[at])
+  const args = words.slice(at + 1)
+  noteSecrets(program, args, seg.quoted.slice(at + 1), ctx, acc)
+  raise(programLevel(program, args, seg, ctx, depth, acc))
   return level
 }
 
-/** A word that resolves to a governing file (a dotfile under `~`, …). */
-function governingPath(word: string, ctx: Context): boolean {
-  const at = resolve(ctx.dir, word)
-  return at !== null && GOVERNING_FILES.some((re) => re.test(at))
+/** The secrets NOTE (R1): a secret-like name, a recursive search from the
+ *  root or a dot-folder, an environment dump, `git remote -v`, a dotfile glob. */
+function noteSecrets(
+  program: string,
+  args: string[],
+  quoted: boolean[],
+  ctx: Context,
+  acc: Acc
+): void {
+  const search =
+    program === 'grep' || program === 'egrep' || program === 'fgrep' || program === 'rg'
+  let patternSkipped =
+    !search || args.some((a) => a === '-e' || /^-[A-Za-z]*e$/.test(a) || a === '--files')
+  const operands: string[] = []
+  args.forEach((a, i) => {
+    if (a.startsWith('-')) {
+      const value = a.includes('=') ? a.slice(a.indexOf('=') + 1) : ''
+      if (value && (secretWord(value) || dotGlob(value))) acc.maySecrets = true
+      return
+    }
+    if (!patternSkipped) {
+      patternSkipped = true
+      return
+    }
+    operands.push(a)
+    if (quoted[i] && /\s/.test(a)) return
+    if (secretWord(a) || dotGlob(a) || (!quoted[i] && /[*?[]/.test(a) && globMaySecret(a)))
+      acc.maySecrets = true
+  })
+  // A value of a short option (`rg -g secrets.*`).
+  args.forEach((a, i) => {
+    if (/^-[gI]$/.test(a) && args[i + 1] && (secretWord(args[i + 1]) || dotGlob(args[i + 1])))
+      acc.maySecrets = true
+  })
+  const atRoot = (list: string[]): boolean =>
+    list.length === 0 ||
+    list.some((o) => {
+      const r = resolve(ctx.dir, o)
+      return r === ctx.base || r === null || /(?:^|\/)\.[^/.][^/]*/.test(o)
+    })
+  const flags = args.filter((a) => a.startsWith('-'))
+  const recursiveGrep =
+    (program === 'grep' || program === 'egrep' || program === 'fgrep') &&
+    flags.some(
+      (f) => /^-[A-Za-z]*[rR]/.test(f) || f === '--recursive' || f === '--dereference-recursive'
+    )
+  const hiddenRg =
+    program === 'rg' &&
+    flags.some((f) => f === '--hidden' || f === '-.' || /^-u{2,}$/.test(f) || f === '--no-ignore')
+  if ((recursiveGrep || hiddenRg) && atRoot(operands)) acc.maySecrets = true
+  if (
+    program === 'find' &&
+    atRoot(
+      args
+        .slice(
+          0,
+          Math.max(
+            0,
+            args.findIndex((a) => a.startsWith('-') || a === '!')
+          )
+        )
+        .concat(args.findIndex((a) => a.startsWith('-')) < 0 ? args : [])
+    )
+  )
+    acc.maySecrets = true
+  if (program === 'tree' && flags.some((f) => /^-[A-Za-z]*a/.test(f)) && atRoot(operands))
+    acc.maySecrets = true
+  // Environment dumps.
+  if (program === 'printenv') acc.maySecrets = true
+  if (
+    (program === 'set' || program === 'export' || program === 'declare' || program === 'typeset') &&
+    (args.length === 0 || args.every((a) => /^-[px]+$/.test(a)))
+  )
+    acc.maySecrets = true
+  if (program === 'jq' && args.some((a) => /\benv\b|\$ENV/.test(a))) acc.maySecrets = true
+  if (program === 'ps' && args.some((a) => /^[a-z]*e[a-z]*$/.test(a))) acc.maySecrets = true
+  if (program === 'security' && args.some((a) => /^find-/.test(a))) acc.maySecrets = true
+  if (program === 'git') {
+    const sub = args.find((a) => !a.startsWith('-'))
+    if (sub === 'remote' && args.includes('-v')) acc.maySecrets = true
+    if (sub === 'config' && args.some((a) => a === '-l' || a === '--list' || /url/.test(a)))
+      acc.maySecrets = true
+  }
+}
+
+/** A glob that can match a dotfile (`.e*`, `.*`, `src/.en?`). */
+const dotGlob = (word: string): boolean =>
+  word.split('/').some((c) => c.startsWith('.') && /[*?[]/.test(c))
+
+function programLevel(
+  program: string,
+  args: string[],
+  seg: Segment,
+  ctx: Context,
+  depth: number,
+  acc: Acc
+): RuleLevel {
+  const flags = args.filter((a) => a.startsWith('-'))
+  const operands = args.filter((a) => !a.startsWith('-'))
+  const has = (...f: string[]): boolean => args.some((a) => f.includes(a))
+  const shortHas = (letters: RegExp): boolean =>
+    args.some((a) => /^-[A-Za-z]+$/.test(a) && letters.test(a.slice(1)))
+
+  // Shells: `-c TEXT` is read as a command; code on their input too.
+  if (SHELLS.has(program)) {
+    const c = args.findIndex((a) => /^-[A-Za-z]*c[A-Za-z]*$/.test(a) || a === '--command')
+    if (c >= 0 && args[c + 1] !== undefined) {
+      const inner = newAcc()
+      inner.budget = acc.budget
+      let level = detectScript(args[c + 1], ctx, depth + 1, inner)
+      acc.budget = inner.budget
+      acc.maySecrets ||= inner.maySecrets
+      for (const h of inner.hints) acc.hints.add(h)
+      acc.fetched ||= inner.fetched
+      // `bash -c "$(curl …)"`: it runs what was downloaded.
+      if (inner.fetched && /\$\(|`/.test(args[c + 1])) level = combine(level, 'irreversible')
+      if (inner.fetched && inner.stdinShell) level = combine(level, 'irreversible')
+      return level
+    }
+    const script = operands.find((o) => o !== '-')
+    if (script === undefined) {
+      acc.stdinShell = true
+      let level: RuleLevel = 'unknown'
+      for (const body of seg.stdin) level = combine(level, detectScript(body, ctx, depth + 1, acc))
+      return level
+    }
+    if (acc.downloaded.has(script)) return 'irreversible'
+    return 'unknown'
+  }
+  if (program === 'source' || program === '.' || program === 'eval') {
+    if (program === 'eval') return detectScript(args.join(' '), ctx, depth + 1, acc)
+    if (!operands.length || acc.downloaded.has(operands[0])) acc.stdinShell = true
+    return acc.downloaded.has(operands[0] ?? '') ? 'irreversible' : 'unknown'
+  }
+  if (isInterpreter(program)) {
+    // Code from its input (`python3 -`, `node` alone) may be a download.
+    if (!operands.length || operands[0] === '-')
+      if (!args.some((a) => /^-[ce]$/.test(a))) acc.stdinShell = true
+    if (operands[0] && acc.downloaded.has(operands[0])) return 'irreversible'
+    return 'unknown'
+  }
+
+  // The network and remote programs.
+  if (FETCH.has(program)) {
+    acc.fetched = true
+    let level: RuleLevel = 'outside'
+    args.forEach((a, i) => {
+      if (/^(?:-X|--request|--method)$/.test(a) && /^delete$/i.test(args[i + 1] ?? ''))
+        level = 'irreversible'
+      if (/^(?:-XDELETE|--request=DELETE|--method=DELETE)$/i.test(a)) level = 'irreversible'
+      const out = /^(?:-o|-O|--output|--output-document)$/.test(a)
+        ? args[i + 1]
+        : /^--output(?:-document)?=(.+)$/.exec(a)?.[1]
+      if (out && out !== '-') {
+        acc.downloaded.add(out)
+        level = combine(level, writeTarget(out, ctx)) as RiskLevel
+      }
+    })
+    for (const r of seg.redirects) if (r.op.includes('>')) acc.downloaded.add(r.target)
+    return level
+  }
+  if (program === 'ssh') {
+    let i = 0
+    while (i < args.length && args[i].startsWith('-')) {
+      if (/^-[bcDEeFIiJLlmOoPpRSWw]$/.test(args[i])) i++
+      i++
+    }
+    const remote = args.slice(i + 1)
+    return remote.length
+      ? combine('outside', detectScript(remote.join(' '), ctx, depth + 1, acc))
+      : 'outside'
+  }
+  if (NETWORK.has(program)) return 'outside'
+  if (program === 'rsync') {
+    if (has('--delete') || flags.some((f) => /^--delete/.test(f) || f === '--remove-source-files'))
+      return 'irreversible'
+    if (operands.some((o) => /^[^/]*:/.test(o))) return 'outside'
+    return operands.length ? writeTarget(operands[operands.length - 1], ctx) : 'unknown'
+  }
+  if (program === 'git') return gitLevel(args, ctx)
+  if (program === 'gh') {
+    const sub = operands.slice(0, 2)
+    if (sub[1] === 'delete') return 'irreversible'
+    if (
+      sub[0] === 'api' &&
+      args.some((a, i) => /^(?:-X|--method)$/.test(a) && /^delete$/i.test(args[i + 1] ?? ''))
+    )
+      return 'irreversible'
+    if (args.some((a) => /^(?:-XDELETE|--method=DELETE)$/i.test(a))) return 'irreversible'
+    return 'outside'
+  }
+  if (program === 'kubectl') return operands[0] === 'delete' ? 'irreversible' : 'outside'
+  if (program === 'terraform' || program === 'tofu')
+    return operands[0] === 'destroy' || (operands[0] === 'apply' && has('-destroy'))
+      ? 'irreversible'
+      : 'outside'
+  if (program === 'docker' || program === 'podman') {
+    const [a, b] = operands
+    if (a === 'system' && b === 'prune') return 'irreversible'
+    if (a === 'volume' && (b === 'rm' || b === 'prune')) return 'irreversible'
+    if (
+      (a === 'rm' || (a === 'container' && b === 'rm')) &&
+      (has('-f', '--force') || shortHas(/f/))
+    )
+      return 'irreversible'
+    return 'outside'
+  }
+  if (CLOUD.has(program)) {
+    if (
+      operands.some((o) => o.split('-').some((p) => /^(?:delete|destroy|terminate|rm|rb)$/.test(p)))
+    )
+      return 'irreversible'
+    return 'outside'
+  }
+  if (REMOTE.has(program)) return 'outside'
+  if (program === 'npm' || program === 'pnpm' || program === 'yarn' || program === 'bun') {
+    const sub = operands[0]
+    if (program === 'yarn' && sub === undefined) return 'outside'
+    if (program === 'bun' && sub === 'x') return 'outside'
+    return sub !== undefined && PACKAGE_NETWORK.test(sub) ? 'outside' : 'unknown'
+  }
+  if (DB_CLIENTS.has(program))
+    return args.some((a) => SQL_FINAL.test(a)) ? 'irreversible' : 'unknown'
+
+  // What deletes, wipes or overwrites for good.
+  if (
+    (program === 'rm' || program === 'rmdir' || program === 'unlink') &&
+    operands.length &&
+    operands.every((o) => scratch(resolve(ctx.dir, o)))
+  )
+    // Scratch files of the machine's temporary folder: outside, not lost work.
+    return 'outside'
+  if (program === 'rm') {
+    if (flags.some((f) => /^-[A-Za-z]*[rRf]/.test(f) || f === '--recursive' || f === '--force'))
+      return 'irreversible'
+    // No operand: they come on its input (`… | xargs rm`), unplaceable.
+    if (!operands.length) return 'irreversible'
+    let level: RuleLevel = 'project'
+    for (const o of operands) {
+      const w = writeTarget(o, ctx)
+      level = combine(level, w === 'project' ? 'project' : 'irreversible')
+    }
+    return level
+  }
+  if (program === 'rmdir' || program === 'unlink') {
+    let level: RuleLevel = 'unknown'
+    for (const o of operands) {
+      const w = writeTarget(o, ctx)
+      level = combine(level, w === 'project' ? 'project' : 'irreversible')
+    }
+    return level
+  }
+  if (program === 'find') {
+    if (args.includes('-delete')) return 'irreversible'
+    let level: RuleLevel = 'unknown'
+    args.forEach((a, i) => {
+      if (/^-(?:fprint0?|fprintf|fls)$/.test(a) && args[i + 1])
+        level = combine(level, writeTarget(args[i + 1], ctx))
+    })
+    const exec = args.findIndex((a) => /^-(?:exec|execdir|ok|okdir)$/.test(a))
+    if (exec >= 0) {
+      const end = args.findIndex((a, i) => i > exec && (a === ';' || a === '+'))
+      const inner = args
+        .slice(exec + 1, end < 0 ? args.length : end)
+        .map((a) => (a === '{}' ? './x' : a))
+      level = combine(
+        level,
+        segmentLevel(
+          { ...newSegment(), words: inner, quoted: inner.map(() => false) },
+          ctx,
+          depth + 1,
+          acc
+        )
+      )
+    }
+    for (const o of args) level = combine(level, readTarget(o, ctx))
+    return level
+  }
+  if (program === 'dd') return args.some((a) => a.startsWith('of=')) ? 'irreversible' : 'unknown'
+  if (/^mkfs/.test(program) || /^newfs/.test(program)) return 'irreversible'
+  if (program === 'shred' || program === 'truncate' || program === 'wipefs') return 'irreversible'
+  if (program === 'diskutil')
+    return operands.some((o) => /^(?:erase|zero|secureErase|reformat|partitionDisk)/i.test(o))
+      ? 'irreversible'
+      : 'unknown'
+  // crontab with anything but a listing installs or removes the table.
+  if (program === 'crontab') return args.some((a) => a !== '-l') ? 'irreversible' : 'unknown'
+
+  // What changes files of the project.
+  if (program === 'mkdir' || program === 'touch' || program === 'tee') {
+    let level: RuleLevel = program === 'tee' ? 'reads' : 'unknown'
+    for (const o of operands) level = combine(level, writeTarget(o, ctx))
+    return level
+  }
+  if (program === 'cp' || program === 'mv' || program === 'ln' || program === 'install') {
+    if (operands.length < 2) return 'unknown'
+    let level: RuleLevel = writeTarget(operands[operands.length - 1], ctx)
+    for (const o of operands.slice(0, -1)) {
+      level = combine(level, readTarget(o, ctx))
+      // A move takes the file away from where it was.
+      if (program === 'mv') level = combine(level, writeTarget(o, ctx))
+    }
+    return level
+  }
+  if (program === 'sed') {
+    if (!flags.some((f) => /^-[A-Za-z]*i/.test(f) || /^--in-place/.test(f))) return 'unknown'
+    const files = operands.slice(args.some((a) => a === '-e' || a === '-f') ? 0 : 1)
+    let level: RuleLevel = 'project'
+    for (const f of files) level = combine(level, writeTarget(f, ctx))
+    return level
+  }
+  if (program === 'chmod' || program === 'chown' || program === 'chgrp') {
+    let level: RuleLevel = 'unknown'
+    for (const o of operands.slice(1)) {
+      const w = writeTarget(o, ctx)
+      level = combine(
+        level,
+        w === 'project' ? 'project' : flags.some((f) => /R/.test(f)) ? 'irreversible' : w
+      )
+    }
+    return level
+  }
+
+  // A reader of a path outside the project reaches outside.
+  if (READERS.has(program)) {
+    let level: RuleLevel = 'unknown'
+    for (const o of args) {
+      const value = o.startsWith('-') && o.includes('=') ? o.slice(o.indexOf('=') + 1) : o
+      level = combine(level, readTarget(value, ctx))
+    }
+    // An option that writes the file it names (`sort -o`, `tree -o`).
+    args.forEach((a, i) => {
+      if (/^(?:-o|--output)$/.test(a) && args[i + 1] && program !== 'find')
+        level = combine(level, writeTarget(args[i + 1], ctx))
+      const eq = /^--output=(.+)$/.exec(a)
+      if (eq) level = combine(level, writeTarget(eq[1], ctx))
+    })
+    if (program === 'uniq' && operands.length >= 2)
+      level = combine(level, writeTarget(operands[1], ctx))
+    return level
+  }
+  // Anything else: unknown, the model reads it.
+  return 'unknown'
 }
 
 // ── git ──
@@ -1757,165 +1972,92 @@ function governingPath(word: string, ctx: Context): boolean {
 /** What a git command does, from what follows the word `git`. */
 function gitLevel(args: string[], ctx: Context): RuleLevel {
   let i = 0
-  let level: RuleLevel = 'unknown'
   while (i < args.length && args[i].startsWith('-')) {
-    const g = args[i]
-    // `-c key=value` can name a program to run; `-C`/`--git-dir` move it.
-    if (g === '-c' || g.startsWith('--config-env') || g.startsWith('-c')) level = 'outside'
-    if (
-      g === '-c' ||
-      g === '-C' ||
-      /^--(?:git-dir|work-tree|namespace|exec-path|config-env)$/.test(g)
-    )
+    if (/^-[cC]$/.test(args[i]) || /^--(?:git-dir|work-tree|namespace|exec-path)$/.test(args[i]))
       i++
-    if (g === '-C' || g.startsWith('--git-dir') || g.startsWith('--work-tree'))
-      level = combine(level, 'outside')
     i++
   }
   const sub = args[i]
-  if (sub === undefined) return level
+  if (sub === undefined) return 'unknown'
   const rest = args.slice(i + 1)
   const has = (...flags: string[]): boolean => rest.some((a) => flags.includes(a))
-  const hasPrefix = (re: RegExp): boolean => rest.some((a) => re.test(a))
   const positional = rest.filter((a) => !a.startsWith('-'))
-  const raise = (l: RuleLevel): RuleLevel => (level = combine(level, l))
+  const output = (): RuleLevel => {
+    let level: RuleLevel = 'unknown'
+    rest.forEach((a, j) => {
+      const out =
+        a === '--output' ? rest[j + 1] : a.startsWith('--output=') ? a.slice(9) : undefined
+      if (out !== undefined) level = combine(level, writeTarget(out, ctx))
+    })
+    return level
+  }
   switch (sub) {
     case 'push':
-      raise('outside')
       if (
         has('-f', '--force', '-d', '--delete', '--mirror', '--prune') ||
-        hasPrefix(/^--force-with-lease|^--force-if-includes|^-[A-Za-z]*f/) ||
+        rest.some((a) =>
+          /^--force-with-lease|^--force-if-includes|^-[A-Za-z]*f[A-Za-z]*$/.test(a)
+        ) ||
         positional.some((p) => p.startsWith('+') || p.startsWith(':'))
       )
-        raise('irreversible')
-      return level
+        return 'irreversible'
+      return 'outside'
     case 'fetch':
     case 'pull':
     case 'clone':
     case 'ls-remote':
-    case 'request-pull':
-    case 'svn':
-    case 'p4':
-    case 'daemon':
-    case 'instaweb':
-    case 'credential':
-    case 'mergetool':
-    case 'difftool':
-    case 'bisect':
-    case 'submodule':
-      raise('outside')
-      if (sub === 'pull' && has('--rebase', '-r')) raise('irreversible')
-      return level
-    case 'send-email':
+      return 'outside'
     case 'clean':
-    case 'restore':
     case 'filter-branch':
-    case 'filter-repo':
-    case 'rebase':
-    case 'replace':
-    case 'update-ref':
-    case 'prune':
-      return raise('irreversible')
+      return 'irreversible'
     case 'reset':
-      return raise(has('--hard', '--keep', '--merge') ? 'irreversible' : 'project')
+      return has('--hard') ? 'irreversible' : 'project'
+    case 'restore':
+      return positional.length ? 'irreversible' : 'unknown'
     case 'checkout': {
-      if (has('--', '-f', '--force', '-p', '--patch', '--ours', '--theirs', '.'))
-        return raise('irreversible')
+      if (has('--', '-f', '--force', '.')) return 'irreversible'
       const ops: string[] = []
       for (let j = 0; j < rest.length; j++) {
         if (['-b', '-B', '--orphan', '-t', '--track'].includes(rest[j])) j++
         else if (!rest[j].startsWith('-')) ops.push(rest[j])
       }
-      return raise(ops.length >= 2 ? 'irreversible' : 'project')
+      return ops.length >= 2 ? 'irreversible' : 'project'
     }
     case 'switch':
-      return raise(
-        has('-f', '--force', '--discard-changes') || hasPrefix(/^-C$/) ? 'irreversible' : 'project'
-      )
+      return has('-f', '--force', '--discard-changes') ? 'irreversible' : 'project'
     case 'branch':
-      if (has('-D', '-d', '--delete', '-M', '-C', '--force', '-f') || hasPrefix(/^-[a-zA-Z]*D/))
-        return raise('irreversible')
-      return raise(positional.length ? 'project' : level)
-    case 'stash':
-      return raise(
-        ['drop', 'clear'].includes(rest[0] ?? '')
-          ? 'irreversible'
-          : rest[0] === 'list' || rest[0] === 'show'
-            ? level
-            : 'project'
-      )
-    case 'reflog':
-      return raise(rest[0] === 'expire' || rest[0] === 'delete' ? 'irreversible' : level)
-    case 'gc':
-      return raise(hasPrefix(/^--prune/) ? 'irreversible' : 'project')
-    case 'worktree':
-      if (['remove', 'prune'].includes(rest[0] ?? '')) return raise('irreversible')
-      return raise(rest[0] === 'list' ? level : 'project')
-    case 'commit':
-      return raise(has('--amend') ? 'irreversible' : 'project')
-    case 'tag':
-      if (has('-d', '--delete', '-f', '--force')) return raise('irreversible')
-      return raise(positional.length && !has('-l', '--list') ? 'project' : level)
-    case 'config':
       if (
-        has('--get', '--get-all', '--get-regexp', '-l', '--list') ||
-        rest[0] === 'get' ||
-        rest[0] === 'list'
+        has('-D') ||
+        rest.some((a) => /^-[A-Za-z]*D/.test(a)) ||
+        (has('--delete') && has('--force'))
       )
-        return raise('outside')
-      return raise('irreversible')
-    case 'remote':
-      if (!rest.length || (rest.length === 1 && rest[0] === '-v')) return level
-      if (['remove', 'rm', 'prune', 'set-url'].includes(rest[0])) return raise('irreversible')
-      return raise('outside')
-    case 'help':
-      return raise(has('--web', '-w', '--browser') ? 'outside' : level)
+        return 'irreversible'
+      return 'unknown'
+    case 'stash':
+      return rest[0] === 'drop' || rest[0] === 'clear'
+        ? 'irreversible'
+        : rest[0] === 'list' || rest[0] === 'show'
+          ? 'unknown'
+          : 'project'
+    case 'reflog':
+      return rest[0] === 'expire' ? 'irreversible' : 'unknown'
+    case 'gc':
+      return rest.some((a) => /^--prune=now$/.test(a)) ? 'irreversible' : 'unknown'
+    case 'worktree':
+      return rest[0] === 'remove' || rest[0] === 'prune' ? 'irreversible' : 'unknown'
+    case 'config':
+      // Setting a key writes .git/config (or ~/.gitconfig), which governs
+      // what git runs.
+      if (has('--get', '--get-all', '--get-regexp', '-l', '--list') || positional.length < 2)
+        return 'unknown'
+      return 'irreversible'
     case 'add':
+    case 'commit':
     case 'merge':
-    case 'mv':
-    case 'apply':
-    case 'am':
-    case 'cherry-pick':
-    case 'revert':
-    case 'init':
-    case 'notes':
-    case 'commit-tree':
-    case 'update-index':
-    case 'rm':
-      return raise(sub === 'rm' ? 'irreversible' : 'project')
-    case 'status':
-    case 'log':
-    case 'show':
-    case 'diff':
-    case 'blame':
-    case 'rev-parse':
-    case 'ls-files':
-    case 'describe':
-    case 'shortlog':
-    case 'grep':
-    case 'cat-file':
-    case 'rev-list':
-    case 'ls-tree':
-    case 'for-each-ref':
-    case 'show-ref':
-    case 'name-rev':
-    case 'merge-base':
-    case 'whatchanged':
-    case 'cherry':
-    case 'range-diff':
-    case 'version':
-      if (has('--ext-diff', '--textconv', '--no-index') || hasPrefix(/^-O/)) raise('outside')
-      for (let j = 0; j < rest.length; j++) {
-        const a = rest[j]
-        const out =
-          a === '--output' ? rest[j + 1] : a.startsWith('--output=') ? a.slice(9) : undefined
-        if (out !== undefined)
-          raise(governingMention(out) ? 'irreversible' : writeLevel(resolve(ctx.dir, out), ctx))
-      }
-      return level
+    case 'rebase':
+      return 'project'
     default:
-      // An alias or a command the rules do not know: an alias can run a shell.
-      return raise('outside')
+      return output()
   }
 }
 
