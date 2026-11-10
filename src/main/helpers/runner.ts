@@ -34,37 +34,8 @@ export const MAX_RUNNING_HELPERS = 3
 /** How long a cancelled child gets to leave on SIGTERM before SIGKILL. */
 export const HELPER_CANCEL_GRACE_MS = 1000
 
-/**
- * The CLI arguments of a helper call: one turn on the helper's model with
- * the helper's own system prompt, no MCP server, no skill, no tool. The
- * person's settings stay in force (an `apiKeyHelper` may live there, and
- * `--bare` drops the OAuth and keychain logins), so the reply may still carry
- * their output style: every parser reads past it. `--tools` is variadic and
- * takes the rest of the line, so it comes last and the prompt goes on stdin.
- */
-export function helperCliArgs(
-  systemPrompt: string,
-  config: Pick<HelperConfig, 'model' | 'fallbackModel'>
-): string[] {
-  const fallback =
-    config.fallbackModel && config.fallbackModel !== config.model
-      ? ['--fallback-model', config.fallbackModel]
-      : []
-  return [
-    '-p',
-    '--model',
-    config.model,
-    ...fallback,
-    '--system-prompt',
-    systemPrompt,
-    '--strict-mcp-config',
-    '--mcp-config',
-    '{"mcpServers":{}}',
-    '--disable-slash-commands',
-    '--tools',
-    ''
-  ]
-}
+export { helperCliArgs } from './cli-args'
+import { helperCliArgs } from './cli-args'
 
 /** What the CLI's failure says it was. `killed` is execFile's own timeout. */
 export function classifyFailure(input: {
