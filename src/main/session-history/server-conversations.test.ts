@@ -258,6 +258,27 @@ describe('serverConversations: the ledger of what the tabs ran', () => {
     })
   })
 
+  it('lists every conversation of a tab that ran /clear twice, after the tab is gone', () => {
+    for (const id of ['conv-1', 'conv-2', 'conv-3']) writeTranscript(root, id)
+    const h = harness()
+    h.records.push(claudeRecord())
+    h.conversations.observe('tab-1')
+    h.records[0] = { ...h.records[0], claudeSessionId: 'conv-2' }
+    h.conversations.observe('tab-1')
+    h.records[0] = { ...h.records[0], claudeSessionId: 'conv-3' }
+    h.conversations.observe('tab-1')
+    const tab = h.records[0]
+    h.conversations.closing(tab)
+    h.records.splice(0)
+    const { conversations } = h.conversations.list()
+    expect(conversations.map((c) => c.conversationId).sort()).toEqual([
+      'conv-1',
+      'conv-2',
+      'conv-3'
+    ])
+    for (const c of conversations) expect(c).toMatchObject({ sessionId: 'tab-1', held: 'closed' })
+  })
+
   it('lists the server group and its workspace for a record with no workspace of its own', () => {
     writeTranscript(root, 'conv-1')
     const groupOf = vi.fn(() => ({ id: 'g1', name: 'Group', workspaceId: 'ws-1' }))

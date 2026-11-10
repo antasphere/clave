@@ -1365,6 +1365,18 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
         (wireId) => local.setSessionViewRecord(wireId, view),
         (b, wireId) => b.api.sessions.keepOnRecord(wireId, { page: view })
       ),
+    // A `/clear` in a server's tab reaches that server's record, never this
+    // Mac's own server, which holds no such tab (PRDCT-4321): the server's
+    // History then lists the conversation the tab runs after the clear.
+    setSessionClaudeSessionId: (id, claudeSessionId) =>
+      route(
+        id,
+        (wireId) => local.setSessionClaudeSessionId(wireId, claudeSessionId),
+        async (b, wireId) => {
+          if (!claudeSessionId) return
+          await b.api.sessions.keepOnRecord(wireId, { claudeSessionId })
+        }
+      ),
     setSessionWorkspace: (id, workspaceId) =>
       route(
         id,

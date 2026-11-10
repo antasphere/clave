@@ -253,6 +253,34 @@ describe('resumeHistoryEntry: a server’s row reopened on its server (PRDCT-432
     expect(api.spawnSession).not.toHaveBeenCalled()
   })
 
+  it('restarts a stopped tab of that server holding an unlisted conversation, starting nothing', async () => {
+    // An older server lists nothing, so the row says held null; the stopped
+    // tab is in this window's store all the same.
+    const HOLDER = sessionKey({ serverId: 'srv', sessionId: 'tab-stopped' })
+    h.session.sessions = [{ id: HOLDER, alive: false, claudeSessionId: 'c1' }]
+    expect(await resume(ran(null))).toBe(HOLDER)
+    expect(api.restartSession).toHaveBeenCalledTimes(1)
+    expect(api.restartSession).toHaveBeenCalledWith(HOLDER, { onlyIfStopped: true })
+    expect(api.fleetStart).not.toHaveBeenCalled()
+    expect(api.spawnSession).not.toHaveBeenCalled()
+    expect(api.fleetSnapshot).toHaveBeenCalledWith('srv')
+    expect(selected).toEqual([HOLDER])
+  })
+
+  it('takes no stopped tab of another server for the holder, and starts on this one', async () => {
+    h.session.sessions = [
+      {
+        id: sessionKey({ serverId: 'other', sessionId: 'tab-1' }),
+        alive: false,
+        claudeSessionId: 'c1'
+      }
+    ]
+    expect(await resume(ran(null))).toBe(NEW_TAB)
+    expect(api.restartSession).not.toHaveBeenCalled()
+    expect(api.fleetStart).toHaveBeenCalledTimes(1)
+    expect(api.fleetStart.mock.calls[0][0]).toBe('srv')
+  })
+
   it('starts nothing for a closed conversation whose transcript left the server', async () => {
     expect(await resume(withoutTranscript(ran('closed')))).toBeNull()
     expect(api.fleetStart).not.toHaveBeenCalled()

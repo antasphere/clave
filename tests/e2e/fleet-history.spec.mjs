@@ -13,19 +13,25 @@
  * a row of that server, online and resumable, finds it by a phrase of its
  * human line, and a click on it starts a new tab ON THE SERVER on the same
  * conversation, in its folder and its server workspace, and nothing on the
- * Mac. That tab deleted too, the daemon is stopped: the row stays, read from
- * the Mac's kept copy of the server's last answer, offline and blocked, and a
- * click on it starts nothing.
+ * Mac. That tab deleted too, a second server tab is moved onto two new
+ * conversations from the Mac's window, as its pane does after each `/clear`,
+ * and deleted: the server's History lists all three conversations it ran.
+ * Then the daemon is stopped: the row stays, read from the Mac's kept copy of
+ * the server's last answer, offline and blocked, and a click on it starts
+ * nothing.
  *
  * Fails if: a deleted tab's conversation drops out of the server's History
  * (its last word not stamped before its record goes), the Mac does not lay a
  * server's list into its own (no `data-history-server` row, or a row that
  * reads "Transcript gone" because it looked on the Mac's disk), the server's
  * transcript is not searched, a click resumes the conversation on the Mac (or
- * nowhere) instead of on the server, an offline server's rows vanish or stay
- * clickable, or anything is written into the Mac's own transcripts root.
+ * nowhere) instead of on the server, a `/clear` of a server tab misses the
+ * server's record or a conversation between two of them goes unlisted, an
+ * offline server's rows vanish or stay clickable, or anything is written into
+ * the Mac's own transcripts root.
  */
 import assert from 'node:assert/strict'
+import { randomUUID } from 'node:crypto'
 import { appendFileSync, existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { REPO, fixturePath, until } from './harness.mjs'
@@ -325,6 +331,41 @@ export async function run(t) {
     t.equal('online, the row is resumable again', (await readRow())?.blocked, null)
     await win.keyboard.press('Escape')
     await win.locator('[data-history-dialog]').waitFor({ state: 'detached' })
+
+    // --- A `/clear` in a server tab: every conversation it ran stays listed ---
+    // The pane keeps each rotation through the window's API, with the tab's
+    // key (use-terminal.ts); here twice, then the tab is deleted.
+    const clearedTab = await request(server, '/sessions/start', {
+      cwd: server.root,
+      options: { claudeMode: true, launchProfileId: 'chat:claude:fleet-history-stub' }
+    })
+    let beforeClear = null
+    await eventually(async () => {
+      beforeClear =
+        (await daemonRecords()).find((r) => r.id === clearedTab.id)?.claudeSessionId ?? null
+      return !!beforeClear
+    }, 'the second server tab carries its conversation id')
+    const rotations = [randomUUID(), randomUUID()]
+    for (const rotated of rotations)
+      await win.evaluate(
+        ({ key, rotated }) => window.electronAPI.setSessionClaudeSessionId(key, rotated),
+        { key: owned('session', owner, clearedTab.id), rotated }
+      )
+    t.equal(
+      'the server’s record follows the tab’s last /clear',
+      (await daemonRecords()).find((r) => r.id === clearedTab.id)?.claudeSessionId,
+      rotations[1]
+    )
+    await request(server, '/sessions/stop', { id: clearedTab.id })
+    const ranByCleared = (await daemonHistory())
+      .filter((c) => c.sessionId === clearedTab.id)
+      .map((c) => c.conversationId)
+      .sort()
+    t.equal(
+      'the server’s History lists every conversation the cleared tab ran',
+      JSON.stringify(ranByCleared),
+      JSON.stringify([beforeClear, ...rotations].sort())
+    )
 
     await server.stop()
     // The renderer's own word on the connection: the preload refuses a

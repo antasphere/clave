@@ -860,7 +860,7 @@ describe('the server’s own History is told what its tabs run (PRDCT-4321)', ()
   it('observes at a turn’s end only, never as a turn starts or waits', () => {
     const conversations = fakeConversations()
     const f = fixture(directory(), { conversations })
-    for (const state of ['working', 'blocked', 'done'] as const)
+    for (const state of ['working', 'blocked'] as const)
       f.emit(record.id, { kind: 'event', event: { type: 'state_change', state } })
     expect(conversations.observe).not.toHaveBeenCalled()
     f.emit(record.id, { kind: 'event', event: { type: 'state_change', state: 'idle' } })
@@ -868,6 +868,48 @@ describe('the server’s own History is told what its tabs run (PRDCT-4321)', ()
     f.emit('another-tab', { kind: 'event', event: { type: 'state_change', state: 'ended' } })
     expect(conversations.observe).toHaveBeenCalledTimes(2)
     expect(conversations.observe).toHaveBeenLastCalledWith('another-tab')
+    f.close()
+  })
+
+  it('takes a chat’s `done` as a turn’s end (the Claude and Codex adapters end a turn so)', () => {
+    const conversations = fakeConversations()
+    const f = fixture(directory(), { conversations })
+    f.emit(record.id, { kind: 'event', event: { type: 'state_change', state: 'working' } })
+    expect(conversations.observe).not.toHaveBeenCalled()
+    f.emit(record.id, { kind: 'event', event: { type: 'state_change', state: 'done' } })
+    expect(conversations.observe).toHaveBeenCalledTimes(1)
+    expect(conversations.observe).toHaveBeenCalledWith(record.id)
+    f.close()
+  })
+
+  it('observes a tab once a `/clear` is kept on its record, after the record names it', () => {
+    const conversations = fakeConversations()
+    const f = fixture(directory(), { conversations })
+    const keep = f.base.keepOnRecord as unknown as ReturnType<typeof vi.fn>
+    f.host.keepOnRecord(record.id, { claudeSessionId: 'new' })
+    expect(keep).toHaveBeenCalledWith(record.id, { claudeSessionId: 'new' })
+    expect(conversations.observe).toHaveBeenCalledTimes(1)
+    expect(conversations.observe).toHaveBeenCalledWith(record.id)
+    expect(conversations.observe.mock.invocationCallOrder[0]).toBeGreaterThan(
+      keep.mock.invocationCallOrder[0]
+    )
+    f.close()
+  })
+
+  it('keeps a name, a page or a workspace on the record with no observe', () => {
+    const conversations = fakeConversations()
+    const f = fixture(directory(), { conversations })
+    const keep = f.base.keepOnRecord as unknown as ReturnType<typeof vi.fn>
+    const name = { displayName: 'Invoices', userRenamed: true }
+    f.host.keepOnRecord(record.id, { name })
+    f.host.keepOnRecord(record.id, { page: null })
+    f.host.keepOnRecord(record.id, { workspaceId: 'ws-2' })
+    expect(keep.mock.calls).toEqual([
+      [record.id, { name }],
+      [record.id, { page: null }],
+      [record.id, { workspaceId: 'ws-2' }]
+    ])
+    expect(conversations.observe).not.toHaveBeenCalled()
     f.close()
   })
 

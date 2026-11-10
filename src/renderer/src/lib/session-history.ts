@@ -192,17 +192,28 @@ async function resumeOnServer(
     useSessionStore.getState().setFocusedSession(id)
     return id
   }
+  const restartInPlace = async (id: string): Promise<string> => {
+    const result = await window.electronAPI.restartSession(id, { onlyIfStopped: true })
+    if ('error' in result) throw new Error(result.error)
+    await window.electronAPI.fleetSnapshot(serverId).catch(() => undefined)
+    return show(id)
+  }
   try {
-    if (server.held === 'running' || server.held === 'stopped') {
-      if (server.held === 'stopped') {
-        const result = await window.electronAPI.restartSession(entry.sessionId, {
-          onlyIfStopped: true
-        })
-        if ('error' in result) throw new Error(result.error)
-      }
+    if (server.held === 'stopped') return await restartInPlace(entry.sessionId)
+    if (server.held === 'running') {
       await window.electronAPI.fleetSnapshot(serverId).catch(() => undefined)
       return show(entry.sessionId)
     }
+    // A stopped tab of this server may still hold the conversation where the
+    // server's answer does not say so (an older server lists nothing): that
+    // tab comes back in place, never a second tab on its conversation. A live
+    // one was focused before this.
+    const holder = useSessionStore
+      .getState()
+      .sessions.find(
+        (s) => ownerOf(s.id) === serverId && s.claudeSessionId === entry.claudeSessionId
+      )
+    if (holder && !holder.alive) return await restartInPlace(holder.id)
     // A conversation the server does not list (held null) is started like a
     // closed one, its transcript unchecked: the server resumes it when its
     // transcript is there, as a start on a server always did.

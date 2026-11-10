@@ -67,14 +67,18 @@ export function serverOwnedSessionHost(options: ServerOwnedHostOptions): {
   const stopHistory = options.subscribeAll((id, stream) => {
     history.record(id, stream)
     // A turn's end is where a tab's conversation shows a change: the first
-    // idle after its start, a new conversation after `/clear`. An observe
-    // re-reads every record, so a tab is observed at most once per
-    // OBSERVE_EVERY_MS from here, and never at a turn's start.
+    // idle after its start, a new conversation after `/clear`. A terminal
+    // ends a turn `idle`, a chat `done` (the Claude and Codex adapters), and
+    // a tab that stops `ended`. An observe re-reads every record, so a tab is
+    // observed at most once per OBSERVE_EVERY_MS from here, and never at a
+    // turn's start.
     if (
       conversations &&
       stream.kind === 'event' &&
       stream.event.type === 'state_change' &&
-      (stream.event.state === 'idle' || stream.event.state === 'ended')
+      (stream.event.state === 'idle' ||
+        stream.event.state === 'done' ||
+        stream.event.state === 'ended')
     ) {
       const now = Date.now()
       const last = observedAt.get(id)
@@ -267,6 +271,14 @@ export function serverOwnedSessionHost(options: ServerOwnedHostOptions): {
     setPage: (id, page) => {
       requireLive(id)
       base.setPage(id, page)
+    },
+    // A `/clear` moves a tab onto a new conversation, and the window keeps
+    // it here (PRDCT-4321): the record names the new one from now on, so the
+    // History is told now. Left to the next list, a second `/clear` before it
+    // would replace the record's conversation unseen, and that one is lost.
+    keepOnRecord: (id, fields) => {
+      base.keepOnRecord(id, fields)
+      if (fields.claudeSessionId) conversations?.observe(id)
     },
     // A session's work is its record's (PRDCT-4123), so a stopped session's
     // can change too: no requireLive. Its Resume carries the work on, the

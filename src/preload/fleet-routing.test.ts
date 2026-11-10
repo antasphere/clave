@@ -66,7 +66,8 @@ vi.mock('@clave/client/node', () => ({
           history: call('history', { owner, items: [] }),
           list: call('list', []),
           listAdoptable: call('records', []),
-          stop: call('stop', undefined)
+          stop: call('stop', undefined),
+          keepOnRecord: call('keepOnRecord', undefined)
         },
         sidebar: {
           getLayout: call('layout', {
@@ -327,6 +328,22 @@ describe('desktop owner routing', () => {
       { owner: 'b', method: 'stop', args: ['same'] }
     ])
     expect(mocks.invoke.mock.calls.filter(([channel]) => channel === 'pty:kill')).toEqual([])
+  })
+  it('keeps a `/clear` of a server tab on that server’s record, never on the Mac’s (PRDCT-4321)', async () => {
+    await api.setSessionClaudeSessionId(resourceKey('session', 'b', 'same'), 'conv-2')
+    expect(mocks.calls.filter((c) => c.method === 'keepOnRecord')).toEqual([
+      { owner: 'b', method: 'keepOnRecord', args: ['same', { claudeSessionId: 'conv-2' }] }
+    ])
+    expect(
+      mocks.invoke.mock.calls.filter(([channel]) => channel === 'session:set-claude-session-id')
+    ).toEqual([])
+  })
+  it('keeps a `/clear` of a Mac tab on the Mac, with no server asked', async () => {
+    await api.setSessionClaudeSessionId('same', 'conv-2')
+    expect(
+      mocks.invoke.mock.calls.filter(([channel]) => channel === 'session:set-claude-session-id')
+    ).toEqual([['session:set-claude-session-id', 'same', 'conv-2']])
+    expect(mocks.calls.filter((c) => c.method === 'keepOnRecord')).toEqual([])
   })
   it('converts selected Mac file bytes before preparing on the owning endpoint', async () => {
     await api.sessionsFiles.prepare(resourceKey('session', 'a', 'same'), { path: '/mac/image.png' })

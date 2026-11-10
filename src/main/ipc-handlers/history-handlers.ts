@@ -13,9 +13,11 @@ import {
   serverOwnerOf,
   stampRecords
 } from '../session-history/host-reads'
-import { splitSearchIds } from '../session-history/fleet-history'
-import type { HistorySearchScope } from '@clave/contract/history'
+import { SearchCancels, runHistorySearch } from '../session-history/history-search'
 import { serverClient } from '../mcp/server-client'
+
+/** The searches running now, and those cancelled while a server answered. */
+const searchCancels = new SearchCancels()
 
 /** Session-history IPC (PRDCT-1738). `history:stamp` is fire-and-forget
  *  (`send`, not `invoke`): the renderer writes a ledger row whenever a tab's
@@ -23,13 +25,6 @@ import { serverClient } from '../mcp/server-client'
  *  `history:list` is the dialog's one read. `history:search` streams hits
  *  back to the ASKING window (`history:search-hits`) and resolves with the
  *  totals; `history:search-cancel` aborts between lines. */
-const SERVER_SCOPES: ReadonlySet<string> = new Set(['human', 'agent', 'tools'])
-/** Searches cancelled while a server was still answering: its hits are dropped. */
-const cancelledSearches = new Set<string>()
-/** The searches running now: only one of them can be cancelled, so a cancel
- *  that arrives after its search ended is not kept. */
-const inflightSearches = new Set<string>()
-
 export function registerHistoryHandlers(): void {
   ipcMain.on('history:stamp', (_event, row: unknown) => {
     void stampHistory(row, stampRecords)
@@ -58,56 +53,22 @@ export function registerHistoryHandlers(): void {
   })
   // The message trail's read: a live tab's conversation as turns.
   ipcMain.handle('history:conversation', (_event, request: unknown) => getConversation(request))
-  // This Mac's transcripts stream as they are read; each server that holds
-  // one of the asked conversations searches its own disk at the same time
-  // (PRDCT-4321), its hits sent the same way. A conversation the last list
-  // routed to a server is searched there only: a disk the Mac shares with
-  // its server would otherwise show each of its hits twice.
-  ipcMain.handle('history:search', async (event, request: unknown) => {
-    const send = (progress: unknown): void => {
-      if (!event.sender.isDestroyed()) event.sender.send('history:search-hits', progress)
-    }
-    const r = request as {
-      requestId?: unknown
-      query?: unknown
-      scopes?: unknown
-      claudeSessionIds?: unknown
-    } | null
-    const requestId = typeof r?.requestId === 'string' ? r.requestId : ''
-    cancelledSearches.delete(requestId)
-    if (requestId) inflightSearches.add(requestId)
-    const scopes = Array.isArray(r?.scopes)
-      ? r.scopes.filter((s): s is HistorySearchScope => SERVER_SCOPES.has(s as string))
-      : []
-    const ids = Array.isArray(r?.claudeSessionIds)
-      ? r.claudeSessionIds.filter((id): id is string => typeof id === 'string')
-      : []
-    const { local: localIds, byServer } = splitSearchIds(ids, serverOwnerOf)
-    const serverIds = [...byServer.values()].flat()
-    try {
-      const [local, servers] = await Promise.all([
-        searchHistory({ ...(r ?? {}), claudeSessionIds: localIds }, send),
-        requestId
-          ? searchServers(
-              { query: typeof r?.query === 'string' ? r.query : '', scopes, ids: serverIds },
-              (hits) => send({ requestId, hits }),
-              () => cancelledSearches.has(requestId)
-            )
-          : Promise.resolve({ filesSearched: 0, truncated: false })
-      ])
-      return {
-        ...local,
-        filesSearched: local.filesSearched + servers.filesSearched,
-        truncated: local.truncated || servers.truncated
-      }
-    } finally {
-      inflightSearches.delete(requestId)
-      cancelledSearches.delete(requestId)
-    }
-  })
+  // This Mac's transcripts and each server's that holds one of the asked
+  // conversations, searched at once (PRDCT-4321, `history-search.ts`).
+  ipcMain.handle('history:search', (event, request: unknown) =>
+    runHistorySearch(request, {
+      searchLocal: searchHistory,
+      searchServers,
+      serverOwnerOf,
+      send: (progress) => {
+        if (!event.sender.isDestroyed()) event.sender.send('history:search-hits', progress)
+      },
+      cancels: searchCancels
+    })
+  )
   ipcMain.on('history:search-cancel', (_event, requestId: unknown) => {
     if (typeof requestId !== 'string') return
-    if (inflightSearches.has(requestId)) cancelledSearches.add(requestId)
+    searchCancels.cancel(requestId)
     cancelSearch(requestId)
   })
 }
