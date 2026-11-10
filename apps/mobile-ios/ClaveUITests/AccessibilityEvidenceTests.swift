@@ -11,7 +11,7 @@ final class AccessibilityEvidenceTests: XCTestCase {
   /// The audit's findings recorded rather than fixed (in the dark theme), by screen: the audit's
   /// compact description and the element's identifier, else its label. Anything else the audit
   /// reports fails the test, so a new finding is seen.
-  private let recorded: [EvidenceScreen: Set<String>] = [
+  private let recorded: [EvidenceScreen: Set<String>] = AccessibilityEvidenceTests.unresolvedContrast.merging([
     .machines: [
       "Hit area is too small | machines.paired.m_fake",
       "Dynamic Type font sizes are partially unsupported | Fake Mac",
@@ -49,19 +49,17 @@ final class AccessibilityEvidenceTests: XCTestCase {
       "Hit area is too small | chat.composer.field",
       "Dynamic Type font sizes are partially unsupported | swift",
       "Text clipped | Read · /fake/scratch/README.md",
-      // Seen in the full run, not alone: the transcript's accessibility frames sit about 80 points
-      // below the drawing on iOS 17.5, so the audit reads these cells' contrast over whatever is
-      // drawn there (ChatEvidenceTests' turns.txt measures the offset).
-      "Contrast failed | Name",
-      "Contrast failed | Value",
-      "Contrast failed | alpha",
-      "Contrast failed | 1",
     ],
     .requests: [
       "Hit area is too small | chat.permission.r_fake.question.0.answer",
       "Label not human-readable | chat.permission.r_fake.question.0.option.0",
-      "Contrast failed | requests.dismiss.r_fake",
     ],
+  ]) { $0.union($1) }
+
+  // unresolved: red in the full run, green alone, cause unknown
+  private static let unresolvedContrast: [EvidenceScreen: Set<String>] = [
+    .chat: ["Contrast failed | Name", "Contrast failed | Value", "Contrast failed | alpha", "Contrast failed | 1"],
+    .requests: ["Contrast failed | requests.dismiss.r_fake"],
   ]
 
   @MainActor
