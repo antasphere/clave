@@ -250,6 +250,15 @@ export function nextAccountFor(session: Session): string | null {
   return next === current ? null : next
 }
 
+/** The words of a tab's switch-mode item. On this Mac the mode governs the
+ *  policy at a limit and an agent's ask; on a server tab only an agent's
+ *  ask, since this Mac's policy does not act there (PRDCT-4328). */
+export function switchModeLabel(automatic: boolean, remote: boolean): string {
+  if (remote)
+    return automatic ? 'Ask me before an agent switches' : 'Let agents switch without asking'
+  return automatic ? 'Propose switches, do not make them' : 'Switch automatically at limit'
+}
+
 export interface SwitchResult {
   ok: boolean
   /** The conversation came along; false means the tab started fresh. */

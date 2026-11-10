@@ -1640,15 +1640,14 @@ async function handleSwitchAccount(payload: {
   // "any" or a name, in the tab's OWNER's list: a server tab moves among
   // that server's accounts, never to an id of this Mac's (PRDCT-4328).
   const target = resolveSessionAccountRef(session, provider, payload.account)
-  const remote = ownerOf(session.id) !== LOCAL_SERVER_ID
   // An agent's ask goes through the tab's mode (ADR 0002): in propose mode
-  // the user sees the move and decides; a pinned tab is never moved. Both
-  // are this Mac's policy over this Mac's tabs: a server tab has neither
-  // (its menu does not offer them), so the move is made.
-  if (!remote && session.accountPinned) {
+  // the user sees the move and decides; a pinned tab is never moved. A tab on
+  // a server gets the same consent as one on this Mac: its pin and its mode
+  // live in this window's store, and the proposal is drawn in its header.
+  if (session.accountPinned) {
     throw new Error('This tab is pinned to its account; the user can unpin it from the tab menu')
   }
-  if (!remote && effectiveSwitchMode(session) === 'propose') {
+  if (effectiveSwitchMode(session) === 'propose') {
     state.setAccountProposal(session.id, {
       reason: 'reported',
       rungs: [{ kind: 'account', accountId: target.id, label: target.label }]

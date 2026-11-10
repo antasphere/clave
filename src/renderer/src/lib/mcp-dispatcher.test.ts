@@ -30,7 +30,10 @@ import type { LaunchProfile, LaunchProfilePreferences } from '../../../shared/ag
 
 const switchAccount = vi.hoisted(() => ({
   restartSessionProcess: vi.fn(async (id: string) => ({ ok: id !== '', resumed: true })),
-  resolveAccountRef: vi.fn(() => ({ id: 'default', label: 'Default' }))
+  resolveAccountRef: vi.fn(() => ({ id: 'default', label: 'Default' })),
+  // The server's account an agent's ref resolves to on a server tab.
+  resolveSessionAccountRef: vi.fn(() => ({ id: 'srv-two', label: 'Play' })),
+  switchSessionAccount: vi.fn(async () => ({ ok: true, resumed: true }))
 }))
 vi.mock('./switch-account', () => ({
   restartSessionProcess: switchAccount.restartSessionProcess,
@@ -38,7 +41,10 @@ vi.mock('./switch-account', () => ({
   claudeProfileSpawnFields: () => ({}),
   codexAccountSpawnFields: () => ({ codexAccountId: 'default', codexAccountLabel: 'Default' }),
   sessionAccountExhausted: () => false,
-  switchSessionAccount: vi.fn()
+  accountProviderOf: (s: { claudeMode?: boolean; codexMode?: boolean }) =>
+    s.claudeMode ? 'claude' : s.codexMode ? 'codex' : null,
+  resolveSessionAccountRef: switchAccount.resolveSessionAccountRef,
+  switchSessionAccount: switchAccount.switchSessionAccount
 }))
 vi.mock('./session-accounts', () => ({
   sessionOwnAccount: () => ({ id: 'default', label: 'Default', removed: false })
@@ -1007,5 +1013,85 @@ describe('the account of a window-road open', () => {
       resumeSessionId: '11111111-1111-4111-8111-111111111111'
     })
     expect(switchAccount.resolveAccountRef).toHaveBeenLastCalledWith('claude', undefined, undefined)
+  })
+})
+
+/* clave_switch_account on a tab of another server (PRDCT-4328): the account
+   is resolved in the SERVER's list (the seam, `resolveSessionAccountRef`),
+   and the tab gets the same consent as one on this Mac: its pin refuses the
+   move, propose mode proposes it, automatic mode makes it. */
+describe('an agent switches the account of a server tab', () => {
+  const SERVER_TAB = resourceKey('session', 'srv-b', 'abc')
+  const dispatch = async (
+    payload: Record<string, unknown>
+  ): Promise<{ ok: boolean; result?: unknown; error?: string }> => {
+    let receive: (msg: { requestId: string; command: string; payload: unknown }) => void = () => {}
+    const response = new Promise<{ ok: boolean; result?: unknown; error?: string }>((resolve) => {
+      globals.window.electronAPI.onMcpCommand = (handler: typeof receive) => {
+        receive = handler
+        return () => {}
+      }
+      globals.window.electronAPI.mcpRespond = resolve
+    })
+    const unsubscribe = initMcpDispatcher()
+    receive({ requestId: 'switch', command: 'switchAccount', payload })
+    try {
+      return await response
+    } finally {
+      unsubscribe()
+    }
+  }
+  const tab = (over: Record<string, unknown> = {}): void =>
+    useSessionStore.setState({
+      sessions: [
+        {
+          id: SERVER_TAB,
+          name: 'Served',
+          sessionType: 'local',
+          claudeMode: true,
+          alive: true,
+          claudeProfileId: 'srv-one',
+          ...over
+        } as never
+      ]
+    })
+  beforeEach(() => {
+    switchAccount.resolveSessionAccountRef.mockClear()
+    switchAccount.switchSessionAccount.mockClear()
+    switchAccount.resolveAccountRef.mockClear()
+  })
+
+  it('"any" resolves in the server’s list, and automatic mode moves the tab there', async () => {
+    tab({ accountSwitchMode: 'automatic' })
+    const answer = await dispatch({ sessionId: SERVER_TAB, account: 'any' })
+    expect(answer).toMatchObject({
+      ok: true,
+      result: { switched: true, account: { id: 'srv-two', label: 'Play' } }
+    })
+    expect(switchAccount.resolveSessionAccountRef).toHaveBeenCalledWith(
+      expect.objectContaining({ id: SERVER_TAB }),
+      'claude',
+      'any'
+    )
+    expect(switchAccount.resolveAccountRef).not.toHaveBeenCalled()
+    expect(switchAccount.switchSessionAccount).toHaveBeenCalledWith(SERVER_TAB, 'srv-two')
+  })
+
+  it('a pinned server tab is refused, with the words a tab on this Mac gets', async () => {
+    tab({ accountPinned: true, accountSwitchMode: 'automatic' })
+    const answer = await dispatch({ sessionId: SERVER_TAB, account: 'Play' })
+    expect(answer.ok).toBe(false)
+    expect(answer.error).toMatch(/pinned to its account/)
+    expect(switchAccount.switchSessionAccount).not.toHaveBeenCalled()
+  })
+
+  it('in propose mode the move is proposed in the tab, not made', async () => {
+    tab({ accountSwitchMode: 'propose' })
+    const answer = await dispatch({ sessionId: SERVER_TAB, account: 'Play' })
+    expect(answer).toMatchObject({ ok: true, result: { proposed: true, switched: false } })
+    expect(switchAccount.switchSessionAccount).not.toHaveBeenCalled()
+    expect(
+      useSessionStore.getState().sessions.find((s) => s.id === SERVER_TAB)?.accountProposal
+    ).toMatchObject({ rungs: [{ kind: 'account', accountId: 'srv-two', label: 'Play' }] })
   })
 })

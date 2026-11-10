@@ -14,6 +14,7 @@ import {
 import {
   accountProviderOf,
   sessionSwitchTargets,
+  switchModeLabel,
   switchSessionAccount
 } from '../../../src/renderer/src/lib/switch-account'
 import {
@@ -40,9 +41,9 @@ import { MenuPreview } from '../../../src/renderer/src/components/ui/ContextMenu
  *
  * The accounts and the usage are the tab's OWNER's (`lib/session-accounts.ts`):
  * a tab on a server names that server's account, reads its usage there and
- * moves among that server's accounts. The pin and the switch mode are this
- * Mac's policy, which acts on this Mac's tabs only, so a server tab is not
- * offered them.
+ * moves among that server's accounts. Its pin and its mode hold an agent's
+ * ask as on this Mac; the mode is worded for that, since this Mac's policy
+ * does not move a server tab at a limit.
  */
 export function AccountChip({ sessionId }: { sessionId: string }): React.JSX.Element | null {
   const host = useViewSessionStore((s) => s.sessions.find((x) => x.id === sessionId))
@@ -95,8 +96,7 @@ export function AccountChip({ sessionId }: { sessionId: string }): React.JSX.Ele
     .join(' · ')
 
   const targets = open && host.alive ? sessionSwitchTargets(host) : []
-  // This Mac's policy reads the pin and the mode of this Mac's tabs alone.
-  const policyHere = !view.remote
+
   const pinned = host.accountPinned === true
   const automatic = effectiveSwitchMode(host) === 'automatic'
   // Focus is the one signal hover and the arrow keys share; a blur is
@@ -176,7 +176,7 @@ export function AccountChip({ sessionId }: { sessionId: string }): React.JSX.Ele
                 ))}
               </>
             )}
-            {host.alive && policyHere && (
+            {host.alive && (
               <>
                 <DropdownMenu.Separator className="menu-sep" />
                 <DropdownMenu.Item
@@ -195,9 +195,7 @@ export function AccountChip({ sessionId }: { sessionId: string }): React.JSX.Ele
                   }
                 >
                   <BoltIcon className="term-account-item-icon" aria-hidden />
-                  {automatic
-                    ? 'Propose switches, do not make them'
-                    : 'Switch automatically at limit'}
+                  {switchModeLabel(automatic, view.remote)}
                 </DropdownMenu.Item>
               </>
             )}
