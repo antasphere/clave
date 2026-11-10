@@ -80,11 +80,18 @@ const MAX_CONCURRENT_TITLES = 1
  *  daemon runs the Echo adapter and must reach no provider, yet every fresh
  *  chat and every fresh Claude terminal is named by a `claude -p` one-shot
  *  under the machine's login, the Echo chat included. The standalone entry
- *  sets this from `--no-titles`; the app never does, so production titles
- *  are unchanged. Checked at every entry below, so both call sites are
- *  covered: the chat path (`pty-manager.ts`, `scheduleChatTitle`) and the
- *  terminal path (`sessions/lifecycle.ts`, `scheduleTitleGeneration`), and
- *  `generateTitle` itself refuses, in case a caller reaches it another way. */
+ *  sets this from `--no-titles`. Checked at every entry below, so both call
+ *  sites are covered: the chat path (`pty-manager.ts`, `scheduleChatTitle`)
+ *  and the terminal path (`sessions/lifecycle.ts`, `scheduleTitleGeneration`),
+ *  and `generateTitle` itself refuses, in case a caller reaches it another way.
+ *
+ *  The terminal path's guard returns before the transcript watcher starts,
+ *  and that watcher is the only source of `sessionPlanDetected` and
+ *  `sessionCleared`: while titles are off, a Claude terminal's plan is not
+ *  detected and its `/clear` is not followed either.
+ *
+ *  The app never sets it, and neither does a daemon started without the
+ *  flag: there titles, plan detection and the `/clear` follow are unchanged. */
 let disabledBy: string | null = null
 
 /** Name no tab from now on; `reason` is the flag or variable that asked. */

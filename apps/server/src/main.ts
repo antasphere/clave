@@ -13,8 +13,16 @@
  * `--no-titles` names no tab (the native mobile wave, 9 November 2026): a
  * fixture daemon on the Echo adapter must reach no provider, and a fresh
  * chat is otherwise named by a `claude -p` one-shot under the machine's
- * login (`packages/host/src/title-generator.ts`). Off by default; the app
- * never passes it. The discovery file says `titles: "off"` when it is on,
+ * login (`packages/host/src/title-generator.ts`). Under the flag no Claude
+ * terminal's transcript is watched either, and that watcher is also what
+ * detects a plan and follows a `/clear`: neither happens in this daemon's
+ * terminal sessions while the flag is on.
+ *
+ * Without the flag, the default the app and every production daemon run,
+ * nothing of this changes: tabs are named, plans detected and `/clear`
+ * followed as before. The app never passes it.
+ *
+ * The discovery file says `titles: "off"` when it is on,
  * beside `testMode` (`--test-no-activate`, which also stops the usage clock
  * and turns the test fixture route on) and `machineUsage` (false under
  * `--test-no-machine-usage`), so a fixture can read what this server will
