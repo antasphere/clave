@@ -45,12 +45,12 @@ private func screenWidthInPoints(fallback: CGFloat) -> CGFloat {
 }
 
 extension XCTestCase {
-  /// The screen as it is now, attached to the test under `name` and written to
+  /// The screen as it is now (or only `element`), attached to the test under `name` and written to
   /// `evidence/<topic>/<name>.png`.
   @MainActor
   @discardableResult
-  func keepScreenshot(topic: String, name: String) -> XCUIScreenshot {
-    let shot = XCUIScreen.main.screenshot()
+  func keepScreenshot(topic: String, name: String, of element: XCUIElement? = nil) -> XCUIScreenshot {
+    let shot = element?.screenshot() ?? XCUIScreen.main.screenshot()
     let attachment = XCTAttachment(screenshot: shot)
     attachment.name = "\(topic)/\(name)"
     attachment.lifetime = .keepAlways

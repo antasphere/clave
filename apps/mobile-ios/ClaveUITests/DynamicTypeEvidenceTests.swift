@@ -30,9 +30,29 @@ final class DynamicTypeEvidenceTests: XCTestCase {
         XCTAssertTrue(target.isHittable, "\(screen): \(identifier) is off screen at \(target.frame)")
         report.append("  \(identifier) \(target.frame)")
       }
+      if screen == .chat { report += composerFits(app) }
       lines.append(report.joined(separator: "\n"))
     }
     keepText(lines.joined(separator: "\n") + "\n", topic: "dynamic-type", name: "frames.txt")
+  }
+
+  /// The composer at this size: the send and attach buttons lie inside the dock's box, and the send
+  /// button's frame has grown with its scaled circle (44 points at the default size), so the box
+  /// that holds the frame holds the circle. Kept as `dynamic-type/composer.png`.
+  @MainActor
+  private func composerFits(_ app: XCUIApplication) -> [String] {
+    let dock = element(app, "chat.composer.dock")
+    XCTAssertTrue(dock.exists, "chat: no composer dock")
+    var report = ["  chat.composer.dock \(dock.frame)"]
+    for identifier in ["chat.composer.send", "chat.composer.attach"] {
+      let frame = element(app, identifier).frame
+      XCTAssertTrue(
+        dock.frame.insetBy(dx: -0.5, dy: -0.5).contains(frame), "chat: \(identifier) \(frame) is not inside the dock \(dock.frame)")
+    }
+    let send = element(app, "chat.composer.send").frame
+    XCTAssertGreaterThan(send.height, 44, "chat: the send button's frame \(send) did not grow with its circle")
+    keepScreenshot(topic: "dynamic-type", name: "composer", of: dock)
+    return report
   }
 
   /// The buttons a person needs on each screen of the flow.

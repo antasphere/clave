@@ -151,6 +151,8 @@ struct Composer: View {
     .background(shape.fill(theme.colors.surfaceRaised))
     .overlay(shape.strokeBorder(theme.colors.borderSubtle, lineWidth: 1))
     .claveShadow(theme.raised)
+    .accessibilityElement(children: .contain)
+    .accessibilityIdentifier("chat.composer.dock")
   }
 
   private var attachMenu: some View {
@@ -176,9 +178,10 @@ struct Composer: View {
       }
       .accessibilityIdentifier("chat.composer.attach.files")
     } label: {
+      // The frame follows the scaled glyph past 44 points, so the dock grows with it.
       Icon(.paperClip, size: glyph)
         .foregroundStyle(theme.colors.textSecondary)
-        .frame(width: 44, height: 44)
+        .frame(width: max(44, glyph), height: max(44, glyph))
         .contentShape(Rectangle())
     }
     .disabled(model.sending || ended || model.pendingFiles.count >= maxAttachments)
@@ -191,7 +194,7 @@ struct Composer: View {
     let enabled = model.canSend && !ended
     if model.sending {
       ProgressView()
-        .frame(width: 44, height: 44)
+        .frame(width: max(44, sendSize), height: max(44, sendSize))
         .accessibilityLabel("Sending")
         .accessibilityIdentifier("chat.composer.progress")
     } else {
@@ -202,7 +205,8 @@ struct Composer: View {
           .foregroundStyle(enabled ? theme.colors.actionForeground : theme.colors.textTertiary)
           .frame(width: sendSize, height: sendSize)
           .background(Circle().fill(enabled ? theme.colors.action : theme.colors.surface200))
-          .frame(width: 44, height: 44)
+          // The circle grows with the text size; its frame grows with it, so the dock holds it.
+          .frame(width: max(44, sendSize), height: max(44, sendSize))
           .contentShape(Rectangle())
       }
       .buttonStyle(.plain)
