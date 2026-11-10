@@ -144,6 +144,19 @@ function mayStart(definition: HelperDefinition<unknown, unknown>): boolean {
   return true
 }
 
+/** Whether `job` starts before `other`. Inside one pool, in the order they
+ *  were asked, whatever their helpers' priorities: the exchange digests
+ *  must not starve the work-card titles beside them, which ran first come,
+ *  first served before the helpers. Otherwise the higher priority, then the
+ *  older. */
+function startsBefore(job: Job, other: Job): boolean {
+  const pool = job.definition.pool?.id
+  if (pool !== undefined && pool === other.definition.pool?.id) return job.seq < other.seq
+  if (job.definition.priority !== other.definition.priority)
+    return job.definition.priority > other.definition.priority
+  return job.seq < other.seq
+}
+
 /** The next job that may start: the highest priority under its caps, the
  *  oldest of equals. */
 function nextJob(): number {
@@ -155,12 +168,7 @@ function nextJob(): number {
       best = i
       continue
     }
-    const current = queue[best]
-    if (
-      job.definition.priority > current.definition.priority ||
-      (job.definition.priority === current.definition.priority && job.seq < current.seq)
-    )
-      best = i
+    if (startsBefore(job, queue[best])) best = i
   }
   return best
 }

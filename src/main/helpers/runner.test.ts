@@ -298,6 +298,34 @@ describe('the digests and the helpers a person waits on', () => {
     expect(runningHelpers()).toBe(2)
   })
 
+  it('inside the pool, digests start in the order they were asked, whatever their priority', async () => {
+    const message = [{ from: 'a', text: 'b' }]
+    // The pool full with two exchange digests; then a work card waits first.
+    void runHelper(exchangeDigestHelper, message)
+    void runHelper(exchangeDigestHelper, message)
+    void runHelper(workDigestHelper, { notes: ['first asked'], tools: 1 })
+    void runHelper(exchangeDigestHelper, [{ from: 'c', text: 'asked later' }])
+    await ticks()
+    expect(mocks.spawned).toHaveLength(2)
+    mocks.spawned[0].finish(null, json, '')
+    await ticks()
+    expect(mocks.spawned[2].prompt).toContain('first asked')
+    expect(queuedHelpers()).toEqual(['exchange-digest'])
+  })
+
+  it('outside a shared pool, priority still decides', async () => {
+    const low = helper({ priority: 1, concurrency: 1, pool: { id: 'p-low', concurrency: 1 } })
+    const high = helper({ priority: 9, concurrency: 1, pool: { id: 'p-high', concurrency: 1 } })
+    const gate = helper({ background: true })
+    for (let i = 0; i < MAX_RUNNING_HELPERS; i++) void runHelper(gate, `busy-${i}`)
+    void runHelper({ ...low, background: true }, 'low')
+    void runHelper({ ...high, background: true }, 'high')
+    await ticks()
+    mocks.spawned[0].finish(null, 'ok', '')
+    await ticks()
+    expect(mocks.spawned[MAX_RUNNING_HELPERS].prompt).toBe('PROMPT high')
+  })
+
   it('a title, a git call and a prompt a person waits on never wait behind the digests', async () => {
     const message = [{ from: 'a', text: 'b' }]
     // The background cap full: two digests and another background helper.
