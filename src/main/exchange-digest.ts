@@ -2,6 +2,7 @@ import { DigestStore } from './exchange-digest-store'
 import { settingsPorts } from './ports'
 import { TEST_NO_ACTIVATE } from './test-mode'
 import * as helperRunner from './helpers/runner'
+import { resolveHelperConfig } from './helpers/registry'
 import { DIGEST_TIMEOUT_MS, exchangeDigestHelper, workDigestHelper } from './helpers/digests'
 import {
   parseDigestReply,
@@ -105,11 +106,36 @@ export function requestWorkDigest(request: WorkDigestRequest): Promise<WorkDiges
 }
 const workInflight = new Map<string, Promise<WorkDigestResult>>()
 
-function read(request: DigestRequest): Promise<DigestResult> {
+// ── PRDCT-4330 (helpers-settings lane) ──
+/** Whether the harness's canned reply stands in for the model. A spec that
+ *  puts a stub `claude` on the PATH sets CLAVE_E2E_DIGEST_RUNNER=1 to send the
+ *  digests through the runner, so their arguments can be read. */
+const harnessReplies = (): boolean =>
+  TEST_NO_ACTIVATE && process.env.CLAVE_E2E_DIGEST_RUNNER !== '1'
+
+/** A helper that is off never reaches the harness's reply either: the
+ *  preference is read first, as the runner reads it. */
+async function switchedOff(
+  helper: typeof exchangeDigestHelper | typeof workDigestHelper
+): Promise<{ ok: false; error: string; reason: 'disabled' } | null> {
+  const config = await resolveHelperConfig(helper)
+  return config.enabled
+    ? null
+    : {
+        ok: false,
+        error: `Switched off in Settings › Helpers (${helper.label}).`,
+        reason: 'disabled'
+      }
+}
+// ── end PRDCT-4330 ──
+
+async function read(request: DigestRequest): Promise<DigestResult> {
   // Under the end-to-end harness no model is called: a spec that wants a
   // digest hands the model's reply in CLAVE_E2E_DIGEST_REPLY, read the way a
   // real one is, after a beat so the reading state shows.
-  if (TEST_NO_ACTIVATE) {
+  if (harnessReplies()) {
+    const off = await switchedOff(exchangeDigestHelper)
+    if (off) return off
     const reply = process.env.CLAVE_E2E_DIGEST_REPLY
     if (!reply) return Promise.resolve({ ok: false, error: 'No model under test' })
     return new Promise((resolve) =>
@@ -145,9 +171,11 @@ function read(request: DigestRequest): Promise<DigestResult> {
     })
 }
 
-function readWork(request: WorkDigestRequest): Promise<WorkDigestResult> {
+async function readWork(request: WorkDigestRequest): Promise<WorkDigestResult> {
   // Under the harness, the reply comes from CLAVE_E2E_WORK_DIGEST_REPLY.
-  if (TEST_NO_ACTIVATE) {
+  if (harnessReplies()) {
+    const off = await switchedOff(workDigestHelper)
+    if (off) return off
     const reply = process.env.CLAVE_E2E_WORK_DIGEST_REPLY
     if (!reply) return Promise.resolve({ ok: false, error: 'No model under test' })
     return new Promise((resolve) =>
