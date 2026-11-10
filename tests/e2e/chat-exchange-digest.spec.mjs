@@ -9,8 +9,8 @@ import { until } from './harness.mjs'
    - the card the digest came from is marked, the others are not;
    - the digest is filed under the tab's session id, and a timeline scrolled
      out of view is read and filed all the same;
-   - with no digest to be had, the timeline shows its messages and nothing
-     else: no error, no empty line. */
+   - with no digest to be had, the timeline shows its messages and one quiet
+     line saying it was not read, with Ask again (PRDCT-4327). */
 
 const header = (name, id) =>
   `[Message from Clave tab "${name}" — reply with clave_send_to_session sessionId="${id}"]\n`
@@ -66,16 +66,14 @@ export async function run(t) {
           JSON.stringify(shown.flagged) === '[false,true]',
         shown
       )
-      // Filed by the tab's id in Clave's data folder, so a remount or a
-      // restart finds it.
+      // Filed by the tab's id in the data folder of the server that runs the
+      // tab (main's in-process, `userData/server` separate, PRDCT-4327), so a
+      // remount or a restart finds it: read back through the window's road.
       const filed = () =>
-        chat.app.evaluate(({ app }, id) => {
-          const fs = process.getBuiltinModule('fs')
-          const path = process.getBuiltinModule('path')
-          const file = path.join(app.getPath('userData'), 'exchange-digests.json')
-          if (!fs.existsSync(file)) return []
-          return Object.keys(JSON.parse(fs.readFileSync(file, 'utf-8'))[id] ?? {})
-        }, record.id)
+        chat.win.evaluate(
+          async (id) => Object.keys(await window.electronAPI.exchangeDigestsOf(id)),
+          record.id
+        )
       const saved = await until(async () => ((await filed()).length === 1 ? true : null), 8000)
       t.check(`${mode}: the digest is filed under the tab's session id`, saved === true, {
         filed: await filed()
@@ -114,11 +112,17 @@ export async function run(t) {
       const state = {
         failed,
         digestText: await timeline.locator('.exchange-digest-text').count(),
+        unread: await timeline.locator('.digest-unread-words').allInnerTexts(),
+        retry: await timeline.getByRole('button', { name: 'Ask again', exact: true }).count(),
         cards: await timeline.locator('.exchange').count()
       }
       t.check(
-        `${mode}: with no digest to be had, the timeline shows its messages and nothing else`,
-        state.failed && state.digestText === 0 && state.cards === 2,
+        `${mode}: with no digest to be had, the timeline shows its messages and says it was not read`,
+        state.failed &&
+          state.digestText === 0 &&
+          JSON.stringify(state.unread) === '["Not read: something went wrong."]' &&
+          state.retry === 1 &&
+          state.cards === 2,
         state
       )
     } finally {

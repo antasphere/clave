@@ -55,6 +55,8 @@ import { GitEventsLive, GitPort, gitHandlers } from './git'
 import { ServerInfoEventsLive, ServerInfoPort, serverInfoHandlers } from './server-info'
 // ── ADR 0004: the routines ──
 import { Routines, RoutinesEventsLive, routineHandlers } from './routines'
+// ── PRDCT-4327: the digests ──
+import { DigestsPort, digestHandlers } from './digests'
 
 export interface ServerOptions {
   /** The bearer token every request and every push hello must present. */
@@ -100,6 +102,8 @@ export type ServerServices =
   | ServerInfoPort
   // ── ADR 0004: the routines ──
   | Routines
+  // ── PRDCT-4327: the digests ──
+  | DigestsPort
 
 /** Everything but the listener. */
 export const ServicesLive = (options: ServerOptions): Layer.Layer<ServerServices> => {
@@ -202,7 +206,9 @@ export const BusesLive = busesLayer.pipe(
       // ── Issue #266: the server domain ──
       ...serverInfoHandlers,
       // ── ADR 0004: the routines ──
-      ...routineHandlers
+      ...routineHandlers,
+      // ── PRDCT-4327: the digests ──
+      ...digestHandlers
       // ── Lane B: ...terminalHandlers ──
     )
   )

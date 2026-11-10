@@ -93,8 +93,8 @@ describe('the harness reads the preference before its reply', () => {
     })
   })
 
-  it('a work digest switched off, asked of an owner that answers later, says so too', async () => {
-    setHelperConfigSource(async (id) => (id === 'work-digest' ? { enabled: false } : undefined))
+  it('a work digest switched off says so too', async () => {
+    setHelperConfigSource((id) => (id === 'work-digest' ? { enabled: false } : undefined))
     await expect(
       requestWorkDigest({
         sessionId: 's',

@@ -1291,6 +1291,11 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
   }
   type LaunchSettings = Awaited<ReturnType<FleetDesktopAPI['fleetLaunchSettings']>>
   type UsageAnswer = Awaited<ReturnType<FleetDesktopAPI['fleetUsage']>>
+  // ── PRDCT-4327: the digests' answers, as the bridge types them ──
+  type DigestAnswer = Awaited<ReturnType<ElectronAPI['exchangeDigest']>>
+  type DigestsFiled = Awaited<ReturnType<ElectronAPI['exchangeDigestsOf']>>
+  type WorkDigestAnswer = Awaited<ReturnType<ElectronAPI['workDigest']>>
+  type WorkDigestsFiled = Awaited<ReturnType<ElectronAPI['workDigestsOf']>>
   const api: ElectronAPI = {
     ...local,
     ...shared,
@@ -1331,6 +1336,43 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
       ),
     sessionsCapabilities: (id) =>
       route(id, local.sessionsCapabilities, (b, wireId) => b.api.sessions.capabilities(wireId)),
+    // ── PRDCT-4327: a digest is read by the server the tab runs on, on its own
+    // record of the session; the launch the view read off the tab stays here ──
+    exchangeDigest: (request) =>
+      route(
+        request.sessionId,
+        () => local.exchangeDigest(request),
+        async (b, wireId) =>
+          (await b.api.digests.exchange({
+            sessionId: wireId,
+            key: request.key,
+            messages: request.messages
+          })) as DigestAnswer
+      ),
+    exchangeDigestsOf: (id) =>
+      route(
+        id,
+        () => local.exchangeDigestsOf(id),
+        async (b, wireId) => (await b.api.digests.exchangesOf(wireId)) as DigestsFiled
+      ),
+    workDigest: (request) =>
+      route(
+        request.sessionId,
+        () => local.workDigest(request),
+        async (b, wireId) =>
+          (await b.api.digests.work({
+            sessionId: wireId,
+            key: request.key,
+            notes: request.notes,
+            tools: request.tools
+          })) as WorkDigestAnswer
+      ),
+    workDigestsOf: (id) =>
+      route(
+        id,
+        () => local.workDigestsOf(id),
+        async (b, wireId) => (await b.api.digests.workOf(wireId)) as WorkDigestsFiled
+      ),
     sessionsSetView: (id, viewId) =>
       route(
         id,

@@ -5,7 +5,7 @@ import { droppedPathFallback } from './dropped-paths'
 /**
  * A dropped path that could not be attached (PRDCT-4329): a folder always
  * lands here, since the transfer reads one file's bytes and `readBounded`
- * refuses a directory ("Folders and special files cannot be attached.").
+ * refuses a directory (`readBounded`, `packages/server/src/files/binary.ts`).
  */
 describe('what a dropped path that could not be attached leaves behind', () => {
   const serverTab = sessionKey({ serverId: 'studio', sessionId: 's1' })
@@ -22,5 +22,9 @@ describe('what a dropped path that could not be attached leaves behind', () => {
     expect(droppedPathFallback(serverTab, resourceKey('file', 'studio', '/srv/site'))).toBe(
       'insert'
     )
+  })
+
+  it('a file key of ANOTHER server dropped on a server tab is refused too', () => {
+    expect(droppedPathFallback(serverTab, resourceKey('file', 'other', '/srv/site'))).toBe('refuse')
   })
 })

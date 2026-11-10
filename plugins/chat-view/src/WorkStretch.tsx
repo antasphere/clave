@@ -2,7 +2,8 @@ import { useContext, useMemo, useState, type CSSProperties, type ReactNode } fro
 import { ChevronDownIcon } from '@heroicons/react/24/outline'
 import { workDigestKey } from '../../../src/shared/work-digest'
 import { useDisclosure } from './disclosure'
-import { useWorkDigestState } from './digest'
+import { retryWorkDigest, useWorkDigestState } from './digest'
+import { DigestSlow, DigestUnread } from './DeliveryStack'
 import {
   countsLabel,
   noteCount,
@@ -105,6 +106,14 @@ export function WorkStretch({
                 {title || 'The agent worked'}
               </span>
             </span>
+            {digest.state === 'reading' && digest.slow && <DigestSlow />}
+            {digest.state === 'failed' && (
+              <DigestUnread
+                reason={digest.reason}
+                card="work"
+                onRetry={() => retryWorkDigest(sessionId, key)}
+              />
+            )}
             {flaggedStep?.note && (
               <span className="stretch-flag" aria-label="A note needs you">
                 <svg

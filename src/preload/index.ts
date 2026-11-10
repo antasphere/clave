@@ -65,8 +65,8 @@ import {
   type OnboardingInstallResult,
   type OnboardingState
 } from '../shared/onboarding'
-import type { DigestRequest } from '../shared/exchange-digest'
-import type { WorkDigestRequest } from '../shared/work-digest'
+import type { DigestDone, DigestRequest, DigestResult } from '../shared/exchange-digest'
+import type { WorkDigestDone, WorkDigestRequest, WorkDigestResult } from '../shared/work-digest'
 import type {
   ServerInstallProgress,
   ServerInstallResult,
@@ -1848,14 +1848,34 @@ const electronAPI = {
     ipcRenderer.invoke('session:save-transcript', markdown, fileName),
 
   openExternal: (url: string) => ipcRenderer.invoke('shell:openExternal', url),
-  // What the reader needs from a run of messages other tabs sent: a one-shot
-  // model call in main (src/main/exchange-digest.ts), answered as a result.
-  exchangeDigest: (request: DigestRequest) => ipcRenderer.invoke('exchanges:digest', request),
-  exchangeDigestsOf: (sessionId: string) => ipcRenderer.invoke('exchanges:digests-of', sessionId),
-  // The title of a card of the agent's working notes (PRDCT-4212), the same
-  // one-shot runner, filed under the tab beside the exchange digests.
-  workDigest: (request: WorkDigestRequest) => ipcRenderer.invoke('work:digest', request),
-  workDigestsOf: (sessionId: string) => ipcRenderer.invoke('work:digests-of', sessionId),
+  // What the reader needs from a run of messages other tabs sent, and the
+  // title of a card of the agent's working notes (PRDCT-4212): one-shot model
+  // calls read by the server that runs the tab, as every session call is
+  // (PRDCT-4327). Once main names a server (in-process, a separate child, an
+  // attached daemon), the server reads them on ITS record of the session
+  // (its account list, its helper settings) and files them in its own data
+  // folder; before that, main reads them (src/main/exchange-digest.ts). The
+  // launch the view sends is for main's arm only: the wire carries none.
+  exchangeDigest: viaServer<[DigestRequest], DigestResult>({
+    ipc: (request) => ipcRenderer.invoke('exchanges:digest', request),
+    server: async ({ api }, { sessionId, key, messages }) =>
+      (await api.digests.exchange({ sessionId, key, messages })) as DigestResult
+  }),
+  exchangeDigestsOf: viaServer<[string], Record<string, DigestDone>>({
+    ipc: (sessionId) => ipcRenderer.invoke('exchanges:digests-of', sessionId),
+    server: async ({ api }, sessionId) =>
+      (await api.digests.exchangesOf(sessionId)) as Record<string, DigestDone>
+  }),
+  workDigest: viaServer<[WorkDigestRequest], WorkDigestResult>({
+    ipc: (request) => ipcRenderer.invoke('work:digest', request),
+    server: async ({ api }, { sessionId, key, notes, tools }) =>
+      (await api.digests.work({ sessionId, key, notes, tools })) as WorkDigestResult
+  }),
+  workDigestsOf: viaServer<[string], Record<string, WorkDigestDone>>({
+    ipc: (sessionId) => ipcRenderer.invoke('work:digests-of', sessionId),
+    server: async ({ api }, sessionId) =>
+      (await api.digests.workOf(sessionId)) as Record<string, WorkDigestDone>
+  }),
   // The GitHub pull request panel (plugins/github). Main runs the user's own
   // `gh`; every call answers with a GithubResult rather than throwing, so the
   // panel can tell "gh is missing" from "not signed in" from "gh said no".
