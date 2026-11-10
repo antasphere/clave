@@ -60,7 +60,9 @@ export const artefactServers = new ArtefactServers({
   fetch: globalThis.fetch,
   execPath: process.execPath,
   store: storeDir(),
-  resolveCli: () => resolveCli(cliDir(), process.env)
+  resolveCli: () => resolveCli(cliDir(), process.env),
+  // A child that died under its holders: the views serve again.
+  onExit: (target) => broadcastToAllWindows('slideless:server-exited', target)
 })
 
 /**

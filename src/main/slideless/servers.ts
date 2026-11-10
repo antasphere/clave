@@ -31,14 +31,19 @@ export interface ServerDeps {
   env?: NodeJS.ProcessEnv
   /** How long a child may take to print its address. */
   startTimeoutMs?: number
+  /** A server that still had holders exited on its own (a crash): the holders may serve again. */
+  onExit?: (target: string) => void
   log?: (message: string) => void
 }
 
 interface Running {
   target: string
-  child: ChildProcess
+  /** Null while the port is being found: the entry exists before the child does. */
+  child: ChildProcess | null
   url: Promise<string>
   holders: number
+  /** Set by stop(): the exit that follows is ours, not a crash. */
+  stopped: boolean
 }
 
 const SNAPSHOT_TIMEOUT_MS = 30_000
@@ -80,40 +85,59 @@ export class ArtefactServers {
   async serve(raw: string): Promise<string> {
     const target = artefactTarget(raw)
     const existing = this.running.get(target)
-    if (existing && existing.child.exitCode === null && !existing.child.killed) {
+    if (
+      existing &&
+      !existing.stopped &&
+      (existing.child === null || existing.child.exitCode === null)
+    ) {
       existing.holders++
       return existing.url
     }
     const resolved = this.deps.resolveCli()
     if (!resolved.cli) throw new Error(resolved.reason)
-    const port = await freePort()
-    const child = this.deps.spawn(
-      this.deps.execPath,
-      [
-        resolved.cli.cliPath,
-        'dev',
-        target,
-        '--port',
-        String(port),
-        '--no-open',
-        '--json',
-        '--store',
-        this.deps.store
-      ],
-      {
-        env: { ...(this.deps.env ?? process.env), ELECTRON_RUN_AS_NODE: '1' },
-        stdio: ['ignore', 'pipe', 'pipe'],
-        windowsHide: true
-      }
-    )
-    const url = this.readAddress(child, target)
-    const entry: Running = { target, child, url, holders: 1 }
+    const cliPath = resolved.cli.cliPath
+    // The entry is recorded BEFORE anything is awaited: a second caller in the
+    // same moment joins this start instead of spawning a second child.
+    const entry: Running = {
+      target,
+      child: null,
+      url: Promise.resolve(''),
+      holders: 1,
+      stopped: false
+    }
+    entry.url = (async () => {
+      const port = await freePort()
+      if (entry.stopped) throw new Error('Released before it started')
+      const child = this.deps.spawn(
+        this.deps.execPath,
+        [
+          cliPath,
+          'dev',
+          target,
+          '--port',
+          String(port),
+          '--no-open',
+          '--json',
+          '--store',
+          this.deps.store
+        ],
+        {
+          env: { ...(this.deps.env ?? process.env), ELECTRON_RUN_AS_NODE: '1' },
+          stdio: ['ignore', 'pipe', 'pipe'],
+          windowsHide: true
+        }
+      )
+      entry.child = child
+      child.once('exit', () => {
+        const crashed = !entry.stopped && entry.holders > 0
+        if (this.running.get(target) === entry) this.running.delete(target)
+        if (crashed) this.deps.onExit?.(target)
+      })
+      return this.readAddress(child, target)
+    })()
     this.running.set(target, entry)
-    child.once('exit', () => {
-      if (this.running.get(target) === entry) this.running.delete(target)
-    })
     try {
-      return await url
+      return await entry.url
     } catch (err) {
       this.stop(entry)
       throw err
@@ -166,8 +190,9 @@ export class ArtefactServers {
   }
 
   private stop(entry: Running): void {
+    entry.stopped = true
     if (this.running.get(entry.target) === entry) this.running.delete(entry.target)
-    if (entry.child.exitCode === null && !entry.child.killed) entry.child.kill()
+    if (entry.child && entry.child.exitCode === null && !entry.child.killed) entry.child.kill()
   }
 
   private readAddress(child: ChildProcess, target: string): Promise<string> {

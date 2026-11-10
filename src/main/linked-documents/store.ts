@@ -186,7 +186,7 @@ export class LinkedDocumentStore {
     if (filePath && !['.md', '.markdown', '.html', '.htm'].includes(ext))
       throw new Error('Linked files support Markdown, HTML, and a folder holding an HTML page')
     const prior = this.index()[sessionId]
-    if (prior && filePath && this.get(prior).path === filePath) {
+    if (prior && filePath && this.get(prior).path === filePath && this.get(prior).root === root) {
       const was = this.get(prior)
       // Opening the same file again shows what is on disk now (PRDCT-4261):
       // an agent that edited it and opens it again must not see the old page.
@@ -328,7 +328,15 @@ export class LinkedDocumentStore {
       if (input.reloadExternal && input.ifChanged) {
         // The watcher's call: nothing to do when the file is what the panel
         // holds, and never over a conflict the person has to resolve.
-        const disk = this.readText(doc.path!)
+        // A file gone for a moment (a checkout, an agent's rm then write) is
+        // nothing to load: the panel keeps what it holds, and the watcher's
+        // next event, when the file is back, reloads it.
+        let disk: string
+        try {
+          disk = this.readText(doc.path!)
+        } catch {
+          return doc
+        }
         if (doc.conflict || digest(disk) === doc.sourceHash) return doc
         doc.content = disk
         doc.sourceHash = digest(disk)

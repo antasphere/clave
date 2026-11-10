@@ -33,4 +33,6 @@ export interface SlidelessAPI {
   /** Save a local version of a served target (nothing changed: no new version). */
   snapshot: (target: string) => Promise<SlidelessSnapshot>
   onState: (callback: (state: SlidelessState) => void) => () => void
+  /** A served target's server exited on its own; a view holding it should serve again. */
+  onServerExited: (callback: (target: string) => void) => () => void
 }

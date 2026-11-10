@@ -110,6 +110,8 @@ export function readTar(archive: Buffer): Map<string, Buffer> {
 export interface InstallDeps {
   fetch: typeof globalThis.fetch
   registry?: string
+  /** Every request to the registry, its body included (default one minute). */
+  timeoutMs?: number
 }
 
 interface RegistryLatest {
@@ -126,6 +128,30 @@ async function fetchWithTimeout(
   const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
   try {
     return await fetchImpl(url, { signal: controller.signal, redirect: 'follow' })
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+/** The package file, under one timeout that covers the body too: a stalled download fails. */
+async function download(
+  fetchImpl: typeof globalThis.fetch,
+  url: string,
+  timeoutMs: number
+): Promise<Buffer> {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
+  try {
+    const res = await fetchImpl(url, { signal: controller.signal, redirect: 'follow' })
+    if (!res.ok) throw new Error(`The registry answered ${res.status} for the package file`)
+    const declared = Number(res.headers.get('content-length') ?? '0')
+    if (declared > MAX_TARBALL_BYTES) throw new Error('The package file is too large')
+    const body = Buffer.from(await res.arrayBuffer())
+    if (body.length > MAX_TARBALL_BYTES) throw new Error('The package file is too large')
+    return body
+  } catch (err) {
+    if (controller.signal.aborted) throw new Error('The package download timed out')
+    throw err
   } finally {
     clearTimeout(timer)
   }
@@ -183,12 +209,7 @@ export async function installSlideless(dir: string, deps: InstallDeps): Promise<
     )
   if (!/^[0-9A-Za-z.+-]+$/.test(release.version))
     throw new Error(`Unexpected version string: ${release.version}`)
-  const res = await fetchWithTimeout(deps.fetch, release.tarball)
-  if (!res.ok) throw new Error(`The registry answered ${res.status} for the package file`)
-  const declared = Number(res.headers.get('content-length') ?? '0')
-  if (declared > MAX_TARBALL_BYTES) throw new Error('The package file is too large')
-  const tarball = Buffer.from(await res.arrayBuffer())
-  if (tarball.length > MAX_TARBALL_BYTES) throw new Error('The package file is too large')
+  const tarball = await download(deps.fetch, release.tarball, deps.timeoutMs ?? REQUEST_TIMEOUT_MS)
   if (!integrityMatches(tarball, release.integrity))
     throw new Error('The downloaded package does not match its published integrity hash')
   const files = readTar(gunzipSync(tarball))

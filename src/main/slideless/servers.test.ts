@@ -15,6 +15,8 @@ const FAKE_CLI = `
 const http = require('http');
 const args = process.argv.slice(2);
 if (process.env.FAKE_MODE === 'crash') { console.error('Error: no entry page in the folder'); process.exit(1); }
+const FOREIGN = process.env.FAKE_MODE === 'foreign';
+const DIE = process.env.FAKE_MODE === 'die';
 if (process.env.ELECTRON_RUN_AS_NODE !== '1') { console.error('not run as node'); process.exit(2); }
 const port = Number(args[args.indexOf('--port') + 1]);
 const store = args[args.indexOf('--store') + 1];
@@ -29,7 +31,9 @@ http.createServer((req, res) => {
   res.writeHead(200); res.end('ok');
 }).listen(port, '127.0.0.1', () => {
   console.log('noise before the address');
+  if (FOREIGN) console.log(JSON.stringify({ url: 'http://attacker.example/' }));
   console.log(JSON.stringify({ url: 'http://127.0.0.1:' + port + '/', entry: 'index.html' }));
+  if (DIE) setTimeout(() => process.exit(3), 300);
 });
 `
 
@@ -48,7 +52,7 @@ interface Setup {
   cliPath: string
 }
 
-function setup(env: NodeJS.ProcessEnv = {}): Setup {
+function setup(env: NodeJS.ProcessEnv = {}, onExit?: (target: string) => void): Setup {
   const root = mkdtempSync(join(tmpdir(), 'clave-artefacts-'))
   dirs.push(root)
   const cliPath = join(root, 'fake-cli.cjs')
@@ -67,7 +71,8 @@ function setup(env: NodeJS.ProcessEnv = {}): Setup {
     store: join(root, 'store'),
     resolveCli: () => ({ cli: { cliPath, version: '0.14.0', override: false } }),
     env: { ...process.env, ...env },
-    startTimeoutMs: 5000
+    startTimeoutMs: 5000,
+    onExit
   })
   servers.push(servers_)
   return { root, deck, servers: servers_, spawned, cliPath }
@@ -151,5 +156,34 @@ describe('artefact servers', () => {
     expect(() => artefactTarget(join(deck, 'nope'))).toThrow(/No such/)
     writeFileSync(join(deck, 'notes.txt'), 'x')
     expect(() => artefactTarget(join(deck, 'notes.txt'))).toThrow(/folder or an .html/)
+  })
+
+  it('starts ONE child for two callers in the same moment', async () => {
+    const { deck, servers: s, spawned } = setup()
+    const [a, b] = await Promise.all([s.serve(deck), s.serve(deck)])
+    expect(a).toBe(b)
+    expect(spawned).toHaveLength(1)
+    s.release(deck)
+    expect(s.targets()).toEqual([deck])
+    s.release(deck)
+    expect(s.targets()).toEqual([])
+  })
+
+  it('takes only a loopback address from the CLI', async () => {
+    const { deck, servers: s } = setup({ FAKE_MODE: 'foreign' })
+    expect(await s.serve(deck)).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/$/)
+  })
+
+  it('reports a child that dies under its holders, and not one it stopped', async () => {
+    const exited: string[] = []
+    const { deck, servers: s } = setup({ FAKE_MODE: 'die' }, (t) => exited.push(t))
+    await s.serve(deck)
+    await expect.poll(() => exited, { timeout: 3000 }).toEqual([deck])
+    expect(s.targets()).toEqual([])
+    const calm = setup({}, (t) => exited.push(t))
+    await calm.servers.serve(calm.deck)
+    calm.servers.release(calm.deck)
+    await new Promise((r) => setTimeout(r, 500))
+    expect(exited).toEqual([deck])
   })
 })

@@ -27,7 +27,8 @@ import {
   toolErrored,
   toolPayload,
   recordsRootOf,
-  fixturePath
+  fixturePath,
+  callMcp
 } from './harness.mjs'
 
 const CLI =
@@ -147,6 +148,7 @@ export async function run(t) {
   seedWorkspaces(DIR, { workspaces: [WS], activeWorkspaceId: WS.id, fresh: true })
   seedTrustedRoots(DIR, [ROOT])
   const reg = await registry()
+  let liveSrc = ''
   let { app, win } = await launchApp(DIR, {
     server: 'in-process',
     env: { CLAVE_TEST_SLIDELESS_REGISTRY: reg.url, CLAVE_SLIDELESS_CLI: '' }
@@ -225,6 +227,15 @@ export async function run(t) {
     await sleep(1500)
     t.equal('a turn that changed nothing saves no version', (await versions()).length, 2)
 
+    // A turn that has only started is not a version: the edit waits for its end.
+    writeFileSync(`${BRIEF}/index.html`, '<!doctype html><h1 id="t">mid-turn draft</h1>')
+    hookWord(DIR, agent.sessionId, 'working')
+    await sleep(1500)
+    t.equal('a turn still running saves nothing', (await versions()).length, 2)
+    hookWord(DIR, agent.sessionId, 'done')
+    const three = await until(async () => ((await versions()).length === 3 ? true : null))
+    t.check('and its end saves the edit as version 3', !!three, await versions())
+
     const options = await win
       .frameLocator('[data-testid="slideless-artefact"]')
       .locator('#sel option')
@@ -240,10 +251,56 @@ export async function run(t) {
 
     const again = await client.call('clave_open_side_panel', { path: BRIEF })
     t.check('opening the folder again is harmless', !toolErrored(again), again)
+
+    // The Source view keeps the server: a turn ended there still saves a version.
+    await win.getByRole('button', { name: 'Source', exact: true }).click()
+    writeFileSync(`${BRIEF}/index.html`, '<!doctype html><h1 id="t">edited under Source</h1>')
+    hookWord(DIR, agent.sessionId, 'working')
+    await sleep(600)
+    hookWord(DIR, agent.sessionId, 'done')
+    const four = await until(async () => ((await versions()).length === 4 ? true : null))
+    t.check(
+      'a turn ended while the panel shows Source still saves a version',
+      !!four,
+      await versions()
+    )
+    await win.getByRole('button', { name: 'Rendered', exact: true }).click()
+
+    // Closing the session lets go of its server.
+    const up = (url) =>
+      fetch(url).then(
+        () => true,
+        () => false
+      )
+    await callMcp(app, 'closeSession', { sessionId: agent.sessionId })
+    const stopped = await until(async () => ((await up(src)) ? null : true))
+    t.check('closing the session stops its Slideless server', !!stopped)
+
+    // Another agent shows the same folder: one server again, for the quit below.
+    const second = await spawnAgentTabIn(app, win, DIR)
+    const client2 = mcpHttpClient(mcpEndpoint(DIR), second.token)
+    await client2.init()
+    await client2.call('clave_open_side_panel', { path: BRIEF })
+    await frame.waitFor({ state: 'visible', timeout: 20000 })
+    liveSrc = await frame.getAttribute('src')
+    t.check(
+      'another session shows it again on a server of its own',
+      !!(await until(() => up(liveSrc))),
+      liveSrc
+    )
   } finally {
     await app.close()
     reg.server.close()
   }
+  const quitDown = await until(async () =>
+    (await fetch(liveSrc).then(
+      () => true,
+      () => false
+    ))
+      ? null
+      : true
+  )
+  t.check('quitting Clave stops every Slideless server it started', !!quitDown, liveSrc)
 
   // ── Part two: no Slideless, the page as before under the install card; it
   // still follows its file (PRDCT-4261).
@@ -290,6 +347,62 @@ export async function run(t) {
       'an agent’s edit to the file reloads the panel within seconds',
       !!followed,
       await previewText()
+    )
+
+    // Markdown follows its file the same way.
+    t.check(
+      'the agent opens a Markdown file',
+      !toolErrored(await client.call('clave_open_side_panel', { path: `${ROOT2}/notes.md` }))
+    )
+    const editor = win.locator('[data-testid="linked-document-panel"] .markdown-page-content')
+    await editor.waitFor({ state: 'visible', timeout: 10000 })
+    const editorText = () => editor.textContent().catch(() => '')
+    t.check(
+      'it shows the file',
+      !!(await until(async () => (await editorText()).includes('first words')))
+    )
+    writeFileSync(`${ROOT2}/notes.md`, '# Notes\n\nthe agent rewrote this\n')
+    t.check(
+      'an agent’s edit to a Markdown file reloads it too',
+      !!(await until(async () => (await editorText()).includes('the agent rewrote this'))),
+      await editorText()
+    )
+
+    // A file gone for a moment (a checkout, an agent's rm then write) never
+    // locks the panel, and the panel follows it back.
+    rmSync(`${ROOT2}/notes.md`)
+    await sleep(1200)
+    const alerts = await win.locator('[data-testid="linked-document-panel"] [role="alert"]').count()
+    t.equal('a deleted file raises no error in the panel', alerts, 0)
+    writeFileSync(`${ROOT2}/notes.md`, '# Notes\n\nback again\n')
+    t.check(
+      'and the recreated file shows',
+      !!(await until(async () => (await editorText()).includes('back again'))),
+      await editorText()
+    )
+    const read = await client.call('clave_side_panel', { action: 'read' })
+    t.check(
+      'the agent still reads the panel',
+      !toolErrored(read) && JSON.stringify(toolPayload(read)).includes('back again'),
+      read
+    )
+
+    // The panel's own saves never reload it under the person's cursor.
+    await editor.locator('p').last().click()
+    await win.keyboard.press('End')
+    for (const ch of ['x', 'y', 'z']) {
+      await win.keyboard.type(ch)
+      await sleep(700)
+    }
+    const typed = await editorText()
+    const focused = await win.evaluate(() =>
+      Boolean(document.activeElement?.closest('.markdown-page-content'))
+    )
+    t.check('typing through three saves keeps every key', typed.includes('back againxyz'), typed)
+    t.check('and keeps the focus in the editor', focused)
+    t.check(
+      'and the keys reach the file',
+      !!(await until(() => readFileSync(`${ROOT2}/notes.md`, 'utf8').includes('xyz')))
     )
   } finally {
     await app.close()

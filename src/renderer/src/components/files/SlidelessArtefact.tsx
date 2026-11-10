@@ -34,6 +34,15 @@ export function SlidelessArtefact({
   const [served, setServed] = useState<{ target: string; url?: string; error?: string } | null>(
     null
   )
+  // Bumped when main reports this target's server gone: the effect serves again.
+  const [generation, setGeneration] = useState(0)
+  useEffect(
+    () =>
+      window.electronAPI.slideless.onServerExited((exited) => {
+        if (exited === target) setGeneration((g) => g + 1)
+      }),
+    [target]
+  )
 
   useEffect(() => {
     if (!ready) return
@@ -54,7 +63,7 @@ export function SlidelessArtefact({
       cancelled = true
       if (holding) void window.electronAPI.slideless.release(target)
     }
-  }, [ready, target])
+  }, [ready, target, generation])
 
   // One version per finished turn of the session that holds the artefact.
   const agentState = useSessionStore((s) => s.sessions.find((x) => x.id === sessionId)?.agentState)

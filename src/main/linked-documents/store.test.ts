@@ -336,3 +336,49 @@ describe('the side panel follows its file (PRDCT-4261) and opens a folder (PRDCT
     await expect(store.open('s3', { path: two })).rejects.toThrow(/several HTML pages/)
   })
 })
+
+describe('round 1 of the review (PRDCT-4261, PRDCT-4262)', () => {
+  it('a file gone on the watcher’s call is not an error: the panel keeps what it holds, and follows it back', async () => {
+    const { root, store } = fixture()
+    const path = join(root, 'notes.md')
+    writeFileSync(path, '# one')
+    const doc = await store.open('s1', { path })
+    rmSync(path)
+    const kept = await store.update(doc.id, doc.revision, { reloadExternal: true, ifChanged: true })
+    expect(kept.revision).toBe(doc.revision)
+    expect(kept.content).toBe('# one')
+    expect(kept.conflict).toBeUndefined()
+    writeFileSync(path, '# back')
+    const back = await store.update(kept.id, kept.revision, {
+      reloadExternal: true,
+      ifChanged: true
+    })
+    expect(back.content).toBe('# back')
+  })
+
+  it('opening the same file again never reloads over a conflict', async () => {
+    const { root, store } = fixture()
+    const path = join(root, 'page.html')
+    writeFileSync(path, '<h1>one</h1>')
+    const doc = await store.open('s1', { path })
+    writeFileSync(path, '<h1>outside</h1>')
+    const conflicted = await store.update(doc.id, doc.revision, { content: '<h1>my edit</h1>' })
+    expect(conflicted.conflict).toBeTruthy()
+    const again = await store.open('s1', { path })
+    expect(again.content).toBe('<h1>my edit</h1>')
+    expect(again.conflict).toBeTruthy()
+  })
+
+  it('the same page opened as a folder after a file (or the reverse) is a new open with its folder', async () => {
+    const { root, store } = fixture()
+    const folder = join(root, 'deck')
+    mkdirSync(folder)
+    writeFileSync(join(folder, 'index.html'), '<h1>deck</h1>')
+    const asFile = await store.open('s1', { path: join(folder, 'index.html') })
+    expect(asFile.root).toBeUndefined()
+    const asFolder = await store.open('s1', { path: folder })
+    expect(asFolder.root).toBe(folder)
+    const backToFile = await store.open('s1', { path: join(folder, 'index.html') })
+    expect(backToFile.root).toBeUndefined()
+  })
+})

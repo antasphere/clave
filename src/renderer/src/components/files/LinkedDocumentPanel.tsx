@@ -35,6 +35,9 @@ export function LinkedDocumentPanel({
   const queue = useRef(Promise.resolve())
   const scroll = useRef<HTMLDivElement>(null)
   const blocked = useRef(false)
+  // Counts the reloads from disk that changed the document: a keystroke typed
+  // before one landed must not be saved over the file it replaced.
+  const reloads = useRef(0)
   useEffect(
     () =>
       registerLinkedFlusher(
@@ -84,6 +87,7 @@ export function LinkedDocumentPanel({
 
   function update(input: LinkedUpdate, emailPatch?: Partial<LinkedEmail>): void {
     if (blocked.current) return
+    const reloadsAtCall = reloads.current
     pending.current++
     setStatus('Saving…')
     setError('')
@@ -97,6 +101,13 @@ export function LinkedDocumentPanel({
         pending.current--
         return
       }
+      if (input.content !== undefined && reloads.current !== reloadsAtCall) {
+        // The file changed on disk while this was typed, and the panel took
+        // the new file: saving the old buffer would erase that change unseen.
+        pending.current--
+        setStatus('Reloaded: the file changed on disk while you typed')
+        return
+      }
       try {
         const saved = await window.electronAPI.linkedDocuments.update(
           current.current.id,
@@ -106,7 +117,10 @@ export function LinkedDocumentPanel({
         const before = current.current.revision
         current.current = saved
         if (pending.current === 1) setDoc(saved)
-        if (input.reloadExternal && saved.revision !== before) setEpoch((e) => e + 1)
+        if (input.reloadExternal && saved.revision !== before) {
+          reloads.current++
+          setEpoch((e) => e + 1)
+        }
         setStatus(saved.conflict ? 'Conflict · edits retained' : 'Saved')
       } catch (e) {
         // Never overwrite the local buffer following an agent revision conflict.
@@ -217,31 +231,51 @@ export function LinkedDocumentPanel({
             signatureError={signatureError}
             onSignatureError={setSignatureError}
           />
-        ) : source ? (
-          <CodeEditor
-            filename={doc.path!}
-            value={doc.content}
-            onChange={(content) => update({ content })}
-          />
         ) : doc.kind === 'markdown' ? (
-          <MarkdownPageEditor
-            key={epoch}
-            content={doc.content}
-            onChange={(content) => update({ content })}
-            onSave={() => {}}
-          />
-        ) : doc.conflict ? (
-          <div className="linked-document-notice">
-            Resolve the external file conflict before previewing. Your edits remain available in
-            Source.
-          </div>
+          source ? (
+            <CodeEditor
+              filename={doc.path!}
+              value={doc.content}
+              onChange={(content) => update({ content })}
+            />
+          ) : (
+            <MarkdownPageEditor
+              key={epoch}
+              content={doc.content}
+              onChange={(content) => update({ content })}
+              onSave={() => {}}
+            />
+          )
         ) : (
-          <SlidelessArtefact
-            target={doc.root ?? doc.path!}
-            page={doc.path!}
-            sessionId={doc.sessionId}
-            reloadKey={doc.revision}
-          />
+          <>
+            {source && (
+              <CodeEditor
+                filename={doc.path!}
+                value={doc.content}
+                onChange={(content) => update({ content })}
+              />
+            )}
+            {/* The Slideless view stays mounted under Source and through a
+                conflict (PRDCT-4262), so its server keeps running and each
+                finished turn still saves a version; it is only out of sight. */}
+            {!source && doc.conflict && (
+              <div className="linked-document-notice">
+                Resolve the external file conflict before previewing. Your edits remain available in
+                Source.
+              </div>
+            )}
+            <div
+              className="h-full"
+              style={source || doc.conflict ? { display: 'none' } : undefined}
+            >
+              <SlidelessArtefact
+                target={doc.root ?? doc.path!}
+                page={doc.path!}
+                sessionId={doc.sessionId}
+                reloadKey={doc.revision}
+              />
+            </div>
+          </>
         )}
       </div>
     </section>

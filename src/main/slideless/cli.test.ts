@@ -202,4 +202,30 @@ describe('the managed Slideless CLI', () => {
     writeFileSync(join(dir, 'current.json'), JSON.stringify({ version: '../../x' }))
     expect(installedVersion(dir)).toBeNull()
   })
+
+  it('gives up on a download that stalls, and keeps the installed copy', async () => {
+    const dir = tmp()
+    await installSlideless(dir, { fetch: registry('0.14.0', pkg('0.14.0')).fetch })
+    const stalled = (async (input: string | URL, init?: RequestInit) => {
+      if (String(input).endsWith('/latest'))
+        return new Response(
+          JSON.stringify({
+            version: '0.15.0',
+            dist: { tarball: 'https://registry.test/slow.tgz', integrity: 'sha512-x' }
+          })
+        )
+      // Headers arrive, the body never does.
+      return new Response(
+        new ReadableStream({
+          start(controller) {
+            init?.signal?.addEventListener('abort', () => controller.error(new Error('aborted')))
+          }
+        })
+      )
+    }) as typeof fetch
+    await expect(installSlideless(dir, { fetch: stalled, timeoutMs: 200 })).rejects.toThrow(
+      /timed out/
+    )
+    expect(installedVersion(dir)).toBe('0.14.0')
+  })
 })

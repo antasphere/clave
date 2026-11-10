@@ -1727,7 +1727,9 @@ const electronAPI = {
     snapshot: (target: string) =>
       ipcRenderer.invoke('slideless:snapshot', target) as Promise<SlidelessSnapshot>,
     onState: (callback: (state: SlidelessState) => void) =>
-      createIpcListener<[SlidelessState]>('slideless:state', callback)
+      createIpcListener<[SlidelessState]>('slideless:state', callback),
+    onServerExited: (callback: (target: string) => void) =>
+      createIpcListener<[string]>('slideless:server-exited', callback)
   },
   linkedDocuments: {
     getDefaultSignature: () => ipcRenderer.invoke('linked-documents:get-default-signature'),
