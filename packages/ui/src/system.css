@@ -6291,8 +6291,42 @@ details[open] > .chat-approval-items {
   grid-template-rows: 0fr;
   transition: grid-template-rows calc(var(--default-transition-duration) * 2) var(--ease-out-expo);
 }
-.exchange-timeline:is([data-digest='reading'], [data-digest='done']) .exchange-digest {
+.exchange-timeline:is([data-digest='reading'], [data-digest='done'], [data-digest='failed'])
+  .exchange-digest {
   grid-template-rows: 1fr;
+}
+/* A read that could not be made (PRDCT-4327): one quiet line, the reason's
+   class in words, and a plain link-weight "Ask again". On the exchange
+   timeline and on a work card alike. */
+.digest-unread {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: calc(var(--spacing) * 2);
+  margin-top: calc(var(--spacing) / 2);
+  font-size: var(--text-xs);
+  line-height: 1.45;
+  color: var(--text-tertiary);
+}
+.digest-unread-retry {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: var(--text-secondary);
+  text-decoration: underline;
+  text-decoration-color: color-mix(in oklab, currentColor 35%, transparent);
+  text-underline-offset: 2px;
+  cursor: pointer;
+  transition: color var(--default-transition-duration);
+}
+.digest-unread-retry:hover {
+  color: var(--term-ink, var(--text-primary));
+}
+.digest-unread-retry:focus-visible {
+  outline: thin solid var(--color-accent);
+  outline-offset: calc(var(--spacing) / 2);
+  border-radius: var(--radius-sm);
 }
 .exchange-digest-inner {
   min-height: 0;

@@ -6,7 +6,7 @@ import { useSessionStore } from '../../../src/renderer/src/store/session-store'
 import { useDisclosure } from './disclosure'
 import { digestMessages, gist, useExchange, useExchanges, type ExchangeSide } from './exchanges'
 import { digestKey } from '../../../src/shared/exchange-digest'
-import { useDigestState } from './digest'
+import { digestFailureLine, retryDigest, useDigestState, type DigestFailure } from './digest'
 import { ExchangeDrawing } from './ExchangeDrawing'
 import type { DeliveryEntry, DeliveryGroup } from './tools'
 
@@ -73,6 +73,8 @@ export function DeliveryStack({
                     flagged === null ? undefined : (event) => openCard(event.currentTarget, flagged)
                   }
                 />
+              ) : digest.state === 'failed' ? (
+                <DigestUnread reason={digest.reason} onRetry={() => retryDigest(sessionId, key)} />
               ) : null}
             </span>
           </span>
@@ -90,6 +92,34 @@ export function DeliveryStack({
         ))}
       </ol>
     </section>
+  )
+}
+
+/** A read that could not be made (PRDCT-4327): one quiet line with the
+ *  class of the reason, and a way to ask again. Shared with the work cards. */
+export function DigestUnread({
+  reason,
+  onRetry
+}: {
+  reason: DigestFailure | undefined
+  onRetry: () => void
+}): React.JSX.Element {
+  return (
+    <span className="digest-unread" data-reason={reason ?? 'failed'}>
+      <span className="digest-unread-words">{digestFailureLine(reason)}</span>
+      <button
+        type="button"
+        className="digest-unread-retry"
+        onClick={(event) => {
+          // Inside a card's summary: ask, never toggle the card.
+          event.preventDefault()
+          event.stopPropagation()
+          onRetry()
+        }}
+      >
+        Ask again
+      </button>
+    </span>
   )
 }
 

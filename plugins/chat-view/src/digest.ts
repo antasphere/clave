@@ -7,6 +7,7 @@ import type {
   DigestResult
 } from '../../../src/shared/exchange-digest'
 import type { WorkDigestDone, WorkDigestResult } from '../../../src/shared/work-digest'
+import type { HelperFailureReason } from '../../../src/shared/helper-prompt'
 
 /**
  * The one-shot digests on the view's side. Main reads them and files them by
@@ -26,7 +27,11 @@ import type { WorkDigestDone, WorkDigestResult } from '../../../src/shared/work-
  *  - a digest not filed yet is asked for once its card has held still for
  *    DIGEST_SETTLE_MS, and goes on to the end whatever the reader does, so it
  *    is filed even if they left;
- *  - a card stops saying it reads after DIGEST_GIVE_UP_MS.
+ *  - a card stops saying it reads after DIGEST_GIVE_UP_MS;
+ *  - a read that failed says so on its card, with the class of the reason
+ *    (`digestFailureLine`), and is not final (PRDCT-4327): the card's "Ask
+ *    again" asks at once, and a view that asks again (a remount, the tab
+ *    reopened) re-asks a failure older than DIGEST_RETRY_AFTER_MS.
  */
 
 /** How long a card must hold still before its digest is asked for: a burst
@@ -34,6 +39,34 @@ import type { WorkDigestDone, WorkDigestResult } from '../../../src/shared/work-
 export const DIGEST_SETTLE_MS = 2500
 /** How long a digest may be read before the card stops saying so. */
 export const DIGEST_GIVE_UP_MS = 90_000
+/** How old a failure must be before a view asking again re-asks it on its
+ *  own: a failing account is not asked once per render. */
+export const DIGEST_RETRY_AFTER_MS = 60_000
+
+/** Why a read failed, as the card says it. */
+export type DigestFailure = HelperFailureReason | 'unanswered'
+
+/** The one quiet line a card shows for a read that failed. */
+export function digestFailureLine(reason: DigestFailure | undefined): string {
+  switch (reason) {
+    case 'limit':
+      return 'Not read: the account is at its limit.'
+    case 'auth':
+      return 'Not read: the account is not signed in.'
+    case 'timeout':
+      return 'Not read: the read timed out.'
+    case 'disabled':
+      return 'Not read: this helper is switched off.'
+    case 'cancelled':
+      return 'Not read: the read was stopped.'
+    case 'unreadable':
+      return 'Not read: the answer was not in the asked shape.'
+    case 'unanswered':
+      return 'Not read: the server did not answer.'
+    default:
+      return 'Not read.'
+  }
+}
 
 export type DigestStateOf<Done> =
   /** Not read, and not to be: an older card (`Exchanges.recent`). */
@@ -42,7 +75,8 @@ export type DigestStateOf<Done> =
   | { state: 'reading' }
   /** `fresh`: read while the reader was here, rather than found filed. */
   | { state: 'done'; result: Done; fresh?: boolean }
-  | { state: 'failed' }
+  /** `at`: when it failed, so a view asking again knows a stale failure. */
+  | { state: 'failed'; reason?: DigestFailure; at: number }
 export type DigestState = DigestStateOf<DigestDone>
 export type WorkDigestState = DigestStateOf<WorkDigestDone>
 
@@ -63,17 +97,23 @@ const idOf = (sessionId: string, key: string): string => `${sessionId}|${key}`
 
 /** One family of digests: how to load what is filed for a tab, and how to
  *  ask for one. The `useDigests` hook is the view's, `useState` the card's. */
-function createDigests<Payload, Done>(api: {
+export function createDigests<Payload, Done>(api: {
   filed: (sessionId: string) => Promise<Record<string, Done>> | undefined
   read: (
     sessionId: string,
     key: string,
     launch: DigestLaunch,
     payload: Payload
-  ) => Promise<{ ok: true } | { ok: false; error: string }> | undefined
+  ) =>
+    | Promise<{ ok: true } | { ok: false; error: string; reason?: HelperFailureReason }>
+    | undefined
 }): {
   useStore: UseBoundStore<StoreApi<DigestStore<Done>>>
   useState: (sessionId: string, key: string, enabled: boolean) => DigestStateOf<Done>
+  /** Ask a failed card again, now (its "Ask again"). */
+  retry: (sessionId: string, key: string) => void
+  /** What the view wants read now (`useDigests`' effect, a plain call). */
+  view: (sessionId: string, items: readonly DigestItem<Payload>[], launch: DigestLaunch) => void
   useDigests: (
     sessionId: string,
     items: readonly DigestItem<Payload>[],
@@ -98,48 +138,95 @@ function createDigests<Payload, Done>(api: {
   /** The keys each tab's view wants read right now: a card that changed
    *  while its wait ran (a burst of messages) is not read in its old form. */
   const current = new Map<string, Set<string>>()
+  /** What each card was last asked with, so its "Ask again" can ask. */
+  const asked = new Map<string, { item: DigestItem<Payload>; launch: DigestLaunch }>()
+  /** Each card's latest ask: an answer of an older one is not applied. */
+  const asks = new Map<string, number>()
+  const failed = (reason?: DigestFailure): DigestStateOf<Done> => ({
+    state: 'failed',
+    reason,
+    at: Date.now()
+  })
 
   /** Ask for one card's digest, unless it is filed, asked for already, or
-   *  given up on in this run of the app. */
-  const ask = (sessionId: string, item: DigestItem<Payload>, launch: DigestLaunch): void => {
+   *  failed a moment ago (`DIGEST_RETRY_AFTER_MS`; `now` asks at once, the
+   *  card's "Ask again"). */
+  const ask = (
+    sessionId: string,
+    item: DigestItem<Payload>,
+    launch: DigestLaunch,
+    now = false
+  ): void => {
     const id = idOf(sessionId, item.key)
     const store = useStore.getState()
-    if (store.states[id]) return
+    const state = store.states[id]
+    if (
+      state &&
+      !(state.state === 'failed' && (now || Date.now() - state.at >= DIGEST_RETRY_AFTER_MS))
+    )
+      return
+    asked.set(id, { item, launch })
+    const generation = (asks.get(id) ?? 0) + 1
+    asks.set(id, generation)
     store.set(id, { state: 'waiting' })
-    setTimeout(() => {
-      if (!current.get(sessionId)?.has(item.key)) {
-        // Moved on during the wait: forget it, the newer form is asked for.
-        useStore.setState((s) => ({ states: { ...s.states, [id]: undefined } }))
-        return
-      }
-      const call = api.read(sessionId, item.key, launch, item.payload)
-      if (!call) {
-        useStore.getState().set(id, { state: 'failed' })
-        return
-      }
-      useStore.getState().set(id, { state: 'reading' })
-      const giveUp = setTimeout(() => {
-        if (useStore.getState().states[id]?.state === 'reading')
-          useStore.getState().set(id, { state: 'failed' })
-      }, DIGEST_GIVE_UP_MS)
-      void call
-        .catch((error: unknown) => ({ ok: false as const, error: String(error) }))
-        .then((result) => {
-          clearTimeout(giveUp)
-          useStore
-            .getState()
-            .set(
-              id,
-              result.ok
-                ? { state: 'done', result: result as unknown as Done, fresh: true }
-                : { state: 'failed' }
-            )
-        })
-    }, DIGEST_SETTLE_MS)
+    setTimeout(
+      () => {
+        if (!current.get(sessionId)?.has(item.key)) {
+          // Moved on during the wait: forget it, the newer form is asked for.
+          useStore.setState((s) => ({ states: { ...s.states, [id]: undefined } }))
+          return
+        }
+        const call = api.read(sessionId, item.key, launch, item.payload)
+        if (!call) {
+          useStore.getState().set(id, failed())
+          return
+        }
+        useStore.getState().set(id, { state: 'reading' })
+        const giveUp = setTimeout(() => {
+          if (useStore.getState().states[id]?.state === 'reading')
+            useStore.getState().set(id, failed('timeout'))
+        }, DIGEST_GIVE_UP_MS)
+        void call
+          .catch((error: unknown) => ({
+            ok: false as const,
+            error: String(error),
+            reason: 'unanswered' as const
+          }))
+          .then((result) => {
+            clearTimeout(giveUp)
+            // Asked again since (its "Ask again"): this answer is the old ask's.
+            if (asks.get(id) !== generation) return
+            useStore
+              .getState()
+              .set(
+                id,
+                result.ok
+                  ? { state: 'done', result: result as unknown as Done, fresh: true }
+                  : failed(result.reason)
+              )
+          })
+      },
+      now ? 0 : DIGEST_SETTLE_MS
+    )
+  }
+
+  const view = (
+    sessionId: string,
+    items: readonly DigestItem<Payload>[],
+    launch: DigestLaunch
+  ): void => {
+    current.set(sessionId, new Set(items.map((item) => item.key)))
+    if (!useStore.getState().loaded[sessionId]) return
+    for (const item of items) ask(sessionId, item, launch)
   }
 
   return {
     useStore,
+    view,
+    retry: (sessionId, key) => {
+      const last = asked.get(idOf(sessionId, key))
+      if (last) ask(sessionId, last.item, last.launch, true)
+    },
     useState: (sessionId, key, enabled) => {
       const state = useStore((s) => s.states[idOf(sessionId, key)])
       return state ?? (enabled ? { state: 'waiting' } : { state: 'off' })
@@ -157,9 +244,7 @@ function createDigests<Payload, Done>(api: {
       // The keys stand for the payloads: a new message is a new key.
       const keys = items.map((item) => item.key).join(',')
       useEffect(() => {
-        current.set(sessionId, new Set(items.map((item) => item.key)))
-        if (!loaded) return
-        for (const item of items) ask(sessionId, item, launch)
+        view(sessionId, items, launch)
         // eslint-disable-next-line react-hooks/exhaustive-deps
       }, [sessionId, keys, loaded])
     }
@@ -184,6 +269,9 @@ export const useDigestStore = exchanges.useStore
 
 /** Where a timeline's digest stands, for its head. */
 export const useDigestState = exchanges.useState
+
+/** Ask a timeline's failed digest again. */
+export const retryDigest = exchanges.retry
 
 /** The view's side of the exchange digests: loads what is filed for the tab,
  *  then asks for each of the timelines given (the conversation's latest) that
@@ -219,6 +307,9 @@ export const useWorkDigestStore = stretches.useStore
 
 /** Where a stretch's digest stands, for its card's face. */
 export const useWorkDigestState = stretches.useState
+
+/** Ask a stretch's failed title again. */
+export const retryWorkDigest = stretches.retry
 
 /** The view's side of the work digests: the conversation's latest stretches
  *  are titled whether or not their cards are on screen. */
